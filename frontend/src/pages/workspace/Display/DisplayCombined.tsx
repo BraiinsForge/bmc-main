@@ -35,9 +35,9 @@ interface ManifestFormState {
     size: pb.WidgetSize;
     sizeOptions: CombinedSize[];
     position: pb.WidgetPosition;
-    // Snapshot for the Cancel handler to revert live-preview RPCs.
     originalParams: Record<string, string>;
     originalSize: pb.WidgetSize;
+    isNewWidget: boolean;
 }
 
 interface Props {
@@ -78,10 +78,44 @@ const getInitialState = (): State => ({
         position: pb.create(pb.WidgetPositionSchema),
         originalParams: {},
         originalSize: pb.WidgetSize.UNSPECIFIED,
+        isNewWidget: false,
     },
 });
 
 const $ = getID('combined').get;
+
+function widgetParamsToFormState(params: pb.WidgetDataStruct | undefined): Record<string, string> {
+    if (!params) return {};
+    const result: Record<string, string> = {};
+    for (const [k, v] of Object.entries(params.fields)) {
+        switch (v.kind.case) {
+            case 'stringValue':
+                result[k] = JSON.stringify(v.kind.value);
+                break;
+            case 'integerValue':
+            case 'doubleValue':
+                result[k] = JSON.stringify(v.kind.value);
+                break;
+            case 'booleanValue':
+                result[k] = JSON.stringify(v.kind.value);
+                break;
+            default:
+                result[k] = 'null';
+        }
+    }
+    return result;
+}
+
+function formStateToWidgetDataStruct(manifest: pb.WidgetManifest, params: Record<string, string>): pb.WidgetDataStruct {
+    const fields: Record<string, pb.WidgetDataValue> = {};
+    for (const def of manifest.params) {
+        const raw = params[def.key];
+        if (raw !== undefined) {
+            fields[def.key] = Comp.widgetDataValueFromRaw(raw, def.kind);
+        }
+    }
+    return pb.create(pb.WidgetDataStructSchema, { fields });
+}
 
 class View extends Component<Props, State> {
     readonly state = getInitialState();
@@ -208,21 +242,12 @@ class View extends Component<Props, State> {
         });
 
         try {
-            // Convert the widget's params into the proto's map<string, string> form.
-            const paramsMap: Record<string, string> = {};
-            const obj = targetWidgetState.config?.params;
-            if (obj && typeof obj === 'object') {
-                for (const [k, v] of Object.entries(obj)) {
-                    paramsMap[k] = typeof v === 'string' ? v : JSON.stringify(v);
-                }
-            }
-
             await pb.rpc.scenes.updateWidget({
                 sceneId,
                 id: targetWidgetState.id,
                 size: targetWidgetState.size,
                 position: targetWidgetState.position,
-                params: paramsMap,
+                params: targetWidgetState.config?.params,
             });
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -275,13 +300,7 @@ class View extends Component<Props, State> {
             return;
         }
 
-        const params: Record<string, string> = {};
-        if (widget.config?.params && typeof widget.config.params === 'object') {
-            for (const [k, v] of Object.entries(widget.config.params as Record<string, unknown>)) {
-                params[k] = typeof v === 'string' ? v : JSON.stringify(v);
-            }
-        }
-
+        const params = widgetParamsToFormState(widget.config?.params);
         const position = widget.position ?? pb.create(pb.WidgetPositionSchema);
         const sizeOptions = this.#computeSizeOptions(manifest, { id, position });
 
@@ -296,6 +315,7 @@ class View extends Component<Props, State> {
                 position,
                 originalParams: { ...params },
                 originalSize: widget.size,
+                isNewWidget: false,
             },
         });
     };
@@ -326,14 +346,10 @@ class View extends Component<Props, State> {
         this.#loadSceneDebounced();
     };
 
-    #handleManifestWidgetAdd = (manifest: pb.WidgetManifest): void => {
-        const { formatMessage } = this.props.intl;
+    #handleManifestWidgetAdd = async (manifest: pb.WidgetManifest): Promise<void> => {
+        const { sceneId, intl } = this.props;
+        const { formatMessage } = intl;
         const { addPosition } = this.state;
-
-        const params: Record<string, string> = {};
-        for (const def of manifest.params) {
-            params[def.key] = def.defaultValue;
-        }
 
         const position = addPosition ?? pb.create(pb.WidgetPositionSchema);
         const sizeOptions = this.#computeSizeOptions(manifest, { id: '', position });
@@ -343,28 +359,64 @@ class View extends Component<Props, State> {
             return;
         }
 
-        this.setState({
-            openDialogKind: 'manifest',
-            manifestForm: {
-                manifest,
-                widgetID: '',
-                params,
-                size: sizeOptions[0],
-                sizeOptions,
-                position,
-                originalParams: {},
-                originalSize: pb.WidgetSize.UNSPECIFIED,
-            },
-        });
+        const size = sizeOptions[0];
+        const widgets = this.state.scene?.kind.case === 'combined' ? this.state.scene.kind.value.widgets : [];
+        const canonicalPosition = fn.getWidgetInsertionSlot(widgets, { id: '', size, position }) ?? position;
+
+        try {
+            const { value: newWidgetId } = await pb.rpc.scenes.addWidget({
+                sceneId,
+                position: canonicalPosition,
+                size,
+                config: {
+                    widgetUid: manifest.uid,
+                    params: pb.create(pb.WidgetDataStructSchema, { fields: {} }),
+                },
+            });
+
+            const { scene } = await pb.rpc.scenes.getScene({ value: sceneId });
+            const widget =
+                scene?.kind.case === 'combined' ? scene.kind.value.widgets.find(w => w.id === newWidgetId) : undefined;
+
+            const resolvedParams = widgetParamsToFormState(widget?.config?.params);
+            const resolvedPosition = widget?.position ?? canonicalPosition;
+            const resolvedSize = widget?.size ?? size;
+
+            this.setState({
+                openDialogKind: 'manifest',
+                manifestForm: {
+                    manifest,
+                    widgetID: newWidgetId,
+                    params: resolvedParams,
+                    size: resolvedSize,
+                    sizeOptions,
+                    position: resolvedPosition,
+                    originalParams: {},
+                    originalSize: pb.WidgetSize.UNSPECIFIED,
+                    isNewWidget: true,
+                },
+            });
+            this.#loadSceneDebounced();
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to add widget!' });
+            toast.error(msg);
+        }
     };
 
     #livePreviewWidget = debounce(async (): Promise<void> => {
         const { sceneId } = this.props;
-        const { widgetID, position, size, params } = this.state.manifestForm;
-        // Add-flow is skipped — respawn-per-keystroke OOMs the GPU.
-        if (!widgetID) return;
+        const { widgetID, position, size, params, manifest } = this.state.manifestForm;
+        if (!widgetID || !manifest) return;
         try {
-            await pb.rpc.scenes.updateWidget({ id: widgetID, sceneId, position, size, params });
+            await pb.rpc.scenes.updateWidget({
+                id: widgetID,
+                sceneId,
+                position,
+                size,
+                params: formStateToWidgetDataStruct(manifest, params),
+            });
         } catch ($) {
             if (pb.abort.is($)) return;
         }
@@ -402,66 +454,23 @@ class View extends Component<Props, State> {
     #handleManifestFormDone = async (): Promise<void> => {
         const { sceneId } = this.props;
         const { formatMessage } = this.props.intl;
-        const { manifestForm, addPosition } = this.state;
+        const { manifestForm } = this.state;
         const { manifest, widgetID, params, size, position } = manifestForm;
 
-        if (!manifest) {
+        if (!manifest || !widgetID) {
             this.setState({ openDialogKind: null });
             return;
         }
 
         try {
-            if (widgetID) {
-                this.#livePreviewWidget.cancel();
-                await pb.rpc.scenes.updateWidget({
-                    id: widgetID,
-                    sceneId,
-                    position,
-                    size,
-                    params,
-                });
-            } else if (addPosition) {
-                const widgets = this.state.scene?.kind.case === 'combined' ? this.state.scene.kind.value.widgets : [];
-                const canonicalPosition =
-                    fn.getWidgetInsertionSlot(widgets, { id: '', size, position: addPosition }) ?? addPosition;
-
-                const { value: newWidgetId } = await pb.rpc.scenes.addWidget({
-                    sceneId,
-                    position: canonicalPosition,
-                    size,
-                    config: {
-                        widgetUid: manifest.uid,
-                        params,
-                    },
-                });
-
-                // Optimistic insert; debounced loadScene reconciles ~200ms later.
-                this.setState(s => {
-                    if (s.scene?.kind.case !== 'combined') return s;
-                    const newWidget = pb.create(pb.WidgetSchema, {
-                        id: newWidgetId,
-                        position: canonicalPosition,
-                        size,
-                        config: {
-                            widgetUid: manifest.uid,
-                            params,
-                        },
-                    });
-                    return {
-                        ...s,
-                        scene: {
-                            ...s.scene,
-                            kind: {
-                                case: 'combined',
-                                value: {
-                                    $typeName: 'braiins.bmc.web.Scene.Combined',
-                                    widgets: [...s.scene.kind.value.widgets, newWidget],
-                                },
-                            },
-                        },
-                    };
-                });
-            }
+            this.#livePreviewWidget.cancel();
+            await pb.rpc.scenes.updateWidget({
+                id: widgetID,
+                sceneId,
+                position,
+                size,
+                params: formStateToWidgetDataStruct(manifest, params),
+            });
 
             this.setState({ openDialogKind: null, addPosition: null });
             this.#loadSceneDebounced();
@@ -480,17 +489,32 @@ class View extends Component<Props, State> {
 
     #openDialogCancel = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const { widgetID, position, originalSize, originalParams } = this.state.manifestForm;
-        this.setState({ openDialogKind: null });
+        const { widgetID, position, originalSize, originalParams, isNewWidget, manifest } = this.state.manifestForm;
+        this.setState({ openDialogKind: null, addPosition: null });
         if (!widgetID) return;
         this.#livePreviewWidget.cancel();
+
+        if (isNewWidget) {
+            try {
+                await pb.rpc.scenes.removeWidget({ id: widgetID, sceneId: this.props.sceneId });
+                this.#loadSceneDebounced();
+            } catch ($) {
+                if (pb.abort.is($)) return;
+                let msg = pb.collectAllErrorsAsFormattedList($);
+                msg ||= formatMessage({ defaultMessage: 'Failed to remove widget!' });
+                toast.error(msg);
+            }
+            return;
+        }
+
+        if (!manifest) return;
         try {
             await pb.rpc.scenes.updateWidget({
                 id: widgetID,
                 sceneId: this.props.sceneId,
                 position,
                 size: originalSize,
-                params: originalParams,
+                params: formStateToWidgetDataStruct(manifest, originalParams),
             });
         } catch ($) {
             if (pb.abort.is($)) return;

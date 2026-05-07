@@ -31,6 +31,39 @@ import css from './DisplayList.scss';
 
 const $ = getID('list').get;
 
+function widgetParamsToFormState(params: pb.WidgetDataStruct | undefined): Record<string, string> {
+    if (!params) return {};
+    const result: Record<string, string> = {};
+    for (const [k, v] of Object.entries(params.fields)) {
+        switch (v.kind.case) {
+            case 'stringValue':
+                result[k] = JSON.stringify(v.kind.value);
+                break;
+            case 'integerValue':
+            case 'doubleValue':
+                result[k] = JSON.stringify(v.kind.value);
+                break;
+            case 'booleanValue':
+                result[k] = JSON.stringify(v.kind.value);
+                break;
+            default:
+                result[k] = 'null';
+        }
+    }
+    return result;
+}
+
+function formStateToWidgetDataStruct(manifest: pb.WidgetManifest, params: Record<string, string>): pb.WidgetDataStruct {
+    const fields: Record<string, pb.WidgetDataValue> = {};
+    for (const def of manifest.params) {
+        const raw = params[def.key];
+        if (raw !== undefined) {
+            fields[def.key] = Comp.widgetDataValueFromRaw(raw, def.kind);
+        }
+    }
+    return pb.create(pb.WidgetDataStructSchema, { fields });
+}
+
 type OpenDialogKind = null | 'scene-select' | 'manifest';
 
 interface ManifestFormState {
@@ -38,6 +71,7 @@ interface ManifestFormState {
     sceneID: string;
     widgetID: string;
     params: Record<string, string>;
+    isNewScene: boolean;
 }
 
 interface Props {
@@ -82,7 +116,7 @@ const getInitialState = (): State => ({
     },
 
     openDialogKind: null,
-    manifestForm: { manifest: null, sceneID: '', widgetID: '', params: {} },
+    manifestForm: { manifest: null, sceneID: '', widgetID: '', params: {}, isNewScene: false },
 });
 
 class View extends Component<Props, State> {
@@ -212,26 +246,28 @@ class View extends Component<Props, State> {
 
         try {
             const { value: sceneID } = await pb.rpc.scenes.addFullscreenScene({
-                config: { widgetUid: manifest.uid, params: {} },
+                config: {
+                    widgetUid: manifest.uid,
+                    params: pb.create(pb.WidgetDataStructSchema, { fields: {} }),
+                },
             });
             this.#notifySceneAdded();
 
-            const scenes = await this.#loadScenes();
-            const newScene = scenes.find(s => s.id === sceneID);
-            const widget = newScene?.kind.case === 'fullscreen' ? newScene.kind.value.widget : undefined;
+            const { scene } = await pb.rpc.scenes.getScene({ value: sceneID });
+            const widget = scene?.kind.case === 'fullscreen' ? scene.kind.value.widget : undefined;
 
             if (!widget) {
                 this.setState({ openDialogKind: null });
                 return;
             }
 
-            const params: Record<string, string> = {};
-            for (const def of manifest.params) params[def.key] = def.defaultValue;
+            const params = widgetParamsToFormState(widget.config?.params);
 
             this.setState({
                 openDialogKind: 'manifest',
-                manifestForm: { manifest, sceneID, widgetID: widget.id, params },
+                manifestForm: { manifest, sceneID, widgetID: widget.id, params, isNewScene: true },
             });
+            this.#loadScenesDebounced();
         } catch ($) {
             if (pb.abort.is($)) return;
 
@@ -250,9 +286,23 @@ class View extends Component<Props, State> {
         this.#notifySceneAdded();
     };
 
-    #openDialogCancel = (): void => {
+    #openDialogCancel = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+        const { manifestForm } = this.state;
         this.abortPreview.abort();
         this.setState({ openDialogKind: null });
+
+        if (manifestForm.isNewScene && manifestForm.sceneID) {
+            try {
+                await pb.rpc.scenes.removeScene({ value: manifestForm.sceneID });
+                this.#loadScenesDebounced();
+            } catch ($) {
+                if (pb.abort.is($)) return;
+                let msg = pb.collectAllErrorsAsFormattedList($);
+                msg ||= formatMessage({ defaultMessage: 'Failed to remove widget!' });
+                toast.error(msg);
+            }
+        }
     };
 
     private abortPreview = pb.abort.get();
@@ -306,7 +356,7 @@ class View extends Component<Props, State> {
                 sceneId: sceneID,
                 position: widget?.position ?? pb.create(pb.WidgetPositionSchema),
                 size: widget?.size ?? pb.WidgetSize.FULL,
-                params,
+                params: formStateToWidgetDataStruct(manifest, params),
             });
 
             this.abortPreview.abort();
@@ -540,17 +590,12 @@ class View extends Component<Props, State> {
                     return;
                 }
 
-                const params: Record<string, string> = {};
-                if (widget.config?.params && typeof widget.config.params === 'object') {
-                    for (const [k, v] of Object.entries(widget.config.params as Record<string, unknown>)) {
-                        params[k] = typeof v === 'string' ? v : JSON.stringify(v);
-                    }
-                }
+                const params = widgetParamsToFormState(widget.config?.params);
 
                 this.setState(
                     {
                         openDialogKind: 'manifest',
-                        manifestForm: { manifest, sceneID: id, widgetID: widget.id, params },
+                        manifestForm: { manifest, sceneID: id, widgetID: widget.id, params, isNewScene: false },
                     },
                     () => this.#previewOpen(id),
                 );
