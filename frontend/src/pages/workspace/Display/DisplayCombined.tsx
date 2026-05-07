@@ -37,6 +37,7 @@ interface ManifestFormState {
     size: pb.WidgetSize;
     sizeOptions: CombinedSize[];
     position: pb.WidgetPosition;
+    anchorPosition: pb.WidgetPosition;
     originalParams: Record<string, pb.WidgetDataValue>;
     originalSize: pb.WidgetSize;
     isNewWidget: boolean;
@@ -80,6 +81,7 @@ const getInitialState = (): State => ({
         size: pb.WidgetSize.SMALL,
         sizeOptions: [],
         position: pb.create(pb.WidgetPositionSchema),
+        anchorPosition: pb.create(pb.WidgetPositionSchema),
         originalParams: {},
         originalSize: pb.WidgetSize.UNSPECIFIED,
         isNewWidget: false,
@@ -286,6 +288,7 @@ class View extends Component<Props, State> {
                     size: widget.size,
                 sizeOptions,
                 position,
+                anchorPosition: position,
                 originalParams: { ...params },
                 originalSize: widget.size,
                 isNewWidget: false,
@@ -366,6 +369,7 @@ class View extends Component<Props, State> {
                     size: resolvedSize,
                     sizeOptions,
                     position: resolvedPosition,
+                    anchorPosition: resolvedPosition,
                     originalParams: {},
                     originalSize: pb.WidgetSize.UNSPECIFIED,
                     isNewWidget: true,
@@ -384,17 +388,37 @@ class View extends Component<Props, State> {
         const { sceneId } = this.props;
         const { widgetID, position, size, params, manifest } = this.state.manifestForm;
         if (!widgetID || !manifest) return;
+        const paramsStruct = fn.formStateToWidgetDataStruct(manifest, params);
         try {
             await pb.rpc.scenes.updateWidget({
                 id: widgetID,
                 sceneId,
                 position,
                 size,
-                params: fn.formStateToWidgetDataStruct(manifest, params),
+                params: paramsStruct,
             });
         } catch ($) {
             if (pb.abort.is($)) return;
+            return;
         }
+        this.setState(s => {
+            if (s.scene?.kind.case !== 'combined') return s;
+            const widgets = s.scene.kind.value.widgets.map(w =>
+                w.id === widgetID
+                    ? { ...w, size, position, config: w.config ? { ...w.config, params: paramsStruct } : w.config }
+                    : w,
+            );
+            return {
+                ...s,
+                scene: {
+                    ...s.scene,
+                    kind: {
+                        case: 'combined',
+                        value: { $typeName: 'braiins.bmc.web.Scene.Combined', widgets },
+                    },
+                },
+            };
+        });
     }, 300);
 
     #handleManifestParamChange = (key: string, value: pb.WidgetDataValue | undefined): void => {
@@ -423,8 +447,17 @@ class View extends Component<Props, State> {
 
     #handleManifestSizeChange = (size: pb.WidgetSize): void => {
         if (this.state.manifestForm.size === size) return;
+
+        const { widgetID, anchorPosition, position } = this.state.manifestForm;
+        const scene = this.state.scene;
+        const widgets = scene?.kind.case === 'combined' ? scene.kind.value.widgets : [];
+        const canonicalPosition =
+            fn.getWidgetInsertionSlot(widgets, { id: widgetID, size, position: anchorPosition }) ??
+            fn.getWidgetInsertionSlot(widgets, { id: widgetID, size, position }) ??
+            position;
+
         this.setState(
-            s => ({ manifestForm: { ...s.manifestForm, size } }),
+            s => ({ manifestForm: { ...s.manifestForm, size, position: canonicalPosition } }),
             () => this.#livePreviewWidget(),
         );
     };
