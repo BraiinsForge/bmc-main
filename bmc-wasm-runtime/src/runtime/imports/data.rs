@@ -3,7 +3,7 @@
 //! Data-, persistence-, and formatting-focused guest imports.
 
 use anyhow::{Result, bail};
-use bmc_wasm_protocol::{TemperatureUnit, UnitSystem};
+use bmc_wasm_protocol::{JsonId, TemperatureUnit, UnitSystem, XmlId};
 use chrono::{DateTime, Utc};
 use wasmi::{Caller, Extern, Linker};
 
@@ -208,10 +208,9 @@ fn register_json_parse_import(linker: &mut Linker<HostState>) -> Result<()> {
             };
 
             let state = caller.data_mut();
-            let doc_id = state.next_json_id;
-            state.next_json_id += 1;
+            let doc_id = JsonId::alloc(&mut state.next_json_id);
             state.json_docs.insert(doc_id, value);
-            doc_id
+            doc_id.to_wire()
         },
     )?;
 
@@ -219,6 +218,9 @@ fn register_json_parse_import(linker: &mut Linker<HostState>) -> Result<()> {
         "env",
         "host_json_free",
         |mut caller: Caller<'_, HostState>, doc_id: u32| {
+            let Some(doc_id) = JsonId::from_wire(doc_id) else {
+                return;
+            };
             caller.data_mut().json_docs.remove(&doc_id);
         },
     )?;
@@ -238,6 +240,9 @@ fn register_json_string_import(linker: &mut Linker<HostState>) -> Result<()> {
          out_len: u32|
          -> i32 {
             let Some(path) = read_string(&caller, path_ptr, path_len) else {
+                return -1;
+            };
+            let Some(doc_id) = JsonId::from_wire(doc_id) else {
                 return -1;
             };
 
@@ -270,6 +275,9 @@ fn register_json_numeric_imports(linker: &mut Linker<HostState>) -> Result<()> {
             let Some(path) = read_string(&caller, path_ptr, path_len) else {
                 return i64::MIN;
             };
+            let Some(doc_id) = JsonId::from_wire(doc_id) else {
+                return i64::MIN;
+            };
             let state = caller.data();
             let Some(doc) = state.json_docs.get(&doc_id) else {
                 return i64::MIN;
@@ -286,6 +294,9 @@ fn register_json_numeric_imports(linker: &mut Linker<HostState>) -> Result<()> {
         "host_json_get_f64",
         |caller: Caller<'_, HostState>, doc_id: u32, path_ptr: u32, path_len: u32| -> f64 {
             let Some(path) = read_string(&caller, path_ptr, path_len) else {
+                return f64::NAN;
+            };
+            let Some(doc_id) = JsonId::from_wire(doc_id) else {
                 return f64::NAN;
             };
             let state = caller.data();
@@ -308,6 +319,9 @@ fn register_json_bool_import(linker: &mut Linker<HostState>) -> Result<()> {
         "host_json_get_bool",
         |caller: Caller<'_, HostState>, doc_id: u32, path_ptr: u32, path_len: u32| -> i32 {
             let Some(path) = read_string(&caller, path_ptr, path_len) else {
+                return -1;
+            };
+            let Some(doc_id) = JsonId::from_wire(doc_id) else {
                 return -1;
             };
             let state = caller.data();
@@ -384,10 +398,9 @@ fn register_xml_imports(linker: &mut Linker<HostState>) -> Result<()> {
             };
 
             let state = caller.data_mut();
-            let doc_id = state.next_xml_id;
-            state.next_xml_id += 1;
+            let doc_id = XmlId::alloc(&mut state.next_xml_id);
             state.xml_indices.insert(doc_id, xml_index);
-            doc_id
+            doc_id.to_wire()
         },
     )?;
 
@@ -402,6 +415,9 @@ fn register_xml_imports(linker: &mut Linker<HostState>) -> Result<()> {
          out_len: u32|
          -> i32 {
             let Some(path) = read_string(&caller, path_ptr, path_len) else {
+                return -1;
+            };
+            let Some(doc_id) = XmlId::from_wire(doc_id) else {
                 return -1;
             };
 
@@ -424,6 +440,9 @@ fn register_xml_imports(linker: &mut Linker<HostState>) -> Result<()> {
             let Some(path) = read_string(&caller, path_ptr, path_len) else {
                 return f64::NAN;
             };
+            let Some(doc_id) = XmlId::from_wire(doc_id) else {
+                return f64::NAN;
+            };
 
             let state = caller.data();
             xml_lookup_text(&state.xml_indices, doc_id, &path)
@@ -436,6 +455,9 @@ fn register_xml_imports(linker: &mut Linker<HostState>) -> Result<()> {
         "env",
         "host_xml_free",
         |mut caller: Caller<'_, HostState>, doc_id: u32| {
+            let Some(doc_id) = XmlId::from_wire(doc_id) else {
+                return;
+            };
             caller.data_mut().xml_indices.remove(&doc_id);
         },
     )?;
@@ -588,8 +610,8 @@ fn register_timezone_import(linker: &mut Linker<HostState>) -> Result<()> {
 }
 
 fn xml_lookup_text(
-    xml_docs: &std::collections::HashMap<u32, XmlDocumentIndex>,
-    doc_id: u32,
+    xml_docs: &std::collections::HashMap<XmlId, XmlDocumentIndex>,
+    doc_id: XmlId,
     path: &str,
 ) -> Option<String> {
     xml_docs.get(&doc_id)?.get_str(path).map(str::to_owned)
@@ -611,6 +633,8 @@ fn kv_disk_path(base: &std::path::Path, key: &str) -> Result<std::path::PathBuf>
 mod tests {
     use std::collections::HashMap;
     use std::path::Path;
+
+    use bmc_wasm_protocol::XmlId;
 
     use crate::xml::XmlDocumentIndex;
 
@@ -649,7 +673,7 @@ mod tests {
     #[test]
     fn xml_lookup_reads_multiple_fields_from_one_indexed_document() {
         let mut xml_docs = HashMap::new();
-        let doc_id = 1;
+        let doc_id = XmlId::from_wire(1).expect("BUG: 1 is a valid wire ID");
         xml_docs.insert(
             doc_id,
             XmlDocumentIndex::from_xml(XML_WIDGET_FEED)
@@ -685,7 +709,7 @@ mod tests {
     #[test]
     fn xml_lookup_f64_rejects_non_numeric_fields() {
         let mut xml_docs = HashMap::new();
-        let doc_id = 1;
+        let doc_id = XmlId::from_wire(1).expect("BUG: 1 is a valid wire ID");
         xml_docs.insert(
             doc_id,
             XmlDocumentIndex::from_xml(XML_WIDGET_FEED)

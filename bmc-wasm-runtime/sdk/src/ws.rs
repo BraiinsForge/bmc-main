@@ -28,6 +28,8 @@
 use core::cell::RefCell;
 use std::collections::HashMap;
 
+use bmc_wasm_protocol::WebsocketId;
+
 // Host function imports
 unsafe extern "C" {
     fn host_ws_connect(
@@ -42,19 +44,19 @@ unsafe extern "C" {
 
 /// Handle to an active WebSocket connection.
 #[derive(Debug, Clone, Copy)]
-pub struct Ws(pub(crate) u32);
+pub struct Ws(pub(crate) WebsocketId);
 
 impl Ws {
     /// Send a text message over this connection.
     pub fn send(&self, message: &str) {
         unsafe {
-            host_ws_send(self.0, message.as_ptr(), message.len() as u32);
+            host_ws_send(self.0.to_wire(), message.as_ptr(), message.len() as u32);
         }
     }
 
     /// Close this connection.
     pub fn close(&self) {
-        unsafe { host_ws_close(self.0) }
+        unsafe { host_ws_close(self.0.to_wire()) }
     }
 }
 
@@ -75,7 +77,7 @@ thread_local! {
     /// Registered callbacks indexed by position.
     static CALLBACKS: RefCell<Vec<Callback>> = const { RefCell::new(Vec::new()) };
     /// Maps ws_id → callback index.
-    static CONNECTIONS: RefCell<HashMap<u32, usize>> = RefCell::new(HashMap::new());
+    static CONNECTIONS: RefCell<HashMap<WebsocketId, usize>> = RefCell::new(HashMap::new());
 }
 
 /// Register a callback and return its index, reusing existing slots.
@@ -109,10 +111,9 @@ pub fn ws_connect(url: &str, headers: Option<&str>, on_event: Callback) -> Optio
         Some(h) => (h.as_ptr(), h.len() as u32),
         None => (core::ptr::null(), 0),
     };
-    let ws_id = unsafe { host_ws_connect(url.as_ptr(), url.len() as u32, h_ptr, h_len) };
-    if ws_id == 0 {
-        return None;
-    }
+    let ws_id = WebsocketId::from_wire(unsafe {
+        host_ws_connect(url.as_ptr(), url.len() as u32, h_ptr, h_len)
+    })?;
     CONNECTIONS.with(|c| c.borrow_mut().insert(ws_id, cb_idx));
     Some(Ws(ws_id))
 }
@@ -125,6 +126,10 @@ pub fn ws_connect(url: &str, headers: Option<&str>, on_event: Callback) -> Optio
 /// - 2 = Close (data = 2 bytes LE close code)
 #[unsafe(no_mangle)]
 pub extern "C" fn __on_ws_event(ws_id: u32, event_type: u32, data_ptr: u32, data_len: u32) {
+    let Some(ws_id) = WebsocketId::from_wire(ws_id) else {
+        return;
+    };
+
     let data = if data_len > 0 && data_ptr != 0 {
         unsafe { Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize) }
     } else {

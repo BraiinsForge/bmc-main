@@ -26,6 +26,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use bmc_wasm_protocol::{MdnsBrowseId, MdnsRegId};
+
 // Host function imports
 unsafe extern "C" {
     fn host_mdns_browse(svc_types_ptr: *const u8, svc_types_len: u32) -> u32;
@@ -47,23 +49,23 @@ pub type BrowseCallback = fn(MdnsBrowse, &MdnsEvent<'_>);
 
 /// Handle to an active mDNS browse session.
 #[derive(Clone, Copy, Debug)]
-pub struct MdnsBrowse(pub u32);
+pub struct MdnsBrowse(pub MdnsBrowseId);
 
 impl MdnsBrowse {
     /// Stop this browse session.
     pub fn stop(&self) {
-        unsafe { host_mdns_stop(self.0) }
+        unsafe { host_mdns_stop(self.0.to_wire()) }
     }
 }
 
 /// Handle to an active mDNS service registration.
 #[derive(Clone, Copy, Debug)]
-pub struct MdnsRegistration(pub u32);
+pub struct MdnsRegistration(pub MdnsRegId);
 
 impl MdnsRegistration {
     /// Unregister this service.
     pub fn unregister(&self) {
-        unsafe { host_mdns_unregister(self.0) }
+        unsafe { host_mdns_unregister(self.0.to_wire()) }
     }
 }
 
@@ -79,7 +81,7 @@ pub enum MdnsEvent<'a> {
 
 thread_local! {
     static CALLBACKS: RefCell<Vec<BrowseCallback>> = const { RefCell::new(Vec::new()) };
-    static BROWSES: RefCell<HashMap<u32, usize>> = RefCell::new(HashMap::new());
+    static BROWSES: RefCell<HashMap<MdnsBrowseId, usize>> = RefCell::new(HashMap::new());
 }
 
 fn register_callback(cb: BrowseCallback) -> usize {
@@ -106,10 +108,8 @@ fn register_callback(cb: BrowseCallback) -> usize {
 pub fn mdns_browse(service_types: &[&str], callback: BrowseCallback) -> Option<MdnsBrowse> {
     let cb_idx = register_callback(callback);
     let joined = service_types.join("\n");
-    let browse_id = unsafe { host_mdns_browse(joined.as_ptr(), joined.len() as u32) };
-    if browse_id == 0 {
-        return None;
-    }
+    let browse_id =
+        MdnsBrowseId::from_wire(unsafe { host_mdns_browse(joined.as_ptr(), joined.len() as u32) })?;
     BROWSES.with(|b| b.borrow_mut().insert(browse_id, cb_idx));
     Some(MdnsBrowse(browse_id))
 }
@@ -129,7 +129,7 @@ pub fn mdns_register(
         .map(|(k, v)| format!("{k}={v}"))
         .collect::<Vec<_>>()
         .join("\n");
-    let reg_id = unsafe {
+    MdnsRegId::from_wire(unsafe {
         host_mdns_register(
             service_type.as_ptr(),
             service_type.len() as u32,
@@ -139,13 +139,17 @@ pub fn mdns_register(
             txt_str.as_ptr(),
             txt_str.len() as u32,
         )
-    };
-    (reg_id != 0).then_some(MdnsRegistration(reg_id))
+    })
+    .map(MdnsRegistration)
 }
 
 /// Called by the host when an mDNS event is ready.
 #[unsafe(no_mangle)]
 pub extern "C" fn __on_mdns_event(browse_id: u32, event_type: u32, data_ptr: u32, data_len: u32) {
+    let Some(browse_id) = MdnsBrowseId::from_wire(browse_id) else {
+        return;
+    };
+
     // Take ownership first, then borrow — avoids dangling reference.
     let owned = if data_len > 0 && data_ptr != 0 {
         unsafe { Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize) }

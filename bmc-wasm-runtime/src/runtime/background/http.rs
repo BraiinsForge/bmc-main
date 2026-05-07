@@ -7,7 +7,6 @@ use std::time::Duration;
 use crate::host_api::{HttpInboundRequest, HttpListenerResponse};
 
 /// Background thread for an HTTP listener.
-#[expect(clippy::too_many_lines)]
 #[expect(
     clippy::needless_pass_by_value,
     reason = "thread entry point — values are moved in"
@@ -36,8 +35,6 @@ pub(in crate::runtime) fn http_listener_thread(
     let actual_port = listener.local_addr().map_or(port, |a| a.port());
     let _ = port_report_tx.send(actual_port);
     tracing::info!("HTTP listener started on port {actual_port}");
-
-    let mut next_req_id: u32 = 1;
 
     loop {
         if stop_rx.try_recv().is_ok() {
@@ -83,13 +80,9 @@ pub(in crate::runtime) fn http_listener_thread(
                     let _ = reader.read_exact(&mut body);
                 }
 
-                let request_id = next_req_id;
-                next_req_id += 1;
-
                 let (resp_tx, resp_rx) = std::sync::mpsc::channel::<HttpListenerResponse>();
 
                 let req = HttpInboundRequest {
-                    request_id,
                     method,
                     path,
                     headers,

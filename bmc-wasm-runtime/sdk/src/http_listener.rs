@@ -28,6 +28,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use bmc_wasm_protocol::{HttpListenerId, HttpRequestId};
+
 // Host function imports
 unsafe extern "C" {
     fn host_http_listen(port: u32) -> u32;
@@ -48,26 +50,29 @@ pub type RequestCallback = fn(HttpListener, &HttpRequest);
 
 /// Handle to an active HTTP listener.
 #[derive(Clone, Copy, Debug)]
-pub struct HttpListener(pub u32);
+pub struct HttpListener(pub Option<HttpListenerId>);
 
 impl HttpListener {
     /// Get the actual bound port (useful when port=0 for ephemeral).
+    /// Returns `0` if the listener failed to bind.
     #[must_use]
     pub fn port(&self) -> u16 {
-        unsafe { host_http_get_port(self.0) as u16 }
+        let Some(id) = self.0 else { return 0 };
+        unsafe { host_http_get_port(id.to_wire()) as u16 }
     }
 
     /// Close this listener and stop accepting connections.
     pub fn close(&self) {
-        LISTENERS.with(|l| l.borrow_mut().remove(&self.0));
-        unsafe { host_http_close_listener(self.0) }
+        let Some(id) = self.0 else { return };
+        LISTENERS.with(|l| l.borrow_mut().remove(&id));
+        unsafe { host_http_close_listener(id.to_wire()) }
     }
 }
 
 /// An inbound HTTP request delivered from the host.
 #[derive(Debug)]
 pub struct HttpRequest {
-    pub request_id: u32,
+    pub request_id: HttpRequestId,
     pub method: String,
     pub path: String,
     pub headers: String,
@@ -81,7 +86,7 @@ impl HttpRequest {
     pub fn respond(&self, status: u16, headers: &str, body: &[u8]) {
         unsafe {
             host_http_respond(
-                self.request_id,
+                self.request_id.to_wire(),
                 u32::from(status),
                 headers.as_ptr(),
                 headers.len() as u32,
@@ -94,7 +99,7 @@ impl HttpRequest {
 
 thread_local! {
     static CALLBACKS: RefCell<Vec<RequestCallback>> = const { RefCell::new(Vec::new()) };
-    static LISTENERS: RefCell<HashMap<u32, usize>> = RefCell::new(HashMap::new());
+    static LISTENERS: RefCell<HashMap<HttpListenerId, usize>> = RefCell::new(HashMap::new());
 }
 
 fn register_callback(cb: RequestCallback) -> usize {
@@ -117,8 +122,10 @@ fn register_callback(cb: RequestCallback) -> usize {
 /// The `callback` is invoked for each inbound request.
 pub fn http_listen(port: u16, callback: RequestCallback) -> HttpListener {
     let cb_idx = register_callback(callback);
-    let listener_id = unsafe { host_http_listen(u32::from(port)) };
-    LISTENERS.with(|l| l.borrow_mut().insert(listener_id, cb_idx));
+    let listener_id = HttpListenerId::from_wire(unsafe { host_http_listen(u32::from(port)) });
+    if let Some(id) = listener_id {
+        LISTENERS.with(|l| l.borrow_mut().insert(id, cb_idx));
+    }
     HttpListener(listener_id)
 }
 
@@ -136,6 +143,13 @@ pub extern "C" fn __on_http_request(
     body_ptr: u32,
     body_len: u32,
 ) {
+    let Some(listener_id) = HttpListenerId::from_wire(listener_id) else {
+        return;
+    };
+    let Some(request_id) = HttpRequestId::from_wire(request_id) else {
+        return;
+    };
+
     let method = take_string(method_ptr, method_len);
     let path = take_string(path_ptr, path_len);
     let headers = take_string(headers_ptr, headers_len);
@@ -149,7 +163,7 @@ pub extern "C" fn __on_http_request(
         body,
     };
 
-    let listener = HttpListener(listener_id);
+    let listener = HttpListener(Some(listener_id));
 
     let cb = LISTENERS
         .with(|l| l.borrow().get(&listener_id).copied())

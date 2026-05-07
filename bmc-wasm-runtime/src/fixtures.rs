@@ -182,39 +182,41 @@ pub fn fixture_events_to_timeline(
         .map(|fe| {
             let event = match &fe.kind {
                 FixtureEventKind::SsdpFound { search_id, data } => UnifiedEvent::SsdpFound {
-                    search_id: *search_id,
+                    search_id: search_id.to_wire(),
                     data: data.clone(),
                 },
                 FixtureEventKind::SsdpRemoved { search_id, data } => UnifiedEvent::SsdpRemoved {
-                    search_id: *search_id,
+                    search_id: search_id.to_wire(),
                     data: data.clone(),
                 },
                 FixtureEventKind::MdnsFound { browse_id, data } => UnifiedEvent::MdnsFound {
-                    browse_id: *browse_id,
+                    browse_id: browse_id.to_wire(),
                     data: data.clone(),
                 },
                 FixtureEventKind::MdnsRemoved { browse_id, data } => UnifiedEvent::MdnsRemoved {
-                    browse_id: *browse_id,
+                    browse_id: browse_id.to_wire(),
                     data: data.clone(),
                 },
-                FixtureEventKind::WsOpen { ws_id } => UnifiedEvent::WsOpen { ws_id: *ws_id },
+                FixtureEventKind::WsOpen { ws_id } => UnifiedEvent::WsOpen {
+                    ws_id: ws_id.to_wire(),
+                },
                 FixtureEventKind::WsMessage { ws_id, data } => UnifiedEvent::WsMessage {
-                    ws_id: *ws_id,
+                    ws_id: ws_id.to_wire(),
                     data: FixtureBody::from_bytes(data),
                 },
                 FixtureEventKind::WsClose { ws_id, code } => UnifiedEvent::WsClose {
-                    ws_id: *ws_id,
+                    ws_id: ws_id.to_wire(),
                     code: *code,
                 },
                 FixtureEventKind::SocketConnected { socket_id } => UnifiedEvent::SocketConnected {
-                    socket_id: *socket_id,
+                    socket_id: socket_id.to_wire(),
                 },
                 FixtureEventKind::SocketData { socket_id, data } => UnifiedEvent::SocketData {
-                    socket_id: *socket_id,
+                    socket_id: socket_id.to_wire(),
                     data: FixtureBody::from_bytes(data),
                 },
                 FixtureEventKind::SocketClosed { socket_id, code } => UnifiedEvent::SocketClosed {
-                    socket_id: *socket_id,
+                    socket_id: socket_id.to_wire(),
                     code: *code,
                 },
                 FixtureEventKind::UdpResponse {
@@ -222,7 +224,7 @@ pub fn fixture_events_to_timeline(
                     data,
                     source,
                 } => UnifiedEvent::UdpResponse {
-                    broadcast_id: *broadcast_id,
+                    broadcast_id: broadcast_id.to_wire(),
                     data: data.clone(),
                     source: source.clone(),
                 },
@@ -232,7 +234,7 @@ pub fn fixture_events_to_timeline(
                     name,
                     duration_ms,
                 } => UnifiedEvent::AudioPlay {
-                    sound_id: *sound_id,
+                    sound_id: u32::from(sound_id.to_wire()),
                     volume: *volume,
                     name: name.clone(),
                     duration_ms: *duration_ms,

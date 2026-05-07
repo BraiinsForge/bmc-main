@@ -7,6 +7,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use bmc_wasm_protocol::SocketId;
 use wasmi::Caller;
 
 use crate::host_api::{ActiveSocket, HostState, SocketEvent, SocketOutbound, WsEvent, WsOutbound};
@@ -39,8 +40,7 @@ pub(in crate::runtime) fn host_tls_connect_impl(
         );
         return 0;
     }
-    let socket_id = state.next_socket_id;
-    state.next_socket_id += 1;
+    let socket_id = SocketId::alloc(&mut state.next_socket_id);
 
     let (event_tx, event_rx) = std::sync::mpsc::channel::<SocketEvent>();
 
@@ -56,9 +56,10 @@ pub(in crate::runtime) fn host_tls_connect_impl(
             .sockets
             .insert(socket_id, ActiveSocket { write_tx, event_rx });
         let port = port as u16;
+        let socket_id_wire = socket_id.to_wire();
         std::thread::spawn(move || {
             tls_background_thread(
-                socket_id,
+                socket_id_wire,
                 &host,
                 port,
                 verification_mode,
@@ -68,7 +69,7 @@ pub(in crate::runtime) fn host_tls_connect_impl(
         });
     }
 
-    socket_id
+    socket_id.to_wire()
 }
 
 pub(in crate::runtime) fn build_tls_client_config(

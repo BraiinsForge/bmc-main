@@ -4,6 +4,11 @@
 
 #![expect(clippy::too_many_lines)]
 
+use bmc_wasm_protocol::{
+    FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, SocketId, SsdpSearchId,
+    UdpBroadcastId, WebsocketId,
+};
+
 use crate::host_api::{
     CompletedFetch, FixtureEvent, FixtureEventKind, HttpInboundRequest, MdnsEvent, SocketEvent,
     SsdpEvent, UdpBroadcastEvent, WsEvent,
@@ -13,7 +18,13 @@ use super::backend::WasmWidgetRuntime;
 use super::background::do_fetch;
 use super::memory::alloc_and_copy_to_guest;
 
-type DelayedFetchRequest = (String, String, Vec<(String, String)>, Option<Vec<u8>>, u32);
+type DelayedFetchRequest = (
+    String,
+    String,
+    Vec<(String, String)>,
+    Option<Vec<u8>>,
+    FetchRequestId,
+);
 
 impl WasmWidgetRuntime {
     /// Take all recorded events (drains the buffer). Used by the capture binary
@@ -198,7 +209,7 @@ impl WasmWidgetRuntime {
 
         for resp in responses {
             tracing::debug!(
-                id = resp.request_id,
+                id = resp.request_id.to_wire(),
                 status = resp.status,
                 body_len = resp.body.len(),
                 "delivering fetch response"
@@ -216,7 +227,7 @@ impl WasmWidgetRuntime {
             }
             if let Err(e) = on_response.call(
                 &mut self.store,
-                (resp.request_id, resp.status, body_ptr, body_len),
+                (resp.request_id.to_wire(), resp.status, body_ptr, body_len),
             ) {
                 tracing::error!("__on_fetch_response failed: {e}");
             }
@@ -236,8 +247,8 @@ impl WasmWidgetRuntime {
     /// Event types: 0 = Open, 1 = Message, 2 = Close (data_ptr/data_len carry
     /// the close code as two little-endian bytes).
     pub fn deliver_ws_messages(&mut self) -> bool {
-        let mut events: Vec<(u32, WsEvent)> = Vec::new();
-        let mut closed_ids: Vec<u32> = Vec::new();
+        let mut events: Vec<(WebsocketId, WsEvent)> = Vec::new();
+        let mut closed_ids: Vec<WebsocketId> = Vec::new();
 
         let state = self.store.data_mut();
         for (&ws_id, ws) in &state.websockets {
@@ -306,9 +317,10 @@ impl WasmWidgetRuntime {
                 tracing::error!("set_fuel failed: {e}");
                 continue;
             }
-            if let Err(e) =
-                on_ws_event.call(&mut self.store, (ws_id, event_type, data_ptr, data_len))
-            {
+            if let Err(e) = on_ws_event.call(
+                &mut self.store,
+                (ws_id.to_wire(), event_type, data_ptr, data_len),
+            ) {
                 tracing::error!("__on_ws_event failed: {e}");
             }
         }
@@ -326,8 +338,8 @@ impl WasmWidgetRuntime {
     ///
     /// Event types: 0 = Connected, 1 = Data, 2 = Closed.
     pub fn deliver_socket_events(&mut self) -> bool {
-        let mut events: Vec<(u32, SocketEvent)> = Vec::new();
-        let mut closed_ids: Vec<u32> = Vec::new();
+        let mut events: Vec<(SocketId, SocketEvent)> = Vec::new();
+        let mut closed_ids: Vec<SocketId> = Vec::new();
 
         let state = self.store.data_mut();
         for (&socket_id, sock) in &state.sockets {
@@ -396,9 +408,10 @@ impl WasmWidgetRuntime {
                 tracing::error!("set_fuel failed: {e}");
                 continue;
             }
-            if let Err(e) =
-                on_socket_event.call(&mut self.store, (socket_id, event_type, data_ptr, data_len))
-            {
+            if let Err(e) = on_socket_event.call(
+                &mut self.store,
+                (socket_id.to_wire(), event_type, data_ptr, data_len),
+            ) {
                 tracing::error!("__on_socket_event failed: {e}");
             }
         }
@@ -414,7 +427,7 @@ impl WasmWidgetRuntime {
     /// Drain mDNS events from all active browse sessions and deliver them
     /// to WASM by calling `__on_mdns_event(browse_id, event_type, data_ptr, data_len)`.
     pub fn deliver_mdns_events(&mut self) -> bool {
-        let mut events: Vec<(u32, MdnsEvent)> = Vec::new();
+        let mut events: Vec<(MdnsBrowseId, MdnsEvent)> = Vec::new();
 
         let state = self.store.data_mut();
         for (&browse_id, browse) in &state.mdns_browses {
@@ -472,9 +485,10 @@ impl WasmWidgetRuntime {
                 tracing::error!("set_fuel failed: {e}");
                 continue;
             }
-            if let Err(e) =
-                on_mdns_event.call(&mut self.store, (browse_id, event_type, data_ptr, data_len))
-            {
+            if let Err(e) = on_mdns_event.call(
+                &mut self.store,
+                (browse_id.to_wire(), event_type, data_ptr, data_len),
+            ) {
                 tracing::error!("__on_mdns_event failed: {e}");
             }
         }
@@ -490,7 +504,7 @@ impl WasmWidgetRuntime {
     /// Drain SSDP events from all active search sessions and deliver them
     /// to WASM by calling `__on_ssdp_event(search_id, event_type, data_ptr, data_len)`.
     pub fn deliver_ssdp_events(&mut self) -> bool {
-        let mut events: Vec<(u32, SsdpEvent)> = Vec::new();
+        let mut events: Vec<(SsdpSearchId, SsdpEvent)> = Vec::new();
 
         let state = self.store.data_mut();
         for (&search_id, search) in &state.ssdp_searches {
@@ -548,9 +562,10 @@ impl WasmWidgetRuntime {
                 tracing::error!("set_fuel failed: {e}");
                 continue;
             }
-            if let Err(e) =
-                on_ssdp_event.call(&mut self.store, (search_id, event_type, data_ptr, data_len))
-            {
+            if let Err(e) = on_ssdp_event.call(
+                &mut self.store,
+                (search_id.to_wire(), event_type, data_ptr, data_len),
+            ) {
                 tracing::error!("__on_ssdp_event failed: {e}");
             }
         }
@@ -566,7 +581,7 @@ impl WasmWidgetRuntime {
     /// Drain UDP broadcast events from all active sessions and deliver them
     /// to WASM by calling `__on_udp_broadcast_event`.
     pub fn deliver_udp_broadcast_events(&mut self) -> bool {
-        let mut events: Vec<(u32, UdpBroadcastEvent)> = Vec::new();
+        let mut events: Vec<(UdpBroadcastId, UdpBroadcastEvent)> = Vec::new();
 
         let state = self.store.data_mut();
         for (&broadcast_id, broadcast) in &state.udp_broadcasts {
@@ -630,7 +645,13 @@ impl WasmWidgetRuntime {
             }
             if let Err(e) = on_udp_broadcast_event.call(
                 &mut self.store,
-                (broadcast_id, data_ptr, data_len, source_ptr, source_len),
+                (
+                    broadcast_id.to_wire(),
+                    data_ptr,
+                    data_len,
+                    source_ptr,
+                    source_len,
+                ),
             ) {
                 tracing::error!("__on_udp_broadcast_event failed: {e}");
             }
@@ -647,7 +668,7 @@ impl WasmWidgetRuntime {
     /// Drain inbound HTTP requests from all active listeners and deliver them
     /// to WASM by calling `__on_http_request(...)`.
     pub fn deliver_http_requests(&mut self) -> bool {
-        let mut requests: Vec<(u32, HttpInboundRequest)> = Vec::new();
+        let mut requests: Vec<(HttpListenerId, HttpInboundRequest)> = Vec::new();
 
         let state = self.store.data_mut();
         for (&listener_id, listener) in &state.http_listeners {
@@ -676,10 +697,9 @@ impl WasmWidgetRuntime {
         };
 
         for (listener_id, req) in requests {
-            self.store
-                .data_mut()
-                .http_response_txs
-                .insert(req.request_id, req.response_tx);
+            let state = self.store.data_mut();
+            let request_id = HttpRequestId::alloc(&mut state.next_http_request_id);
+            state.http_response_txs.insert(request_id, req.response_tx);
 
             let (method_ptr, method_len) = self
                 .alloc_guest_bytes(alloc_func, req.method.as_bytes(), "HTTP request method")
@@ -698,12 +718,11 @@ impl WasmWidgetRuntime {
                 tracing::error!("set_fuel failed: {e}");
                 continue;
             }
-            let request_id = req.request_id;
             if let Err(e) = on_http_request.call(
                 &mut self.store,
                 (
-                    listener_id,
-                    request_id,
+                    listener_id.to_wire(),
+                    request_id.to_wire(),
                     method_ptr,
                     method_len,
                     path_ptr,
@@ -762,7 +781,7 @@ impl WasmWidgetRuntime {
         });
 
         for (method, url, headers, body, request_id) in ready {
-            tracing::info!(request_id, %method, %url, "firing HTTP fetch");
+            tracing::info!(request_id = request_id.to_wire(), %method, %url, "firing HTTP fetch");
             state
                 .fetch_keys
                 .insert(request_id, format!("{method} {url}"));
@@ -785,7 +804,7 @@ impl WasmWidgetRuntime {
             std::thread::spawn(move || {
                 let (status, resp_body) = do_fetch(&method, &url, &headers, body.as_deref());
                 tracing::info!(
-                    request_id,
+                    request_id = request_id.to_wire(),
                     status,
                     body_len = resp_body.len(),
                     %url,

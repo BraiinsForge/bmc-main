@@ -10,6 +10,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use bmc_wasm_protocol::UdpBroadcastId;
+
 // Host function imports
 unsafe extern "C" {
     fn host_udp_broadcast(port: u32, msg_ptr: *const u8, msg_len: u32, timeout_secs: u32) -> u32;
@@ -21,12 +23,12 @@ pub type BroadcastCallback = fn(UdpBroadcast, &UdpBroadcastEvent<'_>);
 
 /// Handle to an active UDP broadcast session.
 #[derive(Clone, Copy, Debug)]
-pub struct UdpBroadcast(pub u32);
+pub struct UdpBroadcast(pub UdpBroadcastId);
 
 impl UdpBroadcast {
     /// Stop this broadcast session.
     pub fn stop(&self) {
-        unsafe { host_udp_broadcast_stop(self.0) }
+        unsafe { host_udp_broadcast_stop(self.0.to_wire()) }
     }
 }
 
@@ -39,7 +41,7 @@ pub enum UdpBroadcastEvent<'a> {
 
 thread_local! {
     static CALLBACKS: RefCell<Vec<BroadcastCallback>> = const { RefCell::new(Vec::new()) };
-    static BROADCASTS: RefCell<HashMap<u32, usize>> = RefCell::new(HashMap::new());
+    static BROADCASTS: RefCell<HashMap<UdpBroadcastId, usize>> = RefCell::new(HashMap::new());
 }
 
 fn register_callback(cb: BroadcastCallback) -> usize {
@@ -71,11 +73,9 @@ pub fn udp_broadcast(
     callback: BroadcastCallback,
 ) -> Option<UdpBroadcast> {
     let cb_idx = register_callback(callback);
-    let broadcast_id =
-        unsafe { host_udp_broadcast(port, message.as_ptr(), message.len() as u32, timeout_secs) };
-    if broadcast_id == 0 {
-        return None;
-    }
+    let broadcast_id = UdpBroadcastId::from_wire(unsafe {
+        host_udp_broadcast(port, message.as_ptr(), message.len() as u32, timeout_secs)
+    })?;
     BROADCASTS.with(|b| b.borrow_mut().insert(broadcast_id, cb_idx));
     Some(UdpBroadcast(broadcast_id))
 }
@@ -89,6 +89,10 @@ pub extern "C" fn __on_udp_broadcast_event(
     source_ptr: u32,
     source_len: u32,
 ) {
+    let Some(broadcast_id) = UdpBroadcastId::from_wire(broadcast_id) else {
+        return;
+    };
+
     // Take ownership first, then borrow — avoids dangling reference.
     let owned_data = if data_len > 0 && data_ptr != 0 {
         unsafe { Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize) }

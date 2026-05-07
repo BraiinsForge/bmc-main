@@ -29,6 +29,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use bmc_wasm_protocol::FetchRequestId;
+
 use crate::json::JsonDoc;
 
 /// Response from an HTTP fetch request.
@@ -37,7 +39,7 @@ pub struct FetchResponse {
     /// HTTP status code (200, 404, etc.). 0 if network error.
     pub status: u32,
     /// Request ID returned by [`FetchRequest::send`], for correlating responses.
-    pub request_id: u32,
+    pub request_id: FetchRequestId,
     body: Vec<u8>,
 }
 
@@ -100,7 +102,7 @@ thread_local! {
     /// Registered callbacks indexed by position.
     static CALLBACKS: RefCell<Vec<Callback>> = const { RefCell::new(Vec::new()) };
     /// Maps request_id → callback index.
-    static PENDING: RefCell<HashMap<u32, usize>> = RefCell::new(HashMap::new());
+    static PENDING: RefCell<HashMap<FetchRequestId, usize>> = RefCell::new(HashMap::new());
 }
 
 /// Register a callback and return its index.
@@ -124,7 +126,7 @@ fn register_callback(cb: Callback) -> usize {
 ///
 /// `headers` is an optional newline-separated list of `Key: Value` pairs.
 #[must_use]
-pub fn fetch(url: &str, headers: Option<&str>, callback: Callback) -> Option<u32> {
+pub fn fetch(url: &str, headers: Option<&str>, callback: Callback) -> Option<FetchRequestId> {
     FetchRequest::get(url).headers_opt(headers).send(callback)
 }
 
@@ -138,7 +140,7 @@ pub fn fetch_after(
     url: &str,
     headers: Option<&str>,
     callback: Callback,
-) -> Option<u32> {
+) -> Option<FetchRequestId> {
     FetchRequest::get(url)
         .headers_opt(headers)
         .send_after(delay_ms, callback)
@@ -223,12 +225,12 @@ impl<'a> FetchRequest<'a> {
     /// request before it is queued, for example because the runtime hit its
     /// resource limit.
     #[must_use]
-    pub fn send(self, callback: Callback) -> Option<u32> {
+    pub fn send(self, callback: Callback) -> Option<FetchRequestId> {
         let cb_idx = register_callback(callback);
         let (m_ptr, m_len) = (self.method.as_ptr(), self.method.len() as u32);
         let (h_ptr, h_len) = optional_raw(self.headers);
         let (b_ptr, b_len) = optional_bytes_raw(self.body);
-        let request_id = unsafe {
+        let request_id = FetchRequestId::from_wire(unsafe {
             host_fetch(
                 m_ptr,
                 m_len,
@@ -239,10 +241,7 @@ impl<'a> FetchRequest<'a> {
                 b_ptr,
                 b_len,
             )
-        };
-        if request_id == 0 {
-            return None;
-        }
+        })?;
         PENDING.with(|p| p.borrow_mut().insert(request_id, cb_idx));
         Some(request_id)
     }
@@ -251,12 +250,12 @@ impl<'a> FetchRequest<'a> {
     ///
     /// Returns `None` if the host rejects the request before it is queued.
     #[must_use]
-    pub fn send_after(self, delay_ms: u32, callback: Callback) -> Option<u32> {
+    pub fn send_after(self, delay_ms: u32, callback: Callback) -> Option<FetchRequestId> {
         let cb_idx = register_callback(callback);
         let (m_ptr, m_len) = (self.method.as_ptr(), self.method.len() as u32);
         let (h_ptr, h_len) = optional_raw(self.headers);
         let (b_ptr, b_len) = optional_bytes_raw(self.body);
-        let request_id = unsafe {
+        let request_id = FetchRequestId::from_wire(unsafe {
             host_fetch_after(
                 delay_ms,
                 m_ptr,
@@ -268,10 +267,7 @@ impl<'a> FetchRequest<'a> {
                 b_ptr,
                 b_len,
             )
-        };
-        if request_id == 0 {
-            return None;
-        }
+        })?;
         PENDING.with(|p| p.borrow_mut().insert(request_id, cb_idx));
         Some(request_id)
     }
@@ -298,6 +294,10 @@ fn optional_bytes_raw(b: Option<&[u8]>) -> (*const u8, u32) {
 /// the registered callback.
 #[unsafe(no_mangle)]
 pub extern "C" fn __on_fetch_response(request_id: u32, status: u32, body_ptr: u32, body_len: u32) {
+    let Some(request_id) = FetchRequestId::from_wire(request_id) else {
+        return;
+    };
+
     // Reconstruct the body from the host-allocated buffer
     let body = if body_len > 0 && body_ptr != 0 {
         unsafe { Vec::from_raw_parts(body_ptr as *mut u8, body_len as usize, body_len as usize) }

@@ -8,6 +8,10 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::Result;
+use bmc_wasm_protocol::{
+    FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, MdnsRegId, SocketId, SsdpSearchId,
+    UdpBroadcastId, WebsocketId,
+};
 use wasmi::{Caller, Linker};
 
 use crate::host_api::{
@@ -70,8 +74,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
                 );
                 return 0;
             }
-            let request_id = state.next_request_id;
-            state.next_request_id += 1;
+            let request_id = FetchRequestId::alloc(&mut state.next_request_id);
             state.in_flight_fetches += 1;
             state
                 .fetch_keys
@@ -87,7 +90,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
                     status,
                     body,
                 });
-                return request_id;
+                return request_id.to_wire();
             }
 
             let tx = state.fetch_tx.clone();
@@ -100,7 +103,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
                 });
             });
 
-            request_id
+            request_id.to_wire()
         },
     )?;
 
@@ -139,8 +142,7 @@ fn register_fetch_after_import(linker: &mut Linker<HostState>) -> Result<()> {
                 );
                 return 0;
             }
-            let request_id = state.next_request_id;
-            state.next_request_id += 1;
+            let request_id = FetchRequestId::alloc(&mut state.next_request_id);
 
             let fire_at_ms = state.monotonic_ms + u64::from(delay_ms);
             state.delayed_fetches.push(DelayedFetch {
@@ -152,7 +154,7 @@ fn register_fetch_after_import(linker: &mut Linker<HostState>) -> Result<()> {
                 request_id,
             });
 
-            request_id
+            request_id.to_wire()
         },
     )?;
 
@@ -182,8 +184,7 @@ fn register_websocket_imports(linker: &mut Linker<HostState>) -> Result<()> {
                 );
                 return 0;
             }
-            let ws_id = state.next_ws_id;
-            state.next_ws_id += 1;
+            let ws_id = WebsocketId::alloc(&mut state.next_ws_id);
 
             let (event_tx, event_rx) = std::sync::mpsc::channel::<WsEvent>();
 
@@ -198,12 +199,13 @@ fn register_websocket_imports(linker: &mut Linker<HostState>) -> Result<()> {
                 state
                     .websockets
                     .insert(ws_id, ActiveWebSocket { msg_tx, event_rx });
+                let ws_id_wire = ws_id.to_wire();
                 std::thread::spawn(move || {
-                    ws_background_thread(ws_id, &url, &headers, event_tx, msg_rx);
+                    ws_background_thread(ws_id_wire, &url, &headers, event_tx, msg_rx);
                 });
             }
 
-            ws_id
+            ws_id.to_wire()
         },
     )?;
 
@@ -212,6 +214,9 @@ fn register_websocket_imports(linker: &mut Linker<HostState>) -> Result<()> {
         "host_ws_send",
         |mut caller: Caller<'_, HostState>, ws_id: u32, msg_ptr: u32, msg_len: u32| -> u32 {
             let Some(msg) = read_string(&caller, msg_ptr, msg_len) else {
+                return 1;
+            };
+            let Some(ws_id) = WebsocketId::from_wire(ws_id) else {
                 return 1;
             };
 
@@ -228,6 +233,9 @@ fn register_websocket_imports(linker: &mut Linker<HostState>) -> Result<()> {
         "env",
         "host_ws_close",
         |mut caller: Caller<'_, HostState>, ws_id: u32| {
+            let Some(ws_id) = WebsocketId::from_wire(ws_id) else {
+                return;
+            };
             let state = caller.data_mut();
             if let Some(ws) = state.websockets.remove(&ws_id) {
                 let _ = ws.msg_tx.send(WsOutbound::Close);
@@ -255,8 +263,7 @@ fn register_socket_connect_imports(linker: &mut Linker<HostState>) -> Result<()>
                 );
                 return 0;
             }
-            let socket_id = state.next_socket_id;
-            state.next_socket_id += 1;
+            let socket_id = SocketId::alloc(&mut state.next_socket_id);
 
             let (event_tx, event_rx) = std::sync::mpsc::channel::<SocketEvent>();
 
@@ -272,12 +279,13 @@ fn register_socket_connect_imports(linker: &mut Linker<HostState>) -> Result<()>
                     .sockets
                     .insert(socket_id, ActiveSocket { write_tx, event_rx });
                 let port = port as u16;
+                let socket_id_wire = socket_id.to_wire();
                 std::thread::spawn(move || {
-                    tcp_background_thread(socket_id, &host, port, event_tx, write_rx);
+                    tcp_background_thread(socket_id_wire, &host, port, event_tx, write_rx);
                 });
             }
 
-            socket_id
+            socket_id.to_wire()
         },
     )?;
 
@@ -320,6 +328,9 @@ fn register_socket_io_imports(linker: &mut Linker<HostState>) -> Result<()> {
             let Some(bytes) = read_bytes(&caller, data_ptr, data_len) else {
                 return 1;
             };
+            let Some(socket_id) = SocketId::from_wire(socket_id) else {
+                return 1;
+            };
 
             let state = caller.data_mut();
             let ok = state
@@ -334,6 +345,9 @@ fn register_socket_io_imports(linker: &mut Linker<HostState>) -> Result<()> {
         "env",
         "host_socket_close",
         |mut caller: Caller<'_, HostState>, socket_id: u32| {
+            let Some(socket_id) = SocketId::from_wire(socket_id) else {
+                return;
+            };
             let state = caller.data_mut();
             if let Some(sock) = state.sockets.remove(&socket_id) {
                 let _ = sock.write_tx.send(SocketOutbound::Close);
@@ -376,8 +390,7 @@ fn register_mdns_browse_imports(linker: &mut Linker<HostState>) -> Result<()> {
                 );
                 return 0;
             }
-            let browse_id = state.next_mdns_browse_id;
-            state.next_mdns_browse_id += 1;
+            let browse_id = MdnsBrowseId::alloc(&mut state.next_mdns_browse_id);
 
             let (event_tx, event_rx) = std::sync::mpsc::channel::<MdnsEvent>();
             let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
@@ -395,7 +408,7 @@ fn register_mdns_browse_imports(linker: &mut Linker<HostState>) -> Result<()> {
                 });
             }
 
-            browse_id
+            browse_id.to_wire()
         },
     )?;
 
@@ -403,6 +416,9 @@ fn register_mdns_browse_imports(linker: &mut Linker<HostState>) -> Result<()> {
         "env",
         "host_mdns_stop",
         |mut caller: Caller<'_, HostState>, browse_id: u32| {
+            let Some(browse_id) = MdnsBrowseId::from_wire(browse_id) else {
+                return;
+            };
             let state = caller.data_mut();
             if let Some(browse) = state.mdns_browses.remove(&browse_id) {
                 let _ = browse.stop_tx.send(());
@@ -487,13 +503,12 @@ fn register_mdns_register_import(linker: &mut Linker<HostState>) -> Result<()> {
             }
 
             let state = caller.data_mut();
-            let reg_id = state.next_mdns_reg_id;
-            state.next_mdns_reg_id += 1;
+            let reg_id = MdnsRegId::alloc(&mut state.next_mdns_reg_id);
             state
                 .mdns_registrations
                 .insert(reg_id, ActiveMdnsRegistration { daemon, fullname });
 
-            reg_id
+            reg_id.to_wire()
         },
     )?;
 
@@ -505,6 +520,9 @@ fn register_mdns_unregister_import(linker: &mut Linker<HostState>) -> Result<()>
         "env",
         "host_mdns_unregister",
         |mut caller: Caller<'_, HostState>, reg_id: u32| {
+            let Some(reg_id) = MdnsRegId::from_wire(reg_id) else {
+                return;
+            };
             let state = caller.data_mut();
             if let Some(reg) = state.mdns_registrations.remove(&reg_id) {
                 let _ = reg.daemon.unregister(&reg.fullname);
@@ -536,8 +554,7 @@ fn register_ssdp_imports(linker: &mut Linker<HostState>) -> Result<()> {
                 );
                 return 0;
             }
-            let search_id = state.next_ssdp_search_id;
-            state.next_ssdp_search_id += 1;
+            let search_id = SsdpSearchId::alloc(&mut state.next_ssdp_search_id);
 
             let (event_tx, event_rx) = std::sync::mpsc::channel::<SsdpEvent>();
             let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
@@ -555,7 +572,7 @@ fn register_ssdp_imports(linker: &mut Linker<HostState>) -> Result<()> {
                 });
             }
 
-            search_id
+            search_id.to_wire()
         },
     )?;
 
@@ -563,6 +580,9 @@ fn register_ssdp_imports(linker: &mut Linker<HostState>) -> Result<()> {
         "env",
         "host_ssdp_stop",
         |mut caller: Caller<'_, HostState>, search_id: u32| {
+            let Some(search_id) = SsdpSearchId::from_wire(search_id) else {
+                return;
+            };
             let state = caller.data_mut();
             if let Some(search) = state.ssdp_searches.remove(&search_id) {
                 let _ = search.stop_tx.send(());
@@ -598,8 +618,7 @@ fn register_udp_broadcast_imports(linker: &mut Linker<HostState>) -> Result<()> 
                 );
                 return 0;
             }
-            let broadcast_id = state.next_udp_broadcast_id;
-            state.next_udp_broadcast_id += 1;
+            let broadcast_id = UdpBroadcastId::alloc(&mut state.next_udp_broadcast_id);
 
             let (event_tx, event_rx) = std::sync::mpsc::channel::<UdpBroadcastEvent>();
             let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
@@ -617,7 +636,7 @@ fn register_udp_broadcast_imports(linker: &mut Linker<HostState>) -> Result<()> 
                 });
             }
 
-            broadcast_id
+            broadcast_id.to_wire()
         },
     )?;
 
@@ -625,6 +644,9 @@ fn register_udp_broadcast_imports(linker: &mut Linker<HostState>) -> Result<()> 
         "env",
         "host_udp_broadcast_stop",
         |mut caller: Caller<'_, HostState>, broadcast_id: u32| {
+            let Some(broadcast_id) = UdpBroadcastId::from_wire(broadcast_id) else {
+                return;
+            };
             let state = caller.data_mut();
             if let Some(broadcast) = state.udp_broadcasts.remove(&broadcast_id) {
                 let _ = broadcast.stop_tx.send(());
@@ -650,8 +672,7 @@ fn register_http_listener_imports(linker: &mut Linker<HostState>) -> Result<()> 
                 );
                 return 0;
             }
-            let listener_id = state.next_http_listener_id;
-            state.next_http_listener_id += 1;
+            let listener_id = HttpListenerId::alloc(&mut state.next_http_listener_id);
 
             let (request_tx, request_rx) = std::sync::mpsc::channel::<HttpInboundRequest>();
             let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
@@ -672,7 +693,7 @@ fn register_http_listener_imports(linker: &mut Linker<HostState>) -> Result<()> 
                 },
             );
 
-            listener_id
+            listener_id.to_wire()
         },
     )?;
 
@@ -680,6 +701,9 @@ fn register_http_listener_imports(linker: &mut Linker<HostState>) -> Result<()> 
         "env",
         "host_http_close_listener",
         |mut caller: Caller<'_, HostState>, listener_id: u32| {
+            let Some(listener_id) = HttpListenerId::from_wire(listener_id) else {
+                return;
+            };
             let state = caller.data_mut();
             if let Some(listener) = state.http_listeners.remove(&listener_id) {
                 let _ = listener.stop_tx.send(());
@@ -691,6 +715,9 @@ fn register_http_listener_imports(linker: &mut Linker<HostState>) -> Result<()> 
         "env",
         "host_http_get_port",
         |caller: Caller<'_, HostState>, listener_id: u32| -> u32 {
+            let Some(listener_id) = HttpListenerId::from_wire(listener_id) else {
+                return 0;
+            };
             let state = caller.data();
             state
                 .http_listeners
@@ -724,6 +751,9 @@ fn register_http_response_import(linker: &mut Linker<HostState>) -> Result<()> {
                 Vec::new()
             };
 
+            let Some(request_id) = HttpRequestId::from_wire(request_id) else {
+                return;
+            };
             let state = caller.data_mut();
             if let Some(tx) = state.http_response_txs.remove(&request_id) {
                 let _ = tx.send(HttpListenerResponse {

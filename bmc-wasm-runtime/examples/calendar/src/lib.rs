@@ -68,7 +68,7 @@ thread_local! {
     static THEME_KEY: RefCell<render::ThemeKey> = const { RefCell::new(render::ThemeKey::Dark) };
     /// Maps fetch request_id → source index. HTTP responses arrive in arbitrary
     /// order, so we cannot use a FIFO queue.
-    static PENDING: RefCell<HashMap<u32, usize>> = RefCell::new(HashMap::new());
+    static PENDING: RefCell<HashMap<bmc_wasm_sdk::FetchRequestId, usize>> = RefCell::new(HashMap::new());
 }
 
 #[unsafe(no_mangle)]

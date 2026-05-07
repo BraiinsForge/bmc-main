@@ -212,9 +212,9 @@ pub fn seek(fraction: f64) {
         .headers(&headers)
         .body(body.as_bytes())
         .send(on_command_done)
-        .unwrap_or_else(|| {
+        .is_none()
+        .then(|| {
             log_warn!("kodi: seek command rejected by host runtime limits");
-            0
         });
 }
 
@@ -245,9 +245,9 @@ fn poll_active_players() {
         .headers(&headers)
         .body(body.as_bytes())
         .send(on_active_players)
-        .unwrap_or_else(|| {
+        .is_none()
+        .then(|| {
             log_warn!("kodi: active player poll rejected by host runtime limits");
-            0
         });
 }
 
@@ -317,9 +317,9 @@ fn poll_player_properties() {
         .headers(&headers)
         .body(body.as_bytes())
         .send(on_player_properties)
-        .unwrap_or_else(|| {
+        .is_none()
+        .then(|| {
             log_warn!("kodi: player property poll rejected by host runtime limits");
-            0
         });
 }
 
@@ -377,9 +377,9 @@ fn poll_player_item() {
         .headers(&headers)
         .body(body.as_bytes())
         .send(on_player_item)
-        .unwrap_or_else(|| {
+        .is_none()
+        .then(|| {
             log_warn!("kodi: player item poll rejected by host runtime limits");
-            0
         });
 }
 
@@ -452,9 +452,9 @@ fn poll_app_properties() {
         .headers(&headers)
         .body(body.as_bytes())
         .send(on_app_properties)
-        .unwrap_or_else(|| {
+        .is_none()
+        .then(|| {
             log_warn!("kodi: application property poll rejected by host runtime limits");
-            0
         });
 }
 
@@ -531,9 +531,9 @@ fn kodi_command(method: &str, params_fn: fn(&KodiState) -> String) {
         .headers(&headers)
         .body(body.as_bytes())
         .send(on_command_done)
-        .unwrap_or_else(|| {
+        .is_none()
+        .then(|| {
             log_warn!("kodi: command rejected by host runtime limits");
-            0
         });
 }
 
@@ -553,9 +553,9 @@ fn kodi_fire_and_forget(method: &str, params: &str) {
         .headers(&headers)
         .body(body.as_bytes())
         .send(on_command_done)
-        .unwrap_or_else(|| {
+        .is_none()
+        .then(|| {
             log_warn!("kodi: fire-and-forget command rejected by host runtime limits");
-            0
         });
 }
 

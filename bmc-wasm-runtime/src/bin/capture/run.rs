@@ -25,6 +25,7 @@ use glutin::surface::{PbufferSurface, SurfaceAttributesBuilder};
 
 use bmc_render::interaction::TouchEvent;
 use bmc_render::renderer::Renderer;
+use bmc_wasm_protocol::{MdnsBrowseId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId};
 use bmc_wasm_runtime::capture_config::CaptureConfig;
 use bmc_wasm_runtime::unified_fixture::{
     TimelineEvent, UnifiedEvent, UnifiedFixture, load_unified_fixture, validate_fixture,
@@ -679,87 +680,112 @@ fn split_unified_events(
 
             // Convert network events to the runtime's FixtureEvent format
             UnifiedEvent::SsdpFound { search_id, data } => {
+                let Some(search_id) = SsdpSearchId::from_wire(*search_id) else {
+                    continue;
+                };
                 network_events.push(FixtureEvent {
                     at_ms: te.at_ms,
                     kind: FixtureEventKind::SsdpFound {
-                        search_id: *search_id,
+                        search_id,
                         data: data.clone(),
                     },
                 });
             }
             UnifiedEvent::SsdpRemoved { search_id, data } => {
+                let Some(search_id) = SsdpSearchId::from_wire(*search_id) else {
+                    continue;
+                };
                 network_events.push(FixtureEvent {
                     at_ms: te.at_ms,
                     kind: FixtureEventKind::SsdpRemoved {
-                        search_id: *search_id,
+                        search_id,
                         data: data.clone(),
                     },
                 });
             }
             UnifiedEvent::MdnsFound { browse_id, data } => {
+                let Some(browse_id) = MdnsBrowseId::from_wire(*browse_id) else {
+                    continue;
+                };
                 network_events.push(FixtureEvent {
                     at_ms: te.at_ms,
                     kind: FixtureEventKind::MdnsFound {
-                        browse_id: *browse_id,
+                        browse_id,
                         data: data.clone(),
                     },
                 });
             }
             UnifiedEvent::MdnsRemoved { browse_id, data } => {
+                let Some(browse_id) = MdnsBrowseId::from_wire(*browse_id) else {
+                    continue;
+                };
                 network_events.push(FixtureEvent {
                     at_ms: te.at_ms,
                     kind: FixtureEventKind::MdnsRemoved {
-                        browse_id: *browse_id,
+                        browse_id,
                         data: data.clone(),
                     },
                 });
             }
             UnifiedEvent::WsOpen { ws_id } => {
+                let Some(ws_id) = WebsocketId::from_wire(*ws_id) else {
+                    continue;
+                };
                 network_events.push(FixtureEvent {
                     at_ms: te.at_ms,
-                    kind: FixtureEventKind::WsOpen { ws_id: *ws_id },
+                    kind: FixtureEventKind::WsOpen { ws_id },
                 });
             }
             UnifiedEvent::WsMessage { ws_id, data } => {
+                let Some(ws_id) = WebsocketId::from_wire(*ws_id) else {
+                    continue;
+                };
                 network_events.push(FixtureEvent {
                     at_ms: te.at_ms,
                     kind: FixtureEventKind::WsMessage {
-                        ws_id: *ws_id,
+                        ws_id,
                         data: data.to_bytes(),
                     },
                 });
             }
             UnifiedEvent::WsClose { ws_id, code } => {
+                let Some(ws_id) = WebsocketId::from_wire(*ws_id) else {
+                    continue;
+                };
                 network_events.push(FixtureEvent {
                     at_ms: te.at_ms,
-                    kind: FixtureEventKind::WsClose {
-                        ws_id: *ws_id,
-                        code: *code,
-                    },
+                    kind: FixtureEventKind::WsClose { ws_id, code: *code },
                 });
             }
             UnifiedEvent::SocketConnected { socket_id } => {
+                let Some(socket_id) = SocketId::from_wire(*socket_id) else {
+                    continue;
+                };
                 network_events.push(FixtureEvent {
                     at_ms: te.at_ms,
-                    kind: FixtureEventKind::SocketConnected {
-                        socket_id: *socket_id,
-                    },
+                    kind: FixtureEventKind::SocketConnected { socket_id },
                 });
             }
             UnifiedEvent::SocketData { socket_id, data } => {
+                let Some(socket_id) = SocketId::from_wire(*socket_id) else {
+                    continue;
+                };
                 network_events.push(FixtureEvent {
                     at_ms: te.at_ms,
                     kind: FixtureEventKind::SocketData {
-                        socket_id: *socket_id,
+                        socket_id,
                         data: data.to_bytes(),
                     },
                 });
             }
             UnifiedEvent::SocketClosed { socket_id, code } => {
+                let Some(socket_id) = SocketId::from_wire(*socket_id) else {
+                    continue;
+                };
                 network_events.push(FixtureEvent {
                     at_ms: te.at_ms,
                     kind: FixtureEventKind::SocketClosed {
-                        socket_id: *socket_id,
+                        socket_id,
                         code: *code,
                     },
                 });
@@ -769,10 +795,13 @@ fn split_unified_events(
                 data,
                 source,
             } => {
+                let Some(broadcast_id) = UdpBroadcastId::from_wire(*broadcast_id) else {
+                    continue;
+                };
                 network_events.push(FixtureEvent {
                     at_ms: te.at_ms,
                     kind: FixtureEventKind::UdpResponse {
-                        broadcast_id: *broadcast_id,
+                        broadcast_id,
                         data: data.clone(),
                         source: source.clone(),
                     },

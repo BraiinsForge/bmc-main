@@ -26,6 +26,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use bmc_wasm_protocol::SsdpSearchId;
+
 // Host function imports
 unsafe extern "C" {
     fn host_ssdp_search(st_ptr: *const u8, st_len: u32, timeout: u32) -> u32;
@@ -37,12 +39,12 @@ pub type SearchCallback = fn(SsdpSearch, &SsdpEvent<'_>);
 
 /// Handle to an active SSDP search session.
 #[derive(Clone, Copy, Debug)]
-pub struct SsdpSearch(pub u32);
+pub struct SsdpSearch(pub SsdpSearchId);
 
 impl SsdpSearch {
     /// Stop this search session.
     pub fn stop(&self) {
-        unsafe { host_ssdp_stop(self.0) }
+        unsafe { host_ssdp_stop(self.0.to_wire()) }
     }
 }
 
@@ -59,7 +61,7 @@ pub enum SsdpEvent<'a> {
 
 thread_local! {
     static CALLBACKS: RefCell<Vec<SearchCallback>> = const { RefCell::new(Vec::new()) };
-    static SEARCHES: RefCell<HashMap<u32, usize>> = RefCell::new(HashMap::new());
+    static SEARCHES: RefCell<HashMap<SsdpSearchId, usize>> = RefCell::new(HashMap::new());
 }
 
 fn register_callback(cb: SearchCallback) -> usize {
@@ -92,16 +94,13 @@ pub fn ssdp_search(
     callback: SearchCallback,
 ) -> Option<SsdpSearch> {
     let cb_idx = register_callback(callback);
-    let search_id = unsafe {
+    let search_id = SsdpSearchId::from_wire(unsafe {
         host_ssdp_search(
             search_target.as_ptr(),
             search_target.len() as u32,
             timeout_secs,
         )
-    };
-    if search_id == 0 {
-        return None;
-    }
+    })?;
     SEARCHES.with(|s| s.borrow_mut().insert(search_id, cb_idx));
     Some(SsdpSearch(search_id))
 }
@@ -109,6 +108,10 @@ pub fn ssdp_search(
 /// Called by the host when an SSDP event is ready.
 #[unsafe(no_mangle)]
 pub extern "C" fn __on_ssdp_event(search_id: u32, event_type: u32, data_ptr: u32, data_len: u32) {
+    let Some(search_id) = SsdpSearchId::from_wire(search_id) else {
+        return;
+    };
+
     // Take ownership first, then borrow — avoids dangling reference.
     let owned = if data_len > 0 && data_ptr != 0 {
         unsafe { Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize) }

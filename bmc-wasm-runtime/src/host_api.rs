@@ -21,14 +21,17 @@ use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::interaction::InteractionState;
 use bmc_render::tree::NodeContext;
 use bmc_render::{AnimationState, ModalState, ScrollState, TransitionState};
-use bmc_wasm_protocol::{AudioId, FormatPreferences};
+use bmc_wasm_protocol::{
+    AudioId, FetchRequestId, FormatPreferences, HttpListenerId, HttpRequestId, JsonId,
+    MdnsBrowseId, MdnsRegId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, XmlId,
+};
 
 use crate::runtime_limits::RuntimeResourceLimits;
 use crate::xml::XmlDocumentIndex;
 
 /// A completed HTTP fetch response ready for delivery to WASM.
 pub struct CompletedFetch {
-    pub request_id: u32,
+    pub request_id: FetchRequestId,
     pub status: u32,
     pub body: Vec<u8>,
 }
@@ -40,7 +43,7 @@ pub struct DelayedFetch {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
-    pub request_id: u32,
+    pub request_id: FetchRequestId,
 }
 
 /// A timestamped event for fixture replay (SSDP, mDNS, WebSocket, etc.).
@@ -56,50 +59,50 @@ pub struct FixtureEvent {
 #[derive(Debug, PartialEq)]
 pub enum FixtureEventKind {
     SsdpFound {
-        search_id: u32,
+        search_id: SsdpSearchId,
         data: String,
     },
     SsdpRemoved {
-        search_id: u32,
+        search_id: SsdpSearchId,
         data: String,
     },
     MdnsFound {
-        browse_id: u32,
+        browse_id: MdnsBrowseId,
         data: String,
     },
     MdnsRemoved {
-        browse_id: u32,
+        browse_id: MdnsBrowseId,
         data: String,
     },
     WsOpen {
-        ws_id: u32,
+        ws_id: WebsocketId,
     },
     WsMessage {
-        ws_id: u32,
+        ws_id: WebsocketId,
         data: Vec<u8>,
     },
     WsClose {
-        ws_id: u32,
+        ws_id: WebsocketId,
         code: u16,
     },
     SocketConnected {
-        socket_id: u32,
+        socket_id: SocketId,
     },
     SocketData {
-        socket_id: u32,
+        socket_id: SocketId,
         data: Vec<u8>,
     },
     SocketClosed {
-        socket_id: u32,
+        socket_id: SocketId,
         code: u32,
     },
     UdpResponse {
-        broadcast_id: u32,
+        broadcast_id: UdpBroadcastId,
         data: String,
         source: String,
     },
     AudioPlay {
-        sound_id: u32,
+        sound_id: AudioId,
         volume: u32,
         name: String,
         duration_ms: u32,
@@ -137,15 +140,15 @@ pub struct FixtureEventState {
     /// Next event index to replay.
     pub cursor: usize,
     /// Senders for injecting WebSocket events into stub connections.
-    pub ws_event_txs: HashMap<u32, mpsc::Sender<WsEvent>>,
+    pub ws_event_txs: HashMap<WebsocketId, mpsc::Sender<WsEvent>>,
     /// Senders for injecting socket events into stub connections.
-    pub socket_event_txs: HashMap<u32, mpsc::Sender<SocketEvent>>,
+    pub socket_event_txs: HashMap<SocketId, mpsc::Sender<SocketEvent>>,
     /// Senders for injecting mDNS events into stub browse sessions.
-    pub mdns_event_txs: HashMap<u32, mpsc::Sender<MdnsEvent>>,
+    pub mdns_event_txs: HashMap<MdnsBrowseId, mpsc::Sender<MdnsEvent>>,
     /// Senders for injecting SSDP events into stub search sessions.
-    pub ssdp_event_txs: HashMap<u32, mpsc::Sender<SsdpEvent>>,
+    pub ssdp_event_txs: HashMap<SsdpSearchId, mpsc::Sender<SsdpEvent>>,
     /// Senders for injecting UDP broadcast events into stub sessions.
-    pub udp_event_txs: HashMap<u32, mpsc::Sender<UdpBroadcastEvent>>,
+    pub udp_event_txs: HashMap<UdpBroadcastId, mpsc::Sender<UdpBroadcastEvent>>,
 }
 
 /// A WebSocket event queued for delivery to WASM.
@@ -260,8 +263,10 @@ pub struct ActiveMdnsRegistration {
 }
 
 /// An inbound HTTP request queued for delivery to WASM.
+///
+/// The `request_id` is assigned host-side at delivery time (so it can come
+/// from a single shared counter), not in the listener thread.
 pub struct HttpInboundRequest {
-    pub request_id: u32,
     pub method: String,
     pub path: String,
     pub headers: String,
@@ -434,7 +439,7 @@ pub(crate) struct HostState {
     /// Used for deferred timer checks and wasm_delta computation.
     pub monotonic_ms: u64,
 
-    /// Next request ID for fetch.
+    /// Next fetch request ID counter (for `FetchRequestId::alloc`).
     pub next_request_id: u32,
 
     /// Receiver for completed fetch responses from background threads.
@@ -450,51 +455,51 @@ pub(crate) struct HostState {
     pub in_flight_fetches: u32,
 
     /// Parsed JSON documents, keyed by doc_id.
-    pub json_docs: HashMap<u32, Value>,
+    pub json_docs: HashMap<JsonId, Value>,
 
-    /// Next JSON document ID.
+    /// Next JSON document ID counter (for `JsonId::alloc`).
     pub next_json_id: u32,
 
     /// Owned XML lookup indices built once at `host_xml_parse` time.
-    pub xml_indices: HashMap<u32, XmlDocumentIndex>,
+    pub xml_indices: HashMap<XmlId, XmlDocumentIndex>,
 
-    /// Next XML document ID.
+    /// Next XML document ID counter (for `XmlId::alloc`).
     pub next_xml_id: u32,
 
     /// Active WebSocket connections, keyed by ws_id.
-    pub websockets: HashMap<u32, ActiveWebSocket>,
+    pub websockets: HashMap<WebsocketId, ActiveWebSocket>,
 
-    /// Next WebSocket connection ID.
+    /// Next WebSocket ID counter (for `WebsocketId::alloc`).
     pub next_ws_id: u32,
 
     /// Active TLS socket connections, keyed by socket_id.
-    pub sockets: HashMap<u32, ActiveSocket>,
+    pub sockets: HashMap<SocketId, ActiveSocket>,
 
-    /// Next TLS socket connection ID.
+    /// Next socket ID counter (for `SocketId::alloc`).
     pub next_socket_id: u32,
 
     /// Active mDNS browse sessions, keyed by browse_id.
-    pub mdns_browses: HashMap<u32, ActiveMdnsBrowse>,
+    pub mdns_browses: HashMap<MdnsBrowseId, ActiveMdnsBrowse>,
 
-    /// Next mDNS browse ID.
+    /// Next mDNS browse ID counter (for `MdnsBrowseId::alloc`).
     pub next_mdns_browse_id: u32,
 
     /// Active mDNS service registrations, keyed by reg_id.
-    pub mdns_registrations: HashMap<u32, ActiveMdnsRegistration>,
+    pub mdns_registrations: HashMap<MdnsRegId, ActiveMdnsRegistration>,
 
-    /// Next mDNS registration ID.
+    /// Next mDNS registration ID counter (for `MdnsRegId::alloc`).
     pub next_mdns_reg_id: u32,
 
     /// Active SSDP search sessions, keyed by search_id.
-    pub ssdp_searches: HashMap<u32, ActiveSsdpSearch>,
+    pub ssdp_searches: HashMap<SsdpSearchId, ActiveSsdpSearch>,
 
-    /// Next SSDP search ID.
+    /// Next SSDP search ID counter (for `SsdpSearchId::alloc`).
     pub next_ssdp_search_id: u32,
 
     /// Active UDP broadcast sessions, keyed by broadcast_id.
-    pub udp_broadcasts: HashMap<u32, ActiveUdpBroadcast>,
+    pub udp_broadcasts: HashMap<UdpBroadcastId, ActiveUdpBroadcast>,
 
-    /// Next UDP broadcast ID.
+    /// Next UDP broadcast ID counter (for `UdpBroadcastId::alloc`).
     pub next_udp_broadcast_id: u32,
 
     /// Per-widget key-value storage directory (None = persistence disabled).
@@ -504,13 +509,18 @@ pub(crate) struct HostState {
     pub kv_cache: HashMap<String, Vec<u8>>,
 
     /// Active HTTP listeners, keyed by listener_id.
-    pub http_listeners: HashMap<u32, ActiveHttpListener>,
+    pub http_listeners: HashMap<HttpListenerId, ActiveHttpListener>,
 
-    /// Next HTTP listener ID.
+    /// Next HTTP listener ID counter (for `HttpListenerId::alloc`).
     pub next_http_listener_id: u32,
 
     /// Per-request response senders: request_id → sender for the response.
-    pub http_response_txs: HashMap<u32, mpsc::Sender<HttpListenerResponse>>,
+    pub http_response_txs: HashMap<HttpRequestId, mpsc::Sender<HttpListenerResponse>>,
+
+    /// Next HTTP request ID counter (for `HttpRequestId::alloc`). Shared
+    /// across all HTTP listeners so two concurrent listeners never emit the
+    /// same `HttpRequestId` and overwrite each other in `http_response_txs`.
+    pub next_http_request_id: u32,
 
     /// Optional host-provided interceptor for fetch requests.
     /// Called with `(method, url)` before hitting the network.
@@ -521,7 +531,7 @@ pub(crate) struct HostState {
     pub fetch_observer: Option<crate::runtime::FetchObserver>,
 
     /// Maps `request_id` → fixture key (e.g. "GET https://...") for the observer.
-    pub fetch_keys: HashMap<u32, String>,
+    pub fetch_keys: HashMap<FetchRequestId, String>,
 
     /// Whether to record network events for fixture generation.
     pub record_events: bool,
@@ -621,6 +631,7 @@ impl HostState {
             http_listeners: HashMap::new(),
             next_http_listener_id: 1,
             http_response_txs: HashMap::new(),
+            next_http_request_id: 1,
             fetch_interceptor: None,
             fetch_observer: None,
             fetch_keys: HashMap::new(),

@@ -82,7 +82,7 @@ fn register_audio_play_import(linker: &mut Linker<HostState>) -> Result<()> {
                 state.recorded_events.push(FixtureEvent {
                     at_ms: state.monotonic_ms,
                     kind: FixtureEventKind::AudioPlay {
-                        sound_id,
+                        sound_id: id,
                         volume,
                         name: sample.name.clone(),
                         duration_ms: sample.duration_ms,

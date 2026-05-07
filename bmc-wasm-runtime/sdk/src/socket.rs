@@ -36,6 +36,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use bmc_wasm_protocol::SocketId;
+
 // Host function imports
 unsafe extern "C" {
     fn host_tls_connect(host_ptr: *const u8, host_len: u32, port: u32) -> u32;
@@ -50,20 +52,20 @@ pub type Callback = fn(Socket, &SocketEvent<'_>);
 
 /// Handle to an active TLS socket connection.
 #[derive(Clone, Copy, Debug)]
-pub struct Socket(pub u32);
+pub struct Socket(pub SocketId);
 
 impl Socket {
     /// Write data bytes to the socket.
     pub fn write(&self, data: &[u8]) {
         unsafe {
-            host_socket_write(self.0, data.as_ptr(), data.len() as u32);
+            host_socket_write(self.0.to_wire(), data.as_ptr(), data.len() as u32);
         }
     }
 
     /// Close the socket connection.
     pub fn close(&self) {
         unsafe {
-            host_socket_close(self.0);
+            host_socket_close(self.0.to_wire());
         }
     }
 }
@@ -81,7 +83,7 @@ pub enum SocketEvent<'a> {
 
 thread_local! {
     static CALLBACKS: RefCell<Vec<Callback>> = const { RefCell::new(Vec::new()) };
-    static CONNECTIONS: RefCell<HashMap<u32, usize>> = RefCell::new(HashMap::new());
+    static CONNECTIONS: RefCell<HashMap<SocketId, usize>> = RefCell::new(HashMap::new());
 }
 
 fn register_callback(cb: Callback) -> usize {
@@ -106,10 +108,9 @@ fn register_callback(cb: Callback) -> usize {
 #[must_use]
 pub fn tls_connect(host: &str, port: u16, callback: Callback) -> Option<Socket> {
     let cb_idx = register_callback(callback);
-    let socket_id = unsafe { host_tls_connect(host.as_ptr(), host.len() as u32, u32::from(port)) };
-    if socket_id == 0 {
-        return None;
-    }
+    let socket_id = SocketId::from_wire(unsafe {
+        host_tls_connect(host.as_ptr(), host.len() as u32, u32::from(port))
+    })?;
     CONNECTIONS.with(|c| c.borrow_mut().insert(socket_id, cb_idx));
     Some(Socket(socket_id))
 }
@@ -123,11 +124,9 @@ pub fn tls_connect(host: &str, port: u16, callback: Callback) -> Option<Socket> 
 #[must_use]
 pub fn tls_connect_insecure(host: &str, port: u16, callback: Callback) -> Option<Socket> {
     let cb_idx = register_callback(callback);
-    let socket_id =
-        unsafe { host_tls_connect_insecure(host.as_ptr(), host.len() as u32, u32::from(port)) };
-    if socket_id == 0 {
-        return None;
-    }
+    let socket_id = SocketId::from_wire(unsafe {
+        host_tls_connect_insecure(host.as_ptr(), host.len() as u32, u32::from(port))
+    })?;
     CONNECTIONS.with(|c| c.borrow_mut().insert(socket_id, cb_idx));
     Some(Socket(socket_id))
 }
@@ -140,10 +139,9 @@ pub fn tls_connect_insecure(host: &str, port: u16, callback: Callback) -> Option
 #[must_use]
 pub fn tcp_connect(host: &str, port: u16, callback: Callback) -> Option<Socket> {
     let cb_idx = register_callback(callback);
-    let socket_id = unsafe { host_tcp_connect(host.as_ptr(), host.len() as u32, u32::from(port)) };
-    if socket_id == 0 {
-        return None;
-    }
+    let socket_id = SocketId::from_wire(unsafe {
+        host_tcp_connect(host.as_ptr(), host.len() as u32, u32::from(port))
+    })?;
     CONNECTIONS.with(|c| c.borrow_mut().insert(socket_id, cb_idx));
     Some(Socket(socket_id))
 }
@@ -151,6 +149,10 @@ pub fn tcp_connect(host: &str, port: u16, callback: Callback) -> Option<Socket> 
 /// Called by the host when a socket event is ready.
 #[unsafe(no_mangle)]
 pub extern "C" fn __on_socket_event(socket_id: u32, event_type: u32, data_ptr: u32, data_len: u32) {
+    let Some(socket_id) = SocketId::from_wire(socket_id) else {
+        return;
+    };
+
     let data = if data_len > 0 && data_ptr != 0 {
         unsafe { Vec::from_raw_parts(data_ptr as *mut u8, data_len as usize, data_len as usize) }
     } else {
