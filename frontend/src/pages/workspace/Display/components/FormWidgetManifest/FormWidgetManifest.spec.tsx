@@ -1,27 +1,42 @@
 import { describe, expect, test } from '@rstest/core';
 
-import { encodeNumberEnumParamValue, encodeNumberParamValue, getNumberInputValue } from './FormWidgetManifest';
+import * as pb from '@/proto';
+import { widgetDataValueFromRaw } from './FormWidgetManifest';
 
-describe('getNumberInputValue', () => {
-    test('returns empty value for non-numeric defaults', () => {
-        expect(getNumberInputValue('null')).toEqual('');
-        expect(getNumberInputValue('""')).toEqual('');
+describe('widgetDataValueFromRaw', () => {
+    test('decodes a JSON string to stringValue', () => {
+        const kind: pb.ManifestParamDefinition['kind'] = {
+            case: 'paramString',
+            value: pb.create(pb.ParamStringSchema),
+        };
+        const v = widgetDataValueFromRaw('"hello"', kind);
+        expect(v.kind).toEqual({ case: 'stringValue', value: 'hello' });
     });
-});
 
-describe('encodeNumberParamValue', () => {
-    test('returns json number for numeric input', () => {
-        expect(encodeNumberParamValue('42')).toEqual('42');
+    test('decodes a JSON number to integerValue', () => {
+        const kind: pb.ManifestParamDefinition['kind'] = {
+            case: 'paramInteger',
+            value: pb.create(pb.ParamIntegerSchema),
+        };
+        const v = widgetDataValueFromRaw('42', kind);
+        expect(v.kind).toEqual({ case: 'integerValue', value: 42 });
     });
 
-    test('returns explicit json null for empty input', () => {
-        expect(encodeNumberParamValue('')).toBe('null');
-        expect(encodeNumberParamValue(null)).toBe('null');
+    test('decodes null / empty number to nullValue', () => {
+        const kind: pb.ManifestParamDefinition['kind'] = {
+            case: 'paramInteger',
+            value: pb.create(pb.ParamIntegerSchema),
+        };
+        expect(widgetDataValueFromRaw('null', kind).kind.case).toBe('nullValue');
+        expect(widgetDataValueFromRaw('', kind).kind.case).toBe('nullValue');
     });
-});
 
-describe('encodeNumberEnumParamValue', () => {
-    test('returns explicit json null for non-numeric enum key', () => {
-        expect(encodeNumberEnumParamValue('on')).toBe('null');
+    test('decodes boolean string to booleanValue', () => {
+        const kind: pb.ManifestParamDefinition['kind'] = {
+            case: 'paramBoolean',
+            value: pb.create(pb.ParamBooleanSchema),
+        };
+        expect(widgetDataValueFromRaw('true', kind).kind).toEqual({ case: 'booleanValue', value: true });
+        expect(widgetDataValueFromRaw('false', kind).kind).toEqual({ case: 'booleanValue', value: false });
     });
 });
