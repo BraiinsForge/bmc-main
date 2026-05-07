@@ -6,7 +6,7 @@ use std::time::Duration;
 use bmc_grpc::web;
 use bmc_grpc::web::scene_management_service_server::SceneManagementService as GrpcSceneManagementService;
 use bmc_ipc::SizeType;
-use bmc_widget::{ParamDefinition, ParamKey};
+use bmc_widget::{ParamDefinition, ParamKey, ParamKind};
 use futures::stream::{BoxStream, StreamExt};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time;
@@ -91,6 +91,98 @@ fn build_widget_params(
     let _ = manifest_params;
     let _ = user_overrides;
     unimplemented!("filled in by Phase 3")
+}
+
+fn widget_data_struct_to_json(s: &web::WidgetDataStruct) -> serde_json::Value {
+    let map = s
+        .fields
+        .iter()
+        .map(|(k, v)| (k.clone(), widget_data_value_to_json(v)))
+        .collect();
+    serde_json::Value::Object(map)
+}
+
+fn widget_data_value_to_json(v: &web::WidgetDataValue) -> serde_json::Value {
+    use web::widget_data_value::Kind;
+    match &v.kind {
+        None | Some(Kind::NullValue(_)) => serde_json::Value::Null,
+        Some(Kind::BooleanValue(b)) => serde_json::Value::Bool(*b),
+        Some(Kind::IntegerValue(i)) => serde_json::Value::Number((*i).into()),
+        Some(Kind::DoubleValue(d)) => {
+            let n = serde_json::Number::from_f64(*d)
+                .expect("BUG: validate_widget_params must reject non-finite double_value");
+            serde_json::Value::Number(n)
+        }
+        Some(Kind::StringValue(s)) => serde_json::Value::String(s.clone()),
+    }
+}
+
+fn json_to_widget_data_struct(
+    json: &serde_json::Value,
+    manifest_kinds: &std::collections::HashMap<String, ParamKind>,
+) -> web::WidgetDataStruct {
+    let mut fields = std::collections::HashMap::new();
+    if let Some(obj) = json.as_object() {
+        for (k, v) in obj {
+            if let Some(value) = json_to_widget_data_value(v, k, manifest_kinds.get(k)) {
+                fields.insert(k.clone(), value);
+            }
+        }
+    }
+    web::WidgetDataStruct { fields }
+}
+
+fn json_to_widget_data_value(
+    v: &serde_json::Value,
+    key: &str,
+    kind_hint: Option<&ParamKind>,
+) -> Option<web::WidgetDataValue> {
+    use web::widget_data_value::Kind;
+    let arm = match (v, kind_hint) {
+        (serde_json::Value::Null, _) => Kind::NullValue(web::widget_data_value::Null {}),
+        (serde_json::Value::Bool(b), _) => Kind::BooleanValue(*b),
+        (serde_json::Value::String(s), _) => Kind::StringValue(s.clone()),
+        (serde_json::Value::Number(n), Some(ParamKind::Integer { .. })) => {
+            let Some(i64v) = n.as_i64() else {
+                tracing::warn!(key, value = %n, "stored Integer param is not representable as i64; omitting");
+                return None;
+            };
+            let Ok(i32v) = i32::try_from(i64v) else {
+                tracing::warn!(key, value = %n, "stored Integer param overflows i32; omitting");
+                return None;
+            };
+            Kind::IntegerValue(i32v)
+        }
+        (serde_json::Value::Number(n), Some(ParamKind::Double { .. })) => {
+            let Some(d) = n.as_f64().filter(|d| d.is_finite()) else {
+                tracing::warn!(key, value = %n, "stored Double param is not finite; omitting");
+                return None;
+            };
+            Kind::DoubleValue(d)
+        }
+        (serde_json::Value::Number(n), _) if n.is_i64() => {
+            let Some(i) = n.as_i64().and_then(|i| i32::try_from(i).ok()) else {
+                tracing::warn!(key, value = %n, "stored integer-shaped value overflows i32 (no manifest); omitting");
+                return None;
+            };
+            Kind::IntegerValue(i)
+        }
+        (serde_json::Value::Number(n), _) => {
+            let Some(d) = n.as_f64().filter(|d| d.is_finite()) else {
+                tracing::warn!(key, value = %n, "stored numeric value is not finite (no manifest); omitting");
+                return None;
+            };
+            Kind::DoubleValue(d)
+        }
+        (serde_json::Value::Array(_) | serde_json::Value::Object(_), _) => {
+            tracing::warn!(
+                key,
+                "stored param is array/object — manifest schema disallows; omitting"
+            );
+            return None;
+        }
+    };
+    Some(web::WidgetDataValue { kind: Some(arm) })
 }
 
 fn size_type_to_proto(size: SizeType) -> i32 {
@@ -771,4 +863,118 @@ mod tests {
     #[test]
     #[ignore = "re-enabled in Phase 3"]
     fn param_type_timezone_maps_to_proto_timezone() {}
+
+    #[test]
+    fn widget_data_struct_to_json_round_trips_each_arm() {
+        use bmc_widget::ParamKind;
+        let manifest_kinds = std::collections::HashMap::from([
+            (
+                "s".to_owned(),
+                ParamKind::String {
+                    format: None,
+                    enum_values: vec![],
+                    default_value: Some("x".into()),
+                },
+            ),
+            (
+                "i".to_owned(),
+                ParamKind::Integer {
+                    min: None,
+                    max: None,
+                    step: None,
+                    enum_values: vec![],
+                    default_value: Some(2),
+                },
+            ),
+            (
+                "d".to_owned(),
+                ParamKind::Double {
+                    min: None,
+                    max: None,
+                    step: None,
+                    enum_values: vec![],
+                    default_value: Some(2.5),
+                },
+            ),
+            (
+                "b".to_owned(),
+                ParamKind::Boolean {
+                    default_value: Some(true),
+                },
+            ),
+        ]);
+
+        let s = web::WidgetDataStruct {
+            fields: [
+                ("s".to_owned(), wdv_string("hello")),
+                ("i".to_owned(), wdv_integer(42)),
+                ("d".to_owned(), wdv_double(2.5)),
+                ("b".to_owned(), wdv_boolean(false)),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let json = widget_data_struct_to_json(&s);
+        let back = json_to_widget_data_struct(&json, &manifest_kinds);
+        assert_eq!(back.fields, s.fields);
+    }
+
+    #[test]
+    fn widget_data_value_to_json_null_arm_is_json_null() {
+        let v = wdv_null();
+        let j = widget_data_value_to_json(&v);
+        assert!(j.is_null());
+    }
+
+    #[test]
+    fn json_to_widget_data_struct_falls_back_to_shape_inference_without_manifest() {
+        use web::widget_data_value::Kind;
+        let manifest_kinds: std::collections::HashMap<String, bmc_widget::ParamKind> =
+            std::collections::HashMap::new();
+        let json = serde_json::json!({
+            "s": "hello",
+            "i": 5,
+            "d": 1.5,
+            "b": true,
+            "n": serde_json::Value::Null,
+        });
+        let back = json_to_widget_data_struct(&json, &manifest_kinds);
+        assert!(matches!(back.fields["s"].kind, Some(Kind::StringValue(_))));
+        assert!(matches!(back.fields["i"].kind, Some(Kind::IntegerValue(5))));
+        assert!(matches!(back.fields["d"].kind, Some(Kind::DoubleValue(_))));
+        assert!(matches!(
+            back.fields["b"].kind,
+            Some(Kind::BooleanValue(true))
+        ));
+        assert!(matches!(back.fields["n"].kind, Some(Kind::NullValue(_))));
+    }
+
+    fn wdv_string(s: &str) -> web::WidgetDataValue {
+        web::WidgetDataValue {
+            kind: Some(web::widget_data_value::Kind::StringValue(s.to_owned())),
+        }
+    }
+    fn wdv_integer(i: i32) -> web::WidgetDataValue {
+        web::WidgetDataValue {
+            kind: Some(web::widget_data_value::Kind::IntegerValue(i)),
+        }
+    }
+    fn wdv_double(d: f64) -> web::WidgetDataValue {
+        web::WidgetDataValue {
+            kind: Some(web::widget_data_value::Kind::DoubleValue(d)),
+        }
+    }
+    fn wdv_boolean(b: bool) -> web::WidgetDataValue {
+        web::WidgetDataValue {
+            kind: Some(web::widget_data_value::Kind::BooleanValue(b)),
+        }
+    }
+    fn wdv_null() -> web::WidgetDataValue {
+        web::WidgetDataValue {
+            kind: Some(web::widget_data_value::Kind::NullValue(
+                web::widget_data_value::Null {},
+            )),
+        }
+    }
 }
