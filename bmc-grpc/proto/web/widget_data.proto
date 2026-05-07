@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package braiins.bmc.web;
+
+message WidgetDataValue {
+  oneof kind {
+    Null null_value     = 1;
+    bool boolean_value  = 2;
+    int32 integer_value = 3;
+    double double_value = 4;
+    string string_value = 5;
+  }
+  message Null {}
+}
+
+message WidgetDataStruct {
+  map<string, WidgetDataValue> fields = 1;
+}
