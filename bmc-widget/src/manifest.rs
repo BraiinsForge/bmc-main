@@ -860,4 +860,19 @@ mod tests {
             "expected error for duplicate empty-string enum values"
         );
     }
+
+    #[test]
+    fn manifest_rejects_invalid_param_key() {
+        let manifest_json = r#"{
+            "uid":"550e8400-e29b-41d4-a716-446655440000",
+            "version":"1.0.0",
+            "name":"Test",
+            "description":"Test",
+            "binary":"bin/test",
+            "sizes":["small"],
+            "params":{"123":{"name":"Bad","type":"string","default_value":"x"}}
+        }"#;
+        let res = Manifest::from_str(manifest_json);
+        assert!(res.is_err(), "all-digit param key must reject");
+    }
 }
