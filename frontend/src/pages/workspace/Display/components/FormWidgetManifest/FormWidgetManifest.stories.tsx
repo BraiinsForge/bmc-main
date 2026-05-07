@@ -3,6 +3,7 @@ import type { Meta } from '@storybook/react';
 import { action } from 'storybook/actions';
 
 import * as pb from '@/proto';
+import { create } from '@/proto';
 import { FormWidgetManifest as Component, type FormWidgetManifestProps } from './FormWidgetManifest';
 
 export default {
@@ -27,26 +28,15 @@ function manifestWith(...params: pb.ManifestParamDefinition[]): pb.WidgetManifes
     });
 }
 
-function param(overrides: Partial<pb.ManifestParamDefinition>): pb.ManifestParamDefinition {
-    return pb.create(pb.ManifestParamDefinitionSchema, {
-        key: 'value',
-        name: 'Value',
-        paramType: pb.ManifestParamType.STRING,
-        defaultValue: '""',
-        enumValues: {},
-        ...overrides,
-    });
-}
-
 function Demo(props: {
     manifest: pb.WidgetManifest;
-    initialParams?: Record<string, string>;
+    initialParams?: Record<string, pb.WidgetDataValue>;
     error?: string | null;
     size?: pb.WidgetSize;
     sizeOptions?: FormWidgetManifestProps['sizeOptions'];
 }) {
     const { manifest, initialParams, error, size, sizeOptions } = props;
-    const [params, setParams] = useState<Record<string, string>>(initialParams ?? {});
+    const [params, setParams] = useState<Record<string, pb.WidgetDataValue>>(initialParams ?? {});
     const [currentSize, setCurrentSize] = useState<pb.WidgetSize | undefined>(size);
 
     return (
@@ -76,12 +66,11 @@ function Demo(props: {
 export const StringParam = () => (
     <Demo
         manifest={manifestWith(
-            param({
+            create(pb.ManifestParamDefinitionSchema, {
                 key: 'label',
                 name: 'Label',
-                paramType: pb.ManifestParamType.STRING,
                 description: 'Free-form text.',
-                defaultValue: '"Hello"',
+                kind: { case: 'paramString', value: create(pb.ParamStringSchema, { defaultValue: 'Hello' }) },
             }),
         )}
     />
@@ -90,12 +79,20 @@ export const StringParam = () => (
 export const StringEnum = () => (
     <Demo
         manifest={manifestWith(
-            param({
+            create(pb.ManifestParamDefinitionSchema, {
                 key: 'theme',
                 name: 'Theme',
-                paramType: pb.ManifestParamType.STRING,
-                defaultValue: '"light"',
-                enumValues: { light: 'Light', dark: 'Dark', auto: 'Auto' },
+                kind: {
+                    case: 'paramString',
+                    value: create(pb.ParamStringSchema, {
+                        defaultValue: 'light',
+                        enumValues: [
+                            create(pb.StringOptionSchema, { value: 'light', label: 'Light' }),
+                            create(pb.StringOptionSchema, { value: 'dark', label: 'Dark' }),
+                            create(pb.StringOptionSchema, { value: 'auto', label: 'Auto' }),
+                        ],
+                    }),
+                },
             }),
         )}
     />
@@ -104,54 +101,63 @@ export const StringEnum = () => (
 export const BooleanParam = () => (
     <Demo
         manifest={manifestWith(
-            param({
+            create(pb.ManifestParamDefinitionSchema, {
                 key: 'enabled',
                 name: 'Enabled',
-                paramType: pb.ManifestParamType.BOOLEAN,
-                defaultValue: 'true',
+                kind: { case: 'paramBoolean', value: create(pb.ParamBooleanSchema, { defaultValue: true }) },
             }),
         )}
     />
 );
 
-export const NumberParam = () => (
+export const IntegerParam = () => (
     <Demo
         manifest={manifestWith(
-            param({
+            create(pb.ManifestParamDefinitionSchema, {
                 key: 'refreshSeconds',
                 name: 'Refresh interval (s)',
-                paramType: pb.ManifestParamType.NUMBER,
-                defaultValue: '30',
-                min: 1,
-                max: 600,
+                kind: {
+                    case: 'paramInteger',
+                    value: create(pb.ParamIntegerSchema, { defaultValue: 30, min: 1, max: 600 }),
+                },
             }),
         )}
     />
 );
 
-export const NumberEnum = () => (
+export const IntegerEnum = () => (
     <Demo
         manifest={manifestWith(
-            param({
+            create(pb.ManifestParamDefinitionSchema, {
                 key: 'multiplier',
                 name: 'Multiplier',
-                paramType: pb.ManifestParamType.NUMBER,
-                defaultValue: '1',
-                enumValues: { '1': '1×', '2': '2×', '5': '5×', '10': '10×' },
+                kind: {
+                    case: 'paramInteger',
+                    value: create(pb.ParamIntegerSchema, {
+                        defaultValue: 1,
+                        enumValues: [
+                            create(pb.IntegerOptionSchema, { value: 1, label: '1×' }),
+                            create(pb.IntegerOptionSchema, { value: 2, label: '2×' }),
+                            create(pb.IntegerOptionSchema, { value: 5, label: '5×' }),
+                            create(pb.IntegerOptionSchema, { value: 10, label: '10×' }),
+                        ],
+                    }),
+                },
             }),
         )}
     />
 );
 
-export const ArrayParam = () => (
+export const DoubleParam = () => (
     <Demo
         manifest={manifestWith(
-            param({
-                key: 'symbols',
-                name: 'Tracked symbols',
-                paramType: pb.ManifestParamType.ARRAY,
-                description: 'JSON array of ticker symbols.',
-                defaultValue: '["BTC","ETH"]',
+            create(pb.ManifestParamDefinitionSchema, {
+                key: 'scale',
+                name: 'Scale factor',
+                kind: {
+                    case: 'paramDouble',
+                    value: create(pb.ParamDoubleSchema, { defaultValue: 1.0, min: 0.1, max: 10.0, step: 0.1 }),
+                },
             }),
         )}
     />
@@ -160,87 +166,62 @@ export const ArrayParam = () => (
 export const Timezone = () => (
     <Demo
         manifest={manifestWith(
-            param({
+            create(pb.ManifestParamDefinitionSchema, {
                 key: 'tz',
                 name: 'Timezone',
-                paramType: pb.ManifestParamType.TIMEZONE,
-                defaultValue: 'null',
+                kind: { case: 'paramTimezone', value: create(pb.ParamTimezoneSchema) },
             }),
         )}
-    />
-);
-
-export const InvalidAndEmpty = () => (
-    <Demo
-        manifest={manifestWith(
-            param({
-                key: 'count',
-                name: 'Count (was stored as JSON string)',
-                paramType: pb.ManifestParamType.NUMBER,
-                defaultValue: '0',
-            }),
-            param({
-                key: 'symbols',
-                name: 'Symbols (malformed JSON)',
-                paramType: pb.ManifestParamType.ARRAY,
-                defaultValue: '[]',
-            }),
-        )}
-        initialParams={{
-            count: '"on"',
-            symbols: '[BTC,ETH',
-        }}
     />
 );
 
 export const KitchenSink = () => (
     <Demo
         manifest={manifestWith(
-            param({
+            create(pb.ManifestParamDefinitionSchema, {
                 key: 'label',
                 name: 'Label',
-                paramType: pb.ManifestParamType.STRING,
-                defaultValue: '"Demo"',
+                kind: { case: 'paramString', value: create(pb.ParamStringSchema, { defaultValue: 'Demo' }) },
             }),
-            param({
+            create(pb.ManifestParamDefinitionSchema, {
                 key: 'theme',
                 name: 'Theme',
-                paramType: pb.ManifestParamType.STRING,
-                defaultValue: '"light"',
-                enumValues: { light: 'Light', dark: 'Dark' },
+                kind: {
+                    case: 'paramString',
+                    value: create(pb.ParamStringSchema, {
+                        defaultValue: 'light',
+                        enumValues: [
+                            create(pb.StringOptionSchema, { value: 'light', label: 'Light' }),
+                            create(pb.StringOptionSchema, { value: 'dark', label: 'Dark' }),
+                        ],
+                    }),
+                },
             }),
-            param({
+            create(pb.ManifestParamDefinitionSchema, {
                 key: 'enabled',
                 name: 'Enabled',
-                paramType: pb.ManifestParamType.BOOLEAN,
-                defaultValue: 'true',
+                kind: { case: 'paramBoolean', value: create(pb.ParamBooleanSchema, { defaultValue: true }) },
             }),
-            param({
+            create(pb.ManifestParamDefinitionSchema, {
                 key: 'refreshSeconds',
                 name: 'Refresh interval (s)',
-                paramType: pb.ManifestParamType.NUMBER,
-                defaultValue: '30',
-                min: 1,
-                max: 600,
+                kind: {
+                    case: 'paramInteger',
+                    value: create(pb.ParamIntegerSchema, { defaultValue: 30, min: 1, max: 600 }),
+                },
             }),
-            param({
-                key: 'multiplier',
-                name: 'Multiplier',
-                paramType: pb.ManifestParamType.NUMBER,
-                defaultValue: '1',
-                enumValues: { '1': '1×', '2': '2×' },
+            create(pb.ManifestParamDefinitionSchema, {
+                key: 'scale',
+                name: 'Scale',
+                kind: {
+                    case: 'paramDouble',
+                    value: create(pb.ParamDoubleSchema, { defaultValue: 1.0, min: 0.1, max: 10.0 }),
+                },
             }),
-            param({
-                key: 'symbols',
-                name: 'Symbols',
-                paramType: pb.ManifestParamType.ARRAY,
-                defaultValue: '["BTC"]',
-            }),
-            param({
+            create(pb.ManifestParamDefinitionSchema, {
                 key: 'tz',
                 name: 'Timezone',
-                paramType: pb.ManifestParamType.TIMEZONE,
-                defaultValue: 'null',
+                kind: { case: 'paramTimezone', value: create(pb.ParamTimezoneSchema) },
             }),
         )}
         size={pb.WidgetSize.MEDIUM}

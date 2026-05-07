@@ -274,6 +274,75 @@ export function getValidDropSlots(pool: C.Located[], widget: C.Located): C.Valid
     return res;
 }
 
+/**
+ * Project a WidgetDataStruct from the wire into the modal's
+ * Record<string, WidgetDataValue> form state.
+ */
+export function widgetParamsToFormState(params: pb.WidgetDataStruct | undefined): Record<string, pb.WidgetDataValue> {
+    if (!params) return {};
+    const result: Record<string, pb.WidgetDataValue> = {};
+    for (const [k, v] of Object.entries(params.fields)) {
+        result[k] = pb.create(pb.WidgetDataValueSchema, v);
+    }
+    return result;
+}
+
+function makeNullValue(): pb.WidgetDataValue {
+    return pb.create(pb.WidgetDataValueSchema, {
+        kind: { case: 'nullValue', value: pb.create(pb.WidgetDataValue_NullSchema) },
+    });
+}
+
+function defaultParamValue(def: pb.ManifestParamDefinition): pb.WidgetDataValue {
+    switch (def.kind.case) {
+        case 'paramString':
+            return pb.create(pb.WidgetDataValueSchema, {
+                kind: { case: 'stringValue', value: def.kind.value.defaultValue ?? '' },
+            });
+        case 'paramTimezone':
+            return def.kind.value.defaultValue !== undefined
+                ? pb.create(pb.WidgetDataValueSchema, {
+                      kind: { case: 'stringValue', value: def.kind.value.defaultValue },
+                  })
+                : makeNullValue();
+        case 'paramInteger':
+            return def.kind.value.defaultValue !== undefined
+                ? pb.create(pb.WidgetDataValueSchema, {
+                      kind: { case: 'integerValue', value: def.kind.value.defaultValue },
+                  })
+                : makeNullValue();
+        case 'paramDouble':
+            return def.kind.value.defaultValue !== undefined
+                ? pb.create(pb.WidgetDataValueSchema, {
+                      kind: { case: 'doubleValue', value: def.kind.value.defaultValue },
+                  })
+                : makeNullValue();
+        case 'paramBoolean':
+            return pb.create(pb.WidgetDataValueSchema, {
+                kind: { case: 'booleanValue', value: def.kind.value.defaultValue ?? false },
+            });
+        default:
+            return pb.create(pb.WidgetDataValueSchema, { kind: { case: 'stringValue', value: '' } });
+    }
+}
+
+/**
+ * Inverse of widgetParamsToFormState. Iterates the manifest (not the form
+ * state) so unknown form keys cannot leak onto the wire.
+ * Missing keys are materialized from manifest defaults so UpdateWidget
+ * requests always carry a complete param map.
+ */
+export function formStateToWidgetDataStruct(
+    manifest: pb.WidgetManifest,
+    params: Record<string, pb.WidgetDataValue>,
+): pb.WidgetDataStruct {
+    const fields: Record<string, pb.WidgetDataValue> = {};
+    for (const def of manifest.params) {
+        fields[def.key] = params[def.key] ?? defaultParamValue(def);
+    }
+    return pb.create(pb.WidgetDataStructSchema, { fields });
+}
+
 /** Get available widget sizes for a given widget position */
 export function getValidWidgetSizes(pool: C.Located[], slot: Pick<C.Located, 'id' | 'position'>): C.Size[] {
     invariant(slot.position, 'slot.position is required');

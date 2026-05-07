@@ -1,6 +1,7 @@
 import { useIntl } from 'react-intl';
 
 import * as pb from '@/proto';
+import { create } from '@/proto';
 import { getID } from '../const';
 import { Form } from '@/lib/form';
 
@@ -21,8 +22,9 @@ export interface FormWidgetManifestProps {
     error: Maybe<string>;
 
     manifest: null | pb.WidgetManifest;
-    params: Record<string, string>;
-    onParamChange(key: string, value: string | undefined): void;
+    params: Record<string, pb.WidgetDataValue>;
+    fieldErrors?: Record<string, string>;
+    onParamChange(key: string, value: pb.WidgetDataValue | undefined): void;
 
     /** Timezones available on the device, fetched once via `sys.getTimezoneList`. */
     timezones: pb.Timezone[];
@@ -34,129 +36,204 @@ export interface FormWidgetManifestProps {
     onSizeChange?(size: pb.WidgetSize): void;
 }
 
-function parseJsonDefault(defaultValue: string): unknown {
-    try {
-        return JSON.parse(defaultValue);
-    } catch {
-        return defaultValue;
+function stringFormatToInputType(format: pb.StringFormat | undefined): string {
+    switch (format) {
+        case pb.StringFormat.DATE:
+            return 'date';
+        case pb.StringFormat.TIME:
+            return 'time';
+        case pb.StringFormat.EMAIL:
+            return 'email';
+        case pb.StringFormat.URI:
+            return 'url';
+        default:
+            return 'text';
     }
 }
 
-export function encodeNumberParamValue(value: string | number | null): string {
-    if (value === '' || value === null) return 'null';
-    const numeric = typeof value === 'number' ? value : Number(value);
-    if (Number.isNaN(numeric)) return 'null';
-    return JSON.stringify(numeric);
+function makeStringValue(s: string): pb.WidgetDataValue {
+    return create(pb.WidgetDataValueSchema, { kind: { case: 'stringValue', value: s } });
 }
 
-export function encodeNumberEnumParamValue(value: string): string {
-    return encodeNumberParamValue(value);
+function makeIntegerValue(n: number): pb.WidgetDataValue {
+    return create(pb.WidgetDataValueSchema, { kind: { case: 'integerValue', value: n } });
 }
 
-export function getNumberInputValue(value: string): number | '' {
-    const parsedValue = parseJsonDefault(value);
-    return typeof parsedValue === 'number' ? parsedValue : '';
+function makeDoubleValue(n: number): pb.WidgetDataValue {
+    return create(pb.WidgetDataValueSchema, { kind: { case: 'doubleValue', value: n } });
+}
+
+function makeBooleanValue(b: boolean): pb.WidgetDataValue {
+    return create(pb.WidgetDataValueSchema, { kind: { case: 'booleanValue', value: b } });
+}
+
+function makeNullValue(): pb.WidgetDataValue {
+    return create(pb.WidgetDataValueSchema, {
+        kind: { case: 'nullValue', value: create(pb.WidgetDataValue_NullSchema) },
+    });
+}
+
+function readString(value: pb.WidgetDataValue | undefined): string {
+    return value?.kind.case === 'stringValue' ? value.kind.value : '';
+}
+
+function readNumber(value: pb.WidgetDataValue | undefined): number | '' {
+    if (!value) return '';
+    if (value.kind.case === 'integerValue' || value.kind.case === 'doubleValue') return value.kind.value;
+    return '';
+}
+
+function readBoolean(value: pb.WidgetDataValue | undefined): boolean {
+    return value?.kind.case === 'booleanValue' && value.kind.value === true;
+}
+
+function makeStringParamValue(v: string, isOptional: boolean): pb.WidgetDataValue {
+    if (isOptional && v === '') return makeNullValue();
+    return makeStringValue(v);
+}
+
+function makeNumberParamValue(v: string | number | null, type: 'integer' | 'double'): pb.WidgetDataValue {
+    if (v === '' || v === null) return makeNullValue();
+    const n = typeof v === 'number' ? v : Number(v);
+    if (Number.isNaN(n)) return makeNullValue();
+    return type === 'integer' ? makeIntegerValue(n) : makeDoubleValue(n);
 }
 
 function ParamField(props: {
     id: string;
     definition: pb.ManifestParamDefinition;
-    value: string;
-    onChange(key: string, value: string | undefined): void;
+    value: pb.WidgetDataValue;
+    error?: string;
+    onChange(key: string, value: pb.WidgetDataValue | undefined): void;
     timezones: pb.Timezone[];
 }) {
-    const { id, definition, value, onChange, timezones } = props;
+    const { id, definition, value, onChange, timezones, error } = props;
     const { formatMessage } = useIntl();
+    const required = !definition.isOptional;
+    const labelText = required ? `${definition.name} *` : definition.name;
 
-    const parsedValue = parseJsonDefault(value);
-    const enumEntries = Object.entries(definition.enumValues);
-
-    switch (definition.paramType) {
-        case pb.ManifestParamType.STRING: {
-            if (enumEntries.length > 0) {
-                const items: Array<OptionItem<string>> = enumEntries.map(([val, label]) => ({
-                    value: val,
-                    label,
+    switch (definition.kind.case) {
+        case 'paramString': {
+            const { enumValues, format } = definition.kind.value;
+            if (enumValues.length > 0) {
+                const items: Array<OptionItem<string>> = enumValues.map(opt => ({
+                    value: opt.value,
+                    label: opt.label,
                 }));
                 return (
                     <BoundComboBox<string>
                         id={id}
-                        labelText={definition.name}
+                        labelText={labelText}
+                        error={error}
                         items={items}
-                        value={typeof parsedValue === 'string' ? parsedValue : null}
-                        onChange={v => onChange(definition.key, JSON.stringify(v))}
+                        value={readString(value) || null}
+                        onChange={v =>
+                            onChange(
+                                definition.key,
+                                v !== null ? makeStringParamValue(v, definition.isOptional) : undefined,
+                            )
+                        }
                     />
                 );
             }
-
             return (
                 <TextInput
                     id={id}
-                    labelText={definition.name}
+                    labelText={labelText}
                     helperText={definition.description}
-                    value={typeof parsedValue === 'string' ? parsedValue : ''}
-                    onChange={e => onChange(definition.key, JSON.stringify(e.target.value))}
+                    invalid={!!error}
+                    invalidText={error}
+                    type={stringFormatToInputType(format)}
+                    value={readString(value)}
+                    onChange={e =>
+                        onChange(definition.key, makeStringParamValue(e.target.value, definition.isOptional))
+                    }
                 />
             );
         }
 
-        case pb.ManifestParamType.BOOLEAN:
-            return (
-                <BoundToggle
-                    id={id}
-                    labelText={definition.name}
-                    value={parsedValue === true}
-                    onChange={v => onChange(definition.key, JSON.stringify(v))}
-                />
-            );
-
-        case pb.ManifestParamType.NUMBER: {
-            if (enumEntries.length > 0) {
-                const items: Array<OptionItem<string>> = enumEntries.map(([val, label]) => ({
-                    value: val,
-                    label,
+        case 'paramInteger': {
+            const { min, max, step, enumValues } = definition.kind.value;
+            if (enumValues.length > 0) {
+                const items: Array<OptionItem<string>> = enumValues.map(opt => ({
+                    value: String(opt.value),
+                    label: opt.label,
                 }));
                 return (
                     <BoundComboBox<string>
                         id={id}
-                        labelText={definition.name}
+                        labelText={labelText}
+                        error={error}
                         items={items}
-                        value={String(parsedValue)}
-                        onChange={v => {
-                            onChange(definition.key, encodeNumberEnumParamValue(v));
-                        }}
+                        value={String(readNumber(value))}
+                        onChange={v => onChange(definition.key, makeNumberParamValue(v, 'integer'))}
                     />
                 );
             }
-
             return (
                 <NumberInput
                     id={id}
-                    label={definition.name}
+                    label={labelText}
                     helperText={definition.description}
-                    value={getNumberInputValue(value)}
+                    invalid={!!error}
+                    invalidText={error}
+                    value={readNumber(value)}
                     allowEmpty
-                    min={definition.min}
-                    max={definition.max}
-                    onChange={(_e, { value }) => {
-                        onChange(definition.key, encodeNumberParamValue(value));
-                    }}
+                    min={min}
+                    max={max}
+                    step={step ?? 1}
+                    onChange={(_e, { value: v }) => onChange(definition.key, makeNumberParamValue(v, 'integer'))}
                 />
             );
         }
 
-        case pb.ManifestParamType.ARRAY:
+        case 'paramDouble': {
+            const { min, max, step, enumValues } = definition.kind.value;
+            if (enumValues.length > 0) {
+                const items: Array<OptionItem<string>> = enumValues.map(opt => ({
+                    value: String(opt.value),
+                    label: opt.label,
+                }));
+                return (
+                    <BoundComboBox<string>
+                        id={id}
+                        labelText={labelText}
+                        error={error}
+                        items={items}
+                        value={String(readNumber(value))}
+                        onChange={v => onChange(definition.key, makeNumberParamValue(v, 'double'))}
+                    />
+                );
+            }
             return (
-                <TextInput
+                <NumberInput
                     id={id}
-                    labelText={definition.name}
-                    helperText={definition.description ?? 'JSON array'}
-                    value={value}
-                    onChange={e => onChange(definition.key, e.target.value)}
+                    label={labelText}
+                    helperText={definition.description}
+                    invalid={!!error}
+                    invalidText={error}
+                    value={readNumber(value)}
+                    allowEmpty
+                    min={min}
+                    max={max}
+                    step={step ?? 0.01}
+                    onChange={(_e, { value: v }) => onChange(definition.key, makeNumberParamValue(v, 'double'))}
+                />
+            );
+        }
+
+        case 'paramBoolean':
+            return (
+                <BoundToggle
+                    id={id}
+                    labelText={labelText}
+                    error={error}
+                    value={readBoolean(value)}
+                    onChange={v => onChange(definition.key, makeBooleanValue(v))}
                 />
             );
 
-        case pb.ManifestParamType.TIMEZONE: {
+        case 'paramTimezone': {
             const tzItems: Array<OptionItem<string>> = [
                 {
                     value: '',
@@ -167,28 +244,39 @@ function ParamField(props: {
                     label: `${tz.offset} ${tz.label}`,
                 })),
             ];
+            const tzValue = readString(value);
             return (
                 <BoundComboBox<string>
                     id={id}
-                    labelText={definition.name}
+                    labelText={labelText}
                     helperText={definition.description}
+                    error={error}
                     items={tzItems}
-                    value={parsedValue === null ? '' : typeof parsedValue === 'string' ? parsedValue : null}
-                    onChange={v => onChange(definition.key, v ? JSON.stringify(v) : 'null')}
+                    value={tzValue || ''}
+                    onChange={v => onChange(definition.key, v ? makeStringValue(v) : makeNullValue())}
                 />
             );
         }
 
         default:
-            return (
-                <TextInput
-                    id={id}
-                    labelText={definition.name}
-                    helperText={definition.description}
-                    value={typeof parsedValue === 'string' ? parsedValue : String(parsedValue)}
-                    onChange={e => onChange(definition.key, JSON.stringify(e.target.value))}
-                />
-            );
+            return null;
+    }
+}
+
+function kindDefaultValue(kind: pb.ManifestParamDefinition['kind']): pb.WidgetDataValue {
+    switch (kind.case) {
+        case 'paramString':
+            return makeStringValue(kind.value.defaultValue ?? '');
+        case 'paramTimezone':
+            return kind.value.defaultValue !== undefined ? makeStringValue(kind.value.defaultValue) : makeNullValue();
+        case 'paramInteger':
+            return kind.value.defaultValue !== undefined ? makeIntegerValue(kind.value.defaultValue) : makeNullValue();
+        case 'paramDouble':
+            return kind.value.defaultValue !== undefined ? makeDoubleValue(kind.value.defaultValue) : makeNullValue();
+        case 'paramBoolean':
+            return makeBooleanValue(kind.value.defaultValue ?? false);
+        default:
+            return makeStringValue('');
     }
 }
 
@@ -200,6 +288,7 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
         error,
         manifest,
         params,
+        fieldErrors,
         onParamChange,
         timezones,
         size,
@@ -229,7 +318,8 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
                     key={def.key}
                     id={$(`param-${def.key}`)}
                     definition={def}
-                    value={params[def.key] ?? def.defaultValue}
+                    value={params[def.key] ?? kindDefaultValue(def.kind)}
+                    error={fieldErrors?.[def.key]}
                     onChange={onParamChange}
                     timezones={timezones}
                 />

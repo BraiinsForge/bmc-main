@@ -13,24 +13,26 @@ import {
     getValidDropSlots,
 } from './fn';
 
+const emptyParams = pb.create(pb.WidgetDataStructSchema, { fields: {} });
+
 const testOneInp: pb.Widget[] = [
     {
         $typeName: 'braiins.bmc.web.Widget',
-        config: { $typeName: 'braiins.bmc.web.WidgetConfig', widgetUid: '', params: {} },
+        config: { $typeName: 'braiins.bmc.web.WidgetConfig', widgetUid: '', params: emptyParams },
         id: '1',
         position: C.pos(0, 0),
         size: pb.WidgetSize.LARGE,
     },
     {
         $typeName: 'braiins.bmc.web.Widget',
-        config: { $typeName: 'braiins.bmc.web.WidgetConfig', widgetUid: '', params: {} },
+        config: { $typeName: 'braiins.bmc.web.WidgetConfig', widgetUid: '', params: emptyParams },
         id: '2',
         position: C.pos(0, 2),
         size: pb.WidgetSize.SMALL,
     },
     {
         $typeName: 'braiins.bmc.web.Widget',
-        config: { $typeName: 'braiins.bmc.web.WidgetConfig', widgetUid: '', params: {} },
+        config: { $typeName: 'braiins.bmc.web.WidgetConfig', widgetUid: '', params: emptyParams },
         id: '3',
         position: C.pos(1, 2),
         size: pb.WidgetSize.MEDIUM,
@@ -44,7 +46,7 @@ const testOneOut: C.WidgetsOccupandyMap = [
 const testTwoInp: pb.Widget[] = [
     {
         $typeName: 'braiins.bmc.web.Widget',
-        config: { $typeName: 'braiins.bmc.web.WidgetConfig', widgetUid: '', params: {} },
+        config: { $typeName: 'braiins.bmc.web.WidgetConfig', widgetUid: '', params: emptyParams },
         id: '1',
         position: C.pos(0, 0),
         size: pb.WidgetSize.LARGE,
@@ -66,7 +68,7 @@ const testFullInp: pb.Widget[] = [
     C.pos(1, 3),
 ].map((position, index) => ({
     $typeName: 'braiins.bmc.web.Widget',
-    config: { $typeName: 'braiins.bmc.web.WidgetConfig', widgetUid: '', params: {} },
+    config: { $typeName: 'braiins.bmc.web.WidgetConfig', widgetUid: '', params: emptyParams },
     id: String(index),
     position,
     size: pb.WidgetSize.SMALL,
