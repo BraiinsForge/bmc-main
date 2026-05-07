@@ -9,7 +9,7 @@ import SVGR_TEMPLATE from './svgr.template.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
 const proxyConf: ProxyOptions = {
-    target: 'http://localhost:6070',
+    target: process.env.BMC_BACKEND || 'http://localhost:6070',
     changeOrigin: true,
     followRedirects: true,
     // Without this the abort singals do not propagate to the server
