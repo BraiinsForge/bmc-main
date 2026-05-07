@@ -156,11 +156,12 @@ fn widget_data_value_to_json(v: &web::WidgetDataValue) -> serde_json::Value {
 
 fn map_to_widget_data_struct(
     map: &serde_json::Map<String, serde_json::Value>,
-    manifest_kinds: &std::collections::HashMap<String, ParamKind>,
+    manifest: Option<&bmc_widget::Manifest>,
 ) -> web::WidgetDataStruct {
     let mut fields = std::collections::HashMap::new();
     for (k, v) in map {
-        if let Some(value) = json_to_widget_data_value(v, k, manifest_kinds.get(k)) {
+        let kind_hint = manifest.and_then(|m| m.params.get(k.as_str()).map(|d| &d.kind));
+        if let Some(value) = json_to_widget_data_value(v, k, kind_hint) {
             fields.insert(k.clone(), value);
         }
     }
@@ -570,31 +571,25 @@ fn scene_widget_size_to_proto(size: scene::WidgetSize) -> i32 {
     }
 }
 
-fn scene_widget_to_proto(widget: &scene::Widget, registry: &WidgetRegistry) -> web::Widget {
-    let manifest_kinds: std::collections::HashMap<String, ParamKind> =
-        if let Some(info) = registry.get(&widget.widget_type_id) {
-            info.manifest
-                .params
-                .iter()
-                .map(|(k, def)| (k.as_str().to_owned(), def.kind.clone()))
-                .collect()
-        } else {
-            tracing::warn!(
-                widget_type_id = %widget.widget_type_id,
-                "widget manifest not installed; falling back to shape inference for params"
-            );
-            std::collections::HashMap::new()
-        };
+fn scene_widget_to_proto(
+    widget: &scene::Widget,
+    manifest: Option<&bmc_widget::Manifest>,
+) -> web::Widget {
+    if manifest.is_none() {
+        tracing::warn!(
+            widget_type_id = %widget.widget_type_id,
+            "widget manifest not installed; falling back to shape inference for params"
+        );
+    }
 
-    let params = match widget.params.as_object() {
-        Some(map) => map_to_widget_data_struct(map, &manifest_kinds),
-        None => {
-            tracing::warn!(
-                widget_id = %widget.id,
-                "stored widget.params is not a JSON object; surfacing empty params"
-            );
-            web::WidgetDataStruct::default()
-        }
+    let params = if let Some(map) = widget.params.as_object() {
+        map_to_widget_data_struct(map, manifest)
+    } else {
+        tracing::warn!(
+            widget_id = %widget.id,
+            "stored widget.params is not a JSON object; surfacing empty params"
+        );
+        web::WidgetDataStruct::default()
     };
 
     web::Widget {
@@ -615,7 +610,10 @@ fn scene_to_proto(scene: &scene::Scene, registry: &WidgetRegistry) -> web::Scene
     let widgets: Vec<web::Widget> = scene
         .widgets
         .values()
-        .map(|w| scene_widget_to_proto(w, registry))
+        .map(|w| {
+            let manifest = registry.get(&w.widget_type_id).map(|info| &info.manifest);
+            scene_widget_to_proto(w, manifest)
+        })
         .collect();
 
     let kind = match scene.kind {
@@ -1443,18 +1441,18 @@ mod tests {
 
     #[test]
     fn widget_data_struct_round_trips_each_arm_through_json_map() {
-        use bmc_widget::ParamKind;
-        let manifest_kinds = std::collections::HashMap::from([
+        let manifest = manifest_with_params(&[
             (
-                "s".to_owned(),
+                "s",
                 ParamKind::String {
                     format: None,
                     enum_values: vec![],
                     default_value: Some("x".into()),
                 },
+                false,
             ),
             (
-                "i".to_owned(),
+                "i",
                 ParamKind::Integer {
                     min: None,
                     max: None,
@@ -1462,9 +1460,10 @@ mod tests {
                     enum_values: vec![],
                     default_value: Some(2),
                 },
+                false,
             ),
             (
-                "d".to_owned(),
+                "d",
                 ParamKind::Double {
                     min: None,
                     max: None,
@@ -1472,12 +1471,14 @@ mod tests {
                     enum_values: vec![],
                     default_value: Some(2.5),
                 },
+                false,
             ),
             (
-                "b".to_owned(),
+                "b",
                 ParamKind::Boolean {
                     default_value: Some(true),
                 },
+                false,
             ),
         ]);
 
@@ -1493,7 +1494,7 @@ mod tests {
         };
 
         let map = widget_data_struct_to_map(&s);
-        let back = map_to_widget_data_struct(&map, &manifest_kinds);
+        let back = map_to_widget_data_struct(&map, Some(&manifest));
         assert_eq!(back.fields, s.fields);
     }
 
@@ -1507,8 +1508,6 @@ mod tests {
     #[test]
     fn map_to_widget_data_struct_falls_back_to_shape_inference_without_manifest() {
         use web::widget_data_value::Kind;
-        let manifest_kinds: std::collections::HashMap<String, bmc_widget::ParamKind> =
-            std::collections::HashMap::new();
         let map = serde_json::json!({
             "s": "hello",
             "i": 5,
@@ -1519,7 +1518,7 @@ mod tests {
         .as_object()
         .expect("BUG: literal is an object")
         .clone();
-        let back = map_to_widget_data_struct(&map, &manifest_kinds);
+        let back = map_to_widget_data_struct(&map, None);
         assert!(matches!(back.fields["s"].kind, Some(Kind::StringValue(_))));
         assert!(matches!(back.fields["i"].kind, Some(Kind::IntegerValue(5))));
         assert!(matches!(back.fields["d"].kind, Some(Kind::DoubleValue(_))));
