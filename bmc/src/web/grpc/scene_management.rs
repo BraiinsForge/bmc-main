@@ -720,6 +720,16 @@ impl GrpcSceneManagementService for SceneManagementService {
             .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
         let manifest = &info.manifest;
 
+        if !self
+            .widget_registry
+            .supports_size(&widget_uid, SizeType::Full)
+        {
+            return Err(Status::failed_precondition(format!(
+                "widget {widget_uid} does not support size {:?}",
+                SizeType::Full,
+            )));
+        }
+
         let params = config.params.unwrap_or_default();
         validate_widget_params(manifest, &params, ValidateMode::Add)?;
         let resolved = build_widget_params(manifest, &params);
@@ -1125,6 +1135,12 @@ impl GrpcSceneManagementService for SceneManagementService {
             .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
         let manifest = &info.manifest;
 
+        if !self.widget_registry.supports_size(&widget_uid, size.into()) {
+            return Err(Status::failed_precondition(format!(
+                "widget {widget_uid} does not support size {size}",
+            )));
+        }
+
         let params = config_req.params.unwrap_or_default();
         validate_widget_params(manifest, &params, ValidateMode::Add)?;
         let resolved = build_widget_params(manifest, &params);
@@ -1194,6 +1210,12 @@ impl GrpcSceneManagementService for SceneManagementService {
                 .get(&widget_uid)
                 .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
             let manifest = &info.manifest;
+
+            if !self.widget_registry.supports_size(&widget_uid, size.into()) {
+                return Err(Status::failed_precondition(format!(
+                    "widget {widget_uid} does not support size {size}",
+                )));
+            }
 
             let params = req.params.unwrap_or_default();
             validate_widget_params(manifest, &params, ValidateMode::Update)?;

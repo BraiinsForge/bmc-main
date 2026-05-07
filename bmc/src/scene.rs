@@ -63,6 +63,17 @@ impl Display for WidgetSize {
     }
 }
 
+impl From<WidgetSize> for bmc_ipc::SizeType {
+    fn from(size: WidgetSize) -> Self {
+        match size {
+            WidgetSize::Small => Self::Small,
+            WidgetSize::Medium => Self::Medium,
+            WidgetSize::Large => Self::Large,
+            WidgetSize::Full => Self::Full,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct WidgetPosition {
     pub row: u8,
@@ -336,6 +347,26 @@ mod tests {
         assert!(
             a.overlaps(&b),
             "two identical widgets at row=255 must be reported as overlapping",
+        );
+    }
+
+    #[test]
+    fn widget_size_into_size_type_maps_each_variant() {
+        assert_eq!(
+            bmc_ipc::SizeType::from(WidgetSize::Small),
+            bmc_ipc::SizeType::Small
+        );
+        assert_eq!(
+            bmc_ipc::SizeType::from(WidgetSize::Medium),
+            bmc_ipc::SizeType::Medium
+        );
+        assert_eq!(
+            bmc_ipc::SizeType::from(WidgetSize::Large),
+            bmc_ipc::SizeType::Large
+        );
+        assert_eq!(
+            bmc_ipc::SizeType::from(WidgetSize::Full),
+            bmc_ipc::SizeType::Full
         );
     }
 }
