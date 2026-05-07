@@ -39,6 +39,8 @@ interface ManifestFormState {
     sceneID: string;
     widgetID: string;
     params: Record<string, pb.WidgetDataValue>;
+    fieldErrors: Record<string, string>;
+    error: Maybe<string>;
     isNewScene: boolean;
 }
 
@@ -84,7 +86,7 @@ const getInitialState = (): State => ({
     },
 
     openDialogKind: null,
-    manifestForm: { manifest: null, sceneID: '', widgetID: '', params: {}, isNewScene: false },
+    manifestForm: { manifest: null, sceneID: '', widgetID: '', params: {}, fieldErrors: {}, error: null, isNewScene: false },
 });
 
 class View extends Component<Props, State> {
@@ -233,7 +235,7 @@ class View extends Component<Props, State> {
 
             this.setState({
                 openDialogKind: 'manifest',
-                manifestForm: { manifest, sceneID, widgetID: widget.id, params, isNewScene: true },
+                manifestForm: { manifest, sceneID, widgetID: widget.id, params, fieldErrors: {}, error: null, isNewScene: true },
             });
             this.#loadScenesDebounced();
         } catch ($) {
@@ -296,17 +298,20 @@ class View extends Component<Props, State> {
             } else {
                 params[key] = value;
             }
+            const fieldErrors = { ...s.manifestForm.fieldErrors };
+            delete fieldErrors[key];
             return {
                 manifestForm: {
                     ...s.manifestForm,
                     params,
+                    fieldErrors,
+                    error: null,
                 },
             };
         });
     };
 
     #handleManifestFormDone = async (): Promise<void> => {
-        const { formatMessage } = this.props.intl;
         const { manifestForm } = this.state;
         const { manifest, sceneID, widgetID, params } = manifestForm;
 
@@ -332,10 +337,24 @@ class View extends Component<Props, State> {
             this.#loadScenesDebounced();
         } catch ($) {
             if (pb.abort.is($)) return;
-
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to update widget!' });
-            toast.error(msg);
+            const known = ['params'];
+            const { global, fields } = pb.parseFormErrors($, known);
+            const paramsFieldErrors = fields.params as Maybe<Record<string, string[]>>;
+            const fieldErrors: Record<string, string> = {};
+            if (paramsFieldErrors) {
+                for (const [key, errs] of Object.entries(paramsFieldErrors)) {
+                    const msg = pb.renderFieldErrorsAsList(errs);
+                    if (msg) fieldErrors[key] = msg;
+                }
+            }
+            const error = pb.renderFieldErrorsAsList(global);
+            this.setState(s => ({
+                manifestForm: {
+                    ...s.manifestForm,
+                    fieldErrors,
+                    error,
+                },
+            }));
         }
     };
 
@@ -358,9 +377,10 @@ class View extends Component<Props, State> {
                     isOpen={openDialogKind === 'manifest'}
                     onSave={this.#handleManifestFormDone}
                     onCancel={this.#openDialogCancel}
-                    error={null}
+                    error={this.state.manifestForm.error}
                     manifest={this.state.manifestForm.manifest}
                     params={this.state.manifestForm.params}
+                    fieldErrors={this.state.manifestForm.fieldErrors}
                     onParamChange={this.#handleManifestParamChange}
                     timezones={this.state.timezones}
                 />
@@ -563,7 +583,15 @@ class View extends Component<Props, State> {
                 this.setState(
                     {
                         openDialogKind: 'manifest',
-                        manifestForm: { manifest, sceneID: id, widgetID: widget.id, params, isNewScene: false },
+                        manifestForm: {
+                            manifest,
+                            sceneID: id,
+                            widgetID: widget.id,
+                            params,
+                            fieldErrors: {},
+                            error: null,
+                            isNewScene: false,
+                        },
                     },
                     () => this.#previewOpen(id),
                 );

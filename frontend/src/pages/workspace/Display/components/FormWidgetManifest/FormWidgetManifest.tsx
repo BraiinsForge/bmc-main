@@ -23,6 +23,7 @@ export interface FormWidgetManifestProps {
 
     manifest: null | pb.WidgetManifest;
     params: Record<string, pb.WidgetDataValue>;
+    fieldErrors?: Record<string, string>;
     onParamChange(key: string, value: pb.WidgetDataValue | undefined): void;
 
     /** Timezones available on the device, fetched once via `sys.getTimezoneList`. */
@@ -102,10 +103,11 @@ function ParamField(props: {
     id: string;
     definition: pb.ManifestParamDefinition;
     value: pb.WidgetDataValue;
+    error?: string;
     onChange(key: string, value: pb.WidgetDataValue | undefined): void;
     timezones: pb.Timezone[];
 }) {
-    const { id, definition, value, onChange, timezones } = props;
+    const { id, definition, value, onChange, timezones, error } = props;
     const { formatMessage } = useIntl();
     const required = !definition.isOptional;
     const labelText = required ? `${definition.name} *` : definition.name;
@@ -122,6 +124,7 @@ function ParamField(props: {
                     <BoundComboBox<string>
                         id={id}
                         labelText={labelText}
+                        error={error}
                         items={items}
                         value={readString(value) || null}
                         onChange={v =>
@@ -138,6 +141,8 @@ function ParamField(props: {
                     id={id}
                     labelText={labelText}
                     helperText={definition.description}
+                    invalid={!!error}
+                    invalidText={error}
                     type={stringFormatToInputType(format)}
                     value={readString(value)}
                     onChange={e =>
@@ -158,6 +163,7 @@ function ParamField(props: {
                     <BoundComboBox<string>
                         id={id}
                         labelText={labelText}
+                        error={error}
                         items={items}
                         value={String(readNumber(value))}
                         onChange={v => onChange(definition.key, makeNumberParamValue(v, 'integer'))}
@@ -169,6 +175,8 @@ function ParamField(props: {
                     id={id}
                     label={labelText}
                     helperText={definition.description}
+                    invalid={!!error}
+                    invalidText={error}
                     value={readNumber(value)}
                     allowEmpty
                     min={min}
@@ -190,6 +198,7 @@ function ParamField(props: {
                     <BoundComboBox<string>
                         id={id}
                         labelText={labelText}
+                        error={error}
                         items={items}
                         value={String(readNumber(value))}
                         onChange={v => onChange(definition.key, makeNumberParamValue(v, 'double'))}
@@ -201,6 +210,8 @@ function ParamField(props: {
                     id={id}
                     label={labelText}
                     helperText={definition.description}
+                    invalid={!!error}
+                    invalidText={error}
                     value={readNumber(value)}
                     allowEmpty
                     min={min}
@@ -216,6 +227,7 @@ function ParamField(props: {
                 <BoundToggle
                     id={id}
                     labelText={labelText}
+                    error={error}
                     value={readBoolean(value)}
                     onChange={v => onChange(definition.key, makeBooleanValue(v))}
                 />
@@ -238,6 +250,7 @@ function ParamField(props: {
                     id={id}
                     labelText={labelText}
                     helperText={definition.description}
+                    error={error}
                     items={tzItems}
                     value={tzValue || ''}
                     onChange={v => onChange(definition.key, v ? makeStringValue(v) : makeNullValue())}
@@ -275,6 +288,7 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
         error,
         manifest,
         params,
+        fieldErrors,
         onParamChange,
         timezones,
         size,
@@ -305,6 +319,7 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
                     id={$(`param-${def.key}`)}
                     definition={def}
                     value={params[def.key] ?? kindDefaultValue(def.kind)}
+                    error={fieldErrors?.[def.key]}
                     onChange={onParamChange}
                     timezones={timezones}
                 />

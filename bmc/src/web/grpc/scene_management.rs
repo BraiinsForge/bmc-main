@@ -11,13 +11,171 @@ use futures::stream::{BoxStream, StreamExt};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time;
 use tokio_stream::wrappers::IntervalStream;
-use tonic::{Request, Response, Status};
+use tonic::{Code, Request, Response, Status};
+use tonic_types::{ErrorDetails, StatusExt};
 use uuid::Uuid;
 
 use crate::config::ConfigHandle;
 use crate::data::{SceneCycling, SceneCyclingTransition};
 use crate::scene;
+use crate::web::grpc::GrpcError;
+use crate::web::grpc::shared::FieldViolations;
 use crate::widget::{Coordinator, WidgetRegistry};
+
+/// Wrap a non-empty FieldViolations into InvalidArgument + BadRequest details.
+fn bad_request_status(violations: FieldViolations) -> Option<Status> {
+    if violations.is_empty() {
+        return None;
+    }
+    Some(Status::with_error_details(
+        Code::InvalidArgument,
+        GrpcError::BadRequest.to_string(),
+        ErrorDetails::with_bad_request(violations),
+    ))
+}
+
+fn parse_uuid_field(s: &str, path: &str, violations: &mut FieldViolations) -> Option<Uuid> {
+    match Uuid::parse_str(s) {
+        Ok(uuid) => Some(uuid),
+        Err(_) => {
+            violations.push(path.to_owned(), format!("invalid UUID: {s:?}"));
+            None
+        }
+    }
+}
+
+fn parse_grid_axis(value: u32, path: &str, violations: &mut FieldViolations) -> Option<u8> {
+    match u8::try_from(value) {
+        Ok(v) => Some(v),
+        Err(_) => {
+            violations.push(path.to_owned(), format!("{value} does not fit in u8"));
+            None
+        }
+    }
+}
+
+fn parse_widget_size(
+    size: i32,
+    path: &str,
+    violations: &mut FieldViolations,
+) -> Option<scene::WidgetSize> {
+    match web::WidgetSize::try_from(size) {
+        Ok(web::WidgetSize::Small) => Some(scene::WidgetSize::Small),
+        Ok(web::WidgetSize::Medium) => Some(scene::WidgetSize::Medium),
+        Ok(web::WidgetSize::Large) => Some(scene::WidgetSize::Large),
+        Ok(web::WidgetSize::Full) => Some(scene::WidgetSize::Full),
+        Ok(web::WidgetSize::Unspecified) => {
+            violations.push(path.to_owned(), "widget size unspecified");
+            None
+        }
+        Err(_) => {
+            violations.push(path.to_owned(), format!("invalid widget size: {size}"));
+            None
+        }
+    }
+}
+
+struct ParsedAddFullscreenShape {
+    config: web::WidgetConfig,
+    widget_uid: Uuid,
+}
+
+fn parse_add_fullscreen_shape(req: web::AddFullscreenSceneRequest) -> Result<ParsedAddFullscreenShape, Status> {
+    let mut shape = FieldViolations::new();
+    let config = req.config.or_else(|| {
+        shape.push("config", "config is required");
+        None
+    });
+    let widget_uid = config
+        .as_ref()
+        .and_then(|c| parse_uuid_field(&c.widget_uid, "config.widget_uid", &mut shape));
+    if let Some(status) = bad_request_status(shape) {
+        return Err(status);
+    }
+
+    match (config, widget_uid) {
+        (Some(config), Some(widget_uid)) => Ok(ParsedAddFullscreenShape { config, widget_uid }),
+        _ => Err(Status::internal("BUG: shape parsing succeeded with missing required values")),
+    }
+}
+
+struct ParsedAddWidgetShape {
+    scene_id: Uuid,
+    position: scene::WidgetPosition,
+    size: scene::WidgetSize,
+    config_req: web::WidgetConfig,
+    widget_uid: Uuid,
+}
+
+fn parse_add_widget_shape(req: web::AddWidgetRequest) -> Result<ParsedAddWidgetShape, Status> {
+    let mut shape = FieldViolations::new();
+
+    let scene_id = parse_uuid_field(&req.scene_id, "scene_id", &mut shape);
+    let proto_pos = req.position.unwrap_or_default();
+    let row = parse_grid_axis(proto_pos.row, "position.row", &mut shape);
+    let col = parse_grid_axis(proto_pos.col, "position.col", &mut shape);
+    let size = parse_widget_size(req.size, "size", &mut shape);
+    let config_req = req.config.or_else(|| {
+        shape.push("config", "config is required");
+        None
+    });
+    let widget_uid = config_req
+        .as_ref()
+        .and_then(|c| parse_uuid_field(&c.widget_uid, "config.widget_uid", &mut shape));
+
+    if let Some(status) = bad_request_status(shape) {
+        return Err(status);
+    }
+
+    match (scene_id, row, col, size, config_req, widget_uid) {
+        (Some(scene_id), Some(row), Some(col), Some(size), Some(config_req), Some(widget_uid)) => {
+            Ok(ParsedAddWidgetShape {
+                scene_id,
+                position: scene::WidgetPosition { row, col },
+                size,
+                config_req,
+                widget_uid,
+            })
+        }
+        _ => Err(Status::internal("BUG: shape parsing succeeded with missing required values")),
+    }
+}
+
+struct ParsedUpdateWidgetShape {
+    scene_id: Uuid,
+    widget_id: Uuid,
+    proto_position: web::WidgetPosition,
+    position: scene::WidgetPosition,
+    size: scene::WidgetSize,
+    params: Option<web::WidgetDataStruct>,
+}
+
+fn parse_update_widget_shape(req: web::UpdateWidgetRequest) -> Result<ParsedUpdateWidgetShape, Status> {
+    let mut shape = FieldViolations::new();
+
+    let scene_id = parse_uuid_field(&req.scene_id, "scene_id", &mut shape);
+    let widget_id = parse_uuid_field(&req.id, "id", &mut shape);
+    let proto_position = req.position.unwrap_or_default();
+    let row = parse_grid_axis(proto_position.row, "position.row", &mut shape);
+    let col = parse_grid_axis(proto_position.col, "position.col", &mut shape);
+    let size = parse_widget_size(req.size, "size", &mut shape);
+
+    if let Some(status) = bad_request_status(shape) {
+        return Err(status);
+    }
+
+    match (scene_id, widget_id, row, col, size) {
+        (Some(scene_id), Some(widget_id), Some(row), Some(col), Some(size)) => Ok(ParsedUpdateWidgetShape {
+            scene_id,
+            widget_id,
+            proto_position,
+            position: scene::WidgetPosition { row, col },
+            size,
+            params: req.params,
+        }),
+        _ => Err(Status::internal("BUG: shape parsing succeeded with missing required values")),
+    }
+}
 
 pub(crate) struct SceneManagementService {
     widget_registry: Arc<WidgetRegistry>,
@@ -335,34 +493,6 @@ fn widget_info_to_proto(info: &crate::widget::WidgetInfo) -> web::WidgetManifest
     }
 }
 
-fn proto_size_to_scene(size: i32) -> Result<scene::WidgetSize, Status> {
-    match web::WidgetSize::try_from(size) {
-        Ok(web::WidgetSize::Small) => Ok(scene::WidgetSize::Small),
-        Ok(web::WidgetSize::Medium) => Ok(scene::WidgetSize::Medium),
-        Ok(web::WidgetSize::Large) => Ok(scene::WidgetSize::Large),
-        Ok(web::WidgetSize::Full) => Ok(scene::WidgetSize::Full),
-        Ok(web::WidgetSize::Unspecified) => {
-            Err(Status::invalid_argument("widget size unspecified"))
-        }
-        Err(_) => Err(Status::invalid_argument("invalid widget size")),
-    }
-}
-
-/// Convert the proto's u32 row/col into the scene model's u8, rejecting
-/// values that don't fit instead of silently clamping to u8::MAX — a
-/// clamped position would subsequently fail the bounds check anyway,
-/// but reporting it as an explicit argument error gives the client a
-/// much more useful message than "out of grid bounds".
-fn proto_position_to_scene(position: web::WidgetPosition) -> Result<scene::WidgetPosition, Status> {
-    let row = u8::try_from(position.row).map_err(|_| {
-        Status::invalid_argument(format!("row {} does not fit in u8", position.row))
-    })?;
-    let col = u8::try_from(position.col).map_err(|_| {
-        Status::invalid_argument(format!("col {} does not fit in u8", position.col))
-    })?;
-    Ok(scene::WidgetPosition { row, col })
-}
-
 /// Rejects widgets that either fall outside the display grid or collide with
 /// another widget in the same scene. `exclude_id` is set to the widget's own
 /// id when validating an update so it doesn't report overlapping with itself.
@@ -434,56 +564,55 @@ pub(crate) fn validate_widget_params(
     manifest: &bmc_widget::Manifest,
     params: &web::WidgetDataStruct,
     mode: ValidateMode,
-) -> Result<(), Status> {
+) -> FieldViolations {
     use web::widget_data_value::Kind as VK;
+    let mut violations = FieldViolations::new();
 
     if matches!(mode, ValidateMode::Update) {
         for key in manifest.params.keys() {
             if !params.fields.contains_key(key.as_str()) {
-                return Err(Status::invalid_argument(format!(
-                    "param {:?}: missing in UpdateWidget request",
-                    key.as_str()
-                )));
+                violations.push(
+                    format!(r#"params["{}"]"#, key.as_str()),
+                    "missing in UpdateWidget request",
+                );
             }
         }
     }
 
     for (key, value) in &params.fields {
-        let def = manifest
-            .params
-            .get(key.as_str())
-            .ok_or_else(|| Status::invalid_argument(format!("param {key:?}: unknown")))?;
-
-        let kind = value.kind.as_ref().ok_or_else(|| {
-            Status::invalid_argument(format!("param {key:?}: WidgetDataValue.kind unset"))
-        })?;
+        let path = format!(r#"params["{key}"]"#);
+        let Some(def) = manifest.params.get(key.as_str()) else {
+            violations.push(path, "unknown param");
+            continue;
+        };
+        let Some(kind) = value.kind.as_ref() else {
+            violations.push(path, "WidgetDataValue.kind unset");
+            continue;
+        };
 
         if matches!(kind, VK::NullValue(_)) {
             if !def.is_optional {
-                return Err(Status::invalid_argument(format!(
-                    "param {key:?}: null_value on required param"
-                )));
+                violations.push(path, "null_value on required param");
             }
             continue;
         }
 
-        validate_widget_param_value(key, &def.kind, kind)?;
+        validate_widget_param_value(&path, &def.kind, kind, &mut violations);
     }
-    Ok(())
+    violations
 }
 
 fn validate_widget_param_value(
-    key: &str,
+    path: &str,
     param_kind: &ParamKind,
     kind: &web::widget_data_value::Kind,
-) -> Result<(), Status> {
+    violations: &mut FieldViolations,
+) {
     use web::widget_data_value::Kind as VK;
     match (param_kind, kind) {
         (ParamKind::String { enum_values, .. }, VK::StringValue(s)) => {
             if !enum_values.is_empty() && !enum_values.iter().any(|o| &o.value == s) {
-                return Err(Status::invalid_argument(format!(
-                    "param {key:?}: value not in enum_values"
-                )));
+                violations.push(path.to_owned(), "value not in enum_values");
             }
         }
         (ParamKind::Timezone { .. }, VK::StringValue(_))
@@ -500,21 +629,15 @@ fn validate_widget_param_value(
             if let Some(lo) = min
                 && i < lo
             {
-                return Err(Status::invalid_argument(format!(
-                    "param {key:?}: {i} < min {lo}"
-                )));
+                violations.push(path.to_owned(), format!("{i} < min {lo}"));
             }
             if let Some(hi) = max
                 && i > hi
             {
-                return Err(Status::invalid_argument(format!(
-                    "param {key:?}: {i} > max {hi}"
-                )));
+                violations.push(path.to_owned(), format!("{i} > max {hi}"));
             }
             if !enum_values.is_empty() && !enum_values.iter().any(|o| o.value == *i) {
-                return Err(Status::invalid_argument(format!(
-                    "param {key:?}: value not in enum_values"
-                )));
+                violations.push(path.to_owned(), "value not in enum_values");
             }
         }
         (
@@ -527,39 +650,35 @@ fn validate_widget_param_value(
             VK::DoubleValue(d),
         ) => {
             if !d.is_finite() {
-                return Err(Status::invalid_argument(format!(
-                    "param {key:?}: double_value must be finite (got {d})"
-                )));
+                violations.push(
+                    path.to_owned(),
+                    format!("double_value must be finite (got {d})"),
+                );
+                return;
             }
             if let Some(lo) = min
                 && d < lo
             {
-                return Err(Status::invalid_argument(format!(
-                    "param {key:?}: {d} < min {lo}"
-                )));
+                violations.push(path.to_owned(), format!("{d} < min {lo}"));
             }
             if let Some(hi) = max
                 && d > hi
             {
-                return Err(Status::invalid_argument(format!(
-                    "param {key:?}: {d} > max {hi}"
-                )));
+                violations.push(path.to_owned(), format!("{d} > max {hi}"));
             }
             if !enum_values.is_empty()
                 && !enum_values.iter().any(|o| o.value.to_bits() == d.to_bits())
             {
-                return Err(Status::invalid_argument(format!(
-                    "param {key:?}: value not in enum_values"
-                )));
+                violations.push(path.to_owned(), "value not in enum_values");
             }
         }
         _ => {
-            return Err(Status::invalid_argument(format!(
-                "param {key:?}: WidgetDataValue arm does not match declared variant"
-            )));
+            violations.push(
+                path.to_owned(),
+                "WidgetDataValue arm does not match declared variant",
+            );
         }
     }
-    Ok(())
 }
 
 fn scene_widget_size_to_proto(size: scene::WidgetSize) -> i32 {
@@ -704,13 +823,8 @@ impl GrpcSceneManagementService for SceneManagementService {
         &self,
         request: Request<web::AddFullscreenSceneRequest>,
     ) -> Result<Response<String>, Status> {
-        let req = request.into_inner();
-        let config = req
-            .config
-            .ok_or_else(|| Status::invalid_argument("config is required"))?;
-
-        let widget_uid = Uuid::parse_str(&config.widget_uid)
-            .map_err(|_| Status::invalid_argument("invalid widget UID"))?;
+        let ParsedAddFullscreenShape { config, widget_uid } =
+            parse_add_fullscreen_shape(request.into_inner())?;
 
         let info = self
             .widget_registry
@@ -729,7 +843,13 @@ impl GrpcSceneManagementService for SceneManagementService {
         }
 
         let params = config.params.unwrap_or_default();
-        validate_widget_params(manifest, &params, ValidateMode::Add)?;
+        if let Some(status) = bad_request_status(validate_widget_params(
+            manifest,
+            &params,
+            ValidateMode::Add,
+        )) {
+            return Err(status);
+        }
         let resolved = build_widget_params(manifest, &params);
         let params_json = serde_json::Value::Object(widget_data_struct_to_map(&resolved));
 
@@ -1113,19 +1233,13 @@ impl GrpcSceneManagementService for SceneManagementService {
         &self,
         request: Request<web::AddWidgetRequest>,
     ) -> Result<Response<String>, Status> {
-        let req = request.into_inner();
-        let scene_id = Uuid::parse_str(&req.scene_id)
-            .map_err(|_| Status::invalid_argument("invalid scene ID"))?;
-
-        let position = proto_position_to_scene(req.position.unwrap_or_default())?;
-        let size = proto_size_to_scene(req.size)?;
-
-        let config_req = req
-            .config
-            .ok_or_else(|| Status::invalid_argument("config is required"))?;
-
-        let widget_uid = Uuid::parse_str(&config_req.widget_uid)
-            .map_err(|_| Status::invalid_argument("invalid widget UID"))?;
+        let ParsedAddWidgetShape {
+            scene_id,
+            position,
+            size,
+            config_req,
+            widget_uid,
+        } = parse_add_widget_shape(request.into_inner())?;
 
         let info = self
             .widget_registry
@@ -1140,7 +1254,13 @@ impl GrpcSceneManagementService for SceneManagementService {
         }
 
         let params = config_req.params.unwrap_or_default();
-        validate_widget_params(manifest, &params, ValidateMode::Add)?;
+        if let Some(status) = bad_request_status(validate_widget_params(
+            manifest,
+            &params,
+            ValidateMode::Add,
+        )) {
+            return Err(status);
+        }
         let resolved = build_widget_params(manifest, &params);
         let params_json = serde_json::Value::Object(widget_data_struct_to_map(&resolved));
 
@@ -1175,15 +1295,14 @@ impl GrpcSceneManagementService for SceneManagementService {
         &self,
         request: Request<web::UpdateWidgetRequest>,
     ) -> Result<Response<()>, Status> {
-        let req = request.into_inner();
-        let scene_id = Uuid::parse_str(&req.scene_id)
-            .map_err(|_| Status::invalid_argument("invalid scene ID"))?;
-        let widget_id =
-            Uuid::parse_str(&req.id).map_err(|_| Status::invalid_argument("invalid widget ID"))?;
-
-        let proto_position = req.position.unwrap_or_default();
-        let position = proto_position_to_scene(proto_position)?;
-        let size = proto_size_to_scene(req.size)?;
+        let ParsedUpdateWidgetShape {
+            scene_id,
+            widget_id,
+            proto_position,
+            position,
+            size,
+            params,
+        } = parse_update_widget_shape(request.into_inner())?;
 
         let scene_id_key = scene::SceneId::from(scene_id);
         let widget_id_key = scene::WidgetId::from(widget_id);
@@ -1215,8 +1334,14 @@ impl GrpcSceneManagementService for SceneManagementService {
                 )));
             }
 
-            let params = req.params.unwrap_or_default();
-            validate_widget_params(manifest, &params, ValidateMode::Update)?;
+            let params = params.unwrap_or_default();
+            if let Some(status) = bad_request_status(validate_widget_params(
+                manifest,
+                &params,
+                ValidateMode::Update,
+            )) {
+                return Err(status);
+            }
             let params_json = serde_json::Value::Object(widget_data_struct_to_map(&params));
 
             let widget = scene
@@ -1622,6 +1747,16 @@ mod tests {
         }
     }
 
+    fn violation_count(
+        manifest: &bmc_widget::Manifest,
+        params: &web::WidgetDataStruct,
+        mode: ValidateMode,
+    ) -> usize {
+        let violations = validate_widget_params(manifest, params, mode);
+        let v: Vec<tonic_types::FieldViolation> = violations.into();
+        v.len()
+    }
+
     #[test]
     fn validate_widget_params_string_string_value_accepts() {
         let manifest = single_param_manifest(
@@ -1634,7 +1769,7 @@ mod tests {
             false,
         );
         let params = fields_one("color", wdv_string("blue"));
-        assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_ok());
+        assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_empty());
     }
 
     #[test]
@@ -1649,9 +1784,7 @@ mod tests {
             false,
         );
         let params = fields_one("color", wdv_double(1.0));
-        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
-            .expect_err("BUG: must reject");
-        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
     #[test]
@@ -1668,9 +1801,7 @@ mod tests {
             false,
         );
         let params = fields_one("count", wdv_double(5.0));
-        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
-            .expect_err("BUG: must reject");
-        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
     #[test]
@@ -1687,9 +1818,7 @@ mod tests {
             false,
         );
         let params = fields_one("ratio", wdv_integer(1));
-        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
-            .expect_err("BUG: must reject");
-        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
     #[test]
@@ -1702,9 +1831,7 @@ mod tests {
             false,
         );
         let params = fields_one("flag", wdv_unset_kind());
-        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
-            .expect_err("BUG: must reject");
-        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
     #[test]
@@ -1719,9 +1846,7 @@ mod tests {
             false,
         );
         let params = fields_one("name", wdv_null());
-        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
-            .expect_err("BUG: must reject");
-        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
     #[test]
@@ -1736,7 +1861,7 @@ mod tests {
             true,
         );
         let params = fields_one("label", wdv_null());
-        assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_ok());
+        assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_empty());
     }
 
     #[test]
@@ -1753,9 +1878,7 @@ mod tests {
             false,
         );
         let params = fields_one("val", wdv_double(f64::NAN));
-        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
-            .expect_err("BUG: must reject NaN");
-        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
     #[test]
@@ -1772,9 +1895,7 @@ mod tests {
             false,
         );
         let params = fields_one("val", wdv_double(f64::INFINITY));
-        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
-            .expect_err("BUG: must reject Inf");
-        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
     #[test]
@@ -1791,9 +1912,7 @@ mod tests {
             false,
         );
         let params = fields_one("n", wdv_integer(4));
-        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
-            .expect_err("BUG: must reject");
-        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
     #[test]
@@ -1810,9 +1929,7 @@ mod tests {
             false,
         );
         let params = fields_one("n", wdv_integer(11));
-        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
-            .expect_err("BUG: must reject");
-        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
     #[test]
@@ -1829,9 +1946,7 @@ mod tests {
             false,
         );
         let params = fields_one("ratio", wdv_double(-0.1));
-        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
-            .expect_err("BUG: must reject");
-        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
     #[test]
@@ -1855,9 +1970,7 @@ mod tests {
             false,
         );
         let params = fields_one("style", wdv_string("solarized"));
-        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
-            .expect_err("BUG: must reject");
-        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
     #[test]
@@ -1881,7 +1994,7 @@ mod tests {
             false,
         );
         let params = fields_one("style", wdv_string("light"));
-        assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_ok());
+        assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_empty());
     }
 
     #[test]
@@ -1894,9 +2007,7 @@ mod tests {
             false,
         );
         let params = fields_one("unknown", wdv_boolean(true));
-        let err = validate_widget_params(&manifest, &params, ValidateMode::Add)
-            .expect_err("BUG: must reject unknown key");
-        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
     }
 
     #[test]
@@ -1911,9 +2022,7 @@ mod tests {
         let params = web::WidgetDataStruct {
             fields: std::collections::HashMap::new(),
         };
-        let err = validate_widget_params(&manifest, &params, ValidateMode::Update)
-            .expect_err("BUG: Update must require all keys");
-        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Update), 1);
     }
 
     #[test]
@@ -1928,7 +2037,68 @@ mod tests {
         let params = web::WidgetDataStruct {
             fields: std::collections::HashMap::new(),
         };
-        assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_ok());
+        assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_empty());
+    }
+
+    #[test]
+    fn validate_widget_params_accumulates_per_field_violations() {
+        let manifest = manifest_with_params(&[
+            (
+                "n",
+                bmc_widget::ParamKind::Integer {
+                    min: Some(0),
+                    max: Some(10),
+                    step: None,
+                    enum_values: vec![],
+                    default_value: Some(5),
+                },
+                false,
+            ),
+            (
+                "color",
+                bmc_widget::ParamKind::String {
+                    format: None,
+                    enum_values: vec![bmc_widget::StringOption {
+                        value: "red".into(),
+                        label: "Red".into(),
+                    }],
+                    default_value: Some("red".into()),
+                },
+                false,
+            ),
+        ]);
+        let params = web::WidgetDataStruct {
+            fields: [
+                ("n".to_owned(), wdv_integer(99)),
+                ("color".to_owned(), wdv_string("blue")),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let violations = validate_widget_params(&manifest, &params, ValidateMode::Add);
+        let v: Vec<tonic_types::FieldViolation> = violations.into();
+        assert_eq!(v.len(), 2, "both broken fields must be reported");
+
+        let fields: std::collections::HashSet<&str> = v.iter().map(|x| x.field.as_str()).collect();
+        assert!(fields.contains(r#"params["n"]"#));
+        assert!(fields.contains(r#"params["color"]"#));
+    }
+
+    #[test]
+    fn add_widget_request_shape_errors_accumulate_in_one_response() {
+        let mut v = FieldViolations::new();
+        assert!(parse_uuid_field("not-a-uuid", "scene_id", &mut v).is_none());
+        assert!(parse_grid_axis(999, "position.row", &mut v).is_none());
+        assert!(parse_widget_size(web::WidgetSize::Unspecified.into(), "size", &mut v).is_none());
+
+        let violations: Vec<tonic_types::FieldViolation> = v.into();
+        assert_eq!(violations.len(), 3);
+        let fields: std::collections::HashSet<&str> =
+            violations.iter().map(|x| x.field.as_str()).collect();
+        assert!(fields.contains("scene_id"));
+        assert!(fields.contains("position.row"));
+        assert!(fields.contains("size"));
     }
 
     #[test]

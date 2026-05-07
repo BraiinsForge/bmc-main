@@ -32,6 +32,8 @@ interface ManifestFormState {
     manifest: null | pb.WidgetManifest;
     widgetID: string;
     params: Record<string, pb.WidgetDataValue>;
+    fieldErrors: Record<string, string>;
+    error: Maybe<string>;
     size: pb.WidgetSize;
     sizeOptions: CombinedSize[];
     position: pb.WidgetPosition;
@@ -73,6 +75,8 @@ const getInitialState = (): State => ({
         manifest: null,
         widgetID: '',
         params: {},
+        fieldErrors: {},
+        error: null,
         size: pb.WidgetSize.SMALL,
         sizeOptions: [],
         position: pb.create(pb.WidgetPositionSchema),
@@ -271,13 +275,15 @@ class View extends Component<Props, State> {
         const position = widget.position ?? pb.create(pb.WidgetPositionSchema);
         const sizeOptions = this.#computeSizeOptions(manifest, { id, position });
 
-        this.setState({
-            openDialogKind: 'manifest',
-            manifestForm: {
-                manifest,
-                widgetID: id,
-                params,
-                size: widget.size,
+            this.setState({
+                openDialogKind: 'manifest',
+                manifestForm: {
+                    manifest,
+                    widgetID: id,
+                    params,
+                    fieldErrors: {},
+                    error: null,
+                    size: widget.size,
                 sizeOptions,
                 position,
                 originalParams: { ...params },
@@ -355,6 +361,8 @@ class View extends Component<Props, State> {
                     manifest,
                     widgetID: newWidgetId,
                     params: resolvedParams,
+                    fieldErrors: {},
+                    error: null,
                     size: resolvedSize,
                     sizeOptions,
                     position: resolvedPosition,
@@ -393,15 +401,19 @@ class View extends Component<Props, State> {
         this.setState(
             s => {
                 const params = { ...s.manifestForm.params };
+                const fieldErrors = { ...s.manifestForm.fieldErrors };
                 if (value === undefined) {
                     delete params[key];
                 } else {
                     params[key] = value;
                 }
+                delete fieldErrors[key];
                 return {
                     manifestForm: {
                         ...s.manifestForm,
                         params,
+                        fieldErrors,
+                        error: null,
                     },
                 };
             },
@@ -419,7 +431,6 @@ class View extends Component<Props, State> {
 
     #handleManifestFormDone = async (): Promise<void> => {
         const { sceneId } = this.props;
-        const { formatMessage } = this.props.intl;
         const { manifestForm } = this.state;
         const { manifest, widgetID, params, size, position } = manifestForm;
 
@@ -442,10 +453,24 @@ class View extends Component<Props, State> {
             this.#loadSceneDebounced();
         } catch ($) {
             if (pb.abort.is($)) return;
-
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to save widget!' });
-            toast.error(msg);
+            const known = ['params'];
+            const { global, fields } = pb.parseFormErrors($, known);
+            const paramsFieldErrors = fields.params as Maybe<Record<string, string[]>>;
+            const fieldErrors: Record<string, string> = {};
+            if (paramsFieldErrors) {
+                for (const [key, errs] of Object.entries(paramsFieldErrors)) {
+                    const msg = pb.renderFieldErrorsAsList(errs);
+                    if (msg) fieldErrors[key] = msg;
+                }
+            }
+            const error = pb.renderFieldErrorsAsList(global);
+            this.setState(s => ({
+                manifestForm: {
+                    ...s.manifestForm,
+                    fieldErrors,
+                    error,
+                },
+            }));
         }
     };
 
@@ -599,9 +624,10 @@ class View extends Component<Props, State> {
                     isOpen={openDialogKind === 'manifest'}
                     onSave={this.#handleManifestFormDone}
                     onCancel={this.#openDialogCancel}
-                    error={null}
+                    error={manifestForm.error}
                     manifest={manifestForm.manifest}
                     params={manifestForm.params}
+                    fieldErrors={manifestForm.fieldErrors}
                     onParamChange={this.#handleManifestParamChange}
                     timezones={this.state.timezones}
                     size={manifestForm.size}
