@@ -24,17 +24,17 @@
       "name": "Animation Mode",
       "type": "string",
       "description": "Animation style for the flip-clock digits",
-      "default": "extruded",
-      "enum": {
-        "flat": "Flat",
-        "extruded": "Extruded"
-      }
+      "default_value": "extruded",
+      "enum_values": [
+        { "value": "flat", "label": "Flat" },
+        { "value": "extruded", "label": "Extruded" }
+      ]
     },
     "timezone": {
       "name": "Timezone",
       "type": "timezone",
       "description": "Override timezone (e.g. 'America/New_York'). If not set, uses global timezone setting.",
-      "default": null
+      "optional": true
     }
   }
 }
