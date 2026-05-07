@@ -6,9 +6,6 @@ import { assertUnreachable } from '@/lib/ts';
 
 import * as C from './const';
 import type { WidgetOrPlaceholder, WidgetsOccupandyMap, WidgetsWithPlaceholders } from './const';
-// Direct import: going through ../components would re-enter fn via
-// CombinedSceneView and create a cycle.
-import { widgetDataValueFromRaw } from '../components/FormWidgetManifest';
 
 /**
  * To allow the user to:
@@ -279,24 +276,15 @@ export function getValidDropSlots(pool: C.Located[], widget: C.Located): C.Valid
 
 /**
  * Project a WidgetDataStruct from the wire into the modal's
- * Record<string, string> form state. Each field is JSON.stringify'd so a
- * single string-typed slot can carry every scalar wire arm; null_value
- * (and unset kind) become "" so the convention stays "no raw == no value".
+ * Record<string, WidgetDataValue> form state.
  */
-export function widgetParamsToFormState(params: pb.WidgetDataStruct | undefined): Record<string, string> {
+export function widgetParamsToFormState(
+    params: pb.WidgetDataStruct | undefined,
+): Record<string, pb.WidgetDataValue> {
     if (!params) return {};
-    const result: Record<string, string> = {};
+    const result: Record<string, pb.WidgetDataValue> = {};
     for (const [k, v] of Object.entries(params.fields)) {
-        switch (v.kind.case) {
-            case 'stringValue':
-            case 'integerValue':
-            case 'doubleValue':
-            case 'booleanValue':
-                result[k] = JSON.stringify(v.kind.value);
-                break;
-            default:
-                result[k] = '';
-        }
+        result[k] = pb.create(pb.WidgetDataValueSchema, v);
     }
     return result;
 }
@@ -309,13 +297,13 @@ export function widgetParamsToFormState(params: pb.WidgetDataStruct | undefined)
  */
 export function formStateToWidgetDataStruct(
     manifest: pb.WidgetManifest,
-    params: Record<string, string>,
+    params: Record<string, pb.WidgetDataValue>,
 ): pb.WidgetDataStruct {
     const fields: Record<string, pb.WidgetDataValue> = {};
     for (const def of manifest.params) {
-        const raw = params[def.key];
-        if (raw !== undefined) {
-            fields[def.key] = widgetDataValueFromRaw(raw, def);
+        const paramValue = params[def.key];
+        if (paramValue !== undefined) {
+            fields[def.key] = paramValue;
         }
     }
     return pb.create(pb.WidgetDataStructSchema, { fields });

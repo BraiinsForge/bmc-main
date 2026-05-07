@@ -38,7 +38,7 @@ interface ManifestFormState {
     manifest: null | pb.WidgetManifest;
     sceneID: string;
     widgetID: string;
-    params: Record<string, string>;
+    params: Record<string, pb.WidgetDataValue>;
     isNewScene: boolean;
 }
 
@@ -288,7 +288,7 @@ class View extends Component<Props, State> {
         }
     };
 
-    #handleManifestParamChange = (key: string, value: string | undefined): void => {
+    #handleManifestParamChange = (key: string, value: pb.WidgetDataValue | undefined): void => {
         this.setState(s => {
             const params = { ...s.manifestForm.params };
             if (value === undefined) {

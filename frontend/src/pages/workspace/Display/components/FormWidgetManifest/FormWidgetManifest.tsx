@@ -22,8 +22,8 @@ export interface FormWidgetManifestProps {
     error: Maybe<string>;
 
     manifest: null | pb.WidgetManifest;
-    params: Record<string, string>;
-    onParamChange(key: string, value: string | undefined): void;
+    params: Record<string, pb.WidgetDataValue>;
+    onParamChange(key: string, value: pb.WidgetDataValue | undefined): void;
 
     /** Timezones available on the device, fetched once via `sys.getTimezoneList`. */
     timezones: pb.Timezone[];
@@ -50,46 +50,6 @@ function stringFormatToInputType(format: pb.StringFormat | undefined): string {
     }
 }
 
-function readString(raw: string): string {
-    try {
-        const parsed: unknown = JSON.parse(raw);
-        if (typeof parsed === 'string') return parsed;
-        if (parsed === null) return '';
-        return raw;
-    } catch {
-        return raw;
-    }
-}
-
-function readNumber(raw: string): number | '' {
-    try {
-        const parsed: unknown = JSON.parse(raw);
-        return typeof parsed === 'number' ? parsed : '';
-    } catch {
-        return '';
-    }
-}
-
-function readBoolean(raw: string): boolean {
-    try {
-        const parsed: unknown = JSON.parse(raw);
-        return parsed === true;
-    } catch {
-        return false;
-    }
-}
-
-function encodeString(v: string): string {
-    return JSON.stringify(v);
-}
-
-function encodeNumber(v: string | number | null): string {
-    if (v === '' || v === null) return 'null';
-    const n = typeof v === 'number' ? v : Number(v);
-    if (Number.isNaN(n)) return 'null';
-    return JSON.stringify(n);
-}
-
 function makeStringValue(s: string): pb.WidgetDataValue {
     return create(pb.WidgetDataValueSchema, { kind: { case: 'stringValue', value: s } });
 }
@@ -112,35 +72,37 @@ function makeNullValue(): pb.WidgetDataValue {
     });
 }
 
-export function widgetDataValueFromRaw(raw: string, def: pb.ManifestParamDefinition): pb.WidgetDataValue {
-    const { kind, isOptional } = def;
-    switch (kind.case) {
-        case 'paramString':
-        case 'paramTimezone': {
-            const s = readString(raw);
-            if (s === '' && isOptional) return makeNullValue();
-            return makeStringValue(s);
-        }
-        case 'paramInteger': {
-            const n = readNumber(raw);
-            return n === '' ? makeNullValue() : makeIntegerValue(n);
-        }
-        case 'paramDouble': {
-            const n = readNumber(raw);
-            return n === '' ? makeNullValue() : makeDoubleValue(n);
-        }
-        case 'paramBoolean':
-            return makeBooleanValue(readBoolean(raw));
-        default:
-            return makeStringValue(readString(raw));
-    }
+function readString(value: pb.WidgetDataValue | undefined): string {
+    return value?.kind.case === 'stringValue' ? value.kind.value : '';
+}
+
+function readNumber(value: pb.WidgetDataValue | undefined): number | '' {
+    if (!value) return '';
+    if (value.kind.case === 'integerValue' || value.kind.case === 'doubleValue') return value.kind.value;
+    return '';
+}
+
+function readBoolean(value: pb.WidgetDataValue | undefined): boolean {
+    return value?.kind.case === 'booleanValue' && value.kind.value === true;
+}
+
+function makeStringParamValue(v: string, isOptional: boolean): pb.WidgetDataValue {
+    if (isOptional && v === '') return makeNullValue();
+    return makeStringValue(v);
+}
+
+function makeNumberParamValue(v: string | number | null, type: 'integer' | 'double'): pb.WidgetDataValue {
+    if (v === '' || v === null) return makeNullValue();
+    const n = typeof v === 'number' ? v : Number(v);
+    if (Number.isNaN(n)) return makeNullValue();
+    return type === 'integer' ? makeIntegerValue(n) : makeDoubleValue(n);
 }
 
 function ParamField(props: {
     id: string;
     definition: pb.ManifestParamDefinition;
-    value: string;
-    onChange(key: string, value: string | undefined): void;
+    value: pb.WidgetDataValue;
+    onChange(key: string, value: pb.WidgetDataValue | undefined): void;
     timezones: pb.Timezone[];
 }) {
     const { id, definition, value, onChange, timezones } = props;
@@ -162,7 +124,12 @@ function ParamField(props: {
                         labelText={labelText}
                         items={items}
                         value={readString(value) || null}
-                        onChange={v => onChange(definition.key, v !== null ? encodeString(v) : undefined)}
+                        onChange={v =>
+                            onChange(
+                                definition.key,
+                                v !== null ? makeStringParamValue(v, definition.isOptional) : undefined,
+                            )
+                        }
                     />
                 );
             }
@@ -173,7 +140,9 @@ function ParamField(props: {
                     helperText={definition.description}
                     type={stringFormatToInputType(format)}
                     value={readString(value)}
-                    onChange={e => onChange(definition.key, encodeString(e.target.value))}
+                    onChange={e =>
+                        onChange(definition.key, makeStringParamValue(e.target.value, definition.isOptional))
+                    }
                 />
             );
         }
@@ -191,7 +160,7 @@ function ParamField(props: {
                         labelText={labelText}
                         items={items}
                         value={String(readNumber(value))}
-                        onChange={v => onChange(definition.key, encodeNumber(v))}
+                        onChange={v => onChange(definition.key, makeNumberParamValue(v, 'integer'))}
                     />
                 );
             }
@@ -205,7 +174,7 @@ function ParamField(props: {
                     min={min}
                     max={max}
                     step={step ?? 1}
-                    onChange={(_e, { value: v }) => onChange(definition.key, encodeNumber(v))}
+                    onChange={(_e, { value: v }) => onChange(definition.key, makeNumberParamValue(v, 'integer'))}
                 />
             );
         }
@@ -223,7 +192,7 @@ function ParamField(props: {
                         labelText={labelText}
                         items={items}
                         value={String(readNumber(value))}
-                        onChange={v => onChange(definition.key, encodeNumber(v))}
+                        onChange={v => onChange(definition.key, makeNumberParamValue(v, 'double'))}
                     />
                 );
             }
@@ -237,7 +206,7 @@ function ParamField(props: {
                     min={min}
                     max={max}
                     step={step ?? 0.01}
-                    onChange={(_e, { value: v }) => onChange(definition.key, encodeNumber(v))}
+                    onChange={(_e, { value: v }) => onChange(definition.key, makeNumberParamValue(v, 'double'))}
                 />
             );
         }
@@ -248,7 +217,7 @@ function ParamField(props: {
                     id={id}
                     labelText={labelText}
                     value={readBoolean(value)}
-                    onChange={v => onChange(definition.key, JSON.stringify(v))}
+                    onChange={v => onChange(definition.key, makeBooleanValue(v))}
                 />
             );
 
@@ -271,7 +240,7 @@ function ParamField(props: {
                     helperText={definition.description}
                     items={tzItems}
                     value={tzValue || ''}
-                    onChange={v => onChange(definition.key, v ? encodeString(v) : 'null')}
+                    onChange={v => onChange(definition.key, v ? makeStringValue(v) : makeNullValue())}
                 />
             );
         }
@@ -281,19 +250,20 @@ function ParamField(props: {
     }
 }
 
-function kindDefaultValue(kind: pb.ManifestParamDefinition['kind']): string {
+function kindDefaultValue(kind: pb.ManifestParamDefinition['kind']): pb.WidgetDataValue {
     switch (kind.case) {
         case 'paramString':
-            return kind.value.defaultValue !== undefined ? encodeString(kind.value.defaultValue) : '""';
+            return makeStringValue(kind.value.defaultValue ?? '');
         case 'paramTimezone':
-            return kind.value.defaultValue !== undefined ? encodeString(kind.value.defaultValue) : 'null';
+            return kind.value.defaultValue !== undefined ? makeStringValue(kind.value.defaultValue) : makeNullValue();
         case 'paramInteger':
+            return kind.value.defaultValue !== undefined ? makeIntegerValue(kind.value.defaultValue) : makeNullValue();
         case 'paramDouble':
-            return kind.value.defaultValue !== undefined ? JSON.stringify(kind.value.defaultValue) : 'null';
+            return kind.value.defaultValue !== undefined ? makeDoubleValue(kind.value.defaultValue) : makeNullValue();
         case 'paramBoolean':
-            return JSON.stringify(kind.value.defaultValue ?? false);
+            return makeBooleanValue(kind.value.defaultValue ?? false);
         default:
-            return '""';
+            return makeStringValue('');
     }
 }
 

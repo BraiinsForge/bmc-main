@@ -30,13 +30,13 @@ function manifestWith(...params: pb.ManifestParamDefinition[]): pb.WidgetManifes
 
 function Demo(props: {
     manifest: pb.WidgetManifest;
-    initialParams?: Record<string, string>;
+    initialParams?: Record<string, pb.WidgetDataValue>;
     error?: string | null;
     size?: pb.WidgetSize;
     sizeOptions?: FormWidgetManifestProps['sizeOptions'];
 }) {
     const { manifest, initialParams, error, size, sizeOptions } = props;
-    const [params, setParams] = useState<Record<string, string>>(initialParams ?? {});
+    const [params, setParams] = useState<Record<string, pb.WidgetDataValue>>(initialParams ?? {});
     const [currentSize, setCurrentSize] = useState<pb.WidgetSize | undefined>(size);
 
     return (

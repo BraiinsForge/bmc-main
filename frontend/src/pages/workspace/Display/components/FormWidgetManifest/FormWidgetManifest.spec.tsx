@@ -1,10 +1,11 @@
 import { describe, expect, test } from '@rstest/core';
 
 import * as pb from '@/proto';
-import { widgetDataValueFromRaw } from './FormWidgetManifest';
+import { formStateToWidgetDataStruct } from '../../fn';
 
 function paramDef(
     kindCase: pb.ManifestParamDefinition['kind']['case'],
+    key = 'k',
     isOptional = false,
 ): pb.ManifestParamDefinition {
     let kind: pb.ManifestParamDefinition['kind'];
@@ -28,47 +29,49 @@ function paramDef(
             kind = { case: 'paramString', value: pb.create(pb.ParamStringSchema) };
     }
     return pb.create(pb.ManifestParamDefinitionSchema, {
-        key: 'k',
+        key,
         name: 'K',
         isOptional,
         kind,
     });
 }
 
-describe('widgetDataValueFromRaw', () => {
-    test('decodes a JSON string to stringValue', () => {
-        const v = widgetDataValueFromRaw('"hello"', paramDef('paramString'));
-        expect(v.kind).toEqual({ case: 'stringValue', value: 'hello' });
+describe('formStateToWidgetDataStruct', () => {
+    const manifest = pb.create(pb.WidgetManifestSchema, {
+        uid: 'widget-1',
+        name: 'Widget',
+        description: '',
+        supportedSizes: [pb.WidgetSize.FULL],
+        params: [
+            paramDef('paramString', 'name'),
+            paramDef('paramInteger', 'count'),
+            paramDef('paramBoolean', 'enabled'),
+            pb.create(pb.ManifestParamDefinitionSchema, {
+                key: 'tz',
+                name: 'Timezone',
+                isOptional: true,
+                kind: { case: 'paramTimezone', value: pb.create(pb.ParamTimezoneSchema) },
+            }),
+        ],
     });
 
-    test('decodes a JSON number to integerValue', () => {
-        const v = widgetDataValueFromRaw('42', paramDef('paramInteger'));
-        expect(v.kind).toEqual({ case: 'integerValue', value: 42 });
+    test('keeps typed wire values as-is', () => {
+        const params: Record<string, pb.WidgetDataValue> = {
+            enabled: pb.create(pb.WidgetDataValueSchema, { kind: { case: 'booleanValue', value: true } }),
+            tz: pb.create(pb.WidgetDataValueSchema, {
+                kind: { case: 'nullValue', value: pb.create(pb.WidgetDataValue_NullSchema) },
+            }),
+        };
+        const result = formStateToWidgetDataStruct(manifest, params);
+        expect(result.fields.enabled.kind).toEqual({ case: 'booleanValue', value: true });
+        expect(result.fields.tz.kind.case).toBe('nullValue');
     });
 
-    test('decodes null / empty number to nullValue', () => {
-        const def = paramDef('paramInteger');
-        expect(widgetDataValueFromRaw('null', def).kind.case).toBe('nullValue');
-        expect(widgetDataValueFromRaw('', def).kind.case).toBe('nullValue');
-    });
-
-    test('decodes boolean string to booleanValue', () => {
-        const def = paramDef('paramBoolean');
-        expect(widgetDataValueFromRaw('true', def).kind).toEqual({ case: 'booleanValue', value: true });
-        expect(widgetDataValueFromRaw('false', def).kind).toEqual({ case: 'booleanValue', value: false });
-    });
-
-    test('optional string with empty raw round-trips as nullValue', () => {
-        expect(widgetDataValueFromRaw('', paramDef('paramString', true)).kind.case).toBe('nullValue');
-        expect(widgetDataValueFromRaw('null', paramDef('paramString', true)).kind.case).toBe('nullValue');
-    });
-
-    test('required string with empty raw stays as empty stringValue', () => {
-        const v = widgetDataValueFromRaw('""', paramDef('paramString', false));
-        expect(v.kind).toEqual({ case: 'stringValue', value: '' });
-    });
-
-    test('optional timezone with empty raw round-trips as nullValue', () => {
-        expect(widgetDataValueFromRaw('', paramDef('paramTimezone', true)).kind.case).toBe('nullValue');
+    test('drops unknown keys from form state', () => {
+        const params: Record<string, pb.WidgetDataValue> = {
+            unknown: pb.create(pb.WidgetDataValueSchema, { kind: { case: 'stringValue', value: 'x' } }),
+        };
+        const result = formStateToWidgetDataStruct(manifest, params);
+        expect(result.fields.unknown).toBeUndefined();
     });
 });

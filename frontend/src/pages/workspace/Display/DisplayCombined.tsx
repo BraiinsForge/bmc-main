@@ -31,11 +31,11 @@ type CombinedSize = Exclude<pb.WidgetSize, pb.WidgetSize.UNSPECIFIED>;
 interface ManifestFormState {
     manifest: null | pb.WidgetManifest;
     widgetID: string;
-    params: Record<string, string>;
+    params: Record<string, pb.WidgetDataValue>;
     size: pb.WidgetSize;
     sizeOptions: CombinedSize[];
     position: pb.WidgetPosition;
-    originalParams: Record<string, string>;
+    originalParams: Record<string, pb.WidgetDataValue>;
     originalSize: pb.WidgetSize;
     isNewWidget: boolean;
 }
@@ -389,8 +389,7 @@ class View extends Component<Props, State> {
         }
     }, 300);
 
-    #handleManifestParamChange = (key: string, value: string | undefined): void => {
-        if (this.state.manifestForm.params[key] === value) return;
+    #handleManifestParamChange = (key: string, value: pb.WidgetDataValue | undefined): void => {
         this.setState(
             s => {
                 const params = { ...s.manifestForm.params };
