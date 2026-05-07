@@ -38,6 +38,33 @@ impl<'de> Deserialize<'de> for ParamKey {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StringOption {
+    pub value: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DoubleOption {
+    pub value: f64,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IntegerOption {
+    pub value: i32,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StringFormat {
+    Date,
+    Time,
+    Email,
+    Uri,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct RawManifest {
     uid: Uuid,
