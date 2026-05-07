@@ -130,13 +130,13 @@ fn param_default_to_widget_data_value(kind: &ParamKind) -> web::WidgetDataValue 
     web::WidgetDataValue { kind: Some(arm) }
 }
 
-fn widget_data_struct_to_json(s: &web::WidgetDataStruct) -> serde_json::Value {
-    let map = s
-        .fields
+fn widget_data_struct_to_map(
+    s: &web::WidgetDataStruct,
+) -> serde_json::Map<String, serde_json::Value> {
+    s.fields
         .iter()
         .map(|(k, v)| (k.clone(), widget_data_value_to_json(v)))
-        .collect();
-    serde_json::Value::Object(map)
+        .collect()
 }
 
 fn widget_data_value_to_json(v: &web::WidgetDataValue) -> serde_json::Value {
@@ -154,16 +154,14 @@ fn widget_data_value_to_json(v: &web::WidgetDataValue) -> serde_json::Value {
     }
 }
 
-fn json_to_widget_data_struct(
-    json: &serde_json::Value,
+fn map_to_widget_data_struct(
+    map: &serde_json::Map<String, serde_json::Value>,
     manifest_kinds: &std::collections::HashMap<String, ParamKind>,
 ) -> web::WidgetDataStruct {
     let mut fields = std::collections::HashMap::new();
-    if let Some(obj) = json.as_object() {
-        for (k, v) in obj {
-            if let Some(value) = json_to_widget_data_value(v, k, manifest_kinds.get(k)) {
-                fields.insert(k.clone(), value);
-            }
+    for (k, v) in map {
+        if let Some(value) = json_to_widget_data_value(v, k, manifest_kinds.get(k)) {
+            fields.insert(k.clone(), value);
         }
     }
     web::WidgetDataStruct { fields }
@@ -588,7 +586,16 @@ fn scene_widget_to_proto(widget: &scene::Widget, registry: &WidgetRegistry) -> w
             std::collections::HashMap::new()
         };
 
-    let params = json_to_widget_data_struct(&widget.params, &manifest_kinds);
+    let params = match widget.params.as_object() {
+        Some(map) => map_to_widget_data_struct(map, &manifest_kinds),
+        None => {
+            tracing::warn!(
+                widget_id = %widget.id,
+                "stored widget.params is not a JSON object; surfacing empty params"
+            );
+            web::WidgetDataStruct::default()
+        }
+    };
 
     web::Widget {
         id: widget.id.to_string(),
@@ -716,7 +723,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let params = config.params.unwrap_or_default();
         validate_widget_params(manifest, &params, ValidateMode::Add)?;
         let resolved = build_widget_params(manifest, &params);
-        let params_json = widget_data_struct_to_json(&resolved);
+        let params_json = serde_json::Value::Object(widget_data_struct_to_map(&resolved));
 
         let scene = scene::Scene::fullscreen(widget_uid, params_json);
         let scene_id = scene.id.to_string();
@@ -1121,7 +1128,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let params = config_req.params.unwrap_or_default();
         validate_widget_params(manifest, &params, ValidateMode::Add)?;
         let resolved = build_widget_params(manifest, &params);
-        let params_json = widget_data_struct_to_json(&resolved);
+        let params_json = serde_json::Value::Object(widget_data_struct_to_map(&resolved));
 
         let widget = scene::Widget::new(widget_uid, params_json, position, size);
         let widget_id = widget.id.to_string();
@@ -1190,7 +1197,7 @@ impl GrpcSceneManagementService for SceneManagementService {
 
             let params = req.params.unwrap_or_default();
             validate_widget_params(manifest, &params, ValidateMode::Update)?;
-            let params_json = widget_data_struct_to_json(&params);
+            let params_json = serde_json::Value::Object(widget_data_struct_to_map(&params));
 
             let widget = scene
                 .widgets
@@ -1413,7 +1420,7 @@ mod tests {
     }
 
     #[test]
-    fn widget_data_struct_to_json_round_trips_each_arm() {
+    fn widget_data_struct_round_trips_each_arm_through_json_map() {
         use bmc_widget::ParamKind;
         let manifest_kinds = std::collections::HashMap::from([
             (
@@ -1463,8 +1470,8 @@ mod tests {
             .collect(),
         };
 
-        let json = widget_data_struct_to_json(&s);
-        let back = json_to_widget_data_struct(&json, &manifest_kinds);
+        let map = widget_data_struct_to_map(&s);
+        let back = map_to_widget_data_struct(&map, &manifest_kinds);
         assert_eq!(back.fields, s.fields);
     }
 
@@ -1476,18 +1483,21 @@ mod tests {
     }
 
     #[test]
-    fn json_to_widget_data_struct_falls_back_to_shape_inference_without_manifest() {
+    fn map_to_widget_data_struct_falls_back_to_shape_inference_without_manifest() {
         use web::widget_data_value::Kind;
         let manifest_kinds: std::collections::HashMap<String, bmc_widget::ParamKind> =
             std::collections::HashMap::new();
-        let json = serde_json::json!({
+        let map = serde_json::json!({
             "s": "hello",
             "i": 5,
             "d": 1.5,
             "b": true,
             "n": serde_json::Value::Null,
-        });
-        let back = json_to_widget_data_struct(&json, &manifest_kinds);
+        })
+        .as_object()
+        .expect("BUG: literal is an object")
+        .clone();
+        let back = map_to_widget_data_struct(&map, &manifest_kinds);
         assert!(matches!(back.fields["s"].kind, Some(Kind::StringValue(_))));
         assert!(matches!(back.fields["i"].kind, Some(Kind::IntegerValue(5))));
         assert!(matches!(back.fields["d"].kind, Some(Kind::DoubleValue(_))));
