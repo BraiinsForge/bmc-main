@@ -625,7 +625,7 @@ fn render_comparison_image(
     };
     let filter = comparison_filter(size);
     let status = Command::new(ffmpeg)
-        .args(["-y", "-loglevel", "error", "-i"])
+        .args(["-nostdin", "-y", "-loglevel", "error", "-i"])
         .arg(baseline)
         .arg("-i")
         .arg(diff)
@@ -680,7 +680,16 @@ fn render_comparison_video(
     }
 
     // Build -i args: baseline0 diff0 baseline1 diff1 …
-    let mut args: Vec<std::ffi::OsString> = vec!["-y".into(), "-loglevel".into(), "error".into()];
+    // `-nostdin` so ffmpeg doesn't enter its interactive console when one of
+    // the parallel jobs happens to inherit a TTY stdin (which surfaces as
+    // `Enter command: <target>|all <time>|-1 <command>[ <argument>]` blocking
+    // the verify run).
+    let mut args: Vec<std::ffi::OsString> = vec![
+        "-nostdin".into(),
+        "-y".into(),
+        "-loglevel".into(),
+        "error".into(),
+    ];
     for (baseline, diff) in &pairs {
         args.extend(["-i".into(), baseline.as_os_str().to_owned()]);
         args.extend(["-i".into(), diff.as_os_str().to_owned()]);

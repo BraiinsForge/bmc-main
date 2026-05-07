@@ -119,6 +119,7 @@ fn encode_video(ffmpeg: &Path, frame_dir: &Path, output: &Path, fps: u32) -> Res
 
     let status = Command::new(ffmpeg)
         .args([
+            "-nostdin",
             "-y",
             "-loglevel",
             "warning",
