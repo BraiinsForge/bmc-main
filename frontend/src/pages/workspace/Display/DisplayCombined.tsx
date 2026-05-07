@@ -458,7 +458,8 @@ class View extends Component<Props, State> {
             const paramsFieldErrors = fields.params as Maybe<Record<string, string[]>>;
             const fieldErrors: Record<string, string> = {};
             if (paramsFieldErrors) {
-                for (const [key, errs] of Object.entries(paramsFieldErrors)) {
+                for (const [rawKey, errs] of Object.entries(paramsFieldErrors)) {
+                    const key = rawKey.replaceAll('"', '').replaceAll("'", '');
                     const msg = pb.renderFieldErrorsAsList(errs);
                     if (msg) fieldErrors[key] = msg;
                 }

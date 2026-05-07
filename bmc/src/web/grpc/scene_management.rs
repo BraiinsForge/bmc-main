@@ -573,7 +573,7 @@ pub(crate) fn validate_widget_params(
             if !params.fields.contains_key(key.as_str()) {
                 violations.push(
                     format!(r#"params["{}"]"#, key.as_str()),
-                    "missing in UpdateWidget request",
+                    "Value is required",
                 );
             }
         }
@@ -582,7 +582,7 @@ pub(crate) fn validate_widget_params(
     for (key, value) in &params.fields {
         let path = format!(r#"params["{key}"]"#);
         let Some(def) = manifest.params.get(key.as_str()) else {
-            violations.push(path, "unknown param");
+            violations.push(path, "Unknown param");
             continue;
         };
         let Some(kind) = value.kind.as_ref() else {
@@ -592,7 +592,7 @@ pub(crate) fn validate_widget_params(
 
         if matches!(kind, VK::NullValue(_)) {
             if !def.is_optional {
-                violations.push(path, "null_value on required param");
+                violations.push(path, "Value is required");
             }
             continue;
         }
@@ -1306,8 +1306,9 @@ impl GrpcSceneManagementService for SceneManagementService {
 
         let scene_id_key = scene::SceneId::from(scene_id);
         let widget_id_key = scene::WidgetId::from(widget_id);
+        let showing = self.scene_is_showing(&scene_id_key).await;
 
-        {
+        let widget_snapshot = {
             let mut config = self.config_handle.write().await;
             let scene = config
                 .scenes
@@ -1352,12 +1353,18 @@ impl GrpcSceneManagementService for SceneManagementService {
             widget.size = size;
             widget.params = params_json;
 
-            let widget_snapshot = widget.clone();
-            validate_widget_placement(scene, &widget_snapshot, Some(widget_id_key))?;
+            let updated_widget = widget.clone();
+            validate_widget_placement(scene, &updated_widget, Some(widget_id_key))?;
 
             Self::save_config(&mut config).await?;
-        }
+            updated_widget
+        };
 
+        if showing {
+            let instance_id = widget_snapshot.id.as_uuid().to_string();
+            self.coordinator.stop_widget(&instance_id).await;
+            self.try_spawn_widget(&scene_id_key, &widget_snapshot).await;
+        }
         self.restore_active_scene().await;
 
         Ok(Response::new(()))

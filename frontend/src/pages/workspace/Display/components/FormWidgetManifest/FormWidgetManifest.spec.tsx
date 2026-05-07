@@ -73,5 +73,14 @@ describe('formStateToWidgetDataStruct', () => {
         };
         const result = formStateToWidgetDataStruct(manifest, params);
         expect(result.fields.unknown).toBeUndefined();
+        expect(result.fields.name.kind).toEqual({ case: 'stringValue', value: '' });
+    });
+
+    test('fills missing manifest keys with defaults/nulls', () => {
+        const result = formStateToWidgetDataStruct(manifest, {});
+        expect(result.fields.name.kind).toEqual({ case: 'stringValue', value: '' });
+        expect(result.fields.count.kind.case).toBe('nullValue');
+        expect(result.fields.enabled.kind).toEqual({ case: 'booleanValue', value: false });
+        expect(result.fields.tz.kind.case).toBe('nullValue');
     });
 });
