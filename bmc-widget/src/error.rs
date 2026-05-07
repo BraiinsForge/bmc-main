@@ -42,4 +42,7 @@ pub enum ManifestError {
 
     #[error("parameter '{name}' uses enum constraint but no enum values provided")]
     ParamEnumMissing { name: String },
+
+    #[error("parameter {name:?}: {reason}")]
+    InvalidParam { name: String, reason: String },
 }

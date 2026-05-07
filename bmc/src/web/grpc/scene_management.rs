@@ -6,7 +6,7 @@ use std::time::Duration;
 use bmc_grpc::web;
 use bmc_grpc::web::scene_management_service_server::SceneManagementService as GrpcSceneManagementService;
 use bmc_ipc::SizeType;
-use bmc_widget::ParamDefinition;
+use bmc_widget::{ParamDefinition, ParamKey};
 use futures::stream::{BoxStream, StreamExt};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time;
@@ -85,7 +85,7 @@ impl SceneManagementService {
 }
 
 fn build_widget_params(
-    manifest_params: &std::collections::HashMap<String, ParamDefinition>,
+    manifest_params: &std::collections::HashMap<ParamKey, ParamDefinition>,
     user_overrides: Option<&web::WidgetDataStruct>,
 ) -> serde_json::Value {
     let _ = manifest_params;
@@ -126,7 +126,7 @@ fn widget_info_to_proto(info: &crate::widget::WidgetInfo) -> web::WidgetManifest
         params: manifest
             .params
             .iter()
-            .map(|(key, param)| param_definition_to_proto(key, param))
+            .map(|(key, param)| param_definition_to_proto(key.as_str(), param))
             .collect(),
     }
 }
