@@ -127,7 +127,7 @@ mod tests {
             binary: PathBuf::from("bin/widget"),
             settings: vec![],
             sizes,
-            params: std::collections::HashMap::new(),
+            params: indexmap::IndexMap::new(),
         };
 
         WidgetInfo {

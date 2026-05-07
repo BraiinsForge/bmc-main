@@ -1,23 +1,197 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use bmc_grpc::web;
 use bmc_grpc::web::scene_management_service_server::SceneManagementService as GrpcSceneManagementService;
 use bmc_ipc::SizeType;
-use bmc_widget::{ParamDefinition, ParamType};
+use bmc_shared_time::time::Timezone;
+use bmc_widget::{ParamDefinition, ParamKind};
 use futures::stream::{BoxStream, StreamExt};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time;
 use tokio_stream::wrappers::IntervalStream;
-use tonic::{Request, Response, Status};
+use tonic::{Code, Request, Response, Status};
+use tonic_types::{ErrorDetails, StatusExt};
 use uuid::Uuid;
 
 use crate::config::ConfigHandle;
 use crate::data::{SceneCycling, SceneCyclingTransition};
 use crate::scene;
+use crate::web::grpc::GrpcError;
+use crate::web::grpc::shared::FieldViolations;
 use crate::widget::{Coordinator, WidgetRegistry};
+
+/// Wrap FieldViolations into InvalidArgument + BadRequest details. Callers
+/// must check `is_empty()` themselves — this builds the status unconditionally.
+fn bad_request_status(violations: FieldViolations) -> Status {
+    Status::with_error_details(
+        Code::InvalidArgument,
+        GrpcError::BadRequest.to_string(),
+        ErrorDetails::with_bad_request(violations),
+    )
+}
+
+fn parse_uuid_field(s: &str, path: &str, violations: &mut FieldViolations) -> Option<Uuid> {
+    if let Ok(uuid) = Uuid::parse_str(s) {
+        Some(uuid)
+    } else {
+        violations.push(path.to_owned(), format!("invalid UUID: {s:?}"));
+        None
+    }
+}
+
+fn parse_grid_axis(value: u32, path: &str, violations: &mut FieldViolations) -> Option<u8> {
+    if let Ok(v) = u8::try_from(value) {
+        Some(v)
+    } else {
+        violations.push(path.to_owned(), format!("{value} does not fit in u8"));
+        None
+    }
+}
+
+fn parse_widget_size(
+    size: i32,
+    path: &str,
+    violations: &mut FieldViolations,
+) -> Option<scene::WidgetSize> {
+    match web::WidgetSize::try_from(size) {
+        Ok(web::WidgetSize::Small) => Some(scene::WidgetSize::Small),
+        Ok(web::WidgetSize::Medium) => Some(scene::WidgetSize::Medium),
+        Ok(web::WidgetSize::Large) => Some(scene::WidgetSize::Large),
+        Ok(web::WidgetSize::Full) => Some(scene::WidgetSize::Full),
+        Ok(web::WidgetSize::Unspecified) => {
+            violations.push(
+                path.to_owned(),
+                "must be one of {Small, Medium, Large, Full}",
+            );
+            None
+        }
+        Err(_) => {
+            violations.push(
+                path.to_owned(),
+                format!("must be one of {{Small, Medium, Large, Full}} (got {size})"),
+            );
+            None
+        }
+    }
+}
+
+struct ParsedAddFullscreenShape {
+    config: web::WidgetConfig,
+    widget_uid: Uuid,
+}
+
+fn parse_add_fullscreen_shape(
+    req: web::AddFullscreenSceneRequest,
+) -> Result<ParsedAddFullscreenShape, Status> {
+    let mut shape = FieldViolations::new();
+    let config = req.config.or_else(|| {
+        shape.push("config", "config is required");
+        None
+    });
+    let widget_uid = config
+        .as_ref()
+        .and_then(|c| parse_uuid_field(&c.widget_uid, "config.widget_uid", &mut shape));
+    if !shape.is_empty() {
+        return Err(bad_request_status(shape));
+    }
+
+    match (config, widget_uid) {
+        (Some(config), Some(widget_uid)) => Ok(ParsedAddFullscreenShape { config, widget_uid }),
+        _ => Err(Status::internal(
+            "BUG: shape parsing succeeded with missing required values",
+        )),
+    }
+}
+
+struct ParsedAddWidgetShape {
+    scene_id: Uuid,
+    position: scene::WidgetPosition,
+    size: scene::WidgetSize,
+    config_req: web::WidgetConfig,
+    widget_uid: Uuid,
+}
+
+fn parse_add_widget_shape(req: web::AddWidgetRequest) -> Result<ParsedAddWidgetShape, Status> {
+    let mut shape = FieldViolations::new();
+
+    let scene_id = parse_uuid_field(&req.scene_id, "scene_id", &mut shape);
+    let proto_pos = req.position.unwrap_or_default();
+    let row = parse_grid_axis(proto_pos.row, "position.row", &mut shape);
+    let col = parse_grid_axis(proto_pos.col, "position.col", &mut shape);
+    let size = parse_widget_size(req.size, "size", &mut shape);
+    let config_req = req.config.or_else(|| {
+        shape.push("config", "config is required");
+        None
+    });
+    let widget_uid = config_req
+        .as_ref()
+        .and_then(|c| parse_uuid_field(&c.widget_uid, "config.widget_uid", &mut shape));
+
+    if !shape.is_empty() {
+        return Err(bad_request_status(shape));
+    }
+
+    match (scene_id, row, col, size, config_req, widget_uid) {
+        (Some(scene_id), Some(row), Some(col), Some(size), Some(config_req), Some(widget_uid)) => {
+            Ok(ParsedAddWidgetShape {
+                scene_id,
+                position: scene::WidgetPosition { row, col },
+                size,
+                config_req,
+                widget_uid,
+            })
+        }
+        _ => Err(Status::internal(
+            "BUG: shape parsing succeeded with missing required values",
+        )),
+    }
+}
+
+struct ParsedUpdateWidgetShape {
+    scene_id: Uuid,
+    widget_id: Uuid,
+    proto_position: web::WidgetPosition,
+    position: scene::WidgetPosition,
+    size: scene::WidgetSize,
+    params: Option<web::WidgetDataStruct>,
+}
+
+fn parse_update_widget_shape(
+    req: web::UpdateWidgetRequest,
+) -> Result<ParsedUpdateWidgetShape, Status> {
+    let mut shape = FieldViolations::new();
+
+    let scene_id = parse_uuid_field(&req.scene_id, "scene_id", &mut shape);
+    let widget_id = parse_uuid_field(&req.id, "id", &mut shape);
+    let proto_position = req.position.unwrap_or_default();
+    let row = parse_grid_axis(proto_position.row, "position.row", &mut shape);
+    let col = parse_grid_axis(proto_position.col, "position.col", &mut shape);
+    let size = parse_widget_size(req.size, "size", &mut shape);
+
+    if !shape.is_empty() {
+        return Err(bad_request_status(shape));
+    }
+
+    match (scene_id, widget_id, row, col, size) {
+        (Some(scene_id), Some(widget_id), Some(row), Some(col), Some(size)) => {
+            Ok(ParsedUpdateWidgetShape {
+                scene_id,
+                widget_id,
+                proto_position,
+                position: scene::WidgetPosition { row, col },
+                size,
+                params: req.params,
+            })
+        }
+        _ => Err(Status::internal(
+            "BUG: shape parsing succeeded with missing required values",
+        )),
+    }
+}
 
 pub(crate) struct SceneManagementService {
     widget_registry: Arc<WidgetRegistry>,
@@ -26,6 +200,11 @@ pub(crate) struct SceneManagementService {
     /// Scene currently held open by a `preview_scene` stream. While set,
     /// that scene overrides the first-enabled pick in `restore_active_scene`
     /// so edits made during a preview stay focused on it.
+    ///
+    /// **Lock order:** always acquire this mutex *before* `config_handle`.
+    /// `PreviewGuard::drop` and every method on this service follows that
+    /// order; without it tokio's write-preferring `RwLock` can deadlock
+    /// under a queued config writer.
     preview_scene_id: Arc<Mutex<Option<scene::SceneId>>>,
 }
 
@@ -46,33 +225,14 @@ impl SceneManagementService {
     /// Refresh the compositor's cycling list from current config; if a
     /// preview is active, also push that scene as the destructive active.
     async fn restore_active_scene(&self) {
+        let preview_id = *self.preview_scene_id.lock().await;
         let config = self.config_handle.read().await;
         self.coordinator.refresh_scene_cycling(&config.scenes);
-        let preview_id = *self.preview_scene_id.lock().await;
         if let Some(preview_id) = preview_id
             && let Some(scene) = config.scenes.get(&preview_id)
         {
             self.coordinator.set_active_scene(scene);
         }
-    }
-
-    /// Whether the given scene is currently shown on the display — either
-    /// because it's enabled or because it's being previewed. Gates the
-    /// "apply to live compositor" branches of add_widget / update_widget so
-    /// edits during a preview reach the widget process that's already up.
-    async fn scene_is_showing(&self, scene_id: &scene::SceneId) -> bool {
-        let config = self.config_handle.read().await;
-        let enabled = config.scenes.get(scene_id).is_some_and(|s| s.enabled);
-        drop(config);
-        enabled || self.preview_scene_id.lock().await.as_ref() == Some(scene_id)
-    }
-
-    /// Spawn a widget and log failures instead of propagating them.
-    async fn try_spawn_widget(&self, scene_id: &scene::SceneId, widget: &scene::Widget) {
-        // Settings travel through the compositor's cached state — each
-        // widget's initial configure batch replays them on connect, so the
-        // runtime spawn path no longer threads them through.
-        self.coordinator.spawn_widget(scene_id, widget).await;
     }
 
     /// Save config, returning a gRPC-friendly error on failure.
@@ -84,24 +244,28 @@ impl SceneManagementService {
     }
 }
 
-/// Build a params object starting from the manifest's declared defaults and
-/// overlaying any user-provided overrides on top. Used on widget creation,
-/// where omitted params fall back to manifest defaults.
-fn build_widget_params(
-    manifest_params: &std::collections::HashMap<String, ParamDefinition>,
-    user_overrides: &std::collections::HashMap<String, String>,
-) -> serde_json::Value {
-    let mut map: serde_json::Map<String, serde_json::Value> = manifest_params
-        .iter()
-        .map(|(key, def)| (key.clone(), def.default.clone()))
-        .collect();
-
-    for (key, val) in user_overrides {
-        let parsed = serde_json::from_str(val).unwrap_or(serde_json::Value::String(val.clone()));
-        map.insert(key.clone(), parsed);
+fn params_to_widget_data_struct(
+    params: &BTreeMap<bmc_widget::ParamKey, bmc_widget::ParamValue>,
+) -> web::WidgetDataStruct {
+    web::WidgetDataStruct {
+        fields: params
+            .iter()
+            .map(|(k, v)| (k.as_str().to_owned(), param_value_to_wire(v)))
+            .collect(),
     }
+}
 
-    map.into()
+fn param_value_to_wire(v: &bmc_widget::ParamValue) -> web::WidgetDataValue {
+    use bmc_widget::ParamValue as PV;
+    use web::widget_data_value::Kind as VK;
+    let arm = match v {
+        PV::Null => VK::NullValue(()),
+        PV::Boolean(b) => VK::BooleanValue(*b),
+        PV::Integer(i) => VK::IntegerValue(*i),
+        PV::Double(d) => VK::DoubleValue(*d),
+        PV::String(s) => VK::StringValue(s.clone()),
+    };
+    web::WidgetDataValue { kind: Some(arm) }
 }
 
 fn size_type_to_proto(size: SizeType) -> i32 {
@@ -113,26 +277,85 @@ fn size_type_to_proto(size: SizeType) -> i32 {
     }
 }
 
-fn param_type_to_proto(param_type: ParamType) -> i32 {
-    match param_type {
-        ParamType::String => web::ManifestParamType::String.into(),
-        ParamType::Boolean => web::ManifestParamType::Boolean.into(),
-        ParamType::Number => web::ManifestParamType::Number.into(),
-        ParamType::Array => web::ManifestParamType::Array.into(),
-        ParamType::Timezone => web::ManifestParamType::Timezone.into(),
+fn param_definition_to_proto(key: &str, def: &ParamDefinition) -> web::ManifestParamDefinition {
+    use web::manifest_param_definition::Kind as PK;
+    let kind = match &def.kind {
+        ParamKind::String {
+            format,
+            enum_values,
+            default_value,
+        } => PK::ParamString(web::ParamString {
+            format: format.map(string_format_to_proto).map(i32::from),
+            enum_values: enum_values
+                .iter()
+                .map(|o| web::StringOption {
+                    value: o.value.clone(),
+                    label: o.label.clone(),
+                })
+                .collect(),
+            default_value: default_value.clone(),
+        }),
+        ParamKind::Double {
+            min,
+            max,
+            step,
+            enum_values,
+            default_value,
+        } => PK::ParamDouble(web::ParamDouble {
+            min: *min,
+            max: *max,
+            step: *step,
+            enum_values: enum_values
+                .iter()
+                .map(|o| web::DoubleOption {
+                    value: o.value,
+                    label: o.label.clone(),
+                })
+                .collect(),
+            default_value: *default_value,
+        }),
+        ParamKind::Integer {
+            min,
+            max,
+            step,
+            enum_values,
+            default_value,
+        } => PK::ParamInteger(web::ParamInteger {
+            min: *min,
+            max: *max,
+            step: *step,
+            enum_values: enum_values
+                .iter()
+                .map(|o| web::IntegerOption {
+                    value: o.value,
+                    label: o.label.clone(),
+                })
+                .collect(),
+            default_value: *default_value,
+        }),
+        ParamKind::Boolean { default_value } => PK::ParamBoolean(web::ParamBoolean {
+            default_value: *default_value,
+        }),
+        ParamKind::Timezone { default_value } => PK::ParamTimezone(web::ParamTimezone {
+            default_value: default_value.clone(),
+        }),
+    };
+    web::ManifestParamDefinition {
+        key: key.to_owned(),
+        name: def.name.clone(),
+        description: def.description.clone(),
+        is_optional: def.is_optional,
+        kind: Some(kind),
     }
 }
 
-fn param_definition_to_proto(key: &str, param: &ParamDefinition) -> web::ManifestParamDefinition {
-    web::ManifestParamDefinition {
-        key: key.to_owned(),
-        name: param.name.clone(),
-        param_type: param_type_to_proto(param.param_type),
-        description: param.description.clone(),
-        default_value: param.default.to_string(),
-        enum_values: param.enum_values.clone().unwrap_or_default(),
-        min: param.min,
-        max: param.max,
+fn string_format_to_proto(f: bmc_widget::StringFormat) -> web::StringFormat {
+    use bmc_widget::StringFormat as F;
+    match f {
+        F::Date => web::StringFormat::Date,
+        F::Time => web::StringFormat::Time,
+        F::Email => web::StringFormat::Email,
+        F::Uri => web::StringFormat::Uri,
     }
 }
 
@@ -143,8 +366,6 @@ fn widget_info_to_proto(info: &crate::widget::WidgetInfo) -> web::WidgetManifest
         name: manifest.name.clone(),
         description: manifest.description.clone(),
         version: manifest.version.to_string(),
-        author_name: manifest.author.as_ref().map(|a| a.name.clone()),
-        author_url: manifest.author.as_ref().and_then(|a| a.url.clone()),
         supported_sizes: manifest
             .sizes
             .iter()
@@ -154,37 +375,9 @@ fn widget_info_to_proto(info: &crate::widget::WidgetInfo) -> web::WidgetManifest
         params: manifest
             .params
             .iter()
-            .map(|(key, param)| param_definition_to_proto(key, param))
+            .map(|(key, param)| param_definition_to_proto(key.as_str(), param))
             .collect(),
     }
-}
-
-fn proto_size_to_scene(size: i32) -> Result<scene::WidgetSize, Status> {
-    match web::WidgetSize::try_from(size) {
-        Ok(web::WidgetSize::Small) => Ok(scene::WidgetSize::Small),
-        Ok(web::WidgetSize::Medium) => Ok(scene::WidgetSize::Medium),
-        Ok(web::WidgetSize::Large) => Ok(scene::WidgetSize::Large),
-        Ok(web::WidgetSize::Full) => Ok(scene::WidgetSize::Full),
-        Ok(web::WidgetSize::Unspecified) => {
-            Err(Status::invalid_argument("widget size unspecified"))
-        }
-        Err(_) => Err(Status::invalid_argument("invalid widget size")),
-    }
-}
-
-/// Convert the proto's u32 row/col into the scene model's u8, rejecting
-/// values that don't fit instead of silently clamping to u8::MAX — a
-/// clamped position would subsequently fail the bounds check anyway,
-/// but reporting it as an explicit argument error gives the client a
-/// much more useful message than "out of grid bounds".
-fn proto_position_to_scene(position: web::WidgetPosition) -> Result<scene::WidgetPosition, Status> {
-    let row = u8::try_from(position.row).map_err(|_| {
-        Status::invalid_argument(format!("row {} does not fit in u8", position.row))
-    })?;
-    let col = u8::try_from(position.col).map_err(|_| {
-        Status::invalid_argument(format!("col {} does not fit in u8", position.col))
-    })?;
-    Ok(scene::WidgetPosition { row, col })
 }
 
 /// Rejects widgets that either fall outside the display grid or collide with
@@ -245,37 +438,195 @@ fn reject_update_widget_in_fullscreen(
     Ok(())
 }
 
-fn scene_widget_size_to_proto(size: scene::WidgetSize) -> i32 {
-    match size {
-        scene::WidgetSize::Small => web::WidgetSize::Small.into(),
-        scene::WidgetSize::Medium => web::WidgetSize::Medium.into(),
-        scene::WidgetSize::Large => web::WidgetSize::Large.into(),
-        scene::WidgetSize::Full => web::WidgetSize::Full.into(),
+pub(crate) enum ValidateMode {
+    Add,
+    Update,
+}
+
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "enum is cheap; by-value keeps call-site ergonomic"
+)]
+/// Validate a `WidgetDataStruct` against the manifest and project it onto
+/// a typed `BTreeMap<ParamKey, ParamValue>`. On `Add`, manifest keys missing
+/// from `params` are seeded with the manifest's default (or `Null` for
+/// optional params without a default). On `Update`, missing keys are
+/// reported as violations. Unknown override keys are also reported.
+pub(crate) fn validate_widget_params(
+    manifest: &bmc_widget::Manifest,
+    params: &web::WidgetDataStruct,
+    mode: ValidateMode,
+) -> Result<BTreeMap<bmc_widget::ParamKey, bmc_widget::ParamValue>, FieldViolations> {
+    use web::widget_data_value::Kind as VK;
+    let mut violations = FieldViolations::new();
+    let mut typed = BTreeMap::new();
+
+    for (key, def) in &manifest.params {
+        let path = format!("params[{:?}]", key.as_str());
+        let Some(wdv) = params.fields.get(key.as_str()) else {
+            if matches!(mode, ValidateMode::Update) {
+                violations.push(path, "Value is required");
+            } else {
+                typed.insert(
+                    key.clone(),
+                    bmc_widget::ParamValue::from_param_kind_default(&def.kind),
+                );
+            }
+            continue;
+        };
+
+        let Some(kind) = wdv.kind.as_ref() else {
+            violations.push(path, "WidgetDataValue.kind unset");
+            continue;
+        };
+
+        if matches!(kind, VK::NullValue(())) {
+            if def.is_optional {
+                typed.insert(key.clone(), bmc_widget::ParamValue::Null);
+            } else {
+                violations.push(path, "Value is required");
+            }
+            continue;
+        }
+
+        if let Some(value) =
+            validate_and_project_param_value(&path, &def.kind, kind, &mut violations)
+        {
+            typed.insert(key.clone(), value);
+        }
+    }
+
+    for key in params.fields.keys() {
+        if !manifest.params.contains_key(key.as_str()) {
+            // Debug-format the key so a client-supplied key with quotes,
+            // newlines, etc. cannot break the FieldViolation field path.
+            violations.push(format!("params[{key:?}]"), "Unknown param");
+        }
+    }
+
+    if violations.is_empty() {
+        Ok(typed)
+    } else {
+        Err(violations)
+    }
+}
+
+fn type_mismatch_message(kind: &ParamKind) -> &'static str {
+    match kind {
+        ParamKind::String { .. } => "Must be text",
+        ParamKind::Integer { .. } => "Must be a whole number",
+        ParamKind::Double { .. } => "Must be a number",
+        ParamKind::Boolean { .. } => "Must be true or false",
+        ParamKind::Timezone { .. } => "Must be a timezone",
+    }
+}
+
+fn validate_and_project_param_value(
+    path: &str,
+    param_kind: &ParamKind,
+    kind: &web::widget_data_value::Kind,
+    violations: &mut FieldViolations,
+) -> Option<bmc_widget::ParamValue> {
+    use bmc_widget::ParamValue as PV;
+    use web::widget_data_value::Kind as VK;
+    match (param_kind, kind) {
+        (ParamKind::String { enum_values, .. }, VK::StringValue(s)) => {
+            if !enum_values.is_empty() && !enum_values.iter().any(|o| &o.value == s) {
+                violations.push(path.to_owned(), "Must be one of the listed options");
+                return None;
+            }
+            Some(PV::String(s.clone()))
+        }
+        (ParamKind::Timezone { .. }, VK::StringValue(s)) => {
+            if !Timezone::list().iter().any(|tz| tz.iana() == s) {
+                violations.push(path.to_owned(), "Must be a valid timezone");
+                return None;
+            }
+            Some(PV::String(s.clone()))
+        }
+        (ParamKind::Boolean { .. }, VK::BooleanValue(b)) => Some(PV::Boolean(*b)),
+        (
+            ParamKind::Integer {
+                min,
+                max,
+                enum_values,
+                ..
+            },
+            VK::IntegerValue(i),
+        ) => {
+            let mut ok = true;
+            if let Some(lo) = min
+                && i < lo
+            {
+                violations.push(path.to_owned(), format!("Must be at least {lo}"));
+                ok = false;
+            }
+            if let Some(hi) = max
+                && i > hi
+            {
+                violations.push(path.to_owned(), format!("Must be at most {hi}"));
+                ok = false;
+            }
+            if !enum_values.is_empty() && !enum_values.iter().any(|o| o.value == *i) {
+                violations.push(path.to_owned(), "Must be one of the listed options");
+                ok = false;
+            }
+            if ok { Some(PV::Integer(*i)) } else { None }
+        }
+        (
+            ParamKind::Double {
+                min,
+                max,
+                enum_values,
+                ..
+            },
+            VK::DoubleValue(d),
+        ) => {
+            if !d.is_finite() {
+                violations.push(path.to_owned(), "Must be a finite number");
+                return None;
+            }
+            let mut ok = true;
+            if let Some(lo) = min
+                && d < lo
+            {
+                violations.push(path.to_owned(), format!("Must be at least {lo}"));
+                ok = false;
+            }
+            if let Some(hi) = max
+                && d > hi
+            {
+                violations.push(path.to_owned(), format!("Must be at most {hi}"));
+                ok = false;
+            }
+            if !enum_values.is_empty()
+                && !enum_values.iter().any(|o| {
+                    bmc_widget::f64_canonical_bits(o.value) == bmc_widget::f64_canonical_bits(*d)
+                })
+            {
+                violations.push(path.to_owned(), "Must be one of the listed options");
+                ok = false;
+            }
+            if ok { Some(PV::Double(*d)) } else { None }
+        }
+        (other_kind, _) => {
+            violations.push(path.to_owned(), type_mismatch_message(other_kind));
+            None
+        }
     }
 }
 
 fn scene_widget_to_proto(widget: &scene::Widget) -> web::Widget {
-    // Convert params JSON object to map<string, string>
-    let params = widget
-        .params
-        .as_object()
-        .map(|obj| {
-            obj.iter()
-                .map(|(k, v)| (k.clone(), v.to_string()))
-                .collect()
-        })
-        .unwrap_or_default();
-
     web::Widget {
-        id: widget.id.as_uuid().to_string(),
+        id: widget.id.to_string(),
         position: Some(web::WidgetPosition {
             row: u32::from(widget.position.row),
             col: u32::from(widget.position.col),
         }),
-        size: scene_widget_size_to_proto(widget.size),
+        size: size_type_to_proto(widget.size.into()),
         config: Some(web::WidgetConfig {
             widget_uid: widget.widget_type_id.to_string(),
-            params,
+            params: Some(params_to_widget_data_struct(&widget.params)),
         }),
     }
 }
@@ -299,6 +650,19 @@ fn scene_to_proto(scene: &scene::Scene) -> web::Scene {
             secs
         }),
         kind: Some(kind),
+    }
+}
+
+fn parse_scene_cycling_transition(value: i32) -> Result<SceneCyclingTransition, Status> {
+    match web::SceneCyclingTransition::try_from(value) {
+        Ok(web::SceneCyclingTransition::Slide) => Ok(SceneCyclingTransition::Slide),
+        Ok(web::SceneCyclingTransition::Fade) => Ok(SceneCyclingTransition::Fade),
+        Ok(web::SceneCyclingTransition::Unspecified) => Err(Status::invalid_argument(
+            "scene_cycling.transition must be Slide or Fade (got Unspecified)",
+        )),
+        Err(_) => Err(Status::invalid_argument(format!(
+            "scene_cycling.transition: unknown value {value}"
+        ))),
     }
 }
 
@@ -367,38 +731,34 @@ impl GrpcSceneManagementService for SceneManagementService {
         &self,
         request: Request<web::AddFullscreenSceneRequest>,
     ) -> Result<Response<String>, Status> {
-        let req = request.into_inner();
-        let config = req
-            .config
-            .ok_or_else(|| Status::invalid_argument("config is required"))?;
+        let ParsedAddFullscreenShape { config, widget_uid } =
+            parse_add_fullscreen_shape(request.into_inner())?;
 
-        let widget_uid = Uuid::parse_str(&config.widget_uid)
-            .map_err(|_| Status::invalid_argument("invalid widget UID"))?;
-
-        let manifest_info = self
+        let info = self
             .widget_registry
             .get(&widget_uid)
-            .ok_or_else(|| Status::not_found(format!("widget not found: {widget_uid}")))?;
+            .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
+        let manifest = &info.manifest;
 
-        let params = build_widget_params(&manifest_info.manifest.params, &config.params);
+        if !self
+            .widget_registry
+            .supports_size(&widget_uid, SizeType::Full)
+        {
+            return Err(Status::failed_precondition(format!(
+                "widget {widget_uid} does not support size {:?}",
+                SizeType::Full,
+            )));
+        }
 
-        let widget = scene::Widget::new(
-            widget_uid,
-            params,
-            scene::WidgetPosition { row: 0, col: 0 },
-            scene::WidgetSize::Full,
-        );
-        let widget_clone = widget.clone();
+        let params = config.params.unwrap_or_default();
+        let typed_params = validate_widget_params(manifest, &params, ValidateMode::Add)
+            .map_err(bad_request_status)?;
 
-        let scene = scene::Scene {
-            id: scene::SceneId::generate(),
-            enabled: true,
-            cycle_duration: None,
-            kind: scene::SceneKind::Fullscreen,
-            widgets: indexmap::indexmap! { widget.id => widget },
-        };
-        let scene_id_key = scene.id;
-        let scene_id = scene_id_key.to_string();
+        let scene = scene::Scene::fullscreen(widget_uid, typed_params);
+        let scene_id = scene.id.to_string();
+
+        let scene_enabled = scene.enabled;
+        let scene_key = scene.id;
 
         {
             let mut config = self.config_handle.write().await;
@@ -406,7 +766,12 @@ impl GrpcSceneManagementService for SceneManagementService {
             Self::save_config(&mut config).await?;
         }
 
-        self.try_spawn_widget(&scene_id_key, &widget_clone).await;
+        if scene_enabled {
+            let config = self.config_handle.read().await;
+            if let Some(scene) = config.scenes.get(&scene_key) {
+                self.coordinator.spawn_scene_widgets(scene).await;
+            }
+        }
         self.restore_active_scene().await;
 
         Ok(Response::new(scene_id))
@@ -441,12 +806,6 @@ impl GrpcSceneManagementService for SceneManagementService {
         let id =
             Uuid::parse_str(&req.id).map_err(|_| Status::invalid_argument("invalid scene ID"))?;
 
-        if req.cycle_duration_sec == Some(0) {
-            return Err(Status::invalid_argument(
-                "cycle_duration_sec must be >= 1 when set",
-            ));
-        }
-
         let scene_id_key = scene::SceneId::from(id);
         let was_enabled;
         {
@@ -455,6 +814,12 @@ impl GrpcSceneManagementService for SceneManagementService {
                 .scenes
                 .get_mut(&scene_id_key)
                 .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
+
+            if req.cycle_duration_sec == Some(0) {
+                return Err(Status::invalid_argument(
+                    "cycle_duration_sec must be >= 1 when set",
+                ));
+            }
 
             was_enabled = scene.enabled;
             scene.enabled = req.enabled;
@@ -521,13 +886,12 @@ impl GrpcSceneManagementService for SceneManagementService {
             Uuid::parse_str(&id_str).map_err(|_| Status::invalid_argument("invalid scene ID"))?;
 
         let mut config = self.config_handle.write().await;
-        let source = config
+        let (source_idx, mut cloned) = config
             .scenes
-            .get(&scene::SceneId::from(id))
-            .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?
-            .clone();
+            .get_full(&scene::SceneId::from(id))
+            .map(|(idx, _, scene)| (idx, scene.clone()))
+            .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
 
-        let mut cloned = source;
         cloned.id = scene::SceneId::generate();
         // Give each widget a new ID
         let old_widgets = std::mem::take(&mut cloned.widgets);
@@ -541,10 +905,6 @@ impl GrpcSceneManagementService for SceneManagementService {
         let cloned_enabled = cloned.enabled;
 
         // Insert right after the source scene
-        let source_idx = config
-            .scenes
-            .get_index_of(&scene::SceneId::from(id))
-            .expect("BUG: source scene just verified to exist");
         config.scenes.insert(cloned.id, cloned);
         let last_idx = config.scenes.len() - 1;
         config.scenes.move_index(last_idx, source_idx + 1);
@@ -603,22 +963,19 @@ impl GrpcSceneManagementService for SceneManagementService {
             Uuid::parse_str(&id_str).map_err(|_| Status::invalid_argument("invalid scene ID"))?;
         let scene_id = scene::SceneId::from(id);
 
-        // Look the scene up, claim the preview slot, and kick off rendering
-        // in a single config read so the scene can't vanish between the
-        // existence check and the spawn.
         let scene_was_disabled = {
+            let mut preview = self.preview_scene_id.lock().await;
+            if preview.is_some() {
+                return Err(Status::resource_exhausted("scene preview already active"));
+            }
+
             let config = self.config_handle.read().await;
             let scene = config
                 .scenes
                 .get(&scene_id)
                 .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
 
-            let mut preview = self.preview_scene_id.lock().await;
-            if preview.is_some() {
-                return Err(Status::resource_exhausted("scene preview already active"));
-            }
             *preview = Some(scene_id);
-            drop(preview);
 
             let disabled = !scene.enabled;
             if disabled {
@@ -751,13 +1108,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             automatic_cycling_default_duration: std::time::Duration::from_secs(u64::from(
                 cycling.automatic_cycling_default_duration_sec,
             )),
-            transition: match web::SceneCyclingTransition::try_from(cycling.transition) {
-                Ok(web::SceneCyclingTransition::Fade) => SceneCyclingTransition::Fade,
-                Ok(
-                    web::SceneCyclingTransition::Slide | web::SceneCyclingTransition::Unspecified,
-                )
-                | Err(_) => SceneCyclingTransition::Slide,
-            },
+            transition: parse_scene_cycling_transition(cycling.transition)?,
         });
 
         Self::save_config(&mut config).await?;
@@ -769,38 +1120,38 @@ impl GrpcSceneManagementService for SceneManagementService {
         &self,
         request: Request<web::AddWidgetRequest>,
     ) -> Result<Response<String>, Status> {
-        let req = request.into_inner();
-        let config = req
-            .config
-            .ok_or_else(|| Status::invalid_argument("config is required"))?;
+        let ParsedAddWidgetShape {
+            scene_id,
+            position,
+            size,
+            config_req,
+            widget_uid,
+        } = parse_add_widget_shape(request.into_inner())?;
 
-        let widget_uid = Uuid::parse_str(&config.widget_uid)
-            .map_err(|_| Status::invalid_argument("invalid widget UID"))?;
-
-        let manifest_info = self
+        let info = self
             .widget_registry
             .get(&widget_uid)
-            .ok_or_else(|| Status::not_found(format!("widget not found: {widget_uid}")))?;
+            .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
+        let manifest = &info.manifest;
 
-        let scene_id = Uuid::parse_str(&req.scene_id)
-            .map_err(|_| Status::invalid_argument("invalid scene ID"))?;
+        if !self.widget_registry.supports_size(&widget_uid, size.into()) {
+            return Err(Status::failed_precondition(format!(
+                "widget {widget_uid} does not support size {size}",
+            )));
+        }
 
-        let position = req
-            .position
-            .ok_or_else(|| Status::invalid_argument("position is required"))?;
+        let params = config_req.params.unwrap_or_default();
+        let typed_params = validate_widget_params(manifest, &params, ValidateMode::Add)
+            .map_err(bad_request_status)?;
 
-        let size = proto_size_to_scene(req.size)?;
+        let widget = scene::Widget::new(widget_uid, typed_params, position, size);
+        let widget_id = widget.id.to_string();
 
-        let params = build_widget_params(&manifest_info.manifest.params, &config.params);
-
-        let widget =
-            scene::Widget::new(widget_uid, params, proto_position_to_scene(position)?, size);
-
-        let widget_id = widget.id.as_uuid().to_string();
-        let widget_clone = widget.clone();
         let scene_id_key = scene::SceneId::from(scene_id);
 
-        {
+        let preview_snapshot = *self.preview_scene_id.lock().await;
+
+        let widget_to_spawn = {
             let mut config = self.config_handle.write().await;
             let scene = config
                 .scenes
@@ -809,12 +1160,15 @@ impl GrpcSceneManagementService for SceneManagementService {
 
             validate_widget_placement(scene, &widget, None)?;
 
-            scene.widgets.insert(widget.id, widget);
+            let showing = scene.enabled || preview_snapshot == Some(scene_id_key);
+            scene.widgets.insert(widget.id, widget.clone());
             Self::save_config(&mut config).await?;
-        }
 
-        if self.scene_is_showing(&scene_id_key).await {
-            self.try_spawn_widget(&scene_id_key, &widget_clone).await;
+            if showing { Some(widget) } else { None }
+        };
+
+        if let Some(widget) = widget_to_spawn {
+            self.coordinator.spawn_widget(&scene_id_key, &widget).await;
         }
         self.restore_active_scene().await;
 
@@ -825,61 +1179,79 @@ impl GrpcSceneManagementService for SceneManagementService {
         &self,
         request: Request<web::UpdateWidgetRequest>,
     ) -> Result<Response<()>, Status> {
-        let req = request.into_inner();
-
-        let widget_id =
-            Uuid::parse_str(&req.id).map_err(|_| Status::invalid_argument("invalid widget ID"))?;
-        let scene_id = Uuid::parse_str(&req.scene_id)
-            .map_err(|_| Status::invalid_argument("invalid scene ID"))?;
-        let position = req
-            .position
-            .ok_or_else(|| Status::invalid_argument("position is required"))?;
-        let size = proto_size_to_scene(req.size)?;
+        let ParsedUpdateWidgetShape {
+            scene_id,
+            widget_id,
+            proto_position,
+            position,
+            size,
+            params,
+        } = parse_update_widget_shape(request.into_inner())?;
 
         let scene_id_key = scene::SceneId::from(scene_id);
-        let widget_key = scene::WidgetId::from(widget_id);
-        let instance_id = widget_id.to_string();
+        let widget_id_key = scene::WidgetId::from(widget_id);
+        let preview_snapshot = *self.preview_scene_id.lock().await;
 
-        let widget_clone;
-        {
+        let widget_snapshot = {
             let mut config = self.config_handle.write().await;
             let scene = config
                 .scenes
                 .get_mut(&scene_id_key)
                 .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
 
-            let existing = scene
+            reject_update_widget_in_fullscreen(&scene.kind, proto_position, size)?;
+
+            let widget_uid = scene
                 .widgets
-                .get(&widget_key)
-                .ok_or_else(|| Status::not_found(format!("widget not found: {widget_id}")))?;
+                .get(&widget_id_key)
+                .ok_or_else(|| Status::not_found(format!("widget not found: {widget_id}")))?
+                .widget_type_id;
 
-            reject_update_widget_in_fullscreen(&scene.kind, position, size)?;
-            let manifest_info = self
+            let info = self
                 .widget_registry
-                .get(&existing.widget_type_id)
-                .ok_or_else(|| {
-                    Status::not_found(format!("widget not found: {}", existing.widget_type_id))
-                })?;
-            let params = build_widget_params(&manifest_info.manifest.params, &req.params);
+                .get(&widget_uid)
+                .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
+            let manifest = &info.manifest;
 
-            let updated = scene::Widget {
-                id: existing.id,
-                widget_type_id: existing.widget_type_id,
-                position: proto_position_to_scene(position)?,
+            if !self.widget_registry.supports_size(&widget_uid, size.into()) {
+                return Err(Status::failed_precondition(format!(
+                    "widget {widget_uid} does not support size {size}",
+                )));
+            }
+
+            let params = params.unwrap_or_default();
+            let typed_params = validate_widget_params(manifest, &params, ValidateMode::Update)
+                .map_err(bad_request_status)?;
+
+            // Build the post-update widget snapshot first so placement
+            // validation runs against immutable state. If anything below
+            // fails the in-memory ConfigHandle is left untouched.
+            let updated_widget = scene::Widget {
+                id: widget_id_key,
+                position,
                 size,
-                params,
+                widget_type_id: widget_uid,
+                params: typed_params,
             };
+            validate_widget_placement(scene, &updated_widget, Some(widget_id_key))?;
 
-            validate_widget_placement(scene, &updated, Some(widget_key))?;
+            scene
+                .widgets
+                .insert(updated_widget.id, updated_widget.clone());
 
-            scene.widgets.insert(widget_key, updated.clone());
-            widget_clone = updated;
+            let showing = scene.enabled || preview_snapshot == Some(scene_id_key);
             Self::save_config(&mut config).await?;
-        }
+            (updated_widget, showing)
+        };
 
-        if self.scene_is_showing(&scene_id_key).await {
+        let (widget_snapshot, showing) = widget_snapshot;
+
+        if showing {
+            let instance_id = widget_snapshot.id.as_uuid().to_string();
             self.coordinator.stop_widget(&instance_id).await;
-            self.try_spawn_widget(&scene_id_key, &widget_clone).await;
+            self.coordinator
+                .spawn_widget(&scene_id_key, &widget_snapshot)
+                .await;
         }
         self.restore_active_scene().await;
 
@@ -952,74 +1324,1120 @@ mod tests {
     }
 
     #[test]
-    fn build_widget_params_keeps_default_when_key_omitted() {
-        let manifest_params = std::collections::HashMap::from([(
-            "foo".to_owned(),
-            ParamDefinition {
-                name: "Foo".to_owned(),
-                param_type: ParamType::String,
-                description: None,
-                default: serde_json::Value::String("bar".to_owned()),
-                enum_values: None,
-                min: None,
-                max: None,
+    fn build_widget_params_seeds_required_with_default() {
+        use bmc_widget::ParamValue as PV;
+        let manifest = single_param_manifest(
+            "name",
+            ParamKind::String {
+                format: None,
+                enum_values: vec![],
+                default_value: Some("hello".into()),
             },
-        )]);
-        let overrides = std::collections::HashMap::new();
-
-        let params = build_widget_params(&manifest_params, &overrides);
-
-        assert_eq!(params["foo"], serde_json::Value::String("bar".to_owned()));
+            false,
+        );
+        let resolved = validate_widget_params(
+            &manifest,
+            &web::WidgetDataStruct::default(),
+            ValidateMode::Add,
+        )
+        .expect("BUG: defaults-only must validate");
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved.get("name"), Some(&PV::String("hello".into())));
     }
 
     #[test]
-    fn build_widget_params_override_wins_over_default() {
-        let manifest_params = std::collections::HashMap::from([(
-            "foo".to_owned(),
-            ParamDefinition {
-                name: "Foo".to_owned(),
-                param_type: ParamType::Number,
-                description: None,
-                default: serde_json::json!(1),
-                enum_values: None,
-                min: None,
-                max: None,
+    fn build_widget_params_seeds_optional_no_default_with_null() {
+        use bmc_widget::ParamValue as PV;
+        let manifest = single_param_manifest(
+            "name",
+            ParamKind::String {
+                format: None,
+                enum_values: vec![],
+                default_value: None,
             },
-        )]);
-        let overrides = std::collections::HashMap::from([("foo".to_owned(), "42".to_owned())]);
-
-        let params = build_widget_params(&manifest_params, &overrides);
-
-        assert_eq!(params["foo"], serde_json::json!(42));
+            true,
+        );
+        let resolved = validate_widget_params(
+            &manifest,
+            &web::WidgetDataStruct::default(),
+            ValidateMode::Add,
+        )
+        .expect("BUG: defaults-only must validate");
+        assert_eq!(resolved.get("name"), Some(&PV::Null));
     }
 
     #[test]
-    fn build_widget_params_invalid_json_override_is_stored_as_string() {
-        let manifest_params = std::collections::HashMap::from([(
-            "foo".to_owned(),
-            ParamDefinition {
-                name: "Foo".to_owned(),
-                param_type: ParamType::String,
+    fn build_widget_params_override_wins() {
+        use bmc_widget::ParamValue as PV;
+        let manifest = single_param_manifest(
+            "name",
+            ParamKind::String {
+                format: None,
+                enum_values: vec![],
+                default_value: Some("hello".into()),
+            },
+            false,
+        );
+        let mut overrides = web::WidgetDataStruct::default();
+        overrides
+            .fields
+            .insert("name".to_owned(), wdv_string("world"));
+        let resolved = validate_widget_params(&manifest, &overrides, ValidateMode::Add)
+            .expect("BUG: override must validate");
+        assert_eq!(resolved.get("name"), Some(&PV::String("world".into())));
+    }
+
+    #[test]
+    fn build_widget_params_seeds_each_kind_with_default() {
+        use bmc_widget::ParamValue as PV;
+        let manifest = manifest_with_params(&[
+            (
+                "s",
+                ParamKind::String {
+                    format: None,
+                    enum_values: vec![],
+                    default_value: Some("x".into()),
+                },
+                false,
+            ),
+            (
+                "i",
+                ParamKind::Integer {
+                    min: None,
+                    max: None,
+                    step: None,
+                    enum_values: vec![],
+                    default_value: Some(7),
+                },
+                false,
+            ),
+            (
+                "d",
+                ParamKind::Double {
+                    min: None,
+                    max: None,
+                    step: None,
+                    enum_values: vec![],
+                    default_value: Some(2.5),
+                },
+                false,
+            ),
+            (
+                "b",
+                ParamKind::Boolean {
+                    default_value: Some(true),
+                },
+                false,
+            ),
+            (
+                "t",
+                ParamKind::Timezone {
+                    default_value: Some("UTC".into()),
+                },
+                false,
+            ),
+        ]);
+        let resolved = validate_widget_params(
+            &manifest,
+            &web::WidgetDataStruct::default(),
+            ValidateMode::Add,
+        )
+        .expect("BUG: defaults-only must validate");
+        assert_eq!(resolved.len(), 5);
+        assert_eq!(resolved.get("s"), Some(&PV::String("x".into())));
+        assert_eq!(resolved.get("i"), Some(&PV::Integer(7)));
+        assert_eq!(resolved.get("d"), Some(&PV::Double(2.5)));
+        assert_eq!(resolved.get("b"), Some(&PV::Boolean(true)));
+        assert_eq!(resolved.get("t"), Some(&PV::String("UTC".into())));
+    }
+
+    #[test]
+    fn params_to_widget_data_struct_round_trips_each_arm() {
+        use bmc_widget::{ParamKey, ParamValue as PV};
+        use web::widget_data_value::Kind as VK;
+        let key = |k: &str| ParamKey::try_new(k.to_owned()).expect("BUG: valid key");
+
+        let map: BTreeMap<ParamKey, PV> = [
+            (key("s"), PV::String("hello".into())),
+            (key("i"), PV::Integer(42)),
+            (key("d"), PV::Double(2.5)),
+            (key("b"), PV::Boolean(false)),
+            (key("n"), PV::Null),
+        ]
+        .into_iter()
+        .collect();
+
+        let wire = params_to_widget_data_struct(&map);
+        assert!(matches!(wire.fields["s"].kind, Some(VK::StringValue(_))));
+        assert!(matches!(wire.fields["i"].kind, Some(VK::IntegerValue(42))));
+        assert!(matches!(wire.fields["d"].kind, Some(VK::DoubleValue(_))));
+        assert!(matches!(
+            wire.fields["b"].kind,
+            Some(VK::BooleanValue(false))
+        ));
+        assert!(matches!(wire.fields["n"].kind, Some(VK::NullValue(()))));
+    }
+
+    fn wdv_string(s: &str) -> web::WidgetDataValue {
+        web::WidgetDataValue {
+            kind: Some(web::widget_data_value::Kind::StringValue(s.to_owned())),
+        }
+    }
+    fn wdv_integer(i: i32) -> web::WidgetDataValue {
+        web::WidgetDataValue {
+            kind: Some(web::widget_data_value::Kind::IntegerValue(i)),
+        }
+    }
+    fn wdv_double(d: f64) -> web::WidgetDataValue {
+        web::WidgetDataValue {
+            kind: Some(web::widget_data_value::Kind::DoubleValue(d)),
+        }
+    }
+    fn wdv_boolean(b: bool) -> web::WidgetDataValue {
+        web::WidgetDataValue {
+            kind: Some(web::widget_data_value::Kind::BooleanValue(b)),
+        }
+    }
+    fn wdv_null() -> web::WidgetDataValue {
+        web::WidgetDataValue {
+            kind: Some(web::widget_data_value::Kind::NullValue(())),
+        }
+    }
+    fn wdv_unset_kind() -> web::WidgetDataValue {
+        web::WidgetDataValue { kind: None }
+    }
+
+    fn single_param_manifest(
+        key: &str,
+        kind: bmc_widget::ParamKind,
+        is_optional: bool,
+    ) -> bmc_widget::Manifest {
+        let param = bmc_widget::ParamDefinition {
+            name: "Test".into(),
+            description: None,
+            is_optional,
+            kind,
+        };
+        let pk: bmc_widget::ParamKey =
+            serde_json::from_str(&format!("\"{key}\"")).expect("BUG: valid key");
+        let mut params = indexmap::IndexMap::new();
+        params.insert(pk, param);
+        bmc_widget::Manifest {
+            uid: uuid::Uuid::new_v4(),
+            version: semver::Version::new(1, 0, 0),
+            name: "T".into(),
+            description: "T".into(),
+            author: None,
+            binary: std::path::PathBuf::from("bin/test"),
+            settings: vec![],
+            sizes: vec![bmc_ipc::SizeType::Small],
+            params,
+        }
+    }
+
+    fn manifest_with_params(
+        entries: &[(&str, bmc_widget::ParamKind, bool)],
+    ) -> bmc_widget::Manifest {
+        let mut params = indexmap::IndexMap::new();
+        for (key, kind, is_optional) in entries {
+            let pk: bmc_widget::ParamKey =
+                serde_json::from_str(&format!("\"{key}\"")).expect("BUG: valid key");
+            let param = bmc_widget::ParamDefinition {
+                name: "Test".into(),
                 description: None,
-                default: serde_json::Value::String("bar".to_owned()),
-                enum_values: None,
+                is_optional: *is_optional,
+                kind: kind.clone(),
+            };
+            params.insert(pk, param);
+        }
+        bmc_widget::Manifest {
+            uid: uuid::Uuid::new_v4(),
+            version: semver::Version::new(1, 0, 0),
+            name: "T".into(),
+            description: "T".into(),
+            author: None,
+            binary: std::path::PathBuf::from("bin/test"),
+            settings: vec![],
+            sizes: vec![bmc_ipc::SizeType::Small],
+            params,
+        }
+    }
+
+    fn fields_one(key: &str, value: web::WidgetDataValue) -> web::WidgetDataStruct {
+        web::WidgetDataStruct {
+            fields: [(key.to_owned(), value)].into_iter().collect(),
+        }
+    }
+
+    fn violation_count(
+        manifest: &bmc_widget::Manifest,
+        params: &web::WidgetDataStruct,
+        mode: ValidateMode,
+    ) -> usize {
+        match validate_widget_params(manifest, params, mode) {
+            Ok(_) => 0,
+            Err(violations) => {
+                let v: Vec<tonic_types::FieldViolation> = violations.into();
+                v.len()
+            }
+        }
+    }
+
+    #[test]
+    fn validate_widget_params_string_string_value_accepts() {
+        let manifest = single_param_manifest(
+            "color",
+            bmc_widget::ParamKind::String {
+                format: None,
+                enum_values: vec![],
+                default_value: Some("red".into()),
+            },
+            false,
+        );
+        let params = fields_one("color", wdv_string("blue"));
+        assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_ok());
+    }
+
+    #[test]
+    fn validate_widget_params_string_double_value_rejects() {
+        let manifest = single_param_manifest(
+            "color",
+            bmc_widget::ParamKind::String {
+                format: None,
+                enum_values: vec![],
+                default_value: Some("red".into()),
+            },
+            false,
+        );
+        let params = fields_one("color", wdv_double(1.0));
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
+    }
+
+    #[test]
+    fn validate_widget_params_double_for_integer_rejects() {
+        let manifest = single_param_manifest(
+            "count",
+            bmc_widget::ParamKind::Integer {
                 min: None,
                 max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(0),
             },
-        )]);
-        let overrides = std::collections::HashMap::from([("foo".to_owned(), "broken{".to_owned())]);
+            false,
+        );
+        let params = fields_one("count", wdv_double(5.0));
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
+    }
 
-        let params = build_widget_params(&manifest_params, &overrides);
+    #[test]
+    fn validate_widget_params_integer_for_double_rejects() {
+        let manifest = single_param_manifest(
+            "ratio",
+            bmc_widget::ParamKind::Double {
+                min: None,
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(0.5),
+            },
+            false,
+        );
+        let params = fields_one("ratio", wdv_integer(1));
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
+    }
 
-        assert_eq!(
-            params["foo"],
-            serde_json::Value::String("broken{".to_owned())
+    #[test]
+    fn validate_widget_params_unset_kind_rejects() {
+        let manifest = single_param_manifest(
+            "flag",
+            bmc_widget::ParamKind::Boolean {
+                default_value: Some(false),
+            },
+            false,
+        );
+        let params = fields_one("flag", wdv_unset_kind());
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
+    }
+
+    #[test]
+    fn validate_widget_params_null_value_on_required_rejects() {
+        let manifest = single_param_manifest(
+            "name",
+            bmc_widget::ParamKind::String {
+                format: None,
+                enum_values: vec![],
+                default_value: Some("x".into()),
+            },
+            false,
+        );
+        let params = fields_one("name", wdv_null());
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
+    }
+
+    #[test]
+    fn validate_widget_params_null_value_on_optional_accepts() {
+        let manifest = single_param_manifest(
+            "label",
+            bmc_widget::ParamKind::String {
+                format: None,
+                enum_values: vec![],
+                default_value: None,
+            },
+            true,
+        );
+        let params = fields_one("label", wdv_null());
+        assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_ok());
+    }
+
+    #[test]
+    fn validate_widget_params_double_nan_rejects() {
+        let manifest = single_param_manifest(
+            "val",
+            bmc_widget::ParamKind::Double {
+                min: None,
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(1.0),
+            },
+            false,
+        );
+        let params = fields_one("val", wdv_double(f64::NAN));
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
+    }
+
+    #[test]
+    fn validate_widget_params_double_inf_rejects() {
+        let manifest = single_param_manifest(
+            "val",
+            bmc_widget::ParamKind::Double {
+                min: None,
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(1.0),
+            },
+            false,
+        );
+        let params = fields_one("val", wdv_double(f64::INFINITY));
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
+    }
+
+    #[test]
+    fn validate_widget_params_integer_below_min_rejects() {
+        let manifest = single_param_manifest(
+            "n",
+            bmc_widget::ParamKind::Integer {
+                min: Some(5),
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(5),
+            },
+            false,
+        );
+        let params = fields_one("n", wdv_integer(4));
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
+    }
+
+    #[test]
+    fn validate_widget_params_integer_above_max_rejects() {
+        let manifest = single_param_manifest(
+            "n",
+            bmc_widget::ParamKind::Integer {
+                min: None,
+                max: Some(10),
+                step: None,
+                enum_values: vec![],
+                default_value: Some(5),
+            },
+            false,
+        );
+        let params = fields_one("n", wdv_integer(11));
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
+    }
+
+    #[test]
+    fn validate_widget_params_double_below_min_rejects() {
+        let manifest = single_param_manifest(
+            "ratio",
+            bmc_widget::ParamKind::Double {
+                min: Some(0.0),
+                max: Some(1.0),
+                step: None,
+                enum_values: vec![],
+                default_value: Some(0.5),
+            },
+            false,
+        );
+        let params = fields_one("ratio", wdv_double(-0.1));
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
+    }
+
+    #[test]
+    fn validate_widget_params_enum_value_not_in_options_rejects() {
+        let manifest = single_param_manifest(
+            "style",
+            bmc_widget::ParamKind::String {
+                format: None,
+                enum_values: vec![
+                    bmc_widget::StringOption {
+                        value: "dark".into(),
+                        label: "Dark".into(),
+                    },
+                    bmc_widget::StringOption {
+                        value: "light".into(),
+                        label: "Light".into(),
+                    },
+                ],
+                default_value: Some("dark".into()),
+            },
+            false,
+        );
+        let params = fields_one("style", wdv_string("solarized"));
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
+    }
+
+    #[test]
+    fn validate_widget_params_enum_value_in_options_accepts() {
+        let manifest = single_param_manifest(
+            "style",
+            bmc_widget::ParamKind::String {
+                format: None,
+                enum_values: vec![
+                    bmc_widget::StringOption {
+                        value: "dark".into(),
+                        label: "Dark".into(),
+                    },
+                    bmc_widget::StringOption {
+                        value: "light".into(),
+                        label: "Light".into(),
+                    },
+                ],
+                default_value: Some("dark".into()),
+            },
+            false,
+        );
+        let params = fields_one("style", wdv_string("light"));
+        assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_ok());
+    }
+
+    #[test]
+    fn validate_widget_params_unknown_key_rejects() {
+        let manifest = single_param_manifest(
+            "known",
+            bmc_widget::ParamKind::Boolean {
+                default_value: Some(true),
+            },
+            false,
+        );
+        let params = fields_one("unknown", wdv_boolean(true));
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Add), 1);
+    }
+
+    #[test]
+    fn validate_widget_params_update_missing_key_rejects() {
+        let manifest = single_param_manifest(
+            "flag",
+            bmc_widget::ParamKind::Boolean {
+                default_value: Some(false),
+            },
+            false,
+        );
+        let params = web::WidgetDataStruct {
+            fields: std::collections::HashMap::new(),
+        };
+        assert_eq!(violation_count(&manifest, &params, ValidateMode::Update), 1);
+    }
+
+    #[test]
+    fn validate_widget_params_add_missing_key_accepts() {
+        let manifest = single_param_manifest(
+            "flag",
+            bmc_widget::ParamKind::Boolean {
+                default_value: Some(false),
+            },
+            false,
+        );
+        let params = web::WidgetDataStruct {
+            fields: std::collections::HashMap::new(),
+        };
+        assert!(validate_widget_params(&manifest, &params, ValidateMode::Add).is_ok());
+    }
+
+    #[test]
+    fn validate_widget_params_accumulates_per_field_violations() {
+        let manifest = manifest_with_params(&[
+            (
+                "n",
+                bmc_widget::ParamKind::Integer {
+                    min: Some(0),
+                    max: Some(10),
+                    step: None,
+                    enum_values: vec![],
+                    default_value: Some(5),
+                },
+                false,
+            ),
+            (
+                "color",
+                bmc_widget::ParamKind::String {
+                    format: None,
+                    enum_values: vec![bmc_widget::StringOption {
+                        value: "red".into(),
+                        label: "Red".into(),
+                    }],
+                    default_value: Some("red".into()),
+                },
+                false,
+            ),
+        ]);
+        let params = web::WidgetDataStruct {
+            fields: [
+                ("n".to_owned(), wdv_integer(99)),
+                ("color".to_owned(), wdv_string("blue")),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let violations = validate_widget_params(&manifest, &params, ValidateMode::Add)
+            .expect_err("BUG: must reject both fields");
+        let v: Vec<tonic_types::FieldViolation> = violations.into();
+        assert_eq!(v.len(), 2, "both broken fields must be reported");
+
+        let fields: std::collections::HashSet<&str> = v.iter().map(|x| x.field.as_str()).collect();
+        assert!(fields.contains(r#"params["n"]"#));
+        assert!(fields.contains(r#"params["color"]"#));
+    }
+
+    #[test]
+    fn add_widget_request_shape_errors_accumulate_in_one_response() {
+        let mut v = FieldViolations::new();
+        assert!(parse_uuid_field("not-a-uuid", "scene_id", &mut v).is_none());
+        assert!(parse_grid_axis(999, "position.row", &mut v).is_none());
+        assert!(parse_widget_size(web::WidgetSize::Unspecified.into(), "size", &mut v).is_none());
+
+        let violations: Vec<tonic_types::FieldViolation> = v.into();
+        assert_eq!(violations.len(), 3);
+        let fields: std::collections::HashSet<&str> =
+            violations.iter().map(|x| x.field.as_str()).collect();
+        assert!(fields.contains("scene_id"));
+        assert!(fields.contains("position.row"));
+        assert!(fields.contains("size"));
+    }
+
+    #[test]
+    fn param_definition_to_proto_string_with_enum() {
+        use bmc_widget::{ParamDefinition, ParamKind, StringOption};
+        use web::manifest_param_definition::Kind;
+        let p = ParamDefinition {
+            name: "Style".into(),
+            description: None,
+            is_optional: false,
+            kind: ParamKind::String {
+                format: None,
+                enum_values: vec![
+                    StringOption {
+                        value: "a".into(),
+                        label: "A".into(),
+                    },
+                    StringOption {
+                        value: "b".into(),
+                        label: "B".into(),
+                    },
+                ],
+                default_value: Some("a".into()),
+            },
+        };
+        let proto = param_definition_to_proto("style", &p);
+        assert_eq!(proto.key, "style");
+        assert!(!proto.is_optional);
+        let Some(Kind::ParamString(ps)) = proto.kind else {
+            panic!("BUG: expected param_string arm");
+        };
+        assert_eq!(ps.default_value.as_deref(), Some("a"));
+        assert_eq!(ps.enum_values.len(), 2);
+        assert_eq!(ps.enum_values[0].value, "a");
+    }
+
+    #[test]
+    fn param_definition_to_proto_double() {
+        use bmc_widget::{ParamDefinition, ParamKind};
+        use web::manifest_param_definition::Kind;
+        let p = ParamDefinition {
+            name: "Brightness".into(),
+            description: Some("Brightness level".into()),
+            is_optional: false,
+            kind: ParamKind::Double {
+                min: Some(0.0),
+                max: Some(1.0),
+                step: Some(0.1),
+                enum_values: vec![],
+                default_value: Some(0.5),
+            },
+        };
+        let proto = param_definition_to_proto("brightness", &p);
+        assert_eq!(proto.key, "brightness");
+        let Some(Kind::ParamDouble(pd)) = proto.kind else {
+            panic!("BUG: expected param_double arm");
+        };
+        assert_eq!(pd.default_value, Some(0.5));
+        assert_eq!(pd.min, Some(0.0));
+        assert_eq!(pd.max, Some(1.0));
+        assert_eq!(pd.step, Some(0.1));
+    }
+
+    #[test]
+    fn param_definition_to_proto_integer() {
+        use bmc_widget::{ParamDefinition, ParamKind};
+        use web::manifest_param_definition::Kind;
+        let p = ParamDefinition {
+            name: "Count".into(),
+            description: None,
+            is_optional: false,
+            kind: ParamKind::Integer {
+                min: Some(0),
+                max: Some(10),
+                step: Some(1),
+                enum_values: vec![],
+                default_value: Some(5),
+            },
+        };
+        let proto = param_definition_to_proto("count", &p);
+        assert_eq!(proto.key, "count");
+        let Some(Kind::ParamInteger(pi)) = proto.kind else {
+            panic!("BUG: expected param_integer arm");
+        };
+        assert_eq!(pi.default_value, Some(5));
+        assert_eq!(pi.min, Some(0));
+        assert_eq!(pi.max, Some(10));
+        assert_eq!(pi.step, Some(1));
+    }
+
+    #[test]
+    fn param_definition_to_proto_boolean() {
+        use bmc_widget::{ParamDefinition, ParamKind};
+        use web::manifest_param_definition::Kind;
+        let p = ParamDefinition {
+            name: "Show seconds".into(),
+            description: None,
+            is_optional: false,
+            kind: ParamKind::Boolean {
+                default_value: Some(true),
+            },
+        };
+        let proto = param_definition_to_proto("show-seconds", &p);
+        assert_eq!(proto.key, "show-seconds");
+        let Some(Kind::ParamBoolean(pb)) = proto.kind else {
+            panic!("BUG: expected param_boolean arm");
+        };
+        assert_eq!(pb.default_value, Some(true));
+    }
+
+    #[test]
+    fn param_definition_to_proto_timezone() {
+        use bmc_widget::{ParamDefinition, ParamKind};
+        use web::manifest_param_definition::Kind;
+        let p = ParamDefinition {
+            name: "Timezone".into(),
+            description: None,
+            is_optional: false,
+            kind: ParamKind::Timezone {
+                default_value: Some("Europe/Prague".into()),
+            },
+        };
+        let proto = param_definition_to_proto("tz", &p);
+        assert_eq!(proto.key, "tz");
+        let Some(Kind::ParamTimezone(pt)) = proto.kind else {
+            panic!("BUG: expected param_timezone arm");
+        };
+        assert_eq!(pt.default_value.as_deref(), Some("Europe/Prague"));
+    }
+
+    fn scene_with_widget(
+        widget_uid: uuid::Uuid,
+        params: BTreeMap<bmc_widget::ParamKey, bmc_widget::ParamValue>,
+    ) -> crate::scene::Scene {
+        crate::scene::Scene::fullscreen(widget_uid, params)
+    }
+
+    fn proto_scene_first_widget(proto: &web::Scene) -> &web::Widget {
+        match proto.kind.as_ref().expect("BUG: kind") {
+            web::scene::Kind::Fullscreen(f) => f.widget.as_ref().expect("BUG: widget"),
+            web::scene::Kind::Combined(c) => c.widgets.first().expect("BUG: widget"),
+        }
+    }
+
+    #[test]
+    fn scene_to_proto_emits_typed_params_directly() {
+        use bmc_widget::{ParamKey, ParamValue as PV};
+        use web::widget_data_value::Kind as VK;
+
+        let widget_uid = uuid::Uuid::new_v4();
+        let key = ParamKey::try_new("x".to_owned()).expect("BUG: valid key");
+        let params: BTreeMap<ParamKey, PV> = [(key, PV::Integer(5))].into_iter().collect();
+
+        let scene = scene_with_widget(widget_uid, params);
+        let proto = scene_to_proto(&scene);
+        let widget = proto_scene_first_widget(&proto);
+        let config = widget.config.as_ref().expect("BUG: config");
+        let params = config.params.as_ref().expect("BUG: params");
+        assert!(matches!(params.fields["x"].kind, Some(VK::IntegerValue(5))));
+    }
+
+    #[test]
+    fn scene_to_proto_emits_each_param_value_arm() {
+        use bmc_widget::{ParamKey, ParamValue as PV};
+        use web::widget_data_value::Kind as VK;
+
+        let widget_uid = uuid::Uuid::new_v4();
+        let key = |k: &str| ParamKey::try_new(k.to_owned()).expect("BUG: valid key");
+        let params: BTreeMap<ParamKey, PV> = [
+            (key("s"), PV::String("hi".into())),
+            (key("i"), PV::Integer(7)),
+            (key("d"), PV::Double(0.25)),
+            (key("b"), PV::Boolean(true)),
+            (key("n"), PV::Null),
+        ]
+        .into_iter()
+        .collect();
+
+        let scene = scene_with_widget(widget_uid, params);
+        let proto = scene_to_proto(&scene);
+        let widget = proto_scene_first_widget(&proto);
+        let fields = &widget
+            .config
+            .as_ref()
+            .expect("BUG: config")
+            .params
+            .as_ref()
+            .expect("BUG: params")
+            .fields;
+        assert!(matches!(fields["s"].kind, Some(VK::StringValue(_))));
+        assert!(matches!(fields["i"].kind, Some(VK::IntegerValue(7))));
+        assert!(matches!(fields["d"].kind, Some(VK::DoubleValue(_))));
+        assert!(matches!(fields["b"].kind, Some(VK::BooleanValue(true))));
+        assert!(matches!(fields["n"].kind, Some(VK::NullValue(()))));
+    }
+
+    #[test]
+    fn set_scene_cycling_rejects_unspecified_transition() {
+        let req = web::SetSceneCyclingRequest {
+            scene_cycling: Some(web::SceneCycling {
+                automatic_cycling_enabled: false,
+                automatic_cycling_default_duration_sec: 30,
+                transition: web::SceneCyclingTransition::Unspecified.into(),
+            }),
+        };
+        let err = parse_scene_cycling_transition(
+            req.scene_cycling
+                .as_ref()
+                .expect("BUG: cycling set above")
+                .transition,
+        )
+        .expect_err("BUG: must reject unspecified transition");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert!(
+            err.message().contains("transition"),
+            "message should name the field: {err:?}"
         );
     }
 
     #[test]
-    fn param_type_timezone_maps_to_proto_timezone() {
-        let proto = param_type_to_proto(ParamType::Timezone);
-        assert_eq!(proto, web::ManifestParamType::Timezone as i32);
+    fn set_scene_cycling_rejects_unknown_transition_int() {
+        let err = parse_scene_cycling_transition(9999)
+            .expect_err("BUG: must reject unknown transition int");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn set_scene_cycling_accepts_slide_and_fade() {
+        assert_eq!(
+            parse_scene_cycling_transition(web::SceneCyclingTransition::Slide.into())
+                .expect("BUG: Slide must parse"),
+            SceneCyclingTransition::Slide,
+        );
+        assert_eq!(
+            parse_scene_cycling_transition(web::SceneCyclingTransition::Fade.into())
+                .expect("BUG: Fade must parse"),
+            SceneCyclingTransition::Fade,
+        );
+    }
+
+    #[test]
+    fn parse_widget_size_unspecified_message_names_variants() {
+        let mut v = FieldViolations::new();
+        let result = parse_widget_size(web::WidgetSize::Unspecified.into(), "size", &mut v);
+        assert!(result.is_none());
+        let violations: Vec<tonic_types::FieldViolation> = v.into();
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].field, "size");
+        let msg = &violations[0].description;
+        assert!(
+            msg.contains("Small")
+                && msg.contains("Medium")
+                && msg.contains("Large")
+                && msg.contains("Full"),
+            "message should name the four valid variants, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn parse_widget_size_unknown_int_message_includes_value() {
+        let mut v = FieldViolations::new();
+        let result = parse_widget_size(9999, "size", &mut v);
+        assert!(result.is_none());
+        let violations: Vec<tonic_types::FieldViolation> = v.into();
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].field, "size");
+        let msg = &violations[0].description;
+        assert!(
+            msg.contains("9999"),
+            "message should include the bad value, got: {msg}"
+        );
+    }
+
+    fn first_violation_desc(
+        manifest: &bmc_widget::Manifest,
+        params: &web::WidgetDataStruct,
+    ) -> String {
+        let violations = validate_widget_params(manifest, params, ValidateMode::Add)
+            .expect_err("BUG: expected at least one violation");
+        let v: Vec<tonic_types::FieldViolation> = violations.into();
+        assert_eq!(v.len(), 1, "expected exactly one violation");
+        v.into_iter()
+            .next()
+            .expect("BUG: vec checked non-empty")
+            .description
+    }
+
+    #[test]
+    fn validate_widget_params_message_string_type_mismatch() {
+        let manifest = single_param_manifest(
+            "color",
+            bmc_widget::ParamKind::String {
+                format: None,
+                enum_values: vec![],
+                default_value: Some("red".into()),
+            },
+            false,
+        );
+        let params = fields_one("color", wdv_double(1.0));
+        assert_eq!(first_violation_desc(&manifest, &params), "Must be text");
+    }
+
+    #[test]
+    fn validate_widget_params_message_integer_type_mismatch() {
+        let manifest = single_param_manifest(
+            "count",
+            bmc_widget::ParamKind::Integer {
+                min: None,
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(0),
+            },
+            false,
+        );
+        let params = fields_one("count", wdv_string("abc"));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be a whole number",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_double_type_mismatch() {
+        let manifest = single_param_manifest(
+            "ratio",
+            bmc_widget::ParamKind::Double {
+                min: None,
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(0.5),
+            },
+            false,
+        );
+        let params = fields_one("ratio", wdv_string("abc"));
+        assert_eq!(first_violation_desc(&manifest, &params), "Must be a number",);
+    }
+
+    #[test]
+    fn validate_widget_params_message_boolean_type_mismatch() {
+        let manifest = single_param_manifest(
+            "flag",
+            bmc_widget::ParamKind::Boolean {
+                default_value: Some(false),
+            },
+            false,
+        );
+        let params = fields_one("flag", wdv_string("yes"));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be true or false",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_timezone_type_mismatch() {
+        let manifest = single_param_manifest(
+            "tz",
+            bmc_widget::ParamKind::Timezone {
+                default_value: None,
+            },
+            true,
+        );
+        let params = fields_one("tz", wdv_integer(0));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be a timezone",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_integer_below_min() {
+        let manifest = single_param_manifest(
+            "n",
+            bmc_widget::ParamKind::Integer {
+                min: Some(5),
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(5),
+            },
+            false,
+        );
+        let params = fields_one("n", wdv_integer(4));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be at least 5",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_integer_above_max() {
+        let manifest = single_param_manifest(
+            "n",
+            bmc_widget::ParamKind::Integer {
+                min: None,
+                max: Some(10),
+                step: None,
+                enum_values: vec![],
+                default_value: Some(5),
+            },
+            false,
+        );
+        let params = fields_one("n", wdv_integer(11));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be at most 10",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_double_not_finite() {
+        let manifest = single_param_manifest(
+            "v",
+            bmc_widget::ParamKind::Double {
+                min: None,
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(1.0),
+            },
+            false,
+        );
+        let params = fields_one("v", wdv_double(f64::NAN));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be a finite number",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_double_below_min() {
+        let manifest = single_param_manifest(
+            "ratio",
+            bmc_widget::ParamKind::Double {
+                min: Some(0.0),
+                max: Some(1.0),
+                step: None,
+                enum_values: vec![],
+                default_value: Some(0.5),
+            },
+            false,
+        );
+        let params = fields_one("ratio", wdv_double(-0.1));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be at least 0",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_double_above_max() {
+        let manifest = single_param_manifest(
+            "ratio",
+            bmc_widget::ParamKind::Double {
+                min: Some(0.0),
+                max: Some(1.0),
+                step: None,
+                enum_values: vec![],
+                default_value: Some(0.5),
+            },
+            false,
+        );
+        let params = fields_one("ratio", wdv_double(1.5));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be at most 1",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_enum_string_mismatch() {
+        let manifest = single_param_manifest(
+            "style",
+            bmc_widget::ParamKind::String {
+                format: None,
+                enum_values: vec![bmc_widget::StringOption {
+                    value: "dark".into(),
+                    label: "Dark".into(),
+                }],
+                default_value: Some("dark".into()),
+            },
+            false,
+        );
+        let params = fields_one("style", wdv_string("solarized"));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be one of the listed options",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_enum_integer_mismatch() {
+        let manifest = single_param_manifest(
+            "level",
+            bmc_widget::ParamKind::Integer {
+                min: None,
+                max: None,
+                step: None,
+                enum_values: vec![bmc_widget::IntegerOption {
+                    value: 1,
+                    label: "One".into(),
+                }],
+                default_value: Some(1),
+            },
+            false,
+        );
+        let params = fields_one("level", wdv_integer(99));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be one of the listed options",
+        );
     }
 }

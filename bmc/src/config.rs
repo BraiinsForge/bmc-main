@@ -14,10 +14,12 @@ use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone, WeekDay};
 use bmc_shared_utils::number_format::NumberFormat;
 use bmc_shared_utils::temperature::TemperatureUnit;
 use bmc_upgrade::autoupgrade::AutoUpgradeConfig;
+use bmc_widget::{ParamKey, ParamValue};
 use chrono::{Local, NaiveTime};
 use indexmap::{IndexMap, indexmap};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -318,11 +320,12 @@ impl Default for Config {
 
         let digital_clock_scene = Scene::fullscreen(
             digital_clock_type_id,
-            serde_json::json!({
-                "showSeconds": true,
-                "showTimezone": true,
-                "fontStyle": "medium"
-            }),
+            params_map(&[
+                ("showSeconds", ParamValue::Boolean(true)),
+                ("showTimezone", ParamValue::Boolean(true)),
+                ("fontStyle", ParamValue::String("medium".into())),
+            ])
+            .expect("BUG: invalid built-in ParamKey in digital-clock defaults"),
         );
 
         // Flip clock widget type ID from widgets/flip-clock/manifest.json
@@ -331,9 +334,8 @@ impl Default for Config {
 
         let flip_clock_scene = Scene::fullscreen(
             flip_clock_type_id,
-            serde_json::json!({
-                "mode": "extruded"
-            }),
+            params_map(&[("mode", ParamValue::String("extruded".into()))])
+                .expect("BUG: invalid built-in ParamKey in flip-clock defaults"),
         );
 
         let scenes = indexmap! {
@@ -714,4 +716,21 @@ pub enum UnitSystem {
     #[default]
     Metric,
     Imperial,
+}
+
+fn params_map(entries: &[(&str, ParamValue)]) -> Result<BTreeMap<ParamKey, ParamValue>, String> {
+    entries
+        .iter()
+        .map(|(k, v)| ParamKey::try_new((*k).to_owned()).map(|key| (key, v.clone())))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_default_constructs_without_panic() {
+        let _ = Config::default();
+    }
 }

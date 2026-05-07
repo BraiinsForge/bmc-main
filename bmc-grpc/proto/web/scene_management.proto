@@ -4,6 +4,7 @@ package braiins.bmc.web;
 
 import "google/protobuf/empty.proto";
 import "google/protobuf/wrappers.proto";
+import "web/widget_data.proto";
 
 message Scene {
   string id = 1;
@@ -66,10 +67,8 @@ enum WidgetSize {
 }
 
 message WidgetConfig {
-  // UID of the manifest
   string widget_uid = 1;
-  // Parameter values (key → JSON-encoded value).
-  map<string, string> params = 2;
+  WidgetDataStruct params = 2;
 }
 
 // A widget instance placed in a scene. Every widget is driven by a manifest;
@@ -93,8 +92,7 @@ message UpdateWidgetRequest {
   string scene_id = 2;
   WidgetPosition position = 3;
   WidgetSize size = 4;
-  // Parameter values set by user (key → JSON-encoded value)
-  map<string, string> params = 5;
+  WidgetDataStruct params = 5;
 }
 
 message RemoveWidgetRequest {
@@ -132,45 +130,91 @@ message SetSceneCyclingRequest {
 // Widget parameters are described by custom manifest format.
 
 message WidgetManifest {
-  // Widget UID (UUID v4 from manifest.json)
+  // UUID v4 from manifest.json
   string uid = 1;
   string name = 2;
   string description = 3;
   string version = 4;
-  // Author info
-  optional string author_name = 5;
-  optional string author_url = 6;
-  // Sizes this widget supports (subset of WidgetSize)
   repeated WidgetSize supported_sizes = 7;
-  // Parameter definitions — frontend generates form inputs from these
+  // Ordered: the FE renders fields in this order.
+  // Uniqueness of `key` is enforced server-side.
   repeated ManifestParamDefinition params = 8;
 }
 
+// is_optional and per-variant default_value combine to express the four
+// possible param states:
+//
+//   is_optional=false + default_value present: required field with default
+//   is_optional=false + default_value absent:  manifest rejected at load
+//   is_optional=true  + default_value present: optional, default-on-add
+//   is_optional=true  + default_value absent:  optional, null-on-add
+//
+// On the wire WidgetDataValue.null_value is only legal for is_optional=true.
 message ManifestParamDefinition {
-  // Parameter key (used in the params map when configuring a widget)
   string key = 1;
-  // Human-readable label
   string name = 2;
-  // Parameter type
-  ManifestParamType param_type = 3;
-  // Optional description / help text
-  optional string description = 4;
-  // Default value as JSON string
-  string default_value = 5;
-  // For enum types: map of value → display label
-  map<string, string> enum_values = 6;
-  // For number types: optional range constraints
-  optional double min = 7;
-  optional double max = 8;
+  optional string description = 3;
+  bool is_optional = 4;
+  oneof kind {
+    ParamString param_string = 5;
+    ParamDouble param_double = 6;
+    ParamInteger param_integer = 7;
+    ParamBoolean param_boolean = 8;
+    ParamTimezone param_timezone = 9;
+  }
 }
 
-enum ManifestParamType {
-  MANIFEST_PARAM_TYPE_UNSPECIFIED = 0;
-  MANIFEST_PARAM_TYPE_STRING = 1;
-  MANIFEST_PARAM_TYPE_BOOLEAN = 2;
-  MANIFEST_PARAM_TYPE_NUMBER = 3;
-  MANIFEST_PARAM_TYPE_ARRAY = 4;
-  MANIFEST_PARAM_TYPE_TIMEZONE = 5;
+message ParamString {
+  optional StringFormat format = 1;
+  repeated StringOption enum_values = 2;
+  optional string default_value = 3;
+}
+
+message StringOption {
+  string value = 1;
+  string label = 2;
+}
+
+enum StringFormat {
+  STRING_FORMAT_UNSPECIFIED = 0;
+  STRING_FORMAT_DATE = 1;
+  STRING_FORMAT_TIME = 2;
+  STRING_FORMAT_EMAIL = 3;
+  STRING_FORMAT_URI = 4;
+}
+
+message ParamDouble {
+  optional double min = 1;
+  optional double max = 2;
+  optional double step = 3;
+  repeated DoubleOption enum_values = 4;
+  optional double default_value = 5;
+}
+
+message DoubleOption {
+  double value = 1;
+  string label = 2;
+}
+
+message ParamInteger {
+  optional int32 min = 1;
+  optional int32 max = 2;
+  optional int32 step = 3;
+  repeated IntegerOption enum_values = 4;
+  optional int32 default_value = 5;
+}
+
+message IntegerOption {
+  int32 value = 1;
+  string label = 2;
+}
+
+message ParamBoolean {
+  optional bool default_value = 1;
+}
+
+message ParamTimezone {
+  optional string default_value = 1;
 }
 
 message GetAvailableWidgetsResponse {

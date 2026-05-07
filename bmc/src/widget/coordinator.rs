@@ -117,7 +117,13 @@ impl Coordinator {
             size: Self::widget_size_to_size_type(widget.size),
             width: widget.size.width(),
             height: widget.size.height(),
-            params: widget.params.clone(),
+            params: serde_json::Value::Object(
+                widget
+                    .params
+                    .iter()
+                    .map(|(k, v)| (k.as_str().to_owned(), v.to_json_value()))
+                    .collect(),
+            ),
         };
 
         // Register widget with compositor before spawning. This call blocks

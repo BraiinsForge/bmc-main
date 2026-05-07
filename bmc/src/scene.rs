@@ -1,7 +1,9 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use bmc_widget::{ParamKey, ParamValue};
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
 use uuid::Uuid;
@@ -63,6 +65,17 @@ impl Display for WidgetSize {
     }
 }
 
+impl From<WidgetSize> for bmc_ipc::SizeType {
+    fn from(size: WidgetSize) -> Self {
+        match size {
+            WidgetSize::Small => Self::Small,
+            WidgetSize::Medium => Self::Medium,
+            WidgetSize::Large => Self::Large,
+            WidgetSize::Full => Self::Full,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct WidgetPosition {
     pub row: u8,
@@ -109,14 +122,15 @@ pub struct Widget {
     pub position: WidgetPosition,
     pub size: WidgetSize,
     pub widget_type_id: Uuid,
-    pub params: serde_json::Value,
+    #[serde(default)]
+    pub params: BTreeMap<ParamKey, ParamValue>,
 }
 
 impl Widget {
     #[must_use]
     pub fn new(
         widget_type_id: Uuid,
-        params: serde_json::Value,
+        params: BTreeMap<ParamKey, ParamValue>,
         position: WidgetPosition,
         size: WidgetSize,
     ) -> Self {
@@ -219,7 +233,7 @@ impl Scene {
     pub const MIN_CYCLE_DURATION: Duration = Duration::from_secs(1);
 
     #[must_use]
-    pub fn fullscreen(widget_uid: Uuid, params: serde_json::Value) -> Self {
+    pub fn fullscreen(widget_uid: Uuid, params: BTreeMap<ParamKey, ParamValue>) -> Self {
         let widget = Widget::new(
             widget_uid,
             params,
@@ -312,7 +326,7 @@ mod tests {
             },
             size: WidgetSize::Small,
             widget_type_id: Uuid::nil(),
-            params: serde_json::Value::Null,
+            params: BTreeMap::new(),
         };
         assert!(
             !widget.in_bounds(),
@@ -330,12 +344,81 @@ mod tests {
             },
             size: WidgetSize::Small,
             widget_type_id: Uuid::nil(),
-            params: serde_json::Value::Null,
+            params: BTreeMap::new(),
         };
         let b = a.clone_with_new_id();
         assert!(
             a.overlaps(&b),
             "two identical widgets at row=255 must be reported as overlapping",
+        );
+    }
+
+    #[test]
+    fn widget_size_into_size_type_maps_each_variant() {
+        assert_eq!(
+            bmc_ipc::SizeType::from(WidgetSize::Small),
+            bmc_ipc::SizeType::Small
+        );
+        assert_eq!(
+            bmc_ipc::SizeType::from(WidgetSize::Medium),
+            bmc_ipc::SizeType::Medium
+        );
+        assert_eq!(
+            bmc_ipc::SizeType::from(WidgetSize::Large),
+            bmc_ipc::SizeType::Large
+        );
+        assert_eq!(
+            bmc_ipc::SizeType::from(WidgetSize::Full),
+            bmc_ipc::SizeType::Full
+        );
+    }
+
+    #[test]
+    fn clone_with_new_id_preserves_widget_iteration_order() {
+        let positions = [
+            (0_u8, 0_u8, WidgetSize::Small),
+            (0, 1, WidgetSize::Small),
+            (0, 2, WidgetSize::Medium),
+            (1, 0, WidgetSize::Large),
+        ];
+        let widget_type = Uuid::new_v4();
+        let mut source = Scene::combined();
+        for (row, col, size) in positions {
+            let w = Widget::new(
+                widget_type,
+                BTreeMap::new(),
+                WidgetPosition { row, col },
+                size,
+            );
+            source.widgets.insert(w.id, w);
+        }
+        let source_order: Vec<(u8, u8, WidgetSize)> = source
+            .widgets
+            .values()
+            .map(|w| (w.position.row, w.position.col, w.size))
+            .collect();
+
+        let cloned = source.clone_with_new_id();
+
+        let cloned_order: Vec<(u8, u8, WidgetSize)> = cloned
+            .widgets
+            .values()
+            .map(|w| (w.position.row, w.position.col, w.size))
+            .collect();
+
+        assert_eq!(
+            source_order, cloned_order,
+            "BUG: clone_with_new_id must preserve widget iteration order"
+        );
+        assert_ne!(source.id, cloned.id);
+        let source_widget_ids: Vec<_> = source.widgets.keys().copied().collect();
+        let cloned_widget_ids: Vec<_> = cloned.widgets.keys().copied().collect();
+        assert!(
+            source_widget_ids
+                .iter()
+                .zip(cloned_widget_ids.iter())
+                .all(|(a, b)| a != b),
+            "BUG: each cloned widget must have a fresh id",
         );
     }
 }

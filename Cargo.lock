@@ -1645,6 +1645,7 @@ dependencies = [
  "futures",
  "gbm 0.17.0",
  "glow 0.16.0",
+ "indexmap",
  "libc",
  "semver",
  "serde",

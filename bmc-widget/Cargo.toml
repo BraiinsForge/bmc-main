@@ -20,6 +20,7 @@ anyhow = { workspace = true }
 bmc-ipc = { workspace = true }
 bmc-widget-protocol = { workspace = true }
 futures = { workspace = true }
+indexmap = { workspace = true }
 libc = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }

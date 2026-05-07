@@ -24,30 +24,39 @@
       "name": "Show Seconds",
       "type": "boolean",
       "description": "Display seconds on the clock",
-      "default": true
+      "default_value": true
     },
     "showTimezone": {
       "name": "Show Timezone",
       "type": "boolean",
       "description": "Display timezone on the clock",
-      "default": true
+      "default_value": true
     },
     "fontStyle": {
       "name": "Font Style",
       "type": "string",
       "description": "Font weight for the time display",
-      "default": "medium",
-      "enum": {
-        "light": "Light",
-        "medium": "Medium",
-        "bold": "Bold"
-      }
+      "default_value": "medium",
+      "enum_values": [
+        {
+          "value": "light",
+          "label": "Light"
+        },
+        {
+          "value": "medium",
+          "label": "Medium"
+        },
+        {
+          "value": "bold",
+          "label": "Bold"
+        }
+      ]
     },
     "timezone": {
       "name": "Timezone",
       "type": "timezone",
       "description": "Override timezone (e.g. 'America/New_York'). If not set, uses global timezone setting.",
-      "default": null
+      "optional": true
     }
   }
 }
