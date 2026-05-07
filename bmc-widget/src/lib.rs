@@ -10,5 +10,8 @@ pub mod surface;
 pub mod wayland;
 
 pub use error::ManifestError;
-pub use manifest::{Author, Manifest, ParamDefinition, ParamKey, ParamKind, SettingKey};
+pub use manifest::{
+    Author, DoubleOption, IntegerOption, Manifest, ParamDefinition, ParamKey, ParamKind,
+    SettingKey, StringFormat, StringOption,
+};
 pub use wayland::{WaylandError, WidgetEventHandler, WidgetProtocolClient};

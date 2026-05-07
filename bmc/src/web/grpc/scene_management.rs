@@ -194,10 +194,86 @@ fn size_type_to_proto(size: SizeType) -> i32 {
     }
 }
 
-fn param_definition_to_proto(key: &str, param: &ParamDefinition) -> web::ManifestParamDefinition {
-    let _ = key;
-    let _ = param;
-    unimplemented!("filled in by Phase 3")
+fn param_definition_to_proto(key: &str, def: &ParamDefinition) -> web::ManifestParamDefinition {
+    use web::manifest_param_definition::Kind as PK;
+    let kind = match &def.kind {
+        ParamKind::String {
+            format,
+            enum_values,
+            default_value,
+        } => PK::ParamString(web::ParamString {
+            format: format.map(string_format_to_proto).map(i32::from),
+            enum_values: enum_values
+                .iter()
+                .map(|o| web::StringOption {
+                    value: o.value.clone(),
+                    label: o.label.clone(),
+                })
+                .collect(),
+            default_value: default_value.clone(),
+        }),
+        ParamKind::Double {
+            min,
+            max,
+            step,
+            enum_values,
+            default_value,
+        } => PK::ParamDouble(web::ParamDouble {
+            min: *min,
+            max: *max,
+            step: *step,
+            enum_values: enum_values
+                .iter()
+                .map(|o| web::DoubleOption {
+                    value: o.value,
+                    label: o.label.clone(),
+                })
+                .collect(),
+            default_value: *default_value,
+        }),
+        ParamKind::Integer {
+            min,
+            max,
+            step,
+            enum_values,
+            default_value,
+        } => PK::ParamInteger(web::ParamInteger {
+            min: *min,
+            max: *max,
+            step: *step,
+            enum_values: enum_values
+                .iter()
+                .map(|o| web::IntegerOption {
+                    value: o.value,
+                    label: o.label.clone(),
+                })
+                .collect(),
+            default_value: *default_value,
+        }),
+        ParamKind::Boolean { default_value } => PK::ParamBoolean(web::ParamBoolean {
+            default_value: *default_value,
+        }),
+        ParamKind::Timezone { default_value } => PK::ParamTimezone(web::ParamTimezone {
+            default_value: default_value.clone(),
+        }),
+    };
+    web::ManifestParamDefinition {
+        key: key.to_owned(),
+        name: def.name.clone(),
+        description: def.description.clone(),
+        is_optional: def.is_optional,
+        kind: Some(kind),
+    }
+}
+
+fn string_format_to_proto(f: bmc_widget::StringFormat) -> web::StringFormat {
+    use bmc_widget::StringFormat as F;
+    match f {
+        F::Date => web::StringFormat::Date,
+        F::Time => web::StringFormat::Time,
+        F::Email => web::StringFormat::Email,
+        F::Uri => web::StringFormat::Uri,
+    }
 }
 
 fn widget_info_to_proto(info: &crate::widget::WidgetInfo) -> web::WidgetManifest {
@@ -976,5 +1052,133 @@ mod tests {
                 web::widget_data_value::Null {},
             )),
         }
+    }
+
+    #[test]
+    fn param_definition_to_proto_string_with_enum() {
+        use bmc_widget::{ParamDefinition, ParamKind, StringOption};
+        use web::manifest_param_definition::Kind;
+        let p = ParamDefinition {
+            name: "Style".into(),
+            description: None,
+            is_optional: false,
+            kind: ParamKind::String {
+                format: None,
+                enum_values: vec![
+                    StringOption {
+                        value: "a".into(),
+                        label: "A".into(),
+                    },
+                    StringOption {
+                        value: "b".into(),
+                        label: "B".into(),
+                    },
+                ],
+                default_value: Some("a".into()),
+            },
+        };
+        let proto = param_definition_to_proto("style", &p);
+        assert_eq!(proto.key, "style");
+        assert!(!proto.is_optional);
+        let Some(Kind::ParamString(ps)) = proto.kind else {
+            panic!("BUG: expected param_string arm");
+        };
+        assert_eq!(ps.default_value.as_deref(), Some("a"));
+        assert_eq!(ps.enum_values.len(), 2);
+        assert_eq!(ps.enum_values[0].value, "a");
+    }
+
+    #[test]
+    fn param_definition_to_proto_double() {
+        use bmc_widget::{ParamDefinition, ParamKind};
+        use web::manifest_param_definition::Kind;
+        let p = ParamDefinition {
+            name: "Brightness".into(),
+            description: Some("Brightness level".into()),
+            is_optional: false,
+            kind: ParamKind::Double {
+                min: Some(0.0),
+                max: Some(1.0),
+                step: Some(0.1),
+                enum_values: vec![],
+                default_value: Some(0.5),
+            },
+        };
+        let proto = param_definition_to_proto("brightness", &p);
+        assert_eq!(proto.key, "brightness");
+        let Some(Kind::ParamDouble(pd)) = proto.kind else {
+            panic!("BUG: expected param_double arm");
+        };
+        assert_eq!(pd.default_value, Some(0.5));
+        assert_eq!(pd.min, Some(0.0));
+        assert_eq!(pd.max, Some(1.0));
+        assert_eq!(pd.step, Some(0.1));
+    }
+
+    #[test]
+    fn param_definition_to_proto_integer() {
+        use bmc_widget::{ParamDefinition, ParamKind};
+        use web::manifest_param_definition::Kind;
+        let p = ParamDefinition {
+            name: "Count".into(),
+            description: None,
+            is_optional: false,
+            kind: ParamKind::Integer {
+                min: Some(0),
+                max: Some(10),
+                step: Some(1),
+                enum_values: vec![],
+                default_value: Some(5),
+            },
+        };
+        let proto = param_definition_to_proto("count", &p);
+        assert_eq!(proto.key, "count");
+        let Some(Kind::ParamInteger(pi)) = proto.kind else {
+            panic!("BUG: expected param_integer arm");
+        };
+        assert_eq!(pi.default_value, Some(5));
+        assert_eq!(pi.min, Some(0));
+        assert_eq!(pi.max, Some(10));
+        assert_eq!(pi.step, Some(1));
+    }
+
+    #[test]
+    fn param_definition_to_proto_boolean() {
+        use bmc_widget::{ParamDefinition, ParamKind};
+        use web::manifest_param_definition::Kind;
+        let p = ParamDefinition {
+            name: "Show seconds".into(),
+            description: None,
+            is_optional: false,
+            kind: ParamKind::Boolean {
+                default_value: Some(true),
+            },
+        };
+        let proto = param_definition_to_proto("show-seconds", &p);
+        assert_eq!(proto.key, "show-seconds");
+        let Some(Kind::ParamBoolean(pb)) = proto.kind else {
+            panic!("BUG: expected param_boolean arm");
+        };
+        assert_eq!(pb.default_value, Some(true));
+    }
+
+    #[test]
+    fn param_definition_to_proto_timezone() {
+        use bmc_widget::{ParamDefinition, ParamKind};
+        use web::manifest_param_definition::Kind;
+        let p = ParamDefinition {
+            name: "Timezone".into(),
+            description: None,
+            is_optional: false,
+            kind: ParamKind::Timezone {
+                default_value: Some("Europe/Prague".into()),
+            },
+        };
+        let proto = param_definition_to_proto("tz", &p);
+        assert_eq!(proto.key, "tz");
+        let Some(Kind::ParamTimezone(pt)) = proto.kind else {
+            panic!("BUG: expected param_timezone arm");
+        };
+        assert_eq!(pt.default_value.as_deref(), Some("Europe/Prague"));
     }
 }
