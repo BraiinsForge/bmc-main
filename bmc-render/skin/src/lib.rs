@@ -16,9 +16,7 @@ use bmc_wasm_protocol::colors::Color;
 // Bitmap registrar callback
 // ---------------------------------------------------------------------------
 
-/// Function pointer type for registering bitmap data with the host.
-/// Returns a host-assigned bitmap ID.
-type BitmapRegistrar = fn(&[u8]) -> BitmapId;
+type BitmapRegistrar = fn(&[u8]) -> Option<BitmapId>;
 
 thread_local! {
     static BITMAP_REGISTRAR: RefCell<BitmapRegistrar> = const {
@@ -26,15 +24,13 @@ thread_local! {
     };
 }
 
-/// Initialize the skin system with a bitmap registration function.
-///
-/// Must be called once before any skin or nine-patch registration.
-/// Typically called with `host::register_bitmap`.
+/// Initialize the skin system with a bitmap registration function. Must be
+/// called once before any skin or nine-patch registration.
 pub fn init(register_fn: BitmapRegistrar) {
     BITMAP_REGISTRAR.with(|r| *r.borrow_mut() = register_fn);
 }
 
-fn register_bitmap(data: &[u8]) -> BitmapId {
+fn register_bitmap(data: &[u8]) -> Option<BitmapId> {
     BITMAP_REGISTRAR.with(|r| r.borrow()(data))
 }
 
@@ -65,7 +61,7 @@ pub struct NinePatchAsset {
 /// [`ensure_nine_patch_registered`], or directly via [`NinePatch::from_id`].
 #[derive(Clone, Copy, Debug)]
 pub struct NinePatch {
-    pub bitmap_id: BitmapId,
+    pub bitmap_id: Option<BitmapId>,
     pub left: u16,
     pub top: u16,
     pub right: u16,
@@ -77,7 +73,7 @@ impl NinePatch {
     #[must_use]
     pub fn from_id(bitmap_id: BitmapId, left: u16, top: u16, right: u16, bottom: u16) -> Self {
         Self {
-            bitmap_id,
+            bitmap_id: Some(bitmap_id),
             left,
             top,
             right,
@@ -95,6 +91,12 @@ thread_local! {
 }
 
 /// Register a 9-patch asset with the host (if not already registered) and return a `NinePatch`.
+///
+/// A successful registration is cached by asset-data pointer so subsequent
+/// calls reuse the same `BitmapId`. A failed registration is **not** cached:
+/// callers get a `NinePatch { bitmap_id: None, .. }` for this call and the
+/// next call will retry, matching the SDK asset-cache convention that
+/// transient registration failures must not become permanent.
 #[must_use]
 pub fn ensure_nine_patch_registered(asset: &NinePatchAsset) -> NinePatch {
     NINE_PATCH_IDS.with(|ids| {
@@ -113,7 +115,9 @@ pub fn ensure_nine_patch_registered(asset: &NinePatchAsset) -> NinePatch {
             right: asset.right,
             bottom: asset.bottom,
         };
-        ids.push((key, np));
+        if bitmap_id.is_some() {
+            ids.push((key, np));
+        }
         np
     })
 }
@@ -294,12 +298,12 @@ pub struct SliderSkin {
     pub track: NinePatch,
     /// Track nine-patch height (pixels) — needed for layout.
     pub track_h: u16,
-    /// Thumb bitmap ID (non-9-patch, fixed size). `NONE` = no thumb.
-    pub thumb_id: BitmapId,
+    /// Thumb bitmap (non-9-patch, fixed size). `None` = no thumb.
+    pub thumb_id: Option<BitmapId>,
     pub thumb_w: u16,
     pub thumb_h: u16,
-    /// Pressed thumb bitmap ID. `NONE` = use `thumb_id` with host-side darkening.
-    pub thumb_pressed_id: BitmapId,
+    /// Pressed thumb bitmap. `None` = use `thumb_id` with host-side darkening.
+    pub thumb_pressed_id: Option<BitmapId>,
 }
 
 // ---------------------------------------------------------------------------

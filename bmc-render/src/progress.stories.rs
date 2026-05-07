@@ -22,10 +22,10 @@ fn progress_bar_variants(ctx: &mut StoryCtx) -> Node {
     let skinned = SliderSkin {
         track: track.nine_patch,
         track_h: track.height,
-        thumb_id: thumb.map_or(0, |t| t.nine_patch.bitmap_id),
+        thumb_id: thumb.and_then(|t| t.nine_patch.bitmap_id),
         thumb_w: thumb.map_or(0, |t| t.width),
         thumb_h: thumb.map_or(0, |t| t.height),
-        thumb_pressed_id: thumb_pressed.map_or(0, |t| t.nine_patch.bitmap_id),
+        thumb_pressed_id: thumb_pressed.and_then(|t| t.nine_patch.bitmap_id),
     };
 
     col(

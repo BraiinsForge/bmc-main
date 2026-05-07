@@ -130,6 +130,7 @@ fn render_draw_inner(
             icon_id,
             anti_alias,
         } => {
+            let Some(icon_id) = *icon_id else { return };
             let ew = *w * scale;
             let eh = *h * scale;
             let sx = *x + offset_x + (*w - ew) / 2.0;
@@ -143,7 +144,7 @@ fn render_draw_inner(
                 base_color
             };
             if rotation == 0.0 {
-                renderer.draw_icon(rx, ry, ew, eh, final_color, *icon_id, *anti_alias);
+                renderer.draw_icon(rx, ry, ew, eh, final_color, icon_id, *anti_alias);
             } else {
                 let pivot_x = cx + cw / 2.0;
                 let pivot_y = cy + ch / 2.0;
@@ -156,7 +157,7 @@ fn render_draw_inner(
                     ew,
                     eh,
                     final_color,
-                    *icon_id,
+                    icon_id,
                     *anti_alias,
                 );
                 renderer.restore();
@@ -169,6 +170,7 @@ fn render_draw_inner(
             h,
             bitmap_id,
         } => {
+            let Some(bitmap_id) = *bitmap_id else { return };
             let ew = *w * scale;
             let eh = *h * scale;
             let sx = *x + offset_x + (*w - ew) / 2.0;
@@ -176,14 +178,14 @@ fn render_draw_inner(
             let rx = cx + sx;
             let ry = cy + sy;
             if rotation == 0.0 {
-                renderer.draw_bitmap(rx, ry, ew, eh, *bitmap_id);
+                renderer.draw_bitmap(rx, ry, ew, eh, bitmap_id);
             } else {
                 let pivot_x = cx + cw / 2.0;
                 let pivot_y = cy + ch / 2.0;
                 renderer.save();
                 renderer.translate(pivot_x, pivot_y);
                 renderer.rotate(rotation);
-                renderer.draw_bitmap(rx - pivot_x, ry - pivot_y, ew, eh, *bitmap_id);
+                renderer.draw_bitmap(rx - pivot_x, ry - pivot_y, ew, eh, bitmap_id);
                 renderer.restore();
             }
         }
@@ -198,6 +200,7 @@ fn render_draw_inner(
             right,
             bottom,
         } => {
+            let Some(bitmap_id) = *bitmap_id else { return };
             let ew = *w * scale;
             let eh = *h * scale;
             let sx = *x + offset_x + (*w - ew) / 2.0;
@@ -205,7 +208,7 @@ fn render_draw_inner(
             let rx = cx + sx;
             let ry = cy + sy;
             if rotation == 0.0 {
-                renderer.draw_nine_patch(rx, ry, ew, eh, *bitmap_id, *left, *top, *right, *bottom);
+                renderer.draw_nine_patch(rx, ry, ew, eh, bitmap_id, *left, *top, *right, *bottom);
             } else {
                 let pivot_x = cx + cw / 2.0;
                 let pivot_y = cy + ch / 2.0;
@@ -217,7 +220,7 @@ fn render_draw_inner(
                     ry - pivot_y,
                     ew,
                     eh,
-                    *bitmap_id,
+                    bitmap_id,
                     *left,
                     *top,
                     *right,
@@ -653,6 +656,7 @@ fn render_draw_inner(
             light_lat,
             light_lon,
         } => {
+            let Some(bitmap_id) = *bitmap_id else { return };
             let ew = *w * scale;
             let eh = *h * scale;
             let sx = *x + offset_x + (*w - ew) / 2.0;
@@ -665,7 +669,7 @@ fn render_draw_inner(
                     ry,
                     ew,
                     eh,
-                    *bitmap_id,
+                    bitmap_id,
                     *center_lat,
                     *center_lon,
                     *zoom,
@@ -684,7 +688,7 @@ fn render_draw_inner(
                     ry - pivot_y,
                     ew,
                     eh,
-                    *bitmap_id,
+                    bitmap_id,
                     *center_lat,
                     *center_lon,
                     *zoom,
@@ -703,6 +707,7 @@ fn render_draw_inner(
             mesh_id,
             args,
         } => {
+            let Some(mesh_id) = *mesh_id else { return };
             let ew = *w * scale;
             let eh = *h * scale;
             let sx = *x + offset_x + (*w - ew) / 2.0;
@@ -712,14 +717,14 @@ fn render_draw_inner(
             let slot = anim_ctx.mesh_slot_counter;
             anim_ctx.mesh_slot_counter = slot.saturating_add(1);
             if rotation == 0.0 {
-                renderer.draw_mesh(rx, ry, ew, eh, slot, *mesh_id, *args);
+                renderer.draw_mesh(rx, ry, ew, eh, slot, mesh_id, *args);
             } else {
                 let pivot_x = cx + cw / 2.0;
                 let pivot_y = cy + ch / 2.0;
                 renderer.save();
                 renderer.translate(pivot_x, pivot_y);
                 renderer.rotate(rotation);
-                renderer.draw_mesh(rx - pivot_x, ry - pivot_y, ew, eh, slot, *mesh_id, *args);
+                renderer.draw_mesh(rx - pivot_x, ry - pivot_y, ew, eh, slot, mesh_id, *args);
                 renderer.restore();
             }
         }

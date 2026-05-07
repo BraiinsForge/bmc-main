@@ -3,6 +3,7 @@
 //! Audio sample registration and playback guest imports.
 
 use anyhow::Result;
+use bmc_wasm_protocol::AudioId;
 use wasmi::{Caller, Linker};
 
 use crate::host_api::{AudioSample, FixtureEvent, FixtureEventKind, HostState};
@@ -45,8 +46,7 @@ fn register_register_audio_import(linker: &mut Linker<HostState>) -> Result<()> 
             let duration_ms = 0_u32;
 
             let state = caller.data_mut();
-            let id = state.next_audio_id;
-            state.next_audio_id += 1;
+            let id = AudioId::alloc(&mut state.next_audio_id);
             state.audio_samples.insert(
                 id,
                 AudioSample {
@@ -55,7 +55,7 @@ fn register_register_audio_import(linker: &mut Linker<HostState>) -> Result<()> 
                     duration_ms,
                 },
             );
-            u32::from(id)
+            id.to_wire().into()
         },
     )?;
     Ok(())
@@ -68,7 +68,10 @@ fn register_audio_play_import(linker: &mut Linker<HostState>) -> Result<()> {
         |mut caller: Caller<'_, HostState>, sound_id: u32, volume: u32| {
             let state = caller.data_mut();
 
-            let Ok(id) = u16::try_from(sound_id) else {
+            let Ok(raw) = u16::try_from(sound_id) else {
+                return;
+            };
+            let Some(id) = AudioId::from_wire(raw) else {
                 return;
             };
             let Some(sample) = state.audio_samples.get(&id) else {
@@ -126,9 +129,13 @@ fn register_audio_stop_import(linker: &mut Linker<HostState>) -> Result<()> {
             {
                 let mut caller = caller;
                 let state = caller.data_mut();
-                if let Ok(id) = u16::try_from(sound_id)
-                    && let Some(sinks) = state.audio_sinks.remove(&id)
-                {
+                let Ok(raw) = u16::try_from(sound_id) else {
+                    return;
+                };
+                let Some(id) = AudioId::from_wire(raw) else {
+                    return;
+                };
+                if let Some(sinks) = state.audio_sinks.remove(&id) {
                     for sink in sinks {
                         sink.stop();
                     }

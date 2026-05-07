@@ -8,7 +8,7 @@
 
 // Re-export from protocol — single source of truth for wire-format enums
 #[cfg(target_arch = "wasm32")]
-use bmc_wasm_protocol::{BitmapId, IconId, MeshId};
+use bmc_wasm_protocol::{AudioId, BitmapId, IconId, MeshId};
 pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
 
 // ============================================================================
@@ -171,11 +171,11 @@ mod ffi {
         }
     }
 
-    /// Register icon data with the host, returns an opaque icon ID.
+    /// Register icon data with the host. Wire `0` lifts to `None`.
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
-    pub fn register_icon(data: &[u8]) -> IconId {
-        IconId::from_raw(unsafe { host_register_icon(data.as_ptr(), data.len() as u32) as u16 })
+    pub fn register_icon(data: &[u8]) -> Option<IconId> {
+        IconId::from_wire(unsafe { host_register_icon(data.as_ptr(), data.len() as u32) as u16 })
     }
 
     /// Parse an ISO 8601 date string (e.g. "2026-02-13T10:15:56Z") into a unix timestamp.
@@ -187,54 +187,59 @@ mod ffi {
         if val == i64::MIN { None } else { Some(val) }
     }
 
-    /// Register mesh data (optimized binary format) with the host, returns an opaque mesh ID.
+    /// Register mesh data (optimized binary format) with the host.
     ///
     /// The host uploads VBO, IBO, and texture to GPU. One-time cost.
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
-    pub fn register_mesh(data: &[u8]) -> MeshId {
-        MeshId::from_raw(unsafe { host_register_mesh(data.as_ptr(), data.len() as u32) as u16 })
+    pub fn register_mesh(data: &[u8]) -> Option<MeshId> {
+        MeshId::from_wire(unsafe { host_register_mesh(data.as_ptr(), data.len() as u32) as u16 })
     }
 
-    /// Register audio data (WAV/OGG/MP3 bytes) with the host, returns an opaque audio ID.
+    /// Register audio data (WAV/OGG/MP3 bytes) with the host.
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
-    pub fn register_audio(data: &[u8], name: &str) -> u16 {
-        unsafe {
+    pub fn register_audio(data: &[u8], name: &str) -> Option<AudioId> {
+        AudioId::from_wire(unsafe {
             host_register_audio(
                 data.as_ptr(),
                 data.len() as u32,
                 name.as_ptr(),
                 name.len() as u32,
             ) as u16
-        }
+        })
     }
 
     /// Play a registered audio sample at the given [`Volume`].
     ///
-    /// Fire-and-forget: the host mixes and plays asynchronously.
-    /// No-op if the audio ID is invalid or if audio output is unavailable.
-    pub fn audio_play(sound_id: u16, volume: super::Volume) {
-        unsafe { host_audio_play(u32::from(sound_id), u32::from(volume)) }
+    /// Fire-and-forget: the host mixes and plays asynchronously. `None`
+    /// no-ops, so callers can thread an `Option<AudioId>` straight from
+    /// `ensure_audio_registered` without unwrapping.
+    pub fn audio_play(sound_id: Option<AudioId>, volume: super::Volume) {
+        let Some(id) = sound_id else { return };
+        unsafe { host_audio_play(u32::from(id.to_wire()), u32::from(volume)) }
     }
 
-    /// Stop playback of a registered audio sample.
-    pub fn audio_stop(sound_id: u16) {
-        unsafe { host_audio_stop(u32::from(sound_id)) }
+    /// Stop playback of a registered audio sample. `None` no-ops.
+    pub fn audio_stop(sound_id: Option<AudioId>) {
+        let Some(id) = sound_id else { return };
+        unsafe { host_audio_stop(u32::from(id.to_wire())) }
     }
 
-    /// Register bitmap data (PNG bytes) with the host, returns an opaque bitmap ID.
+    /// Register bitmap data (PNG bytes) with the host.
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
-    pub fn register_bitmap(data: &[u8]) -> BitmapId {
-        BitmapId::from_raw(unsafe { host_register_bitmap(data.as_ptr(), data.len() as u32) as u16 })
+    pub fn register_bitmap(data: &[u8]) -> Option<BitmapId> {
+        BitmapId::from_wire(unsafe {
+            host_register_bitmap(data.as_ptr(), data.len() as u32) as u16
+        })
     }
 
     /// Register bitmap data with nearest-neighbor filtering (no bilinear interpolation).
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
-    pub fn register_bitmap_nearest(data: &[u8]) -> BitmapId {
-        BitmapId::from_raw(unsafe {
+    pub fn register_bitmap_nearest(data: &[u8]) -> Option<BitmapId> {
+        BitmapId::from_wire(unsafe {
             host_register_bitmap_nearest(data.as_ptr(), data.len() as u32) as u16
         })
     }
@@ -242,7 +247,7 @@ mod ffi {
     /// Sample the average color of a rectangular region within a registered bitmap.
     #[must_use]
     pub fn bitmap_sample(bitmap_id: BitmapId, x: u32, y: u32, w: u32, h: u32) -> Option<u32> {
-        let result = unsafe { host_bitmap_sample(u32::from(bitmap_id.raw()), x, y, w, h) };
+        let result = unsafe { host_bitmap_sample(u32::from(bitmap_id.to_wire()), x, y, w, h) };
         if result == 0 { None } else { Some(result) }
     }
 

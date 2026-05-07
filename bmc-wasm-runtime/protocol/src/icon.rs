@@ -40,61 +40,78 @@ pub const ICON_FLAG_HAS_STROKE: u8 = 0x02;
 pub const ICON_FLAG_EVENODD: u8 = 0x04;
 
 // ── Built-in icon IDs ───────────────────────────────────────────────
-// Reserved range 0xFF00..=0xFFFF for host-bundled icons.
-// User-registered icons use IDs 1.. (no collision).
+// Reserved range `ICON_RESERVED_MIN..=0xFFFF` for host-bundled icons.
+// User-registered icons get IDs `1..ICON_RESERVED_MIN`; the host registry
+// must refuse new user allocations once it reaches `ICON_RESERVED_MIN`.
 
 use crate::ids::IconId;
 
+/// First icon ID reserved for host-bundled (builtin + dev) icons.
+///
+/// User-icon allocators must stop before this value. `0xFE00..=0xFEFF` is
+/// dev/testbed icons (see [`ICON_DEV_CAMERA`] etc.) and `0xFF00..=0xFFFF` is
+/// builtin icons (see [`ICON_BUILTIN_BASE`] etc.).
+pub const ICON_RESERVED_MIN: u16 = 0xFE00;
+
+/// `const`-context lift of a known-non-zero builtin ID. Panics at compile
+/// time if a literal is mistyped as zero.
+const fn builtin(raw: u16) -> IconId {
+    match IconId::from_wire(raw) {
+        Some(id) => id,
+        None => panic!("BUG: builtin icon id must be non-zero"),
+    }
+}
+
 /// Base ID for built-in icons.
-pub const ICON_BUILTIN_BASE: IconId = IconId::from_raw(0xFF00);
+pub const ICON_BUILTIN_BASE: IconId = builtin(0xFF00);
 
 /// Close (X) icon — used by modal close button.
-pub const ICON_CLOSE: IconId = IconId::from_raw(0xFF01);
+pub const ICON_CLOSE: IconId = builtin(0xFF01);
 
 /// Error icon (filled circle with diagonal line) — notification error state.
-pub const ICON_ERROR: IconId = IconId::from_raw(0xFF10);
+pub const ICON_ERROR: IconId = builtin(0xFF10);
 
 /// Warning icon (filled triangle with exclamation) — notification warning state.
-pub const ICON_WARNING: IconId = IconId::from_raw(0xFF11);
+pub const ICON_WARNING: IconId = builtin(0xFF11);
 
 /// Success icon (filled circle with checkmark) — notification success state.
-pub const ICON_SUCCESS: IconId = IconId::from_raw(0xFF12);
+pub const ICON_SUCCESS: IconId = builtin(0xFF12);
 
 /// Info icon (filled circle with "i") — notification info state.
-pub const ICON_INFO: IconId = IconId::from_raw(0xFF13);
+pub const ICON_INFO: IconId = builtin(0xFF13);
 
 /// Meter / gauge icon — fuel budget indicator.
-pub const ICON_METER: IconId = IconId::from_raw(0xFF14);
+pub const ICON_METER: IconId = builtin(0xFF14);
 
 /// Minus / subtract icon — NumberInput decrement stepper.
-pub const ICON_MINUS: IconId = IconId::from_raw(0xFF15);
+pub const ICON_MINUS: IconId = builtin(0xFF15);
 
 /// Plus / add icon — NumberInput increment stepper.
-pub const ICON_PLUS: IconId = IconId::from_raw(0xFF16);
+pub const ICON_PLUS: IconId = builtin(0xFF16);
 
 /// Warning icon (filled triangle) — NumberInput warning state.
-pub const ICON_WARN_ALT: IconId = IconId::from_raw(0xFF17);
+pub const ICON_WARN_ALT: IconId = builtin(0xFF17);
 
 /// Error icon (filled circle with "!") — NumberInput error state.
-pub const ICON_WARN_FILLED: IconId = IconId::from_raw(0xFF18);
+pub const ICON_WARN_FILLED: IconId = builtin(0xFF18);
 
 // ── Dev / testbed-only icons ───────────────────────────────────────
 // Used in the recording panel event log. Range 0xFE00..=0xFEFF.
 
 /// Camera icon — capture event.
-pub const ICON_DEV_CAMERA: IconId = IconId::from_raw(0xFE01);
+pub const ICON_DEV_CAMERA: IconId = builtin(0xFE01);
 
 /// Cursor / pointer icon — click and drag events.
-pub const ICON_DEV_CURSOR: IconId = IconId::from_raw(0xFE02);
+pub const ICON_DEV_CURSOR: IconId = builtin(0xFE02);
 
 /// Scroll icon — scroll events.
-pub const ICON_DEV_SCROLL: IconId = IconId::from_raw(0xFE03);
+pub const ICON_DEV_SCROLL: IconId = builtin(0xFE03);
 
 /// Download arrow icon — inbound network data (fetch, ws message, socket data, etc.).
-pub const ICON_DEV_DOWNLOAD: IconId = IconId::from_raw(0xFE04);
+pub const ICON_DEV_DOWNLOAD: IconId = builtin(0xFE04);
 
 /// Upload arrow icon — outbound / connection open (ws open, socket connected).
-pub const ICON_DEV_UPLOAD: IconId = IconId::from_raw(0xFE05);
+pub const ICON_DEV_UPLOAD: IconId = builtin(0xFE05);
 
 /// Broken link icon — disconnect / close (ws close, socket closed, ssdp/mdns removed).
-pub const ICON_DEV_UNLINK: IconId = IconId::from_raw(0xFE06);
+pub const ICON_DEV_UNLINK: IconId = builtin(0xFE06);

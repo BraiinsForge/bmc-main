@@ -21,7 +21,7 @@ use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::interaction::InteractionState;
 use bmc_render::tree::NodeContext;
 use bmc_render::{AnimationState, ModalState, ScrollState, TransitionState};
-use bmc_wasm_protocol::FormatPreferences;
+use bmc_wasm_protocol::{AudioId, FormatPreferences};
 
 use crate::runtime_limits::RuntimeResourceLimits;
 use crate::xml::XmlDocumentIndex;
@@ -556,9 +556,9 @@ pub(crate) struct HostState {
 
     /// Registered audio samples (raw encoded bytes), keyed by audio ID.
     /// The host stores the original encoded data and decodes on each play.
-    pub audio_samples: HashMap<u16, AudioSample>,
+    pub audio_samples: HashMap<AudioId, AudioSample>,
 
-    /// Next audio ID to allocate.
+    /// Next audio ID counter (for `AudioId::alloc`).
     pub next_audio_id: u16,
 
     /// Audio output stream — must stay alive for the entire session.
@@ -569,7 +569,7 @@ pub(crate) struct HostState {
     /// Active audio sinks keyed by sound ID. Allows overlapping plays of the
     /// same sound and per-ID stop. Finished sinks are lazily pruned on play.
     #[cfg(feature = "audio")]
-    pub audio_sinks: HashMap<u16, Vec<rodio::Sink>>,
+    pub audio_sinks: HashMap<AudioId, Vec<rodio::Sink>>,
 }
 
 impl HostState {

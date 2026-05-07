@@ -248,7 +248,7 @@ pub(crate) fn render_modal(
         close_btn_size,
         ButtonStyle::Ghost,
         ButtonSize::Normal,
-        ICON_CLOSE,
+        Some(ICON_CLOSE),
         false,
         None,
     );
@@ -326,7 +326,7 @@ pub(crate) fn render_modal(
                 btn_h,
                 ButtonStyle::Secondary,
                 footer_btn_size,
-                IconId::NONE,
+                None,
                 false,
                 None,
             );
@@ -356,7 +356,7 @@ pub(crate) fn render_modal(
             btn_h,
             primary_style,
             footer_btn_size,
-            IconId::NONE,
+            None,
             false,
             None,
         );

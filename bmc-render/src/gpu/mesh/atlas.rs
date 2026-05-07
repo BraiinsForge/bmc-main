@@ -34,31 +34,28 @@ pub(super) const MAX_SLOTS: u32 = ATLAS_COLS * ATLAS_ROWS;
 const _: () = assert!(ATLAS_W.saturating_mul(2) < i32::MAX as u32);
 const _: () = assert!(ATLAS_H.saturating_mul(2) < i32::MAX as u32);
 /// Dirty-check state for a single atlas slot. Stores the last-rendered
-/// `(mesh_id, args)` pair; a `None` `prev_args` represents "never rendered
-/// yet" and forces a first-frame draw.
-#[derive(Clone)]
+/// `(mesh_id, args)` pair; `None` for either field represents "never
+/// rendered yet" and forces a first-frame draw.
+#[derive(Clone, Default)]
 pub(super) struct SlotState {
-    prev_mesh_id: MeshId,
+    prev_mesh_id: Option<MeshId>,
     prev_args: Option<MeshDrawArgs>,
 }
 
 impl SlotState {
     pub(super) fn new() -> Self {
-        Self {
-            prev_mesh_id: MeshId::from_raw(u16::MAX),
-            prev_args: None,
-        }
+        Self::default()
     }
 
     /// Returns true if the slot needs re-rendering for the given parameters.
     pub(super) fn check_and_update(&mut self, mesh_id: MeshId, args: &MeshDrawArgs) -> bool {
-        let dirty = self.prev_mesh_id != mesh_id
+        let dirty = self.prev_mesh_id != Some(mesh_id)
             || self
                 .prev_args
                 .as_ref()
                 .is_none_or(|prev| args.dirty_against(prev));
         if dirty {
-            self.prev_mesh_id = mesh_id;
+            self.prev_mesh_id = Some(mesh_id);
             self.prev_args = Some(*args);
         }
         dirty
@@ -89,30 +86,24 @@ pub(super) fn warn_slot_overflow_once(slot_index: u32) {
     }
 }
 
-pub(super) fn mesh_id_from_storage_index(index: usize) -> Option<u16> {
-    let one_based = index.checked_add(1)?;
-    u16::try_from(one_based).ok()
+pub(super) fn mesh_id_from_storage_index(index: usize) -> Option<MeshId> {
+    let one_based = u16::try_from(index.checked_add(1)?).ok()?;
+    MeshId::from_wire(one_based)
 }
 
-pub(super) fn mesh_id_to_storage_index(mesh_id: u16) -> Option<usize> {
-    mesh_id.checked_sub(1).map(usize::from)
+pub(super) fn mesh_id_to_storage_index(mesh_id: MeshId) -> usize {
+    usize::from(mesh_id.to_wire() - 1)
 }
 
 #[cfg(test)]
 mod tests {
-    use bmc_wasm_protocol::MeshId;
-
     use super::{DIRTY_EPSILON, is_dirty, mesh_id_from_storage_index, mesh_id_to_storage_index};
 
     #[test]
     fn mesh_ids_are_one_based() {
-        assert_eq!(mesh_id_from_storage_index(0), Some(1));
-        assert_eq!(mesh_id_to_storage_index(1), Some(0));
-    }
-
-    #[test]
-    fn invalid_mesh_id_does_not_map_to_storage() {
-        assert_eq!(mesh_id_to_storage_index(MeshId::NONE.raw()), None);
+        let id = mesh_id_from_storage_index(0).expect("BUG: index 0 must round-trip");
+        assert_eq!(id.to_wire(), 1);
+        assert_eq!(mesh_id_to_storage_index(id), 0);
     }
 
     #[test]

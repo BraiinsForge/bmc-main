@@ -8,7 +8,7 @@
     clippy::cast_sign_loss
 )]
 
-use bmc_wasm_protocol::{BitmapId, Color};
+use bmc_wasm_protocol::Color;
 
 use crate::renderer::Renderer;
 use crate::tree::{AnimationContext, SliderSkinData};
@@ -130,20 +130,16 @@ fn render_progress_bar_skinned(
     let track_y = y + (h - track_h) / 2.0;
 
     // Draw track background (9-patch stretched to full width)
-    renderer.draw_nine_patch(
-        x,
-        track_y,
-        w,
-        track_h,
-        np.bitmap_id,
-        np.left,
-        np.top,
-        np.right,
-        np.bottom,
-    );
+    if let Some(bitmap_id) = np.bitmap_id {
+        renderer.draw_nine_patch(
+            x, track_y, w, track_h, bitmap_id, np.left, np.top, np.right, np.bottom,
+        );
+    }
 
     // Draw thumb at progress position (scale down when bar is narrow)
-    if skin.thumb_id != BitmapId::NONE && pb.mode == 0 {
+    if let Some(thumb_id) = skin.thumb_id
+        && pb.mode == 0
+    {
         let fraction = pb.fraction.clamp(0.0, 1.0);
         let thumb_w = f32::from(skin.thumb_w);
         let thumb_h = f32::from(skin.thumb_h);
@@ -151,7 +147,7 @@ fn render_progress_bar_skinned(
         let tw = thumb_w * scale;
         let thumb_x = x + fraction * (w - tw);
         let thumb_y = y + (h - thumb_h) / 2.0;
-        renderer.draw_bitmap(thumb_x, thumb_y, tw, thumb_h, skin.thumb_id);
+        renderer.draw_bitmap(thumb_x, thumb_y, tw, thumb_h, thumb_id);
     }
 
     false // skinned bars don't animate (no squiggle)

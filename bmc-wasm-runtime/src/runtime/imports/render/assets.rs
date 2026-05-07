@@ -5,8 +5,8 @@
 #![expect(clippy::cast_possible_truncation)]
 
 use anyhow::{Result, bail};
-use bmc_wasm_protocol::BitmapId;
 use bmc_wasm_protocol::colors::Color;
+use bmc_wasm_protocol::{BitmapId, IconId, MeshId};
 use wasmi::{Caller, Extern, Linker};
 
 use bmc_render::renderer::Renderer;
@@ -30,7 +30,11 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
                 return 0;
             };
             let state = caller.data_mut();
-            u32::from(state.renderer.register_icon(&data).raw())
+            state
+                .renderer
+                .register_icon(&data)
+                .map_or(0, IconId::to_wire)
+                .into()
         },
     )?;
 
@@ -42,7 +46,11 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
                 return 0;
             };
             let state = caller.data_mut();
-            u32::from(state.renderer.register_bitmap(&data).raw())
+            state
+                .renderer
+                .register_bitmap(&data)
+                .map_or(0, BitmapId::to_wire)
+                .into()
         },
     )?;
 
@@ -57,7 +65,11 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
                 return 0;
             };
             let state = caller.data_mut();
-            let id = u32::from(state.renderer.register_mesh(&data).raw());
+            let id: u32 = state
+                .renderer
+                .register_mesh(&data)
+                .map_or(0, MeshId::to_wire)
+                .into();
 
             #[cfg(feature = "profiling")]
             log_host_register_mesh(id, data_len, &probe);
@@ -74,7 +86,11 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
                 return 0;
             };
             let state = caller.data_mut();
-            u32::from(state.renderer.register_bitmap_nearest(&data).raw())
+            state
+                .renderer
+                .register_bitmap_nearest(&data)
+                .map_or(0, BitmapId::to_wire)
+                .into()
         },
     )?;
 
@@ -82,10 +98,13 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
         "env",
         "host_bitmap_sample",
         |caller: Caller<'_, HostState>, bitmap_id: u32, x: u32, y: u32, w: u32, h: u32| -> u32 {
+            let Some(bitmap_id) = BitmapId::from_wire(bitmap_id as u16) else {
+                return 0;
+            };
             let state = caller.data();
             state
                 .renderer
-                .bitmap_sample(BitmapId::from_raw(bitmap_id as u16), x, y, w, h)
+                .bitmap_sample(bitmap_id, x, y, w, h)
                 .map_or(0, Color::to_u32)
         },
     )?;

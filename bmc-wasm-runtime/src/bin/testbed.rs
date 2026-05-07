@@ -1513,7 +1513,7 @@ fn draw_stats_panel(
         btn_h,
         ButtonStyle::Danger,
         btn_sz,
-        IconId::NONE,
+        None,
         false,
         None,
     );
@@ -1537,7 +1537,7 @@ fn draw_stats_panel(
         btn_h,
         debug_style,
         btn_sz,
-        IconId::NONE,
+        None,
         false,
         None,
     );
@@ -1901,7 +1901,7 @@ fn draw_recording_buttons(
             ButtonStyle::Secondary
         },
         btn_sz,
-        IconId::NONE,
+        None,
         false,
         None,
     );
@@ -1928,7 +1928,7 @@ fn draw_recording_buttons(
         btn_h,
         ButtonStyle::Secondary,
         btn_sz,
-        IconId::NONE,
+        None,
         false,
         None,
     );
@@ -1959,7 +1959,7 @@ fn draw_recording_buttons(
         btn_h,
         ButtonStyle::Danger,
         btn_sz,
-        IconId::NONE,
+        None,
         false,
         None,
     );

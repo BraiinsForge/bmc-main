@@ -6,31 +6,29 @@ use std::fmt::Write;
 use std::fs;
 use std::path::Path;
 
-use bmc_wasm_protocol::{
-    ICON_CLOSE, ICON_DEV_CAMERA, ICON_DEV_CURSOR, ICON_DEV_DOWNLOAD, ICON_DEV_SCROLL,
-    ICON_DEV_UNLINK, ICON_DEV_UPLOAD, ICON_ERROR, ICON_INFO, ICON_METER, ICON_MINUS, ICON_PLUS,
-    ICON_SUCCESS, ICON_WARN_ALT, ICON_WARN_FILLED, ICON_WARNING,
-};
-
-/// Maps SVG file stem → builtin icon ID from the protocol crate.
-const BUILTIN_ICON_MAP: &[(&str, bmc_wasm_protocol::IconId)] = &[
-    ("close", ICON_CLOSE),
-    ("error--solid", ICON_ERROR),
-    ("warning--solid", ICON_WARNING),
-    ("checkmark--solid", ICON_SUCCESS),
-    ("info--solid", ICON_INFO),
-    ("meter", ICON_METER),
-    ("minus", ICON_MINUS),
-    ("plus", ICON_PLUS),
-    ("warn--alt-filled", ICON_WARN_ALT),
-    ("warn--filled", ICON_WARN_FILLED),
+/// Maps SVG file stem → name of the protocol-side `IconId` constant.
+///
+/// The build script emits a table that *references* these constants by name
+/// rather than reconstructing IDs from raw `u16` values. This keeps the
+/// `from_wire` boundary inside the protocol crate.
+const BUILTIN_ICON_MAP: &[(&str, &str)] = &[
+    ("close", "ICON_CLOSE"),
+    ("error--solid", "ICON_ERROR"),
+    ("warning--solid", "ICON_WARNING"),
+    ("checkmark--solid", "ICON_SUCCESS"),
+    ("info--solid", "ICON_INFO"),
+    ("meter", "ICON_METER"),
+    ("minus", "ICON_MINUS"),
+    ("plus", "ICON_PLUS"),
+    ("warn--alt-filled", "ICON_WARN_ALT"),
+    ("warn--filled", "ICON_WARN_FILLED"),
     // Dev / testbed icons
-    ("camera", ICON_DEV_CAMERA),
-    ("cursor", ICON_DEV_CURSOR),
-    ("scroll", ICON_DEV_SCROLL),
-    ("download", ICON_DEV_DOWNLOAD),
-    ("upload", ICON_DEV_UPLOAD),
-    ("unlink", ICON_DEV_UNLINK),
+    ("camera", "ICON_DEV_CAMERA"),
+    ("cursor", "ICON_DEV_CURSOR"),
+    ("scroll", "ICON_DEV_SCROLL"),
+    ("download", "ICON_DEV_DOWNLOAD"),
+    ("upload", "ICON_DEV_UPLOAD"),
+    ("unlink", "ICON_DEV_UNLINK"),
 ];
 
 fn main() {
@@ -67,8 +65,8 @@ fn main() {
                 fs::write(out_path.join(&bin_name), &compiled)
                     .unwrap_or_else(|e| panic!("failed to write {bin_name}: {e}"));
 
-                // Look up ID from the protocol-defined mapping
-                let const_id = BUILTIN_ICON_MAP
+                // Look up the protocol-defined constant name for this stem.
+                let const_name = BUILTIN_ICON_MAP
                     .iter()
                     .find(|(name, _)| *name == stem)
                     .unwrap_or_else(|| {
@@ -76,7 +74,7 @@ fn main() {
                     })
                     .1;
 
-                entries.push((stem, const_id));
+                entries.push((stem, const_name));
 
                 // Tell Cargo to rerun if this SVG changes
                 println!("cargo:rerun-if-changed={}", path.display());
@@ -84,17 +82,18 @@ fn main() {
         }
     }
 
-    // Generate Rust source with the icon data table
+    // Generate Rust source with the icon data table. References the protocol
+    // crate's named constants directly so no `from_wire`/`from_raw` boundary
+    // is exposed in generated code.
     let mut generated = String::from(
         "use bmc_wasm_protocol::IconId;\n\
          /// Built-in icon data compiled from SVGs at build time.\n\
          pub const BUILTIN_ICON_DATA: &[(IconId, &[u8])] = &[\n",
     );
-    for (stem, id) in &entries {
-        let raw = id.raw();
+    for (stem, const_name) in &entries {
         writeln!(
             generated,
-            "    (IconId::from_raw(0x{raw:04X}), include_bytes!(concat!(env!(\"OUT_DIR\"), \"/icon_{stem}.bin\"))),"
+            "    (bmc_wasm_protocol::{const_name}, include_bytes!(concat!(env!(\"OUT_DIR\"), \"/icon_{stem}.bin\"))),"
         )
         .unwrap_or_else(|e| panic!("failed to write generated source: {e}"));
     }

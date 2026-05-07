@@ -62,9 +62,9 @@ const BTN_DISABLED_FG: Color = GRAY_10.with_alpha(0.25);
 
 /// Draw a button with optional icon and label, and check if it was clicked.
 ///
-/// - `icon_id == 0`: text-only button
-/// - `icon_id != 0, label empty`: icon-only button (icon centered)
-/// - `icon_id != 0, label present`: icon + text button
+/// - `icon_id == None`: text-only button
+/// - `icon_id == Some, label empty`: icon-only button (icon centered)
+/// - `icon_id == Some, label present`: icon + text button
 ///
 /// When `disabled` is true, the button renders in a dimmed state per Carbon
 /// guidelines and does not register clicks or pressed state.
@@ -86,7 +86,7 @@ pub fn draw_button(
     h: f32,
     style: ButtonStyle,
     size: ButtonSize,
-    icon_id: IconId,
+    icon_id: Option<IconId>,
     disabled: bool,
     skin: Option<&ButtonSkinData>,
 ) -> (bool, Option<(f32, f32)>) {
@@ -109,17 +109,9 @@ pub fn draw_button(
         } else {
             &skin.normal
         };
-        renderer.draw_nine_patch(
-            x,
-            y,
-            w,
-            h,
-            np.bitmap_id,
-            np.left,
-            np.top,
-            np.right,
-            np.bottom,
-        );
+        if let Some(bitmap_id) = np.bitmap_id {
+            renderer.draw_nine_patch(x, y, w, h, bitmap_id, np.left, np.top, np.right, np.bottom);
+        }
         // Darken overlay when pressed and no dedicated pressed asset
         if is_pressed && skin.pressed.is_none() {
             renderer.fill_rect(x, y, w, h, BLACK.with_alpha(0.25));
@@ -188,22 +180,14 @@ fn draw_button_disabled(
     h: f32,
     style: ButtonStyle,
     size: ButtonSize,
-    icon_id: IconId,
+    icon_id: Option<IconId>,
     skin: Option<&ButtonSkinData>,
 ) {
     let fg_color = if let Some(skin) = skin {
         let np = &skin.normal;
-        renderer.draw_nine_patch(
-            x,
-            y,
-            w,
-            h,
-            np.bitmap_id,
-            np.left,
-            np.top,
-            np.right,
-            np.bottom,
-        );
+        if let Some(bitmap_id) = np.bitmap_id {
+            renderer.draw_nine_patch(x, y, w, h, bitmap_id, np.left, np.top, np.right, np.bottom);
+        }
         renderer.fill_rect(x, y, w, h, BLACK.with_alpha(0.50)); // darken overlay for disabled
         if skin.text_color == TRANSPARENT {
             BTN_DISABLED_FG_ON_COLOR
@@ -232,43 +216,45 @@ fn draw_button_content(
     w: f32,
     h: f32,
     size: ButtonSize,
-    icon_id: IconId,
+    icon_id: Option<IconId>,
     fg_color: Color,
 ) {
     let font_size = size.font_size();
     let icon_sz = size.icon_size();
     let gap = size.icon_text_gap();
 
-    let has_icon = icon_id != IconId::NONE;
     let has_label = !label.is_empty();
-
     let pad = size.h_padding();
 
-    if has_icon && has_label {
-        let icon_x = x + pad;
-        let icon_y = y + (h - icon_sz) / 2.0;
-        renderer.draw_icon(icon_x, icon_y, icon_sz, icon_sz, fg_color, icon_id, false);
+    match (icon_id, has_label) {
+        (Some(icon_id), true) => {
+            let icon_x = x + pad;
+            let icon_y = y + (h - icon_sz) / 2.0;
+            renderer.draw_icon(icon_x, icon_y, icon_sz, icon_sz, fg_color, icon_id, false);
 
-        let text_h = font_size * 1.3;
-        let text_x = icon_x + icon_sz + gap;
-        let text_y = y + (h - text_h) / 2.0;
-        let max_text_w = w - pad - icon_sz - gap - pad;
-        draw_text_ellipsis(
-            renderer, label, text_x, text_y, font_size, max_text_w, fg_color,
-        );
-    } else if has_icon {
-        // Icon-only: keep centered
-        let icon_x = x + (w - icon_sz) / 2.0;
-        let icon_y = y + (h - icon_sz) / 2.0;
-        renderer.draw_icon(icon_x, icon_y, icon_sz, icon_sz, fg_color, icon_id, false);
-    } else {
-        let text_h = font_size * 1.3;
-        let text_x = x + pad;
-        let text_y = y + (h - text_h) / 2.0;
-        let max_text_w = w - pad * 2.0;
-        draw_text_ellipsis(
-            renderer, label, text_x, text_y, font_size, max_text_w, fg_color,
-        );
+            let text_h = font_size * 1.3;
+            let text_x = icon_x + icon_sz + gap;
+            let text_y = y + (h - text_h) / 2.0;
+            let max_text_w = w - pad - icon_sz - gap - pad;
+            draw_text_ellipsis(
+                renderer, label, text_x, text_y, font_size, max_text_w, fg_color,
+            );
+        }
+        (Some(icon_id), false) => {
+            // Icon-only: keep centered
+            let icon_x = x + (w - icon_sz) / 2.0;
+            let icon_y = y + (h - icon_sz) / 2.0;
+            renderer.draw_icon(icon_x, icon_y, icon_sz, icon_sz, fg_color, icon_id, false);
+        }
+        (None, _) => {
+            let text_h = font_size * 1.3;
+            let text_x = x + pad;
+            let text_y = y + (h - text_h) / 2.0;
+            let max_text_w = w - pad * 2.0;
+            draw_text_ellipsis(
+                renderer, label, text_x, text_y, font_size, max_text_w, fg_color,
+            );
+        }
     }
 }
 

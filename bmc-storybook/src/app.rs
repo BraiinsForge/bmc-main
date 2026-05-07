@@ -64,7 +64,7 @@ thread_local! {
     static RENDERER_PTR: Cell<*mut FemtoVgRenderer> = const { Cell::new(std::ptr::null_mut()) };
 }
 
-pub(crate) fn registrar_icon(data: &[u8]) -> bmc_wasm_sdk::IconId {
+pub(crate) fn registrar_icon(data: &[u8]) -> Option<bmc_wasm_sdk::IconId> {
     let ptr = RENDERER_PTR.with(Cell::get);
     assert!(
         !ptr.is_null(),
@@ -74,7 +74,7 @@ pub(crate) fn registrar_icon(data: &[u8]) -> bmc_wasm_sdk::IconId {
     unsafe { &mut *ptr }.register_icon(data)
 }
 
-pub(crate) fn registrar_bitmap(data: &[u8]) -> bmc_wasm_sdk::BitmapId {
+pub(crate) fn registrar_bitmap(data: &[u8]) -> Option<bmc_wasm_sdk::BitmapId> {
     let ptr = RENDERER_PTR.with(Cell::get);
     assert!(
         !ptr.is_null(),
@@ -84,7 +84,7 @@ pub(crate) fn registrar_bitmap(data: &[u8]) -> bmc_wasm_sdk::BitmapId {
     unsafe { &mut *ptr }.register_bitmap(data)
 }
 
-pub(crate) fn registrar_bitmap_nearest(data: &[u8]) -> bmc_wasm_sdk::BitmapId {
+pub(crate) fn registrar_bitmap_nearest(data: &[u8]) -> Option<bmc_wasm_sdk::BitmapId> {
     let ptr = RENDERER_PTR.with(Cell::get);
     assert!(
         !ptr.is_null(),
@@ -94,7 +94,7 @@ pub(crate) fn registrar_bitmap_nearest(data: &[u8]) -> bmc_wasm_sdk::BitmapId {
     unsafe { &mut *ptr }.register_bitmap_nearest(data)
 }
 
-pub(crate) fn registrar_mesh(data: &[u8]) -> bmc_wasm_sdk::MeshId {
+pub(crate) fn registrar_mesh(data: &[u8]) -> Option<bmc_wasm_sdk::MeshId> {
     let ptr = RENDERER_PTR.with(Cell::get);
     assert!(
         !ptr.is_null(),

@@ -11,7 +11,7 @@ use std::fmt;
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
     ICON_FLAG_EVENODD, ICON_FLAG_HAS_FILL, ICON_FLAG_HAS_STROKE, ICON_OP_CLOSE, ICON_OP_CUBIC_TO,
-    ICON_OP_LINE_TO, ICON_OP_MOVE_TO, ICON_OP_QUAD_TO, IconId,
+    ICON_OP_LINE_TO, ICON_OP_MOVE_TO, ICON_OP_QUAD_TO, ICON_RESERVED_MIN, IconId,
 };
 use femtovg::{FillRule, Paint, Path};
 
@@ -60,20 +60,30 @@ impl IconRegistry {
         }
     }
 
-    /// Parse binary icon data and register it, returning the assigned ID.
-    pub fn register(&mut self, data: &[u8]) -> IconId {
-        let id = IconId::from_raw(self.next_id);
-        self.next_id += 1;
-
-        match parse_icon(data) {
-            Ok(icon) => {
-                self.icons.insert(id, icon);
-            }
+    /// Parse binary icon data and register it. The counter only advances
+    /// on successful parse — failed registrations don't burn an ID.
+    ///
+    /// Returns `None` once user-icon allocation reaches `ICON_RESERVED_MIN`,
+    /// to avoid colliding with builtin/dev icon IDs that share this map.
+    pub fn register(&mut self, data: &[u8]) -> Option<IconId> {
+        if self.next_id >= ICON_RESERVED_MIN {
+            tracing::error!(
+                "user icon registry exhausted at 0x{:04X} (reserved range starts at 0x{ICON_RESERVED_MIN:04X})",
+                self.next_id,
+            );
+            return None;
+        }
+        let icon = match parse_icon(data) {
+            Ok(i) => i,
             Err(e) => {
                 tracing::error!("failed to parse icon data: {e}");
+                return None;
             }
-        }
-        id
+        };
+
+        let id = IconId::alloc(&mut self.next_id);
+        self.icons.insert(id, icon);
+        Some(id)
     }
 
     /// Parse binary icon data and register it with an explicit ID.
@@ -83,7 +93,10 @@ impl IconRegistry {
                 self.icons.insert(id, icon);
             }
             Err(e) => {
-                tracing::error!("failed to parse icon data for id 0x{:04X}: {e}", id.raw());
+                tracing::error!(
+                    "failed to parse icon data for id 0x{:04X}: {e}",
+                    id.to_wire()
+                );
             }
         }
     }

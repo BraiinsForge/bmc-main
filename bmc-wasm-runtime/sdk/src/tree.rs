@@ -92,6 +92,18 @@ impl TreeBuffer {
         self.data.extend_from_slice(&c.to_u32().to_le_bytes());
     }
 
+    fn write_icon_id(&mut self, id: Option<IconId>) {
+        self.write_u16(id.map_or(0, IconId::to_wire));
+    }
+
+    fn write_bitmap_id(&mut self, id: Option<BitmapId>) {
+        self.write_u16(id.map_or(0, BitmapId::to_wire));
+    }
+
+    fn write_mesh_id(&mut self, id: Option<MeshId>) {
+        self.write_u16(id.map_or(0, MeshId::to_wire));
+    }
+
     fn write_props(&mut self, props: &PropsData) {
         self.data.extend_from_slice(&props.to_bytes());
     }
@@ -151,7 +163,7 @@ impl TreeBuffer {
         label: &str,
         style: ButtonStyle,
         size: ButtonSize,
-        icon_id: IconId,
+        icon_id: Option<IconId>,
         disabled: bool,
     ) {
         self.write_u8(NODE_BUTTON);
@@ -160,7 +172,7 @@ impl TreeBuffer {
         self.write_bytes(id_bytes);
         self.write_u8(style as u8);
         self.write_u8(size as u8);
-        self.write_u16(icon_id.raw());
+        self.write_icon_id(icon_id);
         self.write_u8(u8::from(disabled));
         let bytes = label.as_bytes();
         self.write_u16(bytes.len() as u16);
@@ -276,17 +288,17 @@ impl TreeBuffer {
         if let Some(sk) = skin {
             self.write_u8(1);
             // Track 9-patch: bitmap_id + insets
-            self.write_u16(sk.track.bitmap_id.raw());
+            self.write_bitmap_id(sk.track.bitmap_id);
             self.write_u16(sk.track.left);
             self.write_u16(sk.track.top);
             self.write_u16(sk.track.right);
             self.write_u16(sk.track.bottom);
             self.write_u16(sk.track_h);
             // Thumb
-            self.write_u16(sk.thumb_id.raw());
+            self.write_bitmap_id(sk.thumb_id);
             self.write_u16(sk.thumb_w);
             self.write_u16(sk.thumb_h);
-            self.write_u16(sk.thumb_pressed_id.raw());
+            self.write_bitmap_id(sk.thumb_pressed_id);
         } else {
             self.write_u8(0);
         }
@@ -395,7 +407,7 @@ pub enum Draw {
         w: f32,
         h: f32,
         color: Color,
-        icon_id: IconId,
+        icon_id: Option<IconId>,
         anti_alias: bool,
     },
     /// Bitmap (raster image) at absolute local position
@@ -404,7 +416,7 @@ pub enum Draw {
         y: f32,
         w: f32,
         h: f32,
-        bitmap_id: BitmapId,
+        bitmap_id: Option<BitmapId>,
     },
     /// Draw with host-computed animations and/or transitions
     Modified {
@@ -444,7 +456,7 @@ pub enum Draw {
         y: f32,
         w: f32,
         h: f32,
-        bitmap_id: BitmapId,
+        bitmap_id: Option<BitmapId>,
         atmosphere: bool,
         center_lat: f32,
         center_lon: f32,
@@ -458,7 +470,7 @@ pub enum Draw {
         y: f32,
         w: f32,
         h: f32,
-        mesh_id: MeshId,
+        mesh_id: Option<MeshId>,
         fov: f32,
         distance: f32,
         qx: f32,
@@ -551,14 +563,21 @@ impl Draw {
     ///
     /// Use `ICON_CLOSE` or other `ICON_*` constants from the protocol crate.
     #[must_use]
-    pub fn icon_builtin(x: f32, y: f32, w: f32, h: f32, icon_id: IconId, color: Color) -> Self {
+    pub fn icon_builtin(
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        icon_id: impl Into<Option<IconId>>,
+        color: Color,
+    ) -> Self {
         Self::Icon {
             x,
             y,
             w,
             h,
             color,
-            icon_id,
+            icon_id: icon_id.into(),
             anti_alias: false,
         }
     }
@@ -597,7 +616,7 @@ impl Draw {
     /// Use `host::register_bitmap()` to register image data and get an ID,
     /// then pass it here to render. Useful for album art and other runtime images.
     #[must_use]
-    pub fn bitmap_id(x: f32, y: f32, w: f32, h: f32, bitmap_id: BitmapId) -> Self {
+    pub fn bitmap_id(x: f32, y: f32, w: f32, h: f32, bitmap_id: Option<BitmapId>) -> Self {
         Self::Bitmap {
             x,
             y,
@@ -952,7 +971,7 @@ pub enum Node {
         label: String,
         style: ButtonStyle,
         size: ButtonSize,
-        icon_id: IconId,
+        icon_id: Option<IconId>,
         disabled: bool,
         skin: Option<ButtonSkin>,
     },
@@ -1048,7 +1067,7 @@ pub fn make_button(
     label: String,
     style: ButtonStyle,
     size: ButtonSize,
-    icon_id: IconId,
+    icon_id: Option<IconId>,
     disabled: bool,
     skin: Option<ButtonSkin>,
 ) -> Node {
@@ -1258,7 +1277,7 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             if let Some(s) = skin {
                 buf.write_u8(1); // has_skin
                 // Normal 9-patch
-                buf.write_u16(s.normal.bitmap_id.raw());
+                buf.write_bitmap_id(s.normal.bitmap_id);
                 buf.write_u16(s.normal.left);
                 buf.write_u16(s.normal.top);
                 buf.write_u16(s.normal.right);
@@ -1266,7 +1285,7 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
                 // Pressed 9-patch (optional)
                 if let Some(p) = &s.pressed {
                     buf.write_u8(1); // has_pressed
-                    buf.write_u16(p.bitmap_id.raw());
+                    buf.write_bitmap_id(p.bitmap_id);
                     buf.write_u16(p.left);
                     buf.write_u16(p.top);
                     buf.write_u16(p.right);
@@ -1412,7 +1431,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*w);
             buf.write_f32(*h);
             buf.write_color(*color);
-            buf.write_u16(icon_id.raw());
+            buf.write_icon_id(*icon_id);
             buf.write_u8(u8::from(*anti_alias));
         }
         Draw::Bitmap {
@@ -1427,7 +1446,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*y);
             buf.write_f32(*w);
             buf.write_f32(*h);
-            buf.write_u16(bitmap_id.raw());
+            buf.write_bitmap_id(*bitmap_id);
         }
         Draw::Centered { inner } => {
             buf.write_u8(DRAW_CENTERED);
@@ -1542,7 +1561,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*y);
             buf.write_f32(*w);
             buf.write_f32(*h);
-            buf.write_u16(bitmap_id.raw());
+            buf.write_bitmap_id(*bitmap_id);
             let flags: u8 = u8::from(*atmosphere);
             buf.write_u8(flags);
             buf.write_f32(*center_lat);
@@ -1584,7 +1603,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*y);
             buf.write_f32(*w);
             buf.write_f32(*h);
-            buf.write_u16(mesh_id.raw());
+            buf.write_mesh_id(*mesh_id);
             buf.write_f32(*fov);
             buf.write_f32(*distance);
             buf.write_f32(*qx);
@@ -1619,7 +1638,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*y);
             buf.write_f32(*w);
             buf.write_f32(*h);
-            buf.write_u16(np.bitmap_id.raw());
+            buf.write_bitmap_id(np.bitmap_id);
             buf.write_u16(np.left);
             buf.write_u16(np.top);
             buf.write_u16(np.right);

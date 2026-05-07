@@ -120,7 +120,7 @@ pub fn number_input(key: &str, value: i32, p: &NumberInputProps) -> Node {
         String::new(),
         ButtonStyle::Ghost,
         ButtonSize::Small,
-        ICON_MINUS,
+        Some(ICON_MINUS),
         p.disabled,
         None,
     ));
@@ -130,7 +130,7 @@ pub fn number_input(key: &str, value: i32, p: &NumberInputProps) -> Node {
         String::new(),
         ButtonStyle::Ghost,
         ButtonSize::Small,
-        ICON_PLUS,
+        Some(ICON_PLUS),
         p.disabled,
         None,
     ));

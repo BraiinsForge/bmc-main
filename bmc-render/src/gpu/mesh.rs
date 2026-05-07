@@ -443,8 +443,7 @@ impl MeshRenderer {
     }
 
     /// Upload mesh binary data to GPU (VBO + IBO + optional texture).
-    /// Returns an opaque non-zero mesh ID.
-    pub fn register_mesh(&mut self, gl: &glow::Context, data: &[u8]) -> MeshId {
+    pub fn register_mesh(&mut self, gl: &glow::Context, data: &[u8]) -> Option<MeshId> {
         #[cfg(feature = "profiling")]
         let profile_before = profile::RegisterMeshProbe::start();
 
@@ -453,28 +452,28 @@ impl MeshRenderer {
         // `UploadedMesh` has no `Drop` impl that frees GPU handles.
         let Some(id) = mesh_id_from_storage_index(self.meshes.len()) else {
             tracing::error!("mesh registration failed: id space exhausted");
-            return MeshId::NONE;
+            return None;
         };
 
         let mesh = match parse_and_upload(gl, data) {
             Ok(m) => m,
             Err(e) => {
                 tracing::error!("mesh upload failed: {e}");
-                return MeshId::NONE;
+                return None;
             }
         };
 
         self.meshes.push(Some(mesh));
-        // No slot invalidation needed: `mesh_id` is fresh (one-based index of
+        // No slot invalidation needed: `id` is fresh (one-based index of
         // the just-pushed entry), so no existing slot's `prev_mesh_id` can
         // collide. `SlotState::check_and_update` already triggers a redraw
         // when a slot is first bound to this mesh via the `prev_mesh_id !=
         // mesh_id` check.
 
         #[cfg(feature = "profiling")]
-        profile_before.finish(id, data.len());
+        profile_before.finish(id.to_wire(), data.len());
 
-        MeshId::from_raw(id)
+        Some(id)
     }
 
     /// Render a mesh into an atlas slot. Returns the atlas image ID and sub-rect
@@ -510,9 +509,7 @@ impl MeshRenderer {
             SLOT_SIZE as f32,
         );
 
-        let Some(mesh_idx) = mesh_id_to_storage_index(mesh_id.raw()) else {
-            return subrect;
-        };
+        let mesh_idx = mesh_id_to_storage_index(mesh_id);
         if mesh_idx >= self.meshes.len() || self.meshes[mesh_idx].is_none() {
             return subrect;
         }

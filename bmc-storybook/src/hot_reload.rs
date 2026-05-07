@@ -428,10 +428,10 @@ impl HotReloader {
         // pointers which call back through RENDERER_PTR.
         unsafe {
             type InitFn = fn(
-                fn(&[u8]) -> bmc_wasm_sdk::IconId,
-                fn(&[u8]) -> bmc_wasm_sdk::BitmapId,
-                fn(&[u8]) -> bmc_wasm_sdk::MeshId,
-                fn(&[u8]) -> bmc_wasm_sdk::BitmapId,
+                fn(&[u8]) -> Option<bmc_wasm_sdk::IconId>,
+                fn(&[u8]) -> Option<bmc_wasm_sdk::BitmapId>,
+                fn(&[u8]) -> Option<bmc_wasm_sdk::MeshId>,
+                fn(&[u8]) -> Option<bmc_wasm_sdk::BitmapId>,
             );
             let init: libloading::Symbol<'_, InitFn> = library
                 .get(b"__init_registrars")

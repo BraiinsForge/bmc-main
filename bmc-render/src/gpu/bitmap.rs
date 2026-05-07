@@ -60,27 +60,26 @@ impl BitmapRegistry {
         data: &[u8],
         canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
         flags: ImageFlags,
-    ) -> BitmapId {
-        let id = BitmapId::from_raw(self.next_id);
-        self.next_id += 1;
-
-        match decode_and_upload(data, canvas, flags) {
-            Ok((image_id, pixels, width, height)) => {
-                self.bitmaps.insert(
-                    id,
-                    StoredBitmap {
-                        image_id,
-                        pixels,
-                        width,
-                        height,
-                    },
-                );
-            }
+    ) -> Option<BitmapId> {
+        let (image_id, pixels, width, height) = match decode_and_upload(data, canvas, flags) {
+            Ok(t) => t,
             Err(e) => {
                 tracing::error!("failed to decode/upload bitmap: {e}");
+                return None;
             }
-        }
-        id
+        };
+
+        let id = BitmapId::alloc(&mut self.next_id);
+        self.bitmaps.insert(
+            id,
+            StoredBitmap {
+                image_id,
+                pixels,
+                width,
+                height,
+            },
+        );
+        Some(id)
     }
 
     /// Get the FemtoVG `ImageId` for a registered bitmap.
