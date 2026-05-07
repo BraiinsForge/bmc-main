@@ -87,6 +87,11 @@ let
         "-Ddriverdir=${final.mesa}/lib/dri"
       ];
     };
+    # Break infinite recursion mesa -> libdisplay-info ->
+    # -> v4l-utils -> qt5compat -> .. -> libva-minimal
+    v4l-utils = prev.v4l-utils.override {
+      withGUI = false;
+    };
     libva-minimal = prev.libva-minimal.overrideAttrs {
       mesonFlags = lib.optionals prev.stdenv.hostPlatform.isLinux [
         "-Ddriverdir=${final.mesa}/lib/dri"
