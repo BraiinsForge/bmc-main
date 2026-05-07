@@ -2083,6 +2083,7 @@ mod tests {
 
     #[test]
     fn scene_to_proto_uses_manifest_param_kind_to_pick_arms() {
+        use web::widget_data_value::Kind as VK;
         let widget_uid = uuid::Uuid::new_v4();
         let manifest = single_param_manifest_with_uid(
             widget_uid,
@@ -2102,7 +2103,6 @@ mod tests {
         let widget = proto_scene_first_widget(&proto);
         let config = widget.config.as_ref().expect("BUG: config");
         let params = config.params.as_ref().expect("BUG: params");
-        use web::widget_data_value::Kind as VK;
         assert!(
             matches!(params.fields["x"].kind, Some(VK::IntegerValue(5))),
             "expected IntegerValue(5) using manifest hint"
@@ -2111,6 +2111,7 @@ mod tests {
 
     #[test]
     fn scene_to_proto_falls_back_to_shape_inference_when_manifest_missing() {
+        use web::widget_data_value::Kind as VK;
         let widget_uid = uuid::Uuid::new_v4();
         let registry = make_empty_registry();
         let scene = scene_with_widget(widget_uid, serde_json::json!({"x": 5}));
@@ -2118,7 +2119,6 @@ mod tests {
         let widget = proto_scene_first_widget(&proto);
         let config = widget.config.as_ref().expect("BUG: config");
         let params = config.params.as_ref().expect("BUG: params");
-        use web::widget_data_value::Kind as VK;
         assert!(matches!(params.fields["x"].kind, Some(VK::IntegerValue(5))));
     }
 }
