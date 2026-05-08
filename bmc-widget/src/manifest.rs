@@ -473,6 +473,12 @@ fn check_int_range(
 fn check_string_options(options: &[StringOption]) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
     for o in options {
+        if o.value.is_empty() {
+            return Err(
+                "enum_values entry value must be non-empty (collides with FE \"no selection\" sentinel)"
+                    .into(),
+            );
+        }
         if o.label.trim().is_empty() {
             return Err("enum_values entry label must be non-empty after trim".into());
         }
@@ -917,29 +923,35 @@ mod tests {
     }
 
     #[test]
-    fn validate_string_enum_empty_value_passes() {
-        let p: ParamDefinition = serde_json::from_str(
-            r#"{"name":"X","type":"string","default_value":"","enum_values":[
+    fn validate_string_enum_empty_value_rejects() {
+        let p: Result<ParamDefinition, _> = serde_json::from_str(
+            r#"{"name":"X","type":"string","default_value":"a","enum_values":[
                   {"value":"","label":"None"},
                   {"value":"a","label":"A"}
                ]}"#,
-        )
-        .expect("BUG: parse");
-        p.validate("x").expect("BUG: empty value must validate");
+        );
+        let err = match p {
+            Err(e) => e.to_string(),
+            Ok(def) => def
+                .validate("x")
+                .expect_err("BUG: empty value must be rejected")
+                .to_string(),
+        };
+        assert!(err.contains("non-empty"), "{err}");
     }
 
     #[test]
-    fn validate_string_enum_duplicate_empty_values_fails() {
+    fn validate_string_enum_duplicate_values_rejects() {
         let p: ParamDefinition = serde_json::from_str(
-            r#"{"name":"X","type":"string","default_value":"","enum_values":[
-                  {"value":"","label":"A"},
-                  {"value":"","label":"B"}
+            r#"{"name":"X","type":"string","default_value":"a","enum_values":[
+                  {"value":"a","label":"A"},
+                  {"value":"a","label":"B"}
                ]}"#,
         )
         .expect("BUG: parse");
         assert!(
             p.validate("x").is_err(),
-            "expected error for duplicate empty-string enum values"
+            "expected error for duplicate enum values",
         );
     }
 
