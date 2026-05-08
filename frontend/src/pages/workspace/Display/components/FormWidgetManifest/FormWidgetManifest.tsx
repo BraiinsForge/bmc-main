@@ -3,7 +3,7 @@ import { useIntl } from 'react-intl';
 import * as pb from '@/proto';
 import { create } from '@/proto';
 import { getID } from '../const';
-import { defaultParamValue } from '../../fn/fn';
+import { defaultParamValue } from '../../fn';
 import { Form } from '@/lib/form';
 
 // Components
