@@ -226,6 +226,7 @@ where
                 );
             }
             deck_widget_surface_v1::Request::LedTemporary {
+                request_id,
                 effect,
                 r,
                 g,
@@ -237,14 +238,22 @@ where
                     tracing::warn!("Widget {} led_temporary: unknown effect", instance_id);
                     return;
                 };
+                if request_id == bmc_widget_protocol::LED_REQUEST_ID_ALL {
+                    tracing::warn!(
+                        "Widget {} led_temporary: request_id 0 is reserved; ignoring",
+                        instance_id
+                    );
+                    return;
+                }
                 let protocol_state = state.deck_widget_state();
                 tracing::debug!(
-                    "Widget {} led_temporary: effect={effect:?} rgb=({r},{g},{b}) period_ms={period_ms} duration_ms={duration_ms}",
+                    "Widget {} led_temporary: req={request_id} effect={effect:?} rgb=({r},{g},{b}) period_ms={period_ms} duration_ms={duration_ms}",
                     instance_id
                 );
                 protocol_state.add_action(
                     instance_id,
                     bmc_widget_protocol::ActionPayload::LedTemporary {
+                        request_id,
                         effect: led_effect_from_protocol(effect),
                         color: bmc_widget_protocol::RgbColor {
                             r: clamp_u8(r),
@@ -257,6 +266,7 @@ where
                 );
             }
             deck_widget_surface_v1::Request::LedEndless {
+                request_id,
                 effect,
                 r,
                 g,
@@ -267,14 +277,22 @@ where
                     tracing::warn!("Widget {} led_endless: unknown effect", instance_id);
                     return;
                 };
+                if request_id == bmc_widget_protocol::LED_REQUEST_ID_ALL {
+                    tracing::warn!(
+                        "Widget {} led_endless: request_id 0 is reserved; ignoring",
+                        instance_id
+                    );
+                    return;
+                }
                 let protocol_state = state.deck_widget_state();
                 tracing::debug!(
-                    "Widget {} led_endless: effect={effect:?} rgb=({r},{g},{b}) period_ms={period_ms}",
+                    "Widget {} led_endless: req={request_id} effect={effect:?} rgb=({r},{g},{b}) period_ms={period_ms}",
                     instance_id
                 );
                 protocol_state.add_action(
                     instance_id,
                     bmc_widget_protocol::ActionPayload::LedEndless {
+                        request_id,
                         effect: led_effect_from_protocol(effect),
                         color: bmc_widget_protocol::RgbColor {
                             r: clamp_u8(r),
@@ -285,11 +303,13 @@ where
                     },
                 );
             }
-            deck_widget_surface_v1::Request::StopLed => {
+            deck_widget_surface_v1::Request::StopLed { request_id } => {
                 let protocol_state = state.deck_widget_state();
-                tracing::debug!("Widget {} stop_led", instance_id);
-                protocol_state
-                    .add_action(instance_id, bmc_widget_protocol::ActionPayload::StopLed {});
+                tracing::debug!("Widget {} stop_led: req={request_id}", instance_id);
+                protocol_state.add_action(
+                    instance_id,
+                    bmc_widget_protocol::ActionPayload::StopLed { request_id },
+                );
             }
             other => {
                 // `deck_widget_surface_v1::Request` is `#[non_exhaustive]`,

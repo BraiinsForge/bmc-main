@@ -5,8 +5,9 @@
 //! Logs all compositor operations instead of rendering to a display.
 
 use bmc::compositor::{
-    Compositor, CompositorError, CompositorEvent, HardwareCapabilities, InstanceId, Position,
-    SceneCycling, SceneLayout, SettingUpdate, Size, WidgetAction, WidgetInitialConfig,
+    Compositor, CompositorError, CompositorEvent, HardwareCapabilities, InstanceId,
+    LedRequestStatusEvent, Position, SceneCycling, SceneLayout, SettingUpdate, Size, WidgetAction,
+    WidgetInitialConfig,
 };
 use bmc_platform::{HardwareProfile, Product};
 use tokio::sync::mpsc;
@@ -16,6 +17,7 @@ pub struct MockCompositor {
     action_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<WidgetAction>>>,
     event_tx: mpsc::UnboundedSender<CompositorEvent>,
     event_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<CompositorEvent>>>,
+    status_tx: mpsc::UnboundedSender<LedRequestStatusEvent>,
     display_name: std::sync::Mutex<Option<String>>,
     product: Product,
 }
@@ -25,10 +27,22 @@ impl MockCompositor {
     pub fn new(product: Product) -> Self {
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (status_tx, mut status_rx) = mpsc::unbounded_channel::<LedRequestStatusEvent>();
+        tokio::spawn(async move {
+            while let Some(status) = status_rx.recv().await {
+                tracing::info!(
+                    "MockCompositor: led_request_status widget={} req={} status={:?}",
+                    status.instance_id,
+                    status.request_id,
+                    status.status
+                );
+            }
+        });
         Self {
             action_rx: std::sync::Mutex::new(Some(action_rx)),
             event_tx,
             event_rx: std::sync::Mutex::new(Some(event_rx)),
+            status_tx,
             display_name: std::sync::Mutex::new(None),
             product,
         }
@@ -163,6 +177,10 @@ impl Compositor for MockCompositor {
             .expect("BUG: action_rx lock poisoned")
             .take()
             .expect("BUG: action_receiver already taken")
+    }
+
+    fn request_status_sender(&self) -> mpsc::UnboundedSender<LedRequestStatusEvent> {
+        self.status_tx.clone()
     }
 
     fn event_receiver(&self) -> mpsc::UnboundedReceiver<CompositorEvent> {
