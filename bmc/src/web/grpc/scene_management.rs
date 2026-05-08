@@ -236,10 +236,6 @@ impl SceneManagementService {
         }
     }
 
-    /// Whether the given scene is currently shown on the display — either
-    /// because it's enabled or because it's being previewed. Gates the
-    /// "apply to live compositor" branches of add_widget / update_widget so
-    /// edits during a preview reach the widget process that's already up.
     /// Save config, returning a gRPC-friendly error on failure.
     async fn save_config(config: &mut ConfigHandle) -> Result<(), Status> {
         config
