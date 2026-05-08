@@ -64,11 +64,17 @@ fn parse_widget_size(
         Ok(web::WidgetSize::Large) => Some(scene::WidgetSize::Large),
         Ok(web::WidgetSize::Full) => Some(scene::WidgetSize::Full),
         Ok(web::WidgetSize::Unspecified) => {
-            violations.push(path.to_owned(), "widget size unspecified");
+            violations.push(
+                path.to_owned(),
+                "must be one of {Small, Medium, Large, Full}",
+            );
             None
         }
         Err(_) => {
-            violations.push(path.to_owned(), format!("invalid widget size: {size}"));
+            violations.push(
+                path.to_owned(),
+                format!("must be one of {{Small, Medium, Large, Full}} (got {size})"),
+            );
             None
         }
     }
@@ -2229,6 +2235,39 @@ mod tests {
             v[0].description.contains("integer") && v[0].description.contains("string"),
             "expected message to name both kinds, got: {}",
             v[0].description,
+        );
+    }
+
+    #[test]
+    fn parse_widget_size_unspecified_message_names_variants() {
+        let mut v = FieldViolations::new();
+        let result = parse_widget_size(web::WidgetSize::Unspecified.into(), "size", &mut v);
+        assert!(result.is_none());
+        let violations: Vec<tonic_types::FieldViolation> = v.into();
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].field, "size");
+        let msg = &violations[0].description;
+        assert!(
+            msg.contains("Small")
+                && msg.contains("Medium")
+                && msg.contains("Large")
+                && msg.contains("Full"),
+            "message should name the four valid variants, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn parse_widget_size_unknown_int_message_includes_value() {
+        let mut v = FieldViolations::new();
+        let result = parse_widget_size(9999, "size", &mut v);
+        assert!(result.is_none());
+        let violations: Vec<tonic_types::FieldViolation> = v.into();
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].field, "size");
+        let msg = &violations[0].description;
+        assert!(
+            msg.contains("9999"),
+            "message should include the bad value, got: {msg}"
         );
     }
 }
