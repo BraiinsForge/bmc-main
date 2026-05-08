@@ -844,12 +844,6 @@ impl GrpcSceneManagementService for SceneManagementService {
         let id =
             Uuid::parse_str(&req.id).map_err(|_| Status::invalid_argument("invalid scene ID"))?;
 
-        if req.cycle_duration_sec == Some(0) {
-            return Err(Status::invalid_argument(
-                "cycle_duration_sec must be >= 1 when set",
-            ));
-        }
-
         let scene_id_key = scene::SceneId::from(id);
         let was_enabled;
         {
@@ -858,6 +852,12 @@ impl GrpcSceneManagementService for SceneManagementService {
                 .scenes
                 .get_mut(&scene_id_key)
                 .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
+
+            if req.cycle_duration_sec == Some(0) {
+                return Err(Status::invalid_argument(
+                    "cycle_duration_sec must be >= 1 when set",
+                ));
+            }
 
             was_enabled = scene.enabled;
             scene.enabled = req.enabled;
