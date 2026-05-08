@@ -988,6 +988,9 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
                     .pending_events
                     .push(DeckWidgetEvent::TransitionIncoming);
             }
+            deck_widget_surface_v1::Event::LedRequestStatus { request_id, status } => {
+                tracing::debug!("Received led_request_status: req={request_id} status={status:?}");
+            }
             _ => {}
         }
     }

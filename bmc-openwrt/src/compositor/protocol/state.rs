@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 
 use bmc::compositor::InstanceId;
 use bmc_widget_protocol::server::deck_widget_surface_v1::DeckWidgetSurfaceV1;
-use bmc_widget_protocol::{ActionPayload, SettingUpdate, WidgetInitialConfig};
+use bmc_widget_protocol::{
+    ActionPayload, LedRequestId, LedRequestStatus, SettingUpdate, WidgetInitialConfig,
+};
 use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::backend::ClientId;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
@@ -445,6 +447,24 @@ impl DeckWidgetProtocolState {
         Some(sink.into_events())
     }
 
+    /// Emit `led_request_status` on the widget's surface. Drops
+    /// silently if the widget has no surface (still configuring or
+    /// already gone).
+    pub fn emit_led_request_status(
+        &self,
+        instance_id: &InstanceId,
+        request_id: LedRequestId,
+        status: LedRequestStatus,
+    ) {
+        let Some(widget) = self.widgets.get(instance_id) else {
+            return;
+        };
+        let Some(ref surface) = widget.protocol_surface else {
+            return;
+        };
+        surface.led_request_status(request_id, led_request_status_to_protocol(status));
+    }
+
     pub fn broadcast_shutdown(&self) {
         for widget_data in self.widgets.values() {
             if let Some(ref surface) = widget_data.protocol_surface {
@@ -500,6 +520,20 @@ impl DeckWidgetProtocolState {
 impl Default for DeckWidgetProtocolState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn led_request_status_to_protocol(
+    status: LedRequestStatus,
+) -> bmc_widget_protocol::server::deck_widget_surface_v1::LedRequestStatus {
+    use bmc_widget_protocol::server::deck_widget_surface_v1::LedRequestStatus as P;
+    match status {
+        LedRequestStatus::Accepted => P::Accepted,
+        LedRequestStatus::Rejected => P::Rejected,
+        LedRequestStatus::Superseded => P::Superseded,
+        LedRequestStatus::Completed => P::Completed,
+        LedRequestStatus::Suspended => P::Suspended,
+        LedRequestStatus::Resumed => P::Resumed,
     }
 }
 

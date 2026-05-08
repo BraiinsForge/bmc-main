@@ -10,7 +10,9 @@ use tokio::sync::mpsc;
 
 pub use crate::data::SceneCycling;
 pub use bmc_platform::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
-pub use bmc_widget_protocol::{ActionPayload, SettingUpdate, WidgetInitialConfig};
+pub use bmc_widget_protocol::{
+    ActionPayload, LedRequestId, LedRequestStatus, SettingUpdate, WidgetInitialConfig,
+};
 
 pub type InstanceId = String;
 
@@ -50,6 +52,15 @@ pub struct SceneLayout {
 pub struct WidgetAction {
     pub instance_id: InstanceId,
     pub payload: ActionPayload,
+}
+
+/// LED request status flowing back to the originating widget: bmc
+/// emits, the compositor relays as a `led_request_status` event.
+#[derive(Debug, Clone)]
+pub struct LedRequestStatusEvent {
+    pub instance_id: InstanceId,
+    pub request_id: LedRequestId,
+    pub status: LedRequestStatus,
 }
 
 #[derive(Debug, Clone)]
@@ -160,6 +171,11 @@ pub trait Compositor: Send + Sync {
 
     /// Get a receiver for widget action requests (sound, LED).
     fn action_receiver(&self) -> mpsc::UnboundedReceiver<WidgetAction>;
+
+    /// Get a sender for LED request status updates flowing back to the
+    /// originating widget. The compositor owns the receiver and emits
+    /// `led_request_status` events on the matching widget surface.
+    fn request_status_sender(&self) -> mpsc::UnboundedSender<LedRequestStatusEvent>;
 
     /// Get a receiver for compositor events (widget ready, disconnected).
     fn event_receiver(&self) -> mpsc::UnboundedReceiver<CompositorEvent>;

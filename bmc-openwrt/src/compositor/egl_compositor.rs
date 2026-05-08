@@ -18,8 +18,8 @@ use super::{
     widget_tracker::{LifecycleState, SceneTransitionTarget},
 };
 use bmc::compositor::{
-    Compositor, CompositorError, CompositorEvent, InstanceId, Position, SceneLayout, Size,
-    WidgetAction,
+    Compositor, CompositorError, CompositorEvent, InstanceId, LedRequestStatusEvent, Position,
+    SceneLayout, Size, WidgetAction,
 };
 use bmc_platform::TouchTransform;
 use bmc_platform::linux_input::discover_touch_node;
@@ -165,6 +165,11 @@ pub struct EglCompositor {
     command_channel: Mutex<Option<calloop_channel::Channel<CompositorCommand>>>,
     action_tx: mpsc::UnboundedSender<WidgetAction>,
     event_tx: mpsc::UnboundedSender<CompositorEvent>,
+    /// `status_rx` is taken into the compositor thread on
+    /// [`Self::start`]; `status_tx` is cloned out via
+    /// [`Self::request_status_sender`].
+    status_tx: mpsc::UnboundedSender<LedRequestStatusEvent>,
+    status_rx: Mutex<Option<mpsc::UnboundedReceiver<LedRequestStatusEvent>>>,
     action_rx: Mutex<Option<mpsc::UnboundedReceiver<WidgetAction>>>,
     event_rx: Mutex<Option<mpsc::UnboundedReceiver<CompositorEvent>>>,
     thread_handle: Mutex<Option<JoinHandle<()>>>,
@@ -228,6 +233,7 @@ impl EglCompositor {
         let (command_tx, command_channel) = calloop_channel::channel();
         let (action_tx, action_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (status_tx, status_rx) = mpsc::unbounded_channel();
 
         Self {
             wayland_display: Mutex::new(None),
@@ -235,6 +241,8 @@ impl EglCompositor {
             command_channel: Mutex::new(Some(command_channel)),
             action_tx,
             event_tx,
+            status_tx,
+            status_rx: Mutex::new(Some(status_rx)),
             action_rx: Mutex::new(Some(action_rx)),
             event_rx: Mutex::new(Some(event_rx)),
             thread_handle: Mutex::new(None),
@@ -261,6 +269,7 @@ impl EglCompositor {
         command_channel: calloop_channel::Channel<CompositorCommand>,
         action_tx: mpsc::UnboundedSender<WidgetAction>,
         event_tx: mpsc::UnboundedSender<CompositorEvent>,
+        status_rx: mpsc::UnboundedReceiver<LedRequestStatusEvent>,
         ready_tx: &flume::Sender<Result<String, String>>,
     ) {
         tracing::info!("Compositor thread starting (headless={})...", headless,);
@@ -400,6 +409,7 @@ impl EglCompositor {
             listening_socket,
             action_tx,
             event_tx,
+            status_rx,
             gesture: GestureState::new(),
             gesture_slot: None,
             active_touch_slots: HashSet::new(),
@@ -810,6 +820,7 @@ struct AppState {
     listening_socket: ListeningSocket,
     action_tx: mpsc::UnboundedSender<WidgetAction>,
     event_tx: mpsc::UnboundedSender<CompositorEvent>,
+    status_rx: mpsc::UnboundedReceiver<LedRequestStatusEvent>,
     /// Backend-agnostic gesture state machine, driven by libinput events.
     gesture: GestureState,
     /// Touch slot that owns compositor-level scene arbitration for the
@@ -1864,6 +1875,20 @@ fn process_protocol_events(state: &mut AppState) {
             payload,
         });
     }
+
+    while let Ok(status) = state.status_rx.try_recv() {
+        tracing::debug!(
+            "Widget {} led_request_status: req={} status={:?}",
+            status.instance_id,
+            status.request_id,
+            status.status
+        );
+        state.compositor.deck_widget_state.emit_led_request_status(
+            &status.instance_id,
+            status.request_id,
+            status.status,
+        );
+    }
 }
 
 impl Compositor for EglCompositor {
@@ -1901,6 +1926,12 @@ impl Compositor for EglCompositor {
             .expect("BUG: command_channel already taken");
         let action_tx = self.action_tx.clone();
         let event_tx = self.event_tx.clone();
+        let status_rx = self
+            .status_rx
+            .lock()
+            .expect("BUG: status_rx lock poisoned")
+            .take()
+            .expect("BUG: status_rx already taken");
 
         let handle = thread::Builder::new()
             .name("egl-compositor".to_owned())
@@ -1916,6 +1947,7 @@ impl Compositor for EglCompositor {
                     command_channel,
                     action_tx,
                     event_tx,
+                    status_rx,
                     &ready_tx,
                 );
             })
@@ -2066,6 +2098,10 @@ impl Compositor for EglCompositor {
             .expect("BUG: action_receiver already taken")
     }
 
+    fn request_status_sender(&self) -> mpsc::UnboundedSender<LedRequestStatusEvent> {
+        self.status_tx.clone()
+    }
+
     fn event_receiver(&self) -> mpsc::UnboundedReceiver<CompositorEvent> {
         self.event_rx
             .lock()
@@ -2153,6 +2189,7 @@ mod tests {
             .expect("BUG: test Wayland socket should bind");
         let (action_tx, _) = mpsc::unbounded_channel();
         let (event_tx, _) = mpsc::unbounded_channel();
+        let (_status_tx, status_rx) = mpsc::unbounded_channel();
 
         AppState {
             display,
@@ -2161,6 +2198,7 @@ mod tests {
             listening_socket,
             action_tx,
             event_tx,
+            status_rx,
             gesture: GestureState::new(),
             gesture_slot: None,
             active_touch_slots: HashSet::new(),
