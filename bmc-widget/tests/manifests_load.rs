@@ -17,12 +17,18 @@ fn manifest_paths() -> Vec<std::path::PathBuf> {
             out.push(path);
         }
     }
-    for entry in std::fs::read_dir(&wasm_examples_dir).expect("BUG: read wasm examples dir") {
-        let entry = entry.expect("BUG: read entry");
-        let path = entry.path().join("manifest.json");
-        if path.exists() {
-            out.push(path);
+    match std::fs::read_dir(&wasm_examples_dir) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry.expect("BUG: read entry");
+                let path = entry.path().join("manifest.json");
+                if path.exists() {
+                    out.push(path);
+                }
+            }
         }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => panic!("BUG: read wasm examples dir: {e}"),
     }
     out
 }
