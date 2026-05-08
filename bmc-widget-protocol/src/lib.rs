@@ -62,7 +62,7 @@ pub use bmc_shared_time::time::{DateFormat, TimeSystem, WeekDay};
 pub use bmc_shared_utils::number_format::NumberFormat;
 pub use bmc_shared_utils::temperature::TemperatureUnit;
 pub use types::{
-    ActionPayload, LedEffect, Localization, RgbColor, SettingUpdate, Settings, SizeInfo, SizeType,
-    WidgetInitialConfig,
+    ActionPayload, LED_REQUEST_ID_ALL, LedEffect, LedRequestId, LedRequestStatus, Localization,
+    RgbColor, SettingUpdate, Settings, SizeInfo, SizeType, WidgetInitialConfig,
 };
 pub use wayland_client;
