@@ -399,10 +399,18 @@ class View extends Component<Props, State> {
             });
         } catch ($) {
             if (pb.abort.is($)) return;
+            const { fieldErrors, error } = fn.mapManifestUpdateError($);
+            this.setState(s => ({
+                manifestForm: { ...s.manifestForm, fieldErrors, error },
+            }));
             return;
         }
         this.setState(s => {
-            if (s.scene?.kind.case !== 'combined') return s;
+            const manifestForm =
+                s.manifestForm.error || Object.keys(s.manifestForm.fieldErrors).length > 0
+                    ? { ...s.manifestForm, fieldErrors: {}, error: null }
+                    : s.manifestForm;
+            if (s.scene?.kind.case !== 'combined') return { ...s, manifestForm };
             const widgets = s.scene.kind.value.widgets.map(w =>
                 w.id === widgetID
                     ? { ...w, size, position, config: w.config ? { ...w.config, params: paramsStruct } : w.config }
@@ -410,6 +418,7 @@ class View extends Component<Props, State> {
             );
             return {
                 ...s,
+                manifestForm,
                 scene: {
                     ...s.scene,
                     kind: {
