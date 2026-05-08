@@ -2,6 +2,7 @@ import { describe, expect, test } from '@rstest/core';
 
 import * as pb from '@/proto';
 import { formStateToWidgetDataStruct } from '../../fn';
+import { makeNumberParamValue } from './FormWidgetManifest';
 
 function paramDef(
     kindCase: pb.ManifestParamDefinition['kind']['case'],
@@ -82,5 +83,64 @@ describe('formStateToWidgetDataStruct', () => {
         expect(result.fields.count.kind.case).toBe('nullValue');
         expect(result.fields.enabled.kind).toEqual({ case: 'booleanValue', value: false });
         expect(result.fields.tz.kind.case).toBe('nullValue');
+    });
+});
+
+describe('makeNumberParamValue', () => {
+    test('empty string -> nullValue', () => {
+        expect(makeNumberParamValue('', 'integer').kind.case).toBe('nullValue');
+    });
+
+    test('null -> nullValue', () => {
+        expect(makeNumberParamValue(null, 'integer').kind.case).toBe('nullValue');
+    });
+
+    test('numeric string -> integerValue for integer type', () => {
+        expect(makeNumberParamValue('42', 'integer').kind).toEqual({
+            case: 'integerValue',
+            value: 42,
+        });
+    });
+
+    test('numeric string -> doubleValue for double type', () => {
+        expect(makeNumberParamValue('1.5', 'double').kind).toEqual({
+            case: 'doubleValue',
+            value: 1.5,
+        });
+    });
+
+    test('typeof number passes through unchanged', () => {
+        expect(makeNumberParamValue(7, 'integer').kind).toEqual({
+            case: 'integerValue',
+            value: 7,
+        });
+    });
+
+    test('non-numeric string -> stringValue carrying raw text', () => {
+        expect(makeNumberParamValue('abc', 'integer').kind).toEqual({
+            case: 'stringValue',
+            value: 'abc',
+        });
+    });
+
+    test('lone minus -> stringValue', () => {
+        expect(makeNumberParamValue('-', 'integer').kind).toEqual({
+            case: 'stringValue',
+            value: '-',
+        });
+    });
+
+    test('partial exponent -> stringValue', () => {
+        expect(makeNumberParamValue('1e', 'double').kind).toEqual({
+            case: 'stringValue',
+            value: '1e',
+        });
+    });
+
+    test('whitespace-only string -> integerValue 0 (Number coerces "   " to 0)', () => {
+        expect(makeNumberParamValue('   ', 'integer').kind).toEqual({
+            case: 'integerValue',
+            value: 0,
+        });
     });
 });
