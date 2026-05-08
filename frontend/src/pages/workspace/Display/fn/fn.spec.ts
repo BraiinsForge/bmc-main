@@ -744,6 +744,26 @@ describe('defaultParamValue', () => {
         expect(v.kind).toMatchObject({ case: 'doubleValue', value: 3.14 });
     });
 
+    test('returns nullValue for paramDouble with no defaultValue', () => {
+        const def = pb.create(pb.ManifestParamDefinitionSchema, {
+            key: 'ratio',
+            name: 'Ratio',
+            kind: { case: 'paramDouble', value: pb.create(pb.ParamDoubleSchema, {}) },
+        });
+        const v = defaultParamValue(def);
+        expect(v.kind.case).toBe('nullValue');
+    });
+
+    test('returns the manifest default for paramBoolean with defaultValue true', () => {
+        const def = pb.create(pb.ManifestParamDefinitionSchema, {
+            key: 'flag',
+            name: 'Flag',
+            kind: { case: 'paramBoolean', value: pb.create(pb.ParamBooleanSchema, { defaultValue: true }) },
+        });
+        const v = defaultParamValue(def);
+        expect(v.kind).toMatchObject({ case: 'booleanValue', value: true });
+    });
+
     test('returns the manifest default for paramTimezone', () => {
         const def = pb.create(pb.ManifestParamDefinitionSchema, {
             key: 'tz',
