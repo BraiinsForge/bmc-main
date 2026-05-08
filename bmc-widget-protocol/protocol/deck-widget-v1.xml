@@ -130,7 +130,9 @@
         validate this — the widget owns its manifest and is authoritative
         on what values are meaningful.
 
-        Emitted once on surface creation as part of the initial batch.
+        Emitted on surface creation as part of the initial configure
+        batch, and re-emitted at runtime whenever the widget's params
+        change (via an update that keeps the widget's geometry stable).
         An empty JSON object ("{}") is sent when no params are configured.
       </description>
       <arg name="json" type="string" summary="JSON-encoded params object"/>

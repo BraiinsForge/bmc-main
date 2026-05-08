@@ -141,7 +141,7 @@ pub fn connect_standalone(
 ) -> Result<()> {
     let mut surface = XdgSurfaceClient::connect(width, height, "Flip Clock", "bmc-flip-clock")?;
     tracing::info!("Connected to Wayland display (standalone mode)");
-    run_render_loop(&mut surface, animation_mode, timezone)
+    run_render_loop(&mut surface, animation_mode, timezone, None)
 }
 
 /// Connect in production mode and return the surface client together with
@@ -160,27 +160,6 @@ pub fn connect_production() -> Result<(DeckWidgetSurfaceClient, bmc_widget::surf
     Ok((surface, initial))
 }
 
-/// Resolve the effective initial timezone from the setting events and an
-/// optional per-widget override. The override (from widget params) wins;
-/// otherwise the system timezone from the initial settings batch is used.
-fn resolve_initial_timezone(
-    settings: &[SettingUpdate],
-    timezone_override: Option<String>,
-) -> String {
-    if let Some(tz) = timezone_override {
-        tracing::info!("Using per-widget timezone override: {tz}");
-        return tz;
-    }
-    for setting in settings {
-        if let SettingUpdate::Timezone(tz) = setting {
-            tracing::info!("Using system timezone: {tz}");
-            return tz.clone();
-        }
-    }
-    tracing::warn!("No timezone in settings or params, defaulting to UTC");
-    "UTC".to_owned()
-}
-
 /// Drive the render loop for a production-mode surface whose initial
 /// state has already been collected.
 pub fn run_production(
@@ -189,63 +168,96 @@ pub fn run_production(
     timezone_override: Option<String>,
     initial_settings: &[SettingUpdate],
 ) -> Result<()> {
-    let timezone = resolve_initial_timezone(initial_settings, timezone_override);
-    run_render_loop(&mut surface, animation_mode, timezone)
+    let mut system_timezone: Option<String> = None;
+    for setting in initial_settings {
+        if let SettingUpdate::Timezone(tz) = setting {
+            system_timezone = Some(tz.clone());
+        }
+    }
+    let system_timezone = system_timezone.unwrap_or_else(|| {
+        tracing::warn!("No timezone in initial settings, defaulting to UTC");
+        "UTC".to_owned()
+    });
+    run_render_loop(
+        &mut surface,
+        animation_mode,
+        system_timezone,
+        timezone_override,
+    )
 }
 
-/// Shared render loop that works with any [`WidgetSurface`] backend.
-fn run_render_loop(
-    surface: &mut dyn WidgetSurface,
+/// Mutable state carried across a single render-loop iteration.
+struct RenderLoopState {
     animation_mode: AnimationMode,
-    initial_timezone: String,
-) -> Result<()> {
-    let mut timezone = initial_timezone;
-    // Initialize GBM-based EGL
-    let mut egl = EglState::new(surface.width(), surface.height())?;
-    tracing::info!("GBM-based EGL initialized, starting render loop");
+    system_timezone: String,
+    timezone_override: Option<String>,
+    digit_meshes: Option<Digit3DMeshes>,
+    flip_state: FlipState,
+    phase: LoopPhase,
+}
 
-    // Initialize renderer with shaders
-    let mut renderer = Renderer::new(egl.gl(), surface.width(), surface.height())?;
-    tracing::info!("OpenGL ES renderer initialized");
-
-    // Create digit textures (used for 2D mode)
-    let digit_textures = DigitTextures::new(egl.gl())?;
-    tracing::info!("Digit textures created");
-
-    // Create 3D digit meshes (used for 3D mode)
-    let digit_meshes = if animation_mode == AnimationMode::Extruded {
-        Some(Digit3DMeshes::new(egl.gl())?)
-    } else {
-        None
-    };
-    if digit_meshes.is_some() {
-        tracing::info!("3D digit meshes created");
+impl RenderLoopState {
+    fn effective_timezone(&self) -> &str {
+        self.timezone_override
+            .as_deref()
+            .unwrap_or(self.system_timezone.as_str())
     }
 
-    let mut flip_state = FlipState::new();
-    let mut phase = LoopPhase::RenderPending;
-
-    while surface.running() {
-        let outcome = surface.poll_dispatch(phase.poll_timeout_ms())?;
-
-        // A frame callback arrived (the Dispatch impl for wl_callback.done
-        // sets needs_render). Consume the flag and arm the next render.
-        if surface.take_render_requested() {
-            phase = LoopPhase::RenderPending;
+    fn apply_param_update(
+        &mut self,
+        manifest: crate::widget_protocol::ManifestParams,
+        gl: &glow::Context,
+        surface: &mut dyn WidgetSurface,
+    ) -> Result<()> {
+        let new_mode = AnimationMode::from(manifest.mode);
+        if new_mode != self.animation_mode {
+            tracing::info!("Animation mode updated: {:?}", new_mode);
+            self.animation_mode = new_mode;
+            if self.animation_mode == AnimationMode::Extruded && self.digit_meshes.is_none() {
+                self.digit_meshes = Some(Digit3DMeshes::new(gl)?);
+                tracing::info!("3D digit meshes created on mode flip");
+            }
+            surface.mark_needs_render();
         }
 
-        // Idle-timeout expiry — roll into the next second's render.
-        if phase == LoopPhase::WaitingForIdleTimeout && outcome == PollOutcome::Timeout {
-            phase = LoopPhase::RenderPending;
+        if manifest.timezone != self.timezone_override {
+            tracing::info!(
+                "Per-widget timezone override updated: {:?}",
+                manifest.timezone
+            );
+            self.timezone_override = manifest.timezone;
+            self.phase = LoopPhase::RenderPending;
         }
+        Ok(())
+    }
 
-        // Protocol events (timezone, shutdown).
-        for event in surface.drain_events() {
+    fn handle_events(
+        &mut self,
+        events: impl Iterator<Item = WidgetEvent>,
+        gl: &glow::Context,
+        surface: &mut dyn WidgetSurface,
+    ) -> Result<()> {
+        for event in events {
             match event {
                 WidgetEvent::Setting(SettingUpdate::Timezone(new_tz)) => {
-                    tracing::info!("Timezone updated: {new_tz}");
-                    timezone = new_tz;
-                    phase = LoopPhase::RenderPending;
+                    tracing::info!("System timezone updated: {new_tz}");
+                    self.system_timezone = new_tz;
+                    self.phase = LoopPhase::RenderPending;
+                }
+                WidgetEvent::ParamUpdate(params) => {
+                    let manifest: crate::widget_protocol::ManifestParams =
+                        match serde_json::from_value(params.into()) {
+                            Ok(m) => m,
+                            Err(e) => {
+                                tracing::error!(
+                                    "ParamUpdate: failed to decode manifest-validated \
+                                     params — compositor and widget schemas have \
+                                     diverged: {e}"
+                                );
+                                continue;
+                            }
+                        };
+                    self.apply_param_update(manifest, gl, surface)?;
                 }
                 WidgetEvent::Setting(_)
                 | WidgetEvent::Shutdown
@@ -255,8 +267,60 @@ fn run_render_loop(
                 | WidgetEvent::TouchCancel => {}
             }
         }
+        Ok(())
+    }
+}
 
-        // Resize (independent of phase).
+/// Shared render loop that works with any [`WidgetSurface`] backend.
+fn run_render_loop(
+    surface: &mut dyn WidgetSurface,
+    animation_mode: AnimationMode,
+    system_timezone: String,
+    timezone_override: Option<String>,
+) -> Result<()> {
+    let mut egl = EglState::new(surface.width(), surface.height())?;
+    tracing::info!("GBM-based EGL initialized, starting render loop");
+
+    let mut renderer = Renderer::new(egl.gl(), surface.width(), surface.height())?;
+    tracing::info!("OpenGL ES renderer initialized");
+
+    let digit_textures = DigitTextures::new(egl.gl())?;
+    tracing::info!("Digit textures created");
+
+    // Lazily instantiated on first Extruded request so runtime mode
+    // flips don't require a respawn; kept alive across
+    // Flat→Extruded→Flat cycles to avoid re-uploading mesh data.
+    let digit_meshes = if animation_mode == AnimationMode::Extruded {
+        let meshes = Digit3DMeshes::new(egl.gl())?;
+        tracing::info!("3D digit meshes created");
+        Some(meshes)
+    } else {
+        None
+    };
+
+    let mut state = RenderLoopState {
+        animation_mode,
+        system_timezone,
+        timezone_override,
+        digit_meshes,
+        flip_state: FlipState::new(),
+        phase: LoopPhase::RenderPending,
+    };
+
+    while surface.running() {
+        let outcome = surface.poll_dispatch(state.phase.poll_timeout_ms())?;
+
+        if surface.take_render_requested() {
+            state.phase = LoopPhase::RenderPending;
+        }
+
+        if state.phase == LoopPhase::WaitingForIdleTimeout && outcome == PollOutcome::Timeout {
+            state.phase = LoopPhase::RenderPending;
+        }
+
+        let events = surface.drain_events();
+        state.handle_events(events.into_iter(), egl.gl(), surface)?;
+
         if surface.take_size_changed() {
             let (w, h) = (surface.width(), surface.height());
             surface.invalidate_cached_buffers();
@@ -264,11 +328,11 @@ fn run_render_loop(
             renderer.resize(w, h);
         }
 
-        if phase != LoopPhase::RenderPending {
+        if state.phase != LoopPhase::RenderPending {
             continue;
         }
 
-        let tz: chrono_tz::Tz = timezone.parse().unwrap_or(chrono_tz::UTC);
+        let tz: chrono_tz::Tz = state.effective_timezone().parse().unwrap_or(chrono_tz::UTC);
         let now = chrono::Utc::now().with_timezone(&tz);
 
         #[expect(
@@ -277,27 +341,33 @@ fn run_render_loop(
         )]
         let (hours, minutes, seconds) = (now.hour() as u8, now.minute() as u8, now.second() as u8);
 
-        flip_state.update(hours, minutes, seconds);
+        state.flip_state.update(hours, minutes, seconds);
         let layout = ClockLayout::for_viewport(surface.width(), surface.height());
 
         egl.begin_frame()?;
         egl.clear(0.0, 0.0, 0.0, 1.0);
         let gl = egl.gl();
 
+        let meshes_for_frame = if state.animation_mode == AnimationMode::Extruded {
+            state.digit_meshes.as_ref()
+        } else {
+            None
+        };
+
         render_clock(
             &layout,
             &renderer,
             &digit_textures,
-            digit_meshes.as_ref(),
+            meshes_for_frame,
             gl,
-            &flip_state,
+            &state.flip_state,
         );
 
-        let animating = flip_state.is_animating();
+        let animating = state.flip_state.is_animating();
         let (dmabuf_info, slot) = egl.end_frame()?;
         surface.submit_buffer(&dmabuf_info, slot, animating)?;
 
-        phase = if animating {
+        state.phase = if animating {
             LoopPhase::WaitingForCallback
         } else {
             LoopPhase::WaitingForIdleTimeout

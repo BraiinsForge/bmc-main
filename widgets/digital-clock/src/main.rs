@@ -32,8 +32,8 @@ fn run_with_wayland() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Connect to the compositor first; the configure batch drives the
     // widget's initial config, so we can't instantiate the widget until
     // that has arrived.
-    let (protocol_client, config) = widget_protocol::connect_and_read_config()?;
-    let widget = DigitalClockWidget::new(config)?;
+    let (protocol_client, initial) = widget_protocol::connect_and_read_config()?;
+    let widget = DigitalClockWidget::new(initial.config)?;
 
     // Timer must be kept alive for the duration of the widget
     let (_wayland_timer, _shutdown_flag) = widget_protocol::spawn_runtime_handler(
@@ -41,6 +41,9 @@ fn run_with_wayland() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         widget.date_format(),
         widget.timezone(),
         widget.is_24_format(),
+        widget.as_weak(),
+        initial.system_timezone,
+        initial.timezone_override,
     );
 
     widget.run()?;

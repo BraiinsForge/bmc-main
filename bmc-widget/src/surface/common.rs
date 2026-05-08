@@ -87,14 +87,25 @@ pub(crate) fn submit_buffer_to_surface<S>(
 pub enum WidgetEvent {
     /// A setting was updated at runtime.
     Setting(bmc_widget_protocol::SettingUpdate),
+    ParamUpdate(serde_json::Map<String, serde_json::Value>),
     /// The compositor requests graceful shutdown.
     Shutdown,
     /// Touch point down (standard Wayland `wl_touch`).
-    TouchDown { id: i32, x: f64, y: f64 },
+    TouchDown {
+        id: i32,
+        x: f64,
+        y: f64,
+    },
     /// Touch point moved (standard Wayland `wl_touch`).
-    TouchMotion { id: i32, x: f64, y: f64 },
+    TouchMotion {
+        id: i32,
+        x: f64,
+        y: f64,
+    },
     /// Touch point lifted (standard Wayland `wl_touch`).
-    TouchUp { id: i32 },
+    TouchUp {
+        id: i32,
+    },
     /// Touch sequence cancelled (standard Wayland `wl_touch`).
     TouchCancel,
 }

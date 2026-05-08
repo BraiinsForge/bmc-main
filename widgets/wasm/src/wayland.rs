@@ -71,6 +71,9 @@ impl WaylandClient {
                     WidgetEvent::Shutdown => {
                         // Already handled by the client (sets running=false)
                     }
+                    WidgetEvent::ParamUpdate(_) => {
+                        tracing::debug!("wasm: ignoring runtime params update");
+                    }
                     #[expect(
                         clippy::cast_possible_truncation,
                         reason = "wl_touch f64 → f32 is lossless for pixel coordinates"

@@ -39,14 +39,25 @@ const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(10);
 pub enum DeckWidgetEvent {
     /// A system setting changed at runtime.
     Setting(SettingUpdate),
+    ParamUpdate(serde_json::Map<String, serde_json::Value>),
     /// Compositor requested graceful shutdown.
     Shutdown,
     /// Touch down from standard `wl_touch`.
-    TouchDown { id: i32, x: f64, y: f64 },
+    TouchDown {
+        id: i32,
+        x: f64,
+        y: f64,
+    },
     /// Touch motion from standard `wl_touch`.
-    TouchMotion { id: i32, x: f64, y: f64 },
+    TouchMotion {
+        id: i32,
+        x: f64,
+        y: f64,
+    },
     /// Touch up from standard `wl_touch`.
-    TouchUp { id: i32 },
+    TouchUp {
+        id: i32,
+    },
     /// Touch cancelled from standard `wl_touch`.
     TouchCancel,
 }
@@ -65,7 +76,7 @@ pub struct InitialState {
     pub size: SizeType,
     pub width: u32,
     pub height: u32,
-    pub params: serde_json::Value,
+    pub params: serde_json::Map<String, serde_json::Value>,
     pub settings: Vec<SettingUpdate>,
 }
 
@@ -102,9 +113,9 @@ pub struct DeckWidgetSurfaceState {
     /// Accumulated `configure` data (size class + dimensions). `None` until
     /// the compositor emits its `configure` event.
     pending_size: Option<(SizeType, u32, u32)>,
-    /// Accumulated `params(json)` event, as a JSON object (empty
-    /// object if the compositor sent `{}` or null).
-    pending_params: serde_json::Value,
+    /// Accumulated `params(json)` event (empty if the compositor sent
+    /// `{}`).
+    pending_params: serde_json::Map<String, serde_json::Value>,
     /// Accumulated setting events emitted before `configure_done`.
     pending_initial_settings: Vec<SettingUpdate>,
 
@@ -228,7 +239,7 @@ impl DeckWidgetSurfaceClient {
             widget_surface: None,
             configure_done: false,
             pending_size: None,
-            pending_params: serde_json::Value::Object(serde_json::Map::new()),
+            pending_params: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
             pending_events: Vec::new(),
         };
@@ -297,7 +308,7 @@ impl DeckWidgetSurfaceClient {
             width,
             height,
             size,
-            initial.params.as_object().map_or(0, serde_json::Map::len),
+            initial.params.len(),
             initial.settings.len(),
         );
 
@@ -479,6 +490,7 @@ impl WidgetSurface for DeckWidgetSurfaceClient {
             .drain(..)
             .map(|event| match event {
                 DeckWidgetEvent::Setting(update) => WidgetEvent::Setting(update),
+                DeckWidgetEvent::ParamUpdate(params) => WidgetEvent::ParamUpdate(params),
                 DeckWidgetEvent::Shutdown => WidgetEvent::Shutdown,
                 DeckWidgetEvent::TouchDown { id, x, y } => WidgetEvent::TouchDown { id, x, y },
                 DeckWidgetEvent::TouchMotion { id, x, y } => WidgetEvent::TouchMotion { id, x, y },
@@ -586,18 +598,12 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
                 state.pending_size = Some((size, width, height));
             }
             deck_widget_surface_v1::Event::Params { json } => {
-                match serde_json::from_str::<serde_json::Value>(&json) {
-                    Ok(v @ serde_json::Value::Object(_)) => state.pending_params = v,
-                    Ok(serde_json::Value::Null) => {
-                        state.pending_params = serde_json::Value::Object(serde_json::Map::new());
-                    }
-                    Ok(other) => {
-                        tracing::warn!("Params JSON is not an object, ignoring: {other}");
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to decode params JSON ({}): {}", json, e);
-                    }
-                }
+                handle_params_json(
+                    &mut state.pending_params,
+                    &mut state.pending_events,
+                    state.configure_done,
+                    &json,
+                );
             }
             deck_widget_surface_v1::Event::ConfigureDone => {
                 tracing::debug!("ConfigureDone");
@@ -659,6 +665,38 @@ fn push_setting(state: &mut DeckWidgetSurfaceState, update: SettingUpdate) {
         state.pending_events.push(DeckWidgetEvent::Setting(update));
     } else {
         state.pending_initial_settings.push(update);
+    }
+}
+
+fn push_params(
+    pending_params: &mut serde_json::Map<String, serde_json::Value>,
+    pending_events: &mut Vec<DeckWidgetEvent>,
+    configure_done: bool,
+    params: serde_json::Map<String, serde_json::Value>,
+) {
+    if configure_done {
+        pending_events.push(DeckWidgetEvent::ParamUpdate(params));
+    } else {
+        *pending_params = params;
+    }
+}
+
+fn handle_params_json(
+    pending_params: &mut serde_json::Map<String, serde_json::Value>,
+    pending_events: &mut Vec<DeckWidgetEvent>,
+    configure_done: bool,
+    json: &str,
+) {
+    match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(serde_json::Value::Object(map)) => {
+            push_params(pending_params, pending_events, configure_done, map);
+        }
+        Ok(other) => {
+            tracing::warn!("Params JSON is not an object, ignoring: {other}");
+        }
+        Err(e) => {
+            tracing::warn!("Failed to decode params JSON ({}): {}", json, e);
+        }
     }
 }
 
@@ -755,10 +793,14 @@ impl Dispatch<wl_touch::WlTouch, ()> for DeckWidgetSurfaceState {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::{Map, Value};
     use std::cell::Cell;
     use std::rc::Rc;
 
-    use super::{ReleasableTouch, TouchCapabilityChange, sync_touch_capability};
+    use super::{
+        DeckWidgetEvent, ReleasableTouch, TouchCapabilityChange, handle_params_json,
+        sync_touch_capability,
+    };
 
     struct MockTouch {
         released: Rc<Cell<bool>>,
@@ -795,5 +837,30 @@ mod tests {
 
         assert_eq!(change, TouchCapabilityChange::Acquire);
         assert!(touch.is_none());
+    }
+
+    #[test]
+    fn params_null_is_ignored_before_configure_done() {
+        let mut pending_params = Map::new();
+        pending_params.insert("keep".to_owned(), Value::String("value".to_owned()));
+        let mut pending_events: Vec<DeckWidgetEvent> = Vec::new();
+
+        handle_params_json(&mut pending_params, &mut pending_events, false, "null");
+
+        assert_eq!(
+            pending_params.get("keep"),
+            Some(&Value::String("value".to_owned()))
+        );
+        assert!(pending_events.is_empty());
+    }
+
+    #[test]
+    fn params_null_is_ignored_after_configure_done() {
+        let mut pending_params = Map::new();
+        let mut pending_events: Vec<DeckWidgetEvent> = Vec::new();
+
+        handle_params_json(&mut pending_params, &mut pending_events, true, "null");
+
+        assert!(pending_events.is_empty());
     }
 }

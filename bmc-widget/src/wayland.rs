@@ -41,7 +41,7 @@ pub struct ProtocolInitialState {
     pub size: SizeType,
     pub width: u32,
     pub height: u32,
-    pub params: serde_json::Value,
+    pub params: serde_json::Map<String, serde_json::Value>,
     pub settings: Vec<SettingUpdate>,
 }
 
@@ -71,6 +71,9 @@ pub enum WaylandError {
 pub trait WidgetEventHandler {
     /// Called when a setting update is received.
     fn on_setting(&mut self, update: SettingUpdate);
+
+    /// Called when a widget-specific param blob is updated at runtime.
+    fn on_param_update(&mut self, _params: serde_json::Map<String, serde_json::Value>);
 
     /// Called when shutdown is requested.
     fn on_shutdown(&mut self);
@@ -103,13 +106,14 @@ struct WidgetState {
     // Initial configure batch accumulation.
     configure_done: bool,
     pending_size: Option<(SizeType, u32, u32)>,
-    pending_params: serde_json::Value,
+    pending_params: serde_json::Map<String, serde_json::Value>,
     pending_initial_settings: Vec<SettingUpdate>,
 }
 
 #[derive(Debug, Clone)]
 enum WidgetEvent {
     Setting(SettingUpdate),
+    ParamUpdate(serde_json::Map<String, serde_json::Value>),
     Shutdown,
 }
 
@@ -127,7 +131,7 @@ impl WidgetProtocolClient {
             pending_events: Vec::new(),
             configure_done: false,
             pending_size: None,
-            pending_params: serde_json::Value::Object(serde_json::Map::new()),
+            pending_params: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
         };
 
@@ -202,6 +206,7 @@ impl WidgetProtocolClient {
         for event in self.state.pending_events.drain(..) {
             match event {
                 WidgetEvent::Setting(update) => handler.on_setting(update),
+                WidgetEvent::ParamUpdate(params) => handler.on_param_update(params),
                 WidgetEvent::Shutdown => handler.on_shutdown(),
             }
         }
@@ -505,18 +510,12 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
                 .unwrap_or(SizeType::Small);
                 state.pending_size = Some((size, width, height));
             }
-            Event::Params { json } => match serde_json::from_str::<serde_json::Value>(&json) {
-                Ok(v @ serde_json::Value::Object(_)) => state.pending_params = v,
-                Ok(serde_json::Value::Null) => {
-                    state.pending_params = serde_json::Value::Object(serde_json::Map::new());
-                }
-                Ok(other) => {
-                    tracing::warn!("Params JSON is not an object, ignoring: {other}");
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to decode params JSON ({}): {}", json, e);
-                }
-            },
+            Event::Params { json } => handle_params_json(
+                &mut state.pending_params,
+                &mut state.pending_events,
+                state.configure_done,
+                &json,
+            ),
             Event::ConfigureDone => {
                 state.configure_done = true;
             }
@@ -568,5 +567,37 @@ fn push_setting(state: &mut WidgetState, update: SettingUpdate) {
         state.pending_events.push(WidgetEvent::Setting(update));
     } else {
         state.pending_initial_settings.push(update);
+    }
+}
+
+fn push_params(
+    pending_params: &mut serde_json::Map<String, serde_json::Value>,
+    pending_events: &mut Vec<WidgetEvent>,
+    configure_done: bool,
+    params: serde_json::Map<String, serde_json::Value>,
+) {
+    if configure_done {
+        pending_events.push(WidgetEvent::ParamUpdate(params));
+    } else {
+        *pending_params = params;
+    }
+}
+
+fn handle_params_json(
+    pending_params: &mut serde_json::Map<String, serde_json::Value>,
+    pending_events: &mut Vec<WidgetEvent>,
+    configure_done: bool,
+    json: &str,
+) {
+    match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(serde_json::Value::Object(map)) => {
+            push_params(pending_params, pending_events, configure_done, map);
+        }
+        Ok(other) => {
+            tracing::warn!("Params JSON is not an object, ignoring: {other}");
+        }
+        Err(e) => {
+            tracing::warn!("Failed to decode params JSON ({}): {}", json, e);
+        }
     }
 }

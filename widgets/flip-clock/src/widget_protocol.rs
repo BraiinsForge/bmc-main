@@ -17,17 +17,17 @@ pub enum IpcError {
     Params(#[from] serde_json::Error),
 }
 
-/// Manifest-declared parameters for the flip-clock widget.
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct ManifestParams {
-    mode: Option<AnimationModeKind>,
-    timezone: Option<String>,
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestParams {
+    pub mode: AnimationModeKind,
+    #[serde(default)]
+    pub timezone: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum AnimationModeKind {
+pub enum AnimationModeKind {
     Flat,
     Extruded,
 }
@@ -41,13 +41,11 @@ impl From<AnimationModeKind> for AnimationMode {
     }
 }
 
-/// Resolve flip-clock's animation mode from the protocol-delivered
-/// params. Missing → default; unknown string → decode error.
-pub fn animation_mode_from_params(params: &serde_json::Value) -> Result<AnimationMode, IpcError> {
-    let parsed: ManifestParams = serde_json::from_value(params.clone())?;
-    Ok(parsed
-        .mode
-        .map_or_else(AnimationMode::default, AnimationMode::from))
+pub fn animation_mode_from_params(
+    params: &serde_json::Map<String, serde_json::Value>,
+) -> Result<AnimationMode, IpcError> {
+    let parsed: ManifestParams = serde_json::from_value(params.clone().into())?;
+    Ok(parsed.mode.into())
 }
 
 /// Resolve an optional per-widget timezone override from the params.
@@ -55,8 +53,8 @@ pub fn animation_mode_from_params(params: &serde_json::Value) -> Result<Animatio
 /// Returns `None` when the widget has no override — the caller must use
 /// the system timezone delivered via the `timezone` setting event.
 pub fn timezone_override_from_params(
-    params: &serde_json::Value,
+    params: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<Option<String>, IpcError> {
-    let parsed: ManifestParams = serde_json::from_value(params.clone())?;
+    let parsed: ManifestParams = serde_json::from_value(params.clone().into())?;
     Ok(parsed.timezone)
 }

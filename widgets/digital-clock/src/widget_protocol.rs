@@ -10,7 +10,7 @@ use bmc_widget_protocol::SettingUpdate;
 use serde::Deserialize;
 use slint::Timer;
 
-use crate::{Config, FontStyle, WidgetSize};
+use crate::{Config, DigitalClock, FontStyle, WidgetSize};
 
 #[derive(Debug, thiserror::Error)]
 pub enum IpcError {
@@ -21,15 +21,13 @@ pub enum IpcError {
     Params(#[from] serde_json::Error),
 }
 
-/// Manifest-declared parameters for the digital-clock widget.
-/// Every field is optional so an empty / partial params object from
-/// the compositor falls back to [`Config::default`] values.
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ManifestParams {
-    font_style: Option<FontStyleKind>,
-    show_seconds: Option<bool>,
-    show_timezone: Option<bool>,
+    font_style: FontStyleKind,
+    show_seconds: bool,
+    show_timezone: bool,
+    #[serde(default)]
     timezone: Option<String>,
 }
 
@@ -62,33 +60,39 @@ impl From<bmc_widget_protocol::SizeType> for WidgetSize {
     }
 }
 
+#[derive(Debug)]
+pub struct InitialConfig {
+    pub config: Config,
+    pub system_timezone: String,
+    pub timezone_override: Option<String>,
+}
+
 /// Connect to the compositor, wait for its initial configure batch, and
 /// return the widget's fully-populated runtime config plus the live
 /// [`WidgetProtocolClient`] that will continue feeding setting updates.
-pub fn connect_and_read_config() -> Result<(WidgetProtocolClient, Config), IpcError> {
+pub fn connect_and_read_config() -> Result<(WidgetProtocolClient, InitialConfig), IpcError> {
     let mut client = WidgetProtocolClient::connect()?;
     client.create_widget_surface();
     client.flush()?;
 
     let initial = client.wait_for_configure()?;
-    let config = build_config(&initial)?;
+    let initial_config = build_initial_config(&initial)?;
 
-    Ok((client, config))
+    Ok((client, initial_config))
 }
 
-fn build_config(initial: &ProtocolInitialState) -> Result<Config, IpcError> {
-    let params: ManifestParams = serde_json::from_value(initial.params.clone())?;
+fn build_initial_config(initial: &ProtocolInitialState) -> Result<InitialConfig, IpcError> {
+    let params: ManifestParams = serde_json::from_value(initial.params.clone().into())?;
 
     let defaults = Config::default();
+    let mut system_timezone = defaults.timezone.clone();
     let mut config = Config {
         width: initial.width,
         height: initial.height,
         size: initial.size.into(),
-        show_seconds: params.show_seconds.unwrap_or(defaults.show_seconds),
-        show_timezone: params.show_timezone.unwrap_or(defaults.show_timezone),
-        font_style: params
-            .font_style
-            .map_or(defaults.font_style, FontStyle::from),
+        show_seconds: params.show_seconds,
+        show_timezone: params.show_timezone,
+        font_style: FontStyle::from(params.font_style),
         timezone: defaults.timezone,
         is_24_format: defaults.is_24_format,
         date_format: defaults.date_format,
@@ -98,7 +102,7 @@ fn build_config(initial: &ProtocolInitialState) -> Result<Config, IpcError> {
         match setting {
             SettingUpdate::TimeFormat(t) => config.is_24_format = *t == TimeSystem::Hour24,
             SettingUpdate::DateFormat(d) => config.date_format = *d,
-            SettingUpdate::Timezone(tz) => config.timezone.clone_from(tz),
+            SettingUpdate::Timezone(tz) => system_timezone.clone_from(tz),
             SettingUpdate::NightMode(_)
             | SettingUpdate::NumberFormat(_)
             | SettingUpdate::TemperatureUnit(_)
@@ -106,12 +110,16 @@ fn build_config(initial: &ProtocolInitialState) -> Result<Config, IpcError> {
         }
     }
 
-    // Per-widget timezone override wins over the system timezone from settings.
-    if let Some(tz) = params.timezone {
-        config.timezone = tz;
-    }
+    let timezone_override = params.timezone;
+    config.timezone = timezone_override
+        .clone()
+        .unwrap_or_else(|| system_timezone.clone());
 
-    Ok(config)
+    Ok(InitialConfig {
+        config,
+        system_timezone,
+        timezone_override,
+    })
 }
 
 struct EventHandler {
@@ -119,13 +127,29 @@ struct EventHandler {
     timezone: Arc<RwLock<String>>,
     is_24_format: Arc<AtomicBool>,
     shutdown_requested: Arc<AtomicBool>,
+    /// Weak handle so runtime param updates can push fresh values into
+    /// Slint without respawning the widget process.
+    ui: slint::Weak<DigitalClock>,
+    system_timezone: String,
+    timezone_override: Option<String>,
+}
+
+impl EventHandler {
+    fn write_effective_timezone(&self) {
+        let effective = self
+            .timezone_override
+            .as_deref()
+            .unwrap_or(self.system_timezone.as_str());
+        effective.clone_into(&mut self.timezone.write().expect("BUG: timezone lock poisoned"));
+    }
 }
 
 impl WidgetEventHandler for EventHandler {
     fn on_setting(&mut self, update: SettingUpdate) {
         match update {
             SettingUpdate::Timezone(tz_str) => {
-                *self.timezone.write().expect("BUG: timezone lock poisoned") = tz_str;
+                self.system_timezone = tz_str;
+                self.write_effective_timezone();
             }
             SettingUpdate::TimeFormat(t) => {
                 self.is_24_format
@@ -140,6 +164,32 @@ impl WidgetEventHandler for EventHandler {
             | SettingUpdate::FirstDayOfWeek(_) => {
                 // Clock widget doesn't use these settings.
             }
+        }
+    }
+
+    fn on_param_update(&mut self, params: serde_json::Map<String, serde_json::Value>) {
+        let Some(ui) = self.ui.upgrade() else {
+            tracing::debug!("on_param_update: UI handle gone, dropping update");
+            return;
+        };
+
+        let manifest: ManifestParams = match serde_json::from_value(params.into()) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::error!(
+                    "on_param_update: failed to decode manifest-validated params — \
+                     compositor and widget schemas have diverged: {e}"
+                );
+                return;
+            }
+        };
+
+        ui.set_font_style(FontStyle::from(manifest.font_style));
+        ui.set_show_seconds(manifest.show_seconds);
+        ui.set_show_timezone(manifest.show_timezone);
+        if manifest.timezone != self.timezone_override {
+            self.timezone_override = manifest.timezone;
+            self.write_effective_timezone();
         }
     }
 
@@ -160,6 +210,9 @@ pub fn spawn_runtime_handler(
     date_format: Arc<AtomicU8>,
     timezone: Arc<RwLock<String>>,
     is_24_format: Arc<AtomicBool>,
+    ui: slint::Weak<DigitalClock>,
+    system_timezone: String,
+    timezone_override: Option<String>,
 ) -> (Timer, Arc<AtomicBool>) {
     let shutdown_requested = Arc::new(AtomicBool::new(false));
 
@@ -168,6 +221,9 @@ pub fn spawn_runtime_handler(
         timezone,
         is_24_format,
         shutdown_requested: Arc::clone(&shutdown_requested),
+        ui,
+        system_timezone,
+        timezone_override,
     };
 
     let timer = Timer::default();
