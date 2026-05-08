@@ -242,14 +242,6 @@ impl SceneManagementService {
         enabled || self.preview_scene_id.lock().await.as_ref() == Some(scene_id)
     }
 
-    /// Spawn a widget and log failures instead of propagating them.
-    async fn try_spawn_widget(&self, scene_id: &scene::SceneId, widget: &scene::Widget) {
-        // Settings travel through the compositor's cached state — each
-        // widget's initial configure batch replays them on connect, so the
-        // runtime spawn path no longer threads them through.
-        self.coordinator.spawn_widget(scene_id, widget).await;
-    }
-
     /// Save config, returning a gRPC-friendly error on failure.
     async fn save_config(config: &mut ConfigHandle) -> Result<(), Status> {
         config
@@ -1220,7 +1212,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         }
 
         if showing {
-            self.try_spawn_widget(&scene_id_key, &widget).await;
+            self.coordinator.spawn_widget(&scene_id_key, &widget).await;
         }
         self.restore_active_scene().await;
 
@@ -1308,7 +1300,9 @@ impl GrpcSceneManagementService for SceneManagementService {
         if showing {
             let instance_id = widget_snapshot.id.as_uuid().to_string();
             self.coordinator.stop_widget(&instance_id).await;
-            self.try_spawn_widget(&scene_id_key, &widget_snapshot).await;
+            self.coordinator
+                .spawn_widget(&scene_id_key, &widget_snapshot)
+                .await;
         }
         self.restore_active_scene().await;
 
