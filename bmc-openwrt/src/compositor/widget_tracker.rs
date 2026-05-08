@@ -87,7 +87,11 @@ impl WidgetTracker {
     /// Replace the cycling list. Tries to keep the same scene active
     /// by remapping `current_index` via `scene_id`; falls back to 0
     /// when the active scene is no longer in the list. Cancels any
-    /// in-progress drag.
+    /// in-progress drag. When `scenes` is empty the list is reset
+    /// to a single sentinel `SceneLayout::default()` (scene_id=None);
+    /// a follow-up `set_active_scene(layout_with_id)` for an id not
+    /// in the (still-empty) list will then reset to a single-scene
+    /// list with that layout.
     pub fn set_scene_cycling(&mut self, scenes: Vec<SceneLayout>) {
         let active_id = self.scenes.get(self.current_index).and_then(|s| s.scene_id);
 
@@ -469,6 +473,35 @@ mod tests {
             tracker.active_scene().scene_id,
             Some(id_a),
             "should fall back to index 0 when active scene is removed"
+        );
+    }
+
+    #[test]
+    fn set_scene_cycling_empty_then_set_active_scene_resets_to_single() {
+        let mut t = WidgetTracker::default();
+        let id_a = SceneId::generate();
+        let layout_a = SceneLayout {
+            scene_id: Some(id_a),
+            ..SceneLayout::default()
+        };
+
+        t.set_scene_cycling(vec![layout_a.clone()]);
+        t.set_active_scene(layout_a.clone());
+        assert_eq!(t.active_scene().scene_id, Some(id_a));
+
+        t.set_scene_cycling(vec![]);
+        assert_eq!(t.active_scene().scene_id, None);
+
+        let id_b = SceneId::generate();
+        let layout_b = SceneLayout {
+            scene_id: Some(id_b),
+            ..SceneLayout::default()
+        };
+        t.set_active_scene(layout_b.clone());
+        assert_eq!(t.active_scene().scene_id, Some(id_b));
+        assert!(
+            !t.can_drag(),
+            "BUG: active scene not in (empty) list must reset to single-scene list",
         );
     }
 }
