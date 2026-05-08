@@ -3,6 +3,7 @@ import { useIntl } from 'react-intl';
 import * as pb from '@/proto';
 import { create } from '@/proto';
 import { getID } from '../const';
+import { defaultParamValue } from '../../fn/fn';
 import { Form } from '@/lib/form';
 
 // Components
@@ -263,23 +264,6 @@ function ParamField(props: {
     }
 }
 
-function kindDefaultValue(kind: pb.ManifestParamDefinition['kind']): pb.WidgetDataValue {
-    switch (kind.case) {
-        case 'paramString':
-            return makeStringValue(kind.value.defaultValue ?? '');
-        case 'paramTimezone':
-            return kind.value.defaultValue !== undefined ? makeStringValue(kind.value.defaultValue) : makeNullValue();
-        case 'paramInteger':
-            return kind.value.defaultValue !== undefined ? makeIntegerValue(kind.value.defaultValue) : makeNullValue();
-        case 'paramDouble':
-            return kind.value.defaultValue !== undefined ? makeDoubleValue(kind.value.defaultValue) : makeNullValue();
-        case 'paramBoolean':
-            return makeBooleanValue(kind.value.defaultValue ?? false);
-        default:
-            return makeStringValue('');
-    }
-}
-
 export function FormWidgetManifest(props: FormWidgetManifestProps) {
     const {
         isOpen,
@@ -318,7 +302,7 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
                     key={def.key}
                     id={$(`param-${def.key}`)}
                     definition={def}
-                    value={params[def.key] ?? kindDefaultValue(def.kind)}
+                    value={params[def.key] ?? defaultParamValue(def)}
                     error={fieldErrors?.[def.key]}
                     onChange={onParamChange}
                     timezones={timezones}
