@@ -1,5 +1,6 @@
 import { useIntl } from 'react-intl';
 
+import { assertUnreachable } from '@/lib/ts';
 import * as pb from '@/proto';
 import { create } from '@/proto';
 import { getID } from '../const';
@@ -259,8 +260,11 @@ function ParamField(props: {
             );
         }
 
-        default:
+        case undefined:
             return null;
+
+        default:
+            return assertUnreachable(definition.kind, 'manifest param kind');
     }
 }
 
