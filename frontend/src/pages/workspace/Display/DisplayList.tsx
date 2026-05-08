@@ -353,18 +353,7 @@ class View extends Component<Props, State> {
             this.#loadScenesDebounced();
         } catch ($) {
             if (pb.abort.is($)) return;
-            const known = ['params'];
-            const { global, fields } = pb.parseFormErrors($, known);
-            const paramsFieldErrors = fields.params as Maybe<Record<string, string[]>>;
-            const fieldErrors: Record<string, string> = {};
-            if (paramsFieldErrors) {
-                for (const [rawKey, errs] of Object.entries(paramsFieldErrors)) {
-                    const key = rawKey.replaceAll('"', '').replaceAll("'", '');
-                    const msg = pb.renderFieldErrorsAsList(errs);
-                    if (msg) fieldErrors[key] = msg;
-                }
-            }
-            const error = pb.renderFieldErrorsAsList(global);
+            const { fieldErrors, error } = fn.mapManifestUpdateError($);
             this.setState(s => ({
                 manifestForm: {
                     ...s.manifestForm,
