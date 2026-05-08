@@ -24,9 +24,6 @@ pub struct Config {
     /// Set server address
     #[clap(long, default_value = "0.0.0.0:6060")]
     pub address: std::net::SocketAddr,
-    /// Set gRPC address
-    #[clap(long, default_value = "0.0.0.0:50051")]
-    pub grpc_address: std::net::SocketAddr,
     /// Set path to a web content directory
     #[clap(long, default_value = data_dir("www"))]
     pub www_path: PathBuf,
@@ -94,8 +91,7 @@ impl From<Config> for Configuration {
                 value
                     .www_var_path
                     .unwrap_or_else(|| value.www_path.join("var")),
-            )
-            .set_grpc_address(value.grpc_address);
+            );
 
         Configuration {
             address: value.address,

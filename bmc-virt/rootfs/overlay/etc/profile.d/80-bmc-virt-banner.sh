@@ -60,13 +60,13 @@ fi
 
 # -- Forwarded ports (host → guest) --
 # Host-side values are written by flake.nix to keep them in sync; guest ports
-# are constants of the services they front.
+# are constants of the services they front. HTTP also serves gRPC-Web — it
+# is multiplexed onto the same listener.
 PORT_SSH='?'
 PORT_HTTP='?'
-PORT_GRPC='?'
 # shellcheck source=/dev/null
 [ -r /etc/bmc-virt/ports.env ] && . /etc/bmc-virt/ports.env
-PORTS="SSH ${PORT_SSH}→22  HTTP ${PORT_HTTP}→80  gRPC ${PORT_GRPC}→50051  VNC 5900→5900"
+PORTS="SSH ${PORT_SSH}→22  HTTP/gRPC ${PORT_HTTP}→80  VNC 5900→5900"
 
 # -- Print --
 printf '\n'
