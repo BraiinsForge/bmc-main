@@ -201,6 +201,11 @@ pub(crate) struct SceneManagementService {
     /// Scene currently held open by a `preview_scene` stream. While set,
     /// that scene overrides the first-enabled pick in `restore_active_scene`
     /// so edits made during a preview stay focused on it.
+    ///
+    /// **Lock order:** always acquire this mutex *before* `config_handle`.
+    /// `PreviewGuard::drop` and every method on this service follows that
+    /// order; without it tokio's write-preferring `RwLock` can deadlock
+    /// under a queued config writer.
     preview_scene_id: Arc<Mutex<Option<scene::SceneId>>>,
 }
 
