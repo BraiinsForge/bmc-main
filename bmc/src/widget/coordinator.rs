@@ -63,7 +63,7 @@ impl Coordinator {
         use bmc_widget_protocol::SettingUpdate;
         let _ = self
             .compositor
-            .broadcast_setting(SettingUpdate::Timezone(timezone.to_string()));
+            .broadcast_setting(SettingUpdate::Timezone(timezone.iana().to_owned()));
         let _ = self
             .compositor
             .broadcast_setting(SettingUpdate::NightMode(night_mode_active));
