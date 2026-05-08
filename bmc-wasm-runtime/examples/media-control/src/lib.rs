@@ -123,6 +123,19 @@ thread_local! {
     static ACTIVE_SKIN: RefCell<ActiveSkin> = RefCell::new(ActiveSkin {
         source: None, button: None, slider: None, background: None, art_frame: None, resolved: true,
     });
+    /// Monotonic counter for album-art bitmap tags. Album art is dynamic (per
+    /// fetch / per song) and has no stable identity, so each registration uses
+    /// a fresh tag rather than trying to dedup.
+    static ALBUM_ART_COUNTER: Cell<u64> = const { Cell::new(0) };
+}
+
+fn next_album_art_tag() -> String {
+    let n = ALBUM_ART_COUNTER.with(|c| {
+        let n = c.get().wrapping_add(1);
+        c.set(n);
+        n
+    });
+    format!("media-control::album-art::{n}")
 }
 
 /// Set the active skin. Pass `None` for baseline rendering.
@@ -162,6 +175,18 @@ fn active_background() -> Option<NinePatch> {
     })
 }
 
+/// Palette key names shared between this widget's Rust code and its
+/// `skin.toml`. Single source of truth — future authors defining their own
+/// skin vocabulary should follow the pattern.
+pub mod palette_key {
+    pub const BACKGROUND: &str = "background";
+    pub const LAYER1: &str = "layer1";
+    pub const LAYER2: &str = "layer2";
+    pub const TEXT_PRIMARY: &str = "text_primary";
+    pub const TEXT_SECONDARY: &str = "text_secondary";
+    pub const ACCENT: &str = "accent";
+}
+
 /// Media control widget's palette — populated from the active skin.
 #[derive(Clone, Copy, Debug, Default)]
 struct Palette {
@@ -184,12 +209,12 @@ fn active_palette() -> Palette {
         return Palette::default();
     };
     Palette {
-        background: skin.color_or("background", Color::default()),
-        layer1: skin.color_or("layer1", Color::default()),
-        layer2: skin.color_or("layer2", Color::default()),
-        text_primary: skin.color_or("text_primary", Color::default()),
-        text_secondary: skin.color_or("text_secondary", Color::default()),
-        accent: skin.color_or("accent", Color::default()),
+        background: skin.color_or(palette_key::BACKGROUND, Color::default()),
+        layer1: skin.color_or(palette_key::LAYER1, Color::default()),
+        layer2: skin.color_or(palette_key::LAYER2, Color::default()),
+        text_primary: skin.color_or(palette_key::TEXT_PRIMARY, Color::default()),
+        text_secondary: skin.color_or(palette_key::TEXT_SECONDARY, Color::default()),
+        accent: skin.color_or(palette_key::ACCENT, Color::default()),
     }
 }
 
@@ -1775,7 +1800,8 @@ fn on_mute(response: &FetchResponse) {
 
 fn on_album_art(response: &FetchResponse) {
     if response.ok() && !response.body().is_empty() {
-        let Some(bitmap_id) = host::register_bitmap(response.body()) else {
+        let tag = next_album_art_tag();
+        let Some(bitmap_id) = host::register_bitmap(&tag, response.body()) else {
             return;
         };
         // Get natural dimensions for aspect ratio (lightweight — no RGBA allocation)
@@ -2034,7 +2060,8 @@ fn on_mpd_art(data: &[u8]) {
     if data.is_empty() {
         return;
     }
-    let Some(bitmap_id) = host::register_bitmap(data) else {
+    let tag = next_album_art_tag();
+    let Some(bitmap_id) = host::register_bitmap(&tag, data) else {
         return;
     };
     let aspect = host::image_dimensions(data)

@@ -4,6 +4,10 @@ mod wasm 'bmc-wasm-runtime/justfile'
 CI_TOOLS_REV := "c75e453c0e3fd5fe167a9437b86e48b54c2aa81c"
 NIX_SYSTEM := "$(nix eval --impure --raw --expr builtins.currentSystem)"
 
+# Global env vars
+
+export FORCE_COLOR := "1"
+
 [private]
 default:
     @just --justfile {{ justfile() }} --list

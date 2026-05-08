@@ -54,15 +54,35 @@ mod ffi {
         fn host_get_touch_click(key_ptr: *const u8, key_len: u32, out_ptr: *mut u8) -> i32;
         fn host_get_touch_drag(key_ptr: *const u8, key_len: u32, out_ptr: *mut u8) -> i32;
 
-        // Icon registration
-        pub(super) fn host_register_icon(data_ptr: *const u8, data_len: u32) -> u32;
+        // Icon registration. The host dedups by tag.
+        pub(super) fn host_register_icon(
+            tag_ptr: *const u8,
+            tag_len: u32,
+            data_ptr: *const u8,
+            data_len: u32,
+        ) -> u32;
 
-        // Bitmap registration
-        pub(super) fn host_register_bitmap(data_ptr: *const u8, data_len: u32) -> u32;
-        pub(super) fn host_register_bitmap_nearest(data_ptr: *const u8, data_len: u32) -> u32;
+        // Bitmap registration. The host dedups by tag.
+        pub(super) fn host_register_bitmap(
+            tag_ptr: *const u8,
+            tag_len: u32,
+            data_ptr: *const u8,
+            data_len: u32,
+        ) -> u32;
+        pub(super) fn host_register_bitmap_nearest(
+            tag_ptr: *const u8,
+            tag_len: u32,
+            data_ptr: *const u8,
+            data_len: u32,
+        ) -> u32;
 
-        // Mesh registration
-        fn host_register_mesh(data_ptr: *const u8, data_len: u32) -> u32;
+        // Mesh registration. The host dedups by tag.
+        fn host_register_mesh(
+            tag_ptr: *const u8,
+            tag_len: u32,
+            data_ptr: *const u8,
+            data_len: u32,
+        ) -> u32;
 
         // Audio registration and playback
         fn host_register_audio(
@@ -171,11 +191,19 @@ mod ffi {
         }
     }
 
-    /// Register icon data with the host. Wire `0` lifts to `None`.
+    /// Register icon data with the host under `tag`. Idempotent host-side.
+    /// Wire `0` lifts to `None`.
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
-    pub fn register_icon(data: &[u8]) -> Option<IconId> {
-        IconId::from_wire(unsafe { host_register_icon(data.as_ptr(), data.len() as u32) as u16 })
+    pub fn register_icon(tag: &str, data: &[u8]) -> Option<IconId> {
+        IconId::from_wire(unsafe {
+            host_register_icon(
+                tag.as_ptr(),
+                tag.len() as u32,
+                data.as_ptr(),
+                data.len() as u32,
+            ) as u16
+        })
     }
 
     /// Parse an ISO 8601 date string (e.g. "2026-02-13T10:15:56Z") into a unix timestamp.
@@ -187,13 +215,19 @@ mod ffi {
         if val == i64::MIN { None } else { Some(val) }
     }
 
-    /// Register mesh data (optimized binary format) with the host.
-    ///
-    /// The host uploads VBO, IBO, and texture to GPU. One-time cost.
+    /// Register mesh data (optimized binary format) with the host under `tag`.
+    /// Idempotent host-side; first call uploads VBO/IBO/texture to GPU.
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
-    pub fn register_mesh(data: &[u8]) -> Option<MeshId> {
-        MeshId::from_wire(unsafe { host_register_mesh(data.as_ptr(), data.len() as u32) as u16 })
+    pub fn register_mesh(tag: &str, data: &[u8]) -> Option<MeshId> {
+        MeshId::from_wire(unsafe {
+            host_register_mesh(
+                tag.as_ptr(),
+                tag.len() as u32,
+                data.as_ptr(),
+                data.len() as u32,
+            ) as u16
+        })
     }
 
     /// Register audio data (WAV/OGG/MP3 bytes) with the host.
@@ -226,21 +260,33 @@ mod ffi {
         unsafe { host_audio_stop(u32::from(id.to_wire())) }
     }
 
-    /// Register bitmap data (PNG bytes) with the host.
+    /// Register bitmap data (PNG bytes) with the host under `tag`. Idempotent
+    /// host-side.
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
-    pub fn register_bitmap(data: &[u8]) -> Option<BitmapId> {
+    pub fn register_bitmap(tag: &str, data: &[u8]) -> Option<BitmapId> {
         BitmapId::from_wire(unsafe {
-            host_register_bitmap(data.as_ptr(), data.len() as u32) as u16
+            host_register_bitmap(
+                tag.as_ptr(),
+                tag.len() as u32,
+                data.as_ptr(),
+                data.len() as u32,
+            ) as u16
         })
     }
 
-    /// Register bitmap data with nearest-neighbor filtering (no bilinear interpolation).
+    /// Register bitmap data with nearest-neighbor filtering (no bilinear
+    /// interpolation) under `tag`. Idempotent host-side.
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
-    pub fn register_bitmap_nearest(data: &[u8]) -> Option<BitmapId> {
+    pub fn register_bitmap_nearest(tag: &str, data: &[u8]) -> Option<BitmapId> {
         BitmapId::from_wire(unsafe {
-            host_register_bitmap_nearest(data.as_ptr(), data.len() as u32) as u16
+            host_register_bitmap_nearest(
+                tag.as_ptr(),
+                tag.len() as u32,
+                data.as_ptr(),
+                data.len() as u32,
+            ) as u16
         })
     }
 

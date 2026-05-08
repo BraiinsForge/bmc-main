@@ -48,9 +48,9 @@ use bmc_render::renderer::Renderer as _;
 // ── Thread-local renderer bridge for asset registrars ────────────────
 //
 // The SDK's pluggable registrars (`init_icon_registrar`, etc.) and the skin
-// system (`bmc_render_skin::init`) take `fn(&[u8]) -> u16` — bare function
-// pointers that can't capture. We bridge this by stashing a raw pointer to
-// the renderer in a thread-local during story rendering.
+// system (`bmc_render_skin::init`) take `fn(&str, &[u8]) -> u16` — bare
+// function pointers that can't capture. We bridge this by stashing a raw
+// pointer to the renderer in a thread-local during story rendering.
 //
 // Single-thread assumption: story rendering runs on the main UI thread
 // only. The thread-local is null on every other thread (thread-locals
@@ -63,44 +63,44 @@ thread_local! {
     static RENDERER_PTR: Cell<*mut FemtoVgRenderer> = const { Cell::new(std::ptr::null_mut()) };
 }
 
-pub(crate) fn registrar_icon(data: &[u8]) -> Option<bmc_wasm_sdk::IconId> {
+pub(crate) fn registrar_icon(tag: &str, data: &[u8]) -> Option<bmc_wasm_sdk::IconId> {
     let ptr = RENDERER_PTR.with(Cell::get);
     assert!(
         !ptr.is_null(),
         "icon registrar called from a non-render thread; \
          RENDERER_PTR is thread-local and stories must not register assets from spawned threads"
     );
-    unsafe { &mut *ptr }.register_icon(data)
+    unsafe { &mut *ptr }.register_icon(tag, data)
 }
 
-pub(crate) fn registrar_bitmap(data: &[u8]) -> Option<bmc_wasm_sdk::BitmapId> {
+pub(crate) fn registrar_bitmap(tag: &str, data: &[u8]) -> Option<bmc_wasm_sdk::BitmapId> {
     let ptr = RENDERER_PTR.with(Cell::get);
     assert!(
         !ptr.is_null(),
         "bitmap registrar called from a non-render thread; \
          RENDERER_PTR is thread-local and stories must not register assets from spawned threads"
     );
-    unsafe { &mut *ptr }.register_bitmap(data)
+    unsafe { &mut *ptr }.register_bitmap(tag, data)
 }
 
-pub(crate) fn registrar_bitmap_nearest(data: &[u8]) -> Option<bmc_wasm_sdk::BitmapId> {
+pub(crate) fn registrar_bitmap_nearest(tag: &str, data: &[u8]) -> Option<bmc_wasm_sdk::BitmapId> {
     let ptr = RENDERER_PTR.with(Cell::get);
     assert!(
         !ptr.is_null(),
         "bitmap_nearest registrar called from a non-render thread; \
          RENDERER_PTR is thread-local and stories must not register assets from spawned threads"
     );
-    unsafe { &mut *ptr }.register_bitmap_nearest(data)
+    unsafe { &mut *ptr }.register_bitmap_nearest(tag, data)
 }
 
-pub(crate) fn registrar_mesh(data: &[u8]) -> Option<bmc_wasm_sdk::MeshId> {
+pub(crate) fn registrar_mesh(tag: &str, data: &[u8]) -> Option<bmc_wasm_sdk::MeshId> {
     let ptr = RENDERER_PTR.with(Cell::get);
     assert!(
         !ptr.is_null(),
         "mesh registrar called from a non-render thread; \
          RENDERER_PTR is thread-local and stories must not register assets from spawned threads"
     );
-    unsafe { &mut *ptr }.register_mesh(data)
+    unsafe { &mut *ptr }.register_mesh(tag, data)
 }
 
 // ── Company palette (from bmc-wasm-protocol colors) ─────────────────

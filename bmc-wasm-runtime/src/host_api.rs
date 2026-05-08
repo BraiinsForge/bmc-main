@@ -568,6 +568,9 @@ pub(crate) struct HostState {
     /// The host stores the original encoded data and decodes on each play.
     pub audio_samples: HashMap<AudioId, AudioSample>,
 
+    /// Tag → `AudioId` lookup for idempotent registration.
+    pub audio_id_by_name: HashMap<String, AudioId>,
+
     /// Next audio ID counter (for `AudioId::alloc`).
     pub next_audio_id: u16,
 
@@ -645,6 +648,7 @@ impl HostState {
             rng_state: None, // None = auto-seed on first use (from monotonic_ms)
             led_command_sender: None,
             audio_samples: HashMap::new(),
+            audio_id_by_name: HashMap::new(),
             next_audio_id: 1,
             #[cfg(feature = "audio")]
             audio_stream: {

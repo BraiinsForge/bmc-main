@@ -33,6 +33,12 @@ fn register_register_audio_import(linker: &mut Linker<HostState>) -> Result<()> 
             let name =
                 read_string(&caller, name_ptr, name_len).unwrap_or_else(|| "unknown".to_owned());
 
+            // Idempotent by name: a second registration with the same tag
+            // returns the cached ID without re-decoding.
+            if let Some(existing) = caller.data().audio_id_by_name.get(&name) {
+                return existing.to_wire().into();
+            }
+
             #[cfg(feature = "audio")]
             let duration_ms = {
                 use rodio::Source as _;
@@ -51,10 +57,11 @@ fn register_register_audio_import(linker: &mut Linker<HostState>) -> Result<()> 
                 id,
                 AudioSample {
                     data: data.into(),
-                    name,
+                    name: name.clone(),
                     duration_ms,
                 },
             );
+            state.audio_id_by_name.insert(name, id);
             id.to_wire().into()
         },
     )?;

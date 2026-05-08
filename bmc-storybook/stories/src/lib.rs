@@ -30,10 +30,10 @@ use bmc_storybook_api::{StoryEntry, StoryGroupMeta, StoryManifest};
 /// Called by the shell before each story render.
 #[unsafe(no_mangle)]
 pub extern "Rust" fn __init_registrars(
-    icon: fn(&[u8]) -> Option<bmc_wasm_sdk::IconId>,
-    bitmap: fn(&[u8]) -> Option<bmc_wasm_sdk::BitmapId>,
-    mesh: fn(&[u8]) -> Option<bmc_wasm_sdk::MeshId>,
-    bitmap_nearest: fn(&[u8]) -> Option<bmc_wasm_sdk::BitmapId>,
+    icon: fn(&str, &[u8]) -> Option<bmc_wasm_sdk::IconId>,
+    bitmap: fn(&str, &[u8]) -> Option<bmc_wasm_sdk::BitmapId>,
+    mesh: fn(&str, &[u8]) -> Option<bmc_wasm_sdk::MeshId>,
+    bitmap_nearest: fn(&str, &[u8]) -> Option<bmc_wasm_sdk::BitmapId>,
 ) {
     bmc_wasm_sdk::assets::init_icon_registrar(icon);
     bmc_wasm_sdk::assets::init_bitmap_registrar(bitmap);

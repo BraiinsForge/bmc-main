@@ -55,11 +55,11 @@ use bmc_wasm_protocol::colors::Color;
 // Bitmap registrar callback
 // ---------------------------------------------------------------------------
 
-type BitmapRegistrar = fn(&[u8]) -> Option<BitmapId>;
+type BitmapRegistrar = fn(&str, &[u8]) -> Option<BitmapId>;
 
 thread_local! {
     static BITMAP_REGISTRAR: RefCell<BitmapRegistrar> = const {
-        RefCell::new(|_| panic!("BUG: skin bitmap registrar not initialized — call bmc_render_skin::init() first"))
+        RefCell::new(|_, _| panic!("BUG: skin bitmap registrar not initialized — call bmc_render_skin::init() first"))
     };
 }
 
@@ -69,8 +69,8 @@ pub fn init(register_fn: BitmapRegistrar) {
     BITMAP_REGISTRAR.with(|r| *r.borrow_mut() = register_fn);
 }
 
-fn register_bitmap(data: &[u8]) -> Option<BitmapId> {
-    BITMAP_REGISTRAR.with(|r| r.borrow()(data))
+fn register_bitmap(tag: &str, data: &[u8]) -> Option<BitmapId> {
+    BITMAP_REGISTRAR.with(|r| r.borrow()(tag, data))
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +84,8 @@ fn register_bitmap(data: &[u8]) -> Option<BitmapId> {
 /// At runtime, the inner bitmap is registered with the host on first use.
 pub struct NinePatchAsset {
     pub data: &'static [u8],
+    /// Stable, unique-per-host registration tag (e.g. `"<crate>::<file_stem>"`).
+    pub name: &'static str,
     pub left: u16,
     pub top: u16,
     pub right: u16,
@@ -125,40 +127,19 @@ impl NinePatch {
 // NinePatchAsset registration
 // ---------------------------------------------------------------------------
 
-thread_local! {
-    static NINE_PATCH_IDS: RefCell<Vec<(usize, NinePatch)>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Register a 9-patch asset with the host (if not already registered) and return a `NinePatch`.
+/// Register a 9-patch asset with the host and return a `NinePatch`.
 ///
-/// A successful registration is cached by asset-data pointer so subsequent
-/// calls reuse the same `BitmapId`. A failed registration is **not** cached:
-/// callers get a `NinePatch { bitmap_id: None, .. }` for this call and the
-/// next call will retry, matching the SDK asset-cache convention that
-/// transient registration failures must not become permanent.
+/// Idempotent: the host dedups by `asset.name`, so a second call returns the
+/// cached `BitmapId` without re-decoding/re-uploading.
 #[must_use]
 pub fn ensure_nine_patch_registered(asset: &NinePatchAsset) -> NinePatch {
-    NINE_PATCH_IDS.with(|ids| {
-        let mut ids = ids.borrow_mut();
-        let key = asset.data.as_ptr() as usize;
-        for &(k, np) in ids.iter() {
-            if k == key {
-                return np;
-            }
-        }
-        let bitmap_id = register_bitmap(asset.data);
-        let np = NinePatch {
-            bitmap_id,
-            left: asset.left,
-            top: asset.top,
-            right: asset.right,
-            bottom: asset.bottom,
-        };
-        if bitmap_id.is_some() {
-            ids.push((key, np));
-        }
-        np
-    })
+    NinePatch {
+        bitmap_id: register_bitmap(asset.name, asset.data),
+        left: asset.left,
+        top: asset.top,
+        right: asset.right,
+        bottom: asset.bottom,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -219,10 +200,6 @@ pub struct Skin {
     pub assets: &'static [SkinAsset],
 }
 
-thread_local! {
-    static SKIN_ASSET_IDS: RefCell<Vec<(usize, NinePatch)>> = const { RefCell::new(Vec::new()) };
-}
-
 /// A resolved skin asset — registered 9-patch + metadata from `skin.toml`.
 #[derive(Clone, Copy, Debug)]
 pub struct SkinEntry {
@@ -238,13 +215,16 @@ impl Skin {
     // -- Palette (colors) --
 
     /// Look up a palette color by name.
+    ///
+    /// Returns `None` only when the key is absent. A palette entry whose
+    /// value is [`Color::TRANSPARENT`] returns `Some(TRANSPARENT)` — callers
+    /// that need a fallback should use [`color_or`](Self::color_or).
     #[must_use]
     pub fn get_color(&self, name: &str) -> Option<Color> {
         self.palette
             .iter()
             .find(|(k, _)| *k == name)
             .map(|(_, c)| *c)
-            .filter(|c| c.to_u32() != 0)
     }
 
     /// Look up a palette color by name, returning `fallback` if missing.
@@ -256,30 +236,21 @@ impl Skin {
     // -- Assets (9-patches / bitmaps) --
 
     /// Look up a 9-patch asset by name and register it with the host if needed.
+    ///
+    /// Registration is idempotent host-side: the tag combines the skin name and
+    /// the asset name so two skins with the same asset name don't alias.
     #[must_use]
     pub fn get_nine_patch(&self, name: &str) -> Option<SkinEntry> {
         let asset = self.assets.iter().find(|a| a.name == name)?;
-        let nine_patch = SKIN_ASSET_IDS.with(|ids| {
-            let mut ids = ids.borrow_mut();
-            let key = asset.data.as_ptr() as usize;
-            for &(k, np) in ids.iter() {
-                if k == key {
-                    return np;
-                }
-            }
-            let bitmap_id = register_bitmap(asset.data);
-            let np = NinePatch {
-                bitmap_id,
+        let tag = format!("skin::{}::{}", self.name, asset.name);
+        Some(SkinEntry {
+            nine_patch: NinePatch {
+                bitmap_id: register_bitmap(&tag, asset.data),
                 left: asset.left,
                 top: asset.top,
                 right: asset.right,
                 bottom: asset.bottom,
-            };
-            ids.push((key, np));
-            np
-        });
-        Some(SkinEntry {
-            nine_patch,
+            },
             width: asset.width,
             height: asset.height,
             color: asset.color,

@@ -47,6 +47,19 @@ fn resolve_asset(rel_path: &str) -> PathBuf {
     panic!("asset not found: `{rel_path}` (searched from `{manifest_dir}`)");
 }
 
+/// Build a host-unique asset tag of the form `"<crate>::<file_stem>"`.
+///
+/// Two crates that ship an asset with the same filename register under
+/// different tags, so they don't alias in the host's shared registry.
+fn asset_tag(full_path: &Path) -> String {
+    let crate_name = std::env::var("CARGO_PKG_NAME").unwrap_or_else(|_| "unknown".to_owned());
+    let stem = full_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
+    format!("{crate_name}::{stem}")
+}
+
 /// Embed a PNG (or other raster image) file as a `Bitmap` at compile time.
 ///
 /// The raw file bytes are included directly; the host decodes on first registration.
@@ -67,10 +80,12 @@ pub fn include_bitmap(input: TokenStream) -> TokenStream {
 
     let full_path = resolve_asset(&rel_path);
     let abs_path = full_path.display().to_string();
+    let name = asset_tag(&full_path);
 
     let expanded = quote! {
         bmc_wasm_sdk::Bitmap {
-            data: include_bytes!(#abs_path)
+            data: include_bytes!(#abs_path),
+            name: #name,
         }
     };
 
@@ -97,12 +112,7 @@ pub fn include_audio(input: TokenStream) -> TokenStream {
 
     let full_path = resolve_asset(&rel_path);
     let abs_path = full_path.display().to_string();
-
-    let name = full_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("unknown")
-        .to_string();
+    let name = asset_tag(&full_path);
 
     let expanded = quote! {
         bmc_wasm_sdk::Audio {
@@ -162,6 +172,7 @@ fn include_mesh_impl(path_lit: &LitStr) -> syn::Result<proc_macro2::TokenStream>
     }
 
     let (packed, face_normals, extra_tracked_paths) = mesh::pack_mesh(&full_path, span)?;
+    let name = asset_tag(&full_path);
 
     // Generate face_normals as &[[f32; 3]] literal
     let normal_arrays = face_normals.iter().map(|[x, y, z]| {
@@ -190,6 +201,7 @@ fn include_mesh_impl(path_lit: &LitStr) -> syn::Result<proc_macro2::TokenStream>
             bmc_wasm_sdk::Mesh {
                 data: &[#(#packed),*],
                 face_normals: &[#(#normal_arrays),*],
+                name: #name,
             }
         }
     })
@@ -222,13 +234,14 @@ pub fn include_icon(input: TokenStream) -> TokenStream {
         .unwrap_or_else(|e| panic!("failed to read SVG `{}`: {e}", full_path.display()));
 
     let compiled = bmc_icon_compiler::compile_svg(&svg_data);
+    let name = asset_tag(&full_path);
 
     // Emit const-compatible expression.
     // The include_bytes! ensures Cargo recompiles when the SVG file changes.
     let expanded = quote! {
         {
             const _TRACK: &[u8] = include_bytes!(#abs_path);
-            bmc_wasm_sdk::Icon { data: &[#(#compiled),*] }
+            bmc_wasm_sdk::Icon { data: &[#(#compiled),*], name: #name }
         }
     };
 
@@ -306,6 +319,7 @@ fn include_nine_patch_impl(input: TokenStream) -> syn::Result<proc_macro2::Token
     let png_data = png_bytes.as_slice();
 
     let abs_path = full_path.display().to_string();
+    let name = asset_tag(&full_path);
 
     Ok(quote! {
         {
@@ -313,6 +327,7 @@ fn include_nine_patch_impl(input: TokenStream) -> syn::Result<proc_macro2::Token
             const _TRACK: &[u8] = include_bytes!(#abs_path);
             bmc_wasm_sdk::NinePatchAsset {
                 data: &[#(#png_data),*],
+                name: #name,
                 left: #left,
                 top: #top,
                 right: #right,

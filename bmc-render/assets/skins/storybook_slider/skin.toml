@@ -1,8 +1,2 @@
 name = "Storybook Slider"
 description = "Minimal SliderSkin demo for the storybook progress story."
-
-[slider_track]
-height = 12
-
-[slider_thumb]
-[slider_thumb_pressed]

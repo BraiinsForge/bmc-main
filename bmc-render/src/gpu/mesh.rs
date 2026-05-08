@@ -307,6 +307,8 @@ pub struct MeshRenderer {
     u_highlight_color: glow::UniformLocation,
     // Registered meshes
     meshes: Vec<Option<UploadedMesh>>,
+    // Tag → MeshId for idempotent registration.
+    by_tag: std::collections::HashMap<String, MeshId>,
     // Per-slot dirty tracking
     slots: Vec<SlotState>,
     #[cfg(feature = "profiling")]
@@ -429,6 +431,7 @@ impl MeshRenderer {
                 u_highlight_rect,
                 u_highlight_color,
                 meshes: Vec::new(),
+                by_tag: std::collections::HashMap::new(),
                 slots,
                 #[cfg(feature = "profiling")]
                 setup_w: ii_stopwatch::StopWatch::default(),
@@ -442,8 +445,14 @@ impl MeshRenderer {
         }
     }
 
-    /// Upload mesh binary data to GPU (VBO + IBO + optional texture).
-    pub fn register_mesh(&mut self, gl: &glow::Context, data: &[u8]) -> Option<MeshId> {
+    /// Upload mesh binary data to GPU (VBO + IBO + optional texture) under
+    /// `tag`. Idempotent: a second call with the same tag returns the cached
+    /// ID without re-uploading.
+    pub fn register_mesh(&mut self, gl: &glow::Context, tag: &str, data: &[u8]) -> Option<MeshId> {
+        if let Some(&id) = self.by_tag.get(tag) {
+            return Some(id);
+        }
+
         #[cfg(feature = "profiling")]
         let profile_before = profile::RegisterMeshProbe::start();
 
@@ -451,19 +460,20 @@ impl MeshRenderer {
         // doesn't leak the freshly-allocated VBO/IBO/textures —
         // `UploadedMesh` has no `Drop` impl that frees GPU handles.
         let Some(id) = mesh_id_from_storage_index(self.meshes.len()) else {
-            tracing::error!("mesh registration failed: id space exhausted");
+            tracing::error!("mesh registration failed: id space exhausted ({tag})");
             return None;
         };
 
         let mesh = match parse_and_upload(gl, data) {
             Ok(m) => m,
             Err(e) => {
-                tracing::error!("mesh upload failed: {e}");
+                tracing::error!("mesh upload failed ({tag}): {e}");
                 return None;
             }
         };
 
         self.meshes.push(Some(mesh));
+        self.by_tag.insert(tag.to_owned(), id);
         // No slot invalidation needed: `id` is fresh (one-based index of
         // the just-pushed entry), so no existing slot's `prev_mesh_id` can
         // collide. `SlotState::check_and_update` already triggers a redraw

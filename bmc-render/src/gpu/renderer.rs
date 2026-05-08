@@ -513,8 +513,8 @@ impl Renderer for FemtoVgRenderer {
 
     // -- Icons --
 
-    fn register_icon(&mut self, data: &[u8]) -> Option<IconId> {
-        self.icon_registry.register(data)
+    fn register_icon(&mut self, tag: &str, data: &[u8]) -> Option<IconId> {
+        self.icon_registry.register(tag, data)
     }
 
     fn draw_icon(
@@ -534,14 +534,14 @@ impl Renderer for FemtoVgRenderer {
 
     // -- Bitmaps --
 
-    fn register_bitmap(&mut self, data: &[u8]) -> Option<BitmapId> {
+    fn register_bitmap(&mut self, tag: &str, data: &[u8]) -> Option<BitmapId> {
         self.bitmap_registry
-            .register(data, &mut self.canvas, femtovg::ImageFlags::empty())
+            .register(tag, data, &mut self.canvas, femtovg::ImageFlags::empty())
     }
 
-    fn register_bitmap_nearest(&mut self, data: &[u8]) -> Option<BitmapId> {
+    fn register_bitmap_nearest(&mut self, tag: &str, data: &[u8]) -> Option<BitmapId> {
         self.bitmap_registry
-            .register(data, &mut self.canvas, femtovg::ImageFlags::NEAREST)
+            .register(tag, data, &mut self.canvas, femtovg::ImageFlags::NEAREST)
     }
 
     fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: BitmapId) {
@@ -586,10 +586,10 @@ impl Renderer for FemtoVgRenderer {
         }
     }
 
-    fn register_mesh(&mut self, data: &[u8]) -> Option<MeshId> {
+    fn register_mesh(&mut self, tag: &str, data: &[u8]) -> Option<MeshId> {
         self.lazy_init_mesh_renderer();
         let renderer = self.mesh_renderer.as_mut()?;
-        renderer.register_mesh(&self.gl, data)
+        renderer.register_mesh(&self.gl, tag, data)
     }
 
     fn draw_mesh(

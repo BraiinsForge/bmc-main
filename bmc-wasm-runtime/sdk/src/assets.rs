@@ -6,10 +6,12 @@
 //! On native targets (storybook), callers must initialize pluggable registrars
 //! via [`init_icon_registrar`], [`init_bitmap_registrar`], [`init_mesh_registrar`]
 //! before any registration occurs.
+//!
+//! The host's registry is idempotent by `name` — the SDK keeps no consumer-side
+//! cache; every call routes through the host, which returns the same ID for the
+//! same `name`.
 
 #![cfg_attr(target_arch = "wasm32", expect(clippy::cast_sign_loss))]
-
-use std::cell::RefCell;
 
 use bmc_wasm_protocol::{AudioId, BitmapId, IconId, MeshId};
 
@@ -18,149 +20,114 @@ use crate::host;
 use crate::mesh::Mesh;
 
 #[cfg(not(target_arch = "wasm32"))]
-type IconRegistrar = fn(&[u8]) -> Option<IconId>;
+type IconRegistrar = fn(&str, &[u8]) -> Option<IconId>;
 #[cfg(not(target_arch = "wasm32"))]
-type BitmapRegistrar = fn(&[u8]) -> Option<BitmapId>;
+type BitmapRegistrar = fn(&str, &[u8]) -> Option<BitmapId>;
 #[cfg(not(target_arch = "wasm32"))]
-type MeshRegistrar = fn(&[u8]) -> Option<MeshId>;
-
-/// Look up `key` in `ids`; on miss, call `register` and cache the result
-/// only on success. Failed registrations must NOT be cached, so the next
-/// call retries once the host is ready (e.g. after lazy GL initialisation).
-pub(crate) fn cache_successful_resource_id<T, F>(
-    ids: &mut Vec<(usize, T)>,
-    key: usize,
-    register: F,
-) -> Option<T>
-where
-    T: Copy,
-    F: FnOnce() -> Option<T>,
-{
-    for &(k, id) in ids.iter() {
-        if k == key {
-            return Some(id);
-        }
-    }
-    let id = register()?;
-    ids.push((key, id));
-    Some(id)
-}
+type MeshRegistrar = fn(&str, &[u8]) -> Option<MeshId>;
 
 // ── Icon ─────────────────────────────────────────────────────────────
 
 /// Compiled icon data (output of `include_icon!` proc macro).
 ///
-/// The `data` field contains the compact binary representation of SVG paths
-/// produced at compile time. On first use, this data is sent to the host via
-/// `host_register_icon()` which returns an opaque ID used for rendering.
+/// `data` is the compact binary representation of SVG paths produced at
+/// compile time. `name` is a stable, host-unique tag (typically
+/// `"<crate>::<file_stem>"`) used by the host to dedup registrations.
 #[derive(Debug)]
 pub struct Icon {
     pub data: &'static [u8],
-}
-
-thread_local! {
-    static ICON_IDS: RefCell<Vec<(usize, IconId)>> = const { RefCell::new(Vec::new()) };
+    pub name: &'static str,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-thread_local! {
-    static ICON_REGISTRAR: RefCell<IconRegistrar> = RefCell::new(|_| panic!("BUG: icon registrar not initialized — call init_icon_registrar()"));
+mod icon_native {
+    use super::IconRegistrar;
+    use std::cell::RefCell;
+
+    thread_local! {
+        pub(super) static ICON_REGISTRAR: RefCell<IconRegistrar> = RefCell::new(|_, _| panic!("BUG: icon registrar not initialized — call init_icon_registrar()"));
+    }
 }
 
 /// Initialize the icon registrar for native targets.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn init_icon_registrar(f: IconRegistrar) {
-    ICON_REGISTRAR.with(|r| *r.borrow_mut() = f);
+    icon_native::ICON_REGISTRAR.with(|r| *r.borrow_mut() = f);
 }
 
-/// Register an icon (if not already registered) and return its ID.
+/// Register an icon (host-side dedup by `icon.name`) and return its ID.
 #[must_use]
 pub fn ensure_registered(icon: &Icon) -> Option<IconId> {
-    ICON_IDS.with(|ids| {
-        cache_successful_resource_id(&mut ids.borrow_mut(), icon.data.as_ptr() as usize, || {
-            #[cfg(target_arch = "wasm32")]
-            {
-                host::register_icon(icon.data)
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                ICON_REGISTRAR.with(|r| r.borrow()(icon.data))
-            }
-        })
-    })
+    #[cfg(target_arch = "wasm32")]
+    {
+        host::register_icon(icon.name, icon.data)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        icon_native::ICON_REGISTRAR.with(|r| r.borrow()(icon.name, icon.data))
+    }
 }
 
 // ── Bitmap ───────────────────────────────────────────────────────────
 
 /// Embedded raster image data (output of `include_bitmap!` proc macro).
 ///
-/// The `data` field contains raw PNG (or other image format) bytes embedded
-/// at compile time. On first use, this data is sent to the host via
-/// `host_register_bitmap()` which decodes it and uploads the texture to VRAM.
+/// `data` is the raw image bytes (PNG/JPEG/etc.). `name` is a stable,
+/// host-unique tag (typically `"<crate>::<file_stem>"`) used by the host to
+/// dedup registrations.
 #[derive(Debug)]
 pub struct Bitmap {
     pub data: &'static [u8],
-}
-
-thread_local! {
-    static BITMAP_IDS: RefCell<Vec<(usize, BitmapId)>> = const { RefCell::new(Vec::new()) };
+    pub name: &'static str,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-thread_local! {
-    static BITMAP_REGISTRAR: RefCell<BitmapRegistrar> = RefCell::new(|_| panic!("BUG: bitmap registrar not initialized — call init_bitmap_registrar()"));
+mod bitmap_native {
+    use super::BitmapRegistrar;
+    use std::cell::RefCell;
+
+    thread_local! {
+        pub(super) static BITMAP_REGISTRAR: RefCell<BitmapRegistrar> = RefCell::new(|_, _| panic!("BUG: bitmap registrar not initialized — call init_bitmap_registrar()"));
+    }
 }
 
 /// Initialize the bitmap registrar for native targets.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn init_bitmap_registrar(f: BitmapRegistrar) {
-    BITMAP_REGISTRAR.with(|r| *r.borrow_mut() = f);
+    bitmap_native::BITMAP_REGISTRAR.with(|r| *r.borrow_mut() = f);
 }
 
-/// Register a bitmap (if not already registered) and return its ID.
+/// Register a bitmap (host-side dedup by `bmp.name`) and return its ID.
 #[must_use]
 pub fn ensure_bitmap_registered(bmp: &Bitmap) -> Option<BitmapId> {
-    BITMAP_IDS.with(|ids| {
-        cache_successful_resource_id(&mut ids.borrow_mut(), bmp.data.as_ptr() as usize, || {
-            #[cfg(target_arch = "wasm32")]
-            {
-                host::register_bitmap(bmp.data)
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                BITMAP_REGISTRAR.with(|r| r.borrow()(bmp.data))
-            }
-        })
-    })
+    #[cfg(target_arch = "wasm32")]
+    {
+        host::register_bitmap(bmp.name, bmp.data)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        bitmap_native::BITMAP_REGISTRAR.with(|r| r.borrow()(bmp.name, bmp.data))
+    }
 }
 
 // ── Audio ────────────────────────────────────────────────────────────
 
 /// Embedded audio data (output of `include_audio!` proc macro).
 ///
-/// The `data` field contains raw WAV/OGG/MP3 bytes embedded at compile time.
-/// On first use, this data is sent to the host via `host_register_audio()`
-/// which decodes to PCM and caches the samples for playback.
+/// `data` is the raw audio bytes (WAV/OGG/MP3). `name` is a stable,
+/// host-unique tag used by the host to dedup registrations and for fixture
+/// debugging.
 #[derive(Debug)]
 pub struct Audio {
     pub data: &'static [u8],
-    /// Human-readable name derived from filename (for fixture debugging).
     pub name: &'static str,
 }
 
-thread_local! {
-    static AUDIO_IDS: RefCell<Vec<(usize, AudioId)>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Register an audio asset (if not already registered) and return its ID.
+/// Register an audio asset (host-side dedup by `audio.name`) and return its ID.
 #[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn ensure_audio_registered(audio: &Audio) -> Option<AudioId> {
-    AUDIO_IDS.with(|ids| {
-        cache_successful_resource_id(&mut ids.borrow_mut(), audio.data.as_ptr() as usize, || {
-            host::register_audio(audio.data, audio.name)
-        })
-    })
+    host::register_audio(audio.data, audio.name)
 }
 
 /// Placeholder for native compilation (audio not used in storybook).
@@ -172,74 +139,31 @@ pub fn ensure_audio_registered(_audio: &Audio) -> Option<AudioId> {
 
 // ── Mesh ─────────────────────────────────────────────────────────────
 
-thread_local! {
-    static MESH_IDS: RefCell<Vec<(usize, MeshId)>> = const { RefCell::new(Vec::new()) };
-}
-
 #[cfg(not(target_arch = "wasm32"))]
-thread_local! {
-    static MESH_REGISTRAR: RefCell<MeshRegistrar> = RefCell::new(|_| panic!("BUG: mesh registrar not initialized — call init_mesh_registrar()"));
+mod mesh_native {
+    use super::MeshRegistrar;
+    use std::cell::RefCell;
+
+    thread_local! {
+        pub(super) static MESH_REGISTRAR: RefCell<MeshRegistrar> = RefCell::new(|_, _| panic!("BUG: mesh registrar not initialized — call init_mesh_registrar()"));
+    }
 }
 
 /// Initialize the mesh registrar for native targets.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn init_mesh_registrar(f: MeshRegistrar) {
-    MESH_REGISTRAR.with(|r| *r.borrow_mut() = f);
+    mesh_native::MESH_REGISTRAR.with(|r| *r.borrow_mut() = f);
 }
 
-/// Register a mesh (if not already registered) and return its ID.
+/// Register a mesh (host-side dedup by `mesh.name`) and return its ID.
 #[must_use]
 pub fn ensure_mesh_registered(mesh: &Mesh) -> Option<MeshId> {
-    MESH_IDS.with(|ids| {
-        cache_successful_resource_id(&mut ids.borrow_mut(), mesh.data.as_ptr() as usize, || {
-            #[cfg(target_arch = "wasm32")]
-            {
-                host::register_mesh(mesh.data)
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                MESH_REGISTRAR.with(|r| r.borrow()(mesh.data))
-            }
-        })
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::cache_successful_resource_id;
-
-    #[test]
-    fn successful_registrations_are_cached() {
-        let mut ids = Vec::new();
-        let mut calls = 0;
-
-        let first = cache_successful_resource_id(&mut ids, 7, || {
-            calls += 1;
-            Some(11_u16)
-        });
-        let second = cache_successful_resource_id(&mut ids, 7, || {
-            calls += 1;
-            Some(12_u16)
-        });
-
-        assert_eq!(first, Some(11));
-        assert_eq!(second, Some(11));
-        assert_eq!(calls, 1);
+    #[cfg(target_arch = "wasm32")]
+    {
+        host::register_mesh(mesh.name, mesh.data)
     }
-
-    #[test]
-    fn failed_registrations_are_not_cached() {
-        let mut ids: Vec<(usize, u16)> = Vec::new();
-        let mut responses = [None, Some(9_u16)].into_iter();
-
-        let first = cache_successful_resource_id(&mut ids, 42, || {
-            responses.next().expect("BUG: missing first test response")
-        });
-        let second = cache_successful_resource_id(&mut ids, 42, || {
-            responses.next().expect("BUG: missing second test response")
-        });
-
-        assert_eq!(first, None);
-        assert_eq!(second, Some(9));
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        mesh_native::MESH_REGISTRAR.with(|r| r.borrow()(mesh.name, mesh.data))
     }
 }

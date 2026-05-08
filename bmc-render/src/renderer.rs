@@ -77,8 +77,9 @@ pub trait Renderer {
 
     // -- Icons --
 
-    /// Register icon data (compact binary from proc macro).
-    fn register_icon(&mut self, data: &[u8]) -> Option<IconId>;
+    /// Register icon data (compact binary from proc macro) under a stable
+    /// `tag`. Idempotent: re-registering the same tag returns the cached ID.
+    fn register_icon(&mut self, tag: &str, data: &[u8]) -> Option<IconId>;
 
     /// Draw a registered icon at the given position and size.
     #[expect(clippy::too_many_arguments)]
@@ -95,13 +96,14 @@ pub trait Renderer {
 
     // -- Bitmaps --
 
-    /// Register bitmap data (PNG/JPEG bytes), decode and upload to GPU.
-    fn register_bitmap(&mut self, data: &[u8]) -> Option<BitmapId>;
+    /// Register bitmap data (PNG/JPEG bytes), decode and upload to GPU. Idempotent
+    /// by `tag` — re-registering the same tag returns the cached ID.
+    fn register_bitmap(&mut self, tag: &str, data: &[u8]) -> Option<BitmapId>;
 
     /// Register bitmap with nearest-neighbor filtering (no bilinear interpolation).
     /// Use for pixel-art assets (9-patch skins) where bilinear filtering would
-    /// cause color bleeding across sub-rect boundaries.
-    fn register_bitmap_nearest(&mut self, data: &[u8]) -> Option<BitmapId>;
+    /// cause color bleeding across sub-rect boundaries. Idempotent by `tag`.
+    fn register_bitmap_nearest(&mut self, tag: &str, data: &[u8]) -> Option<BitmapId>;
 
     /// Draw a registered bitmap at the given position and size.
     fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: BitmapId);
@@ -132,8 +134,9 @@ pub trait Renderer {
 
     // -- Meshes --
 
-    /// Register mesh binary data, upload VBO/IBO/texture to GPU.
-    fn register_mesh(&mut self, data: &[u8]) -> Option<MeshId>;
+    /// Register mesh binary data, upload VBO/IBO/texture to GPU. Idempotent
+    /// by `tag` — re-registering the same tag returns the cached ID.
+    fn register_mesh(&mut self, tag: &str, data: &[u8]) -> Option<MeshId>;
 
     /// Draw a 3D mesh with quaternion-based orientation and optional directional light.
     ///

@@ -26,8 +26,12 @@ struct StoredBitmap {
 
 /// Registry mapping opaque widget-side IDs to FemtoVG GPU texture handles
 /// and retained RGBA pixel data for host-side sampling.
+///
+/// Registrations are deduped by tag: re-registering the same tag returns the
+/// cached ID without re-decoding or re-uploading.
 pub struct BitmapRegistry {
     bitmaps: HashMap<BitmapId, StoredBitmap>,
+    by_tag: HashMap<String, BitmapId>,
     next_id: u16,
 }
 
@@ -36,7 +40,7 @@ impl fmt::Debug for BitmapRegistry {
         f.debug_struct("BitmapRegistry")
             .field("count", &self.bitmaps.len())
             .field("next_id", &self.next_id)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -45,26 +49,33 @@ impl BitmapRegistry {
     pub fn new() -> Self {
         Self {
             bitmaps: HashMap::new(),
+            by_tag: HashMap::new(),
             next_id: 1,
         }
     }
 
-    /// Decode image bytes (PNG, JPEG, etc.) and upload to GPU as a texture.
-    /// Returns the assigned bitmap ID.
+    /// Decode image bytes (PNG, JPEG, etc.) and upload to GPU as a texture
+    /// under `tag`. Idempotent: a second call with the same tag returns the
+    /// cached ID without re-decoding. The `flags` from the first successful
+    /// call win.
     ///
     /// Pass `ImageFlags::empty()` for default bilinear filtering, or
     /// `ImageFlags::NEAREST` for pixel-art / 9-patch assets where bilinear
     /// filtering would cause color bleeding across sub-rect boundaries.
     pub fn register(
         &mut self,
+        tag: &str,
         data: &[u8],
         canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
         flags: ImageFlags,
     ) -> Option<BitmapId> {
+        if let Some(&id) = self.by_tag.get(tag) {
+            return Some(id);
+        }
         let (image_id, pixels, width, height) = match decode_and_upload(data, canvas, flags) {
             Ok(t) => t,
             Err(e) => {
-                tracing::error!("failed to decode/upload bitmap: {e}");
+                tracing::error!("failed to decode/upload bitmap ({tag}): {e}");
                 return None;
             }
         };
@@ -79,6 +90,7 @@ impl BitmapRegistry {
                 height,
             },
         );
+        self.by_tag.insert(tag.to_owned(), id);
         Some(id)
     }
 

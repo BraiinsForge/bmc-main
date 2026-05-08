@@ -15,59 +15,127 @@ use crate::host_api::HostState;
 
 use super::super::super::memory::read_bytes;
 
+/// Read a tag string from guest memory. Returns `None` on out-of-bounds or
+/// non-UTF-8 bytes.
+fn read_tag(caller: &Caller<'_, HostState>, ptr: u32, len: u32) -> Option<String> {
+    let bytes = read_bytes(caller, ptr, len)?;
+    String::from_utf8(bytes).ok()
+}
+
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
-    register_bitmap_storage_imports(linker)?;
+    register_icon_import(linker)?;
+    register_bitmap_import(linker)?;
+    register_bitmap_nearest_import(linker)?;
+    register_mesh_import(linker)?;
+    register_bitmap_sample_import(linker)?;
     register_image_decode_import(linker)?;
     Ok(())
 }
 
-fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()> {
+fn register_icon_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_register_icon",
-        |mut caller: Caller<'_, HostState>, data_ptr: u32, data_len: u32| -> u32 {
+        |mut caller: Caller<'_, HostState>,
+         tag_ptr: u32,
+         tag_len: u32,
+         data_ptr: u32,
+         data_len: u32|
+         -> u32 {
+            let Some(tag) = read_tag(&caller, tag_ptr, tag_len) else {
+                return 0;
+            };
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
                 return 0;
             };
             let state = caller.data_mut();
             state
                 .renderer
-                .register_icon(&data)
+                .register_icon(&tag, &data)
                 .map_or(0, IconId::to_wire)
                 .into()
         },
     )?;
+    Ok(())
+}
 
+fn register_bitmap_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_register_bitmap",
-        |mut caller: Caller<'_, HostState>, data_ptr: u32, data_len: u32| -> u32 {
+        |mut caller: Caller<'_, HostState>,
+         tag_ptr: u32,
+         tag_len: u32,
+         data_ptr: u32,
+         data_len: u32|
+         -> u32 {
+            let Some(tag) = read_tag(&caller, tag_ptr, tag_len) else {
+                return 0;
+            };
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
                 return 0;
             };
             let state = caller.data_mut();
             state
                 .renderer
-                .register_bitmap(&data)
+                .register_bitmap(&tag, &data)
                 .map_or(0, BitmapId::to_wire)
                 .into()
         },
     )?;
+    Ok(())
+}
 
+fn register_bitmap_nearest_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_register_bitmap_nearest",
+        |mut caller: Caller<'_, HostState>,
+         tag_ptr: u32,
+         tag_len: u32,
+         data_ptr: u32,
+         data_len: u32|
+         -> u32 {
+            let Some(tag) = read_tag(&caller, tag_ptr, tag_len) else {
+                return 0;
+            };
+            let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
+                return 0;
+            };
+            let state = caller.data_mut();
+            state
+                .renderer
+                .register_bitmap_nearest(&tag, &data)
+                .map_or(0, BitmapId::to_wire)
+                .into()
+        },
+    )?;
+    Ok(())
+}
+
+fn register_mesh_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_register_mesh",
-        |mut caller: Caller<'_, HostState>, data_ptr: u32, data_len: u32| -> u32 {
+        |mut caller: Caller<'_, HostState>,
+         tag_ptr: u32,
+         tag_len: u32,
+         data_ptr: u32,
+         data_len: u32|
+         -> u32 {
             #[cfg(feature = "profiling")]
             let probe = bmc_render::profile::MemProbe::start();
 
+            let Some(tag) = read_tag(&caller, tag_ptr, tag_len) else {
+                return 0;
+            };
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
                 return 0;
             };
             let state = caller.data_mut();
             let id: u32 = state
                 .renderer
-                .register_mesh(&data)
+                .register_mesh(&tag, &data)
                 .map_or(0, MeshId::to_wire)
                 .into();
 
@@ -77,23 +145,10 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
             id
         },
     )?;
+    Ok(())
+}
 
-    linker.func_wrap(
-        "env",
-        "host_register_bitmap_nearest",
-        |mut caller: Caller<'_, HostState>, data_ptr: u32, data_len: u32| -> u32 {
-            let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
-                return 0;
-            };
-            let state = caller.data_mut();
-            state
-                .renderer
-                .register_bitmap_nearest(&data)
-                .map_or(0, BitmapId::to_wire)
-                .into()
-        },
-    )?;
-
+fn register_bitmap_sample_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_bitmap_sample",
@@ -108,7 +163,6 @@ fn register_bitmap_storage_imports(linker: &mut Linker<HostState>) -> Result<()>
                 .map_or(0, Color::to_u32)
         },
     )?;
-
     Ok(())
 }
 

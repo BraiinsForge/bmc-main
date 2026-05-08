@@ -20,6 +20,8 @@ use crate::orientation::Orientation;
 pub struct Mesh {
     pub data: &'static [u8],
     pub face_normals: &'static [[f32; 3]],
+    /// Stable, unique-per-host registration tag (e.g. `"crate::stem"`).
+    pub name: &'static str,
 }
 
 /// Directional light angles, in degrees.

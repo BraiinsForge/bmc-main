@@ -37,8 +37,12 @@ pub struct RegisteredIcon {
 }
 
 /// Registry mapping opaque IDs to parsed FemtoVG icon data.
+///
+/// User registrations are deduped by tag: re-registering the same tag returns
+/// the cached ID without re-parsing.
 pub struct IconRegistry {
     icons: HashMap<IconId, RegisteredIcon>,
+    by_tag: HashMap<String, IconId>,
     next_id: u16,
 }
 
@@ -47,7 +51,7 @@ impl fmt::Debug for IconRegistry {
         f.debug_struct("IconRegistry")
             .field("count", &self.icons.len())
             .field("next_id", &self.next_id)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -56,16 +60,23 @@ impl IconRegistry {
     pub fn new() -> Self {
         Self {
             icons: HashMap::new(),
+            by_tag: HashMap::new(),
             next_id: 1,
         }
     }
 
-    /// Parse binary icon data and register it. The counter only advances
-    /// on successful parse — failed registrations don't burn an ID.
+    /// Parse binary icon data and register it under `tag`. Idempotent: a second
+    /// call with the same tag returns the cached ID without re-parsing.
+    ///
+    /// The counter only advances on successful parse — failed registrations
+    /// don't burn an ID.
     ///
     /// Returns `None` once user-icon allocation reaches `ICON_RESERVED_MIN`,
     /// to avoid colliding with builtin/dev icon IDs that share this map.
-    pub fn register(&mut self, data: &[u8]) -> Option<IconId> {
+    pub fn register(&mut self, tag: &str, data: &[u8]) -> Option<IconId> {
+        if let Some(&id) = self.by_tag.get(tag) {
+            return Some(id);
+        }
         if self.next_id >= ICON_RESERVED_MIN {
             tracing::error!(
                 "user icon registry exhausted at 0x{:04X} (reserved range starts at 0x{ICON_RESERVED_MIN:04X})",
@@ -76,13 +87,14 @@ impl IconRegistry {
         let icon = match parse_icon(data) {
             Ok(i) => i,
             Err(e) => {
-                tracing::error!("failed to parse icon data: {e}");
+                tracing::error!("failed to parse icon data ({tag}): {e}");
                 return None;
             }
         };
 
         let id = IconId::alloc(&mut self.next_id);
         self.icons.insert(id, icon);
+        self.by_tag.insert(tag.to_owned(), id);
         Some(id)
     }
 
