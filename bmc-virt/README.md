@@ -133,12 +133,14 @@ Reference source files are in `kernel-patches/ref/` for future porting.
 
 ## Ports
 
-| Service | Host port | Guest port |
-| ------- | --------- | ---------- |
-| SSH     | 2222      | 22         |
-| HTTP    | 50080     | 80         |
-| gRPC    | 50052     | 50051      |
-| IPC     | 5910      | 5910       |
+| Service   | Host port | Guest port |
+| --------- | --------- | ---------- |
+| SSH       | 2222      | 22         |
+| HTTP/gRPC | 50080     | 80         |
+| IPC       | 5910      | 5910       |
+
+gRPC-Web shares the HTTP listener on port 80 — `bmc/src/web.rs` routes by `Content-Type: application/grpc` rather than
+running a separate listener.
 
 Port numbers are defined once in `flake.nix` (`ports = { ... }`).
 

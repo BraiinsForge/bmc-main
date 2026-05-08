@@ -4,7 +4,7 @@ graph TD
         FE["React SPA\n/www/bmc/"]
     end
 
-    subgraph api["gRPC API :50051"]
+    subgraph api["gRPC-Web API :80 (multiplexed with HTTP)"]
         GRPC["bmc-grpc"]
     end
 

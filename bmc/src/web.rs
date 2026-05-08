@@ -20,11 +20,7 @@ use anyhow::Result;
 use axum::{ServiceExt, extract::Request, http::header::CONTENT_TYPE};
 use bmc_platform::HardwareCapabilities;
 use bmc_upgrade::firmware::FirmwareIndex;
-use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tower::{Layer, steer::Steer};
@@ -142,7 +138,6 @@ pub struct ServerConfig {
     pub www_root_path: PathBuf,
     pub www_assets_path: PathBuf,
     pub www_var_path: PathBuf,
-    pub grpc_address: std::net::SocketAddr,
 }
 
 impl ServerConfig {
@@ -163,12 +158,6 @@ impl ServerConfig {
         self.www_var_path = www_var_path;
         self
     }
-
-    #[must_use]
-    pub fn set_grpc_address(mut self, address: std::net::SocketAddr) -> Self {
-        self.grpc_address = address;
-        self
-    }
 }
 
 impl Default for ServerConfig {
@@ -181,7 +170,6 @@ impl Default for ServerConfig {
             www_root_path: PathBuf::from(DEFAULT_ROOT),
             www_assets_path: PathBuf::from(DEFAULT_ROOT).join("assets"),
             www_var_path: PathBuf::from(DEFAULT_ROOT).join("var"),
-            grpc_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 50051),
         }
     }
 }
