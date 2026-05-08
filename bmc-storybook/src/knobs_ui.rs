@@ -25,16 +25,28 @@ pub fn render_knobs_ui(ctx: &mut StoryCtx, ui: &mut egui::Ui) -> bool {
         .num_columns(2)
         .spacing([8.0, 4.0])
         .show(ui, |ui| {
+            // `prev_was_group` lets us skip the inter-knob gap right after a
+            // `Group` header — its own separator already provides the break.
+            let mut prev_was_group = false;
             for (i, knob) in ctx.knobs_mut().iter_mut().enumerate() {
-                changed |= render_knob(ui, knob, i == 0);
+                changed |= render_knob(ui, knob, i == 0, prev_was_group);
+                prev_was_group = matches!(knob, Knob::Group { .. });
             }
         });
     changed
 }
 
 /// Render a single knob in the grid. Returns `true` if the value changed.
-fn render_knob(ui: &mut egui::Ui, knob: &mut Knob, first: bool) -> bool {
+fn render_knob(ui: &mut egui::Ui, knob: &mut Knob, first: bool, prev_was_group: bool) -> bool {
     let mut changed = false;
+    // Visual gap between consecutive non-grouped knobs so two radio groups
+    // (or any pair of multi-row knobs) don't blur into a single column.
+    // Skipped on the first knob and right after a `Group` header (which
+    // already inserts its own gap + separator).
+    if !first && !prev_was_group && !matches!(knob, Knob::Group { .. }) {
+        ui.allocate_space(egui::vec2(0.0, 8.0));
+        ui.end_row();
+    }
     match knob {
         Knob::Group { label } => {
             if !first {
