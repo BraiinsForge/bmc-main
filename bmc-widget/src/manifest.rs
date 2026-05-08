@@ -470,6 +470,14 @@ fn check_int_range(
     Ok(())
 }
 
+/// Canonicalise an f64 for bit-equality comparison: collapses `+0.0`
+/// and `-0.0` to the same key. NaNs keep their bit pattern; range and
+/// finite-ness checks elsewhere reject configured NaNs.
+#[must_use]
+pub fn f64_canonical_bits(v: f64) -> u64 {
+    if v == 0.0 { 0_u64 } else { v.to_bits() }
+}
+
 fn check_string_options(options: &[StringOption]) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
     for o in options {
@@ -500,14 +508,16 @@ fn check_double_options(
     }
     for (i, a) in options.iter().enumerate() {
         for b in &options[i + 1..] {
-            if a.value.to_bits() == b.value.to_bits() {
+            if f64_canonical_bits(a.value) == f64_canonical_bits(b.value) {
                 return Err(format!("duplicate enum_values entry value {}", a.value));
             }
         }
     }
     if !options.is_empty()
         && let Some(d) = default_value
-        && !options.iter().any(|o| o.value.to_bits() == d.to_bits())
+        && !options
+            .iter()
+            .any(|o| f64_canonical_bits(o.value) == f64_canonical_bits(d))
     {
         return Err(format!("default_value {d} not in enum_values"));
     }
@@ -1042,6 +1052,21 @@ mod tests {
         assert_eq!(
             ParamValue::from_param_kind_default(&without_default),
             ParamValue::Null
+        );
+    }
+
+    #[test]
+    fn validate_double_enum_treats_plus_zero_and_minus_zero_as_duplicate() {
+        let p: ParamDefinition = serde_json::from_str(
+            r#"{"name":"X","type":"double","default_value":0.0,"enum_values":[
+                  {"value":0.0,"label":"plus"},
+                  {"value":-0.0,"label":"minus"}
+               ]}"#,
+        )
+        .expect("BUG: parse");
+        assert!(
+            p.validate("x").is_err(),
+            "+0.0 and -0.0 must be duplicates after canonicalisation",
         );
     }
 }

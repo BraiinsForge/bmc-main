@@ -630,7 +630,9 @@ fn validate_widget_param_value(
                 violations.push(path.to_owned(), format!("{d} > max {hi}"));
             }
             if !enum_values.is_empty()
-                && !enum_values.iter().any(|o| o.value.to_bits() == d.to_bits())
+                && !enum_values.iter().any(|o| {
+                    bmc_widget::f64_canonical_bits(o.value) == bmc_widget::f64_canonical_bits(*d)
+                })
             {
                 violations.push(path.to_owned(), "value not in enum_values");
             }
