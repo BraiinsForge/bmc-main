@@ -422,7 +422,8 @@ export function widgetDescription(widget: Maybe<pb.Widget>, manifests: Maybe<Man
 /** Title for a scene — names the fullscreen widget, or a fixed label for combined scenes. */
 export function sceneTitle(intl: IntlShape, scene: Maybe<pb.Scene>, manifests: Maybe<ManifestLookup>): null | string {
     if (!scene) return null;
-    switch (scene.kind.case) {
+    const { case: sceneKindCase } = scene.kind;
+    switch (sceneKindCase) {
         case undefined:
             return null;
         case 'combined':
@@ -430,14 +431,15 @@ export function sceneTitle(intl: IntlShape, scene: Maybe<pb.Scene>, manifests: M
         case 'fullscreen':
             return widgetTitle(scene.kind.value.widget, manifests);
         default:
-            assertUnreachable(scene.kind, 'scene kind');
+            assertUnreachable(sceneKindCase, 'scene kind');
     }
 }
 
 /** Description of a scene — widget list for combined, single description for fullscreen. */
 export function sceneDescription(scene: Maybe<pb.Scene>, manifests: Maybe<ManifestLookup>): null | string {
     if (!scene) return null;
-    switch (scene.kind.case) {
+    const { case: sceneKindCase } = scene.kind;
+    switch (sceneKindCase) {
         case undefined:
             return null;
         case 'combined':
@@ -448,6 +450,6 @@ export function sceneDescription(scene: Maybe<pb.Scene>, manifests: Maybe<Manife
         case 'fullscreen':
             return widgetDescription(scene.kind.value.widget, manifests);
         default:
-            assertUnreachable(scene.kind, 'scene kind');
+            assertUnreachable(sceneKindCase, 'scene kind');
     }
 }
