@@ -538,24 +538,13 @@ pub(crate) fn validate_widget_params(
     violations
 }
 
-fn param_kind_name(kind: &ParamKind) -> &'static str {
+fn type_mismatch_message(kind: &ParamKind) -> &'static str {
     match kind {
-        ParamKind::String { .. } => "string",
-        ParamKind::Double { .. } => "double",
-        ParamKind::Integer { .. } => "integer",
-        ParamKind::Boolean { .. } => "boolean",
-        ParamKind::Timezone { .. } => "timezone",
-    }
-}
-
-fn wire_kind_name(kind: &web::widget_data_value::Kind) -> &'static str {
-    use web::widget_data_value::Kind as VK;
-    match kind {
-        VK::NullValue(()) => "null",
-        VK::BooleanValue(_) => "boolean",
-        VK::IntegerValue(_) => "integer",
-        VK::DoubleValue(_) => "double",
-        VK::StringValue(_) => "string",
+        ParamKind::String { .. } => "Must be text",
+        ParamKind::Integer { .. } => "Must be a whole number",
+        ParamKind::Double { .. } => "Must be a number",
+        ParamKind::Boolean { .. } => "Must be true or false",
+        ParamKind::Timezone { .. } => "Must be a timezone",
     }
 }
 
@@ -569,7 +558,7 @@ fn validate_widget_param_value(
     match (param_kind, kind) {
         (ParamKind::String { enum_values, .. }, VK::StringValue(s)) => {
             if !enum_values.is_empty() && !enum_values.iter().any(|o| &o.value == s) {
-                violations.push(path.to_owned(), "value not in enum_values");
+                violations.push(path.to_owned(), "Must be one of the listed options");
             }
         }
         (ParamKind::Timezone { .. }, VK::StringValue(_))
@@ -586,15 +575,15 @@ fn validate_widget_param_value(
             if let Some(lo) = min
                 && i < lo
             {
-                violations.push(path.to_owned(), format!("{i} < min {lo}"));
+                violations.push(path.to_owned(), format!("Must be at least {lo}"));
             }
             if let Some(hi) = max
                 && i > hi
             {
-                violations.push(path.to_owned(), format!("{i} > max {hi}"));
+                violations.push(path.to_owned(), format!("Must be at most {hi}"));
             }
             if !enum_values.is_empty() && !enum_values.iter().any(|o| o.value == *i) {
-                violations.push(path.to_owned(), "value not in enum_values");
+                violations.push(path.to_owned(), "Must be one of the listed options");
             }
         }
         (
@@ -607,39 +596,29 @@ fn validate_widget_param_value(
             VK::DoubleValue(d),
         ) => {
             if !d.is_finite() {
-                violations.push(
-                    path.to_owned(),
-                    format!("double_value must be finite (got {d})"),
-                );
+                violations.push(path.to_owned(), "Must be a finite number");
                 return;
             }
             if let Some(lo) = min
                 && d < lo
             {
-                violations.push(path.to_owned(), format!("{d} < min {lo}"));
+                violations.push(path.to_owned(), format!("Must be at least {lo}"));
             }
             if let Some(hi) = max
                 && d > hi
             {
-                violations.push(path.to_owned(), format!("{d} > max {hi}"));
+                violations.push(path.to_owned(), format!("Must be at most {hi}"));
             }
             if !enum_values.is_empty()
                 && !enum_values.iter().any(|o| {
                     bmc_widget::f64_canonical_bits(o.value) == bmc_widget::f64_canonical_bits(*d)
                 })
             {
-                violations.push(path.to_owned(), "value not in enum_values");
+                violations.push(path.to_owned(), "Must be one of the listed options");
             }
         }
-        (other_kind, other_wire) => {
-            violations.push(
-                path.to_owned(),
-                format!(
-                    "expected {} value, got {}",
-                    param_kind_name(other_kind),
-                    wire_kind_name(other_wire),
-                ),
-            );
+        (other_kind, _) => {
+            violations.push(path.to_owned(), type_mismatch_message(other_kind));
         }
     }
 }
@@ -2197,33 +2176,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_widget_param_value_mismatch_names_expected_and_received() {
-        use web::widget_data_value::Kind as VK;
-        let mut violations = FieldViolations::new();
-        let kind = ParamKind::Integer {
-            min: None,
-            max: None,
-            step: None,
-            enum_values: vec![],
-            default_value: None,
-        };
-        validate_widget_param_value(
-            "params.threshold",
-            &kind,
-            &VK::StringValue("x".into()),
-            &mut violations,
-        );
-        let v: Vec<tonic_types::FieldViolation> = violations.into();
-        assert_eq!(v.len(), 1);
-        assert_eq!(v[0].field, "params.threshold");
-        assert!(
-            v[0].description.contains("integer") && v[0].description.contains("string"),
-            "expected message to name both kinds, got: {}",
-            v[0].description,
-        );
-    }
-
-    #[test]
     fn parse_widget_size_unspecified_message_names_variants() {
         let mut v = FieldViolations::new();
         let result = parse_widget_size(web::WidgetSize::Unspecified.into(), "size", &mut v);
@@ -2253,6 +2205,247 @@ mod tests {
         assert!(
             msg.contains("9999"),
             "message should include the bad value, got: {msg}"
+        );
+    }
+
+    fn first_violation_desc(
+        manifest: &bmc_widget::Manifest,
+        params: &web::WidgetDataStruct,
+    ) -> String {
+        let v: Vec<tonic_types::FieldViolation> =
+            validate_widget_params(manifest, params, ValidateMode::Add).into();
+        assert_eq!(v.len(), 1, "expected exactly one violation");
+        v.into_iter()
+            .next()
+            .expect("BUG: vec checked non-empty")
+            .description
+    }
+
+    #[test]
+    fn validate_widget_params_message_string_type_mismatch() {
+        let manifest = single_param_manifest(
+            "color",
+            bmc_widget::ParamKind::String {
+                format: None,
+                enum_values: vec![],
+                default_value: Some("red".into()),
+            },
+            false,
+        );
+        let params = fields_one("color", wdv_double(1.0));
+        assert_eq!(first_violation_desc(&manifest, &params), "Must be text");
+    }
+
+    #[test]
+    fn validate_widget_params_message_integer_type_mismatch() {
+        let manifest = single_param_manifest(
+            "count",
+            bmc_widget::ParamKind::Integer {
+                min: None,
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(0),
+            },
+            false,
+        );
+        let params = fields_one("count", wdv_string("abc"));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be a whole number",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_double_type_mismatch() {
+        let manifest = single_param_manifest(
+            "ratio",
+            bmc_widget::ParamKind::Double {
+                min: None,
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(0.5),
+            },
+            false,
+        );
+        let params = fields_one("ratio", wdv_string("abc"));
+        assert_eq!(first_violation_desc(&manifest, &params), "Must be a number",);
+    }
+
+    #[test]
+    fn validate_widget_params_message_boolean_type_mismatch() {
+        let manifest = single_param_manifest(
+            "flag",
+            bmc_widget::ParamKind::Boolean {
+                default_value: Some(false),
+            },
+            false,
+        );
+        let params = fields_one("flag", wdv_string("yes"));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be true or false",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_timezone_type_mismatch() {
+        let manifest = single_param_manifest(
+            "tz",
+            bmc_widget::ParamKind::Timezone {
+                default_value: None,
+            },
+            true,
+        );
+        let params = fields_one("tz", wdv_integer(0));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be a timezone",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_integer_below_min() {
+        let manifest = single_param_manifest(
+            "n",
+            bmc_widget::ParamKind::Integer {
+                min: Some(5),
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(5),
+            },
+            false,
+        );
+        let params = fields_one("n", wdv_integer(4));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be at least 5",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_integer_above_max() {
+        let manifest = single_param_manifest(
+            "n",
+            bmc_widget::ParamKind::Integer {
+                min: None,
+                max: Some(10),
+                step: None,
+                enum_values: vec![],
+                default_value: Some(5),
+            },
+            false,
+        );
+        let params = fields_one("n", wdv_integer(11));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be at most 10",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_double_not_finite() {
+        let manifest = single_param_manifest(
+            "v",
+            bmc_widget::ParamKind::Double {
+                min: None,
+                max: None,
+                step: None,
+                enum_values: vec![],
+                default_value: Some(1.0),
+            },
+            false,
+        );
+        let params = fields_one("v", wdv_double(f64::NAN));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be a finite number",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_double_below_min() {
+        let manifest = single_param_manifest(
+            "ratio",
+            bmc_widget::ParamKind::Double {
+                min: Some(0.0),
+                max: Some(1.0),
+                step: None,
+                enum_values: vec![],
+                default_value: Some(0.5),
+            },
+            false,
+        );
+        let params = fields_one("ratio", wdv_double(-0.1));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be at least 0",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_double_above_max() {
+        let manifest = single_param_manifest(
+            "ratio",
+            bmc_widget::ParamKind::Double {
+                min: Some(0.0),
+                max: Some(1.0),
+                step: None,
+                enum_values: vec![],
+                default_value: Some(0.5),
+            },
+            false,
+        );
+        let params = fields_one("ratio", wdv_double(1.5));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be at most 1",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_enum_string_mismatch() {
+        let manifest = single_param_manifest(
+            "style",
+            bmc_widget::ParamKind::String {
+                format: None,
+                enum_values: vec![bmc_widget::StringOption {
+                    value: "dark".into(),
+                    label: "Dark".into(),
+                }],
+                default_value: Some("dark".into()),
+            },
+            false,
+        );
+        let params = fields_one("style", wdv_string("solarized"));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be one of the listed options",
+        );
+    }
+
+    #[test]
+    fn validate_widget_params_message_enum_integer_mismatch() {
+        let manifest = single_param_manifest(
+            "level",
+            bmc_widget::ParamKind::Integer {
+                min: None,
+                max: None,
+                step: None,
+                enum_values: vec![bmc_widget::IntegerOption {
+                    value: 1,
+                    label: "One".into(),
+                }],
+                default_value: Some(1),
+            },
+            false,
+        );
+        let params = fields_one("level", wdv_integer(99));
+        assert_eq!(
+            first_violation_desc(&manifest, &params),
+            "Must be one of the listed options",
         );
     }
 }
