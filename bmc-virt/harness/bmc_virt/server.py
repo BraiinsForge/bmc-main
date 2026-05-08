@@ -179,7 +179,8 @@ class EventDaemon:
             s.app_ready = False
             self.emit(Event.SERVICE_STOPPED, {"name": "bmc-openwrt"})
 
-        # app.ready — HTTP port 80 or gRPC port 50051 is listening (re-emits after restart)
+        # app.ready — HTTP port 80 is listening (gRPC-Web multiplexed on the
+        # same port, so a single probe covers both). Re-emits after restart.
         http_up = _port_listening(80)
         if s.app_started and http_up and not s.app_ready:
             s.app_ready = True
