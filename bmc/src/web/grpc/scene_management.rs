@@ -226,9 +226,9 @@ impl SceneManagementService {
     /// Refresh the compositor's cycling list from current config; if a
     /// preview is active, also push that scene as the destructive active.
     async fn restore_active_scene(&self) {
+        let preview_id = *self.preview_scene_id.lock().await;
         let config = self.config_handle.read().await;
         self.coordinator.refresh_scene_cycling(&config.scenes);
-        let preview_id = *self.preview_scene_id.lock().await;
         if let Some(preview_id) = preview_id
             && let Some(scene) = config.scenes.get(&preview_id)
         {
