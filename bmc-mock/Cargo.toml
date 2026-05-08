@@ -22,6 +22,7 @@ dirs.workspace = true
 futures = { workspace = true }
 rand = { workspace = true, features = ["thread_rng"] }
 reqwest.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true

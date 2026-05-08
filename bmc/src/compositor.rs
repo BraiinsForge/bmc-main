@@ -131,6 +131,17 @@ pub trait Compositor: Send + Sync {
     /// Broadcast a setting update to all connected widgets.
     fn broadcast_setting(&self, setting: SettingUpdate) -> Result<(), CompositorError>;
 
+    /// Push fresh params to a single running widget without stopping
+    /// its process. Only valid when geometry (size) is unchanged —
+    /// callers route through `unregister_widget` + `register_widget`
+    /// for size changes since the widget's EGL surface and Slint scene
+    /// are sized at the initial configure.
+    fn update_widget_params(
+        &self,
+        instance_id: &InstanceId,
+        params: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<(), CompositorError>;
+
     /// Get a receiver for widget action requests (sound, LED).
     fn action_receiver(&self) -> mpsc::UnboundedReceiver<WidgetAction>;
 

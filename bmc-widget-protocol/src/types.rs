@@ -32,10 +32,10 @@ pub struct WidgetInitialConfig {
     pub size: SizeType,
     pub width: u32,
     pub height: u32,
-    /// Widget-specific params. Expected to be a JSON object whose keys
-    /// match entries in the widget's manifest; non-object values are
-    /// treated as "no params".
-    pub params: serde_json::Value,
+    /// Widget-specific params keyed by manifest entry name. Empty map
+    /// means the widget has no configured params.
+    #[serde(default)]
+    pub params: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

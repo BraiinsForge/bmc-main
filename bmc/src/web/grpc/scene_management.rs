@@ -443,6 +443,43 @@ pub(crate) enum ValidateMode {
     Update,
 }
 
+enum UpdateWidgetAction {
+    /// Stop the widget and respawn it. Required when the surface size
+    /// changes — size is fixed at the initial configure batch, so the
+    /// widget process needs a fresh start to size its renderer.
+    Respawn,
+    /// Push fresh params to the running widget via the live-reload
+    /// path. Valid when the widget is showing, size is unchanged, and
+    /// params actually differ.
+    HotPushParams,
+    /// Nothing to do — either the widget is not running (scene not
+    /// showing, so the new config will be picked up on next spawn) or
+    /// it is running but only position changed (picked up by
+    /// `restore_active_scene`).
+    Nothing,
+}
+
+/// Decide what to do with a running widget after a config update.
+///
+/// Inputs:
+/// - `showing` — whether the scene this widget belongs to is currently
+///   on screen (enabled, or being previewed).
+/// - `size_changed` — whether the updated widget has a different size
+///   than the on-disk snapshot.
+/// - `params_changed` — whether the updated widget's typed params
+///   differ from the on-disk snapshot.
+fn decide_update_widget_action(
+    showing: bool,
+    size_changed: bool,
+    params_changed: bool,
+) -> UpdateWidgetAction {
+    match (showing, size_changed, params_changed) {
+        (true, true, _) => UpdateWidgetAction::Respawn,
+        (true, false, true) => UpdateWidgetAction::HotPushParams,
+        (true, false, false) | (false, _, _) => UpdateWidgetAction::Nothing,
+    }
+}
+
 #[expect(
     clippy::needless_pass_by_value,
     reason = "enum is cheap; by-value keeps call-site ergonomic"
@@ -1192,7 +1229,13 @@ impl GrpcSceneManagementService for SceneManagementService {
         let widget_id_key = scene::WidgetId::from(widget_id);
         let preview_snapshot = *self.preview_scene_id.lock().await;
 
-        let widget_snapshot = {
+        // The write lock is held across `save_config().await` (disk I/O)
+        // and across the synchronous live-push send below. Keeping the
+        // send inside the locked region preserves ordering between
+        // concurrent update_widget calls; the cost is that other writers
+        // queue behind disk I/O. Updates are rare enough that this is
+        // acceptable.
+        let respawn_target = {
             let mut config = self.config_handle.write().await;
             let scene = config
                 .scenes
@@ -1201,11 +1244,12 @@ impl GrpcSceneManagementService for SceneManagementService {
 
             reject_update_widget_in_fullscreen(&scene.kind, proto_position, size)?;
 
-            let widget_uid = scene
+            let existing = scene
                 .widgets
                 .get(&widget_id_key)
-                .ok_or_else(|| Status::not_found(format!("widget not found: {widget_id}")))?
-                .widget_type_id;
+                .ok_or_else(|| Status::not_found(format!("widget not found: {widget_id}")))?;
+            let widget_uid = existing.widget_type_id;
+            let previous_size = existing.size;
 
             let info = self
                 .widget_registry
@@ -1222,6 +1266,8 @@ impl GrpcSceneManagementService for SceneManagementService {
             let params = params.unwrap_or_default();
             let typed_params = validate_widget_params(manifest, &params, ValidateMode::Update)
                 .map_err(bad_request_status)?;
+
+            let params_changed = existing.params != typed_params;
 
             // Build the post-update widget snapshot first so placement
             // validation runs against immutable state. If anything below
@@ -1241,17 +1287,35 @@ impl GrpcSceneManagementService for SceneManagementService {
 
             let showing = scene.enabled || preview_snapshot == Some(scene_id_key);
             Self::save_config(&mut config).await?;
-            (updated_widget, showing)
+
+            let instance_id = updated_widget.id.as_uuid().to_string();
+            let size_changed = previous_size != size;
+
+            // Position-only changes get picked up by
+            // `restore_active_scene` below, so we only respawn when
+            // the widget's surface size actually changed. Params are
+            // pushed only when they actually differ — a pure position
+            // move doesn't disturb the running widget's state.
+            // The send happens under the still-held write lock so two
+            // concurrent updates can't reorder against the
+            // compositor.
+            match decide_update_widget_action(showing, size_changed, params_changed) {
+                UpdateWidgetAction::Respawn => Some((instance_id, updated_widget)),
+                UpdateWidgetAction::HotPushParams => {
+                    self.coordinator
+                        .update_widget_params(&instance_id, &updated_widget.params)
+                        .map_err(|e| {
+                            Status::internal(format!("failed to push live params to widget: {e}"))
+                        })?;
+                    None
+                }
+                UpdateWidgetAction::Nothing => None,
+            }
         };
 
-        let (widget_snapshot, showing) = widget_snapshot;
-
-        if showing {
-            let instance_id = widget_snapshot.id.as_uuid().to_string();
+        if let Some((instance_id, widget)) = respawn_target {
             self.coordinator.stop_widget(&instance_id).await;
-            self.coordinator
-                .spawn_widget(&scene_id_key, &widget_snapshot)
-                .await;
+            self.coordinator.spawn_widget(&scene_id_key, &widget).await;
         }
         self.restore_active_scene().await;
 

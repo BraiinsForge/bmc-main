@@ -1124,6 +1124,7 @@ dependencies = [
  "ii-net",
  "rand 0.9.1",
  "reqwest",
+ "serde_json",
  "thiserror 1.0.69",
  "time",
  "tokio",

@@ -299,6 +299,32 @@ impl DeckWidgetProtocolState {
         }
     }
 
+    /// Push fresh params to a running widget by re-emitting the
+    /// `params` event on its surface. Also refreshes the stored
+    /// initial config so a reconnect (e.g. crash + respawn) sees the
+    /// current values.
+    pub fn update_widget_params(
+        &mut self,
+        instance_id: &InstanceId,
+        params: &serde_json::Map<String, serde_json::Value>,
+    ) {
+        if let Some(config) = self.initial_configs.get_mut(instance_id) {
+            config.params.clone_from(params);
+        }
+
+        let Some(widget_data) = self.widgets.get(instance_id) else {
+            tracing::warn!("update_widget_params: no widget record for {instance_id}");
+            return;
+        };
+        let Some(surface) = widget_data.protocol_surface.as_ref() else {
+            tracing::warn!("update_widget_params: widget {instance_id} has no surface yet");
+            return;
+        };
+
+        let params_json = serde_json::Value::Object(params.clone()).to_string();
+        surface.params(params_json);
+    }
+
     /// Emit the initial configure batch on the given surface for the
     /// given instance: `configure` → `params` → setting events →
     /// `configure_done`. Called by the dispatch handler right after the
@@ -327,19 +353,7 @@ impl DeckWidgetProtocolState {
 
         // The widget owns its manifest and is authoritative on param
         // validation; the compositor passes through the JSON as-is.
-        // `serde_json::Value::to_string` never fails.
-        let params_json = if config.params.is_object() {
-            config.params.to_string()
-        } else if config.params.is_null() {
-            "{}".to_owned()
-        } else {
-            tracing::warn!(
-                "Widget {} has non-object params ({}); sending empty object",
-                instance_id,
-                config.params
-            );
-            "{}".to_owned()
-        };
+        let params_json = serde_json::Value::Object(config.params.clone()).to_string();
         surface.params(params_json);
 
         for setting in &self.current_settings {

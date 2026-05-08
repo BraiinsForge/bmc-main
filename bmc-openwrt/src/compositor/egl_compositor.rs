@@ -1239,6 +1239,16 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
                 .deck_widget_state
                 .broadcast_setting(&setting);
         }
+        CompositorCommand::UpdateWidgetParams {
+            instance_id,
+            params,
+        } => {
+            tracing::debug!("Updating widget params: {instance_id}");
+            state
+                .compositor
+                .deck_widget_state
+                .update_widget_params(&instance_id, &params);
+        }
         CompositorCommand::Shutdown => {
             tracing::info!("Shutdown command received");
             state.compositor.deck_widget_state.broadcast_shutdown();
@@ -1436,6 +1446,19 @@ impl Compositor for EglCompositor {
     fn broadcast_setting(&self, setting: SettingUpdate) -> Result<(), CompositorError> {
         self.command_tx
             .send(CompositorCommand::BroadcastSetting { setting })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn update_widget_params(
+        &self,
+        instance_id: &InstanceId,
+        params: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::UpdateWidgetParams {
+                instance_id: instance_id.clone(),
+                params,
+            })
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 

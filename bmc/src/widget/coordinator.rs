@@ -1,12 +1,16 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use bmc_shared_time::time::Timezone;
+use bmc_widget::{ParamKey, ParamValue};
 use bmc_widget_protocol::{Localization, SizeType, WidgetInitialConfig};
 use indexmap::IndexMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::compositor::{Compositor, Position, SceneLayout, Size, WidgetPlacement};
+use crate::compositor::{
+    Compositor, CompositorError, Position, SceneLayout, Size, WidgetPlacement,
+};
 use crate::config::LocalizationConfig;
 use crate::scene::{Scene, SceneId, Widget, WidgetSize};
 
@@ -117,13 +121,7 @@ impl Coordinator {
             size: Self::widget_size_to_size_type(widget.size),
             width: widget.size.width(),
             height: widget.size.height(),
-            params: serde_json::Value::Object(
-                widget
-                    .params
-                    .iter()
-                    .map(|(k, v)| (k.as_str().to_owned(), v.to_json_value()))
-                    .collect(),
-            ),
+            params: params_to_json_map(&widget.params),
         };
 
         // Register widget with compositor before spawning. This call blocks
@@ -208,6 +206,15 @@ impl Coordinator {
     pub async fn stop_widget(&self, instance_id: &str) {
         self.widget_manager.stop_widget(instance_id).await;
         let _ = self.compositor.unregister_widget(&instance_id.to_owned());
+    }
+
+    pub fn update_widget_params(
+        &self,
+        instance_id: &str,
+        params: &BTreeMap<ParamKey, ParamValue>,
+    ) -> Result<(), CompositorError> {
+        self.compositor
+            .update_widget_params(&instance_id.to_owned(), params_to_json_map(params))
     }
 
     pub async fn stop_scene_widgets(&self, scene: &Scene) {
@@ -309,4 +316,13 @@ impl Coordinator {
             first_day_of_week: config.first_day_of_week,
         }
     }
+}
+
+fn params_to_json_map(
+    params: &BTreeMap<ParamKey, ParamValue>,
+) -> serde_json::Map<String, serde_json::Value> {
+    params
+        .iter()
+        .map(|(k, v)| (k.as_str().to_owned(), v.to_json_value()))
+        .collect()
 }

@@ -135,6 +135,18 @@ impl Compositor for MockCompositor {
         Ok(())
     }
 
+    fn update_widget_params(
+        &self,
+        instance_id: &InstanceId,
+        params: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<(), CompositorError> {
+        tracing::info!(
+            "MockCompositor: update_widget_params {instance_id}: {}",
+            serde_json::Value::Object(params)
+        );
+        Ok(())
+    }
+
     fn action_receiver(&self) -> mpsc::UnboundedReceiver<WidgetAction> {
         self.action_rx
             .lock()
