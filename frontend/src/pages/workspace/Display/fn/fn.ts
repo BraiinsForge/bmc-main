@@ -293,7 +293,7 @@ function makeNullValue(): pb.WidgetDataValue {
     });
 }
 
-function defaultParamValue(def: pb.ManifestParamDefinition): pb.WidgetDataValue {
+export function defaultParamValue(def: pb.ManifestParamDefinition): pb.WidgetDataValue {
     switch (def.kind.case) {
         case 'paramString':
             return pb.create(pb.WidgetDataValueSchema, {
@@ -321,8 +321,10 @@ function defaultParamValue(def: pb.ManifestParamDefinition): pb.WidgetDataValue 
             return pb.create(pb.WidgetDataValueSchema, {
                 kind: { case: 'booleanValue', value: def.kind.value.defaultValue ?? false },
             });
+        case undefined:
+            return makeNullValue();
         default:
-            return pb.create(pb.WidgetDataValueSchema, { kind: { case: 'stringValue', value: '' } });
+            assertUnreachable(def.kind, 'manifest param kind');
     }
 }
 

@@ -11,6 +11,7 @@ import {
     fitsLeftAbove,
     explodeWidgetIntoAtoms,
     getValidDropSlots,
+    defaultParamValue,
 } from './fn';
 
 const emptyParams = pb.create(pb.WidgetDataStructSchema, { fields: {} });
@@ -679,5 +680,76 @@ describe('getValidDropSlots', () => {
             expect(result.has(C.dropSlotKey(1, 0))).toBe(true); // Other duplicate position available
             expect(result.has(C.dropSlotKey(0, 1))).toBe(false); // Blocked by 'other'
         });
+    });
+});
+
+describe('defaultParamValue', () => {
+    test('returns the manifest default for paramString', () => {
+        const def = pb.create(pb.ManifestParamDefinitionSchema, {
+            key: 'name',
+            name: 'Name',
+            isOptional: false,
+            kind: { case: 'paramString', value: pb.create(pb.ParamStringSchema, { defaultValue: 'hi' }) },
+        });
+        const v = defaultParamValue(def);
+        expect(v.kind.case).toBe('stringValue');
+        if (v.kind.case === 'stringValue') expect(v.kind.value).toBe('hi');
+    });
+
+    test('returns empty string for paramString with no default', () => {
+        const def = pb.create(pb.ManifestParamDefinitionSchema, {
+            key: 'name',
+            name: 'Name',
+            isOptional: false,
+            kind: { case: 'paramString', value: pb.create(pb.ParamStringSchema, {}) },
+        });
+        const v = defaultParamValue(def);
+        expect(v.kind.case).toBe('stringValue');
+        if (v.kind.case === 'stringValue') expect(v.kind.value).toBe('');
+    });
+
+    test('returns null for an optional paramInteger with no default', () => {
+        const def = pb.create(pb.ManifestParamDefinitionSchema, {
+            key: 'count',
+            name: 'Count',
+            isOptional: true,
+            kind: { case: 'paramInteger', value: pb.create(pb.ParamIntegerSchema, {}) },
+        });
+        const v = defaultParamValue(def);
+        expect(v.kind.case).toBe('nullValue');
+    });
+
+    test('returns the manifest default for paramInteger', () => {
+        const def = pb.create(pb.ManifestParamDefinitionSchema, {
+            key: 'count',
+            name: 'Count',
+            isOptional: false,
+            kind: { case: 'paramInteger', value: pb.create(pb.ParamIntegerSchema, { defaultValue: 42 }) },
+        });
+        const v = defaultParamValue(def);
+        expect(v.kind.case).toBe('integerValue');
+        if (v.kind.case === 'integerValue') expect(v.kind.value).toBe(42);
+    });
+
+    test('returns false for paramBoolean with no default', () => {
+        const def = pb.create(pb.ManifestParamDefinitionSchema, {
+            key: 'flag',
+            name: 'Flag',
+            isOptional: false,
+            kind: { case: 'paramBoolean', value: pb.create(pb.ParamBooleanSchema, {}) },
+        });
+        const v = defaultParamValue(def);
+        expect(v.kind.case).toBe('booleanValue');
+        if (v.kind.case === 'booleanValue') expect(v.kind.value).toBe(false);
+    });
+
+    test('returns null for unset kind', () => {
+        const def = pb.create(pb.ManifestParamDefinitionSchema, {
+            key: 'x',
+            name: 'X',
+            isOptional: true,
+        });
+        const v = defaultParamValue(def);
+        expect(v.kind.case).toBe('nullValue');
     });
 });
