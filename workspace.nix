@@ -137,7 +137,7 @@ let
 
       LD_LIBRARY_PATH = "${lib.makeLibraryPath [
         pkgs.libgcc
-        # rodio (used by bmc-keyboard for keypress sounds, pulled into
+        # rodio (used by bmc-render-keyboard for keypress sounds, pulled into
         # bmc-storybook-stories) dynlinks libasound.so.2 at exec time;
         # nextest invokes test binaries with --list and fails to start
         # without alsa on the loader path.

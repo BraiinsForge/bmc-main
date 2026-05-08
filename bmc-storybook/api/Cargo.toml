@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bmc-keyboard = { path = "../../bmc-render/keyboard" }
 bmc-render = { path = "../../bmc-render" }
+bmc-render-keyboard = { path = "../../bmc-render/keyboard" }
 bmc-storybook-macros = { path = "../storybook-macros" }
 bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
 inventory.workspace = true

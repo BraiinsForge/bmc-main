@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::Arc;
 
-use bmc_keyboard::sound::{AudioSink, SoundTag};
+use bmc_render_keyboard::sound::{AudioSink, SoundTag};
 use rodio::source::Source;
 
 /// Pre-decoded PCM samples for instant playback.

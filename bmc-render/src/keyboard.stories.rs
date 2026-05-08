@@ -3,10 +3,12 @@
 use std::cell::RefCell;
 
 use crate::prelude::*;
-use bmc_keyboard::layout::{ALL_LAYOUTS, KeyboardLayout};
-use bmc_keyboard::sound::SilentSink;
-use bmc_keyboard::theme::{HYPERFUSE_SKIN, LLAMA_SKIN};
-use bmc_keyboard::{EnterBehavior, KeyboardCtx, KeyboardResult, KeyboardState, KeyboardTheme};
+use bmc_render_keyboard::layout::{ALL_LAYOUTS, KeyboardLayout};
+use bmc_render_keyboard::sound::SilentSink;
+use bmc_render_keyboard::theme::{HYPERFUSE_SKIN, LLAMA_SKIN};
+use bmc_render_keyboard::{
+    EnterBehavior, KeyboardCtx, KeyboardResult, KeyboardState, KeyboardTheme,
+};
 
 story_meta! { title: "Keyboard" }
 
@@ -36,7 +38,7 @@ fn keyboard_frame(
         STATE.with_borrow_mut(|s| {
             s.keyboards[index].enter_behavior = enter;
             let mut silent = SilentSink;
-            let audio: &mut dyn bmc_keyboard::AudioSink =
+            let audio: &mut dyn bmc_render_keyboard::AudioSink =
                 if sound { &mut s.audio } else { &mut silent };
             let mut ctx = KeyboardCtx {
                 renderer,
@@ -49,7 +51,7 @@ fn keyboard_frame(
                 delta_ms,
             };
             if !matches!(
-                bmc_keyboard::render_keyboard(&mut ctx, layout),
+                bmc_render_keyboard::render_keyboard(&mut ctx, layout),
                 KeyboardResult::Editing
             ) {
                 *ctx.state =

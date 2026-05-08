@@ -215,7 +215,7 @@ impl HotReloader {
         }
 
         // Watch source directories to pick up transitive-dep edits (e.g.
-        // editing `bmc-keyboard/` while running storybook). The naive
+        // editing `bmc-render-keyboard/` while running storybook). The naive
         // approach — `RecursiveMode::Recursive` on the workspace root —
         // tells inotify to install a watch on every subdirectory under
         // `target/` (hundreds of thousands after a debug build), easily

@@ -217,7 +217,7 @@ fn parse_code(s: &str) -> Option<i32> {
             _ => {
                 println!(
                     "cargo:warning=keyboard: skipping unsupported function key {s} \
-                     (no `KeyCode` mapping in `bmc-keyboard`)"
+                     (no `KeyCode` mapping in `bmc-render-keyboard`)"
                 );
                 None
             }

@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 toml.workspace = true
 
 [dependencies]
-bmc-keyboard = { path = "../../bmc-render/keyboard" }
+bmc-render-keyboard = { path = "../../bmc-render/keyboard" }
 bmc-render-skin = { path = "../../bmc-render/skin" }
 bmc-storybook-api = { path = "../api" }
 bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
