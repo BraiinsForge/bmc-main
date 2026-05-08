@@ -671,6 +671,19 @@ fn scene_to_proto(scene: &scene::Scene) -> web::Scene {
     }
 }
 
+fn parse_scene_cycling_transition(value: i32) -> Result<SceneCyclingTransition, Status> {
+    match web::SceneCyclingTransition::try_from(value) {
+        Ok(web::SceneCyclingTransition::Slide) => Ok(SceneCyclingTransition::Slide),
+        Ok(web::SceneCyclingTransition::Fade) => Ok(SceneCyclingTransition::Fade),
+        Ok(web::SceneCyclingTransition::Unspecified) => Err(Status::invalid_argument(
+            "scene_cycling.transition must be Slide or Fade (got Unspecified)",
+        )),
+        Err(_) => Err(Status::invalid_argument(format!(
+            "scene_cycling.transition: unknown value {value}"
+        ))),
+    }
+}
+
 #[async_trait::async_trait]
 impl GrpcSceneManagementService for SceneManagementService {
     async fn get_available_widgets(
@@ -1125,13 +1138,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             automatic_cycling_default_duration: std::time::Duration::from_secs(u64::from(
                 cycling.automatic_cycling_default_duration_sec,
             )),
-            transition: match web::SceneCyclingTransition::try_from(cycling.transition) {
-                Ok(web::SceneCyclingTransition::Fade) => SceneCyclingTransition::Fade,
-                Ok(
-                    web::SceneCyclingTransition::Slide | web::SceneCyclingTransition::Unspecified,
-                )
-                | Err(_) => SceneCyclingTransition::Slide,
-            },
+            transition: parse_scene_cycling_transition(cycling.transition)?,
         });
 
         Self::save_config(&mut config).await?;
@@ -2127,5 +2134,49 @@ mod tests {
         assert!(matches!(fields["d"].kind, Some(VK::DoubleValue(_))));
         assert!(matches!(fields["b"].kind, Some(VK::BooleanValue(true))));
         assert!(matches!(fields["n"].kind, Some(VK::NullValue(()))));
+    }
+
+    #[test]
+    fn set_scene_cycling_rejects_unspecified_transition() {
+        let req = web::SetSceneCyclingRequest {
+            scene_cycling: Some(web::SceneCycling {
+                automatic_cycling_enabled: false,
+                automatic_cycling_default_duration_sec: 30,
+                transition: web::SceneCyclingTransition::Unspecified.into(),
+            }),
+        };
+        let err = parse_scene_cycling_transition(
+            req.scene_cycling
+                .as_ref()
+                .expect("BUG: cycling set above")
+                .transition,
+        )
+        .expect_err("BUG: must reject unspecified transition");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert!(
+            err.message().contains("transition"),
+            "message should name the field: {err:?}"
+        );
+    }
+
+    #[test]
+    fn set_scene_cycling_rejects_unknown_transition_int() {
+        let err = parse_scene_cycling_transition(9999)
+            .expect_err("BUG: must reject unknown transition int");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn set_scene_cycling_accepts_slide_and_fade() {
+        assert_eq!(
+            parse_scene_cycling_transition(web::SceneCyclingTransition::Slide.into())
+                .expect("BUG: Slide must parse"),
+            SceneCyclingTransition::Slide,
+        );
+        assert_eq!(
+            parse_scene_cycling_transition(web::SceneCyclingTransition::Fade.into())
+                .expect("BUG: Fade must parse"),
+            SceneCyclingTransition::Fade,
+        );
     }
 }
