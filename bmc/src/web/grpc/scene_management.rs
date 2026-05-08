@@ -1200,9 +1200,10 @@ impl GrpcSceneManagementService for SceneManagementService {
         let widget_id = widget.id.to_string();
 
         let scene_id_key = scene::SceneId::from(scene_id);
-        let showing = self.scene_is_showing(&scene_id_key).await;
 
-        {
+        let preview_snapshot = *self.preview_scene_id.lock().await;
+
+        let widget_to_spawn = {
             let mut config = self.config_handle.write().await;
             let scene = config
                 .scenes
@@ -1211,11 +1212,14 @@ impl GrpcSceneManagementService for SceneManagementService {
 
             validate_widget_placement(scene, &widget, None)?;
 
+            let showing = scene.enabled || preview_snapshot == Some(scene_id_key);
             scene.widgets.insert(widget.id, widget.clone());
             Self::save_config(&mut config).await?;
-        }
 
-        if showing {
+            if showing { Some(widget) } else { None }
+        };
+
+        if let Some(widget) = widget_to_spawn {
             self.coordinator.spawn_widget(&scene_id_key, &widget).await;
         }
         self.restore_active_scene().await;
