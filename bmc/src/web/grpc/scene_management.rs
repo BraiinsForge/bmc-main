@@ -240,13 +240,6 @@ impl SceneManagementService {
     /// because it's enabled or because it's being previewed. Gates the
     /// "apply to live compositor" branches of add_widget / update_widget so
     /// edits during a preview reach the widget process that's already up.
-    async fn scene_is_showing(&self, scene_id: &scene::SceneId) -> bool {
-        let config = self.config_handle.read().await;
-        let enabled = config.scenes.get(scene_id).is_some_and(|s| s.enabled);
-        drop(config);
-        enabled || self.preview_scene_id.lock().await.as_ref() == Some(scene_id)
-    }
-
     /// Save config, returning a gRPC-friendly error on failure.
     async fn save_config(config: &mut ConfigHandle) -> Result<(), Status> {
         config
@@ -1242,7 +1235,7 @@ impl GrpcSceneManagementService for SceneManagementService {
 
         let scene_id_key = scene::SceneId::from(scene_id);
         let widget_id_key = scene::WidgetId::from(widget_id);
-        let showing = self.scene_is_showing(&scene_id_key).await;
+        let preview_snapshot = *self.preview_scene_id.lock().await;
 
         let widget_snapshot = {
             let mut config = self.config_handle.write().await;
@@ -1301,9 +1294,12 @@ impl GrpcSceneManagementService for SceneManagementService {
                 .widgets
                 .insert(updated_widget.id, updated_widget.clone());
 
+            let showing = scene.enabled || preview_snapshot == Some(scene_id_key);
             Self::save_config(&mut config).await?;
-            updated_widget
+            (updated_widget, showing)
         };
+
+        let (widget_snapshot, showing) = widget_snapshot;
 
         if showing {
             let instance_id = widget_snapshot.id.as_uuid().to_string();
