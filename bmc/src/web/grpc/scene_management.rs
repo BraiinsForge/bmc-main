@@ -293,7 +293,7 @@ fn param_default_to_widget_data_value(kind: &ParamKind) -> web::WidgetDataValue 
         | ParamKind::Double { .. }
         | ParamKind::Integer { .. }
         | ParamKind::Boolean { .. }
-        | ParamKind::Timezone { .. } => VK::NullValue(web::widget_data_value::Null {}),
+        | ParamKind::Timezone { .. } => VK::NullValue(()),
     };
     web::WidgetDataValue { kind: Some(arm) }
 }
@@ -310,7 +310,7 @@ fn widget_data_struct_to_map(
 fn widget_data_value_to_json(v: &web::WidgetDataValue) -> serde_json::Value {
     use web::widget_data_value::Kind;
     match &v.kind {
-        None | Some(Kind::NullValue(_)) => serde_json::Value::Null,
+        None | Some(Kind::NullValue(())) => serde_json::Value::Null,
         Some(Kind::BooleanValue(b)) => serde_json::Value::Bool(*b),
         Some(Kind::IntegerValue(i)) => serde_json::Value::Number((*i).into()),
         Some(Kind::DoubleValue(d)) => {
@@ -343,7 +343,7 @@ fn json_to_widget_data_value(
 ) -> Option<web::WidgetDataValue> {
     use web::widget_data_value::Kind;
     let arm = match (v, kind_hint) {
-        (serde_json::Value::Null, _) => Kind::NullValue(web::widget_data_value::Null {}),
+        (serde_json::Value::Null, _) => Kind::NullValue(()),
         (serde_json::Value::Bool(b), _) => Kind::BooleanValue(*b),
         (serde_json::Value::String(s), _) => Kind::StringValue(s.clone()),
         (serde_json::Value::Number(n), Some(ParamKind::Integer { .. })) => {
@@ -600,7 +600,7 @@ pub(crate) fn validate_widget_params(
             continue;
         };
 
-        if matches!(kind, VK::NullValue(_)) {
+        if matches!(kind, VK::NullValue(())) {
             if !def.is_optional {
                 violations.push(path, "Value is required");
             }
@@ -1476,7 +1476,7 @@ mod tests {
         );
         let resolved = build_widget_params(&manifest, &web::WidgetDataStruct::default());
         let v = &resolved.fields["name"];
-        assert!(matches!(v.kind, Some(VK::NullValue(_))));
+        assert!(matches!(v.kind, Some(VK::NullValue(()))));
     }
 
     #[test]
@@ -1664,7 +1664,7 @@ mod tests {
             back.fields["b"].kind,
             Some(Kind::BooleanValue(true))
         ));
-        assert!(matches!(back.fields["n"].kind, Some(Kind::NullValue(_))));
+        assert!(matches!(back.fields["n"].kind, Some(Kind::NullValue(()))));
     }
 
     fn wdv_string(s: &str) -> web::WidgetDataValue {
@@ -1689,9 +1689,7 @@ mod tests {
     }
     fn wdv_null() -> web::WidgetDataValue {
         web::WidgetDataValue {
-            kind: Some(web::widget_data_value::Kind::NullValue(
-                web::widget_data_value::Null {},
-            )),
+            kind: Some(web::widget_data_value::Kind::NullValue(())),
         }
     }
     fn wdv_unset_kind() -> web::WidgetDataValue {
