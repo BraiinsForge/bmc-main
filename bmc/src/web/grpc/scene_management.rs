@@ -656,15 +656,6 @@ fn validate_widget_param_value(
     }
 }
 
-fn scene_widget_size_to_proto(size: scene::WidgetSize) -> i32 {
-    match size {
-        scene::WidgetSize::Small => web::WidgetSize::Small.into(),
-        scene::WidgetSize::Medium => web::WidgetSize::Medium.into(),
-        scene::WidgetSize::Large => web::WidgetSize::Large.into(),
-        scene::WidgetSize::Full => web::WidgetSize::Full.into(),
-    }
-}
-
 fn scene_widget_to_proto(widget: &scene::Widget) -> web::Widget {
     web::Widget {
         id: widget.id.to_string(),
@@ -672,7 +663,7 @@ fn scene_widget_to_proto(widget: &scene::Widget) -> web::Widget {
             row: u32::from(widget.position.row),
             col: u32::from(widget.position.col),
         }),
-        size: scene_widget_size_to_proto(widget.size),
+        size: size_type_to_proto(widget.size.into()),
         config: Some(web::WidgetConfig {
             widget_uid: widget.widget_type_id.to_string(),
             params: Some(params_to_widget_data_struct(&widget.params)),
