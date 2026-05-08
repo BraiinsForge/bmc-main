@@ -372,4 +372,53 @@ mod tests {
             bmc_ipc::SizeType::Full
         );
     }
+
+    #[test]
+    fn clone_with_new_id_preserves_widget_iteration_order() {
+        let positions = [
+            (0_u8, 0_u8, WidgetSize::Small),
+            (0, 1, WidgetSize::Small),
+            (0, 2, WidgetSize::Medium),
+            (1, 0, WidgetSize::Large),
+        ];
+        let widget_type = Uuid::new_v4();
+        let mut source = Scene::combined();
+        for (row, col, size) in positions {
+            let w = Widget::new(
+                widget_type,
+                BTreeMap::new(),
+                WidgetPosition { row, col },
+                size,
+            );
+            source.widgets.insert(w.id, w);
+        }
+        let source_order: Vec<(u8, u8, WidgetSize)> = source
+            .widgets
+            .values()
+            .map(|w| (w.position.row, w.position.col, w.size))
+            .collect();
+
+        let cloned = source.clone_with_new_id();
+
+        let cloned_order: Vec<(u8, u8, WidgetSize)> = cloned
+            .widgets
+            .values()
+            .map(|w| (w.position.row, w.position.col, w.size))
+            .collect();
+
+        assert_eq!(
+            source_order, cloned_order,
+            "BUG: clone_with_new_id must preserve widget iteration order"
+        );
+        assert_ne!(source.id, cloned.id);
+        let source_widget_ids: Vec<_> = source.widgets.keys().copied().collect();
+        let cloned_widget_ids: Vec<_> = cloned.widgets.keys().copied().collect();
+        assert!(
+            source_widget_ids
+                .iter()
+                .zip(cloned_widget_ids.iter())
+                .all(|(a, b)| a != b),
+            "BUG: each cloned widget must have a fresh id",
+        );
+    }
 }
