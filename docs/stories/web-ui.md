@@ -27,8 +27,7 @@ firmware rebuild.
 - The widget picker shows every manifest the device currently has installed — no fixed enum.
 - Widget size options are scene-aware and manifest-driven: combined scenes offer Small / Medium / Large; fullscreen
   scenes use Full.
-- Place a widget at a grid position within a combined scene, configure its parameters, and apply it; the widget appears
-  on the device after confirmation.
+- Place a widget at a grid position within a combined scene; the dropped widget appears on the device immediately.
 
 ### Configure widget settings
 
