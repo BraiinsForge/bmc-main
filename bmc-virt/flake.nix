@@ -67,11 +67,12 @@
         uplinkSsid = "BMC-VIRT-UPLINK";
         uplinkKey = "braiins-virt";
 
-        # Host ports (forwarded to guest via QEMU user-mode NAT)
+        # Host ports (forwarded to guest via QEMU user-mode NAT).
+        # gRPC-Web is multiplexed onto the same listener as HTTP (port 80
+        # in the guest), so there is no separate gRPC entry here.
         ports = {
           ssh = 2222; # → guest 22
           http = 50080; # → guest 80 (high range to avoid the common 8080 clash)
-          grpc = 50052; # → guest 50051
           ipc = 5910; # → guest 5910 (bmc-virt-console TCP IPC)
           event = 5920; # → guest 5920 (bmc-virt-eventd)
         };
@@ -398,7 +399,6 @@
           pkgs.lib.generators.toKeyValue { } {
             PORT_SSH = toString ports.ssh;
             PORT_HTTP = toString ports.http;
-            PORT_GRPC = toString ports.grpc;
             PORT_IPC = toString ports.ipc;
             PORT_EVENT = toString ports.event;
           }
@@ -721,7 +721,7 @@
                 -vga none \
                 $GPU_ARGS \
                 -device virtio-net-pci,netdev=net0 \
-                -netdev user,id=net0,net=192.168.1.0/24,hostfwd=tcp::${toString ports.ssh}-192.168.1.1:22,hostfwd=tcp::${toString ports.http}-192.168.1.1:80,hostfwd=tcp::${toString ports.grpc}-192.168.1.1:50051,hostfwd=tcp::${toString ports.ipc}-192.168.1.1:${toString ports.ipc},hostfwd=tcp::${toString ports.event}-192.168.1.1:${toString ports.event} \
+                -netdev user,id=net0,net=192.168.1.0/24,hostfwd=tcp::${toString ports.ssh}-192.168.1.1:22,hostfwd=tcp::${toString ports.http}-192.168.1.1:80,hostfwd=tcp::${toString ports.ipc}-192.168.1.1:${toString ports.ipc},hostfwd=tcp::${toString ports.event}-192.168.1.1:${toString ports.event} \
                 -device virtio-tablet-pci \
                 -object rng-random,filename=/dev/urandom,id=rng0 \
                 -device virtio-rng-pci,rng=rng0 \
@@ -947,7 +947,7 @@
             fi
 
             header "Connecting (Ctrl+D or 'exit' to disconnect, VM keeps running)"
-            echo "Ports: HTTP=${toString ports.http}  gRPC=${toString ports.grpc}  SSH=${toString ports.ssh}"
+            echo "Ports: HTTP/gRPC=${toString ports.http}  SSH=${toString ports.ssh}"
             if [[ -n "$RR" ]]; then
               echo "rr recording active — exit SSH to stop and pull the recording"
             fi

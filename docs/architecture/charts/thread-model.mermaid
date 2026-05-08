@@ -4,8 +4,7 @@ graph LR
         INIT["startup / entry"]
         DT["display_tasks\n(screen transitions)"]
         WT["widget_tasks\n(data fetching)"]
-        WEB["web server\n(:80)"]
-        GRPC["gRPC server\n(:50051)"]
+        WEB["web + gRPC-Web\n(:80, multiplexed)"]
         LED["led_controller"]
         WIFI["WiFi manager"]
     end
