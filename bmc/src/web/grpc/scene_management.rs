@@ -1011,22 +1011,19 @@ impl GrpcSceneManagementService for SceneManagementService {
             Uuid::parse_str(&id_str).map_err(|_| Status::invalid_argument("invalid scene ID"))?;
         let scene_id = scene::SceneId::from(id);
 
-        // Look the scene up, claim the preview slot, and kick off rendering
-        // in a single config read so the scene can't vanish between the
-        // existence check and the spawn.
         let scene_was_disabled = {
+            let mut preview = self.preview_scene_id.lock().await;
+            if preview.is_some() {
+                return Err(Status::resource_exhausted("scene preview already active"));
+            }
+
             let config = self.config_handle.read().await;
             let scene = config
                 .scenes
                 .get(&scene_id)
                 .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
 
-            let mut preview = self.preview_scene_id.lock().await;
-            if preview.is_some() {
-                return Err(Status::resource_exhausted("scene preview already active"));
-            }
             *preview = Some(scene_id);
-            drop(preview);
 
             let disabled = !scene.enabled;
             if disabled {
