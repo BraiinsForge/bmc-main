@@ -15,10 +15,28 @@ use crate::ManifestError;
 const MAX_NAME_LENGTH: usize = 50;
 const MAX_DESCRIPTION_LENGTH: usize = 200;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct ParamKey(String);
 
 impl ParamKey {
+    /// Construct a `ParamKey` from an owned string, applying the same
+    /// character-class rules as the `Deserialize` impl. Returns the
+    /// rejected input back to the caller on failure.
+    pub fn try_new(s: String) -> Result<Self, String> {
+        if Self::is_valid(&s) {
+            Ok(Self(s))
+        } else {
+            Err(s)
+        }
+    }
+
+    fn is_valid(s: &str) -> bool {
+        let mut bytes = s.bytes();
+        let first_ok = matches!(bytes.next(), Some(b) if b.is_ascii_alphabetic());
+        let rest_ok = bytes.all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        first_ok && rest_ok
+    }
+
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -28,13 +46,7 @@ impl ParamKey {
 impl<'de> Deserialize<'de> for ParamKey {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let s = String::deserialize(d)?;
-        let mut bytes = s.bytes();
-        let first_ok = matches!(bytes.next(), Some(b) if b.is_ascii_alphabetic());
-        let rest_ok = bytes.all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-        if !(first_ok && rest_ok) {
-            return Err(D::Error::custom(format!("invalid param key {s:?}")));
-        }
-        Ok(Self(s))
+        Self::try_new(s).map_err(|s| D::Error::custom(format!("invalid param key {s:?}")))
     }
 }
 
@@ -69,6 +81,76 @@ pub enum StringFormat {
     Time,
     Email,
     Uri,
+}
+
+/// Typed scalar value for a stored widget param. Mirrors the manifest's
+/// `ParamKind` value space — null, boolean, i32, finite f64, string —
+/// nothing wider. The on-disk form is internally tagged so integer vs
+/// double survives a JSON round-trip without needing the manifest.
+///
+/// Construct `Double` only with finite values; the `Deserialize` impl
+/// rejects NaN/inf, and validators upstream should reject them too.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum ParamValue {
+    Null,
+    Boolean(bool),
+    Integer(i32),
+    #[serde(deserialize_with = "deserialize_finite_f64")]
+    Double(f64),
+    String(String),
+}
+
+fn deserialize_finite_f64<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    let v = f64::deserialize(d)?;
+    if v.is_finite() {
+        Ok(v)
+    } else {
+        Err(D::Error::custom(format!(
+            "ParamValue::Double must be finite (got {v})"
+        )))
+    }
+}
+
+impl ParamValue {
+    /// JSON projection for the wayland boundary — widget processes
+    /// receive a JSON object whose values are bare scalars, not the
+    /// internally-tagged form.
+    #[must_use]
+    pub fn to_json_value(&self) -> serde_json::Value {
+        match self {
+            ParamValue::Null => serde_json::Value::Null,
+            ParamValue::Boolean(b) => serde_json::Value::Bool(*b),
+            ParamValue::Integer(i) => serde_json::Value::Number((*i).into()),
+            ParamValue::Double(d) => serde_json::Number::from_f64(*d)
+                .map_or(serde_json::Value::Null, serde_json::Value::Number),
+            ParamValue::String(s) => serde_json::Value::String(s.clone()),
+        }
+    }
+
+    /// Build the default value for a manifest param. Required params
+    /// without a `default_value` are caught at manifest load time
+    /// (`ParamKind::has_default_value`); optional params without a
+    /// default deserialize to `Null`.
+    #[must_use]
+    pub fn from_param_kind_default(kind: &ParamKind) -> Self {
+        match kind {
+            ParamKind::String { default_value, .. } | ParamKind::Timezone { default_value } => {
+                default_value
+                    .clone()
+                    .map_or(ParamValue::Null, ParamValue::String)
+            }
+            ParamKind::Double { default_value, .. } => {
+                default_value.map_or(ParamValue::Null, ParamValue::Double)
+            }
+            ParamKind::Integer { default_value, .. } => {
+                default_value.map_or(ParamValue::Null, ParamValue::Integer)
+            }
+            ParamKind::Boolean { default_value } => {
+                default_value.map_or(ParamValue::Null, ParamValue::Boolean)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -874,5 +956,80 @@ mod tests {
         }"#;
         let res = Manifest::from_str(manifest_json);
         assert!(res.is_err(), "all-digit param key must reject");
+    }
+
+    #[test]
+    fn param_value_round_trips_each_variant() {
+        let cases = [
+            ParamValue::Null,
+            ParamValue::Boolean(true),
+            ParamValue::Integer(-7),
+            ParamValue::Double(3.5),
+            ParamValue::String("x".into()),
+        ];
+        for v in cases {
+            let s = serde_json::to_string(&v).expect("BUG: serialize");
+            let back: ParamValue = serde_json::from_str(&s).expect("BUG: deserialize");
+            assert_eq!(v, back);
+        }
+    }
+
+    #[test]
+    fn param_value_double_rejects_non_finite_on_deserialize() {
+        for s in [
+            r#"{"type":"double","value":null}"#,
+            r#"{"type":"integer","value":1.5}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<ParamValue>(s).is_err(),
+                "expected reject: {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn param_value_to_json_value_strips_tag() {
+        assert!(ParamValue::Null.to_json_value().is_null());
+        assert_eq!(
+            ParamValue::Boolean(true).to_json_value(),
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            ParamValue::Integer(42).to_json_value(),
+            serde_json::json!(42)
+        );
+        assert_eq!(
+            ParamValue::Double(2.5).to_json_value(),
+            serde_json::json!(2.5)
+        );
+        assert_eq!(
+            ParamValue::String("hi".into()).to_json_value(),
+            serde_json::json!("hi")
+        );
+    }
+
+    #[test]
+    fn param_value_from_param_kind_default_picks_default_or_null() {
+        let with_default = ParamKind::Integer {
+            min: None,
+            max: None,
+            step: None,
+            enum_values: vec![],
+            default_value: Some(7),
+        };
+        assert_eq!(
+            ParamValue::from_param_kind_default(&with_default),
+            ParamValue::Integer(7)
+        );
+
+        let without_default = ParamKind::String {
+            format: None,
+            enum_values: vec![],
+            default_value: None,
+        };
+        assert_eq!(
+            ParamValue::from_param_kind_default(&without_default),
+            ParamValue::Null
+        );
     }
 }

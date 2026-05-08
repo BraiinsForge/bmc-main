@@ -1,5 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -252,141 +253,74 @@ impl SceneManagementService {
     }
 }
 
+/// Build a typed param map ready for storage. Caller MUST have already
+/// passed `overrides` through `validate_widget_params` for the same
+/// manifest — this function panics on a wire-shape / declared-kind
+/// mismatch, since validation should have caught it.
+///
+/// Manifest keys missing from `overrides` are filled with the manifest's
+/// default value (or `Null` for optional params without a default).
 pub(crate) fn build_widget_params(
     manifest: &bmc_widget::Manifest,
     overrides: &web::WidgetDataStruct,
-) -> web::WidgetDataStruct {
-    let mut fields = std::collections::HashMap::new();
+) -> BTreeMap<bmc_widget::ParamKey, bmc_widget::ParamValue> {
+    let mut out = BTreeMap::new();
     for (key, def) in &manifest.params {
-        let value = overrides
-            .fields
-            .get(key.as_str())
-            .cloned()
-            .unwrap_or_else(|| param_default_to_widget_data_value(&def.kind));
-        fields.insert(key.as_str().to_owned(), value);
+        let value = match overrides.fields.get(key.as_str()) {
+            Some(wdv) => wire_to_param_value(wdv, &def.kind),
+            None => bmc_widget::ParamValue::from_param_kind_default(&def.kind),
+        };
+        out.insert(key.clone(), value);
     }
-    web::WidgetDataStruct { fields }
+    out
 }
 
-fn param_default_to_widget_data_value(kind: &ParamKind) -> web::WidgetDataValue {
+fn wire_to_param_value(
+    wdv: &web::WidgetDataValue,
+    param_kind: &ParamKind,
+) -> bmc_widget::ParamValue {
+    use bmc_widget::ParamValue as PV;
     use web::widget_data_value::Kind as VK;
-    let arm = match kind {
-        ParamKind::String {
-            default_value: Some(d),
-            ..
-        } => VK::StringValue(d.clone()),
-        ParamKind::Double {
-            default_value: Some(d),
-            ..
-        } => VK::DoubleValue(*d),
-        ParamKind::Integer {
-            default_value: Some(d),
-            ..
-        } => VK::IntegerValue(*d),
-        ParamKind::Boolean {
-            default_value: Some(b),
-        } => VK::BooleanValue(*b),
-        ParamKind::Timezone {
-            default_value: Some(s),
-        } => VK::StringValue(s.clone()),
-        ParamKind::String { .. }
-        | ParamKind::Double { .. }
-        | ParamKind::Integer { .. }
-        | ParamKind::Boolean { .. }
-        | ParamKind::Timezone { .. } => VK::NullValue(()),
+    let Some(kind) = wdv.kind.as_ref() else {
+        // Missing kind treated as null on the wire; validators that
+        // want to reject this set is_optional=false. Either way, store
+        // null and let the manifest semantics drive behavior.
+        return PV::Null;
+    };
+    match (param_kind, kind) {
+        (_, VK::NullValue(())) => PV::Null,
+        (ParamKind::Boolean { .. }, VK::BooleanValue(b)) => PV::Boolean(*b),
+        (ParamKind::Integer { .. }, VK::IntegerValue(i)) => PV::Integer(*i),
+        (ParamKind::Double { .. }, VK::DoubleValue(d)) => PV::Double(*d),
+        (ParamKind::String { .. } | ParamKind::Timezone { .. }, VK::StringValue(s)) => {
+            PV::String(s.clone())
+        }
+        _ => panic!("BUG: validate_widget_params must reject param/value kind mismatch"),
+    }
+}
+
+fn params_to_widget_data_struct(
+    params: &BTreeMap<bmc_widget::ParamKey, bmc_widget::ParamValue>,
+) -> web::WidgetDataStruct {
+    web::WidgetDataStruct {
+        fields: params
+            .iter()
+            .map(|(k, v)| (k.as_str().to_owned(), param_value_to_wire(v)))
+            .collect(),
+    }
+}
+
+fn param_value_to_wire(v: &bmc_widget::ParamValue) -> web::WidgetDataValue {
+    use bmc_widget::ParamValue as PV;
+    use web::widget_data_value::Kind as VK;
+    let arm = match v {
+        PV::Null => VK::NullValue(()),
+        PV::Boolean(b) => VK::BooleanValue(*b),
+        PV::Integer(i) => VK::IntegerValue(*i),
+        PV::Double(d) => VK::DoubleValue(*d),
+        PV::String(s) => VK::StringValue(s.clone()),
     };
     web::WidgetDataValue { kind: Some(arm) }
-}
-
-fn widget_data_struct_to_map(
-    s: &web::WidgetDataStruct,
-) -> serde_json::Map<String, serde_json::Value> {
-    s.fields
-        .iter()
-        .map(|(k, v)| (k.clone(), widget_data_value_to_json(v)))
-        .collect()
-}
-
-fn widget_data_value_to_json(v: &web::WidgetDataValue) -> serde_json::Value {
-    use web::widget_data_value::Kind;
-    match &v.kind {
-        None | Some(Kind::NullValue(())) => serde_json::Value::Null,
-        Some(Kind::BooleanValue(b)) => serde_json::Value::Bool(*b),
-        Some(Kind::IntegerValue(i)) => serde_json::Value::Number((*i).into()),
-        Some(Kind::DoubleValue(d)) => {
-            let n = serde_json::Number::from_f64(*d)
-                .expect("BUG: validate_widget_params must reject non-finite double_value");
-            serde_json::Value::Number(n)
-        }
-        Some(Kind::StringValue(s)) => serde_json::Value::String(s.clone()),
-    }
-}
-
-fn map_to_widget_data_struct(
-    map: &serde_json::Map<String, serde_json::Value>,
-    manifest: Option<&bmc_widget::Manifest>,
-) -> web::WidgetDataStruct {
-    let mut fields = std::collections::HashMap::new();
-    for (k, v) in map {
-        let kind_hint = manifest.and_then(|m| m.params.get(k.as_str()).map(|d| &d.kind));
-        if let Some(value) = json_to_widget_data_value(v, k, kind_hint) {
-            fields.insert(k.clone(), value);
-        }
-    }
-    web::WidgetDataStruct { fields }
-}
-
-fn json_to_widget_data_value(
-    v: &serde_json::Value,
-    key: &str,
-    kind_hint: Option<&ParamKind>,
-) -> Option<web::WidgetDataValue> {
-    use web::widget_data_value::Kind;
-    let arm = match (v, kind_hint) {
-        (serde_json::Value::Null, _) => Kind::NullValue(()),
-        (serde_json::Value::Bool(b), _) => Kind::BooleanValue(*b),
-        (serde_json::Value::String(s), _) => Kind::StringValue(s.clone()),
-        (serde_json::Value::Number(n), Some(ParamKind::Integer { .. })) => {
-            let Some(i64v) = n.as_i64() else {
-                tracing::warn!(key, value = %n, "stored Integer param is not representable as i64; omitting");
-                return None;
-            };
-            let Ok(i32v) = i32::try_from(i64v) else {
-                tracing::warn!(key, value = %n, "stored Integer param overflows i32; omitting");
-                return None;
-            };
-            Kind::IntegerValue(i32v)
-        }
-        (serde_json::Value::Number(n), Some(ParamKind::Double { .. })) => {
-            let Some(d) = n.as_f64().filter(|d| d.is_finite()) else {
-                tracing::warn!(key, value = %n, "stored Double param is not finite; omitting");
-                return None;
-            };
-            Kind::DoubleValue(d)
-        }
-        (serde_json::Value::Number(n), _) if n.is_i64() => {
-            let Some(i) = n.as_i64().and_then(|i| i32::try_from(i).ok()) else {
-                tracing::warn!(key, value = %n, "stored integer-shaped value overflows i32 (no manifest); omitting");
-                return None;
-            };
-            Kind::IntegerValue(i)
-        }
-        (serde_json::Value::Number(n), _) => {
-            let Some(d) = n.as_f64().filter(|d| d.is_finite()) else {
-                tracing::warn!(key, value = %n, "stored numeric value is not finite (no manifest); omitting");
-                return None;
-            };
-            Kind::DoubleValue(d)
-        }
-        (serde_json::Value::Array(_) | serde_json::Value::Object(_), _) => {
-            tracing::warn!(
-                key,
-                "stored param is array/object — manifest schema disallows; omitting"
-            );
-            return None;
-        }
-    };
-    Some(web::WidgetDataValue { kind: Some(arm) })
 }
 
 fn size_type_to_proto(size: SizeType) -> i32 {
@@ -700,27 +634,7 @@ fn scene_widget_size_to_proto(size: scene::WidgetSize) -> i32 {
     }
 }
 
-fn scene_widget_to_proto(
-    widget: &scene::Widget,
-    manifest: Option<&bmc_widget::Manifest>,
-) -> web::Widget {
-    if manifest.is_none() {
-        tracing::warn!(
-            widget_type_id = %widget.widget_type_id,
-            "widget manifest not installed; falling back to shape inference for params"
-        );
-    }
-
-    let params = if let Some(map) = widget.params.as_object() {
-        map_to_widget_data_struct(map, manifest)
-    } else {
-        tracing::warn!(
-            widget_id = %widget.id,
-            "stored widget.params is not a JSON object; surfacing empty params"
-        );
-        web::WidgetDataStruct::default()
-    };
-
+fn scene_widget_to_proto(widget: &scene::Widget) -> web::Widget {
     web::Widget {
         id: widget.id.to_string(),
         position: Some(web::WidgetPosition {
@@ -730,20 +644,13 @@ fn scene_widget_to_proto(
         size: scene_widget_size_to_proto(widget.size),
         config: Some(web::WidgetConfig {
             widget_uid: widget.widget_type_id.to_string(),
-            params: Some(params),
+            params: Some(params_to_widget_data_struct(&widget.params)),
         }),
     }
 }
 
-fn scene_to_proto(scene: &scene::Scene, registry: &WidgetRegistry) -> web::Scene {
-    let widgets: Vec<web::Widget> = scene
-        .widgets
-        .values()
-        .map(|w| {
-            let manifest = registry.get(&w.widget_type_id).map(|info| &info.manifest);
-            scene_widget_to_proto(w, manifest)
-        })
-        .collect();
+fn scene_to_proto(scene: &scene::Scene) -> web::Scene {
+    let widgets: Vec<web::Widget> = scene.widgets.values().map(scene_widget_to_proto).collect();
 
     let kind = match scene.kind {
         scene::SceneKind::Fullscreen => web::scene::Kind::Fullscreen(web::scene::Fullscreen {
@@ -802,11 +709,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         _request: Request<()>,
     ) -> Result<Response<web::GetScenesResponse>, Status> {
         let config = self.config_handle.read().await;
-        let scenes = config
-            .scenes
-            .values()
-            .map(|s| scene_to_proto(s, &self.widget_registry))
-            .collect();
+        let scenes = config.scenes.values().map(scene_to_proto).collect();
         Ok(Response::new(web::GetScenesResponse { scenes }))
     }
 
@@ -825,7 +728,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
 
         Ok(Response::new(web::SceneResponse {
-            scene: Some(scene_to_proto(scene, &self.widget_registry)),
+            scene: Some(scene_to_proto(scene)),
         }))
     }
 
@@ -858,10 +761,9 @@ impl GrpcSceneManagementService for SceneManagementService {
         {
             return Err(status);
         }
-        let resolved = build_widget_params(manifest, &params);
-        let params_json = serde_json::Value::Object(widget_data_struct_to_map(&resolved));
+        let typed_params = build_widget_params(manifest, &params);
 
-        let scene = scene::Scene::fullscreen(widget_uid, params_json);
+        let scene = scene::Scene::fullscreen(widget_uid, typed_params);
         let scene_id = scene.id.to_string();
 
         let scene_enabled = scene.enabled;
@@ -1267,10 +1169,9 @@ impl GrpcSceneManagementService for SceneManagementService {
         {
             return Err(status);
         }
-        let resolved = build_widget_params(manifest, &params);
-        let params_json = serde_json::Value::Object(widget_data_struct_to_map(&resolved));
+        let typed_params = build_widget_params(manifest, &params);
 
-        let widget = scene::Widget::new(widget_uid, params_json, position, size);
+        let widget = scene::Widget::new(widget_uid, typed_params, position, size);
         let widget_id = widget.id.to_string();
 
         let scene_id_key = scene::SceneId::from(scene_id);
@@ -1349,18 +1250,27 @@ impl GrpcSceneManagementService for SceneManagementService {
             )) {
                 return Err(status);
             }
-            let params_json = serde_json::Value::Object(widget_data_struct_to_map(&params));
+            let typed_params = build_widget_params(manifest, &params);
 
-            let widget = scene
+            // Build the post-update widget snapshot first so placement
+            // validation runs against immutable state. If anything below
+            // fails the in-memory ConfigHandle is left untouched.
+            let existing = scene
                 .widgets
-                .get_mut(&widget_id_key)
+                .get(&widget_id_key)
                 .expect("BUG: widget was just found above");
-            widget.position = position;
-            widget.size = size;
-            widget.params = params_json;
-
-            let updated_widget = widget.clone();
+            let updated_widget = scene::Widget {
+                id: existing.id,
+                position,
+                size,
+                widget_type_id: existing.widget_type_id,
+                params: typed_params,
+            };
             validate_widget_placement(scene, &updated_widget, Some(widget_id_key))?;
+
+            scene
+                .widgets
+                .insert(updated_widget.id, updated_widget.clone());
 
             Self::save_config(&mut config).await?;
             updated_widget
@@ -1443,7 +1353,7 @@ mod tests {
 
     #[test]
     fn build_widget_params_seeds_required_with_default() {
-        use web::widget_data_value::Kind as VK;
+        use bmc_widget::ParamValue as PV;
         let manifest = single_param_manifest(
             "name",
             ParamKind::String {
@@ -1454,17 +1364,13 @@ mod tests {
             false,
         );
         let resolved = build_widget_params(&manifest, &web::WidgetDataStruct::default());
-        assert_eq!(resolved.fields.len(), 1);
-        let v = &resolved.fields["name"];
-        let Some(VK::StringValue(s)) = &v.kind else {
-            panic!("BUG: expected StringValue")
-        };
-        assert_eq!(s, "hello");
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved.get("name"), Some(&PV::String("hello".into())));
     }
 
     #[test]
     fn build_widget_params_seeds_optional_no_default_with_null() {
-        use web::widget_data_value::Kind as VK;
+        use bmc_widget::ParamValue as PV;
         let manifest = single_param_manifest(
             "name",
             ParamKind::String {
@@ -1475,13 +1381,12 @@ mod tests {
             true,
         );
         let resolved = build_widget_params(&manifest, &web::WidgetDataStruct::default());
-        let v = &resolved.fields["name"];
-        assert!(matches!(v.kind, Some(VK::NullValue(()))));
+        assert_eq!(resolved.get("name"), Some(&PV::Null));
     }
 
     #[test]
     fn build_widget_params_override_wins() {
-        use web::widget_data_value::Kind as VK;
+        use bmc_widget::ParamValue as PV;
         let manifest = single_param_manifest(
             "name",
             ParamKind::String {
@@ -1496,16 +1401,12 @@ mod tests {
             .fields
             .insert("name".to_owned(), wdv_string("world"));
         let resolved = build_widget_params(&manifest, &overrides);
-        let v = &resolved.fields["name"];
-        let Some(VK::StringValue(s)) = &v.kind else {
-            panic!("BUG: expected StringValue")
-        };
-        assert_eq!(s, "world");
+        assert_eq!(resolved.get("name"), Some(&PV::String("world".into())));
     }
 
     #[test]
     fn build_widget_params_seeds_each_kind_with_default() {
-        use web::widget_data_value::Kind as VK;
+        use bmc_widget::ParamValue as PV;
         let manifest = manifest_with_params(&[
             (
                 "s",
@@ -1554,117 +1455,39 @@ mod tests {
             ),
         ]);
         let resolved = build_widget_params(&manifest, &web::WidgetDataStruct::default());
-        assert_eq!(resolved.fields.len(), 5);
-        assert!(matches!(
-            resolved.fields["s"].kind,
-            Some(VK::StringValue(_))
-        ));
-        assert!(matches!(
-            resolved.fields["i"].kind,
-            Some(VK::IntegerValue(7))
-        ));
-        assert!(matches!(
-            resolved.fields["d"].kind,
-            Some(VK::DoubleValue(_))
-        ));
-        assert!(matches!(
-            resolved.fields["b"].kind,
-            Some(VK::BooleanValue(true))
-        ));
-        assert!(matches!(
-            resolved.fields["t"].kind,
-            Some(VK::StringValue(_))
-        ));
+        assert_eq!(resolved.len(), 5);
+        assert_eq!(resolved.get("s"), Some(&PV::String("x".into())));
+        assert_eq!(resolved.get("i"), Some(&PV::Integer(7)));
+        assert_eq!(resolved.get("d"), Some(&PV::Double(2.5)));
+        assert_eq!(resolved.get("b"), Some(&PV::Boolean(true)));
+        assert_eq!(resolved.get("t"), Some(&PV::String("UTC".into())));
     }
 
     #[test]
-    fn widget_data_struct_round_trips_each_arm_through_json_map() {
-        let manifest = manifest_with_params(&[
-            (
-                "s",
-                ParamKind::String {
-                    format: None,
-                    enum_values: vec![],
-                    default_value: Some("x".into()),
-                },
-                false,
-            ),
-            (
-                "i",
-                ParamKind::Integer {
-                    min: None,
-                    max: None,
-                    step: None,
-                    enum_values: vec![],
-                    default_value: Some(2),
-                },
-                false,
-            ),
-            (
-                "d",
-                ParamKind::Double {
-                    min: None,
-                    max: None,
-                    step: None,
-                    enum_values: vec![],
-                    default_value: Some(2.5),
-                },
-                false,
-            ),
-            (
-                "b",
-                ParamKind::Boolean {
-                    default_value: Some(true),
-                },
-                false,
-            ),
-        ]);
+    fn params_to_widget_data_struct_round_trips_each_arm() {
+        use bmc_widget::{ParamKey, ParamValue as PV};
+        use web::widget_data_value::Kind as VK;
+        let key = |k: &str| ParamKey::try_new(k.to_owned()).expect("BUG: valid key");
 
-        let s = web::WidgetDataStruct {
-            fields: [
-                ("s".to_owned(), wdv_string("hello")),
-                ("i".to_owned(), wdv_integer(42)),
-                ("d".to_owned(), wdv_double(2.5)),
-                ("b".to_owned(), wdv_boolean(false)),
-            ]
-            .into_iter()
-            .collect(),
-        };
+        let map: BTreeMap<ParamKey, PV> = [
+            (key("s"), PV::String("hello".into())),
+            (key("i"), PV::Integer(42)),
+            (key("d"), PV::Double(2.5)),
+            (key("b"), PV::Boolean(false)),
+            (key("n"), PV::Null),
+        ]
+        .into_iter()
+        .collect();
 
-        let map = widget_data_struct_to_map(&s);
-        let back = map_to_widget_data_struct(&map, Some(&manifest));
-        assert_eq!(back.fields, s.fields);
-    }
-
-    #[test]
-    fn widget_data_value_to_json_null_arm_is_json_null() {
-        let v = wdv_null();
-        let j = widget_data_value_to_json(&v);
-        assert!(j.is_null());
-    }
-
-    #[test]
-    fn map_to_widget_data_struct_falls_back_to_shape_inference_without_manifest() {
-        use web::widget_data_value::Kind;
-        let map = serde_json::json!({
-            "s": "hello",
-            "i": 5,
-            "d": 1.5,
-            "b": true,
-            "n": serde_json::Value::Null,
-        })
-        .as_object()
-        .expect("BUG: literal is an object")
-        .clone();
-        let back = map_to_widget_data_struct(&map, None);
-        assert!(matches!(back.fields["s"].kind, Some(Kind::StringValue(_))));
-        assert!(matches!(back.fields["i"].kind, Some(Kind::IntegerValue(5))));
-        assert!(matches!(back.fields["d"].kind, Some(Kind::DoubleValue(_))));
+        let wire = params_to_widget_data_struct(&map);
+        assert!(matches!(wire.fields["s"].kind, Some(VK::StringValue(_))));
+        assert!(matches!(wire.fields["i"].kind, Some(VK::IntegerValue(42))));
+        assert!(matches!(wire.fields["d"].kind, Some(VK::DoubleValue(_))));
         assert!(matches!(
-            back.fields["b"].kind,
-            Some(Kind::BooleanValue(true))
+            wire.fields["b"].kind,
+            Some(VK::BooleanValue(false))
         ));
-        assert!(matches!(back.fields["n"].kind, Some(Kind::NullValue(()))));
+        assert!(matches!(wire.fields["n"].kind, Some(VK::NullValue(()))));
     }
 
     fn wdv_string(s: &str) -> web::WidgetDataValue {
@@ -2240,49 +2063,10 @@ mod tests {
         assert_eq!(pt.default_value.as_deref(), Some("Europe/Prague"));
     }
 
-    fn single_param_manifest_with_uid(
-        uid: uuid::Uuid,
-        key: &str,
-        kind: bmc_widget::ParamKind,
-        is_optional: bool,
-    ) -> bmc_widget::Manifest {
-        let param = bmc_widget::ParamDefinition {
-            name: "Test".into(),
-            description: None,
-            is_optional,
-            kind,
-        };
-        let pk: bmc_widget::ParamKey =
-            serde_json::from_str(&format!("\"{key}\"")).expect("BUG: valid key");
-        let mut params = std::collections::HashMap::new();
-        params.insert(pk, param);
-        bmc_widget::Manifest {
-            uid,
-            version: semver::Version::new(1, 0, 0),
-            name: "T".into(),
-            description: "T".into(),
-            author: None,
-            binary: std::path::PathBuf::from("bin/test"),
-            settings: vec![],
-            sizes: vec![bmc_ipc::SizeType::Small],
-            params,
-        }
-    }
-
-    fn make_test_registry(manifest: bmc_widget::Manifest) -> crate::widget::WidgetRegistry {
-        let info = crate::widget::WidgetInfo {
-            manifest,
-            widget_dir: std::path::PathBuf::from("/tmp/test-widget"),
-            binary_path: std::path::PathBuf::from("/tmp/test-widget/bin/test"),
-        };
-        crate::widget::WidgetRegistry::new(vec![info])
-    }
-
-    fn make_empty_registry() -> crate::widget::WidgetRegistry {
-        crate::widget::WidgetRegistry::new(vec![])
-    }
-
-    fn scene_with_widget(widget_uid: uuid::Uuid, params: serde_json::Value) -> crate::scene::Scene {
+    fn scene_with_widget(
+        widget_uid: uuid::Uuid,
+        params: BTreeMap<bmc_widget::ParamKey, bmc_widget::ParamValue>,
+    ) -> crate::scene::Scene {
         crate::scene::Scene::fullscreen(widget_uid, params)
     }
 
@@ -2294,43 +2078,54 @@ mod tests {
     }
 
     #[test]
-    fn scene_to_proto_uses_manifest_param_kind_to_pick_arms() {
+    fn scene_to_proto_emits_typed_params_directly() {
+        use bmc_widget::{ParamKey, ParamValue as PV};
         use web::widget_data_value::Kind as VK;
-        let widget_uid = uuid::Uuid::new_v4();
-        let manifest = single_param_manifest_with_uid(
-            widget_uid,
-            "x",
-            ParamKind::Integer {
-                min: None,
-                max: None,
-                step: None,
-                enum_values: vec![],
-                default_value: Some(0),
-            },
-            false,
-        );
-        let registry = make_test_registry(manifest);
-        let scene = scene_with_widget(widget_uid, serde_json::json!({"x": 5}));
-        let proto = scene_to_proto(&scene, &registry);
-        let widget = proto_scene_first_widget(&proto);
-        let config = widget.config.as_ref().expect("BUG: config");
-        let params = config.params.as_ref().expect("BUG: params");
-        assert!(
-            matches!(params.fields["x"].kind, Some(VK::IntegerValue(5))),
-            "expected IntegerValue(5) using manifest hint"
-        );
-    }
 
-    #[test]
-    fn scene_to_proto_falls_back_to_shape_inference_when_manifest_missing() {
-        use web::widget_data_value::Kind as VK;
         let widget_uid = uuid::Uuid::new_v4();
-        let registry = make_empty_registry();
-        let scene = scene_with_widget(widget_uid, serde_json::json!({"x": 5}));
-        let proto = scene_to_proto(&scene, &registry);
+        let key = ParamKey::try_new("x".to_owned()).expect("BUG: valid key");
+        let params: BTreeMap<ParamKey, PV> = [(key, PV::Integer(5))].into_iter().collect();
+
+        let scene = scene_with_widget(widget_uid, params);
+        let proto = scene_to_proto(&scene);
         let widget = proto_scene_first_widget(&proto);
         let config = widget.config.as_ref().expect("BUG: config");
         let params = config.params.as_ref().expect("BUG: params");
         assert!(matches!(params.fields["x"].kind, Some(VK::IntegerValue(5))));
+    }
+
+    #[test]
+    fn scene_to_proto_emits_each_param_value_arm() {
+        use bmc_widget::{ParamKey, ParamValue as PV};
+        use web::widget_data_value::Kind as VK;
+
+        let widget_uid = uuid::Uuid::new_v4();
+        let key = |k: &str| ParamKey::try_new(k.to_owned()).expect("BUG: valid key");
+        let params: BTreeMap<ParamKey, PV> = [
+            (key("s"), PV::String("hi".into())),
+            (key("i"), PV::Integer(7)),
+            (key("d"), PV::Double(0.25)),
+            (key("b"), PV::Boolean(true)),
+            (key("n"), PV::Null),
+        ]
+        .into_iter()
+        .collect();
+
+        let scene = scene_with_widget(widget_uid, params);
+        let proto = scene_to_proto(&scene);
+        let widget = proto_scene_first_widget(&proto);
+        let fields = &widget
+            .config
+            .as_ref()
+            .expect("BUG: config")
+            .params
+            .as_ref()
+            .expect("BUG: params")
+            .fields;
+        assert!(matches!(fields["s"].kind, Some(VK::StringValue(_))));
+        assert!(matches!(fields["i"].kind, Some(VK::IntegerValue(7))));
+        assert!(matches!(fields["d"].kind, Some(VK::DoubleValue(_))));
+        assert!(matches!(fields["b"].kind, Some(VK::BooleanValue(true))));
+        assert!(matches!(fields["n"].kind, Some(VK::NullValue(()))));
     }
 }

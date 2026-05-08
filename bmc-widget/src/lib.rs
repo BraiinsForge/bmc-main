@@ -12,6 +12,6 @@ pub mod wayland;
 pub use error::ManifestError;
 pub use manifest::{
     Author, DoubleOption, IntegerOption, Manifest, ParamDefinition, ParamKey, ParamKind,
-    SettingKey, StringFormat, StringOption,
+    ParamValue, SettingKey, StringFormat, StringOption,
 };
 pub use wayland::{WaylandError, WidgetEventHandler, WidgetProtocolClient};
