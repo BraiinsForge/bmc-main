@@ -124,6 +124,7 @@ class View extends Component<Props, State> {
     }
     componentWillUnmount() {
         this.#windowClickUnsubscribe();
+        this.#liveUpdateWidget.cancel();
         pb.abort.all(this);
     }
 
@@ -306,30 +307,66 @@ class View extends Component<Props, State> {
         }
     };
 
-    #handleManifestParamChange = (key: string, value: pb.WidgetDataValue | undefined): void => {
+    #liveUpdateWidget = debounce(async (): Promise<void> => {
+        const { manifestForm } = this.state;
+        const { manifest, sceneID, widgetID, params } = manifestForm;
+        if (!manifest || !widgetID) return;
+        const scene = this.#getScene(sceneID);
+        const widget = scene?.kind.case === 'fullscreen' ? scene.kind.value.widget : undefined;
+        try {
+            await pb.rpc.scenes.updateWidget({
+                id: widgetID,
+                sceneId: sceneID,
+                position: widget?.position ?? pb.create(pb.WidgetPositionSchema),
+                size: widget?.size ?? pb.WidgetSize.FULL,
+                params: fn.formStateToWidgetDataStruct(manifest, params),
+            });
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            const { fieldErrors, error } = fn.mapManifestUpdateError($);
+            this.setState(s => ({
+                manifestForm: { ...s.manifestForm, fieldErrors, error },
+            }));
+            return;
+        }
         this.setState(s => {
-            const params = { ...s.manifestForm.params };
-            if (value === undefined) {
-                delete params[key];
-            } else {
-                params[key] = value;
+            if (!s.manifestForm.error && Object.keys(s.manifestForm.fieldErrors).length === 0) {
+                return s;
             }
-            const fieldErrors = { ...s.manifestForm.fieldErrors };
-            delete fieldErrors[key];
             return {
-                manifestForm: {
-                    ...s.manifestForm,
-                    params,
-                    fieldErrors,
-                    error: null,
-                },
+                manifestForm: { ...s.manifestForm, fieldErrors: {}, error: null },
             };
         });
+    }, 300);
+
+    #handleManifestParamChange = (key: string, value: pb.WidgetDataValue | undefined): void => {
+        this.setState(
+            s => {
+                const params = { ...s.manifestForm.params };
+                if (value === undefined) {
+                    delete params[key];
+                } else {
+                    params[key] = value;
+                }
+                const fieldErrors = { ...s.manifestForm.fieldErrors };
+                delete fieldErrors[key];
+                return {
+                    manifestForm: {
+                        ...s.manifestForm,
+                        params,
+                        fieldErrors,
+                        error: null,
+                    },
+                };
+            },
+            () => this.#liveUpdateWidget(),
+        );
     };
 
     #handleManifestFormDone = async (): Promise<void> => {
         const { manifestForm } = this.state;
         const { manifest, sceneID, widgetID, params } = manifestForm;
+        this.#liveUpdateWidget.cancel();
 
         if (!manifest || !widgetID) {
             this.setState({ openDialogKind: null });
