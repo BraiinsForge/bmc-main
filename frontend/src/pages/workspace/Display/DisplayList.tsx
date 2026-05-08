@@ -124,8 +124,8 @@ class View extends Component<Props, State> {
     }
     componentWillUnmount() {
         this.#windowClickUnsubscribe();
-        this.#liveUpdateWidget.cancel();
         pb.abort.all(this);
+        this.#liveUpdateWidget.cancel();
     }
 
     #notifySuccessDebounced = debounce(toast.success, 1e3);
