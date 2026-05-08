@@ -546,6 +546,27 @@ pub(crate) fn validate_widget_params(
     violations
 }
 
+fn param_kind_name(kind: &ParamKind) -> &'static str {
+    match kind {
+        ParamKind::String { .. } => "string",
+        ParamKind::Double { .. } => "double",
+        ParamKind::Integer { .. } => "integer",
+        ParamKind::Boolean { .. } => "boolean",
+        ParamKind::Timezone { .. } => "timezone",
+    }
+}
+
+fn wire_kind_name(kind: &web::widget_data_value::Kind) -> &'static str {
+    use web::widget_data_value::Kind as VK;
+    match kind {
+        VK::NullValue(()) => "null",
+        VK::BooleanValue(_) => "boolean",
+        VK::IntegerValue(_) => "integer",
+        VK::DoubleValue(_) => "double",
+        VK::StringValue(_) => "string",
+    }
+}
+
 fn validate_widget_param_value(
     path: &str,
     param_kind: &ParamKind,
@@ -616,10 +637,14 @@ fn validate_widget_param_value(
                 violations.push(path.to_owned(), "value not in enum_values");
             }
         }
-        _ => {
+        (other_kind, other_wire) => {
             violations.push(
                 path.to_owned(),
-                "WidgetDataValue arm does not match declared variant",
+                format!(
+                    "expected {} value, got {}",
+                    param_kind_name(other_kind),
+                    wire_kind_name(other_wire),
+                ),
             );
         }
     }
@@ -2177,6 +2202,33 @@ mod tests {
             parse_scene_cycling_transition(web::SceneCyclingTransition::Fade.into())
                 .expect("BUG: Fade must parse"),
             SceneCyclingTransition::Fade,
+        );
+    }
+
+    #[test]
+    fn validate_widget_param_value_mismatch_names_expected_and_received() {
+        use web::widget_data_value::Kind as VK;
+        let mut violations = FieldViolations::new();
+        let kind = ParamKind::Integer {
+            min: None,
+            max: None,
+            step: None,
+            enum_values: vec![],
+            default_value: None,
+        };
+        validate_widget_param_value(
+            "params.threshold",
+            &kind,
+            &VK::StringValue("x".into()),
+            &mut violations,
+        );
+        let v: Vec<tonic_types::FieldViolation> = violations.into();
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].field, "params.threshold");
+        assert!(
+            v[0].description.contains("integer") && v[0].description.contains("string"),
+            "expected message to name both kinds, got: {}",
+            v[0].description,
         );
     }
 }
