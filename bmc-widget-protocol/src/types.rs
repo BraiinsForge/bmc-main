@@ -129,13 +129,33 @@ pub enum LedEffect {
     Solid,
 }
 
+/// Widget-allocated identifier for a single LED request.
+///
+/// The widget owns its own u32 namespace per surface; uniqueness on the
+/// host side is keyed on `(instance_id, request_id)`. The reserved
+/// value `0` is invalid for `led_temporary`/`led_endless` and means
+/// "stop everything I have outstanding" on `stop_led`.
+pub type LedRequestId = u32;
+
+/// Reserved value of [`LedRequestId`] — denotes "all of this widget's
+/// requests" on `stop_led` and is invalid as an allocation.
+pub const LED_REQUEST_ID_ALL: LedRequestId = 0;
+
+/// Lifecycle status reported back to the widget for a previous
+/// `LedTemporary`/`LedEndless` request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LedRequestStatus {
+    Accepted,
+    Rejected,
+    Superseded,
+    Completed,
+}
+
 /// One typed action a widget can request from the compositor.
 ///
 /// Each variant maps 1:1 to a typed request in the `deck_widget_v1`
 /// protocol (no JSON envelope).
-///
-/// `period_ms` on the LED variants controls the per-effect animation
-/// speed; `0` means "use the effect's default".
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "name", content = "payload", rename_all = "snake_case")]
 pub enum ActionPayload {
@@ -144,17 +164,24 @@ pub enum ActionPayload {
     },
     StopSound {},
     LedTemporary {
+        request_id: LedRequestId,
         effect: LedEffect,
         color: RgbColor,
         period_ms: u32,
         duration_ms: u32,
     },
     LedEndless {
+        request_id: LedRequestId,
         effect: LedEffect,
         color: RgbColor,
         period_ms: u32,
     },
-    StopLed {},
+    StopLed {
+        /// `0` (== [`LED_REQUEST_ID_ALL`]) cancels every outstanding
+        /// LED request from the same widget; any other value cancels
+        /// just that request.
+        request_id: LedRequestId,
+    },
 }
 
 #[cfg(test)]
@@ -224,6 +251,7 @@ mod tests {
     #[test]
     fn action_led_temporary_serializes_correctly() {
         let action = ActionPayload::LedTemporary {
+            request_id: 7,
             effect: LedEffect::Breathe,
             color: RgbColor { r: 255, g: 0, b: 0 },
             period_ms: 750,
@@ -231,6 +259,7 @@ mod tests {
         };
         let json = serde_json::to_value(&action).expect("BUG: serialization should not fail");
         assert_eq!(json["name"], "led_temporary");
+        assert_eq!(json["payload"]["request_id"], 7);
         assert_eq!(json["payload"]["effect"], "breathe");
         assert_eq!(json["payload"]["color"]["r"], 255);
         assert_eq!(json["payload"]["color"]["g"], 0);
@@ -242,12 +271,14 @@ mod tests {
     #[test]
     fn action_led_endless_serializes_correctly() {
         let action = ActionPayload::LedEndless {
+            request_id: 9,
             effect: LedEffect::Solid,
             color: RgbColor { r: 0, g: 255, b: 0 },
             period_ms: 0,
         };
         let json = serde_json::to_value(&action).expect("BUG: serialization should not fail");
         assert_eq!(json["name"], "led_endless");
+        assert_eq!(json["payload"]["request_id"], 9);
         assert_eq!(json["payload"]["effect"], "solid");
         assert_eq!(json["payload"]["color"]["g"], 255);
         assert_eq!(json["payload"]["period_ms"], 0);
@@ -262,9 +293,25 @@ mod tests {
 
     #[test]
     fn action_stop_led_serializes_correctly() {
-        let action = ActionPayload::StopLed {};
+        let action = ActionPayload::StopLed {
+            request_id: LED_REQUEST_ID_ALL,
+        };
         let json = serde_json::to_value(&action).expect("BUG: serialization should not fail");
         assert_eq!(json["name"], "stop_led");
+        assert_eq!(json["payload"]["request_id"], 0);
     }
 
+    #[test]
+    fn led_request_status_serializes_snake_case() {
+        let cases = [
+            (LedRequestStatus::Accepted, "accepted"),
+            (LedRequestStatus::Rejected, "rejected"),
+            (LedRequestStatus::Superseded, "superseded"),
+            (LedRequestStatus::Completed, "completed"),
+        ];
+        for (status, expected) in cases {
+            let json = serde_json::to_value(status).expect("BUG: serialization should not fail");
+            assert_eq!(json, serde_json::Value::String(expected.to_owned()));
+        }
+    }
 }

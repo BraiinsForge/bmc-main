@@ -81,7 +81,16 @@
         the request. `period_ms` controls per-effect animation speed and
         is ignored for effects that have no notion of period (e.g.
         `solid`). A `period_ms` of 0 means "use the effect's default".
+
+        `request_id` is a widget-allocated identifier; the compositor
+        replies with a `led_request_status` event whose `request_id`
+        echoes this value as the request progresses (accepted, then
+        eventually completed or superseded). The widget's namespace is
+        scoped to its own surface — different widgets can reuse the
+        same numeric value without collision. The value 0 is reserved
+        for stop-all semantics on `stop_led` and must not be used here.
       </description>
+      <arg name="request_id" type="uint" summary="widget-allocated request id, must be non-zero"/>
       <arg name="effect" type="uint" enum="led_effect"/>
       <arg name="r" type="uint" summary="red component, 0-255"/>
       <arg name="g" type="uint" summary="green component, 0-255"/>
@@ -97,7 +106,11 @@
         `period_ms` controls per-effect animation speed and is ignored for
         effects that have no notion of period. A `period_ms` of 0 means
         "use the effect's default".
+
+        See `led_temporary` for the semantics of `request_id` and the
+        `led_request_status` reply.
       </description>
+      <arg name="request_id" type="uint" summary="widget-allocated request id, must be non-zero"/>
       <arg name="effect" type="uint" enum="led_effect"/>
       <arg name="r" type="uint" summary="red component, 0-255"/>
       <arg name="g" type="uint" summary="green component, 0-255"/>
@@ -106,7 +119,15 @@
     </request>
 
     <request name="stop_led">
-      <description summary="stop any running LED effect"/>
+      <description summary="stop a running LED effect">
+        Cancel an LED request the widget previously made. If `request_id`
+        is non-zero, only the matching request is cancelled; if zero,
+        every LED request the widget owns is cancelled. `stop_led` is
+        always accepted by the compositor and produces no
+        `led_request_status` reply on its own — but cancelled requests
+        receive a `superseded` status under their original ids.
+      </description>
+      <arg name="request_id" type="uint" summary="widget request id to cancel, 0 for all of this widget's"/>
     </request>
 
     <!-- Events (Compositor → Widget) -->
@@ -199,6 +220,30 @@
       </description>
     </event>
 
+    <event name="led_request_status">
+      <description summary="status update for an LED request">
+        Lifecycle update for a previous `led_temporary` or `led_endless`
+        request. `request_id` echoes the value the widget supplied.
+
+        Status semantics:
+          - accepted:   the request entered the queue (or was activated
+                        immediately).
+          - rejected:   the compositor refused the request without
+                        running it. Reserved for a future permissions
+                        layer; current implementations only emit
+                        accepted/superseded/completed.
+          - superseded: the request was cancelled before completing —
+                        either by `stop_led`, by another request that
+                        replaced it, or by the widget disconnecting.
+          - completed:  a `led_temporary` ran for its full duration.
+
+        `led_endless` requests never receive `completed`; they end with
+        `superseded` once cancelled or replaced.
+      </description>
+      <arg name="request_id" type="uint" summary="echoed widget request id"/>
+      <arg name="status" type="uint" enum="led_request_status"/>
+    </event>
+
     <!-- Touch input is handled via standard wl_seat/wl_touch rather than
          custom protocol events. The compositor performs hit-testing and
          surface-relative coordinate transformation, and sends wl_touch
@@ -226,6 +271,13 @@
       <entry name="snake" value="3"/>
       <entry name="breathe" value="4"/>
       <entry name="solid" value="5"/>
+    </enum>
+
+    <enum name="led_request_status">
+      <entry name="accepted" value="0" summary="request entered the queue or became active"/>
+      <entry name="rejected" value="1" summary="reserved; compositor refused the request"/>
+      <entry name="superseded" value="2" summary="request was cancelled before completing"/>
+      <entry name="completed" value="3" summary="led_temporary ran for its full duration"/>
     </enum>
 
     <enum name="date_format">
