@@ -241,11 +241,13 @@ impl WidgetProtocolClient {
             ActionPayload::PlaySound { sound } => surface.play_sound(sound.clone()),
             ActionPayload::StopSound {} => surface.stop_sound(),
             ActionPayload::LedTemporary {
+                request_id,
                 effect,
                 color,
                 period_ms,
                 duration_ms,
             } => surface.led_temporary(
+                *request_id,
                 to_protocol::led_effect(*effect),
                 u32::from(color.r),
                 u32::from(color.g),
@@ -254,17 +256,19 @@ impl WidgetProtocolClient {
                 *duration_ms,
             ),
             ActionPayload::LedEndless {
+                request_id,
                 effect,
                 color,
                 period_ms,
             } => surface.led_endless(
+                *request_id,
                 to_protocol::led_effect(*effect),
                 u32::from(color.r),
                 u32::from(color.g),
                 u32::from(color.b),
                 *period_ms,
             ),
-            ActionPayload::StopLed {} => surface.stop_led(),
+            ActionPayload::StopLed { request_id } => surface.stop_led(*request_id),
         }
         self.connection.flush()?;
         Ok(())
@@ -704,6 +708,9 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
                 shape,
                 dpi,
             } => apply_display_info_event(state, width, height, shape, dpi),
+            Event::LedRequestStatus { request_id, status } => {
+                tracing::debug!("Received led_request_status: req={request_id} status={status:?}");
+            }
             _ => {}
         }
     }
