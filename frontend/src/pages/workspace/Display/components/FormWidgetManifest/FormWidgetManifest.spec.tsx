@@ -59,7 +59,7 @@ describe('formStateToWidgetDataStruct', () => {
         const params: Record<string, pb.WidgetDataValue> = {
             enabled: pb.create(pb.WidgetDataValueSchema, { kind: { case: 'booleanValue', value: true } }),
             tz: pb.create(pb.WidgetDataValueSchema, {
-                kind: { case: 'nullValue', value: pb.create(pb.WidgetDataValue_NullSchema) },
+                kind: { case: 'nullValue', value: pb.create(pb.EmptySchema) },
             }),
         };
         const result = formStateToWidgetDataStruct(manifest, params);

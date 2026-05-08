@@ -514,7 +514,9 @@ export type WidgetManifest = Message<'braiins.bmc.web.WidgetManifest'> & {
     supportedSizes: WidgetSize[];
 
     /**
-     * Parameter definitions — frontend generates form inputs from these
+     * Parameter definitions — frontend generates form inputs from these.
+     * Ordered: the FE renders fields in this order. Uniqueness of `key`
+     * is enforced server-side at manifest load.
      *
      * @generated from field: repeated braiins.bmc.web.ManifestParamDefinition params = 8;
      */
@@ -530,6 +532,16 @@ export const WidgetManifestSchema: GenMessage<WidgetManifest> =
     messageDesc(file_web_scene_management, 16);
 
 /**
+ * is_optional and per-variant default_value combine to express the four
+ * possible param states:
+ *
+ *   is_optional=false + default_value present: required field with default
+ *   is_optional=false + default_value absent:  manifest rejected at load
+ *   is_optional=true  + default_value present: optional, default-on-add
+ *   is_optional=true  + default_value absent:  optional, null-on-add
+ *
+ * On the wire WidgetDataValue.null_value is only legal for is_optional=true.
+ *
  * @generated from message braiins.bmc.web.ManifestParamDefinition
  */
 export type ManifestParamDefinition = Message<'braiins.bmc.web.ManifestParamDefinition'> & {

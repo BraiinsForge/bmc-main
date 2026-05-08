@@ -69,7 +69,7 @@ function makeBooleanValue(b: boolean): pb.WidgetDataValue {
 
 function makeNullValue(): pb.WidgetDataValue {
     return create(pb.WidgetDataValueSchema, {
-        kind: { case: 'nullValue', value: create(pb.WidgetDataValue_NullSchema) },
+        kind: { case: 'nullValue', value: create(pb.EmptySchema) },
     });
 }
 

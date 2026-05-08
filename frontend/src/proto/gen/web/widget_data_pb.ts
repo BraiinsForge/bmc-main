@@ -4,6 +4,8 @@
 
 import type { GenFile, GenMessage } from '@bufbuild/protobuf/codegenv2';
 import { fileDesc, messageDesc } from '@bufbuild/protobuf/codegenv2';
+import type { Empty } from '@bufbuild/protobuf/wkt';
+import { file_google_protobuf_empty } from '@bufbuild/protobuf/wkt';
 import type { Message } from '@bufbuild/protobuf';
 
 /**
@@ -12,7 +14,8 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_widget_data: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'ChV3ZWIvd2lkZ2V0X2RhdGEucHJvdG8SD2JyYWlpbnMuYm1jLndlYiLAAQoPV2lkZ2V0RGF0YVZhbHVlEjsKCm51bGxfdmFsdWUYASABKAsyJS5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0RGF0YVZhbHVlLk51bGxIABIXCg1ib29sZWFuX3ZhbHVlGAIgASgISAASFwoNaW50ZWdlcl92YWx1ZRgDIAEoBUgAEhYKDGRvdWJsZV92YWx1ZRgEIAEoAUgAEhYKDHN0cmluZ192YWx1ZRgFIAEoCUgAGgYKBE51bGxCBgoEa2luZCKiAQoQV2lkZ2V0RGF0YVN0cnVjdBI9CgZmaWVsZHMYASADKAsyLS5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0RGF0YVN0cnVjdC5GaWVsZHNFbnRyeRpPCgtGaWVsZHNFbnRyeRILCgNrZXkYASABKAkSLwoFdmFsdWUYAiABKAsyIC5icmFpaW5zLmJtYy53ZWIuV2lkZ2V0RGF0YVZhbHVlOgI4AWIGcHJvdG8z',
+        'ChV3ZWIvd2lkZ2V0X2RhdGEucHJvdG8SD2JyYWlpbnMuYm1jLndlYiKpAQoPV2lkZ2V0RGF0YVZhbHVlEiwKCm51bGxfdmFsdWUYASABKAsyFi5nb29nbGUucHJvdG9idWYuRW1wdHlIABIXCg1ib29sZWFuX3ZhbHVlGAIgASgISAASFwoNaW50ZWdlcl92YWx1ZRgDIAEoBUgAEhYKDGRvdWJsZV92YWx1ZRgEIAEoAUgAEhYKDHN0cmluZ192YWx1ZRgFIAEoCUgAQgYKBGtpbmQiogEKEFdpZGdldERhdGFTdHJ1Y3QSPQoGZmllbGRzGAEgAygLMi0uYnJhaWlucy5ibWMud2ViLldpZGdldERhdGFTdHJ1Y3QuRmllbGRzRW50cnkaTwoLRmllbGRzRW50cnkSCwoDa2V5GAEgASgJEi8KBXZhbHVlGAIgASgLMiAuYnJhaWlucy5ibWMud2ViLldpZGdldERhdGFWYWx1ZToCOAFiBnByb3RvMw',
+        [file_google_protobuf_empty],
     );
 
 /**
@@ -25,9 +28,9 @@ export type WidgetDataValue = Message<'braiins.bmc.web.WidgetDataValue'> & {
     kind:
         | {
               /**
-               * @generated from field: braiins.bmc.web.WidgetDataValue.Null null_value = 1;
+               * @generated from field: google.protobuf.Empty null_value = 1;
                */
-              value: WidgetDataValue_Null;
+              value: Empty;
               case: 'nullValue';
           }
         | {
@@ -66,19 +69,6 @@ export type WidgetDataValue = Message<'braiins.bmc.web.WidgetDataValue'> & {
  * Use `create(WidgetDataValueSchema)` to create a new message.
  */
 export const WidgetDataValueSchema: GenMessage<WidgetDataValue> = /*@__PURE__*/ messageDesc(file_web_widget_data, 0);
-
-/**
- * @generated from message braiins.bmc.web.WidgetDataValue.Null
- */
-export type WidgetDataValue_Null = Message<'braiins.bmc.web.WidgetDataValue.Null'> & {};
-
-/**
- * Describes the message braiins.bmc.web.WidgetDataValue.Null.
- * Use `create(WidgetDataValue_NullSchema)` to create a new message.
- */
-export const WidgetDataValue_NullSchema: GenMessage<WidgetDataValue_Null> =
-    /*@__PURE__*/
-    messageDesc(file_web_widget_data, 0, 0);
 
 /**
  * @generated from message braiins.bmc.web.WidgetDataStruct

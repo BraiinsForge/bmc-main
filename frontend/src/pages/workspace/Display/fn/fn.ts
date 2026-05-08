@@ -289,7 +289,7 @@ export function widgetParamsToFormState(params: pb.WidgetDataStruct | undefined)
 
 function makeNullValue(): pb.WidgetDataValue {
     return pb.create(pb.WidgetDataValueSchema, {
-        kind: { case: 'nullValue', value: pb.create(pb.WidgetDataValue_NullSchema) },
+        kind: { case: 'nullValue', value: pb.create(pb.EmptySchema) },
     });
 }
 
