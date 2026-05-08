@@ -1,7 +1,9 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use bmc_widget::{ParamKey, ParamValue};
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
 use uuid::Uuid;
@@ -120,14 +122,15 @@ pub struct Widget {
     pub position: WidgetPosition,
     pub size: WidgetSize,
     pub widget_type_id: Uuid,
-    pub params: serde_json::Value,
+    #[serde(default)]
+    pub params: BTreeMap<ParamKey, ParamValue>,
 }
 
 impl Widget {
     #[must_use]
     pub fn new(
         widget_type_id: Uuid,
-        params: serde_json::Value,
+        params: BTreeMap<ParamKey, ParamValue>,
         position: WidgetPosition,
         size: WidgetSize,
     ) -> Self {
@@ -230,7 +233,7 @@ impl Scene {
     pub const MIN_CYCLE_DURATION: Duration = Duration::from_secs(1);
 
     #[must_use]
-    pub fn fullscreen(widget_uid: Uuid, params: serde_json::Value) -> Self {
+    pub fn fullscreen(widget_uid: Uuid, params: BTreeMap<ParamKey, ParamValue>) -> Self {
         let widget = Widget::new(
             widget_uid,
             params,
@@ -323,7 +326,7 @@ mod tests {
             },
             size: WidgetSize::Small,
             widget_type_id: Uuid::nil(),
-            params: serde_json::Value::Null,
+            params: BTreeMap::new(),
         };
         assert!(
             !widget.in_bounds(),
@@ -341,7 +344,7 @@ mod tests {
             },
             size: WidgetSize::Small,
             widget_type_id: Uuid::nil(),
-            params: serde_json::Value::Null,
+            params: BTreeMap::new(),
         };
         let b = a.clone_with_new_id();
         assert!(
