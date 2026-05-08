@@ -94,10 +94,13 @@ function makeStringParamValue(v: string, isOptional: boolean): pb.WidgetDataValu
     return makeStringValue(v);
 }
 
-function makeNumberParamValue(v: string | number | null, type: 'integer' | 'double'): pb.WidgetDataValue {
-    if (v === '' || v === null) return makeNullValue();
-    const n = typeof v === 'number' ? v : Number(v);
-    if (Number.isNaN(n)) return makeNullValue();
+export function makeNumberParamValue(raw: string | number | null, type: 'integer' | 'double'): pb.WidgetDataValue {
+    if (raw === '' || raw === null) return makeNullValue();
+    if (typeof raw === 'number') {
+        return type === 'integer' ? makeIntegerValue(raw) : makeDoubleValue(raw);
+    }
+    const n = Number(raw);
+    if (Number.isNaN(n)) return makeStringValue(raw);
     return type === 'integer' ? makeIntegerValue(n) : makeDoubleValue(n);
 }
 
