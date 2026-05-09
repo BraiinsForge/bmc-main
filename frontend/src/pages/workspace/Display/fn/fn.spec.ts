@@ -12,7 +12,40 @@ import {
     explodeWidgetIntoAtoms,
     getValidDropSlots,
     defaultParamValue,
+    defaultFormifiedValue,
+    widgetParamsToFormifiedState,
+    parseFormifiedValue,
+    buildWidgetDataStruct,
 } from './fn';
+
+function paramDef(
+    kindCase: pb.ManifestParamDefinition['kind']['case'],
+    key = 'k',
+    isOptional = false,
+    overrides: Record<string, any> = {},
+): pb.ManifestParamDefinition {
+    let kind: pb.ManifestParamDefinition['kind'];
+    switch (kindCase) {
+        case 'paramString':
+            kind = { case: 'paramString', value: pb.create(pb.ParamStringSchema, overrides) };
+            break;
+        case 'paramInteger':
+            kind = { case: 'paramInteger', value: pb.create(pb.ParamIntegerSchema, overrides) };
+            break;
+        case 'paramDouble':
+            kind = { case: 'paramDouble', value: pb.create(pb.ParamDoubleSchema, overrides) };
+            break;
+        case 'paramBoolean':
+            kind = { case: 'paramBoolean', value: pb.create(pb.ParamBooleanSchema, overrides) };
+            break;
+        case 'paramTimezone':
+            kind = { case: 'paramTimezone', value: pb.create(pb.ParamTimezoneSchema, overrides) };
+            break;
+        default:
+            kind = { case: 'paramString', value: pb.create(pb.ParamStringSchema) };
+    }
+    return pb.create(pb.ManifestParamDefinitionSchema, { key, name: 'K', isOptional, kind });
+}
 
 const emptyParams = pb.create(pb.WidgetDataStructSchema, { fields: {} });
 
@@ -795,5 +828,248 @@ describe('defaultParamValue', () => {
         });
         const v = defaultParamValue(def);
         expect(v.kind.case).toBe('nullValue');
+    });
+});
+
+describe('defaultFormifiedValue', () => {
+    test('paramString with defaultValue', () => {
+        expect(defaultFormifiedValue(paramDef('paramString', 'k', false, { defaultValue: 'hi' }))).toBe('hi');
+    });
+    test('paramString without defaultValue → empty string', () => {
+        expect(defaultFormifiedValue(paramDef('paramString'))).toBe('');
+    });
+    test('paramInteger with defaultValue', () => {
+        expect(defaultFormifiedValue(paramDef('paramInteger', 'k', false, { defaultValue: 5 }))).toBe('5');
+    });
+    test('paramInteger optional, no default → null', () => {
+        expect(defaultFormifiedValue(paramDef('paramInteger', 'k', true))).toBeNull();
+    });
+    test('paramDouble with defaultValue', () => {
+        expect(defaultFormifiedValue(paramDef('paramDouble', 'k', false, { defaultValue: 1.5 }))).toBe('1.5');
+    });
+    test('paramBoolean with defaultValue true', () => {
+        expect(defaultFormifiedValue(paramDef('paramBoolean', 'k', false, { defaultValue: true }))).toBe(true);
+    });
+    test('paramBoolean without defaultValue → false', () => {
+        expect(defaultFormifiedValue(paramDef('paramBoolean'))).toBe(false);
+    });
+    test('paramTimezone with defaultValue', () => {
+        expect(defaultFormifiedValue(paramDef('paramTimezone', 'k', true, { defaultValue: 'Europe/Prague' }))).toBe(
+            'Europe/Prague',
+        );
+    });
+    test('paramTimezone optional, no default → null', () => {
+        expect(defaultFormifiedValue(paramDef('paramTimezone', 'k', true))).toBeNull();
+    });
+});
+
+describe('parseFormifiedValue', () => {
+    test('paramString required, null → error', () => {
+        const r = parseFormifiedValue(paramDef('paramString'), null);
+        expect(r.ok).toBe(false);
+    });
+    test('paramString required, empty → error', () => {
+        const r = parseFormifiedValue(paramDef('paramString'), '');
+        expect(r.ok).toBe(false);
+    });
+    test('paramString optional, empty → nullValue', () => {
+        const r = parseFormifiedValue(paramDef('paramString', 'k', true), '');
+        if (r.ok) expect(r.value.kind.case).toBe('nullValue');
+        else throw new Error('expected ok');
+    });
+    test('paramString non-empty → stringValue', () => {
+        const r = parseFormifiedValue(paramDef('paramString'), 'hi');
+        if (r.ok) expect(r.value.kind).toEqual({ case: 'stringValue', value: 'hi' });
+        else throw new Error('expected ok');
+    });
+
+    test('paramInteger required, empty → error', () => {
+        const r = parseFormifiedValue(paramDef('paramInteger'), '');
+        expect(r.ok).toBe(false);
+    });
+    test('paramInteger optional, empty → nullValue', () => {
+        const r = parseFormifiedValue(paramDef('paramInteger', 'k', true), '');
+        if (r.ok) expect(r.value.kind.case).toBe('nullValue');
+        else throw new Error('expected ok');
+    });
+    test('paramInteger "42" → integerValue 42', () => {
+        const r = parseFormifiedValue(paramDef('paramInteger'), '42');
+        if (r.ok) expect(r.value.kind).toEqual({ case: 'integerValue', value: 42 });
+        else throw new Error('expected ok');
+    });
+    test('paramInteger "1.5" → error (non-integer)', () => {
+        const r = parseFormifiedValue(paramDef('paramInteger'), '1.5');
+        expect(r.ok).toBe(false);
+    });
+    test('paramInteger "abc" → error', () => {
+        const r = parseFormifiedValue(paramDef('paramInteger'), 'abc');
+        expect(r.ok).toBe(false);
+    });
+    test('paramInteger "  -3  " trimmed → integerValue -3', () => {
+        const r = parseFormifiedValue(paramDef('paramInteger'), '  -3  ');
+        if (r.ok) expect(r.value.kind).toEqual({ case: 'integerValue', value: -3 });
+        else throw new Error('expected ok');
+    });
+
+    test('paramDouble "1.5" → doubleValue 1.5', () => {
+        const r = parseFormifiedValue(paramDef('paramDouble'), '1.5');
+        if (r.ok) expect(r.value.kind).toEqual({ case: 'doubleValue', value: 1.5 });
+        else throw new Error('expected ok');
+    });
+    test('paramDouble "1e" → error (NaN)', () => {
+        const r = parseFormifiedValue(paramDef('paramDouble'), '1e');
+        expect(r.ok).toBe(false);
+    });
+
+    test('paramInteger below min → error', () => {
+        const r = parseFormifiedValue(paramDef('paramInteger', 'k', false, { min: 5 }), '3');
+        if (!r.ok) expect(r.error).toBe('Must be at least 5');
+        else throw new Error('expected error');
+    });
+    test('paramInteger above max → error', () => {
+        const r = parseFormifiedValue(paramDef('paramInteger', 'k', false, { max: 10 }), '11');
+        if (!r.ok) expect(r.error).toBe('Must be at most 10');
+        else throw new Error('expected error');
+    });
+    test('paramDouble below min → error', () => {
+        const r = parseFormifiedValue(paramDef('paramDouble', 'k', false, { min: 0.5 }), '0.1');
+        if (!r.ok) expect(r.error).toBe('Must be at least 0.5');
+        else throw new Error('expected error');
+    });
+
+    test('paramBoolean true → booleanValue true', () => {
+        const r = parseFormifiedValue(paramDef('paramBoolean'), true);
+        if (r.ok) expect(r.value.kind).toEqual({ case: 'booleanValue', value: true });
+        else throw new Error('expected ok');
+    });
+
+    test('paramTimezone optional null → nullValue (system timezone)', () => {
+        const r = parseFormifiedValue(paramDef('paramTimezone', 'k', true), null);
+        if (r.ok) expect(r.value.kind.case).toBe('nullValue');
+        else throw new Error('expected ok');
+    });
+    test('paramTimezone optional empty string → nullValue (lenient)', () => {
+        const r = parseFormifiedValue(paramDef('paramTimezone', 'k', true), '');
+        if (r.ok) expect(r.value.kind.case).toBe('nullValue');
+        else throw new Error('expected ok');
+    });
+    test('paramTimezone required null → Required error', () => {
+        const r = parseFormifiedValue(paramDef('paramTimezone', 'k', false), null);
+        if (!r.ok) expect(r.error).toBe('Value is required');
+        else throw new Error('expected error');
+    });
+    test('paramTimezone required empty string → Required error', () => {
+        const r = parseFormifiedValue(paramDef('paramTimezone', 'k', false), '');
+        if (!r.ok) expect(r.error).toBe('Value is required');
+        else throw new Error('expected error');
+    });
+    test('paramTimezone "Europe/Prague" → stringValue', () => {
+        const r = parseFormifiedValue(paramDef('paramTimezone', 'k', true), 'Europe/Prague');
+        if (r.ok) expect(r.value.kind).toEqual({ case: 'stringValue', value: 'Europe/Prague' });
+        else throw new Error('expected ok');
+    });
+});
+
+describe('widgetParamsToFormifiedState', () => {
+    const manifest = pb.create(pb.WidgetManifestSchema, {
+        uid: 'w',
+        name: 'W',
+        supportedSizes: [pb.WidgetSize.FULL],
+        params: [
+            paramDef('paramString', 'name'),
+            paramDef('paramInteger', 'count', true),
+            paramDef('paramBoolean', 'enabled'),
+            paramDef('paramTimezone', 'tz', true),
+        ],
+    });
+
+    test('undefined struct → defaults from manifest', () => {
+        const r = widgetParamsToFormifiedState(manifest, undefined);
+        expect(r.name).toBe('');
+        expect(r.count).toBeNull();
+        expect(r.enabled).toBe(false);
+        expect(r.tz).toBeNull();
+    });
+
+    test('integer value from BE → string', () => {
+        const struct = pb.create(pb.WidgetDataStructSchema, {
+            fields: {
+                count: pb.create(pb.WidgetDataValueSchema, { kind: { case: 'integerValue', value: 7 } }),
+            },
+        });
+        const r = widgetParamsToFormifiedState(manifest, struct);
+        expect(r.count).toBe('7');
+    });
+
+    test('null value from BE → null', () => {
+        const struct = pb.create(pb.WidgetDataStructSchema, {
+            fields: {
+                tz: pb.create(pb.WidgetDataValueSchema, {
+                    kind: { case: 'nullValue', value: pb.create(pb.EmptySchema) },
+                }),
+            },
+        });
+        const r = widgetParamsToFormifiedState(manifest, struct);
+        expect(r.tz).toBeNull();
+    });
+
+    test('null value from BE for boolean → false', () => {
+        const struct = pb.create(pb.WidgetDataStructSchema, {
+            fields: {
+                enabled: pb.create(pb.WidgetDataValueSchema, {
+                    kind: { case: 'nullValue', value: pb.create(pb.EmptySchema) },
+                }),
+            },
+        });
+        const r = widgetParamsToFormifiedState(manifest, struct);
+        expect(r.enabled).toBe(false);
+    });
+
+    test('unknown keys are not surfaced', () => {
+        const struct = pb.create(pb.WidgetDataStructSchema, {
+            fields: {
+                ghost: pb.create(pb.WidgetDataValueSchema, { kind: { case: 'stringValue', value: 'x' } }),
+            },
+        });
+        const r = widgetParamsToFormifiedState(manifest, struct);
+        expect((r as Record<string, unknown>).ghost).toBeUndefined();
+    });
+});
+
+describe('buildWidgetDataStruct', () => {
+    const manifest = pb.create(pb.WidgetManifestSchema, {
+        uid: 'w',
+        name: 'W',
+        supportedSizes: [pb.WidgetSize.FULL],
+        params: [
+            paramDef('paramString', 'name'),
+            paramDef('paramInteger', 'count'),
+            paramDef('paramBoolean', 'enabled'),
+        ],
+    });
+
+    test('all valid → ok with struct', () => {
+        const r = buildWidgetDataStruct(manifest, { name: 'a', count: '3', enabled: true });
+        expect(r.ok).toBe(true);
+        if (r.ok) {
+            expect(r.value.fields.name.kind).toEqual({ case: 'stringValue', value: 'a' });
+            expect(r.value.fields.count.kind).toEqual({ case: 'integerValue', value: 3 });
+            expect(r.value.fields.enabled.kind).toEqual({ case: 'booleanValue', value: true });
+        }
+    });
+
+    test('one bad field → ok=false with error in fields[key]', () => {
+        const r = buildWidgetDataStruct(manifest, { name: 'a', count: 'abc', enabled: true });
+        expect(r.ok).toBe(false);
+        if (!r.ok) {
+            expect(r.errors.fields.count).toBeTruthy();
+            expect(r.errors.fields.name).toBeFalsy();
+        }
+    });
+
+    test('missing required → error', () => {
+        const r = buildWidgetDataStruct(manifest, { count: '1', enabled: false });
+        expect(r.ok).toBe(false);
+        if (!r.ok) expect(r.errors.fields.name).toBeTruthy();
     });
 });

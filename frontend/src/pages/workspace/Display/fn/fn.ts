@@ -345,6 +345,156 @@ export function formStateToWidgetDataStruct(
     return pb.create(pb.WidgetDataStructSchema, { fields });
 }
 
+// ---------------------------------------------------------------------------
+// Formified params: raw user-input shape that mirrors the manifest's declared
+// types. Numbers ride as raw strings (parsed at submit), booleans stay
+// boolean, optional/empty as null. The formified→wire converter has no path
+// to emit a type-mismatched payload — the parse-shape gate catches every
+// failure mode the type system can't express.
+// ---------------------------------------------------------------------------
+
+export type FormifiedValue = string | boolean | null;
+export type FormifiedParams = Record<string, FormifiedValue>;
+export type ParamsFormErrors = pb.FormErrors<FormifiedParams>;
+
+export type ParseResult = { ok: true; value: pb.WidgetDataValue } | { ok: false; error: string };
+
+function nullValue(): pb.WidgetDataValue {
+    return pb.create(pb.WidgetDataValueSchema, {
+        kind: { case: 'nullValue', value: pb.create(pb.EmptySchema) },
+    });
+}
+function stringValue(v: string): pb.WidgetDataValue {
+    return pb.create(pb.WidgetDataValueSchema, { kind: { case: 'stringValue', value: v } });
+}
+function integerValue(n: number): pb.WidgetDataValue {
+    return pb.create(pb.WidgetDataValueSchema, { kind: { case: 'integerValue', value: n } });
+}
+function doubleValue(n: number): pb.WidgetDataValue {
+    return pb.create(pb.WidgetDataValueSchema, { kind: { case: 'doubleValue', value: n } });
+}
+function booleanValue(b: boolean): pb.WidgetDataValue {
+    return pb.create(pb.WidgetDataValueSchema, { kind: { case: 'booleanValue', value: b } });
+}
+
+export function defaultFormifiedValue(def: pb.ManifestParamDefinition): FormifiedValue {
+    switch (def.kind.case) {
+        case 'paramString':
+            return def.kind.value.defaultValue ?? '';
+        case 'paramTimezone':
+            return def.kind.value.defaultValue ?? null;
+        case 'paramInteger':
+            return def.kind.value.defaultValue !== undefined ? String(def.kind.value.defaultValue) : null;
+        case 'paramDouble':
+            return def.kind.value.defaultValue !== undefined ? String(def.kind.value.defaultValue) : null;
+        case 'paramBoolean':
+            return def.kind.value.defaultValue ?? false;
+        case undefined:
+            return null;
+        default:
+            return assertUnreachable(def.kind, 'manifest param kind');
+    }
+}
+
+function readWireAsFormified(def: pb.ManifestParamDefinition, v: pb.WidgetDataValue): FormifiedValue {
+    if (v.kind.case === 'nullValue') {
+        return def.kind.case === 'paramBoolean' ? false : null;
+    }
+    switch (def.kind.case) {
+        case 'paramString':
+        case 'paramTimezone':
+            return v.kind.case === 'stringValue' ? v.kind.value : defaultFormifiedValue(def);
+        case 'paramInteger':
+            return v.kind.case === 'integerValue' ? String(v.kind.value) : defaultFormifiedValue(def);
+        case 'paramDouble':
+            return v.kind.case === 'doubleValue' ? String(v.kind.value) : defaultFormifiedValue(def);
+        case 'paramBoolean':
+            return v.kind.case === 'booleanValue' ? v.kind.value : false;
+        default:
+            return defaultFormifiedValue(def);
+    }
+}
+
+export function widgetParamsToFormifiedState(
+    manifest: pb.WidgetManifest,
+    params: pb.WidgetDataStruct | undefined,
+): FormifiedParams {
+    const out: FormifiedParams = {};
+    for (const def of manifest.params) {
+        const wire = params?.fields[def.key];
+        out[def.key] = wire ? readWireAsFormified(def, wire) : defaultFormifiedValue(def);
+    }
+    return out;
+}
+
+const ERR_REQUIRED = 'Value is required';
+const ERR_NOT_NUMBER = 'Not a number';
+const ERR_NOT_INTEGER = 'Not an integer';
+
+export function parseFormifiedValue(def: pb.ManifestParamDefinition, raw: FormifiedValue): ParseResult {
+    switch (def.kind.case) {
+        case 'paramString': {
+            if (raw === null || raw === '') {
+                if (def.isOptional) return { ok: true, value: nullValue() };
+                return { ok: false, error: ERR_REQUIRED };
+            }
+            if (typeof raw !== 'string') return { ok: false, error: ERR_REQUIRED };
+            return { ok: true, value: stringValue(raw) };
+        }
+        case 'paramTimezone': {
+            if (raw === null || raw === '') {
+                if (def.isOptional) return { ok: true, value: nullValue() };
+                return { ok: false, error: ERR_REQUIRED };
+            }
+            if (typeof raw !== 'string') return { ok: false, error: ERR_REQUIRED };
+            return { ok: true, value: stringValue(raw) };
+        }
+        case 'paramInteger':
+        case 'paramDouble': {
+            const wantInt = def.kind.case === 'paramInteger';
+            const inner = def.kind.value;
+            if (raw === null || (typeof raw === 'string' && raw.trim() === '')) {
+                if (def.isOptional) return { ok: true, value: nullValue() };
+                return { ok: false, error: ERR_REQUIRED };
+            }
+            if (typeof raw !== 'string') return { ok: false, error: ERR_NOT_NUMBER };
+            const n = Number(raw.trim());
+            if (!Number.isFinite(n)) return { ok: false, error: ERR_NOT_NUMBER };
+            if (wantInt && !Number.isInteger(n)) return { ok: false, error: ERR_NOT_INTEGER };
+            if (inner.min !== undefined && n < inner.min) return { ok: false, error: `Must be at least ${inner.min}` };
+            if (inner.max !== undefined && n > inner.max) return { ok: false, error: `Must be at most ${inner.max}` };
+            return { ok: true, value: wantInt ? integerValue(n) : doubleValue(n) };
+        }
+        case 'paramBoolean':
+            return { ok: true, value: booleanValue(raw === true) };
+        case undefined:
+            return { ok: true, value: nullValue() };
+        default:
+            return assertUnreachable(def.kind, 'manifest param kind');
+    }
+}
+
+export function buildWidgetDataStruct(
+    manifest: pb.WidgetManifest,
+    params: FormifiedParams,
+): { ok: true; value: pb.WidgetDataStruct } | { ok: false; errors: ParamsFormErrors } {
+    const fields: Record<string, pb.WidgetDataValue> = {};
+    const fieldErrors: pb.FieldBasedErrors<FormifiedParams> = {};
+    let hasError = false;
+    for (const def of manifest.params) {
+        const raw = def.key in params ? params[def.key] : defaultFormifiedValue(def);
+        const r = parseFormifiedValue(def, raw);
+        if (r.ok) {
+            fields[def.key] = r.value;
+        } else {
+            (fieldErrors as Record<string, string[]>)[def.key] = [r.error];
+            hasError = true;
+        }
+    }
+    if (hasError) return { ok: false, errors: { global: [], fields: fieldErrors } };
+    return { ok: true, value: pb.create(pb.WidgetDataStructSchema, { fields }) };
+}
+
 /** Get available widget sizes for a given widget position */
 export function getValidWidgetSizes(pool: C.Located[], slot: Pick<C.Located, 'id' | 'position'>): C.Size[] {
     invariant(slot.position, 'slot.position is required');
