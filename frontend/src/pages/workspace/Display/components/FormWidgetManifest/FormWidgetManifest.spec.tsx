@@ -1,161 +1,82 @@
-import { describe, expect, test } from '@rstest/core';
-
+import { beforeEach, describe, expect, test } from '@rstest/core';
+import { cleanup, render, fireEvent } from '@testing-library/react/pure';
+import { IntlContext } from 'react-intl';
 import * as pb from '@/proto';
-import { formStateToWidgetDataStruct } from '../../fn';
-import { makeNumberParamValue } from './FormWidgetManifest';
+import type { FormifiedValue } from '../../fn';
+import { paramDef } from '../../fn/test-helpers';
+import { FormWidgetManifest } from './FormWidgetManifest';
 
-function paramDef(
-    kindCase: pb.ManifestParamDefinition['kind']['case'],
-    key = 'k',
-    isOptional = false,
-): pb.ManifestParamDefinition {
-    let kind: pb.ManifestParamDefinition['kind'];
-    switch (kindCase) {
-        case 'paramString':
-            kind = { case: 'paramString', value: pb.create(pb.ParamStringSchema) };
-            break;
-        case 'paramInteger':
-            kind = { case: 'paramInteger', value: pb.create(pb.ParamIntegerSchema) };
-            break;
-        case 'paramDouble':
-            kind = { case: 'paramDouble', value: pb.create(pb.ParamDoubleSchema) };
-            break;
-        case 'paramBoolean':
-            kind = { case: 'paramBoolean', value: pb.create(pb.ParamBooleanSchema) };
-            break;
-        case 'paramTimezone':
-            kind = { case: 'paramTimezone', value: pb.create(pb.ParamTimezoneSchema) };
-            break;
-        default:
-            kind = { case: 'paramString', value: pb.create(pb.ParamStringSchema) };
-    }
-    return pb.create(pb.ManifestParamDefinitionSchema, {
-        key,
-        name: 'K',
-        isOptional,
-        kind,
-    });
+if (typeof ResizeObserver === 'undefined') {
+    global.ResizeObserver = class ResizeObserver {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+    };
 }
 
-describe('formStateToWidgetDataStruct', () => {
+beforeEach(cleanup);
+
+const fakeIntl = {
+    formatMessage: ({ defaultMessage }: { defaultMessage?: string; id?: string }) => defaultMessage ?? '',
+    locale: 'en',
+    defaultLocale: 'en',
+    timeZone: undefined,
+    formats: {},
+    defaultFormats: {},
+    messages: {},
+    onError: () => {},
+} as unknown as ReturnType<typeof import('react-intl').useIntl>;
+
+const wrap = (ui: ReactElement) => <IntlContext.Provider value={fakeIntl}>{ui}</IntlContext.Provider>;
+
+describe('FormWidgetManifest', () => {
     const manifest = pb.create(pb.WidgetManifestSchema, {
-        uid: 'widget-1',
-        name: 'Widget',
-        description: '',
+        uid: 'w',
+        name: 'W',
         supportedSizes: [pb.WidgetSize.FULL],
-        params: [
-            paramDef('paramString', 'name'),
-            paramDef('paramInteger', 'count'),
-            paramDef('paramBoolean', 'enabled'),
-            pb.create(pb.ManifestParamDefinitionSchema, {
-                key: 'tz',
-                name: 'Timezone',
-                isOptional: true,
-                kind: { case: 'paramTimezone', value: pb.create(pb.ParamTimezoneSchema) },
-            }),
-        ],
+        params: [paramDef('paramInteger', 'count')],
     });
 
-    test('keeps typed wire values as-is', () => {
-        const params: Record<string, pb.WidgetDataValue> = {
-            enabled: pb.create(pb.WidgetDataValueSchema, { kind: { case: 'booleanValue', value: true } }),
-            tz: pb.create(pb.WidgetDataValueSchema, {
-                kind: { case: 'nullValue', value: pb.create(pb.EmptySchema) },
-            }),
-        };
-        const result = formStateToWidgetDataStruct(manifest, params);
-        expect(result.fields.enabled.kind).toEqual({ case: 'booleanValue', value: true });
-        expect(result.fields.tz.kind.case).toBe('nullValue');
+    test('renders per-field error from errors.fields[key]', () => {
+        const { getByText } = render(
+            wrap(
+                <FormWidgetManifest
+                    isOpen
+                    onSave={() => {}}
+                    onCancel={() => {}}
+                    manifest={manifest}
+                    params={{ count: 'abc' }}
+                    errors={{ global: [], fields: { count: ['Not an integer'] } }}
+                    onParamChange={() => {}}
+                    timezones={[]}
+                />,
+            ),
+        );
+        expect(getByText('Not an integer')).toBeTruthy();
     });
 
-    test('drops unknown keys from form state', () => {
-        const params: Record<string, pb.WidgetDataValue> = {
-            unknown: pb.create(pb.WidgetDataValueSchema, { kind: { case: 'stringValue', value: 'x' } }),
-        };
-        const result = formStateToWidgetDataStruct(manifest, params);
-        expect(result.fields.unknown).toBeUndefined();
-        expect(result.fields.name.kind).toEqual({ case: 'stringValue', value: '' });
-    });
-
-    test('fills missing manifest keys with defaults/nulls', () => {
-        const result = formStateToWidgetDataStruct(manifest, {});
-        expect(result.fields.name.kind).toEqual({ case: 'stringValue', value: '' });
-        expect(result.fields.count.kind.case).toBe('nullValue');
-        expect(result.fields.enabled.kind).toEqual({ case: 'booleanValue', value: false });
-        expect(result.fields.tz.kind.case).toBe('nullValue');
-    });
-});
-
-describe('makeNumberParamValue', () => {
-    test('empty string -> nullValue', () => {
-        expect(makeNumberParamValue('', 'integer').kind.case).toBe('nullValue');
-    });
-
-    test('null -> nullValue', () => {
-        expect(makeNumberParamValue(null, 'integer').kind.case).toBe('nullValue');
-    });
-
-    test('numeric string -> integerValue for integer type', () => {
-        expect(makeNumberParamValue('42', 'integer').kind).toEqual({
-            case: 'integerValue',
-            value: 42,
-        });
-    });
-
-    test('numeric string -> doubleValue for double type', () => {
-        expect(makeNumberParamValue('1.5', 'double').kind).toEqual({
-            case: 'doubleValue',
-            value: 1.5,
-        });
-    });
-
-    test('typeof number passes through unchanged', () => {
-        expect(makeNumberParamValue(7, 'integer').kind).toEqual({
-            case: 'integerValue',
-            value: 7,
-        });
-    });
-
-    test('non-numeric string -> stringValue carrying raw text', () => {
-        expect(makeNumberParamValue('abc', 'integer').kind).toEqual({
-            case: 'stringValue',
-            value: 'abc',
-        });
-    });
-
-    test('lone minus -> stringValue', () => {
-        expect(makeNumberParamValue('-', 'integer').kind).toEqual({
-            case: 'stringValue',
-            value: '-',
-        });
-    });
-
-    test('partial exponent -> stringValue', () => {
-        expect(makeNumberParamValue('1e', 'double').kind).toEqual({
-            case: 'stringValue',
-            value: '1e',
-        });
-    });
-
-    test('whitespace-only string -> nullValue (trimmed and treated as empty)', () => {
-        expect(makeNumberParamValue('   ', 'integer').kind.case).toBe('nullValue');
-    });
-
-    test('decimal string for integer type -> stringValue', () => {
-        expect(makeNumberParamValue('1.5', 'integer').kind).toEqual({
-            case: 'stringValue',
-            value: '1.5',
-        });
-    });
-
-    test('typeof number with non-integer for integer type -> stringValue', () => {
-        expect(makeNumberParamValue(1.5, 'integer').kind).toEqual({
-            case: 'stringValue',
-            value: '1.5',
-        });
-    });
-
-    test('typeof number NaN -> stringValue', () => {
-        expect(makeNumberParamValue(Number.NaN, 'double').kind.case).toBe('stringValue');
+    test('onParamChange propagates numeric input as a string', () => {
+        let captured: [string, FormifiedValue] | null = null;
+        render(
+            wrap(
+                <FormWidgetManifest
+                    isOpen
+                    onSave={() => {}}
+                    onCancel={() => {}}
+                    manifest={manifest}
+                    params={{ count: '' }}
+                    errors={null}
+                    onParamChange={(k, v) => {
+                        captured = [k, v];
+                    }}
+                    timezones={[]}
+                />,
+            ),
+        );
+        const input = document.body.querySelector<HTMLInputElement>('input[type="number"]');
+        expect(input).toBeTruthy();
+        if (!input) throw new Error('numeric input not found');
+        fireEvent.change(input, { target: { value: '42' } });
+        expect(captured).toEqual(['count', '42']);
     });
 });

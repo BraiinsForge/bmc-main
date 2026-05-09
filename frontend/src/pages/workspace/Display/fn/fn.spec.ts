@@ -11,41 +11,12 @@ import {
     fitsLeftAbove,
     explodeWidgetIntoAtoms,
     getValidDropSlots,
-    defaultParamValue,
     defaultFormifiedValue,
     widgetParamsToFormifiedState,
     parseFormifiedValue,
     buildWidgetDataStruct,
 } from './fn';
-
-function paramDef(
-    kindCase: pb.ManifestParamDefinition['kind']['case'],
-    key = 'k',
-    isOptional = false,
-    overrides: Record<string, any> = {},
-): pb.ManifestParamDefinition {
-    let kind: pb.ManifestParamDefinition['kind'];
-    switch (kindCase) {
-        case 'paramString':
-            kind = { case: 'paramString', value: pb.create(pb.ParamStringSchema, overrides) };
-            break;
-        case 'paramInteger':
-            kind = { case: 'paramInteger', value: pb.create(pb.ParamIntegerSchema, overrides) };
-            break;
-        case 'paramDouble':
-            kind = { case: 'paramDouble', value: pb.create(pb.ParamDoubleSchema, overrides) };
-            break;
-        case 'paramBoolean':
-            kind = { case: 'paramBoolean', value: pb.create(pb.ParamBooleanSchema, overrides) };
-            break;
-        case 'paramTimezone':
-            kind = { case: 'paramTimezone', value: pb.create(pb.ParamTimezoneSchema, overrides) };
-            break;
-        default:
-            kind = { case: 'paramString', value: pb.create(pb.ParamStringSchema) };
-    }
-    return pb.create(pb.ManifestParamDefinitionSchema, { key, name: 'K', isOptional, kind });
-}
+import { paramDef } from './test-helpers';
 
 const emptyParams = pb.create(pb.WidgetDataStructSchema, { fields: {} });
 
@@ -713,121 +684,6 @@ describe('getValidDropSlots', () => {
             expect(result.has(C.dropSlotKey(1, 0))).toBe(true); // Other duplicate position available
             expect(result.has(C.dropSlotKey(0, 1))).toBe(false); // Blocked by 'other'
         });
-    });
-});
-
-describe('defaultParamValue', () => {
-    test('returns the manifest default for paramString', () => {
-        const def = pb.create(pb.ManifestParamDefinitionSchema, {
-            key: 'name',
-            name: 'Name',
-            kind: { case: 'paramString', value: pb.create(pb.ParamStringSchema, { defaultValue: 'hi' }) },
-        });
-        const v = defaultParamValue(def);
-        expect(v.kind).toMatchObject({ case: 'stringValue', value: 'hi' });
-    });
-
-    test('returns empty string for paramString with no default', () => {
-        const def = pb.create(pb.ManifestParamDefinitionSchema, {
-            key: 'name',
-            name: 'Name',
-            kind: { case: 'paramString', value: pb.create(pb.ParamStringSchema, {}) },
-        });
-        const v = defaultParamValue(def);
-        expect(v.kind).toMatchObject({ case: 'stringValue', value: '' });
-    });
-
-    test('returns nullValue for paramInteger with no defaultValue', () => {
-        const def = pb.create(pb.ManifestParamDefinitionSchema, {
-            key: 'count',
-            name: 'Count',
-            kind: { case: 'paramInteger', value: pb.create(pb.ParamIntegerSchema, {}) },
-        });
-        const v = defaultParamValue(def);
-        expect(v.kind.case).toBe('nullValue');
-    });
-
-    test('returns the manifest default for paramInteger', () => {
-        const def = pb.create(pb.ManifestParamDefinitionSchema, {
-            key: 'count',
-            name: 'Count',
-            kind: { case: 'paramInteger', value: pb.create(pb.ParamIntegerSchema, { defaultValue: 42 }) },
-        });
-        const v = defaultParamValue(def);
-        expect(v.kind).toMatchObject({ case: 'integerValue', value: 42 });
-    });
-
-    test('falls back to false for paramBoolean with no default', () => {
-        const def = pb.create(pb.ManifestParamDefinitionSchema, {
-            key: 'flag',
-            name: 'Flag',
-            kind: { case: 'paramBoolean', value: pb.create(pb.ParamBooleanSchema, {}) },
-        });
-        const v = defaultParamValue(def);
-        expect(v.kind).toMatchObject({ case: 'booleanValue', value: false });
-    });
-
-    test('returns the manifest default for paramDouble', () => {
-        const def = pb.create(pb.ManifestParamDefinitionSchema, {
-            key: 'ratio',
-            name: 'Ratio',
-            kind: { case: 'paramDouble', value: pb.create(pb.ParamDoubleSchema, { defaultValue: 3.14 }) },
-        });
-        const v = defaultParamValue(def);
-        expect(v.kind).toMatchObject({ case: 'doubleValue', value: 3.14 });
-    });
-
-    test('returns nullValue for paramDouble with no defaultValue', () => {
-        const def = pb.create(pb.ManifestParamDefinitionSchema, {
-            key: 'ratio',
-            name: 'Ratio',
-            kind: { case: 'paramDouble', value: pb.create(pb.ParamDoubleSchema, {}) },
-        });
-        const v = defaultParamValue(def);
-        expect(v.kind.case).toBe('nullValue');
-    });
-
-    test('returns the manifest default for paramBoolean with defaultValue true', () => {
-        const def = pb.create(pb.ManifestParamDefinitionSchema, {
-            key: 'flag',
-            name: 'Flag',
-            kind: { case: 'paramBoolean', value: pb.create(pb.ParamBooleanSchema, { defaultValue: true }) },
-        });
-        const v = defaultParamValue(def);
-        expect(v.kind).toMatchObject({ case: 'booleanValue', value: true });
-    });
-
-    test('returns the manifest default for paramTimezone', () => {
-        const def = pb.create(pb.ManifestParamDefinitionSchema, {
-            key: 'tz',
-            name: 'Timezone',
-            kind: {
-                case: 'paramTimezone',
-                value: pb.create(pb.ParamTimezoneSchema, { defaultValue: 'Europe/Prague' }),
-            },
-        });
-        const v = defaultParamValue(def);
-        expect(v.kind).toMatchObject({ case: 'stringValue', value: 'Europe/Prague' });
-    });
-
-    test('returns nullValue for paramTimezone with no defaultValue', () => {
-        const def = pb.create(pb.ManifestParamDefinitionSchema, {
-            key: 'tz',
-            name: 'Timezone',
-            kind: { case: 'paramTimezone', value: pb.create(pb.ParamTimezoneSchema, {}) },
-        });
-        const v = defaultParamValue(def);
-        expect(v.kind.case).toBe('nullValue');
-    });
-
-    test('returns null for unset kind', () => {
-        const def = pb.create(pb.ManifestParamDefinitionSchema, {
-            key: 'x',
-            name: 'X',
-            isOptional: true,
-        });
-        const v = defaultParamValue(def);
-        expect(v.kind.case).toBe('nullValue');
     });
 });
 

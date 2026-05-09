@@ -6,6 +6,7 @@ import { type NavigateFunction, useNavigate } from 'react-router';
 
 // Libs
 import * as fn from './fn';
+import type { FormifiedParams, FormifiedValue, ParamsFormErrors } from './fn';
 import { getID } from './const';
 import { toast } from '@/lib/toast';
 import { listenDocumentEvent } from '@/lib/dom';
@@ -38,9 +39,8 @@ interface ManifestFormState {
     manifest: null | pb.WidgetManifest;
     sceneID: string;
     widgetID: string;
-    params: Record<string, pb.WidgetDataValue>;
-    fieldErrors: Record<string, string>;
-    error: Maybe<string>;
+    params: FormifiedParams;
+    errors: null | ParamsFormErrors;
     isNewScene: boolean;
 }
 
@@ -91,8 +91,7 @@ const getInitialState = (): State => ({
         sceneID: '',
         widgetID: '',
         params: {},
-        fieldErrors: {},
-        error: null,
+        errors: null,
         isNewScene: false,
     },
 });
@@ -240,7 +239,7 @@ class View extends Component<Props, State> {
                 return;
             }
 
-            const params = fn.widgetParamsToFormState(widget.config?.params);
+            const params = fn.widgetParamsToFormifiedState(manifest, widget.config?.params);
 
             this.setState({
                 openDialogKind: 'manifest',
@@ -249,8 +248,7 @@ class View extends Component<Props, State> {
                     sceneID,
                     widgetID: widget.id,
                     params,
-                    fieldErrors: {},
-                    error: null,
+                    errors: null,
                     isNewScene: true,
                 },
             });
@@ -311,6 +309,11 @@ class View extends Component<Props, State> {
         const { manifestForm } = this.state;
         const { manifest, sceneID, widgetID, params } = manifestForm;
         if (!manifest || !widgetID) return;
+        const built = fn.buildWidgetDataStruct(manifest, params);
+        if (!built.ok) {
+            this.setState(s => ({ manifestForm: { ...s.manifestForm, errors: built.errors } }));
+            return;
+        }
         const scene = this.#getScene(sceneID);
         const widget = scene?.kind.case === 'fullscreen' ? scene.kind.value.widget : undefined;
         try {
@@ -319,43 +322,32 @@ class View extends Component<Props, State> {
                 sceneId: sceneID,
                 position: widget?.position ?? pb.create(pb.WidgetPositionSchema),
                 size: widget?.size ?? pb.WidgetSize.FULL,
-                params: fn.formStateToWidgetDataStruct(manifest, params),
+                params: built.value,
             });
         } catch ($) {
             if (pb.abort.is($)) return;
-            const { fieldErrors, error } = fn.mapManifestUpdateError($);
-            this.setState(s => ({
-                manifestForm: { ...s.manifestForm, fieldErrors, error },
-            }));
+            const errors = fn.mapManifestUpdateError($);
+            this.setState(s => ({ manifestForm: { ...s.manifestForm, errors } }));
             return;
         }
         this.setState(s => {
-            if (!s.manifestForm.error && Object.keys(s.manifestForm.fieldErrors).length === 0) {
-                return null;
-            }
-            return {
-                manifestForm: { ...s.manifestForm, fieldErrors: {}, error: null },
-            };
+            if (!s.manifestForm.errors) return null;
+            return { manifestForm: { ...s.manifestForm, errors: null } };
         });
     }, 300);
 
-    #handleManifestParamChange = (key: string, value: pb.WidgetDataValue | undefined): void => {
+    #handleManifestParamChange = (key: string, value: FormifiedValue): void => {
         this.setState(
             s => {
-                const params = { ...s.manifestForm.params };
-                if (value === undefined) {
-                    delete params[key];
-                } else {
-                    params[key] = value;
-                }
-                const fieldErrors = { ...s.manifestForm.fieldErrors };
-                delete fieldErrors[key];
+                const def = s.manifestForm.manifest?.params.find(p => p.key === key);
+                const errors = def
+                    ? fn.revalidateField(s.manifestForm.errors, def, value)
+                    : fn.clearFieldError(s.manifestForm.errors, key);
                 return {
                     manifestForm: {
                         ...s.manifestForm,
-                        params,
-                        fieldErrors,
-                        error: null,
+                        params: { ...s.manifestForm.params, [key]: value },
+                        errors,
                     },
                 };
             },
@@ -373,6 +365,12 @@ class View extends Component<Props, State> {
             return;
         }
 
+        const built = fn.buildWidgetDataStruct(manifest, params);
+        if (!built.ok) {
+            this.setState(s => ({ manifestForm: { ...s.manifestForm, errors: built.errors } }));
+            return;
+        }
+
         try {
             const scene = this.#getScene(sceneID);
             const widget = scene?.kind.case === 'fullscreen' ? scene.kind.value.widget : undefined;
@@ -382,7 +380,7 @@ class View extends Component<Props, State> {
                 sceneId: sceneID,
                 position: widget?.position ?? pb.create(pb.WidgetPositionSchema),
                 size: widget?.size ?? pb.WidgetSize.FULL,
-                params: fn.formStateToWidgetDataStruct(manifest, params),
+                params: built.value,
             });
 
             this.abortPreview.abort();
@@ -390,14 +388,8 @@ class View extends Component<Props, State> {
             this.#loadScenesDebounced();
         } catch ($) {
             if (pb.abort.is($)) return;
-            const { fieldErrors, error } = fn.mapManifestUpdateError($);
-            this.setState(s => ({
-                manifestForm: {
-                    ...s.manifestForm,
-                    fieldErrors,
-                    error,
-                },
-            }));
+            const errors = fn.mapManifestUpdateError($);
+            this.setState(s => ({ manifestForm: { ...s.manifestForm, errors } }));
         }
     };
 
@@ -420,10 +412,9 @@ class View extends Component<Props, State> {
                     isOpen={openDialogKind === 'manifest'}
                     onSave={this.#handleManifestFormDone}
                     onCancel={this.#openDialogCancel}
-                    error={this.state.manifestForm.error}
                     manifest={this.state.manifestForm.manifest}
                     params={this.state.manifestForm.params}
-                    fieldErrors={this.state.manifestForm.fieldErrors}
+                    errors={this.state.manifestForm.errors}
                     onParamChange={this.#handleManifestParamChange}
                     timezones={this.state.timezones}
                 />
@@ -630,7 +621,7 @@ class View extends Component<Props, State> {
                     return;
                 }
 
-                const params = fn.widgetParamsToFormState(widget.config?.params);
+                const params = fn.widgetParamsToFormifiedState(manifest, widget.config?.params);
 
                 this.setState(
                     {
@@ -640,8 +631,7 @@ class View extends Component<Props, State> {
                             sceneID: id,
                             widgetID: widget.id,
                             params,
-                            fieldErrors: {},
-                            error: null,
+                            errors: null,
                             isNewScene: false,
                         },
                     },

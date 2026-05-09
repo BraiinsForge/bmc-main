@@ -274,77 +274,6 @@ export function getValidDropSlots(pool: C.Located[], widget: C.Located): C.Valid
     return res;
 }
 
-/**
- * Project a WidgetDataStruct from the wire into the modal's
- * Record<string, WidgetDataValue> form state.
- */
-export function widgetParamsToFormState(params: pb.WidgetDataStruct | undefined): Record<string, pb.WidgetDataValue> {
-    if (!params) return {};
-    const result: Record<string, pb.WidgetDataValue> = {};
-    for (const [k, v] of Object.entries(params.fields)) {
-        result[k] = pb.create(pb.WidgetDataValueSchema, v);
-    }
-    return result;
-}
-
-function makeNullValue(): pb.WidgetDataValue {
-    return pb.create(pb.WidgetDataValueSchema, {
-        kind: { case: 'nullValue', value: pb.create(pb.EmptySchema) },
-    });
-}
-
-export function defaultParamValue(def: pb.ManifestParamDefinition): pb.WidgetDataValue {
-    switch (def.kind.case) {
-        case 'paramString':
-            return pb.create(pb.WidgetDataValueSchema, {
-                kind: { case: 'stringValue', value: def.kind.value.defaultValue ?? '' },
-            });
-        case 'paramTimezone':
-            return def.kind.value.defaultValue !== undefined
-                ? pb.create(pb.WidgetDataValueSchema, {
-                      kind: { case: 'stringValue', value: def.kind.value.defaultValue },
-                  })
-                : makeNullValue();
-        case 'paramInteger':
-            return def.kind.value.defaultValue !== undefined
-                ? pb.create(pb.WidgetDataValueSchema, {
-                      kind: { case: 'integerValue', value: def.kind.value.defaultValue },
-                  })
-                : makeNullValue();
-        case 'paramDouble':
-            return def.kind.value.defaultValue !== undefined
-                ? pb.create(pb.WidgetDataValueSchema, {
-                      kind: { case: 'doubleValue', value: def.kind.value.defaultValue },
-                  })
-                : makeNullValue();
-        case 'paramBoolean':
-            return pb.create(pb.WidgetDataValueSchema, {
-                kind: { case: 'booleanValue', value: def.kind.value.defaultValue ?? false },
-            });
-        case undefined:
-            return makeNullValue();
-        default:
-            assertUnreachable(def.kind, 'manifest param kind');
-    }
-}
-
-/**
- * Inverse of widgetParamsToFormState. Iterates the manifest (not the form
- * state) so unknown form keys cannot leak onto the wire.
- * Missing keys are materialized from manifest defaults so UpdateWidget
- * requests always carry a complete param map.
- */
-export function formStateToWidgetDataStruct(
-    manifest: pb.WidgetManifest,
-    params: Record<string, pb.WidgetDataValue>,
-): pb.WidgetDataStruct {
-    const fields: Record<string, pb.WidgetDataValue> = {};
-    for (const def of manifest.params) {
-        fields[def.key] = params[def.key] ?? defaultParamValue(def);
-    }
-    return pb.create(pb.WidgetDataStructSchema, { fields });
-}
-
 // ---------------------------------------------------------------------------
 // Formified params: raw user-input shape that mirrors the manifest's declared
 // types. Numbers ride as raw strings (parsed at submit), booleans stay
@@ -356,6 +285,27 @@ export function formStateToWidgetDataStruct(
 export type FormifiedValue = string | boolean | null;
 export type FormifiedParams = Record<string, FormifiedValue>;
 export type ParamsFormErrors = pb.FormErrors<FormifiedParams>;
+
+export function clearFieldError(errors: null | ParamsFormErrors, key: string): null | ParamsFormErrors {
+    if (!errors) return null;
+    const hadFieldError = !!errors.fields?.[key]?.length;
+    return {
+        global: hadFieldError ? [] : errors.global,
+        fields: { ...errors.fields, [key]: undefined },
+    };
+}
+
+export function revalidateField(
+    errors: null | ParamsFormErrors,
+    def: pb.ManifestParamDefinition,
+    value: FormifiedValue,
+): null | ParamsFormErrors {
+    const cleared = clearFieldError(errors, def.key);
+    const r = parseFormifiedValue(def, value);
+    if (r.ok) return cleared;
+    const base = cleared ?? { global: [], fields: {} };
+    return { ...base, fields: { ...base.fields, [def.key]: [r.error] } };
+}
 
 export type ParseResult = { ok: true; value: pb.WidgetDataValue } | { ok: false; error: string };
 

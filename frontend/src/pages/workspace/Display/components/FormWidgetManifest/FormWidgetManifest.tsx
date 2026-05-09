@@ -1,18 +1,13 @@
 import { useIntl } from 'react-intl';
-
 import { assertUnreachable } from '@/lib/ts';
 import * as pb from '@/proto';
-import { create } from '@/proto';
+import { Form, hasFormErrors } from '@/lib/form';
 import { getID } from '../const';
-import { defaultParamValue } from '../../fn';
-import { Form } from '@/lib/form';
+import type { FormifiedParams, FormifiedValue, ParamsFormErrors } from '../../fn';
 
-// Components
 import { BoundToggle, BoundComboBox, type OptionItem, CheckYourScreenForPreview, WidgetSizeSelector } from '../shared';
-import { ModalCustom, InlineNotification, Button } from '@/components';
+import { ModalCustom, Button, InlineNotification } from '@/components';
 import { TextInput, NumberInput } from '@carbon/react';
-
-// Styles
 import css from '../shared.scss';
 
 const $ = getID('manifest-form').get;
@@ -21,19 +16,14 @@ export interface FormWidgetManifestProps {
     isOpen: boolean;
     onSave(): void;
     onCancel(): void;
-    error: Maybe<string>;
 
     manifest: null | pb.WidgetManifest;
-    params: Record<string, pb.WidgetDataValue>;
-    fieldErrors?: Record<string, string>;
-    onParamChange(key: string, value: pb.WidgetDataValue | undefined): void;
+    params: FormifiedParams;
+    errors: null | ParamsFormErrors;
+    onParamChange(key: string, value: FormifiedValue): void;
 
-    /** Timezones available on the device, fetched once via `sys.getTimezoneList`. */
     timezones: pb.Timezone[];
-
-    /** Current size selection for a combined-scene widget. Omit for fullscreen flows. */
     size?: pb.WidgetSize;
-    /** Sizes the user may pick from (intersection of cell fit and manifest.supported_sizes). */
     sizeOptions?: Array<Exclude<pb.WidgetSize, pb.WidgetSize.UNSPECIFIED>>;
     onSizeChange?(size: pb.WidgetSize): void;
 }
@@ -53,80 +43,19 @@ function stringFormatToInputType(format: pb.StringFormat | undefined): string {
     }
 }
 
-function makeStringValue(s: string): pb.WidgetDataValue {
-    return create(pb.WidgetDataValueSchema, { kind: { case: 'stringValue', value: s } });
+function asString(v: FormifiedValue): string {
+    return typeof v === 'string' ? v : '';
 }
-
-function makeIntegerValue(n: number): pb.WidgetDataValue {
-    return create(pb.WidgetDataValueSchema, { kind: { case: 'integerValue', value: n } });
-}
-
-function makeDoubleValue(n: number): pb.WidgetDataValue {
-    return create(pb.WidgetDataValueSchema, { kind: { case: 'doubleValue', value: n } });
-}
-
-function makeBooleanValue(b: boolean): pb.WidgetDataValue {
-    return create(pb.WidgetDataValueSchema, { kind: { case: 'booleanValue', value: b } });
-}
-
-function makeNullValue(): pb.WidgetDataValue {
-    return create(pb.WidgetDataValueSchema, {
-        kind: { case: 'nullValue', value: create(pb.EmptySchema) },
-    });
-}
-
-function readString(value: pb.WidgetDataValue | undefined): string {
-    return value?.kind.case === 'stringValue' ? value.kind.value : '';
-}
-
-function readNumber(value: pb.WidgetDataValue | undefined): number | '' {
-    if (!value) return '';
-    if (value.kind.case === 'integerValue' || value.kind.case === 'doubleValue') return value.kind.value;
-    return '';
-}
-
-function readBoolean(value: pb.WidgetDataValue | undefined): boolean {
-    return value?.kind.case === 'booleanValue' && value.kind.value === true;
-}
-
-function makeStringParamValue(v: string, isOptional: boolean): pb.WidgetDataValue {
-    if (isOptional && v === '') return makeNullValue();
-    return makeStringValue(v);
-}
-
-// Unparseable text and non-integer numbers in integer fields are intentionally
-// forwarded as `stringValue` so the backend's typed validator surfaces the
-// real field error to the user, instead of being swallowed locally.
-export function makeNumberParamValue(raw: string | number | null, type: 'integer' | 'double'): pb.WidgetDataValue {
-    if (raw === null) return makeNullValue();
-    if (typeof raw === 'number') {
-        if (!Number.isFinite(raw)) return makeStringValue(String(raw));
-        if (type === 'integer' && !Number.isInteger(raw)) return makeStringValue(String(raw));
-        return type === 'integer' ? makeIntegerValue(raw) : makeDoubleValue(raw);
-    }
-    const trimmed = raw.trim();
-    if (trimmed === '') return makeNullValue();
-    const n = Number(trimmed);
-    if (!Number.isFinite(n)) return makeStringValue(raw);
-    if (type === 'integer' && !Number.isInteger(n)) return makeStringValue(raw);
-    return type === 'integer' ? makeIntegerValue(n) : makeDoubleValue(n);
-}
-
-function isValidNumericInput(raw: string, type: 'integer' | 'double'): boolean {
-    const t = raw.trim();
-    if (t === '') return true;
-    const n = Number(t);
-    if (!Number.isFinite(n)) return false;
-    if (type === 'integer' && !Number.isInteger(n)) return false;
-    return true;
+function asBoolean(v: FormifiedValue): boolean {
+    return v === true;
 }
 
 function ParamField(props: {
     id: string;
     definition: pb.ManifestParamDefinition;
-    value: pb.WidgetDataValue;
+    value: FormifiedValue;
     error?: string;
-    onChange(key: string, value: pb.WidgetDataValue | undefined): void;
+    onChange(key: string, value: FormifiedValue): void;
     timezones: pb.Timezone[];
 }) {
     const { id, definition, value, onChange, timezones, error } = props;
@@ -148,13 +77,8 @@ function ParamField(props: {
                         labelText={labelText}
                         error={error}
                         items={items}
-                        value={readString(value) || null}
-                        onChange={v =>
-                            onChange(
-                                definition.key,
-                                v !== null ? makeStringParamValue(v, definition.isOptional) : undefined,
-                            )
-                        }
+                        value={asString(value) || null}
+                        onChange={v => onChange(definition.key, v)}
                     />
                 );
             }
@@ -166,57 +90,18 @@ function ParamField(props: {
                     invalid={!!error}
                     invalidText={error}
                     type={stringFormatToInputType(format)}
-                    value={readString(value)}
-                    onChange={e =>
-                        onChange(definition.key, makeStringParamValue(e.target.value, definition.isOptional))
-                    }
+                    value={asString(value)}
+                    onChange={e => onChange(definition.key, e.target.value)}
                 />
             );
         }
 
-        case 'paramInteger': {
-            const { min, max, step, enumValues } = definition.kind.value;
-            if (enumValues.length > 0) {
-                const items: Array<OptionItem<string>> = enumValues.map(opt => ({
-                    value: String(opt.value),
-                    label: opt.label,
-                }));
-                return (
-                    <BoundComboBox<string>
-                        id={id}
-                        labelText={labelText}
-                        error={error}
-                        items={items}
-                        value={String(readNumber(value))}
-                        onChange={v => onChange(definition.key, makeNumberParamValue(v, 'integer'))}
-                    />
-                );
-            }
-            return (
-                <NumberInput
-                    id={id}
-                    label={labelText}
-                    helperText={definition.description}
-                    invalid={!!error}
-                    invalidText={error}
-                    type="text"
-                    inputMode="numeric"
-                    defaultValue={readNumber(value)}
-                    allowEmpty
-                    min={min}
-                    max={max}
-                    step={step ?? 1}
-                    validate={raw => isValidNumericInput(raw, 'integer')}
-                    onChange={(_e, { value: v }) => onChange(definition.key, makeNumberParamValue(v, 'integer'))}
-                    onBlur={e => onChange(definition.key, makeNumberParamValue(e.target.value, 'integer'))}
-                />
-            );
-        }
-
+        case 'paramInteger':
         case 'paramDouble': {
-            const { min, max, step, enumValues } = definition.kind.value;
-            if (enumValues.length > 0) {
-                const items: Array<OptionItem<string>> = enumValues.map(opt => ({
+            const isInt = definition.kind.case === 'paramInteger';
+            const inner = definition.kind.value;
+            if (inner.enumValues.length > 0) {
+                const items: Array<OptionItem<string>> = inner.enumValues.map(opt => ({
                     value: String(opt.value),
                     label: opt.label,
                 }));
@@ -226,11 +111,26 @@ function ParamField(props: {
                         labelText={labelText}
                         error={error}
                         items={items}
-                        value={String(readNumber(value))}
-                        onChange={v => onChange(definition.key, makeNumberParamValue(v, 'double'))}
+                        value={asString(value)}
+                        onChange={v => onChange(definition.key, v)}
                     />
                 );
             }
+            const numericValue = (() => {
+                if (typeof value !== 'string' || value === '') return '';
+                const n = Number(value);
+                return Number.isFinite(n) ? n : '';
+            })();
+            const handleNumberChange = (e: { target: EventTarget | null }, state: { value: number | string }) => {
+                const tgt = e.target;
+                // badInput ⇒ browser sends empty string, only validity.badInput distinguishes "empty" from
+                // "non-numeric", so we emit 'NaN' as a parse-shape signal.
+                if (tgt instanceof HTMLInputElement && tgt.validity.badInput) {
+                    onChange(definition.key, 'NaN');
+                } else {
+                    onChange(definition.key, String(state.value));
+                }
+            };
             return (
                 <NumberInput
                     id={id}
@@ -238,16 +138,13 @@ function ParamField(props: {
                     helperText={definition.description}
                     invalid={!!error}
                     invalidText={error}
-                    type="text"
-                    inputMode="decimal"
-                    defaultValue={readNumber(value)}
+                    type="number"
                     allowEmpty
-                    min={min}
-                    max={max}
-                    step={step ?? 0.01}
-                    validate={raw => isValidNumericInput(raw, 'double')}
-                    onChange={(_e, { value: v }) => onChange(definition.key, makeNumberParamValue(v, 'double'))}
-                    onBlur={e => onChange(definition.key, makeNumberParamValue(e.target.value, 'double'))}
+                    value={numericValue}
+                    min={inner.min}
+                    max={inner.max}
+                    step={inner.step ?? (isInt ? 1 : 0.01)}
+                    onChange={handleNumberChange}
                 />
             );
         }
@@ -258,23 +155,18 @@ function ParamField(props: {
                     id={id}
                     labelText={labelText}
                     error={error}
-                    value={readBoolean(value)}
-                    onChange={v => onChange(definition.key, makeBooleanValue(v))}
+                    value={asBoolean(value)}
+                    onChange={v => onChange(definition.key, v)}
                 />
             );
 
         case 'paramTimezone': {
             const tzItems: Array<OptionItem<string>> = [
-                {
-                    value: '',
-                    label: formatMessage({ defaultMessage: 'System Timezone' }),
-                },
-                ...timezones.map(tz => ({
-                    value: tz.id,
-                    label: `${tz.offset} ${tz.label}`,
-                })),
+                ...(definition.isOptional
+                    ? [{ value: '', label: formatMessage({ defaultMessage: 'System Timezone' }) }]
+                    : []),
+                ...timezones.map(tz => ({ value: tz.id, label: `${tz.offset} ${tz.label}` })),
             ];
-            const tzValue = readString(value);
             return (
                 <BoundComboBox<string>
                     id={id}
@@ -282,8 +174,8 @@ function ParamField(props: {
                     helperText={definition.description}
                     error={error}
                     items={tzItems}
-                    value={tzValue || ''}
-                    onChange={v => onChange(definition.key, v ? makeStringValue(v) : makeNullValue())}
+                    value={value === null ? '' : asString(value)}
+                    onChange={v => onChange(definition.key, v)}
                 />
             );
         }
@@ -301,10 +193,9 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
         isOpen,
         onSave,
         onCancel,
-        error,
         manifest,
         params,
-        fieldErrors,
+        errors,
         onParamChange,
         timezones,
         size,
@@ -316,17 +207,15 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
     if (!manifest) return null;
 
     const showSizeSelector = !!sizeOptions && sizeOptions.length > 0 && !!onSizeChange && size != null;
+    const fieldErrors = (errors?.fields ?? {}) as Record<string, string[] | undefined>;
+    const hasFieldErrors = Object.values(fieldErrors).some(errs => errs?.some(Boolean));
+    const globalErrors = errors?.global?.filter(Boolean) ?? [];
+    const showGlobalError = !hasFieldErrors && globalErrors.length > 0;
 
     const form = (
         <Form className={css.form}>
             {showSizeSelector ? (
-                <WidgetSizeSelector
-                    field={{
-                        value: size,
-                        options: sizeOptions,
-                        onChange: onSizeChange,
-                    }}
-                />
+                <WidgetSizeSelector field={{ value: size, options: sizeOptions, onChange: onSizeChange }} />
             ) : null}
 
             {manifest.params.map(def => (
@@ -334,8 +223,8 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
                     key={def.key}
                     id={$(`param-${def.key}`)}
                     definition={def}
-                    value={params[def.key] ?? defaultParamValue(def)}
-                    error={fieldErrors?.[def.key]}
+                    value={params[def.key] ?? null}
+                    error={fieldErrors[def.key]?.[0]}
                     onChange={onParamChange}
                     timezones={timezones}
                 />
@@ -343,14 +232,14 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
 
             <CheckYourScreenForPreview />
 
-            {error ? (
+            {showGlobalError ? (
                 <InlineNotification
                     kind="error"
                     theme="inverse"
                     stretch
                     hideCloseButton
                     title={formatMessage({ defaultMessage: 'Error' })}
-                    children={error}
+                    children={pb.renderFieldErrorsAsList(globalErrors)}
                 />
             ) : null}
         </Form>
@@ -373,6 +262,7 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
                     kind="primary"
                     children={formatMessage({ defaultMessage: 'Done' })}
                     onClick={onSave}
+                    disabled={hasFormErrors(errors ?? undefined)}
                 />
             }
         />

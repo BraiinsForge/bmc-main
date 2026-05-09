@@ -4,6 +4,7 @@ import { action } from 'storybook/actions';
 
 import * as pb from '@/proto';
 import { create } from '@/proto';
+import type { FormifiedParams, FormifiedValue, ParamsFormErrors } from '../../fn';
 import { FormWidgetManifest as Component, type FormWidgetManifestProps } from './FormWidgetManifest';
 
 export default {
@@ -30,14 +31,13 @@ function manifestWith(...params: pb.ManifestParamDefinition[]): pb.WidgetManifes
 
 function Demo(props: {
     manifest: pb.WidgetManifest;
-    initialParams?: Record<string, pb.WidgetDataValue>;
-    error?: string | null;
-    fieldErrors?: Record<string, string>;
+    initialParams?: FormifiedParams;
+    errors?: ParamsFormErrors | null;
     size?: pb.WidgetSize;
     sizeOptions?: FormWidgetManifestProps['sizeOptions'];
 }) {
-    const { manifest, initialParams, error, fieldErrors, size, sizeOptions } = props;
-    const [params, setParams] = useState<Record<string, pb.WidgetDataValue>>(initialParams ?? {});
+    const { manifest, initialParams, errors, size, sizeOptions } = props;
+    const [params, setParams] = useState<FormifiedParams>(initialParams ?? {});
     const [currentSize, setCurrentSize] = useState<pb.WidgetSize | undefined>(size);
 
     return (
@@ -45,17 +45,11 @@ function Demo(props: {
             isOpen
             onSave={action('onSave')}
             onCancel={action('onCancel')}
-            error={error ?? null}
             manifest={manifest}
             params={params}
-            fieldErrors={fieldErrors}
-            onParamChange={(key, value) => {
-                setParams(prev => {
-                    const next = { ...prev };
-                    if (value === undefined) delete next[key];
-                    else next[key] = value;
-                    return next;
-                });
+            errors={errors ?? null}
+            onParamChange={(key: string, value: FormifiedValue) => {
+                setParams(prev => ({ ...prev, [key]: value }));
             }}
             timezones={TIMEZONES}
             size={currentSize}
@@ -251,11 +245,13 @@ export const KitchenSink = () => (
         )}
         size={pb.WidgetSize.MEDIUM}
         sizeOptions={[pb.WidgetSize.SMALL, pb.WidgetSize.MEDIUM, pb.WidgetSize.LARGE]}
-        error="Example inline error to exercise the InlineNotification chrome."
-        fieldErrors={{
-            label: 'Label is required.',
-            refreshSeconds: 'Must be between 1 and 600.',
-            scale: 'Scale is out of range.',
+        errors={{
+            global: ['Example inline error to exercise the InlineNotification chrome.'],
+            fields: {
+                label: ['Label is required.'],
+                refreshSeconds: ['Must be between 1 and 600.'],
+                scale: ['Scale is out of range.'],
+            },
         }}
     />
 );

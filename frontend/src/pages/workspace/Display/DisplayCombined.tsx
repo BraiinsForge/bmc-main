@@ -6,6 +6,7 @@ import { useParams, useNavigate, type NavigateFunction } from 'react-router';
 
 // Libs
 import * as fn from './fn';
+import type { FormifiedParams, FormifiedValue, ParamsFormErrors } from './fn';
 import { getID } from './const';
 import { toast } from '@/lib/toast';
 import { delay } from '@/lib/async';
@@ -31,14 +32,13 @@ type CombinedSize = Exclude<pb.WidgetSize, pb.WidgetSize.UNSPECIFIED>;
 interface ManifestFormState {
     manifest: null | pb.WidgetManifest;
     widgetID: string;
-    params: Record<string, pb.WidgetDataValue>;
-    fieldErrors: Record<string, string>;
-    error: Maybe<string>;
+    params: FormifiedParams;
+    errors: null | ParamsFormErrors;
     size: pb.WidgetSize;
     sizeOptions: CombinedSize[];
     position: pb.WidgetPosition;
     anchorPosition: pb.WidgetPosition;
-    originalParams: Record<string, pb.WidgetDataValue>;
+    originalParams: FormifiedParams;
     originalSize: pb.WidgetSize;
     isNewWidget: boolean;
 }
@@ -76,8 +76,7 @@ const getInitialState = (): State => ({
         manifest: null,
         widgetID: '',
         params: {},
-        fieldErrors: {},
-        error: null,
+        errors: null,
         size: pb.WidgetSize.SMALL,
         sizeOptions: [],
         position: pb.create(pb.WidgetPositionSchema),
@@ -284,7 +283,7 @@ class View extends Component<Props, State> {
             return;
         }
 
-        const params = fn.widgetParamsToFormState(widget.config?.params);
+        const params = fn.widgetParamsToFormifiedState(manifest, widget.config?.params);
         const position = widget.position ?? pb.create(pb.WidgetPositionSchema);
         const sizeOptions = this.#computeSizeOptions(manifest, { id, position });
 
@@ -294,8 +293,7 @@ class View extends Component<Props, State> {
                 manifest,
                 widgetID: id,
                 params,
-                fieldErrors: {},
-                error: null,
+                errors: null,
                 size: widget.size,
                 sizeOptions,
                 position,
@@ -366,7 +364,7 @@ class View extends Component<Props, State> {
             const widget =
                 scene?.kind.case === 'combined' ? scene.kind.value.widgets.find(w => w.id === newWidgetId) : undefined;
 
-            const resolvedParams = fn.widgetParamsToFormState(widget?.config?.params);
+            const resolvedParams = fn.widgetParamsToFormifiedState(manifest, widget?.config?.params);
             const resolvedPosition = widget?.position ?? canonicalPosition;
             const resolvedSize = widget?.size ?? size;
 
@@ -376,8 +374,7 @@ class View extends Component<Props, State> {
                     manifest,
                     widgetID: newWidgetId,
                     params: resolvedParams,
-                    fieldErrors: {},
-                    error: null,
+                    errors: null,
                     size: resolvedSize,
                     sizeOptions,
                     position: resolvedPosition,
@@ -400,7 +397,12 @@ class View extends Component<Props, State> {
         const { sceneId } = this.props;
         const { widgetID, position, size, params, manifest } = this.state.manifestForm;
         if (!widgetID || !manifest) return;
-        const paramsStruct = fn.formStateToWidgetDataStruct(manifest, params);
+        const built = fn.buildWidgetDataStruct(manifest, params);
+        if (!built.ok) {
+            this.setState(s => ({ manifestForm: { ...s.manifestForm, errors: built.errors } }));
+            return;
+        }
+        const paramsStruct = built.value;
         try {
             await pb.rpc.scenes.updateWidget({
                 id: widgetID,
@@ -411,17 +413,12 @@ class View extends Component<Props, State> {
             });
         } catch ($) {
             if (pb.abort.is($)) return;
-            const { fieldErrors, error } = fn.mapManifestUpdateError($);
-            this.setState(s => ({
-                manifestForm: { ...s.manifestForm, fieldErrors, error },
-            }));
+            const errors = fn.mapManifestUpdateError($);
+            this.setState(s => ({ manifestForm: { ...s.manifestForm, errors } }));
             return;
         }
         this.setState(s => {
-            const manifestForm =
-                s.manifestForm.error || Object.keys(s.manifestForm.fieldErrors).length > 0
-                    ? { ...s.manifestForm, fieldErrors: {}, error: null }
-                    : s.manifestForm;
+            const manifestForm = s.manifestForm.errors ? { ...s.manifestForm, errors: null } : s.manifestForm;
             if (s.scene?.kind.case !== 'combined') return { ...s, manifestForm };
             const widgets = s.scene.kind.value.widgets.map(w =>
                 w.id === widgetID
@@ -442,23 +439,18 @@ class View extends Component<Props, State> {
         });
     }, 300);
 
-    #handleManifestParamChange = (key: string, value: pb.WidgetDataValue | undefined): void => {
+    #handleManifestParamChange = (key: string, value: FormifiedValue): void => {
         this.setState(
             s => {
-                const params = { ...s.manifestForm.params };
-                const fieldErrors = { ...s.manifestForm.fieldErrors };
-                if (value === undefined) {
-                    delete params[key];
-                } else {
-                    params[key] = value;
-                }
-                delete fieldErrors[key];
+                const def = s.manifestForm.manifest?.params.find(p => p.key === key);
+                const errors = def
+                    ? fn.revalidateField(s.manifestForm.errors, def, value)
+                    : fn.clearFieldError(s.manifestForm.errors, key);
                 return {
                     manifestForm: {
                         ...s.manifestForm,
-                        params,
-                        fieldErrors,
-                        error: null,
+                        params: { ...s.manifestForm.params, [key]: value },
+                        errors,
                     },
                 };
             },
@@ -493,6 +485,12 @@ class View extends Component<Props, State> {
             return;
         }
 
+        const built = fn.buildWidgetDataStruct(manifest, params);
+        if (!built.ok) {
+            this.setState(s => ({ manifestForm: { ...s.manifestForm, errors: built.errors } }));
+            return;
+        }
+
         try {
             this.#livePreviewWidget.cancel();
             await pb.rpc.scenes.updateWidget({
@@ -500,32 +498,15 @@ class View extends Component<Props, State> {
                 sceneId,
                 position,
                 size,
-                params: fn.formStateToWidgetDataStruct(manifest, params),
+                params: built.value,
             });
 
             this.setState({ openDialogKind: null, addPosition: null });
             this.#loadSceneDebounced();
         } catch ($) {
             if (pb.abort.is($)) return;
-            const known = ['params'];
-            const { global, fields } = pb.parseFormErrors($, known);
-            const paramsFieldErrors = fields.params as Maybe<Record<string, string[]>>;
-            const fieldErrors: Record<string, string> = {};
-            if (paramsFieldErrors) {
-                for (const [rawKey, errs] of Object.entries(paramsFieldErrors)) {
-                    const key = rawKey.replaceAll('"', '').replaceAll("'", '');
-                    const msg = pb.renderFieldErrorsAsList(errs);
-                    if (msg) fieldErrors[key] = msg;
-                }
-            }
-            const error = pb.renderFieldErrorsAsList(global);
-            this.setState(s => ({
-                manifestForm: {
-                    ...s.manifestForm,
-                    fieldErrors,
-                    error,
-                },
-            }));
+            const errors = fn.mapManifestUpdateError($);
+            this.setState(s => ({ manifestForm: { ...s.manifestForm, errors } }));
         }
     };
 
@@ -554,13 +535,15 @@ class View extends Component<Props, State> {
         }
 
         if (!manifest) return;
+        const built = fn.buildWidgetDataStruct(manifest, originalParams);
+        if (!built.ok) return;
         try {
             await pb.rpc.scenes.updateWidget({
                 id: widgetID,
                 sceneId: this.props.sceneId,
                 position,
                 size: originalSize,
-                params: fn.formStateToWidgetDataStruct(manifest, originalParams),
+                params: built.value,
             });
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -686,10 +669,9 @@ class View extends Component<Props, State> {
                     isOpen={openDialogKind === 'manifest'}
                     onSave={this.#handleManifestFormDone}
                     onCancel={this.#openDialogCancel}
-                    error={manifestForm.error}
                     manifest={manifestForm.manifest}
                     params={manifestForm.params}
-                    fieldErrors={manifestForm.fieldErrors}
+                    errors={manifestForm.errors}
                     onParamChange={this.#handleManifestParamChange}
                     timezones={this.state.timezones}
                     size={manifestForm.size}
