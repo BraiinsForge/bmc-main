@@ -413,8 +413,15 @@ class View extends Component<Props, State> {
             });
         } catch ($) {
             if (pb.abort.is($)) return;
+            const { formatMessage } = this.props.intl;
             const errors = fn.mapManifestUpdateError($);
             this.setState(s => ({ manifestForm: { ...s.manifestForm, errors } }));
+
+            if (errors.global.length) {
+                let msg = pb.renderFieldErrorsAsList(errors.global);
+                msg ||= formatMessage({ defaultMessage: 'Failed to update widget!' });
+                toast.error(msg);
+            }
             return;
         }
         this.setState(s => {
@@ -492,6 +499,7 @@ class View extends Component<Props, State> {
         }
 
         try {
+            const { formatMessage } = this.props.intl;
             this.#livePreviewWidget.cancel();
             await pb.rpc.scenes.updateWidget({
                 id: widgetID,
@@ -501,12 +509,20 @@ class View extends Component<Props, State> {
                 params: built.value,
             });
 
+            toast.success(formatMessage({ defaultMessage: 'Widget updated!' }));
             this.setState({ openDialogKind: null, addPosition: null });
             this.#loadSceneDebounced();
         } catch ($) {
             if (pb.abort.is($)) return;
+            const { formatMessage } = this.props.intl;
             const errors = fn.mapManifestUpdateError($);
             this.setState(s => ({ manifestForm: { ...s.manifestForm, errors } }));
+
+            if (errors.global.length) {
+                let msg = pb.renderFieldErrorsAsList(errors.global);
+                msg ||= formatMessage({ defaultMessage: 'Failed to update widget!' });
+                toast.error(msg);
+            }
         }
     };
 

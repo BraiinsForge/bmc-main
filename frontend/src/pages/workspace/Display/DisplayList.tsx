@@ -350,8 +350,15 @@ class View extends Component<Props, State> {
             });
         } catch ($) {
             if (pb.abort.is($)) return;
+            const { formatMessage } = this.props.intl;
             const errors = fn.mapManifestUpdateError($);
             this.setState(s => ({ manifestForm: { ...s.manifestForm, errors } }));
+
+            if (errors.global.length) {
+                let msg = pb.renderFieldErrorsAsList(errors.global);
+                msg ||= formatMessage({ defaultMessage: 'Failed to update widget!' });
+                toast.error(msg);
+            }
             return;
         }
         this.setState(s => {
@@ -396,6 +403,7 @@ class View extends Component<Props, State> {
         }
 
         try {
+            const { formatMessage } = this.props.intl;
             const scene = this.#getScene(sceneID);
             const widget = scene?.kind.case === 'fullscreen' ? scene.kind.value.widget : undefined;
 
@@ -407,13 +415,21 @@ class View extends Component<Props, State> {
                 params: built.value,
             });
 
+            toast.success(formatMessage({ defaultMessage: 'Widget updated!' }));
             this.abortPreview.abort();
             this.setState({ openDialogKind: null });
             this.#loadScenesDebounced();
         } catch ($) {
             if (pb.abort.is($)) return;
+            const { formatMessage } = this.props.intl;
             const errors = fn.mapManifestUpdateError($);
             this.setState(s => ({ manifestForm: { ...s.manifestForm, errors } }));
+
+            if (errors.global.length) {
+                let msg = pb.renderFieldErrorsAsList(errors.global);
+                msg ||= formatMessage({ defaultMessage: 'Failed to update widget!' });
+                toast.error(msg);
+            }
         }
     };
 
