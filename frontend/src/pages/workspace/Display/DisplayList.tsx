@@ -42,6 +42,7 @@ interface ManifestFormState {
     params: FormifiedParams;
     errors: null | ParamsFormErrors;
     isNewScene: boolean;
+    originalParams: FormifiedParams;
 }
 
 interface Props {
@@ -93,6 +94,7 @@ const getInitialState = (): State => ({
         params: {},
         errors: null,
         isNewScene: false,
+        originalParams: {},
     },
 });
 
@@ -250,6 +252,7 @@ class View extends Component<Props, State> {
                     params,
                     errors: null,
                     isNewScene: true,
+                    originalParams: {},
                 },
             });
             this.#loadScenesDebounced();
@@ -274,19 +277,40 @@ class View extends Component<Props, State> {
     #openDialogCancel = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
         const { manifestForm } = this.state;
+        const { sceneID, widgetID, manifest, originalParams, isNewScene } = manifestForm;
+        this.#liveUpdateWidget.cancel();
         this.abortPreview.abort();
         this.setState({ openDialogKind: null });
 
-        if (manifestForm.isNewScene && manifestForm.sceneID) {
+        if (isNewScene && sceneID) {
             try {
-                await pb.rpc.scenes.removeScene({ value: manifestForm.sceneID });
+                await pb.rpc.scenes.removeScene({ value: sceneID });
                 this.#loadScenesDebounced();
             } catch ($) {
                 if (pb.abort.is($)) return;
                 let msg = pb.collectAllErrorsAsFormattedList($);
-                msg ||= formatMessage({ defaultMessage: 'Failed to remove widget!' });
+                msg ||= formatMessage({ defaultMessage: 'Failed to remove scene!' });
                 toast.error(msg);
             }
+            return;
+        }
+
+        if (!manifest || !widgetID || !sceneID) return;
+        const built = fn.buildWidgetDataStruct(manifest, originalParams);
+        if (!built.ok) return;
+        try {
+            await pb.rpc.scenes.updateWidget({
+                id: widgetID,
+                sceneId: sceneID,
+                position: { row: 0, col: 0 },
+                size: pb.WidgetSize.FULL,
+                params: built.value,
+            });
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to revert widget!' });
+            toast.error(msg);
         }
     };
 
@@ -633,6 +657,7 @@ class View extends Component<Props, State> {
                             params,
                             errors: null,
                             isNewScene: false,
+                            originalParams: { ...params },
                         },
                     },
                     () => this.#previewOpen(id),

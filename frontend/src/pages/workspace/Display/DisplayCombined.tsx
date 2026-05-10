@@ -545,6 +545,7 @@ class View extends Component<Props, State> {
                 size: originalSize,
                 params: built.value,
             });
+            this.#loadSceneDebounced();
         } catch ($) {
             if (pb.abort.is($)) return;
             let msg = pb.collectAllErrorsAsFormattedList($);
