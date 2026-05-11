@@ -34,6 +34,10 @@ clippy:
       --all-targets -- \
         -D warnings
 
+# Run nextest for a single crate with mem-box caps
+test crate:
+    scripts/mem-box.sh cargo nextest run -p {{ crate }}
+
 # Pedantic rust diff vs master — stricter than clippy (mem-box caps memory).
 rust-pedantic:
     scripts/mem-box.sh nix run "git+ssh://git@gitlab.ii.zone/nix/ci-tools?rev={{ CI_TOOLS_REV }}#check-rust-diff" \

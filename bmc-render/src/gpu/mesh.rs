@@ -260,6 +260,28 @@ pub struct UploadedMesh {
     label_color: [f32; 4],
 }
 
+impl UploadedMesh {
+    /// Release every GL handle owned by this mesh (VBO, IBO, optional diffuse
+    /// texture, optional normal map).
+    ///
+    /// # Safety
+    /// The caller must ensure a current GL context matching `gl` and that no
+    /// outstanding draw call still references these handles. After this call
+    /// the `UploadedMesh` must not be used again.
+    pub unsafe fn drop_gl(&self, gl: &glow::Context) {
+        unsafe {
+            gl.delete_buffer(self.vbo);
+            gl.delete_buffer(self.ibo);
+            if let Some(tex) = self.texture {
+                gl.delete_texture(tex);
+            }
+            if let Some(nmap) = self.normal_map {
+                gl.delete_texture(nmap);
+            }
+        }
+    }
+}
+
 // ── MeshRenderer ────────────────────────────────────────────────────
 
 /// Offscreen GL renderer for 3D meshes using a single atlas FBO.
@@ -802,16 +824,54 @@ impl MeshRenderer {
             }
             gl.delete_program(self.program);
             for m in self.meshes.iter().flatten() {
-                gl.delete_buffer(m.vbo);
-                gl.delete_buffer(m.ibo);
-                if let Some(tex) = m.texture {
-                    gl.delete_texture(tex);
-                }
-                if let Some(nmap) = m.normal_map {
-                    gl.delete_texture(nmap);
-                }
+                m.drop_gl(gl);
             }
         }
+    }
+
+    /// Evict a single tag's mesh: drop its GL handles and clear the storage
+    /// slot. The `MeshId` returned by earlier `register_mesh(tag, …)` calls
+    /// becomes invalid; subsequent renders that reference it no-op safely
+    /// because the slot is now `None`. The atlas pixels last drawn under that
+    /// slot remain until something else redraws.
+    ///
+    /// Returns `true` if a tag was found and evicted, `false` otherwise.
+    ///
+    /// IDs are not recycled — registering a fresh tag after eviction allocates
+    /// a new storage slot. Slot recycling is a separate concern from resource
+    /// release and is not implemented here.
+    pub fn evict(&mut self, gl: &glow::Context, tag: &str) -> bool {
+        let Some(id) = self.by_tag.remove(tag) else {
+            return false;
+        };
+        let idx = mesh_id_to_storage_index(id);
+        let Some(slot) = self.meshes.get_mut(idx) else {
+            return false;
+        };
+        let Some(mesh) = slot.take() else {
+            return false;
+        };
+        unsafe { mesh.drop_gl(gl) };
+        true
+    }
+
+    /// Evict every tag whose key starts with `prefix`. Returns the number of
+    /// tags removed.
+    pub fn evict_prefix(&mut self, gl: &glow::Context, prefix: &str) -> usize {
+        // Collect first; can't mutate `by_tag` while iterating it.
+        let tags: Vec<String> = self
+            .by_tag
+            .keys()
+            .filter(|k| k.starts_with(prefix))
+            .cloned()
+            .collect();
+        let mut n = 0;
+        for tag in tags {
+            if self.evict(gl, &tag) {
+                n += 1;
+            }
+        }
+        n
     }
 }
 
@@ -1054,6 +1114,197 @@ mod profile {
                 cma_free = s.cma_free_kb,
                 mem_free = s.mem_free_kb,
             );
+        }
+    }
+}
+
+// ── Tests ──────────────────────────────────────────────────────────
+//
+// Linux-only: the test harness boots a real headless GLES 2.0 context via
+// EGL + Mesa llvmpipe (same path used by the `capture` binary). Other
+// platforms would need their own headless GL bootstrap; for now BDK-458
+// only cares about correctness on the device target, which mirrors Linux.
+#[cfg(test)]
+#[cfg(target_os = "linux")]
+mod tests {
+    use super::UploadedMesh;
+    use glow::HasContext;
+
+    /// Real headless GL context (EGL surfaceless + ES 2.0 via Mesa
+    /// llvmpipe). Keeps the EGL display / surface / context alive for the
+    /// duration of the test via the `_keepalive` field.
+    struct GlHarness {
+        gl: glow::Context,
+        _keepalive: Box<dyn std::any::Any>,
+    }
+
+    fn create_headless_gl() -> anyhow::Result<GlHarness> {
+        use std::ffi::CString;
+        use std::num::NonZeroU32;
+
+        use anyhow::{Context as _, anyhow};
+        use glutin::config::{ConfigSurfaceTypes, ConfigTemplateBuilder};
+        use glutin::context::{ContextApi, ContextAttributesBuilder, Version};
+        use glutin::display::{Display, GetGlDisplay};
+        use glutin::prelude::*;
+        use glutin::surface::{PbufferSurface, SurfaceAttributesBuilder};
+
+        let devices: Vec<_> = glutin::api::egl::device::Device::query_devices()
+            .context("EGL device enumeration not supported")?
+            .collect();
+        let device = devices
+            .iter()
+            .find(|d| d.extensions().contains("EGL_MESA_device_software"))
+            .or_else(|| devices.first())
+            .ok_or_else(|| anyhow!("no EGL devices found"))?;
+        let egl_display = unsafe { glutin::api::egl::display::Display::with_device(device, None) }
+            .context("failed to create EGL display")?;
+        let display = Display::Egl(egl_display);
+
+        let template = ConfigTemplateBuilder::new()
+            .with_surface_type(ConfigSurfaceTypes::PBUFFER)
+            .build();
+        let gl_config = unsafe { display.find_configs(template) }
+            .map_err(|e| anyhow!("find_configs failed: {e}"))?
+            .next()
+            .ok_or_else(|| anyhow!("no GL configs"))?;
+        let gl_display = gl_config.display();
+
+        let context_attrs = ContextAttributesBuilder::new()
+            .with_context_api(ContextApi::Gles(Some(Version::new(2, 0))))
+            .build(None);
+        let gl_context = unsafe {
+            gl_display
+                .create_context(&gl_config, &context_attrs)
+                .context("create_context failed")?
+        };
+
+        let surface_attrs = SurfaceAttributesBuilder::<PbufferSurface>::new().build(
+            NonZeroU32::new(1).expect("BUG: const 1 is non-zero"),
+            NonZeroU32::new(1).expect("BUG: const 1 is non-zero"),
+        );
+        let surface = unsafe {
+            gl_display
+                .create_pbuffer_surface(&gl_config, &surface_attrs)
+                .context("create_pbuffer_surface failed")?
+        };
+        let gl_context = gl_context
+            .make_current(&surface)
+            .context("make_current failed")?;
+
+        let gl = unsafe {
+            glow::Context::from_loader_function(|s| {
+                gl_display.get_proc_address(&CString::new(s).unwrap_or_default())
+            })
+        };
+
+        Ok(GlHarness {
+            gl,
+            _keepalive: Box::new((surface, gl_context)),
+        })
+    }
+
+    /// Allocate a buffer and bind it once so `gl.is_buffer` reports `true`.
+    /// Per the GLES 2.0 spec, names returned by `glGenBuffers` only become
+    /// "real" buffers (queryable by `glIsBuffer`) once first bound.
+    fn create_real_buffer(gl: &glow::Context, target: u32) -> glow::Buffer {
+        let buf = unsafe { gl.create_buffer() }.expect("BUG: create_buffer failed");
+        unsafe {
+            gl.bind_buffer(target, Some(buf));
+            gl.bind_buffer(target, None);
+        }
+        buf
+    }
+
+    /// Allocate a texture and bind it once — same reason as above:
+    /// `glIsTexture` only returns true after first bind.
+    fn create_real_texture(gl: &glow::Context) -> glow::Texture {
+        let tex = unsafe { gl.create_texture() }.expect("BUG: create_texture failed");
+        unsafe {
+            gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+            gl.bind_texture(glow::TEXTURE_2D, None);
+        }
+        tex
+    }
+
+    /// Build an `UploadedMesh` whose GL handles are real, freshly allocated
+    /// objects (not wrapped in any draw state). Used to verify `drop_gl`
+    /// releases them all.
+    fn build_test_mesh(
+        gl: &glow::Context,
+        with_texture: bool,
+        with_normal_map: bool,
+    ) -> UploadedMesh {
+        UploadedMesh {
+            vbo: create_real_buffer(gl, glow::ARRAY_BUFFER),
+            ibo: create_real_buffer(gl, glow::ELEMENT_ARRAY_BUFFER),
+            index_count: 0,
+            texture: with_texture.then(|| create_real_texture(gl)),
+            normal_map: with_normal_map.then(|| create_real_texture(gl)),
+            has_uvs: false,
+            has_tangents: false,
+            is_msdf: false,
+            body_color: [0.0; 4],
+            label_color: [0.0; 4],
+        }
+    }
+
+    #[test]
+    fn drop_gl_releases_all_handles() {
+        let harness = create_headless_gl().expect("BUG: headless GL setup failed");
+        let gl = &harness.gl;
+
+        let mesh = build_test_mesh(gl, true, true);
+        let vbo = mesh.vbo;
+        let ibo = mesh.ibo;
+        let texture = mesh.texture.expect("BUG: texture should be Some");
+        let normal_map = mesh.normal_map.expect("BUG: normal_map should be Some");
+
+        unsafe {
+            assert!(gl.is_buffer(vbo), "BUG: vbo should be live before drop");
+            assert!(gl.is_buffer(ibo), "BUG: ibo should be live before drop");
+            assert!(
+                gl.is_texture(texture),
+                "BUG: texture should be live before drop"
+            );
+            assert!(
+                gl.is_texture(normal_map),
+                "BUG: normal_map should be live before drop",
+            );
+        }
+
+        unsafe { mesh.drop_gl(gl) };
+
+        unsafe {
+            assert!(!gl.is_buffer(vbo), "BUG: vbo leaked past drop_gl");
+            assert!(!gl.is_buffer(ibo), "BUG: ibo leaked past drop_gl");
+            assert!(!gl.is_texture(texture), "BUG: texture leaked past drop_gl");
+            assert!(
+                !gl.is_texture(normal_map),
+                "BUG: normal_map leaked past drop_gl",
+            );
+        }
+    }
+
+    #[test]
+    fn drop_gl_handles_optional_textures() {
+        let harness = create_headless_gl().expect("BUG: headless GL setup failed");
+        let gl = &harness.gl;
+
+        let mesh = build_test_mesh(gl, false, false);
+        let vbo = mesh.vbo;
+        let ibo = mesh.ibo;
+
+        unsafe {
+            assert!(gl.is_buffer(vbo), "BUG: vbo should be live before drop");
+            assert!(gl.is_buffer(ibo), "BUG: ibo should be live before drop");
+        }
+
+        unsafe { mesh.drop_gl(gl) };
+
+        unsafe {
+            assert!(!gl.is_buffer(vbo), "BUG: vbo leaked past drop_gl");
+            assert!(!gl.is_buffer(ibo), "BUG: ibo leaked past drop_gl");
         }
     }
 }

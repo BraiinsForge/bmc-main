@@ -28,6 +28,11 @@ taffy.workspace = true
 bmc-icon-compiler = { path = "../bmc-wasm-runtime/icon-compiler" }
 bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# Headless GL setup for integration tests
+# (mirrors the `capture` binary's llvmpipe-via-EGL path).
+glutin.workspace = true
+
 [features]
 default = []
 profiling = ["ii-stopwatch/enabled"]
