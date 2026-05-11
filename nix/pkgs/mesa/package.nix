@@ -107,6 +107,9 @@ stdenv.mkDerivation {
   # Keep build-ids so drivers can use them for caching, etc.
   # Also some drivers segfault without this.
   separateDebugInfo = true;
+
+  # Strip symbol tables from libraries to reduce size.
+  stripAllList = [ "lib" ];
   __structuredAttrs = true;
 
   env.MESON_PACKAGE_CACHE_DIR = packageCache;
@@ -128,6 +131,10 @@ stdenv.mkDerivation {
   # llvm, install-mesa-clc, install-precomp-compiler, tools).
   mesonFlags = [
     "--sysconfdir=/etc"
+
+    # Size optimization
+    "--buildtype=release"
+    "--optimization=s"
 
     # What to build
     (lib.mesonOption "platforms" (lib.concatStringsSep "," eglPlatforms))
