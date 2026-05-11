@@ -1028,9 +1028,7 @@ name = "bmc-button"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-stream",
  "futures",
- "tokio",
 ]
 
 [[package]]
@@ -1081,12 +1079,6 @@ name = "bmc-kobject"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-stream",
- "futures",
- "log",
- "merge-streams",
- "netlink-sys",
- "tokio",
 ]
 
 [[package]]
@@ -1143,7 +1135,6 @@ dependencies = [
  "file-rotate",
  "libc",
  "reqwest",
- "semver",
  "serde",
  "serde_json",
  "tempfile",
@@ -1243,12 +1234,10 @@ dependencies = [
  "bmc-platform",
  "bmc-shared-time",
  "bmc-support",
- "bmc-upgrade",
  "bmc-widget-protocol",
  "calloop 0.14.2",
  "clap",
  "drm",
- "drm-fourcc",
  "file-rotate",
  "flume",
  "futures",
@@ -1261,12 +1250,9 @@ dependencies = [
  "input 0.10.0",
  "libc",
  "log",
- "memmap2",
  "merge-streams",
  "netlink-sys",
- "pnet",
  "pw_hash",
- "rand 0.9.1",
  "serde",
  "serde_json",
  "smithay",
@@ -1276,8 +1262,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "url",
- "ux",
 ]
 
 [[package]]
@@ -1644,7 +1628,6 @@ dependencies = [
  "bmc-ipc",
  "bmc-widget-protocol",
  "drm-fourcc",
- "futures",
  "gbm 0.17.0",
  "glow 0.16.0",
  "indexmap",
@@ -1655,8 +1638,6 @@ dependencies = [
  "smithay",
  "tempfile",
  "thiserror 1.0.69",
- "tokio",
- "tokio-util",
  "tracing",
  "uuid",
  "wayland-backend",

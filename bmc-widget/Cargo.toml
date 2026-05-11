@@ -19,15 +19,12 @@ gpu = [
 anyhow = { workspace = true }
 bmc-ipc = { workspace = true }
 bmc-widget-protocol = { workspace = true }
-futures = { workspace = true }
 indexmap = { workspace = true }
 libc = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
-tokio-util = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 

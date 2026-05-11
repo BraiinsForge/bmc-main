@@ -20,12 +20,10 @@ bmc-shared-ii-net.workspace = true
 bmc-shared-ii-net-drv.workspace = true
 bmc-shared-time.workspace = true
 bmc-support.workspace = true
-bmc-upgrade.workspace = true
 bmc-widget-protocol.workspace = true
 calloop.workspace = true
 clap.workspace = true
 drm.workspace = true
-drm-fourcc.workspace = true
 file-rotate.workspace = true
 flume.workspace = true
 futures.workspace = true
@@ -36,12 +34,9 @@ ii-stopwatch.workspace = true
 input.workspace = true
 libc.workspace = true
 log.workspace = true
-memmap2.workspace = true
 merge-streams.workspace = true
 netlink-sys = { workspace = true, features = ["tokio_socket"] }
-pnet.workspace = true
 pw_hash.workspace = true
-rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smithay.workspace = true
@@ -51,8 +46,6 @@ time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-url.workspace = true
-ux.workspace = true
 
 [features]
 profiling = ["ii-stopwatch/enabled"]
