@@ -113,6 +113,49 @@ impl BitmapRegistry {
         for bitmap in self.bitmaps.drain().map(|(_, bitmap)| bitmap) {
             canvas.delete_image(bitmap.image_id);
         }
+        self.by_tag.clear();
+    }
+
+    /// Evict a single tag's bitmap: drop the FemtoVG image and remove the
+    /// entry. Returns `true` if a tag was found and removed.
+    ///
+    /// IDs are not recycled — registering a fresh tag after eviction
+    /// allocates a new ID via `next_id`.
+    pub fn evict(
+        &mut self,
+        tag: &str,
+        canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
+    ) -> bool {
+        let Some(id) = self.by_tag.remove(tag) else {
+            return false;
+        };
+        let Some(stored) = self.bitmaps.remove(&id) else {
+            return false;
+        };
+        canvas.delete_image(stored.image_id);
+        true
+    }
+
+    /// Evict every tag whose key starts with `prefix`. Returns the number of
+    /// tags removed.
+    pub fn evict_prefix(
+        &mut self,
+        prefix: &str,
+        canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
+    ) -> usize {
+        let tags: Vec<String> = self
+            .by_tag
+            .keys()
+            .filter(|k| k.starts_with(prefix))
+            .cloned()
+            .collect();
+        let mut n = 0;
+        for tag in tags {
+            if self.evict(&tag, canvas) {
+                n += 1;
+            }
+        }
+        n
     }
 
     /// Sample the average RGBA color of a rectangular region within a registered bitmap.
@@ -351,4 +394,82 @@ pub fn draw_bitmap(
     let mut path = Path::new();
     path.rect(x, y, w, h);
     canvas.fill_path(&path, &paint);
+}
+
+#[cfg(test)]
+#[cfg(target_os = "linux")]
+mod tests {
+    use super::*;
+    use crate::test_harness::GlHarness;
+
+    /// 1×1 transparent RGBA PNG, encoded each call to keep the test
+    /// self-contained (no embedded fixture bytes to drift).
+    fn minimal_png() -> Vec<u8> {
+        use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
+        use std::io::Cursor;
+
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_pixel(1, 1, Rgba([0, 0, 0, 0]));
+        let mut buf = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(img)
+            .write_to(&mut buf, ImageFormat::Png)
+            .expect("BUG: PNG encode should succeed");
+        buf.into_inner()
+    }
+
+    #[test]
+    fn evict_removes_tag_id_and_image() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut reg = BitmapRegistry::new();
+        let png = minimal_png();
+
+        let id = reg
+            .register("crate::bmp", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: register should succeed");
+        assert!(reg.get(id).is_some());
+
+        assert!(reg.evict("crate::bmp", &mut canvas));
+        assert!(reg.get(id).is_none());
+        // Idempotent: a second evict on the same tag is a no-op.
+        assert!(!reg.evict("crate::bmp", &mut canvas));
+    }
+
+    #[test]
+    fn evict_prefix_only_touches_matching_tags() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut reg = BitmapRegistry::new();
+        let png = minimal_png();
+
+        let _ = reg
+            .register("a::1", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: a::1");
+        let _ = reg
+            .register("a::2", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: a::2");
+        let id_b = reg
+            .register("b::1", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: b::1");
+
+        assert_eq!(reg.evict_prefix("a::", &mut canvas), 2);
+        assert!(reg.get(id_b).is_some());
+    }
+
+    #[test]
+    fn register_after_evict_uses_fresh_id() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut reg = BitmapRegistry::new();
+        let png = minimal_png();
+
+        let id1 = reg
+            .register("ephemeral", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: first register");
+        assert!(reg.evict("ephemeral", &mut canvas));
+        let id2 = reg
+            .register("ephemeral", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: re-register");
+        // IDs are not recycled — eviction frees resources, not slots.
+        assert_ne!(id1, id2);
+    }
 }

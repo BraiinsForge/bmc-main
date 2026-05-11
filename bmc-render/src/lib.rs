@@ -37,6 +37,9 @@ pub mod profile;
 pub mod renderer;
 pub mod tree;
 
+#[cfg(all(test, target_os = "linux"))]
+mod test_harness;
+
 // Re-export colors and color macro from protocol crate
 pub mod colors {
     pub use bmc_wasm_protocol::colors::*;

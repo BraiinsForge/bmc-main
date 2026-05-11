@@ -124,6 +124,37 @@ impl IconRegistry {
     pub fn get(&self, id: IconId) -> Option<&RegisteredIcon> {
         self.icons.get(&id)
     }
+
+    /// Evict a tag-registered icon. Returns `true` if a tag was found and
+    /// removed. Built-in icons (registered via `register_with_id`, no tag)
+    /// are unaffected.
+    ///
+    /// IDs are not recycled — registering a fresh tag after eviction
+    /// allocates a new ID via `next_id`.
+    pub fn evict(&mut self, tag: &str) -> bool {
+        let Some(id) = self.by_tag.remove(tag) else {
+            return false;
+        };
+        self.icons.remove(&id).is_some()
+    }
+
+    /// Evict every tag whose key starts with `prefix`. Returns the number of
+    /// tags removed.
+    pub fn evict_prefix(&mut self, prefix: &str) -> usize {
+        let tags: Vec<String> = self
+            .by_tag
+            .keys()
+            .filter(|k| k.starts_with(prefix))
+            .cloned()
+            .collect();
+        let mut n = 0;
+        for tag in tags {
+            if self.evict(&tag) {
+                n += 1;
+            }
+        }
+        n
+    }
 }
 
 /// Render a registered icon onto the canvas.
@@ -306,5 +337,70 @@ impl IconReader<'_> {
 
     fn read_f32(&mut self) -> anyhow::Result<f32> {
         Ok(f32::from_bits(self.read_u32()?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Smallest valid icon binary: viewbox 100×100, zero paths.
+    fn minimal_icon() -> Vec<u8> {
+        let mut buf = Vec::with_capacity(10);
+        buf.extend_from_slice(&100.0_f32.to_le_bytes());
+        buf.extend_from_slice(&100.0_f32.to_le_bytes());
+        buf.extend_from_slice(&0_u16.to_le_bytes());
+        buf
+    }
+
+    #[test]
+    fn evict_removes_tag_and_id() {
+        let mut reg = IconRegistry::new();
+        let data = minimal_icon();
+
+        let id = reg
+            .register("crate::icon", &data)
+            .expect("BUG: register should succeed");
+        assert!(reg.get(id).is_some());
+
+        assert!(reg.evict("crate::icon"));
+        assert!(reg.get(id).is_none());
+        // Idempotent: second evict is a no-op.
+        assert!(!reg.evict("crate::icon"));
+    }
+
+    #[test]
+    fn evict_prefix_only_touches_matching_tags() {
+        let mut reg = IconRegistry::new();
+        let data = minimal_icon();
+
+        let id_a1 = reg.register("a::1", &data).expect("BUG: register a::1");
+        let id_a2 = reg.register("a::2", &data).expect("BUG: register a::2");
+        let id_b1 = reg.register("b::1", &data).expect("BUG: register b::1");
+
+        assert_eq!(reg.evict_prefix("a::"), 2);
+        assert!(reg.get(id_a1).is_none());
+        assert!(reg.get(id_a2).is_none());
+        assert!(reg.get(id_b1).is_some());
+    }
+
+    #[test]
+    fn evict_does_not_touch_register_with_id_entries() {
+        let mut reg = IconRegistry::new();
+        let data = minimal_icon();
+        let builtin = IconId::from_wire(ICON_RESERVED_MIN).expect("BUG: reserved id ctor");
+
+        reg.register_with_id(builtin, &data);
+        let user = reg
+            .register("user::foo", &data)
+            .expect("BUG: user register");
+
+        assert!(reg.get(builtin).is_some());
+        assert!(reg.get(user).is_some());
+
+        assert!(reg.evict("user::foo"));
+        assert!(reg.get(user).is_none());
+        // Built-in icons have no `by_tag` entry, so prefix sweeps don't reach them.
+        assert!(reg.get(builtin).is_some());
     }
 }

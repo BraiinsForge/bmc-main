@@ -1119,113 +1119,12 @@ mod profile {
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
-//
-// Linux-only: the test harness boots a real headless GLES 2.0 context via
-// EGL + Mesa llvmpipe (same path used by the `capture` binary). Other
-// platforms would need their own headless GL bootstrap; for now BDK-458
-// only cares about correctness on the device target, which mirrors Linux.
 #[cfg(test)]
 #[cfg(target_os = "linux")]
 mod tests {
     use super::UploadedMesh;
+    use crate::test_harness::{GlHarness, create_real_buffer, create_real_texture};
     use glow::HasContext;
-
-    /// Real headless GL context (EGL surfaceless + ES 2.0 via Mesa
-    /// llvmpipe). Keeps the EGL display / surface / context alive for the
-    /// duration of the test via the `_keepalive` field.
-    struct GlHarness {
-        gl: glow::Context,
-        _keepalive: Box<dyn std::any::Any>,
-    }
-
-    fn create_headless_gl() -> anyhow::Result<GlHarness> {
-        use std::ffi::CString;
-        use std::num::NonZeroU32;
-
-        use anyhow::{Context as _, anyhow};
-        use glutin::config::{ConfigSurfaceTypes, ConfigTemplateBuilder};
-        use glutin::context::{ContextApi, ContextAttributesBuilder, Version};
-        use glutin::display::{Display, GetGlDisplay};
-        use glutin::prelude::*;
-        use glutin::surface::{PbufferSurface, SurfaceAttributesBuilder};
-
-        let devices: Vec<_> = glutin::api::egl::device::Device::query_devices()
-            .context("EGL device enumeration not supported")?
-            .collect();
-        let device = devices
-            .iter()
-            .find(|d| d.extensions().contains("EGL_MESA_device_software"))
-            .or_else(|| devices.first())
-            .ok_or_else(|| anyhow!("no EGL devices found"))?;
-        let egl_display = unsafe { glutin::api::egl::display::Display::with_device(device, None) }
-            .context("failed to create EGL display")?;
-        let display = Display::Egl(egl_display);
-
-        let template = ConfigTemplateBuilder::new()
-            .with_surface_type(ConfigSurfaceTypes::PBUFFER)
-            .build();
-        let gl_config = unsafe { display.find_configs(template) }
-            .map_err(|e| anyhow!("find_configs failed: {e}"))?
-            .next()
-            .ok_or_else(|| anyhow!("no GL configs"))?;
-        let gl_display = gl_config.display();
-
-        let context_attrs = ContextAttributesBuilder::new()
-            .with_context_api(ContextApi::Gles(Some(Version::new(2, 0))))
-            .build(None);
-        let gl_context = unsafe {
-            gl_display
-                .create_context(&gl_config, &context_attrs)
-                .context("create_context failed")?
-        };
-
-        let surface_attrs = SurfaceAttributesBuilder::<PbufferSurface>::new().build(
-            NonZeroU32::new(1).expect("BUG: const 1 is non-zero"),
-            NonZeroU32::new(1).expect("BUG: const 1 is non-zero"),
-        );
-        let surface = unsafe {
-            gl_display
-                .create_pbuffer_surface(&gl_config, &surface_attrs)
-                .context("create_pbuffer_surface failed")?
-        };
-        let gl_context = gl_context
-            .make_current(&surface)
-            .context("make_current failed")?;
-
-        let gl = unsafe {
-            glow::Context::from_loader_function(|s| {
-                gl_display.get_proc_address(&CString::new(s).unwrap_or_default())
-            })
-        };
-
-        Ok(GlHarness {
-            gl,
-            _keepalive: Box::new((surface, gl_context)),
-        })
-    }
-
-    /// Allocate a buffer and bind it once so `gl.is_buffer` reports `true`.
-    /// Per the GLES 2.0 spec, names returned by `glGenBuffers` only become
-    /// "real" buffers (queryable by `glIsBuffer`) once first bound.
-    fn create_real_buffer(gl: &glow::Context, target: u32) -> glow::Buffer {
-        let buf = unsafe { gl.create_buffer() }.expect("BUG: create_buffer failed");
-        unsafe {
-            gl.bind_buffer(target, Some(buf));
-            gl.bind_buffer(target, None);
-        }
-        buf
-    }
-
-    /// Allocate a texture and bind it once — same reason as above:
-    /// `glIsTexture` only returns true after first bind.
-    fn create_real_texture(gl: &glow::Context) -> glow::Texture {
-        let tex = unsafe { gl.create_texture() }.expect("BUG: create_texture failed");
-        unsafe {
-            gl.bind_texture(glow::TEXTURE_2D, Some(tex));
-            gl.bind_texture(glow::TEXTURE_2D, None);
-        }
-        tex
-    }
 
     /// Build an `UploadedMesh` whose GL handles are real, freshly allocated
     /// objects (not wrapped in any draw state). Used to verify `drop_gl`
@@ -1251,7 +1150,7 @@ mod tests {
 
     #[test]
     fn drop_gl_releases_all_handles() {
-        let harness = create_headless_gl().expect("BUG: headless GL setup failed");
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
         let gl = &harness.gl;
 
         let mesh = build_test_mesh(gl, true, true);
@@ -1288,7 +1187,7 @@ mod tests {
 
     #[test]
     fn drop_gl_handles_optional_textures() {
-        let harness = create_headless_gl().expect("BUG: headless GL setup failed");
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
         let gl = &harness.gl;
 
         let mesh = build_test_mesh(gl, false, false);
