@@ -6,7 +6,7 @@ use anyhow::Result;
 use bmc_wasm_protocol::AudioId;
 use wasmi::{Caller, Linker};
 
-use crate::host_api::{AudioSample, FixtureEvent, FixtureEventKind, HostState};
+use crate::host_api::{FixtureEvent, FixtureEventKind, HostState};
 
 use super::super::memory::{read_bytes, read_string};
 
@@ -33,10 +33,8 @@ fn register_register_audio_import(linker: &mut Linker<HostState>) -> Result<()> 
             let name =
                 read_string(&caller, name_ptr, name_len).unwrap_or_else(|| "unknown".to_owned());
 
-            // Idempotent by name: a second registration with the same tag
-            // returns the cached ID without re-decoding.
-            if let Some(existing) = caller.data().audio_id_by_name.get(&name) {
-                return existing.to_wire().into();
+            if let Some(id) = caller.data().audio.get_by_tag(&name) {
+                return id.to_wire().into();
             }
 
             #[cfg(feature = "audio")]
@@ -51,17 +49,10 @@ fn register_register_audio_import(linker: &mut Linker<HostState>) -> Result<()> 
             #[cfg(not(feature = "audio"))]
             let duration_ms = 0_u32;
 
-            let state = caller.data_mut();
-            let id = AudioId::alloc(&mut state.next_audio_id);
-            state.audio_samples.insert(
-                id,
-                AudioSample {
-                    data: data.into(),
-                    name: name.clone(),
-                    duration_ms,
-                },
-            );
-            state.audio_id_by_name.insert(name, id);
+            let id = caller
+                .data_mut()
+                .audio
+                .register(name, data.into(), duration_ms);
             id.to_wire().into()
         },
     )?;
@@ -81,9 +72,13 @@ fn register_audio_play_import(linker: &mut Linker<HostState>) -> Result<()> {
             let Some(id) = AudioId::from_wire(raw) else {
                 return;
             };
-            let Some(sample) = state.audio_samples.get(&id) else {
+            let Some(sample) = state.audio.get(id) else {
                 return;
             };
+
+            let sample_name = sample.name.clone();
+            let sample_duration_ms = sample.duration_ms;
+            let data = sample.data.clone();
 
             if state.record_events {
                 state.recorded_events.push(FixtureEvent {
@@ -91,13 +86,11 @@ fn register_audio_play_import(linker: &mut Linker<HostState>) -> Result<()> {
                     kind: FixtureEventKind::AudioPlay {
                         sound_id: id,
                         volume,
-                        name: sample.name.clone(),
-                        duration_ms: sample.duration_ms,
+                        name: sample_name,
+                        duration_ms: sample_duration_ms,
                     },
                 });
             }
-
-            let data = sample.data.clone();
 
             #[cfg(feature = "audio")]
             {
@@ -114,9 +107,7 @@ fn register_audio_play_import(linker: &mut Linker<HostState>) -> Result<()> {
                     sink.set_volume(vol);
                     sink.append(decoder);
 
-                    let sinks = state.audio_sinks.entry(id).or_default();
-                    sinks.retain(|s| !s.empty());
-                    sinks.push(sink);
+                    state.audio.push_sink(id, sink);
                 }
             }
 
@@ -131,25 +122,14 @@ fn register_audio_stop_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_audio_stop",
-        |caller: Caller<'_, HostState>, sound_id: u32| {
-            #[cfg(feature = "audio")]
-            {
-                let mut caller = caller;
-                let state = caller.data_mut();
-                let Ok(raw) = u16::try_from(sound_id) else {
-                    return;
-                };
-                let Some(id) = AudioId::from_wire(raw) else {
-                    return;
-                };
-                if let Some(sinks) = state.audio_sinks.remove(&id) {
-                    for sink in sinks {
-                        sink.stop();
-                    }
-                }
-            }
-            #[cfg(not(feature = "audio"))]
-            let _ = (caller, sound_id);
+        |mut caller: Caller<'_, HostState>, sound_id: u32| {
+            let Ok(raw) = u16::try_from(sound_id) else {
+                return;
+            };
+            let Some(id) = AudioId::from_wire(raw) else {
+                return;
+            };
+            caller.data_mut().audio.stop(id);
         },
     )?;
     Ok(())

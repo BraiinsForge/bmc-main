@@ -720,6 +720,15 @@ impl Renderer for FemtoVgRenderer {
     fn height(&self) -> f32 {
         self.height
     }
+
+    fn evict_prefix(&mut self, prefix: &str) -> usize {
+        let mut n = self.icon_registry.evict_prefix(prefix);
+        n += self.bitmap_registry.evict_prefix(prefix, &mut self.canvas);
+        if let Some(mesh) = self.mesh_renderer.as_mut() {
+            n += mesh.evict_prefix(&self.gl, prefix);
+        }
+        n
+    }
 }
 
 /// Build a FemtoVG `Path` from a sequence of points.

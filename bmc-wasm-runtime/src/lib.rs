@@ -93,6 +93,7 @@
 mod runtime_limits;
 mod xml;
 
+mod audio_registry;
 mod host_api;
 #[cfg(feature = "perf-overlay")]
 pub mod perf_overlay;

@@ -214,4 +214,11 @@ pub trait Renderer {
     fn flush(&mut self);
     fn width(&self) -> f32;
     fn height(&self) -> f32;
+
+    // -- Eviction --
+
+    /// Drop every icon, bitmap, and mesh registered under a tag that starts
+    /// with `prefix`, releasing the associated GPU resources.
+    /// Returns the total count of evicted entries across all three registries.
+    fn evict_prefix(&mut self, prefix: &str) -> usize;
 }

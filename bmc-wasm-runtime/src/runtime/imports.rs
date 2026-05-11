@@ -4,6 +4,7 @@
 
 mod audio;
 mod data;
+mod eviction;
 mod led;
 mod network;
 mod render;
@@ -21,5 +22,6 @@ pub(super) fn register_host_functions(linker: &mut Linker<HostState>) -> Result<
     system::register(linker)?;
     audio::register(linker)?;
     led::register(linker)?;
+    eviction::register(linker)?;
     Ok(())
 }

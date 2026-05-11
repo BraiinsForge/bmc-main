@@ -19,6 +19,7 @@ use taffy::prelude::*;
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::interaction::InteractionState;
+use bmc_render::renderer::Renderer;
 use bmc_render::tree::NodeContext;
 use bmc_render::{AnimationState, ModalState, ScrollState, TransitionState};
 use bmc_wasm_protocol::{
@@ -26,6 +27,7 @@ use bmc_wasm_protocol::{
     MdnsBrowseId, MdnsRegId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, XmlId,
 };
 
+use crate::audio_registry::AudioRegistry;
 use crate::runtime_limits::RuntimeResourceLimits;
 use crate::xml::XmlDocumentIndex;
 
@@ -123,6 +125,7 @@ pub enum FixtureEventKind {
 }
 
 /// A registered audio sample with metadata.
+#[derive(Debug)]
 pub struct AudioSample {
     /// Raw encoded audio data (WAV/OGG/MP3).
     pub data: Arc<[u8]>,
@@ -564,25 +567,14 @@ pub(crate) struct HostState {
     /// Sender for LED commands. `None` when LED control is unavailable.
     pub led_command_sender: Option<mpsc::Sender<bmc_led::data::LedCommand>>,
 
-    /// Registered audio samples (raw encoded bytes), keyed by audio ID.
-    /// The host stores the original encoded data and decodes on each play.
-    pub audio_samples: HashMap<AudioId, AudioSample>,
-
-    /// Tag → `AudioId` lookup for idempotent registration.
-    pub audio_id_by_name: HashMap<String, AudioId>,
-
-    /// Next audio ID counter (for `AudioId::alloc`).
-    pub next_audio_id: u16,
+    /// Registered audio samples + tag dedup + active playback sinks.
+    /// The host stores original encoded data and decodes on each play.
+    pub audio: AudioRegistry,
 
     /// Audio output stream — must stay alive for the entire session.
     /// `None` if audio output is unavailable (headless, no ALSA, etc.).
     #[cfg(feature = "audio")]
     pub audio_stream: Option<(rodio::OutputStream, rodio::OutputStreamHandle)>,
-
-    /// Active audio sinks keyed by sound ID. Allows overlapping plays of the
-    /// same sound and per-ID stop. Finished sinks are lazily pruned on play.
-    #[cfg(feature = "audio")]
-    pub audio_sinks: HashMap<AudioId, Vec<rodio::Sink>>,
 }
 
 impl HostState {
@@ -647,9 +639,7 @@ impl HostState {
             resource_limits,
             rng_state: None, // None = auto-seed on first use (from monotonic_ms)
             led_command_sender: None,
-            audio_samples: HashMap::new(),
-            audio_id_by_name: HashMap::new(),
-            next_audio_id: 1,
+            audio: AudioRegistry::new(),
             #[cfg(feature = "audio")]
             audio_stream: {
                 match rodio::OutputStream::try_default() {
@@ -662,8 +652,6 @@ impl HostState {
                     }
                 }
             },
-            #[cfg(feature = "audio")]
-            audio_sinks: HashMap::new(),
         }
     }
 
@@ -677,6 +665,13 @@ impl HostState {
         self.delayed_fetches
             .len()
             .saturating_add(self.in_flight_fetches as usize)
+    }
+
+    /// Evict every host-side asset (icon, bitmap, mesh, audio sample +
+    /// matching playback sinks) whose tag starts with `prefix`.
+    /// Returns the total count of evicted entries across all four registries.
+    pub fn evict_prefix(&mut self, prefix: &str) -> usize {
+        self.renderer.evict_prefix(prefix) + self.audio.evict_prefix(prefix)
     }
 }
 
