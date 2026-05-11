@@ -183,6 +183,10 @@ pub struct WasmWidgetRuntime {
     pub(super) store: wasmi::Store<HostState>,
     pub(super) instance: wasmi::Instance,
     render_func: wasmi::TypedFunc<u32, ()>,
+    /// Optional guest export called best-effort during teardown.
+    /// Symmetric counterpart to `init`; gives a widget a chance to release
+    /// its own ephemeral state before the host-side safety sweep runs.
+    unload_func: Option<wasmi::TypedFunc<(), ()>>,
     sdk_version: (u16, u16, u16),
     /// Instruction budget reset before each WASM frame execution.
     pub(super) fuel_per_frame: u64,
@@ -263,6 +267,7 @@ impl WasmWidgetRuntime {
         let instance = linker.instantiate_and_start(&mut store, &module)?;
         let sdk_version = check_sdk_version(instance, &mut store)?;
         let render_func = instance.get_typed_func::<u32, ()>(&store, "render")?;
+        let unload_func = instance.get_typed_func::<(), ()>(&store, "unload").ok();
 
         // Apply config before init() so interceptors/KV are available immediately.
         let state = store.data_mut();
@@ -294,6 +299,7 @@ impl WasmWidgetRuntime {
             store,
             instance,
             render_func,
+            unload_func,
             sdk_version,
             fuel_per_frame,
             fuel_strikes: 0,
@@ -622,5 +628,25 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn instance(&self) -> &wasmi::Instance {
         &self.instance
+    }
+}
+
+impl Drop for WasmWidgetRuntime {
+    fn drop(&mut self) {
+        // Best-effort guest cleanup hook: if the widget exported `unload`,
+        // call it with a fresh fuel budget. Any trap (including out-of-fuel)
+        // is logged and swallowed — the host-side safety sweep below runs
+        // unconditionally and is the authoritative cleanup path.
+        if let Some(unload) = self.unload_func {
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                tracing::warn!("unload: could not set fuel: {e}");
+            } else if let Err(e) = unload.call(&mut self.store, ()) {
+                tracing::warn!("unload trapped: {e}");
+            }
+        }
+        let evicted = self.store.data_mut().evict_widget();
+        if evicted > 0 {
+            tracing::debug!("widget teardown evicted {evicted} asset(s)");
+        }
     }
 }

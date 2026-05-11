@@ -710,6 +710,14 @@ impl HostState {
     pub fn namespaced_tag(&self, tag: &str) -> String {
         format!("{}:{tag}", self.guest_id)
     }
+
+    /// Evict every host-side asset belonging to this widget instance.
+    /// Returns the total count of evicted entries across all four registries.
+    /// Used as the safety sweep in `WasmWidgetRuntime`'s `Drop`.
+    pub fn evict_widget(&mut self) -> usize {
+        let prefix = self.guest_id.to_string();
+        self.evict_prefix(&prefix)
+    }
 }
 
 #[cfg(test)]
