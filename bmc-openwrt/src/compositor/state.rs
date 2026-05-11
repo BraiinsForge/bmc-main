@@ -396,6 +396,22 @@ impl CompositorState {
         self.render_surfaces.remove(instance_id);
     }
 
+    /// Eagerly invalidates textures on disconnect rather than waiting
+    /// for `buffer_destroyed` to fire when the dead client is reaped.
+    /// A late `buffer_destroyed` for the same buffer will push a
+    /// duplicate id; `invalidate_textures` tolerates duplicates
+    /// (a re-invalidate of an already-evicted texture is a no-op).
+    pub fn drop_widget_buffers(&mut self, instance_id: &InstanceId) {
+        let removed: Vec<_> = self
+            .widget_buffers
+            .extract_if(.., |(_, id)| id == instance_id)
+            .collect();
+
+        for (buffer, _) in removed {
+            self.invalidated_buffers.push(buffer.id());
+        }
+    }
+
     fn surface_client_pid(&self, surface: &WlSurface) -> Option<u32> {
         let client = surface.client()?;
         let credentials = client.get_credentials(&self.display_handle).ok()?;

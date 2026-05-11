@@ -1273,6 +1273,9 @@ fn process_protocol_events(state: &mut AppState) {
         state
             .compositor
             .drop_widget_render_surface(&disconnected.instance_id);
+        state
+            .compositor
+            .drop_widget_buffers(&disconnected.instance_id);
         tracing::info!("Widget disconnected: {}", disconnected.instance_id);
         let _ = state.event_tx.send(CompositorEvent::WidgetDisconnected {
             instance_id: disconnected.instance_id,
