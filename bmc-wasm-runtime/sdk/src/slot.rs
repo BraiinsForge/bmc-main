@@ -7,9 +7,19 @@
 //! under that name and registers the new payload; `evict()` drops the
 //! current registration without re-registering.
 //!
-//! Use for assets whose content changes during the widget's lifetime —
-//! album art, dynamic charts, anything you'd otherwise leak by registering
-//! each variant under a fresh tag.
+//! # When to use a Slot vs an `include_*!` macro
+//!
+//! - **Static asset** baked in at compile time (icons, UI bitmaps, sound
+//!   effects that ship with the widget): use `include_bitmap!` /
+//!   `include_icon!` / `include_mesh!` / `include_audio!` and the matching
+//!   `ensure_*_registered` helper. The host dedups by the macro-emitted
+//!   tag, so repeated calls are free.
+//! - **Dynamic asset** whose bytes are fetched at runtime and change over
+//!   time (album art, dynamically generated charts, downloaded skins):
+//!   use a Slot. Each `set(bytes)` releases the previous payload's memory
+//!   and GPU resources before registering the new one — without a Slot
+//!   (or an equivalent manual `evict_prefix`), each variant would
+//!   accumulate forever.
 //!
 //! Slot names participate in the host's segment-delimited namespace, so
 //! `BitmapSlot::new("album_art")` and `BitmapSlot::new("album_art_thumb")`

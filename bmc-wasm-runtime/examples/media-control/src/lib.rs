@@ -123,20 +123,11 @@ thread_local! {
     static ACTIVE_SKIN: RefCell<ActiveSkin> = RefCell::new(ActiveSkin {
         source: None, button: None, slider: None, background: None, art_frame: None, resolved: true,
     });
-    /// Monotonic counter for album-art bitmap tags. Album art is dynamic (per
-    /// fetch / per song) and has no stable identity, so each registration uses
-    /// a fresh tag rather than trying to dedup.
-    static ALBUM_ART_COUNTER: Cell<u64> = const { Cell::new(0) };
 }
 
-fn next_album_art_tag() -> String {
-    let n = ALBUM_ART_COUNTER.with(|c| {
-        let n = c.get().wrapping_add(1);
-        c.set(n);
-        n
-    });
-    format!("media-control::album-art::{n}")
-}
+/// Dynamic album-art bitmap. `set(bytes)` evicts the previous song's image
+/// (memory + GPU texture) and registers the new one under the same tag.
+static ALBUM_ART: BitmapSlot = BitmapSlot::new("album_art");
 
 /// Set the active skin. Pass `None` for baseline rendering.
 fn set_active_skin(skin: Option<&'static Skin>) {
@@ -1169,11 +1160,14 @@ fn fetch_album_art(url: &str) {
 }
 
 /// Clear album art and accent background on the current media state.
+/// Releases the host-side bitmap so a stop/disconnect doesn't leave the
+/// decoded RGBA + GL texture parked indefinitely.
 fn clear_album_art(media: &mut MediaState) {
     if media.art_bitmap_id.is_some() {
         media.art_bitmap_id = None;
         media.art_url.clear();
         media.accent_bg = GRAY_100;
+        ALBUM_ART.evict();
     }
 }
 
@@ -1800,8 +1794,7 @@ fn on_mute(response: &FetchResponse) {
 
 fn on_album_art(response: &FetchResponse) {
     if response.ok() && !response.body().is_empty() {
-        let tag = next_album_art_tag();
-        let Some(bitmap_id) = host::register_bitmap(&tag, response.body()) else {
+        let Some(bitmap_id) = ALBUM_ART.set(response.body()) else {
             return;
         };
         // Get natural dimensions for aspect ratio (lightweight — no RGBA allocation)
@@ -2060,8 +2053,7 @@ fn on_mpd_art(data: &[u8]) {
     if data.is_empty() {
         return;
     }
-    let tag = next_album_art_tag();
-    let Some(bitmap_id) = host::register_bitmap(&tag, data) else {
+    let Some(bitmap_id) = ALBUM_ART.set(data) else {
         return;
     };
     let aspect = host::image_dimensions(data)

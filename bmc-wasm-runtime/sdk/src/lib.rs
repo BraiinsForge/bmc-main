@@ -86,6 +86,8 @@ pub use mesh::*;
 pub use net::*;
 pub use number_input::*;
 pub use orientation::Orientation;
+#[cfg(target_arch = "wasm32")]
+pub use slot::*;
 pub use tree::*;
 pub use ufmt;
 #[cfg(target_arch = "wasm32")]
