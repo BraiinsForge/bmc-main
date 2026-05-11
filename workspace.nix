@@ -107,6 +107,12 @@ let
   x86Pkgs = pkgs.extend (lib.composeExtensions
     (mesaOverlay { galliumDrivers = vmGalliumDrivers; })
     applianceOverlay);
+
+  # Narrow pkgs overlay for the `ci` build profile: just Mesa with
+  # llvmpipe so headless GL tests can run in the Nix sandbox. Doesn't
+  # pull in `applianceOverlay`, so we don't drag compositor-runtime
+  # mutations through the test env.
+  ciPkgs = pkgs.extend (mesaOverlay { galliumDrivers = [ "llvmpipe" ]; });
   aarch64Pkgs = pkgs.pkgsCross.aarch64-multiplatform.extend (final: prev:
     # Same cross-splicing guard as armv7Pkgs — libinput and the
     # compositorUdev marker only belong on the cross-target side.
@@ -233,7 +239,7 @@ let
   };
 
   bmc = {
-    armv7-pkgs = armv7Pkgs;
+    armv7-nixpkgs = armv7Pkgs;
     lib = import ./nix/lib.nix { inherit pkgs lib armv7Pkgs; };
     crates = import ./nix/crates.nix { inherit (pkgs.ii.rust) defineCrate; };
     workspaces = {
@@ -243,7 +249,7 @@ let
     };
     profiles = import ./nix/profiles.nix {
       inherit (bmc) workspaces;
-      inherit pkgs armv7Pkgs x86Pkgs aarch64Pkgs;
+      inherit rustflags pkgs armv7Pkgs x86Pkgs aarch64Pkgs ciPkgs;
     };
   };
 
@@ -354,7 +360,7 @@ let
 
   specialPackages = {
     workspace-deps = bmc.profiles.fast.deps;
-    inherit (bmc.profiles.fast) build clippy test nextest;
+    inherit (bmc.profiles.ci) build clippy test nextest;
   } // (
     # bmc-openwrt + bmc-virt helper packages for x86_64 and aarch64.
     # bmc-openwrt needs autopatchelf for compositor runtime deps (dlopen'd).
@@ -531,7 +537,6 @@ in
   checks = frontend.checks;
   packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // initArtifacts // {
     deck-packages = armv7PackageDefs;
-    armv7-nixpkgs = armv7Pkgs;
     inherit bmc-video-play-armv7;
     bmc-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-mock { };
     bmc-nix-init-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-init-mock { };

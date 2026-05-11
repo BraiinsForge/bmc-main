@@ -142,7 +142,7 @@
 
         legacyPackages = {
           inherit pkgs;
-          inherit (workspace.bmc) armv7-pkgs;
+          inherit (workspace.bmc) armv7-nixpkgs;
         };
 
         checks = self.packages.${localSystem} // workspace.checks // checks // {

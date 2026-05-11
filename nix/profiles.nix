@@ -1,7 +1,12 @@
 # profiles: Build profile definitions for all target platforms.
-{ workspaces, pkgs, armv7Pkgs, x86Pkgs, aarch64Pkgs }:
+{ rustflags, workspaces, pkgs, armv7Pkgs, x86Pkgs, aarch64Pkgs, ciPkgs }:
 let
-  # On x86_64 native, libgbm is a separate package (not part of mesa).
+  # `fast` builds against upstream `pkgs` (no mesaOverlay),
+  # so libgbm comes in as a separate package.
+  # bmc-mock fails to link without it.
+  #
+  # The `ci` and `x86_64-*` profiles use our custom Mesa (which bundles
+  # libgbm internally), so they don't go through this function.
   x86NativeTargetDeps = pkgs: with pkgs; [ libgbm ];
 
   mkX86 = attrs: workspaces.full.mkBuildProfile ({
@@ -29,6 +34,42 @@ in
       # explicit util-linux.
       util-linux
     ];
+  };
+  # CI profile: `fast` plus a working headless EGL stack
+  # so some tests can boot a real surfaceless context inside the Nix sandbox.
+  # Used by the `test` and `nextest` checks.
+  # The local `validate` loop sticks with `fast` to avoid the Mesa rebuild.
+  ci = workspaces.full.mkBuildProfile {
+    pkgs = ciPkgs;
+    targetDeps = pkgs: with pkgs; [ mesa ];
+    minimalDeps = false;
+    rustProfile = "fast";
+    allFeatures = true;
+    nativeDeps = pkgs: with pkgs; [ util-linux ];
+    env = {
+      # Force Mesa onto its software path.
+      #
+      # With no DRM/Wayland/X11 in the sandbox, surfaceless is
+      # the only EGL platform that can produce a display.
+      #
+      # llvmpipe is a gallium software driver that runs without a GPU.
+      # softpipe also works but is markedly slower; llvmpipe is the default for CI.
+      #
+      # LIBGL_ALWAYS_SOFTWARE keeps Mesa from short-circuiting back
+      # to a hardware path it can't actually use.
+      EGL_PLATFORM = "surfaceless";
+      MESA_LOADER_DRIVER_OVERRIDE = "llvmpipe";
+      LIBGL_ALWAYS_SOFTWARE = "1";
+    } // rustflags.makeRustflagsEnv {
+      # Embed `-Wl,-rpath,${mesa}/lib` into the produced test binaries
+      # so `libEGL.so.1` resolves at runtime.
+      #
+      # bmc-render doesn't list Mesa in its Cargo deps,
+      # and a `build.rs` rpath patch doesn't propagate to test binaries
+      # (only to library outputs).
+      runtimePackages = [ ciPkgs.mesa ];
+      rustCrossTarget = ciPkgs.stdenv.hostPlatform.rust.rustcTarget;
+    };
   };
   # musl profiles for statically linked binaries (bmc-nix-init-openwrt)
   armv7-musl-release = workspaces.minimal.mkBuildProfile {

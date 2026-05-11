@@ -13,6 +13,7 @@
 , libdisplay-info
 , libdrm
 , libunwind
+, llvmPackages
 , lm_sensors
 , spirv-tools
 , meson
@@ -44,6 +45,13 @@
 }:
 
 let
+  # `llvmpipe` is Mesa's software rasterizer,
+  # used by headless CI tests that need real GL without a GPU.
+  #
+  # It compiles SPIR-V via LLVM, so the LLVM stack
+  # only comes along on builds that select it.
+  needsLlvm = lib.elem "llvmpipe" galliumDrivers;
+
   # Mesa ≥26 fetches Rust dependencies via meson's wrap mechanism, looking
   # for `<pname>-<version>.tar.gz` files in `MESON_PACKAGE_CACHE_DIR`.
   # We mirror nixpkgs' approach: build the cache from `wraps.json`.
@@ -103,6 +111,13 @@ stdenv.mkDerivation {
 
   env.MESON_PACKAGE_CACHE_DIR = packageCache;
 
+  # llvmpipe's build invokes `llvm-config` from `$PATH`.
+  # The default Mesa build doesn't pull LLVM in,
+  # so put it on PATH only when we actually build llvmpipe.
+  preConfigure = lib.optionalString needsLlvm ''
+    PATH=${lib.getDev llvmPackages.libllvm}/bin:$PATH
+  '';
+
   # Minimal mesa for Vivante GC400 on the Deck:
   #   - one gallium driver (etnaviv)
   #   - one EGL platform (wayland)
@@ -137,7 +152,15 @@ stdenv.mkDerivation {
     (lib.mesonEnable "gallium-va" false)
 
     # LLVM is only needed for software pipes / OpenCL / radeonsi — not for etnaviv.
-    (lib.mesonEnable "llvm" false)
+    (lib.mesonEnable "llvm" needsLlvm)
+  ] ++ lib.optionals needsLlvm [
+    # Mesa locates Clang's runtime libs to drive its SPIR-V → CPU compile path
+    # for llvmpipe / OpenCL.
+    #
+    # Without this, the build picks up Clang from a path outside the closure
+    # and the produced llvmpipe driver fails to load.
+    (lib.mesonOption "clang-libdir" "${lib.getLib llvmPackages.clang-unwrapped}/lib")
+  ] ++ [
 
     # Default to all freedreno kernel mode drivers. Ignored when freedreno
     # is not being built (we only build etnaviv).
@@ -166,6 +189,8 @@ stdenv.mkDerivation {
     wayland-protocols
     zlib
     zstd
+  ] ++ lib.optionals needsLlvm [
+    llvmPackages.libllvm
   ];
 
   depsBuildBuild = [
