@@ -12,6 +12,8 @@ use lyon::path::iterator::PathIterator;
 use lyon::path::{Path, PathEvent};
 use lyon::tessellation::{BuffersBuilder, FillOptions, FillTessellator, FillVertex, VertexBuffers};
 
+use crate::font::FONT;
+
 /// Extrusion depth for 3D digits (in normalized coordinates)
 /// Larger value = thicker digits visible from the side
 const EXTRUSION_DEPTH: f32 = 0.35;
@@ -21,11 +23,6 @@ const EXTRUSION_DEPTH: f32 = 0.35;
 /// silhouette polygon — otherwise edges flicker white during rotation
 /// where the two meshes disagree by sub-pixel amounts.
 const FLATTEN_TOLERANCE: f32 = 0.1;
-
-/// Embedded font - Braiins Deck Sans Regular (weight 400)
-/// Note: OpenType features (ss04, liga) are not applied via ab_glyph
-/// We normalize digit geometry to fit in a -0.5 to 0.5 range (unit cube centered at origin)
-const FONT_DATA: &[u8] = include_bytes!("../../../assets/fonts/BraiinsDeckSans-Regular.otf");
 
 /// Vertex with position and normal for 3D rendering
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -56,13 +53,10 @@ pub struct Digit3DMeshes {
 impl Digit3DMeshes {
     /// Create 3D digit meshes
     pub fn new(gl: &glow::Context) -> Result<Self> {
-        let font = FontRef::try_from_slice(FONT_DATA)
-            .map_err(|e| anyhow::anyhow!("Failed to load font: {e}"))?;
-
         let mut meshes = Vec::with_capacity(10);
 
         for digit in 0..10_u8 {
-            let mesh = create_digit_mesh(gl, &font, digit)?;
+            let mesh = create_digit_mesh(gl, &FONT, digit)?;
             meshes.push(mesh);
         }
 
@@ -70,7 +64,7 @@ impl Digit3DMeshes {
             .try_into()
             .map_err(|_| anyhow::anyhow!("Failed to create mesh array"))?;
 
-        let colon = create_char_mesh(gl, &font, ':')?;
+        let colon = create_char_mesh(gl, &FONT, ':')?;
 
         // Create shader program for 3D lit rendering
         let program = create_3d_shader(gl)?;

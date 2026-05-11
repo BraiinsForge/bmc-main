@@ -8,13 +8,12 @@ use ab_glyph::{FontRef, PxScale};
 use anyhow::Result;
 use glow::HasContext;
 
+use crate::font::FONT;
+
 /// Width of each digit texture in pixels
 pub const DIGIT_WIDTH: u32 = 128;
 /// Height of each digit texture in pixels
 pub const DIGIT_HEIGHT: u32 = 256;
-
-/// Embedded font - Braiins Deck Sans Regular (weight 400)
-const FONT_DATA: &[u8] = include_bytes!("../../../assets/fonts/BraiinsDeckSans-Regular.otf");
 
 /// Digit textures (0-9)
 pub struct DigitTextures {
@@ -25,13 +24,10 @@ pub struct DigitTextures {
 impl DigitTextures {
     /// Create digit textures
     pub fn new(gl: &glow::Context) -> Result<Self> {
-        let font = FontRef::try_from_slice(FONT_DATA)
-            .map_err(|e| anyhow::anyhow!("Failed to load font: {e}"))?;
-
         let mut textures = Vec::with_capacity(10);
 
         for digit in 0..10 {
-            let texture = create_digit_texture(gl, &font, digit)?;
+            let texture = create_digit_texture(gl, &FONT, digit)?;
             textures.push(texture);
         }
 

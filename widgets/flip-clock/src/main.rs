@@ -8,6 +8,7 @@
 mod digits;
 mod digits3d;
 mod egl;
+mod font;
 mod layout;
 mod renderer;
 mod wayland;
