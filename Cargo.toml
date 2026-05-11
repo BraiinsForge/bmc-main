@@ -47,14 +47,13 @@ members = [
 
 [profile.release]
 strip = true
+lto = true
+codegen-units = 1
+opt-level = "s"
 
 [profile.dev]
 opt-level = 3
 strip = true
-
-[profile.lto]
-inherits = "release"
-lto = true
 
 [profile.profiling]
 inherits = "release"
