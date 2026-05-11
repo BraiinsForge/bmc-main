@@ -32,6 +32,7 @@ fn register_register_audio_import(linker: &mut Linker<HostState>) -> Result<()> 
             };
             let name =
                 read_string(&caller, name_ptr, name_len).unwrap_or_else(|| "unknown".to_owned());
+            let name = caller.data().namespaced_tag(&name);
 
             if let Some(id) = caller.data().audio.get_by_tag(&name) {
                 return id.to_wire().into();
@@ -122,14 +123,20 @@ fn register_audio_stop_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_audio_stop",
-        |mut caller: Caller<'_, HostState>, sound_id: u32| {
+        |caller: Caller<'_, HostState>, sound_id: u32| {
             let Ok(raw) = u16::try_from(sound_id) else {
                 return;
             };
             let Some(id) = AudioId::from_wire(raw) else {
                 return;
             };
-            caller.data_mut().audio.stop(id);
+            #[cfg(feature = "audio")]
+            {
+                let mut caller = caller;
+                caller.data_mut().audio.stop(id);
+            }
+            #[cfg(not(feature = "audio"))]
+            let _ = (caller, id);
         },
     )?;
     Ok(())

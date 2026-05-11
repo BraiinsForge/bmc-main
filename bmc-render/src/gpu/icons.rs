@@ -138,13 +138,14 @@ impl IconRegistry {
         self.icons.remove(&id).is_some()
     }
 
-    /// Evict every tag whose key starts with `prefix`. Returns the number of
-    /// tags removed.
+    /// Evict every tag matching `prefix` at segment boundaries (the tag is
+    /// either exactly `prefix` or a descendant under it).
+    /// Returns the number of tags removed.
     pub fn evict_prefix(&mut self, prefix: &str) -> usize {
         let tags: Vec<String> = self
             .by_tag
             .keys()
-            .filter(|k| k.starts_with(prefix))
+            .filter(|k| bmc_wasm_protocol::tag_matches_prefix(k, prefix))
             .cloned()
             .collect();
         let mut n = 0;
@@ -374,14 +375,32 @@ mod tests {
         let mut reg = IconRegistry::new();
         let data = minimal_icon();
 
-        let id_a1 = reg.register("a::1", &data).expect("BUG: register a::1");
-        let id_a2 = reg.register("a::2", &data).expect("BUG: register a::2");
-        let id_b1 = reg.register("b::1", &data).expect("BUG: register b::1");
+        let id_a1 = reg.register("a:1", &data).expect("BUG: register a:1");
+        let id_a2 = reg.register("a:2", &data).expect("BUG: register a:2");
+        let id_b1 = reg.register("b:1", &data).expect("BUG: register b:1");
 
-        assert_eq!(reg.evict_prefix("a::"), 2);
+        assert_eq!(reg.evict_prefix("a"), 2);
         assert!(reg.get(id_a1).is_none());
         assert!(reg.get(id_a2).is_none());
         assert!(reg.get(id_b1).is_some());
+    }
+
+    #[test]
+    fn evict_prefix_respects_segment_boundaries() {
+        let mut reg = IconRegistry::new();
+        let data = minimal_icon();
+
+        let id_foo = reg.register("foo", &data).expect("BUG: register foo");
+        let id_foobar = reg.register("foobar", &data).expect("BUG: register foobar");
+        let id_foo_child = reg
+            .register("foo:child", &data)
+            .expect("BUG: register foo:child");
+
+        // `foo` matches itself and `foo:child` but not the sibling `foobar`.
+        assert_eq!(reg.evict_prefix("foo"), 2);
+        assert!(reg.get(id_foo).is_none());
+        assert!(reg.get(id_foo_child).is_none());
+        assert!(reg.get(id_foobar).is_some());
     }
 
     #[test]

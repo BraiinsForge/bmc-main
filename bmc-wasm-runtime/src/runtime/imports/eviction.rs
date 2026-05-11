@@ -21,7 +21,9 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
             let Some(prefix) = read_string(&caller, prefix_ptr, prefix_len) else {
                 return 0;
             };
-            let evicted = caller.data_mut().evict_prefix(&prefix);
+            let state = caller.data_mut();
+            let prefix = state.namespaced_tag(&prefix);
+            let evicted = state.evict_prefix(&prefix);
             u32::try_from(evicted).unwrap_or(u32::MAX)
         },
     )?;

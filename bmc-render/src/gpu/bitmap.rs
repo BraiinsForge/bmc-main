@@ -136,8 +136,9 @@ impl BitmapRegistry {
         true
     }
 
-    /// Evict every tag whose key starts with `prefix`. Returns the number of
-    /// tags removed.
+    /// Evict every tag matching `prefix` at segment boundaries (the tag is
+    /// either exactly `prefix` or a descendant under it).
+    /// Returns the number of tags removed.
     pub fn evict_prefix(
         &mut self,
         prefix: &str,
@@ -146,7 +147,7 @@ impl BitmapRegistry {
         let tags: Vec<String> = self
             .by_tag
             .keys()
-            .filter(|k| k.starts_with(prefix))
+            .filter(|k| bmc_wasm_protocol::tag_matches_prefix(k, prefix))
             .cloned()
             .collect();
         let mut n = 0;
@@ -442,17 +443,40 @@ mod tests {
         let png = minimal_png();
 
         let _ = reg
-            .register("a::1", &png, &mut canvas, ImageFlags::empty())
-            .expect("BUG: a::1");
+            .register("a:1", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: a:1");
         let _ = reg
-            .register("a::2", &png, &mut canvas, ImageFlags::empty())
-            .expect("BUG: a::2");
+            .register("a:2", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: a:2");
         let id_b = reg
-            .register("b::1", &png, &mut canvas, ImageFlags::empty())
-            .expect("BUG: b::1");
+            .register("b:1", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: b:1");
 
-        assert_eq!(reg.evict_prefix("a::", &mut canvas), 2);
+        assert_eq!(reg.evict_prefix("a", &mut canvas), 2);
         assert!(reg.get(id_b).is_some());
+    }
+
+    #[test]
+    fn evict_prefix_respects_segment_boundaries() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut reg = BitmapRegistry::new();
+        let png = minimal_png();
+
+        let id_foo = reg
+            .register("foo", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: foo");
+        let id_foobar = reg
+            .register("foobar", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: foobar");
+        let id_foo_child = reg
+            .register("foo:child", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: foo:child");
+
+        assert_eq!(reg.evict_prefix("foo", &mut canvas), 2);
+        assert!(reg.get(id_foo).is_none());
+        assert!(reg.get(id_foo_child).is_none());
+        assert!(reg.get(id_foobar).is_some());
     }
 
     #[test]

@@ -105,6 +105,9 @@ mod ffi {
         // Bitmap sampling (average color of a region)
         fn host_bitmap_sample(bitmap_id: u32, x: u32, y: u32, w: u32, h: u32) -> u32;
 
+        // Tag-prefix eviction across icon, bitmap, mesh, and audio registries.
+        fn host_evict_prefix(prefix_ptr: *const u8, prefix_len: u32) -> u32;
+
         // Random number generation (host-seeded for deterministic replay)
         fn host_random_u32() -> u32;
     }
@@ -295,6 +298,15 @@ mod ffi {
     pub fn bitmap_sample(bitmap_id: BitmapId, x: u32, y: u32, w: u32, h: u32) -> Option<u32> {
         let result = unsafe { host_bitmap_sample(u32::from(bitmap_id.to_wire()), x, y, w, h) };
         if result == 0 { None } else { Some(result) }
+    }
+
+    /// Drop every host-side asset (icon, bitmap, mesh, audio) whose tag
+    /// starts with `prefix`. The host implicitly namespaces by guest ID,
+    /// so the prefix only sees this widget's own registrations.
+    /// Returns the number of entries evicted across all four registries.
+    #[expect(clippy::cast_possible_truncation)]
+    pub fn evict_prefix(prefix: &str) -> u32 {
+        unsafe { host_evict_prefix(prefix.as_ptr(), prefix.len() as u32) }
     }
 
     /// Get the dimensions of an image (PNG, JPEG, etc.) without decoding the full pixel data.

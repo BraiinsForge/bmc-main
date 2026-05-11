@@ -12,6 +12,7 @@ pub mod icon;
 pub mod ids;
 pub mod mesh;
 pub mod nodes;
+pub mod tags;
 pub mod text;
 pub mod version;
 
@@ -22,5 +23,6 @@ pub use icon::*;
 pub use ids::*;
 pub use mesh::*;
 pub use nodes::*;
+pub use tags::*;
 pub use text::*;
 pub use version::*;

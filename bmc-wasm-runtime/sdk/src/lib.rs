@@ -56,6 +56,8 @@ pub mod number_input;
 pub mod orientation;
 pub mod progress_bar;
 #[cfg(target_arch = "wasm32")]
+pub mod slot;
+#[cfg(target_arch = "wasm32")]
 pub mod socket;
 #[cfg(target_arch = "wasm32")]
 pub mod ssdp;

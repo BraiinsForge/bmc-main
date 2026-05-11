@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use std::sync::mpsc;
 
@@ -122,6 +123,27 @@ pub enum FixtureEventKind {
     },
     LedEnable,
     LedDisable,
+}
+
+/// Identifies a single `WasmWidgetRuntime` instance.
+///
+/// Minted from a process-wide monotonic counter at HostState construction.
+/// Used as the leading component of every asset tag the host stores,
+/// so two instances of the same widget can't collide on slot names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GuestId(u32);
+
+impl GuestId {
+    fn alloc() -> Self {
+        static NEXT: AtomicU32 = AtomicU32::new(1);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+impl std::fmt::Display for GuestId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 /// A registered audio sample with metadata.
@@ -571,6 +593,11 @@ pub(crate) struct HostState {
     /// The host stores original encoded data and decodes on each play.
     pub audio: AudioRegistry,
 
+    /// Per-instance identity used to namespace every asset tag the host stores.
+    /// Two `WasmWidgetRuntime`s for the same widget get different `guest_id`s,
+    /// so their `<guest_id>:<tag>` registrations and prefix evictions can't collide.
+    pub guest_id: GuestId,
+
     /// Audio output stream — must stay alive for the entire session.
     /// `None` if audio output is unavailable (headless, no ALSA, etc.).
     #[cfg(feature = "audio")]
@@ -640,6 +667,7 @@ impl HostState {
             rng_state: None, // None = auto-seed on first use (from monotonic_ms)
             led_command_sender: None,
             audio: AudioRegistry::new(),
+            guest_id: GuestId::alloc(),
             #[cfg(feature = "audio")]
             audio_stream: {
                 match rodio::OutputStream::try_default() {
@@ -672,6 +700,15 @@ impl HostState {
     /// Returns the total count of evicted entries across all four registries.
     pub fn evict_prefix(&mut self, prefix: &str) -> usize {
         self.renderer.evict_prefix(prefix) + self.audio.evict_prefix(prefix)
+    }
+
+    /// Wrap a guest-supplied tag with this instance's `GuestId` prefix.
+    /// Every host-side asset registration and eviction goes through this
+    /// helper, so two `WasmWidgetRuntime`s for the same widget can use the
+    /// same slot names without collision.
+    #[must_use]
+    pub fn namespaced_tag(&self, tag: &str) -> String {
+        format!("{}:{tag}", self.guest_id)
     }
 }
 

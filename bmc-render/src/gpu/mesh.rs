@@ -855,14 +855,15 @@ impl MeshRenderer {
         true
     }
 
-    /// Evict every tag whose key starts with `prefix`. Returns the number of
-    /// tags removed.
+    /// Evict every tag matching `prefix` at segment boundaries (the tag is
+    /// either exactly `prefix` or a descendant under it).
+    /// Returns the number of tags removed.
     pub fn evict_prefix(&mut self, gl: &glow::Context, prefix: &str) -> usize {
         // Collect first; can't mutate `by_tag` while iterating it.
         let tags: Vec<String> = self
             .by_tag
             .keys()
-            .filter(|k| k.starts_with(prefix))
+            .filter(|k| bmc_wasm_protocol::tag_matches_prefix(k, prefix))
             .cloned()
             .collect();
         let mut n = 0;

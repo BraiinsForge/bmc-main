@@ -49,6 +49,7 @@ fn register_icon_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return 0;
             };
             let state = caller.data_mut();
+            let tag = state.namespaced_tag(&tag);
             state
                 .renderer
                 .register_icon(&tag, &data)
@@ -76,6 +77,7 @@ fn register_bitmap_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return 0;
             };
             let state = caller.data_mut();
+            let tag = state.namespaced_tag(&tag);
             state
                 .renderer
                 .register_bitmap(&tag, &data)
@@ -103,6 +105,7 @@ fn register_bitmap_nearest_import(linker: &mut Linker<HostState>) -> Result<()> 
                 return 0;
             };
             let state = caller.data_mut();
+            let tag = state.namespaced_tag(&tag);
             state
                 .renderer
                 .register_bitmap_nearest(&tag, &data)
@@ -133,6 +136,7 @@ fn register_mesh_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return 0;
             };
             let state = caller.data_mut();
+            let tag = state.namespaced_tag(&tag);
             let id: u32 = state
                 .renderer
                 .register_mesh(&tag, &data)

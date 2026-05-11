@@ -92,17 +92,20 @@ impl AudioRegistry {
             return false;
         };
         self.samples.remove(&id);
+        #[cfg(feature = "audio")]
         self.stop(id);
         true
     }
 
-    /// Evict every tag whose key starts with `prefix`.
-    /// Returns the number of tags removed; sinks for each evicted ID are stopped alongside.
+    /// Evict every tag matching `prefix` at segment boundaries (the tag is
+    /// either exactly `prefix` or a descendant under it).
+    /// Returns the number of tags removed; sinks for each evicted ID are
+    /// stopped alongside.
     pub fn evict_prefix(&mut self, prefix: &str) -> usize {
         let tags: Vec<String> = self
             .by_name
             .keys()
-            .filter(|k| k.starts_with(prefix))
+            .filter(|k| bmc_wasm_protocol::tag_matches_prefix(k, prefix))
             .cloned()
             .collect();
         let mut n = 0;
@@ -124,17 +127,16 @@ impl AudioRegistry {
         bucket.push(sink);
     }
 
-    /// Stop and drop every sink registered for `id`. No-op when the
-    /// `audio` feature is disabled (no sink storage exists in that build).
+    /// Stop and drop every sink registered for `id`.
+    /// Only defined when the `audio` feature is enabled; with the feature off,
+    /// no sink storage exists so the call site must gate the invocation too.
+    #[cfg(feature = "audio")]
     pub fn stop(&mut self, id: AudioId) {
-        #[cfg(feature = "audio")]
         if let Some(bucket) = self.sinks.remove(&id) {
             for sink in bucket {
                 sink.stop();
             }
         }
-        #[cfg(not(feature = "audio"))]
-        let _ = id;
     }
 }
 
@@ -175,12 +177,25 @@ mod tests {
     #[test]
     fn evict_prefix_only_touches_matching_tags() {
         let mut reg = AudioRegistry::new();
-        let _ = reg.register("a::1".into(), data(b"x"), 0);
-        let _ = reg.register("a::2".into(), data(b"x"), 0);
-        let id_b = reg.register("b::1".into(), data(b"x"), 0);
+        let _ = reg.register("a:1".into(), data(b"x"), 0);
+        let _ = reg.register("a:2".into(), data(b"x"), 0);
+        let id_b = reg.register("b:1".into(), data(b"x"), 0);
 
-        assert_eq!(reg.evict_prefix("a::"), 2);
+        assert_eq!(reg.evict_prefix("a"), 2);
         assert!(reg.get(id_b).is_some());
+    }
+
+    #[test]
+    fn evict_prefix_respects_segment_boundaries() {
+        let mut reg = AudioRegistry::new();
+        let id_foo = reg.register("foo".into(), data(b"x"), 0);
+        let id_foobar = reg.register("foobar".into(), data(b"x"), 0);
+        let id_foo_child = reg.register("foo:child".into(), data(b"x"), 0);
+
+        assert_eq!(reg.evict_prefix("foo"), 2);
+        assert!(reg.get(id_foo).is_none());
+        assert!(reg.get(id_foo_child).is_none());
+        assert!(reg.get(id_foobar).is_some());
     }
 
     #[test]
