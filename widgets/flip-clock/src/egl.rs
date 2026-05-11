@@ -10,7 +10,7 @@ use anyhow::Result;
 use glow::HasContext;
 
 pub use bmc_widget::egl::DmaBufInfo;
-use bmc_widget::egl::DoubleBufferedEglState;
+use bmc_widget::egl::{Depth, DoubleBufferedEglState};
 
 /// EGL state for the flip-clock's direct-FBO rendering pipeline.
 ///
@@ -25,7 +25,7 @@ impl EglState {
     /// Create EGL context and prepare for rendering at the given dimensions.
     pub fn new(width: u32, height: u32) -> Result<Self> {
         Ok(Self {
-            egl: DoubleBufferedEglState::new(width, height)?,
+            egl: DoubleBufferedEglState::new(width, height, Depth::Enabled)?,
         })
     }
 

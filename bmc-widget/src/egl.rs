@@ -48,6 +48,17 @@ type EglDestroyImageKhr = unsafe extern "C" fn(dpy: *mut c_void, image: *mut c_v
 
 type GlEglImageTargetTexture2DOes = unsafe extern "C" fn(target: u32, image: *mut c_void);
 
+/// Whether an export buffer's FBO has a depth renderbuffer attached.
+///
+/// Required by widgets that use `GL_DEPTH_TEST` (e.g. 3D flip-clock); a
+/// `DEPTH_COMPONENT16` renderbuffer costs ~1.3 MB per buffer at the
+/// compositor's render size, so widgets that don't need depth opt out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Depth {
+    Enabled,
+    Disabled,
+}
+
 /// DMA-BUF export metadata for a rendered frame.
 #[derive(Debug)]
 pub struct DmaBufInfo {
@@ -175,7 +186,12 @@ impl EglContext {
     /// exported as a DMA-BUF via [`Self::export_dmabuf`].
     #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
     #[expect(clippy::too_many_lines, reason = "linear GL resource setup")]
-    pub fn allocate_export_buffer(&self, width: u32, height: u32) -> Result<ExportBuffer> {
+    pub fn allocate_export_buffer(
+        &self,
+        width: u32,
+        height: u32,
+        depth: Depth,
+    ) -> Result<ExportBuffer> {
         use smithay::reexports::gbm::Format;
 
         anyhow::ensure!(
@@ -250,10 +266,9 @@ impl EglContext {
             tex
         };
 
-        // Create FBO with color + depth attachments.
-        // Depth is needed by widgets that use GL_DEPTH_TEST (e.g. 3D flip-clock).
+        // Create FBO with color attachment and optional depth.
         #[expect(clippy::cast_possible_wrap, reason = "dimensions fit in i32")]
-        let fbo = unsafe {
+        let (fbo, depth_rb) = unsafe {
             let fbo = self
                 .gl
                 .create_framebuffer()
@@ -267,30 +282,34 @@ impl EglContext {
                 0,
             );
 
-            let depth_rb = self
-                .gl
-                .create_renderbuffer()
-                .map_err(|e| anyhow::anyhow!("Failed to create depth renderbuffer: {e}"))?;
-            self.gl
-                .bind_renderbuffer(glow::RENDERBUFFER, Some(depth_rb));
-            self.gl.renderbuffer_storage(
-                glow::RENDERBUFFER,
-                glow::DEPTH_COMPONENT16,
-                width as i32,
-                height as i32,
-            );
-            self.gl.framebuffer_renderbuffer(
-                glow::FRAMEBUFFER,
-                glow::DEPTH_ATTACHMENT,
-                glow::RENDERBUFFER,
-                Some(depth_rb),
-            );
+            let depth_rb = if depth == Depth::Enabled {
+                let rb = self
+                    .gl
+                    .create_renderbuffer()
+                    .map_err(|e| anyhow::anyhow!("Failed to create depth renderbuffer: {e}"))?;
+                self.gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
+                self.gl.renderbuffer_storage(
+                    glow::RENDERBUFFER,
+                    glow::DEPTH_COMPONENT16,
+                    width as i32,
+                    height as i32,
+                );
+                self.gl.framebuffer_renderbuffer(
+                    glow::FRAMEBUFFER,
+                    glow::DEPTH_ATTACHMENT,
+                    glow::RENDERBUFFER,
+                    Some(rb),
+                );
+                Some(rb)
+            } else {
+                None
+            };
 
             let status = self.gl.check_framebuffer_status(glow::FRAMEBUFFER);
             if status != glow::FRAMEBUFFER_COMPLETE {
                 anyhow::bail!("Export framebuffer incomplete: 0x{status:x}");
             }
-            fbo
+            (fbo, depth_rb)
         };
 
         let cached_stride = bo.stride();
@@ -302,6 +321,7 @@ impl EglContext {
             egl_image,
             texture,
             fbo,
+            depth_rb,
             width,
             height,
             cached_fd: None,
@@ -317,6 +337,9 @@ impl EglContext {
     pub fn destroy_export_buffer(&self, buf: ExportBuffer) {
         unsafe {
             self.gl.delete_framebuffer(buf.fbo);
+            if let Some(depth_rb) = buf.depth_rb {
+                self.gl.delete_renderbuffer(depth_rb);
+            }
             self.gl.delete_texture(buf.texture);
             (self.egl_destroy_image)(self.egl_display_raw, buf.egl_image);
         }
@@ -388,6 +411,8 @@ pub struct ExportBuffer {
     texture: glow::Texture,
     /// GL framebuffer object — bind this as the render target.
     pub fbo: glow::Framebuffer,
+    /// GL depth renderbuffer (only allocated when [`Depth::Enabled`]).
+    depth_rb: Option<glow::Renderbuffer>,
     /// Buffer width in pixels.
     pub width: u32,
     /// Buffer height in pixels.
@@ -425,6 +450,7 @@ struct DoubleBufferState {
     current_buffer: usize,
     width: u32,
     height: u32,
+    depth: Depth,
 }
 
 impl fmt::Debug for DoubleBufferState {
@@ -433,6 +459,7 @@ impl fmt::Debug for DoubleBufferState {
             .field("current_buffer", &self.current_buffer)
             .field("width", &self.width)
             .field("height", &self.height)
+            .field("depth", &self.depth)
             .finish_non_exhaustive()
     }
 }
@@ -441,12 +468,13 @@ impl DoubleBufferState {
     /// Create empty state at the given dimensions. Buffers are allocated lazily
     /// on the first call to [`Self::ensure_current`].
     #[must_use]
-    pub fn new(width: u32, height: u32) -> Self {
+    pub fn new(width: u32, height: u32, depth: Depth) -> Self {
         Self {
             buffers: [None, None],
             current_buffer: 0,
             width,
             height,
+            depth,
         }
     }
 
@@ -466,7 +494,8 @@ impl DoubleBufferState {
     pub fn ensure_current(&mut self, ctx: &EglContext) -> Result<&ExportBuffer> {
         let idx = self.current_buffer;
         if self.buffers[idx].is_none() {
-            self.buffers[idx] = Some(ctx.allocate_export_buffer(self.width, self.height)?);
+            self.buffers[idx] =
+                Some(ctx.allocate_export_buffer(self.width, self.height, self.depth)?);
         }
         Ok(self.buffers[idx]
             .as_ref()
@@ -558,10 +587,10 @@ impl fmt::Debug for DoubleBufferedEglState {
 
 impl DoubleBufferedEglState {
     /// Create EGL context and empty double-buffer state at the given size.
-    pub fn new(width: u32, height: u32) -> Result<Self> {
+    pub fn new(width: u32, height: u32, depth: Depth) -> Result<Self> {
         Ok(Self {
             ctx: EglContext::new()?,
-            buffers: DoubleBufferState::new(width, height),
+            buffers: DoubleBufferState::new(width, height, depth),
         })
     }
 
@@ -635,11 +664,11 @@ fn load_egl_proc<T>(name: &str) -> Result<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::DoubleBufferState;
+    use super::{Depth, DoubleBufferState};
 
     #[test]
     fn double_buffer_state_starts_empty_on_slot_zero() {
-        let state = DoubleBufferState::new(640, 480);
+        let state = DoubleBufferState::new(640, 480, Depth::Disabled);
 
         assert_eq!(state.width(), 640);
         assert_eq!(state.height(), 480);

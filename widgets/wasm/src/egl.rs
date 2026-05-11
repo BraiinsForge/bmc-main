@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use glow::HasContext;
 
 pub use bmc_widget::egl::DmaBufInfo;
-use bmc_widget::egl::{DoubleBufferedEglState, EglContext};
+use bmc_widget::egl::{Depth, DoubleBufferedEglState, EglContext};
 
 /// Staging buffer for FemtoVG rendering (regular GL texture, not EGLImage).
 struct StagingBuffer {
@@ -45,7 +45,7 @@ impl EglState {
     /// Create EGL context and prepare for two-FBO rendering.
     pub fn new(width: u32, height: u32) -> Result<Self> {
         Ok(Self {
-            egl: DoubleBufferedEglState::new(width, height)?,
+            egl: DoubleBufferedEglState::new(width, height, Depth::Disabled)?,
             staging: None,
             blit_program: None,
         })
