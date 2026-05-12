@@ -1033,9 +1033,14 @@ impl AppState {
                 self.schedule_scene_cycling_timer(now);
             }
             AutomaticCyclingAction::FinishTransition => {
+                let active_scene_before = (
+                    self.compositor.widgets.active_scene_id(),
+                    self.compositor.widgets.active_visible_widget_ids(),
+                );
                 self.pending_transition_warm_up = None;
                 self.compositor.widgets.finish_automatic_transition();
                 after_scene_change(self);
+                emit_active_scene_changed_if_changed(self, &active_scene_before);
                 self.reset_automatic_waiting(now);
             }
         }
@@ -1325,9 +1330,14 @@ impl AppState {
                     reason = "drag offsets are panel-sized; fractional pixels round to i32"
                 )]
                 let dx_px = dx as i32;
+                let active_scene_before = (
+                    self.compositor.widgets.active_scene_id(),
+                    self.compositor.widgets.active_visible_widget_ids(),
+                );
                 let committed = self.compositor.widgets.end_drag(dx_px, velocity_x);
                 after_scene_change(self);
                 if committed {
+                    emit_active_scene_changed_if_changed(self, &active_scene_before);
                     tracing::info!(
                         "Scene transition committed (dx={:.1}, vel={:.0})",
                         dx,
@@ -1702,8 +1712,13 @@ fn handle_clear_pid_command(state: &mut AppState, instance_id: &InstanceId, expe
 
 fn handle_reset_scene_cycle_command(state: &mut AppState) {
     tracing::debug!("resetting scene cycle");
+    let active_scene_before = (
+        state.compositor.widgets.active_scene_id(),
+        state.compositor.widgets.active_visible_widget_ids(),
+    );
     state.compositor.widgets.reset_to_first_scene();
     after_scene_change(state);
+    emit_active_scene_changed_if_changed(state, &active_scene_before);
     state.reset_automatic_waiting(Instant::now());
 }
 
@@ -1718,6 +1733,7 @@ fn handle_set_scene_cycling_config_command(
     state.reevaluate_automatic_cycling(Instant::now());
 }
 
+#[expect(clippy::too_many_lines, reason = "command dispatch")]
 fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
     match cmd {
         CompositorCommand::RegisterWidget {
@@ -1764,6 +1780,10 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             expected_pid,
         } => handle_clear_pid_command(state, &instance_id, expected_pid),
         CompositorCommand::SetActiveScene { layout } => {
+            let active_scene_before = (
+                state.compositor.widgets.active_scene_id(),
+                state.compositor.widgets.active_visible_widget_ids(),
+            );
             tracing::info!("Setting active scene with {} widgets", layout.widgets.len());
             for w in &layout.widgets {
                 tracing::info!(
@@ -1778,12 +1798,18 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             }
             state.compositor.widgets.set_active_scene(layout);
             after_scene_change(state);
+            emit_active_scene_changed_if_changed(state, &active_scene_before);
             state.reset_automatic_waiting(Instant::now());
         }
         CompositorCommand::SetSceneCycling { scenes } => {
+            let active_scene_before = (
+                state.compositor.widgets.active_scene_id(),
+                state.compositor.widgets.active_visible_widget_ids(),
+            );
             tracing::info!("Setting scene cycling with {} scenes", scenes.len());
             state.compositor.widgets.set_scene_cycling(scenes);
             after_scene_change(state);
+            emit_active_scene_changed_if_changed(state, &active_scene_before);
             state.reset_automatic_waiting(Instant::now());
         }
         CompositorCommand::SetSceneCyclingConfig { config } => {
@@ -1812,6 +1838,24 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             state.compositor.deck_widget_state.broadcast_shutdown();
             state.should_exit = true;
         }
+    }
+}
+
+fn emit_active_scene_changed_if_changed(
+    state: &AppState,
+    active_scene_before: &(Option<bmc::scene::SceneId>, Vec<InstanceId>),
+) {
+    let active_scene_after = (
+        state.compositor.widgets.active_scene_id(),
+        state.compositor.widgets.active_visible_widget_ids(),
+    );
+    if active_scene_before != &active_scene_after
+        && let Some(scene_id) = active_scene_after.0
+    {
+        let _ = state.event_tx.send(CompositorEvent::ActiveSceneChanged {
+            scene_id,
+            widget_ids: active_scene_after.1,
+        });
     }
 }
 

@@ -179,6 +179,21 @@ impl WidgetTracker {
         self.scenes.get(index)
     }
 
+    #[must_use]
+    pub fn active_scene_id(&self) -> Option<bmc::scene::SceneId> {
+        self.active_scene().scene_id
+    }
+
+    #[must_use]
+    pub fn active_visible_widget_ids(&self) -> Vec<InstanceId> {
+        self.active_scene()
+            .widgets
+            .iter()
+            .filter(|widget| widget.visible)
+            .map(|widget| widget.instance_id.clone())
+            .collect()
+    }
+
     /// Get the neighbor scene in the given direction (+1 = next, -1 = prev).
     #[must_use]
     pub fn neighbor_scene(&self, direction: i32) -> Option<&SceneLayout> {
@@ -850,6 +865,25 @@ mod tests {
         }
     }
 
+    fn scene_with_id_and_widgets(id: SceneId, widgets: &[(&str, bool)]) -> SceneLayout {
+        SceneLayout {
+            scene_id: Some(id),
+            cycle_duration: None,
+            widgets: widgets
+                .iter()
+                .map(|(instance_id, visible)| WidgetPlacement {
+                    instance_id: (*instance_id).to_owned(),
+                    position: Position { x: 0, y: 0 },
+                    size: Size {
+                        width: 100,
+                        height: 100,
+                    },
+                    visible: *visible,
+                })
+                .collect(),
+        }
+    }
+
     #[test]
     fn set_scene_cycling_preserves_active_scene_after_reorder() {
         let id_a = SceneId::generate();
@@ -1216,6 +1250,65 @@ mod tests {
         assert!(
             !t.can_drag(),
             "BUG: active scene not in (empty) list must reset to single-scene list",
+        );
+    }
+
+    #[test]
+    fn active_scene_helpers_follow_set_active_scene_index() {
+        let id_a = SceneId::generate();
+        let id_b = SceneId::generate();
+        let id_c = SceneId::generate();
+
+        let mut tracker = WidgetTracker::default();
+        tracker.set_scene_cycling(vec![
+            scene_with_id_and_widgets(id_a, &[("a-visible", true), ("a-hidden", false)]),
+            scene_with_id_and_widgets(id_b, &[("b-visible", true)]),
+            scene_with_id_and_widgets(
+                id_c,
+                &[
+                    ("c-hidden", false),
+                    ("c-visible-1", true),
+                    ("c-visible-2", true),
+                ],
+            ),
+        ]);
+
+        assert_eq!(tracker.active_scene_id(), Some(id_a));
+        assert_eq!(
+            tracker.active_visible_widget_ids(),
+            vec![String::from("a-visible")]
+        );
+
+        tracker.set_active_scene_index(2);
+        assert_eq!(tracker.active_scene_id(), Some(id_c));
+        assert_eq!(
+            tracker.active_visible_widget_ids(),
+            vec![String::from("c-visible-1"), String::from("c-visible-2")]
+        );
+    }
+
+    #[test]
+    fn active_scene_helpers_ignore_out_of_bounds_scene_index() {
+        let id_a = SceneId::generate();
+        let id_b = SceneId::generate();
+
+        let mut tracker = WidgetTracker::default();
+        tracker.set_scene_cycling(vec![
+            scene_with_id_and_widgets(id_a, &[("a-visible", true)]),
+            scene_with_id_and_widgets(id_b, &[("b-visible", true)]),
+        ]);
+        tracker.set_active_scene_index(1);
+        assert_eq!(tracker.active_scene_id(), Some(id_b));
+
+        tracker.set_active_scene_index(9);
+        assert_eq!(
+            tracker.active_scene_id(),
+            Some(id_b),
+            "invalid index should keep the previous active scene"
+        );
+        assert_eq!(
+            tracker.active_visible_widget_ids(),
+            vec![String::from("b-visible")]
         );
     }
 }
