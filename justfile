@@ -1,3 +1,4 @@
+mod manifest 'bmc-widget-manifest/justfile'
 mod virt 'bmc-virt/justfile'
 mod wasm 'bmc-wasm-runtime/justfile'
 

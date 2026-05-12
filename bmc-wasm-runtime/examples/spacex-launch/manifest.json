@@ -1,4 +1,5 @@
 {
+  "$schema": "../../../bmc-widget-manifest/manifest.schema.json",
   "uid": "550e8400-e29b-41d4-a716-446655440202",
   "version": "0.1.0",
   "name": "SpaceX Launch",

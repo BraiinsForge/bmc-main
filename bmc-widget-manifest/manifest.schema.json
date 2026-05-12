@@ -1,0 +1,419 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Manifest",
+  "description": "The parsed and validated form of a widget's `manifest.json`.\nThe canonical loader is [`Manifest::from_str`] (and [`Manifest::from_reader`]);\nThey enforce both the JSON Schema-expressible constraints (via the underlying `RawManifest` deserialize)\nand the cross-field invariants the schema cannot describe.",
+  "type": "object",
+  "properties": {
+    "author": {
+      "description": "Optional author block.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Author"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "binary": {
+      "description": "Path to the widget binary, relative to the widget's directory.",
+      "type": "string"
+    },
+    "description": {
+      "description": "One-line widget description, shown in the operator UI.\nCapped at 200 characters.",
+      "type": "string",
+      "maxLength": 200
+    },
+    "name": {
+      "description": "Human-readable widget name, shown in the operator UI.\nCapped at 50 characters.",
+      "type": "string",
+      "maxLength": 50
+    },
+    "params": {
+      "description": "Per-instance parameter declarations, keyed by [`ParamKey`].\nIteration order matches manifest order.",
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[A-Za-z][A-Za-z0-9_\\-]*$": {
+          "$ref": "#/$defs/ParamDefinition"
+        }
+      }
+    },
+    "settings": {
+      "description": "System-provided settings the widget wants injected (locale, timezone, night mode, etc.).\nOrder is preserved.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SettingKey"
+      }
+    },
+    "sizes": {
+      "description": "Surface sizes the widget supports. Must be non-empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SizeTypeSchema"
+      },
+      "minItems": 1
+    },
+    "uid": {
+      "description": "Stable unique identifier — must be UUID version 4. Used to distinguish widgets at runtime;\nnever reused once a widget is published.",
+      "type": "string"
+    },
+    "version": {
+      "description": "Widget version, in semver.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "uid",
+    "version",
+    "name",
+    "description",
+    "binary",
+    "settings",
+    "sizes",
+    "params"
+  ],
+  "$defs": {
+    "Author": {
+      "description": "Optional author block on a manifest, surfaced in the operator UI.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Author name, as shown in the operator UI.",
+          "type": "string"
+        },
+        "url": {
+          "description": "Optional link to a project page or organisation site.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "DoubleOption": {
+      "description": "A single entry in a `ParamKind::Double` `enum_values` list.\nThe `value` is the f64 selected; `label` is the operator-facing string.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "description": "Human-readable label shown in the operator UI.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Wire value stored for this option.\nMust be finite and unique within the surrounding `enum_values` array after canonicalising\n`+0.0` and `-0.0` to the same bit pattern.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "value",
+        "label"
+      ]
+    },
+    "IntegerOption": {
+      "description": "A single entry in a `ParamKind::Integer` `enum_values` list.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "description": "Human-readable label shown in the operator UI.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Wire value stored for this option.\nMust be unique within the surrounding `enum_values` array.",
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "required": [
+        "value",
+        "label"
+      ]
+    },
+    "ParamDefinition": {
+      "description": "Per-instance parameter declaration inside a manifest's `params` map.\nThe `kind` field carries the value-type-specific options (`enum_values`, `min`, `max`, etc.)\nvia a serde-flattened tagged enum.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "Optional one-line parameter description, shown in the operator UI as help text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Human-readable parameter name, shown in the operator UI.",
+          "type": "string"
+        },
+        "optional": {
+          "description": "Whether the operator can leave this param unset.\nOptional params may have a default; required params *must* (and the host always delivers a value).",
+          "type": "boolean"
+        }
+      },
+      "oneOf": [
+        {
+          "description": "A UTF-8 string.",
+          "type": "object",
+          "properties": {
+            "default_value": {
+              "description": "Default value injected when the operator leaves the param unset.\nRequired when `optional == false`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "enum_values": {
+              "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/StringOption"
+              }
+            },
+            "format": {
+              "description": "Optional structural hint to the operator UI.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StringFormat"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "string"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A finite f64 — JSON Schema \"number\".",
+          "type": "object",
+          "properties": {
+            "default_value": {
+              "description": "Default value injected when the operator leaves the param unset.\nRequired when `optional == false`.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "enum_values": {
+              "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/DoubleOption"
+              }
+            },
+            "max": {
+              "description": "Inclusive upper bound.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "min": {
+              "description": "Inclusive lower bound.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "step": {
+              "description": "UI step granularity. Strictly positive.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double",
+              "exclusiveMinimum": 0.0
+            },
+            "type": {
+              "type": "string",
+              "const": "double"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A 32-bit signed integer — JSON Schema \"integer\" with i32 range.",
+          "type": "object",
+          "properties": {
+            "default_value": {
+              "description": "Default value injected when the operator leaves the param\nunset. Required when `optional == false`.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            },
+            "enum_values": {
+              "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/IntegerOption"
+              }
+            },
+            "max": {
+              "description": "Inclusive upper bound.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            },
+            "min": {
+              "description": "Inclusive lower bound.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            },
+            "step": {
+              "description": "UI step granularity. Strictly positive.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "exclusiveMinimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "integer"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A boolean.",
+          "type": "object",
+          "properties": {
+            "default_value": {
+              "description": "Default value injected when the operator leaves the param\nunset. Required when `optional == false`.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "boolean"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "An IANA timezone identifier. Wire form is a string;\nthe dedicated variant lets the operator UI render a zone picker instead of a free-form text input.",
+          "type": "object",
+          "properties": {
+            "default_value": {
+              "description": "Default zone injected when the operator leaves the param unset.\nRequired when `optional == false`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "timezone"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        }
+      ],
+      "required": [
+        "name"
+      ]
+    },
+    "SettingKey": {
+      "description": "System-provided settings a widget can request, listed in the manifest's `settings` array.\nEach variant names a category the host injects automatically — the widget does not declare these as params.",
+      "oneOf": [
+        {
+          "description": "Locale and language settings — the widget receives the configured locale on start.",
+          "type": "string",
+          "const": "localization"
+        },
+        {
+          "description": "Time zone settings — the widget receives the configured zone on start and on change.",
+          "type": "string",
+          "const": "timezone"
+        },
+        {
+          "description": "Night-mode dimming preference.",
+          "type": "string",
+          "const": "nightMode"
+        }
+      ]
+    },
+    "SizeTypeSchema": {
+      "description": "Schema-only mirror of [`bmc_ipc::SizeType`].\nExists because the underlying enum does not derive [`JsonSchema`]\n(its crate does not depend on schemars), and we want the generated schema\nto enumerate the supported size names rather than treating the field as an opaque string.\n\nThe serde rename rule must stay in sync with the upstream type's `#[serde(rename_all = \"lowercase\")]`.",
+      "type": "string",
+      "enum": [
+        "small",
+        "medium",
+        "large",
+        "full"
+      ]
+    },
+    "StringFormat": {
+      "description": "Optional structural hint on a `ParamKind::String`, instructing\nthe operator UI to render a specialised input (date picker, URI validator, etc.) instead of a free-form text field.",
+      "oneOf": [
+        {
+          "description": "ISO 8601 date (no time component).",
+          "type": "string",
+          "const": "date"
+        },
+        {
+          "description": "ISO 8601 time of day.",
+          "type": "string",
+          "const": "time"
+        },
+        {
+          "description": "RFC 5322 email address.",
+          "type": "string",
+          "const": "email"
+        },
+        {
+          "description": "RFC 3986 URI.",
+          "type": "string",
+          "const": "uri"
+        }
+      ]
+    },
+    "StringOption": {
+      "description": "A single entry in a `ParamKind::String` `enum_values` list.\nThe `value` is what the host stores and the widget receives;\nthe `label` is the operator-facing string shown in the config UI.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "description": "Human-readable label shown in the operator UI.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Wire value stored for this option.\nMust be unique within the surrounding `enum_values` array and non-empty after trim.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "label"
+      ]
+    }
+  }
+}
