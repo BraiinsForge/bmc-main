@@ -13,12 +13,75 @@ use bmc_platform::{HardwareProfile, Product};
 use tokio::sync::{broadcast, mpsc};
 
 #[derive(Debug)]
+struct MockSceneState {
+    scenes: Vec<SceneLayout>,
+    current_index: usize,
+}
+
+impl Default for MockSceneState {
+    fn default() -> Self {
+        Self {
+            scenes: vec![SceneLayout::default()],
+            current_index: 0,
+        }
+    }
+}
+
+impl MockSceneState {
+    fn active_scene(&self) -> &SceneLayout {
+        &self.scenes[self.current_index]
+    }
+
+    fn active_snapshot(&self) -> (Option<bmc::scene::SceneId>, Vec<InstanceId>) {
+        (
+            self.active_scene().scene_id,
+            self.active_scene()
+                .widgets
+                .iter()
+                .filter(|widget| widget.visible)
+                .map(|widget| widget.instance_id.clone())
+                .collect(),
+        )
+    }
+
+    fn set_active_scene(&mut self, layout: SceneLayout) {
+        let index = layout.scene_id.and_then(|id| {
+            self.scenes
+                .iter()
+                .position(|scene| scene.scene_id == Some(id))
+        });
+        if let Some(index) = index {
+            self.scenes[index] = layout;
+            self.current_index = index;
+        } else {
+            self.scenes = vec![layout];
+            self.current_index = 0;
+        }
+    }
+
+    fn set_scene_cycling(&mut self, scenes: Vec<SceneLayout>) {
+        let active_id = self.active_scene().scene_id;
+        if scenes.is_empty() {
+            self.scenes = vec![SceneLayout::default()];
+            self.current_index = 0;
+            return;
+        }
+
+        self.current_index = active_id
+            .and_then(|id| scenes.iter().position(|scene| scene.scene_id == Some(id)))
+            .unwrap_or(0);
+        self.scenes = scenes;
+    }
+}
+
+#[derive(Debug)]
 pub struct MockCompositor {
     action_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<WidgetAction>>>,
     event_tx: broadcast::Sender<CompositorEvent>,
     status_tx: mpsc::UnboundedSender<LedRequestStatusEvent>,
     display_name: std::sync::Mutex<Option<String>>,
     product: Product,
+    scene_state: std::sync::Mutex<MockSceneState>,
 }
 
 impl MockCompositor {
@@ -43,6 +106,37 @@ impl MockCompositor {
             status_tx,
             display_name: std::sync::Mutex::new(None),
             product,
+            scene_state: std::sync::Mutex::new(MockSceneState::default()),
+        }
+    }
+
+    fn emit_active_scene_changed(
+        &self,
+        scene_id: bmc::scene::SceneId,
+        widget_ids: Vec<InstanceId>,
+    ) {
+        let _ = self.event_tx.send(CompositorEvent::ActiveSceneChanged {
+            scene_id,
+            widget_ids,
+        });
+    }
+
+    fn emit_active_scene_changed_if_changed<F>(&self, update_scene_state: F)
+    where
+        F: FnOnce(&mut MockSceneState),
+    {
+        let active_scene_after = {
+            let mut scene_state = self
+                .scene_state
+                .lock()
+                .expect("BUG: scene_state lock poisoned");
+            let active_scene_before = scene_state.active_snapshot();
+            update_scene_state(&mut scene_state);
+            let active_scene_after = scene_state.active_snapshot();
+            (active_scene_before != active_scene_after).then_some(active_scene_after)
+        };
+        if let Some((Some(scene_id), widget_ids)) = active_scene_after {
+            self.emit_active_scene_changed(scene_id, widget_ids);
         }
     }
 }
@@ -131,6 +225,9 @@ impl Compositor for MockCompositor {
                 w.visible,
             );
         }
+        self.emit_active_scene_changed_if_changed(|scene_state| {
+            scene_state.set_active_scene(layout);
+        });
         Ok(())
     }
 
@@ -139,6 +236,9 @@ impl Compositor for MockCompositor {
             "MockCompositor: set scene cycling with {} scenes",
             scenes.len()
         );
+        self.emit_active_scene_changed_if_changed(|scene_state| {
+            scene_state.set_scene_cycling(scenes);
+        });
         Ok(())
     }
 
@@ -193,9 +293,32 @@ impl Compositor for MockCompositor {
 
 #[cfg(test)]
 mod tests {
-    use super::MockCompositor;
-    use bmc::compositor::Compositor;
+    use bmc::compositor::{
+        Compositor, CompositorEvent, Position, SceneLayout, Size, WidgetPlacement,
+    };
+    use bmc::scene::SceneId;
     use bmc_platform::{DisplayShape, Product};
+
+    use super::MockCompositor;
+
+    fn scene_with_id_and_widgets(id: SceneId, widgets: &[(&str, bool)]) -> SceneLayout {
+        SceneLayout {
+            scene_id: Some(id),
+            cycle_duration: None,
+            widgets: widgets
+                .iter()
+                .map(|(instance_id, visible)| WidgetPlacement {
+                    instance_id: (*instance_id).to_owned(),
+                    position: Position { x: 0, y: 0 },
+                    size: Size {
+                        width: 100,
+                        height: 100,
+                    },
+                    visible: *visible,
+                })
+                .collect(),
+        }
+    }
 
     #[test]
     fn mock_reports_bmc100_capabilities() {
@@ -204,5 +327,47 @@ mod tests {
         assert_eq!(caps.display.shape, DisplayShape::Rectangular);
         assert_eq!(caps.display.dpi, 217);
         assert_eq!(caps.slot_grid.map(|g| (g.columns, g.rows)), Some((4, 2)));
+    }
+
+    #[tokio::test]
+    async fn set_scene_cycling_emits_active_scene_changed_when_active_scene_falls_back() {
+        let id_a = SceneId::generate();
+        let id_b = SceneId::generate();
+        let compositor = MockCompositor::new(Product::Bmc100);
+        compositor
+            .set_scene_cycling(vec![
+                scene_with_id_and_widgets(id_a, &[("a-visible", true), ("a-hidden", false)]),
+                scene_with_id_and_widgets(id_b, &[("b-visible", true)]),
+            ])
+            .expect("BUG: initial set_scene_cycling should succeed");
+        compositor
+            .set_active_scene(scene_with_id_and_widgets(id_b, &[("b-visible", true)]))
+            .expect("BUG: set_active_scene should succeed");
+
+        let mut events = compositor.subscribe_events();
+        compositor
+            .set_scene_cycling(vec![scene_with_id_and_widgets(
+                id_a,
+                &[("a-visible", true), ("a-hidden", false)],
+            )])
+            .expect("BUG: set_scene_cycling should succeed");
+
+        let event = events
+            .try_recv()
+            .expect("BUG: expected ActiveSceneChanged after active scene fallback");
+        match event {
+            CompositorEvent::ActiveSceneChanged {
+                scene_id,
+                widget_ids,
+            } => {
+                assert_eq!(scene_id, id_a);
+                assert_eq!(widget_ids, vec![String::from("a-visible")]);
+            }
+            CompositorEvent::WidgetReady { .. }
+            | CompositorEvent::WidgetDisconnected { .. }
+            | CompositorEvent::ScreenActivity => {
+                panic!("BUG: expected ActiveSceneChanged event");
+            }
+        }
     }
 }
