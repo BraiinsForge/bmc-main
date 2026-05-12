@@ -1243,9 +1243,14 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             emit_active_scene_changed_if_changed(state, &active_scene_before);
         }
         CompositorCommand::SetSceneCycling { scenes } => {
+            let active_scene_before = (
+                state.compositor.widgets.active_scene_id(),
+                state.compositor.widgets.active_visible_widget_ids(),
+            );
             tracing::info!("Setting scene cycling with {} scenes", scenes.len());
             state.compositor.widgets.set_scene_cycling(scenes);
             state.compositor.mark_full_output_damage();
+            emit_active_scene_changed_if_changed(state, &active_scene_before);
         }
         CompositorCommand::SetActiveSceneIndex { index } => {
             let active_scene_before = (
