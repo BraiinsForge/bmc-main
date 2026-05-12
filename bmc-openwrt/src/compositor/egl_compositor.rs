@@ -1075,9 +1075,14 @@ impl AppState {
                     reason = "drag offsets are panel-sized; fractional pixels round to i32"
                 )]
                 let dx_px = dx as i32;
+                let active_scene_before = (
+                    self.compositor.widgets.active_scene_id(),
+                    self.compositor.widgets.active_visible_widget_ids(),
+                );
                 let committed = self.compositor.widgets.end_drag(dx_px, velocity_x);
                 self.compositor.mark_full_output_damage();
                 if committed {
+                    emit_active_scene_changed_if_changed(self, &active_scene_before);
                     tracing::info!(
                         "Scene transition committed (dx={:.1}, vel={:.0})",
                         dx,
@@ -1164,6 +1169,7 @@ fn register_touch_devices(ctx: &mut libinput::Libinput, nodes: &[PathBuf]) -> us
     added
 }
 
+#[expect(clippy::too_many_lines, reason = "command dispatch")]
 fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
     match cmd {
         CompositorCommand::RegisterWidget {
@@ -1216,6 +1222,10 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             state.compositor.deck_widget_state.clear_pid(pid);
         }
         CompositorCommand::SetActiveScene { layout } => {
+            let active_scene_before = (
+                state.compositor.widgets.active_scene_id(),
+                state.compositor.widgets.active_visible_widget_ids(),
+            );
             tracing::info!("Setting active scene with {} widgets", layout.widgets.len());
             for w in &layout.widgets {
                 tracing::info!(
@@ -1230,6 +1240,7 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             }
             state.compositor.widgets.set_active_scene(layout);
             state.compositor.mark_full_output_damage();
+            emit_active_scene_changed_if_changed(state, &active_scene_before);
         }
         CompositorCommand::SetSceneCycling { scenes } => {
             tracing::info!("Setting scene cycling with {} scenes", scenes.len());
@@ -1237,9 +1248,14 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             state.compositor.mark_full_output_damage();
         }
         CompositorCommand::SetActiveSceneIndex { index } => {
+            let active_scene_before = (
+                state.compositor.widgets.active_scene_id(),
+                state.compositor.widgets.active_visible_widget_ids(),
+            );
             tracing::info!("Setting active scene index to {}", index);
             state.compositor.widgets.set_active_scene_index(index);
             state.compositor.mark_full_output_damage();
+            emit_active_scene_changed_if_changed(state, &active_scene_before);
         }
         CompositorCommand::BroadcastSetting { setting } => {
             tracing::debug!("Broadcasting setting: {:?}", setting);
@@ -1263,6 +1279,24 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             state.compositor.deck_widget_state.broadcast_shutdown();
             state.should_exit = true;
         }
+    }
+}
+
+fn emit_active_scene_changed_if_changed(
+    state: &AppState,
+    active_scene_before: &(Option<bmc::scene::SceneId>, Vec<InstanceId>),
+) {
+    let active_scene_after = (
+        state.compositor.widgets.active_scene_id(),
+        state.compositor.widgets.active_visible_widget_ids(),
+    );
+    if active_scene_before != &active_scene_after
+        && let Some(scene_id) = active_scene_after.0
+    {
+        let _ = state.event_tx.send(CompositorEvent::ActiveSceneChanged {
+            scene_id,
+            widget_ids: active_scene_after.1,
+        });
     }
 }
 
