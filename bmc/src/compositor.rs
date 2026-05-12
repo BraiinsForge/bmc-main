@@ -6,7 +6,7 @@
 //! on tokio. Communication happens via channels.
 
 use thiserror::Error;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 pub use crate::data::SceneCycling;
 pub use bmc_platform::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
@@ -65,8 +65,16 @@ pub struct LedRequestStatusEvent {
 
 #[derive(Debug, Clone)]
 pub enum CompositorEvent {
-    WidgetReady { instance_id: InstanceId },
-    WidgetDisconnected { instance_id: InstanceId },
+    WidgetReady {
+        instance_id: InstanceId,
+    },
+    WidgetDisconnected {
+        instance_id: InstanceId,
+    },
+    ActiveSceneChanged {
+        scene_id: crate::scene::SceneId,
+        widget_ids: Vec<InstanceId>,
+    },
     ScreenActivity,
 }
 
@@ -177,8 +185,8 @@ pub trait Compositor: Send + Sync {
     /// `led_request_status` events on the matching widget surface.
     fn request_status_sender(&self) -> mpsc::UnboundedSender<LedRequestStatusEvent>;
 
-    /// Get a receiver for compositor events (widget ready, disconnected).
-    fn event_receiver(&self) -> mpsc::UnboundedReceiver<CompositorEvent>;
+    /// Subscribe to compositor events (widget ready, disconnected).
+    fn subscribe_events(&self) -> broadcast::Receiver<CompositorEvent>;
 
     /// Shutdown the compositor.
     fn shutdown(&self) -> Result<(), CompositorError>;

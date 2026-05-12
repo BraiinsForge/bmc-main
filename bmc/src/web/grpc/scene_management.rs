@@ -1671,10 +1671,10 @@ mod tests {
             tx
         }
 
-        fn event_receiver(
+        fn subscribe_events(
             &self,
-        ) -> tokio::sync::mpsc::UnboundedReceiver<crate::compositor::CompositorEvent> {
-            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        ) -> tokio::sync::broadcast::Receiver<crate::compositor::CompositorEvent> {
+            let (_tx, rx) = tokio::sync::broadcast::channel(16);
             rx
         }
 
