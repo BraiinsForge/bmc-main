@@ -30,15 +30,16 @@ skip = [
     { crate = "socket2@0.5" },
     { crate = "sync_wrapper@0.1" },
     { crate = "tower@0.4" },
-    { crate = "wasi@0.11" },
     { crate = "webpki-roots@0.25" },
 
-    # rand 0.8 → 0.9 migration
+    # rand 0.8 → 0.9 migration (see BDK-465).
+    # `wasi@0.11` ships transitively via `getrandom 0.2` and drops with the same migration.
     { crate = "getrandom@0.2" },
     { crate = "getrandom@0.3" },
     { crate = "rand@0.8" },
     { crate = "rand_chacha@0.3" },
     { crate = "rand_core@0.6" },
+    { crate = "wasi@0.11" },
 
     # Font/text ecosystem (cosmic-text pulls swash+harfrust with different versions)
     { crate = "font-types@0.10" },
@@ -139,6 +140,11 @@ skip = [
     # Audio ecosystem (cpal/rodio pulls older ndk via oboe)
     { crate = "ndk@0.8" },
     { crate = "ndk-sys@0.5" },
+
+    # minerctl-defs (tooling) still pulls schemars 0.8; bmc-widget-manifest is
+    # on 1.x. Remove when minerctl-defs upgrades.
+    { crate = "schemars@0.8" },
+    { crate = "schemars_derive@0.8" },
 ]
 
 # Platform crate trees with massive version fragmentation — skip subtrees.

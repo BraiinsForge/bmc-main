@@ -274,10 +274,10 @@ roxmltree = "0.20.0"
 rrule = "0.14.0"
 rtnetlink = { git = "https://github.com/rust-netlink/rtnetlink.git", rev = "d6e8b4c" } # FIXME: change to a crates.io version after they update netlink-packet-route
 rustls = { version = "0.23.37", default-features = false, features = ["logging", "ring", "std", "tls12"] }
-schemars = "0.8.22"
+schemars = "1.2.1"
 semver = { version = "1.0.26", features = ["serde"] }
 serde = { version = "1.0.218", features = ["derive", "rc"] }
-serde_json = "1.0.140"
+serde_json = "1.0.149"
 serde_with = { version = "3.14.0", default-features = false, features = ["macros"] }
 sevenz-rust2 = { version = "0.20", features = ["compress", "util"] }
 sha2 = "0.10.9"

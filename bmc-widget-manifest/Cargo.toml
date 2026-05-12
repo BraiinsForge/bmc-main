@@ -8,6 +8,7 @@ description = "Widget manifest types — the on-disk schema for `manifest.json` 
 [dependencies]
 bmc-ipc = { workspace = true }
 indexmap = { workspace = true }
+schemars = { workspace = true, features = ["indexmap2", "semver1"] }
 semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -2,9 +2,23 @@
 
 //! Widget manifest types — the on-disk schema for `manifest.json`.
 //!
-//! Factored out of `bmc-widget` so the compositor, the wasm host
-//! runtime, and tooling can depend on the manifest grammar without
-//! pulling in the wayland-protocol surface of `bmc-widget`.
+//! The structure here is the source of truth for what a widget's `manifest.json` file may contain.
+//! Field-level semantics are documented on each type and variant with `///` doc comments;
+//! Those comments are propagated through `schemars` into the generated JSON Schema
+//! as `description` properties, which is how the schema's editor tooling surfaces them.
+//!
+//! Validation has two layers. Structural constraints expressible in JSON Schema
+//! (length caps, regex patterns, exclusive numeric bounds, required-fields-by-variant)
+//! are encoded on the types via `schemars` attributes and enforced by any JSON Schema validator.
+//!
+//! Cross-field invariants that JSON Schema cannot describe live in [`Manifest::from_str`] and friends.
+//! Examples:
+//!
+//!  - `default_value` lies within `[min, max]`
+//!  - `default_value` is in `enum_values`
+//!  - `+0.0` / `-0.0` collide in double enum dedup
+//!
+//! See the per-type docs for the complete split.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -12,6 +26,7 @@ use std::str::FromStr;
 
 use bmc_ipc::SizeType;
 use indexmap::IndexMap;
+use schemars::JsonSchema;
 use serde::de::{Error as _, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
@@ -20,52 +35,79 @@ use uuid::Uuid;
 const MAX_NAME_LENGTH: usize = 50;
 const MAX_DESCRIPTION_LENGTH: usize = 200;
 
+/// Errors produced by [`Manifest::from_str`] and the structural / semantic validators it dispatches to.
+/// Each variant names the rule that was violated, so a downstream caller can surface them without re-parsing the message.
 #[derive(Debug, Error)]
 pub enum ManifestError {
+    /// JSON could not be parsed at all, or violated a `#[serde(...)]`
+    /// schema constraint (e.g. wrong literal type on `default_value`).
     #[error("failed to parse manifest JSON: {0}")]
     ParseError(#[from] serde_json::Error),
 
+    /// The `uid` field was not a syntactically-valid UUID.
     #[error("invalid UUID: {0}")]
     InvalidUuid(#[from] uuid::Error),
 
+    /// The `uid` field parsed as a UUID but was not version 4.
+    /// Widgets are required to use random UUIDs so that any new widget gets a fresh identifier without coordination.
     #[error("UUID must be version 4, got version {0}")]
     InvalidUuidVersion(usize),
 
+    /// The `version` field could not be parsed as a semver string.
     #[error("invalid version '{version}': {source}")]
     InvalidVersion {
         version: String,
         source: semver::Error,
     },
 
+    /// The `name` field exceeded the declared length cap.
     #[error("name exceeds maximum length of {max} characters")]
     NameTooLong { max: usize },
 
+    /// The `description` field exceeded the declared length cap.
     #[error("description exceeds maximum length of {max} characters")]
     DescriptionTooLong { max: usize },
 
+    /// The `sizes` array was empty. Every widget must declare at least
+    /// one supported size.
     #[error("sizes array must not be empty")]
     EmptySizes,
 
+    /// A `sizes` entry was not a recognised [`SizeType`] variant.
     #[error("invalid size type: {0}")]
     InvalidSizeType(String),
 
+    /// A `settings` entry was not a recognised [`SettingKey`] variant.
     #[error("invalid setting key: {0}")]
     InvalidSettingKey(String),
 
+    /// A specific parameter failed its semantic validator.
+    /// The [`ParamDefinition::validate`] check fires for cross-field invariants
+    /// (default ∈ enum_values, default ∈ [min, max], etc.) that JSON Schema
+    /// cannot express on its own.
     #[error("parameter {name:?}: {reason}")]
     InvalidParam { name: String, reason: String },
 
+    /// Two `params` entries with identical keys.
+    /// The deserializer rejects these at parse time; this variant exists
+    /// for callers that build manifests programmatically.
     #[error("duplicate parameter key: {0:?}")]
     DuplicateParamKey(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
-pub struct ParamKey(String);
+/// A param key inside a manifest's `params` map.
+/// Matches the regex `^[A-Za-z][A-Za-z0-9_-]*$` — starts with an ASCII letter,
+/// then any mix of ASCII alphanumerics, hyphen, and underscore.
+///
+/// The host guarantees keys are stable identifiers safe to use
+/// as Rust field names after a snake_case-ish normalisation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, JsonSchema)]
+#[schemars(transparent)]
+pub struct ParamKey(#[schemars(regex(pattern = r"^[A-Za-z][A-Za-z0-9_\-]*$"))] String);
 
 impl ParamKey {
-    /// Construct a `ParamKey` from an owned string, applying the same
-    /// character-class rules as the `Deserialize` impl. Returns the
-    /// rejected input back to the caller on failure.
+    /// Construct a `ParamKey` from an owned string, applying the same character-class rules as the `Deserialize` impl.
+    /// Returns the rejected input back to the caller on failure.
     pub fn try_new(s: String) -> Result<Self, String> {
         if Self::is_valid(&s) {
             Ok(Self(s))
@@ -100,44 +142,73 @@ impl std::borrow::Borrow<str> for ParamKey {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A single entry in a `ParamKind::String` `enum_values` list.
+/// The `value` is what the host stores and the widget receives;
+/// the `label` is the operator-facing string shown in the config UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct StringOption {
+    /// Wire value stored for this option.
+    /// Must be unique within the surrounding `enum_values` array and non-empty after trim.
     pub value: String,
+    /// Human-readable label shown in the operator UI.
     pub label: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// A single entry in a `ParamKind::Double` `enum_values` list.
+/// The `value` is the f64 selected; `label` is the operator-facing string.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct DoubleOption {
+    /// Wire value stored for this option.
+    /// Must be finite and unique within the surrounding `enum_values` array after canonicalising
+    /// `+0.0` and `-0.0` to the same bit pattern.
     pub value: f64,
+    /// Human-readable label shown in the operator UI.
     pub label: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A single entry in a `ParamKind::Integer` `enum_values` list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct IntegerOption {
+    /// Wire value stored for this option.
+    /// Must be unique within the surrounding `enum_values` array.
     pub value: i32,
+    /// Human-readable label shown in the operator UI.
     pub label: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Optional structural hint on a `ParamKind::String`, instructing
+/// the operator UI to render a specialised input (date picker, URI validator, etc.) instead of a free-form text field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum StringFormat {
+    /// ISO 8601 date (no time component).
     Date,
+    /// ISO 8601 time of day.
     Time,
+    /// RFC 5322 email address.
     Email,
+    /// RFC 3986 URI.
     Uri,
 }
 
-/// Typed scalar value for a stored widget param. Mirrors the manifest's
-/// `ParamKind` value space — null, boolean, i32, finite f64, string —
-/// nothing wider.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Typed scalar value for a stored widget param.
+/// Mirrors the manifest's [`ParamKind`] value space — null, boolean, i32, finite f64, string — nothing wider.
+///
+/// Used both as the in-memory representation on the compositor side and
+/// as the wire shape sent to widgets through the wayland `params` event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ParamValue {
+    /// Absence of a value. Sent for optional params the operator left unset and that have no manifest default.
     Null,
+    /// A boolean.
     Boolean(bool),
+    /// An i32 — the integer width the manifest declares.
     Integer(i32),
+    /// A finite f64. NaN / ±infinity are rejected at parse time.
     #[serde(deserialize_with = "deserialize_finite_f64")]
     Double(f64),
+    /// A UTF-8 string.
     String(String),
 }
 
@@ -153,9 +224,8 @@ fn deserialize_finite_f64<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Err
 }
 
 impl ParamValue {
-    /// JSON projection for the wayland boundary — widget processes
-    /// receive a JSON object whose values are bare scalars, not the
-    /// internally-tagged form.
+    /// JSON projection for the wayland boundary — widget processes receive a JSON object
+    /// whose values are bare scalars, not the internally-tagged form.
     #[must_use]
     pub fn to_json_value(&self) -> serde_json::Value {
         match self {
@@ -168,10 +238,9 @@ impl ParamValue {
         }
     }
 
-    /// Build the default value for a manifest param. Required params
-    /// without a `default_value` are caught at manifest load time
-    /// (`ParamKind::has_default_value`); optional params without a
-    /// default deserialize to `Null`.
+    /// Build the default value for a manifest param.
+    /// Required params without a `default_value` are caught at manifest load time
+    /// (`ParamKind::has_default_value`); optional params without a default deserialize to `Null`.
     #[must_use]
     pub fn from_param_kind_default(kind: &ParamKind) -> Self {
         match kind {
@@ -189,6 +258,84 @@ impl ParamValue {
             ParamKind::Boolean { default_value } => {
                 default_value.map_or(ParamValue::Null, ParamValue::Boolean)
             }
+        }
+    }
+}
+
+/// Reasons the wayland-side JSON-to-[`ParamValue`] conversion can fail.
+/// Each variant names a JSON shape the scalar schema does not support;
+/// the host drops these at debug log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamValueConversionError {
+    /// `null`, `bool`, finite number, or string was expected; got an array.
+    Array,
+    /// `null`, `bool`, finite number, or string was expected; got an object.
+    Object,
+    /// A number that was neither integer- nor f64-representable.
+    /// In practice this is unreachable through `serde_json`'s default parser,
+    /// but the variant exists so the match is exhaustive.
+    UnrepresentableNumber,
+    /// NaN or ±infinity. `serde_json` does not emit these by default,
+    /// but a custom-built `serde_json::Value` can carry them.
+    NonFiniteNumber,
+}
+
+impl std::fmt::Display for ParamValueConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Array => f.write_str("expected scalar, got JSON array"),
+            Self::Object => f.write_str("expected scalar, got JSON object"),
+            Self::UnrepresentableNumber => f.write_str("number is not representable as i32 or f64"),
+            Self::NonFiniteNumber => f.write_str("number is not finite"),
+        }
+    }
+}
+
+impl std::error::Error for ParamValueConversionError {}
+
+/// Inverse of [`ParamValue::to_json_value`].
+///
+/// Maps the scalar shapes (`null`, `bool`, integer-shaped number within i32 range,
+/// finite non-integer or out-of-i32 finite number, string) into the typed variant.
+///
+/// Returns `Err` for everything else (objects, arrays, non-finite numbers).
+///
+/// Used at the wayland JSON edge inside the wasm host runtime:
+///  the host receives JSON the compositor built from a parsed-and-validated manifest,
+///  and re-types it back into [`ParamValue`] for in-memory storage.
+///
+/// The two functions together form the round-trip boundary.
+impl TryFrom<&serde_json::Value> for ParamValue {
+    type Error = ParamValueConversionError;
+
+    fn try_from(value: &serde_json::Value) -> Result<Self, Self::Error> {
+        match value {
+            serde_json::Value::Null => Ok(ParamValue::Null),
+            serde_json::Value::Bool(b) => Ok(ParamValue::Boolean(*b)),
+            serde_json::Value::String(s) => Ok(ParamValue::String(s.clone())),
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    if let Ok(i32_val) = i32::try_from(i) {
+                        Ok(ParamValue::Integer(i32_val))
+                    } else {
+                        #[expect(
+                            clippy::cast_precision_loss,
+                            reason = "widening i64 outside i32 range into f64 — caller has already validated finiteness at the JSON parser layer"
+                        )]
+                        Ok(ParamValue::Double(i as f64))
+                    }
+                } else if let Some(f) = n.as_f64() {
+                    if f.is_finite() {
+                        Ok(ParamValue::Double(f))
+                    } else {
+                        Err(ParamValueConversionError::NonFiniteNumber)
+                    }
+                } else {
+                    Err(ParamValueConversionError::UnrepresentableNumber)
+                }
+            }
+            serde_json::Value::Array(_) => Err(ParamValueConversionError::Array),
+            serde_json::Value::Object(_) => Err(ParamValueConversionError::Object),
         }
     }
 }
@@ -245,16 +392,40 @@ where
     deserializer.deserialize_map(UniqueMapVisitor)
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// The parsed and validated form of a widget's `manifest.json`.
+/// The canonical loader is [`Manifest::from_str`] (and [`Manifest::from_reader`]);
+/// They enforce both the JSON Schema-expressible constraints (via the underlying `RawManifest` deserialize)
+/// and the cross-field invariants the schema cannot describe.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 pub struct Manifest {
+    /// Stable unique identifier — must be UUID version 4. Used to distinguish widgets at runtime;
+    /// never reused once a widget is published.
+    #[schemars(with = "String")]
     pub uid: Uuid,
+    /// Widget version, in semver.
+    #[schemars(with = "String")]
     pub version: semver::Version,
+    /// Human-readable widget name, shown in the operator UI.
+    /// Capped at 50 characters.
+    #[schemars(length(max = 50))]
     pub name: String,
+    /// One-line widget description, shown in the operator UI.
+    /// Capped at 200 characters.
+    #[schemars(length(max = 200))]
     pub description: String,
+    /// Optional author block.
     pub author: Option<Author>,
+    /// Path to the widget binary, relative to the widget's directory.
+    #[schemars(with = "String")]
     pub binary: PathBuf,
+    /// System-provided settings the widget wants injected (locale, timezone, night mode, etc.).
+    /// Order is preserved.
     pub settings: Vec<SettingKey>,
+    /// Surface sizes the widget supports. Must be non-empty.
+    #[schemars(length(min = 1), with = "Vec<SizeTypeSchema>")]
     pub sizes: Vec<SizeType>,
+    /// Per-instance parameter declarations, keyed by [`ParamKey`].
+    /// Iteration order matches manifest order.
     pub params: IndexMap<ParamKey, ParamDefinition>,
 }
 
@@ -327,76 +498,145 @@ impl Manifest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Optional author block on a manifest, surfaced in the operator UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Author {
+    /// Author name, as shown in the operator UI.
     pub name: String,
+    /// Optional link to a project page or organisation site.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// System-provided settings a widget can request, listed in the manifest's `settings` array.
+/// Each variant names a category the host injects automatically — the widget does not declare these as params.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum SettingKey {
+    /// Locale and language settings — the widget receives the configured locale on start.
     Localization,
+    /// Time zone settings — the widget receives the configured zone on start and on change.
     Timezone,
+    /// Night-mode dimming preference.
     NightMode,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Schema-only mirror of [`bmc_ipc::SizeType`].
+/// Exists because the underlying enum does not derive [`JsonSchema`]
+/// (its crate does not depend on schemars), and we want the generated schema
+/// to enumerate the supported size names rather than treating the field as an opaque string.
+///
+/// The serde rename rule must stay in sync with the upstream type's `#[serde(rename_all = "lowercase")]`.
+#[derive(Debug, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[expect(
+    dead_code,
+    reason = "used only as a schema shim via #[schemars(with = ...)]"
+)]
+enum SizeTypeSchema {
+    Small,
+    Medium,
+    Large,
+    Full,
+}
+
+/// Per-instance parameter declaration inside a manifest's `params` map.
+/// The `kind` field carries the value-type-specific options (`enum_values`, `min`, `max`, etc.)
+/// via a serde-flattened tagged enum.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ParamDefinition {
+    /// Human-readable parameter name, shown in the operator UI.
     pub name: String,
+    /// Optional one-line parameter description, shown in the operator UI as help text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Whether the operator can leave this param unset.
+    /// Optional params may have a default; required params *must* (and the host always delivers a value).
     #[serde(
         default,
         rename = "optional",
         skip_serializing_if = "core::ops::Not::not"
     )]
     pub is_optional: bool,
+    /// Value-kind-specific shape — discriminated on `type`.
     #[serde(flatten)]
     pub kind: ParamKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Tagged enum carrying the value-type-specific shape of a [`ParamDefinition`].
+/// The discriminator field is `type`; variant names are lowercased on the wire
+/// (`"string"`, `"double"`, `"integer"`, `"boolean"`, `"timezone"`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ParamKind {
+    /// A UTF-8 string.
     String {
+        /// Optional structural hint to the operator UI.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         format: Option<StringFormat>,
+        /// Optional closed set of allowed values.
+        /// When non-empty, the `default_value` must be one of these.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         enum_values: Vec<StringOption>,
+        /// Default value injected when the operator leaves the param unset.
+        /// Required when `optional == false`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         default_value: Option<String>,
     },
+    /// A finite f64 — JSON Schema "number".
     Double {
+        /// Inclusive lower bound.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         min: Option<f64>,
+        /// Inclusive upper bound.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max: Option<f64>,
+        /// UI step granularity. Strictly positive.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("exclusiveMinimum" = 0.0))]
         step: Option<f64>,
+        /// Optional closed set of allowed values.
+        /// When non-empty, the `default_value` must be one of these.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         enum_values: Vec<DoubleOption>,
+        /// Default value injected when the operator leaves the param unset.
+        /// Required when `optional == false`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         default_value: Option<f64>,
     },
+    /// A 32-bit signed integer — JSON Schema "integer" with i32 range.
     Integer {
+        /// Inclusive lower bound.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         min: Option<i32>,
+        /// Inclusive upper bound.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max: Option<i32>,
+        /// UI step granularity. Strictly positive.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("exclusiveMinimum" = 0))]
         step: Option<i32>,
+        /// Optional closed set of allowed values.
+        /// When non-empty, the `default_value` must be one of these.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         enum_values: Vec<IntegerOption>,
+        /// Default value injected when the operator leaves the param
+        /// unset. Required when `optional == false`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         default_value: Option<i32>,
     },
+    /// A boolean.
     Boolean {
+        /// Default value injected when the operator leaves the param
+        /// unset. Required when `optional == false`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         default_value: Option<bool>,
     },
+    /// An IANA timezone identifier. Wire form is a string;
+    /// the dedicated variant lets the operator UI render a zone picker instead of a free-form text input.
     Timezone {
+        /// Default zone injected when the operator leaves the param unset.
+        /// Required when `optional == false`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         default_value: Option<String>,
     },
@@ -546,9 +786,8 @@ fn check_int_range(
     Ok(())
 }
 
-/// Canonicalise an f64 for bit-equality comparison: collapses `+0.0`
-/// and `-0.0` to the same key. NaNs keep their bit pattern; range and
-/// finite-ness checks elsewhere reject configured NaNs.
+/// Canonicalise an f64 for bit-equality comparison: collapses `+0.0` and `-0.0` to the same key.
+/// NaNs keep their bit pattern; range and finite-ness checks elsewhere reject configured NaNs.
 #[must_use]
 pub fn f64_canonical_bits(v: f64) -> u64 {
     if v == 0.0 { 0_u64 } else { v.to_bits() }
@@ -1127,6 +1366,43 @@ mod tests {
         assert_eq!(
             ParamValue::String("hi".into()).to_json_value(),
             serde_json::json!("hi")
+        );
+    }
+
+    #[test]
+    fn param_value_try_from_json_maps_each_scalar() {
+        let cases: &[(serde_json::Value, ParamValue)] = &[
+            (serde_json::Value::Null, ParamValue::Null),
+            (serde_json::json!(true), ParamValue::Boolean(true)),
+            (serde_json::json!(42), ParamValue::Integer(42)),
+            (serde_json::json!(-7), ParamValue::Integer(-7)),
+            (serde_json::json!(2.5), ParamValue::Double(2.5)),
+            (serde_json::json!("hi"), ParamValue::String("hi".into())),
+        ];
+        for (json, expected) in cases {
+            let got = ParamValue::try_from(json).expect("BUG: should convert");
+            assert_eq!(&got, expected, "{json:?} should convert to {expected:?}");
+        }
+    }
+
+    #[test]
+    fn param_value_try_from_json_widens_out_of_i32_to_double() {
+        let v = serde_json::json!(2_147_483_648_i64);
+        let got = ParamValue::try_from(&v).expect("BUG: should convert");
+        assert_eq!(got, ParamValue::Double(2_147_483_648.0));
+    }
+
+    #[test]
+    fn param_value_try_from_json_rejects_arrays_and_objects() {
+        let arr = serde_json::json!([1, 2]);
+        let obj = serde_json::json!({"a": 1});
+        assert_eq!(
+            ParamValue::try_from(&arr),
+            Err(ParamValueConversionError::Array)
+        );
+        assert_eq!(
+            ParamValue::try_from(&obj),
+            Err(ParamValueConversionError::Object)
         );
     }
 
