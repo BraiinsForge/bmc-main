@@ -216,6 +216,7 @@ where
 
         crate::widget::action_handler::spawn_action_handler(
             compositor.action_receiver(),
+            compositor.subscribe_events(),
             compositor.request_status_sender(),
             sound_controller.clone(),
             led_controller.clone(),
