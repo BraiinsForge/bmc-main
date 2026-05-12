@@ -1,6 +1,9 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-#![expect(dead_code, reason = "scene manager wiring lands in a follow-up task")]
+#![cfg_attr(
+    not(test),
+    expect(dead_code, reason = "scene manager wiring lands in a follow-up task")
+)]
 
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
@@ -255,7 +258,13 @@ impl<T: crate::BmcManager> LedSceneManager<T> {
                 return;
             };
             match active_temp {
-                ActiveTemp::Running { entry, .. } => Some((entry.instance_id, entry.request_id)),
+                ActiveTemp::Running { entry, until } => {
+                    if Instant::now() < until {
+                        state.active_temp = Some(ActiveTemp::Running { entry, until });
+                        return;
+                    }
+                    Some((entry.instance_id, entry.request_id))
+                }
                 ActiveTemp::Paused { entry } => {
                     state.active_temp = Some(ActiveTemp::Paused { entry });
                     None
@@ -725,6 +734,148 @@ mod tests {
 
     fn scene_id() -> SceneId {
         SceneId::from(Uuid::new_v4())
+    }
+
+    fn active_temp_request_id(h: &Harness, scene: SceneId) -> Option<LedRequestId> {
+        let state = h.manager.scenes.get(&scene)?;
+        let active = state.active_temp.as_ref()?;
+        match active {
+            ActiveTemp::Running { entry, .. } | ActiveTemp::Paused { entry } => {
+                Some(entry.request_id)
+            }
+        }
+    }
+
+    fn force_running_temp_until(h: &mut Harness, scene: SceneId, until: Instant) {
+        let state = h
+            .manager
+            .scenes
+            .get_mut(&scene)
+            .expect("BUG: scene state must exist");
+        let active = state
+            .active_temp
+            .take()
+            .expect("BUG: active temp must exist");
+        state.active_temp = Some(match active {
+            ActiveTemp::Running { entry, .. } => ActiveTemp::Running { entry, until },
+            ActiveTemp::Paused { entry } => ActiveTemp::Paused { entry },
+        });
+    }
+
+    #[test]
+    fn on_active_expiry_completes_running_temp_only_when_due() {
+        let mut h = Harness::new();
+        let scene = scene_id();
+        let widget = instance_id("due-check");
+
+        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+        h.manager.on_temporary(
+            widget.clone(),
+            11,
+            ProtoLedEffect::Breathe,
+            rgb(1, 1, 1),
+            0,
+            30_000,
+        );
+        h.drain_statuses();
+
+        force_running_temp_until(&mut h, scene, Instant::now() + Duration::from_secs(30));
+        h.manager.on_active_expiry();
+        assert!(h.drain_statuses().is_empty());
+        assert_eq!(active_temp_request_id(&h, scene), Some(11));
+
+        force_running_temp_until(&mut h, scene, Instant::now() - Duration::from_millis(1));
+        h.manager.on_active_expiry();
+
+        let statuses = h.drain_statuses();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].instance_id, widget);
+        assert_eq!(statuses[0].request_id, 11);
+        assert_eq!(statuses[0].status, LedRequestStatus::Completed);
+        assert_eq!(active_temp_request_id(&h, scene), None);
+    }
+
+    #[test]
+    fn queued_temporary_starts_after_active_temporary_completes() {
+        let mut h = Harness::new();
+        let scene = scene_id();
+        let widget = instance_id("queue-start");
+
+        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+        h.manager.on_temporary(
+            widget.clone(),
+            21,
+            ProtoLedEffect::Solid,
+            rgb(2, 0, 0),
+            0,
+            1_000,
+        );
+        h.manager.on_temporary(
+            widget.clone(),
+            22,
+            ProtoLedEffect::Solid,
+            rgb(3, 0, 0),
+            0,
+            2_000,
+        );
+        h.drain_statuses();
+        assert_eq!(active_temp_request_id(&h, scene), Some(21));
+
+        force_running_temp_until(&mut h, scene, Instant::now() - Duration::from_millis(1));
+        h.manager.on_active_expiry();
+
+        let statuses = h.drain_statuses();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].request_id, 21);
+        assert_eq!(statuses[0].status, LedRequestStatus::Completed);
+        assert_eq!(active_temp_request_id(&h, scene), Some(22));
+    }
+
+    #[test]
+    fn endless_fallback_becomes_active_when_temporary_queue_drains() {
+        let mut h = Harness::new();
+        let scene = scene_id();
+        let widget = instance_id("fallback");
+
+        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+        h.manager
+            .on_endless(widget.clone(), 31, ProtoLedEffect::Solid, rgb(9, 9, 9), 0);
+        h.manager.on_temporary(
+            widget.clone(),
+            32,
+            ProtoLedEffect::Solid,
+            rgb(4, 0, 0),
+            0,
+            1_000,
+        );
+        h.manager.on_temporary(
+            widget.clone(),
+            33,
+            ProtoLedEffect::Solid,
+            rgb(5, 0, 0),
+            0,
+            1_000,
+        );
+        h.drain_statuses();
+        assert_eq!(active_temp_request_id(&h, scene), Some(32));
+
+        force_running_temp_until(&mut h, scene, Instant::now() - Duration::from_millis(1));
+        h.manager.on_active_expiry();
+        h.drain_statuses();
+        assert_eq!(active_temp_request_id(&h, scene), Some(33));
+
+        force_running_temp_until(&mut h, scene, Instant::now() - Duration::from_millis(1));
+        h.manager.on_active_expiry();
+
+        let statuses = h.drain_statuses();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].request_id, 33);
+        assert_eq!(statuses[0].status, LedRequestStatus::Completed);
+        assert_eq!(active_temp_request_id(&h, scene), None);
+        assert_eq!(
+            h.manager.applied_scene,
+            build_scene(ProtoLedEffect::Solid, rgb(9, 9, 9), 0, None)
+        );
     }
 
     #[test]

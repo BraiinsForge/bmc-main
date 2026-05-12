@@ -5,7 +5,7 @@
 pub mod action_handler;
 mod coordinator;
 mod discovery;
-pub mod led_state;
+mod led_state;
 mod manager;
 mod registry;
 mod spawner;
