@@ -27,3 +27,10 @@ rules that callers must handle.
 How widget action requests (sound, LED) flow over `deck_widget_v1` to the action handler and on to `SoundController` /
 `LedController`. Covers the dispatch architecture, why sound playback runs in its own cancellable task, and the wire →
 hardware effect-type conversion that lives in `bmc/src/widget/action_handler.rs`.
+
+### [Widget Manifest Specification](widget-manifest.md)
+
+System-level concerns around widget manifests: on-disk location, compositor discovery, the parsing path from manifest
+into the runtime, and the rationale behind the validation rules. The per-field grammar is intentionally not duplicated
+here — it lives in the Rust types of `bmc-widget-manifest` and is mirrored into the committed `manifest.schema.json`
+artifact (with rustdoc propagated into the schema's `description` fields).
