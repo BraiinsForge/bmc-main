@@ -11,11 +11,80 @@ use bmc::compositor::{
 use tokio::sync::{broadcast, mpsc};
 
 #[derive(Debug)]
+struct MockSceneState {
+    scenes: Vec<SceneLayout>,
+    current_index: usize,
+}
+
+impl Default for MockSceneState {
+    fn default() -> Self {
+        Self {
+            scenes: vec![SceneLayout::default()],
+            current_index: 0,
+        }
+    }
+}
+
+impl MockSceneState {
+    fn active_scene(&self) -> &SceneLayout {
+        &self.scenes[self.current_index]
+    }
+
+    fn active_snapshot(&self) -> (Option<bmc::scene::SceneId>, Vec<InstanceId>) {
+        (
+            self.active_scene().scene_id,
+            self.active_scene()
+                .widgets
+                .iter()
+                .filter(|widget| widget.visible)
+                .map(|widget| widget.instance_id.clone())
+                .collect(),
+        )
+    }
+
+    fn set_active_scene(&mut self, layout: SceneLayout) {
+        let index = layout.scene_id.and_then(|id| {
+            self.scenes
+                .iter()
+                .position(|scene| scene.scene_id == Some(id))
+        });
+        if let Some(index) = index {
+            self.scenes[index] = layout;
+            self.current_index = index;
+        } else {
+            self.scenes = vec![layout];
+            self.current_index = 0;
+        }
+    }
+
+    fn set_scene_cycling(&mut self, scenes: Vec<SceneLayout>) {
+        let active_id = self.active_scene().scene_id;
+        if scenes.is_empty() {
+            self.scenes = vec![SceneLayout::default()];
+            self.current_index = 0;
+            return;
+        }
+
+        self.current_index = active_id
+            .and_then(|id| scenes.iter().position(|scene| scene.scene_id == Some(id)))
+            .unwrap_or(0);
+        self.scenes = scenes;
+    }
+
+    fn set_active_scene_index(&mut self, index: usize) {
+        if index < self.scenes.len() {
+            self.current_index = index;
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct MockCompositor {
     action_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<WidgetAction>>>,
     event_tx: broadcast::Sender<CompositorEvent>,
     status_tx: mpsc::UnboundedSender<WidgetRequestStatus>,
     display_name: std::sync::Mutex<Option<String>>,
+    scene_state: std::sync::Mutex<MockSceneState>,
 }
 
 impl MockCompositor {
@@ -39,7 +108,19 @@ impl MockCompositor {
             event_tx,
             status_tx,
             display_name: std::sync::Mutex::new(None),
+            scene_state: std::sync::Mutex::new(MockSceneState::default()),
         }
+    }
+
+    fn emit_active_scene_changed(
+        &self,
+        scene_id: bmc::scene::SceneId,
+        widget_ids: Vec<InstanceId>,
+    ) {
+        let _ = self.event_tx.send(CompositorEvent::ActiveSceneChanged {
+            scene_id,
+            widget_ids,
+        });
     }
 }
 
@@ -125,6 +206,19 @@ impl Compositor for MockCompositor {
                 w.visible,
             );
         }
+        let active_scene_after = {
+            let mut scene_state = self
+                .scene_state
+                .lock()
+                .expect("BUG: scene_state lock poisoned");
+            let active_scene_before = scene_state.active_snapshot();
+            scene_state.set_active_scene(layout);
+            let active_scene_after = scene_state.active_snapshot();
+            (active_scene_before != active_scene_after).then_some(active_scene_after)
+        };
+        if let Some((Some(scene_id), widget_ids)) = active_scene_after {
+            self.emit_active_scene_changed(scene_id, widget_ids);
+        }
         Ok(())
     }
 
@@ -133,11 +227,28 @@ impl Compositor for MockCompositor {
             "MockCompositor: set scene cycling with {} scenes",
             scenes.len()
         );
+        self.scene_state
+            .lock()
+            .expect("BUG: scene_state lock poisoned")
+            .set_scene_cycling(scenes);
         Ok(())
     }
 
     fn set_active_scene_index(&self, index: usize) -> Result<(), CompositorError> {
         tracing::info!("MockCompositor: set active scene index {}", index);
+        let active_scene_after = {
+            let mut scene_state = self
+                .scene_state
+                .lock()
+                .expect("BUG: scene_state lock poisoned");
+            let active_scene_before = scene_state.active_snapshot();
+            scene_state.set_active_scene_index(index);
+            let active_scene_after = scene_state.active_snapshot();
+            (active_scene_before != active_scene_after).then_some(active_scene_after)
+        };
+        if let Some((Some(scene_id), widget_ids)) = active_scene_after {
+            self.emit_active_scene_changed(scene_id, widget_ids);
+        }
         Ok(())
     }
 
