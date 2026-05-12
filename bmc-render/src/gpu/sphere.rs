@@ -244,8 +244,9 @@ impl SphereRenderer {
     }
 
     /// Render the sphere to the offscreen FBO if any parameter changed.
-    ///
-    /// Does nothing if no texture has been set.
+    /// Returns the femtovg image backing the FBO, or `None` when no texture
+    /// is set yet — callers must skip the draw in that case so stale FBO
+    /// pixels aren't sampled.
     #[expect(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -256,10 +257,8 @@ impl SphereRenderer {
         light_lat: f32,
         light_lon: f32,
         atmosphere: bool,
-    ) {
-        let Some(tex) = self.texture else {
-            return;
-        };
+    ) -> Option<ImageId> {
+        let tex = self.texture?;
 
         // Dirty check — skip render if nothing changed
         if !is_dirty(self.last_lat, lat)
@@ -269,7 +268,7 @@ impl SphereRenderer {
             && !is_dirty(self.last_light_lon, light_lon)
             && self.last_atmosphere == atmosphere
         {
-            return;
+            return Some(self.image_id);
         }
 
         self.last_lat = lat;
@@ -336,11 +335,8 @@ impl SphereRenderer {
             }
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
         }
-    }
 
-    /// The femtovg image backed by the offscreen FBO texture.
-    pub fn image_id(&self) -> ImageId {
-        self.image_id
+        Some(self.image_id)
     }
 
     /// Release FemtoVG bookkeeping and GL resources owned by the sphere renderer.

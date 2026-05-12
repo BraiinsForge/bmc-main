@@ -607,8 +607,14 @@ impl Renderer for FemtoVgRenderer {
             return;
         };
 
-        // Render mesh to atlas slot (skips if params unchanged)
-        let (image_id, sx, sy, sw, sh) = renderer.render(&self.gl, slot_index, mesh_id, &args);
+        // Render mesh to atlas slot (skips if params unchanged).
+        // `None` means out-of-range slot or evicted mesh
+        //  — skip the draw so we don't sample stale slot pixels.
+        let Some((image_id, sx, sy, sw, sh)) =
+            renderer.render(&self.gl, slot_index, mesh_id, &args)
+        else {
+            return;
+        };
 
         // Draw the atlas sub-rect via femtovg
         let (atlas_w, atlas_h) = renderer.atlas_size();
@@ -675,11 +681,16 @@ impl Renderer for FemtoVgRenderer {
             (light_lat, light_lon)
         };
 
-        // Render sphere to offscreen FBO (skips if params unchanged)
-        sphere.render(&self.gl, center_lat, center_lon, zoom, sl, sn, atmosphere);
+        // Render sphere to offscreen FBO (skips if params unchanged). `None`
+        // means no texture has been bound yet — skip the draw so we don't
+        // sample stale FBO pixels.
+        let Some(image_id) =
+            sphere.render(&self.gl, center_lat, center_lon, zoom, sl, sn, atmosphere)
+        else {
+            return;
+        };
 
         // Draw the FBO texture via femtovg
-        let image_id = sphere.image_id();
         super::bitmap::draw_bitmap(&mut self.canvas, image_id, x, y, w, h);
     }
 

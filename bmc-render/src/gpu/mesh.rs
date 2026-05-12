@@ -509,7 +509,10 @@ impl MeshRenderer {
     }
 
     /// Render a mesh into an atlas slot. Returns the atlas image ID and sub-rect
-    /// `(src_x, src_y, src_w, src_h)` for sampling with `draw_bitmap_subrect`.
+    /// `(src_x, src_y, src_w, src_h)` for sampling with `draw_bitmap_subrect`,
+    /// or `None` when the slot index is out of range or the mesh has been
+    /// evicted — callers must skip the draw in that case so stale slot pixels
+    /// aren't sampled.
     ///
     /// Skips GL work if the slot's parameters haven't changed (dirty check).
     #[expect(clippy::too_many_lines)]
@@ -519,14 +522,11 @@ impl MeshRenderer {
         slot_index: u8,
         mesh_id: MeshId,
         args: &MeshDrawArgs,
-    ) -> (ImageId, f32, f32, f32, f32) {
+    ) -> Option<(ImageId, f32, f32, f32, f32)> {
         let si = u32::from(slot_index);
         if si >= MAX_SLOTS {
             warn_slot_overflow_once(si);
-            // Return a degenerate sub-rect so the caller's
-            // `draw_bitmap_subrect` no-ops (sw == sh == 0). The image_id is
-            // still valid; only the geometry is suppressed.
-            return (self.image_id, 0.0, 0.0, 0.0, 0.0);
+            return None;
         }
         let col = si % ATLAS_COLS;
         #[expect(clippy::integer_division)]
@@ -542,18 +542,12 @@ impl MeshRenderer {
         );
 
         let mesh_idx = mesh_id_to_storage_index(mesh_id);
-        if mesh_idx >= self.meshes.len() || self.meshes[mesh_idx].is_none() {
-            return subrect;
-        }
+        let mesh = self.meshes.get(mesh_idx)?.as_ref()?;
 
-        // Per-slot dirty check
+        // Slot still holds the previously-rendered content of the same mesh.
         if !self.slots[si as usize].check_and_update(mesh_id, args) {
-            return subrect;
+            return Some(subrect);
         }
-
-        let mesh = self.meshes[mesh_idx]
-            .as_ref()
-            .expect("BUG: mesh was None after check");
 
         let MeshTransform {
             fov,
@@ -782,7 +776,7 @@ impl MeshRenderer {
             ii_stopwatch::stopwatch_reset!(self.blit_w);
         }
 
-        subrect
+        Some(subrect)
     }
 
     /// The femtovg image backed by the atlas FBO texture.
