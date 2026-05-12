@@ -227,6 +227,7 @@ input = "0.10.0"
 intel_tex_2 = "0.5"
 inventory = "0.3"
 itertools = "0.14.0"
+jsonschema = { version = "0.46.4", default-features = false }
 keyframe = { version = "1.1", default-features = false }
 khronos-egl = { version = "6", features = ["dynamic"] }
 libc = "0.2"

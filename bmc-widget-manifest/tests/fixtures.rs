@@ -1,0 +1,421 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+//! Fixture suite that locks the validation split between the JSON Schema and the Rust validator.
+//!
+//! Two test surfaces:
+//!
+//!  - `every_example_manifest_validates_against_both` — every shipping example `manifest.json`
+//!    accepts under both the committed JSON Schema and `Manifest::from_str`. Catches schema /
+//!    parser drift in the happy direction.
+//!
+//!  - `negative_fixtures_lock_schema_vs_validator_split` — table-driven negative cases per
+//!    `ParamKind` variant. For each variant we assert one structurally-invalid case that *both*
+//!    validators reject and one semantically-invalid case that *only* the Rust validator rejects
+//!    (the schema is unable to express cross-field invariants like
+//!    `default_value` ∈ `[min, max]` or `default_value` ∈ `enum_values`).
+//!
+//! The two together pin down the split:
+//! structural constraints live in the schema,
+//! cross-field invariants live in `ParamDefinition::validate`.
+
+use bmc_widget_manifest::{MAX_PARAM_KEY_LENGTH, MAX_PARAM_STRING_LENGTH, Manifest};
+use std::str::FromStr;
+
+const COMMITTED_SCHEMA: &str = include_str!("../manifest.schema.json");
+
+fn schema_validator() -> jsonschema::Validator {
+    let schema: serde_json::Value =
+        serde_json::from_str(COMMITTED_SCHEMA).expect("BUG: committed schema must parse as JSON");
+    jsonschema::validator_for(&schema).expect("BUG: committed schema must compile to a validator")
+}
+
+fn example_manifests() -> Vec<(std::path::PathBuf, String)> {
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("BUG: workspace root");
+    let examples = workspace.join("bmc-wasm-runtime/examples");
+    let mut out = vec![];
+    for entry in std::fs::read_dir(&examples).expect("BUG: read examples dir") {
+        let entry = entry.expect("BUG: read entry");
+        let path = entry.path().join("manifest.json");
+        if path.exists() {
+            let body = std::fs::read_to_string(&path).expect("BUG: read manifest");
+            out.push((path, body));
+        }
+    }
+    out
+}
+
+#[test]
+fn every_example_manifest_validates_against_both() {
+    let validator = schema_validator();
+    let manifests = example_manifests();
+    assert!(!manifests.is_empty(), "BUG: no example manifests found");
+
+    for (path, body) in manifests {
+        let instance: serde_json::Value = serde_json::from_str(&body)
+            .unwrap_or_else(|e| panic!("BUG: {path:?} is not valid JSON: {e}"));
+        assert!(
+            validator.is_valid(&instance),
+            "{path:?} failed the JSON Schema validator. Errors:\n  - {}",
+            validator
+                .iter_errors(&instance)
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n  - "),
+        );
+
+        Manifest::from_str(&body)
+            .unwrap_or_else(|e| panic!("BUG: {path:?} failed Manifest::from_str: {e}"));
+    }
+}
+
+/// One row per negative fixture.
+struct Negative {
+    /// Short label used in failure messages.
+    label: &'static str,
+    /// Full manifest JSON.
+    json: &'static str,
+    /// Expected verdict from the JSON Schema validator.
+    schema_accepts: bool,
+    /// Expected verdict from `Manifest::from_str`.
+    manifest_accepts: bool,
+}
+
+// Every fixture is a full manifest with a unique uid so the schema's UUID v4 check passes.
+// The only variability is the params block; everything else is boilerplate.
+
+const FIXTURES: &[Negative] = &[
+    // ── String variant ────────────────────────────────────────────────
+    Negative {
+        label: "string: default_value is a number (structural)",
+        json: r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440001",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Bad default type",
+            "binary": "bin/x",
+            "sizes": ["small"],
+            "params": {
+                "label": {"name": "L", "type": "string", "default_value": 42}
+            }
+        }"#,
+        schema_accepts: false,
+        manifest_accepts: false,
+    },
+    Negative {
+        label: "string: default_value not in enum_values (semantic)",
+        json: r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440002",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Default outside enum",
+            "binary": "bin/x",
+            "sizes": ["small"],
+            "params": {
+                "color": {
+                    "name": "C",
+                    "type": "string",
+                    "default_value": "blue",
+                    "enum_values": [
+                        {"value": "red", "label": "R"},
+                        {"value": "green", "label": "G"}
+                    ]
+                }
+            }
+        }"#,
+        schema_accepts: true,
+        manifest_accepts: false,
+    },
+    // ── Double variant ────────────────────────────────────────────────
+    Negative {
+        label: "double: default_value is a string (structural)",
+        json: r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440003",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Bad default type",
+            "binary": "bin/x",
+            "sizes": ["small"],
+            "params": {
+                "ratio": {"name": "R", "type": "double", "default_value": "huge"}
+            }
+        }"#,
+        schema_accepts: false,
+        manifest_accepts: false,
+    },
+    Negative {
+        label: "double: default_value below min (semantic)",
+        json: r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440004",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Default below min",
+            "binary": "bin/x",
+            "sizes": ["small"],
+            "params": {
+                "ratio": {
+                    "name": "R",
+                    "type": "double",
+                    "default_value": 0.0,
+                    "min": 10.0,
+                    "max": 20.0
+                }
+            }
+        }"#,
+        schema_accepts: true,
+        manifest_accepts: false,
+    },
+    // ── Integer variant ───────────────────────────────────────────────
+    Negative {
+        label: "integer: default_value is fractional (structural)",
+        json: r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440005",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Fractional default",
+            "binary": "bin/x",
+            "sizes": ["small"],
+            "params": {
+                "count": {"name": "N", "type": "integer", "default_value": 3.14}
+            }
+        }"#,
+        schema_accepts: false,
+        manifest_accepts: false,
+    },
+    Negative {
+        label: "integer: step zero (structural via exclusiveMinimum)",
+        json: r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440006",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Zero step",
+            "binary": "bin/x",
+            "sizes": ["small"],
+            "params": {
+                "count": {"name": "N", "type": "integer", "default_value": 1, "step": 0}
+            }
+        }"#,
+        schema_accepts: false,
+        manifest_accepts: false,
+    },
+    Negative {
+        label: "integer: default_value above max (semantic)",
+        json: r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440007",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Default above max",
+            "binary": "bin/x",
+            "sizes": ["small"],
+            "params": {
+                "count": {
+                    "name": "N",
+                    "type": "integer",
+                    "default_value": 15,
+                    "min": 0,
+                    "max": 10
+                }
+            }
+        }"#,
+        schema_accepts: true,
+        manifest_accepts: false,
+    },
+    // ── Boolean variant ───────────────────────────────────────────────
+    Negative {
+        label: "boolean: default_value is a string (structural)",
+        json: r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440008",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Bad default type",
+            "binary": "bin/x",
+            "sizes": ["small"],
+            "params": {
+                "flag": {"name": "F", "type": "boolean", "default_value": "yes"}
+            }
+        }"#,
+        schema_accepts: false,
+        manifest_accepts: false,
+    },
+    // ── Timezone variant ──────────────────────────────────────────────
+    Negative {
+        label: "timezone: default_value is a number (structural)",
+        json: r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440009",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Bad default type",
+            "binary": "bin/x",
+            "sizes": ["small"],
+            "params": {
+                "tz": {"name": "T", "type": "timezone", "default_value": 42}
+            }
+        }"#,
+        schema_accepts: false,
+        manifest_accepts: false,
+    },
+    // ── Envelope-level structural rejects ─────────────────────────────
+    Negative {
+        label: "envelope: empty sizes (structural via minItems)",
+        json: r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440010",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "No sizes",
+            "binary": "bin/x",
+            "sizes": []
+        }"#,
+        schema_accepts: false,
+        manifest_accepts: false,
+    },
+    Negative {
+        label: "envelope: param key starts with a digit (structural via regex)",
+        json: r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440011",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Bad param key",
+            "binary": "bin/x",
+            "sizes": ["small"],
+            "params": {
+                "1bad": {"name": "B", "type": "string", "default_value": "x"}
+            }
+        }"#,
+        schema_accepts: false,
+        manifest_accepts: false,
+    },
+];
+
+#[test]
+fn negative_fixtures_lock_schema_vs_validator_split() {
+    let validator = schema_validator();
+
+    let mut failures: Vec<String> = Vec::new();
+
+    for fixture in FIXTURES {
+        let instance: serde_json::Value = serde_json::from_str(fixture.json)
+            .unwrap_or_else(|e| panic!("BUG: fixture {:?} is not valid JSON: {e}", fixture.label));
+        let schema_actual = validator.is_valid(&instance);
+        let manifest_actual = Manifest::from_str(fixture.json).is_ok();
+
+        if schema_actual != fixture.schema_accepts {
+            failures.push(format!(
+                "{}: schema verdict mismatch — expected accepts={}, got accepts={}",
+                fixture.label, fixture.schema_accepts, schema_actual,
+            ));
+        }
+        if manifest_actual != fixture.manifest_accepts {
+            failures.push(format!(
+                "{}: Manifest::from_str verdict mismatch — expected accepts={}, got accepts={}",
+                fixture.label, fixture.manifest_accepts, manifest_actual,
+            ));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "fixture-split mismatches:\n  - {}",
+        failures.join("\n  - "),
+    );
+}
+
+// ── Length caps (split fixtures with long strings — kept separate from FIXTURES
+//    because the const-table shape can't carry runtime-built JSON bodies) ───────
+
+#[test]
+fn over_cap_param_key_rejected_by_manifest_but_accepted_by_schema() {
+    // `patternProperties` only constrains key shape via regex, not length — so the schema
+    // accepts even an over-cap key. The Rust validator is the authoritative gate on length.
+    let key = "a".repeat(MAX_PARAM_KEY_LENGTH + 1);
+    let json = format!(
+        r#"{{
+            "uid": "550e8400-e29b-41d4-a716-446655440101",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Over-cap key",
+            "binary": "bin/x",
+            "sizes": ["small"],
+            "params": {{
+                "{key}": {{"name": "K", "type": "string", "default_value": "x"}}
+            }}
+        }}"#
+    );
+    let validator = schema_validator();
+    let instance: serde_json::Value =
+        serde_json::from_str(&json).expect("BUG: fixture must be valid JSON");
+    assert!(
+        validator.is_valid(&instance),
+        "JSON Schema unexpectedly rejected over-cap param key; patternProperties is regex-only"
+    );
+    assert!(
+        Manifest::from_str(&json).is_err(),
+        "Manifest::from_str accepted over-cap param key"
+    );
+}
+
+#[test]
+fn over_cap_string_default_value_rejected_by_both() {
+    let big = "x".repeat(MAX_PARAM_STRING_LENGTH + 1);
+    let json = format!(
+        r#"{{
+            "uid": "550e8400-e29b-41d4-a716-446655440102",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Over-cap default_value",
+            "binary": "bin/x",
+            "sizes": ["small"],
+            "params": {{
+                "label": {{"name": "L", "type": "string", "default_value": "{big}"}}
+            }}
+        }}"#
+    );
+    let validator = schema_validator();
+    let instance: serde_json::Value =
+        serde_json::from_str(&json).expect("BUG: fixture must be valid JSON");
+    assert!(
+        !validator.is_valid(&instance),
+        "JSON Schema accepted over-cap String default_value"
+    );
+    assert!(
+        Manifest::from_str(&json).is_err(),
+        "Manifest::from_str accepted over-cap String default_value"
+    );
+}
+
+#[test]
+fn over_cap_enum_values_entry_rejected_by_both() {
+    let big = "x".repeat(MAX_PARAM_STRING_LENGTH + 1);
+    let json = format!(
+        r#"{{
+            "uid": "550e8400-e29b-41d4-a716-446655440103",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Over-cap enum_values value",
+            "binary": "bin/x",
+            "sizes": ["small"],
+            "params": {{
+                "color": {{
+                    "name": "C",
+                    "type": "string",
+                    "default_value": "ok",
+                    "enum_values": [
+                        {{"value": "ok", "label": "OK"}},
+                        {{"value": "{big}", "label": "Big"}}
+                    ]
+                }}
+            }}
+        }}"#
+    );
+    let validator = schema_validator();
+    let instance: serde_json::Value =
+        serde_json::from_str(&json).expect("BUG: fixture must be valid JSON");
+    assert!(
+        !validator.is_valid(&instance),
+        "JSON Schema accepted over-cap enum_values entry"
+    );
+    assert!(
+        Manifest::from_str(&json).is_err(),
+        "Manifest::from_str accepted over-cap enum_values entry"
+    );
+}

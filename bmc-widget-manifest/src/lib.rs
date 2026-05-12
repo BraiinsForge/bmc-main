@@ -35,6 +35,21 @@ use uuid::Uuid;
 const MAX_NAME_LENGTH: usize = 50;
 const MAX_DESCRIPTION_LENGTH: usize = 200;
 
+/// Maximum byte length of a [`ParamKey`].
+///
+/// Keys are identifier-shaped (`^[A-Za-z][A-Za-z0-9_\-]*$`); 64 bytes is comfortably above typical
+/// values while staying well under the wire-format `u16` length field, so the encoder's
+/// `u16::try_from` is statically infallible.
+pub const MAX_PARAM_KEY_LENGTH: usize = 64;
+
+/// Maximum byte length of any string-shaped value: [`ParamValue::String`],
+/// [`StringOption::value`], and the `default_value` of [`ParamKind::String`] / [`ParamKind::Timezone`].
+///
+/// 1024 bytes covers IANA timezone IDs (≤ 32), enum codes (typically ≤ 64), and ad-hoc free-text
+/// values without runaway. Well under the wire-format `u32` length field, so the encoder's
+/// `u32::try_from` is statically infallible.
+pub const MAX_PARAM_STRING_LENGTH: usize = 1024;
+
 /// Errors produced by [`Manifest::from_str`] and the structural / semantic validators it dispatches to.
 /// Each variant names the rule that was violated, so a downstream caller can surface them without re-parsing the message.
 #[derive(Debug, Error)]
@@ -97,16 +112,19 @@ pub enum ManifestError {
 
 /// A param key inside a manifest's `params` map.
 /// Matches the regex `^[A-Za-z][A-Za-z0-9_-]*$` — starts with an ASCII letter,
-/// then any mix of ASCII alphanumerics, hyphen, and underscore.
+/// then any mix of ASCII alphanumerics, hyphen, and underscore. Capped at [`MAX_PARAM_KEY_LENGTH`] bytes.
 ///
 /// The host guarantees keys are stable identifiers safe to use
 /// as Rust field names after a snake_case-ish normalisation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, JsonSchema)]
 #[schemars(transparent)]
-pub struct ParamKey(#[schemars(regex(pattern = r"^[A-Za-z][A-Za-z0-9_\-]*$"))] String);
+pub struct ParamKey(
+    #[schemars(regex(pattern = r"^[A-Za-z][A-Za-z0-9_\-]*$"), length(max = MAX_PARAM_KEY_LENGTH))]
+    String,
+);
 
 impl ParamKey {
-    /// Construct a `ParamKey` from an owned string, applying the same character-class rules as the `Deserialize` impl.
+    /// Construct a `ParamKey` from an owned string, applying the same character-class and length rules as the `Deserialize` impl.
     /// Returns the rejected input back to the caller on failure.
     pub fn try_new(s: String) -> Result<Self, String> {
         if Self::is_valid(&s) {
@@ -117,6 +135,9 @@ impl ParamKey {
     }
 
     fn is_valid(s: &str) -> bool {
+        if s.len() > MAX_PARAM_KEY_LENGTH {
+            return false;
+        }
         let mut bytes = s.bytes();
         let first_ok = matches!(bytes.next(), Some(b) if b.is_ascii_alphabetic());
         let rest_ok = bytes.all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
@@ -149,6 +170,8 @@ impl std::borrow::Borrow<str> for ParamKey {
 pub struct StringOption {
     /// Wire value stored for this option.
     /// Must be unique within the surrounding `enum_values` array and non-empty after trim.
+    /// Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.
+    #[schemars(length(max = MAX_PARAM_STRING_LENGTH))]
     pub value: String,
     /// Human-readable label shown in the operator UI.
     pub label: String,
@@ -199,7 +222,7 @@ pub enum StringFormat {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ParamValue {
-    /// Absence of a value. Sent for optional params the operator left unset and that have no manifest default.
+    /// Absence of a value. Sent for optional params the operator cleared.
     Null,
     /// A boolean.
     Boolean(bool),
@@ -265,33 +288,27 @@ impl ParamValue {
 /// Reasons the wayland-side JSON-to-[`ParamValue`] conversion can fail.
 /// Each variant names a JSON shape the scalar schema does not support;
 /// the host drops these at debug log.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum ParamValueConversionError {
     /// `null`, `bool`, finite number, or string was expected; got an array.
+    #[error("expected scalar, got JSON array")]
     Array,
     /// `null`, `bool`, finite number, or string was expected; got an object.
+    #[error("expected scalar, got JSON object")]
     Object,
     /// A number that was neither integer- nor f64-representable.
     /// In practice this is unreachable through `serde_json`'s default parser,
     /// but the variant exists so the match is exhaustive.
+    #[error("number is not representable as i32 or f64")]
     UnrepresentableNumber,
     /// NaN or ±infinity. `serde_json` does not emit these by default,
     /// but a custom-built `serde_json::Value` can carry them.
+    #[error("number is not finite")]
     NonFiniteNumber,
+    /// String value exceeded [`MAX_PARAM_STRING_LENGTH`].
+    #[error("string value exceeds max length of {max} bytes (got {len})")]
+    StringTooLong { len: usize, max: usize },
 }
-
-impl std::fmt::Display for ParamValueConversionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Array => f.write_str("expected scalar, got JSON array"),
-            Self::Object => f.write_str("expected scalar, got JSON object"),
-            Self::UnrepresentableNumber => f.write_str("number is not representable as i32 or f64"),
-            Self::NonFiniteNumber => f.write_str("number is not finite"),
-        }
-    }
-}
-
-impl std::error::Error for ParamValueConversionError {}
 
 /// Inverse of [`ParamValue::to_json_value`].
 ///
@@ -312,7 +329,16 @@ impl TryFrom<&serde_json::Value> for ParamValue {
         match value {
             serde_json::Value::Null => Ok(ParamValue::Null),
             serde_json::Value::Bool(b) => Ok(ParamValue::Boolean(*b)),
-            serde_json::Value::String(s) => Ok(ParamValue::String(s.clone())),
+            serde_json::Value::String(s) => {
+                if s.len() > MAX_PARAM_STRING_LENGTH {
+                    Err(ParamValueConversionError::StringTooLong {
+                        len: s.len(),
+                        max: MAX_PARAM_STRING_LENGTH,
+                    })
+                } else {
+                    Ok(ParamValue::String(s.clone()))
+                }
+            }
             serde_json::Value::Number(n) => {
                 if let Some(i) = n.as_i64() {
                     if let Ok(i32_val) = i32::try_from(i) {
@@ -414,18 +440,21 @@ pub struct Manifest {
     #[schemars(length(max = 200))]
     pub description: String,
     /// Optional author block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<Author>,
     /// Path to the widget binary, relative to the widget's directory.
     #[schemars(with = "String")]
     pub binary: PathBuf,
     /// System-provided settings the widget wants injected (locale, timezone, night mode, etc.).
     /// Order is preserved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub settings: Vec<SettingKey>,
     /// Surface sizes the widget supports. Must be non-empty.
     #[schemars(length(min = 1), with = "Vec<SizeTypeSchema>")]
     pub sizes: Vec<SizeType>,
     /// Per-instance parameter declarations, keyed by [`ParamKey`].
     /// Iteration order matches manifest order.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub params: IndexMap<ParamKey, ParamDefinition>,
 }
 
@@ -578,9 +607,10 @@ pub enum ParamKind {
         /// When non-empty, the `default_value` must be one of these.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         enum_values: Vec<StringOption>,
-        /// Default value injected when the operator leaves the param unset.
-        /// Required when `optional == false`.
+        /// Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
+        /// Required when `optional == false`. Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(length(max = MAX_PARAM_STRING_LENGTH))]
         default_value: Option<String>,
     },
     /// A finite f64 — JSON Schema "number".
@@ -599,7 +629,7 @@ pub enum ParamKind {
         /// When non-empty, the `default_value` must be one of these.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         enum_values: Vec<DoubleOption>,
-        /// Default value injected when the operator leaves the param unset.
+        /// Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
         /// Required when `optional == false`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         default_value: Option<f64>,
@@ -620,24 +650,25 @@ pub enum ParamKind {
         /// When non-empty, the `default_value` must be one of these.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         enum_values: Vec<IntegerOption>,
-        /// Default value injected when the operator leaves the param
-        /// unset. Required when `optional == false`.
+        /// Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
+        /// Required when `optional == false`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         default_value: Option<i32>,
     },
     /// A boolean.
     Boolean {
-        /// Default value injected when the operator leaves the param
-        /// unset. Required when `optional == false`.
+        /// Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
+        /// Required when `optional == false`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         default_value: Option<bool>,
     },
     /// An IANA timezone identifier. Wire form is a string;
     /// the dedicated variant lets the operator UI render a zone picker instead of a free-form text input.
     Timezone {
-        /// Default zone injected when the operator leaves the param unset.
-        /// Required when `optional == false`.
+        /// Initial zone seeded at widget creation; later updates with the operator field unset are delivered as `Null`.
+        /// Required when `optional == false`. Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(length(max = MAX_PARAM_STRING_LENGTH))]
         default_value: Option<String>,
     },
 }
@@ -681,6 +712,14 @@ impl ParamKind {
                 ..
             } => {
                 check_string_options(enum_values).map_err(&invalid)?;
+                if let Some(d) = default_value
+                    && d.len() > MAX_PARAM_STRING_LENGTH
+                {
+                    return Err(invalid(format!(
+                        "default_value exceeds max length of {MAX_PARAM_STRING_LENGTH} bytes (got {})",
+                        d.len()
+                    )));
+                }
                 if !enum_values.is_empty()
                     && let Some(d) = default_value
                     && !enum_values.iter().any(|o| &o.value == d)
@@ -715,7 +754,17 @@ impl ParamKind {
                 check_int_range(*min, *max, *step, *default_value).map_err(&invalid)?;
                 check_int_options(enum_values, *default_value).map_err(&invalid)?;
             }
-            ParamKind::Boolean { .. } | ParamKind::Timezone { .. } => {}
+            ParamKind::Boolean { .. } => {}
+            ParamKind::Timezone { default_value } => {
+                if let Some(d) = default_value
+                    && d.len() > MAX_PARAM_STRING_LENGTH
+                {
+                    return Err(invalid(format!(
+                        "default_value exceeds max length of {MAX_PARAM_STRING_LENGTH} bytes (got {})",
+                        d.len()
+                    )));
+                }
+            }
         }
         Ok(())
     }
@@ -801,6 +850,12 @@ fn check_string_options(options: &[StringOption]) -> Result<(), String> {
                 "enum_values entry value must be non-empty (collides with FE \"no selection\" sentinel)"
                     .into(),
             );
+        }
+        if o.value.len() > MAX_PARAM_STRING_LENGTH {
+            return Err(format!(
+                "enum_values entry value exceeds max length of {MAX_PARAM_STRING_LENGTH} bytes (got {})",
+                o.value.len()
+            ));
         }
         if o.label.trim().is_empty() {
             return Err("enum_values entry label must be non-empty after trim".into());

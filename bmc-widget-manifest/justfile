@@ -6,8 +6,8 @@ default:
 
 # Regenerate the committed `manifest.schema.json` from the Rust types.
 gen-schema:
-    cargo run -q --example gen_schema -p bmc-widget-manifest > {{ source_directory() }}/manifest.schema.json
+    cargo run -q --bin gen_schema -p bmc-widget-manifest > {{ source_directory() }}/manifest.schema.json
 
 # Verify the committed `manifest.schema.json` matches the current types.
 check-schema:
-    diff -u {{ source_directory() }}/manifest.schema.json <(cargo run -q --example gen_schema -p bmc-widget-manifest)
+    diff -u {{ source_directory() }}/manifest.schema.json <(cargo run -q --bin gen_schema -p bmc-widget-manifest)

@@ -69,9 +69,7 @@
     "name",
     "description",
     "binary",
-    "settings",
-    "sizes",
-    "params"
+    "sizes"
   ],
   "$defs": {
     "Author": {
@@ -158,11 +156,12 @@
           "type": "object",
           "properties": {
             "default_value": {
-              "description": "Default value injected when the operator leaves the param unset.\nRequired when `optional == false`.",
+              "description": "Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.\nRequired when `optional == false`. Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.",
               "type": [
                 "string",
                 "null"
-              ]
+              ],
+              "maxLength": 1024
             },
             "enum_values": {
               "description": "Optional closed set of allowed values.\nWhen non-empty, the `default_value` must be one of these.",
@@ -196,7 +195,7 @@
           "type": "object",
           "properties": {
             "default_value": {
-              "description": "Default value injected when the operator leaves the param unset.\nRequired when `optional == false`.",
+              "description": "Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.\nRequired when `optional == false`.",
               "type": [
                 "number",
                 "null"
@@ -249,7 +248,7 @@
           "type": "object",
           "properties": {
             "default_value": {
-              "description": "Default value injected when the operator leaves the param\nunset. Required when `optional == false`.",
+              "description": "Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.\nRequired when `optional == false`.",
               "type": [
                 "integer",
                 "null"
@@ -302,7 +301,7 @@
           "type": "object",
           "properties": {
             "default_value": {
-              "description": "Default value injected when the operator leaves the param\nunset. Required when `optional == false`.",
+              "description": "Initial value seeded at widget creation; later updates with the operator field unset are delivered as `Null`.\nRequired when `optional == false`.",
               "type": [
                 "boolean",
                 "null"
@@ -322,11 +321,12 @@
           "type": "object",
           "properties": {
             "default_value": {
-              "description": "Default zone injected when the operator leaves the param unset.\nRequired when `optional == false`.",
+              "description": "Initial zone seeded at widget creation; later updates with the operator field unset are delivered as `Null`.\nRequired when `optional == false`. Capped at [`MAX_PARAM_STRING_LENGTH`] bytes.",
               "type": [
                 "string",
                 "null"
-              ]
+              ],
+              "maxLength": 1024
             },
             "type": {
               "type": "string",
@@ -406,8 +406,9 @@
           "type": "string"
         },
         "value": {
-          "description": "Wire value stored for this option.\nMust be unique within the surrounding `enum_values` array and non-empty after trim.",
-          "type": "string"
+          "description": "Wire value stored for this option.\nMust be unique within the surrounding `enum_values` array and non-empty after trim.\nCapped at [`MAX_PARAM_STRING_LENGTH`] bytes.",
+          "type": "string",
+          "maxLength": 1024
         }
       },
       "required": [
