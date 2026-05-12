@@ -1,10 +1,5 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "scene manager wiring lands in a follow-up task")
-)]
-
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
