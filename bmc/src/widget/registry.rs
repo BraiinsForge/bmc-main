@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use bmc_ipc::SizeType;
-use bmc_widget::{Manifest, ManifestError};
+use bmc_widget_manifest::{Manifest, ManifestError};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -115,7 +115,7 @@ impl WidgetRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bmc_widget::Manifest;
+    use bmc_widget_manifest::Manifest;
 
     fn make_widget_info(uid: &str, name: &str, sizes: Vec<SizeType>) -> WidgetInfo {
         let manifest = Manifest {

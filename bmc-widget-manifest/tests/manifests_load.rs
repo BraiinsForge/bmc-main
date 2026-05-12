@@ -1,6 +1,6 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-use bmc_widget::Manifest;
+use bmc_widget_manifest::Manifest;
 use std::str::FromStr;
 
 fn manifest_paths() -> Vec<std::path::PathBuf> {

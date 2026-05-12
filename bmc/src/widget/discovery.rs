@@ -3,7 +3,7 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
-use bmc_widget::Manifest;
+use bmc_widget_manifest::Manifest;
 use tokio::fs;
 use tracing::warn;
 

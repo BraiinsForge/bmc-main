@@ -11,7 +11,7 @@ use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone, WeekDay};
 use bmc_shared_utils::number_format::NumberFormat;
 use bmc_shared_utils::temperature::TemperatureUnit;
 use bmc_upgrade::autoupgrade::AutoUpgradeConfig;
-use bmc_widget::{ParamKey, ParamValue};
+use bmc_widget_manifest::{ParamKey, ParamValue};
 use chrono::{Local, NaiveTime};
 use indexmap::{IndexMap, indexmap};
 use itertools::Itertools;

@@ -27,6 +27,7 @@ bmc-shared-utils.workspace = true
 bmc-support.workspace = true
 bmc-upgrade = { workspace = true, features = ["disk-check"] }
 bmc-widget.workspace = true
+bmc-widget-manifest.workspace = true
 bmc-widget-protocol.workspace = true
 chrono = { workspace = true }
 chrono-tz.workspace = true

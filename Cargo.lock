@@ -975,6 +975,7 @@ dependencies = [
  "bmc-support",
  "bmc-upgrade",
  "bmc-widget",
+ "bmc-widget-manifest",
  "bmc-widget-protocol",
  "chrono",
  "chrono-tz",
@@ -1630,16 +1631,11 @@ dependencies = [
  "drm-fourcc",
  "gbm 0.17.0",
  "glow 0.16.0",
- "indexmap",
  "libc",
- "semver",
- "serde",
  "serde_json",
  "smithay",
- "tempfile",
  "thiserror 1.0.69",
  "tracing",
- "uuid",
  "wayland-backend",
  "wayland-client 0.31.14",
  "wayland-protocols 0.32.12",
@@ -1683,6 +1679,19 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "bmc-widget-manifest"
+version = "0.1.0"
+dependencies = [
+ "bmc-ipc",
+ "indexmap",
+ "semver",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "uuid",
 ]
 
 [[package]]

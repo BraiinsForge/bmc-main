@@ -19,14 +19,10 @@ gpu = [
 anyhow = { workspace = true }
 bmc-ipc = { workspace = true }
 bmc-widget-protocol = { workspace = true }
-indexmap = { workspace = true }
 libc = { workspace = true }
-semver = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-uuid = { workspace = true }
 
 # GPU rendering (optional, behind "gpu" feature)
 drm-fourcc = { workspace = true, optional = true }
@@ -36,9 +32,6 @@ smithay = { workspace = true, default-features = false, features = ["backend_egl
 wayland-backend = { workspace = true, features = ["client_system"], optional = true }
 wayland-client = { workspace = true, optional = true }
 wayland-protocols = { workspace = true, features = ["staging"], optional = true }
-
-[dev-dependencies]
-tempfile = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,0 +1,18 @@
+[package]
+name = "bmc-widget-manifest"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins Systems s.r.o."]
+description = "Widget manifest types — the on-disk schema for `manifest.json` shared between the compositor, the wasm host runtime, and tooling"
+
+[dependencies]
+bmc-ipc = { workspace = true }
+indexmap = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true
