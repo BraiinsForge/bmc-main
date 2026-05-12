@@ -169,7 +169,7 @@ pub trait Compositor: Send + Sync {
     /// `led_request_status` events on the matching widget surface.
     fn request_status_sender(&self) -> mpsc::UnboundedSender<WidgetRequestStatus>;
 
-    /// Subscribe to compositor events (widget ready, disconnected).
+    /// Subscribe to the compositor event stream.
     fn subscribe_events(&self) -> broadcast::Receiver<CompositorEvent>;
 
     /// Shutdown the compositor.

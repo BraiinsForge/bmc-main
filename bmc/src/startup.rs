@@ -167,9 +167,16 @@ where
         let screen_activity_for_touch = button_manager.screen_activity.clone();
         tokio::spawn(async move {
             let mut event_rx = compositor_for_events.subscribe_events();
-            while let Ok(event) = event_rx.recv().await {
-                if matches!(event, CompositorEvent::ScreenActivity) {
-                    screen_activity_for_touch.notify_waiters();
+            loop {
+                match event_rx.recv().await {
+                    Ok(CompositorEvent::ScreenActivity) => {
+                        screen_activity_for_touch.notify_waiters();
+                    }
+                    Ok(_) => {}
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(skipped = n, "compositor event receiver lagged");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
         });
