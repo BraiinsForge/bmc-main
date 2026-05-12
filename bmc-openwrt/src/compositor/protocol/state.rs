@@ -29,12 +29,6 @@ pub struct WidgetData {
     pub pid: Option<u32>,
 }
 
-#[derive(Debug, Clone)]
-pub struct DisconnectedWidget {
-    pub instance_id: InstanceId,
-    pub pid: Option<u32>,
-}
-
 /// A widget connection that arrived before `set_widget_pid` registered
 /// the process. Buffered until the pid is known.
 ///
@@ -67,7 +61,7 @@ pub struct DeckWidgetProtocolState {
     current_settings: Vec<SettingUpdate>,
     pending_actions: Vec<(InstanceId, ActionPayload)>,
     newly_connected: Vec<InstanceId>,
-    newly_disconnected: Vec<DisconnectedWidget>,
+    newly_disconnected: Vec<InstanceId>,
     /// Connections that arrived before the coordinator called
     /// `set_widget_pid`. Resolved in `set_widget_pid`.
     pending_connections: Vec<PendingConnection>,
@@ -228,14 +222,16 @@ impl DeckWidgetProtocolState {
             .map(|w| &w.instance_id)
     }
 
-    pub fn unregister_widget(&mut self, instance_id: &InstanceId) {
-        let Some(widget) = self.widgets.remove(instance_id) else {
-            return;
-        };
+    /// Remove the widget record and return its pid so the caller can
+    /// run pid-tagged cleanup synchronously. Pushes the instance id
+    /// onto `newly_disconnected` for `WidgetDisconnected` event
+    /// emission.
+    pub fn unregister_widget(&mut self, instance_id: &InstanceId) -> Option<u32> {
+        let widget = self.widgets.remove(instance_id)?;
 
-        // Purge any buffered connection for this pid before its
-        // record is gone; the natural-exit window is handled by
-        // `clear_pid`.
+        // Purge any buffered connection for the disconnecting pid
+        // before its widget record is gone; the natural-exit window
+        // for already-registered widgets is handled by `clear_pid`.
         if let Some(pid) = widget.pid {
             let before = self.pending_connections.len();
             self.pending_connections.retain(|pc| pc.pid != pid);
@@ -247,22 +243,40 @@ impl DeckWidgetProtocolState {
             }
         }
 
-        self.newly_disconnected.push(DisconnectedWidget {
-            instance_id: widget.instance_id,
-            pid: widget.pid,
-        });
+        let pid = widget.pid;
+        self.newly_disconnected.push(widget.instance_id);
+        pid
     }
 
-    /// Remove any pending connection or widget entry associated with the
-    /// given pid. Called when a widget process exits so that a recycled
-    /// pid cannot be mistaken for the dead widget.
-    pub fn clear_pid(&mut self, pid: u32) {
-        for widget in self.widgets.values_mut() {
-            if widget.pid == Some(pid) {
-                widget.pid = None;
-            }
+    /// Synthesize a disconnect for an exited widget process.
+    ///
+    /// A crashed or SIGTERM'd widget can exit without sending protocol
+    /// `Destroy`, so the coordinator emits this call from its child-exit
+    /// watcher. To avoid PID-reuse races, disconnection is guarded by both
+    /// instance id and expected pid: stale exit notifications for a prior
+    /// spawn of the same instance are ignored.
+    pub fn clear_pid_for_instance(
+        &mut self,
+        instance_id: &InstanceId,
+        expected_pid: u32,
+    ) -> Option<u32> {
+        let Some(current_pid) = self.widgets.get(instance_id).and_then(|w| w.pid) else {
+            tracing::debug!(
+                "clear_pid_for_instance: ignoring stale clear for unknown instance {instance_id} (expected_pid={expected_pid})"
+            );
+            return None;
+        };
+
+        if current_pid != expected_pid {
+            tracing::debug!(
+                "clear_pid_for_instance: ignoring stale clear for instance {instance_id}: expected pid {}, current pid {}",
+                expected_pid,
+                current_pid
+            );
+            return None;
         }
-        self.pending_connections.retain(|pc| pc.pid != pid);
+
+        self.unregister_widget(instance_id)
     }
 
     pub fn add_action(&mut self, instance_id: InstanceId, payload: ActionPayload) {
@@ -277,7 +291,7 @@ impl DeckWidgetProtocolState {
         std::mem::take(&mut self.newly_connected)
     }
 
-    pub fn drain_disconnected(&mut self) -> Vec<DisconnectedWidget> {
+    pub fn drain_disconnected(&mut self) -> Vec<InstanceId> {
         std::mem::take(&mut self.newly_disconnected)
     }
 
@@ -374,5 +388,84 @@ fn emit_setting(surface: &DeckWidgetSurfaceV1, setting: &SettingUpdate) {
             surface.temperature_unit(temperature_unit_to_protocol(*u));
         }
         SettingUpdate::FirstDayOfWeek(w) => surface.first_day_of_week(weekday_to_protocol(*w)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bmc_widget_protocol::SizeType;
+
+    use super::*;
+
+    fn make_config() -> WidgetInitialConfig {
+        WidgetInitialConfig {
+            size: SizeType::Small,
+            width: 100,
+            height: 100,
+            params: serde_json::Map::new(),
+        }
+    }
+
+    fn register_with_pid(state: &mut DeckWidgetProtocolState, instance_id: &str, pid: u32) {
+        state.register_widget(instance_id.to_owned(), make_config());
+        state.set_widget_pid(&instance_id.to_owned(), pid);
+    }
+
+    #[test]
+    fn clear_pid_for_instance_unregisters_only_matching_instance_and_pid() {
+        let mut state = DeckWidgetProtocolState::new();
+        register_with_pid(&mut state, "alpha", 100);
+        register_with_pid(&mut state, "beta", 200);
+        let _ = state.drain_connected();
+
+        let pid = state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+
+        assert_eq!(pid, Some(100));
+        let disconnected = state.drain_disconnected();
+        assert_eq!(disconnected, vec!["alpha".to_owned()]);
+
+        assert!(state.widgets.contains_key("beta"));
+        assert!(!state.widgets.contains_key("alpha"));
+    }
+
+    #[test]
+    fn clear_pid_for_instance_with_no_matching_widget_is_noop() {
+        let mut state = DeckWidgetProtocolState::new();
+        register_with_pid(&mut state, "alpha", 100);
+        let _ = state.drain_connected();
+
+        let pid = state.clear_pid_for_instance(&"alpha".to_owned(), 999);
+
+        assert_eq!(pid, None);
+        assert!(state.drain_disconnected().is_empty());
+        assert!(state.widgets.contains_key("alpha"));
+    }
+
+    #[test]
+    fn clear_pid_for_instance_ignores_unknown_instance() {
+        let mut state = DeckWidgetProtocolState::new();
+        register_with_pid(&mut state, "alpha", 100);
+        let _ = state.drain_connected();
+
+        let pid = state.clear_pid_for_instance(&"missing".to_owned(), 100);
+
+        assert_eq!(pid, None);
+        assert!(state.drain_disconnected().is_empty());
+        assert!(state.widgets.contains_key("alpha"));
+    }
+
+    #[test]
+    fn clear_pid_for_instance_ignores_stale_exit_after_respawn() {
+        let mut state = DeckWidgetProtocolState::new();
+        register_with_pid(&mut state, "alpha", 100);
+        let _ = state.drain_connected();
+
+        state.set_widget_pid(&"alpha".to_owned(), 200);
+
+        let pid = state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+
+        assert_eq!(pid, None);
+        assert!(state.drain_disconnected().is_empty());
+        assert!(state.widgets.contains_key("alpha"));
     }
 }

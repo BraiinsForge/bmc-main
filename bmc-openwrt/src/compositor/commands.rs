@@ -24,7 +24,8 @@ pub enum CompositorCommand {
         instance_id: InstanceId,
     },
     ClearPid {
-        pid: u32,
+        instance_id: InstanceId,
+        expected_pid: u32,
     },
     SetActiveScene {
         layout: SceneLayout,

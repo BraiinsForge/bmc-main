@@ -5,6 +5,7 @@
 use super::{
     commands::CompositorCommand,
     device_access::{DeviceAccessConfig, RootLibinputInterface, set_libinput_debug_priority},
+    protocol::DeckWidgetHandler,
     render::{DrmOutput, EglContext},
     scene_renderer::SceneRenderer,
     state::{ClientState, CompositorState},
@@ -1155,6 +1156,17 @@ fn register_touch_devices(ctx: &mut libinput::Libinput, nodes: &[PathBuf]) -> us
     added
 }
 
+fn handle_clear_pid_command(state: &mut AppState, instance_id: &InstanceId, expected_pid: u32) {
+    tracing::debug!(
+        "Clearing pid for widget {} (expected_pid={})",
+        instance_id,
+        expected_pid
+    );
+    state
+        .compositor
+        .clear_pid_for_instance(instance_id, expected_pid);
+}
+
 fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
     match cmd {
         CompositorCommand::RegisterWidget {
@@ -1193,19 +1205,12 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
         }
         CompositorCommand::UnregisterWidget { instance_id } => {
             tracing::debug!("Unregistering widget {}", instance_id);
-            state.compositor.mark_full_output_damage();
-            state
-                .compositor
-                .deck_widget_state
-                .unregister_widget(&instance_id);
-            // Remove stale touch routing surface so a reconnecting widget
-            // gets a fresh entry via the surface commit path.
-            state.compositor.drop_widget_render_surface(&instance_id);
+            state.compositor.unregister_widget(&instance_id);
         }
-        CompositorCommand::ClearPid { pid } => {
-            tracing::debug!("Clearing pid {}", pid);
-            state.compositor.deck_widget_state.clear_pid(pid);
-        }
+        CompositorCommand::ClearPid {
+            instance_id,
+            expected_pid,
+        } => handle_clear_pid_command(state, &instance_id, expected_pid),
         CompositorCommand::SetActiveScene { layout } => {
             tracing::info!("Setting active scene with {} widgets", layout.widgets.len());
             for w in &layout.widgets {
@@ -1265,21 +1270,11 @@ fn process_protocol_events(state: &mut AppState) {
             .send(CompositorEvent::WidgetReady { instance_id });
     }
 
-    for disconnected in state.compositor.deck_widget_state.drain_disconnected() {
-        state.compositor.mark_full_output_damage();
-        state
-            .compositor
-            .drop_widget_callback_state(&disconnected.instance_id, disconnected.pid);
-        state
-            .compositor
-            .drop_widget_render_surface(&disconnected.instance_id);
-        state
-            .compositor
-            .drop_widget_buffers(&disconnected.instance_id);
-        tracing::info!("Widget disconnected: {}", disconnected.instance_id);
-        let _ = state.event_tx.send(CompositorEvent::WidgetDisconnected {
-            instance_id: disconnected.instance_id,
-        });
+    for instance_id in state.compositor.deck_widget_state.drain_disconnected() {
+        tracing::info!("Widget disconnected: {}", instance_id);
+        let _ = state
+            .event_tx
+            .send(CompositorEvent::WidgetDisconnected { instance_id });
     }
 
     for (instance_id, payload) in state.compositor.deck_widget_state.drain_actions() {
@@ -1422,9 +1417,12 @@ impl Compositor for EglCompositor {
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 
-    fn clear_pid(&self, pid: u32) -> Result<(), CompositorError> {
+    fn clear_pid(&self, instance_id: &InstanceId, pid: u32) -> Result<(), CompositorError> {
         self.command_tx
-            .send(CompositorCommand::ClearPid { pid })
+            .send(CompositorCommand::ClearPid {
+                instance_id: instance_id.clone(),
+                expected_pid: pid,
+            })
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 

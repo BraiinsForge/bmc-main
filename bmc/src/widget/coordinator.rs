@@ -268,9 +268,10 @@ impl Coordinator {
         // Clear the pid from the compositor when the child exits so a
         // recycled pid cannot be mistaken for this widget.
         let compositor = Arc::clone(&self.compositor);
+        let clear_instance_id = instance_id.clone();
         tokio::spawn(async move {
             if let Ok(exited_pid) = exit_rx.await {
-                let _ = compositor.clear_pid(exited_pid);
+                let _ = compositor.clear_pid(&clear_instance_id, exited_pid);
             }
         });
     }

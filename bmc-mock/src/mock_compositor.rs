@@ -93,8 +93,12 @@ impl Compositor for MockCompositor {
         Ok(())
     }
 
-    fn clear_pid(&self, pid: u32) -> Result<(), CompositorError> {
-        tracing::info!("MockCompositor: clear_pid {pid}");
+    fn clear_pid(&self, instance_id: &InstanceId, pid: u32) -> Result<(), CompositorError> {
+        tracing::info!(
+            "MockCompositor: clear_pid instance='{}' pid={}",
+            instance_id,
+            pid
+        );
         Ok(())
     }
 

@@ -573,6 +573,13 @@ impl DeckWidgetHandler for CompositorState {
     fn deck_widget_state(&mut self) -> &mut DeckWidgetProtocolState {
         &mut self.deck_widget_state
     }
+
+    fn drop_widget_render_state(&mut self, instance_id: &InstanceId, pid: Option<u32>) {
+        self.mark_full_output_damage();
+        self.drop_widget_callback_state(instance_id, pid);
+        self.drop_widget_render_surface(instance_id);
+        self.drop_widget_buffers(instance_id);
+    }
 }
 
 impl CompositorHandler for CompositorState {

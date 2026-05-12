@@ -33,6 +33,38 @@ pub struct WidgetSurfaceUserData {
 
 pub trait DeckWidgetHandler {
     fn deck_widget_state(&mut self) -> &mut DeckWidgetProtocolState;
+
+    /// Synchronously drop per-widget render state owned outside the
+    /// protocol state. Called from the trait's `unregister_widget` /
+    /// `clear_pid_for_instance` defaults while the disconnecting pid
+    /// is still the current pid, so a same-id re-register cannot find
+    /// this cleanup running against its fresh state.
+    fn drop_widget_render_state(&mut self, _instance_id: &InstanceId, _pid: Option<u32>) {}
+
+    /// Unregister a widget and drop its render-side state in one
+    /// step. Wayland-dispatch `Destroy` and command-loop unregister
+    /// paths go through this method so cleanup happens before any
+    /// re-register can populate fresh entries under the same
+    /// instance id.
+    fn unregister_widget(&mut self, instance_id: &InstanceId) {
+        let pid = self.deck_widget_state().unregister_widget(instance_id);
+        if pid.is_some() {
+            self.drop_widget_render_state(instance_id, pid);
+        }
+    }
+
+    /// Pid-guarded unregister for the coordinator's child-exit path.
+    /// Bundled with render-state cleanup for the same reason
+    /// `unregister_widget` is: the two protocol-state unregister
+    /// entry points must not diverge on which side owns cleanup.
+    fn clear_pid_for_instance(&mut self, instance_id: &InstanceId, expected_pid: u32) {
+        let pid = self
+            .deck_widget_state()
+            .clear_pid_for_instance(instance_id, expected_pid);
+        if pid.is_some() {
+            self.drop_widget_render_state(instance_id, pid);
+        }
+    }
 }
 
 impl<D> GlobalDispatch<DeckWidgetManagerV1, (), D> for DeckWidgetProtocolState
@@ -163,13 +195,13 @@ where
             tracing::warn!("Received request on unresolved widget surface; ignoring");
             return;
         }
-        let protocol_state = state.deck_widget_state();
         match request {
             deck_widget_surface_v1::Request::Destroy => {
-                protocol_state.unregister_widget(&instance_id);
+                state.unregister_widget(&instance_id);
                 tracing::info!("Widget surface destroyed for instance: {}", instance_id);
             }
             deck_widget_surface_v1::Request::PlaySound { sound } => {
+                let protocol_state = state.deck_widget_state();
                 tracing::debug!("Widget {} play_sound: {sound}", instance_id);
                 protocol_state.add_action(
                     instance_id,
@@ -177,6 +209,7 @@ where
                 );
             }
             deck_widget_surface_v1::Request::StopSound => {
+                let protocol_state = state.deck_widget_state();
                 tracing::debug!("Widget {} stop_sound", instance_id);
                 protocol_state.add_action(
                     instance_id,
@@ -194,6 +227,7 @@ where
                     tracing::warn!("Widget {} led_temporary: unknown effect", instance_id);
                     return;
                 };
+                let protocol_state = state.deck_widget_state();
                 tracing::debug!(
                     "Widget {} led_temporary: effect={effect:?} rgb=({r},{g},{b}) duration_ms={duration_ms}",
                     instance_id
@@ -216,6 +250,7 @@ where
                     tracing::warn!("Widget {} led_endless: unknown effect", instance_id);
                     return;
                 };
+                let protocol_state = state.deck_widget_state();
                 tracing::debug!(
                     "Widget {} led_endless: effect={effect:?} rgb=({r},{g},{b})",
                     instance_id
@@ -233,6 +268,7 @@ where
                 );
             }
             deck_widget_surface_v1::Request::StopLed => {
+                let protocol_state = state.deck_widget_state();
                 tracing::debug!("Widget {} stop_led", instance_id);
                 protocol_state
                     .add_action(instance_id, bmc_widget_protocol::ActionPayload::StopLed {});
@@ -260,4 +296,97 @@ where
         + 'static,
 {
     display.create_global::<D, DeckWidgetManagerV1, ()>(1, ());
+}
+
+#[cfg(test)]
+mod tests {
+    use bmc::compositor::InstanceId;
+    use bmc_widget_protocol::{SizeType, WidgetInitialConfig};
+
+    use super::super::state::DeckWidgetProtocolState;
+    use super::DeckWidgetHandler;
+
+    struct MockHandler {
+        state: DeckWidgetProtocolState,
+        cleanup_log: Vec<(InstanceId, Option<u32>)>,
+    }
+
+    impl DeckWidgetHandler for MockHandler {
+        fn deck_widget_state(&mut self) -> &mut DeckWidgetProtocolState {
+            &mut self.state
+        }
+
+        fn drop_widget_render_state(&mut self, instance_id: &InstanceId, pid: Option<u32>) {
+            self.cleanup_log.push((instance_id.clone(), pid));
+        }
+    }
+
+    fn make_config() -> WidgetInitialConfig {
+        WidgetInitialConfig {
+            size: SizeType::Small,
+            width: 100,
+            height: 100,
+            params: serde_json::Map::new(),
+        }
+    }
+
+    #[test]
+    fn unregister_drops_render_state_before_same_id_register_can_race() {
+        let mut handler = MockHandler {
+            state: DeckWidgetProtocolState::new(),
+            cleanup_log: Vec::new(),
+        };
+        handler
+            .state
+            .register_widget("alpha".to_owned(), make_config());
+        handler.state.set_widget_pid(&"alpha".to_owned(), 100);
+        let _ = handler.state.drain_connected();
+
+        handler.unregister_widget(&"alpha".to_owned());
+
+        assert_eq!(
+            handler.cleanup_log,
+            vec![("alpha".to_owned(), Some(100))],
+            "cleanup must run synchronously while the old pid is still current"
+        );
+
+        handler
+            .state
+            .register_widget("alpha".to_owned(), make_config());
+        handler.state.set_widget_pid(&"alpha".to_owned(), 200);
+
+        assert_eq!(
+            handler.cleanup_log.len(),
+            1,
+            "no deferred queue should fire a second cleanup against the fresh pid=200 state"
+        );
+
+        let drained = handler.state.drain_disconnected();
+        assert_eq!(drained, vec!["alpha".to_owned()]);
+    }
+
+    // A stale `clear_pid_for_instance` (pid does not match current)
+    // must not invoke render-state cleanup — the widget still belongs
+    // to a different (newer) process and its render state must
+    // survive.
+    #[test]
+    fn stale_clear_pid_does_not_invoke_render_state_cleanup() {
+        let mut handler = MockHandler {
+            state: DeckWidgetProtocolState::new(),
+            cleanup_log: Vec::new(),
+        };
+        handler
+            .state
+            .register_widget("alpha".to_owned(), make_config());
+        handler.state.set_widget_pid(&"alpha".to_owned(), 200);
+        let _ = handler.state.drain_connected();
+
+        handler.clear_pid_for_instance(&"alpha".to_owned(), 100);
+
+        assert!(
+            handler.cleanup_log.is_empty(),
+            "stale clear (pid mismatch) must not trigger any cleanup"
+        );
+        assert!(handler.state.drain_disconnected().is_empty());
+    }
 }

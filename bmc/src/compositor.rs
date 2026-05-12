@@ -114,10 +114,14 @@ pub trait Compositor: Send + Sync {
     /// Unregister a widget when its process stops.
     fn unregister_widget(&self, instance_id: &InstanceId) -> Result<(), CompositorError>;
 
-    /// Clear any pid association for the given process. Called when a
-    /// widget process exits so that a recycled pid cannot be mistaken
-    /// for the dead widget.
-    fn clear_pid(&self, pid: u32) -> Result<(), CompositorError>;
+    /// Clear pid association for a specific widget instance. Called when a
+    /// widget process exits so that a recycled pid cannot be mistaken for
+    /// the dead widget.
+    ///
+    /// Implementations must only disconnect when the instance currently maps
+    /// to `pid`; stale exit notifications for a prior spawn of the same
+    /// instance must be ignored.
+    fn clear_pid(&self, instance_id: &InstanceId, pid: u32) -> Result<(), CompositorError>;
 
     /// Set the active scene layout (visible widgets and positions).
     fn set_active_scene(&self, layout: SceneLayout) -> Result<(), CompositorError>;
