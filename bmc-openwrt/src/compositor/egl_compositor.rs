@@ -49,7 +49,7 @@ use std::{
 /// satisfies that without the per-call overhead of sampling a realtime
 /// clock.
 static COMPOSITOR_BOOT: LazyLock<Instant> = LazyLock::new(Instant::now);
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 /// Physical display dimensions (panel reports 600x1280 but only 480x1280 is visible).
 const PHYSICAL_WIDTH: u32 = 480;
@@ -153,14 +153,13 @@ pub struct EglCompositor {
     command_tx: calloop_channel::Sender<CompositorCommand>,
     command_channel: Mutex<Option<calloop_channel::Channel<CompositorCommand>>>,
     action_tx: mpsc::UnboundedSender<WidgetAction>,
-    event_tx: mpsc::UnboundedSender<CompositorEvent>,
+    event_tx: broadcast::Sender<CompositorEvent>,
     /// `status_rx` is taken into the compositor thread on
     /// [`Self::start`]; `status_tx` is cloned out via
     /// [`Self::request_status_sender`].
     status_tx: mpsc::UnboundedSender<WidgetRequestStatus>,
     status_rx: Mutex<Option<mpsc::UnboundedReceiver<WidgetRequestStatus>>>,
     action_rx: Mutex<Option<mpsc::UnboundedReceiver<WidgetAction>>>,
-    event_rx: Mutex<Option<mpsc::UnboundedReceiver<CompositorEvent>>>,
     thread_handle: Mutex<Option<JoinHandle<()>>>,
     device_access: DeviceAccessConfig,
     headless: bool,
@@ -210,7 +209,7 @@ impl EglCompositor {
     pub fn with_device_access_config(device_access: DeviceAccessConfig, headless: bool) -> Self {
         let (command_tx, command_channel) = calloop_channel::channel();
         let (action_tx, action_rx) = mpsc::unbounded_channel();
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (event_tx, _) = broadcast::channel(64);
         let (status_tx, status_rx) = mpsc::unbounded_channel();
 
         Self {
@@ -222,7 +221,6 @@ impl EglCompositor {
             status_tx,
             status_rx: Mutex::new(Some(status_rx)),
             action_rx: Mutex::new(Some(action_rx)),
-            event_rx: Mutex::new(Some(event_rx)),
             thread_handle: Mutex::new(None),
             device_access,
             headless,
@@ -244,7 +242,7 @@ impl EglCompositor {
         headless: bool,
         command_channel: calloop_channel::Channel<CompositorCommand>,
         action_tx: mpsc::UnboundedSender<WidgetAction>,
-        event_tx: mpsc::UnboundedSender<CompositorEvent>,
+        event_tx: broadcast::Sender<CompositorEvent>,
         status_rx: mpsc::UnboundedReceiver<WidgetRequestStatus>,
         ready_tx: &flume::Sender<Result<String, String>>,
     ) {
@@ -758,7 +756,7 @@ struct AppState {
     scene_renderer: Option<SceneRenderer>,
     listening_socket: ListeningSocket,
     action_tx: mpsc::UnboundedSender<WidgetAction>,
-    event_tx: mpsc::UnboundedSender<CompositorEvent>,
+    event_tx: broadcast::Sender<CompositorEvent>,
     status_rx: mpsc::UnboundedReceiver<WidgetRequestStatus>,
     /// Backend-agnostic gesture state machine, driven by libinput events.
     gesture: GestureState,
@@ -1506,12 +1504,8 @@ impl Compositor for EglCompositor {
         self.status_tx.clone()
     }
 
-    fn event_receiver(&self) -> mpsc::UnboundedReceiver<CompositorEvent> {
-        self.event_rx
-            .lock()
-            .expect("BUG: event_rx lock poisoned")
-            .take()
-            .expect("BUG: event_receiver already taken")
+    fn subscribe_events(&self) -> broadcast::Receiver<CompositorEvent> {
+        self.event_tx.subscribe()
     }
 
     fn shutdown(&self) -> Result<(), CompositorError> {

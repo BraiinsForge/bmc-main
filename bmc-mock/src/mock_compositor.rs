@@ -8,13 +8,12 @@ use bmc::compositor::{
     Compositor, CompositorError, CompositorEvent, InstanceId, Position, SceneLayout, SettingUpdate,
     Size, WidgetAction, WidgetInitialConfig, WidgetRequestStatus,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 #[derive(Debug)]
 pub struct MockCompositor {
     action_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<WidgetAction>>>,
-    event_tx: mpsc::UnboundedSender<CompositorEvent>,
-    event_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<CompositorEvent>>>,
+    event_tx: broadcast::Sender<CompositorEvent>,
     status_tx: mpsc::UnboundedSender<WidgetRequestStatus>,
     display_name: std::sync::Mutex<Option<String>>,
 }
@@ -23,7 +22,7 @@ impl MockCompositor {
     #[must_use]
     pub fn new() -> Self {
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (event_tx, _) = broadcast::channel(64);
         let (status_tx, mut status_rx) = mpsc::unbounded_channel::<WidgetRequestStatus>();
         tokio::spawn(async move {
             while let Some(status) = status_rx.recv().await {
@@ -38,7 +37,6 @@ impl MockCompositor {
         Self {
             action_rx: std::sync::Mutex::new(Some(action_rx)),
             event_tx,
-            event_rx: std::sync::Mutex::new(Some(event_rx)),
             status_tx,
             display_name: std::sync::Mutex::new(None),
         }
@@ -172,12 +170,8 @@ impl Compositor for MockCompositor {
         self.status_tx.clone()
     }
 
-    fn event_receiver(&self) -> mpsc::UnboundedReceiver<CompositorEvent> {
-        self.event_rx
-            .lock()
-            .expect("BUG: event_rx lock poisoned")
-            .take()
-            .expect("BUG: event_receiver already taken")
+    fn subscribe_events(&self) -> broadcast::Receiver<CompositorEvent> {
+        self.event_tx.subscribe()
     }
 
     fn shutdown(&self) -> Result<(), CompositorError> {

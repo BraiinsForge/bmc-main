@@ -166,8 +166,8 @@ where
 
         let screen_activity_for_touch = button_manager.screen_activity.clone();
         tokio::spawn(async move {
-            let mut event_rx = compositor_for_events.event_receiver();
-            while let Some(event) = event_rx.recv().await {
+            let mut event_rx = compositor_for_events.subscribe_events();
+            while let Ok(event) = event_rx.recv().await {
                 if matches!(event, CompositorEvent::ScreenActivity) {
                     screen_activity_for_touch.notify_waiters();
                 }
