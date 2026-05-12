@@ -536,7 +536,15 @@ in
   inherit (wasmWidgetsModule) wasmExamples;
   checks = frontend.checks;
   packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // initArtifacts // {
-    deck-packages = armv7PackageDefs;
+    # Wrap as a real derivation so `nix flake check` accepts it under
+    # `packages.<system>` (the flake schema rejects nested attrsets).
+    # `passthru` preserves the `.#deck-packages.<name>` access pattern
+    # the deploy scripts and docs rely on.
+    deck-packages = pkgs.symlinkJoin {
+      name = "deck-packages";
+      paths = lib.attrValues (lib.filterAttrs (_: lib.isDerivation) armv7PackageDefs);
+      passthru = armv7PackageDefs;
+    };
     inherit bmc-video-play-armv7;
     bmc-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-mock { };
     bmc-nix-init-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-init-mock { };
