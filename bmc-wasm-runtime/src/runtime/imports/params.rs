@@ -14,6 +14,16 @@
 //!    writes the packed snapshot and returns the bytes written; `out_cap < required` writes
 //!    nothing and returns the required length so the caller can retry.
 //!
+//! ## Memory-access failure traps, doesn't fail-quiet
+//!
+//! `host_params_snapshot` only returns a numeric result on success paths
+//! (probe / retry-needed / write-completed).
+//! An OOB `out_ptr` (i.e. `out_ptr + bytes.len()` overflows the guest's linear memory)
+//! or a missing `memory` export traps with a clear message naming the rule that was violated,
+//! mirroring `require_render` in `super::guards`.
+//! Returning `0` for this case (the prior behaviour) collided with the genuinely-empty snapshot
+//! that surfaces as the `u32` count header, and silently masked guest ABI bugs.
+//!
 //! The packed wire format is documented in `bmc_wasm_sdk::params`; the host-side serialiser
 //! here is the inverse of the SDK's parser.
 
@@ -59,7 +69,10 @@ fn register_params_snapshot(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_params_snapshot",
-        |mut caller: Caller<'_, HostState>, out_ptr: u32, out_cap: u32| -> u32 {
+        |mut caller: Caller<'_, HostState>,
+         out_ptr: u32,
+         out_cap: u32|
+         -> std::result::Result<u32, wasmi::Error> {
             // Serialise once into a stack-local buffer; cheap because params are small and the
             // snapshot is regenerated only when the guest's cache misses.
             let bytes = encode_params(&caller.data().params);
@@ -68,22 +81,28 @@ fn register_params_snapshot(linker: &mut Linker<HostState>) -> Result<()> {
             if out_cap < needed {
                 // Probe (out_cap == 0) and retry-with-larger-buffer both fall here.
                 // Caller reads the return value to size the next call.
-                return needed;
+                return Ok(needed);
             }
 
-            let memory = caller.get_export("memory").and_then(Extern::into_memory);
-            if let Some(memory) = memory {
-                let data = memory.data_mut(&mut caller);
-                let start = out_ptr as usize;
-                let end = start.saturating_add(bytes.len());
-                if end <= data.len() {
-                    data[start..end].copy_from_slice(&bytes);
-                    return needed;
-                }
+            let Some(memory) = caller.get_export("memory").and_then(Extern::into_memory) else {
+                return Err(wasmi::Error::new(
+                    "host import `host_params_snapshot`: guest module has no exported `memory` \
+                     — cannot write the snapshot. ABI requires an exported linear memory.",
+                ));
+            };
+            let data = memory.data_mut(&mut caller);
+            let start = out_ptr as usize;
+            let end = start.saturating_add(bytes.len());
+            if end > data.len() {
+                return Err(wasmi::Error::new(format!(
+                    "host import `host_params_snapshot`: out_ptr range {start:#x}..{end:#x} \
+                     overflows guest memory of {} bytes — caller must size the buffer using \
+                     the probe call (out_cap == 0) before writing",
+                    data.len(),
+                )));
             }
-            // Memory access failed (out_ptr out of bounds, no memory export, etc.).
-            // Return 0 — the guest sees this as "empty snapshot, nothing to parse".
-            0
+            data[start..end].copy_from_slice(&bytes);
+            Ok(needed)
         },
     )?;
     Ok(())
@@ -113,19 +132,19 @@ fn encode_entry(out: &mut Vec<u8>, key: &str, value: &ParamValue) {
     };
     out.push(kind_byte);
 
-    let key_len = u16::try_from(key.len()).unwrap_or(u16::MAX);
+    // `ParamKey` enforces `MAX_PARAM_KEY_LENGTH` (well below `u16::MAX`) at the manifest layer,
+    // so the conversion is statically infallible here. Same shape for the `s_len` u32 below.
+    let key_len =
+        u16::try_from(key.len()).expect("BUG: ParamKey enforces MAX_PARAM_KEY_LENGTH < u16::MAX");
     out.extend_from_slice(&key_len.to_le_bytes());
-    // `ParamKey`'s regex caps keys to ASCII identifiers, so the byte length always equals the
-    // char length and the truncation above is unreachable for valid keys.
-    let key_bytes = &key.as_bytes()[..key_len as usize];
-    out.extend_from_slice(key_bytes);
+    out.extend_from_slice(key.as_bytes());
 
     match value {
         ParamValue::String(s) => {
-            let s_len = u32::try_from(s.len()).unwrap_or(u32::MAX);
+            let s_len = u32::try_from(s.len())
+                .expect("BUG: ParamValue::String enforces MAX_PARAM_STRING_LENGTH < u32::MAX");
             out.extend_from_slice(&s_len.to_le_bytes());
-            let s_bytes = &s.as_bytes()[..s_len as usize];
-            out.extend_from_slice(s_bytes);
+            out.extend_from_slice(s.as_bytes());
         }
         ParamValue::Integer(v) => out.extend_from_slice(&v.to_le_bytes()),
         ParamValue::Double(v) => out.extend_from_slice(&v.to_le_bytes()),
@@ -231,7 +250,7 @@ mod tests {
             offset += 2;
             keys.push(
                 std::str::from_utf8(&bytes[offset..offset + key_len])
-                    .unwrap()
+                    .expect("BUG: encode_params writes &str bytes — output is valid UTF-8 by construction")
                     .to_owned(),
             );
             offset += key_len;

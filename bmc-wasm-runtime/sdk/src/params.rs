@@ -441,14 +441,16 @@ mod tests {
         fn push_key(&mut self, kind: u8, key: &str) {
             self.count += 1;
             self.out.push(kind);
-            let key_len = u16::try_from(key.len()).expect("test key under 64 KiB");
+            let key_len = u16::try_from(key.len())
+                .expect("BUG: test fixtures always use keys well under 64 KiB");
             self.out.extend_from_slice(&key_len.to_le_bytes());
             self.out.extend_from_slice(key.as_bytes());
         }
 
         fn str(mut self, key: &str, value: &str) -> Self {
             self.push_key(kind::STR, key);
-            let len = u32::try_from(value.len()).expect("test value under 4 GiB");
+            let len = u32::try_from(value.len())
+                .expect("BUG: test fixtures always use values well under 4 GiB");
             self.out.extend_from_slice(&len.to_le_bytes());
             self.out.extend_from_slice(value.as_bytes());
             self

@@ -412,7 +412,7 @@ fn deliver_params_update_fires_hook_and_advances_version() {
 
     let first_version = runtime
         .call_export_i64("last_version_in_update")
-        .expect("widget exports last_version_in_update");
+        .expect("BUG: probe widget wat declares last_version_in_update — see probe_widget_wat()");
     assert!(
         first_version > 0,
         "version counter must have advanced past initial 0; got {first_version}"
@@ -420,7 +420,9 @@ fn deliver_params_update_fires_hook_and_advances_version() {
 
     let snapshot_len = runtime
         .call_export_i32("last_snapshot_len_in_update")
-        .expect("widget exports last_snapshot_len_in_update");
+        .expect(
+            "BUG: probe widget wat declares last_snapshot_len_in_update — see probe_widget_wat()",
+        );
     assert!(
         snapshot_len > 4,
         "snapshot inside on_params_update must reflect the just-pushed table \
@@ -436,7 +438,7 @@ fn deliver_params_update_fires_hook_and_advances_version() {
 
     let second_version = runtime
         .call_export_i64("last_version_in_update")
-        .expect("widget exports last_version_in_update");
+        .expect("BUG: probe widget wat declares last_version_in_update — see probe_widget_wat()");
     assert_ne!(
         second_version, first_version,
         "consecutive deliveries must produce distinct version values \
