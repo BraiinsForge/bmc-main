@@ -19,6 +19,7 @@ use super::conversions::{
 #[derive(Debug, Clone)]
 pub struct WidgetData {
     pub instance_id: InstanceId,
+    pub config: WidgetInitialConfig,
     pub protocol_surface: Option<DeckWidgetSurfaceV1>,
     pub wl_surface: Option<WlSurface>,
     /// PID of the widget process. Used to (1) match a Wayland connection
@@ -60,10 +61,6 @@ const MAX_PENDING_CONNECTIONS: usize = 512;
 #[derive(Debug)]
 pub struct DeckWidgetProtocolState {
     widgets: HashMap<InstanceId, WidgetData>,
-    /// Initial configuration pushed by the coordinator before spawning a
-    /// widget. Consumed on `get_widget_surface` to emit the initial batch
-    /// (configure + param_* + settings + configure_done).
-    initial_configs: HashMap<InstanceId, WidgetInitialConfig>,
     /// Latest observed value of each runtime setting. Emitted to newly
     /// connecting widgets as part of the initial batch so they start with
     /// a fully populated state instead of waiting for the next change.
@@ -81,7 +78,6 @@ impl DeckWidgetProtocolState {
     pub fn new() -> Self {
         Self {
             widgets: HashMap::new(),
-            initial_configs: HashMap::new(),
             current_settings: Vec::new(),
             pending_actions: Vec::new(),
             newly_connected: Vec::new(),
@@ -90,20 +86,24 @@ impl DeckWidgetProtocolState {
         }
     }
 
-    /// Store initial config for a widget before it connects.
-    pub fn register_initial_config(
-        &mut self,
-        instance_id: InstanceId,
-        config: WidgetInitialConfig,
-    ) {
+    pub fn register_widget(&mut self, instance_id: InstanceId, config: WidgetInitialConfig) {
         tracing::info!(
-            "Registering initial config for {}: size={:?} {}x{}",
+            "Registering widget {}: size={:?} {}x{}",
             instance_id,
             config.size,
             config.width,
             config.height
         );
-        self.initial_configs.insert(instance_id, config);
+        self.widgets.insert(
+            instance_id.clone(),
+            WidgetData {
+                instance_id,
+                config,
+                protocol_surface: None,
+                wl_surface: None,
+                pid: None,
+            },
+        );
     }
 
     /// Associate a spawned process pid with an instance so that
@@ -113,15 +113,17 @@ impl DeckWidgetProtocolState {
     /// Also resolves any connection that arrived before this call (the
     /// race between process spawn and pid registration).
     pub fn set_widget_pid(&mut self, instance_id: &InstanceId, pid: u32) {
-        self.widgets
-            .entry(instance_id.clone())
-            .or_insert_with(|| WidgetData {
-                instance_id: instance_id.clone(),
-                protocol_surface: None,
-                wl_surface: None,
-                pid: None,
-            })
-            .pid = Some(pid);
+        let Some(widget) = self.widgets.get_mut(instance_id) else {
+            tracing::error!(
+                "set_widget_pid for {instance_id}: no widget record; register_widget was not called first"
+            );
+            debug_assert!(
+                false,
+                "set_widget_pid called before register_widget for {instance_id}"
+            );
+            return;
+        };
+        widget.pid = Some(pid);
 
         // Check if this widget already connected before its pid was registered.
         let pending = self
@@ -192,15 +194,16 @@ impl DeckWidgetProtocolState {
         wl_surface: WlSurface,
         protocol_surface: DeckWidgetSurfaceV1,
     ) {
-        let entry = self
-            .widgets
-            .entry(instance_id.clone())
-            .or_insert_with(|| WidgetData {
-                instance_id: instance_id.clone(),
-                protocol_surface: None,
-                wl_surface: None,
-                pid: None,
-            });
+        let Some(entry) = self.widgets.get_mut(instance_id) else {
+            tracing::error!(
+                "attach_surface for {instance_id}: no widget record; dispatch resolved a pid that has no registered widget"
+            );
+            debug_assert!(
+                false,
+                "attach_surface called without a registered widget for {instance_id}"
+            );
+            return;
+        };
         entry.wl_surface = Some(wl_surface);
         entry.protocol_surface = Some(protocol_surface);
         self.newly_connected.push(instance_id.clone());
@@ -226,13 +229,14 @@ impl DeckWidgetProtocolState {
     }
 
     pub fn unregister_widget(&mut self, instance_id: &InstanceId) {
-        // Purge any buffered connection that would otherwise resolve
-        // to this instance's pid after the widget record is gone.
-        // Closes the common race windows (scene change, spawn
-        // failure) synchronously; the pidfd-on-natural-exit window
-        // is handled by `clear_pid`.
-        let pid_to_purge = self.widgets.get(instance_id).and_then(|w| w.pid);
-        if let Some(pid) = pid_to_purge {
+        let Some(widget) = self.widgets.remove(instance_id) else {
+            return;
+        };
+
+        // Purge any buffered connection for this pid before its
+        // record is gone; the natural-exit window is handled by
+        // `clear_pid`.
+        if let Some(pid) = widget.pid {
             let before = self.pending_connections.len();
             self.pending_connections.retain(|pc| pc.pid != pid);
             let purged = before - self.pending_connections.len();
@@ -243,19 +247,10 @@ impl DeckWidgetProtocolState {
             }
         }
 
-        let removed_widget = self.widgets.remove(instance_id);
-        let had_config = self.initial_configs.remove(instance_id).is_some();
-        if let Some(widget) = removed_widget {
-            self.newly_disconnected.push(DisconnectedWidget {
-                instance_id: widget.instance_id,
-                pid: widget.pid,
-            });
-        } else if had_config {
-            self.newly_disconnected.push(DisconnectedWidget {
-                instance_id: instance_id.clone(),
-                pid: None,
-            });
-        }
+        self.newly_disconnected.push(DisconnectedWidget {
+            instance_id: widget.instance_id,
+            pid: widget.pid,
+        });
     }
 
     /// Remove any pending connection or widget entry associated with the
@@ -306,22 +301,20 @@ impl DeckWidgetProtocolState {
     pub fn update_widget_params(
         &mut self,
         instance_id: &InstanceId,
-        params: &serde_json::Map<String, serde_json::Value>,
+        params: serde_json::Map<String, serde_json::Value>,
     ) {
-        if let Some(config) = self.initial_configs.get_mut(instance_id) {
-            config.params.clone_from(params);
-        }
-
-        let Some(widget_data) = self.widgets.get(instance_id) else {
+        let Some(widget_data) = self.widgets.get_mut(instance_id) else {
             tracing::warn!("update_widget_params: no widget record for {instance_id}");
             return;
         };
+        widget_data.config.params = params;
+
         let Some(surface) = widget_data.protocol_surface.as_ref() else {
             tracing::warn!("update_widget_params: widget {instance_id} has no surface yet");
             return;
         };
 
-        let params_json = serde_json::Value::Object(params.clone()).to_string();
+        let params_json = serde_json::Value::Object(widget_data.config.params.clone()).to_string();
         surface.params(params_json);
     }
 
@@ -330,20 +323,14 @@ impl DeckWidgetProtocolState {
     /// `configure_done`. Called by the dispatch handler right after the
     /// surface role is assigned.
     pub fn emit_initial_state(&self, instance_id: &InstanceId, surface: &DeckWidgetSurfaceV1) {
-        let Some(config) = self.initial_configs.get(instance_id) else {
-            // This is a programming error — dispatch resolves the
-            // instance via pid, and the coordinator guarantees the
-            // `register_initial_config` call precedes `set_widget_pid`.
-            // Emitting bare `configure_done` makes the widget fail at
-            // `wait_for_configure` with a confusing
-            // "configure_done without configure" message; log it
-            // loudly so the real cause is not buried.
+        let Some(widget) = self.widgets.get(instance_id) else {
             tracing::error!(
-                "emit_initial_state for {instance_id} without prior register_initial_config; widget will fail configure"
+                "emit_initial_state for {instance_id}: no widget record; dispatch resolved a pid that has no registered widget"
             );
             surface.configure_done();
             return;
         };
+        let config = &widget.config;
 
         surface.configure(
             size_type_to_protocol(config.size),
@@ -351,8 +338,6 @@ impl DeckWidgetProtocolState {
             config.height,
         );
 
-        // The widget owns its manifest and is authoritative on param
-        // validation; the compositor passes through the JSON as-is.
         let params_json = serde_json::Value::Object(config.params.clone()).to_string();
         surface.params(params_json);
 

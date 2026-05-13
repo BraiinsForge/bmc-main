@@ -1176,7 +1176,7 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             state
                 .compositor
                 .deck_widget_state
-                .register_initial_config(instance_id, initial_config);
+                .register_widget(instance_id, initial_config);
             let _ = ack.send(());
         }
         CompositorCommand::SetWidgetPid {
@@ -1247,7 +1247,7 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             state
                 .compositor
                 .deck_widget_state
-                .update_widget_params(&instance_id, &params);
+                .update_widget_params(&instance_id, params);
         }
         CompositorCommand::Shutdown => {
             tracing::info!("Shutdown command received");
