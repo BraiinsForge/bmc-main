@@ -79,29 +79,19 @@ pub extern "C" fn on_params_update() {
 }
 
 /// Return the set of keys whose value differs between two snapshots.
-/// Diff covers value mismatches *and* set/unset transitions: a key present in one snapshot
-/// but absent (or null) in the other is treated as changed, so the decay highlight catches
-/// the optional-without-default null path too.
+/// Diff covers value mismatches *and* set/unset transitions on a per-key basis:
+/// `value_equal` treats both snapshots' typed accessors uniformly, so a transition between
+/// `Some(v)` and `None` (i.e. a value being set, cleared, or modified) flips the equality
+/// check and the key gets flagged.
+///
+/// The host packs `Null` entries for every manifest-declared key, so `current.keys()` always
+/// covers the full manifest set — no second pass over `previous.keys()` is needed. (Earlier
+/// drafts had one, but its check fired for `Null`-in-current entries too and made every
+/// optional-without-default cell flash amber on every unrelated update.)
 fn diff_changed_keys(current: &params::Params, previous: &params::Params) -> Vec<String> {
     let mut changed = Vec::new();
     for key in current.keys() {
         if !value_equal(current, previous, key) {
-            changed.push(key.to_owned());
-        }
-    }
-    // Keys that were in `previous` but disappeared from `current` (operator cleared an optional).
-    // `current.keys()` already covers everything currently in the manifest; only worry about
-    // entries that vanished entirely.
-    for key in previous.keys() {
-        if current.get_str(key).is_none()
-            && current.get_i32(key).is_none()
-            && current.get_f64(key).is_none()
-            && current.get_bool(key).is_none()
-            && !changed.iter().any(|k| k == key)
-        {
-            // Only flag keys the renderer still has a cell for. Today every cell key is in
-            // `current.keys()` because the host packs nulls for every manifest key; this branch
-            // is here for the day the host elides absent keys.
             changed.push(key.to_owned());
         }
     }

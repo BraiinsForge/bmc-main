@@ -139,10 +139,58 @@ fn run_capture(ctx: &CaptureCtx, config: &CaptureConfig) -> Result<()> {
 /// Loads and validates the fixture, extracts fetch interceptors and network
 /// events, seeds KV from the fixture header, then advances virtual time
 /// frame-by-frame dispatching events at their `at_ms` timestamps.
+/// Locate the widget's `manifest.json` next to the wasm binary and load its `params` defaults
+/// into the `BTreeMap` shape `RuntimeConfig.params` expects. Returns an empty map (no params
+/// staged) when the manifest can't be found or fails to parse — capture replay falls back to
+/// whatever the fixture's `ParamDelivery` events supply.
+///
+/// The package-name unwrapping (`_` → `-`) mirrors the testbed's autodetect helper so both
+/// binaries pick up the same manifest path for the same wasm file.
+fn load_manifest_defaults(
+    wasm_path: &Path,
+) -> std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue> {
+    let Some(stem) = wasm_path.file_stem().and_then(|s| s.to_str()) else {
+        return std::collections::BTreeMap::new();
+    };
+    let package = stem.replace('_', "-");
+    let Some(mut dir) = wasm_path.parent() else {
+        return std::collections::BTreeMap::new();
+    };
+    let manifest_path = loop {
+        let Some(parent) = dir.parent() else {
+            return std::collections::BTreeMap::new();
+        };
+        let candidate = parent.join(&package).join("manifest.json");
+        if candidate.exists() {
+            break candidate;
+        }
+        dir = parent;
+    };
+    let Ok(body) = std::fs::read_to_string(&manifest_path) else {
+        return std::collections::BTreeMap::new();
+    };
+    let Ok(manifest) = <bmc_widget_manifest::Manifest as std::str::FromStr>::from_str(&body) else {
+        return std::collections::BTreeMap::new();
+    };
+    manifest
+        .params
+        .iter()
+        .map(|(key, def)| {
+            (
+                key.clone(),
+                bmc_widget_manifest::ParamValue::from_param_kind_default(&def.kind),
+            )
+        })
+        .collect()
+}
+
 #[expect(
     clippy::too_many_lines,
     clippy::integer_division,
-    clippy::cast_precision_loss
+    clippy::cast_precision_loss,
+    reason = "single-flow replay routine; splitting purely for line count would obscure the \
+              event-cursor / time-cursor coupling, and the precision-loss casts are \
+              capture-step math on small bounded integers"
 )]
 fn run_unified_capture(
     ctx: &CaptureCtx,
@@ -182,11 +230,17 @@ fn run_unified_capture(
     // Extract fetch interceptors and network events from the unified timeline
     let (fetch_interceptor, network_events) = split_unified_events(&fixture);
 
+    // Load the widget's manifest defaults so the runtime's first frame sees the same
+    // baseline state as the on-device compositor delivers. Operator-driven changes captured
+    // as `ParamDelivery` events in the fixture replay on top of this baseline.
+    let initial_params = load_manifest_defaults(&ctx.wasm_path);
+
     // Build runtime config
     let mut rt_config = RuntimeConfig {
         kv_store_path: Some(kv_dir),
         mesh_msaa_samples: 4,
         rng_seed: Some(42),
+        params: initial_params,
         ..RuntimeConfig::default()
     };
     if !fetch_interceptor.is_empty() {
@@ -221,6 +275,7 @@ fn run_unified_capture(
                     | UnifiedEvent::Click { .. }
                     | UnifiedEvent::Scroll { .. }
                     | UnifiedEvent::Drag { .. }
+                    | UnifiedEvent::ParamDelivery { .. }
             )
         })
         .collect();
@@ -498,6 +553,14 @@ fn run_unified_capture(
                         &mut system_time,
                         &mut frame_count,
                     )?;
+                }
+                // Operator-driven params update — call `deliver_params_update` on the runtime
+                // and let the widget's `on_params_update` hook fire. The version counter is
+                // bumped by the runtime; we don't need to advance any timeline-side state.
+                UnifiedEvent::ParamDelivery { params } => {
+                    let json_blob = serde_json::Value::Object(params.clone());
+                    let table = bmc_wasm_runtime::parse_params_json(&json_blob);
+                    runtime.deliver_params_update(table);
                 }
                 // Network events are handled by inject_fixture_events/fetch_interceptor
                 UnifiedEvent::Fetch { .. }
@@ -813,6 +876,7 @@ fn split_unified_events(
             | UnifiedEvent::Click { .. }
             | UnifiedEvent::Scroll { .. }
             | UnifiedEvent::Drag { .. }
+            | UnifiedEvent::ParamDelivery { .. }
             | UnifiedEvent::AudioPlay { .. }
             | UnifiedEvent::LedSetEffect { .. }
             | UnifiedEvent::LedSetBrightness { .. }

@@ -118,6 +118,17 @@ pub enum UnifiedEvent {
         from: f32,
         to: f32,
     },
+    /// Operator-driven params update — full snapshot delivered to the widget runtime.
+    /// Replay calls `WasmWidgetRuntime::deliver_params_update`, which bumps the version
+    /// counter and fires `on_params_update`. Capture writes one of these per change the
+    /// operator made in the testbed param-mutation UI, plus one for the initial delivery
+    /// so a fixture replay reproduces the pre-change state too.
+    ///
+    /// Values are stored as raw JSON for diffability; the `bmc-widget-manifest` parser
+    /// re-derives the typed `ParamValue` at replay time, same as the wayland edge.
+    ParamDelivery {
+        params: serde_json::Map<String, serde_json::Value>,
+    },
 
     // ── HTTP fetch ──────────────────────────────────────────────
     /// A pre-recorded HTTP fetch response.
@@ -279,6 +290,7 @@ pub fn validate_fixture(fixture: &UnifiedFixture) -> Result<()> {
                 }
             }
             UnifiedEvent::Fetch { .. }
+            | UnifiedEvent::ParamDelivery { .. }
             | UnifiedEvent::SsdpFound { .. }
             | UnifiedEvent::SsdpRemoved { .. }
             | UnifiedEvent::MdnsFound { .. }

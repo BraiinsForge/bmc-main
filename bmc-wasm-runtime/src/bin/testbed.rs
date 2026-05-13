@@ -101,6 +101,11 @@ const STATS_Y: u32 = ROW1_Y + row_stride(TILE_MEDIUM_H);
 const STATS_W: u32 = PREVIEW_WIDTH - M - STATS_X;
 const STATS_H: u32 = PREVIEW_HEIGHT - M - STATS_Y;
 
+/// Width of the right-side params sidebar when the manifest declares any params.
+/// Added to the window's outer size so the tile area stays at native dimensions
+/// instead of getting squeezed.
+const PARAM_PANEL_W: u32 = 320;
+
 // ── CLI ─────────────────────────────────────────────────────────────
 
 struct CliArgs {
@@ -162,13 +167,10 @@ fn autodetect_manifest(wasm_path: &Path) -> Option<PathBuf> {
     None
 }
 
-fn load_manifest_params(
+fn load_manifest(
     wasm_path: &Path,
     explicit: Option<PathBuf>,
-) -> Result<(
-    PathBuf,
-    std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
-)> {
+) -> Result<(PathBuf, bmc_widget_manifest::Manifest)> {
     let manifest_path = explicit
         .or_else(|| autodetect_manifest(wasm_path))
         .with_context(|| {
@@ -181,7 +183,16 @@ fn load_manifest_params(
         .with_context(|| format!("failed to read {}", manifest_path.display()))?;
     let manifest = <bmc_widget_manifest::Manifest as std::str::FromStr>::from_str(&body)
         .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
-    let params = manifest
+    Ok((manifest_path, manifest))
+}
+
+/// Initial params snapshot from the manifest: every declared key bound to its
+/// `ParamValue::from_param_kind_default`. Mirrors what the compositor delivers on-device
+/// when no operator overrides are set.
+fn manifest_default_params(
+    manifest: &bmc_widget_manifest::Manifest,
+) -> std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue> {
+    manifest
         .params
         .iter()
         .map(|(key, def)| {
@@ -190,8 +201,7 @@ fn load_manifest_params(
                 bmc_widget_manifest::ParamValue::from_param_kind_default(&def.kind),
             )
         })
-        .collect();
-    Ok((manifest_path, params))
+        .collect()
 }
 
 // ── Memory stats (Linux only) ───────────────────────────────────────
@@ -234,7 +244,18 @@ fn main() -> Result<()> {
     bmc_render::tree::init_debug_flags();
 
     let cli = parse_args()?;
-    let (manifest_path, params) = load_manifest_params(&cli.wasm_path, cli.manifest_path.clone())?;
+    let (manifest_path, manifest) = load_manifest(&cli.wasm_path, cli.manifest_path.clone())?;
+    let params = manifest_default_params(&manifest);
+
+    // Window width includes the param sidebar when the manifest declares any params; the
+    // central tile area stays at native dimensions so widgets are never squeezed.
+    let sidebar_w = if manifest.params.is_empty() {
+        0
+    } else {
+        PARAM_PANEL_W
+    };
+    let outer_w = (PREVIEW_WIDTH + sidebar_w) as f32;
+    let outer_h = PREVIEW_HEIGHT as f32;
 
     println!("Loading widget from: {}", cli.wasm_path.display());
     println!("Manifest:            {}", manifest_path.display());
@@ -242,7 +263,10 @@ fn main() -> Result<()> {
         "Params:              {} key(s) from manifest defaults",
         params.len()
     );
-    println!("Display size: {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} (4 sizes)");
+    println!(
+        "Display size: {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} (4 sizes); \
+         requested outer: {outer_w}x{outer_h}"
+    );
     if let Some(ref path) = cli.perf_report_path {
         println!(
             "Perf report: {} ({} frames)",
@@ -256,14 +280,23 @@ fn main() -> Result<()> {
 
     let rss_before_gl = current_rss_kb();
 
+    // `inner` + `max` only; deliberately no `with_min_inner_size`. Wayland's `Invalid
+    // min/max size` error fires when min > max, so omitting min sidesteps it while max==inner
+    // still caps the resize. `with_resizable(false)` is left off because it gets silently
+    // honoured-or-not depending on the compositor; the post-frame `Resizable(false)` command
+    // takes care of it once the surface exists.
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([PREVIEW_WIDTH as f32, PREVIEW_HEIGHT as f32])
-            .with_min_inner_size([PREVIEW_WIDTH as f32, PREVIEW_HEIGHT as f32])
-            .with_resizable(false)
+            .with_inner_size([outer_w, outer_h])
+            .with_max_inner_size([outer_w, outer_h])
             .with_title("WASM Widget Testbed"),
         renderer: eframe::Renderer::Glow,
         vsync: true,
+        // Persistence defaults to true — eframe saves/restores window size across runs,
+        // which silently undoes `with_inner_size` once the user has launched once. The
+        // testbed's window dimensions are derived from constants every launch, so saved
+        // state is purely harmful.
+        persist_window: false,
         ..Default::default()
     };
 
@@ -271,8 +304,7 @@ fn main() -> Result<()> {
         "WASM Widget Testbed",
         options,
         Box::new(move |cc| {
-            // PHASE 1 stub: no WASM runtime wired yet.
-            let app = TestbedApp::new(cc, cli, params)?;
+            let app = TestbedApp::new(cc, cli, manifest, params, egui::vec2(outer_w, outer_h))?;
             log_startup_memory(rss_before_gl);
             Ok(Box::new(app))
         }),
@@ -476,6 +508,7 @@ fn format_event_label(event: &UnifiedEvent) -> String {
         UnifiedEvent::Drag { element, from, to } => {
             format!("drag #{element}  {from:.0}→{to:.0}")
         }
+        UnifiedEvent::ParamDelivery { params } => format!("params Δ{} key(s)", params.len()),
         UnifiedEvent::Fetch {
             method,
             url,
@@ -579,8 +612,9 @@ fn classify_and_record_gesture(rec: &mut RecordingState, gesture: &GestureTracke
 
 // ── Hot reload ──────────────────────────────────────────────────────
 
-/// Watch the directory containing `path` for relevant changes; send `()` on its receiver
-/// whenever the target file is created/modified/removed.
+/// Watch the directory containing `path` for relevant changes; send `()`
+/// on its receiver whenever the target file is created/modified/removed.
+///
 /// Returns both the live watcher (must be kept alive) and the receiver.
 fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, std::sync::mpsc::Receiver<()>)> {
     let (tx, rx) = std::sync::mpsc::channel();
@@ -855,6 +889,19 @@ fn paint_led_strip(
 
 struct TestbedApp {
     cli: CliArgs,
+    /// Requested window size. Sent as `ViewportCommand::InnerSize` repeatedly until the
+    /// compositor actually applies it — `with_inner_size` at startup gets silently clamped
+    /// on some GNOME/Wayland setups regardless of `persist_window: false`.
+    requested_size: egui::Vec2,
+    /// Frames remaining in the size-pin retry budget. Counts down from a small cap; we stop
+    /// requesting repaints once it hits zero so we never end up in an infinite resize loop
+    /// when the compositor refuses the requested size outright.
+    size_pin_attempts: u8,
+    /// Parsed manifest — read by the param-mutation panel to render type-appropriate inputs
+    /// (ComboBox for enums, DragValue for numerics with min/max/step, etc.).
+    manifest: bmc_widget_manifest::Manifest,
+    /// Current per-instance params snapshot. Mutated by the param-mutation UI; the
+    /// underlying runtimes are kept in sync via `deliver_params_update` on each change.
     params:
         std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
     gl: Arc<eframe::glow::Context>,
@@ -886,8 +933,8 @@ struct HotReload {
     manual_reload: bool,
 }
 
-/// Per-frame performance accounting. The rolling window drives the FPS readout in the stats
-/// panel; the full vector is what `--perf-report=` writes to disk at exit.
+/// Per-frame performance accounting. The rolling window drives the FPS readout
+/// in the stats panel; the full vector is what `--perf-report=` writes to disk at exit.
 struct PerfState {
     /// Total frames rendered so far. Used to drive the `--perf-frames` exit condition.
     frame_count: u32,
@@ -897,8 +944,8 @@ struct PerfState {
     recent_frame_us: std::collections::VecDeque<u32>,
 }
 
-/// Recording-mode bundle: the optional in-flight recording state plus the shared fetch
-/// buffer the active tile's fetch observer pushes into.
+/// Recording-mode bundle: the optional in-flight recording state plus the shared
+/// fetch buffer the active tile's fetch observer pushes into.
 struct RecordingMode {
     /// `Some` only when started via `--record=<size>`; `None` resets it after Save/Cancel.
     state: Option<RecordingState>,
@@ -911,10 +958,12 @@ impl TestbedApp {
     fn new(
         cc: &eframe::CreationContext<'_>,
         cli: CliArgs,
+        manifest: bmc_widget_manifest::Manifest,
         params: std::collections::BTreeMap<
             bmc_widget_manifest::ParamKey,
             bmc_widget_manifest::ParamValue,
         >,
+        requested_size: egui::Vec2,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let gl = cc
             .gl
@@ -925,9 +974,9 @@ impl TestbedApp {
             .get_proc_address
             .clone()
             .ok_or("glow backend must expose get_proc_address")?;
-        // Stash the loader so `init_tiles` can pull it back when the eframe::Frame is in
-        // scope (the lazy init path). Cleared on Drop so a fresh app instance doesn't
-        // inherit stale handles.
+        // Stash the loader so `init_tiles` can pull it back when the eframe::Frame
+        // is in scope (the lazy init path). Cleared on Drop so a fresh app instance
+        // doesn't inherit stale handles.
         GET_PROC_ADDRESS.with(|cell| *cell.borrow_mut() = Some(get_proc));
 
         let (watcher, watcher_rx) =
@@ -953,6 +1002,11 @@ impl TestbedApp {
         let now = std::time::Instant::now();
         Ok(Self {
             cli,
+            requested_size,
+            // 30 attempts at ~16ms = ~0.5 s of negotiation. More than enough for any
+            // compositor to settle, far less than long enough to feel like the UI froze.
+            size_pin_attempts: 30,
+            manifest,
             params,
             gl,
             tiles: Vec::new(),
@@ -1123,8 +1177,8 @@ impl TestbedApp {
         }
         let (major, minor, patch) = tiles[0].runtime.sdk_version();
         println!("Widget SDK version: {major}.{minor}.{patch}");
-        // Snapshot the active recording tile's KV directory at start so the fixture's
-        // `header.kv` reproduces the initial state on replay.
+        // Snapshot the active recording tile's KV directory at start
+        // so the fixture's `header.kv` reproduces the initial state on replay.
         if let Some(ref mut rec) = self.recording_mode.state {
             let kv_path = kv_base.join(rec.size_name.to_ascii_lowercase());
             rec.kv_snapshot = snapshot_kv_dir(&kv_path);
@@ -1142,10 +1196,12 @@ impl TestbedApp {
     /// Drive one frame: each tile's WASM runtime renders into its FBO. Egui paints the
     /// textures afterward via `painter.image`.
     ///
-    /// Saves the GL framebuffer binding + viewport before mutating them per tile and restores
-    /// both at the end so egui's own draw list runs against the screen framebuffer the way it
-    /// expects. Skipping this caused screen-wide trails (egui's clear hit a tile FBO instead of
-    /// the default framebuffer).
+    /// Saves the GL framebuffer binding + viewport before mutating them per tile
+    /// and restores both at the end so egui's own draw list runs against the screen
+    /// framebuffer the way it expects.
+    ///
+    /// Skipping this caused screen-wide trails (egui's clear hit
+    /// a tile FBO instead of the default framebuffer).
     fn render_tiles(&mut self, delta_ms: u32) {
         // SAFETY: gl is current on this thread inside `App::ui`; the queries below only read.
         let (prev_fbo, prev_viewport) = unsafe {
@@ -1216,6 +1272,104 @@ impl TestbedApp {
     /// Paint the stats panel inside an explicit rect (the empty slot right of SMALL tile).
     /// Includes the FPS readout, FULL-tile timing breakdown, reload + debug-toggle buttons,
     /// and a stacked-bar chart of recent per-frame timings.
+    ///
+    /// Push a new params snapshot to every tile's runtime via `deliver_params_update`,
+    /// update the local cache, and (when recording is active) append a `ParamDelivery`
+    /// event to the timeline.
+    ///
+    /// A no-op when the new snapshot matches the cached one.
+    fn apply_params_update(
+        &mut self,
+        new_params: std::collections::BTreeMap<
+            bmc_widget_manifest::ParamKey,
+            bmc_widget_manifest::ParamValue,
+        >,
+    ) {
+        if new_params == self.params {
+            return;
+        }
+        // Fire `on_params_update` on every tile — operator-driven changes apply to all
+        // size variants previewed in the testbed, not just the active recording tile.
+        for tile in &mut self.tiles {
+            tile.runtime.deliver_params_update(new_params.clone());
+        }
+        self.params = new_params;
+
+        if let Some(rec) = self.recording_mode.state.as_mut() {
+            let at_ms = rec.recording_start.elapsed().as_millis() as u64;
+            let json_params: serde_json::Map<String, serde_json::Value> = self
+                .params
+                .iter()
+                .map(|(k, v)| (k.as_str().to_owned(), v.to_json_value()))
+                .collect();
+            rec.events.push(TimelineEvent {
+                at_ms,
+                event: UnifiedEvent::ParamDelivery {
+                    params: json_params,
+                },
+            });
+        }
+    }
+
+    /// Render the param-mutation form as a fixed right-side sidebar.
+    ///
+    /// Only shown when the manifest declares any params;
+    /// The window's outer width is extended by `PARAM_PANEL_W` at startup
+    /// to host this panel without compressing the central tile area.
+    ///
+    /// Each declared key gets a type-appropriate egui input (text / number / dropdown / checkbox / clear-to-null)
+    /// honouring manifest constraints (`enum_values`, `min` / `max` / `step`, `optional`).
+    ///
+    /// Two columns aligned by `egui::Grid` so the labels and controls stack cleanly regardless of key length.
+    fn paint_params_panel(&mut self, root_ui: &mut egui::Ui) {
+        if self.manifest.params.is_empty() {
+            return;
+        }
+        // Take the current snapshot out so we can mutate while the egui closure borrows it,
+        // then put it back via `apply_params_update` which detects diffs and propagates.
+        let mut working = self.params.clone();
+        let manifest_params = self.manifest.params.clone();
+        let mut changed = false;
+        let style = root_ui.ctx().style();
+
+        egui::SidePanel::right("params_panel")
+            .resizable(false)
+            .exact_width(PARAM_PANEL_W as f32)
+            .frame(egui::Frame::side_top_panel(&style).inner_margin(egui::Margin::same(8)))
+            .show_inside(root_ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Params")
+                        .color(egui::Color32::from_gray(160))
+                        .strong(),
+                );
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |scroll| {
+                        egui::Grid::new("params_grid")
+                            .num_columns(2)
+                            .spacing([12.0, 4.0])
+                            .min_col_width(0.0)
+                            .show(scroll, |grid| {
+                                for (key, def) in &manifest_params {
+                                    let current = working.entry(key.clone()).or_insert_with(|| {
+                                        bmc_widget_manifest::ParamValue::from_param_kind_default(
+                                            &def.kind,
+                                        )
+                                    });
+                                    if paint_param_row(grid, key.as_str(), def, current) {
+                                        changed = true;
+                                    }
+                                }
+                            });
+                    });
+            });
+
+        if changed {
+            self.apply_params_update(working);
+        }
+    }
+
     fn paint_stats_panel(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
         // Backing rectangle so the chart + labels read against a flat colour, not the
         // checkerboard underneath.
@@ -1300,8 +1454,8 @@ impl TestbedApp {
         let block_h = block_h.min(inner.height() - (child.cursor().min.y - inner.min.y) - 6.0);
         if block_h > LEGEND_H + 12.0 && !self.perf.samples.is_empty() {
             let block_top = inner.max.y - block_h;
-            // Chart on top, legend strip below — keeps the chart visually grouped with the
-            // numeric stats above and the legend functions as a key reading downward.
+            // Chart on top, legend strip below — keeps the chart visually grouped
+            // with the numeric stats above and the legend functions as a key reading downward.
             let chart_rect = egui::Rect::from_min_max(
                 egui::pos2(inner.min.x, block_top),
                 egui::pos2(inner.max.x, inner.max.y - LEGEND_H),
@@ -1361,8 +1515,8 @@ fn paint_timing_chart(
         .max()
         .unwrap_or(1)
         .max(1);
-    // y-scale floor is 36,000 µs — slightly above the 30 fps budget (33,333 µs) so the
-    // 30 fps reference line sits a bit below the top of the chart and its label has room
+    // y-scale floor is 36,000 µs — slightly above the 30 fps budget (33,333 µs)
+    // so the 30 fps reference line sits a bit below the top of the chart and its label has room
     // instead of being clipped at the edge. A genuine spike past 36 ms grows the scale.
     let y_scale_us = peak_us.max(36_000) as f32;
     let col_w = COL_W;
@@ -1414,8 +1568,8 @@ fn paint_timing_chart(
         }
     }
 
-    // Reference lines at 60 fps (16.6 ms) and 30 fps (33.3 ms) — the two budgets the
-    // testbed cares about. Each labeled at the right edge.
+    // Reference lines at 60 fps (16.6 ms) and 30 fps (33.3 ms)
+    // — the two budgets the testbed cares about. Each labeled at the right edge.
     for (us, label) in [(16_666.0_f32, "60 fps"), (33_333.0_f32, "30 fps")] {
         let y = rect.max.y - (us / y_scale_us) * rect.height();
         if y < rect.min.y || y > rect.max.y {
@@ -1441,8 +1595,8 @@ fn paint_timing_chart(
 }
 
 /// Paint the chart's component legend in its own strip — the colour swatches and labels
-/// for wasm / deser / layout / render / flush, in stack order. Lives above the chart so it
-/// doesn't overlap the bars.
+/// for wasm / deser / layout / render / flush, in stack order.
+/// Lives above the chart so it doesn't overlap the bars.
 fn paint_timing_legend(painter: &egui::Painter, rect: egui::Rect) {
     let colours = [
         (egui::Color32::from_rgb(0x6A, 0x9F, 0xD8), "wasm"),
@@ -1464,6 +1618,250 @@ fn paint_timing_legend(painter: &egui::Painter, rect: egui::Rect) {
             egui::Color32::from_gray(180),
         );
         x_cursor += 56.0;
+    }
+}
+
+// ── Param-mutation inputs ───────────────────────────────────────────
+
+/// Render one row inside the params Grid: monospace key in the left column,
+/// type-appropriate input + optional clear-to-null toggle in the right column.
+///
+/// Returns `true` when the operator changed the value this frame.
+///
+/// Caller (`paint_params_panel`) wraps this in `egui::Grid::show` so the two columns
+/// stay aligned across rows regardless of key length or input width.
+fn paint_param_row(
+    grid: &mut egui::Ui,
+    key: &str,
+    def: &bmc_widget_manifest::ParamDefinition,
+    value: &mut bmc_widget_manifest::ParamValue,
+) -> bool {
+    use bmc_widget_manifest::{ParamKind, ParamValue};
+
+    let mut changed = false;
+
+    // Column 1: monospace key label
+    grid.label(
+        egui::RichText::new(key)
+            .font(egui::FontId::monospace(11.0))
+            .color(egui::Color32::from_gray(180)),
+    );
+
+    // Column 2: optional toggle + typed input on one row
+    grid.horizontal(|row| {
+        if def.is_optional {
+            let is_null = matches!(value, ParamValue::Null);
+            // Plain-text labels — `✗` and similar dingbats aren't in egui's bundled font
+            // and render as a missing-glyph box.
+            let label = if is_null { "(unset)" } else { "clear" };
+            if row.small_button(label).clicked() {
+                if is_null {
+                    *value = ParamValue::from_param_kind_default(&def.kind);
+                    // If the default is also Null (optional-without-default), seed with a
+                    // type-appropriate zero so the input below has something to edit.
+                    if matches!(value, ParamValue::Null) {
+                        *value = match &def.kind {
+                            ParamKind::String { .. } | ParamKind::Timezone { .. } => {
+                                ParamValue::String(String::new())
+                            }
+                            ParamKind::Integer { .. } => ParamValue::Integer(0),
+                            ParamKind::Double { .. } => ParamValue::Double(0.0),
+                            ParamKind::Boolean { .. } => ParamValue::Boolean(false),
+                        };
+                    }
+                } else {
+                    *value = ParamValue::Null;
+                }
+                changed = true;
+            }
+            if matches!(value, ParamValue::Null) {
+                // Nothing to render after the (unset) button when the value is cleared.
+                return;
+            }
+        }
+        changed |= paint_typed_input(row, key, &def.kind, value);
+    });
+    grid.end_row();
+    changed
+}
+
+/// Render an `egui::Slider` so its compound widget (track + value box) fills `cell_w`.
+/// `Slider` doesn't honour `add_sized` for its track width — the track size comes from
+/// `ui.spacing().slider_width`. We pre-allocate the cell, scope a temporary `slider_width`
+/// equal to the cell minus the value-box estimate, then run the slider inside the scoped
+/// ui so the operator sees a track that actually fills the column.
+///
+/// The value-box reserve is derived from `ui.spacing().interact_size.x` (egui's default
+/// minimum interactable width for value-like widgets), not a constant.
+fn stretched_slider<R>(ui: &mut egui::Ui, cell_w: f32, f: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let row_h = ui.spacing().interact_size.y;
+    let value_box_reserve = ui.spacing().interact_size.x + ui.spacing().item_spacing.x;
+    let track_w = (cell_w - value_box_reserve).max(0.0);
+    let result = ui.allocate_ui(egui::vec2(cell_w, row_h), |slot| {
+        slot.spacing_mut().slider_width = track_w;
+        f(slot)
+    });
+    result.inner
+}
+
+/// Inner dispatch: actual editable widget per kind. Caller has already drawn the label
+/// and (when applicable) the optional toggle. Each branch wraps its widget in `add_sized`
+/// so the column lines up visually with the longest TextEdit-style input.
+///
+/// Control width comes from `ui.available_width()` — the parent Grid + horizontal layout
+/// has already reserved space for the key label and any optional toggle, so what's left is
+/// exactly what we want the input to fill. No constant, layout naturally follows sidebar
+/// resizes or label changes.
+///
+/// `too_many_lines` is `expect`ed because the match is one arm per `ParamKind` variant +
+/// enum-or-not split; pulling each branch into its own function would obscure the otherwise
+/// trivial widget construction at every site.
+#[expect(
+    clippy::too_many_lines,
+    reason = "linear ParamKind dispatch — splitting hurts readability"
+)]
+fn paint_typed_input(
+    ui: &mut egui::Ui,
+    key: &str,
+    kind: &bmc_widget_manifest::ParamKind,
+    value: &mut bmc_widget_manifest::ParamValue,
+) -> bool {
+    use bmc_widget_manifest::{ParamKind, ParamValue};
+
+    let row_h = ui.spacing().interact_size.y;
+    let cell_w = ui.available_width();
+    let cell = egui::vec2(cell_w, row_h);
+    match (kind, value) {
+        (ParamKind::String { enum_values, .. }, ParamValue::String(s))
+            if !enum_values.is_empty() =>
+        {
+            let mut changed = false;
+            ui.allocate_ui(cell, |slot| {
+                egui::ComboBox::from_id_salt(key)
+                    .selected_text(s.clone())
+                    .width(cell_w)
+                    .show_ui(slot, |menu| {
+                        for opt in enum_values {
+                            if menu.selectable_label(*s == opt.value, &opt.label).clicked() {
+                                s.clone_from(&opt.value);
+                                changed = true;
+                            }
+                        }
+                    });
+            });
+            changed
+        }
+        (ParamKind::String { .. } | ParamKind::Timezone { .. }, ParamValue::String(s)) => {
+            ui.add_sized(cell, egui::TextEdit::singleline(s)).changed()
+        }
+        (ParamKind::Integer { enum_values, .. }, ParamValue::Integer(n))
+            if !enum_values.is_empty() =>
+        {
+            let mut changed = false;
+            let label = enum_values
+                .iter()
+                .find(|o| o.value == *n)
+                .map_or_else(|| n.to_string(), |o| o.label.clone());
+            ui.allocate_ui(cell, |slot| {
+                egui::ComboBox::from_id_salt(key)
+                    .selected_text(label)
+                    .width(cell_w)
+                    .show_ui(slot, |menu| {
+                        for opt in enum_values {
+                            if menu.selectable_label(*n == opt.value, &opt.label).clicked() {
+                                *n = opt.value;
+                                changed = true;
+                            }
+                        }
+                    });
+            });
+            changed
+        }
+        (ParamKind::Integer { min, max, step, .. }, ParamValue::Integer(n)) => {
+            // Bounded ranges use a `Slider` with `trailing_fill` so the cell shows the
+            // value as a progress fill against `min..=max` (the GIMP-style look). Unbounded
+            // integers fall back to a `DragValue` since `Slider` requires a finite range.
+            if let (Some(lo), Some(hi)) = (min, max) {
+                stretched_slider(ui, cell_w, |sl| {
+                    sl.add(
+                        egui::Slider::new(n, *lo..=*hi)
+                            .step_by(step.map_or(1.0, f64::from))
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                })
+            } else {
+                let mut dv = egui::DragValue::new(n).speed(step.map_or(1.0, f64::from));
+                if let Some(lo) = min {
+                    dv = dv.range(*lo..=i32::MAX);
+                } else if let Some(hi) = max {
+                    dv = dv.range(i32::MIN..=*hi);
+                }
+                ui.add_sized(cell, dv).changed()
+            }
+        }
+        (ParamKind::Double { enum_values, .. }, ParamValue::Double(f))
+            if !enum_values.is_empty() =>
+        {
+            let mut changed = false;
+            let label = enum_values
+                .iter()
+                .find(|o| (o.value - *f).abs() < f64::EPSILON)
+                .map_or_else(|| format!("{f}"), |o| o.label.clone());
+            ui.allocate_ui(cell, |slot| {
+                egui::ComboBox::from_id_salt(key)
+                    .selected_text(label)
+                    .width(cell_w)
+                    .show_ui(slot, |menu| {
+                        for opt in enum_values {
+                            if menu
+                                .selectable_label((opt.value - *f).abs() < f64::EPSILON, &opt.label)
+                                .clicked()
+                            {
+                                *f = opt.value;
+                                changed = true;
+                            }
+                        }
+                    });
+            });
+            changed
+        }
+        (ParamKind::Double { min, max, step, .. }, ParamValue::Double(f)) => {
+            // Same dispatch as Integer: bounded ranges get the filled-slider treatment,
+            // unbounded fall back to DragValue.
+            if let (Some(lo), Some(hi)) = (min, max) {
+                stretched_slider(ui, cell_w, |sl| {
+                    sl.add(
+                        egui::Slider::new(f, *lo..=*hi)
+                            .step_by(step.unwrap_or(0.0))
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                })
+            } else {
+                let mut dv = egui::DragValue::new(f).speed(step.unwrap_or(0.1));
+                if let Some(lo) = min {
+                    dv = dv.range(*lo..=f64::INFINITY);
+                } else if let Some(hi) = max {
+                    dv = dv.range(f64::NEG_INFINITY..=*hi);
+                }
+                ui.add_sized(cell, dv).changed()
+            }
+        }
+        // Checkbox stays at its natural icon size — stretching it would make the entire row
+        // a giant click target with the box ghosted in the corner.
+        (ParamKind::Boolean { .. }, ParamValue::Boolean(b)) => ui.checkbox(b, "").changed(),
+        // Type mismatch (value's variant doesn't match kind) — shouldn't happen with a
+        // well-formed manifest + default-init path, but render a read-only label rather than
+        // crashing if it does.
+        _ => {
+            ui.label(
+                egui::RichText::new("(type mismatch)")
+                    .color(egui::Color32::from_rgb(200, 80, 80))
+                    .font(egui::FontId::monospace(10.0)),
+            );
+            false
+        }
     }
 }
 
@@ -1576,9 +1974,9 @@ impl TestbedApp {
         }
     }
 
-    /// Take ownership of the active recording, merge all event sources (user actions, network
-    /// events from the runtime, fetch events from the shared buffer), validate, and write a
-    /// `.jsonl.gz` fixture into the widget's `capture/fixtures/<size>.jsonl.gz`.
+    /// Take ownership of the active recording, merge all event sources
+    /// (user actions, network events from the runtime, fetch events from the shared buffer),
+    /// validate, and write a `.jsonl.gz` fixture into the widget's `capture/fixtures/<size>.jsonl.gz`.
     /// Also updates the widget's `capture/config.toml` to point at the new fixture.
     fn finish_recording(&mut self) {
         let Some(rec) = self.recording_mode.state.take() else {
@@ -1714,10 +2112,11 @@ fn write_perf_report(path: &Path, samples: &[bmc_render::FrameTimings]) {
 }
 
 // Process-wide cell holding the eframe-provided GL proc address loader, populated in
-// `TestbedApp::new` and read by `init_tiles` / `poll_hot_reload`. A thread-local sidesteps the
-// `dyn Fn` capture lifetime question while keeping the closure trivially cloneable.
-// `thread_local!` is a macro, so this stays a regular `//` comment — doc comments don't
-// attach to macro invocations.
+// `TestbedApp::new` and read by `init_tiles` / `poll_hot_reload`.
+//
+// A thread-local sidesteps the `dyn Fn` capture lifetime question while keeping
+// the closure trivially cloneable. `thread_local!` is a macro, so this stays
+// a regular `//` comment — doc comments don't attach to macro invocations.
 thread_local! {
     static GET_PROC_ADDRESS: std::cell::RefCell<Option<GlProcAddress>>
         = const { std::cell::RefCell::new(None) };
@@ -1725,6 +2124,31 @@ thread_local! {
 
 impl eframe::App for TestbedApp {
     fn ui(&mut self, root_ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // One-shot resize lock. We deliberately do NOT re-send `InnerSize` here — on some
+        // Wayland compositors it gets clamped, undoing the larger startup hint. The
+        // post-frame `Resizable(false)` command pins whatever size the compositor actually
+        // gave us. Setting min/max here would re-trigger `wl_surface error 4` on the same
+        // compositors that rejected it at startup.
+        if self.size_pin_attempts > 0 {
+            let ctx = root_ui.ctx();
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(self.requested_size));
+            let actual = ctx.input(|i| i.viewport().inner_rect).map(|r| r.size());
+            let matches = actual.is_some_and(|s| {
+                (s.x - self.requested_size.x).abs() < 1.0
+                    && (s.y - self.requested_size.y).abs() < 1.0
+            });
+            if matches {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
+                self.size_pin_attempts = 0;
+            } else {
+                self.size_pin_attempts -= 1;
+                if self.size_pin_attempts == 0 {
+                    // Final attempt exhausted; lock down whatever size we have anyway.
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
+                }
+                ctx.request_repaint();
+            }
+        }
         // Lazy tile construction — `frame.register_native_glow_texture` needs the
         // `eframe::Frame`, which isn't available in `CreationContext`.
         if self.tiles.is_empty()
@@ -1760,6 +2184,12 @@ impl eframe::App for TestbedApp {
             return;
         }
         let time_s = self.clock.start_instant.elapsed().as_secs_f32();
+
+        // Param-mutation sidebar — must be added BEFORE the CentralPanel so it claims
+        // its 320 px slice from the right edge first. Changes propagate to all tile
+        // runtimes and (when recording) append a `ParamDelivery` event to the timeline.
+        self.paint_params_panel(root_ui);
+
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show_inside(root_ui, |ui| {
@@ -1780,8 +2210,8 @@ impl eframe::App for TestbedApp {
 
                     // Touch / mouse routing: allocate the same rect for click+drag so we
                     // can forward pointer events to the runtime in tile-local coordinates.
-                    // Recording state is threaded in only for the active recording tile so
-                    // gestures on other tiles don't pollute the fixture timeline.
+                    // Recording state is threaded in only for the active recording tile
+                    // so gestures on other tiles don't pollute the fixture timeline.
                     let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
                     let rec_for_tile = if active_record_idx == Some(tile_idx) {
                         self.recording_mode.state.as_mut()
