@@ -1,0 +1,159 @@
+{
+  "$schema": "../../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "550e8400-e29b-41d4-a716-446655440300",
+  "version": "0.1.0",
+  "name": "Params Demo",
+  "description": "Read-back exemplar for every ParamKind variant + the structural-flag matrix",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/params-demo",
+  "settings": [],
+  "sizes": [
+    "small",
+    "medium",
+    "large",
+    "full"
+  ],
+  "params": {
+    "free_string": {
+      "name": "Free-form string",
+      "description": "String with no enum or format constraint",
+      "type": "string",
+      "default_value": "Hello, params"
+    },
+    "string_enum": {
+      "name": "String enum",
+      "description": "String with a closed enum_values set",
+      "type": "string",
+      "default_value": "violet",
+      "enum_values": [
+        {
+          "value": "violet",
+          "label": "Violet"
+        },
+        {
+          "value": "green",
+          "label": "Green"
+        },
+        {
+          "value": "amber",
+          "label": "Amber"
+        }
+      ]
+    },
+    "string_uri": {
+      "name": "URI string",
+      "description": "String with format: \"uri\" structural hint",
+      "type": "string",
+      "format": "uri",
+      "default_value": "https://braiins.com"
+    },
+    "string_date": {
+      "name": "Date string",
+      "description": "String with format: \"date\" structural hint",
+      "type": "string",
+      "format": "date",
+      "default_value": "2026-01-01"
+    },
+    "integer_range": {
+      "name": "Integer with bounds",
+      "description": "Integer with min / max / step constraints",
+      "type": "integer",
+      "min": 1,
+      "max": 100,
+      "step": 5,
+      "default_value": 25
+    },
+    "integer_enum": {
+      "name": "Integer enum",
+      "description": "Integer with a closed enum_values set",
+      "type": "integer",
+      "default_value": 2,
+      "enum_values": [
+        {
+          "value": 1,
+          "label": "One"
+        },
+        {
+          "value": 2,
+          "label": "Two"
+        },
+        {
+          "value": 3,
+          "label": "Three"
+        },
+        {
+          "value": 4,
+          "label": "Four"
+        }
+      ]
+    },
+    "double_range": {
+      "name": "Double with bounds",
+      "description": "Double with min / max / step constraints",
+      "type": "double",
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.05,
+      "default_value": 0.5
+    },
+    "double_enum": {
+      "name": "Double enum",
+      "description": "Double with a closed enum_values set",
+      "type": "double",
+      "default_value": 2.2,
+      "enum_values": [
+        {
+          "value": 1.0,
+          "label": "Linear"
+        },
+        {
+          "value": 1.8,
+          "label": "Mac"
+        },
+        {
+          "value": 2.2,
+          "label": "sRGB"
+        }
+      ]
+    },
+    "boolean_flag": {
+      "name": "Boolean",
+      "description": "Plain on/off toggle",
+      "type": "boolean",
+      "default_value": true
+    },
+    "tz": {
+      "name": "Timezone",
+      "description": "IANA timezone identifier",
+      "type": "timezone",
+      "default_value": "Europe/Prague"
+    },
+    "optional_string": {
+      "name": "Optional string",
+      "description": "Optional with no default — exercises null-on-wire for the String variant",
+      "type": "string",
+      "optional": true
+    },
+    "optional_integer": {
+      "name": "Optional integer",
+      "description": "Optional with no default — exercises null-on-wire for the Integer variant",
+      "type": "integer",
+      "optional": true
+    },
+    "optional_double": {
+      "name": "Optional double",
+      "description": "Optional with no default — exercises null-on-wire for the Double variant",
+      "type": "double",
+      "optional": true
+    },
+    "optional_boolean": {
+      "name": "Optional boolean",
+      "description": "Optional with no default — exercises null-on-wire for the Boolean variant",
+      "type": "boolean",
+      "optional": true
+    }
+  }
+}

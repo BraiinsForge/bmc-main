@@ -499,6 +499,10 @@ let
       wasmFile = "pomodoro.wasm";
       manifest = ./bmc-wasm-runtime/examples/pomodoro/manifest.json;
     };
+    params-demo = {
+      wasmFile = "params_demo.wasm";
+      manifest = ./bmc-wasm-runtime/examples/params-demo/manifest.json;
+    };
   };
 
   # Build all wasm widgets against `profile`'s host binary, joined into

@@ -182,6 +182,20 @@ in
     category = "widget";
     description = "Pomodoro timer with LED phase feedback and daily session tracking";
   };
+  params-demo = {
+    pkg = mkWasmWidget {
+      name = "params-demo";
+      wasmDir = wasmExamples;
+      wasmFile = "params_demo.wasm";
+      manifest = ../bmc-wasm-runtime/examples/params-demo/manifest.json;
+      inherit host;
+    };
+    version = "0.1.0";
+    category = "widget";
+    description = "Read-back exemplar for every ParamKind variant + the structural-flag matrix";
+    upgrade_strategy = null;
+    install_strategy = null;
+  };
   bmc-frontend = {
     pkg = armv7Pkgs.runCommand "bmc-frontend-profile" { } ''
       mkdir -p $out/www
