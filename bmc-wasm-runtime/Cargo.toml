@@ -81,7 +81,7 @@ capture = ["host", "askama", "base64", "clap", "khronos-egl", "libc", "fixtures"
 
 [[bin]]
 name = "testbed"
-path = "src/bin/testbed.rs"
+path = "src/bin/testbed/main.rs"
 required-features = ["testbed"]
 
 [[bin]]
