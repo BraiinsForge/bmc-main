@@ -48,6 +48,10 @@ winit = { workspace = true, optional = true }
 
 # Testbed only
 notify = { workspace = true, optional = true }
+# Testbed UI — eframe + egui own the event loop, window, and GL context.
+# Mirrors what `bmc-virt-console` does so patterns stay consistent across host UIs.
+eframe = { workspace = true, optional = true }
+egui = { workspace = true, optional = true }
 
 # Fixtures (shared between capture and testbed)
 flate2 = { workspace = true, optional = true }
@@ -72,7 +76,7 @@ profiling = ["ii-stopwatch/enabled", "bmc-render/profiling"]
 audio = ["rodio"]
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
 fixtures = ["host", "base64", "flate2", "owo-colors", "serde", "toml"]
-testbed = ["host", "perf-overlay", "notify", "fixtures", "audio"]
+testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "eframe", "egui"]
 capture = ["host", "askama", "base64", "clap", "khronos-egl", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile"]
 
 [[bin]]

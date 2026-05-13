@@ -2,66 +2,51 @@
 
 //! Widget development testbed with hot-reloading.
 //!
-//! Uses winit for windowing, glutin for OpenGL context, and FemtoVG for GPU rendering.
-//! Renders all 4 widget sizes simultaneously.
+//! Built on [`eframe`] so the same egui patterns used by `bmc-virt-console`
+//! carry over (window + GL context owned by eframe, custom GL via the `glow` backend,
+//! native textures registered with the egui frame for painting).
+//!
+//! Renders all four widget-size variants in a fixed-layout window
+//! plus stats / LED-strip / recording UI overlays.
 
 #![expect(
     clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
     clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
     clippy::integer_division,
-    clippy::wildcard_enum_match_arm
+    clippy::items_after_statements,
+    reason = "UI / GL math on small bounded positive values, GL u32 enums cast to GLint, \
+              and inline ui-block constants placed next to where they're used \
+              — all intentional in this single-file testbed binary"
 )]
 
 use std::ffi::CString;
-use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, channel};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use glow::HasContext;
-use glutin::config::ConfigTemplateBuilder;
-use glutin::context::ContextAttributesBuilder;
-use glutin::display::GetGlDisplay;
-use glutin::prelude::*;
-use glutin::surface::{SurfaceAttributesBuilder, SwapInterval, WindowSurface};
-use glutin_winit::DisplayBuilder;
-use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use raw_window_handle::HasWindowHandle;
-use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowButtons};
+use eframe::glow::HasContext as _;
 
-use bmc_wasm_protocol::{
-    GRAY_30, GRAY_40, GRAY_60, ICON_DEV_CAMERA, ICON_DEV_CURSOR, ICON_DEV_DOWNLOAD,
-    ICON_DEV_SCROLL, ICON_DEV_UNLINK, ICON_DEV_UPLOAD, IconId, WHITE,
-};
-use owo_colors::OwoColorize;
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
-use bmc_render::FrameTimings;
-use bmc_render::components::{ButtonSize, ButtonStyle, draw_button};
-use bmc_render::gpu::FemtoVgRenderer;
-use bmc_render::interaction::{InteractionState, TouchEvent};
-use bmc_render::renderer::Renderer;
+use bmc_render::interaction::TouchEvent;
+use bmc_render::renderer::Renderer as _;
 use bmc_wasm_runtime::fixtures::{self, find_widget_root, seed_kv_from_secrets, snapshot_kv_dir};
-use bmc_wasm_runtime::perf_overlay::PerfOverlay;
 use bmc_wasm_runtime::unified_fixture::{
     FixtureHeader, TimelineEvent, UnifiedEvent, UnifiedFixture,
 };
 use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, WasmWidgetRuntime};
-use chrono::Local;
 
-// Layout constants
+// ── Layout constants ────────────────────────────────────────────────
+
 const PREVIEW_GAP: u32 = 16;
 const PREVIEW_MARGIN: u32 = 16;
 /// Height of the LED diffuser strip rendered below each tile.
 const LED_STRIP_H: u32 = 24;
 /// Number of simulated LEDs across the strip.
 const LED_COUNT: usize = 10;
-// Widget size presets (pixels)
+// Widget size presets (logical pixels)
 const TILE_FULL_W: u32 = 1280;
 const TILE_FULL_H: u32 = 480;
 const TILE_LARGE_W: u32 = 638;
@@ -71,16 +56,12 @@ const TILE_MEDIUM_H: u32 = 238;
 const TILE_SMALL_W: u32 = 317;
 const TILE_SMALL_H: u32 = 238;
 
-// Inner width = max(full tile, two-column layout)
 const INNER_W: u32 = if TILE_FULL_W > TILE_LARGE_W + PREVIEW_GAP + TILE_MEDIUM_W {
     TILE_FULL_W
 } else {
     TILE_LARGE_W + PREVIEW_GAP + TILE_MEDIUM_W
 };
 const PREVIEW_WIDTH: u32 = PREVIEW_MARGIN + INNER_W + PREVIEW_MARGIN;
-// Inner height: row0 (FULL+LED+gap) + row1 (max of left/right columns)
-// Left col:  480 + LED
-// Right col: 238 + LED + gap + 238 + LED
 const RIGHT_COL_H: u32 = TILE_MEDIUM_H + LED_STRIP_H + PREVIEW_GAP + TILE_SMALL_H + LED_STRIP_H;
 const LEFT_COL_H: u32 = TILE_LARGE_H + LED_STRIP_H;
 const ROW1_H: u32 = if LEFT_COL_H > RIGHT_COL_H {
@@ -91,33 +72,60 @@ const ROW1_H: u32 = if LEFT_COL_H > RIGHT_COL_H {
 const PREVIEW_HEIGHT: u32 =
     PREVIEW_MARGIN + (TILE_FULL_H + LED_STRIP_H + PREVIEW_GAP) + ROW1_H + PREVIEW_MARGIN;
 
-/// Scale a logical pixel value by the DPI factor to get physical pixels.
-#[expect(clippy::cast_sign_loss)]
-fn scaled(logical: u32, dpi: f32) -> u32 {
-    (logical as f32 * dpi) as u32
+const M: u32 = PREVIEW_MARGIN;
+const G: u32 = PREVIEW_GAP;
+const fn row_stride(h: u32) -> u32 {
+    h + LED_STRIP_H + G
+}
+const ROW0_Y: u32 = M;
+const ROW1_Y: u32 = ROW0_Y + row_stride(TILE_FULL_H);
+const RIGHT_COL_X: u32 = M + TILE_LARGE_W + G;
+
+/// (x, y, w, h, label) — tile positions in logical pixels.
+const TILE_DEFS: [(u32, u32, u32, u32, &str); 4] = [
+    (M, ROW0_Y, TILE_FULL_W, TILE_FULL_H, "FULL"),
+    (M, ROW1_Y, TILE_LARGE_W, TILE_LARGE_H, "LARGE"),
+    (RIGHT_COL_X, ROW1_Y, TILE_MEDIUM_W, TILE_MEDIUM_H, "MEDIUM"),
+    (
+        RIGHT_COL_X,
+        ROW1_Y + row_stride(TILE_MEDIUM_H),
+        TILE_SMALL_W,
+        TILE_SMALL_H,
+        "SMALL",
+    ),
+];
+
+// Stats panel position: empty area right of SMALL tile, below MEDIUM
+const STATS_X: u32 = RIGHT_COL_X + TILE_SMALL_W + G;
+const STATS_Y: u32 = ROW1_Y + row_stride(TILE_MEDIUM_H);
+const STATS_W: u32 = PREVIEW_WIDTH - M - STATS_X;
+const STATS_H: u32 = PREVIEW_HEIGHT - M - STATS_Y;
+
+// ── CLI ─────────────────────────────────────────────────────────────
+
+struct CliArgs {
+    wasm_path: PathBuf,
+    manifest_path: Option<PathBuf>,
+    perf_report_path: Option<PathBuf>,
+    perf_frames: u32,
+    record_size: Option<String>,
 }
 
-fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
-    bmc_render::tree::init_debug_flags();
-
+fn parse_args() -> Result<CliArgs> {
     let args: Vec<String> = std::env::args().collect();
-
     if args.len() < 2 {
-        eprintln!("WASM Widget Testbed");
-        eprintln!(
-            "Usage: testbed <wasm_file> [--manifest=<path>] [--perf-report=<path>] [--perf-frames=<N>] [--record=<size>]"
+        anyhow::bail!(
+            "WASM Widget Testbed\n\
+             Usage: testbed <wasm_file> [--manifest=<path>] [--perf-report=<path>] \
+             [--perf-frames=<N>] [--record=<size>]"
         );
-        std::process::exit(1);
     }
 
     let wasm_path = PathBuf::from(&args[1]);
-
-    // Parse optional flags from remaining args
-    let mut perf_report_path: Option<PathBuf> = None;
+    let mut perf_report_path = None;
     let mut perf_frames: u32 = 600;
-    let mut record_size: Option<String> = None;
-    let mut manifest_path: Option<PathBuf> = None;
+    let mut record_size = None;
+    let mut manifest_path = None;
     for arg in &args[2..] {
         if let Some(path) = arg.strip_prefix("--manifest=") {
             manifest_path = Some(PathBuf::from(path));
@@ -129,77 +137,17 @@ fn main() -> Result<()> {
             record_size = Some(s.to_owned());
         }
     }
-
-    // Locate the widget's manifest.json — either provided explicitly via `--manifest=`
-    // or auto-detected by walking up the wasm path. The manifest is required;
-    // it carries the params declarations whose defaults the testbed applies to every runtime,
-    // mirroring what the compositor delivers on-device when no operator overrides are set.
-    let manifest_path = manifest_path
-        .or_else(|| autodetect_manifest(&wasm_path))
-        .with_context(|| {
-            format!(
-                "could not locate manifest.json for {}. Pass --manifest=<path> explicitly.",
-                wasm_path.display()
-            )
-        })?;
-    let manifest_body = std::fs::read_to_string(&manifest_path)
-        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
-    let manifest = <bmc_widget_manifest::Manifest as std::str::FromStr>::from_str(&manifest_body)
-        .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
-    let params: std::collections::BTreeMap<
-        bmc_widget_manifest::ParamKey,
-        bmc_widget_manifest::ParamValue,
-    > = manifest
-        .params
-        .iter()
-        .map(|(key, def)| {
-            (
-                key.clone(),
-                bmc_widget_manifest::ParamValue::from_param_kind_default(&def.kind),
-            )
-        })
-        .collect();
-
-    println!("Loading widget from: {}", wasm_path.display());
-    println!("Manifest:            {}", manifest_path.display());
-    println!(
-        "Params:              {} key(s) from manifest defaults",
-        params.len()
-    );
-    println!("Display size: {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} (4 sizes)");
-    if let Some(ref path) = perf_report_path {
-        println!("Perf report: {} ({perf_frames} frames)", path.display());
-    }
-
-    let event_loop = EventLoop::new()?;
-    if let Some(ref size) = record_size {
-        println!("Recording mode: size={size}");
-    }
-
-    let mut app = App {
+    Ok(CliArgs {
         wasm_path,
-        params,
-        state: None,
-        rss_after_gl_kb: None,
-        rss_after_runtime_kb: None,
+        manifest_path,
         perf_report_path,
         perf_frames,
         record_size,
-    };
-    event_loop.run_app(&mut app)?;
-    print_memory_stats(app.rss_after_gl_kb, app.rss_after_runtime_kb);
-    Ok(())
+    })
 }
 
 /// Walk up the wasm path looking for `<package>/manifest.json` at each level.
-///
-/// Cargo emits widget binaries at `<workspace>/target/<target-triple>/<profile>/<package>.wasm`
-/// with `-` in the package name normalised to `_`.
-///
-/// This walks parents of the wasm file, undoing the underscore convention to look for the
-/// matching widget source directory containing `manifest.json`.
-///
-/// Returns `None` if no sibling manifest is found before the filesystem root.
+/// Cargo emits widget binaries with `-` in the package name normalised to `_`.
 fn autodetect_manifest(wasm_path: &Path) -> Option<PathBuf> {
     let stem = wasm_path.file_stem()?.to_str()?;
     let package = stem.replace('_', "-");
@@ -214,7 +162,40 @@ fn autodetect_manifest(wasm_path: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Read current RSS from `/proc/self/status` in kB (Linux only).
+fn load_manifest_params(
+    wasm_path: &Path,
+    explicit: Option<PathBuf>,
+) -> Result<(
+    PathBuf,
+    std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
+)> {
+    let manifest_path = explicit
+        .or_else(|| autodetect_manifest(wasm_path))
+        .with_context(|| {
+            format!(
+                "could not locate manifest.json for {}. Pass --manifest=<path> explicitly.",
+                wasm_path.display()
+            )
+        })?;
+    let body = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    let manifest = <bmc_widget_manifest::Manifest as std::str::FromStr>::from_str(&body)
+        .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
+    let params = manifest
+        .params
+        .iter()
+        .map(|(key, def)| {
+            (
+                key.clone(),
+                bmc_widget_manifest::ParamValue::from_param_kind_default(&def.kind),
+            )
+        })
+        .collect();
+    Ok((manifest_path, params))
+}
+
+// ── Memory stats (Linux only) ───────────────────────────────────────
+
 fn current_rss_kb() -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     for line in status.lines() {
@@ -225,16 +206,19 @@ fn current_rss_kb() -> Option<u64> {
     None
 }
 
-/// Print peak memory usage from `/proc/self/status` (Linux only, zero overhead).
-fn print_memory_stats(rss_after_gl_kb: Option<u64>, rss_after_runtime_kb: Option<u64>) {
+/// Log RSS deltas at app startup once GL + the WASM runtime are wired up.
+/// The pre-GL baseline is taken before `eframe::run_native` is called, so the difference
+/// reported here captures GL initialisation + first-runtime construction.
+fn log_startup_memory(rss_before_gl_kb: Option<u64>) {
+    let now = current_rss_kb();
     let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
         return;
     };
-    eprintln!("\n=== Memory ===");
-    if let (Some(gl), Some(rt)) = (rss_after_gl_kb, rss_after_runtime_kb) {
-        let rt_delta = rt.saturating_sub(gl);
-        eprintln!("GL + windowing:    {gl:>6} kB");
-        eprintln!("WASM runtime:      {rt_delta:>6} kB  (delta)");
+    eprintln!("\n=== Memory (startup) ===");
+    if let (Some(before), Some(now)) = (rss_before_gl_kb, now) {
+        let delta = now.saturating_sub(before);
+        eprintln!("Pre-eframe RSS:    {before:>6} kB");
+        eprintln!("Post-init RSS:     {now:>6} kB ({delta:+} kB)");
     }
     for line in status.lines() {
         if line.starts_with("VmPeak:") || line.starts_with("VmRSS:") || line.starts_with("VmHWM:") {
@@ -243,50 +227,200 @@ fn print_memory_stats(rss_after_gl_kb: Option<u64>, rss_after_runtime_kb: Option
     }
 }
 
-// ── App ────────────────────────────────────────────────────────────
+// ── main ────────────────────────────────────────────────────────────
 
-struct App {
-    wasm_path: PathBuf,
-    /// Per-instance params materialised from the widget's `manifest.json` defaults.
-    /// Applied to each runtime via `set_params` immediately after construction.
-    ///
-    /// Mirrors what the compositor's `ParamValue::from_param_kind_default`
-    /// pass would deliver on the device when no operator overrides are set.
-    params:
-        std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
-    state: Option<PreviewState>,
-    rss_after_gl_kb: Option<u64>,
-    rss_after_runtime_kb: Option<u64>,
-    /// If set, write a JSON perf report to this path after `perf_frames` frames.
-    perf_report_path: Option<PathBuf>,
-    perf_frames: u32,
-    /// If set, enter recording mode for this size name.
-    record_size: Option<String>,
+fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
+    bmc_render::tree::init_debug_flags();
+
+    let cli = parse_args()?;
+    let (manifest_path, params) = load_manifest_params(&cli.wasm_path, cli.manifest_path.clone())?;
+
+    println!("Loading widget from: {}", cli.wasm_path.display());
+    println!("Manifest:            {}", manifest_path.display());
+    println!(
+        "Params:              {} key(s) from manifest defaults",
+        params.len()
+    );
+    println!("Display size: {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} (4 sizes)");
+    if let Some(ref path) = cli.perf_report_path {
+        println!(
+            "Perf report: {} ({} frames)",
+            path.display(),
+            cli.perf_frames
+        );
+    }
+    if let Some(ref size) = cli.record_size {
+        println!("Recording mode: size={size}");
+    }
+
+    let rss_before_gl = current_rss_kb();
+
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([PREVIEW_WIDTH as f32, PREVIEW_HEIGHT as f32])
+            .with_min_inner_size([PREVIEW_WIDTH as f32, PREVIEW_HEIGHT as f32])
+            .with_resizable(false)
+            .with_title("WASM Widget Testbed"),
+        renderer: eframe::Renderer::Glow,
+        vsync: true,
+        ..Default::default()
+    };
+
+    eframe::run_native(
+        "WASM Widget Testbed",
+        options,
+        Box::new(move |cc| {
+            // PHASE 1 stub: no WASM runtime wired yet.
+            let app = TestbedApp::new(cc, cli, params)?;
+            log_startup_memory(rss_before_gl);
+            Ok(Box::new(app))
+        }),
+    )
+    .map_err(|e| anyhow::anyhow!("eframe: {e}"))
 }
 
-// ── Preview mode ───────────────────────────────────────────────────
+// ── GL helpers ──────────────────────────────────────────────────────
 
-struct PreviewTile {
-    runtime: WasmWidgetRuntime,
-    x: u32,
-    y: u32,
-    w: u32,
-    h: u32,
-    pw: u32,
-    ph: u32,
-    label: &'static str,
-    fbo: glow::Framebuffer,
-    texture: glow::Texture,
-    logged_dead: bool,
-    ever_rendered: bool,
-    kv_path: PathBuf,
-    /// Receiver for LED commands from the widget (drained each frame).
-    led_rx: Receiver<bmc_led::data::LedCommand>,
-    /// Current LED scene (from last `SetEffect` command).
-    led_scene: Option<bmc_led::data::LedScene>,
-    /// Whether LEDs are enabled.
-    led_enabled: bool,
+/// FBO + texture pair allocated against eframe's glow context. Each tile owns one;
+/// `WasmWidgetRuntime` renders into the FBO and we paint the texture in egui.
+struct TileGpu {
+    fbo: eframe::glow::Framebuffer,
+    /// Held to keep the GL texture alive for as long as the FBO references it; the egui
+    /// painter samples this texture by id at draw time, but Rust doesn't see those reads
+    /// through the GL boundary, so without retaining we'd risk the texture being collected.
+    #[expect(
+        dead_code,
+        reason = "ownership marker — keeps the FBO's color attachment alive"
+    )]
+    texture: eframe::glow::Texture,
+    egui_tex_id: egui::TextureId,
+    width: u32,
+    height: u32,
 }
+
+impl TileGpu {
+    /// Create an `width × height` RGBA8 colour texture + matching framebuffer.
+    /// The texture is registered with egui's frame so callers paint it as an `egui::Image`
+    /// after the underlying GL render finishes.
+    fn new(
+        gl: &eframe::glow::Context,
+        frame: &mut eframe::Frame,
+        width: u32,
+        height: u32,
+    ) -> Result<Self> {
+        // SAFETY: eframe's glow context is current on the calling thread inside `App::ui`.
+        unsafe {
+            let texture = gl
+                .create_texture()
+                .map_err(|e| anyhow::anyhow!("create_texture: {e}"))?;
+            gl.bind_texture(eframe::glow::TEXTURE_2D, Some(texture));
+            gl.tex_image_2d(
+                eframe::glow::TEXTURE_2D,
+                0,
+                eframe::glow::RGBA8 as i32,
+                width as i32,
+                height as i32,
+                0,
+                eframe::glow::RGBA,
+                eframe::glow::UNSIGNED_BYTE,
+                eframe::glow::PixelUnpackData::Slice(None),
+            );
+            gl.tex_parameter_i32(
+                eframe::glow::TEXTURE_2D,
+                eframe::glow::TEXTURE_MIN_FILTER,
+                eframe::glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                eframe::glow::TEXTURE_2D,
+                eframe::glow::TEXTURE_MAG_FILTER,
+                eframe::glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                eframe::glow::TEXTURE_2D,
+                eframe::glow::TEXTURE_WRAP_S,
+                eframe::glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.tex_parameter_i32(
+                eframe::glow::TEXTURE_2D,
+                eframe::glow::TEXTURE_WRAP_T,
+                eframe::glow::CLAMP_TO_EDGE as i32,
+            );
+
+            let fbo = gl
+                .create_framebuffer()
+                .map_err(|e| anyhow::anyhow!("create_framebuffer: {e}"))?;
+            gl.bind_framebuffer(eframe::glow::FRAMEBUFFER, Some(fbo));
+            gl.framebuffer_texture_2d(
+                eframe::glow::FRAMEBUFFER,
+                eframe::glow::COLOR_ATTACHMENT0,
+                eframe::glow::TEXTURE_2D,
+                Some(texture),
+                0,
+            );
+
+            // Stencil renderbuffer — FemtoVG's stroke shader uses stencil.
+            let rbo = gl
+                .create_renderbuffer()
+                .map_err(|e| anyhow::anyhow!("create_renderbuffer: {e}"))?;
+            gl.bind_renderbuffer(eframe::glow::RENDERBUFFER, Some(rbo));
+            gl.renderbuffer_storage(
+                eframe::glow::RENDERBUFFER,
+                eframe::glow::DEPTH24_STENCIL8,
+                width as i32,
+                height as i32,
+            );
+            gl.framebuffer_renderbuffer(
+                eframe::glow::FRAMEBUFFER,
+                eframe::glow::DEPTH_STENCIL_ATTACHMENT,
+                eframe::glow::RENDERBUFFER,
+                Some(rbo),
+            );
+            gl.bind_renderbuffer(eframe::glow::RENDERBUFFER, None);
+
+            let status = gl.check_framebuffer_status(eframe::glow::FRAMEBUFFER);
+            if status != eframe::glow::FRAMEBUFFER_COMPLETE {
+                anyhow::bail!("FBO incomplete: {status:#x}");
+            }
+            gl.bind_framebuffer(eframe::glow::FRAMEBUFFER, None);
+            gl.bind_texture(eframe::glow::TEXTURE_2D, None);
+
+            let native = eframe::glow::NativeTexture(texture.0);
+            let egui_tex_id = frame.register_native_glow_texture(native);
+
+            Ok(Self {
+                fbo,
+                texture,
+                egui_tex_id,
+                width,
+                height,
+            })
+        }
+    }
+
+    /// Numeric FBO ID for `WasmWidgetRuntime::new(... fbo_id ...)`.
+    fn fbo_id(&self) -> u32 {
+        self.fbo.0.get()
+    }
+}
+
+/// Wraps `cc.get_proc_address` into the shape `WasmWidgetRuntime::new` accepts (a `&str`-keyed
+/// loader). The eframe-provided callback takes `&CStr`; we allocate the `CString` per call
+/// since the runtime constructor only runs once per widget construction.
+fn proc_loader(get_proc: GlProcAddress) -> impl FnMut(&str) -> *const std::ffi::c_void {
+    move |name: &str| {
+        let Ok(cstr) = CString::new(name) else {
+            return std::ptr::null();
+        };
+        get_proc(&cstr)
+    }
+}
+
+/// Eframe's GL function loader closure shape — `&CStr` → raw function pointer.
+/// Aliased so the `dyn Fn` trait object isn't spelled out at every storage site.
+type GlProcAddress = Arc<dyn Fn(&std::ffi::CStr) -> *const std::ffi::c_void + Send + Sync>;
+
+// ── Recording mode ──────────────────────────────────────────────────
 
 /// Tracks an in-progress touch gesture for recording mode.
 struct GestureTracker {
@@ -295,23 +429,23 @@ struct GestureTracker {
     start_element: Option<String>,
 }
 
-/// Delay (ms) between a user action and its auto-inserted capture event.
+/// Delay between a user action and its auto-inserted capture event (ms).
 const AUTO_CAPTURE_DELAY_MS: u64 = 500;
+/// Pixel threshold separating "click" from "drag" / "scroll" gestures.
+const GESTURE_THRESHOLD: f32 = 5.0;
 
-/// Recording mode state — produces a unified fixture on completion.
+/// Recording-mode state. Owned by the `TestbedApp` while a recording is active; replaced with
+/// `None` on save/cancel. The recording UI panel reads this to render its event log.
 struct RecordingState {
     active_tile: usize,
     size_name: String,
     /// Unified timeline events (user actions + fetch recordings).
     events: Vec<TimelineEvent>,
-    interaction: InteractionState,
     gesture: Option<GestureTracker>,
     /// Widget root directory (for output paths).
     widget_root: Option<PathBuf>,
     /// Wall-clock reference for `at_ms` calculation.
-    recording_start: Instant,
-    /// Scroll offset for the event log (in pixels).
-    scroll_offset: f32,
+    recording_start: std::time::Instant,
     /// Snapshot of KV dir state at recording start.
     kv_snapshot: std::collections::HashMap<String, String>,
     /// Start time (ISO 8601) captured at recording start.
@@ -320,1209 +454,136 @@ struct RecordingState {
     auto_capture: bool,
 }
 
-struct PreviewState {
-    // Drop order: tiles (FemtoVG Canvases) → GL resources → window
-    tiles: Vec<PreviewTile>,
-    /// Params snapshot applied to every runtime constructed for this preview (including hot-reload).
-    /// Cloned from `App::params` at preview construction.
-    params:
-        std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
-    checker_fbo: glow::Framebuffer,
-    _checker_texture: glow::Texture,
-    stats_fbo: glow::Framebuffer,
-    _stats_texture: glow::Texture,
-    stats_renderer: FemtoVgRenderer,
-    /// FBO for rendering LED strip gaussian blobs (reused across tiles).
-    led_fbo: glow::Framebuffer,
-    _led_texture: glow::Texture,
-    led_renderer: FemtoVgRenderer,
-    gl: glow::Context,
-    gl_surface: glutin::surface::Surface<WindowSurface>,
-    gl_context: glutin::context::PossiblyCurrentContext,
-    gl_config: glutin::config::Config,
-    window: Window,
-    _watcher: RecommendedWatcher,
-    watcher_rx: Receiver<()>,
-    last_frame: Instant,
-    needs_render: bool,
-    pending_reload: bool,
-    mouse_pos: (f32, f32),
-    mouse_down: bool,
-    perf_overlay: PerfOverlay,
-    stats_interaction: InteractionState,
-    /// Display DPI scale (for screen coordinate mapping only, not FemtoVG rendering).
-    dpi_scale: f32,
-    /// Physical pixel dimensions of the screen surface.
-    phys_w: u32,
-    phys_h: u32,
-    /// Total frames rendered (for perf-report exit condition).
-    frame_count: u32,
-    /// Collected per-frame timings for perf report.
-    perf_samples: Vec<FrameTimings>,
-    /// Monotonic reference point for host-provided time.
-    start_instant: Instant,
-    /// Recording mode state (None = normal testbed mode).
-    recording: Option<RecordingState>,
-    /// Shared buffer for fetch events recorded during recording mode.
-    record_fetch_events: Arc<Mutex<Vec<TimelineEvent>>>,
-}
-
-/// Tile definitions: (x, y, w, h, label) — positioned with margin offset.
-/// Each tile has LED_STRIP_H pixels of space below it for the LED visualization.
-const M: u32 = PREVIEW_MARGIN;
-const G: u32 = PREVIEW_GAP;
-/// Vertical stride for a tile: tile height + LED strip + gap
-const fn row_stride(h: u32) -> u32 {
-    h + LED_STRIP_H + G
-}
-const ROW0_Y: u32 = M;
-const ROW1_Y: u32 = ROW0_Y + row_stride(TILE_FULL_H); // after FULL tile + LED + gap
-const RIGHT_COL_X: u32 = M + TILE_LARGE_W + G;
-const TILE_DEFS: [(u32, u32, u32, u32, &str); 4] = [
-    (M, ROW0_Y, TILE_FULL_W, TILE_FULL_H, "FULL"),
-    (M, ROW1_Y, TILE_LARGE_W, TILE_LARGE_H, "LARGE"),
-    (RIGHT_COL_X, ROW1_Y, TILE_MEDIUM_W, TILE_MEDIUM_H, "MEDIUM"),
-    (
-        RIGHT_COL_X,
-        ROW1_Y + row_stride(TILE_MEDIUM_H),
-        TILE_SMALL_W,
-        TILE_SMALL_H,
-        "SMALL",
-    ),
-];
-
-// Stats panel position: empty area right of SMALL tile
-const STATS_X: u32 = RIGHT_COL_X + TILE_SMALL_W + G;
-const STATS_Y: u32 = ROW1_Y + row_stride(TILE_MEDIUM_H);
-const STATS_W: u32 = PREVIEW_WIDTH - M - STATS_X;
-const STATS_H: u32 = PREVIEW_HEIGHT - M - STATS_Y;
-
-impl App {
-    #[expect(clippy::too_many_lines)]
-    fn init(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
-        // Use LogicalSize so the window adapts to display DPI — on HiDPI displays
-        // the physical surface is larger, giving us higher-resolution text rendering.
-        let win_size = LogicalSize::new(PREVIEW_WIDTH, PREVIEW_HEIGHT);
-        let window_attrs = Window::default_attributes()
-            .with_title("WASM Widget Testbed")
-            .with_inner_size(win_size)
-            .with_min_inner_size(win_size)
-            .with_max_inner_size(win_size)
-            .with_resizable(false)
-            .with_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE);
-
-        let template = ConfigTemplateBuilder::new()
-            .with_alpha_size(8)
-            .with_stencil_size(8);
-        let display_builder = DisplayBuilder::new().with_window_attributes(Some(window_attrs));
-
-        // Pick a single-sample config: tile FBOs are single-sample, and
-        // glBlitFramebuffer to a multisampled default framebuffer fails with
-        // GL_INVALID_OPERATION when the src and dst rectangles differ in size
-        // (which they do whenever DPI scaling is in effect — see GL 4.6 §18.3.2).
-        // Some Mesa drivers expose MSAA configs in this iterator, so we must
-        // filter them out explicitly rather than relying on the template.
-        let (window, gl_config) = display_builder
-            .build(event_loop, template, |configs| {
-                configs
-                    .reduce(|a, c| {
-                        if c.num_samples() < a.num_samples() {
-                            c
-                        } else {
-                            a
-                        }
-                    })
-                    .unwrap_or_else(|| unreachable!())
-            })
-            .map_err(|e| anyhow::anyhow!("Failed to build display: {e}"))?;
-
-        let window = window.context("Failed to create window")?;
-        let gl_display = gl_config.display();
-        let raw_handle = window.window_handle()?.as_raw();
-
-        let context_attrs = ContextAttributesBuilder::new().build(Some(raw_handle));
-        let gl_context = unsafe {
-            gl_display
-                .create_context(&gl_config, &context_attrs)
-                .context("Failed to create GL context")?
-        };
-
-        let size = window.inner_size();
-        let (nz_w, nz_h) = (
-            NonZeroU32::new(size.width.max(1)).unwrap_or(NonZeroU32::MIN),
-            NonZeroU32::new(size.height.max(1)).unwrap_or(NonZeroU32::MIN),
-        );
-        let surface_attrs =
-            SurfaceAttributesBuilder::<WindowSurface>::new().build(raw_handle, nz_w, nz_h);
-        let gl_surface = unsafe {
-            gl_display
-                .create_window_surface(&gl_config, &surface_attrs)
-                .context("Failed to create GL surface")?
-        };
-
-        let gl_context = gl_context
-            .make_current(&gl_surface)
-            .context("Failed to make GL context current")?;
-
-        if let Err(e) = gl_surface.set_swap_interval(
-            &gl_context,
-            SwapInterval::Wait(NonZeroU32::new(1).expect("BUG: 1 is non-zero")),
-        ) {
-            eprintln!("Warning: failed to enable vsync: {e}");
-        }
-
-        self.rss_after_gl_kb = current_rss_kb();
-
-        let dpi_scale = window.scale_factor() as f32;
-        let phys_w = scaled(PREVIEW_WIDTH, dpi_scale);
-        let phys_h = scaled(PREVIEW_HEIGHT, dpi_scale);
-        println!("Display DPI scale: {dpi_scale} ({phys_w}×{phys_h} physical)");
-
-        let (watcher, watcher_rx) =
-            setup_watcher(&self.wasm_path).context("Failed to set up file watcher")?;
-
-        let gl = unsafe {
-            glow::Context::from_loader_function(|s| {
-                gl_display
-                    .get_proc_address(&CString::new(s).unwrap_or_default())
-                    .cast()
-            })
-        };
-
-        // KV storage directory: ./widget_data/<widget_name>/ next to the WASM file
-        let widget_name = self
-            .wasm_path
-            .file_stem()
-            .map_or("widget".into(), |s| s.to_string_lossy().into_owned());
-        let kv_base = self
-            .wasm_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("widget_data")
-            .join(&widget_name);
-
-        // Determine active recording tile index (if any)
-        let record_active_idx = self.record_size.as_deref().map(|s| match s {
-            "large" => 1,
-            "medium" => 2,
-            "small" => 3,
-            // "full" and unknown sizes default to tile 0
-            _ => 0,
-        });
-        let record_widget_root = self
-            .record_size
-            .as_ref()
-            .and_then(|_| find_widget_root(&self.wasm_path));
-        // Shared buffer for fetch events recorded by the runtime's fetch observer
-        let record_fetch_events: Arc<Mutex<Vec<TimelineEvent>>> = Arc::new(Mutex::new(Vec::new()));
-
-        let mut tiles = Vec::with_capacity(4);
-        for (tile_idx, &(x, y, w, h, label)) in TILE_DEFS.iter().enumerate() {
-            // FBOs at logical resolution — the blit to screen handles upscaling
-            let (pw, ph) = (w, h);
-            let (fbo, texture) = create_fbo(&gl, pw, ph, true)?;
-            let fbo_id = fbo.0.get();
-            let kv_path = kv_base.join(label.to_ascii_lowercase());
-            // Recording tile: wipe KV to start fresh (matches capture behavior)
-            if record_active_idx == Some(tile_idx) {
-                let _ = std::fs::remove_dir_all(&kv_path);
-                let _ = std::fs::create_dir_all(&kv_path);
-            }
-            // Pre-populate KV from secrets.ini (if present)
-            seed_kv_from_secrets(&self.wasm_path, &kv_path);
-
-            // Active recording tile gets fixture-recording RuntimeConfig with unified observer
-            let mut rt_config = if record_active_idx == Some(tile_idx) {
-                fixtures::build_unified_recording_config(
-                    kv_path.clone(),
-                    record_fetch_events.clone(),
-                    Instant::now(),
-                )
-            } else {
-                RuntimeConfig {
-                    kv_store_path: Some(kv_path.clone()),
-                    ..RuntimeConfig::default()
-                }
-            };
-            rt_config.mesh_msaa_samples = 4;
-            rt_config.params = self.params.clone();
-
-            let (led_tx, led_rx) = channel();
-            rt_config.led_command_sender = Some(led_tx);
-
-            let runtime = create_runtime(&self.wasm_path, &gl_config, w, h, fbo_id, rt_config)
-                .context("Failed to create runtime")?;
-            tiles.push(PreviewTile {
-                runtime,
-                x,
-                y,
-                w,
-                h,
-                pw,
-                ph,
-                label,
-                fbo,
-                texture,
-                logged_dead: false,
-                ever_rendered: false,
-                kv_path,
-                led_rx,
-                led_scene: None,
-                led_enabled: false,
-            });
-        }
-
-        let (checker_fbo, checker_texture) = create_fbo(&gl, phys_w, phys_h, false)?;
-        render_checkerboard_to_fbo(&gl, checker_fbo, phys_w, phys_h);
-        let (stats_fbo, stats_texture) = create_fbo(&gl, STATS_W, STATS_H, true)?;
-        let stats_renderer = unsafe {
-            let gl_display = gl_config.display();
-            FemtoVgRenderer::new(
-                |s| gl_display.get_proc_address(&CString::new(s).unwrap_or_default()),
-                STATS_W,
-                STATS_H,
-                stats_fbo.0.get(),
-                0,
-            )
-            .context("Failed to create stats renderer")?
-        };
-
-        // LED strip FBO — full FULL-tile width so it fits all tile sizes
-        let led_fbo_w = 1280;
-        let led_fbo_h = LED_STRIP_H;
-        let (led_fbo, led_texture) = create_fbo(&gl, led_fbo_w, led_fbo_h, true)?;
-        let led_renderer = unsafe {
-            let gl_display = gl_config.display();
-            FemtoVgRenderer::new(
-                |s| gl_display.get_proc_address(&CString::new(s).unwrap_or_default()),
-                led_fbo_w,
-                led_fbo_h,
-                led_fbo.0.get(),
-                0,
-            )
-            .context("Failed to create LED renderer")?
-        };
-
-        self.rss_after_runtime_kb = current_rss_kb();
-
-        let (major, minor, patch) = tiles[0].runtime.sdk_version();
-        println!("Widget SDK version: {major}.{minor}.{patch}");
-        let widget_name = self
-            .wasm_path
-            .file_stem()
-            .map_or("widget".into(), |s| s.to_string_lossy().into_owned());
-        window.set_title(&format!("{widget_name} — SDK {major}.{minor}.{patch}"));
-
-        // Set up recording mode if requested
-        let now_instant = Instant::now();
-        let recording =
-            record_active_idx
-                .zip(self.record_size.as_ref())
-                .map(|(active_tile, size_name)| {
-                    // Snapshot KV state at recording start
-                    let kv_snapshot = snapshot_kv_dir(&tiles[active_tile].kv_path);
-                    // Drain any fetch events that accumulated during init
-                    record_fetch_events
-                        .lock()
-                        .expect("BUG: fetch events poisoned")
-                        .clear();
-                    RecordingState {
-                        active_tile,
-                        size_name: size_name.clone(),
-                        events: Vec::new(),
-                        interaction: InteractionState::new(),
-                        gesture: None,
-                        widget_root: record_widget_root,
-                        recording_start: now_instant,
-                        scroll_offset: 0.0,
-                        kv_snapshot,
-                        start_time_iso: chrono::Utc::now()
-                            .format("%Y-%m-%dT%H:%M:%S%:z")
-                            .to_string(),
-                        auto_capture: true,
-                    }
-                });
-
-        self.state = Some(PreviewState {
-            tiles,
-            params: self.params.clone(),
-            checker_fbo,
-            _checker_texture: checker_texture,
-            stats_fbo,
-            _stats_texture: stats_texture,
-            stats_renderer,
-            led_fbo,
-            _led_texture: led_texture,
-            led_renderer,
-            gl,
-            gl_surface,
-            gl_context,
-            gl_config,
-            window,
-            _watcher: watcher,
-            watcher_rx,
-            last_frame: Instant::now(),
-            needs_render: true,
-            pending_reload: false,
-            mouse_pos: (0.0, 0.0),
-            mouse_down: false,
-            perf_overlay: PerfOverlay::new(),
-            stats_interaction: InteractionState::new(),
-            dpi_scale,
-            phys_w,
-            phys_h,
-            frame_count: 0,
-            perf_samples: Vec::new(),
-            start_instant: Instant::now(),
-            recording,
-            record_fetch_events,
-        });
-        Ok(())
+fn record_size_to_idx(s: &str) -> usize {
+    match s {
+        "large" => 1,
+        "medium" => 2,
+        "small" => 3,
+        _ => 0, // "full" and unknown sizes default to tile 0
     }
 }
 
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.state.is_some() {
-            return;
-        }
-        if let Err(e) = self.init(event_loop) {
-            eprintln!("Fatal initialization error: {e:#}");
-            event_loop.exit();
-        }
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: winit::window::WindowId,
-        event: WindowEvent,
-    ) {
-        if let Some(state) = &mut self.state {
-            let was_redraw = matches!(event, WindowEvent::RedrawRequested);
-            handle_preview_event(&self.wasm_path, state, event_loop, event);
-
-            // Perf report: collect sample after each rendered frame
-            if was_redraw && let Some(ref report_path) = self.perf_report_path {
-                state
-                    .perf_samples
-                    .push(state.perf_overlay.last_sample_timings());
-                state.frame_count += 1;
-
-                if state.frame_count >= self.perf_frames {
-                    write_perf_report(report_path, &state.perf_samples);
-                    event_loop.exit();
-                }
-            }
-        }
-    }
-
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let Some(s) = &mut self.state else { return };
-
-        if s.watcher_rx.try_recv().is_ok() {
-            while s.watcher_rx.try_recv().is_ok() {}
-            s.pending_reload = true;
-        }
-
-        let has_async_io = s.tiles.iter().any(|t| {
-            t.runtime.has_pending_fetches()
-                || t.runtime.has_active_websockets()
-                || t.runtime.has_active_sockets()
-                || t.runtime.has_active_mdns_browses()
-                || t.runtime.has_active_ssdp_searches()
-                || t.runtime.has_active_udp_broadcasts()
-                || t.runtime.has_active_http_listeners()
-        });
-
-        let wants_frame = s.tiles.iter().any(|t| t.runtime.wants_next_frame());
-
-        if s.needs_render || s.pending_reload || wants_frame {
-            event_loop.set_control_flow(ControlFlow::Poll);
-            s.window.request_redraw();
-        } else if let Some(delay_ms) = s
-            .tiles
-            .iter()
-            .filter_map(|t| t.runtime.next_frame_delay())
-            .min()
-        {
-            // Widget requested a delayed frame — wake after the delay and redraw
-            if delay_ms == 0 {
-                s.window.request_redraw();
-            } else {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(
-                    Instant::now() + Duration::from_millis(delay_ms.into()),
-                ));
-                s.window.request_redraw();
-            }
-        } else if has_async_io {
-            // Active WebSocket/fetch — poll periodically to deliver messages
-            event_loop.set_control_flow(ControlFlow::WaitUntil(
-                Instant::now() + Duration::from_millis(16),
-            ));
-            s.window.request_redraw();
-        } else {
-            // Fully idle — just poll for hot-reload
-            event_loop.set_control_flow(ControlFlow::WaitUntil(
-                Instant::now() + Duration::from_millis(100),
-            ));
-        }
-    }
-}
-
-// ── Event handling ─────────────────────────────────────────────────
-
-#[expect(clippy::too_many_lines, clippy::needless_pass_by_value)]
-fn handle_preview_event(
-    wasm_path: &Path,
-    state: &mut PreviewState,
-    event_loop: &ActiveEventLoop,
-    event: WindowEvent,
-) {
+/// Short label for the event log (the icon already carries the type info).
+fn format_event_label(event: &UnifiedEvent) -> String {
     match event {
-        WindowEvent::CloseRequested => {
-            if state.recording.is_some() {
-                // Abort recording — discard events, no file written
-                state.recording = None;
-                eprintln!("Recording aborted (window closed)");
-            }
-            event_loop.exit();
+        UnifiedEvent::Capture { duration_ms, fps } => match (duration_ms, fps) {
+            (Some(d), Some(f)) => format!("capture({d}ms, {f}fps)"),
+            (Some(d), None) => format!("capture({d}ms)"),
+            _ => "capture".to_owned(),
+        },
+        UnifiedEvent::Click { element } => format!("click #{element}"),
+        UnifiedEvent::Scroll { element, delta } => format!("scroll #{element}  Δ{delta}"),
+        UnifiedEvent::Drag { element, from, to } => {
+            format!("drag #{element}  {from:.0}→{to:.0}")
         }
-
-        WindowEvent::CursorMoved { position, .. } => {
-            // Convert physical cursor position to logical coordinates
-            let s = f64::from(state.dpi_scale);
-            #[expect(clippy::cast_possible_truncation, reason = "display coords fit f32")]
-            {
-                state.mouse_pos = ((position.x / s) as f32, (position.y / s) as f32);
-            }
-            if state.mouse_down
-                && let Some((idx, lx, ly)) = hit_test_tile(&state.tiles, state.mouse_pos)
-            {
-                // In recording mode, update gesture tracker for active tile
-                if let Some(ref mut rec) = state.recording
-                    && idx == rec.active_tile
-                    && let Some(ref mut g) = rec.gesture
-                {
-                    g.current_pos = (lx, ly);
-                }
-                state.tiles[idx]
-                    .runtime
-                    .push_touch_event(TouchEvent::Move { x: lx, y: ly });
-                state.needs_render = true;
-            }
-        }
-
-        WindowEvent::MouseInput {
-            state: btn_state,
-            button: MouseButton::Left,
-            ..
-        } => {
-            if let Some((idx, lx, ly)) = hit_test_tile(&state.tiles, state.mouse_pos) {
-                // In recording mode, only allow interaction with active tile
-                if let Some(ref mut rec) = state.recording {
-                    if idx == rec.active_tile {
-                        match btn_state {
-                            ElementState::Pressed => {
-                                state.mouse_down = true;
-                                // Start gesture tracking
-                                let element = state.tiles[idx].runtime.hit_test(lx, ly);
-                                rec.gesture = Some(GestureTracker {
-                                    start_pos: (lx, ly),
-                                    current_pos: (lx, ly),
-                                    start_element: element,
-                                });
-                                state.tiles[idx]
-                                    .runtime
-                                    .push_touch_event(TouchEvent::Down { x: lx, y: ly });
-                                state.needs_render = true;
-                            }
-                            ElementState::Released => {
-                                state.mouse_down = false;
-                                // Classify and record the gesture
-                                if let Some(gesture) = rec.gesture.take() {
-                                    classify_and_record_gesture(rec, &gesture);
-                                }
-                                state.tiles[idx].runtime.push_touch_event(TouchEvent::Up);
-                                state.needs_render = true;
-                            }
-                        }
-                    } else {
-                        // Ignore clicks on non-active tiles
-                        if btn_state == ElementState::Released {
-                            state.mouse_down = false;
-                        }
-                    }
-                } else {
-                    // Normal mode
-                    match btn_state {
-                        ElementState::Pressed => {
-                            state.mouse_down = true;
-                            state.tiles[idx]
-                                .runtime
-                                .push_touch_event(TouchEvent::Down { x: lx, y: ly });
-                            state.needs_render = true;
-                        }
-                        ElementState::Released => {
-                            state.mouse_down = false;
-                            state.tiles[idx].runtime.push_touch_event(TouchEvent::Up);
-                            state.needs_render = true;
-                        }
-                    }
-                }
-            } else if let Some((lx, ly)) = hit_test_stats(state.mouse_pos) {
-                // Stats/recording panel interaction
-                let interaction = if let Some(ref mut rec) = state.recording {
-                    &mut rec.interaction
-                } else {
-                    &mut state.stats_interaction
-                };
-                match btn_state {
-                    ElementState::Pressed => {
-                        state.mouse_down = true;
-                        interaction.push_event(TouchEvent::Down { x: lx, y: ly });
-                        state.needs_render = true;
-                    }
-                    ElementState::Released => {
-                        state.mouse_down = false;
-                        interaction.push_event(TouchEvent::Up);
-                        state.needs_render = true;
-                    }
-                }
-            } else if btn_state == ElementState::Released {
-                state.mouse_down = false;
-            }
-        }
-
-        WindowEvent::MouseWheel { delta, .. } => {
-            #[expect(clippy::cast_possible_truncation, reason = "scroll delta fits f32")]
-            let delta_y = match delta {
-                MouseScrollDelta::LineDelta(_, y) => -y * 30.0,
-                MouseScrollDelta::PixelDelta(pos) => -pos.y as f32,
-            };
-            if delta_y != 0.0 {
-                if let Some((idx, lx, ly)) = hit_test_tile(&state.tiles, state.mouse_pos) {
-                    // In recording mode, only forward scroll to active tile
-                    if state
-                        .recording
-                        .as_ref()
-                        .is_none_or(|r| idx == r.active_tile)
-                    {
-                        state.tiles[idx]
-                            .runtime
-                            .push_touch_event(TouchEvent::Scroll {
-                                x: lx,
-                                y: ly,
-                                delta_y,
-                            });
-                        // Record scroll wheel as a scroll event
-                        if let Some(ref mut rec) = state.recording
-                            && idx == rec.active_tile
-                            && let Some(element) = state.tiles[idx].runtime.hit_test(lx, ly)
-                        {
-                            let at_ms = rec.recording_start.elapsed().as_millis() as u64;
-                            eprintln!("Recording: scroll(#{element}, {delta_y})");
-                            rec.events.push(TimelineEvent {
-                                at_ms,
-                                event: UnifiedEvent::Scroll {
-                                    element,
-                                    #[expect(
-                                        clippy::cast_possible_truncation,
-                                        reason = "fixture scroll deltas remain integer pixels"
-                                    )]
-                                    delta: delta_y.round() as i32,
-                                },
-                            });
-                            auto_scroll_log(rec);
-                        }
-                        state.needs_render = true;
-                    }
-                } else if let Some((_lx, _ly)) = hit_test_stats(state.mouse_pos) {
-                    // Scroll on the recording panel — scroll the step log
-                    if let Some(ref mut rec) = state.recording {
-                        rec.scroll_offset = (rec.scroll_offset + delta_y).max(0.0);
-                        state.needs_render = true;
-                    }
-                }
-            }
-        }
-
-        WindowEvent::Resized(size) => {
-            // Undo WM-triggered maximize/resize (enabled_buttons not supported on X11/Wayland,
-            // is_maximized unreliable — just force size back unconditionally).
-            // Compare against physical dimensions since Resized gives PhysicalSize.
-            if size.width != state.phys_w || size.height != state.phys_h {
-                state.window.set_maximized(false);
-                let _ = state
-                    .window
-                    .request_inner_size(LogicalSize::new(PREVIEW_WIDTH, PREVIEW_HEIGHT));
-            }
-        }
-
-        WindowEvent::RedrawRequested => {
-            render_preview(wasm_path, state);
-        }
-
-        _ => {}
-    }
-}
-
-#[expect(clippy::too_many_lines)]
-fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
-    // Hot-reload: recreate all 4 runtimes
-    if state.pending_reload {
-        state.pending_reload = false;
-        let mut any_ok = false;
-        for tile in &mut state.tiles {
-            // FemtoVG's Framebuffer::Drop deletes the FBO passed to set_screen_target,
-            // even though we created it externally. Recreate the FBO before the old
-            // runtime is dropped so the new runtime gets a valid FBO.
-            let Ok((fbo, texture)) = create_fbo(&state.gl, tile.pw, tile.ph, true) else {
-                eprintln!("Reload failed ({}): could not create FBO", tile.label);
-                continue;
-            };
-            let fbo_id = fbo.0.get();
-            let (led_tx, led_rx) = channel();
-            let rt_config = RuntimeConfig {
-                kv_store_path: Some(tile.kv_path.clone()),
-                mesh_msaa_samples: 4,
-                led_command_sender: Some(led_tx),
-                params: state.params.clone(),
-                ..RuntimeConfig::default()
-            };
-            match create_runtime(
-                wasm_path,
-                &state.gl_config,
-                tile.w,
-                tile.h,
-                fbo_id,
-                rt_config,
-            ) {
-                Ok(new_runtime) => {
-                    tile.runtime = new_runtime; // drops old runtime → deletes old FBO
-                    tile.led_rx = led_rx;
-                    tile.led_scene = None;
-                    tile.led_enabled = false;
-                    tile.fbo = fbo;
-                    tile.texture = texture;
-                    // Force a fresh render for the new runtime so constants
-                    // or initial state changes show up immediately.
-                    tile.ever_rendered = false;
-                    tile.logged_dead = false;
-                    any_ok = true;
-                }
-                Err(e) => {
-                    // Clean up the FBO we just created since we won't use it
-                    unsafe {
-                        state.gl.delete_framebuffer(fbo);
-                        state.gl.delete_texture(texture);
-                    }
-                    eprintln!("Reload failed ({}): {e}", tile.label);
-                }
-            }
-        }
-        if any_ok {
-            let (major, minor, patch) = state.tiles[0].runtime.sdk_version();
-            println!(
-                "Reloaded: {} (SDK {major}.{minor}.{patch})",
-                wasm_path.display()
-            );
-            let widget_name = wasm_path
-                .file_stem()
-                .map_or("widget".into(), |s| s.to_string_lossy().into_owned());
-            state
-                .window
-                .set_title(&format!("{widget_name} — SDK {major}.{minor}.{patch}"));
-        }
-    }
-
-    let now = Instant::now();
-    let delta_ms = now.duration_since(state.last_frame).as_millis() as u32;
-    state.last_frame = now;
-
-    let t0 = Instant::now();
-
-    // Set host-provided time on all tiles
-    let mono_ms = state.start_instant.elapsed().as_millis() as u64;
-    let wall_time = Local::now().fixed_offset();
-    for tile in &mut state.tiles {
-        tile.runtime.set_time(wall_time, mono_ms);
-    }
-
-    // Deliver async I/O to all tiles first (may trigger request_frame inside WASM)
-    for tile in &mut state.tiles {
-        tile.runtime.deliver_fetch_responses();
-        tile.runtime.deliver_ws_messages();
-        tile.runtime.deliver_socket_events();
-        tile.runtime.deliver_mdns_events();
-        tile.runtime.deliver_ssdp_events();
-        tile.runtime.deliver_udp_broadcast_events();
-        tile.runtime.deliver_http_requests();
-    }
-
-    // Drain live network events into the recording log so they appear in the panel.
-    if let Some(ref mut rec) = state.recording {
-        // Fetch events from the shared observer buffer
-        let mut fetch_buf = state
-            .record_fetch_events
-            .lock()
-            .expect("BUG: fetch events poisoned");
-        rec.events.append(&mut *fetch_buf);
-        drop(fetch_buf);
-
-        // Runtime-recorded events (WS, mDNS, SSDP, UDP, socket)
-        let runtime_events = state.tiles[rec.active_tile].runtime.take_recorded_events();
-        if !runtime_events.is_empty() {
-            let timeline = fixtures::fixture_events_to_timeline(&runtime_events);
-            rec.events.extend(timeline);
-        }
-
-        // Keep sorted by timestamp
-        rec.events.sort_by_key(|e| e.at_ms);
-    }
-
-    // Render stats/recording panel into its dedicated FBO via its own FemtoVG renderer.
-    let reload_clicked;
-    let mut recording_done = false;
-    {
-        let renderer = &mut state.stats_renderer;
-        let w = STATS_W as f32;
-        let h = STATS_H as f32;
-        renderer.begin_frame(STATS_W, STATS_H, 1.0);
-
-        if let Some(ref mut rec) = state.recording {
-            rec.interaction.begin_frame();
-            let result = draw_recording_panel(renderer, rec, w, h);
-            reload_clicked = false;
-            recording_done = result.done;
-        } else {
-            state.stats_interaction.begin_frame();
-            reload_clicked = draw_stats_panel(
-                renderer,
-                &mut state.stats_interaction,
-                w,
-                h,
-                &state.perf_overlay,
-            );
-        }
-        renderer.flush();
-    }
-
-    // Render each tile directly to its FBO (FemtoVG targets them via fbo_id)
-    let interaction_pending = state.needs_render;
-    let mut frame_timings = FrameTimings::default();
-    let mut any_rendered = false;
-    for (tile_idx, tile) in state.tiles.iter_mut().enumerate() {
-        let needs_work = !tile.ever_rendered
-            || tile.runtime.wants_next_frame()
-            || tile.runtime.has_pending_fetches()
-            || interaction_pending;
-        if !needs_work && !state.pending_reload {
-            continue; // FBO already holds the last good frame
-        }
-        tile.ever_rendered = true;
-
-        any_rendered = true;
-        let (tw, th) = (tile.w, tile.h);
-
-        tile.runtime.renderer().begin_frame(tw, th, 1.0);
-        match tile.runtime.render(delta_ms) {
-            Ok(RenderStatus::Ok) => {
-                tile.logged_dead = false;
-            }
-            Ok(RenderStatus::FuelExhausted) => {
-                eprintln!("Fuel exhausted ({})", tile.label);
-            }
-            Ok(RenderStatus::Dead) => {
-                if !tile.logged_dead {
-                    eprintln!("Widget dead ({})", tile.label);
-                    tile.logged_dead = true;
-                }
-            }
-            Err(e) => {
-                eprintln!("Render error ({}): {e}", tile.label);
-            }
-        }
-
-        let flush_t0 = Instant::now();
-        tile.runtime.renderer().flush();
-        let flush_us = flush_t0.elapsed().as_micros() as u32;
-
-        // Drain LED commands, update state for visualization
-        while let Ok(cmd) = tile.led_rx.try_recv() {
-            match cmd {
-                bmc_led::data::LedCommand::Enable => tile.led_enabled = true,
-                bmc_led::data::LedCommand::Disable => tile.led_enabled = false,
-                bmc_led::data::LedCommand::SetEffect(scene) => tile.led_scene = Some(scene),
-                bmc_led::data::LedCommand::SetBrightness(_) => {} // TODO
-            }
-        }
-
-        // Use FULL tile (index 0) as the representative for timings
-        if tile_idx == 0 {
-            frame_timings = tile.runtime.last_timings();
-            frame_timings.flush_us = flush_us;
-        }
-    }
-
-    // Blit cached checkerboard background (already at physical resolution)
-    let sh = state.phys_h;
-    blit_fbo_to_screen(
-        &state.gl,
-        state.checker_fbo,
-        state.phys_w,
-        state.phys_h,
-        0,
-        0,
-        state.phys_w,
-        state.phys_h,
-        sh,
-    );
-
-    // Blit each tile FBO to screen — FBOs are logical, screen is physical
-    let dpi = state.dpi_scale;
-    let active_tile_idx = state.recording.as_ref().map(|r| r.active_tile);
-    for (i, tile) in state.tiles.iter().enumerate() {
-        blit_fbo_to_screen(
-            &state.gl,
-            tile.fbo,
-            tile.pw,
-            tile.ph,
-            scaled(tile.x, dpi),
-            scaled(tile.y, dpi),
-            scaled(tile.w, dpi),
-            scaled(tile.h, dpi),
-            sh,
-        );
-        // In recording mode, dim non-active tiles with a dark overlay
-        if let Some(active) = active_tile_idx {
-            if i == active {
-                // Draw highlight border around active tile
-                draw_highlight_border(
-                    &state.gl,
-                    scaled(tile.x, dpi),
-                    scaled(tile.y, dpi),
-                    scaled(tile.w, dpi),
-                    scaled(tile.h, dpi),
-                    sh,
-                );
-            } else {
-                draw_dim_overlay(
-                    &state.gl,
-                    scaled(tile.x, dpi),
-                    scaled(tile.y, dpi),
-                    scaled(tile.w, dpi),
-                    scaled(tile.h, dpi),
-                    sh,
-                );
-            }
-        }
-    }
-    // Render LED strips below each tile using femtovg for gaussian blobs
-    let mono_s = state.start_instant.elapsed().as_secs_f32();
-    for tile in &state.tiles {
-        render_led_strip(
-            &state.gl,
-            &mut state.led_renderer,
-            state.led_fbo,
-            tile,
-            mono_s,
-            dpi,
-            sh,
-        );
-    }
-
-    // Blit stats panel (logical FBO → physical screen position)
-    blit_fbo_to_screen(
-        &state.gl,
-        state.stats_fbo,
-        STATS_W,
-        STATS_H,
-        scaled(STATS_X, dpi),
-        scaled(STATS_Y, dpi),
-        scaled(STATS_W, dpi),
-        scaled(STATS_H, dpi),
-        sh,
-    );
-
-    // Reset = full WASM reload (same as hot-reload)
-    if reload_clicked {
-        state.pending_reload = true;
-    }
-
-    // Recording: [Done] was clicked — save fixture and exit
-    if recording_done {
-        finish_recording(state, wasm_path);
-        std::process::exit(0);
-    }
-
-    unsafe {
-        state.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-    }
-
-    let render_us = t0.elapsed().as_micros() as u32;
-    state
-        .perf_overlay
-        .tick(render_us, any_rendered, frame_timings);
-
-    if let Err(e) = state.gl_surface.swap_buffers(&state.gl_context) {
-        eprintln!("Failed to swap buffers: {e}");
-    }
-
-    // Schedule next wake-up. `needs_render` is only set by user interactions
-    // (mouse, scroll, keyboard). WebSocket/fetch activity is handled via the
-    // I/O pre-pass — if messages arrive they trigger request_frame() in WASM.
-    state.needs_render = false;
-}
-
-/// Blit an FBO to a position on the default framebuffer (screen).
-///
-/// Blit an FBO to a position on the default framebuffer (screen).
-///
-/// `src_w/src_h` = FBO dimensions (logical pixels).
-/// `dst_x/dst_y/dst_w/dst_h` = destination on screen (physical pixels).
-/// `screen_h` = physical height of the screen surface (for OpenGL Y-flip).
-/// When src and dst sizes differ, `GL_NEAREST` preserves pixel-sharp rendering.
-#[expect(clippy::too_many_arguments, clippy::cast_possible_wrap)]
-fn blit_fbo_to_screen(
-    gl: &glow::Context,
-    fbo: glow::Framebuffer,
-    src_w: u32,
-    src_h: u32,
-    dst_x: u32,
-    dst_y: u32,
-    dst_w: u32,
-    dst_h: u32,
-    screen_h: u32,
-) {
-    unsafe {
-        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(fbo));
-        gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
-        // OpenGL Y is bottom-up, window Y is top-down
-        let dy0 = screen_h as i32 - dst_y as i32 - dst_h as i32;
-        let dy1 = screen_h as i32 - dst_y as i32;
-        gl.blit_framebuffer(
-            0,
-            0,
-            src_w as i32,
-            src_h as i32,
-            dst_x as i32,
-            dy0,
-            (dst_x + dst_w) as i32,
-            dy1,
-            glow::COLOR_BUFFER_BIT,
-            glow::LINEAR,
-        );
-        // Reset framebuffer bindings so subsequent FemtoVG begin_frame calls
-        // don't inherit a stale READ_FRAMEBUFFER from the blit.
-        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-    }
-}
-
-/// Render a checkerboard pattern once into an FBO for later blitting.
-#[expect(clippy::cast_possible_wrap)]
-fn render_checkerboard_to_fbo(gl: &glow::Context, fbo: glow::Framebuffer, w: u32, h: u32) {
-    const CELL: i32 = 16;
-    unsafe {
-        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
-        gl.viewport(0, 0, w as i32, h as i32);
-
-        // Fill with dark gray base
-        gl.clear_color(0.10, 0.10, 0.10, 1.0);
-        gl.clear(glow::COLOR_BUFFER_BIT);
-
-        // Draw lighter cells in checkerboard pattern
-        gl.enable(glow::SCISSOR_TEST);
-        gl.clear_color(0.16, 0.16, 0.16, 1.0);
-        let cols = (w as i32 + CELL - 1) / CELL;
-        let rows = (h as i32 + CELL - 1) / CELL;
-        for row in 0..rows {
-            for col in 0..cols {
-                if (row + col) % 2 == 0 {
-                    gl.scissor(col * CELL, row * CELL, CELL, CELL);
-                    gl.clear(glow::COLOR_BUFFER_BIT);
-                }
-            }
-        }
-        gl.disable(glow::SCISSOR_TEST);
-
-        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-    }
-}
-
-/// Check if window coordinates are inside the stats panel, return local coords.
-fn hit_test_stats(pos: (f32, f32)) -> Option<(f32, f32)> {
-    let (mx, my) = pos;
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "stats panel coordinates fit in f32"
-    )]
-    let sx = STATS_X as f32;
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "stats panel coordinates fit in f32"
-    )]
-    let sy = STATS_Y as f32;
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "stats panel coordinates fit in f32"
-    )]
-    let stats_w = STATS_W as f32;
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "stats panel coordinates fit in f32"
-    )]
-    let stats_h = STATS_H as f32;
-    if mx >= sx && mx < sx + stats_w && my >= sy && my < sy + stats_h {
-        Some((mx - sx, my - sy))
-    } else {
-        None
-    }
-}
-
-/// Find which tile contains the given window coordinates, returning (index, local_x, local_y).
-fn hit_test_tile(tiles: &[PreviewTile], pos: (f32, f32)) -> Option<(usize, f32, f32)> {
-    let (mx, my) = pos;
-    for (i, tile) in tiles.iter().enumerate() {
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "tile coordinates fit in f32 preview layout"
-        )]
-        let tx = tile.x as f32;
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "tile coordinates fit in f32 preview layout"
-        )]
-        let ty = tile.y as f32;
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "tile coordinates fit in f32 preview layout"
-        )]
-        let tile_w = tile.w as f32;
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "tile coordinates fit in f32 preview layout"
-        )]
-        let tile_h = tile.h as f32;
-        if mx >= tx && mx < tx + tile_w && my >= ty && my < ty + tile_h {
-            return Some((i, mx - tx, my - ty));
-        }
-    }
-    None
-}
-
-/// Create an FBO with a color texture attachment and optional depth-stencil renderbuffer.
-///
-/// FemtoVG requires a stencil buffer for clipping and path rendering.  Tile FBOs
-/// that serve as direct render targets must pass `stencil = true`.  Blit-only FBOs
-/// (checkerboard, stats) can pass `false`.
-#[expect(clippy::cast_possible_wrap)]
-fn create_fbo(
-    gl: &glow::Context,
-    width: u32,
-    height: u32,
-    stencil: bool,
-) -> Result<(glow::Framebuffer, glow::Texture)> {
-    unsafe {
-        let texture = gl
-            .create_texture()
-            .map_err(|e| anyhow::anyhow!("Failed to create texture: {e}"))?;
-        gl.bind_texture(glow::TEXTURE_2D, Some(texture));
-        gl.tex_image_2d(
-            glow::TEXTURE_2D,
-            0,
-            glow::RGBA8 as i32,
-            width as i32,
-            height as i32,
-            0,
-            glow::RGBA,
-            glow::UNSIGNED_BYTE,
-            glow::PixelUnpackData::Slice(None),
-        );
-        gl.tex_parameter_i32(
-            glow::TEXTURE_2D,
-            glow::TEXTURE_MIN_FILTER,
-            glow::NEAREST as i32,
-        );
-        gl.tex_parameter_i32(
-            glow::TEXTURE_2D,
-            glow::TEXTURE_MAG_FILTER,
-            glow::NEAREST as i32,
-        );
-
-        let fbo = gl
-            .create_framebuffer()
-            .map_err(|e| anyhow::anyhow!("Failed to create framebuffer: {e}"))?;
-        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
-        gl.framebuffer_texture_2d(
-            glow::FRAMEBUFFER,
-            glow::COLOR_ATTACHMENT0,
-            glow::TEXTURE_2D,
-            Some(texture),
-            0,
-        );
-
-        if stencil {
-            let rbo = gl
-                .create_renderbuffer()
-                .map_err(|e| anyhow::anyhow!("Failed to create renderbuffer: {e}"))?;
-            gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rbo));
-            gl.renderbuffer_storage(
-                glow::RENDERBUFFER,
-                glow::DEPTH24_STENCIL8,
-                width as i32,
-                height as i32,
-            );
-            gl.framebuffer_renderbuffer(
-                glow::FRAMEBUFFER,
-                glow::DEPTH_STENCIL_ATTACHMENT,
-                glow::RENDERBUFFER,
-                Some(rbo),
-            );
-            gl.bind_renderbuffer(glow::RENDERBUFFER, None);
-        }
-
-        let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-        assert_eq!(
+        UnifiedEvent::Fetch {
+            method,
+            url,
             status,
-            glow::FRAMEBUFFER_COMPLETE,
-            "FBO incomplete: {status:#x}"
+            ..
+        } => format!("{method} {status} {url}"),
+        UnifiedEvent::WsOpen { ws_id } | UnifiedEvent::WsMessage { ws_id, .. } => {
+            format!("ws#{ws_id}")
+        }
+        UnifiedEvent::WsClose { ws_id, code } => format!("ws#{ws_id} code={code}"),
+        UnifiedEvent::SocketConnected { socket_id }
+        | UnifiedEvent::SocketData { socket_id, .. } => format!("tcp#{socket_id}"),
+        UnifiedEvent::SocketClosed { socket_id, code } => format!("tcp#{socket_id} code={code}"),
+        UnifiedEvent::SsdpFound { search_id, .. } | UnifiedEvent::SsdpRemoved { search_id, .. } => {
+            format!("ssdp#{search_id}")
+        }
+        UnifiedEvent::MdnsFound { browse_id, .. } | UnifiedEvent::MdnsRemoved { browse_id, .. } => {
+            format!("mdns#{browse_id}")
+        }
+        UnifiedEvent::UdpResponse {
+            broadcast_id,
+            source,
+            ..
+        } => format!("udp#{broadcast_id} ← {source}"),
+        UnifiedEvent::AudioPlay {
+            name,
+            volume,
+            duration_ms,
+            ..
+        } => format!("audio {name} vol={volume} {duration_ms}ms"),
+        UnifiedEvent::LedSetEffect {
+            effect,
+            r,
+            g,
+            b,
+            period_ms,
+            duration_ms,
+        } => format!("LED effect={effect} rgb=({r},{g},{b}) p={period_ms}ms d={duration_ms}ms"),
+        UnifiedEvent::LedSetBrightness { brightness } => format!("LED brightness={brightness:.2}"),
+        UnifiedEvent::LedEnable => "LED enable".to_owned(),
+        UnifiedEvent::LedDisable => "LED disable".to_owned(),
+    }
+}
+
+/// Classify a finished gesture into a `UnifiedEvent` and append it to `rec.events`.
+/// Auto-inserts a `Capture` event 500ms later when `auto_capture` is on.
+fn classify_and_record_gesture(rec: &mut RecordingState, gesture: &GestureTracker) {
+    let dx = gesture.current_pos.0 - gesture.start_pos.0;
+    let dy = gesture.current_pos.1 - gesture.start_pos.1;
+    let adx = dx.abs();
+    let ady = dy.abs();
+    let at_ms = rec.recording_start.elapsed().as_millis() as u64;
+
+    let Some(ref id) = gesture.start_element else {
+        if adx < GESTURE_THRESHOLD && ady < GESTURE_THRESHOLD {
+            eprintln!("Recording: click on empty area (no element ID)");
+        }
+        return;
+    };
+
+    let event = if adx < GESTURE_THRESHOLD && ady < GESTURE_THRESHOLD {
+        eprintln!("Recording: click(#{id})");
+        UnifiedEvent::Click {
+            element: id.clone(),
+        }
+    } else if ady >= GESTURE_THRESHOLD && ady > adx {
+        let delta = dy.round() as i32;
+        eprintln!("Recording: scroll(#{id}, {delta})");
+        UnifiedEvent::Scroll {
+            element: id.clone(),
+            delta,
+        }
+    } else if adx >= GESTURE_THRESHOLD && adx > ady {
+        eprintln!(
+            "Recording: drag(#{id}, {:.2}, {:.2})",
+            gesture.start_pos.0, gesture.current_pos.0
         );
+        UnifiedEvent::Drag {
+            element: id.clone(),
+            from: gesture.start_pos.0,
+            to: gesture.current_pos.0,
+        }
+    } else {
+        return;
+    };
 
-        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-        gl.bind_texture(glow::TEXTURE_2D, None);
+    rec.events.push(TimelineEvent { at_ms, event });
 
-        Ok((fbo, texture))
+    if rec.auto_capture {
+        let capture_at = at_ms + AUTO_CAPTURE_DELAY_MS;
+        rec.events.push(TimelineEvent {
+            at_ms: capture_at,
+            event: UnifiedEvent::Capture {
+                duration_ms: Some(2_000),
+                fps: Some(4),
+            },
+        });
+        eprintln!("Recording: auto-capture at {capture_at}ms");
     }
 }
 
-// ── Helpers ────────────────────────────────────────────────────────
+// ── Hot reload ──────────────────────────────────────────────────────
 
-fn create_runtime(
-    wasm_path: &Path,
-    gl_config: &glutin::config::Config,
-    width: u32,
-    height: u32,
-    fbo_id: u32,
-    rt_config: RuntimeConfig,
-) -> Result<WasmWidgetRuntime> {
-    let wasm_bytes = std::fs::read(wasm_path).context("Failed to read WASM file")?;
-    let gl_display = gl_config.display();
-    unsafe {
-        WasmWidgetRuntime::new(
-            &wasm_bytes,
-            |s| gl_display.get_proc_address(&CString::new(s).unwrap_or_default()),
-            width,
-            height,
-            fbo_id,
-            rt_config,
-        )
-    }
-    .context("Failed to create runtime")
-}
-
-fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, Receiver<()>)> {
-    let (tx, rx) = channel();
+/// Watch the directory containing `path` for relevant changes; send `()` on its receiver
+/// whenever the target file is created/modified/removed.
+/// Returns both the live watcher (must be kept alive) and the receiver.
+fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, std::sync::mpsc::Receiver<()>)> {
+    let (tx, rx) = std::sync::mpsc::channel();
     let target = path.canonicalize()?;
     let parent = target.parent().context("no parent directory")?.to_owned();
     let target_file_name = target.file_name().map(ToOwned::to_owned);
@@ -1559,752 +620,139 @@ fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, Receiver<()>)> {
     Ok((watcher, rx))
 }
 
-// ── Stats overlay ──────────────────────────────────────────────────
+// ── Background ──────────────────────────────────────────────────────
 
-/// Draw stats panel with reload + debug layout buttons. Returns `true` if reload was clicked.
-fn draw_stats_panel(
-    renderer: &mut dyn Renderer,
-    interaction: &mut InteractionState,
-    w: f32,
-    h: f32,
-    overlay: &PerfOverlay,
-) -> bool {
-    let pad = 8.0;
-    let y = pad;
-    let btn_sz = ButtonSize::Small;
-    let btn_h = btn_sz.height();
-    let gap = 4.0;
-
-    // ── Row 1: debug layout toggle + reload button ──
-    let reload_w =
-        renderer.measure_text("Reload WASM", btn_sz.font_size()) + btn_sz.h_padding() * 2.0;
-    let reload_clicked = draw_button(
-        renderer,
-        interaction,
-        "reload",
-        "Reload WASM",
-        w - pad - reload_w,
-        y,
-        reload_w,
-        btn_h,
-        ButtonStyle::Danger,
-        btn_sz,
-        None,
-        false,
-        None,
-    );
-
-    let debug_on = bmc_render::tree::debug_layout_enabled();
-    let debug_label = "Debug layout";
-    let debug_w = renderer.measure_text(debug_label, btn_sz.font_size()) + btn_sz.h_padding() * 2.0;
-    let debug_style = if debug_on {
-        ButtonStyle::Primary
-    } else {
-        ButtonStyle::Secondary
-    };
-    let debug_clicked = draw_button(
-        renderer,
-        interaction,
-        "debug_layout",
-        debug_label,
-        w - pad - reload_w - gap - debug_w,
-        y,
-        debug_w,
-        btn_h,
-        debug_style,
-        btn_sz,
-        None,
-        false,
-        None,
-    );
-    if debug_clicked.0 {
-        bmc_render::tree::toggle_debug_layout();
-    }
-
-    let y_offset = y + btn_h + 4.0;
-
-    // ── Perf overlay (reusable) ──
-    overlay.draw(renderer, w, h, y_offset);
-
-    reload_clicked.0
-}
-
-// ── Perf report ───────────────────────────────────────────────────
-
-fn write_perf_report(path: &Path, samples: &[FrameTimings]) {
-    use std::io::Write;
-
-    let n = samples.len() as f64;
-    if n == 0.0 {
-        eprintln!("No samples collected, skipping perf report");
-        return;
-    }
-
-    let avg = |f: fn(&FrameTimings) -> u32| -> f64 {
-        samples.iter().map(|s| f64::from(f(s))).sum::<f64>() / n
-    };
-    #[expect(clippy::cast_sign_loss)]
-    let percentile = |f: fn(&FrameTimings) -> u32, pct: f64| -> u32 {
-        let mut vals: Vec<u32> = samples.iter().map(f).collect();
-        vals.sort_unstable();
-        let idx = ((pct / 100.0) * (vals.len() - 1) as f64).round() as usize;
-        vals[idx.min(vals.len() - 1)]
-    };
-
-    // Total frame time = wasm + flush (wasm includes tree+layout+render)
-    let total_frame = |s: &FrameTimings| -> u32 { s.wasm_us + s.flush_us };
-    let avg_frame = samples
-        .iter()
-        .map(|s| f64::from(total_frame(s)))
-        .sum::<f64>()
-        / n;
-    let avg_fps_val = if avg_frame > 0.0 {
-        1_000_000.0 / avg_frame
-    } else {
-        0.0
-    };
-
-    let anim_only_count = samples.iter().filter(|s| s.wasm_us == 0).count();
-    let anim_only_pct = anim_only_count as f64 / n * 100.0;
-
-    let json = format!(
-        r#"{{
-  "frames": {frames},
-  "avg_fps": {avg_fps:.1},
-  "avg_frame_us": {avg_frame:.0},
-  "avg_wasm_us": {avg_wasm:.0},
-  "avg_tree_us": {avg_tree:.0},
-  "avg_layout_us": {avg_layout:.0},
-  "avg_render_us": {avg_render:.0},
-  "avg_flush_us": {avg_flush:.0},
-  "p50_frame_us": {p50},
-  "p95_frame_us": {p95},
-  "p99_frame_us": {p99},
-  "animation_only_pct": {anim_only_pct:.1},
-  "samples": [{samples_json}
-  ]
-}}"#,
-        frames = samples.len(),
-        avg_fps = avg_fps_val,
-        avg_frame = avg_frame,
-        avg_wasm = avg(|s| s.wasm_us),
-        avg_tree = avg(|s| s.deserialize_us),
-        avg_layout = avg(|s| s.layout_us),
-        avg_render = avg(|s| s.render_us),
-        avg_flush = avg(|s| s.flush_us),
-        p50 = percentile(total_frame, 50.0),
-        p95 = percentile(total_frame, 95.0),
-        p99 = percentile(total_frame, 99.0),
-        anim_only_pct = anim_only_pct,
-        samples_json = samples
-            .iter()
-            .map(|s| format!(
-                "\n    {{\"wasm\":{},\"tree\":{},\"layout\":{},\"render\":{},\"flush\":{}}}",
-                s.wasm_us, s.deserialize_us, s.layout_us, s.render_us, s.flush_us,
-            ))
-            .collect::<Vec<_>>()
-            .join(","),
-    );
-
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    match std::fs::File::create(path) {
-        Ok(mut f) => {
-            let _ = f.write_all(json.as_bytes());
-            eprintln!("Perf report written to: {}", path.display());
-        }
-        Err(e) => eprintln!("Failed to write perf report: {e}"),
-    }
-}
-
-// seed_kv_from_secrets and find_widget_root are imported from fixtures module.
-
-// ── Recording mode ─────────────────────────────────────────────────
-
-/// Minimum displacement (in px) to distinguish a click from a scroll/drag.
-const GESTURE_THRESHOLD: f32 = 5.0;
-
-/// Result of drawing the recording panel.
-struct RecordingPanelResult {
-    done: bool,
-}
-
-/// Format a timeline event for the recording panel log.
-/// Map a unified event to its dev icon ID.
-fn event_icon_id(event: &UnifiedEvent) -> IconId {
-    match event {
-        UnifiedEvent::Capture { .. } => ICON_DEV_CAMERA,
-        UnifiedEvent::Click { .. } | UnifiedEvent::Drag { .. } => ICON_DEV_CURSOR,
-        UnifiedEvent::Scroll { .. } => ICON_DEV_SCROLL,
-        UnifiedEvent::Fetch { .. }
-        | UnifiedEvent::WsMessage { .. }
-        | UnifiedEvent::SocketData { .. }
-        | UnifiedEvent::UdpResponse { .. }
-        | UnifiedEvent::SsdpFound { .. }
-        | UnifiedEvent::MdnsFound { .. } => ICON_DEV_DOWNLOAD,
-        UnifiedEvent::WsOpen { .. }
-        | UnifiedEvent::SocketConnected { .. }
-        | UnifiedEvent::AudioPlay { .. }
-        | UnifiedEvent::LedSetEffect { .. }
-        | UnifiedEvent::LedSetBrightness { .. }
-        | UnifiedEvent::LedEnable => ICON_DEV_UPLOAD,
-        UnifiedEvent::WsClose { .. }
-        | UnifiedEvent::SocketClosed { .. }
-        | UnifiedEvent::SsdpRemoved { .. }
-        | UnifiedEvent::MdnsRemoved { .. }
-        | UnifiedEvent::LedDisable => ICON_DEV_UNLINK,
-    }
-}
-
-/// Is this a user-initiated action (vs network/system)?
-fn is_user_event(event: &UnifiedEvent) -> bool {
-    matches!(
-        event,
-        UnifiedEvent::Capture { .. }
-            | UnifiedEvent::Click { .. }
-            | UnifiedEvent::Scroll { .. }
-            | UnifiedEvent::Drag { .. }
-    )
-}
-
-/// Short label for the event log (icon carries the type info).
-fn format_event_label(event: &UnifiedEvent) -> String {
-    match event {
-        UnifiedEvent::Capture { duration_ms, fps } => match (duration_ms, fps) {
-            (Some(d), Some(f)) => format!("capture({d}ms, {f}fps)"),
-            (Some(d), None) => format!("capture({d}ms)"),
-            _ => "capture".to_owned(),
-        },
-        UnifiedEvent::Click { element } => format!("#{element}"),
-        UnifiedEvent::Scroll { element, delta } => format!("#{element}  Δ{delta}"),
-        UnifiedEvent::Drag { element, from, to } => {
-            format!("#{element}  {from:.0}→{to:.0}")
-        }
-        UnifiedEvent::Fetch {
-            method,
-            url,
-            status,
-            ..
-        } => format!("{method} {status} {url}"),
-        UnifiedEvent::WsOpen { ws_id } | UnifiedEvent::WsMessage { ws_id, .. } => {
-            format!("ws#{ws_id}")
-        }
-        UnifiedEvent::WsClose { ws_id, code } => format!("ws#{ws_id} code={code}"),
-        UnifiedEvent::SocketConnected { socket_id }
-        | UnifiedEvent::SocketData { socket_id, .. } => format!("tcp#{socket_id}"),
-        UnifiedEvent::SocketClosed { socket_id, code } => format!("tcp#{socket_id} code={code}"),
-        UnifiedEvent::SsdpFound { search_id, .. } | UnifiedEvent::SsdpRemoved { search_id, .. } => {
-            format!("ssdp#{search_id}")
-        }
-        UnifiedEvent::MdnsFound { browse_id, .. } | UnifiedEvent::MdnsRemoved { browse_id, .. } => {
-            format!("mdns#{browse_id}")
-        }
-        UnifiedEvent::UdpResponse {
-            broadcast_id,
-            source,
-            ..
-        } => format!("udp#{broadcast_id} ← {source}"),
-        UnifiedEvent::AudioPlay {
-            name,
-            volume,
-            duration_ms,
-            ..
-        } => format!("{name} vol={volume} {duration_ms}ms"),
-        UnifiedEvent::LedSetEffect {
-            effect,
-            r,
-            g,
-            b,
-            period_ms,
-            duration_ms,
-        } => format!("LED effect={effect} rgb=({r},{g},{b}) p={period_ms}ms d={duration_ms}ms"),
-        UnifiedEvent::LedSetBrightness { brightness } => {
-            format!("LED brightness={brightness:.2}")
-        }
-        UnifiedEvent::LedEnable => "LED enable".to_owned(),
-        UnifiedEvent::LedDisable => "LED disable".to_owned(),
-    }
-}
-
-/// A display row in the recording panel — either a single event or a grouped network summary.
-enum LogRow<'a> {
-    /// A single event (user action or standalone network event).
-    Single(&'a TimelineEvent),
-    /// A group of consecutive network events collapsed into one row.
-    Group {
-        at_ms: u64,
-        count: usize,
-        icon_id: IconId,
-    },
-}
-
-/// Build display rows from the event list, grouping consecutive network events.
-fn build_log_rows(events: &[TimelineEvent]) -> Vec<LogRow<'_>> {
-    let mut rows = Vec::new();
-    let mut i = 0;
-    while i < events.len() {
-        let ev = &events[i];
-        if is_user_event(&ev.event) {
-            rows.push(LogRow::Single(ev));
-            i += 1;
-        } else {
-            // Count consecutive network events with the same icon
-            let icon = event_icon_id(&ev.event);
-            let start = i;
-            i += 1;
-            while i < events.len()
-                && !is_user_event(&events[i].event)
-                && event_icon_id(&events[i].event) == icon
-            {
-                i += 1;
-            }
-            let count = i - start;
-            if count == 1 {
-                rows.push(LogRow::Single(ev));
+/// Paint a two-tone checkerboard over `rect` — same pattern as `bmc-virt-console`'s
+/// device backdrop so the tile boundaries read clearly against an otherwise blank window.
+fn draw_checkerboard(painter: &egui::Painter, rect: egui::Rect) {
+    let size = 16.0;
+    let color_a = egui::Color32::from_gray(24);
+    let color_b = egui::Color32::from_gray(32);
+    let cols = (rect.width() / size).ceil() as usize;
+    let rows = (rect.height() / size).ceil() as usize;
+    for row in 0..rows {
+        for col in 0..cols {
+            let color = if (row + col) % 2 == 0 {
+                color_a
             } else {
-                rows.push(LogRow::Group {
-                    at_ms: ev.at_ms,
-                    count,
-                    icon_id: icon,
-                });
-            }
+                color_b
+            };
+            let pos = rect.min + egui::vec2(col as f32 * size, row as f32 * size);
+            let cell_rect = egui::Rect::from_min_size(pos, egui::vec2(size, size));
+            painter.rect_filled(cell_rect, 0.0, color);
         }
     }
-    rows
 }
 
-/// Draw the recording panel (replaces stats panel when recording).
-fn draw_recording_panel(
-    renderer: &mut dyn Renderer,
-    rec: &mut RecordingState,
-    w: f32,
-    h: f32,
-) -> RecordingPanelResult {
-    let pad = 8.0;
-    let btn_sz = ButtonSize::Small;
-    let btn_h = btn_sz.height();
-    let gap = 4.0;
-    let row_height = 18.0;
-    let icon_sz = 12.0;
-    let icon_gap = 4.0;
-    let font_sz = 11.0;
-    let time_w = 42.0;
+// ── Touch routing ───────────────────────────────────────────────────
 
-    // ── Header ──
-    let elapsed = rec.recording_start.elapsed().as_secs();
-    let header = format!("Recording: {} ({}s)", rec.size_name.to_uppercase(), elapsed);
-    renderer.draw_text(&header, pad, pad, 14.0, WHITE);
-
-    // ── Event log (scrollable) ──
-    let log_y = pad + 22.0;
-    let log_h = h - log_y - btn_h - gap - pad;
-
-    let rows = build_log_rows(&rec.events);
-    let total_content = rows.len() as f32 * row_height;
-    let max_scroll = (total_content - log_h).max(0.0);
-    rec.scroll_offset = rec.scroll_offset.min(max_scroll);
-
-    for (i, row) in rows.iter().enumerate() {
-        let y = log_y + i as f32 * row_height - rec.scroll_offset;
-        if y + row_height < log_y || y > log_y + log_h {
-            continue;
-        }
-
-        let (at_ms, icon_id, label, is_user) = match row {
-            LogRow::Single(ev) => (
-                ev.at_ms,
-                event_icon_id(&ev.event),
-                format_event_label(&ev.event),
-                is_user_event(&ev.event),
-            ),
-            LogRow::Group {
-                at_ms,
-                count,
-                icon_id,
-            } => (*at_ms, *icon_id, format!("×{count}"), false),
-        };
-
-        let secs = at_ms as f64 / 1_000.0;
-        let color = if is_user { WHITE } else { GRAY_40 };
-        let time_color = if is_user { GRAY_30 } else { GRAY_60 };
-
-        // Timestamp
-        let time_str = format!("{secs:.1}s");
-        renderer.draw_text(&time_str, pad, y + 2.0, font_sz, time_color);
-
-        // Icon
-        let icon_x = pad + time_w;
-        let icon_y = y + (row_height - icon_sz) / 2.0;
-        renderer.draw_icon(icon_x, icon_y, icon_sz, icon_sz, color, icon_id, true);
-
-        // Label
-        let label_x = icon_x + icon_sz + icon_gap;
-        renderer.draw_text(&label, label_x, y + 2.0, font_sz, color);
-    }
-
-    // ── Bottom button row ──
-    draw_recording_buttons(renderer, rec, w, h, pad, btn_h, btn_sz)
-}
-
-/// Draw [Auto] [Capture] [Done] buttons at the bottom of the recording panel.
-fn draw_recording_buttons(
-    renderer: &mut dyn Renderer,
-    rec: &mut RecordingState,
-    w: f32,
-    h: f32,
-    pad: f32,
-    btn_h: f32,
-    btn_sz: ButtonSize,
-) -> RecordingPanelResult {
-    let btn_y = h - pad - btn_h;
-
-    // [Auto] toggle — auto-insert capture after each user action
-    let auto_label = if rec.auto_capture { "Auto ✓" } else { "Auto" };
-    let auto_w = renderer.measure_text(auto_label, btn_sz.font_size()) + btn_sz.h_padding() * 2.0;
-    let auto_clicked = draw_button(
-        renderer,
-        &mut rec.interaction,
-        "rec_auto",
-        auto_label,
-        pad,
-        btn_y,
-        auto_w,
-        btn_h,
-        if rec.auto_capture {
-            ButtonStyle::Primary
-        } else {
-            ButtonStyle::Secondary
-        },
-        btn_sz,
-        None,
-        false,
-        None,
-    );
-    if auto_clicked.0 {
-        rec.auto_capture = !rec.auto_capture;
-        eprintln!(
-            "Recording: auto-capture {}",
-            if rec.auto_capture { "ON" } else { "OFF" }
-        );
-    }
-
-    // [Capture] button (manual)
-    let capture_label = "Capture";
-    let capture_w =
-        renderer.measure_text(capture_label, btn_sz.font_size()) + btn_sz.h_padding() * 2.0;
-    let capture_clicked = draw_button(
-        renderer,
-        &mut rec.interaction,
-        "rec_capture",
-        capture_label,
-        pad + auto_w + 4.0,
-        btn_y,
-        capture_w,
-        btn_h,
-        ButtonStyle::Secondary,
-        btn_sz,
-        None,
-        false,
-        None,
-    );
-    if capture_clicked.0 {
-        let at_ms = rec.recording_start.elapsed().as_millis() as u64;
-        rec.events.push(TimelineEvent {
-            at_ms,
-            event: UnifiedEvent::Capture {
-                duration_ms: Some(2_000),
-                fps: Some(4),
-            },
-        });
-        eprintln!("Recording: capture(2000ms, 4fps)");
-        auto_scroll_log(rec);
-    }
-
-    // [Done] button (right-aligned)
-    let done_label = "Done";
-    let done_w = renderer.measure_text(done_label, btn_sz.font_size()) + btn_sz.h_padding() * 2.0;
-    let done_clicked = draw_button(
-        renderer,
-        &mut rec.interaction,
-        "rec_done",
-        done_label,
-        w - pad - done_w,
-        btn_y,
-        done_w,
-        btn_h,
-        ButtonStyle::Danger,
-        btn_sz,
-        None,
-        false,
-        None,
-    );
-
-    RecordingPanelResult {
-        done: done_clicked.0,
-    }
-}
-
-/// Classify a completed gesture and append a `TimelineEvent` to the recording.
-fn classify_and_record_gesture(rec: &mut RecordingState, gesture: &GestureTracker) {
-    let dx = gesture.current_pos.0 - gesture.start_pos.0;
-    let dy = gesture.current_pos.1 - gesture.start_pos.1;
-    let adx = dx.abs();
-    let ady = dy.abs();
-    let at_ms = rec.recording_start.elapsed().as_millis() as u64;
-
-    let Some(ref id) = gesture.start_element else {
-        if adx < GESTURE_THRESHOLD && ady < GESTURE_THRESHOLD {
-            eprintln!("Recording: click on empty area (no element ID)");
-        }
-        return;
-    };
-
-    let event = if adx < GESTURE_THRESHOLD && ady < GESTURE_THRESHOLD {
-        // Click
-        eprintln!("Recording: click(#{id})");
-        UnifiedEvent::Click {
-            element: id.clone(),
-        }
-    } else if ady >= GESTURE_THRESHOLD && ady > adx {
-        // Scroll (vertical drag)
-        let delta = dy.round() as i32;
-        eprintln!("Recording: scroll(#{id}, {delta})");
-        UnifiedEvent::Scroll {
-            element: id.clone(),
-            delta,
-        }
-    } else if adx >= GESTURE_THRESHOLD && adx > ady {
-        // Horizontal drag — record as fractional positions
-        // (would need element bounds to compute fractions; for now use pixel delta)
-        eprintln!(
-            "Recording: drag(#{id}, {:.2}, {:.2})",
-            gesture.start_pos.0, gesture.current_pos.0
-        );
-        UnifiedEvent::Drag {
-            element: id.clone(),
-            from: gesture.start_pos.0,
-            to: gesture.current_pos.0,
-        }
-    } else {
-        return;
-    };
-
-    rec.events.push(TimelineEvent { at_ms, event });
-
-    // Auto-insert a capture event after each user action
-    if rec.auto_capture {
-        let capture_at = at_ms + AUTO_CAPTURE_DELAY_MS;
-        rec.events.push(TimelineEvent {
-            at_ms: capture_at,
-            event: UnifiedEvent::Capture {
-                duration_ms: Some(2_000),
-                fps: Some(4),
-            },
-        });
-        eprintln!("Recording: auto-capture at {capture_at}ms");
-    }
-
-    auto_scroll_log(rec);
-}
-
-/// Auto-scroll the recording log to the bottom.
-fn auto_scroll_log(rec: &mut RecordingState) {
-    let row_height = 18.0_f32;
-    let log_h = STATS_H as f32 - 8.0 - 22.0 - ButtonSize::Small.height() - 4.0 - 8.0;
-    let row_count = build_log_rows(&rec.events).len() as f32;
-    rec.scroll_offset = (row_count * row_height - log_h).max(0.0);
-}
-
-/// Build unified fixture and write it to disk.
-fn finish_recording(state: &mut PreviewState, _wasm_path: &Path) {
-    // Take recording state to avoid borrow conflicts with tiles
-    let Some(rec) = state.recording.take() else {
-        return;
-    };
-
-    // Collect network events from the runtime
-    let tile = &mut state.tiles[rec.active_tile];
-    let runtime_events = tile.runtime.take_recorded_events();
-    let network_timeline = fixtures::fixture_events_to_timeline(&runtime_events);
-
-    // Collect fetch events from the shared buffer
-    let fetch_timeline: Vec<TimelineEvent> = std::mem::take(
-        &mut *state
-            .record_fetch_events
-            .lock()
-            .expect("BUG: fetch events poisoned"),
-    );
-
-    // Merge all event sources: user actions + network + fetch
-    let mut all_events = rec.events;
-    all_events.extend(network_timeline);
-    all_events.extend(fetch_timeline);
-
-    // Sort by at_ms (stable sort preserves insertion order for equal timestamps)
-    all_events.sort_by_key(|e| e.at_ms);
-
-    // Merge consecutive scroll events on the same element into one
-    let mut merged = Vec::with_capacity(all_events.len());
-    for event in all_events {
-        let should_merge = if let UnifiedEvent::Scroll { ref element, .. } = event.event {
-            merged.last().is_some_and(|prev: &TimelineEvent| {
-                matches!(&prev.event, UnifiedEvent::Scroll { element: prev_el, .. } if prev_el == element)
-            })
-        } else {
-            false
-        };
-        if should_merge {
-            if let UnifiedEvent::Scroll { delta, .. } = event.event
-                && let Some(prev) = merged.last_mut()
-                && let UnifiedEvent::Scroll {
-                    delta: ref mut prev_delta,
-                    ..
-                } = prev.event
-            {
-                *prev_delta += delta;
-            }
-        } else {
-            merged.push(event);
-        }
-    }
-    let all_events = merged;
-
-    // Build the unified fixture
-    let fixture = UnifiedFixture {
-        header: FixtureHeader {
-            time: rec.start_time_iso,
-            kv: rec.kv_snapshot,
-        },
-        events: all_events,
-    };
-
-    // Determine output path
-    let Some(widget_root) = rec.widget_root else {
-        eprintln!(
-            "{} could not find widget root — fixture not saved",
-            "error:".red().bold()
-        );
-        eprintln!("Fixture would contain {} event(s)", fixture.events.len());
-        return;
-    };
-
-    let fixture_dir = widget_root.join("capture").join("fixtures");
-    let fixture_path = fixture_dir.join(format!("{}.jsonl.gz", rec.size_name));
-
-    // Validate before writing
-    if let Err(e) = bmc_wasm_runtime::unified_fixture::validate_fixture(&fixture) {
-        eprintln!(
-            "{} fixture validation failed: {e:#}",
-            "warning:".yellow().bold()
-        );
-        eprintln!("         writing anyway (you can fix the fixture manually)");
-    }
-
-    // Write fixture file
-    if let Err(e) = fixtures::write_jsonl_fixture(&fixture_path, &fixture) {
-        eprintln!("{} failed to write fixture: {e:#}", "error:".red().bold());
-        return;
-    }
-    eprintln!(
-        "{} {} event(s) → {}",
-        "wrote:".green().bold(),
-        fixture.events.len(),
-        fixture_path.display()
-    );
-
-    // Update config.toml with fixture path
-    let config_path = widget_root.join("capture").join("config.toml");
-    let fixture_rel = format!("fixtures/{}.jsonl.gz", rec.size_name);
-    if let Err(e) =
-        fixtures::update_config_toml_fixtures(&config_path, &rec.size_name, &fixture_rel)
-    {
-        eprintln!(
-            "{} failed to update config.toml: {e:#}",
-            "warning:".yellow().bold()
-        );
-    } else {
-        eprintln!("{} {}", "updated:".green().bold(), config_path.display());
-    }
-
-    // Hint: how to set baselines from this recording
-    let widget_name = widget_root
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("WIDGET");
-    eprintln!();
-    eprintln!(
-        "{} run `make update-baselines EXAMPLE={}` to set baselines",
-        "hint:".cyan().bold(),
-        widget_name
-    );
-}
-
-/// Draw a semi-transparent dark overlay on a screen region (for dimming non-active tiles).
-#[expect(clippy::cast_possible_wrap)]
-fn draw_dim_overlay(gl: &glow::Context, x: u32, y: u32, w: u32, h: u32, screen_h: u32) {
-    unsafe {
-        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-        gl.enable(glow::SCISSOR_TEST);
-        // OpenGL Y is bottom-up
-        let gl_y = screen_h as i32 - y as i32 - h as i32;
-        gl.scissor(x as i32, gl_y, w as i32, h as i32);
-        gl.enable(glow::BLEND);
-        gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
-        gl.clear_color(0.0, 0.0, 0.0, 0.7);
-        gl.clear(glow::COLOR_BUFFER_BIT);
-        gl.disable(glow::BLEND);
-        gl.disable(glow::SCISSOR_TEST);
-    }
-}
-
-/// Draw a 2px highlight border around a screen region (for the active recording tile).
-#[expect(clippy::cast_possible_wrap)]
-fn draw_highlight_border(gl: &glow::Context, x: u32, y: u32, w: u32, h: u32, screen_h: u32) {
-    let border = 2_u32;
-    let color = [0.2, 0.6, 1.0, 1.0]; // blue highlight
-
-    unsafe {
-        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-        gl.enable(glow::SCISSOR_TEST);
-        gl.clear_color(color[0], color[1], color[2], color[3]);
-
-        // OpenGL Y is bottom-up
-        let gl_y = screen_h as i32 - y as i32 - h as i32;
-
-        // Top edge
-        gl.scissor(
-            x as i32,
-            gl_y + h as i32 - border as i32,
-            w as i32,
-            border as i32,
-        );
-        gl.clear(glow::COLOR_BUFFER_BIT);
-        // Bottom edge
-        gl.scissor(x as i32, gl_y, w as i32, border as i32);
-        gl.clear(glow::COLOR_BUFFER_BIT);
-        // Left edge
-        gl.scissor(x as i32, gl_y, border as i32, h as i32);
-        gl.clear(glow::COLOR_BUFFER_BIT);
-        // Right edge
-        gl.scissor(
-            x as i32 + w as i32 - border as i32,
-            gl_y,
-            border as i32,
-            h as i32,
-        );
-        gl.clear(glow::COLOR_BUFFER_BIT);
-
-        gl.disable(glow::SCISSOR_TEST);
-    }
-}
-
-/// Render LED diffuser strip below a tile using femtovg radial gradients.
+/// Translate egui pointer events on a tile rect into `TouchEvent`s pushed to the runtime.
 ///
-/// Simulates bounced diffused light: LED centers at the top edge of the strip
-/// (bottom of viewport). Each LED is a radial gradient ellipse — bright center,
-/// gaussian falloff to transparent. Overlapping blobs blend together naturally.
-/// Compute per-LED brightness for an effect.
+/// Click / drag semantics mirror what the prior winit-based testbed forwarded:
+/// a quick click fires `Down` then `Up`; a drag fires `Down` on start,
+/// `Move` on each frame the pointer moved, and `Up` on release.
+///
+/// When `recording` is `Some`, also tracks the gesture (start/current pos + start element)
+/// so the recording-side gesture classifier can turn it into a Click / Scroll / Drag
+/// `UnifiedEvent` on release.
+fn dispatch_touch_events(
+    response: &egui::Response,
+    rect: egui::Rect,
+    runtime: &mut WasmWidgetRuntime,
+    recording: Option<&mut RecordingState>,
+) {
+    // Carry the recording reborrow through each branch by hand instead of `as_deref_mut`
+    // (which clippy rejects since the `Option`'s inner type is already a `&mut`).
+    let mut rec = recording;
+    if response.clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let (x, y) = (pos.x - rect.min.x, pos.y - rect.min.y);
+        runtime.push_touch_event(TouchEvent::Down { x, y });
+        runtime.push_touch_event(TouchEvent::Up);
+        if let Some(r) = rec.as_mut() {
+            // A quick click never triggers `drag_started` — synthesise + immediately classify
+            // a zero-distance gesture so it's recorded as a click on the hit element.
+            let start_element = runtime.hit_test(x, y);
+            let gesture = GestureTracker {
+                start_pos: (x, y),
+                current_pos: (x, y),
+                start_element,
+            };
+            classify_and_record_gesture(r, &gesture);
+        }
+    }
+    if response.drag_started()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let (x, y) = (pos.x - rect.min.x, pos.y - rect.min.y);
+        runtime.push_touch_event(TouchEvent::Down { x, y });
+        if let Some(r) = rec.as_mut() {
+            let start_element = runtime.hit_test(x, y);
+            r.gesture = Some(GestureTracker {
+                start_pos: (x, y),
+                current_pos: (x, y),
+                start_element,
+            });
+        }
+    } else if response.dragged()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let (x, y) = (pos.x - rect.min.x, pos.y - rect.min.y);
+        runtime.push_touch_event(TouchEvent::Move { x, y });
+        if let Some(r) = rec.as_mut()
+            && let Some(g) = r.gesture.as_mut()
+        {
+            g.current_pos = (x, y);
+        }
+    }
+    if response.drag_stopped() {
+        runtime.push_touch_event(TouchEvent::Up);
+        if let Some(r) = rec.as_mut()
+            && let Some(gesture) = r.gesture.take()
+        {
+            classify_and_record_gesture(r, &gesture);
+        }
+    }
+}
+
+// ── Tile ────────────────────────────────────────────────────────────
+
+struct PreviewTile {
+    runtime: WasmWidgetRuntime,
+    gpu: TileGpu,
+    x: u32,
+    y: u32,
+    label: &'static str,
+    logged_dead: bool,
+    ever_rendered: bool,
+    /// Receiver for LED commands from the widget (drained each frame).
+    led_rx: std::sync::mpsc::Receiver<bmc_led::data::LedCommand>,
+    /// Current LED scene (from last `SetEffect` command).
+    led_scene: Option<bmc_led::data::LedScene>,
+    /// Whether LEDs are enabled.
+    led_enabled: bool,
+}
+
+impl PreviewTile {
+    /// Drain pending LED commands; update `led_scene` / `led_enabled`.
+    fn drain_led_commands(&mut self) {
+        while let Ok(cmd) = self.led_rx.try_recv() {
+            use bmc_led::data::LedCommand;
+            match cmd {
+                LedCommand::SetEffect(scene) => self.led_scene = Some(scene),
+                LedCommand::Enable => self.led_enabled = true,
+                LedCommand::Disable => self.led_enabled = false,
+                LedCommand::SetBrightness(_) => {}
+            }
+        }
+    }
+}
+
+// ── LED strip rendering (egui painter, gradient approximation) ──────
+
+/// Brightness ∈ [0, 1] for LED `phase` (0..1) at time `anim_t`.
+/// Ported from the prior FemtoVG-based strip with identical semantics.
 fn led_brightness(effect: bmc_led::data::LedEffect, phase: f32, anim_t: f32) -> f32 {
     use bmc_led::data::LedEffect;
     match &effect {
@@ -2339,97 +787,1031 @@ fn led_brightness(effect: bmc_led::data::LedEffect, phase: f32, anim_t: f32) -> 
     }
 }
 
-/// Render LED diffuser strip below a tile.
+/// Paint an LED diffuser strip below a tile.
 ///
-/// Always renders the black strip bar. LED blobs only appear when LEDs are active.
-fn render_led_strip(
-    gl: &glow::Context,
-    led_renderer: &mut FemtoVgRenderer,
-    led_fbo: glow::Framebuffer,
+/// Black background always; glow blobs only when the tile's `led_scene` is active.
+/// Glow is approximated via 4 stacked alpha-decreasing circles per LED —
+/// a cheap gaussian stand-in that reads as soft light without the FBO machinery
+/// the prior FemtoVG-based strip needed.
+fn paint_led_strip(
+    painter: &egui::Painter,
     tile: &PreviewTile,
+    tile_origin: egui::Pos2,
     time_s: f32,
-    dpi: f32,
-    screen_h: u32,
 ) {
-    use femtovg::{Color, Paint, Path};
+    let strip_w = tile.gpu.width as f32;
+    let strip_h = LED_STRIP_H as f32;
+    let strip_rect = egui::Rect::from_min_size(
+        tile_origin + egui::vec2(tile.x as f32, tile.y as f32 + tile.gpu.height as f32),
+        egui::vec2(strip_w, strip_h),
+    );
+    painter.rect_filled(strip_rect, 0.0, egui::Color32::BLACK);
 
-    let strip_w = tile.w;
-    let strip_h = LED_STRIP_H;
+    let Some(scene) = tile.led_scene.as_ref().filter(|_| tile.led_enabled) else {
+        return;
+    };
+    let (cr, cg, cb) = match &scene.effect {
+        bmc_led::data::LedEffect::None => return,
+        bmc_led::data::LedEffect::Solid(c)
+        | bmc_led::data::LedEffect::Breathe(c)
+        | bmc_led::data::LedEffect::Chase(c)
+        | bmc_led::data::LedEffect::KnightRider(c)
+        | bmc_led::data::LedEffect::Scan(c)
+        | bmc_led::data::LedEffect::Snake(c) => (c.r, c.g, c.b),
+    };
+    let period_s = scene.period.map_or(1.0, |d| d.as_secs_f32().max(0.1));
+    let anim_t = time_s / period_s;
 
-    // Always render the strip (black bar) — begin_frame clears to black
-    led_renderer.begin_frame(strip_w, strip_h, 1.0);
+    // FULL tile: LEDs span centre half. Smaller tiles: full width.
+    let is_full = tile.gpu.width >= 1280;
+    let led_region_w = if is_full { strip_w * 0.5 } else { strip_w };
+    let led_x_offset = (strip_w - led_region_w) / 2.0;
+    let led_spacing = led_region_w / LED_COUNT as f32;
 
-    // Draw LED blobs only when active
-    if tile.led_enabled
-        && let Some(scene) = &tile.led_scene
-    {
-        let (cr, cg, cb) = match &scene.effect {
-            bmc_led::data::LedEffect::None => (0.0, 0.0, 0.0),
-            bmc_led::data::LedEffect::Solid(c)
-            | bmc_led::data::LedEffect::Breathe(c)
-            | bmc_led::data::LedEffect::Chase(c)
-            | bmc_led::data::LedEffect::KnightRider(c)
-            | bmc_led::data::LedEffect::Scan(c)
-            | bmc_led::data::LedEffect::Snake(c) => (
-                f32::from(c.r) / 255.0,
-                f32::from(c.g) / 255.0,
-                f32::from(c.b) / 255.0,
-            ),
+    for idx in 0..LED_COUNT {
+        let phase = idx as f32 / LED_COUNT as f32;
+        let brightness = led_brightness(scene.effect, phase, anim_t);
+        if brightness <= 0.0 {
+            continue;
+        }
+        let cx = strip_rect.min.x + led_x_offset + (idx as f32 + 0.5) * led_spacing;
+        let cy = strip_rect.min.y;
+        // Stacked falloff: 4 circles of increasing radius and decreasing alpha approximate
+        // a radial gradient cheaply enough for the testbed UI.
+        for ring in 0..4 {
+            let t = ring as f32 / 3.0;
+            let radius = led_spacing * (0.4 + t * 1.6);
+            let alpha = (brightness * (1.0 - t) * (1.0 - t) * 0.8 * 255.0).clamp(0.0, 255.0) as u8;
+            if alpha == 0 {
+                continue;
+            }
+            let color = egui::Color32::from_rgba_unmultiplied(cr, cg, cb, alpha);
+            painter.circle_filled(egui::pos2(cx, cy), radius, color);
+        }
+    }
+}
+
+// ── App ─────────────────────────────────────────────────────────────
+
+struct TestbedApp {
+    cli: CliArgs,
+    params:
+        std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
+    gl: Arc<eframe::glow::Context>,
+    tiles: Vec<PreviewTile>,
+    clock: Clock,
+    hot_reload: HotReload,
+    perf: PerfState,
+    recording_mode: RecordingMode,
+}
+
+/// Wall-clock instants used to drive per-frame timing.
+/// `last_frame` advances on every `ui` call and yields `delta_ms` for the WASM runtime;
+/// `start_instant` is the fixed origin for the monotonic clock the runtime sees.
+struct Clock {
+    last_frame: std::time::Instant,
+    start_instant: std::time::Instant,
+}
+
+/// Filesystem watcher + manual-reload signal. Drains as a single "rebuild every runtime"
+/// signal each frame inside `poll_hot_reload`.
+struct HotReload {
+    /// Live `notify` watcher. Held to keep the watch thread alive — when dropped, file
+    /// events stop arriving. Never read after construction.
+    _watcher: RecommendedWatcher,
+    /// Channel fed by `setup_watcher` whenever the wasm file on disk changes.
+    watcher_rx: std::sync::mpsc::Receiver<()>,
+    /// Set by the "Reload WASM" button in the stats panel; consumed as a synthetic watcher
+    /// event on the next `poll_hot_reload` tick.
+    manual_reload: bool,
+}
+
+/// Per-frame performance accounting. The rolling window drives the FPS readout in the stats
+/// panel; the full vector is what `--perf-report=` writes to disk at exit.
+struct PerfState {
+    /// Total frames rendered so far. Used to drive the `--perf-frames` exit condition.
+    frame_count: u32,
+    /// Per-frame timings from FULL tile's runtime; written to disk by `--perf-report=` at exit.
+    samples: Vec<bmc_render::FrameTimings>,
+    /// Last frame's wall-clock duration (microseconds); recent samples averaged for FPS.
+    recent_frame_us: std::collections::VecDeque<u32>,
+}
+
+/// Recording-mode bundle: the optional in-flight recording state plus the shared fetch
+/// buffer the active tile's fetch observer pushes into.
+struct RecordingMode {
+    /// `Some` only when started via `--record=<size>`; `None` resets it after Save/Cancel.
+    state: Option<RecordingState>,
+    /// Shared buffer for fetch events captured by the active tile's fetch observer. Held
+    /// behind `Arc<Mutex<_>>` because the observer runs on background fetch threads.
+    fetch_events: std::sync::Arc<std::sync::Mutex<Vec<TimelineEvent>>>,
+}
+
+impl TestbedApp {
+    fn new(
+        cc: &eframe::CreationContext<'_>,
+        cli: CliArgs,
+        params: std::collections::BTreeMap<
+            bmc_widget_manifest::ParamKey,
+            bmc_widget_manifest::ParamValue,
+        >,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let gl = cc
+            .gl
+            .as_ref()
+            .ok_or("glow backend required (eframe::Renderer::Glow)")?
+            .clone();
+        let get_proc = cc
+            .get_proc_address
+            .clone()
+            .ok_or("glow backend must expose get_proc_address")?;
+        // Stash the loader so `init_tiles` can pull it back when the eframe::Frame is in
+        // scope (the lazy init path). Cleared on Drop so a fresh app instance doesn't
+        // inherit stale handles.
+        GET_PROC_ADDRESS.with(|cell| *cell.borrow_mut() = Some(get_proc));
+
+        let (watcher, watcher_rx) =
+            setup_watcher(&cli.wasm_path).map_err(|e| format!("watcher: {e}"))?;
+
+        let recording_state = cli.record_size.as_ref().map(|size_name| {
+            let active_tile = record_size_to_idx(size_name);
+            let widget_root = find_widget_root(&cli.wasm_path);
+            let start_time_iso = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+            RecordingState {
+                active_tile,
+                size_name: size_name.clone(),
+                events: Vec::new(),
+                gesture: None,
+                widget_root,
+                recording_start: std::time::Instant::now(),
+                kv_snapshot: std::collections::HashMap::new(),
+                start_time_iso,
+                auto_capture: true,
+            }
+        });
+
+        let now = std::time::Instant::now();
+        Ok(Self {
+            cli,
+            params,
+            gl,
+            tiles: Vec::new(),
+            clock: Clock {
+                last_frame: now,
+                start_instant: now,
+            },
+            hot_reload: HotReload {
+                _watcher: watcher,
+                watcher_rx,
+                manual_reload: false,
+            },
+            perf: PerfState {
+                frame_count: 0,
+                samples: Vec::new(),
+                recent_frame_us: std::collections::VecDeque::with_capacity(60),
+            },
+            recording_mode: RecordingMode {
+                state: recording_state,
+                fetch_events: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            },
+        })
+    }
+
+    /// Drain pending watcher events; if any fired, rebuild every tile's `WasmWidgetRuntime`
+    /// from the (now-updated) wasm bytes on disk.
+    /// FBO + texture are kept across reloads since their dimensions don't change.
+    fn poll_hot_reload(&mut self, frame: &mut eframe::Frame) {
+        let mut needs_reload = self.hot_reload.manual_reload;
+        self.hot_reload.manual_reload = false;
+        while self.hot_reload.watcher_rx.try_recv().is_ok() {
+            needs_reload = true;
+        }
+        if !needs_reload {
+            return;
+        }
+        let Some(get_proc) = Self::gl_proc_address() else {
+            return;
+        };
+        let wasm_bytes = match std::fs::read(&self.cli.wasm_path) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(
+                    "hot reload: failed to read {}: {e}",
+                    self.cli.wasm_path.display()
+                );
+                return;
+            }
+        };
+        tracing::info!(
+            "hot reload: rebuilding {} tile runtime(s)",
+            self.tiles.len()
+        );
+        for tile in &mut self.tiles {
+            let (led_tx, led_rx) = std::sync::mpsc::channel();
+            let rt_config = RuntimeConfig {
+                mesh_msaa_samples: 4,
+                params: self.params.clone(),
+                led_command_sender: Some(led_tx),
+                ..RuntimeConfig::default()
+            };
+            // SAFETY: same context invariants as initial construction in `init_tiles`.
+            match unsafe {
+                WasmWidgetRuntime::new(
+                    &wasm_bytes,
+                    proc_loader(get_proc.clone()),
+                    tile.gpu.width,
+                    tile.gpu.height,
+                    tile.gpu.fbo_id(),
+                    rt_config,
+                )
+            } {
+                Ok(rt) => {
+                    tile.runtime = rt; // drops the old runtime + its renderer
+                    tile.led_rx = led_rx;
+                    tile.led_scene = None;
+                    tile.led_enabled = false;
+                    tile.logged_dead = false;
+                    tile.ever_rendered = false;
+                }
+                Err(e) => {
+                    tracing::warn!("hot reload: {}: {e}", tile.label);
+                }
+            }
+        }
+        // Avoid an unused-`frame` warning while we keep the parameter for future texture
+        // re-registration in case the reload ever changes tile dimensions.
+        let _ = frame;
+    }
+
+    /// Build the four widget tiles on first `ui` call (where `eframe::Frame` is available
+    /// for `register_native_glow_texture`).
+    fn init_tiles(&mut self, frame: &mut eframe::Frame) -> Result<()> {
+        let get_proc = Self::gl_proc_address()
+            .ok_or_else(|| anyhow::anyhow!("BUG: get_proc_address vanished after construction"))?;
+        let wasm_bytes = std::fs::read(&self.cli.wasm_path)
+            .with_context(|| format!("failed to read {}", self.cli.wasm_path.display()))?;
+        let active_record_idx = self.recording_mode.state.as_ref().map(|r| r.active_tile);
+        let widget_name = self
+            .cli
+            .wasm_path
+            .file_stem()
+            .map_or("widget".into(), |s| s.to_string_lossy().into_owned());
+        let kv_base = self
+            .cli
+            .wasm_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("widget_data")
+            .join(&widget_name);
+
+        let mut tiles = Vec::with_capacity(TILE_DEFS.len());
+        for (tile_idx, &(x, y, w, h, label)) in TILE_DEFS.iter().enumerate() {
+            let gpu = TileGpu::new(&self.gl, frame, w, h)?;
+            let (led_tx, led_rx) = std::sync::mpsc::channel();
+            // Per-tile KV storage matches the prior testbed layout
+            // (`./widget_data/<widget>/<size>/`). Active recording tile wipes its KV first
+            // so the fixture starts from a known baseline.
+            let kv_path = kv_base.join(label.to_ascii_lowercase());
+            if active_record_idx == Some(tile_idx) {
+                let _ = std::fs::remove_dir_all(&kv_path);
+                let _ = std::fs::create_dir_all(&kv_path);
+            }
+            seed_kv_from_secrets(&self.cli.wasm_path, &kv_path);
+
+            // Active recording tile gets the fixture-recording config with the unified
+            // fetch observer; non-recording tiles use the simpler default config.
+            let mut rt_config = if active_record_idx == Some(tile_idx) {
+                fixtures::build_unified_recording_config(
+                    kv_path.clone(),
+                    self.recording_mode.fetch_events.clone(),
+                    std::time::Instant::now(),
+                )
+            } else {
+                RuntimeConfig {
+                    kv_store_path: Some(kv_path.clone()),
+                    ..RuntimeConfig::default()
+                }
+            };
+            rt_config.mesh_msaa_samples = 4;
+            rt_config.params = self.params.clone();
+            rt_config.led_command_sender = Some(led_tx);
+            // SAFETY: `get_proc` returns valid GL function pointers for the current context;
+            // eframe keeps that context current for the lifetime of the app.
+            let runtime = unsafe {
+                WasmWidgetRuntime::new(
+                    &wasm_bytes,
+                    proc_loader(get_proc.clone()),
+                    w,
+                    h,
+                    gpu.fbo_id(),
+                    rt_config,
+                )
+            }
+            .with_context(|| format!("create runtime for {label}"))?;
+            tiles.push(PreviewTile {
+                runtime,
+                gpu,
+                x,
+                y,
+                label,
+                logged_dead: false,
+                ever_rendered: false,
+                led_rx,
+                led_scene: None,
+                led_enabled: false,
+            });
+        }
+        let (major, minor, patch) = tiles[0].runtime.sdk_version();
+        println!("Widget SDK version: {major}.{minor}.{patch}");
+        // Snapshot the active recording tile's KV directory at start so the fixture's
+        // `header.kv` reproduces the initial state on replay.
+        if let Some(ref mut rec) = self.recording_mode.state {
+            let kv_path = kv_base.join(rec.size_name.to_ascii_lowercase());
+            rec.kv_snapshot = snapshot_kv_dir(&kv_path);
+        }
+        self.tiles = tiles;
+        Ok(())
+    }
+
+    /// Retrieve `get_proc_address` from the process-wide cell populated in `new`.
+    /// Associated (no `&self`) because the loader lives in a thread-local, not on the app.
+    fn gl_proc_address() -> Option<GlProcAddress> {
+        GET_PROC_ADDRESS.with(|cell| cell.borrow().clone())
+    }
+
+    /// Drive one frame: each tile's WASM runtime renders into its FBO. Egui paints the
+    /// textures afterward via `painter.image`.
+    ///
+    /// Saves the GL framebuffer binding + viewport before mutating them per tile and restores
+    /// both at the end so egui's own draw list runs against the screen framebuffer the way it
+    /// expects. Skipping this caused screen-wide trails (egui's clear hit a tile FBO instead of
+    /// the default framebuffer).
+    fn render_tiles(&mut self, delta_ms: u32) {
+        // SAFETY: gl is current on this thread inside `App::ui`; the queries below only read.
+        let (prev_fbo, prev_viewport) = unsafe {
+            let prev_fbo = self.gl.get_parameter_i32(eframe::glow::FRAMEBUFFER_BINDING);
+            let mut vp = [0_i32; 4];
+            self.gl
+                .get_parameter_i32_slice(eframe::glow::VIEWPORT, &mut vp);
+            (prev_fbo, vp)
         };
 
-        let period_s = scene.period.map_or(1.0, |d| d.as_secs_f32().max(0.1));
-        let anim_t = time_s / period_s;
+        let monotonic_ms = self.clock.start_instant.elapsed().as_millis() as u64;
+        let system_time = chrono::Local::now().fixed_offset();
+        for tile in &mut self.tiles {
+            tile.drain_led_commands();
+            tile.runtime.set_time(system_time, monotonic_ms);
+            tile.runtime
+                .renderer()
+                .begin_frame(tile.gpu.width, tile.gpu.height, 1.0);
+            tile.runtime.deliver_fetch_responses();
+            tile.runtime.deliver_ws_messages();
+            tile.runtime.deliver_socket_events();
+            tile.runtime.deliver_mdns_events();
+            tile.runtime.deliver_ssdp_events();
+            tile.runtime.deliver_udp_broadcast_events();
+            tile.runtime.deliver_http_requests();
+            match tile.runtime.render(delta_ms) {
+                Ok(RenderStatus::Ok) => {
+                    tile.ever_rendered = true;
+                }
+                Ok(RenderStatus::FuelExhausted) => {
+                    tracing::warn!("{}: fuel exhausted", tile.label);
+                }
+                Ok(RenderStatus::Dead) => {
+                    if !tile.logged_dead {
+                        tracing::error!("{}: widget killed (repeated fuel overages)", tile.label);
+                        tile.logged_dead = true;
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("{}: render failed: {e}", tile.label);
+                }
+            }
+            tile.runtime.renderer().flush();
+        }
+        // Pick the FULL tile (idx 0) as the perf-report sampling source — matches the prior
+        // testbed which sampled tile 0 too. The other tiles still render but aren't reported.
+        if let Some(tile) = self.tiles.first() {
+            self.perf.samples.push(tile.runtime.last_timings());
+        }
 
-        // FULL tile: LEDs span center half. Smaller tiles: full width.
-        let is_full = tile.w >= 1280;
-        let led_region_w = if is_full {
-            strip_w as f32 * 0.5
-        } else {
-            strip_w as f32
-        };
-        let led_x_offset = (strip_w as f32 - led_region_w) / 2.0;
-        let led_spacing = led_region_w / LED_COUNT as f32;
-        let blob_rx = led_spacing * 1.2; // overlap neighbors
-        let blob_ry = strip_h as f32 * 1.0;
-
-        let canvas = led_renderer.canvas_mut();
-        for idx in 0..LED_COUNT {
-            let phase = idx as f32 / LED_COUNT as f32;
-            let brightness = led_brightness(scene.effect, phase, anim_t);
-
-            let cx = led_x_offset + (idx as f32 + 0.5) * led_spacing;
-            let cy = 0.0; // LED at top edge — glow bleeds downward
-
-            let center_color = Color::rgbaf(cr, cg, cb, brightness * 0.8);
-            let edge_color = Color::rgbaf(cr, cg, cb, 0.0);
-
-            canvas.save();
-            canvas.translate(cx, cy);
-            canvas.scale(1.0, blob_ry / blob_rx);
-
-            let paint = Paint::radial_gradient(0.0, 0.0, 0.0, blob_rx, center_color, edge_color);
-            let mut path = Path::new();
-            path.circle(0.0, 0.0, blob_rx);
-            canvas.fill_path(&path, &paint);
-
-            canvas.restore();
+        // Restore framebuffer + viewport so egui draws onto the screen FBO at the right size.
+        // SAFETY: same context invariants as the read above; values came from this very GL.
+        unsafe {
+            // 0 maps to the default framebuffer; any non-zero prior binding goes back as a
+            // `NativeFramebuffer`. The cast through `NonZeroU32` filters the 0 case correctly.
+            let target =
+                std::num::NonZeroU32::new(prev_fbo as u32).map(eframe::glow::NativeFramebuffer);
+            self.gl.bind_framebuffer(eframe::glow::FRAMEBUFFER, target);
+            self.gl.viewport(
+                prev_viewport[0],
+                prev_viewport[1],
+                prev_viewport[2],
+                prev_viewport[3],
+            );
         }
     }
 
-    led_renderer.flush();
+    /// Paint the stats panel inside an explicit rect (the empty slot right of SMALL tile).
+    /// Includes the FPS readout, FULL-tile timing breakdown, reload + debug-toggle buttons,
+    /// and a stacked-bar chart of recent per-frame timings.
+    fn paint_stats_panel(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
+        // Backing rectangle so the chart + labels read against a flat colour, not the
+        // checkerboard underneath.
+        ui.painter()
+            .rect_filled(rect, 4.0, egui::Color32::from_gray(18));
+        ui.painter().rect_stroke(
+            rect,
+            4.0,
+            egui::Stroke::new(1.0, egui::Color32::from_gray(50)),
+            egui::StrokeKind::Inside,
+        );
 
-    // Blit LED FBO directly below the tile
-    blit_fbo_to_screen(
-        gl,
-        led_fbo,
-        strip_w,
-        strip_h,
-        scaled(tile.x, dpi),
-        scaled(tile.y + tile.h, dpi),
-        scaled(tile.w, dpi),
-        scaled(strip_h, dpi),
-        screen_h,
-    );
+        let pad = 8.0;
+        let inner = rect.shrink(pad);
+
+        // ── Top row: Reload + Debug-layout buttons ──
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
+        child.horizontal(|row| {
+            if row.button("Reload WASM").clicked() {
+                self.hot_reload.manual_reload = true;
+            }
+            let mut debug_on = bmc_render::tree::debug_layout_enabled();
+            if row.checkbox(&mut debug_on, "Debug layout").changed() {
+                bmc_render::tree::toggle_debug_layout();
+            }
+        });
+        child.add_space(8.0);
+
+        // ── FPS + last-frame breakdown ──
+        let avg_us = if self.perf.recent_frame_us.is_empty() {
+            0
+        } else {
+            let sum: u32 = self.perf.recent_frame_us.iter().sum();
+            sum / self.perf.recent_frame_us.len() as u32
+        };
+        let fps = if avg_us > 0 {
+            1_000_000.0 / avg_us as f32
+        } else {
+            0.0
+        };
+        // Stats table — egui::Grid gives column alignment without manual width math.
+        // Right-aligning numbers inside their cells via RichText keeps the digit columns
+        // visually anchored even as values change width.
+        let mono = egui::FontId::monospace(11.0);
+        let val_color = egui::Color32::from_gray(220);
+        let lbl_color = egui::Color32::from_gray(160);
+        let cell_lbl = |txt: &str| egui::RichText::new(txt).font(mono.clone()).color(lbl_color);
+        let cell_val = |txt: String| egui::RichText::new(txt).font(mono.clone()).color(val_color);
+        egui::Grid::new("testbed_stats_table")
+            .num_columns(4)
+            .spacing([12.0, 2.0])
+            .min_col_width(0.0)
+            .show(&mut child, |g| {
+                g.label(cell_lbl("frame avg:"));
+                g.label(cell_val(format!("{avg_us} µs")));
+                g.label(cell_lbl(""));
+                g.label(cell_val(format!("{fps:.1} fps")));
+                g.end_row();
+                if let Some(t) = self.tiles.first().map(|t| t.runtime.last_timings()) {
+                    g.label(cell_lbl("FULL wasm:"));
+                    g.label(cell_val(format!("{} µs", t.wasm_us)));
+                    g.label(cell_lbl("deser:"));
+                    g.label(cell_val(format!("{} µs", t.deserialize_us)));
+                    g.end_row();
+                    g.label(cell_lbl("layout:"));
+                    g.label(cell_val(format!("{} µs", t.layout_us)));
+                    g.label(cell_lbl("render:"));
+                    g.label(cell_val(format!("{} µs", t.render_us)));
+                    g.end_row();
+                    g.label(cell_lbl("flush:"));
+                    g.label(cell_val(format!("{} µs", t.flush_us)));
+                    g.label(cell_lbl(""));
+                    g.label(cell_lbl(""));
+                    g.end_row();
+                }
+            });
+
+        // ── Stacked bar chart + legend pinned to the bottom (fixed heights) ──
+        const CHART_H: f32 = 100.0;
+        const LEGEND_H: f32 = 14.0;
+        let block_h = CHART_H + LEGEND_H;
+        let block_h = block_h.min(inner.height() - (child.cursor().min.y - inner.min.y) - 6.0);
+        if block_h > LEGEND_H + 12.0 && !self.perf.samples.is_empty() {
+            let block_top = inner.max.y - block_h;
+            // Chart on top, legend strip below — keeps the chart visually grouped with the
+            // numeric stats above and the legend functions as a key reading downward.
+            let chart_rect = egui::Rect::from_min_max(
+                egui::pos2(inner.min.x, block_top),
+                egui::pos2(inner.max.x, inner.max.y - LEGEND_H),
+            );
+            let legend_rect = egui::Rect::from_min_max(
+                egui::pos2(inner.min.x, inner.max.y - LEGEND_H),
+                egui::pos2(inner.max.x, inner.max.y),
+            );
+            // `painter_at` clips chart draws so spikes don't bleed past the rect.
+            let chart_painter = ui.painter_at(chart_rect);
+            paint_timing_chart(&chart_painter, chart_rect, &self.perf.samples);
+            paint_timing_legend(child.painter(), legend_rect);
+        }
+    }
+
+    /// Trim `recent_frame_us` to a 60-sample sliding window so the FPS readout averages
+    /// roughly the last second at 60 fps.
+    fn record_frame_us(&mut self, us: u32) {
+        if self.perf.recent_frame_us.len() == 60 {
+            self.perf.recent_frame_us.pop_front();
+        }
+        self.perf.recent_frame_us.push_back(us);
+    }
 }
 
-// find_widget_root is imported from fixtures module.
+// ── Timing chart ────────────────────────────────────────────────────
+
+/// Paint a stacked bar chart of the most recent frame timings into `rect`.
+/// One column per sample, stacked top-to-bottom: wasm / deserialize / layout / render / flush.
+/// A horizontal reference line marks the 16.6 ms / 60 fps budget.
+fn paint_timing_chart(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    samples: &[bmc_render::FrameTimings],
+) {
+    // Fixed column width — bars stay the same size and newest samples append at the right edge,
+    // older samples scroll off the left. Avoids the "bars resize as the window fills" effect.
+    const COL_W: f32 = 2.0;
+    let max_cols = (rect.width() / COL_W).floor().max(1.0) as usize;
+    let n = samples.len().min(max_cols);
+    if n == 0 {
+        return;
+    }
+    let start = samples.len() - n;
+    let view = &samples[start..];
+
+    // Peak total across the window establishes the y scale.
+    let peak_us = view
+        .iter()
+        .map(|s| {
+            u64::from(s.wasm_us)
+                + u64::from(s.deserialize_us)
+                + u64::from(s.layout_us)
+                + u64::from(s.render_us)
+                + u64::from(s.flush_us)
+        })
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    // y-scale floor is 36,000 µs — slightly above the 30 fps budget (33,333 µs) so the
+    // 30 fps reference line sits a bit below the top of the chart and its label has room
+    // instead of being clipped at the edge. A genuine spike past 36 ms grows the scale.
+    let y_scale_us = peak_us.max(36_000) as f32;
+    let col_w = COL_W;
+
+    // Subtle horizontal grid every 5 ms — drawn first so bars overlay on top.
+    let grid_color = egui::Color32::from_rgba_unmultiplied(140, 140, 140, 30);
+    let grid_step_us = 5_000.0_f32;
+    let mut grid_us = grid_step_us;
+    while grid_us < y_scale_us {
+        let y = rect.max.y - (grid_us / y_scale_us) * rect.height();
+        if y > rect.min.y && y < rect.max.y {
+            painter.line_segment(
+                [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
+                egui::Stroke::new(1.0, grid_color),
+            );
+        }
+        grid_us += grid_step_us;
+    }
+    // Component colours mirror PerfOverlay's legend ordering.
+    let colours = [
+        (egui::Color32::from_rgb(0x6A, 0x9F, 0xD8), "wasm"),
+        (egui::Color32::from_rgb(0xE0, 0x9A, 0x50), "deser"),
+        (egui::Color32::from_rgb(0xCC, 0xCC, 0x50), "layout"),
+        (egui::Color32::from_rgb(0x50, 0xCC, 0x50), "render"),
+        (egui::Color32::from_rgb(0xCC, 0x50, 0xCC), "flush"),
+    ];
+
+    // Right-anchored: oldest sample drawn at the leftmost slot used, newest at the right edge.
+    let bars_left = rect.max.x - n as f32 * col_w;
+    for (i, sample) in view.iter().enumerate() {
+        let x = bars_left + i as f32 * col_w;
+        let mut y = rect.max.y;
+        let parts = [
+            sample.wasm_us,
+            sample.deserialize_us,
+            sample.layout_us,
+            sample.render_us,
+            sample.flush_us,
+        ];
+        for (part_us, (color, _)) in parts.into_iter().zip(colours) {
+            let h = (part_us as f32 / y_scale_us) * rect.height();
+            if h < 0.5 {
+                continue;
+            }
+            let bar =
+                egui::Rect::from_min_max(egui::pos2(x, y - h), egui::pos2(x + col_w.max(1.0), y));
+            painter.rect_filled(bar, 0.0, color);
+            y -= h;
+        }
+    }
+
+    // Reference lines at 60 fps (16.6 ms) and 30 fps (33.3 ms) — the two budgets the
+    // testbed cares about. Each labeled at the right edge.
+    for (us, label) in [(16_666.0_f32, "60 fps"), (33_333.0_f32, "30 fps")] {
+        let y = rect.max.y - (us / y_scale_us) * rect.height();
+        if y < rect.min.y || y > rect.max.y {
+            continue;
+        }
+        painter.line_segment(
+            [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
+            egui::Stroke::new(
+                1.0,
+                egui::Color32::from_rgba_unmultiplied(180, 180, 180, 140),
+            ),
+        );
+        // Label sits BELOW the line so it doesn't get clipped against `rect.min.y`
+        // when the line itself is near the top of the chart (e.g. 30 fps marker at peak scale).
+        painter.text(
+            egui::pos2(rect.max.x - 2.0, y + 1.0),
+            egui::Align2::RIGHT_TOP,
+            label,
+            egui::FontId::monospace(9.0),
+            egui::Color32::from_gray(200),
+        );
+    }
+}
+
+/// Paint the chart's component legend in its own strip — the colour swatches and labels
+/// for wasm / deser / layout / render / flush, in stack order. Lives above the chart so it
+/// doesn't overlap the bars.
+fn paint_timing_legend(painter: &egui::Painter, rect: egui::Rect) {
+    let colours = [
+        (egui::Color32::from_rgb(0x6A, 0x9F, 0xD8), "wasm"),
+        (egui::Color32::from_rgb(0xE0, 0x9A, 0x50), "deser"),
+        (egui::Color32::from_rgb(0xCC, 0xCC, 0x50), "layout"),
+        (egui::Color32::from_rgb(0x50, 0xCC, 0x50), "render"),
+        (egui::Color32::from_rgb(0xCC, 0x50, 0xCC), "flush"),
+    ];
+    let mut x_cursor = rect.min.x;
+    let cy = rect.center().y;
+    for (color, label) in colours {
+        let sw = egui::Rect::from_center_size(egui::pos2(x_cursor + 4.0, cy), egui::vec2(8.0, 8.0));
+        painter.rect_filled(sw, 0.0, color);
+        painter.text(
+            egui::pos2(x_cursor + 10.0, cy),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::monospace(9.0),
+            egui::Color32::from_gray(180),
+        );
+        x_cursor += 56.0;
+    }
+}
+
+// ── Recording panel / finish ────────────────────────────────────────
+
+/// Action dispatched by the recording panel each frame.
+/// `None` between frames; one of the variants on the frame the operator clicks.
+#[derive(Clone, Copy, Debug)]
+enum RecordingAction {
+    Save,
+    Cancel,
+    Capture,
+}
+
+impl TestbedApp {
+    /// Paint the recording panel in `rect` — title, scrollable event log, Save/Cancel/Capture
+    /// buttons, and the auto-capture toggle. Returns the operator action for this frame.
+    fn paint_recording_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        rect: egui::Rect,
+    ) -> Option<RecordingAction> {
+        let rec = self.recording_mode.state.as_mut()?;
+        ui.painter()
+            .rect_filled(rect, 4.0, egui::Color32::from_gray(18));
+        ui.painter().rect_stroke(
+            rect,
+            4.0,
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(180, 80, 20)),
+            egui::StrokeKind::Inside,
+        );
+
+        let pad = 8.0;
+        let inner = rect.shrink(pad);
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
+        let mut action: Option<RecordingAction> = None;
+
+        child.label(
+            egui::RichText::new(format!("RECORDING — {}", rec.size_name))
+                .color(egui::Color32::from_rgb(255, 170, 80))
+                .strong(),
+        );
+        child.separator();
+
+        // Bottom button row pinned to inner.max.y; reserve the space first so the scroll
+        // area knows how tall it can be.
+        const BUTTON_ROW_H: f32 = 28.0;
+        let log_max_y = inner.max.y - BUTTON_ROW_H - 6.0;
+        let log_rect = egui::Rect::from_min_max(
+            egui::pos2(inner.min.x, child.cursor().min.y),
+            egui::pos2(inner.max.x, log_max_y),
+        );
+        if log_rect.height() > 16.0 {
+            let mut log_child = child.new_child(egui::UiBuilder::new().max_rect(log_rect));
+            let mono = egui::FontId::monospace(10.0);
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .stick_to_bottom(true)
+                .max_height(log_rect.height())
+                .show(&mut log_child, |scroll| {
+                    if rec.events.is_empty() {
+                        scroll.label(
+                            egui::RichText::new("(no events yet — click / drag a tile)")
+                                .color(egui::Color32::from_gray(120))
+                                .font(mono.clone()),
+                        );
+                    } else {
+                        for ev in &rec.events {
+                            let secs = ev.at_ms as f32 / 1000.0;
+                            let line = format!("{secs:>6.2}s  {}", format_event_label(&ev.event));
+                            scroll.label(egui::RichText::new(line).font(mono.clone()));
+                        }
+                    }
+                });
+        }
+
+        // Button row at the bottom edge.
+        let row_rect = egui::Rect::from_min_max(
+            egui::pos2(inner.min.x, inner.max.y - BUTTON_ROW_H),
+            inner.max,
+        );
+        let mut row_child = child.new_child(egui::UiBuilder::new().max_rect(row_rect));
+        row_child.horizontal(|row| {
+            if row.button("Save").clicked() {
+                action = Some(RecordingAction::Save);
+            }
+            if row.button("Cancel").clicked() {
+                action = Some(RecordingAction::Cancel);
+            }
+            if row.button("Capture").clicked() {
+                action = Some(RecordingAction::Capture);
+            }
+            row.checkbox(&mut rec.auto_capture, "auto");
+        });
+
+        action
+    }
+
+    /// Append a manual single-frame `Capture` event to the recording timeline.
+    fn push_manual_capture(&mut self) {
+        if let Some(rec) = self.recording_mode.state.as_mut() {
+            let at_ms = rec.recording_start.elapsed().as_millis() as u64;
+            rec.events.push(TimelineEvent {
+                at_ms,
+                event: UnifiedEvent::Capture {
+                    duration_ms: None,
+                    fps: None,
+                },
+            });
+        }
+    }
+
+    /// Take ownership of the active recording, merge all event sources (user actions, network
+    /// events from the runtime, fetch events from the shared buffer), validate, and write a
+    /// `.jsonl.gz` fixture into the widget's `capture/fixtures/<size>.jsonl.gz`.
+    /// Also updates the widget's `capture/config.toml` to point at the new fixture.
+    fn finish_recording(&mut self) {
+        let Some(rec) = self.recording_mode.state.take() else {
+            return;
+        };
+
+        // Pull network events out of the active tile's runtime, plus the fetch events the
+        // observer pushed into the shared buffer.
+        let runtime_events = if let Some(tile) = self.tiles.get_mut(rec.active_tile) {
+            tile.runtime.take_recorded_events()
+        } else {
+            Vec::new()
+        };
+        let network_timeline = fixtures::fixture_events_to_timeline(&runtime_events);
+        let fetch_timeline: Vec<TimelineEvent> = std::mem::take(
+            &mut *self
+                .recording_mode
+                .fetch_events
+                .lock()
+                .expect("BUG: fetch events poisoned"),
+        );
+
+        // Merge: user actions + network + fetch, sorted by at_ms (stable so insertion order
+        // breaks ties), then collapse consecutive scrolls on the same element into one event.
+        let mut all_events = rec.events;
+        all_events.extend(network_timeline);
+        all_events.extend(fetch_timeline);
+        all_events.sort_by_key(|e| e.at_ms);
+        let mut merged: Vec<TimelineEvent> = Vec::with_capacity(all_events.len());
+        for event in all_events {
+            let should_merge = if let UnifiedEvent::Scroll { ref element, .. } = event.event {
+                merged.last().is_some_and(|prev: &TimelineEvent| {
+                    matches!(&prev.event, UnifiedEvent::Scroll { element: prev_el, .. } if prev_el == element)
+                })
+            } else {
+                false
+            };
+            if should_merge {
+                if let UnifiedEvent::Scroll { delta, .. } = event.event
+                    && let Some(prev) = merged.last_mut()
+                    && let UnifiedEvent::Scroll {
+                        delta: ref mut prev_delta,
+                        ..
+                    } = prev.event
+                {
+                    *prev_delta += delta;
+                }
+            } else {
+                merged.push(event);
+            }
+        }
+
+        let fixture = UnifiedFixture {
+            header: FixtureHeader {
+                time: rec.start_time_iso,
+                kv: rec.kv_snapshot,
+            },
+            events: merged,
+        };
+
+        let Some(widget_root) = rec.widget_root else {
+            eprintln!(
+                "error: could not find widget root — fixture not saved ({} event(s))",
+                fixture.events.len()
+            );
+            return;
+        };
+        let fixture_dir = widget_root.join("capture").join("fixtures");
+        let fixture_path = fixture_dir.join(format!("{}.jsonl.gz", rec.size_name));
+
+        if let Err(e) = bmc_wasm_runtime::unified_fixture::validate_fixture(&fixture) {
+            eprintln!("warning: fixture validation failed: {e:#} (writing anyway)");
+        }
+        if let Err(e) = fixtures::write_jsonl_fixture(&fixture_path, &fixture) {
+            eprintln!("error: failed to write fixture: {e:#}");
+            return;
+        }
+        eprintln!(
+            "wrote: {} event(s) → {}",
+            fixture.events.len(),
+            fixture_path.display()
+        );
+
+        let config_path = widget_root.join("capture").join("config.toml");
+        let fixture_rel = format!("fixtures/{}.jsonl.gz", rec.size_name);
+        if let Err(e) =
+            fixtures::update_config_toml_fixtures(&config_path, &rec.size_name, &fixture_rel)
+        {
+            eprintln!("warning: failed to update config.toml: {e:#}");
+        } else {
+            eprintln!("updated: {}", config_path.display());
+        }
+
+        let widget_name = widget_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("WIDGET");
+        eprintln!("hint: run `just wasm::update-baselines {widget_name}` to set baselines");
+    }
+}
+
+// ── Perf report ─────────────────────────────────────────────────────
+
+fn write_perf_report(path: &Path, samples: &[bmc_render::FrameTimings]) {
+    let n = samples.len();
+    if n == 0 {
+        return;
+    }
+    let sum_wasm: u64 = samples.iter().map(|s| u64::from(s.wasm_us)).sum();
+    let sum_deser: u64 = samples.iter().map(|s| u64::from(s.deserialize_us)).sum();
+    let sum_layout: u64 = samples.iter().map(|s| u64::from(s.layout_us)).sum();
+    let sum_render: u64 = samples.iter().map(|s| u64::from(s.render_us)).sum();
+    let sum_flush: u64 = samples.iter().map(|s| u64::from(s.flush_us)).sum();
+    let n_u64 = n as u64;
+    let avg = |s: u64| s / n_u64;
+    let report = serde_json::json!({
+        "frames": n,
+        "avg_us": {
+            "wasm": avg(sum_wasm),
+            "deserialize": avg(sum_deser),
+            "layout": avg(sum_layout),
+            "render": avg(sum_render),
+            "flush": avg(sum_flush),
+        }
+    });
+    match std::fs::write(
+        path,
+        serde_json::to_string_pretty(&report).unwrap_or_default(),
+    ) {
+        Ok(()) => println!("Perf report written to {}", path.display()),
+        Err(e) => tracing::warn!("perf report: {e}"),
+    }
+}
+
+// Process-wide cell holding the eframe-provided GL proc address loader, populated in
+// `TestbedApp::new` and read by `init_tiles` / `poll_hot_reload`. A thread-local sidesteps the
+// `dyn Fn` capture lifetime question while keeping the closure trivially cloneable.
+// `thread_local!` is a macro, so this stays a regular `//` comment — doc comments don't
+// attach to macro invocations.
+thread_local! {
+    static GET_PROC_ADDRESS: std::cell::RefCell<Option<GlProcAddress>>
+        = const { std::cell::RefCell::new(None) };
+}
+
+impl eframe::App for TestbedApp {
+    fn ui(&mut self, root_ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // Lazy tile construction — `frame.register_native_glow_texture` needs the
+        // `eframe::Frame`, which isn't available in `CreationContext`.
+        if self.tiles.is_empty()
+            && let Err(e) = self.init_tiles(frame)
+        {
+            root_ui.label(format!("Failed to init tiles: {e:#}"));
+            return;
+        }
+        // Hot reload check — rebuild runtimes if the wasm changed on disk.
+        self.poll_hot_reload(frame);
+
+        let now = std::time::Instant::now();
+        let delta = now.duration_since(self.clock.last_frame);
+        let delta_ms = delta.as_millis() as u32;
+        let frame_us = delta.as_micros() as u32;
+        self.clock.last_frame = now;
+        self.record_frame_us(frame_us);
+
+        let ctx = root_ui.ctx().clone();
+
+        // Render each widget into its FBO before egui submits its own draw list.
+        // Must happen before checkerboard / image draws to keep GL state contained.
+        self.render_tiles(delta_ms);
+        self.perf.frame_count += 1;
+
+        // Perf-report exit condition: write JSON + close the viewport once we've collected
+        // enough samples. Matches the prior `--perf-frames` flag behaviour.
+        if let Some(ref path) = self.cli.perf_report_path
+            && self.perf.frame_count >= self.cli.perf_frames
+        {
+            write_perf_report(path, &self.perf.samples);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        let time_s = self.clock.start_instant.elapsed().as_secs_f32();
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show_inside(root_ui, |ui| {
+                let origin = ui.min_rect().left_top();
+                // Window-wide checkerboard backdrop so tile boundaries read clearly against
+                // widget body colours like params-demo's `#14_16_1B`.
+                draw_checkerboard(ui.painter(), ui.max_rect());
+                let active_record_idx = self.recording_mode.state.as_ref().map(|r| r.active_tile);
+                for (tile_idx, tile) in self.tiles.iter_mut().enumerate() {
+                    let rect = egui::Rect::from_min_size(
+                        origin + egui::vec2(tile.x as f32, tile.y as f32),
+                        egui::vec2(tile.gpu.width as f32, tile.gpu.height as f32),
+                    );
+                    // FemtoVG renders bottom-up into the FBO; flip V to display top-down.
+                    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 1.0), egui::pos2(1.0, 0.0));
+                    ui.painter()
+                        .image(tile.gpu.egui_tex_id, rect, uv, egui::Color32::WHITE);
+
+                    // Touch / mouse routing: allocate the same rect for click+drag so we
+                    // can forward pointer events to the runtime in tile-local coordinates.
+                    // Recording state is threaded in only for the active recording tile so
+                    // gestures on other tiles don't pollute the fixture timeline.
+                    let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+                    let rec_for_tile = if active_record_idx == Some(tile_idx) {
+                        self.recording_mode.state.as_mut()
+                    } else {
+                        None
+                    };
+                    dispatch_touch_events(&response, rect, &mut tile.runtime, rec_for_tile);
+
+                    paint_led_strip(ui.painter(), tile, origin, time_s);
+                }
+                // Stats panel / recording panel — both anchor in the empty slot right of SMALL.
+                // Recording mode displaces the stats view; the chart isn't useful while
+                // authoring a fixture and the operator needs the event log there.
+                let stats_rect = egui::Rect::from_min_size(
+                    origin + egui::vec2(STATS_X as f32, STATS_Y as f32),
+                    egui::vec2(STATS_W as f32, STATS_H as f32),
+                );
+                if self.recording_mode.state.is_some() {
+                    if let Some(action) = self.paint_recording_panel(ui, stats_rect) {
+                        match action {
+                            RecordingAction::Save => self.finish_recording(),
+                            RecordingAction::Cancel => self.recording_mode.state = None,
+                            RecordingAction::Capture => self.push_manual_capture(),
+                        }
+                    }
+                } else {
+                    self.paint_stats_panel(ui, stats_rect);
+                }
+            });
+
+        ctx.request_repaint_after(std::time::Duration::from_millis(16));
+    }
+}

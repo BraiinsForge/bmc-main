@@ -1566,6 +1566,8 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "clap",
+ "eframe",
+ "egui",
  "femtovg",
  "flate2",
  "formato",

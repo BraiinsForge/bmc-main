@@ -48,17 +48,30 @@ mod headless_egl {
     use std::ffi::{CString, c_void};
     use std::num::NonZeroU32;
 
-    /// Headless GL context tied to a pbuffer; kept alive
-    /// for the lifetime of the widget runtime.
+    /// Headless GL context tied to a pbuffer; kept alive for the lifetime of the widget
+    /// runtime through `_resources` below.
     pub struct HeadlessGl {
         pub display: Display,
         pub fbo_id: u32,
-        // Hold the surface and context alive — dropping them after the runtime is built would
-        // tear down the GL state the runtime is referencing.
-        _surface: Surface<PbufferSurface>,
-        _context: glutin::context::PossiblyCurrentContext,
-        _gl: glow::Context,
-        _texture: glow::Texture,
+        /// Ownership root for the GL resources backing this context. Never accessed after
+        /// construction — the `_` prefix tells the compiler that's intentional. Held only
+        /// so its `Drop` impls fire when the test ends; see [`GlResources`] for drop order.
+        _resources: GlResources,
+    }
+
+    /// Ownership root for the GL resources `HeadlessGl` keeps alive. Fields drop in declaration
+    /// order, which matters: the pbuffer surface must drop before the context that made it
+    /// current (glutin enforces this at runtime), and texture / context-wrapped glow handles
+    /// release their underlying GL state once the context goes.
+    ///
+    /// Every field is intentionally write-only — held to keep the GL state alive for as long
+    /// as `HeadlessGl` lives, never read after construction.
+    #[expect(dead_code, reason = "ownership markers — see struct doc")]
+    struct GlResources {
+        surface: Surface<PbufferSurface>,
+        context: glutin::context::PossiblyCurrentContext,
+        gl: glow::Context,
+        texture: glow::Texture,
     }
 
     impl HeadlessGl {
@@ -159,10 +172,12 @@ mod headless_egl {
         Ok(HeadlessGl {
             display,
             fbo_id,
-            _surface: surface,
-            _context: gl_context,
-            _gl: gl,
-            _texture: texture,
+            _resources: GlResources {
+                surface,
+                context: gl_context,
+                gl,
+                texture,
+            },
         })
     }
 

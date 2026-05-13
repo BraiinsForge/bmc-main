@@ -204,11 +204,11 @@ pub extern "C" fn render(delta_ms: u32) {
 
     let size = WidgetSize::from_dimensions(w, h);
     match size.variant {
-        // Small tiles (317×238) drop the "Required / Optional" split and pack all 14 entries
-        // across two balanced columns of seven; the section headers + the optional column's
-        // tail are luxuries we don't have the pixels for.
-        SizeVariant::Small => render_compact(w, h, &p, &SIZES_SMALL),
-        SizeVariant::Medium | SizeVariant::Large | SizeVariant::Full => {
+        // Small (317×238) and Medium (638×238) both lack the vertical room for the two-line
+        // grid layout (Required has 10 entries, each a key+hint line pair). They fall back to
+        // the compact single-line variant; Medium just gets wider rows than Small.
+        SizeVariant::Small | SizeVariant::Medium => render_compact(w, h, &p, &SIZES_SMALL),
+        SizeVariant::Large | SizeVariant::Full => {
             render_grid(w, h, &p, &SIZES_FULL);
         }
     }
@@ -376,7 +376,7 @@ fn render_grid(w: u32, h: u32, p: &params::Params, sizes: &Sizes) {
         w,
         h,
         row(
-            props!(background: BG_COLOR, padding: sizes.col_padding, gap: sizes.col_gap, flex: 1.0),
+            props!(background: BG_COLOR, gap: sizes.col_gap, flex: 1.0),
             [required, optional],
         ),
     );
