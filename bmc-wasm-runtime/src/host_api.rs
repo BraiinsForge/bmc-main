@@ -8,7 +8,7 @@
 //! See `bmc_render`'s crate-level docs for the rationale on `glam` being part
 //! of the host-side public surface.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -464,6 +464,22 @@ pub(crate) struct HostState {
     /// Used for deferred timer checks and wasm_delta computation.
     pub monotonic_ms: u64,
 
+    /// Per-instance widget parameters, materialised from the wayland `deck_widget_v1.params`
+    /// event (compositor) or applied directly from the manifest defaults (testbed).
+    ///
+    /// Order is alphabetical-by-key (`BTreeMap`) so the on-wire serialisation
+    /// is deterministic and snapshot byte-equality is meaningful.
+    pub params: BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
+
+    /// Opaque change marker bumped on every `set_params` call via `wrapping_add(1)`.
+    /// Returned to guests by `host_params_version`; the SDK refreshes its cached snapshot
+    /// whenever this differs from the last-seen value.
+    ///
+    /// Semantics are deliberately "different = changed" rather than "greater = newer",
+    /// so the counter is safe to wrap. The numeric value carries no meaning beyond
+    /// change detection — it is not a count, not a timestamp, not an ordering.
+    pub params_version: u64,
+
     /// Next fetch request ID counter (for `FetchRequestId::alloc`).
     pub next_request_id: u32,
 
@@ -627,6 +643,8 @@ impl HostState {
             cached_tree: None,
             system_time: chrono::Local::now().fixed_offset(),
             monotonic_ms: 0,
+            params: BTreeMap::new(),
+            params_version: 0,
             next_request_id: 1,
             fetch_rx,
             fetch_tx,

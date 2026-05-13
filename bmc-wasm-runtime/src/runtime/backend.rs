@@ -532,6 +532,25 @@ impl WasmWidgetRuntime {
             .min(monotonic_ms);
     }
 
+    /// Replace the host-side widget params snapshot.
+    ///
+    /// Called by the compositor / testbed on initial widget creation
+    /// and on every operator-driven update.
+    ///
+    /// The version counter is bumped via `wrapping_add(1)` so guests observing it
+    /// re-fetch the snapshot on the next read of `params::current()`.
+    pub fn set_params(
+        &mut self,
+        params: std::collections::BTreeMap<
+            bmc_widget_manifest::ParamKey,
+            bmc_widget_manifest::ParamValue,
+        >,
+    ) {
+        let state = self.store.data_mut();
+        state.params = params;
+        state.params_version = state.params_version.wrapping_add(1);
+    }
+
     /// Access the GPU renderer (for begin_frame, flush, and testbed drawing).
     pub fn renderer(&mut self) -> &mut FemtoVgRenderer {
         &mut self.store.data_mut().renderer

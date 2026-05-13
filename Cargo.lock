@@ -1562,6 +1562,7 @@ dependencies = [
  "bmc-led",
  "bmc-render",
  "bmc-wasm-protocol",
+ "bmc-widget-manifest",
  "chrono",
  "chrono-tz",
  "clap",
@@ -1723,6 +1724,7 @@ dependencies = [
  "chrono",
  "clap",
  "glow 0.16.0",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
 ]

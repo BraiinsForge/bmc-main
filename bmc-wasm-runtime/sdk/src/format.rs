@@ -130,7 +130,8 @@ macro_rules! format_temperature {
 
 /// Format a duration in seconds as a compact countdown string.
 ///
-/// Zero-pads hours, minutes, and seconds to 2 digits. Days are not padded.
+/// Zero-pads hours, minutes, and seconds to 2 digits.
+/// Days are not padded.
 ///
 /// # Examples
 ///
@@ -183,6 +184,80 @@ fn push_pad2(s: &mut String, n: i64) {
         s.push('0');
     }
     push_int(s, n);
+}
+
+/// Push a non-negative integer left-padded with `0` to `width` digits.
+fn push_padded(s: &mut String, n: i64, width: usize) {
+    let digits = digit_count(n);
+    for _ in digits..width {
+        s.push('0');
+    }
+    push_int(s, n);
+}
+
+/// Decimal digit count of a non-negative `i64`, with `0` counted as one digit.
+fn digit_count(n: i64) -> usize {
+    if n < 10 {
+        return 1;
+    }
+    let mut count = 0;
+    let mut v = n;
+    while v > 0 {
+        count += 1;
+        v /= 10;
+    }
+    count
+}
+
+/// Format an `f64` with a fixed number of decimal places, without pulling in `core::fmt::Display for f64`.
+/// Provides float display formatting in widgets without the binary-size cost of `format!()`,
+/// and without the orphan-rule pain of implementing `uDisplay` on `f64` directly.
+///
+/// `decimals` is clamped to `0..=9` so the scaled integer always fits in `i64`.
+/// The `params` wayland edge already rejects non-finite values, so callers can rely on `value`
+/// being a normal finite f64; NaN / ±infinity fall through to whatever the rounded cast produces
+/// (well-defined as saturation in stable Rust) and are not specially formatted.
+///
+/// # Examples
+///
+/// ```
+/// # use bmc_wasm_sdk::format::format_f64_fixed;
+/// assert_eq!(format_f64_fixed(2.5, 2), "2.50");
+/// assert_eq!(format_f64_fixed(0.0, 2), "0.00");
+/// assert_eq!(format_f64_fixed(-0.05, 2), "-0.05");
+/// assert_eq!(format_f64_fixed(123.456, 0), "123");
+/// assert_eq!(format_f64_fixed(-1.0, 3), "-1.000");
+/// ```
+#[must_use]
+pub fn format_f64_fixed(value: f64, decimals: u32) -> String {
+    let decimals = decimals.min(9) as usize;
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "decimals clamped to 0..=9 above, so the pow(u32) result fits trivially"
+    )]
+    let factor: i64 = 10_i64.pow(decimals as u32);
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        reason = "scale stays within i64 range for finite f64 inputs at decimals <= 9"
+    )]
+    let scaled = (value * factor as f64).round() as i64;
+    let int_part = scaled.abs() / factor;
+    let frac_part = scaled.abs() % factor;
+
+    let mut out = String::with_capacity(20);
+    // Preserve a leading "-" for negative values that don't round to zero.
+    // `value.is_sign_negative()` is true for `-0.0`, so the `scaled != 0` guard prevents "-0.00"
+    // output from a stray sign bit on a true zero.
+    if value.is_sign_negative() && scaled != 0 {
+        out.push('-');
+    }
+    push_int(&mut out, int_part);
+    if decimals > 0 {
+        out.push('.');
+        push_padded(&mut out, frac_part, decimals);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -248,5 +323,45 @@ mod tests {
         buf.fill(b'x');
         // len > 64 should be clamped
         assert_eq!(read_host_buf(&buf, 100), "x".repeat(64));
+    }
+
+    #[test]
+    fn f64_fixed_positive_with_decimals() {
+        assert_eq!(format_f64_fixed(2.5, 2), "2.50");
+        assert_eq!(format_f64_fixed(2.55, 2), "2.55");
+        assert_eq!(format_f64_fixed(0.05, 2), "0.05");
+        assert_eq!(format_f64_fixed(123.456, 2), "123.46");
+        assert_eq!(format_f64_fixed(1.0, 3), "1.000");
+    }
+
+    #[test]
+    fn f64_fixed_zero_and_signed_zero() {
+        assert_eq!(format_f64_fixed(0.0, 2), "0.00");
+        assert_eq!(format_f64_fixed(-0.0, 2), "0.00");
+    }
+
+    #[test]
+    fn f64_fixed_negative() {
+        assert_eq!(format_f64_fixed(-1.0, 2), "-1.00");
+        assert_eq!(format_f64_fixed(-0.05, 2), "-0.05");
+        assert_eq!(format_f64_fixed(-123.456, 2), "-123.46");
+    }
+
+    #[test]
+    fn f64_fixed_zero_decimals() {
+        assert_eq!(format_f64_fixed(123.456, 0), "123");
+        assert_eq!(format_f64_fixed(-2.5, 0), "-3");
+        assert_eq!(format_f64_fixed(0.0, 0), "0");
+    }
+
+    #[test]
+    fn f64_fixed_clamps_excessive_decimals() {
+        assert_eq!(format_f64_fixed(1.0, 10), "1.000000000");
+        assert_eq!(format_f64_fixed(1.0, 9), "1.000000000");
+    }
+
+    #[test]
+    fn f64_fixed_does_not_emit_negative_zero() {
+        assert_eq!(format_f64_fixed(-0.001, 2), "0.00");
     }
 }

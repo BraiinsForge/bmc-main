@@ -108,3 +108,46 @@ pub mod unified_fixture;
 
 pub use host_api::{FixtureEvent, FixtureEventKind, FixtureEventState};
 pub use runtime::{RenderStatus, RuntimeConfig, RuntimeResourceLimits, WasmWidgetRuntime};
+
+/// Parse the wayland `deck_widget_v1.params` JSON blob into the typed `BTreeMap` shape that
+/// [`WasmWidgetRuntime::set_params`] expects.
+///
+/// Only scalar entries (string / integer / finite double / boolean / null) survive — arrays,
+/// objects, and non-finite numbers are dropped at debug log.
+/// The compositor produces the JSON from a parsed and validated manifest, so the lossy drop
+/// is purely defensive: it only fires if a future producer sends something off-spec.
+///
+/// Keys that don't satisfy the `ParamKey` regex (must start with an ASCII letter,
+/// then `[A-Za-z0-9_-]*`) are likewise dropped at debug log.
+#[must_use]
+pub fn parse_params_json(
+    json: &serde_json::Value,
+) -> std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue> {
+    let mut out = std::collections::BTreeMap::new();
+    let Some(object) = json.as_object() else {
+        if !json.is_null() {
+            tracing::debug!("params JSON is not an object ({}); treating as empty", json);
+        }
+        return out;
+    };
+    for (raw_key, raw_value) in object {
+        let key = match bmc_widget_manifest::ParamKey::try_new(raw_key.clone()) {
+            Ok(k) => k,
+            Err(bad) => {
+                tracing::debug!("params: dropping entry with invalid key {bad:?}");
+                continue;
+            }
+        };
+        match bmc_widget_manifest::ParamValue::try_from(raw_value) {
+            Ok(v) => {
+                out.insert(key, v);
+            }
+            Err(err) => {
+                tracing::debug!(
+                    "params: dropping entry {raw_key:?} — value not representable ({err})"
+                );
+            }
+        }
+    }
+    out
+}

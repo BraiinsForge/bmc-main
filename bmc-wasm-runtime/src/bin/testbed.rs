@@ -106,7 +106,7 @@ fn main() -> Result<()> {
     if args.len() < 2 {
         eprintln!("WASM Widget Testbed");
         eprintln!(
-            "Usage: testbed <wasm_file> [--perf-report=<path>] [--perf-frames=<N>] [--record=<size>]"
+            "Usage: testbed <wasm_file> [--manifest=<path>] [--perf-report=<path>] [--perf-frames=<N>] [--record=<size>]"
         );
         std::process::exit(1);
     }
@@ -117,8 +117,11 @@ fn main() -> Result<()> {
     let mut perf_report_path: Option<PathBuf> = None;
     let mut perf_frames: u32 = 600;
     let mut record_size: Option<String> = None;
+    let mut manifest_path: Option<PathBuf> = None;
     for arg in &args[2..] {
-        if let Some(path) = arg.strip_prefix("--perf-report=") {
+        if let Some(path) = arg.strip_prefix("--manifest=") {
+            manifest_path = Some(PathBuf::from(path));
+        } else if let Some(path) = arg.strip_prefix("--perf-report=") {
             perf_report_path = Some(PathBuf::from(path));
         } else if let Some(n) = arg.strip_prefix("--perf-frames=") {
             perf_frames = n.parse().unwrap_or(600);
@@ -127,7 +130,42 @@ fn main() -> Result<()> {
         }
     }
 
+    // Locate the widget's manifest.json — either provided explicitly via `--manifest=`
+    // or auto-detected by walking up the wasm path. The manifest is required;
+    // it carries the params declarations whose defaults the testbed applies to every runtime,
+    // mirroring what the compositor delivers on-device when no operator overrides are set.
+    let manifest_path = manifest_path
+        .or_else(|| autodetect_manifest(&wasm_path))
+        .with_context(|| {
+            format!(
+                "could not locate manifest.json for {}. Pass --manifest=<path> explicitly.",
+                wasm_path.display()
+            )
+        })?;
+    let manifest_body = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    let manifest = <bmc_widget_manifest::Manifest as std::str::FromStr>::from_str(&manifest_body)
+        .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
+    let params: std::collections::BTreeMap<
+        bmc_widget_manifest::ParamKey,
+        bmc_widget_manifest::ParamValue,
+    > = manifest
+        .params
+        .iter()
+        .map(|(key, def)| {
+            (
+                key.clone(),
+                bmc_widget_manifest::ParamValue::from_param_kind_default(&def.kind),
+            )
+        })
+        .collect();
+
     println!("Loading widget from: {}", wasm_path.display());
+    println!("Manifest:            {}", manifest_path.display());
+    println!(
+        "Params:              {} key(s) from manifest defaults",
+        params.len()
+    );
     println!("Display size: {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} (4 sizes)");
     if let Some(ref path) = perf_report_path {
         println!("Perf report: {} ({perf_frames} frames)", path.display());
@@ -140,6 +178,7 @@ fn main() -> Result<()> {
 
     let mut app = App {
         wasm_path,
+        params,
         state: None,
         rss_after_gl_kb: None,
         rss_after_runtime_kb: None,
@@ -150,6 +189,29 @@ fn main() -> Result<()> {
     event_loop.run_app(&mut app)?;
     print_memory_stats(app.rss_after_gl_kb, app.rss_after_runtime_kb);
     Ok(())
+}
+
+/// Walk up the wasm path looking for `<package>/manifest.json` at each level.
+///
+/// Cargo emits widget binaries at `<workspace>/target/<target-triple>/<profile>/<package>.wasm`
+/// with `-` in the package name normalised to `_`.
+///
+/// This walks parents of the wasm file, undoing the underscore convention to look for the
+/// matching widget source directory containing `manifest.json`.
+///
+/// Returns `None` if no sibling manifest is found before the filesystem root.
+fn autodetect_manifest(wasm_path: &Path) -> Option<PathBuf> {
+    let stem = wasm_path.file_stem()?.to_str()?;
+    let package = stem.replace('_', "-");
+    let mut dir = wasm_path.parent()?;
+    while let Some(parent) = dir.parent() {
+        let candidate = parent.join(&package).join("manifest.json");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+        dir = parent;
+    }
+    None
 }
 
 /// Read current RSS from `/proc/self/status` in kB (Linux only).
@@ -185,6 +247,13 @@ fn print_memory_stats(rss_after_gl_kb: Option<u64>, rss_after_runtime_kb: Option
 
 struct App {
     wasm_path: PathBuf,
+    /// Per-instance params materialised from the widget's `manifest.json` defaults.
+    /// Applied to each runtime via `set_params` immediately after construction.
+    ///
+    /// Mirrors what the compositor's `ParamValue::from_param_kind_default`
+    /// pass would deliver on the device when no operator overrides are set.
+    params:
+        std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
     state: Option<PreviewState>,
     rss_after_gl_kb: Option<u64>,
     rss_after_runtime_kb: Option<u64>,
@@ -254,6 +323,10 @@ struct RecordingState {
 struct PreviewState {
     // Drop order: tiles (FemtoVG Canvases) → GL resources → window
     tiles: Vec<PreviewTile>,
+    /// Params snapshot applied to every runtime constructed for this preview (including hot-reload).
+    /// Cloned from `App::params` at preview construction.
+    params:
+        std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
     checker_fbo: glow::Framebuffer,
     _checker_texture: glow::Texture,
     stats_fbo: glow::Framebuffer,
@@ -476,8 +549,9 @@ impl App {
             let (led_tx, led_rx) = channel();
             rt_config.led_command_sender = Some(led_tx);
 
-            let runtime = create_runtime(&self.wasm_path, &gl_config, w, h, fbo_id, rt_config)
+            let mut runtime = create_runtime(&self.wasm_path, &gl_config, w, h, fbo_id, rt_config)
                 .context("Failed to create runtime")?;
+            runtime.set_params(self.params.clone());
             tiles.push(PreviewTile {
                 runtime,
                 x,
@@ -571,6 +645,7 @@ impl App {
 
         self.state = Some(PreviewState {
             tiles,
+            params: self.params.clone(),
             checker_fbo,
             _checker_texture: checker_texture,
             stats_fbo,
@@ -922,7 +997,8 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
                 fbo_id,
                 rt_config,
             ) {
-                Ok(new_runtime) => {
+                Ok(mut new_runtime) => {
+                    new_runtime.set_params(state.params.clone());
                     tile.runtime = new_runtime; // drops old runtime → deletes old FBO
                     tile.led_rx = led_rx;
                     tile.led_scene = None;

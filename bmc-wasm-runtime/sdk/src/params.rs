@@ -30,12 +30,16 @@
 //! is faithful to the manifest. The typed accessors return `None` for null entries (same as for missing keys);
 //! [`Params::keys`] still yields them so callers iterating the full set see the full manifest.
 //!
-//! ## Stage status
+//! ## Snapshot lifecycle
 //!
-//! [`current`] and [`previous`] return [`Params::default`] in this build.
-//! The wiring to `host_params_snapshot` lands in a follow-up commit (see BDK-432 PLAN stage C);
-//! the public signatures here are final. Widgets compiled against this SDK will read empty params
-//! at runtime until that wiring is in place.
+//! [`current`] returns the latest snapshot the host has delivered.
+//! The first call from `init` reads via the `host_params_snapshot` import; subsequent calls
+//! reuse the cached bytes until the host bumps `host_params_version`, at which point the next
+//! [`current`] re-fetches and the old snapshot is moved into [`previous`].
+//!
+//! [`previous`] returns the snapshot immediately before [`current`].
+//! It is [`Params::default`] until at least one update has been observed.
+//! `on_params_update` is the canonical place to diff the two for React-style change detection.
 
 /// Wire-format kind discriminators.
 mod kind {
@@ -268,24 +272,147 @@ impl<'a> EntryIter<'a> {
 
 /// Latest snapshot delivered for this widget instance.
 ///
-/// Stage A returns [`Params::default`] unconditionally; the host-side wiring lands
-/// in the commit that adds `host_params_snapshot` (BDK-432 PLAN stage C).
+/// First call inside `init` fetches via `host_params_snapshot`.
+/// Subsequent calls reuse the cached bytes until `host_params_version` changes;
+/// at that point the old snapshot is moved into [`previous`] and the new one is fetched.
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn current() -> Params {
+    refresh_if_stale();
+    cache_clone_current()
+}
+
+/// Snapshot delivered immediately before [`current`].
 ///
-/// The signature is the final one — when the wiring lands, widgets compiled
-/// against this SDK pick up real data with no SDK change.
+/// [`Params::default`] until at least one update has been observed (i.e. during `init`
+/// and the first `render` of any widget life).
+///
+/// Inside `on_params_update`, holds the just-replaced snapshot — diff against [`current`]
+/// to react only to keys whose value actually changed.
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn previous() -> Params {
+    cache_clone_previous()
+}
+
+// ── Native-target stubs ─────────────────────────────────────────────
+// On native targets the host imports don't exist; SDK tests use `Params::from_bytes` directly.
+// The `current` / `previous` entry points return empty snapshots so non-wasm consumers of the
+// SDK API (storybook etc.) still compile and behave consistently.
+
+#[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn current() -> Params {
     Params::default()
 }
 
-/// Snapshot delivered immediately before [`current`].
-///
-/// Returns [`Params::default`] before any `on_params_update` has been observed
-/// by the host runtime, and during `init`. As with [`current`],
-/// the body is a stub until BDK-432 PLAN stage C lands.
+#[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn previous() -> Params {
     Params::default()
+}
+
+// ── Host imports ────────────────────────────────────────────────────
+
+#[cfg(target_arch = "wasm32")]
+unsafe extern "C" {
+    /// Probe-then-allocate snapshot reader.
+    /// `out_cap == 0` returns required byte length without writing;
+    /// `out_cap >= required` writes and returns bytes written;
+    /// `out_cap < required` returns required length so the caller can retry with a larger buffer.
+    fn host_params_snapshot(out_ptr: *mut u8, out_cap: u32) -> u32;
+
+    /// Opaque change marker for the current host-side snapshot.
+    /// Different value from last read = re-fetch; equal = use cached bytes.
+    fn host_params_version() -> u64;
+}
+
+// ── Cache state ─────────────────────────────────────────────────────
+// Single-threaded wasm32 guest, so a plain `RefCell` inside `thread_local!` is sound and the
+// borrow checker enforces re-entrancy is impossible.
+// The host serialises guest calls, so there's no concurrent access.
+
+#[cfg(target_arch = "wasm32")]
+struct ParamsCache {
+    current: Params,
+    previous: Params,
+    /// Last observed value of `host_params_version()`.
+    /// `None` before the first fetch — distinguishes "host returned 0" from "never fetched".
+    last_seen_version: Option<u64>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl ParamsCache {
+    const fn new() -> Self {
+        Self {
+            current: Params {
+                bytes: alloc::vec::Vec::new(),
+            },
+            previous: Params {
+                bytes: alloc::vec::Vec::new(),
+            },
+            last_seen_version: None,
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+extern crate alloc;
+
+#[cfg(target_arch = "wasm32")]
+std::thread_local! {
+    static PARAMS_CACHE: core::cell::RefCell<ParamsCache> = const { core::cell::RefCell::new(ParamsCache::new()) };
+}
+
+#[cfg(target_arch = "wasm32")]
+fn refresh_if_stale() {
+    // SAFETY: `host_params_version` has no out-params and is safe to call.
+    let host_version = unsafe { host_params_version() };
+
+    let needs_refresh = PARAMS_CACHE.with(|c| {
+        let cache = c.borrow();
+        cache.last_seen_version != Some(host_version)
+    });
+    if !needs_refresh {
+        return;
+    }
+
+    // Probe the required byte length.
+    // SAFETY: passing a null pointer is sound when `out_cap == 0` — the host implementation
+    // explicitly checks the cap before writing and returns the required length without
+    // touching the pointer.
+    let needed = unsafe { host_params_snapshot(core::ptr::null_mut(), 0) };
+
+    let mut buf = alloc::vec::Vec::with_capacity(needed as usize);
+    buf.resize(needed as usize, 0);
+    let written = if needed > 0 {
+        // SAFETY: `buf` is uniquely owned with capacity `needed`; the host writes at most
+        // `out_cap` bytes (= `needed`) starting at `out_ptr`.
+        unsafe { host_params_snapshot(buf.as_mut_ptr(), needed) }
+    } else {
+        0
+    };
+    buf.truncate(written as usize);
+
+    PARAMS_CACHE.with(|c| {
+        let mut cache = c.borrow_mut();
+        // Rotate: old `current` becomes the new `previous`.
+        // `previous` from before this update is dropped — only one step of history is kept.
+        let new_current = Params::from_bytes(buf);
+        let old_current = core::mem::replace(&mut cache.current, new_current);
+        cache.previous = old_current;
+        cache.last_seen_version = Some(host_version);
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+fn cache_clone_current() -> Params {
+    PARAMS_CACHE.with(|c| c.borrow().current.clone())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn cache_clone_previous() -> Params {
+    PARAMS_CACHE.with(|c| c.borrow().previous.clone())
 }
 
 #[cfg(test)]
@@ -485,10 +612,11 @@ mod tests {
     }
 
     #[test]
-    fn current_and_previous_are_default_in_stub() {
-        // Sanity-check the stage-D placeholder behaviour.
-        // Once stage C lands and wires the host import, these will return real snapshots;
-        // this test will then have to mock the host call or move to an integration test that runs under the runtime.
+    fn current_and_previous_are_default_on_native() {
+        // On `wasm32`, [`current`] and [`previous`] call the host imports.
+        // On native (this test target), those imports don't exist; the native fallback returns
+        // [`Params::default`] so non-wasm consumers of the SDK API compile and behave consistently.
+        // End-to-end coverage of the wasm path lives in `bmc-wasm-runtime` integration tests.
         assert!(current().is_empty());
         assert!(previous().is_empty());
     }

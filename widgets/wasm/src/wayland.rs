@@ -33,6 +33,9 @@ impl RenderState {
 /// Wayland client for the WASM widget.
 pub struct WaylandClient {
     surface: DeckWidgetSurfaceClient,
+    /// Initial params JSON from the configure batch, kept until the runtime is constructed.
+    /// Applied to the runtime via `set_params` immediately after first init.
+    initial_params: serde_json::Value,
 }
 
 impl WaylandClient {
@@ -40,9 +43,17 @@ impl WaylandClient {
     pub fn connect() -> Result<Self> {
         let (surface, initial) = DeckWidgetSurfaceClient::connect()?;
 
-        tracing::info!("Widget config: {}x{}", initial.width, initial.height);
+        tracing::info!(
+            "Widget config: {}x{}, {} params key(s)",
+            initial.width,
+            initial.height,
+            initial.params.as_object().map_or(0, serde_json::Map::len),
+        );
 
-        Ok(Self { surface })
+        Ok(Self {
+            surface,
+            initial_params: initial.params,
+        })
     }
 
     /// Run the event loop with poll(2)-based frame scheduling.
@@ -152,6 +163,12 @@ impl WaylandClient {
                     minor,
                     patch
                 );
+
+                // Apply the params delivered by the compositor in the initial configure batch.
+                // Parsed lossily — non-scalar entries are dropped at debug log inside the helper.
+                let params = bmc_wasm_runtime::parse_params_json(&self.initial_params);
+                tracing::info!("Applying {} params key(s) to runtime", params.len());
+                runtime.set_params(params);
 
                 // Seed clock so animations and frame deadlines tick from t=0
                 let monotonic_origin = Instant::now();
