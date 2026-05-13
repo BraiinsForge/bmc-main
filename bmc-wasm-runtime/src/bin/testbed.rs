@@ -545,13 +545,13 @@ impl App {
                 }
             };
             rt_config.mesh_msaa_samples = 4;
+            rt_config.params = self.params.clone();
 
             let (led_tx, led_rx) = channel();
             rt_config.led_command_sender = Some(led_tx);
 
-            let mut runtime = create_runtime(&self.wasm_path, &gl_config, w, h, fbo_id, rt_config)
+            let runtime = create_runtime(&self.wasm_path, &gl_config, w, h, fbo_id, rt_config)
                 .context("Failed to create runtime")?;
-            runtime.set_params(self.params.clone());
             tiles.push(PreviewTile {
                 runtime,
                 x,
@@ -987,6 +987,7 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
                 kv_store_path: Some(tile.kv_path.clone()),
                 mesh_msaa_samples: 4,
                 led_command_sender: Some(led_tx),
+                params: state.params.clone(),
                 ..RuntimeConfig::default()
             };
             match create_runtime(
@@ -997,8 +998,7 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
                 fbo_id,
                 rt_config,
             ) {
-                Ok(mut new_runtime) => {
-                    new_runtime.set_params(state.params.clone());
+                Ok(new_runtime) => {
                     tile.runtime = new_runtime; // drops old runtime → deletes old FBO
                     tile.led_rx = led_rx;
                     tile.led_scene = None;

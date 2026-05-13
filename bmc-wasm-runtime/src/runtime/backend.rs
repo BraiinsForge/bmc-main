@@ -21,7 +21,7 @@ use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
 use bmc_render::tree::{self, TouchHit};
 
-use crate::host_api::{FixtureEvent, HostState};
+use crate::host_api::{FixtureEvent, HostState, Lifecycle};
 
 /// Write a `TouchHit` (4×f32 LE = 16 bytes) to WASM memory at `out_ptr`.
 pub(super) fn write_touch_hit(caller: &mut Caller<'_, HostState>, out_ptr: u32, hit: &TouchHit) {
@@ -36,6 +36,30 @@ pub(super) fn write_touch_hit(caller: &mut Caller<'_, HostState>, out_ptr: u32, 
             data[start + 12..start + 16].copy_from_slice(&hit.height.to_le_bytes());
         }
     }
+}
+
+/// Run a guest call inside the given [`Lifecycle`] phase,
+/// resetting to [`Lifecycle::Idle`] before returning.
+///
+/// Phases are flat by design (the `Lifecycle` doc spells out the single-threaded,
+/// host-serialised guarantee) — no two are ever on the stack simultaneously,
+/// so the falling edge is always `Idle`.
+///
+/// If that ever needs to change, this helper would save/restore instead,
+/// and the call sites wouldn't change shape.
+///
+/// Not panic-safe by design: wasmi reports traps via `Err`, not panic.
+/// A Rust-side panic from a guest call indicates a host-import bug
+/// we want to surface and abort on, not silently recover from.
+fn in_lifecycle<R>(
+    store: &mut wasmi::Store<HostState>,
+    phase: Lifecycle,
+    f: impl FnOnce(&mut wasmi::Store<HostState>) -> R,
+) -> R {
+    store.data_mut().current_lifecycle = phase;
+    let result = f(store);
+    store.data_mut().current_lifecycle = Lifecycle::Idle;
+    result
 }
 
 /// Call the widget's `__bmc_sdk_version` export and validate against the host.
@@ -147,6 +171,18 @@ pub struct RuntimeConfig {
     /// matches the Deck's hardware ceiling for 3D content. Hosts on faster
     /// targets can lower this toward 16 ms (60 fps) per the BDK-266 NFR.
     pub animation_frame_delay_ms: u32,
+    /// Initial widget params, staged into the runtime **before** the guest's `init()`
+    /// runs so the widget's first frame already sees operator-configured values
+    /// via `bmc_wasm_sdk::params::current()`. The manifest's per-`ParamKind` defaults
+    /// are expected to be folded in by the caller (compositor / testbed).
+    /// The runtime stores the table verbatim and does not re-apply defaults.
+    ///
+    /// The host bumps the version counter once when these are installed.
+    /// The bump is observed by the guest's lazy `params::current()` fetch on first read,
+    /// not as a separate `on_params_update` invocation (that hook only fires for **subsequent**
+    /// deliveries through [`WasmWidgetRuntime::deliver_params_update`]).
+    pub params:
+        std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
 }
 
 impl RuntimeConfig {
@@ -170,6 +206,7 @@ impl Default for RuntimeConfig {
             rng_seed: None,
             led_command_sender: None,
             animation_frame_delay_ms: Self::DEFAULT_ANIMATION_FRAME_DELAY_MS,
+            params: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -187,6 +224,11 @@ pub struct WasmWidgetRuntime {
     /// Symmetric counterpart to `init`; gives a widget a chance to release
     /// its own ephemeral state before the host-side safety sweep runs.
     unload_func: Option<wasmi::TypedFunc<(), ()>>,
+    /// Optional guest export fired for every params delivery **after** the initial one.
+    /// The first delivery is observed through `params::current()` inside `init`.
+    /// Subsequent deliveries arrive via [`Self::deliver_params_update`], which calls
+    /// this hook under [`Lifecycle::ParamsUpdate`].
+    on_params_update_func: Option<wasmi::TypedFunc<(), ()>>,
     sdk_version: (u16, u16, u16),
     /// Instruction budget reset before each WASM frame execution.
     pub(super) fuel_per_frame: u64,
@@ -209,8 +251,8 @@ impl WasmWidgetRuntime {
     /// Create a new runtime from WASM bytes and a GL function loader.
     ///
     /// All configuration from [`RuntimeConfig`] is applied **before** the WASM
-    /// `init()` export runs, so interceptors, KV, and event fixtures are
-    /// available from the widget's first instruction.
+    /// `init()` export runs, so interceptors, KV, and event fixtures are available
+    /// from the widget's first instruction.
     ///
     /// # Safety
     /// `load_fn` must return valid OpenGL function pointers for the current GL context.
@@ -238,6 +280,7 @@ impl WasmWidgetRuntime {
             rng_seed,
             led_command_sender,
             animation_frame_delay_ms,
+            params,
         } = config;
 
         let mut engine_config = wasmi::Config::default();
@@ -268,8 +311,11 @@ impl WasmWidgetRuntime {
         let sdk_version = check_sdk_version(instance, &mut store)?;
         let render_func = instance.get_typed_func::<u32, ()>(&store, "render")?;
         let unload_func = instance.get_typed_func::<(), ()>(&store, "unload").ok();
+        let on_params_update_func = instance
+            .get_typed_func::<(), ()>(&store, "on_params_update")
+            .ok();
 
-        // Apply config before init() so interceptors/KV are available immediately.
+        // Apply config before init() so interceptors/KV/params are available immediately.
         let state = store.data_mut();
         state.kv_store_path = kv_store_path;
         state.fetch_interceptor = fetch_interceptor;
@@ -278,6 +324,16 @@ impl WasmWidgetRuntime {
         state.rng_state = rng_seed;
         state.led_command_sender = led_command_sender;
         state.frame_schedule.animation_frame_delay_ms = animation_frame_delay_ms;
+        // Stage the initial params snapshot before `init` runs so the guest's
+        // first `params::current()` call observes operator-configured values,
+        // not an empty map.
+        //
+        // The version is bumped once here; subsequent deliveries go through
+        // `deliver_params_update`, which bumps again and fires `on_params_update`.
+        if !params.is_empty() {
+            state.params = params;
+            state.params_version = state.params_version.wrapping_add(1);
+        }
         if !event_fixtures.is_empty() {
             state.event_fixtures = Some(crate::host_api::FixtureEventState {
                 events: event_fixtures,
@@ -292,7 +348,9 @@ impl WasmWidgetRuntime {
 
         // Call init — all host config is in place
         if let Ok(init_func) = instance.get_typed_func::<(u32, u32), ()>(&store, "init") {
-            init_func.call(&mut store, (width, height))?;
+            in_lifecycle(&mut store, Lifecycle::Init, |s| {
+                init_func.call(s, (width, height))
+            })?;
         }
 
         Ok(Self {
@@ -300,6 +358,7 @@ impl WasmWidgetRuntime {
             instance,
             render_func,
             unload_func,
+            on_params_update_func,
             sdk_version,
             fuel_per_frame,
             fuel_strikes: 0,
@@ -371,7 +430,10 @@ impl WasmWidgetRuntime {
         self.store.set_fuel(self.fuel_per_frame)?;
         let wasm_t0 = Instant::now();
         ii_stopwatch::stopwatch_start!(self.wasm_w);
-        let call_result = self.render_func.call(&mut self.store, wasm_delta);
+        let render_func = self.render_func;
+        let call_result = in_lifecycle(&mut self.store, Lifecycle::Render, |s| {
+            render_func.call(s, wasm_delta)
+        });
         ii_stopwatch::stopwatch_stop!(self.wasm_w);
 
         #[cfg(feature = "profiling")]
@@ -532,13 +594,14 @@ impl WasmWidgetRuntime {
             .min(monotonic_ms);
     }
 
-    /// Replace the host-side widget params snapshot.
-    ///
-    /// Called by the compositor / testbed on initial widget creation
-    /// and on every operator-driven update.
+    /// Replace the host-side widget params snapshot **without** firing the guest's
+    /// `on_params_update` hook.
     ///
     /// The version counter is bumped via `wrapping_add(1)` so guests observing it
-    /// re-fetch the snapshot on the next read of `params::current()`.
+    /// re-fetch the snapshot on the next read of `params::current()`. Intended for
+    /// initial-delivery test scenarios and the rare host code path that wants to
+    /// stage a snapshot before the first render without notifying the guest.
+    /// Production deliveries should use [`Self::deliver_params_update`].
     pub fn set_params(
         &mut self,
         params: std::collections::BTreeMap<
@@ -549,6 +612,47 @@ impl WasmWidgetRuntime {
         let state = self.store.data_mut();
         state.params = params;
         state.params_version = state.params_version.wrapping_add(1);
+    }
+
+    /// Deliver an operator-driven params update to the running widget.
+    ///
+    /// Stages the snapshot via [`Self::set_params`] (bumping the version) and, if the
+    /// widget exported `on_params_update`, calls it under [`Lifecycle::ParamsUpdate`]
+    /// with a fresh fuel budget. The hook is best-effort: a trap is logged and swallowed
+    /// — the new snapshot is already staged, so the next `render` will pick it up via
+    /// `params::current()` regardless of whether the hook completed cleanly.
+    ///
+    /// Use this for every params delivery **after** the initial one (initial deliveries
+    /// belong in [`RuntimeConfig::params`] so they're observable from `init`).
+    ///
+    /// Returns whether the guest's hook actually ran (`true` = widget exports
+    /// `on_params_update` and the call completed without a trap; `false` = no hook or
+    /// the hook trapped). Most callers ignore the return; tests use it to assert wiring.
+    pub fn deliver_params_update(
+        &mut self,
+        params: std::collections::BTreeMap<
+            bmc_widget_manifest::ParamKey,
+            bmc_widget_manifest::ParamValue,
+        >,
+    ) -> bool {
+        self.set_params(params);
+        let Some(hook) = self.on_params_update_func else {
+            return false;
+        };
+        if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+            tracing::warn!("on_params_update: could not set fuel: {e}");
+            return false;
+        }
+        let call_result = in_lifecycle(&mut self.store, Lifecycle::ParamsUpdate, |s| {
+            hook.call(s, ())
+        });
+        match call_result {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!("on_params_update trapped: {e}");
+                false
+            }
+        }
     }
 
     /// Access the GPU renderer (for begin_frame, flush, and testbed drawing).
@@ -648,6 +752,39 @@ impl WasmWidgetRuntime {
     pub fn instance(&self) -> &wasmi::Instance {
         &self.instance
     }
+
+    /// Test-only escape hatch: call an arbitrary `() -> i32` export by name.
+    ///
+    /// Used by `tests/lifecycle.rs` to read observation counters out of hand-rolled
+    /// WAT probe widgets without exposing the full `Store<HostState>` to test code.
+    /// Returns `None` if the widget doesn't export `name` or the call traps —
+    /// the test then fails with a clear "missing export X" assertion at the call site.
+    ///
+    /// Marked `#[doc(hidden)]` because it is not part of the supported runtime API.
+    /// `#[cfg(test)]` is not viable here because integration tests in `tests/` see
+    /// the crate as a regular dependency, not with the `test` cfg set.
+    #[doc(hidden)]
+    pub fn call_export_i32(&mut self, name: &str) -> Option<i32> {
+        let func = self
+            .instance
+            .get_typed_func::<(), i32>(&self.store, name)
+            .ok()?;
+        func.call(&mut self.store, ()).ok()
+    }
+
+    /// Test-only escape hatch: call an arbitrary `() -> i64` export by name.
+    /// Used for `last_version` observations that thread the `u64` version counter
+    /// through `i64` because wasmi typed funcs round-trip i64 cleanly.
+    ///
+    /// Same scoping notes as [`Self::call_export_i32`].
+    #[doc(hidden)]
+    pub fn call_export_i64(&mut self, name: &str) -> Option<i64> {
+        let func = self
+            .instance
+            .get_typed_func::<(), i64>(&self.store, name)
+            .ok()?;
+        func.call(&mut self.store, ()).ok()
+    }
 }
 
 impl Drop for WasmWidgetRuntime {
@@ -659,7 +796,9 @@ impl Drop for WasmWidgetRuntime {
         if let Some(unload) = self.unload_func {
             if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
                 tracing::warn!("unload: could not set fuel: {e}");
-            } else if let Err(e) = unload.call(&mut self.store, ()) {
+            } else if let Err(e) =
+                in_lifecycle(&mut self.store, Lifecycle::Unload, |s| unload.call(s, ()))
+            {
                 tracing::warn!("unload trapped: {e}");
             }
         }

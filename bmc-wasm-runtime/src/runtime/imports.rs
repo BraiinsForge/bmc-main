@@ -5,9 +5,10 @@
 mod audio;
 mod data;
 mod eviction;
+mod guards;
 mod led;
 mod network;
-mod params;
+pub(crate) mod params;
 mod render;
 mod system;
 

@@ -125,6 +125,30 @@ pub enum FixtureEventKind {
     LedDisable,
 }
 
+/// Phase of the guest lifecycle the runtime is currently executing.
+///
+/// Set immediately before each guest-call site in `WasmWidgetRuntime` and reset to [`Self::Idle`]
+/// when the call returns. Read by guarded host imports to decide whether the call is allowed
+/// in the current phase (the matrix lives in `runtime/imports/guards.rs`).
+///
+/// Single-threaded guest + host-serialised calls = at most one non-`Idle` value at any time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Lifecycle {
+    /// Outside any guest call. Most imports are dormant; assets registered here would have no
+    /// frame to bind to and trap (pre-existing behaviour).
+    Idle,
+    /// `init` is on the stack. Setup work — assets, KV reads, request_frame, etc.
+    Init,
+    /// `render` is on the stack. `host_submit_tree`, touch readbacks, and frame requests are
+    /// all legal here.
+    Render,
+    /// `on_params_update` is on the stack. State mutation + `request_frame` are legal;
+    /// submitting a tree is not (the next render is the rendering opportunity).
+    ParamsUpdate,
+    /// `unload` is on the stack. Synchronous cleanup only; frame requests no-op.
+    Unload,
+}
+
 /// Identifies a single `WasmWidgetRuntime` instance.
 ///
 /// Minted from a process-wide monotonic counter at HostState construction.
@@ -471,14 +495,18 @@ pub(crate) struct HostState {
     /// is deterministic and snapshot byte-equality is meaningful.
     pub params: BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
 
-    /// Opaque change marker bumped on every `set_params` call via `wrapping_add(1)`.
-    /// Returned to guests by `host_params_version`; the SDK refreshes its cached snapshot
-    /// whenever this differs from the last-seen value.
+    /// Opaque change marker bumped on every `set_params` / `deliver_params_update` call
+    /// via `wrapping_add(1)`. Returned to guests by `host_params_version`.
+    /// The SDK refreshes its cached snapshot whenever this differs from the last-seen value.
     ///
     /// Semantics are deliberately "different = changed" rather than "greater = newer",
     /// so the counter is safe to wrap. The numeric value carries no meaning beyond
     /// change detection — it is not a count, not a timestamp, not an ordering.
     pub params_version: u64,
+
+    /// Guest-lifecycle phase the runtime is currently in. See [`Lifecycle`].
+    /// Single-threaded guest, so this is a plain field — only one phase can be active at a time.
+    pub current_lifecycle: Lifecycle,
 
     /// Next fetch request ID counter (for `FetchRequestId::alloc`).
     pub next_request_id: u32,
@@ -645,6 +673,7 @@ impl HostState {
             monotonic_ms: 0,
             params: BTreeMap::new(),
             params_version: 0,
+            current_lifecycle: Lifecycle::Idle,
             next_request_id: 1,
             fetch_rx,
             fetch_tx,

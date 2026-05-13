@@ -206,6 +206,9 @@ glow = "0.16.0"
 gltf = "1"
 glutin = "0.32"
 glutin-winit = "0.5"
+# `wat` parses WebAssembly Text format into binary at runtime; used by
+# `bmc-wasm-runtime/tests/lifecycle.rs` to declare hand-rolled lifecycle
+# probe widgets inline rather than rely on a cross-target build of an example crate.
 governor = "0.8.1"
 gpiod = "0.2.3"
 heck = "0.5"
@@ -340,6 +343,7 @@ uuid = { version = "1.15.1", features = ["fast-rng", "serde", "v4"] }
 ux = { version = "0.1.6" }
 walkdir = "2.5.0"
 wasmi = "1.0"
+wat = "1"
 wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31.14"
 wayland-protocols = { version = "0.32", features = ["client", "server", "staging"] }

@@ -146,6 +146,13 @@ impl WaylandClient {
                 tracing::info!("GBM-based EGL initialized");
 
                 let fbo_id = egl.begin_frame()?;
+                // Parse the compositor-delivered params and pass them via `RuntimeConfig`
+                // so they're staged on `HostState` before `init` runs — the widget's first
+                // `params::current()` call (inside `init` or its first `render`) observes
+                // operator-configured values, not an empty map.
+                // Non-scalar entries are dropped at debug log inside `parse_params_json`.
+                let params = bmc_wasm_runtime::parse_params_json(&self.initial_params);
+                tracing::info!("Applying {} params key(s) to runtime", params.len());
                 let mut runtime = unsafe {
                     WasmWidgetRuntime::new(
                         &wasm_bytes,
@@ -153,7 +160,10 @@ impl WaylandClient {
                         w,
                         h,
                         fbo_id,
-                        RuntimeConfig::default(),
+                        RuntimeConfig {
+                            params,
+                            ..RuntimeConfig::default()
+                        },
                     )
                 }?;
                 let (major, minor, patch) = runtime.sdk_version();
@@ -163,12 +173,6 @@ impl WaylandClient {
                     minor,
                     patch
                 );
-
-                // Apply the params delivered by the compositor in the initial configure batch.
-                // Parsed lossily — non-scalar entries are dropped at debug log inside the helper.
-                let params = bmc_wasm_runtime::parse_params_json(&self.initial_params);
-                tracing::info!("Applying {} params key(s) to runtime", params.len());
-                runtime.set_params(params);
 
                 // Seed clock so animations and frame deadlines tick from t=0
                 let monotonic_origin = Instant::now();

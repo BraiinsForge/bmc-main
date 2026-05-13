@@ -1596,6 +1596,7 @@ dependencies = [
  "tungstenite",
  "ureq",
  "wasmi",
+ "wat",
  "webpki-roots 1.0.6",
  "winit",
 ]

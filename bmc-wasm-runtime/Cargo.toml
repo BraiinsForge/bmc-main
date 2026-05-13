@@ -85,5 +85,15 @@ name = "capture"
 path = "src/bin/capture/main.rs"
 required-features = ["capture"]
 
+[dev-dependencies]
+# Hand-rolled WAT fixtures for `tests/lifecycle.rs` — avoids a cross-target
+# build dependency on the example widgets.
+wat.workspace = true
+# Headless EGL stack for `tests/lifecycle.rs`. The `capture` binary already
+# uses this on Linux; the test harness reuses the same setup so tests can
+# construct a real `WasmWidgetRuntime` under the `ci` build profile
+# (Mesa + llvmpipe + surfaceless EGL).
+glutin.workspace = true
+
 [lints]
 workspace = true

@@ -9,6 +9,10 @@ mod imports;
 mod memory;
 mod time;
 
+// Re-export `encode_params` so `HostState::encoded_params` (in `host_api`) can call it
+// without `imports` itself becoming public.
+pub(crate) use imports::params::encode_params;
+
 pub use backend::{
     FetchInterceptor, FetchObserver, RenderStatus, RuntimeConfig, RuntimeResourceLimits,
     WasmWidgetRuntime,
