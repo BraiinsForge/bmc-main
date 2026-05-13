@@ -239,10 +239,6 @@ impl SphereRenderer {
         self.last_lat = f32::NAN;
     }
 
-    pub fn has_texture(&self) -> bool {
-        self.texture.is_some()
-    }
-
     /// Render the sphere to the offscreen FBO if any parameter changed.
     /// Returns the femtovg image backing the FBO, or `None` when no texture
     /// is set yet — callers must skip the draw in that case so stale FBO

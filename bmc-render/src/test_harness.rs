@@ -108,6 +108,14 @@ impl GlHarness {
             .map_err(|e| anyhow!("OpenGl renderer init failed: {e}"))?;
         Canvas::new(renderer).map_err(|e| anyhow!("Canvas::new failed: {e}"))
     }
+
+    /// FFI proc-addr loader for building higher-level renderers
+    /// (`FemtoVgRenderer`) on top of this harness's GL context. Function
+    /// pointers are baked into the renderer during its `new()`, so the
+    /// returned closure only needs to outlive that call.
+    pub(crate) fn load_fn(&self) -> impl FnMut(&str) -> *const std::ffi::c_void + use<'_> {
+        |s: &str| (self.proc_addr)(s)
+    }
 }
 
 /// Allocate a buffer and bind it once so `gl.is_buffer` reports `true`.

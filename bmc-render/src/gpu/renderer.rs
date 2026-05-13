@@ -52,6 +52,11 @@ pub struct FemtoVgRenderer {
     icon_registry: IconRegistry,
     bitmap_registry: BitmapRegistry,
     sphere: Option<SphereRenderer>,
+    /// `BitmapId` currently bound as the sphere's source texture. Used to
+    /// detect rebind-on-change in `draw_sphere`; a mismatch (incl. the
+    /// post-evict case where the registry has dropped the id) re-fetches
+    /// the native texture so we never sample a deleted GL name.
+    sphere_bitmap_id: Option<BitmapId>,
     mesh_renderer: Option<MeshRenderer>,
     mesh_msaa_samples: u32,
     width: f32,
@@ -215,6 +220,7 @@ impl FemtoVgRenderer {
             icon_registry,
             bitmap_registry: BitmapRegistry::new(),
             sphere: None,
+            sphere_bitmap_id: None,
             mesh_renderer: None,
             mesh_msaa_samples,
             width: width as f32,
@@ -666,12 +672,24 @@ impl Renderer for FemtoVgRenderer {
             .as_mut()
             .expect("BUG: sphere is initialized above");
 
-        // Lazy-init texture from the registered bitmap
-        if !sphere.has_texture()
-            && let Some(image_id) = self.bitmap_registry.get(bitmap_id)
-            && let Ok(tex) = self.canvas.get_native_texture(image_id)
-        {
+        // Resolve the bitmap each frame so an evict+re-register cycle is
+        // observed before we touch GL. Skip the draw on registry miss so a
+        // stale FBO never gets sampled.
+        let Some(image_id) = self.bitmap_registry.get(bitmap_id) else {
+            self.sphere_bitmap_id = None;
+            return;
+        };
+
+        // Rebind the GL texture when the source bitmap changed. `BitmapId`
+        // is not recycled across evict+re-register (see `BitmapRegistry`),
+        // so equal ids guarantee the underlying texture is still live.
+        if self.sphere_bitmap_id != Some(bitmap_id) {
+            let Ok(tex) = self.canvas.get_native_texture(image_id) else {
+                self.sphere_bitmap_id = None;
+                return;
+            };
             sphere.set_texture(tex);
+            self.sphere_bitmap_id = Some(bitmap_id);
         }
 
         // When light is NaN, pass zero-vector to disable shading
@@ -780,4 +798,163 @@ fn build_femtovg_path(points: &[(f32, f32)], closed: bool, smooth: bool) -> Path
         path.close();
     }
     path
+}
+
+// ── Tests ──────────────────────────────────────────────────────────
+#[cfg(test)]
+#[cfg(target_os = "linux")]
+mod tests {
+    use super::FemtoVgRenderer;
+    use crate::renderer::Renderer;
+    use crate::test_harness::GlHarness;
+    use glow::HasContext;
+    use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
+    use std::io::Cursor;
+
+    /// Encode a 1×1 RGBA PNG with the given pixel; minimum payload that
+    /// rides through `BitmapRegistry::register`'s decode+upload path.
+    fn one_px_png(rgba: [u8; 4]) -> Vec<u8> {
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_pixel(1, 1, Rgba(rgba));
+        let mut buf = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(img)
+            .write_to(&mut buf, ImageFormat::Png)
+            .expect("BUG: PNG encode should succeed");
+        buf.into_inner()
+    }
+
+    /// Drain any buffered GL errors so a subsequent `gl.get_error()` reflects
+    /// only the operation under test.
+    fn drain_gl_errors(gl: &glow::Context) {
+        loop {
+            let err = unsafe { gl.get_error() };
+            if err == glow::NO_ERROR {
+                break;
+            }
+        }
+    }
+
+    /// Regression for the use-after-delete documented on MR !324: when
+    /// `BitmapSlot::set` evicts+re-registers the sphere's source bitmap,
+    /// the next `draw_sphere` must rebind to the fresh GL texture instead
+    /// of sampling the deleted one.
+    #[test]
+    fn sphere_rebind_after_bitmap_evict_does_not_use_deleted_texture() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, 0, 0) }
+            .expect("BUG: renderer init failed");
+
+        let png_a = one_px_png([255, 0, 0, 255]);
+        let png_b = one_px_png([0, 255, 0, 255]);
+
+        let id_a = renderer
+            .register_bitmap("sphere:test", &png_a)
+            .expect("BUG: register A");
+        drain_gl_errors(&harness.gl);
+
+        renderer.draw_sphere(
+            0.0,
+            0.0,
+            64.0,
+            64.0,
+            id_a,
+            0.0,
+            0.0,
+            2.0,
+            f32::NAN,
+            f32::NAN,
+            false,
+        );
+        let err = unsafe { harness.gl.get_error() };
+        assert_eq!(
+            err,
+            glow::NO_ERROR,
+            "first draw_sphere produced GL 0x{err:04X}"
+        );
+        assert_eq!(renderer.sphere_bitmap_id, Some(id_a));
+
+        // Evict A and register B under the same tag — mirrors the
+        // `BitmapSlot::set` host path that destroys A's GL texture.
+        assert!(
+            renderer
+                .bitmap_registry
+                .evict("sphere:test", &mut renderer.canvas),
+            "BUG: evict A",
+        );
+        let id_b = renderer
+            .register_bitmap("sphere:test", &png_b)
+            .expect("BUG: register B");
+        assert_ne!(id_a, id_b, "BUG: re-register should mint a fresh BitmapId");
+
+        drain_gl_errors(&harness.gl);
+        renderer.draw_sphere(
+            0.0,
+            0.0,
+            64.0,
+            64.0,
+            id_b,
+            0.0,
+            0.0,
+            2.0,
+            f32::NAN,
+            f32::NAN,
+            false,
+        );
+        let err = unsafe { harness.gl.get_error() };
+        assert_eq!(
+            err,
+            glow::NO_ERROR,
+            "draw_sphere after evict+rebind produced GL 0x{err:04X} (use-after-delete)",
+        );
+        assert_eq!(
+            renderer.sphere_bitmap_id,
+            Some(id_b),
+            "BUG: rebind tracker must follow the new BitmapId",
+        );
+    }
+
+    /// `draw_sphere` with an unregistered (or already-evicted) `BitmapId`
+    /// must skip the GL path entirely rather than sampling whatever
+    /// texture was last bound.
+    #[test]
+    fn sphere_skips_draw_on_registry_miss() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, 0, 0) }
+            .expect("BUG: renderer init failed");
+
+        let png = one_px_png([255, 255, 255, 255]);
+        let id = renderer
+            .register_bitmap("sphere:gone", &png)
+            .expect("BUG: register");
+        assert!(
+            renderer
+                .bitmap_registry
+                .evict("sphere:gone", &mut renderer.canvas),
+            "BUG: evict",
+        );
+
+        drain_gl_errors(&harness.gl);
+        renderer.draw_sphere(
+            0.0,
+            0.0,
+            64.0,
+            64.0,
+            id,
+            0.0,
+            0.0,
+            2.0,
+            f32::NAN,
+            f32::NAN,
+            false,
+        );
+        let err = unsafe { harness.gl.get_error() };
+        assert_eq!(
+            err,
+            glow::NO_ERROR,
+            "draw_sphere on missing bitmap produced GL 0x{err:04X}"
+        );
+        assert_eq!(
+            renderer.sphere_bitmap_id, None,
+            "BUG: registry miss must invalidate the cached binding",
+        );
+    }
 }
