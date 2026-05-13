@@ -139,51 +139,6 @@ fn run_capture(ctx: &CaptureCtx, config: &CaptureConfig) -> Result<()> {
 /// Loads and validates the fixture, extracts fetch interceptors and network
 /// events, seeds KV from the fixture header, then advances virtual time
 /// frame-by-frame dispatching events at their `at_ms` timestamps.
-/// Locate the widget's `manifest.json` next to the wasm binary and load its `params` defaults
-/// into the `BTreeMap` shape `RuntimeConfig.params` expects. Returns an empty map (no params
-/// staged) when the manifest can't be found or fails to parse — capture replay falls back to
-/// whatever the fixture's `ParamDelivery` events supply.
-///
-/// The package-name unwrapping (`_` → `-`) mirrors the testbed's autodetect helper so both
-/// binaries pick up the same manifest path for the same wasm file.
-fn load_manifest_defaults(
-    wasm_path: &Path,
-) -> std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue> {
-    let Some(stem) = wasm_path.file_stem().and_then(|s| s.to_str()) else {
-        return std::collections::BTreeMap::new();
-    };
-    let package = stem.replace('_', "-");
-    let Some(mut dir) = wasm_path.parent() else {
-        return std::collections::BTreeMap::new();
-    };
-    let manifest_path = loop {
-        let Some(parent) = dir.parent() else {
-            return std::collections::BTreeMap::new();
-        };
-        let candidate = parent.join(&package).join("manifest.json");
-        if candidate.exists() {
-            break candidate;
-        }
-        dir = parent;
-    };
-    let Ok(body) = std::fs::read_to_string(&manifest_path) else {
-        return std::collections::BTreeMap::new();
-    };
-    let Ok(manifest) = <bmc_widget_manifest::Manifest as std::str::FromStr>::from_str(&body) else {
-        return std::collections::BTreeMap::new();
-    };
-    manifest
-        .params
-        .iter()
-        .map(|(key, def)| {
-            (
-                key.clone(),
-                bmc_widget_manifest::ParamValue::from_param_kind_default(&def.kind),
-            )
-        })
-        .collect()
-}
-
 #[expect(
     clippy::too_many_lines,
     clippy::integer_division,
@@ -230,10 +185,13 @@ fn run_unified_capture(
     // Extract fetch interceptors and network events from the unified timeline
     let (fetch_interceptor, network_events) = split_unified_events(&fixture);
 
-    // Load the widget's manifest defaults so the runtime's first frame sees the same
-    // baseline state as the on-device compositor delivers. Operator-driven changes captured
-    // as `ParamDelivery` events in the fixture replay on top of this baseline.
-    let initial_params = load_manifest_defaults(&ctx.wasm_path);
+    // Initial params snapshot — baked into the fixture header so replay is fully
+    // self-contained (no `manifest.json` lookup at replay time, which used to walk up
+    // from the wasm binary and silently returned an empty map in CI's nix-build
+    // sandbox where the wasm artifact is divorced from its source tree).
+    let initial_params = bmc_wasm_runtime::parse_params_json(&serde_json::Value::Object(
+        fixture.header.initial_params.clone(),
+    ));
 
     // Build runtime config
     let mut rt_config = RuntimeConfig {

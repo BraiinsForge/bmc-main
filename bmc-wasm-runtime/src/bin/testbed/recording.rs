@@ -31,7 +31,7 @@ pub(super) struct GestureTracker {
 }
 
 /// Delay between a user action and its auto-inserted capture event (ms).
-const AUTO_CAPTURE_DELAY_MS: u64 = 500;
+pub(super) const AUTO_CAPTURE_DELAY_MS: u64 = 500;
 /// Pixel threshold separating "click" from "drag" / "scroll" gestures.
 const GESTURE_THRESHOLD: f32 = 5.0;
 
@@ -49,6 +49,13 @@ pub(super) struct RecordingState {
     pub(super) recording_start: std::time::Instant,
     /// Snapshot of KV dir state at recording start.
     pub(super) kv_snapshot: std::collections::HashMap<String, String>,
+    /// Snapshot of params at recording start (manifest defaults plus any operator
+    /// changes made BEFORE the record button was hit). Pre-encoded as the JSON
+    /// shape `FixtureHeader::initial_params` expects so replay can read them
+    /// without parsing the manifest; the host installs these as the runtime's
+    /// initial `RuntimeConfig::params`, so the first `ParamDelivery` event
+    /// in `events` diffs against them rather than against an empty snapshot.
+    pub(super) params_snapshot: serde_json::Map<String, serde_json::Value>,
     /// Start time (ISO 8601) captured at recording start.
     pub(super) start_time_iso: String,
     /// When true, a Capture event is auto-inserted after each user action.
@@ -347,6 +354,7 @@ impl TestbedApp {
             header: FixtureHeader {
                 time: rec.start_time_iso,
                 kv: rec.kv_snapshot,
+                initial_params: rec.params_snapshot,
             },
             events: merged,
         };

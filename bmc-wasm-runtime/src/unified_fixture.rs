@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 /// Metadata stored at the top of a unified fixture file.
 ///
 /// Captures the initial conditions so replay is fully self-contained:
-/// start time and KV store state are baked in, not loaded from external
-/// files like `secrets.ini`.
+/// start time, KV store state, and params snapshot are baked in, not
+/// loaded from external files like `secrets.ini` or `manifest.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FixtureHeader {
     /// ISO 8601 start time (e.g. `"2026-03-10T18:00:00"`).
@@ -27,6 +27,18 @@ pub struct FixtureHeader {
     /// Initial KV store entries. Applied before the first frame.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub kv: HashMap<String, String>,
+    /// Initial params snapshot — the value of every manifest-declared key
+    /// at the start of replay, before any `ParamDelivery` event fires. The
+    /// runtime materialises this into `RuntimeConfig::params`, so the first
+    /// `on_params_update` (driven by the first `ParamDelivery` in `events`)
+    /// sees these values as `previous()`. JSON-shape matches `ParamDelivery`
+    /// for round-trip simplicity.
+    ///
+    /// Empty for fixtures recorded before this field existed; capture
+    /// replay falls back to an empty initial snapshot in that case, which
+    /// means the first `ParamDelivery` will look like every key changed.
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub initial_params: serde_json::Map<String, serde_json::Value>,
 }
 
 // ── Body encoding ───────────────────────────────────────────────────
@@ -376,6 +388,7 @@ mod tests {
             header: FixtureHeader {
                 time: "2026-03-10T18:00:00".into(),
                 kv: HashMap::new(),
+                initial_params: serde_json::Map::new(),
             },
             events: vec![TimelineEvent {
                 at_ms: 0,
@@ -408,6 +421,7 @@ mod tests {
             header: FixtureHeader {
                 time: "2026-01-01T12:00:00".into(),
                 kv: HashMap::new(),
+                initial_params: serde_json::Map::new(),
             },
             events: vec![TimelineEvent {
                 at_ms: 0,
@@ -426,6 +440,7 @@ mod tests {
             header: FixtureHeader {
                 time: "2026-01-01T12:00:00".into(),
                 kv: HashMap::new(),
+                initial_params: serde_json::Map::new(),
             },
             events: vec![
                 TimelineEvent {
@@ -454,6 +469,7 @@ mod tests {
             header: FixtureHeader {
                 time: "2026-01-01T12:00:00".into(),
                 kv: HashMap::new(),
+                initial_params: serde_json::Map::new(),
             },
             events: vec![
                 TimelineEvent {
@@ -481,6 +497,7 @@ mod tests {
             header: FixtureHeader {
                 time: "2026-01-01T12:00:00".into(),
                 kv: HashMap::new(),
+                initial_params: serde_json::Map::new(),
             },
             events: vec![
                 TimelineEvent {
@@ -509,6 +526,7 @@ mod tests {
             header: FixtureHeader {
                 time: "2026-01-01T12:00:00".into(),
                 kv: HashMap::new(),
+                initial_params: serde_json::Map::new(),
             },
             events: vec![
                 TimelineEvent {
@@ -537,6 +555,7 @@ mod tests {
             header: FixtureHeader {
                 time: "2026-03-10T18:00:00".into(),
                 kv: HashMap::from([("theme".into(), "dark".into())]),
+                initial_params: serde_json::Map::new(),
             },
             events: vec![
                 TimelineEvent {
@@ -717,6 +736,7 @@ mod tests {
             header: FixtureHeader {
                 time: "2026-03-10T18:00:00".into(),
                 kv: HashMap::from([("theme".into(), "dark".into())]),
+                initial_params: serde_json::Map::new(),
             },
             events: vec![
                 TimelineEvent {

@@ -14,14 +14,26 @@
 
 use bmc_wasm_runtime::unified_fixture::{TimelineEvent, UnifiedEvent};
 
+use super::recording::AUTO_CAPTURE_DELAY_MS;
 use super::{PARAM_PANEL_W, TestbedApp};
 
 impl TestbedApp {
     /// Push a new params snapshot to every tile's runtime via `deliver_params_update`,
     /// update the local cache, and (when recording is active) append a `ParamDelivery`
-    /// event to the timeline.
+    /// event to the timeline plus a debounced auto-`Capture` event so each *settled*
+    /// param state yields one frame in the baseline.
     ///
     /// A no-op when the new snapshot matches the cached one.
+    ///
+    /// # Debounce
+    ///
+    /// Slider drags and text typing produce one `ParamDelivery` per intermediate value
+    /// (dozens per second). A naive "Capture 500 ms after every delivery" rule would
+    /// mint hundreds of nearly-identical frames. Instead, when a new delivery arrives
+    /// and the most-recently-pushed Capture's `at_ms` is still in the future relative
+    /// to the new delivery's time, slide that Capture forward to `at_ms + 500` instead
+    /// of appending a new one. Net effect: one Capture per cluster of changes ≤500 ms
+    /// apart, fired 500 ms after the cluster's last delivery.
     fn apply_params_update(
         &mut self,
         new_params: std::collections::BTreeMap<
@@ -52,6 +64,41 @@ impl TestbedApp {
                     params: json_params,
                 },
             });
+            if rec.auto_capture {
+                let capture_at = at_ms + AUTO_CAPTURE_DELAY_MS;
+                // Scan backwards for the most recent auto-Capture and slide it forward
+                // if it's still pending (its at_ms > current at_ms). Position-based
+                // lookup (e.g. `events[len-2]`) doesn't work — once we slide the prior
+                // Capture, subsequent deliveries get pushed past it and the position
+                // shifts. Match only `duration_ms: None, fps: None` (the auto-capture
+                // shape) so we never slide a gesture-path animation Capture, which has
+                // a concrete duration and shouldn't be debounced against params.
+                let pending = rec
+                    .events
+                    .iter_mut()
+                    .rev()
+                    .find(|e| {
+                        matches!(
+                            e.event,
+                            UnifiedEvent::Capture {
+                                duration_ms: None,
+                                fps: None
+                            }
+                        )
+                    })
+                    .filter(|e| e.at_ms > at_ms);
+                if let Some(prev_capture) = pending {
+                    prev_capture.at_ms = capture_at;
+                } else {
+                    rec.events.push(TimelineEvent {
+                        at_ms: capture_at,
+                        event: UnifiedEvent::Capture {
+                            duration_ms: None,
+                            fps: None,
+                        },
+                    });
+                }
+            }
         }
     }
 

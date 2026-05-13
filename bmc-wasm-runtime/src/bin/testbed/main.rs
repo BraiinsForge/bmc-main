@@ -574,7 +574,18 @@ impl TestbedApp {
         let recording_state = cli.record_size.as_ref().map(|size_name| {
             let active_tile = record_size_to_idx(size_name);
             let widget_root = find_widget_root(&cli.wasm_path);
-            let start_time_iso = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+            // Capture's fixture-header parser requires a timezone suffix on the time
+            // field (e.g. `2026-05-13T15:48:38+02:00`); a naive datetime is rejected.
+            let start_time_iso = chrono::Local::now().to_rfc3339();
+            // Initial params snapshot — what the host has staged in `RuntimeConfig::params`
+            // at this moment, pre-encoded into the JSON shape `FixtureHeader::initial_params`
+            // expects. Captured at recording start so the fixture is self-contained:
+            // replay no longer needs to locate the widget's `manifest.json` on disk to
+            // reconstruct the starting snapshot.
+            let params_snapshot: serde_json::Map<String, serde_json::Value> = params
+                .iter()
+                .map(|(k, v)| (k.as_str().to_owned(), v.to_json_value()))
+                .collect();
             RecordingState {
                 active_tile,
                 size_name: size_name.clone(),
@@ -583,6 +594,7 @@ impl TestbedApp {
                 widget_root,
                 recording_start: std::time::Instant::now(),
                 kv_snapshot: std::collections::HashMap::new(),
+                params_snapshot,
                 start_time_iso,
                 auto_capture: true,
             }
@@ -803,7 +815,14 @@ impl TestbedApp {
 
         let monotonic_ms = self.clock.start_instant.elapsed().as_millis() as u64;
         let system_time = chrono::Local::now().fixed_offset();
-        for tile in &mut self.tiles {
+        // In recording mode, only the active tile renders; the others are painted as blank
+        // slabs in `App::ui`. Skipping the WASM render here both clarifies the visual focus
+        // and keeps non-active runtimes from spending fuel on frames nobody will keep.
+        let active_record_idx = self.recording_mode.state.as_ref().map(|r| r.active_tile);
+        for (tile_idx, tile) in self.tiles.iter_mut().enumerate() {
+            if active_record_idx.is_some_and(|active| active != tile_idx) {
+                continue;
+            }
             tile.drain_led_commands();
             tile.runtime.set_time(system_time, monotonic_ms);
             tile.runtime
@@ -1064,10 +1083,35 @@ impl eframe::App for TestbedApp {
                         origin + egui::vec2(tile.x as f32, tile.y as f32),
                         egui::vec2(tile.gpu.width as f32, tile.gpu.height as f32),
                     );
+                    // Recording mode focuses on a single size — non-active tiles get a flat
+                    // dark slab instead of the WASM texture (whose FBO contents are stale
+                    // since `render_tiles` skipped them), and don't receive touch events or
+                    // an LED strip. The active tile gets a thin orange border so the operator
+                    // can see which one's live.
+                    let is_inactive_record =
+                        active_record_idx.is_some_and(|active| active != tile_idx);
+                    if is_inactive_record {
+                        ui.painter()
+                            .rect_filled(rect, 0.0, egui::Color32::from_gray(12));
+                        continue;
+                    }
+
                     // FemtoVG renders bottom-up into the FBO; flip V to display top-down.
                     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 1.0), egui::pos2(1.0, 0.0));
                     ui.painter()
                         .image(tile.gpu.egui_tex_id, rect, uv, egui::Color32::WHITE);
+
+                    if active_record_idx == Some(tile_idx) {
+                        // `Inside` so the bottom edge stays inside the tile rect — `Outside`
+                        // would paint one row below, which `paint_led_strip` then overwrites
+                        // with the LED strip background.
+                        ui.painter().rect_stroke(
+                            rect,
+                            0.0,
+                            egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 170, 80)),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
 
                     // Touch / mouse routing: allocate the same rect for click+drag so we
                     // can forward pointer events to the runtime in tile-local coordinates.

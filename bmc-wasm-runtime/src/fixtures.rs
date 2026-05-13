@@ -272,23 +272,25 @@ pub fn fixture_events_to_timeline(
 
 // ── Shared helpers (used by both capture and testbed) ────────────────
 
-/// Walk up from WASM file to find the widget crate root (has `Cargo.toml`).
-///
-/// Finds the widget source directory from its WASM binary path.
+/// Walk up from WASM file to find the widget crate root.
 ///
 /// The WASM binary lives in a shared workspace target:
 ///   `examples/target/wasm32-unknown-unknown/release/hello_widget.wasm`
 ///
 /// Strategy: derive the crate name from the filename (underscores → hyphens),
-/// walk up to find the workspace root (directory containing `Cargo.toml`),
-/// then resolve `{workspace_root}/{crate_name}/`.
+/// walk up looking for `{ancestor}/{crate_name}/Cargo.toml`. Returning the
+/// *workspace* root (the first `Cargo.toml` encountered) is wrong — fixtures
+/// would land at `examples/capture/` instead of `examples/<widget>/capture/`.
 #[must_use]
 pub fn find_widget_root(wasm_path: &Path) -> Option<PathBuf> {
+    let stem = wasm_path.file_stem()?.to_str()?;
+    let crate_name = stem.replace('_', "-");
     let mut dir = wasm_path.parent();
     for _ in 0..6 {
         let Some(d) = dir else { break };
-        if d.join("Cargo.toml").exists() {
-            return Some(d.to_owned());
+        let candidate = d.join(&crate_name);
+        if candidate.join("Cargo.toml").exists() {
+            return Some(candidate);
         }
         dir = d.parent();
     }
