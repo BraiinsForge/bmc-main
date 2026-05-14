@@ -31,13 +31,7 @@ The backend is organized as a Cargo workspace with the following main components
 
 ### Frontend Structure (TypeScript/React)
 
-Located in `frontend/`:
-
-- React 19 with React Router for navigation
-- gRPC-Web via ConnectRPC for backend communication
-- Carbon Design System for UI components
-- TypeScript with strict typing
-- Yarn 4.x for package management
+See `frontend/CLAUDE.md`
 
 ### Communication Layer
 
@@ -106,46 +100,9 @@ cargo build
 cargo build --release
 ```
 
-### Frontend Development
-
-The frontend uses Yarn 4.x and requires Node.js 24.6.0 (managed by Volta):
-
-```bash
-cd frontend/
-
-# Install dependencies
-yarn install
-
-# Development server (check package.json for available scripts)
-yarn dev
-
-# Build for production
-yarn build
-
-# Run tests
-yarn test
-
-# Lint/format (uses Biome)
-yarn lint
-yarn format
-```
-
 ### CI/Nix Checks
 
-The CI system (`.gitlab-ci.yml`) defines several checks that can also be run locally:
-
-```bash
-# Run all checks (slow)
-nix flake check
-
-# Individual checks
-nix build .#checks.x86_64-linux.build      # Build check
-nix build .#checks.x86_64-linux.clippy     # Clippy lints
-nix build .#checks.x86_64-linux.test       # Rust tests
-nix build .#checks.x86_64-linux.nextest    # Nextest runner
-nix build .#checks.x86_64-linux.frontend   # Frontend build
-nix build .#checks.x86_64-linux.lint       # Frontend lint
-```
+We use GitLab, the checks are in `.gitlab-ci.yml`, mostly using flake outputs.
 
 ## Code Style and Linting
 
@@ -247,13 +204,7 @@ nix-shell -p jq getopt --run "./scripts/verify_crates.sh --summary"
 
 ## Protocol Buffer Workflow
 
-Proto files are in `bmc-grpc/proto/web/`. Changes to `.proto` files require:
-
-1. **Backend**: Rebuild `bmc-grpc` (protobuf code is generated via `build.rs` using `tonic-build`)
-2. **Frontend**: Regenerate TypeScript code using `@bufbuild/buf` and `@bufbuild/protoc-gen-es`
-
-The frontend has build tooling configured for protobuf generation (check `frontend/buf.yaml` and frontend build
-scripts).
+Proto files are in `bmc-grpc/proto/web/`. Changes to `.proto` files require
 
 ## Cross-Compilation Notes
 
@@ -288,35 +239,7 @@ scripts).
 - No clever tricks - choose the boring solution
 - If you need to explain it, it's too complex
 
-## Process
-
-Research the codebase before editing. Never change code you haven't read.
-
-### 1. Planning & Staging
-
-Break complex work into 3-5 stages. Document in `docs/devlogs/BDK_<ticket-no.>`, the ticket is always in the branch
-name.
-
-```markdown
-## Stage N: [Name]
-**Goal**: [Specific deliverable]
-**Success Criteria**: [Testable outcomes]
-**Tests**: [Specific test cases]
-**Status**: [Not Started|In Progress|Complete]
-```
-
-- Update status as you progress
-- Remove file when all stages are done
-
-### 2. Implementation Flow
-
-1. **Understand** - Study existing patterns in codebase
-2. **Test** - Write test first (red)
-3. **Implement** - Minimal code to pass (green)
-4. **Refactor** - Clean up with tests passing
-5. **Commit** - With clear message linking to plan
-
-### 3. When Stuck (After 3 Attempts)
+### When Stuck (After 3 Attempts)
 
 **CRITICAL**: Maximum 3 attempts per issue, then STOP.
 
@@ -363,9 +286,7 @@ name.
 
 - **Before committing**:
 
-  - Run `nix fmt` (formats Rust, Nix, Python, Shell, Protobuf, TOML, YAML)
-  - Run `cargo clippy -- -D warnings` (zero warnings required)
-  - Run `cargo test --workspace`
+  - Run `just validate` (formats, runs clippy and tests)
   - Self-review changes
   - Ensure commit message explains "why"
 
@@ -385,22 +306,6 @@ When multiple valid approaches exist, choose based on:
 3. **Consistency** - Does this match project patterns?
 4. **Simplicity** - Is this the simplest solution that works?
 5. **Reversibility** - How hard to change later?
-
-## Project Integration
-
-### Learning the Codebase
-
-- Find 3 similar features/components
-- Identify common patterns and conventions
-- Use same libraries/utilities when possible
-- Follow existing test patterns
-
-### Tooling
-
-- Use project's existing build system
-- Use project's test framework
-- Use project's formatter/linter settings
-- Don't introduce new tools without strong justification
 
 ## Quality Gates
 
@@ -429,9 +334,12 @@ When multiple valid approaches exist, choose based on:
 - **NEVER** Disable tests instead of fixing them
 - **NEVER** Commit code that doesn't compile
 - **NEVER** Make assumptions - verify with existing code
+- **NEVER** introduce new tools without strong justification
 
 **ALWAYS**:
 
+- Use same libraries/utilities when possible
+- Follow existing test patterns
 - Commit working code incrementally
 - Update plan documentation as you go
 - Learn from existing implementations
