@@ -111,7 +111,22 @@ wasm-regression:
   stage: regression
   needs: []
   script:
-    - nix run .#wasm-capture -- verify --output-dir=captures
+    # Builders write captures to ./captures; on regression the derivation
+    # fails and the sandbox at /tmp/nix-build-wasm-regression-<widget>.drv-N
+    # is preserved by --keep-failed (belt + suspenders with the runner's
+    # `keep-failed = true`). --keep-going builds every widget so the
+    # artifact bundle covers all regressions, not just the first.
+    - nix build --keep-failed -L --keep-going .#checks.x86_64-linux.wasm-regression || rc=$?
+    - |
+      mkdir -p captures
+      for d in /tmp/nix-build-wasm-regression-*.drv-*; do
+        [ -d "$d/captures" ] || continue
+        base=$(basename "$d")
+        name=${base#nix-build-wasm-regression-}
+        name=${name%.drv-*}
+        cp -r "$d/captures" "captures/$name"
+      done
+      exit "${rc:-0}"
   artifacts:
     when: on_failure
     paths:

@@ -13,7 +13,7 @@ let
     binName = "capture";
   };
 
-  unwrapped = profiles.fast.buildCrate crate {
+  unwrapped = profiles.ci.buildCrate crate {
     features = [ "capture" ];
   };
 
@@ -46,21 +46,19 @@ let
     };
     text = ''
       # Auto-detect flags not explicitly provided by the caller.
-      has_wasm_dir=false
+      # --wasm-dir is intentionally NOT auto-injected — callers pass it
+      # explicitly so the wrapper derivation stays decoupled from the
+      # workspace-wide wasmExamples build.
       has_widgets_dir=false
       has_output_dir=false
       for arg in "$@"; do
         case "$arg" in
-          --wasm-dir | --wasm-dir=*)       has_wasm_dir=true ;;
           --widgets-dir | --widgets-dir=*) has_widgets_dir=true ;;
           --output-dir | --output-dir=*)   has_output_dir=true ;;
         esac
       done
 
       extra_args=()
-      if [ "$has_wasm_dir" = false ]; then
-        extra_args+=(--wasm-dir="${wasmExamples}")
-      fi
 
       # Resolve widgets-dir: try repo root first, then bmc-wasm-runtime/.
       if [ "$has_widgets_dir" = false ]; then

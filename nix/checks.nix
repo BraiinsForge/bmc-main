@@ -1,7 +1,31 @@
-{ pkgs, ty-bin, profiles }:
+{ pkgs, ty-bin, profiles, capture, wasmWidgets }:
 
 let
   lib = pkgs.lib;
+
+  # One regression derivation per widget. Each pins to:
+  #   - that widget's source dir only (per-widget src cache key)
+  #   - that widget's docker-spider-narrowed wasm (per-widget wasm rebuild)
+  #   - the capture wrapper for env + binary
+  # Synthesizes a single-widget widgets-dir tree so `verify` finds the
+  # capture/config.toml + baselines under `<widgets>/<name>/capture/`.
+  mkWidgetCheck = name: pkgs.runCommand "wasm-regression-${name}"
+    {
+      nativeBuildInputs = [ capture.package pkgs.odiff pkgs.which ];
+      src = ../bmc-wasm-runtime/examples + "/${name}";
+      wasm = wasmWidgets.${name};
+    } ''
+    widgets=$(mktemp -d)
+    ln -s "$src" "$widgets/${name}"
+    wasm-capture verify \
+      --widgets-dir="$widgets" \
+      --wasm-dir="$wasm" \
+      --output-dir="$TMPDIR/captures" \
+      --example=${name}
+    mkdir -p $out
+  '';
+
+  widgetChecks = lib.mapAttrs (name: _: mkWidgetCheck name) wasmWidgets;
 in
 {
   cargo-deny = profiles.fast.mkCargoDeny {
@@ -12,6 +36,16 @@ in
   docs-wasm = profiles.fast.mkCargoDoc {
     package = "bmc-wasm-sdk";
   };
+
+  # Aggregate check — depends on every per-widget regression derivation
+  # so nix's scheduler runs them in parallel. The per-widget derivations
+  # are internal and not exposed individually under flake.checks.
+  wasm-regression = pkgs.runCommand "wasm-regression"
+    {
+      nativeBuildInputs = lib.attrValues widgetChecks;
+    } ''
+    mkdir -p $out
+  '';
 
   python-lint = pkgs.runCommand "python-lint"
     {
