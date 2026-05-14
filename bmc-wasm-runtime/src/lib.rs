@@ -109,45 +109,61 @@ pub mod unified_fixture;
 pub use host_api::{FixtureEvent, FixtureEventKind, FixtureEventState};
 pub use runtime::{RenderStatus, RuntimeConfig, RuntimeResourceLimits, WasmWidgetRuntime};
 
-/// Parse the wayland `deck_widget_v1.params` JSON blob into the typed `BTreeMap` shape that
-/// [`WasmWidgetRuntime::set_params`] expects.
+/// Errors produced by [`parse_params_json`] when an entry violates the wire-format contract.
 ///
-/// Only scalar entries (string / integer / finite double / boolean / null) survive — arrays,
-/// objects, and non-finite numbers are dropped at debug log.
-/// The compositor produces the JSON from a parsed and validated manifest, so the lossy drop
-/// is purely defensive: it only fires if a future producer sends something off-spec.
+/// Either variant means the *entire* update is rejected
+///  — `parse_params_json` does not return a partial map.
+/// Callers are expected to keep their previous snapshot on `Err`.
+#[derive(Debug, thiserror::Error)]
+pub enum ParseParamsError {
+    /// Key did not satisfy [`bmc_widget_manifest::ParamKey::try_new`]
+    /// — invalid characters or over-cap length.
+    #[error("invalid param key {key:?}")]
+    InvalidKey { key: String },
+
+    /// Value was an array, object, non-finite number, or other shape
+    /// that [`bmc_widget_manifest::ParamValue::try_from`] rejects.
+    #[error("param {key:?} value not representable: {source}")]
+    InvalidValue {
+        key: String,
+        #[source]
+        source: bmc_widget_manifest::ParamValueConversionError,
+    },
+}
+
+/// Parse the wayland `deck_widget_v1.params` map into the typed `BTreeMap` shape
+/// that [`WasmWidgetRuntime::set_params`] expects.
 ///
-/// Keys that don't satisfy the `ParamKey` regex (must start with an ASCII letter,
-/// then `[A-Za-z0-9_-]*`) are likewise dropped at debug log.
-#[must_use]
+/// On the first invalid entry the entire map is rejected with [`ParseParamsError`]
+/// — callers should keep the previous snapshot rather than apply a partial update
+/// (a partial update with stale keys is worse than no update).
+///
+/// The compositor's validator stands upstream and is expected to filter manifests
+/// before this path; a failure here therefore indicates an off-spec producer
+/// (compositor bug) and is logged at `warn` level by callers.
+///
+/// Accepts only scalar shapes (string / integer / finite double / boolean / null);
+/// Arrays, objects, and non-finite numbers reject.
+///
+/// Keys must satisfy the `ParamKey` regex (start with an ASCII letter,
+/// then `[A-Za-z0-9_-]*`) and stay within the manifest-layer length cap.
 pub fn parse_params_json(
-    json: &serde_json::Value,
-) -> std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue> {
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<
+    std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
+    ParseParamsError,
+> {
     let mut out = std::collections::BTreeMap::new();
-    let Some(object) = json.as_object() else {
-        if !json.is_null() {
-            tracing::debug!("params JSON is not an object ({}); treating as empty", json);
-        }
-        return out;
-    };
     for (raw_key, raw_value) in object {
-        let key = match bmc_widget_manifest::ParamKey::try_new(raw_key.clone()) {
-            Ok(k) => k,
-            Err(bad) => {
-                tracing::debug!("params: dropping entry with invalid key {bad:?}");
-                continue;
+        let key = bmc_widget_manifest::ParamKey::try_new(raw_key.clone())
+            .map_err(|bad| ParseParamsError::InvalidKey { key: bad })?;
+        let value = bmc_widget_manifest::ParamValue::try_from(raw_value).map_err(|source| {
+            ParseParamsError::InvalidValue {
+                key: raw_key.clone(),
+                source,
             }
-        };
-        match bmc_widget_manifest::ParamValue::try_from(raw_value) {
-            Ok(v) => {
-                out.insert(key, v);
-            }
-            Err(err) => {
-                tracing::debug!(
-                    "params: dropping entry {raw_key:?} — value not representable ({err})"
-                );
-            }
-        }
+        })?;
+        out.insert(key, value);
     }
-    out
+    Ok(out)
 }

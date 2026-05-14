@@ -189,9 +189,8 @@ fn run_unified_capture(
     // self-contained (no `manifest.json` lookup at replay time, which used to walk up
     // from the wasm binary and silently returned an empty map in CI's nix-build
     // sandbox where the wasm artifact is divorced from its source tree).
-    let initial_params = bmc_wasm_runtime::parse_params_json(&serde_json::Value::Object(
-        fixture.header.initial_params.clone(),
-    ));
+    let initial_params = bmc_wasm_runtime::parse_params_json(&fixture.header.initial_params)
+        .expect("BUG: capture fixture initial_params must be valid");
 
     // Build runtime config
     let mut rt_config = RuntimeConfig {
@@ -516,8 +515,8 @@ fn run_unified_capture(
                 // and let the widget's `on_params_update` hook fire. The version counter is
                 // bumped by the runtime; we don't need to advance any timeline-side state.
                 UnifiedEvent::ParamDelivery { params } => {
-                    let json_blob = serde_json::Value::Object(params.clone());
-                    let table = bmc_wasm_runtime::parse_params_json(&json_blob);
+                    let table = bmc_wasm_runtime::parse_params_json(params)
+                        .expect("BUG: capture ParamDelivery params must be valid");
                     runtime.deliver_params_update(table);
                 }
                 // Network events are handled by inject_fixture_events/fetch_interceptor

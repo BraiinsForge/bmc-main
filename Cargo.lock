@@ -1592,6 +1592,7 @@ dependencies = [
  "sevenz-rust2",
  "taffy",
  "tempfile",
+ "thiserror 1.0.69",
  "toml",
  "tracing",
  "tracing-subscriber",

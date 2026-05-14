@@ -1,7 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use bmc_shared_time::time::Timezone;
-use bmc_widget::{ParamKey, ParamValue};
+use bmc_widget_manifest::{ParamKey, ParamValue};
 use bmc_widget_protocol::{Localization, SettingUpdate, SizeType, WidgetInitialConfig};
 use indexmap::IndexMap;
 use std::collections::BTreeMap;

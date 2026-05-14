@@ -33,9 +33,9 @@ impl RenderState {
 /// Wayland client for the WASM widget.
 pub struct WaylandClient {
     surface: DeckWidgetSurfaceClient,
-    /// Initial params JSON from the configure batch, kept until the runtime is constructed.
+    /// Initial params from the configure batch, kept until the runtime is constructed.
     /// Applied to the runtime via `set_params` immediately after first init.
-    initial_params: serde_json::Value,
+    initial_params: serde_json::Map<String, serde_json::Value>,
 }
 
 impl WaylandClient {
@@ -47,7 +47,7 @@ impl WaylandClient {
             "Widget config: {}x{}, {} params key(s)",
             initial.width,
             initial.height,
-            initial.params.as_object().map_or(0, serde_json::Map::len),
+            initial.params.len(),
         );
 
         Ok(Self {
@@ -82,8 +82,37 @@ impl WaylandClient {
                     WidgetEvent::Shutdown => {
                         // Already handled by the client (sets running=false)
                     }
-                    WidgetEvent::ParamUpdate(_) => {
-                        tracing::debug!("wasm: ignoring runtime params update");
+                    WidgetEvent::ParamUpdate(params) => {
+                        if let Some(rs) = render.as_mut() {
+                            // Runtime is up — parse + deliver. `parse_params_json` rejects
+                            // the entire update on the first invalid entry; on Err we keep
+                            // the runtime's previous snapshot rather than apply a partial map.
+                            // A failure here means the compositor sent something off-spec — warn loudly.
+                            match bmc_wasm_runtime::parse_params_json(&params) {
+                                Ok(table) => {
+                                    rs.runtime.deliver_params_update(table);
+                                    self.surface.mark_needs_render();
+                                }
+                                Err(err) => {
+                                    tracing::warn!(
+                                        "dropping params update — keeping previous snapshot: {err}"
+                                    );
+                                }
+                            }
+                        } else {
+                            // Runtime not yet constructed (first ParamUpdate arrived in the same
+                            // drain that precedes lazy init in this loop iteration).
+                            //
+                            // Buffer the keys into `initial_params` so `RuntimeConfig::params`
+                            // at construction sees the latest delivered values
+                            // rather than silently dropping the update.
+                            merge_into_initial_params(&mut self.initial_params, params);
+                            tracing::debug!(
+                                "buffered param update until runtime init; \
+                                 initial_params now has {} key(s)",
+                                self.initial_params.len(),
+                            );
+                        }
                     }
                     #[expect(
                         clippy::cast_possible_truncation,
@@ -146,12 +175,21 @@ impl WaylandClient {
                 tracing::info!("GBM-based EGL initialized");
 
                 let fbo_id = egl.begin_frame()?;
-                // Parse the compositor-delivered params and pass them via `RuntimeConfig`
-                // so they're staged on `HostState` before `init` runs — the widget's first
-                // `params::current()` call (inside `init` or its first `render`) observes
+                // Parse the compositor-delivered params and pass them
+                // via `RuntimeConfig` so they're staged on `HostState`
+                // before `init` runs — the widget's first  `params::current()`
+                // call (inside `init` or its first `render`) observes
                 // operator-configured values, not an empty map.
-                // Non-scalar entries are dropped at debug log inside `parse_params_json`.
-                let params = bmc_wasm_runtime::parse_params_json(&self.initial_params);
+                //
+                // On a parse failure (off-spec compositor) we fall back
+                // to an empty map rather than refuse to start: the widget
+                // still renders with its manifest defaults, which is
+                // a better UX than bricking startup on an upstream bug.
+                let params = bmc_wasm_runtime::parse_params_json(&self.initial_params)
+                    .unwrap_or_else(|err| {
+                        tracing::warn!("invalid initial params — starting with empty map: {err}");
+                        std::collections::BTreeMap::new()
+                    });
                 tracing::info!("Applying {} params key(s) to runtime", params.len());
                 let mut runtime = unsafe {
                     WasmWidgetRuntime::new(
@@ -300,8 +338,8 @@ impl WaylandClient {
     }
 }
 
-/// Returns true if any background async I/O is in flight that may produce
-/// events the widget needs delivered.
+/// Returns true if any background async I/O is in flight
+/// that may produce events the widget needs delivered.
 fn has_async_io(runtime: &WasmWidgetRuntime) -> bool {
     runtime.has_pending_fetches()
         || runtime.has_active_websockets()
@@ -310,4 +348,61 @@ fn has_async_io(runtime: &WasmWidgetRuntime) -> bool {
         || runtime.has_active_ssdp_searches()
         || runtime.has_active_udp_broadcasts()
         || runtime.has_active_http_listeners()
+}
+
+/// Merge an incoming params map into the buffered initial-params snapshot.
+///
+/// Keys in `incoming` overwrite same-named keys in `initial`;
+/// keys present only in `initial` stay.
+///
+/// Used when a `ParamUpdate` arrives before the runtime is constructed
+/// The buffered state is what gets handed to `RuntimeConfig::params`
+/// at lazy init.
+fn merge_into_initial_params(
+    initial: &mut serde_json::Map<String, serde_json::Value>,
+    incoming: serde_json::Map<String, serde_json::Value>,
+) {
+    initial.extend(incoming);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_into_initial_params;
+    use serde_json::{Value, json};
+
+    fn map_of(pairs: &[(&str, Value)]) -> serde_json::Map<String, Value> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), v.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn merge_into_empty_initial_keeps_all_incoming_keys() {
+        let mut initial = serde_json::Map::new();
+        let incoming = map_of(&[("a", json!(1)), ("b", json!("two"))]);
+        merge_into_initial_params(&mut initial, incoming);
+        assert_eq!(initial.get("a"), Some(&json!(1)));
+        assert_eq!(initial.get("b"), Some(&json!("two")));
+        assert_eq!(initial.len(), 2);
+    }
+
+    #[test]
+    fn merge_overwrites_existing_keys_with_latest_value() {
+        let mut initial = map_of(&[("a", json!(1)), ("b", json!("two"))]);
+        let incoming = map_of(&[("a", json!(99))]);
+        merge_into_initial_params(&mut initial, incoming);
+        assert_eq!(initial.get("a"), Some(&json!(99)));
+        assert_eq!(initial.get("b"), Some(&json!("two")));
+    }
+
+    #[test]
+    fn merge_preserves_keys_not_present_in_incoming() {
+        let mut initial = map_of(&[("a", json!(1)), ("b", json!(2))]);
+        let incoming = map_of(&[("c", json!(3))]);
+        merge_into_initial_params(&mut initial, incoming);
+        assert_eq!(initial.get("a"), Some(&json!(1)));
+        assert_eq!(initial.get("b"), Some(&json!(2)));
+        assert_eq!(initial.get("c"), Some(&json!(3)));
+    }
 }
