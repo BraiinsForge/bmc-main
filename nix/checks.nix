@@ -9,6 +9,10 @@ in
     checks = [ "bans" "sources" ];
   };
 
+  docs-wasm = profiles.fast.mkCargoDoc {
+    package = "bmc-wasm-sdk";
+  };
+
   python-lint = pkgs.runCommand "python-lint"
     {
       nativeBuildInputs = [ pkgs.ruff ty-bin pkgs.python3 ];

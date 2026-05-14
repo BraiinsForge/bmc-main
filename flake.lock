@@ -165,11 +165,11 @@
         "nixpkgs-do-not-override": "nixpkgs-do-not-override"
       },
       "locked": {
-        "lastModified": 1778488345,
-        "narHash": "sha256-CbjCG9zEqY87oOJvjL9naqzBu1d8M4OovjAs4gclato=",
+        "lastModified": 1778758461,
+        "narHash": "sha256-qYe8duXwwoRjRfzSzhUlT3wemkmoXjfy6kPKOr5xvJ4=",
         "ref": "refs/heads/master",
-        "rev": "76802da5683dece20654b10fea00183eeff4d42d",
-        "revCount": 146,
+        "rev": "961db3de26b3e3040f3dc1de1827addaf719834b",
+        "revCount": 147,
         "type": "git",
         "url": "ssh://git@gitlab.ii.zone/nix/lib"
       },
@@ -212,11 +212,11 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1775888245,
-        "narHash": "sha256-nwASzrRDD1JBEu/o8ekKYEXm/oJW6EMCzCRdrwcLe90=",
+        "lastModified": 1778672786,
+        "narHash": "sha256-Blg88K1jwG+P0Mr27+rKMFCufdrWkV3wWh9AdYtz0FQ=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "13043924aaa7375ce482ebe2494338e058282925",
+        "rev": "eef00dfd8a712b34af845f9350bac681b1228bd1",
         "type": "github"
       },
       "original": {
