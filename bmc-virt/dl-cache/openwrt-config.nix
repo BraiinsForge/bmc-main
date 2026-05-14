@@ -16,11 +16,21 @@
     "bash"
     "ca-certificates"
     "coreutils"
+    # `od` ships as a sub-package; `hexdump` lives in util-linux and busybox
+    # already exposes it (`busybox hexdump -C`), so we don't carry a second
+    # copy. `xxd` (below) covers the same use case for tidier output.
+    "coreutils-od"
+    # HTTP tooling for poking the BMC web stack from inside the VM without
+    # having to hand-roll headers via busybox `nc` / `wget`. `grpcurl` is
+    # intentionally absent: OpenWrt 24.10's stock feeds don't carry Go-built
+    # binaries, so a `curl` + the proto descriptors path stays the recipe.
+    "curl"
     "hostapd-openssl"
     "htop"
     "ip-full"
     "iw"
     "iwinfo"
+    "jq"
     "kmod-drm"
     "kmod-drm-kms-helper"
     "kmod-input-evdev"
@@ -30,6 +40,7 @@
     "mpg123"
     "rpcd-mod-iwinfo"
     "rpcd-mod-ucode"
+    "socat"
     "strace"
     "wget-ssl"
     "wpa-supplicant-openssl"

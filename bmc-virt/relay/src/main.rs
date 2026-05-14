@@ -19,7 +19,7 @@ use bmc_virt_ipc::{
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -118,33 +118,28 @@ fn main() {
         // Clear volume override — let the app's own setting take effect
         volume_override_clear();
 
+        // Shared app-volume baseline. The BMC web service ships our initial
+        // value (and updates after settings changes); we cache it here so
+        // command handlers can mix it with the console's override without
+        // re-querying gRPC on every InputEvent. Defaults to 50 until the
+        // probe thread reads the real value.
+        let app_vol_state = Arc::new(AtomicU8::new(50));
+
+        // Lets the parallel probe thread (below) know when this connection
+        // is torn down so it can exit instead of polling against a guest
+        // that's already past this loop iteration.
+        let connection_running = Arc::new(AtomicBool::new(true));
+
         // Start input reader for this connection
         let input_sender = sender.clone();
+        let input_app_vol = Arc::clone(&app_vol_state);
+        let input_done_flag = Arc::clone(&connection_running);
         let input_handle = std::thread::Builder::new()
             .name("input-reader".into())
             .spawn(move || {
                 let mut touch_dev =
                     touch::discover_touch_node().and_then(|path| touch::Touch::open(&path).ok());
                 let mut grpc = commands::GrpcClient::new();
-
-                // Send current volume state to host (app value, no override).
-                // On failure, only send the error — no VolumeLevel, so the
-                // console keeps grpc_error set and disables dependent controls.
-                let app_vol = match grpc.get_volume() {
-                    Ok(vol) => {
-                        input_sender.send_volume(vol, None);
-                        input_sender.send_controls_status(FeatureState::Ready, None);
-                        vol
-                    }
-                    Err(err) => {
-                        eprintln!("volume query error: {err}");
-                        input_sender.send_controls_status(
-                            FeatureState::Unavailable,
-                            Some(format!("BMC web API unavailable: {err}")),
-                        );
-                        50
-                    }
-                };
 
                 loop {
                     match conn.recv() {
@@ -154,7 +149,7 @@ fn main() {
                                 &mut touch_dev,
                                 &mut grpc,
                                 &input_sender,
-                                app_vol,
+                                input_app_vol.load(Ordering::Relaxed),
                             );
                         }
                         Ok(None) => {
@@ -167,8 +162,50 @@ fn main() {
                         }
                     }
                 }
+                input_done_flag.store(false, Ordering::Relaxed);
             })
             .unwrap_or_else(|e| panic!("failed to spawn input reader thread: {e}"));
+
+        // Polling probe for the BMC web service. Mirrors `establish_capture`
+        // (compositor) — sends Waiting once on the first failure, then Ready
+        // (with the real app volume) when the service comes up. Runs in its
+        // own thread so a slow boot doesn't stall the input reader.
+        //
+        // Per-connection: a fresh console attach reprobes, and the thread
+        // exits on host disconnect via `connection_running`. Mid-session
+        // service failures are still surfaced ad-hoc by the existing button
+        // handlers in `handle_host_message`.
+        let probe_sender = sender.clone();
+        let probe_app_vol = Arc::clone(&app_vol_state);
+        let probe_running = Arc::clone(&connection_running);
+        std::thread::Builder::new()
+            .name("bmc-probe".into())
+            .spawn(move || {
+                let mut grpc = commands::GrpcClient::new();
+                let mut waiting_notified = false;
+                while probe_running.load(Ordering::Relaxed) {
+                    match grpc.get_volume() {
+                        Ok(vol) => {
+                            probe_app_vol.store(vol, Ordering::Relaxed);
+                            probe_sender.send_volume(vol, None);
+                            probe_sender.send_controls_status(FeatureState::Ready, None);
+                            return;
+                        }
+                        Err(err) => {
+                            if !waiting_notified {
+                                eprintln!("relay: BMC web API not ready yet: {err}");
+                                probe_sender.send_controls_status(
+                                    FeatureState::Waiting,
+                                    Some(format!("Waiting for BMC web API ({err})")),
+                                );
+                                waiting_notified = true;
+                            }
+                            thread::sleep(Duration::from_millis(500));
+                        }
+                    }
+                }
+            })
+            .unwrap_or_else(|e| panic!("failed to spawn bmc-probe thread: {e}"));
 
         // Delay Wayland capture until a real host is connected. This keeps
         // the compositor's readback path dormant during boot and retries

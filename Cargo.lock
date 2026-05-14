@@ -1541,6 +1541,7 @@ dependencies = [
  "libc",
  "prost 0.13.5",
  "tempfile",
+ "ureq",
  "wayland-client 0.31.14",
  "wayland-protocols 0.32.12",
 ]
@@ -2247,6 +2248,21 @@ dependencies = [
  "percent-encoding",
  "time",
  "version_check",
+]
+
+[[package]]
+name = "cookie_store"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fc4bff745c9b4c7fb1e97b25d13153da2bc7796260141df62378998d070207f"
+dependencies = [
+ "cookie",
+ "document-features",
+ "idna",
+ "indexmap",
+ "log",
+ "time",
+ "url",
 ]
 
 [[package]]
@@ -10171,12 +10187,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dea7109cdcd5864d4eeb1b58a1648dc9bf520360d7af16ec26d0a9354bafcfc0"
 dependencies = [
  "base64 0.22.1",
+ "cookie_store",
  "flate2",
  "log",
  "percent-encoding",
  "rustls 0.23.37",
  "rustls-pki-types",
  "ureq-proto",
+ "url",
  "utf8-zero",
  "webpki-roots 1.0.6",
 ]
