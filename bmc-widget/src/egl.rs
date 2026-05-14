@@ -681,6 +681,12 @@ impl WidgetExportBuffer {
     pub fn fbo_id(&self) -> u32 {
         self.fbo.0.get()
     }
+
+    /// GL color texture backing the staging FBO.
+    #[must_use]
+    pub fn texture(&self) -> glow::Texture {
+        self.texture
+    }
 }
 
 /// Double-buffered DMA-BUF export state.
@@ -840,6 +846,15 @@ impl DoubleBufferedEglState {
     /// Get the glow OpenGL ES context.
     pub fn gl(&self) -> &glow::Context {
         self.ctx.gl()
+    }
+
+    /// Borrow the underlying [`EglContext`].
+    ///
+    /// Useful for callers that need to allocate sibling resources
+    /// (e.g. [`WidgetExportBuffer`]) against the same context.
+    #[must_use]
+    pub fn ctx(&self) -> &EglContext {
+        &self.ctx
     }
 
     /// Ensure the current back buffer is allocated, return a reference to it.

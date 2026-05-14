@@ -12,14 +12,7 @@ use anyhow::{Context, Result};
 use glow::HasContext;
 
 pub use bmc_widget::egl::DmaBufInfo;
-use bmc_widget::egl::{Depth, DoubleBufferedEglState, EglContext};
-
-/// Staging buffer for FemtoVG rendering (regular GL texture, not EGLImage).
-struct StagingBuffer {
-    texture: glow::Texture,
-    fbo: glow::Framebuffer,
-    stencil_rbo: glow::Renderbuffer,
-}
+use bmc_widget::egl::{Depth, DoubleBufferedEglState, EglContext, WidgetExportBuffer};
 
 /// Resources for the Y-flip blit pass.
 struct BlitResources {
@@ -37,7 +30,7 @@ struct BlitResources {
 /// 3. `end_frame()` calls `gl.flush()` and exports DMA-BUF
 pub struct EglState {
     egl: DoubleBufferedEglState,
-    staging: Option<StagingBuffer>,
+    staging: Option<WidgetExportBuffer>,
     blit_program: Option<BlitResources>,
 }
 
@@ -60,7 +53,11 @@ impl EglState {
         self.egl.ensure_current()?;
 
         if self.staging.is_none() {
-            self.staging = Some(self.allocate_staging()?);
+            self.staging = Some(self.egl.ctx().allocate_widget_export_buffer(
+                self.egl.width(),
+                self.egl.height(),
+                Depth::Disabled,
+            )?);
         }
 
         if self.blit_program.is_none() {
@@ -76,13 +73,13 @@ impl EglState {
 
         unsafe {
             let gl = self.egl.gl();
-            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(staging.fbo));
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(staging.fbo()));
             gl.viewport(0, 0, w as i32, h as i32);
             gl.clear_color(0.0, 0.0, 0.0, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
         }
 
-        Ok(staging.fbo.0.get())
+        Ok(staging.fbo_id())
     }
 
     /// Blit staging FBO → export FBO with Y-flip.
@@ -114,7 +111,7 @@ impl EglState {
             gl.use_program(Some(blit.program));
 
             gl.active_texture(glow::TEXTURE0);
-            gl.bind_texture(glow::TEXTURE_2D, Some(staging.texture));
+            gl.bind_texture(glow::TEXTURE_2D, Some(staging.texture()));
 
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(blit.vbo));
             gl.enable_vertex_attrib_array(blit.pos_loc);
@@ -160,11 +157,11 @@ impl EglState {
             height
         );
 
-        self.egl.resize(width, height);
-
-        if let Some(ref staging) = self.staging.take() {
-            Self::destroy_staging(self.egl.gl(), staging);
+        if let Some(staging) = self.staging.take() {
+            self.egl.ctx().destroy_widget_export_buffer(staging);
         }
+
+        self.egl.resize(width, height);
     }
 
     /// Get the glow GL context (for test mode FemtoVG renderer and GL loaders).
@@ -182,98 +179,6 @@ impl EglState {
     }
 
     // -- Private helpers --
-
-    #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
-    fn allocate_staging(&self) -> Result<StagingBuffer> {
-        let gl = self.egl.gl();
-        let width = self.egl.width();
-        let height = self.egl.height();
-
-        let texture = unsafe {
-            let tex = gl
-                .create_texture()
-                .map_err(|e| anyhow::anyhow!("Failed to create staging texture: {e}"))?;
-            gl.bind_texture(glow::TEXTURE_2D, Some(tex));
-            gl.tex_image_2d(
-                glow::TEXTURE_2D,
-                0,
-                glow::RGBA as i32,
-                width as i32,
-                height as i32,
-                0,
-                glow::RGBA,
-                glow::UNSIGNED_BYTE,
-                glow::PixelUnpackData::Slice(None),
-            );
-            gl.tex_parameter_i32(
-                glow::TEXTURE_2D,
-                glow::TEXTURE_MIN_FILTER,
-                glow::LINEAR as i32,
-            );
-            gl.tex_parameter_i32(
-                glow::TEXTURE_2D,
-                glow::TEXTURE_MAG_FILTER,
-                glow::LINEAR as i32,
-            );
-            gl.tex_parameter_i32(
-                glow::TEXTURE_2D,
-                glow::TEXTURE_WRAP_S,
-                glow::CLAMP_TO_EDGE as i32,
-            );
-            gl.tex_parameter_i32(
-                glow::TEXTURE_2D,
-                glow::TEXTURE_WRAP_T,
-                glow::CLAMP_TO_EDGE as i32,
-            );
-            tex
-        };
-
-        let stencil_rbo = unsafe {
-            let rbo = gl
-                .create_renderbuffer()
-                .map_err(|e| anyhow::anyhow!("Failed to create stencil RBO: {e}"))?;
-            gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rbo));
-            gl.renderbuffer_storage(
-                glow::RENDERBUFFER,
-                glow::STENCIL_INDEX8,
-                width as i32,
-                height as i32,
-            );
-            rbo
-        };
-
-        let fbo = unsafe {
-            let fbo = gl
-                .create_framebuffer()
-                .map_err(|e| anyhow::anyhow!("Failed to create staging FBO: {e}"))?;
-            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
-            gl.framebuffer_texture_2d(
-                glow::FRAMEBUFFER,
-                glow::COLOR_ATTACHMENT0,
-                glow::TEXTURE_2D,
-                Some(texture),
-                0,
-            );
-            gl.framebuffer_renderbuffer(
-                glow::FRAMEBUFFER,
-                glow::STENCIL_ATTACHMENT,
-                glow::RENDERBUFFER,
-                Some(stencil_rbo),
-            );
-
-            let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-            if status != glow::FRAMEBUFFER_COMPLETE {
-                anyhow::bail!("Staging framebuffer incomplete: 0x{status:x}");
-            }
-            fbo
-        };
-
-        Ok(StagingBuffer {
-            texture,
-            fbo,
-            stencil_rbo,
-        })
-    }
 
     fn create_blit_resources(&self) -> Result<BlitResources> {
         let gl = self.egl.gl();
@@ -379,14 +284,6 @@ void main() {
         })
     }
 
-    fn destroy_staging(gl: &glow::Context, staging: &StagingBuffer) {
-        unsafe {
-            gl.delete_framebuffer(staging.fbo);
-            gl.delete_renderbuffer(staging.stencil_rbo);
-            gl.delete_texture(staging.texture);
-        }
-    }
-
     fn destroy_blit(gl: &glow::Context, blit: &BlitResources) {
         unsafe {
             gl.delete_program(blit.program);
@@ -397,12 +294,11 @@ void main() {
 
 impl Drop for EglState {
     fn drop(&mut self) {
-        let gl = self.egl.gl();
-        if let Some(ref staging) = self.staging.take() {
-            Self::destroy_staging(gl, staging);
+        if let Some(staging) = self.staging.take() {
+            self.egl.ctx().destroy_widget_export_buffer(staging);
         }
         if let Some(ref blit) = self.blit_program.take() {
-            Self::destroy_blit(gl, blit);
+            Self::destroy_blit(self.egl.gl(), blit);
         }
     }
 }
