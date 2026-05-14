@@ -391,7 +391,7 @@ impl DeckWidgetProtocolState {
             return None;
         };
         let Some(surface) = widget.protocol_surface.as_ref() else {
-            tracing::trace!("send_lifecycle: {instance_id} has no surface yet (state={state:?})");
+            tracing::debug!("send_lifecycle: {instance_id} has no surface yet (state={state:?})");
             return None;
         };
         surface.lifecycle(state);

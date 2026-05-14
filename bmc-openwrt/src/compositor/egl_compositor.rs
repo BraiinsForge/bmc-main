@@ -5,11 +5,13 @@
 use super::{
     commands::CompositorCommand,
     device_access::{DeviceAccessConfig, RootLibinputInterface, set_libinput_debug_priority},
-    protocol::DeckWidgetHandler,
+    lifecycle_emitter::Emission,
+    protocol::{DeckWidgetHandler, DeckWidgetProtocolState},
     render::{DrmOutput, EglContext},
     scene_renderer::SceneRenderer,
     state::{ClientState, CompositorState},
     touch_gesture::{GestureState, TouchGesture},
+    widget_tracker::LifecycleState,
 };
 use bmc::compositor::{
     Compositor, CompositorError, CompositorEvent, InstanceId, Position, SceneLayout, Size,
@@ -30,7 +32,7 @@ use smithay::reexports::{
     },
     drm::control::{Device as DrmControlDevice, Event as DrmEvent},
     input as libinput,
-    wayland_server::{Display, ListeningSocket},
+    wayland_server::{Display, ListeningSocket, backend::ClientId},
 };
 use smithay::utils::{Logical, Point};
 use std::{
@@ -1023,7 +1025,7 @@ impl AppState {
                 )]
                 let dx = info.dx as i32;
                 self.compositor.widgets.update_drag(dx);
-                self.compositor.mark_full_output_damage();
+                after_scene_change(self);
             }
         } else {
             let touch_handle = self.compositor.touch_handle.clone();
@@ -1068,7 +1070,7 @@ impl AppState {
                 )]
                 let dx_px = dx as i32;
                 let committed = self.compositor.widgets.end_drag(dx_px, velocity_x);
-                self.compositor.mark_full_output_damage();
+                after_scene_change(self);
                 if committed {
                     tracing::info!(
                         "Scene transition committed (dx={:.1}, vel={:.0})",
@@ -1082,7 +1084,7 @@ impl AppState {
                 // Drag started but gesture classification didn't finalize —
                 // snap back to the origin rather than leaving the scene offset.
                 self.compositor.widgets.end_drag(0, 0.0);
-                self.compositor.mark_full_output_damage();
+                after_scene_change(self);
             }
         } else {
             let touch_handle = self.compositor.touch_handle.clone();
@@ -1109,7 +1111,7 @@ impl AppState {
         if self.scene_drag_active {
             self.scene_drag_active = false;
             self.compositor.widgets.end_drag(0, 0.0);
-            self.compositor.mark_full_output_damage();
+            after_scene_change(self);
         } else {
             let touch_handle = self.compositor.touch_handle.clone();
             touch_handle.cancel(&mut self.compositor);
@@ -1156,6 +1158,108 @@ fn register_touch_devices(ctx: &mut libinput::Libinput, nodes: &[PathBuf]) -> us
     added
 }
 
+/// Wayland-side of lifecycle emission. Abstracts `send_lifecycle` +
+/// per-client `flush` so [`emit_lifecycle_batches`] is testable
+/// without an `AppState` — production wires it through
+/// [`AppStateLifecycleSink`], tests through an in-memory recorder.
+trait LifecycleSink {
+    type ClientId: Clone + PartialEq;
+    fn send(&mut self, instance_id: &InstanceId, state: LifecycleState) -> Option<Self::ClientId>;
+    fn flush(&mut self, client_id: &Self::ClientId);
+}
+
+struct AppStateLifecycleSink<'a> {
+    deck_widget_state: &'a mut DeckWidgetProtocolState,
+    display: &'a mut Display<CompositorState>,
+}
+
+impl LifecycleSink for AppStateLifecycleSink<'_> {
+    type ClientId = ClientId;
+    fn send(&mut self, instance_id: &InstanceId, state: LifecycleState) -> Option<Self::ClientId> {
+        self.deck_widget_state.send_lifecycle(instance_id, state)
+    }
+    fn flush(&mut self, client_id: &Self::ClientId) {
+        if let Err(e) = self.display.backend().flush(Some(client_id.clone())) {
+            tracing::warn!("lifecycle: flush for {client_id:?} failed: {e}");
+        }
+    }
+}
+
+/// Re-derive the lifecycle state of every widget from `WidgetTracker`,
+/// step the `LifecycleEmitter`, and emit the resulting batches on each
+/// widget's surface in the required order: release batch first (flush),
+/// acquire batch second (flush). The flushes preserve the host's pool
+/// ordering invariant on scene swaps and are scoped to only the clients
+/// that actually received an event.
+fn emit_lifecycle_transitions(state: &mut AppState) {
+    let next = state.compositor.widgets.lifecycle_states();
+    let emission = state.compositor.lifecycle.step(&next);
+
+    if emission.is_empty() {
+        return;
+    }
+
+    let mut sink = AppStateLifecycleSink {
+        deck_widget_state: &mut state.compositor.deck_widget_state,
+        display: &mut state.display,
+    };
+    emit_lifecycle_batches(&emission, &mut sink);
+}
+
+/// Pure ordering logic, split from [`emit_lifecycle_transitions`] so
+/// tests can drive it with an in-memory sink. Sends the release batch,
+/// flushes, then sends the acquire batch, flushes — the flush boundary
+/// between batches is the contract the protocol XML documents.
+fn emit_lifecycle_batches<S: LifecycleSink>(emission: &Emission, sink: &mut S) {
+    let release_clients = send_lifecycle_batch(sink, &emission.releases, "release");
+    flush_lifecycle_clients(sink, &release_clients);
+    let acquire_clients = send_lifecycle_batch(sink, &emission.acquires, "acquire");
+    flush_lifecycle_clients(sink, &acquire_clients);
+}
+
+fn send_lifecycle_batch<S: LifecycleSink>(
+    sink: &mut S,
+    batch: &[(InstanceId, LifecycleState)],
+    label: &str,
+) -> Vec<S::ClientId> {
+    let mut clients: Vec<S::ClientId> = Vec::new();
+    for (instance_id, lifecycle_state) in batch {
+        tracing::debug!("lifecycle: {label} {instance_id} -> {lifecycle_state:?}");
+        if let Some(client_id) = sink.send(instance_id, *lifecycle_state)
+            && !clients.contains(&client_id)
+        {
+            clients.push(client_id);
+        }
+    }
+    clients
+}
+
+fn flush_lifecycle_clients<S: LifecycleSink>(sink: &mut S, clients: &[S::ClientId]) {
+    for client_id in clients {
+        sink.flush(client_id);
+    }
+}
+
+/// Clamp transitional states (Entering/Leaving) to their stable origins:
+/// Entering -> Prepared (entered from Prepared), Leaving -> Visible (leaving from Visible).
+/// Transitional states are only meaningful as deltas from a prior stable state,
+/// which the widget never saw on initial emission.
+fn clamp_initial_lifecycle(state: LifecycleState) -> LifecycleState {
+    match state {
+        LifecycleState::Entering => LifecycleState::Prepared,
+        LifecycleState::Leaving => LifecycleState::Visible,
+        LifecycleState::Dormant | LifecycleState::Prepared | LifecycleState::Visible => state,
+        _ => panic!("BUG: LifecycleState enum only has 5 variants; all are explicitly covered"),
+    }
+}
+
+/// Common tail of every scene mutation: invalidate the cached output and
+/// fan out the resulting lifecycle transitions to widgets.
+fn after_scene_change(state: &mut AppState) {
+    state.compositor.mark_full_output_damage();
+    emit_lifecycle_transitions(state);
+}
+
 fn handle_clear_pid_command(state: &mut AppState, instance_id: &InstanceId, expected_pid: u32) {
     tracing::debug!(
         "Clearing pid for widget {} (expected_pid={})",
@@ -1165,6 +1269,7 @@ fn handle_clear_pid_command(state: &mut AppState, instance_id: &InstanceId, expe
     state
         .compositor
         .clear_pid_for_instance(instance_id, expected_pid);
+    state.compositor.lifecycle.forget(instance_id);
 }
 
 fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
@@ -1206,6 +1311,7 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
         CompositorCommand::UnregisterWidget { instance_id } => {
             tracing::debug!("Unregistering widget {}", instance_id);
             state.compositor.unregister_widget(&instance_id);
+            state.compositor.lifecycle.forget(&instance_id);
         }
         CompositorCommand::ClearPid {
             instance_id,
@@ -1225,17 +1331,17 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
                 );
             }
             state.compositor.widgets.set_active_scene(layout);
-            state.compositor.mark_full_output_damage();
+            after_scene_change(state);
         }
         CompositorCommand::SetSceneCycling { scenes } => {
             tracing::info!("Setting scene cycling with {} scenes", scenes.len());
             state.compositor.widgets.set_scene_cycling(scenes);
-            state.compositor.mark_full_output_damage();
+            after_scene_change(state);
         }
         CompositorCommand::SetActiveSceneIndex { index } => {
             tracing::info!("Setting active scene index to {}", index);
             state.compositor.widgets.set_active_scene_index(index);
-            state.compositor.mark_full_output_damage();
+            after_scene_change(state);
         }
         CompositorCommand::BroadcastSetting { setting } => {
             tracing::debug!("Broadcasting setting: {:?}", setting);
@@ -1263,11 +1369,45 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
 }
 
 fn process_protocol_events(state: &mut AppState) {
-    for instance_id in state.compositor.deck_widget_state.drain_connected() {
-        tracing::info!("Widget connected: {}", instance_id);
-        let _ = state
-            .event_tx
-            .send(CompositorEvent::WidgetReady { instance_id });
+    let connected = state.compositor.deck_widget_state.drain_connected();
+    if !connected.is_empty() {
+        let lifecycle_states = state.compositor.widgets.lifecycle_states();
+        let mut connect_clients: Vec<ClientId> = Vec::new();
+
+        for instance_id in connected {
+            let lifecycle_state = clamp_initial_lifecycle(
+                lifecycle_states
+                    .get(&instance_id)
+                    .copied()
+                    .unwrap_or(LifecycleState::Dormant),
+            );
+            match state
+                .compositor
+                .send_initial_lifecycle(&instance_id, lifecycle_state)
+            {
+                Some(client_id) => {
+                    if !connect_clients.contains(&client_id) {
+                        connect_clients.push(client_id);
+                    }
+                }
+                None => {
+                    tracing::warn!(
+                        "Widget {instance_id} connected without surface; \
+                         deferring lifecycle({lifecycle_state:?}) to next emitter step"
+                    );
+                }
+            }
+
+            tracing::info!("Widget connected: {}", instance_id);
+            let _ = state
+                .event_tx
+                .send(CompositorEvent::WidgetReady { instance_id });
+        }
+        let mut sink = AppStateLifecycleSink {
+            deck_widget_state: &mut state.compositor.deck_widget_state,
+            display: &mut state.display,
+        };
+        flush_lifecycle_clients(&mut sink, &connect_clients);
     }
 
     for instance_id in state.compositor.deck_widget_state.drain_disconnected() {
@@ -1502,8 +1642,152 @@ impl Compositor for EglCompositor {
 
 #[cfg(test)]
 mod tests {
-    use super::{RedrawState, dispatch_timeout};
+    use super::{
+        Emission, LifecycleSink, LifecycleState, RedrawState, clamp_initial_lifecycle,
+        dispatch_timeout, emit_lifecycle_batches,
+    };
+    use bmc::compositor::InstanceId;
     use std::time::Duration;
+
+    /// Records `send`/`flush` calls in order. `send` returns a synthetic
+    /// per-instance `ClientId` so the test can verify that the flush
+    /// boundary between batches refers to the same clients that received
+    /// the preceding batch.
+    #[derive(Default)]
+    struct RecordingSink {
+        events: Vec<RecordedEvent>,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum RecordedEvent {
+        Send(InstanceId, LifecycleState),
+        Flush(String),
+    }
+
+    impl LifecycleSink for RecordingSink {
+        type ClientId = String;
+        fn send(
+            &mut self,
+            instance_id: &InstanceId,
+            state: LifecycleState,
+        ) -> Option<Self::ClientId> {
+            self.events
+                .push(RecordedEvent::Send(instance_id.clone(), state));
+            Some(format!("client-{instance_id}"))
+        }
+        fn flush(&mut self, client_id: &Self::ClientId) {
+            self.events.push(RecordedEvent::Flush(client_id.clone()));
+        }
+    }
+
+    #[test]
+    fn emit_releases_flushes_then_acquires_flushes() {
+        let emission = Emission {
+            releases: vec![
+                (String::from("a"), LifecycleState::Dormant),
+                (String::from("b"), LifecycleState::Dormant),
+            ],
+            acquires: vec![
+                (String::from("c"), LifecycleState::Visible),
+                (String::from("d"), LifecycleState::Prepared),
+            ],
+        };
+
+        let mut sink = RecordingSink::default();
+        emit_lifecycle_batches(&emission, &mut sink);
+
+        assert_eq!(
+            sink.events,
+            vec![
+                RecordedEvent::Send(String::from("a"), LifecycleState::Dormant),
+                RecordedEvent::Send(String::from("b"), LifecycleState::Dormant),
+                RecordedEvent::Flush(String::from("client-a")),
+                RecordedEvent::Flush(String::from("client-b")),
+                RecordedEvent::Send(String::from("c"), LifecycleState::Visible),
+                RecordedEvent::Send(String::from("d"), LifecycleState::Prepared),
+                RecordedEvent::Flush(String::from("client-c")),
+                RecordedEvent::Flush(String::from("client-d")),
+            ],
+            "release sends must precede release flushes, which must precede acquire sends",
+        );
+    }
+
+    #[test]
+    fn empty_release_batch_still_flushes_between_zero_releases_and_acquires() {
+        // First-step case: nothing to release, but acquires still need
+        // a flush after them. Asserts that no flush sneaks in *between*
+        // an empty batch and the acquire sends.
+        let emission = Emission {
+            releases: vec![],
+            acquires: vec![(String::from("a"), LifecycleState::Visible)],
+        };
+
+        let mut sink = RecordingSink::default();
+        emit_lifecycle_batches(&emission, &mut sink);
+
+        assert_eq!(
+            sink.events,
+            vec![
+                RecordedEvent::Send(String::from("a"), LifecycleState::Visible),
+                RecordedEvent::Flush(String::from("client-a")),
+            ],
+        );
+    }
+
+    #[test]
+    fn same_client_across_release_and_acquire_is_flushed_in_each_batch() {
+        // A widget that releases (Visible -> Dormant) and a different
+        // widget that acquires (Dormant -> Visible) on the same client
+        // connection: the client must be flushed in the release batch
+        // before it sees any acquire send, so the pool can be reclaimed.
+        struct SingleClientSink {
+            events: Vec<RecordedEvent>,
+        }
+        impl LifecycleSink for SingleClientSink {
+            type ClientId = String;
+            fn send(
+                &mut self,
+                instance_id: &InstanceId,
+                state: LifecycleState,
+            ) -> Option<Self::ClientId> {
+                self.events
+                    .push(RecordedEvent::Send(instance_id.clone(), state));
+                Some(String::from("shared-client"))
+            }
+            fn flush(&mut self, client_id: &Self::ClientId) {
+                self.events.push(RecordedEvent::Flush(client_id.clone()));
+            }
+        }
+
+        let emission = Emission {
+            releases: vec![(String::from("a"), LifecycleState::Dormant)],
+            acquires: vec![(String::from("b"), LifecycleState::Visible)],
+        };
+
+        let mut sink = SingleClientSink { events: Vec::new() };
+        emit_lifecycle_batches(&emission, &mut sink);
+
+        let flush_after_release = sink
+            .events
+            .iter()
+            .position(|e| matches!(e, RecordedEvent::Flush(_)))
+            .expect("BUG: release flush should be recorded");
+        let acquire_send = sink
+            .events
+            .iter()
+            .position(|e| {
+                matches!(
+                    e,
+                    RecordedEvent::Send(id, LifecycleState::Visible) if id == "b"
+                )
+            })
+            .expect("BUG: acquire send should be recorded");
+        assert!(
+            flush_after_release < acquire_send,
+            "release flush must happen before acquire send for the same client; \
+             otherwise the host can't reclaim the pool buffer before the new one is requested",
+        );
+    }
 
     #[test]
     fn queued_redraw_without_pending_flip_retries_immediately() {
@@ -1558,5 +1842,15 @@ mod tests {
             .on_vblank(false),
             RedrawState::Idle
         );
+    }
+
+    #[test]
+    fn clamp_initial_lifecycle_maps_entering_to_prepared_and_leaving_to_visible() {
+        use LifecycleState::*;
+        assert_eq!(clamp_initial_lifecycle(Entering), Prepared);
+        assert_eq!(clamp_initial_lifecycle(Leaving), Visible);
+        assert_eq!(clamp_initial_lifecycle(Dormant), Dormant);
+        assert_eq!(clamp_initial_lifecycle(Prepared), Prepared);
+        assert_eq!(clamp_initial_lifecycle(Visible), Visible);
     }
 }

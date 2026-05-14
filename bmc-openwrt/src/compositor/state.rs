@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 
+use super::lifecycle_emitter::LifecycleEmitter;
 use super::protocol::{
     DeckWidgetHandler, DeckWidgetProtocolState, WidgetManagerUserData, WidgetSurfaceUserData,
 };
@@ -104,6 +105,10 @@ pub struct CompositorState {
 
     /// Widget registration and connection tracking.
     pub widgets: WidgetTracker,
+
+    /// Tracks the last-emitted lifecycle state per widget to compute
+    /// release/acquire batches on scene changes.
+    pub lifecycle: LifecycleEmitter,
 
     /// Per-widget frame generations used to correlate frame callbacks with
     /// the content that was actually presented.
@@ -303,6 +308,7 @@ impl CompositorState {
             widget_buffers: Vec::new(),
             pending_frame_callbacks: Vec::new(),
             widgets: WidgetTracker::with_screen_width(width),
+            lifecycle: LifecycleEmitter::new(),
             widget_frame_clocks: std::collections::HashMap::new(),
             touch_handle,
             render_surfaces: HashMap::new(),
