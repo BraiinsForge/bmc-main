@@ -527,7 +527,7 @@ let
         (name: w: m.mkWasmWidget {
           inherit name;
           inherit (w) wasmFile manifest;
-          wasmDir = m.wasmExamples;
+          wasmDir = m.wasmWidgets.${name};
           host = m.host;
         })
         wasmWidgetCatalog;
@@ -535,7 +535,7 @@ let
 
   armv7PackageDefs = import ./nix/packages.nix {
     inherit bmc armv7Pkgs deps;
-    inherit (wasmWidgetsModule) wasmExamples host mkWasmWidget;
+    inherit (wasmWidgetsModule) wasmWidgets host mkWasmWidget;
   };
 
   initArtifacts = import ./nix/init-artifacts.nix {
