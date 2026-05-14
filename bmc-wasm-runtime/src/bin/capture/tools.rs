@@ -11,12 +11,12 @@ use anyhow::{Context as _, Result, bail};
 /// Find a tool binary: check PATH first, then try `nix build` fallback.
 pub fn resolve_tool(name: &str, nix_pkg: &str) -> Result<PathBuf> {
     // Check PATH
-    if let Ok(path) = which(name) {
+    if let Some(path) = find_in_path(name) {
         return Ok(path);
     }
 
     // Try nix
-    if which("nix").is_ok() {
+    if find_in_path("nix").is_some() {
         let output = Command::new("nix")
             .args([
                 "build",
@@ -41,15 +41,9 @@ pub fn resolve_tool(name: &str, nix_pkg: &str) -> Result<PathBuf> {
     );
 }
 
-fn which(name: &str) -> Result<PathBuf> {
-    let output = Command::new("which")
-        .arg(name)
-        .output()
-        .context("failed to run which")?;
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        Ok(PathBuf::from(path))
-    } else {
-        bail!("{name} not found")
-    }
+fn find_in_path(name: &str) -> Option<PathBuf> {
+    let path_var = std::env::var_os("PATH")?;
+    std::env::split_paths(&path_var)
+        .map(|dir| dir.join(name))
+        .find(|p| p.is_file())
 }

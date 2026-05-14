@@ -16,7 +16,7 @@ let
   # .gitlab-ci.yml).
   mkWidgetCheck = name: pkgs.runCommand "wasm-regression-${name}"
     {
-      nativeBuildInputs = [ capture.package pkgs.odiff pkgs.which ];
+      nativeBuildInputs = [ capture.package ];
       src = ../bmc-wasm-runtime/examples + "/${name}";
       wasm = wasmWidgets.${name};
     } ''
