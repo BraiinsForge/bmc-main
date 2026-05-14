@@ -7,8 +7,8 @@ GPU-accelerated host-side flex layout (Taffy), text shaping (cosmic-text), and r
 
 ```
 ┌─────────────────┐     ┌──────────────────────┐
-│   WASM Widget   │     │        Host           │
-│  (bmc-wasm-sdk) │────▶│  (bmc-wasm-runtime)   │
+│   WASM Widget   │     │        Host          │
+│  (bmc-wasm-sdk) │────▶│  (bmc-wasm-runtime)  │
 │                 │     │                      │
 │  - UI tree      │     │  - Deserialize tree  │
 │  - Anim decl    │     │  - Taffy flex layout │
@@ -34,10 +34,8 @@ architecture details.
 use bmc_wasm_sdk::*;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn init(width: u32, height: u32) { /* store dimensions */ }
-
-#[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
+    let WidgetSize { width: w, height: h, .. } = widget_size();
     let root = col(props!(padding: 24.0, gap: 16.0, background: BLACK), [
         text("Hello", style!(size: 32, weight: 600)),
         row(props!(gap: 12.0), [
@@ -45,22 +43,22 @@ pub extern "C" fn render(_delta_ms: u32) {
             button!("Cancel", style: Secondary),
         ]),
         spacer(1.0),
-        text(
-            &format_duration(remaining_secs, true),
-            style!(size: 20, color: GRAY_30),
-        ),
     ]);
-    render_ui(1280, 480, root);
+    render_ui(w, h, root);
     request_frame_after(1_000);
 }
 ```
 
-For the full SDK API reference (all layout primitives, canvas drawing, animations, transitions, modals, colors,
-formatting, macros), run:
+`init` / `on_params_update` / `unload` are all optional — define them only when you need them. The full widget lifecycle
+(when each hook fires, which host imports are legal in each phase, the trap-vs-soft-fail guard matrix) lives in the
+[`bmc_wasm_sdk`](sdk/src/lib.rs) crate-level rustdoc — render it locally with:
 
 ```bash
-make docs
+just wasm::docs
 ```
+
+For the full SDK API reference (layout primitives, canvas drawing, animations, transitions, modals, colors, formatting,
+macros) browse the same generated docs.
 
 ## Development
 

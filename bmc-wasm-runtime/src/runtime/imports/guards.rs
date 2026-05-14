@@ -33,8 +33,8 @@ fn lifecycle_trap(
 ) -> wasmi::Error {
     wasmi::Error::new(format!(
         "host import `{import_name}` is only legal inside {allowed}, \
-         but the guest called it from {actual:?} — see the lifecycle matrix \
-         in BDK-432 PLAN.md for the documented rules"
+         but the guest called it from {actual:?} — see the lifecycle guard \
+         matrix in `bmc_wasm_sdk` crate docs for the documented rules"
     ))
 }
 
@@ -80,7 +80,7 @@ pub(super) fn render_or_warn(
     if !warned.swap(true, Ordering::Relaxed) {
         tracing::warn!(
             "host import `{import_name}` called outside `render` (was {actual:?}) — \
-             returning empty. See the BDK-432 lifecycle matrix for the documented rules."
+             returning empty. See the lifecycle guard matrix in `bmc_wasm_sdk` crate docs."
         );
     }
     false

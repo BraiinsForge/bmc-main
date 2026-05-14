@@ -2,13 +2,137 @@
 
 //! WASM Widget SDK for Braiins Deck.
 //!
-//! Provides host bindings and UI primitives for building widgets.
-//! Layout is computed on the host side for minimal WASM binary size.
+//! Widgets compile to wasm32 and render host-side (Taffy layout, FemtoVG GL,
+//! cosmic-text shaping). The SDK is mostly tree-building primitives plus
+//! thin shims around host-imported functions — layout / animation / text shaping
+//! live on the host so the wasm binaries stay small.
 //!
-//! When compiled for native targets (non-wasm32), FFI-dependent modules
-//! are gated out. The tree-building API (`col`, `row`, `text`, `button!`,
-//! `props!`, `style!`) and pure types remain available for the storybook
-//! and other native consumers.
+//! When compiled for native targets (non-wasm32), FFI-dependent modules are gated out.
+//! The tree-building API ([`col`], [`row`], [`fn@text`], [`button!`], [`props!`], [`style!`])
+//! and pure types remain available for the storybook and other native consumers.
+//!
+//! # Widget lifecycle
+//!
+//! A widget process spends its life in one of four lifecycle phases.
+//! The host tracks the active phase and uses it to gate host imports
+//! — some trap when called from the wrong phase, others soft-fail
+//! (see the [Lifecycle guard matrix](#lifecycle-guard-matrix) below).
+//!
+//! ```text
+//! process start
+//!   └─ host instantiates the wasm module
+//!        └─ (optional) calls `init`              ── one-shot setup
+//!             ↓
+//!        ┌──── enters the per-frame loop ───────┐
+//!        │      ↓                               │
+//!        │  calls `render(delta_ms)`            │── once per visible frame
+//!        │      ↓                               │
+//!        │  may fire `on_params_update`         │── after each operator-driven
+//!        │      (when params version bumps)     │   `params` change
+//!        │      ↓                               │
+//!        │  may fire `unload`                   │── when the widget is being torn
+//!        │      (terminal — runs once)          │   down (scene swap, hot reload)
+//!        └──────────────────────────────────────┘
+//! ```
+//!
+//! The host always invokes hooks one at a time on the wasm thread — there
+//! is no concurrent execution inside a widget.
+//!
+//! ## Per-hook reference
+//!
+//! ### `init`
+//!
+//! ```rust,ignore
+//! #[unsafe(no_mangle)]
+//! pub extern "C" fn init() { /* one-shot setup */ }
+//! ```
+//!
+//! Optional. The host runs it once during instantiation if exported.
+//! Use for setup that must complete before the first `render`: panic-hook
+//! installation, KV reads to restore persisted state, kick-off fetches
+//! whose response will populate the first frame.
+//!
+//! Viewport dimensions are no longer passed as arguments — call [`widget_size`]
+//! from anywhere (in `init`, in `render`, in helpers) and you get the same `WidgetSize`
+//! on every call. Most widgets don't need a thread-local copy at all.
+//!
+//! The initial params snapshot is already staged by the time `init` runs
+//! — `params::current()` (or the typed accessor emitted by `bmc-widget-codegen`)
+//! returns operator-configured values, not an empty map.
+//!
+//! ### `render(delta_ms)`
+//!
+//! ```rust,ignore
+//! #[unsafe(no_mangle)]
+//! pub extern "C" fn render(delta_ms: u32) {
+//!     let WidgetSize { width: w, height: h, .. } = widget_size();
+//!     render_ui(w, h, build_tree(/* … */));
+//! }
+//! ```
+//!
+//! The hot path. Called once per visible frame with the wall-clock delta
+//! since the previous `render`. The widget builds a tree, calls `render_ui`
+//! to submit it, and returns.
+//!
+//! `delta_ms` is intended for per-frame timer / animation bookkeeping (metronome elapsed-ms,
+//! pomodoro countdown). Animations declared on the tree (`Draw::animate`, transitions)
+//! are evolved host-side and don't need wasm-side tick state.
+//!
+//! ### `on_params_update`
+//!
+//! ```rust,ignore
+//! #[unsafe(no_mangle)]
+//! pub extern "C" fn on_params_update() {
+//!     let Some(previous) = Params::previous() else { return };
+//!     let changed = Params::current().changed_keys(&previous);
+//!     // …
+//! }
+//! ```
+//!
+//! Optional — fires whenever the host delivers a new params snapshot *after* the initial one
+//! staged for `init`. The hook gets no arguments; read [`params::current`] (or the typed accessor)
+//! for the new state and [`params::previous`] for the old — diff to react only to keys whose value
+//! actually changed. See [`params`] for the byte-level protocol and snapshot caching.
+//!
+//! The initial params delivery (the one staged before `init` runs) does NOT fire this hook
+//! — only operator-driven changes mid-life do.
+//!
+//! ### `unload`
+//!
+//! ```rust,ignore
+//! #[unsafe(no_mangle)]
+//! pub extern "C" fn unload() { /* persist state, flush buffers */ }
+//! ```
+//!
+//! Optional. The host runs it once, synchronously, immediately before the widget instance
+//! is dropped (scene swap, hot reload, shutdown). The place to flush in-memory state to KV.
+//! Frame requests fired from `unload` are silently ignored — the runtime is about to be torn down.
+//!
+//! ## Lifecycle guard matrix
+//!
+//! A handful of host imports are only meaningful inside specific hooks.
+//! The runtime enforces this and surfaces violations in one of two ways:
+//!
+//! - **trap** — the import returns a wasmi trap, which propagates out of the offending
+//!   guest call and kills the widget. Used when calling the import from the wrong phase
+//!   indicates a structural widget bug whose silent no-op would mask a real failure.
+//! - **soft-fail** — the import logs a warn-once and returns a "nothing here" sentinel
+//!   (`None` for touch reads, no-op for frame requests). Used when reading defensively
+//!   is reasonable and the widget composes naturally with the sentinel.
+//!
+//! | Import                                              | `init` | `render` | `on_params_update` | `unload` |
+//! |-----------------------------------------------------|:------:|:--------:|:------------------:|:--------:|
+//! | `render_ui` / `host_submit_tree`                    | trap   | ✓        | trap               | trap     |
+//! | `Touch::click` / `Touch::drag` (touch readback)     | None¹  | ✓        | None¹              | None¹    |
+//! | `request_frame` / `request_frame_after`             | ✓      | ✓        | ✓                  | no-op²   |
+//! | All other imports (params, KV, fetch, log, …)       | ✓      | ✓        | ✓                  | ✓        |
+//!
+//! ¹ Returns the touch-not-present sentinel after a one-time warn.
+//!   Defensive reads compose naturally — the widget gets `None` the same
+//!   way it would on a frame where no touch occurred.
+//!
+//! ² Silently dropped after a one-time warn. Honouring the request would
+//!   queue work on a runtime that's about to be dropped.
 
 // wasm32: usize == u32, so these truncation warnings are false positives.
 // cast_sign_loss only fires on wasm32 (gated FFI code).
