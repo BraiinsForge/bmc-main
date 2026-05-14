@@ -329,6 +329,172 @@ impl EglContext {
         })
     }
 
+    /// Allocate a per-widget staging render target.
+    ///
+    /// Returns a [`WidgetExportBuffer`] usable as a femtovg target: GL color
+    /// texture + stencil RBO (+ optional depth RBO) attached to a complete
+    /// FBO. Caller renders into the FBO, then blits to a separate
+    /// [`ExportBuffer`] for DMA-BUF export.
+    ///
+    /// Must be released via [`Self::destroy_widget_export_buffer`] while this
+    /// context is alive and current — GL deletion needs a current context.
+    pub fn allocate_widget_export_buffer(
+        &self,
+        width: u32,
+        height: u32,
+        depth: Depth,
+    ) -> Result<WidgetExportBuffer> {
+        anyhow::ensure!(
+            width > 0 && height > 0,
+            "widget export buffer dimensions must be non-zero"
+        );
+
+        tracing::debug!("Allocating {width}x{height} widget export buffer (depth={depth:?})");
+
+        let texture = self.make_staging_texture(width, height)?;
+        let stencil_rbo = match self.make_renderbuffer(glow::STENCIL_INDEX8, width, height) {
+            Ok(rbo) => rbo,
+            Err(e) => {
+                unsafe { self.gl.delete_texture(texture) };
+                return Err(e.context("Failed to create stencil RBO"));
+            }
+        };
+        let depth_rbo = if depth == Depth::Enabled {
+            match self.make_renderbuffer(glow::DEPTH_COMPONENT16, width, height) {
+                Ok(rbo) => Some(rbo),
+                Err(e) => {
+                    unsafe {
+                        self.gl.delete_renderbuffer(stencil_rbo);
+                        self.gl.delete_texture(texture);
+                    }
+                    return Err(e.context("Failed to create depth RBO"));
+                }
+            }
+        } else {
+            None
+        };
+        let fbo = match self.make_widget_export_fbo(texture, stencil_rbo, depth_rbo) {
+            Ok(fbo) => fbo,
+            Err(e) => {
+                unsafe {
+                    if let Some(rbo) = depth_rbo {
+                        self.gl.delete_renderbuffer(rbo);
+                    }
+                    self.gl.delete_renderbuffer(stencil_rbo);
+                    self.gl.delete_texture(texture);
+                }
+                return Err(e);
+            }
+        };
+
+        Ok(WidgetExportBuffer {
+            texture,
+            fbo,
+            stencil_rbo,
+            depth_rbo,
+            width,
+            height,
+        })
+    }
+
+    #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
+    fn make_staging_texture(&self, width: u32, height: u32) -> Result<glow::Texture> {
+        unsafe {
+            let tex = self
+                .gl
+                .create_texture()
+                .map_err(|e| anyhow::anyhow!("Failed to create staging texture: {e}"))?;
+            self.gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+            self.gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA as i32,
+                width as i32,
+                height as i32,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(None),
+            );
+            for (name, value) in [
+                (glow::TEXTURE_MIN_FILTER, glow::LINEAR),
+                (glow::TEXTURE_MAG_FILTER, glow::LINEAR),
+                (glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE),
+                (glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE),
+            ] {
+                self.gl
+                    .tex_parameter_i32(glow::TEXTURE_2D, name, value as i32);
+            }
+            Ok(tex)
+        }
+    }
+
+    #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
+    fn make_renderbuffer(
+        &self,
+        format: u32,
+        width: u32,
+        height: u32,
+    ) -> Result<glow::Renderbuffer> {
+        unsafe {
+            let rbo = self
+                .gl
+                .create_renderbuffer()
+                .map_err(|e| anyhow::anyhow!("create_renderbuffer failed: {e}"))?;
+            self.gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rbo));
+            self.gl
+                .renderbuffer_storage(glow::RENDERBUFFER, format, width as i32, height as i32);
+            Ok(rbo)
+        }
+    }
+
+    /// Build the per-widget staging FBO, attach color + stencil (+ optional
+    /// depth), and validate completeness. On failure (incomplete FBO) the
+    /// freshly allocated framebuffer is deleted before returning; the
+    /// caller still owns the texture and renderbuffers.
+    fn make_widget_export_fbo(
+        &self,
+        texture: glow::Texture,
+        stencil_rbo: glow::Renderbuffer,
+        depth_rbo: Option<glow::Renderbuffer>,
+    ) -> Result<glow::Framebuffer> {
+        unsafe {
+            let fbo = self
+                .gl
+                .create_framebuffer()
+                .map_err(|e| anyhow::anyhow!("Failed to create staging FBO: {e}"))?;
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+            self.gl.framebuffer_texture_2d(
+                glow::FRAMEBUFFER,
+                glow::COLOR_ATTACHMENT0,
+                glow::TEXTURE_2D,
+                Some(texture),
+                0,
+            );
+            self.gl.framebuffer_renderbuffer(
+                glow::FRAMEBUFFER,
+                glow::STENCIL_ATTACHMENT,
+                glow::RENDERBUFFER,
+                Some(stencil_rbo),
+            );
+            if let Some(rbo) = depth_rbo {
+                self.gl.framebuffer_renderbuffer(
+                    glow::FRAMEBUFFER,
+                    glow::DEPTH_ATTACHMENT,
+                    glow::RENDERBUFFER,
+                    Some(rbo),
+                );
+            }
+
+            let status = self.gl.check_framebuffer_status(glow::FRAMEBUFFER);
+            if status != glow::FRAMEBUFFER_COMPLETE {
+                self.gl.delete_framebuffer(fbo);
+                anyhow::bail!("Widget export framebuffer incomplete: 0x{status:x}");
+            }
+            Ok(fbo)
+        }
+    }
+
     /// Destroy an export buffer, freeing all GPU resources.
     #[expect(
         clippy::needless_pass_by_value,
@@ -459,7 +625,7 @@ pub struct WidgetExportBuffer {
         reason = "consumed by EglContext::destroy_widget_export_buffer in the next commit"
     )]
     texture: glow::Texture,
-    pub fbo: glow::Framebuffer,
+    fbo: glow::Framebuffer,
     /// Stencil renderbuffer (`STENCIL_INDEX8`). Always allocated — femtovg
     /// requires stencil for its painting algorithms.
     #[expect(
@@ -487,7 +653,13 @@ impl fmt::Debug for WidgetExportBuffer {
 }
 
 impl WidgetExportBuffer {
-    /// Get the raw GL framebuffer name (for `set_screen_target` etc.).
+    /// GL framebuffer handle (for `bind_framebuffer` etc.).
+    #[must_use]
+    pub fn fbo(&self) -> glow::Framebuffer {
+        self.fbo
+    }
+
+    /// Raw GL framebuffer name (for femtovg `set_screen_target` etc.).
     #[must_use]
     pub fn fbo_id(&self) -> u32 {
         self.fbo.0.get()
