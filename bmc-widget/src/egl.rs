@@ -440,6 +440,60 @@ impl ExportBuffer {
     }
 }
 
+/// Per-widget staging render target: a GL color texture, stencil RBO, and FBO.
+///
+/// femtovg renders Y-flipped when targeting an FBO and needs an 8-bit stencil
+/// for its painting algorithms. Each widget owns one of these against a shared
+/// [`EglContext`]; the widget renders into `fbo` with femtovg, then blits with
+/// Y-flip into a separate DMA-BUF-backed [`ExportBuffer`] for compositor
+/// submission. Depth attachment is optional (matches [`ExportBuffer`] policy);
+/// most femtovg widgets do not need it.
+///
+/// Must be released via [`EglContext::destroy_widget_export_buffer`] before
+/// dropping — GL deletion requires the EGL context current on this thread,
+/// which only the owning [`EglContext`] can guarantee.
+pub struct WidgetExportBuffer {
+    /// GL color texture (regular `glTexImage2D` storage, not EGLImage).
+    #[expect(
+        dead_code,
+        reason = "consumed by EglContext::destroy_widget_export_buffer in the next commit"
+    )]
+    texture: glow::Texture,
+    pub fbo: glow::Framebuffer,
+    /// Stencil renderbuffer (`STENCIL_INDEX8`). Always allocated — femtovg
+    /// requires stencil for its painting algorithms.
+    #[expect(
+        dead_code,
+        reason = "consumed by EglContext::destroy_widget_export_buffer in the next commit"
+    )]
+    stencil_rbo: glow::Renderbuffer,
+    /// Optional depth renderbuffer (`DEPTH_COMPONENT16`). Allocated only when
+    /// constructed with [`Depth::Enabled`].
+    depth_rbo: Option<glow::Renderbuffer>,
+    /// Buffer width in pixels.
+    pub width: u32,
+    /// Buffer height in pixels.
+    pub height: u32,
+}
+
+impl fmt::Debug for WidgetExportBuffer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WidgetExportBuffer")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("depth", &self.depth_rbo.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl WidgetExportBuffer {
+    /// Get the raw GL framebuffer name (for `set_screen_target` etc.).
+    #[must_use]
+    pub fn fbo_id(&self) -> u32 {
+        self.fbo.0.get()
+    }
+}
+
 /// Double-buffered DMA-BUF export state.
 ///
 /// Manages two lazily-allocated [`ExportBuffer`]s with ping-pong swap.
