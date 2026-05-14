@@ -5,14 +5,12 @@
 //! modes to exercise the host fuel budget enforcement.
 
 use bmc_wasm_sdk::{
-    GRAY_10, GRAY_50, GRAY_70, Node, ORANGE_50, RED_50, button, col, props, render_ui, row, spacer,
-    style, text,
+    GRAY_10, GRAY_50, GRAY_70, Node, ORANGE_50, RED_50, WidgetSize, button, col, props, render_ui,
+    row, spacer, style, text, widget_size,
 };
 use std::cell::Cell;
 
 thread_local! {
-    static WIDTH: Cell<u32> = const { Cell::new(1_280) };
-    static HEIGHT: Cell<u32> = const { Cell::new(480) };
     /// 0 = normal, 1 = CPU burn, 2 = draw spam
     static MODE: Cell<u32> = const { Cell::new(0) };
 }
@@ -20,15 +18,12 @@ thread_local! {
 const MODE_NAMES: [&str; 3] = ["Normal", "CPU Burn", "Draw Spam"];
 
 #[unsafe(no_mangle)]
-pub extern "C" fn init(width: u32, height: u32) {
-    WIDTH.set(width);
-    HEIGHT.set(height);
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
-    let w = WIDTH.get();
-    let h = HEIGHT.get();
+    let WidgetSize {
+        width: w,
+        height: h,
+        ..
+    } = widget_size();
     let mode = MODE.get();
 
     let mode_color = match mode {
@@ -107,10 +102,8 @@ fn cpu_burn() {
     for i in 0..100_000_000u64 {
         x = x.wrapping_mul(i | 1).wrapping_add(7);
     }
-    // Prevent the optimizer from removing the loop
-    if x == 0 {
-        WIDTH.set(0);
-    }
+    // Prevent the optimizer from removing the loop.
+    core::hint::black_box(x);
 }
 
 /// Heavy WASM-side memory work — simulates what happens when a widget
@@ -126,8 +119,6 @@ fn draw_spam() {
         buf.extend_from_slice(&1.0_f32.to_le_bytes());
         buf.extend_from_slice(&0xFF_00_00_FFu32.to_le_bytes());
     }
-    // Prevent the optimizer from removing the loop
-    if buf.is_empty() {
-        WIDTH.set(0);
-    }
+    // Prevent the optimizer from removing the loop.
+    core::hint::black_box(&buf);
 }

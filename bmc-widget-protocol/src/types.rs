@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 use bmc_shared_time::time::{DateFormat, TimeSystem, WeekDay};
 use bmc_shared_utils::number_format::NumberFormat;

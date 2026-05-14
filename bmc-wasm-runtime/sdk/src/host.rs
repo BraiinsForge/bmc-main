@@ -46,6 +46,9 @@ mod ffi {
         // System time
         pub(super) fn host_get_system_time(out_ptr: *mut u8);
 
+        // Widget viewport dimensions, packed as `(width << 32) | height`.
+        pub(super) fn host_widget_size() -> u64;
+
         // Date parsing
         fn host_parse_date(str_ptr: *const u8, str_len: u32) -> i64;
 
@@ -436,6 +439,38 @@ impl WidgetSize {
             height: h,
         }
     }
+}
+
+/// Widget viewport dimensions, fetched from the host on demand.
+///
+/// The host caches these immutably at runtime construction, so this is a single
+/// register read across the wasm boundary — call it as often as you need (in
+/// `init`, in `render`, in helper functions) instead of stashing dimensions in
+/// thread-locals.
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn widget_size() -> WidgetSize {
+    let packed = unsafe { ffi::host_widget_size() };
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "low 32 bits intentionally selected via `as u32` after shift"
+    )]
+    let width = (packed >> 32) as u32;
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "low 32 bits intentionally selected via `as u32`"
+    )]
+    let height = packed as u32;
+    WidgetSize::from_dimensions(width, height)
+}
+
+/// Native-target stub — returns a default `WidgetSize`. Non-wasm consumers
+/// (storybook, tests) get a stable shape without crossing the FFI boundary
+/// that doesn't exist off-target.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn widget_size() -> WidgetSize {
+    WidgetSize::from_dimensions(0, 0)
 }
 
 /// Date-time with timezone, provided by the host.

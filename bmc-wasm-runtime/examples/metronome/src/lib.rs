@@ -21,11 +21,6 @@ const BEATS_PER_BAR: u32 = 4;
 const TAP_HISTORY: usize = 4;
 
 thread_local! {
-    static SIZE: Cell<WidgetSize> = const { Cell::new(WidgetSize {
-        variant: SizeVariant::Full,
-        width: 1_280,
-        height: 480,
-    }) };
     static BPM: Cell<u32> = const { Cell::new(120) };
     static PLAYING: Cell<bool> = const { Cell::new(false) };
     static BEAT: Cell<u32> = const { Cell::new(0) };
@@ -37,13 +32,8 @@ thread_local! {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn init(width: u32, height: u32) {
-    SIZE.set(WidgetSize::from_dimensions(width, height));
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn render(delta_ms: u32) {
-    let size = SIZE.get();
+    let size = widget_size();
     let bpm = BPM.get();
     let playing = PLAYING.get();
     let beat = BEAT.get();

@@ -35,11 +35,6 @@ enum HaState {
 }
 
 thread_local! {
-    static SIZE: Cell<WidgetSize> = const { Cell::new(WidgetSize {
-        variant: SizeVariant::Full,
-        width: 1_280,
-        height: 480,
-    }) };
     static STATE: RefCell<HaState> = const { RefCell::new(HaState::Connecting) };
     /// Monotonic message ID for the HA JSON-RPC protocol.
     static MSG_ID: Cell<u32> = const { Cell::new(1) };
@@ -79,8 +74,7 @@ fn next_msg_id() -> u32 {
 // ── WASM exports ──────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub extern "C" fn init(width: u32, height: u32) {
-    SIZE.set(WidgetSize::from_dimensions(width, height));
+pub extern "C" fn init() {
     let url = kv::get_string("ha_url").unwrap_or_else(|| DEFAULT_HA_URL.into());
     if ws!(&url, on_ha_event).is_none() {
         let msg = "HA WebSocket rejected by host runtime limits".to_string();
@@ -92,7 +86,7 @@ pub extern "C" fn init(width: u32, height: u32) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
-    let size = SIZE.get();
+    let size = widget_size();
 
     let is_small = matches!(size.variant, SizeVariant::Small | SizeVariant::Medium);
     let pad = if is_small { 12.0 } else { 24.0 };

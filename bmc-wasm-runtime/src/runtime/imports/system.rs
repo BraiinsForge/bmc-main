@@ -13,6 +13,23 @@ use crate::host_api::HostState;
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_system_time_import(linker)?;
     register_random_import(linker)?;
+    register_widget_size_import(linker)?;
+    Ok(())
+}
+
+/// Widget viewport dimensions, packed as `(width << 32) | height` so the guest
+/// reads them in a single register without an out-pointer dance. Set by the host
+/// when constructing the runtime and never mutated thereafter — the SDK's
+/// `widget_size()` reads this once.
+fn register_widget_size_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_widget_size",
+        |caller: Caller<'_, HostState>| -> u64 {
+            let s = caller.data();
+            (u64::from(s.widget_width) << 32) | u64::from(s.widget_height)
+        },
+    )?;
     Ok(())
 }
 

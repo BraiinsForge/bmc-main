@@ -38,15 +38,16 @@ pub(super) fn write_touch_hit(caller: &mut Caller<'_, HostState>, out_ptr: u32, 
     }
 }
 
-/// Run a guest call inside the given [`Lifecycle`] phase,
-/// resetting to [`Lifecycle::Idle`] before returning.
+/// Run a guest call inside the given [`Lifecycle`] phase, restoring the previous phase
+/// before returning.
 ///
-/// Phases are flat by design (the `Lifecycle` doc spells out the single-threaded,
-/// host-serialised guarantee) — no two are ever on the stack simultaneously,
-/// so the falling edge is always `Idle`.
+/// Save/restore makes the helper re-entrancy-safe by construction:
+/// if a host import ever re-enters a guest export,
+/// the inner phase doesn't clobber the outer on return.
 ///
-/// If that ever needs to change, this helper would save/restore instead,
-/// and the call sites wouldn't change shape.
+/// Today's lifecycle is flat (`Lifecycle`'s doc spells out the single-threaded,
+/// host-serialised guarantee), so `previous` is `Idle` on every outermost call
+/// — the save/restore is defence in depth, not currently load-bearing.
 ///
 /// Not panic-safe by design: wasmi reports traps via `Err`, not panic.
 /// A Rust-side panic from a guest call indicates a host-import bug
@@ -56,9 +57,10 @@ fn in_lifecycle<R>(
     phase: Lifecycle,
     f: impl FnOnce(&mut wasmi::Store<HostState>) -> R,
 ) -> R {
+    let previous = store.data().current_lifecycle;
     store.data_mut().current_lifecycle = phase;
     let result = f(store);
-    store.data_mut().current_lifecycle = Lifecycle::Idle;
+    store.data_mut().current_lifecycle = previous;
     result
 }
 
@@ -317,6 +319,8 @@ impl WasmWidgetRuntime {
 
         // Apply config before init() so interceptors/KV/params are available immediately.
         let state = store.data_mut();
+        state.widget_width = width;
+        state.widget_height = height;
         state.kv_store_path = kv_store_path;
         state.fetch_interceptor = fetch_interceptor;
         state.fetch_observer = fetch_observer;
@@ -331,8 +335,7 @@ impl WasmWidgetRuntime {
         // The version is bumped once here; subsequent deliveries go through
         // `deliver_params_update`, which bumps again and fires `on_params_update`.
         if !params.is_empty() {
-            state.params = params;
-            state.params_version = state.params_version.wrapping_add(1);
+            state.replace_params(params);
         }
         if !event_fixtures.is_empty() {
             state.event_fixtures = Some(crate::host_api::FixtureEventState {
@@ -346,11 +349,11 @@ impl WasmWidgetRuntime {
             });
         }
 
-        // Call init — all host config is in place
-        if let Ok(init_func) = instance.get_typed_func::<(u32, u32), ()>(&store, "init") {
-            in_lifecycle(&mut store, Lifecycle::Init, |s| {
-                init_func.call(s, (width, height))
-            })?;
+        // Call init — all host config (including widget dimensions) is in place.
+        // The guest reads its viewport via `widget_size()` / `host_widget_size`
+        // rather than init arguments, so the typed func is `() -> ()`.
+        if let Ok(init_func) = instance.get_typed_func::<(), ()>(&store, "init") {
+            in_lifecycle(&mut store, Lifecycle::Init, |s| init_func.call(s, ()))?;
         }
 
         Ok(Self {
@@ -609,9 +612,7 @@ impl WasmWidgetRuntime {
             bmc_widget_manifest::ParamValue,
         >,
     ) {
-        let state = self.store.data_mut();
-        state.params = params;
-        state.params_version = state.params_version.wrapping_add(1);
+        self.store.data_mut().replace_params(params);
     }
 
     /// Deliver an operator-driven params update to the running widget.

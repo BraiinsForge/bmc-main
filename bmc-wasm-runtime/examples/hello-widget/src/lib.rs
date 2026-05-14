@@ -18,19 +18,11 @@ const WARNING: Icon = include_icon!("assets/warning.svg");
 const SEARCH: Icon = include_icon!("assets/search.svg");
 
 thread_local! {
-    static WIDTH: Cell<u32> = const { Cell::new(1_280) };
-    static HEIGHT: Cell<u32> = const { Cell::new(480) };
     static COUNTS: RefCell<[u32; 4]> = const { RefCell::new([0; 4]) };
     static MODAL_OPEN: Cell<bool> = const { Cell::new(false) };
 }
 
 const BG_COLOR: Color = Color::from_hex(0x66_23_47);
-
-#[unsafe(no_mangle)]
-pub extern "C" fn init(width: u32, height: u32) {
-    WIDTH.set(width);
-    HEIGHT.set(height);
-}
 
 // ---------------------------------------------------------------------------
 // Sections — each returns a Node, composed in render() like React components
@@ -436,8 +428,11 @@ fn handle_clicks(result: &bmc_wasm_sdk::TreeRenderResult) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
-    let w = WIDTH.get();
-    let h = HEIGHT.get();
+    let WidgetSize {
+        width: w,
+        height: h,
+        ..
+    } = widget_size();
     let time = SystemTime::now();
     let counts = COUNTS.with(|c| *c.borrow());
 

@@ -3,7 +3,7 @@
 //! Integration tests for the params/lifecycle wire (Stage E of BDK-432).
 //!
 //! These tests construct a real `WasmWidgetRuntime` with a hand-rolled WAT probe widget
-//! and assert the behaviours documented in `docs/devlogs/BDK-432-wasm-widget-params/PLAN.md`:
+//! and assert the params/lifecycle contract:
 //!
 //! * `on_params_update` does NOT fire for the initial delivery via `RuntimeConfig::params`.
 //! * `on_params_update` DOES fire for every subsequent `deliver_params_update` call.
@@ -275,7 +275,7 @@ fn probe_widget_wat() -> &'static str {
       (func (export "render") (param i32))
 
       ;; Optional. Counts calls so the test can assert init runs exactly once.
-      (func (export "init") (param i32 i32)
+      (func (export "init")
         global.get $init_count
         i32.const 1
         i32.add
@@ -305,6 +305,32 @@ fn probe_widget_wat() -> &'static str {
         global.get $last_version_in_update)
       (func (export "last_snapshot_len_in_update") (result i32)
         global.get $last_snapshot_len_in_update))
+    "#
+}
+
+/// Misbehaving widget: calls `host_params_snapshot` with an out-of-bounds `out_ptr`.
+/// Used to assert the host traps the ABI violation rather than fail-quiet returning 0.
+fn oob_snapshot_traps_wat() -> &'static str {
+    r#"
+    (module
+      (import "env" "host_params_snapshot"
+        (func $host_params_snapshot (param i32 i32) (result i32)))
+
+      (memory (export "memory") 1)
+
+      (func (export "__bmc_sdk_version") (result i64)
+        i64.const 65536)
+
+      (func (export "render") (param i32))
+
+      ;; out_ptr = u32::MAX (well past the guest's single 64 KiB page).
+      ;; out_cap large enough that the host's `out_cap < needed` early-return doesn't fire
+      ;; and the function falls into the memory-write branch.
+      (func (export "on_params_update")
+        i32.const -1     ;; out_ptr = u32::MAX in two's complement
+        i32.const 4096   ;; out_cap
+        call $host_params_snapshot
+        drop))
     "#
 }
 
@@ -443,6 +469,27 @@ fn deliver_params_update_fires_hook_and_advances_version() {
         second_version, first_version,
         "consecutive deliveries must produce distinct version values \
          (different = changed); got {first_version} both times"
+    );
+}
+
+#[test]
+fn host_params_snapshot_traps_on_oob_out_ptr() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+
+    let mut runtime = build_runtime(oob_snapshot_traps_wat(), &gl, BTreeMap::new());
+
+    // Any non-empty delivery so on_params_update fires.
+    let mut delivery = BTreeMap::new();
+    delivery.insert(key("foo"), ParamValue::String("bar".into()));
+    let hook_ran = runtime.deliver_params_update(delivery);
+    assert!(
+        !hook_ran,
+        "host_params_snapshot with an OOB out_ptr must trap on the ABI violation, \
+         which surfaces as `deliver_params_update` returning false — silently returning 0 \
+         (the prior behaviour) makes a misbehaving guest see 'no snapshot' instead of \
+         finding out it bugged itself"
     );
 }
 

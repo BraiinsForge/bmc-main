@@ -64,7 +64,6 @@ const DEFAULT_SOURCES: &[ICalSource] = &[
 
 thread_local! {
     static STATE: RefCell<CalendarState> = RefCell::new(CalendarState::new());
-    static SIZE: RefCell<WidgetSize> = RefCell::new(WidgetSize::from_dimensions(1_280, 480));
     static THEME_KEY: RefCell<render::ThemeKey> = const { RefCell::new(render::ThemeKey::Dark) };
     /// Maps fetch request_id → source index. HTTP responses arrive in arbitrary
     /// order, so we cannot use a FIFO queue.
@@ -72,9 +71,8 @@ thread_local! {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn init(width: u32, height: u32) {
+pub extern "C" fn init() {
     install_panic_hook();
-    SIZE.with(|s| *s.borrow_mut() = WidgetSize::from_dimensions(width, height));
     THEME_KEY.with(|t| {
         *t.borrow_mut() = match kv::get_string("theme").as_deref() {
             Some("light") => render::ThemeKey::Light,
@@ -210,7 +208,7 @@ fn toggle_theme() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
-    let size = SIZE.with(|s| *s.borrow());
+    let size = widget_size();
 
     let theme_key = THEME_KEY.with(|t| *t.borrow());
     render::set_theme_key(theme_key);

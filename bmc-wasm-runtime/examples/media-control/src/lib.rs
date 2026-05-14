@@ -336,11 +336,6 @@ impl Default for WidgetState {
 }
 
 thread_local! {
-    static SIZE: Cell<WidgetSize> = const { Cell::new(WidgetSize {
-        variant: SizeVariant::Full,
-        width: 1_280,
-        height: 480,
-    }) };
     static STATE: RefCell<WidgetState> = const { RefCell::new(WidgetState::Discovering) };
     static DEVICE: RefCell<Option<UpnpDevice>> = const { RefCell::new(None) };
     /// Active protocol controller (set on connect, cleared on disconnect).
@@ -374,9 +369,7 @@ fn discovery_log(msg: String) {
 // ── Entry points ─────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub extern "C" fn init(width: u32, height: u32) {
-    SIZE.set(WidgetSize::from_dimensions(width, height));
-
+pub extern "C" fn init() {
     // Activate skin based on current index
     set_active_skin(SKINS[SKIN_INDEX.with(Cell::get)].skin);
 
@@ -962,7 +955,7 @@ pub extern "C" fn render(delta_ms: u32) {
     // bitmaps during tree construction — before render_ui() calls begin_tree().
     begin_tree();
 
-    let size = SIZE.with(Cell::get);
+    let size = widget_size();
 
     // Determine which screen we're on before building the tree
     #[derive(Clone, Copy)]

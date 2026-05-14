@@ -11,7 +11,7 @@
 //! Displays live ISS position on an equirectangular globe with orbital track,
 //! day/night terminator overlay, and data panels (full/large/medium/small).
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::f64::consts::PI;
 
 #[expect(clippy::wildcard_imports)]
@@ -101,11 +101,6 @@ enum WidgetState {
 }
 
 thread_local! {
-    static SIZE: Cell<WidgetSize> = const { Cell::new(WidgetSize {
-        variant: SizeVariant::Full,
-        width: 1_280,
-        height: 480,
-    }) };
     static STATE: RefCell<WidgetState> = const { RefCell::new(WidgetState::Loading) };
     /// Cached TLE lines for SGP4 orbital propagation.
     static TLE: RefCell<Option<(String, String)>> = const { RefCell::new(None) };
@@ -142,8 +137,7 @@ fn schedule_tle_fetch(delay_ms: Option<u32>) -> bool {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn init(width: u32, height: u32) {
-    SIZE.set(WidgetSize::from_dimensions(width, height));
+pub extern "C" fn init() {
     if !schedule_position_fetch(None) {
         STATE.with(|s| *s.borrow_mut() = WidgetState::Error("fetch queue full".into()));
         request_frame();
@@ -216,7 +210,7 @@ fn on_tle_data(response: &FetchResponse) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
-    let size = SIZE.get();
+    let size = widget_size();
 
     let root = STATE.with(|s| {
         let borrow = s.borrow();

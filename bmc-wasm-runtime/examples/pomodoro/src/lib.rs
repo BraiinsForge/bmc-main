@@ -43,11 +43,6 @@ enum Phase {
 }
 
 thread_local! {
-    static SIZE: Cell<WidgetSize> = const { Cell::new(WidgetSize {
-        variant: SizeVariant::Full,
-        width: 1_280,
-        height: 480,
-    }) };
     static PHASE: Cell<Phase> = const { Cell::new(Phase::Idle) };
     static RUNNING: Cell<bool> = const { Cell::new(false) };
     static ELAPSED_MS: Cell<u32> = const { Cell::new(0) };
@@ -231,14 +226,13 @@ fn play_chime(audio: &Audio) {
 // ── Entry points ─────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub extern "C" fn init(width: u32, height: u32) {
-    SIZE.set(WidgetSize::from_dimensions(width, height));
+pub extern "C" fn init() {
     load_persisted_state();
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn render(delta_ms: u32) {
-    let size = SIZE.get();
+    let size = widget_size();
     let phase = PHASE.get();
     let running = RUNNING.get();
 

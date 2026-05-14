@@ -136,8 +136,6 @@ enum Mode {
 }
 
 thread_local! {
-    static WIDTH: Cell<u32> = const { Cell::new(1_280) };
-    static HEIGHT: Cell<u32> = const { Cell::new(480) };
     static MODE: Cell<Mode> = const { Cell::new(Mode::Tray) };
     // Suzanne drag state
     static YAW: Cell<f32> = const { Cell::new(30.0) };
@@ -293,15 +291,12 @@ fn roll_die(die: &mut DieInstance) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn init(width: u32, height: u32) {
-    WIDTH.set(width);
-    HEIGHT.set(height);
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn render(delta_ms: u32) {
-    let w = WIDTH.get();
-    let h = HEIGHT.get();
+    let WidgetSize {
+        width: w,
+        height: h,
+        ..
+    } = widget_size();
     let mode = MODE.get();
 
     // Seed initial tray with one D6

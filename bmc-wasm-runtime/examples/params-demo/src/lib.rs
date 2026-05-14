@@ -30,12 +30,10 @@ use bmc_wasm_sdk::*;
 
 use manifest_params::Params;
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 thread_local! {
-    static WIDTH: Cell<u32> = const { Cell::new(1_280) };
-    static HEIGHT: Cell<u32> = const { Cell::new(480) };
     /// Per-key milliseconds-remaining on the change-decay highlight.
     /// Bumped to `DECAY_MS` inside `on_params_update` for every key whose value differs
     /// from the previous snapshot, decremented by `delta_ms` at the end of every `render`.
@@ -53,12 +51,6 @@ const DECAY_MS: u32 = 800;
 /// Peak alpha of the amber tint at t=0 of the decay window.
 /// Decays linearly to 0 over `DECAY_MS`.
 const TINT_PEAK_ALPHA: f32 = 0.45;
-
-#[unsafe(no_mangle)]
-pub extern "C" fn init(width: u32, height: u32) {
-    WIDTH.set(width);
-    HEIGHT.set(height);
-}
 
 /// Lifecycle hook fired by the host on every params delivery after the first.
 /// Diffs `current()` against `previous()` and stamps every changed key with a fresh decay
@@ -152,11 +144,11 @@ const SIZES_SMALL: Sizes = Sizes {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn render(delta_ms: u32) {
-    let w = WIDTH.get();
-    let h = HEIGHT.get();
+    let size = widget_size();
+    let w = size.width;
+    let h = size.height;
     let p = Params::current();
 
-    let size = WidgetSize::from_dimensions(w, h);
     match size.variant {
         // Small (317×238) and Medium (638×238) both lack the vertical room for the two-line
         // grid layout (Required has 10 entries, each a key+hint line pair). They fall back to
