@@ -185,6 +185,34 @@
       <arg name="value" type="uint" enum="weekday"/>
     </event>
 
+    <event name="lifecycle">
+      <description summary="widget lifecycle state changed">
+        Emitted whenever the widget's lifecycle state changes. The initial
+        emission immediately after the configure_done batch is always one
+        of the idle states: 'dormant', 'prepared', or 'visible'. The
+        transitional states 'entering' and 'leaving' only appear during
+        an active scene-cycle drag, never as a first event.
+
+        Within a scene change the compositor emits a release batch
+        (transitions into 'dormant') and flushes it, then emits the
+        acquire batch (all other transitions) and flushes again. This
+        ordering lets a shared render-target pool be reclaimed before
+        the next acquire and is the only ordering guarantee the
+        compositor makes between batches.
+
+        Permitted transitions (the compositor never emits anything else):
+          dormant   -> prepared | visible | entering
+          prepared  -> dormant | visible | entering
+          visible   -> dormant | prepared | leaving
+          entering  -> visible | prepared | dormant
+          leaving   -> dormant | prepared | visible
+
+        Widgets that do not bind this event silently ignore it; old
+        widgets keep working unchanged.
+      </description>
+      <arg name="state" type="uint" enum="lifecycle_state"/>
+    </event>
+
     <event name="shutdown">
       <description summary="request graceful shutdown">
         Sent when the widget should shut down gracefully.
@@ -199,6 +227,20 @@
          gestures (e.g. scene navigation), wl_touch.cancel is sent. -->
 
     <!-- Enums -->
+
+    <enum name="lifecycle_state">
+      <description summary="widget visibility lifecycle">
+        Tracks whether the widget is on-screen, neighbouring an on-screen
+        widget, transitioning in or out under a scene-cycle drag, or
+        completely off-screen. The host runtime uses this to acquire and
+        release render-target buffers and to gate animation ticking.
+      </description>
+      <entry name="dormant"  value="0" summary="off-screen, no render target"/>
+      <entry name="prepared" value="1" summary="immediate neighbour, pre-rendered once"/>
+      <entry name="entering" value="2" summary="transitioning in under a drag"/>
+      <entry name="visible"  value="3" summary="active on-screen"/>
+      <entry name="leaving"  value="4" summary="transitioning out under a drag"/>
+    </enum>
 
     <enum name="size_type">
       <entry name="small" value="0"/>
