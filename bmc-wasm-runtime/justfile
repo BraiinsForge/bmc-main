@@ -64,6 +64,15 @@ size EXAMPLE:
 size-check EXAMPLE:
     {{ dir }}/tools/wasm_size.py -e {{ EXAMPLE }} --check
 
+# === Codegen ===
+
+# Regenerate `manifest_params.rs` from `manifest.json`.
+gen EXAMPLE:
+    cargo run -p bmc-widget-codegen \
+        --manifest-path {{ dir }}/../Cargo.toml -- \
+            --manifest {{ widgets_dir }}/{{ EXAMPLE }}/manifest.json \
+            --out {{ widgets_dir }}/{{ EXAMPLE }}/src/manifest_params.rs
+
 # === Docs ===
 
 # SDK API docs (opens in browser).

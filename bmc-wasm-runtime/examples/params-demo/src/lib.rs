@@ -21,8 +21,14 @@
 //! once one is set — through the host-side params plumbing into the SDK's
 //! `params::current()`.
 
+// Generated from `manifest.json` by `bmc-widget-codegen`; regenerate
+// via `just wasm::gen params-demo` after editing the manifest.
+mod manifest_params;
+
 #[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
+
+use manifest_params::Params;
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -57,64 +63,22 @@ pub extern "C" fn init(width: u32, height: u32) {
 /// Lifecycle hook fired by the host on every params delivery after the first.
 /// Diffs `current()` against `previous()` and stamps every changed key with a fresh decay
 /// window; the render path consumes the per-key counter to tint the affected cells.
-/// Also fires for keys that appear or disappear (set vs unset transitions), since both sides
-/// of the diff iterate `keys()` to catch null-on-wire vs absent transitions symmetrically.
 #[unsafe(no_mangle)]
 pub extern "C" fn on_params_update() {
-    let current = params::current();
-    let previous = params::previous();
-    let changed = diff_changed_keys(&current, &previous);
+    let Some(previous) = Params::previous() else {
+        return;
+    };
+    let changed = Params::current().changed_keys(&previous);
     if changed.is_empty() {
-        // Could happen if the host bumped the version but the snapshot content is byte-identical
-        // (e.g. operator hit "save" on an unchanged form). Nothing visible to react to — skip.
         return;
     }
     DECAY_MS_REMAINING.with(|m| {
         let mut m = m.borrow_mut();
         for key in changed {
-            m.insert(key, DECAY_MS);
+            m.insert(key.to_owned(), DECAY_MS);
         }
     });
     request_frame();
-}
-
-/// Return the set of keys whose value differs between two snapshots.
-/// Diff covers value mismatches *and* set/unset transitions on a per-key basis:
-/// `value_equal` treats both snapshots' typed accessors uniformly, so a transition between
-/// `Some(v)` and `None` (i.e. a value being set, cleared, or modified) flips the equality
-/// check and the key gets flagged.
-///
-/// The host packs `Null` entries for every manifest-declared key, so `current.keys()` always
-/// covers the full manifest set — no second pass over `previous.keys()` is needed. (Earlier
-/// drafts had one, but its check fired for `Null`-in-current entries too and made every
-/// optional-without-default cell flash amber on every unrelated update.)
-fn diff_changed_keys(current: &params::Params, previous: &params::Params) -> Vec<String> {
-    let mut changed = Vec::new();
-    for key in current.keys() {
-        if !value_equal(current, previous, key) {
-            changed.push(key.to_owned());
-        }
-    }
-    changed
-}
-
-/// Whether the value behind `key` matches across two snapshots, treating "unset" as a value.
-/// Probes each typed accessor in turn; the first match wins. Two keys whose typed accessors all
-/// return `None` are considered equal (both null/unset).
-fn value_equal(a: &params::Params, b: &params::Params, key: &str) -> bool {
-    if a.get_str(key) != b.get_str(key) {
-        return false;
-    }
-    if a.get_i32(key) != b.get_i32(key) {
-        return false;
-    }
-    if a.get_f64(key) != b.get_f64(key) {
-        return false;
-    }
-    if a.get_bool(key) != b.get_bool(key) {
-        return false;
-    }
-    true
 }
 
 /// Background tint for a cell whose key is mid-decay. Returns transparent when no decay is active.
@@ -163,15 +127,15 @@ struct Sizes {
 }
 
 const SIZES_FULL: Sizes = Sizes {
-    section_header: 14,
-    key: 11,
-    hint: 8,
-    value: 11,
-    col_padding: 12.0,
-    col_gap: 8.0,
-    cell_gap: 6.0,
-    label_width: 110.0,
-    footer_size: 10,
+    section_header: 18,
+    key: 14,
+    hint: 11,
+    value: 14,
+    col_padding: 14.0,
+    col_gap: 10.0,
+    cell_gap: 8.0,
+    label_width: 140.0,
+    footer_size: 12,
 };
 
 const SIZES_SMALL: Sizes = Sizes {
@@ -190,7 +154,7 @@ const SIZES_SMALL: Sizes = Sizes {
 pub extern "C" fn render(delta_ms: u32) {
     let w = WIDTH.get();
     let h = HEIGHT.get();
-    let p = params::current();
+    let p = Params::current();
 
     let size = WidgetSize::from_dimensions(w, h);
     match size.variant {
@@ -216,27 +180,55 @@ pub extern "C" fn render(delta_ms: u32) {
 /// density, and the full 317 px tile width is available for values, so URLs and longer strings
 /// don't wrap.
 /// All 14 keys stack with comfortable gap.
-fn render_compact(w: u32, h: u32, p: &params::Params, sizes: &Sizes) {
+fn render_compact(w: u32, h: u32, p: &Params, sizes: &Sizes) {
     let _ = render_ui(
         w,
         h,
         col(
             props!(flex: 1.0, gap: sizes.cell_gap, background: GRAY_90.with_alpha(0.85), padding: sizes.col_padding),
             [
-                kv_line_str("free_string", p.get_str("free_string"), sizes),
-                kv_line_str("string_enum", p.get_str("string_enum"), sizes),
-                kv_line_str("string_uri", p.get_str("string_uri"), sizes),
-                kv_line_str("string_date", p.get_str("string_date"), sizes),
-                kv_line_i32("integer_range", p.get_i32("integer_range"), sizes),
-                kv_line_i32("integer_enum", p.get_i32("integer_enum"), sizes),
-                kv_line_f64("double_range", p.get_f64("double_range"), sizes),
-                kv_line_f64("double_enum", p.get_f64("double_enum"), sizes),
-                kv_line_bool("boolean_flag", p.get_bool("boolean_flag"), sizes),
-                kv_line_str("tz", p.get_str("tz"), sizes),
-                kv_line_str("optional_string", p.get_str("optional_string"), sizes),
-                kv_line_i32("optional_integer", p.get_i32("optional_integer"), sizes),
-                kv_line_f64("optional_double", p.get_f64("optional_double"), sizes),
-                kv_line_bool("optional_boolean", p.get_bool("optional_boolean"), sizes),
+                kv_line("free_string", &p.free_string, sizes),
+                kv_line(
+                    "string_enum",
+                    fmt!(
+                        "{} ({})",
+                        p.string_enum.as_manifest_value(),
+                        p.string_enum.as_manifest_label()
+                    ),
+                    sizes,
+                ),
+                kv_line("string_uri", &p.string_uri, sizes),
+                kv_line("string_date", &p.string_date, sizes),
+                kv_line("integer_range", fmt!("{}", p.integer_range), sizes),
+                kv_line(
+                    "integer_enum",
+                    fmt!(
+                        "{} ({})",
+                        p.integer_enum.as_manifest_value(),
+                        p.integer_enum.as_manifest_label()
+                    ),
+                    sizes,
+                ),
+                kv_line("double_range", format_f64_fixed(p.double_range, 2), sizes),
+                kv_line(
+                    "double_enum",
+                    fmt!(
+                        "{} ({})",
+                        format_f64_fixed(p.double_enum.as_manifest_value(), 2),
+                        p.double_enum.as_manifest_label(),
+                    ),
+                    sizes,
+                ),
+                kv_line(
+                    "boolean_flag",
+                    if p.boolean_flag { "on" } else { "off" },
+                    sizes,
+                ),
+                kv_line("tz", &p.tz, sizes),
+                kv_line_opt_str("optional_string", p.optional_string.as_deref(), sizes),
+                kv_line_opt_i32("optional_integer", p.optional_integer, sizes),
+                kv_line_opt_f64("optional_double", p.optional_double, sizes),
+                kv_line_opt_bool("optional_boolean", p.optional_boolean, sizes),
             ],
         ),
     );
@@ -259,25 +251,25 @@ fn kv_line(key: &str, value: impl Into<String>, sizes: &Sizes) -> Node {
     )
 }
 
-fn kv_line_str(key: &str, value: Option<&str>, sizes: &Sizes) -> Node {
+fn kv_line_opt_str(key: &str, value: Option<&str>, sizes: &Sizes) -> Node {
     kv_line(key, value.unwrap_or("(unset)"), sizes)
 }
 
-fn kv_line_i32(key: &str, value: Option<i32>, sizes: &Sizes) -> Node {
+fn kv_line_opt_i32(key: &str, value: Option<i32>, sizes: &Sizes) -> Node {
     match value {
         Some(v) => kv_line(key, fmt!("{v}"), sizes),
         None => kv_line(key, "(unset)", sizes),
     }
 }
 
-fn kv_line_f64(key: &str, value: Option<f64>, sizes: &Sizes) -> Node {
+fn kv_line_opt_f64(key: &str, value: Option<f64>, sizes: &Sizes) -> Node {
     match value {
         Some(v) => kv_line(key, format_f64_fixed(v, 2), sizes),
         None => kv_line(key, "(unset)", sizes),
     }
 }
 
-fn kv_line_bool(key: &str, value: Option<bool>, sizes: &Sizes) -> Node {
+fn kv_line_opt_bool(key: &str, value: Option<bool>, sizes: &Sizes) -> Node {
     let display = match value {
         Some(true) => "on",
         Some(false) => "off",
@@ -289,70 +281,79 @@ fn kv_line_bool(key: &str, value: Option<bool>, sizes: &Sizes) -> Node {
 /// Full per-key grid. Layout tuning comes from [`Sizes`]; the cell structure (label column with
 /// hint subtitle, value to the right) stays identical across variants so the small view differs
 /// from the others only in pixels, not shape.
-fn render_grid(w: u32, h: u32, p: &params::Params, sizes: &Sizes) {
+fn render_grid(w: u32, h: u32, p: &Params, sizes: &Sizes) {
     let required = col(
         props!(flex: 1.0, gap: sizes.cell_gap, background: GRAY_90.with_alpha(0.85), padding: sizes.col_padding),
         [
             section_header("Required (per ParamKind variant)", sizes),
-            kv_str("free_string", "", p.get_str("free_string"), sizes),
-            kv_str(
+            kv("free_string", "", &p.free_string, sizes),
+            kv(
                 "string_enum",
                 "enum_values",
-                p.get_str("string_enum"),
+                fmt!(
+                    "{} ({})",
+                    p.string_enum.as_manifest_value(),
+                    p.string_enum.as_manifest_label()
+                ),
                 sizes,
             ),
-            kv_str("string_uri", "format: uri", p.get_str("string_uri"), sizes),
-            kv_str(
-                "string_date",
-                "format: date",
-                p.get_str("string_date"),
-                sizes,
-            ),
-            kv_i32(
+            kv("string_uri", "format: uri", &p.string_uri, sizes),
+            kv("string_date", "format: date", &p.string_date, sizes),
+            kv(
                 "integer_range",
                 "min/max/step",
-                p.get_i32("integer_range"),
+                fmt!("{}", p.integer_range),
                 sizes,
             ),
-            kv_i32(
+            kv(
                 "integer_enum",
                 "enum_values",
-                p.get_i32("integer_enum"),
+                fmt!(
+                    "{} ({})",
+                    p.integer_enum.as_manifest_value(),
+                    p.integer_enum.as_manifest_label()
+                ),
                 sizes,
             ),
-            kv_f64(
+            kv(
                 "double_range",
                 "min/max/step",
-                p.get_f64("double_range"),
+                format_f64_fixed(p.double_range, 2),
                 sizes,
             ),
-            kv_f64(
+            kv(
                 "double_enum",
                 "enum_values",
-                p.get_f64("double_enum"),
+                fmt!(
+                    "{} ({})",
+                    format_f64_fixed(p.double_enum.as_manifest_value(), 2),
+                    p.double_enum.as_manifest_label(),
+                ),
                 sizes,
             ),
-            kv_bool("boolean_flag", "", p.get_bool("boolean_flag"), sizes),
-            kv_str("tz", "Timezone", p.get_str("tz"), sizes),
+            kv(
+                "boolean_flag",
+                "",
+                if p.boolean_flag { "on" } else { "off" },
+                sizes,
+            ),
+            kv("tz", "Timezone", &p.tz, sizes),
         ],
     );
 
+    // The header speaks of 14 keys because the typed struct mirrors the manifest one-to-one;
+    // the optional cells fall back to `(unset)` when the host delivered null.
     let optional = col(
         props!(flex: 1.0, gap: sizes.cell_gap, background: GRAY_90.with_alpha(0.85), padding: sizes.col_padding),
         [
             section_header("Optional, no default (null-on-wire)", sizes),
-            kv_str("optional_string", "", p.get_str("optional_string"), sizes),
-            kv_i32("optional_integer", "", p.get_i32("optional_integer"), sizes),
-            kv_f64("optional_double", "", p.get_f64("optional_double"), sizes),
-            kv_bool(
-                "optional_boolean",
-                "",
-                p.get_bool("optional_boolean"),
-                sizes,
-            ),
+            kv_opt_str("optional_string", "", p.optional_string.as_deref(), sizes),
+            kv_opt_i32("optional_integer", "", p.optional_integer, sizes),
+            kv_opt_f64("optional_double", "", p.optional_double, sizes),
+            kv_opt_bool("optional_boolean", "", p.optional_boolean, sizes),
             spacer(1.0),
             text(
-                fmt!("Snapshot carries {} key(s)", p.keys().count()),
+                "Snapshot carries 14 key(s)",
                 style!(size: sizes.footer_size, color: GRAY_50),
             ),
             text(
@@ -401,25 +402,25 @@ fn kv(key: &str, hint: &str, value: impl Into<String>, sizes: &Sizes) -> Node {
     )
 }
 
-fn kv_str(key: &str, hint: &str, value: Option<&str>, sizes: &Sizes) -> Node {
+fn kv_opt_str(key: &str, hint: &str, value: Option<&str>, sizes: &Sizes) -> Node {
     kv(key, hint, value.unwrap_or("(unset)"), sizes)
 }
 
-fn kv_i32(key: &str, hint: &str, value: Option<i32>, sizes: &Sizes) -> Node {
+fn kv_opt_i32(key: &str, hint: &str, value: Option<i32>, sizes: &Sizes) -> Node {
     match value {
         Some(v) => kv(key, hint, fmt!("{v}"), sizes),
         None => kv(key, hint, "(unset)", sizes),
     }
 }
 
-fn kv_f64(key: &str, hint: &str, value: Option<f64>, sizes: &Sizes) -> Node {
+fn kv_opt_f64(key: &str, hint: &str, value: Option<f64>, sizes: &Sizes) -> Node {
     match value {
         Some(v) => kv(key, hint, format_f64_fixed(v, 2), sizes),
         None => kv(key, hint, "(unset)", sizes),
     }
 }
 
-fn kv_bool(key: &str, hint: &str, value: Option<bool>, sizes: &Sizes) -> Node {
+fn kv_opt_bool(key: &str, hint: &str, value: Option<bool>, sizes: &Sizes) -> Node {
     let display = match value {
         Some(true) => "on",
         Some(false) => "off",

@@ -17,6 +17,7 @@ default:
 
 # Fast sanity check, not CI-reproducible (use `validate-full` for that).
 validate: format clippy
+    just manifest::check-schema
     nix build -L ".#checks.{{ NIX_SYSTEM }}.content"
     @echo "validate: OK"
 

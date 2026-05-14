@@ -2,12 +2,16 @@
 
 //! Binary tree serialization for host-side layout.
 //!
-//! Format: Each node is [type:u8][data...]
-//! Container nodes: [type][props:32B][child_count:u16][children...]
+//! Format: each node is `[type:u8][data...]`. Per-variant layout:
+//!
+//! ```text
+//! Container: [type][props:32B][child_count:u16][children...]
 //! Paragraph: [type][props:32B][text_style:16B][span_count:u16][spans...]
-//! Button: [type][id_len:u16][id_bytes...][style:u8][size:u8][icon_id:u16][label_len:u16][label_bytes...]
-//! Spacer: [type][flex:f32]
-//! Canvas: [type][props:32B]
+//! Button:    [type][id_len:u16][id_bytes...][style:u8][size:u8]
+//!            [icon_id:u16][label_len:u16][label_bytes...]
+//! Spacer:    [type][flex:f32]
+//! Canvas:    [type][props:32B]
+//! ```
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -133,9 +137,12 @@ impl TreeBuffer {
         self.write_u16(child_count);
     }
 
-    /// Write a paragraph node
-    /// Format: [NODE_PARAGRAPH][props:32B][text_style:16B][span_count:u16][spans...]
-    /// Each span: [flags:u16][extra_flags:u8][len:u16][text bytes...][color:u32 if has_color]
+    /// Write a paragraph node.
+    ///
+    /// ```text
+    /// [NODE_PARAGRAPH][props:32B][text_style:16B][span_count:u16][spans...]
+    /// each span: [flags:u16][extra_flags:u8][len:u16][text bytes...][color:u32 if has_color]
+    /// ```
     pub fn write_paragraph(&mut self, props: &PropsData, base_style: &TextStyle, spans: &[Span]) {
         self.write_u8(NODE_PARAGRAPH);
         self.write_props(props);
@@ -200,8 +207,11 @@ impl TreeBuffer {
         self.write_u16(draw_count);
     }
 
-    /// Write a scroll container
-    /// Format: [NODE_SCROLL][key_len:u16][key_bytes...][props:32B][child_count:u16][children...]
+    /// Write a scroll container.
+    ///
+    /// ```text
+    /// [NODE_SCROLL][key_len:u16][key_bytes...][props:32B][child_count:u16][children...]
+    /// ```
     pub fn write_scroll(&mut self, scroll_key: &str, props: &PropsData, child_count: u16) {
         self.write_u8(NODE_SCROLL);
         self.write_u16(scroll_key.len() as u16);
@@ -210,8 +220,12 @@ impl TreeBuffer {
         self.write_u16(child_count);
     }
 
-    /// Write a notification node
-    /// Format: [NODE_NOTIFICATION][kind:u8][title_len:u16][title_bytes...][subtitle_len:u16][subtitle_bytes...]
+    /// Write a notification node.
+    ///
+    /// ```text
+    /// [NODE_NOTIFICATION][kind:u8][title_len:u16][title_bytes...]
+    ///                    [subtitle_len:u16][subtitle_bytes...]
+    /// ```
     pub fn write_notification(&mut self, kind: NotificationKind, title: &str, subtitle: &str) {
         self.write_u8(NODE_NOTIFICATION);
         self.write_u8(kind as u8);
@@ -223,8 +237,13 @@ impl TreeBuffer {
         self.write_bytes(subtitle_bytes);
     }
 
-    /// Write a modal node
-    /// Format: [NODE_MODAL][id_len:u16][id_bytes...][is_open:u8][padding:u16][backdrop_alpha:u8][title_len:u16][title_bytes...][content_height:f32][child_count:u16][children...]
+    /// Write a modal node.
+    ///
+    /// ```text
+    /// [NODE_MODAL][id_len:u16][id_bytes...][is_open:u8][padding:u16]
+    ///             [backdrop_alpha:u8][title_len:u16][title_bytes...]
+    ///             [content_height:f32][child_count:u16][children...]
+    /// ```
     #[expect(clippy::too_many_arguments)]
     pub fn write_modal(
         &mut self,
@@ -250,9 +269,13 @@ impl TreeBuffer {
         self.write_u16(child_count);
     }
 
-    /// Write a progress bar node
-    /// Format: [NODE_PROGRESS_BAR][key_len:u16][key_bytes...][track_h:f32]
-    ///         [mode:u8][fraction:f32][active:u8][fill_color:u32][track_color:u32][bg_color:u32]
+    /// Write a progress bar node.
+    ///
+    /// ```text
+    /// [NODE_PROGRESS_BAR][key_len:u16][key_bytes...][track_h:f32]
+    ///                    [mode:u8][fraction:f32][active:u8]
+    ///                    [fill_color:u32][track_color:u32][bg_color:u32]
+    /// ```
     #[expect(clippy::too_many_arguments)]
     pub fn write_progress_bar(
         &mut self,
@@ -691,7 +714,7 @@ impl Draw {
     ///
     /// When `atmosphere` is true, adds limb darkening and bluish edge glow.
     ///
-    /// Prefer the [`sphere!`] macro for ergonomic call sites.
+    /// Prefer the [`crate::sphere!`] macro for ergonomic call sites.
     #[must_use]
     #[expect(clippy::too_many_arguments)]
     pub fn sphere(
@@ -801,7 +824,7 @@ impl Draw {
 
     /// Path draw command — polyline or polygon with optional Catmull-Rom smoothing.
     ///
-    /// Prefer the [`path!`] macro for ergonomic call sites.
+    /// Prefer the [`crate::path!`] macro for ergonomic call sites.
     #[must_use]
     pub fn path(
         points: Vec<(f32, f32)>,

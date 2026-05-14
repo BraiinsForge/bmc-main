@@ -40,6 +40,32 @@
 //! [`previous`] returns the snapshot immediately before [`current`].
 //! It is [`Params::default`] until at least one update has been observed.
 //! `on_params_update` is the canonical place to diff the two for React-style change detection.
+//!
+//! ## End-to-end byte flow
+//!
+//! ```text
+//! host BTreeMap<ParamKey, ParamValue>
+//!   └─ encode_params  →  Vec<u8> in the wire format above
+//!        └─ extern fn host_params_snapshot  (probe-then-fetch via wasm imports)
+//!             └─ thread-local ParamsCache { current, previous, last_seen_version }
+//!                  └─ snapshot::current()  →  Params { bytes: Vec<u8> }   (clone of cached buffer)
+//!                       └─ Params::get_str / get_i32 / …
+//!                            →  linear scan for the matching key
+//!                            →  Option<&str>  borrowed into snap.bytes
+//!                       └─ typed::ParamRead::read_required / read_optional
+//!                            →  .to_owned() for String, by value for primitives
+//!                            →  from_manifest_value(...) for enum_values fields
+//! ```
+//!
+//! - `host_params_version` is a cheap separate import; idle frames don't cross the
+//!   wasm boundary for params at all (the cache short-circuits when the version is unchanged).
+//! - The fetch is probe-then-allocate: `host_params_snapshot(null, 0)` returns the
+//!   required byte length; the SDK allocates an exact `Vec<u8>` and calls back to fill it.
+//! - `Params::current()` clones the cache's `Vec<u8>` so the caller owns a snapshot
+//!   independent of subsequent host updates. The clone is the only allocation per frame
+//!   when nothing changed; accessors borrow into the cloned buffer until you copy out.
+
+pub mod typed;
 
 /// Wire-format kind discriminators.
 mod kind {
@@ -213,53 +239,53 @@ impl<'a> Iterator for EntryIter<'a> {
 impl<'a> EntryIter<'a> {
     fn read_entry(&mut self) -> Option<Entry<'a>> {
         let kind = *self.bytes.get(self.offset)?;
-        self.offset += 1;
+        self.offset = self.offset.checked_add(1)?;
 
+        let key_len_end = self.offset.checked_add(2)?;
         let key_len = u16::from_le_bytes(
             *self
                 .bytes
-                .get(self.offset..self.offset + 2)?
+                .get(self.offset..key_len_end)?
                 .first_chunk::<2>()?,
         ) as usize;
-        self.offset += 2;
+        self.offset = key_len_end;
 
-        let key_bytes = self.bytes.get(self.offset..self.offset + key_len)?;
+        let key_end = self.offset.checked_add(key_len)?;
+        let key_bytes = self.bytes.get(self.offset..key_end)?;
         let key = core::str::from_utf8(key_bytes).ok()?;
-        self.offset += key_len;
+        self.offset = key_end;
 
         let value = match kind {
             kind::STR => {
+                let str_len_end = self.offset.checked_add(4)?;
                 let str_len = u32::from_le_bytes(
                     *self
                         .bytes
-                        .get(self.offset..self.offset + 4)?
+                        .get(self.offset..str_len_end)?
                         .first_chunk::<4>()?,
                 ) as usize;
-                self.offset += 4;
-                let s_bytes = self.bytes.get(self.offset..self.offset + str_len)?;
+                self.offset = str_len_end;
+                let s_end = self.offset.checked_add(str_len)?;
+                let s_bytes = self.bytes.get(self.offset..s_end)?;
                 let s = core::str::from_utf8(s_bytes).ok()?;
-                self.offset += str_len;
+                self.offset = s_end;
                 EntryValue::Str(s)
             }
             kind::I32 => {
-                let bytes = self
-                    .bytes
-                    .get(self.offset..self.offset + 4)?
-                    .first_chunk::<4>()?;
-                self.offset += 4;
+                let end = self.offset.checked_add(4)?;
+                let bytes = self.bytes.get(self.offset..end)?.first_chunk::<4>()?;
+                self.offset = end;
                 EntryValue::I32(i32::from_le_bytes(*bytes))
             }
             kind::F64 => {
-                let bytes = self
-                    .bytes
-                    .get(self.offset..self.offset + 8)?
-                    .first_chunk::<8>()?;
-                self.offset += 8;
+                let end = self.offset.checked_add(8)?;
+                let bytes = self.bytes.get(self.offset..end)?.first_chunk::<8>()?;
+                self.offset = end;
                 EntryValue::F64(f64::from_le_bytes(*bytes))
             }
             kind::BOOL => {
                 let b = *self.bytes.get(self.offset)?;
-                self.offset += 1;
+                self.offset = self.offset.checked_add(1)?;
                 EntryValue::Bool(b != 0)
             }
             kind::NULL => EntryValue::Null,
@@ -270,6 +296,96 @@ impl<'a> EntryIter<'a> {
     }
 }
 
+// The trait + cache + helpers are consumed by the wasm32 public API and the `tests` module;
+// native non-test builds never reach them, so gate them out to keep the dead-code lint happy.
+
+/// Host-side handle that supplies the change-version + snapshot bytes.
+///
+/// The wasm-target [`WasmHost`] wraps the `host_params_version` / `host_params_snapshot` externs;
+/// tests can swap in a fake to drive the cache logic from native code without crossing the
+/// wasm boundary.
+#[cfg(any(target_arch = "wasm32", test))]
+trait HostParamsProvider {
+    /// Opaque change marker — different value from last observation = re-fetch.
+    fn version(&self) -> u64;
+    /// Probe-then-fill snapshot reader. `out` empty = probe path, returns required byte length.
+    /// `out` sized = fill path, returns bytes actually written.
+    fn fill_snapshot(&self, out: &mut [u8]) -> usize;
+}
+
+/// Snapshot cache rotated by [`refresh_cache`].
+///
+/// Holds the current and previous snapshots plus the last host version observed.
+/// `last_seen_version == None` distinguishes "host returned 0" from "never fetched" —
+/// the first observation seeds `current` and leaves `previous` at default.
+#[cfg(any(target_arch = "wasm32", test))]
+struct ParamsCache {
+    current: Params,
+    previous: Params,
+    last_seen_version: Option<u64>,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl ParamsCache {
+    const fn new() -> Self {
+        Self {
+            current: Params { bytes: Vec::new() },
+            previous: Params { bytes: Vec::new() },
+            last_seen_version: None,
+        }
+    }
+}
+
+/// Refresh the cache if the host's reported version differs from the last seen.
+///
+/// On a version bump, fetches the new snapshot through `host` and rotates: old `current`
+/// becomes the new `previous`, old `previous` is dropped. Idempotent on repeat calls with
+/// the same version (short-circuits via `last_seen_version`).
+#[cfg(any(target_arch = "wasm32", test))]
+fn refresh_cache<H: HostParamsProvider>(host: &H, cache: &mut ParamsCache) {
+    let host_version = host.version();
+    if cache.last_seen_version == Some(host_version) {
+        return;
+    }
+
+    // Probe path: empty buffer, host returns required byte length.
+    let needed = host.fill_snapshot(&mut []);
+    let mut buf = vec![0_u8; needed];
+    let written = if needed > 0 {
+        host.fill_snapshot(&mut buf)
+    } else {
+        0
+    };
+    buf.truncate(written);
+
+    // Rotate: old `current` becomes the new `previous`.
+    // `previous` from before this update is dropped — only one step of history is kept.
+    let new_current = Params::from_bytes(buf);
+    let old_current = std::mem::replace(&mut cache.current, new_current);
+    cache.previous = old_current;
+    cache.last_seen_version = Some(host_version);
+}
+
+/// Latest snapshot delivered for this widget instance.
+///
+/// Refreshes the cache if the host has bumped the version since last observation.
+#[cfg(any(target_arch = "wasm32", test))]
+fn current_using<H: HostParamsProvider>(host: &H, cache: &mut ParamsCache) -> Params {
+    refresh_cache(host, cache);
+    cache.current.clone()
+}
+
+/// Snapshot delivered immediately before the current one.
+///
+/// Refreshes the cache so the read is consistent regardless of whether [`current_using`]
+/// has been called yet — a widget that reads `previous()` before `current()` after a
+/// version bump must still see the just-replaced snapshot, not the one before that.
+#[cfg(any(target_arch = "wasm32", test))]
+fn previous_using<H: HostParamsProvider>(host: &H, cache: &mut ParamsCache) -> Params {
+    refresh_cache(host, cache);
+    cache.previous.clone()
+}
+
 /// Latest snapshot delivered for this widget instance.
 ///
 /// First call inside `init` fetches via `host_params_snapshot`.
@@ -278,8 +394,7 @@ impl<'a> EntryIter<'a> {
 #[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn current() -> Params {
-    refresh_if_stale();
-    cache_clone_current()
+    PARAMS_CACHE.with(|c| current_using(&WasmHost, &mut c.borrow_mut()))
 }
 
 /// Snapshot delivered immediately before [`current`].
@@ -292,11 +407,12 @@ pub fn current() -> Params {
 #[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn previous() -> Params {
-    cache_clone_previous()
+    PARAMS_CACHE.with(|c| previous_using(&WasmHost, &mut c.borrow_mut()))
 }
 
 // ── Native-target stubs ─────────────────────────────────────────────
-// On native targets the host imports don't exist; SDK tests use `Params::from_bytes` directly.
+// On native targets the host imports don't exist; SDK tests use `Params::from_bytes` directly,
+// and the cache logic is exercised via `current_using` / `previous_using` with a mock host.
 // The `current` / `previous` entry points return empty snapshots so non-wasm consumers of the
 // SDK API (storybook etc.) still compile and behave consistently.
 
@@ -312,7 +428,7 @@ pub fn previous() -> Params {
     Params::default()
 }
 
-// ── Host imports ────────────────────────────────────────────────────
+// ── Wasm host bindings ──────────────────────────────────────────────
 
 #[cfg(target_arch = "wasm32")]
 unsafe extern "C" {
@@ -327,92 +443,42 @@ unsafe extern "C" {
     fn host_params_version() -> u64;
 }
 
+/// Wasm-target [`HostParamsProvider`] that calls the real host imports.
+#[cfg(target_arch = "wasm32")]
+struct WasmHost;
+
+#[cfg(target_arch = "wasm32")]
+impl HostParamsProvider for WasmHost {
+    fn version(&self) -> u64 {
+        // SAFETY: `host_params_version` has no out-params and is safe to call.
+        unsafe { host_params_version() }
+    }
+
+    fn fill_snapshot(&self, out: &mut [u8]) -> usize {
+        let cap = u32::try_from(out.len())
+            .expect("BUG: snapshot buffer length must fit in u32 (wire-format guarantee)");
+        let written = if out.is_empty() {
+            // SAFETY: passing a null pointer is sound when `out_cap == 0` — the host implementation
+            // explicitly checks the cap before writing and returns the required length without
+            // touching the pointer.
+            unsafe { host_params_snapshot(core::ptr::null_mut(), 0) }
+        } else {
+            // SAFETY: `out` is uniquely borrowed with length `cap`; the host writes at most
+            // `out_cap` bytes starting at `out_ptr`.
+            unsafe { host_params_snapshot(out.as_mut_ptr(), cap) }
+        };
+        usize::try_from(written).expect("BUG: host_params_snapshot return must fit in usize")
+    }
+}
+
 // ── Cache state ─────────────────────────────────────────────────────
 // Single-threaded wasm32 guest, so a plain `RefCell` inside `thread_local!` is sound and the
 // borrow checker enforces re-entrancy is impossible.
 // The host serialises guest calls, so there's no concurrent access.
 
 #[cfg(target_arch = "wasm32")]
-struct ParamsCache {
-    current: Params,
-    previous: Params,
-    /// Last observed value of `host_params_version()`.
-    /// `None` before the first fetch — distinguishes "host returned 0" from "never fetched".
-    last_seen_version: Option<u64>,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl ParamsCache {
-    const fn new() -> Self {
-        Self {
-            current: Params {
-                bytes: alloc::vec::Vec::new(),
-            },
-            previous: Params {
-                bytes: alloc::vec::Vec::new(),
-            },
-            last_seen_version: None,
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-extern crate alloc;
-
-#[cfg(target_arch = "wasm32")]
 std::thread_local! {
     static PARAMS_CACHE: core::cell::RefCell<ParamsCache> = const { core::cell::RefCell::new(ParamsCache::new()) };
-}
-
-#[cfg(target_arch = "wasm32")]
-fn refresh_if_stale() {
-    // SAFETY: `host_params_version` has no out-params and is safe to call.
-    let host_version = unsafe { host_params_version() };
-
-    let needs_refresh = PARAMS_CACHE.with(|c| {
-        let cache = c.borrow();
-        cache.last_seen_version != Some(host_version)
-    });
-    if !needs_refresh {
-        return;
-    }
-
-    // Probe the required byte length.
-    // SAFETY: passing a null pointer is sound when `out_cap == 0` — the host implementation
-    // explicitly checks the cap before writing and returns the required length without
-    // touching the pointer.
-    let needed = unsafe { host_params_snapshot(core::ptr::null_mut(), 0) };
-
-    let mut buf = alloc::vec::Vec::with_capacity(needed as usize);
-    buf.resize(needed as usize, 0);
-    let written = if needed > 0 {
-        // SAFETY: `buf` is uniquely owned with capacity `needed`; the host writes at most
-        // `out_cap` bytes (= `needed`) starting at `out_ptr`.
-        unsafe { host_params_snapshot(buf.as_mut_ptr(), needed) }
-    } else {
-        0
-    };
-    buf.truncate(written as usize);
-
-    PARAMS_CACHE.with(|c| {
-        let mut cache = c.borrow_mut();
-        // Rotate: old `current` becomes the new `previous`.
-        // `previous` from before this update is dropped — only one step of history is kept.
-        let new_current = Params::from_bytes(buf);
-        let old_current = core::mem::replace(&mut cache.current, new_current);
-        cache.previous = old_current;
-        cache.last_seen_version = Some(host_version);
-    });
-}
-
-#[cfg(target_arch = "wasm32")]
-fn cache_clone_current() -> Params {
-    PARAMS_CACHE.with(|c| c.borrow().current.clone())
-}
-
-#[cfg(target_arch = "wasm32")]
-fn cache_clone_previous() -> Params {
-    PARAMS_CACHE.with(|c| c.borrow().previous.clone())
 }
 
 #[cfg(test)]
@@ -621,5 +687,76 @@ mod tests {
         // End-to-end coverage of the wasm path lives in `bmc-wasm-runtime` integration tests.
         assert!(current().is_empty());
         assert!(previous().is_empty());
+    }
+
+    /// Test-side fake of [`HostParamsProvider`].
+    /// Holds a current `(version, snapshot)` pair the test sets up; the SDK's cache logic
+    /// pulls from it via the trait without touching wasm imports.
+    struct MockHost {
+        version: u64,
+        snapshot: Vec<u8>,
+    }
+
+    impl MockHost {
+        fn new() -> Self {
+            Self {
+                version: 0,
+                snapshot: Vec::new(),
+            }
+        }
+
+        fn set(&mut self, version: u64, snapshot: Vec<u8>) {
+            self.version = version;
+            self.snapshot = snapshot;
+        }
+    }
+
+    impl HostParamsProvider for MockHost {
+        fn version(&self) -> u64 {
+            self.version
+        }
+
+        fn fill_snapshot(&self, out: &mut [u8]) -> usize {
+            if out.is_empty() {
+                // Probe path: return required byte length without writing.
+                return self.snapshot.len();
+            }
+            let to_write = self.snapshot.len().min(out.len());
+            out[..to_write].copy_from_slice(&self.snapshot[..to_write]);
+            to_write
+        }
+    }
+
+    #[test]
+    fn previous_first_after_version_bump_returns_just_replaced_snapshot() {
+        // The bug: `previous_using` returns the cache's `previous` without first refreshing,
+        // so a widget that calls `previous()` before `current()` after a host version bump
+        // sees the snapshot from *two* versions ago — rotation hasn't fired yet, because
+        // only `current_using` triggers `refresh_cache`. The fix is to make `previous_using`
+        // also call `refresh_cache` so the rotation fires regardless of read order.
+        let mut host = MockHost::new();
+        let mut cache = ParamsCache::new();
+
+        // Seed version 1 by reading through `current_using`.
+        host.set(1, PackedBuilder::new().str("a", "v1").build());
+        let cur_v1 = current_using(&host, &mut cache);
+        assert_eq!(cur_v1.get_str("a"), Some("v1"));
+        assert!(
+            previous_using(&host, &mut cache).is_empty(),
+            "before any rotation, previous is empty"
+        );
+
+        // Host bumps to version 2. Critical: read `previous` FIRST.
+        host.set(2, PackedBuilder::new().str("a", "v2").build());
+        let prev_after_bump = previous_using(&host, &mut cache);
+        let cur_after_bump = current_using(&host, &mut cache);
+
+        assert_eq!(
+            prev_after_bump.get_str("a"),
+            Some("v1"),
+            "previous() called before current() after a version bump must return the \
+             just-replaced snapshot, not the version-before-previous (i.e. the empty default)"
+        );
+        assert_eq!(cur_after_bump.get_str("a"), Some("v2"));
     }
 }

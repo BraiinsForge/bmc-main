@@ -1,0 +1,26 @@
+[package]
+name = "bmc-widget-codegen"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins Systems s.r.o."]
+description = "Reads a widget `manifest.json` and emits a typed-accessor `manifest_params.rs` Rust module"
+
+[[bin]]
+name = "bmc-widget-codegen"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+bmc-widget-manifest = { workspace = true }
+clap = { workspace = true }
+heck = { workspace = true }
+prettyplease = { workspace = true }
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

@@ -1646,6 +1646,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-widget-codegen"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bmc-widget-manifest",
+ "clap",
+ "heck",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+ "tempfile",
+]
+
+[[package]]
 name = "bmc-widget-digital-clock"
 version = "0.1.0"
 dependencies = [
