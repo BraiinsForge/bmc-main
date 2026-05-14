@@ -7,6 +7,8 @@ use std::sync::{Arc, Mutex};
 use bmc::compositor::InstanceId;
 use bmc_widget_protocol::server::deck_widget_surface_v1::DeckWidgetSurfaceV1;
 use bmc_widget_protocol::{ActionPayload, SettingUpdate, WidgetInitialConfig};
+use smithay::reexports::wayland_server::Resource;
+use smithay::reexports::wayland_server::backend::ClientId;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use std::collections::HashMap;
 
@@ -15,6 +17,7 @@ use super::conversions::{
     size_type_to_protocol, temperature_unit_to_protocol, time_format_to_protocol,
     weekday_to_protocol,
 };
+use crate::compositor::widget_tracker::LifecycleState;
 
 #[derive(Debug, Clone)]
 pub struct WidgetData {
@@ -369,6 +372,31 @@ impl DeckWidgetProtocolState {
             }
         }
     }
+
+    /// Emit a `lifecycle` event on the widget's surface.
+    ///
+    /// Returns the [`ClientId`] of the receiving widget so callers can
+    /// scope the subsequent display flush to just the affected clients.
+    /// `None` when the widget has not registered yet or its Wayland
+    /// surface has not been attached — the compositor calls this
+    /// eagerly from scene-change paths, so it must tolerate missing
+    /// entries.
+    pub fn send_lifecycle(
+        &self,
+        instance_id: &InstanceId,
+        state: LifecycleState,
+    ) -> Option<ClientId> {
+        let Some(widget) = self.widgets.get(instance_id) else {
+            tracing::trace!("send_lifecycle: no widget record for {instance_id} (state={state:?})");
+            return None;
+        };
+        let Some(surface) = widget.protocol_surface.as_ref() else {
+            tracing::trace!("send_lifecycle: {instance_id} has no surface yet (state={state:?})");
+            return None;
+        };
+        surface.lifecycle(state);
+        surface.client().map(|c| c.id())
+    }
 }
 
 impl Default for DeckWidgetProtocolState {
@@ -452,6 +480,18 @@ mod tests {
         assert_eq!(pid, None);
         assert!(state.drain_disconnected().is_empty());
         assert!(state.widgets.contains_key("alpha"));
+    }
+
+    #[test]
+    fn send_lifecycle_for_unregistered_widget_is_noop() {
+        let mut state = DeckWidgetProtocolState::new();
+        let client = state.send_lifecycle(
+            &String::from("never-registered"),
+            crate::compositor::widget_tracker::LifecycleState::Visible,
+        );
+        assert!(client.is_none());
+        assert!(state.drain_disconnected().is_empty());
+        assert!(state.drain_connected().is_empty());
     }
 
     #[test]
