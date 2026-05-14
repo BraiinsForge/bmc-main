@@ -495,6 +495,31 @@ impl EglContext {
         }
     }
 
+    /// Destroy a [`WidgetExportBuffer`], freeing all GL resources.
+    ///
+    /// Required: callers must invoke this while `self` is the current EGL
+    /// context on this thread. Dropping a [`WidgetExportBuffer`] without
+    /// going through this method leaks GL handles.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "takes ownership to consume the buffer"
+    )]
+    pub fn destroy_widget_export_buffer(&self, buf: WidgetExportBuffer) {
+        unsafe {
+            self.gl.delete_framebuffer(buf.fbo);
+            self.gl.delete_renderbuffer(buf.stencil_rbo);
+            if let Some(rbo) = buf.depth_rbo {
+                self.gl.delete_renderbuffer(rbo);
+            }
+            self.gl.delete_texture(buf.texture);
+        }
+        tracing::debug!(
+            "Destroyed widget export buffer ({}x{})",
+            buf.width,
+            buf.height
+        );
+    }
+
     /// Destroy an export buffer, freeing all GPU resources.
     #[expect(
         clippy::needless_pass_by_value,
@@ -620,18 +645,10 @@ impl ExportBuffer {
 /// which only the owning [`EglContext`] can guarantee.
 pub struct WidgetExportBuffer {
     /// GL color texture (regular `glTexImage2D` storage, not EGLImage).
-    #[expect(
-        dead_code,
-        reason = "consumed by EglContext::destroy_widget_export_buffer in the next commit"
-    )]
     texture: glow::Texture,
     fbo: glow::Framebuffer,
     /// Stencil renderbuffer (`STENCIL_INDEX8`). Always allocated — femtovg
     /// requires stencil for its painting algorithms.
-    #[expect(
-        dead_code,
-        reason = "consumed by EglContext::destroy_widget_export_buffer in the next commit"
-    )]
     stencil_rbo: glow::Renderbuffer,
     /// Optional depth renderbuffer (`DEPTH_COMPONENT16`). Allocated only when
     /// constructed with [`Depth::Enabled`].
@@ -890,7 +907,29 @@ fn load_egl_proc<T>(name: &str) -> Result<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Depth, DoubleBufferState};
+    use super::{Depth, DoubleBufferState, EglContext, WidgetExportBuffer};
+
+    #[test]
+    #[ignore = "EglContext::new() opens /dev/dri/renderD128; the CI sandbox surfaceless EGL has no DRM render node"]
+    fn two_widget_export_buffers_share_one_egl_context() {
+        let ctx = EglContext::new().expect("BUG: EGL context creation should succeed in test env");
+
+        let a: WidgetExportBuffer = ctx
+            .allocate_widget_export_buffer(640, 480, Depth::Disabled)
+            .expect("BUG: first WidgetExportBuffer should allocate");
+        let b: WidgetExportBuffer = ctx
+            .allocate_widget_export_buffer(320, 240, Depth::Disabled)
+            .expect("BUG: second WidgetExportBuffer should allocate");
+
+        assert_eq!(a.width, 640);
+        assert_eq!(a.height, 480);
+        assert_eq!(b.width, 320);
+        assert_eq!(b.height, 240);
+        assert_ne!(a.fbo_id(), b.fbo_id(), "FBOs must be distinct GL names");
+
+        ctx.destroy_widget_export_buffer(a);
+        ctx.destroy_widget_export_buffer(b);
+    }
 
     #[test]
     fn double_buffer_state_starts_empty_on_slot_zero() {
