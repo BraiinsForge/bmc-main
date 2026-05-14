@@ -238,10 +238,22 @@ let
     };
   };
 
+  # Discover WASM example crates that participate in capture/regression
+  # tooling. This intentionally includes regression-only examples such as
+  # stress-test; deck-shipped widgets are selected separately by
+  # wasmWidgetCatalog and nix/packages.nix.
+  wasmExampleNames = lib.filter
+    (n: builtins.pathExists (./bmc-wasm-runtime/examples + "/${n}/Cargo.toml")
+      && builtins.pathExists (./bmc-wasm-runtime/examples + "/${n}/capture/config.toml"))
+    (lib.attrNames (builtins.readDir ./bmc-wasm-runtime/examples));
+
   bmc = {
     armv7-nixpkgs = armv7Pkgs;
     lib = import ./nix/lib.nix { inherit pkgs lib armv7Pkgs; };
-    crates = import ./nix/crates.nix { inherit (pkgs.ii.rust) defineCrate; };
+    crates = import ./nix/crates.nix {
+      inherit lib wasmExampleNames;
+      inherit (pkgs.ii.rust) defineCrate;
+    };
     workspaces = {
       full = workspace;
       minimal = workspaceMinimal;
@@ -450,7 +462,7 @@ let
   # profile to cross-compile the bmc-widget-wasm host for every consumer
   # arch (armv7 deck + x86_64/aarch64 VM).
   wasmWidgetsFor = profile: hostFeatures: import ./nix/wasm-widgets.nix {
-    inherit pkgs profile hostFeatures;
+    inherit pkgs profile hostFeatures wasmExampleNames;
     wasmReleaseProfile = bmc.profiles.wasm-release;
     crates = bmc.crates;
     autopatchelfBinaries = bmc.lib.autopatchelfBinaries;
@@ -462,7 +474,7 @@ let
   # Shared wasm widget catalog: name → { wasmFile, manifest }. Mirrors
   # the per-widget entries in nix/packages.nix; both consumers (deck
   # release tarball and combined widgets tree below) iterate it.
-  wasmWidgets = {
+  wasmWidgetCatalog = {
     hello-widget = {
       wasmFile = "hello_widget.wasm";
       manifest = ./bmc-wasm-runtime/examples/hello-widget/manifest.json;
@@ -518,7 +530,7 @@ let
           wasmDir = m.wasmExamples;
           host = m.host;
         })
-        wasmWidgets;
+        wasmWidgetCatalog;
     };
 
   armv7PackageDefs = import ./nix/packages.nix {
@@ -537,7 +549,7 @@ let
 in
 {
   inherit commonDeps bmc deps makeRustflagsEnv;
-  inherit (wasmWidgetsModule) wasmExamples;
+  inherit (wasmWidgetsModule) wasmExamples wasmWidgets;
   checks = frontend.checks;
   # Nested attrset of cross-built deck packages.
   #

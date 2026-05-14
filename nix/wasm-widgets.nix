@@ -6,6 +6,10 @@
 #
 # Exports:
 #   - wasmExamples: flattened *.wasm from a wasm-release workspace build
+#   - wasmWidgets:  per-widget wasm derivations keyed by widget name; each
+#                   is built via buildCrate so its src closure is narrowed
+#                   by docker-spider — change one widget, only that
+#                   widget's wasm rebuilds.
 #   - host:         cross-compiled bmc-widget-wasm + autopatchelf for the
 #                   selected profile (typically armv7-glibc-release)
 #   - mkWasmWidget: build one lib/bmc-widgets/<name>/ tree (shell wrapper
@@ -17,17 +21,18 @@
 , autopatchelfBinaries  # bmc.lib.autopatchelfBinaries
 , widgetRuntimeDeps     # deps.widgetRuntimeDeps (expects .native fn)
 , hostFeatures ? [ ]    # cargo features for the bmc-widget-wasm host build
+, wasmExampleNames      # list of example crate names (e.g. "hello-widget")
 }:
 let
-  # Collected *.wasm blobs from the wasm-release workspace build.
-  # One cargo build, all examples.
-  #
-  # rustc bakes panic-location strings that point into $cargoVendorDir
-  # (e.g. bytes/chrono source files). The compile-time toolchain remap
-  # scrubs the toolchain path, but not the vendor one — blank its hash
-  # post-install so $out carries zero nix references, and enforce that
-  # with allowedReferences.
-  wasmExamples = wasmReleaseProfile.build.overrideAttrs (old: {
+  lib = pkgs.lib;
+
+  # Reference-cleaning installPhase shared by wasmExamples and per-example
+  # wasm builds. rustc bakes panic-location strings that point into
+  # $cargoVendorDir (e.g. bytes/chrono source files). The compile-time
+  # toolchain remap scrubs the toolchain path, but not the vendor one —
+  # blank its hash post-install so $out carries zero nix references, and
+  # enforce that with allowedReferences.
+  wasmInstallOverrides = old: {
     nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.removeReferencesTo ];
     installPhase = ''
       mkdir -p $out
@@ -37,7 +42,21 @@ let
       done
     '';
     allowedReferences = [ ];
-  });
+  };
+
+  # All examples in one *.wasm-blob tree. Single workspace cargo build,
+  # so its cache key is the full workspace src. Used by `capture.nix` to
+  # expose the `wasm-examples` flake package and as the manual override
+  # target when a wrapper caller wants every wasm at once. Do NOT use
+  # this for per-widget pipelines — touching anything in repo invalidates it.
+  wasmExamples = wasmReleaseProfile.build.overrideAttrs wasmInstallOverrides;
+
+  # Per-widget wasm derivation, ensuring rebuilds happen only on actual
+  # changes of the widget.
+  mkWidgetWasm = name:
+    (wasmReleaseProfile.buildCrate crates."widget-example-${name}" { }).overrideAttrs wasmInstallOverrides;
+
+  wasmWidgets = lib.genAttrs wasmExampleNames mkWidgetWasm;
 
   # Shared host binary (one build, any number of widgets use it).
   # autopatchelfBinaries (not mkWidgetPackage) — the host has no manifest
@@ -85,5 +104,5 @@ let
     '';
 in
 {
-  inherit wasmExamples host mkWasmWidget;
+  inherit wasmExamples wasmWidgets host mkWasmWidget;
 }
