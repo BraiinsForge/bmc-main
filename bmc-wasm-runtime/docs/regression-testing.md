@@ -9,11 +9,13 @@ via GitLab.
 # Local: capture all widgets and diff against baselines
 make regression-test-all
 
-# Via nix package (same as CI runs it, forces software rendering):
-nix run .#wasm-capture -- verify
-
 # Single widget:
 make regression-test EXAMPLE=calendar
+
+# Locally reproduce the CI gate (per-widget derivations); on regression
+# the per-widget build sandbox is preserved by --keep-failed, with
+# captures + report.html under /tmp/nix-build-wasm-regression-<name>.drv-*/captures/
+nix build --keep-failed -L --keep-going .#checks.x86_64-linux.wasm-regression
 ```
 
 ## Pipeline
@@ -48,8 +50,9 @@ nix build .#wasm-capture    # build the wrapped binary
 nix run .#wasm-capture      # run directly
 ```
 
-The package uses a separate `mkWorkspaceConfig` to isolate its nix cache from unrelated workspace changes. See the TODO
-in `capture.nix` for planned source filtering improvements.
+The wrapper is the local/dev entry point and is also the binary that the per-widget regression derivations in
+`nix/checks.nix` call (with `--example=<name>` + a single-widget `--widgets-dir`). It is not, on its own, what CI
+invokes.
 
 ## Capture binary
 
