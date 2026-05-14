@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use super::protocol::{
     DeckWidgetHandler, DeckWidgetProtocolState, WidgetManagerUserData, WidgetSurfaceUserData,
 };
-use super::widget_tracker::WidgetTracker;
+use super::widget_tracker::{LifecycleState, WidgetTracker};
 use bmc::compositor::InstanceId;
 use bmc_widget_protocol::server::{
     deck_widget_manager_v1::DeckWidgetManagerV1, deck_widget_surface_v1::DeckWidgetSurfaceV1,
@@ -566,6 +566,24 @@ impl CompositorState {
 
     pub fn clear_output_damage(&mut self) {
         self.output_damage.clear();
+    }
+
+    /// Send the initial `lifecycle` event for a widget that has just
+    /// connected and atomically sync the [`LifecycleEmitter`] cache so
+    /// the next scene-step does not re-emit the same state.
+    ///
+    /// Returns the receiving widget's [`ClientId`] so the caller can
+    /// scope the subsequent flush, or `None` when the widget has no
+    /// attached surface yet (the next scene-step will deliver the
+    /// lifecycle as a regular acquire).
+    pub fn send_initial_lifecycle(
+        &mut self,
+        instance_id: &InstanceId,
+        state: LifecycleState,
+    ) -> Option<ClientId> {
+        let client_id = self.deck_widget_state.send_lifecycle(instance_id, state)?;
+        self.lifecycle.record_initial(instance_id, state);
+        Some(client_id)
     }
 }
 
