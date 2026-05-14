@@ -6,6 +6,8 @@ use std::collections::HashSet;
 
 use bmc::compositor::{InstanceId, SceneLayout};
 
+pub use bmc_widget_protocol::server::deck_widget_surface_v1::LifecycleState;
+
 /// Default drag distance (fraction of screen width) required to commit a
 /// scene change.
 pub const COMMIT_DISTANCE_FRACTION: f32 = 0.30;
@@ -219,6 +221,75 @@ impl WidgetTracker {
         self.drag_offset
     }
 
+    /// Derive the lifecycle state of every widget reachable from the
+    /// scene-cycling list.
+    ///
+    /// - The widget in the active scene is `Visible` (idle) or `Leaving`
+    ///   (during a drag).
+    /// - The widget in the drag-direction neighbour scene is `Entering`
+    ///   (during a drag).
+    /// - Idle: the widgets in the immediate cycle neighbours (both -1 and
+    ///   +1) are `Prepared`. In a 2-scene cycle the two neighbour indices
+    ///   wrap to the same scene, so the single neighbouring widget is
+    ///   simply marked `Prepared` once.
+    /// - All other widgets are `Dormant`.
+    ///
+    /// Pure function of `(scenes, current_index, drag_offset)` — no GL,
+    /// no Wayland.
+    #[must_use]
+    pub fn lifecycle_states(&self) -> std::collections::HashMap<InstanceId, LifecycleState> {
+        let mut out: std::collections::HashMap<InstanceId, LifecycleState> =
+            std::collections::HashMap::new();
+
+        for scene in &self.scenes {
+            for widget in &scene.widgets {
+                if widget.visible {
+                    out.insert(widget.instance_id.clone(), LifecycleState::Dormant);
+                }
+            }
+        }
+
+        // A drag with offset 0 has ambiguous direction (the user has
+        // touched but not yet moved). Treat it as idle so the active
+        // widget stays Visible and the "next" scene is not erroneously
+        // flagged as Entering until motion picks a direction.
+        let dragging = matches!(self.drag_offset, Some(dx) if dx != 0);
+        let active = self.active_scene();
+
+        let active_state = if dragging {
+            LifecycleState::Leaving
+        } else {
+            LifecycleState::Visible
+        };
+        for widget in &active.widgets {
+            if widget.visible {
+                out.insert(widget.instance_id.clone(), active_state);
+            }
+        }
+
+        if dragging {
+            if let Some(neighbour) = self.drag_neighbor_scene() {
+                for widget in &neighbour.widgets {
+                    if widget.visible {
+                        out.insert(widget.instance_id.clone(), LifecycleState::Entering);
+                    }
+                }
+            }
+        } else {
+            for direction in [-1_i32, 1] {
+                if let Some(neighbour) = self.neighbor_scene(direction) {
+                    for widget in &neighbour.widgets {
+                        if widget.visible {
+                            out.insert(widget.instance_id.clone(), LifecycleState::Prepared);
+                        }
+                    }
+                }
+            }
+        }
+
+        out
+    }
+
     fn neighbor_index(&self, direction: i32) -> Option<usize> {
         let len = self.scenes.len();
         if len <= 1 {
@@ -258,10 +329,12 @@ fn collect_visible_widget_ids(scene: &SceneLayout, ids: &mut HashSet<InstanceId>
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use bmc::compositor::{Position, SceneLayout, Size, WidgetPlacement};
     use bmc::scene::SceneId;
 
-    use super::{SceneCommitConfig, WidgetTracker};
+    use super::{LifecycleState, SceneCommitConfig, WidgetTracker};
 
     /// Build a tracker with three distinct scenes on a 1000-px-wide panel
     /// and the default commit thresholds (`distance_fraction = 0.30`,
@@ -482,6 +555,147 @@ mod tests {
             Some(id_a),
             "should fall back to index 0 when active scene is removed"
         );
+    }
+
+    #[test]
+    fn lifecycle_idle_single_scene_active_is_visible() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![scene_with_widget("a")]);
+
+        let states = t.lifecycle_states();
+        assert_eq!(
+            states,
+            HashMap::from([(String::from("a"), LifecycleState::Visible)])
+        );
+    }
+
+    #[test]
+    fn lifecycle_idle_three_scenes_both_neighbours_prepared() {
+        // With three scenes and active=0, the +1 neighbour is scene 1 and
+        // the -1 neighbour (via wrap-around) is scene 2 — so every other
+        // widget is reachable by a single swipe and therefore Prepared.
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![
+            scene_with_widget("a"),
+            scene_with_widget("b"),
+            scene_with_widget("c"),
+        ]);
+
+        let states = t.lifecycle_states();
+        assert_eq!(states.get("a"), Some(&LifecycleState::Visible));
+        assert_eq!(states.get("b"), Some(&LifecycleState::Prepared));
+        assert_eq!(states.get("c"), Some(&LifecycleState::Prepared));
+    }
+
+    #[test]
+    fn lifecycle_idle_five_scenes_only_immediate_neighbours_prepared() {
+        // With five scenes and active=2, only scenes 1 and 3 are
+        // reachable by a single swipe; scenes 0 and 4 require two
+        // swipes and therefore stay Dormant.
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![
+            scene_with_widget("a"),
+            scene_with_widget("b"),
+            scene_with_widget("c"),
+            scene_with_widget("d"),
+            scene_with_widget("e"),
+        ]);
+        t.set_active_scene_index(2);
+
+        let states = t.lifecycle_states();
+        assert_eq!(states.get("a"), Some(&LifecycleState::Dormant));
+        assert_eq!(states.get("b"), Some(&LifecycleState::Prepared));
+        assert_eq!(states.get("c"), Some(&LifecycleState::Visible));
+        assert_eq!(states.get("d"), Some(&LifecycleState::Prepared));
+        assert_eq!(states.get("e"), Some(&LifecycleState::Dormant));
+    }
+
+    #[test]
+    fn lifecycle_drag_left_outgoing_leaving_incoming_entering() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![
+            scene_with_widget("a"),
+            scene_with_widget("b"),
+            scene_with_widget("c"),
+        ]);
+        t.start_drag();
+        t.update_drag(-100);
+
+        let states = t.lifecycle_states();
+        assert_eq!(
+            states.get("a"),
+            Some(&LifecycleState::Leaving),
+            "active widget is leaving on a leftward drag"
+        );
+        assert_eq!(
+            states.get("b"),
+            Some(&LifecycleState::Entering),
+            "next-scene widget enters on a leftward drag"
+        );
+        assert_eq!(
+            states.get("c"),
+            Some(&LifecycleState::Dormant),
+            "the unaffected scene stays dormant"
+        );
+    }
+
+    #[test]
+    fn lifecycle_drag_right_uses_previous_neighbour() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![
+            scene_with_widget("a"),
+            scene_with_widget("b"),
+            scene_with_widget("c"),
+        ]);
+        t.set_active_scene_index(1);
+        t.start_drag();
+        t.update_drag(100);
+
+        let states = t.lifecycle_states();
+        assert_eq!(states.get("b"), Some(&LifecycleState::Leaving));
+        assert_eq!(states.get("a"), Some(&LifecycleState::Entering));
+        assert_eq!(states.get("c"), Some(&LifecycleState::Dormant));
+    }
+
+    #[test]
+    fn lifecycle_idle_two_scenes_neighbour_is_prepared_not_dormant() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![scene_with_widget("a"), scene_with_widget("b")]);
+
+        let states = t.lifecycle_states();
+        assert_eq!(states.get("a"), Some(&LifecycleState::Visible));
+        assert_eq!(
+            states.get("b"),
+            Some(&LifecycleState::Prepared),
+            "with one neighbour it is always prepared"
+        );
+    }
+
+    #[test]
+    fn lifecycle_at_drag_zero_offset_is_treated_as_idle() {
+        // A drag with offset 0 has no direction; the active widget must
+        // stay Visible and neighbours keep their idle state until motion
+        // picks a direction. Otherwise a tap-without-move thrashes the
+        // lifecycle (Visible→Leaving→Visible plus four flushes).
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![
+            scene_with_widget("a"),
+            scene_with_widget("b"),
+            scene_with_widget("c"),
+        ]);
+        t.start_drag();
+
+        let states = t.lifecycle_states();
+        assert_eq!(states.get("a"), Some(&LifecycleState::Visible));
+        assert_eq!(states.get("b"), Some(&LifecycleState::Prepared));
+        assert_eq!(states.get("c"), Some(&LifecycleState::Prepared));
+
+        // update_drag(0) (user wiggled back to origin) — still ambiguous.
+        t.update_drag(0);
+        let states = t.lifecycle_states();
+        assert_eq!(states.get("a"), Some(&LifecycleState::Visible));
+        assert_eq!(states.get("b"), Some(&LifecycleState::Prepared));
+        assert_eq!(states.get("c"), Some(&LifecycleState::Prepared));
     }
 
     #[test]
