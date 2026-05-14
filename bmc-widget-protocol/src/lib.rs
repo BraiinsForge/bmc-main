@@ -61,6 +61,7 @@ mod types;
 pub use bmc_shared_time::time::{DateFormat, TimeSystem, WeekDay};
 pub use bmc_shared_utils::number_format::NumberFormat;
 pub use bmc_shared_utils::temperature::TemperatureUnit;
+pub use client::deck_widget_surface_v1::LifecycleState;
 pub use types::{
     ActionPayload, LedEffect, Localization, RgbColor, SettingUpdate, Settings, SizeInfo, SizeType,
     WidgetInitialConfig,
