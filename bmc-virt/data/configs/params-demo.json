@@ -1,0 +1,82 @@
+{
+  "scenes": [
+    {
+      "id": "bf0cadbe-568b-47b9-9f74-e01ca9fe7b6a",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "7595e13d-ce38-40a8-8df7-9f705411534a",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440300",
+          "params": {
+            "free_string": "Full-size instance",
+            "string_enum": "violet",
+            "string_uri": "https://braiins.com/full",
+            "string_date": "2026-12-31",
+            "integer_range": 75,
+            "integer_enum": 4,
+            "double_range": 0.85,
+            "double_enum": 2.2,
+            "boolean_flag": true,
+            "tz": "Europe/Prague",
+            "optional_string": "set on full",
+            "optional_integer": 7,
+            "optional_double": 3.14,
+            "optional_boolean": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "1cd5a2ed-8655-4805-95d3-1741b738dd2f",
+      "enabled": true,
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "4d69b5f7-72c0-49b9-90bd-4e761c8bd8a5",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440300",
+          "params": {
+            "free_string": "Large @ cols 0-1",
+            "string_enum": "green",
+            "integer_range": 50,
+            "double_range": 0.5,
+            "boolean_flag": false,
+            "tz": "UTC"
+          }
+        },
+        {
+          "id": "4a3dadcd-ef82-425e-aa11-3aaa478e70c0",
+          "row": 0,
+          "col": 2,
+          "size": "medium",
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440300",
+          "params": {
+            "free_string": "Medium @ top-right",
+            "string_enum": "amber",
+            "integer_range": 10,
+            "double_range": 0.2,
+            "boolean_flag": true
+          }
+        },
+        {
+          "id": "8739603a-2843-4ef4-bba2-206a91191dd7",
+          "row": 1,
+          "col": 2,
+          "size": "small",
+          "widget_type_id": "550e8400-e29b-41d4-a716-446655440300",
+          "params": {
+            "free_string": "Small @ bottom",
+            "string_enum": "violet",
+            "integer_range": 100
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -32,11 +32,27 @@ present=$(
         [ -L "$p" ] && continue
         [ -x "$p" ] || continue
         printf '%s\n' "${p##*/}"
-    done | sort | tr '\n' ' '
+    done | sort
 )
 
 [ -z "$present" ] && return 0
 
 printf '\n'
-printf '%s# Debug tools%s  %s%s%s\n' "$HEAD" "$RESET" "$DIM" "$present" "$RESET"
+printf '%s# Available tools%s\n' "$HEAD" "$RESET"
+echo "$present" | awk -v cols=4 -v d="$DIM" -v r="$RESET" '
+    { rows[NR] = $0; if (length > w) w = length }
+    END {
+        w += 2
+        for (i = 1; i <= NR; i++) {
+            # Hand-pad rather than `%*s`; busybox awk does not support the
+            # dynamic-width specifier and fails the whole call with
+            # "%*x formats are not supported".
+            cell = rows[i]
+            while (length(cell) < w) cell = cell " "
+            printf "%s%s%s", d, cell, r
+            if (i % cols == 0) printf "\n"
+        }
+        if (NR % cols != 0) printf "\n"
+    }
+'
 printf '\n'
