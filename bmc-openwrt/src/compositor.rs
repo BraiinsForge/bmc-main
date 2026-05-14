@@ -5,6 +5,7 @@
 mod commands;
 mod device_access;
 mod egl_compositor;
+mod lifecycle_emitter;
 mod protocol;
 mod render;
 mod scene_renderer;

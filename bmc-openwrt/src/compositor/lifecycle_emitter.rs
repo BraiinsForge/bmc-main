@@ -1,0 +1,247 @@
+// Copyright (C) 2025  Braiins Systems s.r.o.
+
+//! Tracks the lifecycle state last emitted to each widget and produces
+//! ordered release/acquire batches for the next emission.
+
+use std::collections::HashMap;
+
+use bmc::compositor::InstanceId;
+
+use super::widget_tracker::LifecycleState;
+
+/// Per-widget state transitions to emit, split into a release batch
+/// (transitions into `Dormant`) and an acquire batch (transitions out
+/// of `Dormant`). Transitions that keep the render target (neither
+/// endpoint is `Dormant`) are placed in the acquire batch — they carry
+/// no pool ordering requirement so either batch would do, and using
+/// the acquire batch keeps the release batch focused on its single
+/// purpose.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Emission {
+    pub releases: Vec<(InstanceId, LifecycleState)>,
+    pub acquires: Vec<(InstanceId, LifecycleState)>,
+}
+
+impl Emission {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.releases.is_empty() && self.acquires.is_empty()
+    }
+}
+
+/// Keeps the last-emitted lifecycle state per widget and produces the
+/// next emission as a release-then-acquire pair.
+#[derive(Debug, Default)]
+pub struct LifecycleEmitter {
+    last: HashMap<InstanceId, LifecycleState>,
+}
+
+impl LifecycleEmitter {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Compute the emission needed to move from the last-emitted state
+    /// to `next`, and update the cached state. Widgets present in
+    /// `self.last` but absent from `next` are treated as transitioning
+    /// to `Dormant` (a widget that left the scene-cycling list goes
+    /// off-screen by definition); the emitter then forgets them, since
+    /// the corresponding `WidgetData` is gone on the protocol side.
+    pub fn step(&mut self, next: &HashMap<InstanceId, LifecycleState>) -> Emission {
+        let mut releases: Vec<(InstanceId, LifecycleState)> = Vec::new();
+        let mut acquires: Vec<(InstanceId, LifecycleState)> = Vec::new();
+
+        for (id, new_state) in next {
+            let prev = self.last.insert(id.clone(), *new_state);
+            if prev == Some(*new_state) {
+                continue;
+            }
+            if *new_state == LifecycleState::Dormant {
+                if prev.is_none() {
+                    continue;
+                }
+                releases.push((id.clone(), *new_state));
+            } else {
+                acquires.push((id.clone(), *new_state));
+            }
+        }
+
+        let removed: Vec<InstanceId> = self
+            .last
+            .keys()
+            .filter(|id| !next.contains_key(*id))
+            .cloned()
+            .collect();
+        for id in removed {
+            let prev = self.last.remove(&id);
+            if prev != Some(LifecycleState::Dormant) {
+                releases.push((id, LifecycleState::Dormant));
+            }
+        }
+
+        releases.sort_by(|a, b| a.0.cmp(&b.0));
+        acquires.sort_by(|a, b| a.0.cmp(&b.0));
+
+        Emission { releases, acquires }
+    }
+
+    pub fn forget(&mut self, instance_id: &InstanceId) {
+        self.last.remove(instance_id);
+    }
+
+    /// Record `state` as the last value emitted for `instance_id` without
+    /// producing an emission. Used by the connect path (via
+    /// [`CompositorState::send_initial_lifecycle`]), which sends the
+    /// initial lifecycle event directly (outside [`Self::step`]); without
+    /// this sync the next regular `step` would see `prev == None` and
+    /// re-emit the same state.
+    pub(super) fn record_initial(&mut self, instance_id: &InstanceId, state: LifecycleState) {
+        self.last.insert(instance_id.clone(), state);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn next(pairs: &[(&str, LifecycleState)]) -> HashMap<InstanceId, LifecycleState> {
+        pairs.iter().map(|(id, s)| ((*id).to_owned(), *s)).collect()
+    }
+
+    #[test]
+    fn first_step_emits_every_non_dormant_as_acquire() {
+        let mut e = LifecycleEmitter::new();
+        let em = e.step(&next(&[
+            ("a", LifecycleState::Visible),
+            ("b", LifecycleState::Dormant),
+            ("c", LifecycleState::Prepared),
+        ]));
+        assert_eq!(em.releases, Vec::<(InstanceId, LifecycleState)>::new());
+        assert_eq!(
+            em.acquires,
+            vec![
+                (String::from("a"), LifecycleState::Visible),
+                (String::from("c"), LifecycleState::Prepared),
+            ],
+        );
+    }
+
+    #[test]
+    fn scene_swap_emits_release_then_acquire() {
+        let mut e = LifecycleEmitter::new();
+        let _ = e.step(&next(&[
+            ("a", LifecycleState::Visible),
+            ("b", LifecycleState::Prepared),
+        ]));
+
+        let em = e.step(&next(&[
+            ("a", LifecycleState::Dormant),
+            ("b", LifecycleState::Visible),
+        ]));
+
+        assert_eq!(
+            em.releases,
+            vec![(String::from("a"), LifecycleState::Dormant)]
+        );
+        assert_eq!(
+            em.acquires,
+            vec![(String::from("b"), LifecycleState::Visible)]
+        );
+    }
+
+    #[test]
+    fn keep_target_transitions_go_to_acquire_batch() {
+        let mut e = LifecycleEmitter::new();
+        let _ = e.step(&next(&[
+            ("a", LifecycleState::Visible),
+            ("b", LifecycleState::Prepared),
+        ]));
+        let em = e.step(&next(&[
+            ("a", LifecycleState::Prepared),
+            ("b", LifecycleState::Visible),
+        ]));
+
+        assert!(em.releases.is_empty());
+        assert_eq!(
+            em.acquires,
+            vec![
+                (String::from("a"), LifecycleState::Prepared),
+                (String::from("b"), LifecycleState::Visible),
+            ]
+        );
+    }
+
+    #[test]
+    fn unchanged_state_produces_empty_emission() {
+        let mut e = LifecycleEmitter::new();
+        let map = next(&[("a", LifecycleState::Visible)]);
+        let _ = e.step(&map);
+        let em = e.step(&map);
+        assert!(em.is_empty());
+    }
+
+    #[test]
+    fn removed_widget_emits_dormant_release_and_is_forgotten() {
+        let mut e = LifecycleEmitter::new();
+        let _ = e.step(&next(&[("a", LifecycleState::Visible)]));
+
+        let em = e.step(&next(&[]));
+        assert_eq!(
+            em.releases,
+            vec![(String::from("a"), LifecycleState::Dormant)]
+        );
+        assert!(em.acquires.is_empty());
+
+        let em2 = e.step(&next(&[]));
+        assert!(em2.is_empty());
+    }
+
+    #[test]
+    fn record_initial_skips_re_emission_on_next_step() {
+        // Connect path sends the initial event directly and syncs the
+        // emitter via record_initial; the next scene step must not
+        // re-emit the same state.
+        let mut e = LifecycleEmitter::new();
+        e.record_initial(&String::from("a"), LifecycleState::Visible);
+
+        let em = e.step(&next(&[("a", LifecycleState::Visible)]));
+        assert!(em.is_empty(), "no re-emit when cached state matches");
+
+        let em = e.step(&next(&[("a", LifecycleState::Dormant)]));
+        assert_eq!(
+            em.releases,
+            vec![(String::from("a"), LifecycleState::Dormant)]
+        );
+    }
+
+    #[test]
+    fn unrecorded_connect_emits_acquire_on_first_step() {
+        // If the connect path could not send (no surface yet) and so
+        // skipped record_initial, the next scene step is responsible
+        // for delivering the lifecycle event as a regular acquire.
+        let mut e = LifecycleEmitter::new();
+        let em = e.step(&next(&[("a", LifecycleState::Visible)]));
+        assert_eq!(
+            em.acquires,
+            vec![(String::from("a"), LifecycleState::Visible)]
+        );
+    }
+
+    #[test]
+    fn batches_are_sorted_by_instance_id() {
+        let mut e = LifecycleEmitter::new();
+        let em = e.step(&next(&[
+            ("c", LifecycleState::Visible),
+            ("a", LifecycleState::Prepared),
+            ("b", LifecycleState::Entering),
+        ]));
+        assert_eq!(
+            em.acquires
+                .iter()
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>(),
+            vec![String::from("a"), String::from("b"), String::from("c"),],
+        );
+    }
+}
