@@ -30,6 +30,11 @@ clean:
 display:
     ./scripts/display.sh
 
+# Foreground console app attached to this terminal; for a detached form that logs to vm-data/console.log use `display`.
+console *EXTRA:
+    BMC_VIRT_RELAY_ADDR="127.0.0.1:5910" \
+        cargo run -p bmc-virt-console --manifest-path ../Cargo.toml {{ EXTRA }}
+
 run CONFIG="combined-flip-clocks":
     ./scripts/run.sh --config {{ CONFIG }}
 

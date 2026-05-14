@@ -134,6 +134,8 @@ impl ConsoleApp {
             .unwrap_or_else(|| panic!("glow backend required"))
             .clone();
 
+        install_noto_sans(&cc.egui_ctx);
+
         // Compact window title bars: no rounding, thinner
         cc.egui_ctx.global_style_mut(|style| {
             style.spacing.window_margin = egui::Margin::same(6);
@@ -1341,6 +1343,27 @@ fn draw_table_surface(painter: &egui::Painter, device_rect: egui::Rect, window_r
         );
         painter.rect_filled(row_rect, 0.0, egui::Color32::from_rgb(red, green, blue));
     }
+}
+
+/// Install the repo's bundled Noto Sans as the highest-priority font for both proportional and monospace families.
+/// Egui 0.34's default Ubuntu-Light has gaps which turn into tofu in the UI chrome.
+/// Noto Sans Regular covers the BMP well enough that we can use the glyphs we actually want.
+fn install_noto_sans(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "noto_sans".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../../assets/fonts/NotoSans-Regular.ttf"
+        ))),
+    );
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .insert(0, "noto_sans".to_owned());
+    }
+    ctx.set_fonts(fonts);
 }
 
 /// macOS sRGB color space workaround (egui#2712).
