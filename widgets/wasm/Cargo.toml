@@ -12,6 +12,9 @@ profiling = ["bmc-wasm-runtime/profiling"]
 bmc-wasm-protocol = { workspace = true }
 bmc-wasm-runtime = { workspace = true }
 
+# Widget protocol types (ActionPayload, LedEffect, RgbColor)
+bmc-widget-protocol = { workspace = true }
+
 # Rendering engine (extracted from bmc-wasm-runtime)
 bmc-render = { path = "../../bmc-render" }
 

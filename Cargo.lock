@@ -1728,6 +1728,7 @@ dependencies = [
  "bmc-wasm-protocol",
  "bmc-wasm-runtime",
  "bmc-widget",
+ "bmc-widget-protocol",
  "chrono",
  "clap",
  "glow 0.16.0",

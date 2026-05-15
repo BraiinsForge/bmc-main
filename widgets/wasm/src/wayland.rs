@@ -9,9 +9,11 @@
 use crate::egl::EglState;
 use anyhow::{Context, Result};
 use bmc_render::renderer::Renderer;
-use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, WasmWidgetRuntime};
+use bmc_wasm_runtime::{LedEffect, LedRequest, RenderStatus, RuntimeConfig, WasmWidgetRuntime};
 use bmc_widget::surface::{DeckWidgetSurfaceClient, WidgetEvent, WidgetSurface};
+use bmc_widget_protocol::{ActionPayload, LedEffect as ProtoEffect, RgbColor};
 use std::path::Path;
+use std::sync::mpsc;
 use std::time::Instant;
 
 /// Rendering state — created lazily, kept alive forever.
@@ -33,6 +35,9 @@ impl RenderState {
 /// Wayland client for the WASM widget.
 pub struct WaylandClient {
     surface: DeckWidgetSurfaceClient,
+    led_rx: mpsc::Receiver<LedRequest>,
+    /// Moved into the runtime on first init; `None` afterwards.
+    led_tx: Option<mpsc::Sender<LedRequest>>,
 }
 
 impl WaylandClient {
@@ -42,7 +47,12 @@ impl WaylandClient {
 
         tracing::info!("Widget config: {}x{}", initial.width, initial.height);
 
-        Ok(Self { surface })
+        let (led_tx, led_rx) = mpsc::channel();
+        Ok(Self {
+            surface,
+            led_rx,
+            led_tx: Some(led_tx),
+        })
     }
 
     /// Run the event loop with poll(2)-based frame scheduling.
@@ -56,6 +66,7 @@ impl WaylandClient {
         while self.surface.running() {
             let timeout_ms = self.compute_poll_timeout(render.as_ref());
             let outcome = self.surface.poll_dispatch(timeout_ms)?;
+            self.flush_led_requests()?;
 
             // Only a real timeout advances delayed frame scheduling.
             if outcome == bmc_widget::surface::PollOutcome::Timeout {
@@ -135,6 +146,10 @@ impl WaylandClient {
                 tracing::info!("GBM-based EGL initialized");
 
                 let fbo_id = egl.begin_frame()?;
+                let runtime_config = RuntimeConfig {
+                    led_request_sender: self.led_tx.take(),
+                    ..RuntimeConfig::default()
+                };
                 let mut runtime = unsafe {
                     WasmWidgetRuntime::new(
                         &wasm_bytes,
@@ -142,7 +157,7 @@ impl WaylandClient {
                         w,
                         h,
                         fbo_id,
-                        RuntimeConfig::default(),
+                        runtime_config,
                     )
                 }?;
                 let (major, minor, patch) = runtime.sdk_version();
@@ -258,6 +273,16 @@ impl WaylandClient {
         Ok(())
     }
 
+    /// Drain LED requests from the runtime and forward each one as a
+    /// `deck_widget_v1` action.
+    fn flush_led_requests(&mut self) -> Result<()> {
+        while let Ok(req) = self.led_rx.try_recv() {
+            let action = led_request_to_action(&req);
+            self.surface.request_action(&action)?;
+        }
+        Ok(())
+    }
+
     /// Compute the `poll(2)` timeout in milliseconds.
     fn compute_poll_timeout(&self, render: Option<&RenderState>) -> i32 {
         if self.surface.needs_render() {
@@ -289,4 +314,136 @@ fn has_async_io(runtime: &WasmWidgetRuntime) -> bool {
         || runtime.has_active_ssdp_searches()
         || runtime.has_active_udp_broadcasts()
         || runtime.has_active_http_listeners()
+}
+
+/// Map a `LedRequest` from the wasm runtime to the `deck_widget_v1`
+/// action shape used by `DeckWidgetSurfaceClient::request_action`.
+///
+/// Six-variant `LedEffect` (runtime side) and `bmc_widget_protocol::
+/// LedEffect` are both protocol-aligned, so the effect transform is
+/// an exhaustive variant identity. Duration is `Option<Duration>` on
+/// the runtime side, which picks `LedEndless` (None) vs `LedTemporary`
+/// (Some). `LedRequest::Stop` carries the widget's request id; the
+/// runtime emits `0` for stop-all and any non-zero for targeted, but
+/// the current SDK only emits stop-all.
+fn led_request_to_action(req: &LedRequest) -> ActionPayload {
+    match req {
+        LedRequest::SetEffect {
+            request_id,
+            effect,
+            color,
+            period_ms,
+            duration,
+        } => {
+            let effect = match effect {
+                LedEffect::Chase => ProtoEffect::Chase,
+                LedEffect::KnightRider => ProtoEffect::KnightRider,
+                LedEffect::Scan => ProtoEffect::Scan,
+                LedEffect::Snake => ProtoEffect::Snake,
+                LedEffect::Breathe => ProtoEffect::Breathe,
+                LedEffect::Solid => ProtoEffect::Solid,
+            };
+            let color = RgbColor {
+                r: color.r,
+                g: color.g,
+                b: color.b,
+            };
+            match duration {
+                None => ActionPayload::LedEndless {
+                    request_id: *request_id,
+                    effect,
+                    color,
+                    period_ms: *period_ms,
+                },
+                Some(d) => ActionPayload::LedTemporary {
+                    request_id: *request_id,
+                    effect,
+                    color,
+                    period_ms: *period_ms,
+                    duration_ms: u32::try_from(d.as_millis()).unwrap_or(u32::MAX),
+                },
+            }
+        }
+        LedRequest::Stop { request_id } => ActionPayload::StopLed {
+            request_id: *request_id,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::led_request_to_action;
+    use bmc_wasm_runtime::{LedEffect, LedRequest, Rgb};
+    use bmc_widget_protocol::{ActionPayload, LedEffect as ProtoEffect, RgbColor};
+    use std::time::Duration;
+
+    fn red() -> Rgb {
+        Rgb::new(255, 0, 0)
+    }
+
+    #[test]
+    fn endless_maps_to_led_endless() {
+        let req = LedRequest::SetEffect {
+            request_id: 7,
+            effect: LedEffect::Breathe,
+            color: red(),
+            period_ms: 750,
+            duration: None,
+        };
+        assert_eq!(
+            led_request_to_action(&req),
+            ActionPayload::LedEndless {
+                request_id: 7,
+                effect: ProtoEffect::Breathe,
+                color: RgbColor { r: 255, g: 0, b: 0 },
+                period_ms: 750,
+            }
+        );
+    }
+
+    #[test]
+    fn temporary_maps_to_led_temporary() {
+        let req = LedRequest::SetEffect {
+            request_id: 9,
+            effect: LedEffect::Solid,
+            color: red(),
+            period_ms: 0,
+            duration: Some(Duration::from_millis(5_000)),
+        };
+        assert_eq!(
+            led_request_to_action(&req),
+            ActionPayload::LedTemporary {
+                request_id: 9,
+                effect: ProtoEffect::Solid,
+                color: RgbColor { r: 255, g: 0, b: 0 },
+                period_ms: 0,
+                duration_ms: 5_000,
+            }
+        );
+    }
+
+    #[test]
+    fn temporary_zero_duration_is_preserved() {
+        let req = LedRequest::SetEffect {
+            request_id: 1,
+            effect: LedEffect::Snake,
+            color: red(),
+            period_ms: 0,
+            duration: Some(Duration::ZERO),
+        };
+        let action = led_request_to_action(&req);
+        let ActionPayload::LedTemporary { duration_ms, .. } = action else {
+            panic!("BUG: temporary mapping must produce LedTemporary");
+        };
+        assert_eq!(duration_ms, 0);
+    }
+
+    #[test]
+    fn stop_maps_to_stop_led() {
+        let req = LedRequest::Stop { request_id: 0 };
+        assert_eq!(
+            led_request_to_action(&req),
+            ActionPayload::StopLed { request_id: 0 }
+        );
+    }
 }
