@@ -24,6 +24,9 @@ rules that callers must handle.
 
 ### [Widget Hardware Actions](widget-hardware-actions.md)
 
-How widget action requests (sound, LED) flow over `deck_widget_v1` to the action handler and on to `SoundController` /
-`LedController`. Covers the dispatch architecture, why sound playback runs in its own cancellable task, and the wire →
-hardware effect-type conversion that lives in `bmc/src/widget/action_handler.rs`.
+How widget action requests (sound, LED) travel from the wasm guest SDK through the host runtime, onto `deck_widget_v1`,
+and into the compositor's action handler. Covers the guest-side surface (`set_effect` / `set_effect_global` / `stop`,
+`play_sound` / `stop_sound`), the two-tier LED model (local always wins; global fills in when nothing local is playing),
+endless-stack supersession and temporary-queue serialization within each tier, scene-change pause/resume, the sound
+manager's cancellable playback task, and discriminant pinning across the wasm-FFI, wayland, and hardware-driver
+boundaries.
