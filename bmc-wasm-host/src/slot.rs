@@ -5,17 +5,33 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::ptr::NonNull;
 use std::rc::Rc;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
 use bmc_wasm_runtime::{
-    NextAlarm as RuntimeNextAlarm, RenderStatus, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
+    LedEffect, LedRequest, NextAlarm as RuntimeNextAlarm, RenderStatus, RuntimeConfig,
+    SystemSnapshot, WasmWidgetRuntime,
 };
 use bmc_widget::surface::{DeckWidgetSurfaceClient, WidgetEvent, WidgetSurface};
-use bmc_widget_protocol::{NextAlarm as WireNextAlarm, SettingUpdate};
+use bmc_widget_protocol::{
+    ActionPayload, LedEffect as ProtoEffect, NextAlarm as WireNextAlarm, RgbColor, SettingUpdate,
+};
 use serde_json::{Map, Value};
+
+// The wasm runtime allocates `LedRequestId`s on the guest's behalf and
+// forwards them as `deck_widget_v1` actions over Wayland. The two crates
+// don't share a type definition; this assert guarantees the all-stop
+// sentinel value stays equal across the boundary, so a runtime stop
+// emitted as `LedRequest::Stop { request_id: 0 }` lands on the protocol
+// side as `stop_led { request_id: 0 }` and is interpreted as "cancel
+// every outstanding request from this widget."
+const _: () = assert!(
+    bmc_wasm_runtime::LED_REQUEST_ID_ALL == bmc_widget_protocol::LED_REQUEST_ID_ALL,
+    "bmc_wasm_runtime::LED_REQUEST_ID_ALL must equal bmc_widget_protocol::LED_REQUEST_ID_ALL",
+);
 
 use crate::host::SharedHost;
 use crate::lifecycle::{
@@ -140,6 +156,9 @@ pub struct WidgetSlot {
     /// One-time diagnostic latch: set after logging that touch events were
     /// dropped because the widget does not export `on_touch`.
     pub touch_drop_logged: bool,
+    /// Receiver for LED requests the runtime emits on the guest's behalf;
+    /// drained each loop iteration and forwarded as `deck_widget_v1` actions.
+    led_rx: mpsc::Receiver<LedRequest>,
 }
 
 impl WidgetSlot {
@@ -186,6 +205,7 @@ impl WidgetSlot {
         }
         let viewport_shape = bmc_wasm_protocol::ViewportShape::from(initial.viewport_shape);
         let display = bmc_wasm_runtime::RuntimeDisplayInfo::from(initial.display);
+        let (led_tx, led_rx) = mpsc::channel();
         let mut runtime = WasmWidgetRuntime::new(
             &wasm_bytes,
             initial.width,
@@ -200,6 +220,7 @@ impl WidgetSlot {
                     },
                 ),
                 system: pending_system.clone(),
+                led_request_sender: Some(led_tx),
                 ..RuntimeConfig::default()
             },
         )?;
@@ -232,7 +253,18 @@ impl WidgetSlot {
             control_socket,
             next_frame_due_at: None,
             touch_drop_logged: false,
+            led_rx,
         })
+    }
+
+    /// Drain LED requests from the runtime and forward each one as a
+    /// `deck_widget_v1` action on this slot's surface.
+    pub fn flush_led_requests(&mut self) -> Result<()> {
+        while let Ok(req) = self.led_rx.try_recv() {
+            let action = led_request_to_action(&req);
+            self.surface.request_action(&action)?;
+        }
+        Ok(())
     }
 
     pub fn dispatch_wayland_events(&mut self) -> Result<()> {
@@ -808,6 +840,60 @@ fn wayland_touch_xy(x: f64, y: f64) -> (f32, f32) {
     (x as f32, y as f32)
 }
 
+/// Map a `LedRequest` from the wasm runtime to the `deck_widget_v1`
+/// action shape used by `DeckWidgetSurfaceClient::request_action`.
+///
+/// Six-variant `LedEffect` (runtime side) and `bmc_widget_protocol::
+/// LedEffect` are both protocol-aligned, so the effect transform is
+/// an exhaustive variant identity. Duration is `Option<Duration>` on
+/// the runtime side, which picks `LedEndless` (None) vs `LedTemporary`
+/// (Some). `LedRequest::Stop` carries the widget's request id; the
+/// runtime emits `0` for stop-all and any non-zero for targeted, but
+/// the current SDK only emits stop-all.
+fn led_request_to_action(req: &LedRequest) -> ActionPayload {
+    match req {
+        LedRequest::SetEffect {
+            request_id,
+            effect,
+            color,
+            period_ms,
+            duration,
+        } => {
+            let effect = match effect {
+                LedEffect::Chase => ProtoEffect::Chase,
+                LedEffect::KnightRider => ProtoEffect::KnightRider,
+                LedEffect::Scan => ProtoEffect::Scan,
+                LedEffect::Snake => ProtoEffect::Snake,
+                LedEffect::Breathe => ProtoEffect::Breathe,
+                LedEffect::Solid => ProtoEffect::Solid,
+            };
+            let color = RgbColor {
+                r: color.r,
+                g: color.g,
+                b: color.b,
+            };
+            match duration {
+                None => ActionPayload::LedEndless {
+                    request_id: *request_id,
+                    effect,
+                    color,
+                    period_ms: *period_ms,
+                },
+                Some(d) => ActionPayload::LedTemporary {
+                    request_id: *request_id,
+                    effect,
+                    color,
+                    period_ms: *period_ms,
+                    duration_ms: u32::try_from(d.as_millis()).unwrap_or(u32::MAX),
+                },
+            }
+        }
+        LedRequest::Stop { request_id } => ActionPayload::StopLed {
+            request_id: *request_id,
+        },
+    }
+}
+
 fn apply_setting_update(snap: &mut SystemSnapshot, update: &SettingUpdate) {
     match update {
         SettingUpdate::Timezone(tz) => snap.settings.timezone.clone_from(tz),
@@ -1071,9 +1157,13 @@ fn normalize_gl_state(egl: &bmc_widget::egl::EglContext, w: u32, h: u32) {
 mod tests {
     use super::{
         HostRenderFrameContext, RendererAssetEvictor, SystemSnapshot, apply_setting_update,
-        evict_renderer_assets,
+        evict_renderer_assets, led_request_to_action,
     };
-    use bmc_widget_protocol::{NextAlarm as WireNextAlarm, SettingUpdate};
+    use bmc_wasm_runtime::{LedEffect, LedRequest, Rgb};
+    use bmc_widget_protocol::{
+        ActionPayload, LedEffect as ProtoEffect, NextAlarm as WireNextAlarm, RgbColor, SettingUpdate,
+    };
+    use std::time::Duration;
 
     #[test]
     fn apply_setting_update_timezone_folds_into_snapshot() {
@@ -1165,5 +1255,75 @@ mod tests {
         assert_eq!(context.target_height, 480);
         assert!(context.wants_immediate);
         assert_eq!(context.status, bmc_wasm_runtime::RenderStatus::Ok);
+    }
+
+    fn red() -> Rgb {
+        Rgb::new(255, 0, 0)
+    }
+
+    #[test]
+    fn endless_maps_to_led_endless() {
+        let req = LedRequest::SetEffect {
+            request_id: 7,
+            effect: LedEffect::Breathe,
+            color: red(),
+            period_ms: 750,
+            duration: None,
+        };
+        assert_eq!(
+            led_request_to_action(&req),
+            ActionPayload::LedEndless {
+                request_id: 7,
+                effect: ProtoEffect::Breathe,
+                color: RgbColor { r: 255, g: 0, b: 0 },
+                period_ms: 750,
+            }
+        );
+    }
+
+    #[test]
+    fn temporary_maps_to_led_temporary() {
+        let req = LedRequest::SetEffect {
+            request_id: 9,
+            effect: LedEffect::Solid,
+            color: red(),
+            period_ms: 0,
+            duration: Some(Duration::from_millis(5_000)),
+        };
+        assert_eq!(
+            led_request_to_action(&req),
+            ActionPayload::LedTemporary {
+                request_id: 9,
+                effect: ProtoEffect::Solid,
+                color: RgbColor { r: 255, g: 0, b: 0 },
+                period_ms: 0,
+                duration_ms: 5_000,
+            }
+        );
+    }
+
+    #[test]
+    fn temporary_zero_duration_is_preserved() {
+        let req = LedRequest::SetEffect {
+            request_id: 1,
+            effect: LedEffect::Snake,
+            color: red(),
+            period_ms: 0,
+            duration: Some(Duration::ZERO),
+        };
+        let action = led_request_to_action(&req);
+        let ActionPayload::LedTemporary { duration_ms, .. } = action else {
+            panic!("BUG: temporary mapping must produce LedTemporary");
+        };
+        assert_eq!(duration_ms, 0);
+    }
+
+    #[test]
+    fn stop_maps_to_stop_led() {
+        let req = LedRequest::Stop { request_id: 0 };
+        assert_eq!(
+            led_request_to_action(&req),
+            ActionPayload::StopLed { request_id: 0 }
+        );
     }
 }
