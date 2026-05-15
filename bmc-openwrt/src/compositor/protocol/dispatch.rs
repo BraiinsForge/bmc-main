@@ -13,7 +13,7 @@ use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
 
-use super::conversions::led_effect_from_protocol;
+use super::conversions::{led_effect_from_protocol, led_scope_from_protocol};
 use super::state::DeckWidgetProtocolState;
 
 /// Wayland's `uint` is a `u32`, but our RGB values are byte-sized.
@@ -195,9 +195,14 @@ where
                 b,
                 period_ms,
                 duration_ms,
+                scope,
             } => {
                 let Ok(effect) = effect.into_result() else {
                     tracing::warn!("Widget {} led_temporary: unknown effect", instance_id);
+                    return;
+                };
+                let Ok(scope) = scope.into_result() else {
+                    tracing::warn!("Widget {} led_temporary: unknown scope", instance_id);
                     return;
                 };
                 if request_id == bmc_widget_protocol::LED_REQUEST_ID_ALL {
@@ -208,7 +213,7 @@ where
                     return;
                 }
                 tracing::debug!(
-                    "Widget {} led_temporary: req={request_id} effect={effect:?} rgb=({r},{g},{b}) period_ms={period_ms} duration_ms={duration_ms}",
+                    "Widget {} led_temporary: req={request_id} effect={effect:?} rgb=({r},{g},{b}) period_ms={period_ms} duration_ms={duration_ms} scope={scope:?}",
                     instance_id
                 );
                 protocol_state.add_action(
@@ -223,6 +228,7 @@ where
                         },
                         period_ms,
                         duration_ms,
+                        scope: led_scope_from_protocol(scope),
                     },
                 );
             }
@@ -233,9 +239,14 @@ where
                 g,
                 b,
                 period_ms,
+                scope,
             } => {
                 let Ok(effect) = effect.into_result() else {
                     tracing::warn!("Widget {} led_endless: unknown effect", instance_id);
+                    return;
+                };
+                let Ok(scope) = scope.into_result() else {
+                    tracing::warn!("Widget {} led_endless: unknown scope", instance_id);
                     return;
                 };
                 if request_id == bmc_widget_protocol::LED_REQUEST_ID_ALL {
@@ -246,7 +257,7 @@ where
                     return;
                 }
                 tracing::debug!(
-                    "Widget {} led_endless: req={request_id} effect={effect:?} rgb=({r},{g},{b}) period_ms={period_ms}",
+                    "Widget {} led_endless: req={request_id} effect={effect:?} rgb=({r},{g},{b}) period_ms={period_ms} scope={scope:?}",
                     instance_id
                 );
                 protocol_state.add_action(
@@ -260,6 +271,7 @@ where
                             b: clamp_u8(b),
                         },
                         period_ms,
+                        scope: led_scope_from_protocol(scope),
                     },
                 );
             }

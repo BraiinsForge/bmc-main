@@ -236,6 +236,7 @@ impl WidgetProtocolClient {
                 color,
                 period_ms,
                 duration_ms,
+                scope,
             } => surface.led_temporary(
                 *request_id,
                 to_protocol::led_effect(*effect),
@@ -244,12 +245,14 @@ impl WidgetProtocolClient {
                 u32::from(color.b),
                 *period_ms,
                 *duration_ms,
+                to_protocol::led_scope(*scope),
             ),
             ActionPayload::LedEndless {
                 request_id,
                 effect,
                 color,
                 period_ms,
+                scope,
             } => surface.led_endless(
                 *request_id,
                 to_protocol::led_effect(*effect),
@@ -257,6 +260,7 @@ impl WidgetProtocolClient {
                 u32::from(color.g),
                 u32::from(color.b),
                 *period_ms,
+                to_protocol::led_scope(*scope),
             ),
             ActionPayload::StopLed { request_id } => surface.stop_led(*request_id),
         }
@@ -365,8 +369,8 @@ impl WidgetProtocolClient {
 }
 
 pub(crate) mod to_protocol {
-    use bmc_widget_protocol::LedEffect;
     use bmc_widget_protocol::client::deck_widget_surface_v1 as p;
+    use bmc_widget_protocol::{LedEffect, LedScope};
 
     pub fn led_effect(e: LedEffect) -> p::LedEffect {
         match e {
@@ -376,6 +380,13 @@ pub(crate) mod to_protocol {
             LedEffect::Snake => p::LedEffect::Snake,
             LedEffect::Breathe => p::LedEffect::Breathe,
             LedEffect::Solid => p::LedEffect::Solid,
+        }
+    }
+
+    pub fn led_scope(s: LedScope) -> p::LedScope {
+        match s {
+            LedScope::Local => p::LedScope::Local,
+            LedScope::Global => p::LedScope::Global,
         }
     }
 }

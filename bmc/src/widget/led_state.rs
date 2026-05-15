@@ -5,7 +5,8 @@ use std::time::Duration;
 
 use bmc_led::data::{LedCommand, LedEffect as HwLedEffect, LedScene, Rgb};
 use bmc_widget_protocol::{
-    LED_REQUEST_ID_ALL, LedEffect as ProtoLedEffect, LedRequestId, LedRequestStatus, RgbColor,
+    LED_REQUEST_ID_ALL, LedEffect as ProtoLedEffect, LedRequestId, LedRequestStatus, LedScope,
+    RgbColor,
 };
 use tokio::sync::mpsc;
 use tokio::time::Instant;
@@ -49,6 +50,7 @@ pub(crate) struct LedSceneManager<T: crate::BmcManager> {
     widget_to_scene: HashMap<InstanceId, SceneId>,
     active_scene: Option<SceneId>,
     scenes: HashMap<SceneId, SceneEffectState>,
+    global_state: SceneEffectState,
     applied_scene: LedScene,
 }
 
@@ -63,6 +65,7 @@ impl<T: crate::BmcManager> LedSceneManager<T> {
             widget_to_scene: HashMap::new(),
             active_scene: None,
             scenes: HashMap::new(),
+            global_state: SceneEffectState::default(),
             applied_scene: LedScene {
                 effect: HwLedEffect::None,
                 period: None,
@@ -74,8 +77,9 @@ impl<T: crate::BmcManager> LedSceneManager<T> {
     pub(crate) fn on_scene_changed(&mut self, scene_id: SceneId, widget_ids: Vec<InstanceId>) {
         if let Some(previous_scene_id) = self.active_scene
             && previous_scene_id != scene_id
+            && let Some(state) = self.scenes.get_mut(&previous_scene_id)
         {
-            self.pause_scene_temporary(previous_scene_id);
+            pause_state_temporary(state);
         }
 
         self.active_scene = Some(scene_id);
@@ -86,6 +90,10 @@ impl<T: crate::BmcManager> LedSceneManager<T> {
         self.refresh_active_scene_effect();
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "request-shape parameters mirror the wire arg list; bundling them adds a struct without clarifying anything"
+    )]
     pub(crate) fn on_temporary(
         &mut self,
         instance_id: InstanceId,
@@ -94,35 +102,34 @@ impl<T: crate::BmcManager> LedSceneManager<T> {
         color: RgbColor,
         period_ms: u32,
         duration_ms: u32,
+        scope: LedScope,
     ) {
-        let Some(scene_id) = self.widget_to_scene.get(&instance_id).copied() else {
-            warn!(%instance_id, "ignoring led temporary without widget scene mapping");
-            return;
-        };
-
         let entry = TempEntry {
             instance_id: instance_id.clone(),
             request_id,
             scene: build_scene(effect, color, period_ms, Some(u64::from(duration_ms))),
             remaining: Duration::from_millis(u64::from(duration_ms)),
         };
-        self.emit(instance_id, request_id, LedRequestStatus::Accepted);
 
-        let can_start_now = self.active_scene == Some(scene_id)
-            && !self.scene_has_active_temp(scene_id)
-            && self
-                .scenes
-                .get(&scene_id)
-                .is_none_or(|state| state.temp_queue.is_empty());
-        if can_start_now {
-            self.start_temporary(scene_id, entry);
-        } else {
-            self.scenes
-                .entry(scene_id)
-                .or_default()
-                .temp_queue
-                .push_back(entry);
+        match scope {
+            LedScope::Local => {
+                let Some(scene_id) = self.widget_to_scene.get(&instance_id).copied() else {
+                    warn!(%instance_id, "ignoring local led temporary without widget scene mapping");
+                    return;
+                };
+                self.scenes
+                    .entry(scene_id)
+                    .or_default()
+                    .temp_queue
+                    .push_back(entry);
+            }
+            LedScope::Global => {
+                self.global_state.temp_queue.push_back(entry);
+            }
         }
+
+        self.emit(instance_id, request_id, LedRequestStatus::Accepted);
+        self.refresh_active_scene_effect();
     }
 
     pub(crate) fn on_endless(
@@ -132,29 +139,30 @@ impl<T: crate::BmcManager> LedSceneManager<T> {
         effect: ProtoLedEffect,
         color: RgbColor,
         period_ms: u32,
+        scope: LedScope,
     ) {
-        let Some(scene_id) = self.widget_to_scene.get(&instance_id).copied() else {
-            warn!(%instance_id, "ignoring led endless without widget scene mapping");
-            return;
-        };
-
         let new_entry = EndlessEntry {
             instance_id: instance_id.clone(),
             request_id,
             scene: build_scene(effect, color, period_ms, None),
         };
-        let previous_top = self
-            .scenes
-            .entry(scene_id)
-            .or_default()
+
+        let target = match scope {
+            LedScope::Local => {
+                let Some(scene_id) = self.widget_to_scene.get(&instance_id).copied() else {
+                    warn!(%instance_id, "ignoring local led endless without widget scene mapping");
+                    return;
+                };
+                self.scenes.entry(scene_id).or_default()
+            }
+            LedScope::Global => &mut self.global_state,
+        };
+
+        let previous_top = target
             .endless_stack
             .last()
             .map(|entry| (entry.instance_id.clone(), entry.request_id));
-        self.scenes
-            .entry(scene_id)
-            .or_default()
-            .endless_stack
-            .push(new_entry.clone());
+        target.endless_stack.push(new_entry);
 
         if let Some((old_instance_id, old_request_id)) = previous_top {
             self.emit(
@@ -165,9 +173,7 @@ impl<T: crate::BmcManager> LedSceneManager<T> {
         }
         self.emit(instance_id, request_id, LedRequestStatus::Accepted);
 
-        if self.active_scene == Some(scene_id) && !self.scene_has_active_temp(scene_id) {
-            self.apply_scene(new_entry.scene);
-        }
+        self.refresh_active_scene_effect();
     }
 
     pub(crate) fn on_stop(&mut self, instance_id: &str, request_id: LedRequestId) {
@@ -178,51 +184,12 @@ impl<T: crate::BmcManager> LedSceneManager<T> {
 
         let mut superseded: Vec<(InstanceId, LedRequestId)> = Vec::new();
 
-        for state in self.scenes.values_mut() {
-            if let Some(active) = state.active_temp.take() {
-                match active {
-                    ActiveTemp::Running { entry, until } => {
-                        if matches(&entry.instance_id, entry.request_id) {
-                            superseded.push((entry.instance_id, entry.request_id));
-                        } else {
-                            state.active_temp = Some(ActiveTemp::Running { entry, until });
-                        }
-                    }
-                    ActiveTemp::Paused { entry } => {
-                        if matches(&entry.instance_id, entry.request_id) {
-                            superseded.push((entry.instance_id, entry.request_id));
-                        } else {
-                            state.active_temp = Some(ActiveTemp::Paused { entry });
-                        }
-                    }
-                }
-            }
-
-            let kept_queue: VecDeque<_> = std::mem::take(&mut state.temp_queue)
-                .into_iter()
-                .filter_map(|entry| {
-                    if matches(&entry.instance_id, entry.request_id) {
-                        superseded.push((entry.instance_id, entry.request_id));
-                        None
-                    } else {
-                        Some(entry)
-                    }
-                })
-                .collect();
-            state.temp_queue = kept_queue;
-
-            let kept_endless: Vec<_> = std::mem::take(&mut state.endless_stack)
-                .into_iter()
-                .filter_map(|entry| {
-                    if matches(&entry.instance_id, entry.request_id) {
-                        superseded.push((entry.instance_id, entry.request_id));
-                        None
-                    } else {
-                        Some(entry)
-                    }
-                })
-                .collect();
-            state.endless_stack = kept_endless;
+        for state in self
+            .scenes
+            .values_mut()
+            .chain(std::iter::once(&mut self.global_state))
+        {
+            sweep_state(state, &matches, &mut superseded);
         }
 
         for (superseded_instance, superseded_request) in superseded {
@@ -243,59 +210,47 @@ impl<T: crate::BmcManager> LedSceneManager<T> {
     }
 
     pub(crate) fn on_active_expiry(&mut self) {
-        let Some(scene_id) = self.active_scene else {
-            return;
-        };
+        let now = Instant::now();
+        let mut expired: Vec<(InstanceId, LedRequestId)> = Vec::new();
 
-        let expired = {
-            let state = self.scenes.entry(scene_id).or_default();
-            let Some(active_temp) = state.active_temp.take() else {
-                return;
-            };
-            match active_temp {
-                ActiveTemp::Running { entry, until } => {
-                    if Instant::now() < until {
-                        state.active_temp = Some(ActiveTemp::Running { entry, until });
-                        return;
-                    }
-                    Some((entry.instance_id, entry.request_id))
-                }
-                ActiveTemp::Paused { entry } => {
-                    state.active_temp = Some(ActiveTemp::Paused { entry });
-                    None
-                }
-            }
-        };
-
-        if let Some((instance_id, request_id)) = expired {
-            self.emit(instance_id, request_id, LedRequestStatus::Completed);
-            self.refresh_active_scene_effect();
+        if let Some(scene_id) = self.active_scene
+            && let Some(state) = self.scenes.get_mut(&scene_id)
+            && let Some(done) = expire_state_if_due(state, now)
+        {
+            expired.push(done);
         }
+
+        if let Some(done) = expire_state_if_due(&mut self.global_state, now) {
+            expired.push(done);
+        }
+
+        if expired.is_empty() {
+            return;
+        }
+
+        for (instance_id, request_id) in expired {
+            self.emit(instance_id, request_id, LedRequestStatus::Completed);
+        }
+        self.refresh_active_scene_effect();
     }
 
     pub(crate) fn active_deadline(&self) -> Option<Instant> {
-        let scene_id = self.active_scene?;
-        let state = self.scenes.get(&scene_id)?;
-        match state.active_temp.as_ref()? {
-            ActiveTemp::Running { until, .. } => Some(*until),
-            ActiveTemp::Paused { .. } => None,
+        let scene_deadline = self
+            .active_scene
+            .and_then(|id| self.scenes.get(&id))
+            .and_then(|state| match state.active_temp.as_ref()? {
+                ActiveTemp::Running { until, .. } => Some(*until),
+                ActiveTemp::Paused { .. } => None,
+            });
+        let global_deadline = match self.global_state.active_temp.as_ref() {
+            Some(ActiveTemp::Running { until, .. }) => Some(*until),
+            Some(ActiveTemp::Paused { .. }) | None => None,
+        };
+        match (scene_deadline, global_deadline) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(d), None) | (None, Some(d)) => Some(d),
+            (None, None) => None,
         }
-    }
-
-    fn pause_scene_temporary(&mut self, scene_id: SceneId) {
-        let Some(state) = self.scenes.get_mut(&scene_id) else {
-            return;
-        };
-        let Some(active_temp) = state.active_temp.take() else {
-            return;
-        };
-        state.active_temp = Some(match active_temp {
-            ActiveTemp::Running { mut entry, until } => {
-                entry.remaining = until.saturating_duration_since(Instant::now());
-                ActiveTemp::Paused { entry }
-            }
-            ActiveTemp::Paused { entry } => ActiveTemp::Paused { entry },
-        });
     }
 
     fn refresh_active_scene_effect(&mut self) {
@@ -304,80 +259,43 @@ impl<T: crate::BmcManager> LedSceneManager<T> {
         };
         self.scenes.entry(scene_id).or_default();
 
-        let paused_entry = {
-            let state = self.scenes.get_mut(&scene_id).expect("BUG: scene inserted");
-            match state.active_temp.take() {
-                Some(ActiveTemp::Paused { entry }) => Some(entry),
-                Some(running @ ActiveTemp::Running { .. }) => {
-                    state.active_temp = Some(running);
-                    None
-                }
-                None => None,
+        // The active scene's local tier wins outright when it has something
+        // to show; the global tier only feeds the strip when local is empty.
+        // A Running temp that loses to the other tier transitions to Paused
+        // (preserving its `remaining`) without emitting Superseded — it's a
+        // display state, not a lifecycle state.
+        let (winner_scene, winner_loser) = {
+            let local_state = self.scenes.get_mut(&scene_id).expect("BUG: scene inserted");
+            if let Some(scene) = pick_winner_scene(local_state) {
+                (Some(scene), Tier::Global)
+            } else if let Some(scene) = pick_winner_scene(&mut self.global_state) {
+                (Some(scene), Tier::Local)
+            } else {
+                (None, Tier::None)
             }
         };
-        if let Some(entry) = paused_entry {
-            self.start_temporary(scene_id, entry);
-            return;
+
+        match winner_loser {
+            Tier::Global => pause_state_temporary(&mut self.global_state),
+            Tier::Local => {
+                if let Some(state) = self.scenes.get_mut(&scene_id) {
+                    pause_state_temporary(state);
+                }
+            }
+            Tier::None => {}
         }
 
-        if self.scene_has_running_temp(scene_id) {
-            return;
-        }
-
-        let next = self
-            .scenes
-            .get_mut(&scene_id)
-            .expect("BUG: scene inserted")
-            .temp_queue
-            .pop_front();
-        if let Some(entry) = next {
-            self.start_temporary(scene_id, entry);
-            return;
-        }
-
-        let endless = self
-            .scenes
-            .get(&scene_id)
-            .expect("BUG: scene inserted")
-            .endless_stack
-            .last()
-            .map(|entry| entry.scene);
-        if let Some(scene) = endless {
+        if let Some(scene) = winner_scene {
             self.apply_scene(scene);
         } else {
             self.apply_clear();
         }
     }
 
-    fn start_temporary(&mut self, scene_id: SceneId, mut entry: TempEntry) {
-        entry.scene.duration = Some(entry.remaining);
-        let until = Instant::now() + entry.remaining;
-        let scene = entry.scene;
-
-        self.scenes
-            .entry(scene_id)
-            .or_default()
-            .active_temp
-            .replace(ActiveTemp::Running { entry, until });
-        self.apply_scene(scene);
-    }
-
-    fn scene_has_running_temp(&self, scene_id: SceneId) -> bool {
-        self.scenes.get(&scene_id).is_some_and(|state| {
-            state
-                .active_temp
-                .as_ref()
-                .is_some_and(|active| matches!(active, ActiveTemp::Running { .. }))
-        })
-    }
-
-    fn scene_has_active_temp(&self, scene_id: SceneId) -> bool {
-        self.scenes
-            .get(&scene_id)
-            .is_some_and(|state| state.active_temp.is_some())
-    }
-
     fn apply_scene(&mut self, scene: LedScene) {
+        if scene == self.applied_scene {
+            return;
+        }
         self.applied_scene = scene;
         self.led_controller
             .send_command(LedCommand::SetEffect(scene));
@@ -397,6 +315,135 @@ impl<T: crate::BmcManager> LedSceneManager<T> {
             request_id,
             status,
         });
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Tier {
+    Local,
+    Global,
+    None,
+}
+
+/// Pick what the given tier wants to show on the strip, mutating the tier
+/// state in place (resume Paused, pop queued temp). Returns the
+/// `LedScene` to apply, or `None` if the tier has nothing to play.
+fn pick_winner_scene(state: &mut SceneEffectState) -> Option<LedScene> {
+    match state.active_temp.take() {
+        Some(ActiveTemp::Paused { mut entry }) => {
+            entry.scene.duration = Some(entry.remaining);
+            let scene = entry.scene;
+            let until = Instant::now() + entry.remaining;
+            state.active_temp = Some(ActiveTemp::Running { entry, until });
+            return Some(scene);
+        }
+        Some(ActiveTemp::Running { entry, until }) => {
+            let scene = entry.scene;
+            state.active_temp = Some(ActiveTemp::Running { entry, until });
+            return Some(scene);
+        }
+        None => {}
+    }
+
+    if let Some(mut entry) = state.temp_queue.pop_front() {
+        entry.scene.duration = Some(entry.remaining);
+        let scene = entry.scene;
+        let until = Instant::now() + entry.remaining;
+        state.active_temp = Some(ActiveTemp::Running { entry, until });
+        return Some(scene);
+    }
+
+    state.endless_stack.last().map(|entry| entry.scene)
+}
+
+/// Transition a `Running` active temp to `Paused`, capturing remaining
+/// time. No-op for `Paused` or absent temps. Used both when a scene
+/// becomes inactive and when a tier loses to the other tier on refresh.
+fn pause_state_temporary(state: &mut SceneEffectState) {
+    let Some(active_temp) = state.active_temp.take() else {
+        return;
+    };
+    state.active_temp = Some(match active_temp {
+        ActiveTemp::Running { mut entry, until } => {
+            entry.remaining = until.saturating_duration_since(Instant::now());
+            ActiveTemp::Paused { entry }
+        }
+        ActiveTemp::Paused { entry } => ActiveTemp::Paused { entry },
+    });
+}
+
+/// Remove every entry from a state that matches the given predicate,
+/// collecting their `(instance_id, request_id)` into `superseded`.
+fn sweep_state(
+    state: &mut SceneEffectState,
+    matches: &impl Fn(&str, LedRequestId) -> bool,
+    superseded: &mut Vec<(InstanceId, LedRequestId)>,
+) {
+    if let Some(active) = state.active_temp.take() {
+        match active {
+            ActiveTemp::Running { entry, until } => {
+                if matches(&entry.instance_id, entry.request_id) {
+                    superseded.push((entry.instance_id, entry.request_id));
+                } else {
+                    state.active_temp = Some(ActiveTemp::Running { entry, until });
+                }
+            }
+            ActiveTemp::Paused { entry } => {
+                if matches(&entry.instance_id, entry.request_id) {
+                    superseded.push((entry.instance_id, entry.request_id));
+                } else {
+                    state.active_temp = Some(ActiveTemp::Paused { entry });
+                }
+            }
+        }
+    }
+
+    let kept_queue: VecDeque<_> = std::mem::take(&mut state.temp_queue)
+        .into_iter()
+        .filter_map(|entry| {
+            if matches(&entry.instance_id, entry.request_id) {
+                superseded.push((entry.instance_id, entry.request_id));
+                None
+            } else {
+                Some(entry)
+            }
+        })
+        .collect();
+    state.temp_queue = kept_queue;
+
+    let kept_endless: Vec<_> = std::mem::take(&mut state.endless_stack)
+        .into_iter()
+        .filter_map(|entry| {
+            if matches(&entry.instance_id, entry.request_id) {
+                superseded.push((entry.instance_id, entry.request_id));
+                None
+            } else {
+                Some(entry)
+            }
+        })
+        .collect();
+    state.endless_stack = kept_endless;
+}
+
+/// If the state's `active_temp` is `Running` with `until <= now`, take it
+/// and return the request's identity for `Completed` emission.
+fn expire_state_if_due(
+    state: &mut SceneEffectState,
+    now: Instant,
+) -> Option<(InstanceId, LedRequestId)> {
+    let active = state.active_temp.take()?;
+    match active {
+        ActiveTemp::Running { entry, until } if until <= now => {
+            Some((entry.instance_id, entry.request_id))
+        }
+        running @ ActiveTemp::Running { .. } => {
+            state.active_temp = Some(running);
+            None
+        }
+        paused @ ActiveTemp::Paused { .. } => {
+            state.active_temp = Some(paused);
+            None
+        }
     }
 }
 
@@ -771,6 +818,7 @@ mod tests {
             rgb(1, 1, 1),
             0,
             30_000,
+            LedScope::Local,
         );
         h.drain_statuses();
 
@@ -804,6 +852,7 @@ mod tests {
             rgb(2, 0, 0),
             0,
             1_000,
+            LedScope::Local,
         );
         h.manager.on_temporary(
             widget.clone(),
@@ -812,6 +861,7 @@ mod tests {
             rgb(3, 0, 0),
             0,
             2_000,
+            LedScope::Local,
         );
         h.drain_statuses();
         assert_eq!(active_temp_request_id(&h, scene), Some(21));
@@ -833,8 +883,14 @@ mod tests {
         let widget = instance_id("fallback");
 
         h.manager.on_scene_changed(scene, vec![widget.clone()]);
-        h.manager
-            .on_endless(widget.clone(), 31, ProtoLedEffect::Solid, rgb(9, 9, 9), 0);
+        h.manager.on_endless(
+            widget.clone(),
+            31,
+            ProtoLedEffect::Solid,
+            rgb(9, 9, 9),
+            0,
+            LedScope::Local,
+        );
         h.manager.on_temporary(
             widget.clone(),
             32,
@@ -842,6 +898,7 @@ mod tests {
             rgb(4, 0, 0),
             0,
             1_000,
+            LedScope::Local,
         );
         h.manager.on_temporary(
             widget.clone(),
@@ -850,6 +907,7 @@ mod tests {
             rgb(5, 0, 0),
             0,
             1_000,
+            LedScope::Local,
         );
         h.drain_statuses();
         assert_eq!(active_temp_request_id(&h, scene), Some(32));
@@ -894,6 +952,7 @@ mod tests {
             ProtoLedEffect::Solid,
             rgb(1, 2, 3),
             0,
+            LedScope::Local,
         );
 
         let statuses = h.drain_statuses();
@@ -915,10 +974,22 @@ mod tests {
         h.manager.on_scene_changed(scene_a, vec![widget_a.clone()]);
         h.manager.widget_to_scene.insert(widget_b.clone(), scene_b);
 
-        h.manager
-            .on_endless(widget_b.clone(), 1, ProtoLedEffect::Solid, rgb(10, 0, 0), 0);
-        h.manager
-            .on_endless(widget_b.clone(), 2, ProtoLedEffect::Solid, rgb(20, 0, 0), 0);
+        h.manager.on_endless(
+            widget_b.clone(),
+            1,
+            ProtoLedEffect::Solid,
+            rgb(10, 0, 0),
+            0,
+            LedScope::Local,
+        );
+        h.manager.on_endless(
+            widget_b.clone(),
+            2,
+            ProtoLedEffect::Solid,
+            rgb(20, 0, 0),
+            0,
+            LedScope::Local,
+        );
 
         h.manager.on_scene_changed(scene_b, vec![widget_b.clone()]);
 
@@ -946,6 +1017,7 @@ mod tests {
             rgb(1, 1, 1),
             0,
             5_000,
+            LedScope::Local,
         );
         assert!(h.manager.active_deadline().is_some());
 
@@ -971,6 +1043,7 @@ mod tests {
             ProtoLedEffect::Solid,
             rgb(1, 0, 0),
             0,
+            LedScope::Local,
         );
         h.manager.on_endless(
             widget_b.clone(),
@@ -978,6 +1051,7 @@ mod tests {
             ProtoLedEffect::Solid,
             rgb(0, 1, 0),
             0,
+            LedScope::Local,
         );
         h.drain_statuses();
 
@@ -988,6 +1062,323 @@ mod tests {
         assert_eq!(statuses[0].instance_id, widget_a);
         assert_eq!(statuses[0].request_id, 100);
         assert_eq!(statuses[0].status, LedRequestStatus::Superseded);
+    }
+
+    fn global_active_temp_request_id(h: &Harness) -> Option<LedRequestId> {
+        let active = h.manager.global_state.active_temp.as_ref()?;
+        match active {
+            ActiveTemp::Running { entry, .. } | ActiveTemp::Paused { entry } => {
+                Some(entry.request_id)
+            }
+        }
+    }
+
+    fn global_active_temp_is_paused(h: &Harness) -> bool {
+        matches!(
+            h.manager.global_state.active_temp.as_ref(),
+            Some(ActiveTemp::Paused { .. })
+        )
+    }
+
+    fn force_global_running_until(h: &mut Harness, until: Instant) {
+        let active = h
+            .manager
+            .global_state
+            .active_temp
+            .take()
+            .expect("BUG: global active temp must exist");
+        h.manager.global_state.active_temp = Some(match active {
+            ActiveTemp::Running { entry, .. } => ActiveTemp::Running { entry, until },
+            ActiveTemp::Paused { entry } => ActiveTemp::Paused { entry },
+        });
+    }
+
+    #[test]
+    fn local_temp_preempts_global_temp_then_resumes() {
+        let mut h = Harness::new();
+        let scene = scene_id();
+        let widget = instance_id("dual");
+
+        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+        h.manager.on_temporary(
+            widget.clone(),
+            500,
+            ProtoLedEffect::KnightRider,
+            rgb(8, 0, 0),
+            500,
+            5_000,
+            LedScope::Global,
+        );
+        h.drain_statuses();
+        assert_eq!(global_active_temp_request_id(&h), Some(500));
+        // Global temp is the only request and the active scene has nothing
+        // local, so global drives the strip.
+        assert_eq!(
+            h.manager.applied_scene,
+            build_scene(ProtoLedEffect::KnightRider, rgb(8, 0, 0), 500, Some(5_000))
+        );
+
+        h.manager.on_temporary(
+            widget.clone(),
+            600,
+            ProtoLedEffect::Solid,
+            rgb(0, 9, 0),
+            0,
+            1_000,
+            LedScope::Local,
+        );
+        h.drain_statuses();
+        // Local wins; global pauses without emitting Superseded.
+        assert_eq!(active_temp_request_id(&h, scene), Some(600));
+        assert!(global_active_temp_is_paused(&h));
+        assert_eq!(
+            h.manager.applied_scene,
+            build_scene(ProtoLedEffect::Solid, rgb(0, 9, 0), 0, Some(1_000))
+        );
+
+        // Local completes; global resumes.
+        force_running_temp_until(&mut h, scene, Instant::now() - Duration::from_millis(1));
+        h.manager.on_active_expiry();
+        let statuses = h.drain_statuses();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].request_id, 600);
+        assert_eq!(statuses[0].status, LedRequestStatus::Completed);
+        assert_eq!(global_active_temp_request_id(&h), Some(500));
+        assert!(!global_active_temp_is_paused(&h));
+
+        // Global eventually completes under its original id.
+        force_global_running_until(&mut h, Instant::now() - Duration::from_millis(1));
+        h.manager.on_active_expiry();
+        let statuses = h.drain_statuses();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].request_id, 500);
+        assert_eq!(statuses[0].status, LedRequestStatus::Completed);
+    }
+
+    #[test]
+    fn local_endless_hides_global_endless_without_superseded() {
+        let mut h = Harness::new();
+        let scene = scene_id();
+        let widget = instance_id("layered");
+
+        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+        h.manager.on_endless(
+            widget.clone(),
+            700,
+            ProtoLedEffect::Solid,
+            rgb(7, 0, 0),
+            0,
+            LedScope::Global,
+        );
+        h.drain_statuses();
+        assert_eq!(
+            h.manager.applied_scene,
+            build_scene(ProtoLedEffect::Solid, rgb(7, 0, 0), 0, None)
+        );
+
+        h.manager.on_endless(
+            widget.clone(),
+            800,
+            ProtoLedEffect::Solid,
+            rgb(0, 0, 7),
+            0,
+            LedScope::Local,
+        );
+        let statuses = h.drain_statuses();
+        // Only Accepted(800) is emitted; the global endless is hidden, not
+        // superseded.
+        assert!(
+            !statuses
+                .iter()
+                .any(|s| s.request_id == 700 && s.status == LedRequestStatus::Superseded),
+            "global endless must not receive Superseded on cross-tier preemption: {statuses:?}"
+        );
+        assert_eq!(
+            h.manager.applied_scene,
+            build_scene(ProtoLedEffect::Solid, rgb(0, 0, 7), 0, None)
+        );
+
+        h.manager.on_stop(&widget, 800);
+        h.drain_statuses();
+        // Global endless re-applies.
+        assert_eq!(
+            h.manager.applied_scene,
+            build_scene(ProtoLedEffect::Solid, rgb(7, 0, 0), 0, None)
+        );
+    }
+
+    #[test]
+    fn global_endless_stack_supersedes_within_tier() {
+        let mut h = Harness::new();
+        let scene = scene_id();
+        let widget = instance_id("stack");
+
+        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+        h.manager.on_endless(
+            widget.clone(),
+            901,
+            ProtoLedEffect::Solid,
+            rgb(1, 0, 0),
+            0,
+            LedScope::Global,
+        );
+        h.manager.on_endless(
+            widget.clone(),
+            902,
+            ProtoLedEffect::Solid,
+            rgb(2, 0, 0),
+            0,
+            LedScope::Global,
+        );
+
+        let statuses = h.drain_statuses();
+        // 901: Accepted; then 902 supersedes 901; then 902: Accepted.
+        assert!(
+            statuses
+                .iter()
+                .any(|s| s.request_id == 901 && s.status == LedRequestStatus::Superseded),
+            "G1 must receive Superseded when G2 lands: {statuses:?}"
+        );
+        assert_eq!(
+            h.manager.applied_scene,
+            build_scene(ProtoLedEffect::Solid, rgb(2, 0, 0), 0, None)
+        );
+
+        h.manager.on_stop(&widget, 902);
+        let statuses = h.drain_statuses();
+        assert!(
+            statuses
+                .iter()
+                .any(|s| s.request_id == 902 && s.status == LedRequestStatus::Superseded),
+            "G2 must receive Superseded when stopped: {statuses:?}"
+        );
+        assert_eq!(
+            h.manager.applied_scene,
+            build_scene(ProtoLedEffect::Solid, rgb(1, 0, 0), 0, None)
+        );
+    }
+
+    #[test]
+    fn scene_change_falls_through_to_global() {
+        let mut h = Harness::new();
+        let scene_a = scene_id();
+        let scene_b = scene_id();
+        let widget_a = instance_id("a");
+        let widget_b = instance_id("b");
+
+        h.manager.on_scene_changed(scene_a, vec![widget_a.clone()]);
+        h.manager.widget_to_scene.insert(widget_b.clone(), scene_b);
+
+        h.manager.on_temporary(
+            widget_a.clone(),
+            41,
+            ProtoLedEffect::Solid,
+            rgb(4, 0, 0),
+            0,
+            5_000,
+            LedScope::Local,
+        );
+        h.manager.on_endless(
+            widget_a.clone(),
+            42,
+            ProtoLedEffect::Solid,
+            rgb(0, 4, 0),
+            0,
+            LedScope::Global,
+        );
+        h.drain_statuses();
+        // Active scene local is winning; global endless is on its stack but
+        // not displayed.
+        assert_eq!(active_temp_request_id(&h, scene_a), Some(41));
+        assert_eq!(
+            h.manager.applied_scene,
+            build_scene(ProtoLedEffect::Solid, rgb(4, 0, 0), 0, Some(5_000))
+        );
+
+        h.manager.on_scene_changed(scene_b, vec![widget_b.clone()]);
+        // Scene A's local temp paused; scene B has nothing local; global
+        // endless wins.
+        assert_eq!(
+            h.manager.applied_scene,
+            build_scene(ProtoLedEffect::Solid, rgb(0, 4, 0), 0, None)
+        );
+    }
+
+    #[test]
+    fn stop_led_zero_sweeps_both_tiers() {
+        let mut h = Harness::new();
+        let scene = scene_id();
+        let widget = instance_id("sweep");
+
+        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+        h.manager.on_endless(
+            widget.clone(),
+            201,
+            ProtoLedEffect::Solid,
+            rgb(2, 0, 0),
+            0,
+            LedScope::Local,
+        );
+        h.manager.on_endless(
+            widget.clone(),
+            202,
+            ProtoLedEffect::Solid,
+            rgb(0, 2, 0),
+            0,
+            LedScope::Global,
+        );
+        h.drain_statuses();
+
+        h.manager.on_stop(&widget, LED_REQUEST_ID_ALL);
+
+        let statuses = h.drain_statuses();
+        let mut superseded_ids: Vec<_> = statuses
+            .iter()
+            .filter(|s| s.status == LedRequestStatus::Superseded)
+            .map(|s| s.request_id)
+            .collect();
+        superseded_ids.sort_unstable();
+        assert_eq!(superseded_ids, vec![201, 202]);
+        // Both tiers cleared, strip falls through to apply_clear.
+        assert_eq!(h.manager.applied_scene.effect, HwLedEffect::None);
+    }
+
+    #[test]
+    fn widget_disconnect_sweeps_both_tiers() {
+        let mut h = Harness::new();
+        let scene = scene_id();
+        let widget = instance_id("disconnect-both");
+
+        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+        h.manager.on_endless(
+            widget.clone(),
+            301,
+            ProtoLedEffect::Solid,
+            rgb(3, 0, 0),
+            0,
+            LedScope::Local,
+        );
+        h.manager.on_endless(
+            widget.clone(),
+            302,
+            ProtoLedEffect::Solid,
+            rgb(0, 3, 0),
+            0,
+            LedScope::Global,
+        );
+        h.drain_statuses();
+
+        h.manager.on_widget_disconnected(&widget);
+
+        let statuses = h.drain_statuses();
+        let mut superseded_ids: Vec<_> = statuses
+            .iter()
+            .filter(|s| s.status == LedRequestStatus::Superseded)
+            .map(|s| s.request_id)
+            .collect();
+        superseded_ids.sort_unstable();
+        assert_eq!(superseded_ids, vec![301, 302]);
+        assert_eq!(h.manager.applied_scene.effect, HwLedEffect::None);
     }
 
     #[test]
@@ -1001,10 +1392,22 @@ mod tests {
         h.manager.on_scene_changed(scene_a, vec![widget_a.clone()]);
         h.manager.widget_to_scene.insert(widget_b.clone(), scene_b);
 
-        h.manager
-            .on_endless(widget_a.clone(), 10, ProtoLedEffect::Solid, rgb(1, 0, 0), 0);
-        h.manager
-            .on_endless(widget_b.clone(), 20, ProtoLedEffect::Solid, rgb(0, 1, 0), 0);
+        h.manager.on_endless(
+            widget_a.clone(),
+            10,
+            ProtoLedEffect::Solid,
+            rgb(1, 0, 0),
+            0,
+            LedScope::Local,
+        );
+        h.manager.on_endless(
+            widget_b.clone(),
+            20,
+            ProtoLedEffect::Solid,
+            rgb(0, 1, 0),
+            0,
+            LedScope::Local,
+        );
         h.drain_statuses();
 
         h.manager.on_widget_disconnected(&widget_b);

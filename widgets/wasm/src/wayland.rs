@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use bmc_render::renderer::Renderer;
 use bmc_wasm_runtime::{LedEffect, LedRequest, RenderStatus, RuntimeConfig, WasmWidgetRuntime};
 use bmc_widget::surface::{DeckWidgetSurfaceClient, WidgetEvent, WidgetSurface};
-use bmc_widget_protocol::{ActionPayload, LedEffect as ProtoEffect, RgbColor};
+use bmc_widget_protocol::{ActionPayload, LedEffect as ProtoEffect, LedScope, RgbColor};
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::Instant;
@@ -354,6 +354,7 @@ fn led_request_to_action(req: &LedRequest) -> ActionPayload {
                     effect,
                     color,
                     period_ms: *period_ms,
+                    scope: LedScope::Local,
                 },
                 Some(d) => ActionPayload::LedTemporary {
                     request_id: *request_id,
@@ -361,6 +362,7 @@ fn led_request_to_action(req: &LedRequest) -> ActionPayload {
                     color,
                     period_ms: *period_ms,
                     duration_ms: u32::try_from(d.as_millis()).unwrap_or(u32::MAX),
+                    scope: LedScope::Local,
                 },
             }
         }
@@ -374,7 +376,9 @@ fn led_request_to_action(req: &LedRequest) -> ActionPayload {
 mod tests {
     use super::led_request_to_action;
     use bmc_wasm_runtime::{LedEffect, LedRequest, Rgb};
-    use bmc_widget_protocol::{ActionPayload, LedEffect as ProtoEffect, RgbColor};
+    use bmc_widget_protocol::{
+        ActionPayload, LedEffect as ProtoEffect, LedScope as ProtoScope, RgbColor,
+    };
     use std::time::Duration;
 
     fn red() -> Rgb {
@@ -397,6 +401,7 @@ mod tests {
                 effect: ProtoEffect::Breathe,
                 color: RgbColor { r: 255, g: 0, b: 0 },
                 period_ms: 750,
+                scope: ProtoScope::Local,
             }
         );
     }
@@ -418,6 +423,7 @@ mod tests {
                 color: RgbColor { r: 255, g: 0, b: 0 },
                 period_ms: 0,
                 duration_ms: 5_000,
+                scope: ProtoScope::Local,
             }
         );
     }
