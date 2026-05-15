@@ -458,8 +458,6 @@ impl ConfigHandle {
     }
 
     pub async fn save(&mut self) -> Result<()> {
-        self.config.save(&self.path).await?;
-
         if self.localization_dirty {
             self.config_notify
                 .localization_changed(self.localization_config());
@@ -483,6 +481,8 @@ impl ConfigHandle {
             self.config_notify.screen_off_timeout_changed(timeout);
             self.screen_off_timeout_dirty = false;
         }
+
+        self.config.save(&self.path).await?;
 
         Ok(())
     }
