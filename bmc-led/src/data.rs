@@ -16,37 +16,6 @@ impl Rgb {
     }
 }
 
-/// Bare-discriminant view of [`LedEffect`] used as the wire-format kind byte
-/// between the wasm SDK guest and the host.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-#[repr(u8)]
-pub enum LedEffectKind {
-    None = 0,
-    Chase = 1,
-    KnightRider = 2,
-    Scan = 3,
-    Snake = 4,
-    Breathe = 5,
-    Solid = 6,
-}
-
-impl TryFrom<u8> for LedEffectKind {
-    type Error = u8;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(Self::None),
-            1 => Ok(Self::Chase),
-            2 => Ok(Self::KnightRider),
-            3 => Ok(Self::Scan),
-            4 => Ok(Self::Snake),
-            5 => Ok(Self::Breathe),
-            6 => Ok(Self::Solid),
-            other => Err(other),
-        }
-    }
-}
-
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
 pub enum LedEffect {
     #[default]
@@ -57,6 +26,36 @@ pub enum LedEffect {
     Snake(Rgb),
     Breathe(Rgb),
     Solid(Rgb),
+}
+
+/// Bare-discriminant view of [`LedEffect`] used as the wire-format kind byte
+/// between the wasm SDK guest and the host. Pinned with `repr(u8)` so the
+/// discriminants match `deck_widget_v1.led_effect`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[repr(u8)]
+pub enum LedEffectKind {
+    Chase = 0,
+    KnightRider = 1,
+    Scan = 2,
+    Snake = 3,
+    Breathe = 4,
+    Solid = 5,
+}
+
+impl TryFrom<u8> for LedEffectKind {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Chase),
+            1 => Ok(Self::KnightRider),
+            2 => Ok(Self::Scan),
+            3 => Ok(Self::Snake),
+            4 => Ok(Self::Breathe),
+            5 => Ok(Self::Solid),
+            other => Err(other),
+        }
+    }
 }
 
 /// An LED effect bundled with its timing metadata.
@@ -100,4 +99,30 @@ pub enum LedCommand {
     Enable,
     SetBrightness(f32),
     SetEffect(LedScene),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effect_kind_discriminants_match_protocol() {
+        assert_eq!(LedEffectKind::Chase as u8, 0);
+        assert_eq!(LedEffectKind::KnightRider as u8, 1);
+        assert_eq!(LedEffectKind::Scan as u8, 2);
+        assert_eq!(LedEffectKind::Snake as u8, 3);
+        assert_eq!(LedEffectKind::Breathe as u8, 4);
+        assert_eq!(LedEffectKind::Solid as u8, 5);
+    }
+
+    #[test]
+    fn effect_kind_try_from_round_trips_known_values() {
+        for v in 0_u8..=5 {
+            assert_eq!(
+                LedEffectKind::try_from(v).expect("BUG: 0..=5 must be valid") as u8,
+                v
+            );
+        }
+        assert_eq!(LedEffectKind::try_from(6_u8), Err(6));
+    }
 }

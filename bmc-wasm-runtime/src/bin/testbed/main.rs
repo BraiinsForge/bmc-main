@@ -46,7 +46,9 @@ use bmc_wasm_runtime::fixtures::{
     self, find_widget_root, seed_kv_from_widget_root, snapshot_kv_dir,
 };
 use bmc_wasm_runtime::unified_fixture::TimelineEvent;
-use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime};
+use bmc_wasm_runtime::{
+    LedEffect, LedRequest, RenderStatus, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
+};
 
 use paint::{
     GlProcAddress, TileGpu, draw_checkerboard, paint_led_strip, paint_timing_chart,
@@ -1054,27 +1056,49 @@ pub(crate) struct PreviewTile {
     logged_dead: bool,
     ever_rendered: bool,
     pub(crate) led_count: Option<u32>,
-    /// Receiver for LED commands from the widget (drained each frame).
-    led_rx: Option<std::sync::mpsc::Receiver<bmc_led::data::LedCommand>>,
-    /// Current LED scene (from last `SetEffect` command).
+    /// Receiver for LED requests from the widget (drained each frame).
+    led_rx: Option<std::sync::mpsc::Receiver<LedRequest>>,
+    /// Current LED scene (from last `SetEffect` request).
     pub(crate) led_scene: Option<bmc_led::data::LedScene>,
     /// Whether LEDs are enabled.
     pub(crate) led_enabled: bool,
 }
 
 impl PreviewTile {
-    /// Drain pending LED commands; update `led_scene` / `led_enabled`.
+    /// Drain pending LED requests; update `led_scene` / `led_enabled`.
     fn drain_led_commands(&mut self) {
         let Some(led_rx) = self.led_rx.as_ref() else {
             return;
         };
-        while let Ok(cmd) = led_rx.try_recv() {
-            use bmc_led::data::LedCommand;
-            match cmd {
-                LedCommand::SetEffect(scene) => self.led_scene = Some(scene),
-                LedCommand::Enable => self.led_enabled = true,
-                LedCommand::Disable => self.led_enabled = false,
-                LedCommand::SetBrightness(_) => {}
+        while let Ok(req) = led_rx.try_recv() {
+            match req {
+                LedRequest::SetEffect {
+                    effect,
+                    color,
+                    period_ms,
+                    duration,
+                    ..
+                } => {
+                    let hw_effect = match effect {
+                        LedEffect::Chase => bmc_led::data::LedEffect::Chase(color),
+                        LedEffect::KnightRider => bmc_led::data::LedEffect::KnightRider(color),
+                        LedEffect::Scan => bmc_led::data::LedEffect::Scan(color),
+                        LedEffect::Snake => bmc_led::data::LedEffect::Snake(color),
+                        LedEffect::Breathe => bmc_led::data::LedEffect::Breathe(color),
+                        LedEffect::Solid => bmc_led::data::LedEffect::Solid(color),
+                    };
+                    self.led_scene = Some(bmc_led::data::LedScene {
+                        effect: hw_effect,
+                        period: (period_ms > 0)
+                            .then(|| std::time::Duration::from_millis(u64::from(period_ms))),
+                        duration,
+                    });
+                    self.led_enabled = true;
+                }
+                LedRequest::Stop { .. } => {
+                    self.led_scene = None;
+                    self.led_enabled = false;
+                }
             }
         }
     }
@@ -1348,7 +1372,7 @@ impl TestbedApp {
             let rt_config = RuntimeConfig {
                 params: params.clone(),
                 system: system.clone(),
-                led_command_sender: led_tx,
+                led_request_sender: led_tx,
                 ..RuntimeConfig::default()
             };
             tile.renderer.drop_all();
@@ -1499,7 +1523,7 @@ impl TestbedApp {
             rt_config.mesh_msaa_samples = 4;
             rt_config.params = self.params.clone();
             rt_config.system = self.system.clone();
-            rt_config.led_command_sender = led_tx;
+            rt_config.led_request_sender = led_tx;
             // SAFETY: eframe keeps the GL context current for the app's lifetime.
             let renderer = unsafe {
                 FemtoVgRenderer::new(

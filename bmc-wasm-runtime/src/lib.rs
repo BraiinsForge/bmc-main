@@ -95,6 +95,7 @@ mod xml;
 
 mod audio_registry;
 mod host_api;
+pub mod led_request;
 #[cfg(feature = "perf-overlay")]
 pub mod perf_overlay;
 mod runtime;
@@ -107,7 +108,9 @@ pub mod fixtures;
 #[cfg(feature = "fixtures")]
 pub mod unified_fixture;
 
+pub use bmc_led::data::{LedEffectKind as LedEffect, Rgb};
 pub use host_api::{FixtureEvent, FixtureEventKind, FixtureEventState};
+pub use led_request::{LED_REQUEST_ID_ALL, LedRequest, LedRequestId, LedRequestIdAllocator};
 pub use runtime::{
     RenderStatus, RuntimeConfig, RuntimeDisplayInfo, RuntimeResourceLimits, WasmWidgetRuntime,
 };

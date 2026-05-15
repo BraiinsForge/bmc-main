@@ -236,8 +236,16 @@ pub enum UnifiedEvent {
     },
 
     // ── LED ─────────────────────────────────────────────────────
-    /// LED effect set (informational, no-op during replay).
-    LedSetEffect {
+    /// LED effect set, runs until superseded or stopped.
+    LedSetEndless {
+        effect: u8,
+        r: u8,
+        g: u8,
+        b: u8,
+        period_ms: u32,
+    },
+    /// LED effect set, runs for `duration_ms` ms then expires.
+    LedSetTemporary {
         effect: u8,
         r: u8,
         g: u8,
@@ -245,14 +253,8 @@ pub enum UnifiedEvent {
         period_ms: u32,
         duration_ms: u32,
     },
-    /// LED brightness change.
-    LedSetBrightness {
-        brightness: f32,
-    },
-    /// LED strip enabled.
-    LedEnable,
-    /// LED strip disabled.
-    LedDisable,
+    /// All LED requests this widget owns are cancelled.
+    LedStop,
 }
 
 /// A single timestamped event in the unified timeline.
@@ -336,10 +338,9 @@ pub fn validate_fixture(fixture: &UnifiedFixture) -> Result<()> {
             | UnifiedEvent::SocketClosed { .. }
             | UnifiedEvent::UdpResponse { .. }
             | UnifiedEvent::AudioPlay { .. }
-            | UnifiedEvent::LedSetEffect { .. }
-            | UnifiedEvent::LedSetBrightness { .. }
-            | UnifiedEvent::LedEnable
-            | UnifiedEvent::LedDisable => {}
+            | UnifiedEvent::LedSetEndless { .. }
+            | UnifiedEvent::LedSetTemporary { .. }
+            | UnifiedEvent::LedStop => {}
         }
     }
 

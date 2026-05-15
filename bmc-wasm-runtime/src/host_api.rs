@@ -142,7 +142,14 @@ pub enum FixtureEventKind {
         name: String,
         duration_ms: u32,
     },
-    LedSetEffect {
+    LedSetEndless {
+        effect: u8,
+        r: u8,
+        g: u8,
+        b: u8,
+        period_ms: u32,
+    },
+    LedSetTemporary {
         effect: u8,
         r: u8,
         g: u8,
@@ -150,11 +157,7 @@ pub enum FixtureEventKind {
         period_ms: u32,
         duration_ms: u32,
     },
-    LedSetBrightness {
-        brightness: f32,
-    },
-    LedEnable,
-    LedDisable,
+    LedStop,
 }
 
 /// Phase of the guest lifecycle the runtime is currently executing.
@@ -701,8 +704,12 @@ pub(crate) struct HostState {
     #[cfg(feature = "testing")]
     pub mdns_captured_events: Vec<CapturedMdnsEvent>,
 
-    /// Sender for LED commands. `None` when LED control is unavailable.
-    pub led_command_sender: Option<mpsc::Sender<bmc_led::data::LedCommand>>,
+    /// Sender for widget-perspective LED requests. `None` when LED control
+    /// is unavailable.
+    pub led_request_sender: Option<mpsc::Sender<crate::led_request::LedRequest>>,
+
+    /// Per-guest allocator for non-zero LED request ids.
+    pub led_request_alloc: crate::led_request::LedRequestIdAllocator,
 
     /// Registered audio samples + tag dedup + active playback sinks.
     /// The host stores original encoded data and decodes on each play.
@@ -818,7 +825,8 @@ impl HostState {
             delivered_events: 0,
             #[cfg(feature = "testing")]
             mdns_captured_events: Vec::new(),
-            led_command_sender: None,
+            led_request_sender: None,
+            led_request_alloc: crate::led_request::LedRequestIdAllocator::new(),
             audio: AudioRegistry::new(),
             guest_id: GuestId::alloc(),
             #[cfg(feature = "audio")]

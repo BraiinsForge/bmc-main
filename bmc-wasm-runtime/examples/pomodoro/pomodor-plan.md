@@ -15,10 +15,9 @@ re-exports via `pub use bmc_shared_led_data::*`.
 
 ## Stage 2: LED Host API — Complete
 
-SDK (`sdk/src/led.rs`): `LedEffect` enum, FFI bindings, safe wrappers (`set_effect`, `set_brightness`, `enable`,
-`disable`).
+SDK (`sdk/src/led.rs`): `LedEffect` enum, FFI bindings, safe wrappers (`set_effect`, `stop`).
 
-Host (`runtime_wasmi.rs`): 4 linker bindings forwarding to `HostState.led_command_sender`.
+Host (`runtime_wasmi.rs`): 3 linker bindings forwarding to `HostState.led_request_sender`.
 
 ---
 
