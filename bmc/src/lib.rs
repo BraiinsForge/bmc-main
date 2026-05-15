@@ -11,6 +11,7 @@ pub mod entry;
 pub mod firmware;
 mod initial_setup;
 mod led;
+pub mod led_coordinator;
 pub mod log;
 pub mod manager;
 mod night_mode;
@@ -24,6 +25,7 @@ pub mod utils;
 mod web;
 pub mod widget;
 
+pub use led_coordinator::{Layer, LedCoordinatorHandle, spawn_led_coordinator};
 pub use manager::BmcManager;
 pub use startup::{App, Configuration};
 pub use web::ServerConfig;
