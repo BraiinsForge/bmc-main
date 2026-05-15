@@ -17,11 +17,11 @@ use bmc_widget_protocol::client::{
     deck_widget_manager_v1::DeckWidgetManagerV1,
     deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
 };
-use bmc_widget_protocol::{NextAlarm, SettingUpdate, ViewportShape};
+use bmc_widget_protocol::{ActionPayload, NextAlarm, SettingUpdate, ViewportShape};
 use wayland_client::WEnum;
 
 use crate::egl::DmaBufInfo;
-use crate::wayland::from_protocol;
+use crate::wayland::{from_protocol, to_protocol};
 
 use super::common::{
     BufferSlotMap, PollOutcome, ReleasedBuffer, ReleasedBufferSet, blocking_dispatch_impl,
@@ -682,6 +682,49 @@ impl DeckWidgetSurfaceClient {
     /// pattern required by `wayland-client`.
     pub fn poll_dispatch(&mut self, timeout_ms: i32) -> Result<PollOutcome> {
         poll_dispatch(&self.conn, &mut self.queue, &mut self.state, timeout_ms)
+    }
+
+    /// Forward a typed widget action as a `deck_widget_v1` request.
+    /// No-ops if the surface hasn't been created yet.
+    pub fn request_action(&self, action: &ActionPayload) -> Result<()> {
+        let Some(ref surface) = self.state.widget_surface else {
+            return Ok(());
+        };
+        match action {
+            ActionPayload::PlaySound { sound } => surface.play_sound(sound.clone()),
+            ActionPayload::StopSound {} => surface.stop_sound(),
+            ActionPayload::LedTemporary {
+                request_id,
+                effect,
+                color,
+                period_ms,
+                duration_ms,
+            } => surface.led_temporary(
+                *request_id,
+                to_protocol::led_effect(*effect),
+                u32::from(color.r),
+                u32::from(color.g),
+                u32::from(color.b),
+                *period_ms,
+                *duration_ms,
+            ),
+            ActionPayload::LedEndless {
+                request_id,
+                effect,
+                color,
+                period_ms,
+            } => surface.led_endless(
+                *request_id,
+                to_protocol::led_effect(*effect),
+                u32::from(color.r),
+                u32::from(color.g),
+                u32::from(color.b),
+                *period_ms,
+            ),
+            ActionPayload::StopLed { request_id } => surface.stop_led(*request_id),
+        }
+        self.conn.flush().context("Wayland flush after action")?;
+        Ok(())
     }
 }
 
