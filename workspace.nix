@@ -539,16 +539,17 @@ in
   inherit commonDeps bmc deps makeRustflagsEnv;
   inherit (wasmWidgetsModule) wasmExamples;
   checks = frontend.checks;
+  # Nested attrset of cross-built deck packages.
+  #
+  # Lives in `legacyPackages` because `packages.<system>` rejects nested attrsets
+  # in the flake schema, while `legacyPackages.<system>` permits them.
+  #
+  # Scripts and docs reference `.#deck-packages.<name>` which Nix resolves
+  # through the `legacyPackages` chain.
+  legacyPackages = {
+    deck-packages = armv7PackageDefs;
+  };
   packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // initArtifacts // {
-    # Wrap as a real derivation so `nix flake check` accepts it under
-    # `packages.<system>` (the flake schema rejects nested attrsets).
-    # `passthru` preserves the `.#deck-packages.<name>` access pattern
-    # the deploy scripts and docs rely on.
-    deck-packages = pkgs.symlinkJoin {
-      name = "deck-packages";
-      paths = lib.attrValues (lib.filterAttrs (_: lib.isDerivation) armv7PackageDefs);
-      passthru = armv7PackageDefs;
-    };
     inherit bmc-video-play-armv7;
     bmc-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-mock { };
     bmc-nix-init-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-init-mock { };

@@ -140,7 +140,7 @@
           ];
         };
 
-        legacyPackages = {
+        legacyPackages = workspace.legacyPackages // {
           inherit pkgs;
           inherit (workspace.bmc) armv7-nixpkgs;
         };
