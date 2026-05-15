@@ -227,20 +227,21 @@ impl LedIndicatorsState {
     /// Return the currently active scene, resolved across the priority
     /// stack and the temp slot. The temp slot, when set, wins and is
     /// consumed (one-shot semantics matching `apply_event`'s `temp.take()`).
-    /// Returns `None` when no system producer is active, so the
-    /// coordinator can fall through to lower layers.
+    ///
+    /// `None` means "this layer has nothing to draw" — the coordinator
+    /// falls through to lower layers. A resolved scene whose effect is
+    /// `LedEffect::None` is also reported as `None`; pinning `Layer::System`
+    /// to a None-effect scene would mask every lower layer.
     #[must_use]
     pub fn current_scene(&mut self) -> Option<LedScene> {
-        if let Some(LedCommand::SetEffect(scene)) = self.temp.take() {
-            return Some(scene);
-        }
-        if !self.any_persist_active() {
-            return None;
-        }
-        match self.select_persistent(false) {
+        let resolved = match self.temp.take() {
             Some(LedCommand::SetEffect(scene)) => Some(scene),
-            _ => None,
-        }
+            _ => match self.select_persistent(false) {
+                Some(LedCommand::SetEffect(scene)) => Some(scene),
+                _ => None,
+            },
+        };
+        resolved.filter(|s| !matches!(s.effect, LedEffect::None))
     }
 }
 
