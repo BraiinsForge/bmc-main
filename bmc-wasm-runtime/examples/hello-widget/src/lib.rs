@@ -310,32 +310,32 @@ fn led_section() -> Node {
 
 fn handle_led_clicks(result: &TreeRenderResult) {
     if result.clicks.contains_key("led_solid") {
-        led::enable();
-        led::set_effect(LedEffect::Solid, Color::from_rgb(255, 40, 40), 0, 0);
+        led::set_effect(LedEffect::Solid, Color::from_rgb(255, 40, 40), 0, None);
     }
     if result.clicks.contains_key("led_breathe") {
-        led::enable();
-        led::set_effect(LedEffect::Breathe, Color::from_rgb(40, 255, 40), 4_000, 0);
+        led::set_effect(
+            LedEffect::Breathe,
+            Color::from_rgb(40, 255, 40),
+            4_000,
+            None,
+        );
     }
     if result.clicks.contains_key("led_chase") {
-        led::enable();
-        led::set_effect(LedEffect::Chase, Color::from_rgb(40, 40, 255), 1_000, 0);
+        led::set_effect(LedEffect::Chase, Color::from_rgb(40, 40, 255), 1_000, None);
     }
     if result.clicks.contains_key("led_knight") {
-        led::enable();
         led::set_effect(
             LedEffect::KnightRider,
             Color::from_rgb(255, 165, 0),
             2_000,
-            0,
+            None,
         );
     }
     if result.clicks.contains_key("led_snake") {
-        led::enable();
-        led::set_effect(LedEffect::Snake, Color::from_rgb(0, 255, 200), 1_500, 0);
+        led::set_effect(LedEffect::Snake, Color::from_rgb(0, 255, 200), 1_500, None);
     }
     if result.clicks.contains_key("led_off") {
-        led::disable();
+        led::stop();
     }
 }
 
