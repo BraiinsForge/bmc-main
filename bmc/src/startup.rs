@@ -13,6 +13,7 @@ use crate::compositor::{Compositor, CompositorEvent};
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::led::{LedController, run_led_state_task};
+use crate::led_coordinator::LedCoordinatorHandle;
 use crate::manager::BmcManager;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
@@ -45,6 +46,7 @@ where
     initial_setup: InitialSetup<T, V>,
     button_manager: ButtonManager<T>,
     led_controller: LedController<T>,
+    led_coordinator: LedCoordinatorHandle,
     widget_coordinator: Arc<Coordinator>,
     widget_registry: Arc<WidgetRegistry>,
     system_manager: SystemManager<U>,
@@ -255,6 +257,7 @@ where
             initial_setup,
             button_manager,
             led_controller,
+            led_coordinator,
             widget_coordinator,
             widget_registry,
             system_manager,
@@ -279,6 +282,7 @@ where
             self.led_controller,
             self.widget_registry,
             self.widget_coordinator.clone(),
+            self.led_coordinator,
             self.system_manager,
             self.sound_controller,
             self.alarm_controller,

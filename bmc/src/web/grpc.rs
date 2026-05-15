@@ -13,6 +13,7 @@ use crate::backlight::DisplayBacklightDriver;
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
+use crate::led_coordinator::LedCoordinatorHandle;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
 use crate::web::SessionManager;
@@ -87,6 +88,7 @@ pub(crate) struct GrpcWeb<
     led_controller: LedController<T>,
     widget_registry: Arc<WidgetRegistry>,
     widget_coordinator: Arc<Coordinator>,
+    led_coordinator: LedCoordinatorHandle,
     system_manager: SystemManager<V>,
     sound_controller: SoundController,
     alarm_controller: AlarmController,
@@ -105,6 +107,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         led_controller: LedController<T>,
         widget_registry: Arc<WidgetRegistry>,
         widget_coordinator: Arc<Coordinator>,
+        led_coordinator: LedCoordinatorHandle,
         system_manager: SystemManager<V>,
         sound_controller: SoundController,
         alarm_controller: AlarmController,
@@ -118,6 +121,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             led_controller,
             widget_registry,
             widget_coordinator,
+            led_coordinator,
             system_manager,
             sound_controller,
             alarm_controller,
@@ -180,6 +184,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                     self.widget_registry,
                     self.config_handle.clone(),
                     self.widget_coordinator,
+                    self.led_coordinator,
                 ),
             );
 

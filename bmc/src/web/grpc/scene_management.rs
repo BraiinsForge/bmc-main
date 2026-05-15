@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use crate::config::ConfigHandle;
 use crate::data::{SceneCycling, SceneCyclingTransition};
+use crate::led_coordinator::{Layer, LedCoordinatorHandle};
 use crate::scene;
 use crate::web::grpc::GrpcError;
 use crate::web::grpc::shared::FieldViolations;
@@ -197,6 +198,7 @@ pub(crate) struct SceneManagementService {
     widget_registry: Arc<WidgetRegistry>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     coordinator: Arc<Coordinator>,
+    led_coordinator: LedCoordinatorHandle,
     /// Scene currently held open by a `preview_scene` stream. While set,
     /// that scene overrides the first-enabled pick in `restore_active_scene`
     /// so edits made during a preview stay focused on it.
@@ -213,11 +215,13 @@ impl SceneManagementService {
         widget_registry: Arc<WidgetRegistry>,
         config_handle: Arc<RwLock<ConfigHandle>>,
         coordinator: Arc<Coordinator>,
+        led_coordinator: LedCoordinatorHandle,
     ) -> Self {
         Self {
             widget_registry,
             config_handle,
             coordinator,
+            led_coordinator,
             preview_scene_id: Arc::default(),
         }
     }
@@ -1019,6 +1023,14 @@ impl GrpcSceneManagementService for SceneManagementService {
                 self.coordinator.spawn_scene_widgets(scene).await;
             }
             self.coordinator.set_active_scene(scene);
+            self.led_coordinator.publish(
+                Layer::Preview,
+                Some(bmc_led::data::LedScene {
+                    effect: bmc_led::data::LedEffect::Solid(bmc_led::config::RGB_WHITE),
+                    period: None,
+                    duration: None,
+                }),
+            );
             disabled
         };
 
@@ -1029,10 +1041,12 @@ impl GrpcSceneManagementService for SceneManagementService {
             coordinator: Arc<Coordinator>,
             config_handle: Arc<RwLock<ConfigHandle>>,
             preview_scene_id: Arc<Mutex<Option<scene::SceneId>>>,
+            led_coordinator: LedCoordinatorHandle,
             spawned_widgets: bool,
         }
         impl Drop for PreviewGuard {
             fn drop(&mut self) {
+                self.led_coordinator.publish(Layer::Preview, None);
                 let coordinator = Arc::clone(&self.coordinator);
                 let config_handle = Arc::clone(&self.config_handle);
                 let preview_scene_id = Arc::clone(&self.preview_scene_id);
@@ -1055,6 +1069,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             coordinator: Arc::clone(&self.coordinator),
             config_handle: Arc::clone(&self.config_handle),
             preview_scene_id: Arc::clone(&self.preview_scene_id),
+            led_coordinator: self.led_coordinator.clone(),
             spawned_widgets: scene_was_disabled,
         };
 
