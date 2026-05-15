@@ -254,11 +254,6 @@ pub fn fixture_events_to_timeline(
                     period_ms: *period_ms,
                     duration_ms: *duration_ms,
                 },
-                FixtureEventKind::LedSetBrightness { brightness } => {
-                    UnifiedEvent::LedSetBrightness {
-                        brightness: *brightness,
-                    }
-                }
                 FixtureEventKind::LedEnable => UnifiedEvent::LedEnable,
                 FixtureEventKind::LedDisable => UnifiedEvent::LedDisable,
             };

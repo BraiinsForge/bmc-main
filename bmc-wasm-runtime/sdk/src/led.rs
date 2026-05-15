@@ -2,9 +2,8 @@
 
 //! LED peripheral control.
 //!
-//! Lets widgets drive the device's LED strip — set effects, brightness,
-//! enable/disable.  The host maps these calls to real hardware (or testbed
-//! visualization).
+//! Lets widgets drive the device's LED strip — set effects, enable/disable.
+//! The host maps these calls to real hardware (or testbed visualization).
 
 use bmc_wasm_protocol::Color;
 
@@ -12,7 +11,6 @@ pub use bmc_led::data::LedEffectKind as LedEffect;
 
 unsafe extern "C" {
     fn host_led_set_effect(effect: u8, r: u8, g: u8, b: u8, period_ms: u32, duration_ms: u32);
-    fn host_led_set_brightness(brightness_bits: u32);
     fn host_led_enable();
     fn host_led_disable();
 }
@@ -32,13 +30,6 @@ pub fn set_effect(effect: LedEffect, color: Color, period_ms: u32, duration_ms: 
             duration_ms,
         );
     }
-}
-
-/// Set LED brightness (0.0–1.0).
-///
-/// Transmitted as `f32` bits to avoid float ABI issues in WASM FFI.
-pub fn set_brightness(brightness: f32) {
-    unsafe { host_led_set_brightness(brightness.to_bits()) }
 }
 
 /// Enable the LED strip.

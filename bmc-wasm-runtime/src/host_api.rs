@@ -118,9 +118,6 @@ pub enum FixtureEventKind {
         period_ms: u32,
         duration_ms: u32,
     },
-    LedSetBrightness {
-        brightness: f32,
-    },
     LedEnable,
     LedDisable,
 }

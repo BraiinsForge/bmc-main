@@ -514,7 +514,6 @@ fn run_unified_capture(
                 | UnifiedEvent::UdpResponse { .. }
                 | UnifiedEvent::AudioPlay { .. }
                 | UnifiedEvent::LedSetEffect { .. }
-                | UnifiedEvent::LedSetBrightness { .. }
                 | UnifiedEvent::LedEnable
                 | UnifiedEvent::LedDisable => {}
             }
@@ -815,7 +814,6 @@ fn split_unified_events(
             | UnifiedEvent::Drag { .. }
             | UnifiedEvent::AudioPlay { .. }
             | UnifiedEvent::LedSetEffect { .. }
-            | UnifiedEvent::LedSetBrightness { .. }
             | UnifiedEvent::LedEnable
             | UnifiedEvent::LedDisable => {}
         }

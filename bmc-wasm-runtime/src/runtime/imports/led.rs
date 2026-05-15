@@ -11,7 +11,6 @@ use crate::host_api::{FixtureEvent, FixtureEventKind, HostState};
 
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_set_effect_import(linker)?;
-    register_set_brightness_import(linker)?;
     register_enable_import(linker)?;
     register_disable_import(linker)?;
     Ok(())
@@ -80,36 +79,6 @@ fn register_set_effect_import(linker: &mut Linker<HostState>) -> Result<()> {
                 duration,
             };
             let _ = tx.send(bmc_led::data::LedCommand::SetEffect(scene));
-        },
-    )?;
-    Ok(())
-}
-
-fn register_set_brightness_import(linker: &mut Linker<HostState>) -> Result<()> {
-    linker.func_wrap(
-        "env",
-        "host_led_set_brightness",
-        |mut caller: Caller<'_, HostState>, brightness_bits: u32| {
-            let raw = f32::from_bits(brightness_bits);
-            if !raw.is_finite() {
-                tracing::warn!("ignoring non-finite LED brightness: {raw}");
-                return;
-            }
-            let brightness = raw.clamp(0.0, 1.0);
-
-            let state = caller.data_mut();
-            let kind = FixtureEventKind::LedSetBrightness { brightness };
-
-            if state.record_events && state.recorded_events.last().is_none_or(|e| e.kind != kind) {
-                state.recorded_events.push(FixtureEvent {
-                    at_ms: state.monotonic_ms,
-                    kind,
-                });
-            }
-
-            if let Some(ref tx) = state.led_command_sender {
-                let _ = tx.send(bmc_led::data::LedCommand::SetBrightness(brightness));
-            }
         },
     )?;
     Ok(())
