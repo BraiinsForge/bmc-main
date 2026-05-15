@@ -58,6 +58,27 @@ impl TryFrom<u8> for LedEffectKind {
     }
 }
 
+/// LED request scope — which arbitration tier a request lands on.
+/// Pinned with `repr(u8)` to match `deck_widget_v1.led_scope`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[repr(u8)]
+pub enum LedScope {
+    Local = 0,
+    Global = 1,
+}
+
+impl TryFrom<u8> for LedScope {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Local),
+            1 => Ok(Self::Global),
+            other => Err(other),
+        }
+    }
+}
+
 /// An LED effect bundled with its timing metadata.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct LedScene {
@@ -124,5 +145,22 @@ mod tests {
             );
         }
         assert_eq!(LedEffectKind::try_from(6_u8), Err(6));
+    }
+
+    #[test]
+    fn scope_discriminants_match_protocol() {
+        assert_eq!(LedScope::Local as u8, 0);
+        assert_eq!(LedScope::Global as u8, 1);
+    }
+
+    #[test]
+    fn scope_try_from_round_trips_known_values() {
+        for v in 0_u8..=1 {
+            assert_eq!(
+                LedScope::try_from(v).expect("BUG: 0..=1 must be valid") as u8,
+                v
+            );
+        }
+        assert_eq!(LedScope::try_from(2_u8), Err(2));
     }
 }
