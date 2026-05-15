@@ -245,12 +245,14 @@ pub fn fixture_events_to_timeline(
                     g,
                     b,
                     period_ms,
+                    scope,
                 } => UnifiedEvent::LedSetEndless {
                     effect: *effect,
                     r: *r,
                     g: *g,
                     b: *b,
                     period_ms: *period_ms,
+                    scope: *scope,
                 },
                 FixtureEventKind::LedSetTemporary {
                     effect,
@@ -259,6 +261,7 @@ pub fn fixture_events_to_timeline(
                     b,
                     period_ms,
                     duration_ms,
+                    scope,
                 } => UnifiedEvent::LedSetTemporary {
                     effect: *effect,
                     r: *r,
@@ -266,6 +269,7 @@ pub fn fixture_events_to_timeline(
                     b: *b,
                     period_ms: *period_ms,
                     duration_ms: *duration_ms,
+                    scope: *scope,
                 },
                 FixtureEventKind::LedStop => UnifiedEvent::LedStop,
             };

@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::Result;
 use wasmi::{Caller, Linker};
 
-use bmc_wasm_protocol::LedEffect;
+use bmc_wasm_protocol::{LedEffect, LedScope};
 
 use crate::host_api::{FixtureEvent, FixtureEventKind, HostState};
 use crate::led_request::{LED_REQUEST_ID_ALL, LedRequest};
@@ -25,8 +25,14 @@ fn register_set_endless_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_led_set_endless",
-        |mut caller: Caller<'_, HostState>, effect: u32, r: u32, g: u32, b: u32, period_ms: u32| {
-            emit_set(&mut caller, effect, r, g, b, period_ms, None);
+        |mut caller: Caller<'_, HostState>,
+         effect: u32,
+         r: u32,
+         g: u32,
+         b: u32,
+         period_ms: u32,
+         scope: u32| {
+            emit_set(&mut caller, effect, r, g, b, period_ms, None, scope);
         },
     )?;
     Ok(())
@@ -42,8 +48,18 @@ fn register_set_temporary_import(linker: &mut Linker<HostState>) -> Result<()> {
          g: u32,
          b: u32,
          period_ms: u32,
-         duration_ms: u32| {
-            emit_set(&mut caller, effect, r, g, b, period_ms, Some(duration_ms));
+         duration_ms: u32,
+         scope: u32| {
+            emit_set(
+                &mut caller,
+                effect,
+                r,
+                g,
+                b,
+                period_ms,
+                Some(duration_ms),
+                scope,
+            );
         },
     )?;
     Ok(())
@@ -72,6 +88,10 @@ fn register_stop_import(linker: &mut Linker<HostState>) -> Result<()> {
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "parameters mirror the wire signature; bundling them into a struct adds ceremony without clarifying"
+)]
 fn emit_set(
     caller: &mut Caller<'_, HostState>,
     effect: u32,
@@ -80,9 +100,14 @@ fn emit_set(
     b: u32,
     period_ms: u32,
     duration_ms: Option<u32>,
+    scope: u32,
 ) {
     let Ok(effect) = LedEffect::try_from(effect as u8) else {
         tracing::warn!("ignoring unknown LED effect discriminant: {effect}");
+        return;
+    };
+    let Ok(scope) = LedScope::try_from(scope as u8) else {
+        tracing::warn!("ignoring unknown LED scope discriminant: {scope}");
         return;
     };
     let color = bmc_led::data::Rgb::new(r as u8, g as u8, b as u8);
@@ -95,6 +120,7 @@ fn emit_set(
             g: g as u8,
             b: b as u8,
             period_ms,
+            scope: scope as u8,
         },
         Some(d) => FixtureEventKind::LedSetTemporary {
             effect: effect as u8,
@@ -103,6 +129,7 @@ fn emit_set(
             b: b as u8,
             period_ms,
             duration_ms: d,
+            scope: scope as u8,
         },
     };
     if state.record_events && state.recorded_events.last().is_none_or(|e| e.kind != kind) {
@@ -122,5 +149,6 @@ fn emit_set(
         color,
         period_ms,
         duration: duration_ms.map(|n| Duration::from_millis(u64::from(n))),
+        scope,
     });
 }

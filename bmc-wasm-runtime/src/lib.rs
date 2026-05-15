@@ -108,7 +108,7 @@ pub mod fixtures;
 pub mod unified_fixture;
 
 pub use bmc_led::data::Rgb;
-pub use bmc_wasm_protocol::LedEffect;
+pub use bmc_wasm_protocol::{LedEffect, LedScope};
 pub use host_api::{FixtureEvent, FixtureEventKind, FixtureEventState};
 pub use led_request::{LED_REQUEST_ID_ALL, LedRequest, LedRequestId, LedRequestIdAllocator};
 pub use runtime::{RenderStatus, RuntimeConfig, RuntimeResourceLimits, WasmWidgetRuntime};

@@ -7,11 +7,19 @@
 //! when `Some`). `stop()` cancels every outstanding LED request from
 //! this widget — it is also the only way to turn the strip off.
 
-pub use bmc_wasm_protocol::{Color, LedEffect};
+pub use bmc_wasm_protocol::{Color, LedEffect, LedScope};
 
 unsafe extern "C" {
-    fn host_led_set_endless(effect: u8, r: u8, g: u8, b: u8, period_ms: u32);
-    fn host_led_set_temporary(effect: u8, r: u8, g: u8, b: u8, period_ms: u32, duration_ms: u32);
+    fn host_led_set_endless(effect: u8, r: u8, g: u8, b: u8, period_ms: u32, scope: u32);
+    fn host_led_set_temporary(
+        effect: u8,
+        r: u8,
+        g: u8,
+        b: u8,
+        period_ms: u32,
+        duration_ms: u32,
+        scope: u32,
+    );
     fn host_led_stop();
 }
 
@@ -21,10 +29,34 @@ unsafe extern "C" {
 /// `Some(n)` runs for `n` ms (including `Some(0)` — a zero-duration
 /// temporary that the host fires and immediately expires).
 pub fn set_effect(effect: LedEffect, color: Color, period_ms: u32, duration_ms: Option<u32>) {
+    set_effect_scoped(effect, color, period_ms, duration_ms, LedScope::Local);
+}
+
+/// Set an LED effect on the global tier.
+///
+/// The global tier runs when no scene-local effect is active on the strip.
+/// See `set_effect` for parameter semantics.
+pub fn set_effect_global(
+    effect: LedEffect,
+    color: Color,
+    period_ms: u32,
+    duration_ms: Option<u32>,
+) {
+    set_effect_scoped(effect, color, period_ms, duration_ms, LedScope::Global);
+}
+
+fn set_effect_scoped(
+    effect: LedEffect,
+    color: Color,
+    period_ms: u32,
+    duration_ms: Option<u32>,
+    scope: LedScope,
+) {
     let (r, g, b) = (color.red(), color.green(), color.blue());
+    let scope = scope as u32;
     match duration_ms {
-        None => unsafe { host_led_set_endless(effect as u8, r, g, b, period_ms) },
-        Some(d) => unsafe { host_led_set_temporary(effect as u8, r, g, b, period_ms, d) },
+        None => unsafe { host_led_set_endless(effect as u8, r, g, b, period_ms, scope) },
+        Some(d) => unsafe { host_led_set_temporary(effect as u8, r, g, b, period_ms, d, scope) },
     }
 }
 

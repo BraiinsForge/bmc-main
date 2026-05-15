@@ -1773,7 +1773,8 @@ fn format_event_label(event: &UnifiedEvent) -> String {
             g,
             b,
             period_ms,
-        } => format!("LED endless effect={effect} rgb=({r},{g},{b}) p={period_ms}ms"),
+            scope,
+        } => format!("LED endless effect={effect} rgb=({r},{g},{b}) p={period_ms}ms scope={scope}"),
         UnifiedEvent::LedSetTemporary {
             effect,
             r,
@@ -1781,8 +1782,9 @@ fn format_event_label(event: &UnifiedEvent) -> String {
             b,
             period_ms,
             duration_ms,
+            scope,
         } => format!(
-            "LED temporary effect={effect} rgb=({r},{g},{b}) p={period_ms}ms d={duration_ms}ms"
+            "LED temporary effect={effect} rgb=({r},{g},{b}) p={period_ms}ms d={duration_ms}ms scope={scope}"
         ),
         UnifiedEvent::LedStop => "LED stop".to_owned(),
     }

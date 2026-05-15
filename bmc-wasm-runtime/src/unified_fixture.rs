@@ -200,6 +200,7 @@ pub enum UnifiedEvent {
         g: u8,
         b: u8,
         period_ms: u32,
+        scope: u8,
     },
     /// LED effect set, runs for `duration_ms` ms then expires.
     LedSetTemporary {
@@ -209,6 +210,7 @@ pub enum UnifiedEvent {
         b: u8,
         period_ms: u32,
         duration_ms: u32,
+        scope: u8,
     },
     /// All LED requests this widget owns are cancelled.
     LedStop,
