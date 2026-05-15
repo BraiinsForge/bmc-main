@@ -94,3 +94,17 @@ pub fn led_effect_from_protocol(
         P::Solid | _ => L::Solid,
     }
 }
+
+pub fn led_scope_from_protocol(
+    s: deck_widget_surface_v1::LedScope,
+) -> bmc_widget_protocol::LedScope {
+    use bmc_widget_protocol::LedScope as L;
+    use deck_widget_surface_v1::LedScope as P;
+    match s {
+        P::Global => L::Global,
+        // `_` covers `Local` plus any future `#[non_exhaustive]` variant of the
+        // generated enum, defaulting to the safe scene-scoped scope. (Unknown
+        // wire values are already rejected upstream by `into_result`.)
+        P::Local | _ => L::Local,
+    }
+}

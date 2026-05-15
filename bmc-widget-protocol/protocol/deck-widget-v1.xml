@@ -98,6 +98,7 @@
       <arg name="b" type="uint" summary="blue component, 0-255"/>
       <arg name="period_ms" type="uint" summary="animation period in milliseconds, 0 for default"/>
       <arg name="duration_ms" type="uint" summary="duration in milliseconds"/>
+      <arg name="scope" type="uint" enum="led_scope" summary="led_scope.local for scene-scoped requests, led_scope.global for ambient signals"/>
     </request>
 
     <request name="led_endless">
@@ -117,6 +118,7 @@
       <arg name="g" type="uint" summary="green component, 0-255"/>
       <arg name="b" type="uint" summary="blue component, 0-255"/>
       <arg name="period_ms" type="uint" summary="animation period in milliseconds, 0 for default"/>
+      <arg name="scope" type="uint" enum="led_scope" summary="led_scope.local for scene-scoped requests, led_scope.global for ambient signals"/>
     </request>
 
     <request name="stop_led">
@@ -387,6 +389,11 @@
       <entry name="snake" value="3"/>
       <entry name="breathe" value="4"/>
       <entry name="solid" value="5"/>
+    </enum>
+
+    <enum name="led_scope">
+      <entry name="local" value="0" summary="scene-scoped; pauses or hides when widget's scene is not active"/>
+      <entry name="global" value="1" summary="system-wide; runs when no local effect is active on the strip"/>
     </enum>
 
     <enum name="led_request_status">
