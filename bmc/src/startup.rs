@@ -149,11 +149,11 @@ where
             alarm_bus,
         );
 
-        led_controller.init(led_driver.command_sender.clone());
-        led_controller.push_event(bmc_led::data::LedEvent::DeviceReady);
-
         let led_coordinator =
             crate::led_coordinator::spawn_led_coordinator(led_driver.command_sender.clone());
+
+        led_controller.init(led_driver.command_sender.clone(), led_coordinator.clone());
+        led_controller.push_event(bmc_led::data::LedEvent::DeviceReady);
 
         let screen_activity = Arc::new(tokio::sync::Notify::new());
         let button_manager = ButtonManager::new(buttons, manager.clone(), screen_activity.clone());
