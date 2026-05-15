@@ -90,8 +90,6 @@ pub enum LedEvent {
     DownloadOrUpgradeError,   // Error
     Disable,
     Enable,
-    PreviewScene, // Knight Rider
-    PreviewSceneEnded,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

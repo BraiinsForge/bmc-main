@@ -12,14 +12,17 @@ use tracing::{debug, error};
 use crate::{
     BmcManager,
     alarm::{AlarmBus, AlarmEvent},
+    led_coordinator::{Layer, LedCoordinatorHandle},
     manager::WifiEvent,
     system_upgrade::{StateService, SystemUpgradeState},
 };
 use bmc_led::{
     data::{LedCommand, LedEvent},
-    led_driver::LedEventHandler,
+    led_driver::LedIndicatorsState,
 };
 use tokio::task;
+
+const EVENT_BUFFER_SIZE: usize = 4;
 
 #[derive(Clone, Debug)]
 pub enum LedState {
@@ -51,7 +54,7 @@ pub(crate) struct LedController<T>
 where
     T: BmcManager,
 {
-    led_event_handler: LedEventHandler,
+    event_sender: Option<Sender<LedEvent>>,
     command_sender: Option<Sender<LedCommand>>,
     system_upgrade_receiver: sync::watch::Receiver<Option<SystemUpgradeState>>,
     manager: Arc<T>,
@@ -63,7 +66,7 @@ where
 impl<T: BmcManager> Clone for LedController<T> {
     fn clone(&self) -> Self {
         Self {
-            led_event_handler: self.led_event_handler.clone(),
+            event_sender: self.event_sender.clone(),
             command_sender: self.command_sender.clone(),
             system_upgrade_receiver: self.system_upgrade_receiver.clone(),
             manager: self.manager.clone(),
@@ -90,7 +93,7 @@ where
         let (state_sender, state_receiver) = watch::channel(led_enabled.into());
 
         let this = Self {
-            led_event_handler: LedEventHandler::default(),
+            event_sender: None,
             command_sender: None,
             system_upgrade_receiver,
             manager,
@@ -287,9 +290,14 @@ where
         });
     }
 
-    pub(crate) fn init(&mut self, led_cmd_tx: Sender<LedCommand>) {
+    pub(crate) fn init(
+        &mut self,
+        led_cmd_tx: Sender<LedCommand>,
+        coordinator: LedCoordinatorHandle,
+    ) {
         self.command_sender = Some(led_cmd_tx.clone());
-        let led_event_tx = self.led_event_handler.init(led_cmd_tx);
+        let led_event_tx = Self::spawn_event_loop(led_cmd_tx, coordinator);
+        self.event_sender = Some(led_event_tx.clone());
 
         // NOTE: Enable/Disable led events on start
         let led_state = self.state_receiver.borrow().clone().into();
@@ -305,8 +313,37 @@ where
         // self.run_price_task(led_event_tx);
     }
 
+    fn spawn_event_loop(
+        led_cmd_tx: Sender<LedCommand>,
+        coordinator: LedCoordinatorHandle,
+    ) -> Sender<LedEvent> {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(EVENT_BUFFER_SIZE);
+
+        task::spawn(async move {
+            let mut state = LedIndicatorsState::new();
+
+            while let Some(event) = receiver.recv().await {
+                debug!("Received LED event: {:?}", event);
+
+                let (control, _temp, _persistent) = state.apply_event(event);
+
+                if let Some(cmd) = control
+                    && let Err(e) = led_cmd_tx.send(cmd).await
+                {
+                    error!("Failed to send LED control command {:?}: {e}", cmd);
+                }
+
+                coordinator.publish(Layer::System, state.current_scene());
+            }
+        });
+
+        sender
+    }
+
     pub fn push_event(&self, event: LedEvent) {
-        self.led_event_handler.push_event(event);
+        if let Some(sender) = &self.event_sender {
+            let _ = sender.try_send(event);
+        }
     }
 
     pub fn send_command(&self, command: LedCommand) {
