@@ -67,14 +67,7 @@
 
 pub mod typed;
 
-/// Wire-format kind discriminators.
-mod kind {
-    pub const STR: u8 = 0;
-    pub const I32: u8 = 1;
-    pub const F64: u8 = 2;
-    pub const BOOL: u8 = 3;
-    pub const NULL: u8 = 4;
-}
+use bmc_wasm_protocol::params::kind;
 
 /// Owned snapshot of the host-delivered params for this widget instance.
 ///

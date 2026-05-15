@@ -1563,6 +1563,7 @@ dependencies = [
  "bmc-led",
  "bmc-render",
  "bmc-wasm-protocol",
+ "bmc-wasm-sdk",
  "bmc-widget-manifest",
  "chrono",
  "chrono-tz",

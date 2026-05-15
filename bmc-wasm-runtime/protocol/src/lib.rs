@@ -12,6 +12,7 @@ pub mod icon;
 pub mod ids;
 pub mod mesh;
 pub mod nodes;
+pub mod params;
 pub mod tags;
 pub mod text;
 pub mod version;

@@ -91,6 +91,10 @@ path = "src/bin/capture/main.rs"
 required-features = ["capture"]
 
 [dev-dependencies]
+# Pull the SDK parser in for the host-encoder → SDK-parser round-trip test in
+# `runtime::imports::params::tests`. The wasm32-gated externs aren't compiled
+# on native; only the parser (`Params::from_bytes`, `entries()`) is exercised.
+bmc-wasm-sdk = { path = "sdk" }
 # Hand-rolled WAT fixtures for `tests/lifecycle.rs` — avoids a cross-target
 # build dependency on the example widgets.
 wat.workspace = true

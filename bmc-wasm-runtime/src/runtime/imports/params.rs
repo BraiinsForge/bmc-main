@@ -36,19 +36,11 @@
 )]
 
 use anyhow::Result;
+use bmc_wasm_protocol::params::kind;
 use wasmi::{Caller, Extern, Linker};
 
 use crate::host_api::HostState;
 use bmc_widget_manifest::{ParamKey, ParamValue};
-
-/// Wire-format kind discriminators. Must match `bmc_wasm_sdk::params::kind`.
-mod kind {
-    pub const STR: u8 = 0;
-    pub const I32: u8 = 1;
-    pub const F64: u8 = 2;
-    pub const BOOL: u8 = 3;
-    pub const NULL: u8 = 4;
-}
 
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_params_version(linker)?;
@@ -60,7 +52,7 @@ fn register_params_version(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_params_version",
-        |caller: Caller<'_, HostState>| -> u64 { caller.data().params_version },
+        |caller: Caller<'_, HostState>| -> u64 { caller.data().params_version() },
     )?;
     Ok(())
 }
@@ -73,9 +65,11 @@ fn register_params_snapshot(linker: &mut Linker<HostState>) -> Result<()> {
          out_ptr: u32,
          out_cap: u32|
          -> std::result::Result<u32, wasmi::Error> {
-            // Serialise once into a stack-local buffer; cheap because params are small and the
-            // snapshot is regenerated only when the guest's cache misses.
-            let bytes = encode_params(&caller.data().params);
+            // Lazy-encoded cache lives on `HostState`; invalidated atomically when params change.
+            // A misbehaving guest spinning on `host_params_snapshot` re-uses the cached bytes
+            // until the next `replace_params` call instead of forcing a fresh encode every time.
+            // `.to_vec()` releases the `&mut HostState` borrow before the wasm-memory write below.
+            let bytes = caller.data_mut().encoded_params().to_vec();
             let needed = bytes.len() as u32;
 
             if out_cap < needed {
@@ -113,7 +107,10 @@ fn register_params_snapshot(linker: &mut Linker<HostState>) -> Result<()> {
 /// Entries are iterated in the `BTreeMap`'s natural key order (alphabetical) so two snapshots
 /// with the same content produce byte-identical buffers — useful for `Clone` byte-equality
 /// diffs on the guest side.
-fn encode_params(params: &std::collections::BTreeMap<ParamKey, ParamValue>) -> Vec<u8> {
+///
+/// `pub(crate)` so [`crate::host_api::HostState::encoded_params`] can call it from the host_api
+/// module; both sides own different halves of the snapshot story (encoder here, cache there).
+pub(crate) fn encode_params(params: &std::collections::BTreeMap<ParamKey, ParamValue>) -> Vec<u8> {
     let mut out = Vec::with_capacity(estimate_size(params));
     out.extend_from_slice(&(params.len() as u32).to_le_bytes());
     for (key, value) in params {
@@ -257,5 +254,49 @@ mod tests {
             offset += 1; // bool payload
         }
         assert_eq!(keys, vec!["apple", "mango", "zebra"]);
+    }
+
+    /// Cross-validate the host encoder against the SDK parser end-to-end.
+    ///
+    /// The two sides share `bmc_wasm_protocol::params::kind::*` for the kind discriminators,
+    /// so constant drift is impossible at compile time. This test pins the rest of the wire
+    /// contract: length-width (u16 key, u32 string), byte ordering (little-endian), per-entry
+    /// payload shape (i32, f64, bool, null), and alphabetical-by-key iteration order.
+    ///
+    /// If the encoder and parser ever diverge on layout, this test fails before the wasm32
+    /// lifecycle tests get a chance to catch it.
+    #[test]
+    fn host_encoder_round_trips_through_sdk_parser() {
+        use bmc_wasm_sdk::params::Params;
+
+        let mut params = BTreeMap::new();
+        params.insert(key("a_str"), ParamValue::String("hello".into()));
+        params.insert(key("b_int"), ParamValue::Integer(-7));
+        params.insert(key("c_dbl"), ParamValue::Double(2.5));
+        params.insert(key("d_bool"), ParamValue::Boolean(true));
+        params.insert(key("e_null"), ParamValue::Null);
+
+        let bytes = encode_params(&params);
+        let parsed = Params::from_bytes(bytes);
+
+        // Alphabetical-by-key iteration order survives the round-trip.
+        let parsed_keys: Vec<&str> = parsed.keys().collect();
+        assert_eq!(
+            parsed_keys,
+            vec!["a_str", "b_int", "c_dbl", "d_bool", "e_null"],
+            "SDK parser must yield keys in the host's BTreeMap (alphabetical) order"
+        );
+
+        // Each variant's payload survives the round-trip via the public typed accessors.
+        assert_eq!(parsed.get_str("a_str"), Some("hello"));
+        assert_eq!(parsed.get_i32("b_int"), Some(-7));
+        assert_eq!(parsed.get_f64("c_dbl"), Some(2.5));
+        assert_eq!(parsed.get_bool("d_bool"), Some(true));
+        // `Null` is observable as "key listed but no typed value" — `get_*` all return None.
+        assert!(parsed.keys().any(|k| k == "e_null"));
+        assert_eq!(parsed.get_str("e_null"), None);
+        assert_eq!(parsed.get_i32("e_null"), None);
+        assert_eq!(parsed.get_f64("e_null"), None);
+        assert_eq!(parsed.get_bool("e_null"), None);
     }
 }
