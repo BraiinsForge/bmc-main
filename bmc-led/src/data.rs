@@ -88,8 +88,6 @@ pub enum LedEvent {
     DownloadOrUpgradeStarted, // Knight Rider
     DownloadOrUpgradeSuccess, // Success
     DownloadOrUpgradeError,   // Error
-    Disable,
-    Enable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
