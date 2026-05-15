@@ -108,8 +108,6 @@ pub enum LedEvent {
     DownloadOrUpgradeStarted, // Knight Rider
     DownloadOrUpgradeSuccess, // Success
     DownloadOrUpgradeError,   // Error
-    Disable,
-    Enable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -124,8 +122,11 @@ pub enum LedCommand {
 mod tests {
     use super::*;
 
+    // These bytes are the guest↔host wasm wire format. They are also kept
+    // equal to `deck_widget_v1.led_effect` by hand — bmc-led can't import the
+    // protocol crate to assert that here, so this only pins the values stable.
     #[test]
-    fn effect_kind_discriminants_match_protocol() {
+    fn effect_kind_wire_bytes_are_stable() {
         assert_eq!(LedEffectKind::Chase as u8, 0);
         assert_eq!(LedEffectKind::KnightRider as u8, 1);
         assert_eq!(LedEffectKind::Scan as u8, 2);

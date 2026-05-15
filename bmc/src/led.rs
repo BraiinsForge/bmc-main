@@ -51,15 +51,6 @@ impl From<bool> for LedState {
     }
 }
 
-impl From<LedState> for LedEvent {
-    fn from(value: LedState) -> Self {
-        match value {
-            LedState::Enabled => LedEvent::Enable,
-            LedState::Disabled => LedEvent::Disable,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub(crate) struct LedController<T>
 where
@@ -70,7 +61,6 @@ where
     system_upgrade_receiver: sync::watch::Receiver<Option<SystemUpgradeState>>,
     manager: Arc<T>,
     last_price_change_24h_receiver: watch::Receiver<f32>,
-    state_receiver: watch::Receiver<LedState>,
     alarm_bus: AlarmBus,
 }
 
@@ -82,7 +72,6 @@ impl<T: BmcManager> Clone for LedController<T> {
             system_upgrade_receiver: self.system_upgrade_receiver.clone(),
             manager: self.manager.clone(),
             last_price_change_24h_receiver: self.last_price_change_24h_receiver.clone(),
-            state_receiver: self.state_receiver.clone(),
             alarm_bus: self.alarm_bus.clone(),
         }
     }
@@ -98,7 +87,7 @@ where
         last_price_change_24h: watch::Receiver<f32>,
         led_enabled: bool,
         alarm_bus: AlarmBus,
-    ) -> (Self, watch::Sender<LedState>) {
+    ) -> (Self, watch::Sender<LedState>, watch::Receiver<LedState>) {
         let system_upgrade_receiver = state_service.subscribe();
 
         let (state_sender, state_receiver) = watch::channel(led_enabled.into());
@@ -109,11 +98,10 @@ where
             system_upgrade_receiver,
             manager,
             last_price_change_24h_receiver: last_price_change_24h,
-            state_receiver,
             alarm_bus,
         };
 
-        (this, state_sender)
+        (this, state_sender, state_receiver)
     }
 
     fn run_wifi_task(&self, led_event_tx: Sender<LedEvent>) {
@@ -244,22 +232,6 @@ where
         });
     }
 
-    fn run_led_state_task(&self, led_event_tx: Sender<LedEvent>) {
-        let mut receiver = self.state_receiver.clone();
-
-        task::spawn(async move {
-            while let Ok(()) = receiver.changed().await {
-                let led_state = (*receiver.borrow_and_update()).clone();
-
-                debug!("Setting led state: {:?}", led_state);
-
-                if let Err(e) = led_event_tx.send(led_state.into()).await {
-                    error!("Failed to send led command: {}", e);
-                }
-            }
-        });
-    }
-
     fn run_alarm_event_listener(&self, led_event_tx: Sender<LedEvent>) {
         let mut rx_events = self.alarm_bus.subscribe_events();
         tokio::spawn({
@@ -310,11 +282,6 @@ where
         let led_event_tx = Self::spawn_event_loop(coordinator);
         self.event_sender = Some(led_event_tx.clone());
 
-        // NOTE: Enable/Disable led events on start
-        let led_state = self.state_receiver.borrow().clone().into();
-        self.push_event(led_state);
-
-        self.run_led_state_task(led_event_tx.clone());
         self.run_wifi_task(led_event_tx.clone());
         self.run_sysupgrade_task(led_event_tx.clone());
         self.run_alarm_event_listener(led_event_tx.clone());
@@ -367,6 +334,20 @@ where
     pub fn send_command(&self, command: LedCommand) {
         if let Some(sender) = &self.command_sender {
             let _ = sender.try_send(command);
+        }
+    }
+}
+
+pub(crate) async fn run_led_state_task(
+    mut state_rx: watch::Receiver<LedState>,
+    coordinator: LedCoordinatorHandle,
+) {
+    loop {
+        let enabled = matches!(*state_rx.borrow_and_update(), LedState::Enabled);
+        debug!("Setting led enabled: {}", enabled);
+        coordinator.set_enabled(enabled);
+        if state_rx.changed().await.is_err() {
+            break;
         }
     }
 }
