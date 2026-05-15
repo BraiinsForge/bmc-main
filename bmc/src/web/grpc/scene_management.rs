@@ -20,6 +20,7 @@ use bmc_platform::HardwareCapabilities;
 
 use crate::config::ConfigHandle;
 use crate::data::{SceneCycling, SceneCyclingTransition};
+use crate::led_coordinator::{Layer, LedCoordinatorHandle};
 use crate::scene;
 use crate::web::grpc::GrpcError;
 use crate::web::grpc::shared::FieldViolations;
@@ -376,6 +377,7 @@ pub(crate) struct SceneManagementService {
     config_handle: Arc<RwLock<ConfigHandle>>,
     coordinator: Arc<Coordinator>,
     capabilities: HardwareCapabilities,
+    led_coordinator: LedCoordinatorHandle,
     /// Scene currently held open by a `preview_scene` stream. While set,
     /// that scene overrides normal compositor scene refreshes so edits made
     /// during a preview stay focused on it.
@@ -393,12 +395,14 @@ impl SceneManagementService {
         config_handle: Arc<RwLock<ConfigHandle>>,
         coordinator: Arc<Coordinator>,
         capabilities: HardwareCapabilities,
+        led_coordinator: LedCoordinatorHandle,
     ) -> Self {
         Self {
             widget_registry,
             config_handle,
             coordinator,
             capabilities,
+            led_coordinator,
             preview_scene_id: Arc::default(),
         }
     }
@@ -1210,6 +1214,14 @@ impl GrpcSceneManagementService for SceneManagementService {
                 self.coordinator.spawn_scene_widgets(scene).await;
             }
             self.coordinator.pin_preview_scene(scene);
+            self.led_coordinator.publish(
+                Layer::Preview,
+                Some(bmc_led::data::LedScene {
+                    effect: bmc_led::data::LedEffect::Solid(bmc_led::config::RGB_WHITE),
+                    period: None,
+                    duration: None,
+                }),
+            );
             disabled
         };
 
@@ -1220,10 +1232,12 @@ impl GrpcSceneManagementService for SceneManagementService {
             coordinator: Arc<Coordinator>,
             config_handle: Arc<RwLock<ConfigHandle>>,
             preview_scene_id: Arc<Mutex<Option<scene::SceneId>>>,
+            led_coordinator: LedCoordinatorHandle,
             spawned_widgets: bool,
         }
         impl Drop for PreviewGuard {
             fn drop(&mut self) {
+                self.led_coordinator.publish(Layer::Preview, None);
                 let coordinator = Arc::clone(&self.coordinator);
                 let config_handle = Arc::clone(&self.config_handle);
                 let preview_scene_id = Arc::clone(&self.preview_scene_id);
@@ -1246,6 +1260,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             coordinator: Arc::clone(&self.coordinator),
             config_handle: Arc::clone(&self.config_handle),
             preview_scene_id: Arc::clone(&self.preview_scene_id),
+            led_coordinator: self.led_coordinator.clone(),
             spawned_widgets: scene_was_disabled,
         };
 
@@ -2629,11 +2644,14 @@ mod tests {
             Arc::clone(&widget_registry),
             capabilities,
         ));
+        let (led_tx, _led_rx) = tokio::sync::mpsc::channel(16);
+        let led_coordinator = crate::led_coordinator::spawn_led_coordinator(led_tx);
         let service = SceneManagementService::new(
             widget_registry,
             Arc::clone(&config_handle),
             coordinator,
             capabilities,
+            led_coordinator,
         );
 
         let request = web::SetSceneCyclingRequest {
@@ -2689,11 +2707,14 @@ mod tests {
             Arc::clone(&widget_registry),
             capabilities,
         ));
+        let (led_tx, _led_rx) = tokio::sync::mpsc::channel(16);
+        let led_coordinator = crate::led_coordinator::spawn_led_coordinator(led_tx);
         let service = SceneManagementService::new(
             widget_registry,
             Arc::clone(&config_handle),
             coordinator,
             capabilities,
+            led_coordinator,
         );
 
         let below_minimum =
@@ -2739,11 +2760,14 @@ mod tests {
             Arc::clone(&widget_registry),
             capabilities,
         ));
+        let (led_tx, _led_rx) = tokio::sync::mpsc::channel(16);
+        let led_coordinator = crate::led_coordinator::spawn_led_coordinator(led_tx);
         let service = SceneManagementService::new(
             widget_registry,
             Arc::clone(&config_handle),
             coordinator,
             capabilities,
+            led_coordinator,
         );
 
         let below_minimum =
@@ -2815,11 +2839,14 @@ mod tests {
             Arc::clone(&widget_registry),
             capabilities,
         ));
+        let (led_tx, _led_rx) = tokio::sync::mpsc::channel(16);
+        let led_coordinator = crate::led_coordinator::spawn_led_coordinator(led_tx);
         let service = SceneManagementService::new(
             widget_registry,
             Arc::clone(&config_handle),
             coordinator,
             capabilities,
+            led_coordinator,
         );
 
         service.refresh_compositor_scenes().await;
