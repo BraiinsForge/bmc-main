@@ -699,6 +699,7 @@ impl DeckWidgetSurfaceClient {
                 color,
                 period_ms,
                 duration_ms,
+                scope,
             } => surface.led_temporary(
                 *request_id,
                 to_protocol::led_effect(*effect),
@@ -707,12 +708,14 @@ impl DeckWidgetSurfaceClient {
                 u32::from(color.b),
                 *period_ms,
                 *duration_ms,
+                to_protocol::led_scope(*scope),
             ),
             ActionPayload::LedEndless {
                 request_id,
                 effect,
                 color,
                 period_ms,
+                scope,
             } => surface.led_endless(
                 *request_id,
                 to_protocol::led_effect(*effect),
@@ -720,6 +723,7 @@ impl DeckWidgetSurfaceClient {
                 u32::from(color.g),
                 u32::from(color.b),
                 *period_ms,
+                to_protocol::led_scope(*scope),
             ),
             ActionPayload::StopLed { request_id } => surface.stop_led(*request_id),
         }
