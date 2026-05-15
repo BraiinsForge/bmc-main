@@ -5,21 +5,35 @@ use std::{sync::Arc, time::Duration};
 use bmc_shared_ii_net::wifi::SignalStrength;
 use tokio::{
     sync::{self, mpsc::Sender, watch},
-    time::interval,
+    time::{Instant, interval},
 };
 use tracing::{debug, error};
 
 use crate::{
     BmcManager,
     alarm::{AlarmBus, AlarmEvent},
+    led_coordinator::{Layer, LedCoordinatorHandle},
     manager::WifiEvent,
     system_upgrade::{StateService, SystemUpgradeState},
 };
 use bmc_led::{
     data::{LedCommand, LedEvent},
-    led_driver::LedEventHandler,
+    led_driver::LedIndicatorsState,
 };
 use tokio::task;
+
+const EVENT_BUFFER_SIZE: usize = 4;
+
+/// Far-future deadline used when no temp scene is active. `tokio::time::Sleep`
+/// has no "never" state, so the select arm parks on a sleep this long instead.
+const IDLE_EXPIRY: Duration = Duration::from_secs(60 * 60 * 24 * 365);
+
+fn deadline_for(scene: Option<bmc_led::data::LedScene>) -> Instant {
+    let now = Instant::now();
+    scene
+        .and_then(|s| s.duration)
+        .map_or(now + IDLE_EXPIRY, |d| now + d)
+}
 
 #[derive(Clone, Debug)]
 pub enum LedState {
@@ -51,7 +65,7 @@ pub(crate) struct LedController<T>
 where
     T: BmcManager,
 {
-    led_event_handler: LedEventHandler,
+    event_sender: Option<Sender<LedEvent>>,
     command_sender: Option<Sender<LedCommand>>,
     system_upgrade_receiver: sync::watch::Receiver<Option<SystemUpgradeState>>,
     manager: Arc<T>,
@@ -63,7 +77,7 @@ where
 impl<T: BmcManager> Clone for LedController<T> {
     fn clone(&self) -> Self {
         Self {
-            led_event_handler: self.led_event_handler.clone(),
+            event_sender: self.event_sender.clone(),
             command_sender: self.command_sender.clone(),
             system_upgrade_receiver: self.system_upgrade_receiver.clone(),
             manager: self.manager.clone(),
@@ -90,7 +104,7 @@ where
         let (state_sender, state_receiver) = watch::channel(led_enabled.into());
 
         let this = Self {
-            led_event_handler: LedEventHandler::default(),
+            event_sender: None,
             command_sender: None,
             system_upgrade_receiver,
             manager,
@@ -287,9 +301,14 @@ where
         });
     }
 
-    pub(crate) fn init(&mut self, led_cmd_tx: Sender<LedCommand>) {
-        self.command_sender = Some(led_cmd_tx.clone());
-        let led_event_tx = self.led_event_handler.init(led_cmd_tx);
+    pub(crate) fn init(
+        &mut self,
+        led_cmd_tx: Sender<LedCommand>,
+        coordinator: LedCoordinatorHandle,
+    ) {
+        self.command_sender = Some(led_cmd_tx);
+        let led_event_tx = Self::spawn_event_loop(coordinator);
+        self.event_sender = Some(led_event_tx.clone());
 
         // NOTE: Enable/Disable led events on start
         let led_state = self.state_receiver.borrow().clone().into();
@@ -305,8 +324,44 @@ where
         // self.run_price_task(led_event_tx);
     }
 
+    fn spawn_event_loop(coordinator: LedCoordinatorHandle) -> Sender<LedEvent> {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(EVENT_BUFFER_SIZE);
+
+        task::spawn(async move {
+            let mut state = LedIndicatorsState::new();
+            // Idle when no temp is active; reset to the temp's deadline when a
+            // duration-bearing scene is published, so the system layer clears
+            // back to the persistent (or `None`) when the temp expires.
+            let pick_deadline = Instant::now() + IDLE_EXPIRY;
+            let temp_expiry = tokio::time::sleep_until(pick_deadline);
+            tokio::pin!(temp_expiry);
+
+            loop {
+                tokio::select! {
+                    event = receiver.recv() => {
+                        let Some(event) = event else { break };
+                        debug!("Received LED event: {:?}", event);
+                        state.apply_event(event);
+                        let scene = state.current_scene();
+                        temp_expiry.as_mut().reset(deadline_for(scene));
+                        coordinator.publish(Layer::System, scene);
+                    }
+                    () = &mut temp_expiry => {
+                        let scene = state.current_scene();
+                        temp_expiry.as_mut().reset(deadline_for(scene));
+                        coordinator.publish(Layer::System, scene);
+                    }
+                }
+            }
+        });
+
+        sender
+    }
+
     pub fn push_event(&self, event: LedEvent) {
-        self.led_event_handler.push_event(event);
+        if let Some(sender) = &self.event_sender {
+            let _ = sender.try_send(event);
+        }
     }
 
     pub fn send_command(&self, command: LedCommand) {
