@@ -11,7 +11,7 @@ use tracing::{info, warn};
 
 use super::led_state::LedSceneManager;
 use crate::compositor::{CompositorEvent, LedRequestStatusEvent, WidgetAction};
-use crate::led::LedController;
+use crate::led_coordinator::LedCoordinatorHandle;
 use crate::sound::{SoundController, Sounds};
 
 /// Channel capacity for sound commands sent to the sound manager task.
@@ -22,18 +22,18 @@ const SOUND_CHANNEL_CAPACITY: usize = 4;
 ///
 /// Sound playback runs on a dedicated task — `play_sound` blocks until
 /// the clip ends, and we don't want that to stall LED processing.
-pub(crate) fn spawn_action_handler<T: crate::BmcManager>(
+pub(crate) fn spawn_action_handler(
     mut action_rx: mpsc::UnboundedReceiver<WidgetAction>,
     mut event_rx: broadcast::Receiver<CompositorEvent>,
     status_tx: mpsc::UnboundedSender<LedRequestStatusEvent>,
     sound_controller: SoundController,
-    led_controller: LedController<T>,
+    led_coordinator: LedCoordinatorHandle,
 ) {
     let (sound_tx, sound_rx) = mpsc::channel(SOUND_CHANNEL_CAPACITY);
     spawn_sound_manager(sound_rx, sound_controller);
 
     tokio::spawn(async move {
-        let mut led = LedSceneManager::new(led_controller, status_tx);
+        let mut led = LedSceneManager::new(led_coordinator, status_tx);
 
         loop {
             let deadline = led.active_deadline();
