@@ -78,13 +78,7 @@ impl LedIndicatorsState {
         Self::default()
     }
 
-    #[expect(clippy::too_many_lines)]
-    pub fn apply_event(
-        &mut self,
-        event: LedEvent,
-    ) -> (Option<LedCommand>, Option<LedCommand>, Option<LedCommand>) {
-        let mut control: Option<LedCommand> = None;
-
+    pub fn apply_event(&mut self, event: LedEvent) {
         match event {
             // Device lifecycle
             LedEvent::DeviceInitializing => {
@@ -192,16 +186,7 @@ impl LedIndicatorsState {
                     duration: Some(ERROR_DURATION),
                 }));
             }
-
-            // Global control
-            LedEvent::Enable => control = Some(LedCommand::Enable),
-            LedEvent::Disable => control = Some(LedCommand::Disable),
         }
-
-        let temp = self.temp.take();
-        let persistent = self.select_persistent(temp.is_some());
-
-        (control, temp, persistent)
     }
 
     fn any_persist_active(&self) -> bool {
@@ -273,9 +258,10 @@ impl LedEventHandler {
             while let Some(event) = receiver.recv().await {
                 debug!("Received LED event: {:?}", event);
 
-                let (control, temp, persistent) = state.apply_event(event);
+                state.apply_event(event);
 
-                for cmd in [control, temp, persistent].into_iter().flatten() {
+                if let Some(scene) = state.current_scene() {
+                    let cmd = LedCommand::SetEffect(scene);
                     if let Err(e) = sender.send(cmd).await {
                         error!("Failed to send LED command {:?}: {e}", cmd);
                     }
