@@ -209,9 +209,11 @@ pub struct RuntimeConfig {
     ///   `0` indefinitely); pick any non-zero seed for varied deterministic
     ///   output.
     pub rng_seed: Option<u64>,
-    /// Sender for LED commands. Widgets call `led::set_effect()` etc., the host
-    /// forwards commands through this channel. `None` = LED control unavailable.
-    pub led_command_sender: Option<std::sync::mpsc::Sender<bmc_led::data::LedCommand>>,
+    /// Sender for widget-perspective LED requests. Widgets call
+    /// `led::set_effect()` / `led::stop()`; the runtime translates each call
+    /// into a `LedRequest` published through this channel. `None` = LED
+    /// control unavailable.
+    pub led_request_sender: Option<std::sync::mpsc::Sender<crate::led_request::LedRequest>>,
     /// Frame poll cadence (ms) capping the effective host wake while host-side
     /// animations are active, so a widget's `request_frame_after(longer)`
     /// (e.g. a 1Hz clock tick) does not starve cached-tree animation replays.
@@ -253,7 +255,7 @@ impl Default for RuntimeConfig {
             resource_limits: RuntimeResourceLimits::default(),
             mesh_msaa_samples: 0,
             rng_seed: None,
-            led_command_sender: None,
+            led_request_sender: None,
             animation_frame_delay_ms: Self::DEFAULT_ANIMATION_FRAME_DELAY_MS,
             params: std::collections::BTreeMap::new(),
         }
@@ -349,7 +351,7 @@ impl WasmWidgetRuntime {
             event_fixtures,
             resource_limits,
             rng_seed,
-            led_command_sender,
+            led_request_sender,
             animation_frame_delay_ms,
             params,
             ..
@@ -395,7 +397,7 @@ impl WasmWidgetRuntime {
         state.fetch_observer = fetch_observer;
         state.record_events = record_events;
         state.rng_state = rng_seed;
-        state.led_command_sender = led_command_sender;
+        state.led_request_sender = led_request_sender;
         state.frame_schedule.animation_frame_delay_ms = animation_frame_delay_ms;
         // Stage the initial snapshots before `init` runs so the guest's
         // first `params::current()` / `system::current()` calls observe

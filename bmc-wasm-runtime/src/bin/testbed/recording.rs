@@ -184,17 +184,24 @@ fn format_event_label(event: &UnifiedEvent) -> String {
             duration_ms,
             ..
         } => format!("audio {name} vol={volume} {duration_ms}ms"),
-        UnifiedEvent::LedSetEffect {
+        UnifiedEvent::LedSetEndless {
+            effect,
+            r,
+            g,
+            b,
+            period_ms,
+        } => format!("LED endless effect={effect} rgb=({r},{g},{b}) p={period_ms}ms"),
+        UnifiedEvent::LedSetTemporary {
             effect,
             r,
             g,
             b,
             period_ms,
             duration_ms,
-        } => format!("LED effect={effect} rgb=({r},{g},{b}) p={period_ms}ms d={duration_ms}ms"),
-        UnifiedEvent::LedSetBrightness { brightness } => format!("LED brightness={brightness:.2}"),
-        UnifiedEvent::LedEnable => "LED enable".to_owned(),
-        UnifiedEvent::LedDisable => "LED disable".to_owned(),
+        } => format!(
+            "LED temporary effect={effect} rgb=({r},{g},{b}) p={period_ms}ms d={duration_ms}ms"
+        ),
+        UnifiedEvent::LedStop => "LED stop".to_owned(),
     }
 }
 
