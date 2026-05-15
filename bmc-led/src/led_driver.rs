@@ -3,7 +3,7 @@
 use super::data;
 use crate::config::{
     self, BREATHE_PERIOD, ERROR_DURATION, KNIGHT_RIDER_PERIOD, RGB_GREEN, RGB_ORANGE, RGB_RED,
-    RGB_VIOLET60, RGB_WHITE, SUCCESS_DURATION,
+    RGB_VIOLET60, SUCCESS_DURATION,
 };
 use crate::data::{LedCommand, LedEffect, LedEvent, LedScene};
 use tokio::sync::mpsc::Sender;
@@ -62,7 +62,7 @@ pub struct LedEventHandler {
 }
 
 #[derive(Debug, Default, Clone)]
-struct LedIndicatorsState {
+pub struct LedIndicatorsState {
     wifi_persist: Option<LedCommand>,
     temp: Option<LedCommand>,
     wifi_scan_persist: Option<LedCommand>,
@@ -70,12 +70,16 @@ struct LedIndicatorsState {
     clock_persist: Option<LedCommand>,
     device_persist: Option<LedCommand>,
     sys_persist: Option<LedCommand>,
-    scene_persist: Option<LedCommand>,
 }
 
 impl LedIndicatorsState {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     #[expect(clippy::too_many_lines)]
-    fn apply_event(
+    pub fn apply_event(
         &mut self,
         event: LedEvent,
     ) -> (Option<LedCommand>, Option<LedCommand>, Option<LedCommand>) {
@@ -131,18 +135,6 @@ impl LedIndicatorsState {
 
             LedEvent::WifiScanEnded => {
                 self.wifi_scan_persist = None;
-            }
-
-            // Preview of the scene
-            LedEvent::PreviewScene => {
-                self.scene_persist = Some(LedCommand::SetEffect(LedScene {
-                    effect: LedEffect::Solid(RGB_WHITE),
-                    period: None,
-                    duration: None,
-                }));
-            }
-            LedEvent::PreviewSceneEnded => {
-                self.scene_persist = None;
             }
 
             // Price
@@ -218,7 +210,6 @@ impl LedIndicatorsState {
             || self.wifi_persist.is_some()
             || self.sys_persist.is_some()
             || self.price_persist.is_some()
-            || self.scene_persist.is_some()
             || self.wifi_scan_persist.is_some()
     }
 
@@ -242,11 +233,30 @@ impl LedIndicatorsState {
                 .or(self.clock_persist)
                 .or(self.wifi_persist)
                 .or(self.sys_persist)
-                .or(self.scene_persist)
                 .or(self.wifi_scan_persist)
                 .or(self.price_persist)
                 .or(Some(Self::NONE_SCENE))
         }
+    }
+
+    /// Return the currently active scene, resolved across the priority
+    /// stack and the temp slot. The temp slot, when set, wins and is
+    /// consumed (one-shot semantics matching `apply_event`'s `temp.take()`).
+    ///
+    /// `None` means "this layer has nothing to draw" — the coordinator
+    /// falls through to lower layers. A resolved scene whose effect is
+    /// `LedEffect::None` is also reported as `None`; pinning `Layer::System`
+    /// to a None-effect scene would mask every lower layer.
+    #[must_use]
+    pub fn current_scene(&mut self) -> Option<LedScene> {
+        let resolved = match self.temp.take() {
+            Some(LedCommand::SetEffect(scene)) => Some(scene),
+            _ => match self.select_persistent(false) {
+                Some(LedCommand::SetEffect(scene)) => Some(scene),
+                _ => None,
+            },
+        };
+        resolved.filter(|s| !matches!(s.effect, LedEffect::None))
     }
 }
 
