@@ -110,7 +110,14 @@ pub enum FixtureEventKind {
         name: String,
         duration_ms: u32,
     },
-    LedSetEffect {
+    LedSetEndless {
+        effect: u8,
+        r: u8,
+        g: u8,
+        b: u8,
+        period_ms: u32,
+    },
+    LedSetTemporary {
         effect: u8,
         r: u8,
         g: u8,
@@ -118,8 +125,7 @@ pub enum FixtureEventKind {
         period_ms: u32,
         duration_ms: u32,
     },
-    LedEnable,
-    LedDisable,
+    LedStop,
 }
 
 /// Identifies a single `WasmWidgetRuntime` instance.
@@ -583,8 +589,12 @@ pub(crate) struct HostState {
     /// from `RuntimeConfig::rng_seed`.
     pub rng_state: Option<u64>,
 
-    /// Sender for LED commands. `None` when LED control is unavailable.
-    pub led_command_sender: Option<mpsc::Sender<bmc_led::data::LedCommand>>,
+    /// Sender for widget-perspective LED requests. `None` when LED control
+    /// is unavailable.
+    pub led_request_sender: Option<mpsc::Sender<crate::led_request::LedRequest>>,
+
+    /// Per-guest allocator for non-zero LED request ids.
+    pub led_request_alloc: crate::led_request::LedRequestIdAllocator,
 
     /// Registered audio samples + tag dedup + active playback sinks.
     /// The host stores original encoded data and decodes on each play.
@@ -662,7 +672,8 @@ impl HostState {
             taffy: TaffyTree::with_capacity(64),
             resource_limits,
             rng_state: None, // None = auto-seed on first use (from monotonic_ms)
-            led_command_sender: None,
+            led_request_sender: None,
+            led_request_alloc: crate::led_request::LedRequestIdAllocator::new(),
             audio: AudioRegistry::new(),
             guest_id: GuestId::alloc(),
             #[cfg(feature = "audio")]

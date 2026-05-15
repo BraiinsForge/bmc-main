@@ -239,14 +239,27 @@ pub fn fixture_events_to_timeline(
                     name: name.clone(),
                     duration_ms: *duration_ms,
                 },
-                FixtureEventKind::LedSetEffect {
+                FixtureEventKind::LedSetEndless {
+                    effect,
+                    r,
+                    g,
+                    b,
+                    period_ms,
+                } => UnifiedEvent::LedSetEndless {
+                    effect: *effect,
+                    r: *r,
+                    g: *g,
+                    b: *b,
+                    period_ms: *period_ms,
+                },
+                FixtureEventKind::LedSetTemporary {
                     effect,
                     r,
                     g,
                     b,
                     period_ms,
                     duration_ms,
-                } => UnifiedEvent::LedSetEffect {
+                } => UnifiedEvent::LedSetTemporary {
                     effect: *effect,
                     r: *r,
                     g: *g,
@@ -254,8 +267,7 @@ pub fn fixture_events_to_timeline(
                     period_ms: *period_ms,
                     duration_ms: *duration_ms,
                 },
-                FixtureEventKind::LedEnable => UnifiedEvent::LedEnable,
-                FixtureEventKind::LedDisable => UnifiedEvent::LedDisable,
+                FixtureEventKind::LedStop => UnifiedEvent::LedStop,
             };
             TimelineEvent {
                 at_ms: fe.at_ms,

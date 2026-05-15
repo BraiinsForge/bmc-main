@@ -211,9 +211,9 @@ struct PreviewTile {
     logged_dead: bool,
     ever_rendered: bool,
     kv_path: PathBuf,
-    /// Receiver for LED commands from the widget (drained each frame).
-    led_rx: Receiver<bmc_led::data::LedCommand>,
-    /// Current LED scene (from last `SetEffect` command).
+    /// Receiver for LED requests from the widget (drained each frame).
+    led_rx: Receiver<bmc_wasm_runtime::LedRequest>,
+    /// Current LED scene (from last `SetEffect` request).
     led_scene: Option<bmc_led::data::LedScene>,
     /// Whether LEDs are enabled.
     led_enabled: bool,
@@ -474,7 +474,7 @@ impl App {
             rt_config.mesh_msaa_samples = 4;
 
             let (led_tx, led_rx) = channel();
-            rt_config.led_command_sender = Some(led_tx);
+            rt_config.led_request_sender = Some(led_tx);
 
             let runtime = create_runtime(&self.wasm_path, &gl_config, w, h, fbo_id, rt_config)
                 .context("Failed to create runtime")?;
@@ -911,7 +911,7 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
             let rt_config = RuntimeConfig {
                 kv_store_path: Some(tile.kv_path.clone()),
                 mesh_msaa_samples: 4,
-                led_command_sender: Some(led_tx),
+                led_request_sender: Some(led_tx),
                 ..RuntimeConfig::default()
             };
             match create_runtime(
@@ -1072,13 +1072,46 @@ fn render_preview(wasm_path: &Path, state: &mut PreviewState) {
         tile.runtime.renderer().flush();
         let flush_us = flush_t0.elapsed().as_micros() as u32;
 
-        // Drain LED commands, update state for visualization
-        while let Ok(cmd) = tile.led_rx.try_recv() {
-            match cmd {
-                bmc_led::data::LedCommand::Enable => tile.led_enabled = true,
-                bmc_led::data::LedCommand::Disable => tile.led_enabled = false,
-                bmc_led::data::LedCommand::SetEffect(scene) => tile.led_scene = Some(scene),
-                bmc_led::data::LedCommand::SetBrightness(_) => {} // TODO
+        // Drain LED requests, update state for visualization
+        while let Ok(req) = tile.led_rx.try_recv() {
+            match req {
+                bmc_wasm_runtime::LedRequest::SetEffect {
+                    effect,
+                    color,
+                    period_ms,
+                    duration,
+                    ..
+                } => {
+                    let hw_effect = match effect {
+                        bmc_wasm_runtime::LedEffect::Chase => {
+                            bmc_led::data::LedEffect::Chase(color)
+                        }
+                        bmc_wasm_runtime::LedEffect::KnightRider => {
+                            bmc_led::data::LedEffect::KnightRider(color)
+                        }
+                        bmc_wasm_runtime::LedEffect::Scan => bmc_led::data::LedEffect::Scan(color),
+                        bmc_wasm_runtime::LedEffect::Snake => {
+                            bmc_led::data::LedEffect::Snake(color)
+                        }
+                        bmc_wasm_runtime::LedEffect::Breathe => {
+                            bmc_led::data::LedEffect::Breathe(color)
+                        }
+                        bmc_wasm_runtime::LedEffect::Solid => {
+                            bmc_led::data::LedEffect::Solid(color)
+                        }
+                    };
+                    tile.led_scene = Some(bmc_led::data::LedScene {
+                        effect: hw_effect,
+                        period: (period_ms > 0)
+                            .then(|| std::time::Duration::from_millis(u64::from(period_ms))),
+                        duration,
+                    });
+                    tile.led_enabled = true;
+                }
+                bmc_wasm_runtime::LedRequest::Stop { .. } => {
+                    tile.led_scene = None;
+                    tile.led_enabled = false;
+                }
             }
         }
 
@@ -1670,13 +1703,13 @@ fn event_icon_id(event: &UnifiedEvent) -> IconId {
         UnifiedEvent::WsOpen { .. }
         | UnifiedEvent::SocketConnected { .. }
         | UnifiedEvent::AudioPlay { .. }
-        | UnifiedEvent::LedSetEffect { .. }
-        | UnifiedEvent::LedEnable => ICON_DEV_UPLOAD,
+        | UnifiedEvent::LedSetEndless { .. }
+        | UnifiedEvent::LedSetTemporary { .. } => ICON_DEV_UPLOAD,
         UnifiedEvent::WsClose { .. }
         | UnifiedEvent::SocketClosed { .. }
         | UnifiedEvent::SsdpRemoved { .. }
         | UnifiedEvent::MdnsRemoved { .. }
-        | UnifiedEvent::LedDisable => ICON_DEV_UNLINK,
+        | UnifiedEvent::LedStop => ICON_DEV_UNLINK,
     }
 }
 
@@ -1734,16 +1767,24 @@ fn format_event_label(event: &UnifiedEvent) -> String {
             duration_ms,
             ..
         } => format!("{name} vol={volume} {duration_ms}ms"),
-        UnifiedEvent::LedSetEffect {
+        UnifiedEvent::LedSetEndless {
+            effect,
+            r,
+            g,
+            b,
+            period_ms,
+        } => format!("LED endless effect={effect} rgb=({r},{g},{b}) p={period_ms}ms"),
+        UnifiedEvent::LedSetTemporary {
             effect,
             r,
             g,
             b,
             period_ms,
             duration_ms,
-        } => format!("LED effect={effect} rgb=({r},{g},{b}) p={period_ms}ms d={duration_ms}ms"),
-        UnifiedEvent::LedEnable => "LED enable".to_owned(),
-        UnifiedEvent::LedDisable => "LED disable".to_owned(),
+        } => format!(
+            "LED temporary effect={effect} rgb=({r},{g},{b}) p={period_ms}ms d={duration_ms}ms"
+        ),
+        UnifiedEvent::LedStop => "LED stop".to_owned(),
     }
 }
 
