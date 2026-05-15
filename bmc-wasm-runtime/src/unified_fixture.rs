@@ -202,10 +202,6 @@ pub enum UnifiedEvent {
         period_ms: u32,
         duration_ms: u32,
     },
-    /// LED brightness change.
-    LedSetBrightness {
-        brightness: f32,
-    },
     /// LED strip enabled.
     LedEnable,
     /// LED strip disabled.
@@ -292,7 +288,6 @@ pub fn validate_fixture(fixture: &UnifiedFixture) -> Result<()> {
             | UnifiedEvent::UdpResponse { .. }
             | UnifiedEvent::AudioPlay { .. }
             | UnifiedEvent::LedSetEffect { .. }
-            | UnifiedEvent::LedSetBrightness { .. }
             | UnifiedEvent::LedEnable
             | UnifiedEvent::LedDisable => {}
         }

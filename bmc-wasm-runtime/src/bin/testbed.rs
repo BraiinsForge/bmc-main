@@ -1671,7 +1671,6 @@ fn event_icon_id(event: &UnifiedEvent) -> IconId {
         | UnifiedEvent::SocketConnected { .. }
         | UnifiedEvent::AudioPlay { .. }
         | UnifiedEvent::LedSetEffect { .. }
-        | UnifiedEvent::LedSetBrightness { .. }
         | UnifiedEvent::LedEnable => ICON_DEV_UPLOAD,
         UnifiedEvent::WsClose { .. }
         | UnifiedEvent::SocketClosed { .. }
@@ -1743,9 +1742,6 @@ fn format_event_label(event: &UnifiedEvent) -> String {
             period_ms,
             duration_ms,
         } => format!("LED effect={effect} rgb=({r},{g},{b}) p={period_ms}ms d={duration_ms}ms"),
-        UnifiedEvent::LedSetBrightness { brightness } => {
-            format!("LED brightness={brightness:.2}")
-        }
         UnifiedEvent::LedEnable => "LED enable".to_owned(),
         UnifiedEvent::LedDisable => "LED disable".to_owned(),
     }
