@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 use bmc_shared_ii_net::wifi::SignalStrength;
 use tokio::{
     sync::{self, mpsc::Sender, watch},
-    time::interval,
+    time::{Instant, interval},
 };
 use tracing::{debug, error};
 
@@ -23,6 +23,17 @@ use bmc_led::{
 use tokio::task;
 
 const EVENT_BUFFER_SIZE: usize = 4;
+
+/// Far-future deadline used when no temp scene is active. `tokio::time::Sleep`
+/// has no "never" state, so the select arm parks on a sleep this long instead.
+const IDLE_EXPIRY: Duration = Duration::from_secs(60 * 60 * 24 * 365);
+
+fn deadline_for(scene: Option<bmc_led::data::LedScene>) -> Instant {
+    let now = Instant::now();
+    scene
+        .and_then(|s| s.duration)
+        .map_or(now + IDLE_EXPIRY, |d| now + d)
+}
 
 #[derive(Clone, Debug)]
 pub enum LedState {
@@ -285,12 +296,29 @@ where
 
         task::spawn(async move {
             let mut state = LedIndicatorsState::new();
+            // Idle when no temp is active; reset to the temp's deadline when a
+            // duration-bearing scene is published, so the system layer clears
+            // back to the persistent (or `None`) when the temp expires.
+            let pick_deadline = Instant::now() + IDLE_EXPIRY;
+            let temp_expiry = tokio::time::sleep_until(pick_deadline);
+            tokio::pin!(temp_expiry);
 
-            while let Some(event) = receiver.recv().await {
-                debug!("Received LED event: {:?}", event);
-
-                state.apply_event(event);
-                coordinator.publish(Layer::System, state.current_scene());
+            loop {
+                tokio::select! {
+                    event = receiver.recv() => {
+                        let Some(event) = event else { break };
+                        debug!("Received LED event: {:?}", event);
+                        state.apply_event(event);
+                        let scene = state.current_scene();
+                        temp_expiry.as_mut().reset(deadline_for(scene));
+                        coordinator.publish(Layer::System, scene);
+                    }
+                    () = &mut temp_expiry => {
+                        let scene = state.current_scene();
+                        temp_expiry.as_mut().reset(deadline_for(scene));
+                        coordinator.publish(Layer::System, scene);
+                    }
+                }
             }
         });
 
