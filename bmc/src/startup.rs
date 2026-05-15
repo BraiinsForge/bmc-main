@@ -12,7 +12,7 @@ use crate::button_manager::ButtonManager;
 use crate::compositor::{Compositor, CompositorEvent};
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
-use crate::led::LedController;
+use crate::led::{LedController, run_led_state_task};
 use crate::manager::BmcManager;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
@@ -141,7 +141,7 @@ where
         .await;
 
         let (_, last_price_change_24h_receiver) = watch::channel(0.0);
-        let (mut led_controller, led_state_sender) = LedController::new(
+        let (mut led_controller, led_state_sender, led_state_receiver) = LedController::new(
             &state_service,
             manager.clone(),
             last_price_change_24h_receiver,
@@ -151,6 +151,11 @@ where
 
         let led_coordinator =
             crate::led_coordinator::spawn_led_coordinator(led_driver.command_sender.clone());
+
+        tokio::spawn(run_led_state_task(
+            led_state_receiver,
+            led_coordinator.clone(),
+        ));
 
         led_controller.init(led_driver.command_sender.clone(), led_coordinator.clone());
         led_controller.push_event(bmc_led::data::LedEvent::DeviceReady);
