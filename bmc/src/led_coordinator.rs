@@ -72,18 +72,22 @@ impl LedCoordinator {
     fn refresh(&mut self) {
         match (self.enabled, self.output_enabled) {
             (false, true) => {
-                let _ = self.led_tx.try_send(LedCommand::Disable);
-                self.output_enabled = false;
+                if self.led_tx.try_send(LedCommand::Disable).is_ok() {
+                    self.output_enabled = false;
+                }
                 // `applied` is preserved on purpose: when re-enabled, we
                 // re-emit the topmost scene to restart the animation phase
-                // visibly.
+                // visibly. `output_enabled` only advances on a successful
+                // send so a dropped Disable is retried on the next refresh.
                 return;
             }
             (true, false) => {
-                let _ = self.led_tx.try_send(LedCommand::Enable);
+                if self.led_tx.try_send(LedCommand::Enable).is_err() {
+                    return;
+                }
                 self.output_enabled = true;
-                // fall through and re-emit the current pick, forcing a
-                // SetEffect even if the dedupe would otherwise suppress it.
+                // Force the pick below to re-emit even if it matches `applied`,
+                // restarting the animation phase visibly.
                 self.applied = None;
             }
             _ => {}
@@ -95,22 +99,21 @@ impl LedCoordinator {
         if pick == self.applied {
             return;
         }
-        match pick {
-            Some(scene) => {
-                let _ = self.led_tx.try_send(LedCommand::SetEffect(scene));
-            }
-            None => {
-                // No layer wants the strip. Only emit a clearing SetEffect if
-                // we previously had one applied — first-boot ID state must
-                // not spuriously emit SetEffect(None).
-                if self.applied.is_some() {
-                    let _ = self.led_tx.try_send(LedCommand::SetEffect(LedScene {
-                        effect: LedEffect::None,
-                        period: None,
-                        duration: None,
-                    }));
-                }
-            }
+        let emit = match pick {
+            Some(scene) => Some(LedCommand::SetEffect(scene)),
+            None if self.applied.is_some() => Some(LedCommand::SetEffect(LedScene {
+                effect: LedEffect::None,
+                period: None,
+                duration: None,
+            })),
+            None => None,
+        };
+        if let Some(cmd) = emit
+            && self.led_tx.try_send(cmd).is_err()
+        {
+            // Leave `applied` unchanged so the next refresh retries the same
+            // pick rather than dedupe-suppressing it.
+            return;
         }
         self.applied = pick;
     }
