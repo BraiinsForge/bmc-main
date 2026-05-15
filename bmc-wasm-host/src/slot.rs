@@ -17,7 +17,8 @@ use bmc_wasm_runtime::{
 };
 use bmc_widget::surface::{DeckWidgetSurfaceClient, WidgetEvent, WidgetSurface};
 use bmc_widget_protocol::{
-    ActionPayload, LedEffect as ProtoEffect, NextAlarm as WireNextAlarm, RgbColor, SettingUpdate,
+    ActionPayload, LedEffect as ProtoEffect, LedScope, NextAlarm as WireNextAlarm, RgbColor,
+    SettingUpdate,
 };
 use serde_json::{Map, Value};
 
@@ -878,6 +879,7 @@ fn led_request_to_action(req: &LedRequest) -> ActionPayload {
                     effect,
                     color,
                     period_ms: *period_ms,
+                    scope: LedScope::Local,
                 },
                 Some(d) => ActionPayload::LedTemporary {
                     request_id: *request_id,
@@ -885,6 +887,7 @@ fn led_request_to_action(req: &LedRequest) -> ActionPayload {
                     color,
                     period_ms: *period_ms,
                     duration_ms: u32::try_from(d.as_millis()).unwrap_or(u32::MAX),
+                    scope: LedScope::Local,
                 },
             }
         }
@@ -1161,7 +1164,8 @@ mod tests {
     };
     use bmc_wasm_runtime::{LedEffect, LedRequest, Rgb};
     use bmc_widget_protocol::{
-        ActionPayload, LedEffect as ProtoEffect, NextAlarm as WireNextAlarm, RgbColor, SettingUpdate,
+        ActionPayload, LedEffect as ProtoEffect, LedScope as ProtoScope, NextAlarm as WireNextAlarm,
+        RgbColor, SettingUpdate,
     };
     use std::time::Duration;
 
@@ -1277,6 +1281,7 @@ mod tests {
                 effect: ProtoEffect::Breathe,
                 color: RgbColor { r: 255, g: 0, b: 0 },
                 period_ms: 750,
+                scope: ProtoScope::Local,
             }
         );
     }
@@ -1298,6 +1303,7 @@ mod tests {
                 color: RgbColor { r: 255, g: 0, b: 0 },
                 period_ms: 0,
                 duration_ms: 5_000,
+                scope: ProtoScope::Local,
             }
         );
     }
