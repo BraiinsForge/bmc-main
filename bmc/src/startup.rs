@@ -147,6 +147,9 @@ where
         led_controller.init(led_driver.command_sender.clone());
         led_controller.push_event(bmc_led::data::LedEvent::DeviceReady);
 
+        let led_coordinator =
+            crate::led_coordinator::spawn_led_coordinator(led_driver.command_sender.clone());
+
         let screen_activity = Arc::new(tokio::sync::Notify::new());
         let button_manager = ButtonManager::new(buttons, manager.clone(), screen_activity.clone());
         let compositor_for_events = compositor.clone();
@@ -219,7 +222,7 @@ where
             compositor.subscribe_events(),
             compositor.request_status_sender(),
             sound_controller.clone(),
-            led_controller.clone(),
+            led_coordinator.clone(),
         );
 
         {

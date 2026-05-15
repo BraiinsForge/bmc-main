@@ -3,7 +3,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
-use bmc_led::data::{LedCommand, LedEffect as HwLedEffect, LedScene, Rgb};
+use bmc_led::data::{LedEffect as HwLedEffect, LedScene, Rgb};
 use bmc_widget_protocol::{
     LED_REQUEST_ID_ALL, LedEffect as ProtoLedEffect, LedRequestId, LedRequestStatus, LedScope,
     RgbColor,
@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use tokio::time::Instant;
 
 use crate::compositor::{InstanceId, WidgetRequestStatus};
-use crate::led::LedController;
+use crate::led_coordinator::{Layer, LedCoordinatorHandle};
 use crate::scene::SceneId;
 use tracing::warn;
 
@@ -44,8 +44,8 @@ struct SceneEffectState {
     active_temp: Option<ActiveTemp>,
 }
 
-pub(crate) struct LedSceneManager<T: crate::BmcManager> {
-    led_controller: LedController<T>,
+pub(crate) struct LedSceneManager {
+    coordinator: LedCoordinatorHandle,
     status_tx: mpsc::UnboundedSender<WidgetRequestStatus>,
     widget_to_scene: HashMap<InstanceId, SceneId>,
     active_scene: Option<SceneId>,
@@ -54,13 +54,13 @@ pub(crate) struct LedSceneManager<T: crate::BmcManager> {
     applied_scene: LedScene,
 }
 
-impl<T: crate::BmcManager> LedSceneManager<T> {
+impl LedSceneManager {
     pub(crate) fn new(
-        led_controller: LedController<T>,
+        coordinator: LedCoordinatorHandle,
         status_tx: mpsc::UnboundedSender<WidgetRequestStatus>,
     ) -> Self {
         Self {
-            led_controller,
+            coordinator,
             status_tx,
             widget_to_scene: HashMap::new(),
             active_scene: None,
@@ -297,16 +297,20 @@ impl<T: crate::BmcManager> LedSceneManager<T> {
             return;
         }
         self.applied_scene = scene;
-        self.led_controller
-            .send_command(LedCommand::SetEffect(scene));
+        self.coordinator.publish(Layer::Widgets, Some(scene));
     }
 
     fn apply_clear(&mut self) {
-        self.apply_scene(LedScene {
+        let cleared = LedScene {
             effect: HwLedEffect::None,
             period: None,
             duration: None,
-        });
+        };
+        if cleared == self.applied_scene {
+            return;
+        }
+        self.applied_scene = cleared;
+        self.coordinator.publish(Layer::Widgets, None);
     }
 
     fn emit(&self, instance_id: InstanceId, request_id: LedRequestId, status: LedRequestStatus) {
@@ -478,283 +482,37 @@ fn proto_to_hw_effect(effect: ProtoLedEffect, color: RgbColor) -> HwLedEffect {
 
 #[cfg(test)]
 mod tests {
-    use std::net::IpAddr;
-    use std::path::Path;
-    use std::sync::Arc;
-
-    use anyhow::anyhow;
-    use axum_extra::extract::cookie::Cookie;
-    use bmc_platform::BmcPlatform;
-    use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem, WifiStatus};
-    use bmc_shared_time::time::Timezone;
-    use bmc_support::SupportArchiveFormat;
     use uuid::Uuid;
 
     use super::*;
-    use crate::alarm::AlarmBus;
-    use crate::bootloader_config::BootloaderConfig;
-    use crate::manager::{
-        BmcState, IfaceData, InitialSetupError, NetworkProtocolConfig, WifiData, WifiEvent,
-        WifiNetworkConfig,
-    };
-    use crate::session;
-    use crate::system_upgrade::StateService;
-
-    #[derive(Clone, Debug)]
-    struct DummySessionHandle;
-
-    impl session::Handle for DummySessionHandle {
-        fn is_valid(&self) -> bool {
-            true
-        }
-
-        fn id(&self) -> String {
-            "dummy-session".to_owned()
-        }
-    }
-
-    #[derive(Clone, Debug, Default)]
-    struct DummySessionManager;
-
-    #[derive(Debug, thiserror::Error)]
-    #[error("dummy session error")]
-    struct DummySessionError;
-
-    #[async_trait::async_trait]
-    impl session::Manager for DummySessionManager {
-        type Error = DummySessionError;
-        type Session = DummySessionHandle;
-
-        const SESSION_TIMEOUT: u32 = 1;
-
-        async fn login(&self, _password: &str) -> Result<Cookie<'static>, Self::Error> {
-            Err(DummySessionError)
-        }
-
-        async fn logout(&self, _session: Self::Session) -> Result<Cookie<'static>, Self::Error> {
-            Err(DummySessionError)
-        }
-
-        async fn logout_all_related(&self, _session: Self::Session) -> Result<(), Self::Error> {
-            Err(DummySessionError)
-        }
-
-        async fn extend(&self, _session: Self::Session) -> Result<Cookie<'static>, Self::Error> {
-            Err(DummySessionError)
-        }
-
-        async fn find(&self, _cookies: &[Cookie<'_>]) -> Result<Self::Session, Self::Error> {
-            Err(DummySessionError)
-        }
-    }
-
-    #[derive(Clone, Debug)]
-    struct DummyManager {
-        timezone_tx: tokio::sync::watch::Sender<Timezone>,
-    }
-
-    impl DummyManager {
-        fn new() -> Self {
-            let (timezone_tx, _timezone_rx) = tokio::sync::watch::channel(Timezone::default());
-            Self { timezone_tx }
-        }
-    }
-
-    #[derive(Debug, thiserror::Error)]
-    #[error("dummy manager error")]
-    struct DummyManagerError;
-
-    #[async_trait::async_trait]
-    impl crate::BmcManager for DummyManager {
-        type SessionManager = DummySessionManager;
-        type Error = DummyManagerError;
-
-        async fn version(&self) -> Option<bmc_platform::BosVersion> {
-            None
-        }
-
-        fn platform(&self) -> BmcPlatform {
-            BmcPlatform::BraiinsBmc
-        }
-
-        async fn upgrade(
-            &self,
-            _keep_settings: bool,
-            _upgrade_image_path: &Path,
-        ) -> anyhow::Result<()> {
-            Err(anyhow!("not implemented"))
-        }
-
-        async fn check_and_remove_upgrade_marker(&self) -> bool {
-            false
-        }
-
-        fn session_manager(&self) -> Self::SessionManager {
-            DummySessionManager
-        }
-
-        async fn check_password(&self, _password: Option<&str>) -> Result<bool, Self::Error> {
-            Err(DummyManagerError)
-        }
-
-        async fn set_password(&self, _password: Option<String>) -> Result<(), Self::Error> {
-            Err(DummyManagerError)
-        }
-
-        fn timezone(&self) -> Timezone {
-            Timezone::default()
-        }
-
-        async fn set_timezone(&self, timezone: Timezone) -> anyhow::Result<()> {
-            let _ = self.timezone_tx.send(timezone);
-            Ok(())
-        }
-
-        fn watch_timezone_updates(&self) -> tokio::sync::watch::Receiver<Timezone> {
-            self.timezone_tx.subscribe()
-        }
-
-        async fn is_factory_default(&self) -> bool {
-            false
-        }
-
-        async fn factory_reset(&self, _hard: bool) -> Result<(), Self::Error> {
-            Err(DummyManagerError)
-        }
-
-        async fn is_setup_pending(&self) -> bool {
-            false
-        }
-
-        async fn is_wifi_reconfig(&self) -> bool {
-            false
-        }
-
-        async fn enter_wifi_reconfig(&self) -> Result<(), InitialSetupError> {
-            Err(InitialSetupError::NotSupported)
-        }
-
-        async fn exit_wifi_reconfiguration(&self) -> Result<(), InitialSetupError> {
-            Err(InitialSetupError::NotSupported)
-        }
-
-        async fn hostname(&self) -> Option<String> {
-            None
-        }
-
-        fn mac_address(&self) -> Option<String> {
-            None
-        }
-
-        async fn ip_address(&self) -> Option<IpAddr> {
-            None
-        }
-
-        async fn network_config(&self) -> Option<NetworkProtocolConfig> {
-            None
-        }
-
-        async fn set_network_config(&self, _config: NetworkProtocolConfig) -> anyhow::Result<()> {
-            Err(anyhow!("not implemented"))
-        }
-
-        async fn captive_portal_redirect_host(&self) -> Option<String> {
-            None
-        }
-
-        async fn wifi_initial_setup(
-            &self,
-            _config: WifiNetworkConfig,
-        ) -> Result<(), InitialSetupError> {
-            Err(InitialSetupError::NotSupported)
-        }
-
-        async fn revert_to_initial_setup(&self) -> Result<(), InitialSetupError> {
-            Err(InitialSetupError::NotSupported)
-        }
-
-        async fn wifi_scan(&self) -> anyhow::Result<Vec<WifiScanItem>> {
-            Ok(Vec::new())
-        }
-
-        fn subscribe_wifi_events(&self) -> tokio::sync::broadcast::Receiver<WifiEvent> {
-            let (_tx, rx) = tokio::sync::broadcast::channel(1);
-            rx
-        }
-
-        async fn reboot(&self) -> anyhow::Result<()> {
-            Err(anyhow!("not implemented"))
-        }
-
-        async fn device_state(&self) -> BmcState {
-            BmcState::Operational
-        }
-
-        async fn update_device_state(&self) -> anyhow::Result<()> {
-            Ok(())
-        }
-
-        async fn wifi_ssid(&self) -> anyhow::Result<String> {
-            Err(anyhow!("not implemented"))
-        }
-
-        async fn init_wifi_ap(&self) -> Result<(), Self::Error> {
-            Err(DummyManagerError)
-        }
-
-        async fn wifi_save_and_connect(
-            &self,
-            _ssid: String,
-            _password: Option<String>,
-            _encryption: EncryptionType,
-        ) -> Result<(), Self::Error> {
-            Err(DummyManagerError)
-        }
-
-        async fn wifi_status(&self) -> anyhow::Result<WifiData> {
-            Ok(WifiData {
-                iface: IfaceData::default(),
-                status: WifiStatus::default(),
-            })
-        }
-
-        async fn wifi_saved_networks(&self) -> anyhow::Result<Vec<WifiStatus>> {
-            Ok(Vec::new())
-        }
-
-        async fn handle_graceful_shutdown(&self) {}
-
-        async fn support_archive(
-            &self,
-            _format: SupportArchiveFormat,
-        ) -> Result<Vec<u8>, Self::Error> {
-            Err(DummyManagerError)
-        }
-
-        async fn sync_boot_environment(
-            &self,
-            _config: &BootloaderConfig,
-        ) -> Result<(), Self::Error> {
-            Err(DummyManagerError)
-        }
-    }
+    use crate::led_coordinator::spawn_led_coordinator;
 
     struct Harness {
-        manager: LedSceneManager<DummyManager>,
+        manager: LedSceneManager,
         status_rx: mpsc::UnboundedReceiver<WidgetRequestStatus>,
+        _led_cmd_rx: mpsc::Receiver<bmc_led::data::LedCommand>,
+        _runtime: tokio::runtime::Runtime,
     }
 
     impl Harness {
         fn new() -> Self {
-            let state_service = StateService::new();
-            let manager = Arc::new(DummyManager::new());
-            let (_price_tx, price_rx) = tokio::sync::watch::channel(0.0_f32);
-            let alarm_bus = AlarmBus::new();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("BUG: test runtime must build");
+            let (led_cmd_tx, led_cmd_rx) = mpsc::channel(16);
+            let coordinator = {
+                let _guard = runtime.enter();
+                spawn_led_coordinator(led_cmd_tx)
+            };
             let (status_tx, status_rx) = mpsc::unbounded_channel();
-            let (led_controller, _state_tx) =
-                LedController::new(&state_service, manager, price_rx, true, alarm_bus);
-            let manager = LedSceneManager::new(led_controller, status_tx);
-            Self { manager, status_rx }
+            let manager = LedSceneManager::new(coordinator, status_tx);
+            Self {
+                manager,
+                status_rx,
+                _led_cmd_rx: led_cmd_rx,
+                _runtime: runtime,
+            }
         }
 
         fn drain_statuses(&mut self) -> Vec<WidgetRequestStatus> {
