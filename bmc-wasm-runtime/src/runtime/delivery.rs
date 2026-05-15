@@ -138,10 +138,9 @@ impl WasmWidgetRuntime {
                 }
                 // Audio and LED events are informational — no-op during replay.
                 FixtureEventKind::AudioPlay { .. }
-                | FixtureEventKind::LedSetEffect { .. }
-                | FixtureEventKind::LedSetBrightness { .. }
-                | FixtureEventKind::LedEnable
-                | FixtureEventKind::LedDisable => true,
+                | FixtureEventKind::LedSetEndless { .. }
+                | FixtureEventKind::LedSetTemporary { .. }
+                | FixtureEventKind::LedStop => true,
             };
 
             if !delivered {

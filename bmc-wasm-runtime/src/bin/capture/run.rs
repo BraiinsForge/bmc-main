@@ -566,10 +566,9 @@ fn run_unified_capture(
                 | UnifiedEvent::SocketClosed { .. }
                 | UnifiedEvent::UdpResponse { .. }
                 | UnifiedEvent::AudioPlay { .. }
-                | UnifiedEvent::LedSetEffect { .. }
-                | UnifiedEvent::LedSetBrightness { .. }
-                | UnifiedEvent::LedEnable
-                | UnifiedEvent::LedDisable => {}
+                | UnifiedEvent::LedSetEndless { .. }
+                | UnifiedEvent::LedSetTemporary { .. }
+                | UnifiedEvent::LedStop => {}
             }
 
             if is_tty {
@@ -884,10 +883,9 @@ fn split_unified_events(
             | UnifiedEvent::ParamDelivery { .. }
             | UnifiedEvent::SystemDelivery { .. }
             | UnifiedEvent::AudioPlay { .. }
-            | UnifiedEvent::LedSetEffect { .. }
-            | UnifiedEvent::LedSetBrightness { .. }
-            | UnifiedEvent::LedEnable
-            | UnifiedEvent::LedDisable => {}
+            | UnifiedEvent::LedSetEndless { .. }
+            | UnifiedEvent::LedSetTemporary { .. }
+            | UnifiedEvent::LedStop => {}
         }
     }
 
