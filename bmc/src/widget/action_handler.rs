@@ -68,6 +68,7 @@ pub(crate) fn spawn_action_handler<T: crate::BmcManager>(
                             color,
                             period_ms,
                             duration_ms,
+                            scope,
                         } => {
                             led.on_temporary(
                                 action.instance_id,
@@ -76,6 +77,7 @@ pub(crate) fn spawn_action_handler<T: crate::BmcManager>(
                                 color,
                                 period_ms,
                                 duration_ms,
+                                scope,
                             );
                         }
                         ActionPayload::LedEndless {
@@ -83,6 +85,7 @@ pub(crate) fn spawn_action_handler<T: crate::BmcManager>(
                             effect,
                             color,
                             period_ms,
+                            scope,
                         } => {
                             led.on_endless(
                                 action.instance_id,
@@ -90,6 +93,7 @@ pub(crate) fn spawn_action_handler<T: crate::BmcManager>(
                                 effect,
                                 color,
                                 period_ms,
+                                scope,
                             );
                         }
                         ActionPayload::StopLed { request_id } => {

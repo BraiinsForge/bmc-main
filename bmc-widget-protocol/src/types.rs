@@ -224,6 +224,13 @@ pub enum LedEffect {
     Solid,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LedScope {
+    Local,
+    Global,
+}
+
 /// Widget-allocated identifier for a single LED request.
 ///
 /// The widget owns its own u32 namespace per surface; uniqueness on the
@@ -272,12 +279,14 @@ pub enum ActionPayload {
         color: RgbColor,
         period_ms: u32,
         duration_ms: u32,
+        scope: LedScope,
     },
     LedEndless {
         request_id: LedRequestId,
         effect: LedEffect,
         color: RgbColor,
         period_ms: u32,
+        scope: LedScope,
     },
     StopLed {
         /// `0` (== [`LED_REQUEST_ID_ALL`]) cancels every outstanding
@@ -335,6 +344,7 @@ mod tests {
             color: RgbColor { r: 255, g: 0, b: 0 },
             period_ms: 750,
             duration_ms: 5000,
+            scope: LedScope::Local,
         };
         let json = serde_json::to_value(&action).expect("BUG: serialization should not fail");
         assert_eq!(json["name"], "led_temporary");
@@ -345,6 +355,7 @@ mod tests {
         assert_eq!(json["payload"]["color"]["b"], 0);
         assert_eq!(json["payload"]["period_ms"], 750);
         assert_eq!(json["payload"]["duration_ms"], 5000);
+        assert_eq!(json["payload"]["scope"], "local");
     }
 
     #[test]
@@ -354,6 +365,7 @@ mod tests {
             effect: LedEffect::Solid,
             color: RgbColor { r: 0, g: 255, b: 0 },
             period_ms: 0,
+            scope: LedScope::Global,
         };
         let json = serde_json::to_value(&action).expect("BUG: serialization should not fail");
         assert_eq!(json["name"], "led_endless");
@@ -361,6 +373,7 @@ mod tests {
         assert_eq!(json["payload"]["effect"], "solid");
         assert_eq!(json["payload"]["color"]["g"], 255);
         assert_eq!(json["payload"]["period_ms"], 0);
+        assert_eq!(json["payload"]["scope"], "global");
     }
 
     #[test]
