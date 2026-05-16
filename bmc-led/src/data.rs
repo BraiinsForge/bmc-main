@@ -16,37 +16,6 @@ impl Rgb {
     }
 }
 
-/// Bare-discriminant view of [`LedEffect`] used as the wire-format kind byte
-/// between the wasm SDK guest and the host.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-#[repr(u8)]
-pub enum LedEffectKind {
-    None = 0,
-    Chase = 1,
-    KnightRider = 2,
-    Scan = 3,
-    Snake = 4,
-    Breathe = 5,
-    Solid = 6,
-}
-
-impl TryFrom<u8> for LedEffectKind {
-    type Error = u8;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(Self::None),
-            1 => Ok(Self::Chase),
-            2 => Ok(Self::KnightRider),
-            3 => Ok(Self::Scan),
-            4 => Ok(Self::Snake),
-            5 => Ok(Self::Breathe),
-            6 => Ok(Self::Solid),
-            other => Err(other),
-        }
-    }
-}
-
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
 pub enum LedEffect {
     #[default]
