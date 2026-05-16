@@ -13,6 +13,7 @@ use std::path::Path;
 use bmc_nix::manifest::read_manifest;
 use bmc_nix::types::*;
 use common::{create_activation_entrypoint, create_fake_store, test_resolved_package};
+use serial_test::serial;
 use tempfile::TempDir;
 
 /// Apply the upgrade plan to `profile_dir`: build a new generation, activate
@@ -42,6 +43,7 @@ async fn apply_plan(profile_dir: &Path, plan: &UpgradePlan) -> ProfileGeneration
 ///
 /// Mirrors: `Commands::AddPackages` with an empty profile dir.
 #[tokio::test]
+#[serial]
 async fn add_packages_to_empty_profile() {
     let tmp = TempDir::new().expect("BUG: create temp dir");
     let profile_dir = tmp.path().join("profiles/bmc");
@@ -96,6 +98,7 @@ async fn add_packages_to_empty_profile() {
 ///
 /// Mirrors: `Commands::AddPackages` on a profile that was previously built.
 #[tokio::test]
+#[serial]
 async fn add_packages_to_existing_profile() {
     let tmp = TempDir::new().expect("BUG: create temp dir");
     let profile_dir = tmp.path().join("profiles/bmc");
@@ -158,6 +161,7 @@ async fn add_packages_to_existing_profile() {
 /// Mirrors: `Commands::AddPackages` where the package name matches an existing
 /// entry — `compute_upgrade_plan` treats this as a replacement.
 #[tokio::test]
+#[serial]
 async fn add_packages_replaces_existing() {
     let tmp = TempDir::new().expect("BUG: create temp dir");
     let profile_dir = tmp.path().join("profiles/bmc");
@@ -225,6 +229,7 @@ async fn add_packages_replaces_existing() {
 ///
 /// Mirrors: `Commands::RemovePackages`.
 #[tokio::test]
+#[serial]
 async fn remove_packages_from_profile() {
     let tmp = TempDir::new().expect("BUG: create temp dir");
     let profile_dir = tmp.path().join("profiles/bmc");
@@ -284,6 +289,7 @@ async fn remove_packages_from_profile() {
 ///
 /// Mirrors: `Commands::RemovePackages` with a name not present in the manifest.
 #[tokio::test]
+#[serial]
 async fn remove_nonexistent_package_errors() {
     let tmp = TempDir::new().expect("BUG: create temp dir");
     let profile_dir = tmp.path().join("profiles/bmc");
@@ -325,6 +331,7 @@ async fn remove_nonexistent_package_errors() {
 /// Mirrors: `Commands::ResetProfile` — uses an empty manifest so existing
 /// packages are not merged in.
 #[tokio::test]
+#[serial]
 async fn reset_profile_ignores_existing_manifest() {
     let tmp = TempDir::new().expect("BUG: create temp dir");
     let profile_dir = tmp.path().join("profiles/bmc");
@@ -395,6 +402,7 @@ async fn reset_profile_ignores_existing_manifest() {
 /// generation: the plan diff is empty, so `apply_profile_change` skips the
 /// rebuild entirely.
 #[tokio::test]
+#[serial]
 async fn add_packages_noop_skips_generation() {
     let tmp = TempDir::new().expect("BUG: create temp dir");
     let profile_dir = tmp.path().join("profiles/bmc");
@@ -452,6 +460,7 @@ async fn add_packages_noop_skips_generation() {
 /// `add-packages` with the same name in both add and remove lists is rejected
 /// at plan-computation time.
 #[tokio::test]
+#[serial]
 async fn compute_plan_rejects_add_and_remove_same_name() {
     let tmp = TempDir::new().expect("BUG: create temp dir");
     let profile_dir = tmp.path().join("profiles/bmc");
@@ -497,6 +506,7 @@ async fn compute_plan_rejects_add_and_remove_same_name() {
 /// Build two generations and activate gen 1. With `--base latest` (gen 2),
 /// a new gen is built diffed against gen 2's manifest — not gen 1's.
 #[tokio::test]
+#[serial]
 async fn add_packages_with_base_latest_uses_latest_not_current() {
     let tmp = TempDir::new().expect("BUG: create temp dir");
     let profile_dir = tmp.path().join("profiles/bmc");
@@ -566,6 +576,7 @@ async fn add_packages_with_base_latest_uses_latest_not_current() {
 
 /// `--base 1` (explicit N) diffs against that specific generation.
 #[tokio::test]
+#[serial]
 async fn add_packages_with_base_generation_n_uses_specific_generation() {
     let tmp = TempDir::new().expect("BUG: tempdir");
     let profile_dir = tmp.path().join("profiles/bmc");
@@ -625,6 +636,7 @@ async fn add_packages_with_base_generation_n_uses_specific_generation() {
 
 /// `--base 42` when generation 42 doesn't exist errors explicitly.
 #[tokio::test]
+#[serial]
 async fn base_with_nonexistent_generation_errors() {
     let tmp = TempDir::new().expect("BUG: tempdir");
     let profile_dir = tmp.path().join("profiles/bmc");
@@ -647,6 +659,7 @@ async fn base_with_nonexistent_generation_errors() {
 /// Default base path with a broken `current` symlink falls back to latest —
 /// the new generation must diff against latest, not against an empty base.
 #[tokio::test]
+#[serial]
 async fn add_packages_default_base_falls_back_to_latest_when_current_missing() {
     let tmp = TempDir::new().expect("BUG: tempdir");
     let profile_dir = tmp.path().join("profiles/bmc");

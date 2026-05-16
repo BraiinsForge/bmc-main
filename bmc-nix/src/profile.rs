@@ -482,6 +482,8 @@ pub async fn activate_profile(
 mod tests {
     use std::os::unix::fs::PermissionsExt;
 
+    use serial_test::serial;
+
     use super::*;
     use crate::types::{InstalledBy, Manifest, PinStrategy};
 
@@ -615,6 +617,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn build_profile_creates_generation() {
         let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
 
@@ -765,6 +768,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn empty_packages_succeeds() {
         let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
         let profile_dir = tmp.path().join("bmc");
@@ -794,6 +798,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn activate_profile_runs_entrypoint() {
         let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
         let profile_dir = tmp.path().join("bmc");
@@ -837,6 +842,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn activate_profile_does_not_set_activation_has_profile_lock_without_lock() {
         let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
         let profile_dir = tmp.path().join("bmc");
@@ -879,6 +885,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn activate_profile_sets_activation_has_profile_lock_when_lock_is_passed() {
         let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
         let profile_dir = tmp.path().join("bmc");
@@ -929,6 +936,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn activate_profile_fails_without_entrypoint() {
         let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
         let profile_dir = tmp.path().join("bmc");

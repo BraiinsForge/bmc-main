@@ -147,6 +147,8 @@ mod tests {
     use std::process::{Child, Command, Output};
     use std::time::{Duration, Instant};
 
+    use serial_test::serial;
+
     struct TestEnv {
         _tempdir: tempfile::TempDir,
         old_generation: PathBuf,
@@ -279,6 +281,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn entrypoint_defaults_both_generation_env_vars_when_unset() {
         let test_env = prepare_test_env();
 
@@ -296,6 +299,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn entrypoint_preserves_both_generation_env_vars_when_provided() {
         let test_env = prepare_test_env();
         let explicit_new = test_env.new_generation.join("explicit-new");
@@ -315,6 +319,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn entrypoint_exports_activation_entrypoint_pid() {
         let entrypoint = super::write_entrypoint(&[String::from("10-capture-env")]);
 
@@ -329,6 +334,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn entrypoint_skips_locking_when_activation_has_profile_lock_is_set() {
         let entrypoint = super::write_entrypoint(&[String::from("10-capture-env")]);
 
@@ -339,6 +345,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn entrypoint_acquires_profile_lock_nonblocking_when_not_prelocked() {
         let entrypoint = super::write_entrypoint(&[String::from("10-capture-env")]);
 
@@ -353,6 +360,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn entrypoint_holds_profile_lock_while_activation_scripts_run() {
         let tempdir = tempfile::tempdir().expect("BUG: should create tempdir");
         let profile_dir = tempdir.path().join("profile");
@@ -398,6 +406,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn entrypoint_fails_when_profile_lock_is_held_and_not_prelocked() {
         let test_env = prepare_test_env();
         let profile_dir = test_env
@@ -420,6 +429,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn entrypoint_succeeds_when_profile_lock_is_held_and_reported_prelocked() {
         let test_env = prepare_test_env();
         let profile_dir = test_env
@@ -442,6 +452,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn entrypoint_derives_old_generation_when_only_new_is_provided() {
         let test_env = prepare_test_env();
 
@@ -459,6 +470,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn entrypoint_clears_old_generation_when_current_target_does_not_exist() {
         let test_env = prepare_test_env();
         let profile_dir = test_env
@@ -477,6 +489,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn entrypoint_derives_new_generation_when_only_old_is_provided() {
         let test_env = prepare_test_env();
         let explicit_old = test_env.old_generation.join("explicit-old");

@@ -117,6 +117,8 @@ pub async fn run_hooks(
 mod tests {
     use std::os::unix::fs::OpenOptionsExt;
 
+    use serial_test::serial;
+
     use super::*;
 
     fn create_hook_script(dir: &Path, name: &str, content: &str) {
@@ -138,6 +140,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn run_hooks_executes_in_order() {
         let tmp = tempfile::tempdir().expect("BUG: create tempdir");
         let gen_path = tmp.path().join("gen-1");
@@ -167,6 +170,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn empty_hooks_dir_succeeds() {
         let tmp = tempfile::tempdir().expect("BUG: create tempdir");
         let gen_path = tmp.path().join("gen-1");
@@ -178,6 +182,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn missing_hooks_dir_succeeds() {
         let tmp = tempfile::tempdir().expect("BUG: create tempdir");
         let gen_path = tmp.path().join("gen-1");
@@ -189,6 +194,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn hook_failure_propagates_error() {
         let tmp = tempfile::tempdir().expect("BUG: create tempdir");
         let gen_path = tmp.path().join("gen-1");
@@ -215,6 +221,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn hooks_receive_generation_env() {
         let tmp = tempfile::tempdir().expect("BUG: create tempdir");
         let gen_path = tmp.path().join("gen-1");

@@ -294,6 +294,7 @@ semver = { version = "1.0.26", features = ["serde"] }
 serde = { version = "1.0.218", features = ["derive", "rc"] }
 serde_json = "1.0.149"
 serde_with = { version = "3.14.0", default-features = false, features = ["macros"] }
+serial_test = "3.2.0"
 sevenz-rust2 = { version = "0.20", features = ["compress", "util"] }
 sha2 = "0.10.9"
 signal-hook = { version = "0.3", default-features = false, features = ["iterator"] }
