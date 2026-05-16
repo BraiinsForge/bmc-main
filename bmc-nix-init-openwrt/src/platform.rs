@@ -4,7 +4,7 @@ use std::net::IpAddr;
 use std::path::Path;
 
 use bmc_led::data::LedEvent;
-use bmc_led::led_driver::LedEventHandler;
+use bmc_led::led_driver::spawn_led_event_loop;
 use bmc_nix::profile;
 use bmc_nix_init::config::InitConfig;
 use bmc_nix_init::init::{EncryptionType, InitError, InitPlatform, WifiScanItem};
@@ -35,8 +35,7 @@ impl OpenwrtPlatform {
         use bmc_led::led_driver::LedDriverFactory as _;
         let led_driver =
             bmc_led::apa102_spi::platform_led_driver::PlatformLedDriver::new("/dev/spidev0.0");
-        let mut handler = LedEventHandler::default();
-        handler.init(led_driver.0.command_sender)
+        spawn_led_event_loop(led_driver.0.command_sender)
     }
 
     /// Get or lazily initialize the WiFi manager.
