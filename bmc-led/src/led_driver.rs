@@ -56,11 +56,6 @@ impl LedDriver {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct LedEventHandler {
-    pub event_sender: Option<Sender<data::LedEvent>>,
-}
-
 #[derive(Debug, Default, Clone)]
 pub struct LedIndicatorsState {
     wifi_persist: Option<LedCommand>,
@@ -245,36 +240,92 @@ impl LedIndicatorsState {
     }
 }
 
-impl LedEventHandler {
-    #[must_use]
-    pub fn init(&mut self, command_sender: Sender<LedCommand>) -> Sender<data::LedEvent> {
-        let (sender, mut receiver) = tokio::sync::mpsc::channel(EVENT_BUFFER_SIZE);
-        self.event_sender = Some(sender.clone());
+/// Spawn the `LedIndicatorsState`-driven event loop and return its
+/// event sender.
+///
+/// The loop receives [`LedEvent`]s on the returned channel, folds them
+/// into a `LedIndicatorsState`, and forwards the arbitrated scene as a
+/// `LedCommand::SetEffect` on `command_sender`.
+///
+/// Used by `bmc-nix-init-openwrt` to drive system indicators during
+/// the one-shot init flow without pulling in the full `LedCoordinator`
+/// machinery from `bmc`. The bmc daemon path uses `LedController` +
+/// `LedCoordinator` directly and does not call this.
+#[must_use]
+pub fn spawn_led_event_loop(command_sender: Sender<LedCommand>) -> Sender<data::LedEvent> {
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(EVENT_BUFFER_SIZE);
 
-        tokio::spawn(async move {
-            let mut state = LedIndicatorsState::default();
-            let sender = command_sender.clone();
+    tokio::spawn(async move {
+        let mut state = LedIndicatorsState::default();
+        while let Some(event) = receiver.recv().await {
+            debug!("Received LED event: {:?}", event);
 
-            while let Some(event) = receiver.recv().await {
-                debug!("Received LED event: {:?}", event);
+            state.apply_event(event);
 
-                state.apply_event(event);
-
-                if let Some(scene) = state.current_scene() {
-                    let cmd = LedCommand::SetEffect(scene);
-                    if let Err(e) = sender.send(cmd).await {
-                        error!("Failed to send LED command {:?}: {e}", cmd);
-                    }
+            if let Some(scene) = state.current_scene() {
+                let cmd = LedCommand::SetEffect(scene);
+                if let Err(e) = command_sender.send(cmd).await {
+                    error!("Failed to send LED command {:?}: {e}", cmd);
                 }
             }
-        });
+        }
+    });
 
-        sender
+    sender
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LedIndicatorsState;
+    use crate::data::{LedEffect, LedEvent};
+
+    #[test]
+    fn current_scene_is_none_when_nothing_set() {
+        let mut state = LedIndicatorsState::new();
+        assert!(state.current_scene().is_none());
     }
 
-    pub fn push_event(&self, event: data::LedEvent) {
-        if let Some(sender) = &self.event_sender {
-            let _ = sender.try_send(event);
+    #[test]
+    fn current_scene_reports_persistent_repeatably() {
+        let mut state = LedIndicatorsState::new();
+        state.apply_event(LedEvent::WifiConnecting);
+
+        // A persistent indicator is not consumed: it reports the same scene
+        // on every poll until something clears it.
+        for _ in 0..2 {
+            let scene = state
+                .current_scene()
+                .expect("BUG: wifi-connecting must drive the system layer");
+            assert!(matches!(scene.effect, LedEffect::KnightRider(_)));
+            assert!(scene.duration.is_none());
         }
+    }
+
+    #[test]
+    fn current_scene_temp_is_one_shot_then_falls_back_to_persistent() {
+        let mut state = LedIndicatorsState::new();
+        // A persistent system indicator underneath, plus a one-shot success temp.
+        state.apply_event(LedEvent::DownloadOrUpgradeStarted);
+        state.apply_event(LedEvent::WifiConnected);
+
+        let temp = state.current_scene().expect("BUG: temp must show first");
+        assert!(matches!(temp.effect, LedEffect::Solid(_)));
+        assert!(temp.duration.is_some(), "a temp carries its duration");
+
+        // The temp is consumed; the next poll falls back to the persistent.
+        let persistent = state
+            .current_scene()
+            .expect("BUG: persistent must remain once the temp is consumed");
+        assert!(matches!(persistent.effect, LedEffect::KnightRider(_)));
+        assert!(persistent.duration.is_none());
+    }
+
+    #[test]
+    fn current_scene_filters_none_effect_to_none() {
+        let mut state = LedIndicatorsState::new();
+        // `WifiNone` parks a `None`-effect persistent; the system layer must
+        // report `None` so lower layers show through instead of being masked.
+        state.apply_event(LedEvent::WifiNone);
+        assert!(state.current_scene().is_none());
     }
 }
