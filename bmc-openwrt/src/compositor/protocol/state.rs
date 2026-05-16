@@ -195,7 +195,7 @@ impl DeckWidgetProtocolState {
             pending
                 .instance_id_lock
                 .lock()
-                .expect("BUG: instance_id lock poisoned")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone_from(instance_id);
             self.attach_surface(instance_id, pending.wl_surface, pending.protocol_surface);
 
@@ -531,9 +531,7 @@ fn led_request_status_to_protocol(
         LedRequestStatus::Accepted => P::Accepted,
         LedRequestStatus::Rejected => P::Rejected,
         LedRequestStatus::Superseded => P::Superseded,
-        LedRequestStatus::Completed => P::Completed,
-        LedRequestStatus::Suspended => P::Suspended,
-        LedRequestStatus::Resumed => P::Resumed,
+        LedRequestStatus::Expired => P::Expired,
     }
 }
 

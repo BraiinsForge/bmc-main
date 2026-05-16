@@ -155,7 +155,7 @@ where
                     );
                     instance_id_lock
                         .lock()
-                        .expect("BUG: instance_id lock poisoned")
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .clone_from(&instance_id);
                     protocol_state.attach_surface(&instance_id, surface, widget_surface.clone());
                     protocol_state.emit_initial_state(&instance_id, &widget_surface);
@@ -204,7 +204,7 @@ where
         let instance_id = data
             .instance_id
             .lock()
-            .expect("BUG: instance_id lock poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         if instance_id.is_empty() {
             tracing::warn!("Received request on unresolved widget surface; ignoring");

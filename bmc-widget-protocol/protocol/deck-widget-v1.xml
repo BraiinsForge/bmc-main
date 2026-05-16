@@ -86,7 +86,7 @@
         `request_id` is a widget-allocated identifier; the compositor
         replies with a `led_request_status` event whose `request_id`
         echoes this value as the request progresses (accepted, then
-        eventually completed or superseded). The widget's namespace is
+        eventually expired or superseded). The widget's namespace is
         scoped to its own surface — different widgets can reuse the
         same numeric value without collision. The value 0 is reserved
         for stop-all semantics on `stop_led` and must not be used here.
@@ -313,23 +313,18 @@
           - rejected:   the compositor refused the request without
                         running it. Reserved for a future permissions
                         layer; current implementations only emit
-                        accepted/suspended/resumed/superseded/completed.
-          - suspended:  another widget's `led_endless` is now on top of
-                        this one; this request is paused and may resume
-                        later if the suspending request stops.
-          - resumed:    this request is back on top after being
-                        suspended; the strip is once again driven by it
-                        (subject to scene visibility).
-          - superseded: the request was cancelled and will not resume —
-                        either by `stop_led`, by the same widget
-                        replacing it with a new `led_endless`, or by the
-                        widget disconnecting.
-          - completed:  a `led_temporary` ran for its full duration.
+                        accepted/superseded/expired.
+          - superseded: an endless was displaced from its tier — by
+                        `stop_led`, by another endless landing on the
+                        same tier (the previous holder loses the slot
+                        and will not come back), or by the widget
+                        disconnecting.
+          - expired:    a `led_temporary`'s duration ran out on its
+                        logical-time schedule. Fires whether or not the
+                        strip was showing the effect at the moment.
 
-        `led_endless` requests never receive `completed`; they end with
-        `superseded` once cancelled, or may ping-pong between
-        `suspended` and `resumed` as other endless requests come and go
-        on top.
+        `led_endless` requests never receive `expired`; they end with
+        `superseded` once displaced or cancelled.
       </description>
       <arg name="request_id" type="uint" summary="echoed widget request id"/>
       <arg name="status" type="uint" enum="led_request_status"/>
@@ -392,17 +387,15 @@
     </enum>
 
     <enum name="led_scope">
-      <entry name="local" value="0" summary="scene-scoped; pauses or hides when widget's scene is not active"/>
+      <entry name="local" value="0" summary="scene-scoped; hidden while the widget's scene is not active"/>
       <entry name="global" value="1" summary="system-wide; runs when no local effect is active on the strip"/>
     </enum>
 
     <enum name="led_request_status">
       <entry name="accepted" value="0" summary="request entered the queue or became active"/>
       <entry name="rejected" value="1" summary="reserved; compositor refused the request"/>
-      <entry name="superseded" value="2" summary="request was cancelled and will not resume"/>
-      <entry name="completed" value="3" summary="led_temporary ran for its full duration"/>
-      <entry name="suspended" value="4" summary="another endless took the top of the stack; this one is paused"/>
-      <entry name="resumed" value="5" summary="this endless is back on top after being suspended"/>
+      <entry name="superseded" value="2" summary="endless was displaced from its tier and will not come back"/>
+      <entry name="expired" value="3" summary="led_temporary's duration ran out on its logical-time schedule"/>
     </enum>
 
     <enum name="date_format">

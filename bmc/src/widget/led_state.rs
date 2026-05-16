@@ -20,10 +20,6 @@ struct EndlessEntry {
     instance_id: InstanceId,
     request_id: LedRequestId,
     scene: LedScene,
-    /// Set when the entry was pushed below another widget's endless and
-    /// already received `Suspended`. Cleared (and `Resumed` emitted)
-    /// when the entry resurfaces at the top of its stack.
-    suspended_emitted: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -46,7 +42,10 @@ struct RunningTemp {
 
 #[derive(Debug, Default)]
 struct SceneEffectState {
-    endless_stack: Vec<EndlessEntry>,
+    /// Single endless slot per tier. A new endless request displaces
+    /// any prior holder (same widget or different) with `Superseded` —
+    /// last-write-wins; the displaced request does not come back.
+    endless: Option<EndlessEntry>,
     temp_queue: VecDeque<TempEntry>,
     active_temp: Option<RunningTemp>,
 }
@@ -65,7 +64,10 @@ struct PendingTemp {
 
 #[derive(Debug, Default)]
 struct PendingState {
-    endless_stack: Vec<PendingEndless>,
+    /// Single parked endless slot per widget — a parked widget can
+    /// only have one outstanding endless; later requests supersede the
+    /// earlier one with `Superseded` even before the scene activates.
+    endless: Option<PendingEndless>,
     temp_queue: VecDeque<PendingTemp>,
 }
 
@@ -110,12 +112,13 @@ impl LedSceneManager {
 
         // Drain parked requests before `widget_ids` is consumed by the
         // mapping loop below. Sort by seq so cross-widget ordering matches
-        // the order callers issued the requests in.
+        // the order callers issued the requests in — the latest endless
+        // wins the single slot.
         let mut parked_endless: Vec<PendingEndless> = Vec::new();
         let mut parked_temp: Vec<PendingTemp> = Vec::new();
         for widget_id in &widget_ids {
             if let Some(parked) = self.pending.remove(widget_id) {
-                parked_endless.extend(parked.endless_stack);
+                parked_endless.extend(parked.endless);
                 parked_temp.extend(parked.temp_queue);
             }
         }
@@ -128,7 +131,7 @@ impl LedSceneManager {
             .expect("BUG: scene state was just initialised");
         let mut emissions: Vec<(InstanceId, LedRequestId, LedRequestStatus)> = Vec::new();
         for parked in parked_endless {
-            push_endless_into_stack(&mut scene_state.endless_stack, parked.entry, &mut emissions);
+            apply_endless(&mut scene_state.endless, parked.entry, &mut emissions);
         }
         scene_state
             .temp_queue
@@ -202,33 +205,23 @@ impl LedSceneManager {
             instance_id: instance_id.clone(),
             request_id,
             scene: build_scene(effect, color, period_ms, None),
-            suspended_emitted: false,
         };
 
         let mut emissions: Vec<(InstanceId, LedRequestId, LedRequestStatus)> = Vec::new();
         match scope {
             LedScope::Local => {
                 if let Some(scene_id) = self.widget_to_scene.get(&instance_id).copied() {
-                    let stack = &mut self.scenes.entry(scene_id).or_default().endless_stack;
-                    push_endless_into_stack(stack, new_entry, &mut emissions);
+                    let slot = &mut self.scenes.entry(scene_id).or_default().endless;
+                    apply_endless(slot, new_entry, &mut emissions);
                 } else {
                     self.pending_seq += 1;
                     let seq = self.pending_seq;
                     let pending = self.pending.entry(instance_id.clone()).or_default();
-                    push_endless_into_pending(
-                        &mut pending.endless_stack,
-                        new_entry,
-                        seq,
-                        &mut emissions,
-                    );
+                    apply_pending_endless(&mut pending.endless, new_entry, seq, &mut emissions);
                 }
             }
             LedScope::Global => {
-                push_endless_into_stack(
-                    &mut self.global_state.endless_stack,
-                    new_entry,
-                    &mut emissions,
-                );
+                apply_endless(&mut self.global_state.endless, new_entry, &mut emissions);
             }
         }
 
@@ -247,7 +240,6 @@ impl LedSceneManager {
         };
 
         let mut superseded: Vec<(InstanceId, LedRequestId)> = Vec::new();
-        let mut resumed: Vec<(InstanceId, LedRequestId)> = Vec::new();
 
         for state in self
             .scenes
@@ -255,21 +247,17 @@ impl LedSceneManager {
             .chain(std::iter::once(&mut self.global_state))
         {
             sweep_state(state, &matches, &mut superseded);
-            reconcile_endless_top(&mut state.endless_stack, &mut resumed);
         }
 
         if let Some(state) = self.pending.get_mut(instance_id) {
             sweep_pending(state, &matches, &mut superseded);
-            if state.endless_stack.is_empty() && state.temp_queue.is_empty() {
+            if state.endless.is_none() && state.temp_queue.is_empty() {
                 self.pending.remove(instance_id);
             }
         }
 
         for (id, rid) in superseded {
             self.emit(id, rid, LedRequestStatus::Superseded);
-        }
-        for (id, rid) in resumed {
-            self.emit(id, rid, LedRequestStatus::Resumed);
         }
 
         self.refresh_active_scene_effect();
@@ -296,9 +284,7 @@ impl LedSceneManager {
             if referenced.contains(scene_id) || Some(*scene_id) == active {
                 return true;
             }
-            !state.endless_stack.is_empty()
-                || !state.temp_queue.is_empty()
-                || state.active_temp.is_some()
+            state.endless.is_some() || !state.temp_queue.is_empty() || state.active_temp.is_some()
         });
     }
 
@@ -321,7 +307,7 @@ impl LedSceneManager {
         }
 
         for (instance_id, request_id) in expired {
-            self.emit(instance_id, request_id, LedRequestStatus::Completed);
+            self.emit(instance_id, request_id, LedRequestStatus::Expired);
         }
         self.refresh_active_scene_effect();
     }
@@ -330,7 +316,7 @@ impl LedSceneManager {
     /// global tier's `active_temp`. Temps tick in logical time
     /// regardless of which scene is currently active, so the deadline
     /// surface has to cover everything — otherwise a temp in an
-    /// inactive scene would never fire its `Completed`.
+    /// inactive scene would never fire its `Expired`.
     pub(crate) fn active_deadline(&self) -> Option<Instant> {
         self.scenes
             .values()
@@ -382,7 +368,7 @@ impl LedSceneManager {
 ///
 /// Temps tick in logical time once promoted: `until` is set from
 /// `Instant::now() + duration` exactly once and never adjusted. Scene
-/// activity does not affect lifecycle — `Completed` will fire on the
+/// activity does not affect lifecycle — `Expired` will fire on the
 /// schedule the widget asked for whether or not the strip ever showed
 /// the effect.
 fn pick_winner_scene_for_layer(state: &mut SceneEffectState) -> Option<LedScene> {
@@ -397,7 +383,7 @@ fn pick_winner_scene_for_layer(state: &mut SceneEffectState) -> Option<LedScene>
         .active_temp
         .as_ref()
         .map(|t| t.entry.scene)
-        .or_else(|| state.endless_stack.last().map(|entry| entry.scene))
+        .or_else(|| state.endless.as_ref().map(|entry| entry.scene))
 }
 
 /// Remove every entry from a state that matches the given predicate,
@@ -428,93 +414,54 @@ fn sweep_state(
         .collect();
     state.temp_queue = kept_queue;
 
-    let kept_endless: Vec<_> = std::mem::take(&mut state.endless_stack)
-        .into_iter()
-        .filter_map(|entry| {
-            if matches(&entry.instance_id, entry.request_id) {
-                superseded.push((entry.instance_id, entry.request_id));
-                None
-            } else {
-                Some(entry)
-            }
-        })
-        .collect();
-    state.endless_stack = kept_endless;
+    if let Some(entry) = state.endless.take() {
+        if matches(&entry.instance_id, entry.request_id) {
+            superseded.push((entry.instance_id, entry.request_id));
+        } else {
+            state.endless = Some(entry);
+        }
+    }
 }
 
-/// Push a new endless entry onto a scene/global stack, applying the
-/// supersession contract:
-///   - empty stack: pure push, no emissions.
-///   - top is the same widget: that entry is being replaced — pop it,
-///     emit `Superseded`, push the new one.
-///   - top is a different widget: the new one suspends it — push on
-///     top, emit `Suspended` for the prior top (idempotent via
-///     `suspended_emitted`).
-fn push_endless_into_stack(
-    stack: &mut Vec<EndlessEntry>,
+/// Place `new_entry` into the single endless slot, emitting `Superseded`
+/// for any prior holder (same widget or different). Last-write-wins:
+/// the displaced request does not come back, just like a `stop_led` on
+/// it would have done.
+fn apply_endless(
+    slot: &mut Option<EndlessEntry>,
     new_entry: EndlessEntry,
     emissions: &mut Vec<(InstanceId, LedRequestId, LedRequestStatus)>,
 ) {
-    match stack.last() {
-        None => {}
-        Some(prev) if prev.instance_id == new_entry.instance_id => {
-            let popped = stack.pop().expect("BUG: just observed Some");
-            emissions.push((
-                popped.instance_id,
-                popped.request_id,
-                LedRequestStatus::Superseded,
-            ));
-        }
-        Some(_) => {
-            let top = stack.last_mut().expect("BUG: just observed Some");
-            if !top.suspended_emitted {
-                emissions.push((
-                    top.instance_id.clone(),
-                    top.request_id,
-                    LedRequestStatus::Suspended,
-                ));
-                top.suspended_emitted = true;
-            }
-        }
+    if let Some(prev) = slot.take() {
+        emissions.push((
+            prev.instance_id,
+            prev.request_id,
+            LedRequestStatus::Superseded,
+        ));
     }
-    stack.push(new_entry);
+    *slot = Some(new_entry);
 }
 
-/// Pending-state stacks are keyed per-widget, so every push is a
-/// same-widget self-replace. Pop the prior top (if any) with
-/// `Superseded` and push the new entry. No `Suspended`/`Resumed` can
-/// arise in pending because there are no other widgets here.
-fn push_endless_into_pending(
-    stack: &mut Vec<PendingEndless>,
+/// Pending endless slots are keyed per-widget, so any push from the
+/// same widget is a self-replace. Drop the prior slot (if any) with
+/// `Superseded` and store the new entry under the latest seq.
+fn apply_pending_endless(
+    slot: &mut Option<PendingEndless>,
     new_entry: EndlessEntry,
     seq: u64,
     emissions: &mut Vec<(InstanceId, LedRequestId, LedRequestStatus)>,
 ) {
-    if let Some(popped) = stack.pop() {
+    if let Some(prev) = slot.take() {
         emissions.push((
-            popped.entry.instance_id,
-            popped.entry.request_id,
+            prev.entry.instance_id,
+            prev.entry.request_id,
             LedRequestStatus::Superseded,
         ));
     }
-    stack.push(PendingEndless {
+    *slot = Some(PendingEndless {
         entry: new_entry,
         seq,
     });
-}
-
-/// If the top of `stack` is an entry that previously received
-/// `Suspended`, clear the flag and report it as ready for `Resumed`.
-fn reconcile_endless_top(
-    stack: &mut [EndlessEntry],
-    resumed: &mut Vec<(InstanceId, LedRequestId)>,
-) {
-    if let Some(top) = stack.last_mut()
-        && top.suspended_emitted
-    {
-        resumed.push((top.instance_id.clone(), top.request_id));
-        top.suspended_emitted = false;
-    }
 }
 
 fn sweep_pending(
@@ -522,14 +469,13 @@ fn sweep_pending(
     matches: &impl Fn(&str, LedRequestId) -> bool,
     superseded: &mut Vec<(InstanceId, LedRequestId)>,
 ) {
-    state.endless_stack.retain(|p| {
-        if matches(&p.entry.instance_id, p.entry.request_id) {
-            superseded.push((p.entry.instance_id.clone(), p.entry.request_id));
-            false
+    if let Some(parked) = state.endless.take() {
+        if matches(&parked.entry.instance_id, parked.entry.request_id) {
+            superseded.push((parked.entry.instance_id, parked.entry.request_id));
         } else {
-            true
+            state.endless = Some(parked);
         }
-    });
+    }
     state.temp_queue.retain(|p| {
         if matches(&p.entry.instance_id, p.entry.request_id) {
             superseded.push((p.entry.instance_id.clone(), p.entry.request_id));
@@ -541,7 +487,7 @@ fn sweep_pending(
 }
 
 /// If the state's `active_temp` is `Running` with `until <= now`, take it
-/// and return the request's identity for `Completed` emission.
+/// and return the request's identity for `Expired` emission.
 fn expire_state_if_due(
     state: &mut SceneEffectState,
     now: Instant,
@@ -692,7 +638,7 @@ mod tests {
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].instance_id, widget);
         assert_eq!(statuses[0].request_id, 11);
-        assert_eq!(statuses[0].status, LedRequestStatus::Completed);
+        assert_eq!(statuses[0].status, LedRequestStatus::Expired);
         assert_eq!(active_temp_request_id(&h, scene), None);
     }
 
@@ -730,7 +676,7 @@ mod tests {
         let statuses = h.drain_statuses();
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].request_id, 21);
-        assert_eq!(statuses[0].status, LedRequestStatus::Completed);
+        assert_eq!(statuses[0].status, LedRequestStatus::Expired);
         assert_eq!(active_temp_request_id(&h, scene), Some(22));
     }
 
@@ -781,7 +727,7 @@ mod tests {
         let statuses = h.drain_statuses();
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].request_id, 33);
-        assert_eq!(statuses[0].status, LedRequestStatus::Completed);
+        assert_eq!(statuses[0].status, LedRequestStatus::Expired);
         assert_eq!(active_temp_request_id(&h, scene), None);
         assert_eq!(
             h.manager.applied_local,
@@ -901,6 +847,8 @@ mod tests {
 
     #[test]
     fn widget_stop_only_cancels_own_requests() {
+        // A on Local, B on Global so they coexist on separate tiers.
+        // Stopping A must cancel only A's endless — B's slot stays.
         let mut h = Harness::new();
         let scene = scene_id();
         let widget_a = instance_id("a");
@@ -922,7 +870,7 @@ mod tests {
             ProtoLedEffect::Solid,
             rgb(0, 1, 0),
             0,
-            LedScope::Local,
+            LedScope::Global,
         );
         h.drain_statuses();
 
@@ -1028,7 +976,7 @@ mod tests {
         let statuses = h.drain_statuses();
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].request_id, 600);
-        assert_eq!(statuses[0].status, LedRequestStatus::Completed);
+        assert_eq!(statuses[0].status, LedRequestStatus::Expired);
         assert_eq!(global_active_temp_request_id(&h), Some(500));
         assert_eq!(h.manager.applied_local, None);
 
@@ -1039,7 +987,7 @@ mod tests {
         let statuses = h.drain_statuses();
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].request_id, 500);
-        assert_eq!(statuses[0].status, LedRequestStatus::Completed);
+        assert_eq!(statuses[0].status, LedRequestStatus::Expired);
     }
 
     #[test]
@@ -1102,10 +1050,10 @@ mod tests {
     }
 
     #[test]
-    fn same_widget_endless_replace_supersedes_with_no_fallback() {
-        // A widget replacing its own endless is a true cancellation —
-        // the previous request gets `Superseded` and is gone. Stopping
-        // the new one clears the strip (no resurrection of the old).
+    fn endless_replace_supersedes_with_no_fallback() {
+        // Two endlesses on the same tier from the same widget: the
+        // first gets `Superseded` and is gone. Stopping the second
+        // clears the strip — no resurrection of the first.
         let mut h = Harness::new();
         let scene = scene_id();
         let widget = instance_id("stack");
@@ -1133,13 +1081,7 @@ mod tests {
             statuses
                 .iter()
                 .any(|s| s.request_id == 901 && s.status == LedRequestStatus::Superseded),
-            "same-widget replacement must Supersede the prior endless: {statuses:?}"
-        );
-        assert!(
-            !statuses
-                .iter()
-                .any(|s| s.status == LedRequestStatus::Suspended),
-            "same-widget replacement must not emit Suspended: {statuses:?}"
+            "replacement must Supersede the prior endless: {statuses:?}"
         );
         assert_eq!(
             h.manager.applied_global,
@@ -1154,19 +1096,15 @@ mod tests {
                 .any(|s| s.request_id == 902 && s.status == LedRequestStatus::Superseded),
             "stopping 902 must emit Superseded(902): {statuses:?}"
         );
-        assert!(
-            !statuses
-                .iter()
-                .any(|s| s.status == LedRequestStatus::Resumed),
-            "no Resumed should fire — 901 was already cancelled, not suspended: {statuses:?}"
-        );
         assert_eq!(h.manager.applied_global, None);
     }
 
     #[test]
-    fn cross_widget_endless_suspends_and_resumes() {
-        // Widget A then Widget B push endless on the same tier. B
-        // suspends A; stopping B brings A back via Resumed.
+    fn cross_widget_endless_last_writer_wins_and_supersedes_prior() {
+        // Widget B's endless lands on a tier already held by widget A.
+        // A is displaced with `Superseded` (not paused — there is no
+        // suspend/resume any more); the strip shows B. Stopping B
+        // clears the tier; A does not come back.
         let mut h = Harness::new();
         let scene = scene_id();
         let widget_a = instance_id("a");
@@ -1197,14 +1135,8 @@ mod tests {
         assert!(
             statuses.iter().any(|s| s.instance_id == widget_a
                 && s.request_id == 10
-                && s.status == LedRequestStatus::Suspended),
-            "A's endless must be Suspended when B lands on top: {statuses:?}"
-        );
-        assert!(
-            !statuses
-                .iter()
-                .any(|s| s.request_id == 10 && s.status == LedRequestStatus::Superseded),
-            "A's endless must NOT be Superseded — it can still come back: {statuses:?}"
+                && s.status == LedRequestStatus::Superseded),
+            "A's endless must be Superseded when B claims the tier: {statuses:?}"
         );
         assert_eq!(
             h.manager.applied_global,
@@ -1220,82 +1152,9 @@ mod tests {
                 .any(|s| s.request_id == 20 && s.status == LedRequestStatus::Superseded),
             "B's endless must be Superseded when stopped: {statuses:?}"
         );
-        assert!(
-            statuses.iter().any(|s| s.instance_id == widget_a
-                && s.request_id == 10
-                && s.status == LedRequestStatus::Resumed),
-            "A's endless must be Resumed when B leaves the top: {statuses:?}"
-        );
         assert_eq!(
-            h.manager.applied_global,
-            Some(build_scene(ProtoLedEffect::Solid, rgb(1, 0, 0), 0, None))
-        );
-    }
-
-    #[test]
-    fn cross_widget_endless_three_deep_resumes_in_order() {
-        // A, B, C on the same tier. B suspends A; C suspends B. Stopping
-        // C resumes B (not A). Stopping B then resumes A.
-        let mut h = Harness::new();
-        let scene = scene_id();
-        let widget_a = instance_id("a");
-        let widget_b = instance_id("b");
-        let widget_c = instance_id("c");
-
-        h.manager.on_scene_changed(
-            scene,
-            vec![widget_a.clone(), widget_b.clone(), widget_c.clone()],
-        );
-        h.manager.on_endless(
-            widget_a.clone(),
-            1,
-            ProtoLedEffect::Solid,
-            rgb(1, 0, 0),
-            0,
-            LedScope::Global,
-        );
-        h.manager.on_endless(
-            widget_b.clone(),
-            2,
-            ProtoLedEffect::Solid,
-            rgb(0, 1, 0),
-            0,
-            LedScope::Global,
-        );
-        h.manager.on_endless(
-            widget_c.clone(),
-            3,
-            ProtoLedEffect::Solid,
-            rgb(0, 0, 1),
-            0,
-            LedScope::Global,
-        );
-        h.drain_statuses();
-
-        // C goes away → B resumes, A stays suspended.
-        h.manager.on_stop(&widget_c, 3);
-        let statuses = h.drain_statuses();
-        assert!(
-            statuses
-                .iter()
-                .any(|s| s.request_id == 2 && s.status == LedRequestStatus::Resumed),
-            "B must Resume when C is stopped: {statuses:?}"
-        );
-        assert!(
-            !statuses
-                .iter()
-                .any(|s| s.request_id == 1 && s.status == LedRequestStatus::Resumed),
-            "A must stay Suspended — only the top changed: {statuses:?}"
-        );
-
-        // B goes away → A resumes.
-        h.manager.on_stop(&widget_b, 2);
-        let statuses = h.drain_statuses();
-        assert!(
-            statuses
-                .iter()
-                .any(|s| s.request_id == 1 && s.status == LedRequestStatus::Resumed),
-            "A must Resume when B is stopped: {statuses:?}"
+            h.manager.applied_global, None,
+            "A must not resurrect: {statuses:?}"
         );
     }
 
@@ -1356,55 +1215,6 @@ mod tests {
         );
         h.manager.on_widget_disconnected(&widget_b);
         assert!(h.manager.scenes.contains_key(&scene));
-    }
-
-    #[test]
-    fn widget_disconnect_resumes_underlying_endless() {
-        // Widget A is suspended by widget B. B disconnects → A resumes.
-        let mut h = Harness::new();
-        let scene = scene_id();
-        let widget_a = instance_id("a");
-        let widget_b = instance_id("b");
-
-        h.manager
-            .on_scene_changed(scene, vec![widget_a.clone(), widget_b.clone()]);
-        h.manager.on_endless(
-            widget_a.clone(),
-            10,
-            ProtoLedEffect::Solid,
-            rgb(1, 0, 0),
-            0,
-            LedScope::Global,
-        );
-        h.manager.on_endless(
-            widget_b.clone(),
-            20,
-            ProtoLedEffect::Solid,
-            rgb(0, 1, 0),
-            0,
-            LedScope::Global,
-        );
-        h.drain_statuses();
-
-        h.manager.on_widget_disconnected(&widget_b);
-
-        let statuses = h.drain_statuses();
-        assert!(
-            statuses
-                .iter()
-                .any(|s| s.request_id == 20 && s.status == LedRequestStatus::Superseded),
-            "B's endless must be Superseded on disconnect: {statuses:?}"
-        );
-        assert!(
-            statuses
-                .iter()
-                .any(|s| s.request_id == 10 && s.status == LedRequestStatus::Resumed),
-            "A's endless must be Resumed when B disconnects: {statuses:?}"
-        );
-        assert_eq!(
-            h.manager.applied_global,
-            Some(build_scene(ProtoLedEffect::Solid, rgb(1, 0, 0), 0, None))
-        );
     }
 
     #[test]
