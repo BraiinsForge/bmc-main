@@ -15,7 +15,7 @@ use crate::egl::DmaBufInfo;
 
 /// Re-export so widgets can match on setting variants without depending on
 /// `bmc-widget-protocol` directly.
-pub use bmc_widget_protocol::SettingUpdate;
+pub use bmc_widget_protocol::{LifecycleState, SettingUpdate};
 
 /// Re-export the deadline-aware dispatch helper from [`crate::poll`] so the
 /// surface clients can keep importing it as `super::common::poll_dispatch`.
@@ -108,6 +108,8 @@ pub enum WidgetEvent {
     },
     /// Touch sequence cancelled (standard Wayland `wl_touch`).
     TouchCancel,
+    /// Compositor published a new lifecycle state for this widget.
+    Lifecycle(bmc_widget_protocol::LifecycleState),
 }
 
 /// Common interface for widget surface clients.

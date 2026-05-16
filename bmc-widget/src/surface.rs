@@ -11,7 +11,7 @@ mod common;
 mod deck_widget;
 mod xdg;
 
-pub use common::{PollOutcome, SettingUpdate, WidgetEvent, WidgetSurface};
+pub use common::{LifecycleState, PollOutcome, SettingUpdate, WidgetEvent, WidgetSurface};
 pub use deck_widget::{
     DeckWidgetEvent, DeckWidgetSurfaceClient, DeckWidgetSurfaceState, InitialState,
 };

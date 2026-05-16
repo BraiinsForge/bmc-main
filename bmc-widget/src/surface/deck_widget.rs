@@ -60,6 +60,23 @@ pub enum DeckWidgetEvent {
     },
     /// Touch cancelled from standard `wl_touch`.
     TouchCancel,
+    /// Compositor published a new lifecycle state for this widget.
+    Lifecycle(bmc_widget_protocol::LifecycleState),
+}
+
+impl From<DeckWidgetEvent> for WidgetEvent {
+    fn from(event: DeckWidgetEvent) -> Self {
+        match event {
+            DeckWidgetEvent::Setting(update) => Self::Setting(update),
+            DeckWidgetEvent::ParamUpdate(params) => Self::ParamUpdate(params),
+            DeckWidgetEvent::Shutdown => Self::Shutdown,
+            DeckWidgetEvent::TouchDown { id, x, y } => Self::TouchDown { id, x, y },
+            DeckWidgetEvent::TouchMotion { id, x, y } => Self::TouchMotion { id, x, y },
+            DeckWidgetEvent::TouchUp { id } => Self::TouchUp { id },
+            DeckWidgetEvent::TouchCancel => Self::TouchCancel,
+            DeckWidgetEvent::Lifecycle(s) => Self::Lifecycle(s),
+        }
+    }
 }
 
 /// Initial configuration collected during the compositor's startup batch.
@@ -488,15 +505,7 @@ impl WidgetSurface for DeckWidgetSurfaceClient {
         self.state
             .pending_events
             .drain(..)
-            .map(|event| match event {
-                DeckWidgetEvent::Setting(update) => WidgetEvent::Setting(update),
-                DeckWidgetEvent::ParamUpdate(params) => WidgetEvent::ParamUpdate(params),
-                DeckWidgetEvent::Shutdown => WidgetEvent::Shutdown,
-                DeckWidgetEvent::TouchDown { id, x, y } => WidgetEvent::TouchDown { id, x, y },
-                DeckWidgetEvent::TouchMotion { id, x, y } => WidgetEvent::TouchMotion { id, x, y },
-                DeckWidgetEvent::TouchUp { id } => WidgetEvent::TouchUp { id },
-                DeckWidgetEvent::TouchCancel => WidgetEvent::TouchCancel,
-            })
+            .map(Into::into)
             .collect()
     }
 }
@@ -653,6 +662,11 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
                 state.running = false;
                 state.pending_events.push(DeckWidgetEvent::Shutdown);
             }
+            deck_widget_surface_v1::Event::Lifecycle { state: value } => {
+                if let Some(s) = from_protocol::lifecycle_state(value) {
+                    state.pending_events.push(DeckWidgetEvent::Lifecycle(s));
+                }
+            }
             _ => {}
         }
     }
@@ -798,9 +812,10 @@ mod tests {
     use std::rc::Rc;
 
     use super::{
-        DeckWidgetEvent, ReleasableTouch, TouchCapabilityChange, handle_params_json,
+        DeckWidgetEvent, ReleasableTouch, TouchCapabilityChange, WidgetEvent, handle_params_json,
         sync_touch_capability,
     };
+    use bmc_widget_protocol::LifecycleState;
 
     struct MockTouch {
         released: Rc<Cell<bool>>,
@@ -862,5 +877,20 @@ mod tests {
         handle_params_json(&mut pending_params, &mut pending_events, true, "null");
 
         assert!(pending_events.is_empty());
+    }
+
+    #[test]
+    fn deck_widget_event_lifecycle_translates_to_widget_event_lifecycle() {
+        let translated: WidgetEvent = DeckWidgetEvent::Lifecycle(LifecycleState::Visible).into();
+        assert!(matches!(
+            translated,
+            WidgetEvent::Lifecycle(LifecycleState::Visible)
+        ));
+    }
+
+    #[test]
+    fn deck_widget_event_shutdown_still_translates_to_widget_event_shutdown() {
+        let translated: WidgetEvent = DeckWidgetEvent::Shutdown.into();
+        assert!(matches!(translated, WidgetEvent::Shutdown));
     }
 }

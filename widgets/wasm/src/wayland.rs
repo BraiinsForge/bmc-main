@@ -156,6 +156,9 @@ impl WaylandClient {
                             self.surface.mark_needs_render();
                         }
                     }
+                    WidgetEvent::Lifecycle(state) => {
+                        tracing::trace!(?state, "wasm: ignoring lifecycle event");
+                    }
                 }
             }
 
