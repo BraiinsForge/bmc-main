@@ -346,7 +346,10 @@ fn run_render_loop(
             renderer.resize(w, h);
         }
 
-        if matches!(state.lifecycle, None | Some(LifecycleState::Dormant)) {
+        if !matches!(
+            state.lifecycle,
+            Some(LifecycleState::Visible | LifecycleState::Entering | LifecycleState::Leaving)
+        ) {
             state.phase = LoopPhase::WaitingForIdleTimeout;
             continue;
         }
@@ -412,12 +415,12 @@ fn run_render_loop(
 
 /// Apply a new lifecycle state from the compositor.
 ///
-/// On entering `Dormant` the export buffers are released immediately; on
-/// leaving `Dormant` the render loop is marked dirty so the next iteration
-/// reallocates them via the existing lazy-allocation path in
-/// [`EglState::begin_frame`]. Other transitions only update the tracked
-/// state. All transitions log at `info` level so journald + on-device
-/// scene cycling provide end-to-end proof that the lifecycle wiring works.
+/// Buffers are kept allocated while the widget is currently visible to the
+/// user — `Visible`, and the transitional `Entering` / `Leaving` states that
+/// fire during a drag and remain on-screen at the seam. `Prepared` and
+/// `Dormant` both release buffers; on the next transition back into a
+/// visible state the render loop is marked dirty and the existing
+/// lazy-allocation path in [`EglState::begin_frame`] reallocates.
 fn apply_lifecycle_change(
     state: &mut RenderLoopState,
     egl: &mut EglState,
@@ -431,10 +434,20 @@ fn apply_lifecycle_change(
     state.lifecycle = Some(new_state);
 
     match new_state {
-        LifecycleState::Dormant => {
+        LifecycleState::Visible | LifecycleState::Entering | LifecycleState::Leaving => {
             tracing::info!(
                 ?previous,
-                "lifecycle: -> dormant; releasing DMA-BUF export buffers"
+                ?new_state,
+                "lifecycle: -> on-screen; buffers will reallocate on next frame"
+            );
+            surface.mark_needs_render();
+            state.phase = LoopPhase::RenderPending;
+        }
+        LifecycleState::Dormant | LifecycleState::Prepared => {
+            tracing::info!(
+                ?previous,
+                ?new_state,
+                "lifecycle: -> off-screen; releasing DMA-BUF export buffers"
             );
             // The compositor pins the underlying CMA memory via its
             // imported wl_buffer / DMA-BUF refs, so destroying only our
@@ -442,18 +455,6 @@ fn apply_lifecycle_change(
             // explicitly destroyed.
             surface.invalidate_cached_buffers();
             egl.destroy_buffers();
-        }
-        LifecycleState::Prepared
-        | LifecycleState::Entering
-        | LifecycleState::Visible
-        | LifecycleState::Leaving => {
-            tracing::info!(
-                ?previous,
-                ?new_state,
-                "lifecycle: resume; buffers will reallocate on next frame"
-            );
-            surface.mark_needs_render();
-            state.phase = LoopPhase::RenderPending;
         }
         _ => {
             tracing::info!(?previous, ?new_state, "lifecycle: unknown future variant");
