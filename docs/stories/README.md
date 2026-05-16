@@ -11,6 +11,12 @@ A strip of 10 addressable LEDs provides ambient status feedback — device boot,
 alarms, and price movements — without requiring the user to look at the screen. Effects are prioritized so concurrent
 events resolve deterministically, and a master toggle lets the user silence them entirely.
 
+### [Widget LED Effects](widget-led-effects.md)
+
+Widgets can drive the same LED strip. Effects are scene-scoped by default — only visible while the widget is on screen —
+and widgets can opt into ambient effects that follow the user across scenes. System events always take priority so
+device-level alerts are never buried by a widget animation.
+
 ### [Support Archive Credential Censoring](support-archive-credential-censoring.md)
 
 The support archive automatically censors credentials (Braiins Pool API keys, Wi-Fi passwords) before bundling
