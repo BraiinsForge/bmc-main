@@ -28,11 +28,14 @@ const EVENT_BUFFER_SIZE: usize = 4;
 /// has no "never" state, so the select arm parks on a sleep this long instead.
 const IDLE_EXPIRY: Duration = Duration::from_secs(60 * 60 * 24 * 365);
 
-fn deadline_for(scene: Option<bmc_led::data::LedScene>) -> Instant {
-    let now = Instant::now();
-    scene
-        .and_then(|s| s.duration)
-        .map_or(now + IDLE_EXPIRY, |d| now + d)
+/// Next instant the event loop must wake to re-resolve the system layer:
+/// the active temp's deadline, or the idle far-future when no temp is set.
+/// Reading the deadline from the state (rather than the resolved scene's
+/// duration) keeps an unrelated event from re-arming past the temp window.
+fn next_wakeup(state: &LedIndicatorsState) -> Instant {
+    state
+        .temp_deadline()
+        .map_or_else(|| Instant::now() + IDLE_EXPIRY, Instant::from_std)
 }
 
 #[derive(Clone, Debug)]
@@ -310,12 +313,12 @@ where
                         debug!("Received LED event: {:?}", event);
                         state.apply_event(event);
                         let scene = state.current_scene();
-                        temp_expiry.as_mut().reset(deadline_for(scene));
+                        temp_expiry.as_mut().reset(next_wakeup(&state));
                         coordinator.publish(Layer::System, scene);
                     }
                     () = &mut temp_expiry => {
                         let scene = state.current_scene();
-                        temp_expiry.as_mut().reset(deadline_for(scene));
+                        temp_expiry.as_mut().reset(next_wakeup(&state));
                         coordinator.publish(Layer::System, scene);
                     }
                 }
