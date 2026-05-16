@@ -264,7 +264,8 @@ impl RenderLoopState {
                 | WidgetEvent::TouchDown { .. }
                 | WidgetEvent::TouchMotion { .. }
                 | WidgetEvent::TouchUp { .. }
-                | WidgetEvent::TouchCancel => {}
+                | WidgetEvent::TouchCancel
+                | WidgetEvent::Lifecycle(_) => {}
             }
         }
         Ok(())

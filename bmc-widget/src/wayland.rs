@@ -77,6 +77,11 @@ pub trait WidgetEventHandler {
 
     /// Called when shutdown is requested.
     fn on_shutdown(&mut self);
+
+    /// Called when the compositor publishes a new lifecycle state for
+    /// this widget. Default no-op so existing handlers that do not bind
+    /// lifecycle compile unchanged.
+    fn on_lifecycle(&mut self, _state: bmc_widget_protocol::LifecycleState) {}
 }
 
 /// Client for the `deck_widget_v1` Wayland protocol.
@@ -115,6 +120,7 @@ enum WidgetEvent {
     Setting(SettingUpdate),
     ParamUpdate(serde_json::Map<String, serde_json::Value>),
     Shutdown,
+    Lifecycle(bmc_widget_protocol::LifecycleState),
 }
 
 impl WidgetProtocolClient {
@@ -204,11 +210,7 @@ impl WidgetProtocolClient {
     /// Take pending events and process them with the handler.
     pub fn process_events<H: WidgetEventHandler>(&mut self, handler: &mut H) {
         for event in self.state.pending_events.drain(..) {
-            match event {
-                WidgetEvent::Setting(update) => handler.on_setting(update),
-                WidgetEvent::ParamUpdate(params) => handler.on_param_update(params),
-                WidgetEvent::Shutdown => handler.on_shutdown(),
-            }
+            dispatch_event(handler, event);
         }
     }
 
@@ -369,6 +371,15 @@ pub(crate) mod to_protocol {
     }
 }
 
+fn dispatch_event<H: WidgetEventHandler>(handler: &mut H, event: WidgetEvent) {
+    match event {
+        WidgetEvent::Setting(update) => handler.on_setting(update),
+        WidgetEvent::ParamUpdate(params) => handler.on_param_update(params),
+        WidgetEvent::Shutdown => handler.on_shutdown(),
+        WidgetEvent::Lifecycle(s) => handler.on_lifecycle(s),
+    }
+}
+
 pub(crate) mod from_protocol {
     use bmc_widget_protocol::client::deck_widget_surface_v1 as p;
     use bmc_widget_protocol::wayland_client::WEnum;
@@ -424,6 +435,16 @@ pub(crate) mod from_protocol {
 
     pub fn weekday(w: WEnum<p::Weekday>) -> Option<WeekDay> {
         w.into_result().ok().map(WeekDay::from)
+    }
+
+    pub fn lifecycle_state(w: WEnum<p::LifecycleState>) -> Option<p::LifecycleState> {
+        match w.into_result() {
+            Ok(s) => Some(s),
+            Err(raw) => {
+                tracing::warn!("Unknown deck_widget_v1 lifecycle_state value: {raw}");
+                None
+            }
+        }
     }
 }
 
@@ -555,6 +576,11 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
             Event::Shutdown => {
                 state.pending_events.push(WidgetEvent::Shutdown);
             }
+            Event::Lifecycle { state: value } => {
+                if let Some(s) = from_protocol::lifecycle_state(value) {
+                    state.pending_events.push(WidgetEvent::Lifecycle(s));
+                }
+            }
             _ => {}
         }
     }
@@ -599,5 +625,58 @@ fn handle_params_json(
         Err(e) => {
             tracing::warn!("Failed to decode params JSON ({}): {}", json, e);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bmc_widget_protocol::LifecycleState;
+
+    #[derive(Default)]
+    struct MockHandler {
+        settings: Vec<SettingUpdate>,
+        param_updates: usize,
+        shutdowns: usize,
+        lifecycle: Vec<LifecycleState>,
+    }
+
+    impl WidgetEventHandler for MockHandler {
+        fn on_setting(&mut self, update: SettingUpdate) {
+            self.settings.push(update);
+        }
+        fn on_param_update(&mut self, _: serde_json::Map<String, serde_json::Value>) {
+            self.param_updates += 1;
+        }
+        fn on_shutdown(&mut self) {
+            self.shutdowns += 1;
+        }
+        fn on_lifecycle(&mut self, state: bmc_widget_protocol::LifecycleState) {
+            self.lifecycle.push(state);
+        }
+    }
+
+    #[test]
+    fn dispatch_event_routes_lifecycle_to_on_lifecycle() {
+        let mut handler = MockHandler::default();
+        dispatch_event(
+            &mut handler,
+            WidgetEvent::Lifecycle(LifecycleState::Visible),
+        );
+
+        assert_eq!(handler.lifecycle.len(), 1);
+        assert!(matches!(handler.lifecycle[0], LifecycleState::Visible));
+        assert_eq!(handler.shutdowns, 0);
+        assert_eq!(handler.param_updates, 0);
+        assert!(handler.settings.is_empty());
+    }
+
+    #[test]
+    fn dispatch_event_routes_shutdown_to_on_shutdown() {
+        let mut handler = MockHandler::default();
+        dispatch_event(&mut handler, WidgetEvent::Shutdown);
+
+        assert_eq!(handler.shutdowns, 1);
+        assert!(handler.lifecycle.is_empty());
     }
 }
