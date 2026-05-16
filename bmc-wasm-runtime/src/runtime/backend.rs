@@ -623,6 +623,19 @@ impl WasmWidgetRuntime {
     /// — the new snapshot is already staged, so the next `render` will pick it up via
     /// `params::current()` regardless of whether the hook completed cleanly.
     ///
+    /// No rollback on trap (by design).
+    ///
+    /// A trapped hook does not revert the snapshot.
+    /// The contract is that the compositor schema-validates against the widget's manifest
+    /// (see `validate_widget_params` in `bmc/src/web/grpc/scene_management.rs`) before
+    /// invoking delivery, so by the time the runtime sees the update, manifest invariants
+    /// — required keys present, enum/range constraints, typed kinds — already hold.
+    ///
+    /// A deterministic trap here (e.g. `ParamRead::read_required` panicking on a missing
+    /// required key) therefore implies a widget or SDK bug, not bad operator input;
+    /// reverting would mask the bug behind a stale snapshot while the operator-visible
+    /// change silently no-ops. Fuel exhaustion is similarly the widget's responsibility.
+    ///
     /// Use this for every params delivery **after** the initial one (initial deliveries
     /// belong in [`RuntimeConfig::params`] so they're observable from `init`).
     ///
