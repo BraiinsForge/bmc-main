@@ -68,6 +68,12 @@ impl EglState {
         self.egl.resize(width, height);
     }
 
+    /// Release all DMA-BUF export buffers; the next [`Self::begin_frame`]
+    /// call will lazily reallocate them.
+    pub fn destroy_buffers(&mut self) {
+        self.egl.destroy_buffers();
+    }
+
     /// Get the glow OpenGL ES context.
     pub fn gl(&self) -> &glow::Context {
         self.egl.gl()
