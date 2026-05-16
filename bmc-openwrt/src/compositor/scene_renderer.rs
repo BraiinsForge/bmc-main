@@ -143,13 +143,25 @@ impl SceneRenderer {
             let buffer_id = client_buffer.id();
             if let Ok(dmabuf) = get_dmabuf(client_buffer) {
                 // DMA-BUF: only reimport if newly committed (dirty)
-                if dirty.contains(&buffer_id)
-                    && let Ok(texture) = renderer.import_dmabuf(dmabuf, None)
-                {
-                    self.texture_cache.insert(buffer_id, texture);
+                if dirty.contains(&buffer_id) {
+                    match renderer.import_dmabuf(dmabuf, None) {
+                        Ok(texture) => {
+                            self.texture_cache.insert(buffer_id, texture);
+                        }
+                        Err(e) => {
+                            tracing::warn!("import_dmabuf failed for buffer {:?}: {e}", buffer_id);
+                        }
+                    }
                 }
-            } else if let Ok(texture) = renderer.import_shm_buffer(client_buffer, None, &[]) {
-                self.texture_cache.insert(buffer_id, texture);
+            } else {
+                match renderer.import_shm_buffer(client_buffer, None, &[]) {
+                    Ok(texture) => {
+                        self.texture_cache.insert(buffer_id, texture);
+                    }
+                    Err(e) => {
+                        tracing::warn!("import_shm_buffer failed for buffer {:?}: {e}", buffer_id);
+                    }
+                }
             }
         }
     }
