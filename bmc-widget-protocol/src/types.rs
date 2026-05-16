@@ -246,10 +246,11 @@ pub const LED_REQUEST_ID_ALL: LedRequestId = 0;
 /// Lifecycle status reported back to the widget for a previous
 /// `LedTemporary`/`LedEndless` request.
 ///
-/// `Suspended` and `Resumed` only ever fire for `LedEndless`: another
-/// widget's endless landed on top of this one (suspended) or the
-/// suspending request went away and this one is back on top (resumed).
-/// `Superseded` is reserved for true cancellation — the request will
+/// `Expired` only fires for `LedTemporary`: its duration ran out, on
+/// the widget's logical-time schedule, regardless of whether the strip
+/// was showing it at the moment. `Superseded` fires when an endless is
+/// displaced from its tier — by `stop_led`, by another endless landing
+/// on the same tier, or by the widget disconnecting; the request will
 /// not come back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -257,9 +258,7 @@ pub enum LedRequestStatus {
     Accepted,
     Rejected,
     Superseded,
-    Completed,
-    Suspended,
-    Resumed,
+    Expired,
 }
 
 /// One typed action a widget can request from the compositor.
@@ -399,9 +398,7 @@ mod tests {
             (LedRequestStatus::Accepted, "accepted"),
             (LedRequestStatus::Rejected, "rejected"),
             (LedRequestStatus::Superseded, "superseded"),
-            (LedRequestStatus::Completed, "completed"),
-            (LedRequestStatus::Suspended, "suspended"),
-            (LedRequestStatus::Resumed, "resumed"),
+            (LedRequestStatus::Expired, "expired"),
         ];
         for (status, expected) in cases {
             let json = serde_json::to_value(status).expect("BUG: serialization should not fail");
