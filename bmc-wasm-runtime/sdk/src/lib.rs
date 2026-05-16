@@ -182,6 +182,11 @@ pub mod params;
 pub mod progress_bar;
 #[cfg(target_arch = "wasm32")]
 pub mod slot;
+// Snapshot-cache machinery is wasm32-only (consumed by the wasm-target public API)
+// plus pulled in under `cfg(test)` for the unit tests that exercise the generic with a mock host.
+// Native non-test builds don't use it — gate it so the dead-code lint stays happy.
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) mod snapshot_cache;
 #[cfg(target_arch = "wasm32")]
 pub mod socket;
 #[cfg(target_arch = "wasm32")]

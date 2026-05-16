@@ -5,8 +5,8 @@
 //! Two imports backstop the SDK's `bmc_wasm_sdk::params::current()` / `previous()` API:
 //!
 //!  - `host_params_version() -> u64` — opaque change marker.
-//!    The SDK compares it against its last-seen value and re-fetches the snapshot whenever the
-//!    two differ.
+//!    The SDK compares it against its last-seen value and re-fetches
+//!    the snapshot whenever the two differ.
 //!    Wrap-safe (semantics are "different = changed", not "greater = newer").
 //!
 //!  - `host_params_snapshot(out_ptr: *mut u8, out_cap: u32) -> u32` — probe-then-allocate.
@@ -102,14 +102,41 @@ fn register_params_snapshot(linker: &mut Linker<HostState>) -> Result<()> {
     Ok(())
 }
 
+/// Newtype wrapper over the host-side params map so it can carry a [`WireEncode`] impl.
+///
+/// Orphan rules prevent `impl WireEncode for BTreeMap<ParamKey, ParamValue>` directly
+/// (both the trait and the map are foreign to `bmc-wasm-runtime`); the newtype is local
+/// and side-steps that without changing how the map itself is constructed.
+///
+/// Mutation lives upstream on `HostState` (only path is `replace_params`); the inner field
+/// is private here so the cache invalidation invariant can't be sidestepped via direct map
+/// access through the wrapper.
+pub struct ParamsSnapshot(std::collections::BTreeMap<ParamKey, ParamValue>);
+
+impl ParamsSnapshot {
+    /// Wrap an owned params map. Used by `HostState::replace_params`
+    /// when staging an update into the [`VersionedSnapshotCache`].
+    pub fn new(params: std::collections::BTreeMap<ParamKey, ParamValue>) -> Self {
+        Self(params)
+    }
+}
+
+impl bmc_wasm_protocol::versioned_snapshot::WireEncode for ParamsSnapshot {
+    fn encode(&self) -> Vec<u8> {
+        encode_params(&self.0)
+    }
+}
+
 /// Encode the host-side params table into the packed wire format the guest SDK parses.
 ///
-/// Entries are iterated in the `BTreeMap`'s natural key order (alphabetical) so two snapshots
-/// with the same content produce byte-identical buffers — useful for `Clone` byte-equality
-/// diffs on the guest side.
+/// Entries are iterated in the `BTreeMap`'s natural key order (alphabetical)
+/// so two snapshots with the same content produce byte-identical buffers
+/// — useful for `Clone` byte-equality diffs on the guest side.
 ///
-/// `pub(crate)` so [`crate::host_api::HostState::encoded_params`] can call it from the host_api
-/// module; both sides own different halves of the snapshot story (encoder here, cache there).
+/// `pub(crate)` so the round-trip test in this module's `tests` submodule
+/// and the `WireEncode for ParamsSnapshot` impl above can both reach it;
+/// production callers go through the [`ParamsSnapshot`] newtype
+/// or the cache's `encoded()` accessor on `HostState`.
 pub(crate) fn encode_params(params: &std::collections::BTreeMap<ParamKey, ParamValue>) -> Vec<u8> {
     let mut out = Vec::with_capacity(estimate_size(params));
     out.extend_from_slice(&(params.len() as u32).to_le_bytes());
@@ -129,8 +156,9 @@ fn encode_entry(out: &mut Vec<u8>, key: &str, value: &ParamValue) {
     };
     out.push(kind_byte);
 
-    // `ParamKey` enforces `MAX_PARAM_KEY_LENGTH` (well below `u16::MAX`) at the manifest layer,
-    // so the conversion is statically infallible here. Same shape for the `s_len` u32 below.
+    // `ParamKey` enforces `MAX_PARAM_KEY_LENGTH` (well below `u16::MAX`)
+    // at the manifest layer, so the conversion is statically infallible here.
+    // Same shape for the `s_len` u32 below.
     let key_len =
         u16::try_from(key.len()).expect("BUG: ParamKey enforces MAX_PARAM_KEY_LENGTH < u16::MAX");
     out.extend_from_slice(&key_len.to_le_bytes());

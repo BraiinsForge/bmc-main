@@ -289,94 +289,14 @@ impl<'a> EntryIter<'a> {
     }
 }
 
-// The trait + cache + helpers are consumed by the wasm32 public API and the `tests` module;
-// native non-test builds never reach them, so gate them out to keep the dead-code lint happy.
-
-/// Host-side handle that supplies the change-version + snapshot bytes.
-///
-/// The wasm-target [`WasmHost`] wraps the `host_params_version` / `host_params_snapshot` externs;
-/// tests can swap in a fake to drive the cache logic from native code without crossing the
-/// wasm boundary.
+// `FromHostBytes` lets the generic snapshot cache construct `Params` from the raw bytes
+// the host writes. The wasm32 public API + the test module are the only consumers; native
+// non-test builds don't pull in the cache machinery at all.
 #[cfg(any(target_arch = "wasm32", test))]
-trait HostParamsProvider {
-    /// Opaque change marker — different value from last observation = re-fetch.
-    fn version(&self) -> u64;
-    /// Probe-then-fill snapshot reader. `out` empty = probe path, returns required byte length.
-    /// `out` sized = fill path, returns bytes actually written.
-    fn fill_snapshot(&self, out: &mut [u8]) -> usize;
-}
-
-/// Snapshot cache rotated by [`refresh_cache`].
-///
-/// Holds the current and previous snapshots plus the last host version observed.
-/// `last_seen_version == None` distinguishes "host returned 0" from "never fetched" —
-/// the first observation seeds `current` and leaves `previous` at default.
-#[cfg(any(target_arch = "wasm32", test))]
-struct ParamsCache {
-    current: Params,
-    previous: Params,
-    last_seen_version: Option<u64>,
-}
-
-#[cfg(any(target_arch = "wasm32", test))]
-impl ParamsCache {
-    const fn new() -> Self {
-        Self {
-            current: Params { bytes: Vec::new() },
-            previous: Params { bytes: Vec::new() },
-            last_seen_version: None,
-        }
+impl crate::snapshot_cache::FromHostBytes for Params {
+    fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self::from_bytes(bytes)
     }
-}
-
-/// Refresh the cache if the host's reported version differs from the last seen.
-///
-/// On a version bump, fetches the new snapshot through `host` and rotates: old `current`
-/// becomes the new `previous`, old `previous` is dropped. Idempotent on repeat calls with
-/// the same version (short-circuits via `last_seen_version`).
-#[cfg(any(target_arch = "wasm32", test))]
-fn refresh_cache<H: HostParamsProvider>(host: &H, cache: &mut ParamsCache) {
-    let host_version = host.version();
-    if cache.last_seen_version == Some(host_version) {
-        return;
-    }
-
-    // Probe path: empty buffer, host returns required byte length.
-    let needed = host.fill_snapshot(&mut []);
-    let mut buf = vec![0_u8; needed];
-    let written = if needed > 0 {
-        host.fill_snapshot(&mut buf)
-    } else {
-        0
-    };
-    buf.truncate(written);
-
-    // Rotate: old `current` becomes the new `previous`.
-    // `previous` from before this update is dropped — only one step of history is kept.
-    let new_current = Params::from_bytes(buf);
-    let old_current = std::mem::replace(&mut cache.current, new_current);
-    cache.previous = old_current;
-    cache.last_seen_version = Some(host_version);
-}
-
-/// Latest snapshot delivered for this widget instance.
-///
-/// Refreshes the cache if the host has bumped the version since last observation.
-#[cfg(any(target_arch = "wasm32", test))]
-fn current_using<H: HostParamsProvider>(host: &H, cache: &mut ParamsCache) -> Params {
-    refresh_cache(host, cache);
-    cache.current.clone()
-}
-
-/// Snapshot delivered immediately before the current one.
-///
-/// Refreshes the cache so the read is consistent regardless of whether [`current_using`]
-/// has been called yet — a widget that reads `previous()` before `current()` after a
-/// version bump must still see the just-replaced snapshot, not the one before that.
-#[cfg(any(target_arch = "wasm32", test))]
-fn previous_using<H: HostParamsProvider>(host: &H, cache: &mut ParamsCache) -> Params {
-    refresh_cache(host, cache);
-    cache.previous.clone()
 }
 
 /// Latest snapshot delivered for this widget instance.
@@ -387,7 +307,7 @@ fn previous_using<H: HostParamsProvider>(host: &H, cache: &mut ParamsCache) -> P
 #[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn current() -> Params {
-    PARAMS_CACHE.with(|c| current_using(&WasmHost, &mut c.borrow_mut()))
+    PARAMS_CACHE.with(|c| crate::snapshot_cache::current_using(&WasmHost, &mut c.borrow_mut()))
 }
 
 /// Snapshot delivered immediately before [`current`].
@@ -400,7 +320,7 @@ pub fn current() -> Params {
 #[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn previous() -> Params {
-    PARAMS_CACHE.with(|c| previous_using(&WasmHost, &mut c.borrow_mut()))
+    PARAMS_CACHE.with(|c| crate::snapshot_cache::previous_using(&WasmHost, &mut c.borrow_mut()))
 }
 
 // ── Native-target stubs ─────────────────────────────────────────────
@@ -436,12 +356,13 @@ unsafe extern "C" {
     fn host_params_version() -> u64;
 }
 
-/// Wasm-target [`HostParamsProvider`] that calls the real host imports.
+/// Wasm-target [`crate::snapshot_cache::HostSnapshotProvider`] for the params channel —
+/// wraps the `host_params_*` externs.
 #[cfg(target_arch = "wasm32")]
 struct WasmHost;
 
 #[cfg(target_arch = "wasm32")]
-impl HostParamsProvider for WasmHost {
+impl crate::snapshot_cache::HostSnapshotProvider for WasmHost {
     fn version(&self) -> u64 {
         // SAFETY: `host_params_version` has no out-params and is safe to call.
         unsafe { host_params_version() }
@@ -471,7 +392,8 @@ impl HostParamsProvider for WasmHost {
 
 #[cfg(target_arch = "wasm32")]
 std::thread_local! {
-    static PARAMS_CACHE: core::cell::RefCell<ParamsCache> = const { core::cell::RefCell::new(ParamsCache::new()) };
+    static PARAMS_CACHE: core::cell::RefCell<crate::snapshot_cache::Cache<Params>> =
+        core::cell::RefCell::new(crate::snapshot_cache::Cache::new());
 }
 
 #[cfg(test)]
@@ -682,7 +604,7 @@ mod tests {
         assert!(previous().is_empty());
     }
 
-    /// Test-side fake of [`HostParamsProvider`].
+    /// Test-side fake of [`crate::snapshot_cache::HostSnapshotProvider`].
     /// Holds a current `(version, snapshot)` pair the test sets up; the SDK's cache logic
     /// pulls from it via the trait without touching wasm imports.
     struct MockHost {
@@ -704,7 +626,7 @@ mod tests {
         }
     }
 
-    impl HostParamsProvider for MockHost {
+    impl crate::snapshot_cache::HostSnapshotProvider for MockHost {
         fn version(&self) -> u64 {
             self.version
         }
@@ -722,13 +644,14 @@ mod tests {
 
     #[test]
     fn previous_first_after_version_bump_returns_just_replaced_snapshot() {
-        // The bug: `previous_using` returns the cache's `previous` without first refreshing,
-        // so a widget that calls `previous()` before `current()` after a host version bump
-        // sees the snapshot from *two* versions ago — rotation hasn't fired yet, because
-        // only `current_using` triggers `refresh_cache`. The fix is to make `previous_using`
-        // also call `refresh_cache` so the rotation fires regardless of read order.
+        // Channel-specific regression test for the BDK-432 #1 bug, exercised end-to-end through
+        // the params wire format. The companion test in `snapshot_cache::tests` covers the
+        // generic rotation logic; this one pins the Params type's parser-side decoding against
+        // the same scenario.
+        use crate::snapshot_cache::{Cache, current_using, previous_using};
+
         let mut host = MockHost::new();
-        let mut cache = ParamsCache::new();
+        let mut cache = Cache::<Params>::new();
 
         // Seed version 1 by reading through `current_using`.
         host.set(1, PackedBuilder::new().str("a", "v1").build());

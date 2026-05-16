@@ -29,9 +29,10 @@ use bmc_wasm_protocol::{
 };
 
 use crate::audio_registry::AudioRegistry;
-use crate::runtime::encode_params;
+use crate::runtime::ParamsSnapshot;
 use crate::runtime_limits::RuntimeResourceLimits;
 use crate::xml::XmlDocumentIndex;
+use bmc_wasm_protocol::versioned_snapshot::VersionedSnapshotCache;
 
 /// A completed HTTP fetch response ready for delivery to WASM.
 pub struct CompletedFetch {
@@ -514,30 +515,15 @@ pub(crate) struct HostState {
     /// Per-instance widget parameters, materialised from the wayland `deck_widget_v1.params`
     /// event (compositor) or applied directly from the manifest defaults (testbed).
     ///
-    /// Order is alphabetical-by-key (`BTreeMap`) so the on-wire serialisation
-    /// is deterministic and snapshot byte-equality is meaningful.
+    /// Order is alphabetical-by-key (the inner `BTreeMap` inside [`ParamsSnapshot`]) so the
+    /// on-wire serialisation is deterministic and snapshot byte-equality is meaningful.
     ///
-    /// Private — mutate only through [`Self::replace_params`] so the version bump
-    /// and cache invalidation stay atomic with the replacement.
-    params: BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
-
-    /// Opaque change marker bumped on every [`Self::replace_params`] call
-    /// via `wrapping_add(1)`. Read by guests through `host_params_version`.
-    /// The SDK refreshes its cached snapshot whenever this differs from the last-seen value.
-    ///
-    /// Semantics are deliberately "different = changed" rather than "greater = newer",
-    /// so the counter is safe to wrap. The numeric value carries no meaning beyond
-    /// change detection — it is not a count, not a timestamp, not an ordering.
-    params_version: u64,
-
-    /// Lazily-filled cache of the encoded params snapshot, returned by `host_params_snapshot`.
-    /// Invalidated atomically by [`Self::replace_params`];
-    /// next [`Self::encoded_params`] call re-encodes and re-caches.
-    ///
-    /// Avoids re-running `encode_params` on every guest snapshot fetch even
-    /// when the underlying params haven't changed — a misbehaving guest spinning
-    /// on `host_params_snapshot` no longer forces unbounded encoder work on the host.
-    cached_encoded_params: Option<Vec<u8>>,
+    /// Private — mutate only through [`Self::replace_params`]. The wrapping
+    /// [`VersionedSnapshotCache`] folds the source-of-truth value, the change marker the
+    /// SDK reads via `host_params_version`, and the lazily-encoded bytes
+    /// `host_params_snapshot` writes to guest memory into one encapsulated unit,
+    /// so the version-bump and cache-invalidation invariants cannot drift.
+    params: bmc_wasm_protocol::versioned_snapshot::VersionedSnapshotCache<ParamsSnapshot>,
 
     /// Guest-lifecycle phase the runtime is currently in. See [`Lifecycle`].
     /// Single-threaded guest, so this is a plain field — only one phase can be active at a time.
@@ -723,9 +709,7 @@ impl HostState {
             cached_tree: None,
             system_time: chrono::Local::now().fixed_offset(),
             monotonic_ms: 0,
-            params: BTreeMap::new(),
-            params_version: 0,
-            cached_encoded_params: None,
+            params: VersionedSnapshotCache::new(ParamsSnapshot::new(BTreeMap::new())),
             current_lifecycle: Lifecycle::Idle,
             next_request_id: 1,
             fetch_rx,
@@ -843,15 +827,13 @@ impl HostState {
         &mut self,
         new_params: BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
     ) {
-        self.params = new_params;
-        self.params_version = self.params_version.wrapping_add(1);
-        self.cached_encoded_params = None;
+        self.params.replace(ParamsSnapshot::new(new_params));
     }
 
     /// Current value of the opaque change marker,
     /// returned to guests by `host_params_version`.
     pub fn params_version(&self) -> u64 {
-        self.params_version
+        self.params.version()
     }
 
     /// Encoded snapshot of the current params, in the wire format the SDK parser expects.
@@ -859,13 +841,7 @@ impl HostState {
     /// Lazily fills the cache on first call after each [`Self::replace_params`]; subsequent
     /// calls with no intervening mutation return the cached buffer without re-encoding.
     pub fn encoded_params(&mut self) -> &[u8] {
-        if self.cached_encoded_params.is_none() {
-            let encoded = encode_params(&self.params);
-            self.cached_encoded_params = Some(encoded);
-        }
-        self.cached_encoded_params
-            .as_deref()
-            .expect("BUG: just inserted Some")
+        self.params.encoded()
     }
 
     pub(crate) fn shutdown_workers(&mut self) {

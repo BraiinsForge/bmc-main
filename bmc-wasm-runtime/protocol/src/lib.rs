@@ -16,6 +16,7 @@ pub mod params;
 pub mod tags;
 pub mod text;
 pub mod version;
+pub mod versioned_snapshot;
 
 pub use animation::*;
 pub use colors::*;
