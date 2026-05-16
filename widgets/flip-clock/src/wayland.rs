@@ -14,8 +14,8 @@ use crate::layout::ClockLayout;
 use crate::renderer::{Mat4, Renderer};
 use anyhow::Result;
 use bmc_widget::surface::{
-    DeckWidgetSurfaceClient, PollOutcome, SettingUpdate, WidgetEvent, WidgetSurface,
-    XdgSurfaceClient,
+    DeckWidgetSurfaceClient, LifecycleState, PollOutcome, SettingUpdate, WidgetEvent,
+    WidgetSurface, XdgSurfaceClient,
 };
 use chrono::Timelike;
 use glow::HasContext;
@@ -194,6 +194,12 @@ struct RenderLoopState {
     digit_meshes: Option<Digit3DMeshes>,
     flip_state: FlipState,
     phase: LoopPhase,
+    /// Latest lifecycle state from the compositor; `None` until the first
+    /// emission after the initial configure batch. `None` is treated as
+    /// "not yet known" and gates rendering the same way as `Dormant` so
+    /// we do not allocate DMA-BUF export buffers before the compositor
+    /// has announced whether this widget should be visible.
+    lifecycle: Option<LifecycleState>,
 }
 
 impl RenderLoopState {
@@ -264,8 +270,10 @@ impl RenderLoopState {
                 | WidgetEvent::TouchDown { .. }
                 | WidgetEvent::TouchMotion { .. }
                 | WidgetEvent::TouchUp { .. }
-                | WidgetEvent::TouchCancel
-                | WidgetEvent::Lifecycle(_) => {}
+                | WidgetEvent::TouchCancel => {}
+                WidgetEvent::Lifecycle(_) => {
+                    tracing::warn!("Lifecycle event reached handle_events; caller should filter");
+                }
             }
         }
         Ok(())
@@ -306,6 +314,7 @@ fn run_render_loop(
         digit_meshes,
         flip_state: FlipState::new(),
         phase: LoopPhase::RenderPending,
+        lifecycle: None,
     };
 
     while surface.running() {
@@ -320,13 +329,26 @@ fn run_render_loop(
         }
 
         let events = surface.drain_events();
-        state.handle_events(events.into_iter(), egl.gl(), surface)?;
+        let mut other_events = Vec::with_capacity(events.len());
+        for event in events {
+            if let WidgetEvent::Lifecycle(new_state) = event {
+                apply_lifecycle_change(&mut state, &mut egl, surface, new_state);
+            } else {
+                other_events.push(event);
+            }
+        }
+        state.handle_events(other_events.into_iter(), egl.gl(), surface)?;
 
         if surface.take_size_changed() {
             let (w, h) = (surface.width(), surface.height());
             surface.invalidate_cached_buffers();
             egl.resize(w, h);
             renderer.resize(w, h);
+        }
+
+        if matches!(state.lifecycle, None | Some(LifecycleState::Dormant)) {
+            state.phase = LoopPhase::WaitingForIdleTimeout;
+            continue;
         }
 
         if state.phase != LoopPhase::RenderPending {
@@ -386,6 +408,57 @@ fn run_render_loop(
     }
 
     Ok(())
+}
+
+/// Apply a new lifecycle state from the compositor.
+///
+/// On entering `Dormant` the export buffers are released immediately; on
+/// leaving `Dormant` the render loop is marked dirty so the next iteration
+/// reallocates them via the existing lazy-allocation path in
+/// [`EglState::begin_frame`]. Other transitions only update the tracked
+/// state. All transitions log at `info` level so journald + on-device
+/// scene cycling provide end-to-end proof that the lifecycle wiring works.
+fn apply_lifecycle_change(
+    state: &mut RenderLoopState,
+    egl: &mut EglState,
+    surface: &mut dyn WidgetSurface,
+    new_state: LifecycleState,
+) {
+    if state.lifecycle == Some(new_state) {
+        return;
+    }
+    let previous = state.lifecycle;
+    state.lifecycle = Some(new_state);
+
+    match new_state {
+        LifecycleState::Dormant => {
+            tracing::info!(
+                ?previous,
+                "lifecycle: -> dormant; releasing DMA-BUF export buffers"
+            );
+            // The compositor pins the underlying CMA memory via its
+            // imported wl_buffer / DMA-BUF refs, so destroying only our
+            // local end leaks it until the wl_buffer proxies are
+            // explicitly destroyed.
+            surface.invalidate_cached_buffers();
+            egl.destroy_buffers();
+        }
+        LifecycleState::Prepared
+        | LifecycleState::Entering
+        | LifecycleState::Visible
+        | LifecycleState::Leaving => {
+            tracing::info!(
+                ?previous,
+                ?new_state,
+                "lifecycle: resume; buffers will reallocate on next frame"
+            );
+            surface.mark_needs_render();
+            state.phase = LoopPhase::RenderPending;
+        }
+        _ => {
+            tracing::info!(?previous, ?new_state, "lifecycle: unknown future variant");
+        }
+    }
 }
 
 /// Render the HH:MM:SS clock face.
