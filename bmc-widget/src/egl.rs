@@ -891,6 +891,17 @@ impl DoubleBufferedEglState {
     pub fn resize(&mut self, width: u32, height: u32) {
         self.buffers.resize(&self.ctx, width, height);
     }
+
+    /// Destroy all allocated export buffers, freeing the underlying CMA
+    /// memory immediately. Buffers will be lazily reallocated on the
+    /// next call to [`Self::ensure_current`] (and therefore on the next
+    /// frame).
+    ///
+    /// Used by lifecycle-aware widgets to release render-target memory
+    /// while the surface is in the `dormant` lifecycle state.
+    pub fn destroy_buffers(&mut self) {
+        self.buffers.destroy_all(&self.ctx);
+    }
 }
 
 impl Drop for DoubleBufferedEglState {
