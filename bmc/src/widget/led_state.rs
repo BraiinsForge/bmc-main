@@ -14,7 +14,6 @@ use tokio::time::Instant;
 use crate::compositor::{InstanceId, WidgetRequestStatus};
 use crate::led_coordinator::{Layer, LedCoordinatorHandle};
 use crate::scene::SceneId;
-use tracing::warn;
 
 #[derive(Debug, Clone)]
 struct EndlessEntry {
@@ -44,6 +43,24 @@ struct SceneEffectState {
     active_temp: Option<ActiveTemp>,
 }
 
+#[derive(Debug)]
+struct PendingEndless {
+    entry: EndlessEntry,
+    seq: u64,
+}
+
+#[derive(Debug)]
+struct PendingTemp {
+    entry: TempEntry,
+    seq: u64,
+}
+
+#[derive(Debug, Default)]
+struct PendingState {
+    endless_stack: Vec<PendingEndless>,
+    temp_queue: VecDeque<PendingTemp>,
+}
+
 pub(crate) struct LedSceneManager {
     coordinator: LedCoordinatorHandle,
     status_tx: mpsc::UnboundedSender<WidgetRequestStatus>,
@@ -52,6 +69,8 @@ pub(crate) struct LedSceneManager {
     scenes: HashMap<SceneId, SceneEffectState>,
     global_state: SceneEffectState,
     applied_scene: LedScene,
+    pending: HashMap<InstanceId, PendingState>,
+    pending_seq: u64,
 }
 
 impl LedSceneManager {
@@ -71,6 +90,8 @@ impl LedSceneManager {
                 period: None,
                 duration: None,
             },
+            pending: HashMap::new(),
+            pending_seq: 0,
         }
     }
 
@@ -83,10 +104,36 @@ impl LedSceneManager {
         }
 
         self.active_scene = Some(scene_id);
+        self.scenes.entry(scene_id).or_default();
+
+        // Drain parked requests before `widget_ids` is consumed by the
+        // mapping loop below. Sort by seq so cross-widget ordering matches
+        // the order callers issued the requests in.
+        let mut parked_endless: Vec<PendingEndless> = Vec::new();
+        let mut parked_temp: Vec<PendingTemp> = Vec::new();
+        for widget_id in &widget_ids {
+            if let Some(parked) = self.pending.remove(widget_id) {
+                parked_endless.extend(parked.endless_stack);
+                parked_temp.extend(parked.temp_queue);
+            }
+        }
+        parked_endless.sort_by_key(|p| p.seq);
+        parked_temp.sort_by_key(|p| p.seq);
+
+        let scene_state = self
+            .scenes
+            .get_mut(&scene_id)
+            .expect("BUG: scene state was just initialised");
+        scene_state
+            .endless_stack
+            .extend(parked_endless.into_iter().map(|p| p.entry));
+        scene_state
+            .temp_queue
+            .extend(parked_temp.into_iter().map(|p| p.entry));
+
         for widget_id in widget_ids {
             self.widget_to_scene.insert(widget_id, scene_id);
         }
-        self.scenes.entry(scene_id).or_default();
         self.refresh_active_scene_effect();
     }
 
@@ -113,19 +160,23 @@ impl LedSceneManager {
 
         match scope {
             LedScope::Local => {
-                let Some(scene_id) = self.widget_to_scene.get(&instance_id).copied() else {
-                    warn!(%instance_id, "ignoring local led temporary without widget scene mapping");
-                    return;
-                };
-                self.scenes
-                    .entry(scene_id)
-                    .or_default()
-                    .temp_queue
-                    .push_back(entry);
+                if let Some(scene_id) = self.widget_to_scene.get(&instance_id).copied() {
+                    self.scenes
+                        .entry(scene_id)
+                        .or_default()
+                        .temp_queue
+                        .push_back(entry);
+                } else {
+                    self.pending_seq += 1;
+                    let seq = self.pending_seq;
+                    self.pending
+                        .entry(instance_id.clone())
+                        .or_default()
+                        .temp_queue
+                        .push_back(PendingTemp { entry, seq });
+                }
             }
-            LedScope::Global => {
-                self.global_state.temp_queue.push_back(entry);
-            }
+            LedScope::Global => self.global_state.temp_queue.push_back(entry),
         }
 
         self.emit(instance_id, request_id, LedRequestStatus::Accepted);
@@ -147,22 +198,42 @@ impl LedSceneManager {
             scene: build_scene(effect, color, period_ms, None),
         };
 
-        let target = match scope {
+        let previous_top: Option<(InstanceId, LedRequestId)> = match scope {
             LedScope::Local => {
-                let Some(scene_id) = self.widget_to_scene.get(&instance_id).copied() else {
-                    warn!(%instance_id, "ignoring local led endless without widget scene mapping");
-                    return;
-                };
-                self.scenes.entry(scene_id).or_default()
+                if let Some(scene_id) = self.widget_to_scene.get(&instance_id).copied() {
+                    let stack = &mut self.scenes.entry(scene_id).or_default().endless_stack;
+                    let prev = stack
+                        .last()
+                        .map(|entry| (entry.instance_id.clone(), entry.request_id));
+                    stack.push(new_entry);
+                    prev
+                } else {
+                    self.pending_seq += 1;
+                    let seq = self.pending_seq;
+                    let stack = &mut self
+                        .pending
+                        .entry(instance_id.clone())
+                        .or_default()
+                        .endless_stack;
+                    let prev = stack
+                        .last()
+                        .map(|p| (p.entry.instance_id.clone(), p.entry.request_id));
+                    stack.push(PendingEndless {
+                        entry: new_entry,
+                        seq,
+                    });
+                    prev
+                }
             }
-            LedScope::Global => &mut self.global_state,
+            LedScope::Global => {
+                let stack = &mut self.global_state.endless_stack;
+                let prev = stack
+                    .last()
+                    .map(|entry| (entry.instance_id.clone(), entry.request_id));
+                stack.push(new_entry);
+                prev
+            }
         };
-
-        let previous_top = target
-            .endless_stack
-            .last()
-            .map(|entry| (entry.instance_id.clone(), entry.request_id));
-        target.endless_stack.push(new_entry);
 
         if let Some((old_instance_id, old_request_id)) = previous_top {
             self.emit(
@@ -190,6 +261,13 @@ impl LedSceneManager {
             .chain(std::iter::once(&mut self.global_state))
         {
             sweep_state(state, &matches, &mut superseded);
+        }
+
+        if let Some(state) = self.pending.get_mut(instance_id) {
+            sweep_pending(state, &matches, &mut superseded);
+            if state.endless_stack.is_empty() && state.temp_queue.is_empty() {
+                self.pending.remove(instance_id);
+            }
         }
 
         for (superseded_instance, superseded_request) in superseded {
@@ -427,6 +505,29 @@ fn sweep_state(
         })
         .collect();
     state.endless_stack = kept_endless;
+}
+
+fn sweep_pending(
+    state: &mut PendingState,
+    matches: &impl Fn(&str, LedRequestId) -> bool,
+    superseded: &mut Vec<(InstanceId, LedRequestId)>,
+) {
+    state.endless_stack.retain(|p| {
+        if matches(&p.entry.instance_id, p.entry.request_id) {
+            superseded.push((p.entry.instance_id.clone(), p.entry.request_id));
+            false
+        } else {
+            true
+        }
+    });
+    state.temp_queue.retain(|p| {
+        if matches(&p.entry.instance_id, p.entry.request_id) {
+            superseded.push((p.entry.instance_id.clone(), p.entry.request_id));
+            false
+        } else {
+            true
+        }
+    });
 }
 
 /// If the state's `active_temp` is `Running` with `until <= now`, take it
@@ -1175,5 +1276,77 @@ mod tests {
         assert_eq!(statuses[0].instance_id, widget_b);
         assert_eq!(statuses[0].request_id, 20);
         assert_eq!(statuses[0].status, LedRequestStatus::Superseded);
+    }
+
+    #[test]
+    fn local_endless_from_unmapped_widget_parks_then_drains_on_scene_activation() {
+        let mut h = Harness::new();
+        let scene = scene_id();
+        let widget = instance_id("parked");
+
+        h.manager.on_endless(
+            widget.clone(),
+            401,
+            ProtoLedEffect::Solid,
+            rgb(255, 0, 0),
+            0,
+            LedScope::Local,
+        );
+
+        let statuses = h.drain_statuses();
+        assert!(
+            statuses
+                .iter()
+                .any(|s| s.request_id == 401 && s.status == LedRequestStatus::Accepted),
+            "parked request still emits Accepted"
+        );
+
+        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+
+        assert_eq!(
+            h.manager.applied_scene,
+            build_scene(ProtoLedEffect::Solid, rgb(255, 0, 0), 0, None),
+        );
+    }
+
+    #[test]
+    fn parked_endlesses_drain_in_seq_order_across_widgets() {
+        let mut h = Harness::new();
+        let scene = scene_id();
+        let w1 = instance_id("race-a");
+        let w2 = instance_id("race-b");
+
+        h.manager.on_endless(
+            w1.clone(),
+            501,
+            ProtoLedEffect::Solid,
+            rgb(255, 0, 0),
+            0,
+            LedScope::Local,
+        );
+        h.manager.on_endless(
+            w2.clone(),
+            502,
+            ProtoLedEffect::Solid,
+            rgb(0, 255, 0),
+            0,
+            LedScope::Local,
+        );
+        h.manager.on_endless(
+            w1.clone(),
+            503,
+            ProtoLedEffect::Solid,
+            rgb(0, 0, 255),
+            0,
+            LedScope::Local,
+        );
+
+        h.manager
+            .on_scene_changed(scene, vec![w1.clone(), w2.clone()]);
+
+        assert_eq!(
+            h.manager.applied_scene,
+            build_scene(ProtoLedEffect::Solid, rgb(0, 0, 255), 0, None),
+        );
     }
 }
