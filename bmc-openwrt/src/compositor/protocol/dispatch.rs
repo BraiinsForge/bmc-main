@@ -16,11 +16,17 @@ use smithay::reexports::wayland_server::{
 use super::conversions::{led_effect_from_protocol, led_scope_from_protocol};
 use super::state::DeckWidgetProtocolState;
 
-/// Wayland's `uint` is a `u32`, but our RGB values are byte-sized.
-/// Clamp to fit so a malicious or buggy widget can't supply 0xFFFFFFFF
-/// and overflow downstream LED drivers.
-fn clamp_u8(v: u32) -> u8 {
-    u8::try_from(v).unwrap_or(u8::MAX)
+fn rgb_from_protocol(
+    widget: &str,
+    r: u32,
+    g: u32,
+    b: u32,
+) -> Option<bmc_widget_protocol::RgbColor> {
+    let (Ok(r), Ok(g), Ok(b)) = (u8::try_from(r), u8::try_from(g), u8::try_from(b)) else {
+        tracing::warn!(%widget, r, g, b, "RGB component out of u8 range; dropping request");
+        return None;
+    };
+    Some(bmc_widget_protocol::RgbColor { r, g, b })
 }
 
 #[derive(Debug)]
@@ -216,16 +222,15 @@ where
                     "Widget {} led_temporary: req={request_id} effect={effect:?} rgb=({r},{g},{b}) period_ms={period_ms} duration_ms={duration_ms} scope={scope:?}",
                     instance_id
                 );
+                let Some(color) = rgb_from_protocol(&instance_id, r, g, b) else {
+                    return;
+                };
                 protocol_state.add_action(
                     instance_id,
                     bmc_widget_protocol::ActionPayload::LedTemporary {
                         request_id,
                         effect: led_effect_from_protocol(effect),
-                        color: bmc_widget_protocol::RgbColor {
-                            r: clamp_u8(r),
-                            g: clamp_u8(g),
-                            b: clamp_u8(b),
-                        },
+                        color,
                         period_ms,
                         duration_ms,
                         scope: led_scope_from_protocol(scope),
@@ -260,16 +265,15 @@ where
                     "Widget {} led_endless: req={request_id} effect={effect:?} rgb=({r},{g},{b}) period_ms={period_ms} scope={scope:?}",
                     instance_id
                 );
+                let Some(color) = rgb_from_protocol(&instance_id, r, g, b) else {
+                    return;
+                };
                 protocol_state.add_action(
                     instance_id,
                     bmc_widget_protocol::ActionPayload::LedEndless {
                         request_id,
                         effect: led_effect_from_protocol(effect),
-                        color: bmc_widget_protocol::RgbColor {
-                            r: clamp_u8(r),
-                            g: clamp_u8(g),
-                            b: clamp_u8(b),
-                        },
+                        color,
                         period_ms,
                         scope: led_scope_from_protocol(scope),
                     },
