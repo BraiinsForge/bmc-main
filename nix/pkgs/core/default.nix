@@ -36,6 +36,11 @@ let
   bmc-compositor = mkOpenWrtDaemon {
     name = "bmc-compositor";
     start = 95;
+    # TODO: Re-enable once the host firmware drops its monolithic
+    # bmc-openwrt and we ship a firmware that runs the compositor from
+    # this package. Until then ship the service file but keep it
+    # disabled so it doesn't race the legacy app.
+    enabled = false;
     command = "${bmc-openwrt}/bin/bmc-openwrt";
     args = [ "--log-to-file" ];
     env = {
