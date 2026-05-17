@@ -7,7 +7,6 @@
 
 pub mod animation;
 pub mod colors;
-pub mod format;
 pub mod icon;
 pub mod ids;
 pub mod mesh;
@@ -21,7 +20,6 @@ pub mod versioned_snapshot;
 
 pub use animation::*;
 pub use colors::*;
-pub use format::*;
 pub use icon::*;
 pub use ids::*;
 pub use mesh::*;

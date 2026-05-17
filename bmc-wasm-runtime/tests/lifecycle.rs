@@ -29,7 +29,12 @@
 
 use std::collections::BTreeMap;
 
-use bmc_wasm_runtime::{RuntimeConfig, WasmWidgetRuntime};
+use bmc_wasm_protocol::system::{
+    DateFormat, NumberFormat, TemperatureUnit, TimeFormat, UnitSystem, Weekday,
+};
+use bmc_wasm_runtime::{
+    NextAlarm, RuntimeConfig, SystemSettings, SystemSnapshot, WasmWidgetRuntime,
+};
 use bmc_widget_manifest::{ParamKey, ParamValue};
 
 mod common;
@@ -126,6 +131,85 @@ fn oob_snapshot_traps_wat() -> &'static str {
     "#
 }
 
+/// Probe widget for the system snapshot channel.
+/// Imports `host_system_version` + `host_system_snapshot`
+/// and records the version and snapshot length it observes
+/// inside `on_params_update` (the unified hook — system updates
+/// fire the same export as params updates).
+fn system_probe_widget_wat() -> &'static str {
+    r#"
+    (module
+      (import "env" "host_system_version" (func $host_system_version (result i64)))
+      (import "env" "host_system_snapshot"
+        (func $host_system_snapshot (param i32 i32) (result i32)))
+
+      (memory (export "memory") 1)
+
+      (global $update_count (mut i32) (i32.const 0))
+      (global $last_system_version (mut i64) (i64.const 0))
+      (global $last_system_snapshot_len (mut i32) (i32.const 0))
+
+      (func (export "__bmc_sdk_version") (result i64)
+        i64.const 65536)
+
+      (func (export "render") (param i32))
+
+      (func (export "on_params_update")
+        global.get $update_count
+        i32.const 1
+        i32.add
+        global.set $update_count
+
+        call $host_system_version
+        global.set $last_system_version
+
+        i32.const 0      ;; out_ptr
+        i32.const 4096   ;; out_cap — plenty for the system snapshot
+        call $host_system_snapshot
+        global.set $last_system_snapshot_len)
+
+      (func (export "update_count") (result i32) global.get $update_count)
+      (func (export "last_system_version") (result i64)
+        global.get $last_system_version)
+      (func (export "last_system_snapshot_len") (result i32)
+        global.get $last_system_snapshot_len)
+
+      ;; Lets the test read the initial version/snapshot length directly,
+      ;; even when the widget didn't export `on_params_update` for the
+      ;; initial delivery (initial deliveries don't fire the hook).
+      (func (export "probe_system_version") (result i64)
+        call $host_system_version)
+      (func (export "probe_system_snapshot_len") (result i32)
+        i32.const 0
+        i32.const 4096
+        call $host_system_snapshot))
+    "#
+}
+
+/// Misbehaving widget calling `host_system_snapshot`
+/// with an out-of-bounds `out_ptr`.
+/// Mirrors `oob_snapshot_traps_wat` for the system channel.
+fn oob_system_snapshot_traps_wat() -> &'static str {
+    r#"
+    (module
+      (import "env" "host_system_snapshot"
+        (func $host_system_snapshot (param i32 i32) (result i32)))
+
+      (memory (export "memory") 1)
+
+      (func (export "__bmc_sdk_version") (result i64)
+        i64.const 65536)
+
+      (func (export "render") (param i32))
+
+      (func (export "on_params_update")
+        i32.const -1     ;; out_ptr = u32::MAX in two's complement
+        i32.const 4096   ;; out_cap
+        call $host_system_snapshot
+        drop))
+    "#
+}
+
 /// Misbehaving widget: calls `host_submit_tree` from `on_params_update`.
 /// Used to assert the lifecycle guard traps the call.
 fn misbehaving_submit_tree_wat() -> &'static str {
@@ -163,6 +247,15 @@ fn build_runtime(
     gl: &headless_egl::HeadlessGl,
     initial_params: BTreeMap<ParamKey, ParamValue>,
 ) -> (WasmWidgetRuntime, bmc_render::gpu::FemtoVgRenderer) {
+    build_runtime_with_system(wat, gl, initial_params, SystemSnapshot::default())
+}
+
+fn build_runtime_with_system(
+    wat: &str,
+    gl: &headless_egl::HeadlessGl,
+    initial_params: BTreeMap<ParamKey, ParamValue>,
+    initial_system: SystemSnapshot,
+) -> (WasmWidgetRuntime, bmc_render::gpu::FemtoVgRenderer) {
     let wasm = wat::parse_str(wat).expect("BUG: probe WAT must parse");
     let mut proc = gl.proc_address();
     // SAFETY: HeadlessGl keeps the GL context current.
@@ -171,6 +264,7 @@ fn build_runtime(
             .expect("BUG: probe renderer must construct");
     let config = RuntimeConfig {
         params: initial_params,
+        system: initial_system,
         ..RuntimeConfig::default()
     };
     let runtime =
@@ -304,6 +398,126 @@ fn host_submit_tree_traps_outside_render() {
         !hook_ran,
         "calling host_submit_tree from on_params_update must trap the guard, \
          which surfaces as `deliver_params_update` returning false"
+    );
+}
+
+// ── System snapshot channel tests ───────────────────────────────────
+
+fn sample_system_snapshot() -> SystemSnapshot {
+    SystemSnapshot {
+        settings: SystemSettings {
+            timezone: "Europe/Bratislava".into(),
+            time_format: TimeFormat::Hour12,
+            date_format: DateFormat::YyyyMmDdDot,
+            number_format: NumberFormat::CommaGroupDotDecimal,
+            first_day_of_week: Weekday::Sunday,
+            temperature_unit: TemperatureUnit::Fahrenheit,
+            unit_system: UnitSystem::Imperial,
+        },
+        next_alarm: Some(NextAlarm {
+            fire_at_utc_ms: 1_700_000_000_000,
+            name: "Wake up".into(),
+        }),
+    }
+}
+
+#[test]
+fn host_system_snapshot_returns_initial_settings() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+
+    let snapshot = sample_system_snapshot();
+    let (mut runtime, _renderer) =
+        build_runtime_with_system(system_probe_widget_wat(), &gl, BTreeMap::new(), snapshot);
+
+    // Initial delivery via RuntimeConfig::system must NOT fire on_params_update —
+    // it's the staged state for the first frame, not an update event.
+    assert_eq!(
+        runtime.call_export_i32("update_count"),
+        Some(0),
+        "RuntimeConfig::system is the initial delivery — on_params_update must NOT fire for it"
+    );
+
+    let version = runtime
+        .call_export_i64("probe_system_version")
+        .expect("BUG: system probe widget must export probe_system_version");
+    assert!(
+        version > 0,
+        "version counter must advance past initial 0 once the snapshot is staged; got {version}"
+    );
+
+    let snapshot_len = runtime
+        .call_export_i32("probe_system_snapshot_len")
+        .expect("BUG: system probe widget must export probe_system_snapshot_len");
+    assert!(
+        snapshot_len > 4,
+        "encoded system snapshot must include the entry-count header plus at least one entry; got {snapshot_len} bytes"
+    );
+}
+
+#[test]
+fn deliver_system_update_fires_on_params_update_hook_and_advances_version() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+
+    let (mut runtime, _renderer) = build_runtime(system_probe_widget_wat(), &gl, BTreeMap::new());
+
+    let first_delivery = sample_system_snapshot();
+    let hook_ran = runtime.deliver_system_update(first_delivery);
+    assert!(
+        hook_ran,
+        "deliver_system_update must invoke the unified on_params_update hook"
+    );
+    assert_eq!(runtime.call_export_i32("update_count"), Some(1));
+
+    let first_version = runtime
+        .call_export_i64("last_system_version")
+        .expect("BUG: system probe widget exports last_system_version");
+    assert!(
+        first_version > 0,
+        "version counter must advance past initial 0; got {first_version}"
+    );
+
+    let snapshot_len = runtime
+        .call_export_i32("last_system_snapshot_len")
+        .expect("BUG: system probe widget exports last_system_snapshot_len");
+    assert!(
+        snapshot_len > 4,
+        "snapshot observed inside on_params_update must reflect the just-pushed system state; got {snapshot_len} bytes"
+    );
+
+    // A second delivery must fire the hook again with a distinct version.
+    let mut second_delivery = sample_system_snapshot();
+    second_delivery.settings.timezone = "America/Los_Angeles".into();
+    let hook_ran2 = runtime.deliver_system_update(second_delivery);
+    assert!(hook_ran2);
+    assert_eq!(runtime.call_export_i32("update_count"), Some(2));
+
+    let second_version = runtime
+        .call_export_i64("last_system_version")
+        .expect("BUG: system probe widget exports last_system_version");
+    assert_ne!(
+        second_version, first_version,
+        "consecutive deliveries must produce distinct version values; got {first_version} both times"
+    );
+}
+
+#[test]
+fn host_system_snapshot_traps_on_oob_out_ptr() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+
+    let (mut runtime, _renderer) =
+        build_runtime(oob_system_snapshot_traps_wat(), &gl, BTreeMap::new());
+
+    let hook_ran = runtime.deliver_system_update(sample_system_snapshot());
+    assert!(
+        !hook_ran,
+        "host_system_snapshot with an OOB out_ptr must trap the ABI violation, \
+         which surfaces as `deliver_system_update` returning false"
     );
 }
 

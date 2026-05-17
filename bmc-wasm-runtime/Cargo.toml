@@ -7,7 +7,7 @@ edition = "2024"
 anyhow.workspace = true
 bmc-led.workspace = true
 bmc-render = { path = "../bmc-render" }
-bmc-wasm-protocol = { path = "protocol" }
+bmc-wasm-protocol = { path = "protocol", features = ["serde"] }
 bmc-widget-manifest.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
@@ -31,6 +31,7 @@ mdns-sd.workspace = true
 roxmltree.workspace = true
 rrule.workspace = true
 rustls.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tungstenite.workspace = true
@@ -56,7 +57,6 @@ egui = { workspace = true, optional = true }
 
 # Fixtures (shared between capture and testbed)
 flate2 = { workspace = true, optional = true }
-serde = { workspace = true, optional = true }
 
 # Capture only — ANGLE EGL on macOS (loaded at runtime via dlopen)
 askama = { workspace = true, optional = true }
@@ -77,7 +77,7 @@ perf-overlay = []
 profiling = ["ii-stopwatch/enabled", "bmc-render/profiling"]
 audio = ["rodio"]
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
-fixtures = ["host", "base64", "flate2", "owo-colors", "serde", "toml"]
+fixtures = ["host", "base64", "flate2", "owo-colors", "toml"]
 testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "eframe", "egui"]
 capture = ["host", "askama", "base64", "clap", "khronos-egl", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile"]
 

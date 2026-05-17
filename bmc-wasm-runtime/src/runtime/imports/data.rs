@@ -3,7 +3,8 @@
 //! Data-, persistence-, and formatting-focused guest imports.
 
 use anyhow::{Result, bail};
-use bmc_wasm_protocol::{JsonId, TemperatureUnit, UnitSystem, XmlId};
+use bmc_wasm_protocol::system::{TemperatureUnit, UnitSystem};
+use bmc_wasm_protocol::{JsonId, XmlId};
 use chrono::{DateTime, Utc};
 use wasmi::{Caller, Extern, Linker};
 
@@ -475,8 +476,8 @@ fn register_number_format_import(linker: &mut Linker<HostState>) -> Result<()> {
          out_ptr: u32,
          out_len: u32|
          -> i32 {
-            let formatted =
-                format_number_with_prefs(caller.data().prefs.number_format, value, decimals);
+            let number_format = caller.data().system.snapshot().settings.number_format;
+            let formatted = format_number_with_prefs(number_format, value, decimals);
             write_to_wasm(&mut caller, &formatted, out_ptr, out_len)
         },
     )?;
@@ -494,12 +495,18 @@ fn register_speed_format_import(linker: &mut Linker<HostState>) -> Result<()> {
          out_ptr: u32,
          out_len: u32|
          -> i32 {
-            let prefs = caller.data().prefs;
-            let (converted, suffix) = match prefs.unit_system {
+            // Pull the two `Copy` enums out into locals so the snapshot borrow
+            // drops before `format_number_with_prefs` allocates — avoids cloning
+            // the timezone String on every speed-format call.
+            let (number_format, unit_system) = {
+                let s = caller.data().system.snapshot();
+                (s.settings.number_format, s.settings.unit_system)
+            };
+            let (converted, suffix) = match unit_system {
                 UnitSystem::Metric => (value, " km/h"),
                 UnitSystem::Imperial => (value * 0.621_371_192, " mph"),
             };
-            let num = format_number_with_prefs(prefs.number_format, converted, decimals);
+            let num = format_number_with_prefs(number_format, converted, decimals);
             let formatted = format!("{num}{suffix}");
             write_to_wasm(&mut caller, &formatted, out_ptr, out_len)
         },
@@ -518,12 +525,15 @@ fn register_temperature_format_import(linker: &mut Linker<HostState>) -> Result<
          out_ptr: u32,
          out_len: u32|
          -> i32 {
-            let prefs = caller.data().prefs;
-            let (converted, suffix) = match prefs.temperature_unit {
+            let (number_format, temperature_unit) = {
+                let s = caller.data().system.snapshot();
+                (s.settings.number_format, s.settings.temperature_unit)
+            };
+            let (converted, suffix) = match temperature_unit {
                 TemperatureUnit::Celsius => (value, " \u{00b0}C"),
                 TemperatureUnit::Fahrenheit => (value * 9.0 / 5.0 + 32.0, " \u{00b0}F"),
             };
-            let num = format_number_with_prefs(prefs.number_format, converted, decimals);
+            let num = format_number_with_prefs(number_format, converted, decimals);
             let formatted = format!("{num}{suffix}");
             write_to_wasm(&mut caller, &formatted, out_ptr, out_len)
         },

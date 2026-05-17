@@ -24,13 +24,14 @@ use bmc_render::renderer::Renderer;
 use bmc_render::tree::NodeContext;
 use bmc_render::{AnimationState, ModalState, ScrollState, TransitionState};
 use bmc_wasm_protocol::{
-    AudioId, FetchRequestId, FormatPreferences, HttpListenerId, HttpRequestId, JsonId,
-    MdnsBrowseId, MdnsRegId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, XmlId,
+    AudioId, FetchRequestId, HttpListenerId, HttpRequestId, JsonId, MdnsBrowseId, MdnsRegId,
+    SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, XmlId,
 };
 
 use crate::audio_registry::AudioRegistry;
 use crate::runtime::ParamsSnapshot;
 use crate::runtime_limits::RuntimeResourceLimits;
+use crate::system::SystemSnapshot;
 use crate::xml::XmlDocumentIndex;
 use bmc_wasm_protocol::versioned_snapshot::VersionedSnapshotCache;
 
@@ -518,12 +519,13 @@ pub(crate) struct HostState {
     /// Order is alphabetical-by-key (the inner `BTreeMap` inside [`ParamsSnapshot`]) so the
     /// on-wire serialisation is deterministic and snapshot byte-equality is meaningful.
     ///
-    /// Private — mutate only through [`Self::replace_params`]. The wrapping
-    /// [`VersionedSnapshotCache`] folds the source-of-truth value, the change marker the
-    /// SDK reads via `host_params_version`, and the lazily-encoded bytes
-    /// `host_params_snapshot` writes to guest memory into one encapsulated unit,
-    /// so the version-bump and cache-invalidation invariants cannot drift.
-    params: bmc_wasm_protocol::versioned_snapshot::VersionedSnapshotCache<ParamsSnapshot>,
+    /// The wrapping [`VersionedSnapshotCache`] is the encapsulation:
+    /// it folds the source-of-truth value, the change marker the SDK reads
+    /// via `host_params_version`, and the lazily-encoded bytes `host_params_snapshot`
+    /// writes to guest memory into one unit. `replace()` is the only mutation path
+    /// — version-bump and cache-invalidation invariants live inside the cache,
+    /// so the field is `pub` here without compromising them.
+    pub params: bmc_wasm_protocol::versioned_snapshot::VersionedSnapshotCache<ParamsSnapshot>,
 
     /// Guest-lifecycle phase the runtime is currently in. See [`Lifecycle`].
     /// Single-threaded guest, so this is a plain field — only one phase can be active at a time.
@@ -634,8 +636,12 @@ pub(crate) struct HostState {
     /// Populated by `deliver_*` methods; drained via `take_recorded_events()`.
     pub recorded_events: Vec<FixtureEvent>,
 
-    /// User formatting preferences (number format, unit system, temperature unit).
-    pub prefs: FormatPreferences,
+    /// Deck-wide system state delivered to widgets — operator-controlled settings
+    /// (timezone, time/date/number/temperature/unit formats, week start) and the
+    /// resolved next-alarm entry. The runtime's `host_format_*` imports read
+    /// the relevant fields directly out of `system.snapshot().settings` so a
+    /// settings change is observable to widgets without any extra plumbing.
+    pub system: VersionedSnapshotCache<SystemSnapshot>,
 
     /// Per-frame timing breakdown from the last rendered frame.
     pub last_timings: FrameTimings,
@@ -687,12 +693,15 @@ pub(crate) struct HostState {
 }
 
 impl HostState {
-    /// Create new host state with the given formatting preferences.
+    /// Create new host state with default `system` / `params` snapshots
+    /// (version 0). The runtime constructor stages the operator-supplied
+    /// initial snapshots via `.replace(...)` to bump both to version 1
+    /// before `init()` runs.
     ///
     /// The renderer is owned by the caller of [`crate::WasmWidgetRuntime::new`]
     /// and installed on `renderer_ptr` per-frame via
     /// `WasmWidgetRuntime::with_renderer`.
-    pub fn new(prefs: FormatPreferences, resource_limits: RuntimeResourceLimits) -> Self {
+    pub fn new(resource_limits: RuntimeResourceLimits) -> Self {
         let (fetch_tx, fetch_rx) = mpsc::channel();
         Self {
             renderer_ptr: None,
@@ -744,7 +753,7 @@ impl HostState {
             record_events: false,
             event_fixtures: None,
             recorded_events: Vec::new(),
-            prefs,
+            system: VersionedSnapshotCache::new(SystemSnapshot::default()),
             last_timings: FrameTimings::default(),
             taffy: TaffyTree::with_capacity(64),
             resource_limits,
@@ -816,32 +825,6 @@ impl HostState {
     pub fn evict_widget(&mut self) -> usize {
         let prefix = self.guest_id.to_string();
         self.evict_audio_prefix(&prefix)
-    }
-
-    /// Atomically replace the params map, bump the change marker,
-    /// and invalidate the encoded-snapshot cache.
-    ///
-    /// The only correct way to mutate params — direct field writes are blocked
-    /// at compile time so the version-bump + cache-invalidation invariants cannot drift.
-    pub fn replace_params(
-        &mut self,
-        new_params: BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
-    ) {
-        self.params.replace(ParamsSnapshot::new(new_params));
-    }
-
-    /// Current value of the opaque change marker,
-    /// returned to guests by `host_params_version`.
-    pub fn params_version(&self) -> u64 {
-        self.params.version()
-    }
-
-    /// Encoded snapshot of the current params, in the wire format the SDK parser expects.
-    ///
-    /// Lazily fills the cache on first call after each [`Self::replace_params`]; subsequent
-    /// calls with no intervening mutation return the cached buffer without re-encoding.
-    pub fn encoded_params(&mut self) -> &[u8] {
-        self.params.encoded()
     }
 
     pub(crate) fn shutdown_workers(&mut self) {

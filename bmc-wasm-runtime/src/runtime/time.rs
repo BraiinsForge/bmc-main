@@ -4,17 +4,17 @@
 
 #![expect(clippy::cast_possible_truncation)]
 
-use bmc_wasm_protocol::NumberFormat;
+use bmc_wasm_protocol::system::NumberFormat;
 use chrono::{DateTime, Datelike, Local, Timelike};
 use formato::{FormatOptions, Formato};
 
 /// Format a number using the given number format preference and `formato` crate.
 pub(super) fn format_number_with_prefs(nf: NumberFormat, value: f64, decimals: u32) -> String {
     let (group_sep, decimal_sep) = match nf {
-        NumberFormat::SpaceComma => ("\u{00a0}", ","),
-        NumberFormat::CommaDot => (",", "."),
-        NumberFormat::DotComma => (".", ","),
-        NumberFormat::SpaceDot => ("\u{00a0}", "."),
+        NumberFormat::SpaceGroupCommaDecimal => ("\u{00a0}", ","),
+        NumberFormat::CommaGroupDotDecimal => (",", "."),
+        NumberFormat::DotGroupCommaDecimal => (".", ","),
+        NumberFormat::SpaceGroupDotDecimal => ("\u{00a0}", "."),
     };
 
     let options = FormatOptions::new()
@@ -171,18 +171,18 @@ pub(super) fn tz_convert_impl(unix_secs: i64, tz_name: &str) -> Option<[u8; 20]>
 
 #[cfg(test)]
 mod tests {
-    use bmc_wasm_protocol::NumberFormat;
+    use bmc_wasm_protocol::system::NumberFormat;
 
     use super::{format_number_with_prefs, tz_convert_impl};
 
     #[test]
     fn format_number_with_prefs_uses_requested_separators() {
         assert_eq!(
-            format_number_with_prefs(NumberFormat::CommaDot, 12_345.5, 1),
+            format_number_with_prefs(NumberFormat::CommaGroupDotDecimal, 12_345.5, 1),
             "12,345.5"
         );
         assert_eq!(
-            format_number_with_prefs(NumberFormat::DotComma, 12_345.5, 1),
+            format_number_with_prefs(NumberFormat::DotGroupCommaDecimal, 12_345.5, 1),
             "12.345,5"
         );
     }

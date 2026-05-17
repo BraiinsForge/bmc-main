@@ -98,6 +98,7 @@ mod host_api;
 #[cfg(feature = "perf-overlay")]
 pub mod perf_overlay;
 mod runtime;
+pub mod system;
 
 #[cfg(feature = "fixtures")]
 pub mod capture_config;
@@ -108,6 +109,7 @@ pub mod unified_fixture;
 
 pub use host_api::{FixtureEvent, FixtureEventKind, FixtureEventState};
 pub use runtime::{RenderStatus, RuntimeConfig, RuntimeResourceLimits, WasmWidgetRuntime};
+pub use system::{NextAlarm, SystemSettings, SystemSnapshot};
 
 /// Errors produced by [`parse_params_json`] when an entry violates the wire-format contract.
 ///

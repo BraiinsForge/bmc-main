@@ -1,6 +1,7 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! System-level guest imports such as wall-clock time and randomness.
+//! System-level guest imports: wall-clock time, randomness, widget viewport,
+//! and the deck-wide `SystemSnapshot` snapshot channel (timezone, formatting preferences, next-alarm).
 
 #![expect(clippy::cast_possible_truncation)]
 
@@ -14,6 +15,8 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_system_time_import(linker)?;
     register_random_import(linker)?;
     register_widget_size_import(linker)?;
+    register_system_version(linker)?;
+    register_system_snapshot(linker)?;
     Ok(())
 }
 
@@ -63,6 +66,69 @@ fn register_system_time_import(linker: &mut Linker<HostState>) -> Result<()> {
         },
     )?;
 
+    Ok(())
+}
+
+/// `host_system_version() -> u64` — opaque change marker
+/// for the `SystemSnapshot` channel. The SDK compares it against
+/// its last-seen value and re-fetches the snapshot whenever they differ.
+///
+/// Wrap-safe (different = changed, not greater = newer).
+/// Parallel to `host_params_version` for the params channel.
+fn register_system_version(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_system_version",
+        |caller: Caller<'_, HostState>| -> u64 { caller.data().system.version() },
+    )?;
+    Ok(())
+}
+
+/// `host_system_snapshot(out_ptr: *mut u8, out_cap: u32) -> u32`
+/// — probe-then-allocate fetch of the encoded `SystemSnapshot`.
+///
+/// `out_cap == 0` returns the required byte length without writing;
+/// `out_cap >= required` writes the packed snapshot and returns the bytes written;
+/// `out_cap < required` writes nothing and returns the required length.
+///
+/// Mirrors `host_params_snapshot` exactly — same OOB-trap contract
+/// and same memory-export-required ABI rule.
+fn register_system_snapshot(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_system_snapshot",
+        |mut caller: Caller<'_, HostState>,
+         out_ptr: u32,
+         out_cap: u32|
+         -> std::result::Result<u32, wasmi::Error> {
+            let bytes = caller.data_mut().system.encoded().to_vec();
+            let needed = bytes.len() as u32;
+
+            if out_cap < needed {
+                return Ok(needed);
+            }
+
+            let Some(memory) = caller.get_export("memory").and_then(Extern::into_memory) else {
+                return Err(wasmi::Error::new(
+                    "host import `host_system_snapshot`: guest module has no exported `memory` \
+                     — cannot write the snapshot. ABI requires an exported linear memory.",
+                ));
+            };
+            let data = memory.data_mut(&mut caller);
+            let start = out_ptr as usize;
+            let end = start.saturating_add(bytes.len());
+            if end > data.len() {
+                return Err(wasmi::Error::new(format!(
+                    "host import `host_system_snapshot`: out_ptr range {start:#x}..{end:#x} \
+                     overflows guest memory of {} bytes — caller must size the buffer using \
+                     the probe call (out_cap == 0) before writing",
+                    data.len(),
+                )));
+            }
+            data[start..end].copy_from_slice(&bytes);
+            Ok(needed)
+        },
+    )?;
     Ok(())
 }
 

@@ -5,7 +5,8 @@
 //! Mirrors the JS SDK's `sdk.format.*` API from deckfeeder.
 //!
 //! Preference-aware formatters delegate to host functions that use `formato`
-//! and the user's `FormatPreferences` (number format, unit system, temperature).
+//! and the operator-controlled fields of the deck-wide `SystemSnapshot`
+//! (`number_format`, `unit_system`, `temperature_unit`) — see [`crate::system`].
 //! Use the macros [`format_number!`], [`format_speed!`], [`format_temperature!`].
 
 unsafe extern "C" {
@@ -89,7 +90,7 @@ pub fn format_date(timestamp: i64, format: &str) -> String {
 ///
 /// # Example
 /// ```ignore
-/// let s = format_number!(27_565.0, 0); // "27 565" (SpaceComma default)
+/// let s = format_number!(27_565.0, 0); // "27 565" (SpaceGroupCommaDecimal default)
 /// ```
 #[macro_export]
 macro_rules! format_number {

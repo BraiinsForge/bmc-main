@@ -58,33 +58,25 @@ cargo check -p bmc-widget-wasm
 
 ```rust
 use bmc_wasm_runtime::RenderStatus;
-use bmc_wasm_protocol::FormatPreferences;
 ```
 
-The `bmc_wasm_protocol` crate is pulled in transitively via `bmc-wasm-runtime`, but for `FormatPreferences` you need to
-reference it directly. Add to `widgets/wasm/Cargo.toml`:
-
-```toml
-bmc-wasm-protocol = { path = "../../bmc-wasm-runtime/protocol" }
-```
-
-Or alternatively, since `FormatPreferences` implements `Default`, you can avoid the extra dep:
-
-Just pass `FormatPreferences::default()` inline — it gives Metric / Celsius / SpaceComma.
+The deck-wide formatting / next-alarm fields land via the `SystemSnapshot` channel — the wasm widget binary accumulates
+per-field `SettingUpdate` events into a `bmc_wasm_runtime::SystemSnapshot` and pushes the bundle through
+`WasmWidgetRuntime::deliver_system_update`. For the initial delivery, `RuntimeConfig::system` carries the snapshot into
+`WasmWidgetRuntime::new` so the first frame already sees the operator's values.
 
 ### 2b. Constructor signature change
 
-The `WasmWidgetRuntime::new()` constructor now requires two additional parameters:
+The `WasmWidgetRuntime::new()` constructor takes a `RuntimeConfig` argument. The relevant fields for formatting
+preferences are now on the system snapshot:
 
-| Parameter        | Type                | Purpose                                                                             |
-| ---------------- | ------------------- | ----------------------------------------------------------------------------------- |
-| `fuel_per_frame` | `u64`               | Instruction budget per frame (use `WasmWidgetRuntime::FUEL_PER_FRAME` = 10,000,000) |
-| `prefs`          | `FormatPreferences` | Number/unit/temperature formatting prefs                                            |
+| Field            | Type             | Purpose                                                                             |
+| ---------------- | ---------------- | ----------------------------------------------------------------------------------- |
+| `fuel_per_frame` | `u64`            | Instruction budget per frame (use `WasmWidgetRuntime::FUEL_PER_FRAME` = 10,000,000) |
+| `system`         | `SystemSnapshot` | Initial deck-wide system snapshot (timezone, formats, next-alarm)                   |
 
 **Location:** `run_wasm_mode()`, around line 324.
 
-BEFORE (line 324-332):
-
 ```
 let mut runtime = unsafe {
     WasmWidgetRuntime::new(
@@ -93,28 +85,15 @@ let mut runtime = unsafe {
         self.state.width,
         self.state.height,
         fbo_id,
+        RuntimeConfig::default(),
     )?
 };
 ```
 
-AFTER:
-
-```
-let mut runtime = unsafe {
-    WasmWidgetRuntime::new(
-        &wasm_bytes,
-        |symbol| smithay::backend::egl::get_proc_address(symbol),
-        self.state.width,
-        self.state.height,
-        fbo_id,
-        WasmWidgetRuntime::FUEL_PER_FRAME,
-        FormatPreferences::default(),
-    )?
-};
-```
-
-> Later, `FormatPreferences` can be wired to device settings via `DECK_PARAMS` JSON, but `default()`
-> (Metric/Celsius/SpaceComma) is fine for now.
+> `RuntimeConfig::default()` provides `SystemSnapshot::default()` (Metric/Celsius/`SpaceGroupCommaDecimal`/empty
+> timezone). For real operator-driven values, accumulate the per-field wayland `SettingUpdate` events into a
+> `SystemSnapshot` and push it through `WasmWidgetRuntime::deliver_system_update` (or seed `RuntimeConfig::system` for
+> the initial delivery before `init`).
 
 ### 2c. Handle `render()` return type
 

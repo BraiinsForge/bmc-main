@@ -52,7 +52,7 @@ fn register_params_version(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_params_version",
-        |caller: Caller<'_, HostState>| -> u64 { caller.data().params_version() },
+        |caller: Caller<'_, HostState>| -> u64 { caller.data().params.version() },
     )?;
     Ok(())
 }
@@ -69,7 +69,7 @@ fn register_params_snapshot(linker: &mut Linker<HostState>) -> Result<()> {
             // A misbehaving guest spinning on `host_params_snapshot` re-uses the cached bytes
             // until the next `replace_params` call instead of forcing a fresh encode every time.
             // `.to_vec()` releases the `&mut HostState` borrow before the wasm-memory write below.
-            let bytes = caller.data_mut().encoded_params().to_vec();
+            let bytes = caller.data_mut().params.encoded().to_vec();
             let needed = bytes.len() as u32;
 
             if out_cap < needed {

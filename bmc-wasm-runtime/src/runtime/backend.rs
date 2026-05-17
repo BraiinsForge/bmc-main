@@ -11,7 +11,7 @@ use std::time::Instant;
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
-    BLACK, FormatPreferences, ICON_METER, RED_60, SDK_VERSION, SDK_VERSION_EXPORT, version_unpack,
+    BLACK, ICON_METER, RED_60, SDK_VERSION, SDK_VERSION_EXPORT, version_unpack,
 };
 use chrono::{DateTime, FixedOffset};
 use wasmi::{Caller, Extern, Linker};
@@ -21,6 +21,9 @@ use bmc_render::renderer::Renderer;
 use bmc_render::tree::{self, TouchHit};
 
 use crate::host_api::{FixtureEvent, HostState, Lifecycle};
+use crate::system::SystemSnapshot;
+
+use super::ParamsSnapshot;
 
 /// Write a `TouchHit` (4×f32 LE = 16 bytes) to WASM memory at `out_ptr`.
 pub(super) fn write_touch_hit(caller: &mut Caller<'_, HostState>, out_ptr: u32, hit: &TouchHit) {
@@ -135,8 +138,13 @@ pub use crate::runtime_limits::RuntimeResourceLimits;
 pub struct RuntimeConfig {
     /// Instruction budget per frame (default: [`WasmWidgetRuntime::FUEL_PER_FRAME`]).
     pub fuel_per_frame: u64,
-    /// Format preferences (12h/24h, date format, etc.).
-    pub prefs: FormatPreferences,
+    /// Deck-wide system snapshot (timezone, time/date/number/temperature/unit
+    /// formats, week start, next-alarm). Staged into the runtime before
+    /// `init()` runs so the widget's first frame already sees the operator's
+    /// values via `bmc_wasm_sdk::system::current()`. The runtime bumps the
+    /// version counter once on install; subsequent deliveries arrive through
+    /// [`WasmWidgetRuntime::deliver_system_update`].
+    pub system: SystemSnapshot,
     /// Key-value storage directory for this widget.
     pub kv_store_path: Option<std::path::PathBuf>,
     /// Intercept fetch requests before they hit the network.
@@ -196,7 +204,7 @@ impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             fuel_per_frame: WasmWidgetRuntime::FUEL_PER_FRAME,
-            prefs: FormatPreferences::default(),
+            system: SystemSnapshot::default(),
             kv_store_path: None,
             fetch_interceptor: None,
             fetch_observer: None,
@@ -226,7 +234,8 @@ pub struct WasmWidgetRuntime {
     /// Symmetric counterpart to `init`; gives a widget a chance to release
     /// its own ephemeral state before the host-side safety sweep runs.
     unload_func: Option<wasmi::TypedFunc<(), ()>>,
-    /// Optional guest export fired for every params delivery **after** the initial one.
+    /// Optional guest export fired for every params- or system-snapshot delivery
+    /// **after** the initial one.
     /// The first delivery is observed through `params::current()` inside `init`.
     /// Subsequent deliveries arrive via [`Self::deliver_params_update`], which calls
     /// this hook under [`Lifecycle::ParamsUpdate`].
@@ -265,7 +274,7 @@ impl WasmWidgetRuntime {
         // binary can plumb it through to its `FemtoVgRenderer::new` call.
         let RuntimeConfig {
             fuel_per_frame,
-            prefs,
+            system,
             kv_store_path,
             fetch_interceptor,
             fetch_observer,
@@ -293,7 +302,7 @@ impl WasmWidgetRuntime {
         let engine = wasmi::Engine::new(&engine_config);
         let module = wasmi::Module::new(&engine, wasm_bytes)?;
 
-        let host_state = HostState::new(prefs, resource_limits);
+        let host_state = HostState::new(resource_limits);
 
         let mut store = wasmi::Store::new(&engine, host_state);
         store.set_fuel(fuel_per_frame)?;
@@ -320,15 +329,18 @@ impl WasmWidgetRuntime {
         state.rng_state = rng_seed;
         state.led_command_sender = led_command_sender;
         state.frame_schedule.animation_frame_delay_ms = animation_frame_delay_ms;
-        // Stage the initial params snapshot before `init` runs so the guest's
-        // first `params::current()` call observes operator-configured values,
-        // not an empty map.
+        // Stage the initial snapshots before `init` runs so the guest's
+        // first `params::current()` / `system::current()` calls observe
+        // operator-configured values, not defaults.
         //
-        // The version is bumped once here; subsequent deliveries go through
-        // `deliver_params_update`, which bumps again and fires `on_params_update`.
-        if !params.is_empty() {
-            state.replace_params(params);
-        }
+        // Both channels always replace — including the empty-params
+        // and default-system cases — so the post-construction invariant
+        // is uniform: version is always ≥ 1, and the SDK's first fetch
+        // always hits a real snapshot rather than the v0 placeholder.
+        // Subsequent operator changes go through `deliver_*_update`,
+        // which bumps again and fires `on_params_update`.
+        state.params.replace(ParamsSnapshot::new(params));
+        state.system.replace(system);
         if !event_fixtures.is_empty() {
             state.event_fixtures = Some(crate::host_api::FixtureEventState {
                 events: event_fixtures,
@@ -616,7 +628,10 @@ impl WasmWidgetRuntime {
             bmc_widget_manifest::ParamValue,
         >,
     ) {
-        self.store.data_mut().replace_params(params);
+        self.store
+            .data_mut()
+            .params
+            .replace(ParamsSnapshot::new(params));
     }
 
     /// Deliver an operator-driven params update to the running widget.
@@ -654,6 +669,36 @@ impl WasmWidgetRuntime {
         >,
     ) -> bool {
         self.set_params(params);
+        self.fire_on_params_update_hook()
+    }
+
+    /// Deliver an updated deck-wide [`SystemSnapshot`] (timezone, formatting
+    /// preferences, next-alarm, …) to the running widget.
+    ///
+    /// Parallel to [`Self::deliver_params_update`] for the `system` channel:
+    /// stages the snapshot, bumps the version counter, invalidates the
+    /// encoded-cache, and — if the widget exported `on_params_update` — calls
+    /// it under [`Lifecycle::ParamsUpdate`] with a fresh fuel budget. The
+    /// guest sees system updates through the same lifecycle hook as params
+    /// updates so widget authors learn one rule: "deck-side state changed,
+    /// re-check what I depend on."
+    ///
+    /// No rollback on trap (by design); see [`Self::deliver_params_update`].
+    ///
+    /// Use this for every system delivery **after** the initial one (initial
+    /// deliveries belong in [`RuntimeConfig::system`] so they're observable
+    /// from `init`). Returns whether the guest's hook actually ran — most
+    /// callers ignore it.
+    pub fn deliver_system_update(&mut self, snapshot: SystemSnapshot) -> bool {
+        self.store.data_mut().system.replace(snapshot);
+        self.fire_on_params_update_hook()
+    }
+
+    /// Common tail of `deliver_params_update` / `deliver_system_update`:
+    /// invoke the guest's `on_params_update` export under
+    /// `Lifecycle::ParamsUpdate` with a fresh fuel budget, swallowing traps
+    /// (the snapshot is already staged so the next `render` picks it up).
+    fn fire_on_params_update_hook(&mut self) -> bool {
         let Some(hook) = self.on_params_update_func else {
             return false;
         };
