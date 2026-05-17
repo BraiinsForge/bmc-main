@@ -243,18 +243,21 @@ class View extends Component<Props, State> {
 
             const params = fn.widgetParamsToFormifiedState(manifest, widget.config?.params);
 
-            this.setState({
-                openDialogKind: 'manifest',
-                manifestForm: {
-                    manifest,
-                    sceneID,
-                    widgetID: widget.id,
-                    params,
-                    errors: null,
-                    isNewScene: true,
-                    originalParams: {},
+            this.setState(
+                {
+                    openDialogKind: 'manifest',
+                    manifestForm: {
+                        manifest,
+                        sceneID,
+                        widgetID: widget.id,
+                        params,
+                        errors: null,
+                        isNewScene: true,
+                        originalParams: {},
+                    },
                 },
-            });
+                () => this.#previewOpen(sceneID),
+            );
             this.#loadScenesDebounced();
         } catch ($) {
             if (pb.abort.is($)) return;
