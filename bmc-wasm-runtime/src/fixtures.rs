@@ -175,106 +175,113 @@ pub fn snapshot_kv_dir(kv_dir: &Path) -> HashMap<String, String> {
 pub fn fixture_events_to_timeline(
     events: &[FixtureEvent],
 ) -> Vec<crate::unified_fixture::TimelineEvent> {
-    use crate::unified_fixture::{FixtureBody, TimelineEvent, UnifiedEvent};
+    use crate::unified_fixture::TimelineEvent;
 
     events
         .iter()
-        .map(|fe| {
-            let event = match &fe.kind {
-                FixtureEventKind::SsdpFound { search_id, data } => UnifiedEvent::SsdpFound {
-                    search_id: search_id.to_wire(),
-                    data: data.clone(),
-                },
-                FixtureEventKind::SsdpRemoved { search_id, data } => UnifiedEvent::SsdpRemoved {
-                    search_id: search_id.to_wire(),
-                    data: data.clone(),
-                },
-                FixtureEventKind::MdnsFound { browse_id, data } => UnifiedEvent::MdnsFound {
-                    browse_id: browse_id.to_wire(),
-                    data: data.clone(),
-                },
-                FixtureEventKind::MdnsRemoved { browse_id, data } => UnifiedEvent::MdnsRemoved {
-                    browse_id: browse_id.to_wire(),
-                    data: data.clone(),
-                },
-                FixtureEventKind::WsOpen { ws_id } => UnifiedEvent::WsOpen {
-                    ws_id: ws_id.to_wire(),
-                },
-                FixtureEventKind::WsMessage { ws_id, data } => UnifiedEvent::WsMessage {
-                    ws_id: ws_id.to_wire(),
-                    data: FixtureBody::from_bytes(data),
-                },
-                FixtureEventKind::WsClose { ws_id, code } => UnifiedEvent::WsClose {
-                    ws_id: ws_id.to_wire(),
-                    code: *code,
-                },
-                FixtureEventKind::SocketConnected { socket_id } => UnifiedEvent::SocketConnected {
-                    socket_id: socket_id.to_wire(),
-                },
-                FixtureEventKind::SocketData { socket_id, data } => UnifiedEvent::SocketData {
-                    socket_id: socket_id.to_wire(),
-                    data: FixtureBody::from_bytes(data),
-                },
-                FixtureEventKind::SocketClosed { socket_id, code } => UnifiedEvent::SocketClosed {
-                    socket_id: socket_id.to_wire(),
-                    code: *code,
-                },
-                FixtureEventKind::UdpResponse {
-                    broadcast_id,
-                    data,
-                    source,
-                } => UnifiedEvent::UdpResponse {
-                    broadcast_id: broadcast_id.to_wire(),
-                    data: data.clone(),
-                    source: source.clone(),
-                },
-                FixtureEventKind::AudioPlay {
-                    sound_id,
-                    volume,
-                    name,
-                    duration_ms,
-                } => UnifiedEvent::AudioPlay {
-                    sound_id: u32::from(sound_id.to_wire()),
-                    volume: *volume,
-                    name: name.clone(),
-                    duration_ms: *duration_ms,
-                },
-                FixtureEventKind::LedSetEndless {
-                    effect,
-                    r,
-                    g,
-                    b,
-                    period_ms,
-                } => UnifiedEvent::LedSetEndless {
-                    effect: *effect,
-                    r: *r,
-                    g: *g,
-                    b: *b,
-                    period_ms: *period_ms,
-                },
-                FixtureEventKind::LedSetTemporary {
-                    effect,
-                    r,
-                    g,
-                    b,
-                    period_ms,
-                    duration_ms,
-                } => UnifiedEvent::LedSetTemporary {
-                    effect: *effect,
-                    r: *r,
-                    g: *g,
-                    b: *b,
-                    period_ms: *period_ms,
-                    duration_ms: *duration_ms,
-                },
-                FixtureEventKind::LedStop => UnifiedEvent::LedStop,
-            };
-            TimelineEvent {
-                at_ms: fe.at_ms,
-                event,
-            }
+        .map(|fe| TimelineEvent {
+            at_ms: fe.at_ms,
+            event: fixture_event_kind_to_unified(&fe.kind),
         })
         .collect()
+}
+
+fn fixture_event_kind_to_unified(kind: &FixtureEventKind) -> crate::unified_fixture::UnifiedEvent {
+    use crate::unified_fixture::{FixtureBody, UnifiedEvent};
+
+    match kind {
+        FixtureEventKind::SsdpFound { search_id, data } => UnifiedEvent::SsdpFound {
+            search_id: search_id.to_wire(),
+            data: data.clone(),
+        },
+        FixtureEventKind::SsdpRemoved { search_id, data } => UnifiedEvent::SsdpRemoved {
+            search_id: search_id.to_wire(),
+            data: data.clone(),
+        },
+        FixtureEventKind::MdnsFound { browse_id, data } => UnifiedEvent::MdnsFound {
+            browse_id: browse_id.to_wire(),
+            data: data.clone(),
+        },
+        FixtureEventKind::MdnsRemoved { browse_id, data } => UnifiedEvent::MdnsRemoved {
+            browse_id: browse_id.to_wire(),
+            data: data.clone(),
+        },
+        FixtureEventKind::WsOpen { ws_id } => UnifiedEvent::WsOpen {
+            ws_id: ws_id.to_wire(),
+        },
+        FixtureEventKind::WsMessage { ws_id, data } => UnifiedEvent::WsMessage {
+            ws_id: ws_id.to_wire(),
+            data: FixtureBody::from_bytes(data),
+        },
+        FixtureEventKind::WsClose { ws_id, code } => UnifiedEvent::WsClose {
+            ws_id: ws_id.to_wire(),
+            code: *code,
+        },
+        FixtureEventKind::SocketConnected { socket_id } => UnifiedEvent::SocketConnected {
+            socket_id: socket_id.to_wire(),
+        },
+        FixtureEventKind::SocketData { socket_id, data } => UnifiedEvent::SocketData {
+            socket_id: socket_id.to_wire(),
+            data: FixtureBody::from_bytes(data),
+        },
+        FixtureEventKind::SocketClosed { socket_id, code } => UnifiedEvent::SocketClosed {
+            socket_id: socket_id.to_wire(),
+            code: *code,
+        },
+        FixtureEventKind::UdpResponse {
+            broadcast_id,
+            data,
+            source,
+        } => UnifiedEvent::UdpResponse {
+            broadcast_id: broadcast_id.to_wire(),
+            data: data.clone(),
+            source: source.clone(),
+        },
+        FixtureEventKind::AudioPlay {
+            sound_id,
+            volume,
+            name,
+            duration_ms,
+        } => UnifiedEvent::AudioPlay {
+            sound_id: u32::from(sound_id.to_wire()),
+            volume: *volume,
+            name: name.clone(),
+            duration_ms: *duration_ms,
+        },
+        FixtureEventKind::LedSetEndless {
+            effect,
+            r,
+            g,
+            b,
+            period_ms,
+            scope,
+        } => UnifiedEvent::LedSetEndless {
+            effect: *effect,
+            r: *r,
+            g: *g,
+            b: *b,
+            period_ms: *period_ms,
+            scope: *scope,
+        },
+        FixtureEventKind::LedSetTemporary {
+            effect,
+            r,
+            g,
+            b,
+            period_ms,
+            duration_ms,
+            scope,
+        } => UnifiedEvent::LedSetTemporary {
+            effect: *effect,
+            r: *r,
+            g: *g,
+            b: *b,
+            period_ms: *period_ms,
+            duration_ms: *duration_ms,
+            scope: *scope,
+        },
+        FixtureEventKind::LedStop => UnifiedEvent::LedStop,
+    }
 }
 
 // ── Shared helpers (used by both capture and testbed) ────────────────

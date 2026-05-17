@@ -133,6 +133,7 @@ pub enum FixtureEventKind {
         g: u8,
         b: u8,
         period_ms: u32,
+        scope: u8,
     },
     LedSetTemporary {
         effect: u8,
@@ -141,6 +142,7 @@ pub enum FixtureEventKind {
         b: u8,
         period_ms: u32,
         duration_ms: u32,
+        scope: u8,
     },
     LedStop,
 }

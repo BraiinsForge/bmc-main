@@ -108,7 +108,7 @@ pub mod fixtures;
 #[cfg(feature = "fixtures")]
 pub mod unified_fixture;
 
-pub use bmc_led::data::{LedEffectKind as LedEffect, Rgb};
+pub use bmc_led::data::{LedEffectKind as LedEffect, LedScope, Rgb};
 pub use host_api::{FixtureEvent, FixtureEventKind, FixtureEventState};
 pub use led_request::{LED_REQUEST_ID_ALL, LedRequest, LedRequestId, LedRequestIdAllocator};
 pub use runtime::{
