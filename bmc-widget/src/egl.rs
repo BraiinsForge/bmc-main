@@ -910,6 +910,264 @@ impl Drop for DoubleBufferedEglState {
     }
 }
 
+/// Resources for the Y-flip blit pass used by femtovg-rendering widgets.
+///
+/// femtovg renders Y-flipped when targeting an FBO; this program samples a
+/// staging texture with flipped V and writes to a caller-supplied destination
+/// FBO. Lives in [`SharedRenderScratch`] alongside the staging texture so the
+/// host can share one program + VBO across all slots.
+struct BlitResources {
+    program: glow::Program,
+    vbo: glow::Buffer,
+    pos_loc: u32,
+    uv_loc: u32,
+    uv_scale_loc: glow::UniformLocation,
+}
+
+impl BlitResources {
+    fn new(gl: &glow::Context) -> Result<Self> {
+        let vert_src = r"#version 100
+attribute vec2 a_pos;
+attribute vec2 a_uv;
+varying vec2 v_uv;
+uniform vec2 u_uv_scale;
+void main() {
+    v_uv = a_uv * u_uv_scale;
+    gl_Position = vec4(a_pos, 0.0, 1.0);
+}
+";
+        let frag_src = r"#version 100
+precision mediump float;
+varying vec2 v_uv;
+uniform sampler2D u_tex;
+void main() {
+    gl_FragColor = texture2D(u_tex, v_uv);
+}
+";
+        let program = unsafe {
+            let vs = gl
+                .create_shader(glow::VERTEX_SHADER)
+                .map_err(|e| anyhow::anyhow!("Blit VS create: {e}"))?;
+            gl.shader_source(vs, vert_src);
+            gl.compile_shader(vs);
+            if !gl.get_shader_compile_status(vs) {
+                let log = gl.get_shader_info_log(vs);
+                gl.delete_shader(vs);
+                anyhow::bail!("Blit VS compile: {log}");
+            }
+
+            let fs = gl.create_shader(glow::FRAGMENT_SHADER).map_err(|e| {
+                gl.delete_shader(vs);
+                anyhow::anyhow!("Blit FS create: {e}")
+            })?;
+            gl.shader_source(fs, frag_src);
+            gl.compile_shader(fs);
+            if !gl.get_shader_compile_status(fs) {
+                let log = gl.get_shader_info_log(fs);
+                gl.delete_shader(vs);
+                gl.delete_shader(fs);
+                anyhow::bail!("Blit FS compile: {log}");
+            }
+
+            let prog = gl.create_program().map_err(|e| {
+                gl.delete_shader(vs);
+                gl.delete_shader(fs);
+                anyhow::anyhow!("Blit program create: {e}")
+            })?;
+            gl.attach_shader(prog, vs);
+            gl.attach_shader(prog, fs);
+            gl.link_program(prog);
+            gl.delete_shader(vs);
+            gl.delete_shader(fs);
+            if !gl.get_program_link_status(prog) {
+                let log = gl.get_program_info_log(prog);
+                gl.delete_program(prog);
+                anyhow::bail!("Blit program link: {log}");
+            }
+            prog
+        };
+
+        #[rustfmt::skip]
+        let vertices: [f32; 24] = [
+            -1.0, -1.0,  0.0, 1.0,
+             1.0, -1.0,  1.0, 1.0,
+             1.0,  1.0,  1.0, 0.0,
+            -1.0, -1.0,  0.0, 1.0,
+             1.0,  1.0,  1.0, 0.0,
+            -1.0,  1.0,  0.0, 0.0,
+        ];
+
+        let vbo = unsafe {
+            let buf = gl.create_buffer().map_err(|e| {
+                gl.delete_program(program);
+                anyhow::anyhow!("Blit VBO create: {e}")
+            })?;
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(buf));
+            let bytes: &[u8] = std::slice::from_raw_parts(
+                vertices.as_ptr().cast::<u8>(),
+                std::mem::size_of_val(&vertices),
+            );
+            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STATIC_DRAW);
+            buf
+        };
+
+        let pos_loc = unsafe {
+            gl.get_attrib_location(program, "a_pos")
+                .expect("BUG: a_pos not found in blit shader")
+        };
+        let uv_loc = unsafe {
+            gl.get_attrib_location(program, "a_uv")
+                .expect("BUG: a_uv not found in blit shader")
+        };
+        let uv_scale_loc = unsafe {
+            gl.get_uniform_location(program, "u_uv_scale")
+                .expect("BUG: u_uv_scale not found in blit shader")
+        };
+
+        Ok(Self {
+            program,
+            vbo,
+            pos_loc,
+            uv_loc,
+            uv_scale_loc,
+        })
+    }
+
+    fn destroy(&self, gl: &glow::Context) {
+        unsafe {
+            gl.delete_program(self.program);
+            gl.delete_buffer(self.vbo);
+        }
+    }
+}
+
+#[must_use]
+fn shared_scratch_uv_scale(max_width: u32, max_height: u32, w: u32, h: u32) -> (f32, f32) {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "pixel dimensions converted to normalized GL texture coordinates"
+    )]
+    (w as f32 / max_width as f32, h as f32 / max_height as f32)
+}
+
+/// Per-render-thread scratch resources for femtovg-rendering widgets.
+///
+/// femtovg renders into an FBO Y-flipped and needs an 8-bit stencil for its
+/// painting algorithms; this scratch holds:
+///
+/// - a staging [`WidgetExportBuffer`] (color texture + stencil RBO + FBO),
+///   sized to a caller-chosen maximum that bounds all consumers, and
+/// - a blit program that copies the staging color texture to a destination
+///   FBO with flipped V.
+///
+/// Construct once per render thread against a shared [`EglContext`]; in the
+/// standalone-widget process there is one of each. In the multi-widget host
+/// (BDK-469 Stage 5) the host owns one `SharedRenderScratch` and one
+/// `EglContext`; each slot owns its own [`DoubleBufferState`] and reuses the
+/// shared scratch every frame. Smaller widgets set viewport to their own
+/// dimensions on [`Self::begin_frame`] and the blit reads `(0,0,w,h)` of the
+/// staging texture; sizing the staging to the display maximum is the caller's
+/// responsibility.
+///
+/// Single-threaded: callers must serialize their `begin_frame` →
+/// `blit_to` cycles. Two slots cannot render concurrently against the same
+/// scratch.
+///
+/// Release via [`Self::destroy`] while the [`EglContext`] is current on this
+/// thread — GL deletion requires a current context.
+pub struct SharedRenderScratch {
+    staging: WidgetExportBuffer,
+    blit: BlitResources,
+}
+
+impl fmt::Debug for SharedRenderScratch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SharedRenderScratch")
+            .field("staging", &self.staging)
+            .finish_non_exhaustive()
+    }
+}
+
+impl SharedRenderScratch {
+    /// Allocate a staging FBO sized to `(max_width, max_height)` and the
+    /// Y-flip blit program against `ctx`. Per-frame consumers may render at
+    /// any size up to this maximum; [`Self::begin_frame`] sets viewport to
+    /// the per-frame size.
+    pub fn new(ctx: &EglContext, max_width: u32, max_height: u32) -> Result<Self> {
+        let staging = ctx
+            .allocate_widget_export_buffer(max_width, max_height, Depth::Disabled)
+            .context("Failed to allocate SharedRenderScratch staging")?;
+        match BlitResources::new(ctx.gl()) {
+            Ok(blit) => Ok(Self { staging, blit }),
+            Err(e) => {
+                ctx.destroy_widget_export_buffer(staging);
+                Err(e)
+            }
+        }
+    }
+
+    /// Bind the staging FBO, set viewport to `(w, h)`, and clear color +
+    /// stencil. Returns the raw GL framebuffer name for femtovg's
+    /// `set_screen_target`.
+    ///
+    /// `w` and `h` must be ≤ the maximum dimensions passed to [`Self::new`];
+    /// callers exceeding the maximum render outside the staging and produce
+    /// black borders or clipped output.
+    #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
+    #[must_use]
+    pub fn begin_frame(&self, ctx: &EglContext, w: u32, h: u32) -> u32 {
+        let gl = ctx.gl();
+        unsafe {
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.staging.fbo()));
+            gl.viewport(0, 0, w as i32, h as i32);
+            gl.clear_color(0.0, 0.0, 0.0, 1.0);
+            gl.clear(glow::COLOR_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
+        }
+        self.staging.fbo_id()
+    }
+
+    /// Blit the staging color texture into `dest_fbo` with Y-flip, viewport
+    /// `(0, 0, w, h)`. Call after femtovg's `flush()` and before swapping the
+    /// destination buffer out for export.
+    #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
+    pub fn blit_to(&self, ctx: &EglContext, dest_fbo: glow::Framebuffer, w: u32, h: u32) {
+        let gl = ctx.gl();
+        unsafe {
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(dest_fbo));
+            gl.viewport(0, 0, w as i32, h as i32);
+
+            gl.use_program(Some(self.blit.program));
+            let (u_scale, v_scale) =
+                shared_scratch_uv_scale(self.staging.width, self.staging.height, w, h);
+            gl.uniform_2_f32(Some(&self.blit.uv_scale_loc), u_scale, v_scale);
+
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.staging.texture()));
+
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.blit.vbo));
+            gl.enable_vertex_attrib_array(self.blit.pos_loc);
+            gl.vertex_attrib_pointer_f32(self.blit.pos_loc, 2, glow::FLOAT, false, 16, 0);
+            gl.enable_vertex_attrib_array(self.blit.uv_loc);
+            gl.vertex_attrib_pointer_f32(self.blit.uv_loc, 2, glow::FLOAT, false, 16, 8);
+
+            gl.disable(glow::STENCIL_TEST);
+            gl.draw_arrays(glow::TRIANGLES, 0, 6);
+
+            gl.disable_vertex_attrib_array(self.blit.pos_loc);
+            gl.disable_vertex_attrib_array(self.blit.uv_loc);
+        }
+    }
+
+    /// Release all GL resources. Callers must invoke this while `ctx` is
+    /// current on this thread; dropping the value without calling `destroy`
+    /// leaks the staging FBO, color texture, stencil RBO, blit program, and
+    /// blit VBO.
+    pub fn destroy(self, ctx: &EglContext) {
+        self.blit.destroy(ctx.gl());
+        ctx.destroy_widget_export_buffer(self.staging);
+    }
+}
+
 /// Load an EGL/GL extension function pointer by name.
 fn load_egl_proc<T>(name: &str) -> Result<T> {
     // SAFETY: querying an EGL function pointer is safe; the returned pointer
@@ -933,7 +1191,16 @@ fn load_egl_proc<T>(name: &str) -> Result<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Depth, DoubleBufferState, EglContext, WidgetExportBuffer};
+    use super::{
+        Depth, DoubleBufferState, EglContext, SharedRenderScratch, WidgetExportBuffer,
+        shared_scratch_uv_scale,
+    };
+
+    #[test]
+    fn shared_scratch_uv_scale_samples_only_active_slot_region() {
+        assert_eq!(shared_scratch_uv_scale(1280, 480, 640, 240), (0.5, 0.5));
+        assert_eq!(shared_scratch_uv_scale(1280, 480, 1280, 480), (1.0, 1.0));
+    }
 
     #[test]
     #[ignore = "EglContext::new() opens /dev/dri/renderD128; the CI sandbox surfaceless EGL has no DRM render node"]
