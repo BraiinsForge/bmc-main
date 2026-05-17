@@ -10,8 +10,10 @@ use bmc_widget_protocol::{
 };
 use tokio::sync::mpsc;
 use tokio::time::Instant;
+use tracing::warn;
 
 use crate::compositor::{InstanceId, LedRequestStatusEvent};
+use crate::config::WidgetSceneMap;
 use crate::led_coordinator::{Layer, LedCoordinatorHandle};
 use crate::scene::SceneId;
 
@@ -28,9 +30,8 @@ struct TempEntry {
     request_id: LedRequestId,
     scene: LedScene,
     /// Duration the temp wants to run. Set at submission and never
-    /// mutated — temps tick in logical time, so the wall-clock
-    /// deadline (`RunningTemp::until`) is derived once on promotion
-    /// from the queue.
+    /// mutated — the wall-clock deadline (`RunningTemp::until`) is
+    /// derived once when the temp is promoted from the queue.
     duration: Duration,
 }
 
@@ -50,27 +51,6 @@ struct SceneEffectState {
     active_temp: Option<RunningTemp>,
 }
 
-#[derive(Debug)]
-struct PendingEndless {
-    entry: EndlessEntry,
-    seq: u64,
-}
-
-#[derive(Debug)]
-struct PendingTemp {
-    entry: TempEntry,
-    seq: u64,
-}
-
-#[derive(Debug, Default)]
-struct PendingState {
-    /// Single parked endless slot per widget — a parked widget can
-    /// only have one outstanding endless; later requests supersede the
-    /// earlier one with `Superseded` even before the scene activates.
-    endless: Option<PendingEndless>,
-    temp_queue: VecDeque<PendingTemp>,
-}
-
 pub(crate) struct LedSceneManager {
     coordinator: LedCoordinatorHandle,
     status_tx: mpsc::UnboundedSender<LedRequestStatusEvent>,
@@ -83,8 +63,6 @@ pub(crate) struct LedSceneManager {
     /// but skipping the watch-channel send saves work on every refresh.
     applied_local: Option<LedScene>,
     applied_global: Option<LedScene>,
-    pending: HashMap<InstanceId, PendingState>,
-    pending_seq: u64,
 }
 
 impl LedSceneManager {
@@ -101,48 +79,60 @@ impl LedSceneManager {
             global_state: SceneEffectState::default(),
             applied_local: None,
             applied_global: None,
-            pending: HashMap::new(),
-            pending_seq: 0,
         }
     }
 
-    pub(crate) fn on_scene_changed(&mut self, scene_id: SceneId, widget_ids: Vec<InstanceId>) {
+    pub(crate) fn on_scene_changed(&mut self, scene_id: SceneId) {
+        if self.active_scene == Some(scene_id) {
+            return;
+        }
+
+        // Leaving a scene drops its in-flight temp — a local temp never
+        // ticks off-screen and is not paused/resumed. The scene's
+        // remaining queue stays put and plays from the next entry on its
+        // next visit.
+        let dropped = self
+            .active_scene
+            .and_then(|prev| self.scenes.get_mut(&prev))
+            .and_then(|state| state.active_temp.take())
+            .map(|active| (active.entry.instance_id, active.entry.request_id));
+
         self.active_scene = Some(scene_id);
         self.scenes.entry(scene_id).or_default();
 
-        // Drain parked requests before `widget_ids` is consumed by the
-        // mapping loop below. Sort by seq so cross-widget ordering matches
-        // the order callers issued the requests in — the latest endless
-        // wins the single slot.
-        let mut parked_endless: Vec<PendingEndless> = Vec::new();
-        let mut parked_temp: Vec<PendingTemp> = Vec::new();
-        for widget_id in &widget_ids {
-            if let Some(parked) = self.pending.remove(widget_id) {
-                parked_endless.extend(parked.endless);
-                parked_temp.extend(parked.temp_queue);
-            }
+        if let Some((instance_id, request_id)) = dropped {
+            self.emit(instance_id, request_id, LedRequestStatus::Expired);
         }
-        parked_endless.sort_by_key(|p| p.seq);
-        parked_temp.sort_by_key(|p| p.seq);
+        self.refresh_active_scene_effect();
+    }
 
-        let scene_state = self
-            .scenes
-            .get_mut(&scene_id)
-            .expect("BUG: scene state was just initialised");
-        let mut emissions: Vec<(InstanceId, LedRequestId, LedRequestStatus)> = Vec::new();
-        for parked in parked_endless {
-            apply_endless(&mut scene_state.endless, parked.entry, &mut emissions);
-        }
-        scene_state
-            .temp_queue
-            .extend(parked_temp.into_iter().map(|p| p.entry));
+    /// Reconcile `widget_to_scene` with the authoritative config snapshot.
+    ///
+    /// Widgets newly present in config are added to the mapping. Widgets
+    /// that vanished from config have all their outstanding requests
+    /// swept with `Superseded`. This is the only path that removes
+    /// widgets from `widget_to_scene` — wayland-level disconnects (e.g.
+    /// a widget process restart on size change) leave the mapping
+    /// untouched, so transient respawns do not lose state.
+    pub(crate) fn on_config_snapshot(&mut self, snapshot: WidgetSceneMap) {
+        let removed: Vec<InstanceId> = self
+            .widget_to_scene
+            .keys()
+            .filter(|id| !snapshot.contains_key(*id))
+            .cloned()
+            .collect();
 
-        for widget_id in widget_ids {
-            self.widget_to_scene.insert(widget_id, scene_id);
+        for instance_id in &removed {
+            self.widget_to_scene.remove(instance_id);
+            self.on_stop(instance_id, LED_REQUEST_ID_ALL);
         }
-        for (id, rid, status) in emissions {
-            self.emit(id, rid, status);
+
+        for (instance_id, scene_id) in snapshot {
+            self.widget_to_scene.insert(instance_id, scene_id);
+            self.scenes.entry(scene_id).or_default();
         }
+
+        self.evict_empty_scenes();
         self.refresh_active_scene_effect();
     }
 
@@ -176,13 +166,13 @@ impl LedSceneManager {
                         .temp_queue
                         .push_back(entry);
                 } else {
-                    self.pending_seq += 1;
-                    let seq = self.pending_seq;
-                    self.pending
-                        .entry(instance_id.clone())
-                        .or_default()
-                        .temp_queue
-                        .push_back(PendingTemp { entry, seq });
+                    warn!(
+                        widget = %instance_id,
+                        request_id,
+                        "led_state on_temporary: widget not in config snapshot; rejecting"
+                    );
+                    self.emit(instance_id, request_id, LedRequestStatus::Superseded);
+                    return;
                 }
             }
             LedScope::Global => self.global_state.temp_queue.push_back(entry),
@@ -214,10 +204,20 @@ impl LedSceneManager {
                     let slot = &mut self.scenes.entry(scene_id).or_default().endless;
                     apply_endless(slot, new_entry, &mut emissions);
                 } else {
-                    self.pending_seq += 1;
-                    let seq = self.pending_seq;
-                    let pending = self.pending.entry(instance_id.clone()).or_default();
-                    apply_pending_endless(&mut pending.endless, new_entry, seq, &mut emissions);
+                    warn!(
+                        widget = %instance_id,
+                        request_id,
+                        "led_state on_endless: widget not in config snapshot; rejecting"
+                    );
+                    emissions.push((
+                        instance_id.clone(),
+                        request_id,
+                        LedRequestStatus::Superseded,
+                    ));
+                    for (id, rid, status) in emissions {
+                        self.emit(id, rid, status);
+                    }
+                    return;
                 }
             }
             LedScope::Global => {
@@ -249,13 +249,6 @@ impl LedSceneManager {
             sweep_state(state, &matches, &mut superseded);
         }
 
-        if let Some(state) = self.pending.get_mut(instance_id) {
-            sweep_pending(state, &matches, &mut superseded);
-            if state.endless.is_none() && state.temp_queue.is_empty() {
-                self.pending.remove(instance_id);
-            }
-        }
-
         for (id, rid) in superseded {
             self.emit(id, rid, LedRequestStatus::Superseded);
         }
@@ -264,19 +257,14 @@ impl LedSceneManager {
     }
 
     pub(crate) fn on_widget_disconnected(&mut self, instance_id: &str) {
-        self.widget_to_scene
-            .retain(|widget_id, _| widget_id != instance_id);
         self.on_stop(instance_id, LED_REQUEST_ID_ALL);
-        self.evict_empty_scenes();
     }
 
     /// Drop scene entries that no widget still references and that hold
-    /// no pending state. When a scene is removed from the cycling
-    /// configuration, the compositor kills every widget on it; each
-    /// `on_widget_disconnected` clears that widget's `widget_to_scene`
-    /// entry and sweeps its requests, so the scene becomes orphaned and
-    /// empty. Without eviction, `self.scenes` would accumulate dead
-    /// entries forever across config reloads.
+    /// no in-flight effects. Called from `on_config_snapshot` after
+    /// widgets vanish from the config snapshot, so `scenes` does not
+    /// accumulate dead entries across config reloads. The active scene
+    /// is always retained so its tier state stays addressable.
     fn evict_empty_scenes(&mut self) {
         let referenced: HashSet<SceneId> = self.widget_to_scene.values().copied().collect();
         let active = self.active_scene;
@@ -292,14 +280,13 @@ impl LedSceneManager {
         let now = Instant::now();
         let mut expired: Vec<(InstanceId, LedRequestId)> = Vec::new();
 
-        for state in self
-            .scenes
-            .values_mut()
-            .chain(std::iter::once(&mut self.global_state))
+        if let Some(state) = self.active_scene.and_then(|id| self.scenes.get_mut(&id))
+            && let Some(done) = expire_state_if_due(state, now)
         {
-            if let Some(done) = expire_state_if_due(state, now) {
-                expired.push(done);
-            }
+            expired.push(done);
+        }
+        if let Some(done) = expire_state_if_due(&mut self.global_state, now) {
+            expired.push(done);
         }
 
         if expired.is_empty() {
@@ -312,17 +299,18 @@ impl LedSceneManager {
         self.refresh_active_scene_effect();
     }
 
-    /// Earliest wall-clock deadline across every scene's and the
-    /// global tier's `active_temp`. Temps tick in logical time
-    /// regardless of which scene is currently active, so the deadline
-    /// surface has to cover everything — otherwise a temp in an
-    /// inactive scene would never fire its `Expired`.
+    /// Earliest wall-clock deadline across the active scene's local tier
+    /// and the global tier — the only two that advance. A local temp
+    /// ticks only while its scene is active, and the global tier has no
+    /// scene affinity, so no inactive scene ever holds a running temp.
     pub(crate) fn active_deadline(&self) -> Option<Instant> {
-        self.scenes
-            .values()
-            .chain(std::iter::once(&self.global_state))
-            .filter_map(|state| state.active_temp.as_ref().map(|t| t.until))
-            .min()
+        let active_local = self
+            .active_scene
+            .and_then(|id| self.scenes.get(&id))
+            .and_then(|state| state.active_temp.as_ref())
+            .map(|t| t.until);
+        let global = self.global_state.active_temp.as_ref().map(|t| t.until);
+        [active_local, global].into_iter().flatten().min()
     }
 
     /// Publish the winning scene for each widget layer.
@@ -330,10 +318,10 @@ impl LedSceneManager {
     /// Cross-tier priority (local-wins-over-global) is owned by
     /// `LedCoordinator` via its layer ordering, not by this manager.
     /// Each layer is published independently; `LedCoordinator` picks
-    /// the highest-priority filled one. Temps tick in logical time and
-    /// do not pause on scene change or cross-layer loss — they
-    /// complete on schedule regardless of whether they were ever on
-    /// the strip.
+    /// the highest-priority filled one. Only the active scene's local
+    /// tier and the global tier are promoted here; an active temp keeps
+    /// running through cross-layer loss (it is not paused), but a scene
+    /// change drops the outgoing scene's temp.
     fn refresh_active_scene_effect(&mut self) {
         let local_winner = self.active_scene.and_then(|id| {
             self.scenes
@@ -366,11 +354,10 @@ impl LedSceneManager {
 /// temp queue if the active slot is empty. Returns the `LedScene` to
 /// publish, or `None` if the layer has nothing.
 ///
-/// Temps tick in logical time once promoted: `until` is set from
-/// `Instant::now() + duration` exactly once and never adjusted. Scene
-/// activity does not affect lifecycle — `Expired` will fire on the
-/// schedule the widget asked for whether or not the strip ever showed
-/// the effect.
+/// Promotion sets `until` to `Instant::now() + duration` once and never
+/// adjusts it. This runs only for the active scene's local tier and the
+/// global tier, so a temp's clock starts when it reaches the active slot
+/// — for a local temp, only while its scene is active.
 fn pick_winner_scene_for_layer(state: &mut SceneEffectState) -> Option<LedScene> {
     if state.active_temp.is_none()
         && let Some(entry) = state.temp_queue.pop_front()
@@ -440,50 +427,6 @@ fn apply_endless(
         ));
     }
     *slot = Some(new_entry);
-}
-
-/// Pending endless slots are keyed per-widget, so any push from the
-/// same widget is a self-replace. Drop the prior slot (if any) with
-/// `Superseded` and store the new entry under the latest seq.
-fn apply_pending_endless(
-    slot: &mut Option<PendingEndless>,
-    new_entry: EndlessEntry,
-    seq: u64,
-    emissions: &mut Vec<(InstanceId, LedRequestId, LedRequestStatus)>,
-) {
-    if let Some(prev) = slot.take() {
-        emissions.push((
-            prev.entry.instance_id,
-            prev.entry.request_id,
-            LedRequestStatus::Superseded,
-        ));
-    }
-    *slot = Some(PendingEndless {
-        entry: new_entry,
-        seq,
-    });
-}
-
-fn sweep_pending(
-    state: &mut PendingState,
-    matches: &impl Fn(&str, LedRequestId) -> bool,
-    superseded: &mut Vec<(InstanceId, LedRequestId)>,
-) {
-    if let Some(parked) = state.endless.take() {
-        if matches(&parked.entry.instance_id, parked.entry.request_id) {
-            superseded.push((parked.entry.instance_id, parked.entry.request_id));
-        } else {
-            state.endless = Some(parked);
-        }
-    }
-    state.temp_queue.retain(|p| {
-        if matches(&p.entry.instance_id, p.entry.request_id) {
-            superseded.push((p.entry.instance_id.clone(), p.entry.request_id));
-            false
-        } else {
-            true
-        }
-    });
 }
 
 /// If the state's `active_temp` is `Running` with `until <= now`, take it
@@ -586,6 +529,13 @@ mod tests {
         SceneId::from(Uuid::new_v4())
     }
 
+    fn snapshot_of(pairs: &[(&InstanceId, SceneId)]) -> WidgetSceneMap {
+        pairs
+            .iter()
+            .map(|(id, scene)| ((*id).clone(), *scene))
+            .collect()
+    }
+
     fn active_temp_request_id(h: &Harness, scene: SceneId) -> Option<LedRequestId> {
         h.manager
             .scenes
@@ -614,7 +564,9 @@ mod tests {
         let scene = scene_id();
         let widget = instance_id("due-check");
 
-        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+        h.manager
+            .on_config_snapshot(snapshot_of(&[(&widget, scene)]));
+        h.manager.on_scene_changed(scene);
         h.manager.on_temporary(
             widget.clone(),
             11,
@@ -648,7 +600,9 @@ mod tests {
         let scene = scene_id();
         let widget = instance_id("queue-start");
 
-        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+        h.manager
+            .on_config_snapshot(snapshot_of(&[(&widget, scene)]));
+        h.manager.on_scene_changed(scene);
         h.manager.on_temporary(
             widget.clone(),
             21,
@@ -686,7 +640,9 @@ mod tests {
         let scene = scene_id();
         let widget = instance_id("fallback");
 
-        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+        h.manager
+            .on_config_snapshot(snapshot_of(&[(&widget, scene)]));
+        h.manager.on_scene_changed(scene);
         h.manager.on_endless(
             widget.clone(),
             31,
@@ -744,7 +700,8 @@ mod tests {
         let inactive_widget = instance_id("inactive");
 
         h.manager
-            .on_scene_changed(scene_active, vec![active_widget.clone()]);
+            .on_config_snapshot(snapshot_of(&[(&active_widget, scene_active)]));
+        h.manager.on_scene_changed(scene_active);
         h.manager
             .widget_to_scene
             .insert(inactive_widget.clone(), scene_inactive);
@@ -777,7 +734,9 @@ mod tests {
         let widget_a = instance_id("a");
         let widget_b = instance_id("b");
 
-        h.manager.on_scene_changed(scene_a, vec![widget_a.clone()]);
+        h.manager
+            .on_config_snapshot(snapshot_of(&[(&widget_a, scene_a)]));
+        h.manager.on_scene_changed(scene_a);
         h.manager.widget_to_scene.insert(widget_b.clone(), scene_b);
 
         h.manager.on_endless(
@@ -797,7 +756,7 @@ mod tests {
             LedScope::Local,
         );
 
-        h.manager.on_scene_changed(scene_b, vec![widget_b.clone()]);
+        h.manager.on_scene_changed(scene_b);
 
         assert_eq!(
             h.manager.applied_local,
@@ -806,18 +765,18 @@ mod tests {
     }
 
     #[test]
-    fn temp_keeps_ticking_through_scene_change() {
-        // Pause-on-scene-change is gone: a running temp ticks in logical
-        // time regardless of whether the strip is showing it. Its
-        // deadline stays scheduled through a scene change.
+    fn temp_dropped_on_scene_change_emits_expired() {
+        // A local temp never ticks off-screen: navigating away from its
+        // scene drops the in-flight temp and emits `Expired`. It does
+        // not resume, and it no longer contributes a deadline.
         let mut h = Harness::new();
         let scene_a = scene_id();
         let scene_b = scene_id();
         let widget_a = instance_id("a");
-        let widget_b = instance_id("b");
 
-        h.manager.on_scene_changed(scene_a, vec![widget_a.clone()]);
-        h.manager.widget_to_scene.insert(widget_b.clone(), scene_b);
+        h.manager
+            .on_config_snapshot(snapshot_of(&[(&widget_a, scene_a)]));
+        h.manager.on_scene_changed(scene_a);
 
         h.manager.on_temporary(
             widget_a.clone(),
@@ -828,21 +787,57 @@ mod tests {
             5_000,
             LedScope::Local,
         );
-        let deadline_before = h
-            .manager
-            .active_deadline()
-            .expect("BUG: temp should have set a deadline");
+        h.drain_statuses();
+        assert_eq!(active_temp_request_id(&h, scene_a), Some(11));
+        assert!(h.manager.active_deadline().is_some());
 
-        h.manager.on_scene_changed(scene_b, vec![widget_b.clone()]);
-        let deadline_after = h
-            .manager
-            .active_deadline()
-            .expect("BUG: scene change must not clear the temp deadline");
+        h.manager.on_scene_changed(scene_b);
 
-        assert_eq!(
-            deadline_before, deadline_after,
-            "scene change must not move the deadline (no pause): before={deadline_before:?} after={deadline_after:?}"
+        let statuses = h.drain_statuses();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].instance_id, widget_a);
+        assert_eq!(statuses[0].request_id, 11);
+        assert_eq!(statuses[0].status, LedRequestStatus::Expired);
+        assert_eq!(active_temp_request_id(&h, scene_a), None);
+        assert!(h.manager.active_deadline().is_none());
+    }
+
+    #[test]
+    fn inactive_scene_temp_queue_does_not_advance() {
+        // A local temp submitted for a scene that is not active waits in
+        // its queue: no clock starts, so it adds no deadline and nothing
+        // is promoted. It promotes only once its scene becomes active.
+        let mut h = Harness::new();
+        let scene_active = scene_id();
+        let scene_inactive = scene_id();
+        let active_widget = instance_id("active");
+        let inactive_widget = instance_id("inactive");
+
+        h.manager
+            .on_config_snapshot(snapshot_of(&[(&active_widget, scene_active)]));
+        h.manager.on_scene_changed(scene_active);
+        h.manager
+            .widget_to_scene
+            .insert(inactive_widget.clone(), scene_inactive);
+
+        h.manager.on_temporary(
+            inactive_widget.clone(),
+            55,
+            ProtoLedEffect::Solid,
+            rgb(1, 0, 0),
+            0,
+            1_000,
+            LedScope::Local,
         );
+        h.drain_statuses();
+        assert!(h.manager.active_deadline().is_none());
+        assert_eq!(active_temp_request_id(&h, scene_inactive), None);
+
+        // Activating the scene promotes the queued temp and starts its
+        // clock.
+        h.manager.on_scene_changed(scene_inactive);
+        assert_eq!(active_temp_request_id(&h, scene_inactive), Some(55));
+        assert!(h.manager.active_deadline().is_some());
     }
 
     #[test]
@@ -855,7 +850,8 @@ mod tests {
         let widget_b = instance_id("b");
 
         h.manager
-            .on_scene_changed(scene, vec![widget_a.clone(), widget_b.clone()]);
+            .on_config_snapshot(snapshot_of(&[(&widget_a, scene), (&widget_b, scene)]));
+        h.manager.on_scene_changed(scene);
         h.manager.on_endless(
             widget_a.clone(),
             100,
@@ -912,7 +908,9 @@ mod tests {
         let scene = scene_id();
         let widget = instance_id("dual");
 
-        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+        h.manager
+            .on_config_snapshot(snapshot_of(&[(&widget, scene)]));
+        h.manager.on_scene_changed(scene);
         h.manager.on_temporary(
             widget.clone(),
             500,
@@ -1000,7 +998,9 @@ mod tests {
         let scene = scene_id();
         let widget = instance_id("layered");
 
-        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+        h.manager
+            .on_config_snapshot(snapshot_of(&[(&widget, scene)]));
+        h.manager.on_scene_changed(scene);
         h.manager.on_endless(
             widget.clone(),
             700,
@@ -1058,7 +1058,7 @@ mod tests {
         let scene = scene_id();
         let widget = instance_id("stack");
 
-        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+        h.manager.on_scene_changed(scene);
         h.manager.on_endless(
             widget.clone(),
             901,
@@ -1110,8 +1110,7 @@ mod tests {
         let widget_a = instance_id("a");
         let widget_b = instance_id("b");
 
-        h.manager
-            .on_scene_changed(scene, vec![widget_a.clone(), widget_b.clone()]);
+        h.manager.on_scene_changed(scene);
         h.manager.on_endless(
             widget_a.clone(),
             10,
@@ -1159,81 +1158,21 @@ mod tests {
     }
 
     #[test]
-    fn disconnect_of_last_widget_on_inactive_scene_evicts_scene_entry() {
-        // Two scenes, one widget on each. Activate scene_a so scene_b
-        // is non-active. Disconnect widget_b → scene_b's entry should
-        // be evicted from `scenes` so it doesn't leak across config
-        // reloads.
+    fn scene_change_drops_local_layer_keeps_global() {
+        // Scene A has a local temp and the widget also published a
+        // global endless. Switching to scene B (no local content) drops
+        // the LocalScene layer to None and reports `Expired` for the
+        // dropped temp; the GlobalAmbient layer stays untouched, so
+        // `LedCoordinator` then picks the global one.
         let mut h = Harness::new();
         let scene_a = scene_id();
         let scene_b = scene_id();
-        let widget_a = instance_id("a");
-        let widget_b = instance_id("b");
-
-        h.manager.on_scene_changed(scene_a, vec![widget_a.clone()]);
-        h.manager.widget_to_scene.insert(widget_b.clone(), scene_b);
-        // Force scene_b to materialise in `scenes` with an entry.
-        h.manager.on_endless(
-            widget_b.clone(),
-            1,
-            ProtoLedEffect::Solid,
-            rgb(0, 1, 0),
-            0,
-            LedScope::Local,
-        );
-        assert!(h.manager.scenes.contains_key(&scene_b));
-
-        h.manager.on_widget_disconnected(&widget_b);
-
-        assert!(
-            !h.manager.scenes.contains_key(&scene_b),
-            "scene_b must be evicted once its last widget disconnects"
-        );
-        // Active scene stays even if its widgets all left, so we can
-        // keep driving its tier state.
-        assert!(h.manager.scenes.contains_key(&scene_a));
-    }
-
-    #[test]
-    fn disconnect_keeps_scene_when_other_widgets_remain() {
-        // Two widgets on the same scene; disconnecting one must not
-        // evict the scene because the other widget still references it.
-        let mut h = Harness::new();
-        let scene = scene_id();
         let widget_a = instance_id("a");
         let widget_b = instance_id("b");
 
         h.manager
-            .on_scene_changed(scene, vec![widget_a.clone(), widget_b.clone()]);
-        h.manager.on_endless(
-            widget_a.clone(),
-            1,
-            ProtoLedEffect::Solid,
-            rgb(1, 0, 0),
-            0,
-            LedScope::Local,
-        );
-        h.manager.on_widget_disconnected(&widget_b);
-        assert!(h.manager.scenes.contains_key(&scene));
-    }
-
-    #[test]
-    fn scene_change_drops_local_layer_keeps_global() {
-        // Scene A has a local temp and the widget also published a
-        // global endless. Switching to scene B (no local content)
-        // drops the LocalScene layer to None; the GlobalAmbient layer
-        // stays untouched. `LedCoordinator` will then pick the global
-        // one because LocalScene is empty.
-        //
-        // The local temp keeps ticking in logical time off-screen
-        // because pause-on-scene-change is gone.
-        let mut h = Harness::new();
-        let scene_a = scene_id();
-        let scene_b = scene_id();
-        let widget_a = instance_id("a");
-        let widget_b = instance_id("b");
-
-        h.manager.on_scene_changed(scene_a, vec![widget_a.clone()]);
+            .on_config_snapshot(snapshot_of(&[(&widget_a, scene_a)]));
+        h.manager.on_scene_changed(scene_a);
         h.manager.widget_to_scene.insert(widget_b.clone(), scene_b);
 
         h.manager.on_temporary(
@@ -1269,16 +1208,20 @@ mod tests {
             Some(build_scene(ProtoLedEffect::Solid, rgb(0, 4, 0), 0, None))
         );
 
-        h.manager.on_scene_changed(scene_b, vec![widget_b.clone()]);
-        // LocalScene goes None (scene B has nothing local); GlobalAmbient
-        // is unchanged. Scene A's temp is still ticking in its inactive
-        // scene's state.
+        h.manager.on_scene_changed(scene_b);
+        // LocalScene goes None (scene B has nothing local) and the
+        // dropped temp reports `Expired`; GlobalAmbient is unchanged.
+        let statuses = h.drain_statuses();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].instance_id, widget_a);
+        assert_eq!(statuses[0].request_id, 41);
+        assert_eq!(statuses[0].status, LedRequestStatus::Expired);
         assert_eq!(h.manager.applied_local, None);
         assert_eq!(
             h.manager.applied_global,
             Some(build_scene(ProtoLedEffect::Solid, rgb(0, 4, 0), 0, None))
         );
-        assert_eq!(active_temp_request_id(&h, scene_a), Some(41));
+        assert_eq!(active_temp_request_id(&h, scene_a), None);
     }
 
     #[test]
@@ -1287,7 +1230,9 @@ mod tests {
         let scene = scene_id();
         let widget = instance_id("sweep");
 
-        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+        h.manager
+            .on_config_snapshot(snapshot_of(&[(&widget, scene)]));
+        h.manager.on_scene_changed(scene);
         h.manager.on_endless(
             widget.clone(),
             201,
@@ -1327,7 +1272,9 @@ mod tests {
         let scene = scene_id();
         let widget = instance_id("disconnect-both");
 
-        h.manager.on_scene_changed(scene, vec![widget.clone()]);
+        h.manager
+            .on_config_snapshot(snapshot_of(&[(&widget, scene)]));
+        h.manager.on_scene_changed(scene);
         h.manager.on_endless(
             widget.clone(),
             301,
@@ -1368,7 +1315,9 @@ mod tests {
         let widget_a = instance_id("a");
         let widget_b = instance_id("b");
 
-        h.manager.on_scene_changed(scene_a, vec![widget_a.clone()]);
+        h.manager
+            .on_config_snapshot(snapshot_of(&[(&widget_a, scene_a)]));
+        h.manager.on_scene_changed(scene_a);
         h.manager.widget_to_scene.insert(widget_b.clone(), scene_b);
 
         h.manager.on_endless(
@@ -1399,74 +1348,134 @@ mod tests {
     }
 
     #[test]
-    fn local_endless_from_unmapped_widget_parks_then_drains_on_scene_activation() {
+    fn config_snapshot_adds_widget_to_scene_mapping() {
         let mut h = Harness::new();
         let scene = scene_id();
-        let widget = instance_id("parked");
+        let widget = instance_id("snap");
 
+        let mut snapshot = WidgetSceneMap::new();
+        snapshot.insert(widget.clone(), scene);
+        h.manager.on_config_snapshot(snapshot);
+
+        assert_eq!(h.manager.widget_to_scene.get(&widget), Some(&scene));
+    }
+
+    #[test]
+    fn config_snapshot_dropping_widget_supersedes_its_requests() {
+        let mut h = Harness::new();
+        let scene = scene_id();
+        let widget = instance_id("dropped");
+
+        // Seed: widget is in config and active scene; submit an endless.
+        let mut initial = WidgetSceneMap::new();
+        initial.insert(widget.clone(), scene);
+        h.manager.on_config_snapshot(initial);
+        h.manager.on_scene_changed(scene);
         h.manager.on_endless(
             widget.clone(),
-            401,
+            77,
             ProtoLedEffect::Solid,
-            rgb(255, 0, 0),
+            rgb(1, 0, 0),
             0,
             LedScope::Local,
         );
+        h.drain_statuses();
+
+        // New snapshot: widget gone from config.
+        h.manager.on_config_snapshot(WidgetSceneMap::new());
+
+        let statuses = h.drain_statuses();
+        let superseded: Vec<_> = statuses
+            .iter()
+            .filter(|s| s.status == LedRequestStatus::Superseded)
+            .map(|s| (s.instance_id.clone(), s.request_id))
+            .collect();
+        assert_eq!(superseded, vec![(widget.clone(), 77)]);
+        assert!(!h.manager.widget_to_scene.contains_key(&widget));
+        assert_eq!(h.manager.applied_local, None);
+    }
+
+    #[test]
+    fn config_snapshot_unchanged_does_not_sweep_existing_effects() {
+        // Restart scenario: snapshot stays the same across a respawn.
+        // The widget's effects must keep playing.
+        let mut h = Harness::new();
+        let scene = scene_id();
+        let widget = instance_id("restarter");
+
+        let mut snapshot = WidgetSceneMap::new();
+        snapshot.insert(widget.clone(), scene);
+        h.manager.on_config_snapshot(snapshot.clone());
+        h.manager.on_scene_changed(scene);
+        h.manager.on_endless(
+            widget.clone(),
+            88,
+            ProtoLedEffect::Solid,
+            rgb(0, 1, 0),
+            0,
+            LedScope::Local,
+        );
+        h.drain_statuses();
+
+        // Re-deliver the same snapshot — simulating a save that touched
+        // an unrelated concern but still emitted a snapshot.
+        h.manager.on_config_snapshot(snapshot);
 
         let statuses = h.drain_statuses();
         assert!(
-            statuses
-                .iter()
-                .any(|s| s.request_id == 401 && s.status == LedRequestStatus::Accepted),
-            "parked request still emits Accepted"
+            statuses.is_empty(),
+            "no Superseded must fire on identical snapshot, got {statuses:?}"
         );
-
-        h.manager.on_scene_changed(scene, vec![widget.clone()]);
-
         assert_eq!(
             h.manager.applied_local,
-            Some(build_scene(ProtoLedEffect::Solid, rgb(255, 0, 0), 0, None)),
+            Some(build_scene(ProtoLedEffect::Solid, rgb(0, 1, 0), 0, None))
         );
     }
 
     #[test]
-    fn parked_endlesses_drain_in_seq_order_across_widgets() {
+    fn widget_disconnect_keeps_mapping_so_respawned_widget_reroutes() {
+        // Regression: widget process restart (size change) used to wipe
+        // widget_to_scene via WidgetDisconnected, leaving subsequent
+        // LedEndless calls unroutable until the next scene change.
         let mut h = Harness::new();
         let scene = scene_id();
-        let w1 = instance_id("race-a");
-        let w2 = instance_id("race-b");
+        let widget = instance_id("resize-survivor");
+
+        let mut snapshot = WidgetSceneMap::new();
+        snapshot.insert(widget.clone(), scene);
+        h.manager.on_config_snapshot(snapshot);
+        h.manager.on_scene_changed(scene);
 
         h.manager.on_endless(
-            w1.clone(),
-            501,
+            widget.clone(),
+            91,
             ProtoLedEffect::Solid,
-            rgb(255, 0, 0),
+            rgb(7, 7, 7),
             0,
             LedScope::Local,
         );
+        h.drain_statuses();
+
+        // Wayland disconnect (the widget's process is being respawned).
+        // The mapping must survive; effects get swept since the
+        // respawned process won't remember them.
+        h.manager.on_widget_disconnected(&widget);
+        assert_eq!(h.manager.widget_to_scene.get(&widget), Some(&scene));
+        assert_eq!(h.manager.applied_local, None);
+
+        // Respawned widget re-issues its endless — must route to the
+        // scene's slot via the preserved mapping.
         h.manager.on_endless(
-            w2.clone(),
-            502,
+            widget.clone(),
+            92,
             ProtoLedEffect::Solid,
-            rgb(0, 255, 0),
+            rgb(7, 7, 7),
             0,
             LedScope::Local,
         );
-        h.manager.on_endless(
-            w1.clone(),
-            503,
-            ProtoLedEffect::Solid,
-            rgb(0, 0, 255),
-            0,
-            LedScope::Local,
-        );
-
-        h.manager
-            .on_scene_changed(scene, vec![w1.clone(), w2.clone()]);
-
         assert_eq!(
             h.manager.applied_local,
-            Some(build_scene(ProtoLedEffect::Solid, rgb(0, 0, 255), 0, None)),
+            Some(build_scene(ProtoLedEffect::Solid, rgb(7, 7, 7), 0, None))
         );
     }
 }

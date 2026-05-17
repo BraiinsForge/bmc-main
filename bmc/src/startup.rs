@@ -234,12 +234,22 @@ where
             );
         }
 
+        let (initial_widget_scene_map, scenes_rx) = {
+            let config_guard = config_handle.read().await;
+            (
+                config_guard.widget_scene_map(),
+                config_guard.subscribe_scenes_change(),
+            )
+        };
+
         crate::widget::action_handler::spawn_action_handler(
             compositor.action_receiver(),
             compositor.subscribe_events(),
             compositor.request_status_sender(),
             sound_controller.clone(),
             led_coordinator.clone(),
+            initial_widget_scene_map,
+            scenes_rx,
         );
 
         {
@@ -257,7 +267,7 @@ where
             }
             widget_coordinator
                 .spawn_initial_widgets(
-                    &config_guard.scenes,
+                    config_guard.scenes(),
                     &localization,
                     &timezone,
                     night_mode_active,

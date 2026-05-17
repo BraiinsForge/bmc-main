@@ -17,7 +17,7 @@ use chrono::{Local, NaiveTime};
 use indexmap::{IndexMap, indexmap};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -27,6 +27,11 @@ use uuid::Uuid;
 
 const CHANNEL_CAPACITY: usize = 8;
 
+/// Maps a runtime widget instance id (stringified `WidgetId` UUID) to
+/// the scene it belongs to. Built by walking every scene's widget list.
+/// Re-published on every config save that touched scene structure.
+pub type WidgetSceneMap = HashMap<String, SceneId>;
+
 #[derive(Clone, Debug)]
 struct ConfigNotify {
     localization: broadcast::Sender<LocalizationConfig>,
@@ -34,6 +39,7 @@ struct ConfigNotify {
     led_settings: broadcast::Sender<()>,
     brightness_settings: broadcast::Sender<()>,
     screen_off_timeout: broadcast::Sender<Option<u32>>,
+    scenes_change: broadcast::Sender<WidgetSceneMap>,
 }
 
 impl ConfigNotify {
@@ -43,12 +49,14 @@ impl ConfigNotify {
         let (tx_led_settings, _rx) = broadcast::channel(CHANNEL_CAPACITY);
         let (tx_brightness_settings, _rx) = broadcast::channel(CHANNEL_CAPACITY);
         let (tx_screen_off_timeout, _rx) = broadcast::channel(CHANNEL_CAPACITY);
+        let (tx_scenes_change, _rx) = broadcast::channel(CHANNEL_CAPACITY);
         Self {
             localization: tx_localization,
             night_mode_schedule: tx_night_mode_schedule,
             led_settings: tx_led_settings,
             brightness_settings: tx_brightness_settings,
             screen_off_timeout: tx_screen_off_timeout,
+            scenes_change: tx_scenes_change,
         }
     }
 
@@ -95,6 +103,14 @@ impl ConfigNotify {
             warn!(error = %err, "Failed to send screen off timeout changed notification");
         }
     }
+
+    fn subscribe_scenes_change(&self) -> broadcast::Receiver<WidgetSceneMap> {
+        self.scenes_change.subscribe()
+    }
+
+    fn scenes_changed(&self, snapshot: WidgetSceneMap) {
+        let _ = self.scenes_change.send(snapshot);
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -104,7 +120,7 @@ pub struct Config {
         deserialize_with = "deserialize_scenes",
         default
     )]
-    pub scenes: IndexMap<SceneId, Scene>,
+    scenes: IndexMap<SceneId, Scene>,
     #[serde(skip_serializing_if = "Option::is_none")]
     scene_cycling: Option<SceneCycling>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -134,6 +150,10 @@ pub struct Config {
 }
 
 impl Config {
+    pub fn scenes(&self) -> &IndexMap<SceneId, Scene> {
+        &self.scenes
+    }
+
     pub fn scene_cycling(&self) -> SceneCycling {
         self.scene_cycling.clone().unwrap_or_default()
     }
@@ -206,6 +226,16 @@ impl Config {
 
     pub fn set_autoupgrade(&mut self, config: AutoUpgradeConfig) {
         self.autoupgrade = Some(config);
+    }
+
+    pub fn widget_scene_map(&self) -> WidgetSceneMap {
+        let mut map = WidgetSceneMap::new();
+        for (scene_id, scene) in &self.scenes {
+            for widget_id in scene.widgets.keys() {
+                map.insert(widget_id.as_uuid().to_string(), *scene_id);
+            }
+        }
+        map
     }
 
     fn validate(&self) -> Result<()> {
@@ -394,6 +424,7 @@ pub struct ConfigHandle {
     led_settings_dirty: bool,
     brightness_settings_dirty: bool,
     screen_off_timeout_dirty: bool,
+    scenes_dirty: bool,
     default_brightness_pct: u8,
     default_night_mode_brightness_pct: u8,
     default_sound_volume_pct: u8,
@@ -444,6 +475,7 @@ impl ConfigHandle {
             led_settings_dirty: false,
             brightness_settings_dirty: false,
             screen_off_timeout_dirty: false,
+            scenes_dirty: false,
             default_brightness_pct,
             default_night_mode_brightness_pct,
             default_sound_volume_pct,
@@ -471,7 +503,26 @@ impl ConfigHandle {
         self.config_notify.subscribe_screen_off_timeout_change()
     }
 
+    pub fn subscribe_scenes_change(&self) -> broadcast::Receiver<WidgetSceneMap> {
+        self.config_notify.subscribe_scenes_change()
+    }
+
+    pub fn scenes_mut(&mut self) -> &mut IndexMap<SceneId, Scene> {
+        self.scenes_dirty = true;
+        &mut self.config.scenes
+    }
+
+    pub fn widget_scene_map(&self) -> WidgetSceneMap {
+        self.config.widget_scene_map()
+    }
+
     pub async fn save(&mut self) -> Result<()> {
+        if self.scenes_dirty {
+            self.config_notify
+                .scenes_changed(self.config.widget_scene_map());
+            self.scenes_dirty = false;
+        }
+
         if self.localization_dirty {
             self.config_notify
                 .localization_changed(self.localization_config());
@@ -828,5 +879,52 @@ mod tests {
             .await
             .expect("BUG: subscriber must receive change");
         assert_eq!(cfg.unit_system, UnitSystem::Imperial);
+    }
+
+    #[tokio::test]
+    async fn save_emits_scenes_snapshot_when_dirty() {
+        use std::collections::HashMap;
+        use tempfile::tempdir;
+
+        let dir = tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("config.json");
+        let mut handle = ConfigHandle::init(path, 80, 30, 80, 30).await;
+
+        let mut rx = handle.subscribe_scenes_change();
+
+        handle.scenes_mut();
+        handle.save().await.expect("BUG: save must succeed");
+
+        let snapshot = rx
+            .recv()
+            .await
+            .expect("BUG: subscriber must receive snapshot");
+        // Default config has two fullscreen scenes, one widget each.
+        let by_scene: HashMap<SceneId, usize> =
+            snapshot.values().fold(HashMap::new(), |mut m, sid| {
+                *m.entry(*sid).or_default() += 1;
+                m
+            });
+        assert_eq!(by_scene.len(), 2);
+        for count in by_scene.values() {
+            assert_eq!(*count, 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn save_does_not_emit_scenes_snapshot_when_clean() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("config.json");
+        let mut handle = ConfigHandle::init(path, 80, 30, 80, 30).await;
+
+        let mut rx = handle.subscribe_scenes_change();
+        handle.save().await.expect("BUG: save must succeed");
+
+        assert!(
+            rx.try_recv().is_err(),
+            "no snapshot must be sent when scenes_dirty is false"
+        );
     }
 }
