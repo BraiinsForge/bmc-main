@@ -5,6 +5,15 @@ edition = "2024"
 
 [dependencies]
 palette.workspace = true
+serde = { workspace = true, optional = true }
+
+[features]
+default = []
+# Adds `Serialize` / `Deserialize` derives to the wasmi-wire enums
+# in `bmc_wasm_protocol::system`. Off by default so the SDK build
+# path doesn't pick up serde — host callers (testbed, capture)
+# flip this on.
+serde = ["dep:serde"]
 
 [lints]
 workspace = true
