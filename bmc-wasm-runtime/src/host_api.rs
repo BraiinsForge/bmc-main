@@ -10,6 +10,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
+use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -448,6 +449,12 @@ pub(crate) struct HostState {
     /// GPU renderer (FemtoVG + cosmic-text)
     pub renderer: FemtoVgRenderer,
 
+    /// Renderer parked by `WasmWidgetRuntime::with_renderer` for the duration of a
+    /// render scope. `None` outside a render scope; host imports that read this must
+    /// trap the guest with `wasmi::Error::new("renderer accessed outside render scope")`
+    /// rather than panic the host.
+    pub renderer_ptr: Option<NonNull<dyn Renderer>>,
+
     /// Interaction state (hit testing, pending clicks)
     pub interaction: InteractionState,
 
@@ -680,6 +687,7 @@ impl HostState {
         let (fetch_tx, fetch_rx) = mpsc::channel();
         Self {
             renderer,
+            renderer_ptr: None,
             interaction: InteractionState::new(),
             frame_schedule: FrameScheduleState::new(),
             tree_clicks: HashMap::new(),

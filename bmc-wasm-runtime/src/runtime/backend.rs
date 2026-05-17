@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::ptr::NonNull;
 use std::time::Instant;
 
 use anyhow::{Result, bail};
@@ -672,6 +673,34 @@ impl WasmWidgetRuntime {
     /// Access the GPU renderer (for begin_frame, flush, and testbed drawing).
     pub fn renderer(&mut self) -> &mut FemtoVgRenderer {
         &mut self.store.data_mut().renderer
+    }
+
+    /// Install `renderer` on `HostState::renderer_ptr` for the duration of `f`,
+    /// then clear it on normal exit. Host imports inside `f` reach the renderer
+    /// through `runtime::imports::with_renderer`, which traps the guest (does
+    /// **not** panic the host) if called outside this scope.
+    ///
+    /// # Safety
+    /// Caller must guarantee that `renderer` is valid, exclusively borrowed, and
+    /// that no other `&mut Renderer` to the same renderer exists for the duration
+    /// of `f`. The pointer must have been derived with `ptr::addr_of_mut!` (not
+    /// `&mut renderer ...`) so the host's stack does not carry a parent
+    /// `&mut Renderer` reborrow under Stacked / Tree Borrows.
+    ///
+    /// # Panic safety
+    /// If `f` panics, `renderer_ptr` is left set. The host loop will wrap each
+    /// `render` call in `catch_unwind` and drop the entire runtime on a panic,
+    /// so a stale pointer is never observed; installing a `Drop` guard here
+    /// would buy nothing and is intentionally omitted.
+    pub fn with_renderer<R>(
+        &mut self,
+        renderer: NonNull<dyn Renderer>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.store.data_mut().renderer_ptr = Some(renderer);
+        let result = f(self);
+        self.store.data_mut().renderer_ptr = None;
+        result
     }
 
     /// Per-component timing breakdown from the last rendered frame.
