@@ -1240,4 +1240,120 @@ mod tests {
         assert_eq!(DoubleBufferState::next_slot(0), 1);
         assert_eq!(DoubleBufferState::next_slot(1), 0);
     }
+
+    #[test]
+    #[ignore = "EglContext::new() opens /dev/dri/renderD128; the CI sandbox surfaceless EGL has no DRM render node"]
+    fn shared_scratch_supports_two_independent_double_buffers() {
+        use glow::HasContext;
+
+        let ctx = EglContext::new().expect("BUG: EGL context creation should succeed in test env");
+        let scratch = SharedRenderScratch::new(&ctx, 480, 480)
+            .expect("BUG: SharedRenderScratch should allocate at display max");
+
+        let mut slot_a = DoubleBufferState::new(320, 240, Depth::Disabled);
+        let mut slot_b = DoubleBufferState::new(480, 480, Depth::Disabled);
+
+        // Each slot allocates its own export buffer against the shared ctx;
+        // their FBOs are distinct GL names.
+        let fbo_a_id;
+        let fbo_b_id;
+        let fbo_a_handle;
+        let fbo_b_handle;
+        {
+            let buf_a = slot_a
+                .ensure_current(&ctx)
+                .expect("BUG: slot A export buffer should allocate");
+            fbo_a_id = buf_a.fbo_id();
+            fbo_a_handle = buf_a.fbo;
+        }
+        {
+            let buf_b = slot_b
+                .ensure_current(&ctx)
+                .expect("BUG: slot B export buffer should allocate");
+            fbo_b_id = buf_b.fbo_id();
+            fbo_b_handle = buf_b.fbo;
+        }
+        assert_ne!(fbo_a_id, fbo_b_id, "slot FBOs must be distinct GL names");
+
+        // Render slot A: clear staging to red, blit to slot A's export FBO.
+        // The clear values used here override the default clear set by
+        // `begin_frame`; the order is intentional.
+        let _ = scratch.begin_frame(&ctx, 320, 240);
+        unsafe {
+            ctx.gl().clear_color(1.0, 0.0, 0.0, 1.0);
+            ctx.gl().clear(glow::COLOR_BUFFER_BIT);
+        }
+        scratch.blit_to(&ctx, fbo_a_handle, 320, 240);
+
+        // Render slot B: clear staging to green, blit to slot B's export FBO.
+        let _ = scratch.begin_frame(&ctx, 480, 480);
+        unsafe {
+            ctx.gl().clear_color(0.0, 1.0, 0.0, 1.0);
+            ctx.gl().clear(glow::COLOR_BUFFER_BIT);
+        }
+        scratch.blit_to(&ctx, fbo_b_handle, 480, 480);
+
+        unsafe {
+            let err = ctx.gl().get_error();
+            assert_eq!(
+                err,
+                glow::NO_ERROR,
+                "GL error after cross-slot blit: 0x{err:x}"
+            );
+        }
+
+        // Read one pixel back from each export FBO. The color attachment is
+        // the EGLImage-backed texture (== the DMA-BUF the compositor will
+        // sample), so `glReadPixels` returns the exact bytes the compositor
+        // would see. Buffer format is XRGB8888 with stride-padded rows; we
+        // only need one pixel from the centre so stride does not matter.
+        #[expect(
+            clippy::integer_division,
+            reason = "center pixel via floor-division is intentional"
+        )]
+        let read_centre_rgba = |fbo: glow::Framebuffer, w: i32, h: i32| -> [u8; 4] {
+            let mut px = [0_u8; 4];
+            unsafe {
+                ctx.gl().bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+                ctx.gl().read_pixels(
+                    w / 2,
+                    h / 2,
+                    1,
+                    1,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelPackData::Slice(Some(&mut px)),
+                );
+                let err = ctx.gl().get_error();
+                assert_eq!(err, glow::NO_ERROR, "glReadPixels error: 0x{err:x}");
+            }
+            px
+        };
+
+        let px_a = read_centre_rgba(fbo_a_handle, 320, 240);
+        let px_b = read_centre_rgba(fbo_b_handle, 480, 480);
+
+        // Slot A should be (red) ≈ 255,0,0; slot B (green) ≈ 0,255,0. Allow
+        // 1 LSB tolerance for sampler/format conversion. Crucially the two
+        // pixels must differ, proving cross-slot independence.
+        assert!(
+            px_a[0] > 250 && px_a[1] < 5,
+            "slot A centre pixel should be red, got {px_a:?}"
+        );
+        assert!(
+            px_b[1] > 250 && px_b[0] < 5,
+            "slot B centre pixel should be green, got {px_b:?}"
+        );
+        assert_ne!(px_a, px_b, "cross-slot blits must produce distinct pixels");
+
+        // Each slot exports its own DMA-BUF independently.
+        let (info_a, _) = slot_a.export_and_swap().expect("BUG: slot A export");
+        let (info_b, _) = slot_b.export_and_swap().expect("BUG: slot B export");
+        assert_eq!(info_a.width, 320);
+        assert_eq!(info_b.width, 480);
+
+        slot_a.destroy_all(&ctx);
+        slot_b.destroy_all(&ctx);
+        scratch.destroy(&ctx);
+    }
 }
