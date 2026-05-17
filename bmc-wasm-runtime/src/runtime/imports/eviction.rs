@@ -17,14 +17,21 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_evict_prefix",
-        |mut caller: Caller<'_, HostState>, prefix_ptr: u32, prefix_len: u32| -> u32 {
+        |mut caller: Caller<'_, HostState>,
+         prefix_ptr: u32,
+         prefix_len: u32|
+         -> Result<u32, wasmi::Error> {
             let Some(prefix) = read_string(&caller, prefix_ptr, prefix_len) else {
-                return 0;
+                return Ok(0);
             };
-            let state = caller.data_mut();
-            let prefix = state.namespaced_tag(&prefix);
-            let evicted = state.evict_prefix(&prefix);
-            u32::try_from(evicted).unwrap_or(u32::MAX)
+            let (audio_evicted, renderer_evicted) =
+                super::with_renderer_and_state(&mut caller, |renderer, state| {
+                    let namespaced = state.namespaced_tag(&prefix);
+                    let audio = state.evict_audio_prefix(&namespaced);
+                    let rend = renderer.evict_prefix(&namespaced);
+                    (audio, rend)
+                })?;
+            Ok(u32::try_from(audio_evicted + renderer_evicted).unwrap_or(u32::MAX))
         },
     )?;
     Ok(())

@@ -9,8 +9,6 @@ use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{BitmapId, IconId, MeshId};
 use wasmi::{Caller, Extern, Linker};
 
-use bmc_render::renderer::Renderer;
-
 use crate::host_api::HostState;
 
 use super::super::super::memory::read_bytes;
@@ -41,20 +39,20 @@ fn register_icon_import(linker: &mut Linker<HostState>) -> Result<()> {
          tag_len: u32,
          data_ptr: u32,
          data_len: u32|
-         -> u32 {
+         -> Result<u32, wasmi::Error> {
             let Some(tag) = read_tag(&caller, tag_ptr, tag_len) else {
-                return 0;
+                return Ok(0);
             };
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
-                return 0;
+                return Ok(0);
             };
-            let state = caller.data_mut();
-            let tag = state.namespaced_tag(&tag);
-            state
-                .renderer
-                .register_icon(&tag, &data)
-                .map_or(0, IconId::to_wire)
-                .into()
+            let tag = caller.data_mut().namespaced_tag(&tag);
+            super::super::with_renderer(&mut caller, |renderer| {
+                renderer
+                    .register_icon(&tag, &data)
+                    .map_or(0, IconId::to_wire)
+                    .into()
+            })
         },
     )?;
     Ok(())
@@ -69,20 +67,20 @@ fn register_bitmap_import(linker: &mut Linker<HostState>) -> Result<()> {
          tag_len: u32,
          data_ptr: u32,
          data_len: u32|
-         -> u32 {
+         -> Result<u32, wasmi::Error> {
             let Some(tag) = read_tag(&caller, tag_ptr, tag_len) else {
-                return 0;
+                return Ok(0);
             };
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
-                return 0;
+                return Ok(0);
             };
-            let state = caller.data_mut();
-            let tag = state.namespaced_tag(&tag);
-            state
-                .renderer
-                .register_bitmap(&tag, &data)
-                .map_or(0, BitmapId::to_wire)
-                .into()
+            let tag = caller.data_mut().namespaced_tag(&tag);
+            super::super::with_renderer(&mut caller, |renderer| {
+                renderer
+                    .register_bitmap(&tag, &data)
+                    .map_or(0, BitmapId::to_wire)
+                    .into()
+            })
         },
     )?;
     Ok(())
@@ -97,20 +95,20 @@ fn register_bitmap_nearest_import(linker: &mut Linker<HostState>) -> Result<()> 
          tag_len: u32,
          data_ptr: u32,
          data_len: u32|
-         -> u32 {
+         -> Result<u32, wasmi::Error> {
             let Some(tag) = read_tag(&caller, tag_ptr, tag_len) else {
-                return 0;
+                return Ok(0);
             };
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
-                return 0;
+                return Ok(0);
             };
-            let state = caller.data_mut();
-            let tag = state.namespaced_tag(&tag);
-            state
-                .renderer
-                .register_bitmap_nearest(&tag, &data)
-                .map_or(0, BitmapId::to_wire)
-                .into()
+            let tag = caller.data_mut().namespaced_tag(&tag);
+            super::super::with_renderer(&mut caller, |renderer| {
+                renderer
+                    .register_bitmap_nearest(&tag, &data)
+                    .map_or(0, BitmapId::to_wire)
+                    .into()
+            })
         },
     )?;
     Ok(())
@@ -125,28 +123,28 @@ fn register_mesh_import(linker: &mut Linker<HostState>) -> Result<()> {
          tag_len: u32,
          data_ptr: u32,
          data_len: u32|
-         -> u32 {
+         -> Result<u32, wasmi::Error> {
             #[cfg(feature = "profiling")]
             let probe = bmc_render::profile::MemProbe::start();
 
             let Some(tag) = read_tag(&caller, tag_ptr, tag_len) else {
-                return 0;
+                return Ok(0);
             };
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
-                return 0;
+                return Ok(0);
             };
-            let state = caller.data_mut();
-            let tag = state.namespaced_tag(&tag);
-            let id: u32 = state
-                .renderer
-                .register_mesh(&tag, &data)
-                .map_or(0, MeshId::to_wire)
-                .into();
+            let tag = caller.data_mut().namespaced_tag(&tag);
+            let id: u32 = super::super::with_renderer(&mut caller, |renderer| {
+                renderer
+                    .register_mesh(&tag, &data)
+                    .map_or(0, MeshId::to_wire)
+                    .into()
+            })?;
 
             #[cfg(feature = "profiling")]
             log_host_register_mesh(id, data_len, &probe);
 
-            id
+            Ok(id)
         },
     )?;
     Ok(())
@@ -156,15 +154,21 @@ fn register_bitmap_sample_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_bitmap_sample",
-        |caller: Caller<'_, HostState>, bitmap_id: u32, x: u32, y: u32, w: u32, h: u32| -> u32 {
+        |mut caller: Caller<'_, HostState>,
+         bitmap_id: u32,
+         x: u32,
+         y: u32,
+         w: u32,
+         h: u32|
+         -> Result<u32, wasmi::Error> {
             let Some(bitmap_id) = BitmapId::from_wire(bitmap_id as u16) else {
-                return 0;
+                return Ok(0);
             };
-            let state = caller.data();
-            state
-                .renderer
-                .bitmap_sample(bitmap_id, x, y, w, h)
-                .map_or(0, Color::to_u32)
+            super::super::with_renderer(&mut caller, |renderer| {
+                renderer
+                    .bitmap_sample(bitmap_id, x, y, w, h)
+                    .map_or(0, Color::to_u32)
+            })
         },
     )?;
     Ok(())

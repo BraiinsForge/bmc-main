@@ -19,7 +19,6 @@ use std::sync::mpsc;
 use serde_json::Value;
 use taffy::prelude::*;
 
-use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::interaction::InteractionState;
 use bmc_render::renderer::Renderer;
 use bmc_render::tree::NodeContext;
@@ -446,9 +445,6 @@ impl FrameScheduleState {
 
 /// Host-side state accessible to WASM via host functions.
 pub(crate) struct HostState {
-    /// GPU renderer (FemtoVG + cosmic-text)
-    pub renderer: FemtoVgRenderer,
-
     /// Renderer parked by `WasmWidgetRuntime::with_renderer` for the duration of a
     /// render scope. `None` outside a render scope; host imports that read this must
     /// trap the guest with `wasmi::Error::new("renderer accessed outside render scope")`
@@ -678,15 +674,14 @@ pub(crate) struct HostState {
 }
 
 impl HostState {
-    /// Create new host state with the given renderer and formatting preferences.
-    pub fn new(
-        renderer: FemtoVgRenderer,
-        prefs: FormatPreferences,
-        resource_limits: RuntimeResourceLimits,
-    ) -> Self {
+    /// Create new host state with the given formatting preferences.
+    ///
+    /// The renderer is owned by the caller of [`crate::WasmWidgetRuntime::new`]
+    /// and installed on `renderer_ptr` per-frame via
+    /// `WasmWidgetRuntime::with_renderer`.
+    pub fn new(prefs: FormatPreferences, resource_limits: RuntimeResourceLimits) -> Self {
         let (fetch_tx, fetch_rx) = mpsc::channel();
         Self {
-            renderer,
             renderer_ptr: None,
             interaction: InteractionState::new(),
             frame_schedule: FrameScheduleState::new(),
@@ -775,11 +770,15 @@ impl HostState {
             .saturating_add(self.in_flight_fetches as usize)
     }
 
-    /// Evict every host-side asset (icon, bitmap, mesh, audio sample +
-    /// matching playback sinks) whose tag starts with `prefix`.
-    /// Returns the total count of evicted entries across all four registries.
-    pub fn evict_prefix(&mut self, prefix: &str) -> usize {
-        self.renderer.evict_prefix(prefix) + self.audio.evict_prefix(prefix)
+    /// Evict every host-side audio asset (sample + matching playback sinks)
+    /// whose tag starts with `prefix`. Returns the number of evicted entries.
+    ///
+    /// Renderer-side eviction is the caller's responsibility — the host
+    /// import (`host_evict_prefix`) reaches the `FemtoVgRenderer` through
+    /// `WasmWidgetRuntime::with_renderer` and adds its count on top of
+    /// this one.
+    pub fn evict_audio_prefix(&mut self, prefix: &str) -> usize {
+        self.audio.evict_prefix(prefix)
     }
 
     /// Wrap a guest-supplied tag with this instance's `GuestId` prefix.
@@ -791,12 +790,14 @@ impl HostState {
         format!("{}:{tag}", self.guest_id)
     }
 
-    /// Evict every host-side asset belonging to this widget instance.
-    /// Returns the total count of evicted entries across all four registries.
-    /// Used as the safety sweep in `WasmWidgetRuntime`'s `Drop`.
+    /// Evict every host-side audio asset belonging to this widget instance.
+    /// Returns the number of evicted entries.
+    /// Used as the audio-side safety sweep in `WasmWidgetRuntime`'s `Drop`;
+    /// renderer-side assets are reclaimed when the caller drops their
+    /// caller-owned `FemtoVgRenderer`.
     pub fn evict_widget(&mut self) -> usize {
         let prefix = self.guest_id.to_string();
-        self.evict_prefix(&prefix)
+        self.evict_audio_prefix(&prefix)
     }
 
     /// Atomically replace the params map, bump the change marker,

@@ -8,6 +8,7 @@
 
 use crate::egl::EglState;
 use anyhow::{Context, Result};
+use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
 use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, WasmWidgetRuntime};
 use bmc_widget::surface::{DeckWidgetSurfaceClient, WidgetEvent, WidgetSurface};
@@ -18,6 +19,9 @@ use std::time::Instant;
 struct RenderState {
     egl: EglState,
     runtime: WasmWidgetRuntime,
+    /// Caller-owned renderer drawn alongside `runtime`. Bracket each
+    /// `runtime.render(...)` call with `runtime.with_renderer(ptr, ...)`.
+    renderer: FemtoVgRenderer,
     last_frame: Instant,
     /// Baseline for monotonic_ms passed to the wasm runtime.
     monotonic_origin: Instant,
@@ -178,6 +182,9 @@ impl WaylandClient {
                 tracing::info!("GBM-based EGL initialized");
 
                 let fbo_id = egl.begin_frame()?;
+                // SAFETY: EglState has a current GL context for the lifetime of this scope.
+                let mut renderer =
+                    unsafe { FemtoVgRenderer::new(EglState::get_proc_address, w, h, fbo_id, 0) }?;
                 // Parse the compositor-delivered params and pass them
                 // via `RuntimeConfig` so they're staged on `HostState`
                 // before `init` runs — the widget's first  `params::current()`
@@ -194,19 +201,15 @@ impl WaylandClient {
                         std::collections::BTreeMap::new()
                     });
                 tracing::info!("Applying {} params key(s) to runtime", params.len());
-                let mut runtime = unsafe {
-                    WasmWidgetRuntime::new(
-                        &wasm_bytes,
-                        EglState::get_proc_address,
-                        w,
-                        h,
-                        fbo_id,
-                        RuntimeConfig {
-                            params,
-                            ..RuntimeConfig::default()
-                        },
-                    )
-                }?;
+                let mut runtime = WasmWidgetRuntime::new(
+                    &wasm_bytes,
+                    w,
+                    h,
+                    RuntimeConfig {
+                        params,
+                        ..RuntimeConfig::default()
+                    },
+                )?;
                 let (major, minor, patch) = runtime.sdk_version();
                 tracing::info!(
                     "WASM runtime initialized, SDK version {}.{}.{}",
@@ -220,15 +223,21 @@ impl WaylandClient {
                 runtime.set_time(chrono::Local::now().fixed_offset(), 0);
 
                 // Render + commit first frame immediately
-                runtime.renderer().begin_frame(w, h, 1.0);
+                renderer.begin_frame(w, h, 1.0);
                 runtime.deliver_fetch_responses();
-                match runtime.render(0)? {
+                // `*mut FemtoVgRenderer` → `*mut dyn Renderer` is a coercion, not an `as` cast.
+                let renderer_raw: *mut dyn bmc_render::renderer::Renderer =
+                    core::ptr::addr_of_mut!(renderer);
+                let renderer_ptr = std::ptr::NonNull::new(renderer_raw)
+                    .expect("BUG: addr_of_mut! cannot produce null");
+                let status = runtime.with_renderer(renderer_ptr, |rt| rt.render(0))?;
+                match status {
                     RenderStatus::Ok => {}
                     status @ (RenderStatus::FuelExhausted | RenderStatus::Dead) => {
                         tracing::warn!("First frame render status: {status:?}");
                     }
                 }
-                runtime.renderer().flush();
+                renderer.flush();
 
                 egl.blit_to_export()?;
                 let (dmabuf_info, slot) = egl.end_frame()?;
@@ -238,6 +247,7 @@ impl WaylandClient {
                 render = Some(RenderState {
                     egl,
                     runtime,
+                    renderer,
                     last_frame: Instant::now(),
                     monotonic_origin,
                     frame_count: 1,
@@ -278,7 +288,7 @@ impl WaylandClient {
 
                 // Begin frame
                 let _fbo_id = rs.egl.begin_frame()?;
-                rs.runtime.renderer().begin_frame(w, h, 1.0);
+                rs.renderer.begin_frame(w, h, 1.0);
 
                 // Deliver pending async I/O to the WASM widget
                 rs.runtime.deliver_fetch_responses();
@@ -290,8 +300,14 @@ impl WaylandClient {
                 rs.runtime.deliver_http_requests();
 
                 // Render WASM frame
-                let status = rs.runtime.render(delta_ms)?;
-                rs.runtime.renderer().flush();
+                let renderer_raw: *mut dyn bmc_render::renderer::Renderer =
+                    core::ptr::addr_of_mut!(rs.renderer);
+                let renderer_ptr = std::ptr::NonNull::new(renderer_raw)
+                    .expect("BUG: addr_of_mut! cannot produce null");
+                let status = rs
+                    .runtime
+                    .with_renderer(renderer_ptr, |rt| rt.render(delta_ms))?;
+                rs.renderer.flush();
 
                 match status {
                     RenderStatus::Ok => {}

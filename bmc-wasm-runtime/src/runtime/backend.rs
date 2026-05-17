@@ -5,7 +5,6 @@
 #![expect(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 
 use std::collections::HashMap;
-use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::time::Instant;
 
@@ -18,7 +17,6 @@ use chrono::{DateTime, FixedOffset};
 use wasmi::{Caller, Extern, Linker};
 
 use bmc_render::FrameTimings;
-use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
 use bmc_render::tree::{self, TouchHit};
 
@@ -217,7 +215,8 @@ impl Default for RuntimeConfig {
 /// WebAssembly widget runtime.
 ///
 /// Executes WASM modules in a sandboxed environment with fuel metering.
-/// Owns the GPU renderer inside `HostState`.
+/// The GPU renderer is owned by the caller and installed for each
+/// render scope via [`Self::with_renderer`].
 #[expect(missing_debug_implementations)]
 pub struct WasmWidgetRuntime {
     pub(super) store: wasmi::Store<HostState>,
@@ -251,25 +250,19 @@ impl WasmWidgetRuntime {
     /// Maximum fuel (instructions) per frame.
     pub const FUEL_PER_FRAME: u64 = 10_000_000;
 
-    /// Create a new runtime from WASM bytes and a GL function loader.
+    /// Create a new runtime from WASM bytes.
+    ///
+    /// The renderer is owned by the caller; reach it per-frame via
+    /// [`Self::with_renderer`]. `width` / `height` describe widget surface
+    /// dimensions and are also installed on `HostState` before `init()` runs.
     ///
     /// All configuration from [`RuntimeConfig`] is applied **before** the WASM
     /// `init()` export runs, so interceptors, KV, and event fixtures are available
     /// from the widget's first instruction.
-    ///
-    /// # Safety
-    /// `load_fn` must return valid OpenGL function pointers for the current GL context.
-    pub unsafe fn new<F>(
-        wasm_bytes: &[u8],
-        load_fn: F,
-        width: u32,
-        height: u32,
-        fbo_id: u32,
-        config: RuntimeConfig,
-    ) -> Result<Self>
-    where
-        F: FnMut(&str) -> *const c_void,
-    {
+    pub fn new(wasm_bytes: &[u8], width: u32, height: u32, config: RuntimeConfig) -> Result<Self> {
+        // `mesh_msaa_samples` belongs to the caller-owned `FemtoVgRenderer` and is
+        // dropped here via `..`. The field stays on `RuntimeConfig` so the capture
+        // binary can plumb it through to its `FemtoVgRenderer::new` call.
         let RuntimeConfig {
             fuel_per_frame,
             prefs,
@@ -279,11 +272,11 @@ impl WasmWidgetRuntime {
             record_events,
             event_fixtures,
             resource_limits,
-            mesh_msaa_samples,
             rng_seed,
             led_command_sender,
             animation_frame_delay_ms,
             params,
+            ..
         } = config;
 
         let mut engine_config = wasmi::Config::default();
@@ -300,9 +293,7 @@ impl WasmWidgetRuntime {
         let engine = wasmi::Engine::new(&engine_config);
         let module = wasmi::Module::new(&engine, wasm_bytes)?;
 
-        let renderer =
-            unsafe { FemtoVgRenderer::new(load_fn, width, height, fbo_id, mesh_msaa_samples) }?;
-        let host_state = HostState::new(renderer, prefs, resource_limits);
+        let host_state = HostState::new(prefs, resource_limits);
 
         let mut store = wasmi::Store::new(&engine, host_state);
         store.set_fuel(fuel_per_frame)?;
@@ -379,7 +370,8 @@ impl WasmWidgetRuntime {
         super::imports::register_host_functions(linker)
     }
 
-    /// Render a frame. Call `renderer().begin_frame()` before and `renderer().flush()` after.
+    /// Render a frame. Caller calls `begin_frame` on its renderer before and
+    /// `flush` after, with this call bracketed by [`Self::with_renderer`].
     ///
     /// On animation-only frames (no pending input, host auto-requested),
     /// skips WASM execution and re-renders from cached tree data.
@@ -492,6 +484,10 @@ impl WasmWidgetRuntime {
     ///
     /// Calls `layout_and_render` directly on the cached `TreeNode`, skipping
     /// deserialization entirely.
+    ///
+    /// Invariant: callers must be inside a [`Self::with_renderer`] scope so
+    /// `HostState::renderer_ptr` is installed; the `expect` below asserts the
+    /// host's own invariant, not the guest's.
     fn render_cached_tree(state: &mut HostState, delta_ms: u32) {
         let Some((ref tree_node, width, height)) = state.cached_tree else {
             return;
@@ -499,6 +495,13 @@ impl WasmWidgetRuntime {
         let frame_counter = state.frame_counter;
         state.frame_counter += 1;
         let mut timings = FrameTimings::default();
+
+        let mut ptr = state
+            .renderer_ptr
+            .expect("BUG: render_cached_tree called outside `with_renderer` scope");
+        // SAFETY: `ptr` was installed by `WasmWidgetRuntime::with_renderer` on this
+        // thread; single-threaded wasmi dispatch keeps it unique for this borrow.
+        let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
         let mut ctx = bmc_render::ProcessContext {
             interaction: &mut state.interaction,
             modal_states: &mut state.modal_states,
@@ -509,14 +512,7 @@ impl WasmWidgetRuntime {
             frame_counter,
             delta_ms,
         };
-        match tree::layout_and_render(
-            tree_node,
-            width,
-            height,
-            &mut state.renderer,
-            &mut timings,
-            &mut ctx,
-        ) {
+        match tree::layout_and_render(tree_node, width, height, renderer, &mut timings, &mut ctx) {
             Ok((result, has_active)) => {
                 state.last_timings = timings;
                 let had_interaction = !result.clicks.is_empty() || !result.drags.is_empty();
@@ -534,31 +530,38 @@ impl WasmWidgetRuntime {
 
     /// Subtle red bar at the top edge indicating fuel exhaustion.
     fn draw_fuel_warning(state: &mut HostState, strikes: u32, max_strikes: u32) {
-        let w = state.renderer.width();
+        let mut ptr = state
+            .renderer_ptr
+            .expect("BUG: draw_fuel_warning called outside `with_renderer` scope");
+        // SAFETY: same as `render_cached_tree`.
+        let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
+        let w = renderer.width();
         let fraction = strikes as f32 / max_strikes as f32;
         let bar_w = w * fraction;
         // Red bar, increasingly opaque as strikes accumulate
         #[expect(clippy::cast_sign_loss)] // fraction is always 0..=1
         let alpha = (100.0 + 155.0 * fraction) as u8;
         let color = Color::from_rgba(0xFF, 0x00, 0x00, alpha);
-        state.renderer.fill_rect(0.0, 0.0, bar_w, 3.0, color);
+        renderer.fill_rect(0.0, 0.0, bar_w, 3.0, color);
     }
 
     /// Full error overlay for a dead widget — CDS notification banner.
     fn draw_dead_overlay(state: &mut HostState) {
-        let canvas_w = state.renderer.width();
-        let canvas_h = state.renderer.height();
+        let mut ptr = state
+            .renderer_ptr
+            .expect("BUG: draw_dead_overlay called outside `with_renderer` scope");
+        // SAFETY: same as `render_cached_tree`.
+        let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
+        let canvas_w = renderer.width();
+        let canvas_h = renderer.height();
 
         let title = "This widget has been stopped";
         let subtitle = "It used too many resources and was suspended.";
         let banner_w = f32::clamp(canvas_w * 0.6, 250.0, 400.0);
-        let banner_h =
-            tree::measure_notification_banner(title, subtitle, banner_w, &mut state.renderer);
+        let banner_h = tree::measure_notification_banner(title, subtitle, banner_w, renderer);
 
         // Semi-transparent dark scrim
-        state
-            .renderer
-            .fill_rect(0.0, 0.0, canvas_w, canvas_h, BLACK.with_alpha(0.69));
+        renderer.fill_rect(0.0, 0.0, canvas_w, canvas_h, BLACK.with_alpha(0.69));
 
         tree::render_notification_banner(
             title,
@@ -569,7 +572,7 @@ impl WasmWidgetRuntime {
             (canvas_h - banner_h) / 2.0,
             banner_w,
             banner_h,
-            &mut state.renderer,
+            renderer,
         );
     }
 
@@ -670,22 +673,25 @@ impl WasmWidgetRuntime {
         }
     }
 
-    /// Access the GPU renderer (for begin_frame, flush, and testbed drawing).
-    pub fn renderer(&mut self) -> &mut FemtoVgRenderer {
-        &mut self.store.data_mut().renderer
-    }
-
     /// Install `renderer` on `HostState::renderer_ptr` for the duration of `f`,
     /// then clear it on normal exit. Host imports inside `f` reach the renderer
     /// through `runtime::imports::with_renderer`, which traps the guest (does
     /// **not** panic the host) if called outside this scope.
     ///
-    /// # Safety
-    /// Caller must guarantee that `renderer` is valid, exclusively borrowed, and
-    /// that no other `&mut Renderer` to the same renderer exists for the duration
-    /// of `f`. The pointer must have been derived with `ptr::addr_of_mut!` (not
-    /// `&mut renderer ...`) so the host's stack does not carry a parent
-    /// `&mut Renderer` reborrow under Stacked / Tree Borrows.
+    /// # Soundness
+    /// Parking a `NonNull<dyn Renderer>` on `HostState::renderer_ptr` is itself
+    /// harmless: the pointer is never dereferenced from this function's body.
+    /// The actual deref happens inside `imports::with_renderer` (and the helper
+    /// `imports::with_renderer_and_state`), and that is the operation whose
+    /// soundness depends on the parked pointer being valid and exclusively
+    /// borrowed for the duration of `f`.
+    ///
+    /// Callers must derive the pointer with `ptr::addr_of_mut!` (not
+    /// `NonNull::from(&mut renderer)`) so the parent `&mut Renderer` reborrow
+    /// does not enter the Tree-Borrows stack while parked. If a caller hands a
+    /// stale or aliasing `NonNull` here, the eventual deref in
+    /// `imports::with_renderer` is UB; this safe signature is the single
+    /// documented contact point for that obligation.
     ///
     /// # Panic safety
     /// If `f` panics, `renderer_ptr` is left set. The host loop will wrap each
@@ -707,6 +713,19 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn last_timings(&self) -> FrameTimings {
         self.store.data().last_timings
+    }
+
+    /// Prefix used to namespace every host-managed asset tag for this widget.
+    ///
+    /// Every tag the widget registers (icons, bitmaps, meshes) is stored on
+    /// the renderer under `<asset_namespace()>:<tag>`. Hosts that share a
+    /// single renderer across multiple widgets call
+    /// `renderer.evict_prefix(&runtime.asset_namespace())` when a widget
+    /// goes away, so the renderer-side entries are reclaimed without
+    /// dropping the renderer itself.
+    #[must_use]
+    pub fn asset_namespace(&self) -> String {
+        self.store.data().guest_id.to_string()
     }
 
     /// Whether the widget needs another frame rendered.
