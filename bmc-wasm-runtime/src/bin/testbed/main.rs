@@ -36,6 +36,7 @@ use eframe::glow::HasContext as _;
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
+use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::interaction::TouchEvent;
 use bmc_render::renderer::Renderer as _;
 use bmc_wasm_runtime::fixtures::{self, find_widget_root, seed_kv_from_secrets, snapshot_kv_dir};
@@ -445,6 +446,9 @@ fn dispatch_touch_events(
 
 pub(crate) struct PreviewTile {
     pub(crate) runtime: WasmWidgetRuntime,
+    /// Caller-owned renderer drawn alongside `runtime`. Bracket each
+    /// `runtime.render(...)` call with `runtime.with_renderer(ptr, ...)`.
+    pub(crate) renderer: FemtoVgRenderer,
     pub(crate) gpu: TileGpu,
     pub(crate) x: u32,
     pub(crate) y: u32,
@@ -669,19 +673,28 @@ impl TestbedApp {
                 led_command_sender: Some(led_tx),
                 ..RuntimeConfig::default()
             };
-            // SAFETY: same context invariants as initial construction in `init_tiles`.
-            match unsafe {
-                WasmWidgetRuntime::new(
-                    &wasm_bytes,
+            // Rebuild the renderer too so atlases/caches don't bleed across reloads.
+            //
+            // SAFETY: eframe keeps the GL context current for the app's lifetime.
+            let new_renderer = match unsafe {
+                FemtoVgRenderer::new(
                     proc_loader(get_proc.clone()),
                     tile.gpu.width,
                     tile.gpu.height,
                     tile.gpu.fbo_id(),
-                    rt_config,
+                    rt_config.mesh_msaa_samples,
                 )
             } {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("hot reload: {} renderer: {e}", tile.label);
+                    continue;
+                }
+            };
+            match WasmWidgetRuntime::new(&wasm_bytes, tile.gpu.width, tile.gpu.height, rt_config) {
                 Ok(rt) => {
-                    tile.runtime = rt; // drops the old runtime + its renderer
+                    tile.renderer = new_renderer;
+                    tile.runtime = rt;
                     tile.led_rx = led_rx;
                     tile.led_scene = None;
                     tile.led_enabled = false;
@@ -750,21 +763,22 @@ impl TestbedApp {
             rt_config.mesh_msaa_samples = 4;
             rt_config.params = self.params.clone();
             rt_config.led_command_sender = Some(led_tx);
-            // SAFETY: `get_proc` returns valid GL function pointers for the current context;
-            // eframe keeps that context current for the lifetime of the app.
-            let runtime = unsafe {
-                WasmWidgetRuntime::new(
-                    &wasm_bytes,
+            // SAFETY: eframe keeps the GL context current for the app's lifetime.
+            let renderer = unsafe {
+                FemtoVgRenderer::new(
                     proc_loader(get_proc.clone()),
                     w,
                     h,
                     gpu.fbo_id(),
-                    rt_config,
+                    rt_config.mesh_msaa_samples,
                 )
             }
-            .with_context(|| format!("create runtime for {label}"))?;
+            .with_context(|| format!("create renderer for {label}"))?;
+            let runtime = WasmWidgetRuntime::new(&wasm_bytes, w, h, rt_config)
+                .with_context(|| format!("create runtime for {label}"))?;
             tiles.push(PreviewTile {
                 runtime,
+                renderer,
                 gpu,
                 x,
                 y,
@@ -825,8 +839,7 @@ impl TestbedApp {
             }
             tile.drain_led_commands();
             tile.runtime.set_time(system_time, monotonic_ms);
-            tile.runtime
-                .renderer()
+            tile.renderer
                 .begin_frame(tile.gpu.width, tile.gpu.height, 1.0);
             tile.runtime.deliver_fetch_responses();
             tile.runtime.deliver_ws_messages();
@@ -835,7 +848,16 @@ impl TestbedApp {
             tile.runtime.deliver_ssdp_events();
             tile.runtime.deliver_udp_broadcast_events();
             tile.runtime.deliver_http_requests();
-            match tile.runtime.render(delta_ms) {
+
+            // `*mut FemtoVgRenderer` → `*mut dyn Renderer` is a coercion, not an `as` cast.
+            let renderer_raw: *mut dyn bmc_render::renderer::Renderer =
+                core::ptr::addr_of_mut!(tile.renderer);
+            let renderer_ptr = std::ptr::NonNull::new(renderer_raw)
+                .expect("BUG: addr_of_mut! cannot produce null");
+            let outcome = tile
+                .runtime
+                .with_renderer(renderer_ptr, |rt| rt.render(delta_ms));
+            match outcome {
                 Ok(RenderStatus::Ok) => {
                     tile.ever_rendered = true;
                 }
@@ -852,7 +874,7 @@ impl TestbedApp {
                     tracing::error!("{}: render failed: {e}", tile.label);
                 }
             }
-            tile.runtime.renderer().flush();
+            tile.renderer.flush();
         }
         // Pick the FULL tile (idx 0) as the perf-report sampling source — matches the prior
         // testbed which sampled tile 0 too. The other tiles still render but aren't reported.

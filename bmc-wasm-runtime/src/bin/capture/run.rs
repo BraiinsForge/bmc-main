@@ -23,6 +23,7 @@ use glutin::prelude::*;
 #[cfg(target_os = "linux")]
 use glutin::surface::{PbufferSurface, SurfaceAttributesBuilder};
 
+use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::interaction::TouchEvent;
 use bmc_render::renderer::Renderer;
 use bmc_wasm_protocol::{MdnsBrowseId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId};
@@ -209,7 +210,7 @@ fn run_unified_capture(
     }
     rt_config.event_fixtures = network_events;
 
-    let (gl, fbo, _keep_alive, mut runtime) = setup_gl_and_runtime(ctx, rt_config)?;
+    let (gl, fbo, _keep_alive, mut renderer, mut runtime) = setup_gl_and_runtime(ctx, rt_config)?;
 
     let (major, minor, patch) = runtime.sdk_version();
     eprintln!(
@@ -258,7 +259,7 @@ fn run_unified_capture(
             runtime.set_time(system_time, monotonic_ms);
             runtime.inject_fixture_events(fixture_ms);
             deliver_all_io(&mut runtime);
-            if !render_frame(&mut runtime, ctx, frame_count) {
+            if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
                 bail!("widget died at frame {frame_count}");
             }
             unsafe { gl.flush() };
@@ -284,7 +285,7 @@ fn run_unified_capture(
                         runtime.set_time(system_time, monotonic_ms);
                         runtime.inject_fixture_events(fixture_ms);
                         deliver_all_io(&mut runtime);
-                        if !render_frame(&mut runtime, ctx, frame_count) {
+                        if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
                             bail!("widget died during settle at frame {frame_count}");
                         }
                         unsafe { gl.flush() };
@@ -334,7 +335,7 @@ fn run_unified_capture(
                             runtime.set_time(system_time, monotonic_ms);
                             runtime.inject_fixture_events(fixture_ms);
                             deliver_all_io(&mut runtime);
-                            if !render_frame(&mut runtime, ctx, frame_count) {
+                            if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
                                 bail!("widget died at frame {frame_count}");
                             }
                             unsafe { gl.flush() };
@@ -347,7 +348,7 @@ fn run_unified_capture(
                         runtime.set_time(system_time, monotonic_ms);
                         runtime.inject_fixture_events(fixture_ms);
                         deliver_all_io(&mut runtime);
-                        if !render_frame(&mut runtime, ctx, frame_count) {
+                        if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
                             bail!("widget died at frame {frame_count}");
                         }
                         unsafe { gl.flush() };
@@ -396,6 +397,7 @@ fn run_unified_capture(
                     runtime.push_touch_event(TouchEvent::Down { x: cx, y: cy });
                     tick_one_frame(
                         &mut runtime,
+                        &mut renderer,
                         ctx,
                         &gl,
                         &mut monotonic_ms,
@@ -406,6 +408,7 @@ fn run_unified_capture(
                     runtime.push_touch_event(TouchEvent::Up);
                     tick_one_frame(
                         &mut runtime,
+                        &mut renderer,
                         ctx,
                         &gl,
                         &mut monotonic_ms,
@@ -429,6 +432,7 @@ fn run_unified_capture(
                     runtime.push_touch_event(TouchEvent::Down { x: cx, y: cy });
                     tick_one_frame(
                         &mut runtime,
+                        &mut renderer,
                         ctx,
                         &gl,
                         &mut monotonic_ms,
@@ -445,6 +449,7 @@ fn run_unified_capture(
                         });
                         tick_one_frame(
                             &mut runtime,
+                            &mut renderer,
                             ctx,
                             &gl,
                             &mut monotonic_ms,
@@ -456,6 +461,7 @@ fn run_unified_capture(
                     runtime.push_touch_event(TouchEvent::Up);
                     tick_one_frame(
                         &mut runtime,
+                        &mut renderer,
                         ctx,
                         &gl,
                         &mut monotonic_ms,
@@ -479,6 +485,7 @@ fn run_unified_capture(
                     runtime.push_touch_event(TouchEvent::Down { x: start_x, y: cy });
                     tick_one_frame(
                         &mut runtime,
+                        &mut renderer,
                         ctx,
                         &gl,
                         &mut monotonic_ms,
@@ -492,6 +499,7 @@ fn run_unified_capture(
                         runtime.push_touch_event(TouchEvent::Move { x, y: cy });
                         tick_one_frame(
                             &mut runtime,
+                            &mut renderer,
                             ctx,
                             &gl,
                             &mut monotonic_ms,
@@ -503,6 +511,7 @@ fn run_unified_capture(
                     runtime.push_touch_event(TouchEvent::Up);
                     tick_one_frame(
                         &mut runtime,
+                        &mut renderer,
                         ctx,
                         &gl,
                         &mut monotonic_ms,
@@ -564,8 +573,14 @@ fn run_unified_capture(
 /// Tick a single frame: set time, inject fixtures, deliver I/O, render, advance.
 ///
 /// Both `monotonic_ms` and `fixture_ms` are advanced by `DELTA_MS`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "single-flow per-frame helper threading the replay loop's interlocked clocks; \
+              splitting hurts readability"
+)]
 fn tick_one_frame(
     runtime: &mut WasmWidgetRuntime,
+    renderer: &mut FemtoVgRenderer,
     ctx: &CaptureCtx,
     gl: &glow::Context,
     monotonic_ms: &mut u64,
@@ -576,7 +591,7 @@ fn tick_one_frame(
     runtime.set_time(*system_time, *monotonic_ms);
     runtime.inject_fixture_events(*fixture_ms);
     deliver_all_io(runtime);
-    if !render_frame(runtime, ctx, *frame_count) {
+    if !render_frame(runtime, renderer, ctx, *frame_count) {
         bail!("widget died at frame {}", *frame_count);
     }
     unsafe { gl.flush() };
@@ -588,15 +603,22 @@ fn tick_one_frame(
 }
 
 /// Render one frame. Returns false if the widget died or errored (caller should break).
-fn render_frame(runtime: &mut WasmWidgetRuntime, ctx: &CaptureCtx, frame_count: u32) -> bool {
-    runtime.renderer().begin_frame(ctx.width, ctx.height, 1.0);
-    match runtime.render(DELTA_MS) {
+fn render_frame(
+    runtime: &mut WasmWidgetRuntime,
+    renderer: &mut FemtoVgRenderer,
+    ctx: &CaptureCtx,
+    frame_count: u32,
+) -> bool {
+    renderer.begin_frame(ctx.width, ctx.height, 1.0);
+    let raw: *mut dyn Renderer = core::ptr::addr_of_mut!(*renderer);
+    let ptr = std::ptr::NonNull::new(raw).expect("BUG: addr_of_mut! cannot produce null");
+    match runtime.with_renderer(ptr, |rt| rt.render(DELTA_MS)) {
         Ok(RenderStatus::Dead) => {
             eprintln!("Widget died at frame {frame_count}");
             false
         }
         Ok(_) => {
-            runtime.renderer().flush();
+            renderer.flush();
             true
         }
         Err(e) => {
@@ -990,6 +1012,12 @@ fn create_headless_egl_display() -> Result<Display> {
 }
 
 #[cfg(target_os = "linux")]
+#[expect(
+    clippy::type_complexity,
+    reason = "headless EGL setup returns several owned handles whose lifetimes must \
+              outlive the caller; pulling them out via a struct would force a public \
+              `pub(super)` wrapper for a single call site"
+)]
 fn setup_gl_and_runtime(
     ctx: &CaptureCtx,
     rt_config: RuntimeConfig,
@@ -997,6 +1025,7 @@ fn setup_gl_and_runtime(
     glow::Context,
     glow::Framebuffer,
     Box<dyn std::any::Any>,
+    FemtoVgRenderer,
     WasmWidgetRuntime,
 )> {
     let egl_display =
@@ -1050,20 +1079,23 @@ fn setup_gl_and_runtime(
     let fbo_id = fbo.0.get();
 
     let wasm_bytes = std::fs::read(&ctx.wasm_path).context("failed to read WASM file")?;
-    let runtime = unsafe {
-        WasmWidgetRuntime::new(
-            &wasm_bytes,
+    // SAFETY: GL context is current on this thread for the lifetime of the
+    // returned `keep_alive` bundle, which holds `gl_context`.
+    let renderer = unsafe {
+        FemtoVgRenderer::new(
             |s| gl_display.get_proc_address(&CString::new(s).unwrap_or_default()),
             ctx.width,
             ctx.height,
             fbo_id,
-            rt_config,
+            rt_config.mesh_msaa_samples,
         )
     }
-    .context("failed to create WASM runtime")?;
+    .context("failed to create renderer")?;
+    let runtime = WasmWidgetRuntime::new(&wasm_bytes, ctx.width, ctx.height, rt_config)
+        .context("failed to create WASM runtime")?;
 
     let keep_alive: Box<dyn std::any::Any> = Box::new((texture, surface, gl_context));
-    Ok((gl, fbo, keep_alive, runtime))
+    Ok((gl, fbo, keep_alive, renderer, runtime))
 }
 
 // ── macOS: khronos-egl + ANGLE ──────────────────────────────────────
@@ -1100,6 +1132,12 @@ fn load_angle_egl() -> Result<khronos_egl::DynamicInstance<khronos_egl::EGL1_4>>
 }
 
 #[cfg(target_os = "macos")]
+#[expect(
+    clippy::type_complexity,
+    reason = "headless EGL setup returns several owned handles whose lifetimes must \
+              outlive the caller; pulling them out via a struct would force a public \
+              `pub(super)` wrapper for a single call site"
+)]
 fn setup_gl_and_runtime(
     ctx: &CaptureCtx,
     rt_config: RuntimeConfig,
@@ -1107,6 +1145,7 @@ fn setup_gl_and_runtime(
     glow::Context,
     glow::Framebuffer,
     Box<dyn std::any::Any>,
+    FemtoVgRenderer,
     WasmWidgetRuntime,
 )> {
     use khronos_egl as egl;
@@ -1182,9 +1221,10 @@ fn setup_gl_and_runtime(
     let fbo_id = fbo.0.get();
 
     let wasm_bytes = std::fs::read(&ctx.wasm_path).context("failed to read WASM file")?;
-    let runtime = unsafe {
-        WasmWidgetRuntime::new(
-            &wasm_bytes,
+    // SAFETY: ANGLE EGL context is current on this thread for the lifetime of
+    // the returned `keep_alive` bundle.
+    let renderer = unsafe {
+        FemtoVgRenderer::new(
             |s| {
                 instance
                     .get_proc_address(s)
@@ -1193,16 +1233,18 @@ fn setup_gl_and_runtime(
             ctx.width,
             ctx.height,
             fbo_id,
-            rt_config,
+            rt_config.mesh_msaa_samples,
         )
     }
-    .context("failed to create WASM runtime")?;
+    .context("failed to create renderer")?;
+    let runtime = WasmWidgetRuntime::new(&wasm_bytes, ctx.width, ctx.height, rt_config)
+        .context("failed to create WASM runtime")?;
 
     // Keep EGL state alive — dropping tears down the GL context.
     let keep_alive: Box<dyn std::any::Any> =
         Box::new((instance, display, context, surface, texture));
 
-    Ok((gl, fbo, keep_alive, runtime))
+    Ok((gl, fbo, keep_alive, renderer, runtime))
 }
 
 // ── Init subcommand ─────────────────────────────────────────────────
