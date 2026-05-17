@@ -12,13 +12,13 @@ use anyhow::{Context, Result};
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
 use bmc_wasm_runtime::{
-    LedEffect, LedRequest, NextAlarm as RuntimeNextAlarm, RenderStatus, RuntimeConfig,
+    LedEffect, LedRequest, LedScope, NextAlarm as RuntimeNextAlarm, RenderStatus, RuntimeConfig,
     SystemSnapshot, WasmWidgetRuntime,
 };
 use bmc_widget::surface::{DeckWidgetSurfaceClient, WidgetEvent, WidgetSurface};
 use bmc_widget_protocol::{
-    ActionPayload, LedEffect as ProtoEffect, LedScope, NextAlarm as WireNextAlarm, RgbColor,
-    SettingUpdate,
+    ActionPayload, LedEffect as ProtoEffect, LedScope as ProtoScope, NextAlarm as WireNextAlarm,
+    RgbColor, SettingUpdate,
 };
 use serde_json::{Map, Value};
 
@@ -859,6 +859,7 @@ fn led_request_to_action(req: &LedRequest) -> ActionPayload {
             color,
             period_ms,
             duration,
+            scope,
         } => {
             let effect = match effect {
                 LedEffect::Chase => ProtoEffect::Chase,
@@ -873,13 +874,17 @@ fn led_request_to_action(req: &LedRequest) -> ActionPayload {
                 g: color.g,
                 b: color.b,
             };
+            let scope = match scope {
+                LedScope::Local => ProtoScope::Local,
+                LedScope::Global => ProtoScope::Global,
+            };
             match duration {
                 None => ActionPayload::LedEndless {
                     request_id: *request_id,
                     effect,
                     color,
                     period_ms: *period_ms,
-                    scope: LedScope::Local,
+                    scope,
                 },
                 Some(d) => ActionPayload::LedTemporary {
                     request_id: *request_id,
@@ -887,7 +892,7 @@ fn led_request_to_action(req: &LedRequest) -> ActionPayload {
                     color,
                     period_ms: *period_ms,
                     duration_ms: u32::try_from(d.as_millis()).unwrap_or(u32::MAX),
-                    scope: LedScope::Local,
+                    scope,
                 },
             }
         }
@@ -1162,10 +1167,10 @@ mod tests {
         HostRenderFrameContext, RendererAssetEvictor, SystemSnapshot, apply_setting_update,
         evict_renderer_assets, led_request_to_action,
     };
-    use bmc_wasm_runtime::{LedEffect, LedRequest, Rgb};
+    use bmc_wasm_runtime::{LedEffect, LedRequest, LedScope, Rgb};
     use bmc_widget_protocol::{
-        ActionPayload, LedEffect as ProtoEffect, LedScope as ProtoScope, NextAlarm as WireNextAlarm,
-        RgbColor, SettingUpdate,
+        ActionPayload, LedEffect as ProtoEffect, LedScope as ProtoScope,
+        NextAlarm as WireNextAlarm, RgbColor, SettingUpdate,
     };
     use std::time::Duration;
 
@@ -1273,6 +1278,7 @@ mod tests {
             color: red(),
             period_ms: 750,
             duration: None,
+            scope: LedScope::Local,
         };
         assert_eq!(
             led_request_to_action(&req),
@@ -1294,6 +1300,7 @@ mod tests {
             color: red(),
             period_ms: 0,
             duration: Some(Duration::from_millis(5_000)),
+            scope: LedScope::Local,
         };
         assert_eq!(
             led_request_to_action(&req),
@@ -1316,6 +1323,7 @@ mod tests {
             color: red(),
             period_ms: 0,
             duration: Some(Duration::ZERO),
+            scope: LedScope::Local,
         };
         let action = led_request_to_action(&req);
         let ActionPayload::LedTemporary { duration_ms, .. } = action else {
@@ -1330,6 +1338,51 @@ mod tests {
         assert_eq!(
             led_request_to_action(&req),
             ActionPayload::StopLed { request_id: 0 }
+        );
+    }
+
+    #[test]
+    fn endless_global_maps_to_led_endless_with_global_scope() {
+        let req = LedRequest::SetEffect {
+            request_id: 3,
+            effect: LedEffect::Chase,
+            color: red(),
+            period_ms: 500,
+            duration: None,
+            scope: LedScope::Global,
+        };
+        assert_eq!(
+            led_request_to_action(&req),
+            ActionPayload::LedEndless {
+                request_id: 3,
+                effect: ProtoEffect::Chase,
+                color: RgbColor { r: 255, g: 0, b: 0 },
+                period_ms: 500,
+                scope: ProtoScope::Global,
+            }
+        );
+    }
+
+    #[test]
+    fn temporary_global_maps_to_led_temporary_with_global_scope() {
+        let req = LedRequest::SetEffect {
+            request_id: 5,
+            effect: LedEffect::Solid,
+            color: red(),
+            period_ms: 0,
+            duration: Some(Duration::from_millis(5_000)),
+            scope: LedScope::Global,
+        };
+        assert_eq!(
+            led_request_to_action(&req),
+            ActionPayload::LedTemporary {
+                request_id: 5,
+                effect: ProtoEffect::Solid,
+                color: RgbColor { r: 255, g: 0, b: 0 },
+                period_ms: 0,
+                duration_ms: 5_000,
+                scope: ProtoScope::Global,
+            }
         );
     }
 }

@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use bmc_led::data::{LedEffectKind as LedEffect, Rgb};
+use bmc_led::data::{LedEffectKind as LedEffect, LedScope, Rgb};
 
 /// Widget-allocated identifier for an LED request.
 ///
@@ -35,6 +35,7 @@ pub enum LedRequest {
         period_ms: u32,
         /// `None` = endless, `Some(n)` = temporary for `n` ms.
         duration: Option<Duration>,
+        scope: LedScope,
     },
     /// `request_id == LED_REQUEST_ID_ALL` cancels every request the
     /// emitting guest owns; any other value cancels just that one.
