@@ -414,7 +414,7 @@ impl SceneManagementService {
         let preview_id = *self.preview_scene_id.lock().await;
         let config = self.config_handle.read().await;
         if let Some(preview_id) = preview_id
-            && let Some(scene) = config.scenes.get(&preview_id)
+            && let Some(scene) = config.scenes().get(&preview_id)
         {
             // A held preview pins exactly one scene so automatic cycling and
             // manual drag cannot move off the scene being edited. Other edits
@@ -422,7 +422,7 @@ impl SceneManagementService {
             self.coordinator.pin_preview_scene(scene);
             return;
         }
-        self.coordinator.refresh_scene_cycling(&config.scenes);
+        self.coordinator.refresh_scene_cycling(config.scenes());
     }
 
     /// Save config, returning a gRPC-friendly error on failure.
@@ -948,7 +948,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         _request: Request<()>,
     ) -> Result<Response<web::GetScenesResponse>, Status> {
         let config = self.config_handle.read().await;
-        let scenes = config.scenes.values().map(scene_to_proto).collect();
+        let scenes = config.scenes().values().map(scene_to_proto).collect();
         Ok(Response::new(web::GetScenesResponse { scenes }))
     }
 
@@ -962,7 +962,7 @@ impl GrpcSceneManagementService for SceneManagementService {
 
         let config = self.config_handle.read().await;
         let scene = config
-            .scenes
+            .scenes()
             .get(&scene::SceneId::from(id))
             .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
 
@@ -1009,13 +1009,13 @@ impl GrpcSceneManagementService for SceneManagementService {
 
         {
             let mut config = self.config_handle.write().await;
-            config.scenes.insert(scene.id, scene);
+            config.scenes_mut().insert(scene.id, scene);
             Self::save_config(&mut config).await?;
         }
 
         if scene_enabled {
             let config = self.config_handle.read().await;
-            if let Some(scene) = config.scenes.get(&scene_key) {
+            if let Some(scene) = config.scenes().get(&scene_key) {
                 self.coordinator.spawn_scene_widgets(scene).await;
             }
         }
@@ -1038,7 +1038,7 @@ impl GrpcSceneManagementService for SceneManagementService {
 
         {
             let mut config = self.config_handle.write().await;
-            config.scenes.insert(scene.id, scene);
+            config.scenes_mut().insert(scene.id, scene);
             Self::save_config(&mut config).await?;
         }
 
@@ -1060,7 +1060,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         {
             let mut config = self.config_handle.write().await;
             let scene = config
-                .scenes
+                .scenes_mut()
                 .get_mut(&scene_id_key)
                 .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
 
@@ -1084,7 +1084,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         // Spawn/stop widgets based on enabled state change
         if was_enabled != req.enabled {
             let config = self.config_handle.read().await;
-            if let Some(scene) = config.scenes.get(&scene_id_key) {
+            if let Some(scene) = config.scenes().get(&scene_id_key) {
                 if req.enabled {
                     self.coordinator.spawn_scene_widgets(scene).await;
                 } else {
@@ -1110,18 +1110,18 @@ impl GrpcSceneManagementService for SceneManagementService {
         let scene_id = scene::SceneId::from(id);
 
         let current_idx = config
-            .scenes
+            .scenes()
             .get_index_of(&scene_id)
             .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
 
         let target_idx = req.index as usize;
-        if target_idx >= config.scenes.len() {
+        if target_idx >= config.scenes().len() {
             return Err(Status::invalid_argument(format!(
                 "target index {target_idx} out of bounds (scene count: {})",
-                config.scenes.len()
+                config.scenes().len()
             )));
         }
-        config.scenes.move_index(current_idx, target_idx);
+        config.scenes_mut().move_index(current_idx, target_idx);
 
         Self::save_config(&mut config).await?;
         drop(config);
@@ -1138,7 +1138,7 @@ impl GrpcSceneManagementService for SceneManagementService {
 
         let mut config = self.config_handle.write().await;
         let (source_idx, mut cloned) = config
-            .scenes
+            .scenes()
             .get_full(&scene::SceneId::from(id))
             .map(|(idx, _, scene)| (idx, scene.clone()))
             .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
@@ -1156,16 +1156,17 @@ impl GrpcSceneManagementService for SceneManagementService {
         let cloned_enabled = cloned.enabled;
 
         // Insert right after the source scene
-        config.scenes.insert(cloned.id, cloned);
-        let last_idx = config.scenes.len() - 1;
-        config.scenes.move_index(last_idx, source_idx + 1);
+        let scenes = config.scenes_mut();
+        scenes.insert(cloned.id, cloned);
+        let last_idx = scenes.len() - 1;
+        scenes.move_index(last_idx, source_idx + 1);
 
         Self::save_config(&mut config).await?;
         drop(config);
 
         if cloned_enabled {
             let config = self.config_handle.read().await;
-            if let Some(scene) = config.scenes.get(&cloned_key) {
+            if let Some(scene) = config.scenes().get(&cloned_key) {
                 self.coordinator.spawn_scene_widgets(scene).await;
             }
         }
@@ -1190,7 +1191,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         {
             let mut config = self.config_handle.write().await;
             removed_scene = config
-                .scenes
+                .scenes_mut()
                 .shift_remove(&scene_id_key)
                 .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
             Self::save_config(&mut config).await?;
@@ -1222,7 +1223,7 @@ impl GrpcSceneManagementService for SceneManagementService {
 
             let config = self.config_handle.read().await;
             let scene = config
-                .scenes
+                .scenes()
                 .get(&scene_id)
                 .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
 
@@ -1266,11 +1267,11 @@ impl GrpcSceneManagementService for SceneManagementService {
                     let config = config_handle.read().await;
                     if spawned
                         && let Some(id) = id.as_ref()
-                        && let Some(scene) = config.scenes.get(id)
+                        && let Some(scene) = config.scenes().get(id)
                     {
                         coordinator.stop_scene_widgets(scene).await;
                     }
-                    coordinator.refresh_scene_cycling(&config.scenes);
+                    coordinator.refresh_scene_cycling(config.scenes());
                 });
             }
         }
@@ -1308,7 +1309,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         {
             let mut config = self.config_handle.write().await;
             let scene = config
-                .scenes
+                .scenes_mut()
                 .get_mut(&scene::SceneId::from(scene_id))
                 .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
 
@@ -1440,7 +1441,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let widget_to_spawn = {
             let mut config = self.config_handle.write().await;
             let scene = config
-                .scenes
+                .scenes_mut()
                 .get_mut(&scene_id_key)
                 .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
 
@@ -1491,7 +1492,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let respawn_target = {
             let mut config = self.config_handle.write().await;
             let scene = config
-                .scenes
+                .scenes_mut()
                 .get_mut(&scene_id_key)
                 .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
 
@@ -2770,8 +2771,8 @@ mod tests {
         let scene_id = scene.id;
         {
             let mut config = config_handle.write().await;
-            config.scenes.clear();
-            config.scenes.insert(scene.id, scene);
+            config.scenes_mut().clear();
+            config.scenes_mut().insert(scene.id, scene);
         }
 
         let widget_manager = crate::widget::WidgetManager::init(Vec::new(), false).await;
@@ -2853,9 +2854,9 @@ mod tests {
         let preview_id = scene_a.id;
         {
             let mut config = config_handle.write().await;
-            config.scenes.clear();
-            config.scenes.insert(scene_a.id, scene_a);
-            config.scenes.insert(scene_b.id, scene_b);
+            config.scenes_mut().clear();
+            config.scenes_mut().insert(scene_a.id, scene_a);
+            config.scenes_mut().insert(scene_b.id, scene_b);
         }
 
         let widget_manager = crate::widget::WidgetManager::init(Vec::new(), false).await;

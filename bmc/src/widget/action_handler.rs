@@ -14,9 +14,6 @@ use crate::compositor::{CompositorEvent, LedRequestStatusEvent, WidgetAction};
 use crate::led_coordinator::LedCoordinatorHandle;
 use crate::sound::{SoundController, Sounds};
 
-/// Channel capacity for sound commands sent to the sound manager task.
-const SOUND_CHANNEL_CAPACITY: usize = 4;
-
 /// Spawn a task that receives widget actions from the compositor and
 /// dispatches them to the appropriate hardware controller.
 ///
@@ -28,12 +25,17 @@ pub(crate) fn spawn_action_handler(
     status_tx: mpsc::UnboundedSender<LedRequestStatusEvent>,
     sound_controller: SoundController,
     led_coordinator: LedCoordinatorHandle,
+    initial_widget_scene_map: crate::config::WidgetSceneMap,
+    mut scenes_rx: broadcast::Receiver<crate::config::WidgetSceneMap>,
 ) {
-    let (sound_tx, sound_rx) = mpsc::channel(SOUND_CHANNEL_CAPACITY);
+    // Unbounded so a StopSound is never dropped under backpressure — the
+    // sound manager drains fast (it only cancels and spawns), so it can't grow.
+    let (sound_tx, sound_rx) = mpsc::unbounded_channel();
     spawn_sound_manager(sound_rx, sound_controller);
 
     tokio::spawn(async move {
         let mut led = LedSceneManager::new(led_coordinator, status_tx);
+        led.on_config_snapshot(initial_widget_scene_map);
 
         loop {
             let deadline = led.active_deadline();
@@ -57,10 +59,10 @@ pub(crate) fn spawn_action_handler(
                     info!(widget = %action.instance_id, "handling widget action");
                     match action.payload {
                         ActionPayload::PlaySound { sound } => {
-                            let _ = sound_tx.try_send(SoundCommand::Play(sound));
+                            send_sound(&sound_tx, SoundCommand::Play(sound));
                         }
                         ActionPayload::StopSound {} => {
-                            let _ = sound_tx.try_send(SoundCommand::Stop);
+                            send_sound(&sound_tx, SoundCommand::Stop);
                         }
                         ActionPayload::LedTemporary {
                             request_id,
@@ -103,8 +105,8 @@ pub(crate) fn spawn_action_handler(
                 }
                 event = event_rx.recv() => {
                     match event {
-                        Ok(CompositorEvent::ActiveSceneChanged { scene_id, widget_ids }) => {
-                            led.on_scene_changed(scene_id, widget_ids);
+                        Ok(CompositorEvent::ActiveSceneChanged { scene_id, .. }) => {
+                            led.on_scene_changed(scene_id);
                         }
                         Ok(CompositorEvent::WidgetDisconnected { instance_id }) => {
                             led.on_widget_disconnected(&instance_id);
@@ -118,6 +120,15 @@ pub(crate) fn spawn_action_handler(
                         }
                     }
                 }
+                snapshot = scenes_rx.recv() => {
+                    match snapshot {
+                        Ok(snapshot) => led.on_config_snapshot(snapshot),
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            warn!(skipped = n, "action handler scenes_change receiver lagged");
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
             }
         }
         info!("action handler shutting down — channel closed");
@@ -129,10 +140,19 @@ enum SoundCommand {
     Stop,
 }
 
+/// Forward a sound command to the sound manager task, logging if the task is
+/// gone. The channel is unbounded, so this never drops under load — only a
+/// dead manager (closed channel) can fail.
+fn send_sound(tx: &mpsc::UnboundedSender<SoundCommand>, cmd: SoundCommand) {
+    if tx.send(cmd).is_err() {
+        warn!("sound manager gone; dropping sound command");
+    }
+}
+
 /// Separate task that owns the cancellation token and serializes sound playback.
 /// PlaySound cancels any in-progress sound before starting the new one.
 /// StopSound cancels without starting a replacement.
-fn spawn_sound_manager(mut rx: mpsc::Receiver<SoundCommand>, controller: SoundController) {
+fn spawn_sound_manager(mut rx: mpsc::UnboundedReceiver<SoundCommand>, controller: SoundController) {
     tokio::spawn(async move {
         let mut active_token: Option<tokio_util::sync::CancellationToken> = None;
 
