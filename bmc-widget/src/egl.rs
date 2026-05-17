@@ -694,7 +694,7 @@ impl WidgetExportBuffer {
 /// Manages two lazily-allocated [`ExportBuffer`]s with ping-pong swap.
 /// Widgets compose this with [`EglContext`] and their own rendering pipeline
 /// (direct FBO, staging+blit, etc.).
-struct DoubleBufferState {
+pub struct DoubleBufferState {
     buffers: [Option<ExportBuffer>; 2],
     current_buffer: usize,
     width: u32,
