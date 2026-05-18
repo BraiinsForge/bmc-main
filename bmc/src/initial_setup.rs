@@ -3,11 +3,13 @@
 use crate::system_upgrade::SystemUpgradeService;
 use crate::{
     BmcManager,
-    config::{ConfigHandle, UnitSystem},
+    config::ConfigHandle,
     manager::{InitialSetupError, WifiNetworkConfig},
 };
 use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone};
-use bmc_shared_utils::{number_format::NumberFormat, temperature::TemperatureUnit};
+use bmc_shared_utils::{
+    number_format::NumberFormat, temperature::TemperatureUnit, unit_system::UnitSystem,
+};
 use bmc_upgrade::autoupgrade::{
     AutoUpgradeConfig, AutoUpgradeFrequency, SECONDS_DEVICE_SETUP_DELAY,
 };
@@ -242,7 +244,7 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
         config_guard.set_time_system(time_system);
         config_guard.set_data_collection(data_collection);
         config_guard.set_temperature_unit(temperature_unit);
-        config_guard.set_unit_system(unit_system.clone());
+        config_guard.set_unit_system(unit_system);
         config_guard.set_autoupgrade(autoupgrade_config.clone());
         config_guard
             .save()

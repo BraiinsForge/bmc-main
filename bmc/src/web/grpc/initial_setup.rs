@@ -6,7 +6,6 @@ use crate::web::grpc::network::{scan_wifi_response, try_into_wifi_network_config
 use crate::web::grpc::shared::try_from_number_format;
 use crate::{
     BmcManager,
-    config::UnitSystem as ConfigUnitSystem,
     initial_setup::{DeviceSetupConfig, InitialSetup},
     manager::BmcState,
 };
@@ -17,6 +16,7 @@ use bmc_grpc::web::{
 };
 use bmc_shared_time::time::{TimeSystem, Timezone};
 use bmc_shared_utils::temperature::TemperatureUnit as ConfigTemperatureUnit;
+use bmc_shared_utils::unit_system::UnitSystem as ConfigUnitSystem;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::{str::FromStr, sync::Arc};
 use tonic::{Code, Request, Response, Status};

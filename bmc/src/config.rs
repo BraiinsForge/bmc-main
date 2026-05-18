@@ -10,6 +10,7 @@ use anyhow::{Context, Result, bail};
 use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone, WeekDay};
 use bmc_shared_utils::number_format::NumberFormat;
 use bmc_shared_utils::temperature::TemperatureUnit;
+use bmc_shared_utils::unit_system::UnitSystem;
 use bmc_upgrade::autoupgrade::AutoUpgradeConfig;
 use bmc_widget_manifest::{ParamKey, ParamValue};
 use chrono::{Local, NaiveTime};
@@ -502,6 +503,21 @@ impl ConfigHandle {
         self.localization_dirty = true;
     }
 
+    pub fn set_first_day_of_week(&mut self, day: WeekDay) {
+        self.config.set_first_day_of_week(day);
+        self.localization_dirty = true;
+    }
+
+    pub fn set_temperature_unit(&mut self, temperature_unit: TemperatureUnit) {
+        self.config.set_temperature_unit(temperature_unit);
+        self.localization_dirty = true;
+    }
+
+    pub fn set_unit_system(&mut self, unit_system: UnitSystem) {
+        self.config.set_unit_system(unit_system);
+        self.localization_dirty = true;
+    }
+
     pub fn set_brightness(&mut self, brightness_pct: u8) {
         self.brightness_pct = Some(brightness_pct);
         self.brightness_settings_dirty = true;
@@ -708,13 +724,6 @@ impl Default for NightModeConfigData {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
-pub enum UnitSystem {
-    #[default]
-    Metric,
-    Imperial,
-}
-
 fn params_map(entries: &[(&str, ParamValue)]) -> Result<BTreeMap<ParamKey, ParamValue>, String> {
     entries
         .iter()
@@ -729,5 +738,61 @@ mod tests {
     #[test]
     fn config_default_constructs_without_panic() {
         let _ = Config::default();
+    }
+
+    /// Tempfile-backed `ConfigHandle` for notification tests.
+    async fn fresh_handle() -> (tempfile::TempDir, ConfigHandle) {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
+        let path = tmp.path().join("bmc-config.json");
+        let handle = ConfigHandle::init(path, 50, 50, 50, 50).await;
+        (tmp, handle)
+    }
+
+    /// Regression guard for the `localization_dirty` cohort — every
+    /// `ConfigHandle` setter that mutates a localization field must
+    /// flip the dirty flag so `save()` fans the change to subscribers.
+    #[tokio::test]
+    async fn set_first_day_of_week_via_handle_notifies_subscribers() {
+        let (_tmp, mut handle) = fresh_handle().await;
+        let mut rx = handle.subscribe_localization_change();
+
+        handle.set_first_day_of_week(WeekDay::Wednesday);
+        handle.save().await.expect("BUG: save must succeed");
+
+        let cfg = rx
+            .recv()
+            .await
+            .expect("BUG: subscriber must receive change");
+        assert_eq!(cfg.first_day_of_week, WeekDay::Wednesday);
+    }
+
+    #[tokio::test]
+    async fn set_temperature_unit_via_handle_notifies_subscribers() {
+        let (_tmp, mut handle) = fresh_handle().await;
+        let mut rx = handle.subscribe_localization_change();
+
+        handle.set_temperature_unit(TemperatureUnit::Fahrenheit);
+        handle.save().await.expect("BUG: save must succeed");
+
+        let cfg = rx
+            .recv()
+            .await
+            .expect("BUG: subscriber must receive change");
+        assert_eq!(cfg.temperature_unit, TemperatureUnit::Fahrenheit);
+    }
+
+    #[tokio::test]
+    async fn set_unit_system_via_handle_notifies_subscribers() {
+        let (_tmp, mut handle) = fresh_handle().await;
+        let mut rx = handle.subscribe_localization_change();
+
+        handle.set_unit_system(UnitSystem::Imperial);
+        handle.save().await.expect("BUG: save must succeed");
+
+        let cfg = rx
+            .recv()
+            .await
+            .expect("BUG: subscriber must receive change");
+        assert_eq!(cfg.unit_system, UnitSystem::Imperial);
     }
 }

@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use crate::config::{ConfigHandle, UnitSystem};
+use crate::config::ConfigHandle;
 use crate::sound::Sounds;
 use crate::system_manager::SystemManager;
 
@@ -18,6 +18,7 @@ use bmc_grpc::web::{
 use bmc_shared_time::time::{DateFormat, TimeSystem};
 use bmc_shared_utils::number_format::NumberFormat;
 use bmc_shared_utils::temperature::TemperatureUnit;
+use bmc_shared_utils::unit_system::UnitSystem;
 use std::str::FromStr;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
@@ -281,7 +282,7 @@ impl<T: DisplayBacklightDriver> GrpcConfigurationService for ConfigurationServic
             number_format: map_number_format_to_proto(localization.number_format).into(),
             first_day_of_week: map_weekday_to_proto(localization.first_day_of_week).into(),
             temperature_unit: map_temperature_unit_to_proto(localization.temperature_unit).into(),
-            unit_system: map_unit_system_to_proto(&localization.unit_system).into(),
+            unit_system: map_unit_system_to_proto(localization.unit_system).into(),
             show_seconds_status_bar: Some(localization.show_seconds_in_status_bar),
         }))
     }
@@ -629,7 +630,7 @@ fn map_temperature_unit_from_proto(value: web::TemperatureUnit) -> Option<Temper
     }
 }
 
-fn map_unit_system_to_proto(value: &UnitSystem) -> web::UnitSystem {
+fn map_unit_system_to_proto(value: UnitSystem) -> web::UnitSystem {
     match value {
         UnitSystem::Metric => web::UnitSystem::Metric,
         UnitSystem::Imperial => web::UnitSystem::Imperial,
