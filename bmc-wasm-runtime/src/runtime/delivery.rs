@@ -176,6 +176,10 @@ impl WasmWidgetRuntime {
         while let Ok(resp) = state.fetch_rx.try_recv() {
             state.in_flight_fetches = state.in_flight_fetches.saturating_sub(1);
             responses.push(resp);
+            #[cfg(feature = "testing")]
+            {
+                state.delivered_events += 1;
+            }
         }
 
         if responses.is_empty() {
@@ -257,6 +261,10 @@ impl WasmWidgetRuntime {
                 events.push((ws_id, event));
                 if is_close {
                     closed_ids.push(ws_id);
+                }
+                #[cfg(feature = "testing")]
+                {
+                    state.delivered_events += 1;
                 }
             }
         }
@@ -349,6 +357,10 @@ impl WasmWidgetRuntime {
                 if is_close {
                     closed_ids.push(socket_id);
                 }
+                #[cfg(feature = "testing")]
+                {
+                    state.delivered_events += 1;
+                }
             }
         }
         for id in &closed_ids {
@@ -433,6 +445,10 @@ impl WasmWidgetRuntime {
         for (&browse_id, browse) in &state.mdns_browses {
             while let Ok(event) = browse.event_rx.try_recv() {
                 events.push((browse_id, event));
+                #[cfg(feature = "testing")]
+                {
+                    state.delivered_events += 1;
+                }
             }
         }
 
@@ -510,6 +526,10 @@ impl WasmWidgetRuntime {
         for (&search_id, search) in &state.ssdp_searches {
             while let Ok(event) = search.event_rx.try_recv() {
                 events.push((search_id, event));
+                #[cfg(feature = "testing")]
+                {
+                    state.delivered_events += 1;
+                }
             }
         }
 
@@ -587,6 +607,10 @@ impl WasmWidgetRuntime {
         for (&broadcast_id, broadcast) in &state.udp_broadcasts {
             while let Ok(event) = broadcast.event_rx.try_recv() {
                 events.push((broadcast_id, event));
+                #[cfg(feature = "testing")]
+                {
+                    state.delivered_events += 1;
+                }
             }
         }
 
@@ -674,6 +698,10 @@ impl WasmWidgetRuntime {
         for (&listener_id, listener) in &state.http_listeners {
             while let Ok(req) = listener.request_rx.try_recv() {
                 requests.push((listener_id, req));
+                #[cfg(feature = "testing")]
+                {
+                    state.delivered_events += 1;
+                }
             }
         }
 

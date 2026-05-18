@@ -847,14 +847,8 @@ impl WasmWidgetRuntime {
             .ok()?;
         func.call(&mut self.store, ()).ok()
     }
-}
 
-impl Drop for WasmWidgetRuntime {
-    fn drop(&mut self) {
-        // Best-effort guest cleanup hook: if the widget exported `unload`,
-        // call it with a fresh fuel budget. Any trap (including out-of-fuel)
-        // is logged and swallowed — the host-side safety sweep below runs
-        // unconditionally and is the authoritative cleanup path.
+    fn run_unload_with_fresh_fuel(&mut self) {
         if let Some(unload) = self.unload_func {
             if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
                 tracing::warn!("unload: could not set fuel: {e}");
@@ -864,6 +858,82 @@ impl Drop for WasmWidgetRuntime {
                 tracing::warn!("unload trapped: {e}");
             }
         }
+        #[cfg(feature = "testing")]
+        {
+            self.store.data_mut().unload_ran = true;
+        }
+    }
+
+    #[cfg(feature = "testing")]
+    #[must_use]
+    pub fn test_progress_counter(&self) -> u64 {
+        self.store.data().delivered_events
+    }
+
+    #[cfg(feature = "testing")]
+    #[must_use]
+    pub fn test_unload_ran(&self) -> bool {
+        self.store.data().unload_ran
+    }
+}
+
+#[cfg(feature = "testing")]
+impl WasmWidgetRuntime {
+    pub fn test_kick_fetch(&mut self) -> std::thread::JoinHandle<()> {
+        let state = self.store.data_mut();
+        let fetch_tx = state.fetch_tx.clone();
+        state.delayed_fetches.push(crate::host_api::DelayedFetch {
+            fire_at_ms: 0,
+            method: String::new(),
+            url: String::new(),
+            headers: Vec::new(),
+            body: None,
+            request_id: bmc_wasm_protocol::FetchRequestId::alloc(&mut state.next_request_id),
+        });
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                if fetch_tx
+                    .send(crate::host_api::CompletedFetch::test_sentinel())
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+    }
+
+    pub fn test_kick_ws_connect(&mut self) -> std::thread::JoinHandle<()> {
+        let state = self.store.data_mut();
+        let (msg_tx, msg_rx) = std::sync::mpsc::channel::<crate::host_api::WsOutbound>();
+        let (_evt_tx, event_rx) = std::sync::mpsc::channel();
+        let id = bmc_wasm_protocol::WebsocketId::alloc(&mut state.next_ws_id);
+        state
+            .websockets
+            .insert(id, crate::host_api::ActiveWebSocket { msg_tx, event_rx });
+        std::thread::spawn(move || while msg_rx.recv().is_ok() {})
+    }
+
+    pub fn test_kick_mdns_browse(&mut self) -> std::thread::JoinHandle<()> {
+        let state = self.store.data_mut();
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+        let (_evt_tx, event_rx) = std::sync::mpsc::channel();
+        let id = bmc_wasm_protocol::MdnsBrowseId::alloc(&mut state.next_mdns_browse_id);
+        state
+            .mdns_browses
+            .insert(id, crate::host_api::ActiveMdnsBrowse { event_rx, stop_tx });
+        std::thread::spawn(move || {
+            let _ = stop_rx.recv();
+        })
+    }
+}
+
+impl Drop for WasmWidgetRuntime {
+    fn drop(&mut self) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.run_unload_with_fresh_fuel();
+        }));
+        self.store.data_mut().shutdown_workers();
         let evicted = self.store.data_mut().evict_widget();
         if evicted > 0 {
             tracing::debug!("widget teardown evicted {evicted} asset(s)");

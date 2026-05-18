@@ -72,6 +72,7 @@ toml = { workspace = true, optional = true }
 
 [features]
 default = []
+testing = []
 perf-overlay = []
 profiling = ["ii-stopwatch/enabled", "bmc-render/profiling"]
 audio = ["rodio"]
