@@ -1562,6 +1562,7 @@ dependencies = [
  "glow 0.16.0",
  "libc",
  "mdns-sd",
+ "rustix 0.38.44",
  "serde_json",
  "serial_test",
  "sha2",

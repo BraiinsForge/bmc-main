@@ -13,6 +13,7 @@ clap = { workspace = true, features = ["derive"] }
 femtovg = { workspace = true }
 glow = { workspace = true }
 libc = { workspace = true }
+rustix = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
