@@ -5,7 +5,7 @@ use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::net::UnixStream;
 
 use bmc_wasm_thin_protocol::{
-    AckMsg, HelloMsg, read_ack, recv_hello_with_fd, send_hello_with_fd, write_ack,
+    AckMsg, HelloMsg, PROTOCOL_VERSION, read_ack, recv_hello_with_fd, send_hello_with_fd, write_ack,
 };
 
 fn pair() -> (UnixStream, UnixStream) {
@@ -85,7 +85,8 @@ fn oversize_string_is_rejected_before_alloc() {
     let (fd_a, _fd_b) = pair();
 
     let oversize_len: u32 = (64 * 1024) + 1;
-    let mut payload: Vec<u8> = Vec::with_capacity(5);
+    let mut payload: Vec<u8> = Vec::with_capacity(7);
+    payload.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
     payload.push(0x01_u8); // TAG_HELLO_LOAD
     payload.extend_from_slice(&oversize_len.to_le_bytes());
 
@@ -141,7 +142,8 @@ fn hello_without_scm_rights_is_protocol_error() {
 
     let (sender, receiver) = pair();
     let path = "/x".as_bytes();
-    let mut buf = vec![0x01_u8];
+    let mut buf = PROTOCOL_VERSION.to_le_bytes().to_vec();
+    buf.push(0x01_u8); // TAG_HELLO_LOAD
     buf.extend_from_slice(
         &u32::try_from(path.len())
             .expect("BUG: path length fits in u32")
@@ -171,7 +173,8 @@ fn too_many_fds_are_rejected_without_leaking_received_fd() {
     let (extra_a, _extra_b) = pair();
 
     let path = "/x".as_bytes();
-    let mut payload = vec![0x01_u8];
+    let mut payload = PROTOCOL_VERSION.to_le_bytes().to_vec();
+    payload.push(0x01_u8); // TAG_HELLO_LOAD
     payload.extend_from_slice(
         &u32::try_from(path.len())
             .expect("BUG: path length fits in u32")
@@ -222,5 +225,67 @@ fn too_many_fds_are_rejected_without_leaking_received_fd() {
         open_fd_count(),
         baseline,
         "recv_hello_with_fd must close any primary fd it received before rejecting extra fds",
+    );
+}
+
+#[test]
+fn hello_with_wrong_version_is_rejected_before_payload() {
+    use std::os::fd::AsFd;
+
+    let (a, b) = pair();
+    let dummy = UnixStream::pair()
+        .expect("BUG: test fixture requires UnixStream::pair to succeed")
+        .0;
+
+    bmc_wasm_thin_protocol::test_helpers::send_hello_with_fd_versioned(
+        &a,
+        0xFFFF,
+        bmc_wasm_thin_protocol::test_helpers::TAG_HELLO_LOAD_VALUE,
+        b"/tmp/x.wasm",
+        dummy.as_fd(),
+    )
+    .expect("BUG: test fixture expects raw sendmsg to succeed on connected socketpair");
+
+    let err = recv_hello_with_fd(&b).expect_err("must reject bogus version");
+    assert!(err.to_string().contains("protocol version"), "got {err}");
+}
+
+#[test]
+fn ack_decoder_rejects_runaway_input() {
+    use bmc_wasm_thin_protocol::{AckDecoder, MAX_STRING_LEN, PROTOCOL_VERSION};
+
+    let mut dec = AckDecoder::new();
+    dec.push(&PROTOCOL_VERSION.to_le_bytes())
+        .expect("BUG: AckDecoder must accept the protocol version prefix");
+    dec.push(&[0x01])
+        .expect("BUG: AckDecoder must accept the Err tag byte");
+    dec.push(&MAX_STRING_LEN.to_le_bytes())
+        .expect("BUG: AckDecoder must accept the length prefix");
+    let chunk = vec![0_u8; 8 * 1024];
+    let mut last: Result<Option<_>, _> = Ok(None);
+    for _ in 0..16 {
+        last = dec.push(&chunk);
+        if last.is_err() {
+            break;
+        }
+    }
+    assert!(
+        last.is_err(),
+        "decoder must bail once internal buffer exceeds the cap"
+    );
+}
+
+#[test]
+fn ack_decoder_rejects_unknown_tag_distinctly() {
+    use bmc_wasm_thin_protocol::{AckDecoder, PROTOCOL_VERSION};
+
+    let mut dec = AckDecoder::new();
+    dec.push(&PROTOCOL_VERSION.to_le_bytes())
+        .expect("BUG: AckDecoder must accept the protocol version prefix");
+    let err = dec.push(&[0x42]).expect_err("unknown tag must reject");
+    assert!(
+        format!("{err}").contains("unknown Ack tag")
+            || format!("{err}").to_lowercase().contains("unknown"),
+        "got {err}"
     );
 }

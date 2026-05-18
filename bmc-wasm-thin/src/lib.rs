@@ -18,7 +18,7 @@ use crate::args::Config;
 pub fn run(config: Config) -> Result<()> {
     let wayland = wayland_fd::connect_from_env()?;
     let control = spawn::connect_or_spawn(&config)?;
-    let _control =
+    let control =
         host_client::send_load_and_wait_ack(control, &config.wasm, wayland, config.ack_wait)?;
-    anyhow::bail!("idle loop is implemented in Task 4")
+    host_client::idle_until_exit(control)
 }
