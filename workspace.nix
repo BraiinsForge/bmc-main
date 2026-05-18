@@ -459,7 +459,7 @@ let
   };
 
   # wasm-widgets.nix is parametric in the host profile: re-import it per
-  # profile to cross-compile the bmc-widget-wasm host for every consumer
+  # profile to cross-compile the bmc-wasm-host for every consumer
   # arch (armv7 deck + x86_64/aarch64 VM).
   wasmWidgetsFor = profile: hostFeatures: import ./nix/wasm-widgets.nix {
     inherit pkgs profile hostFeatures wasmExampleNames;
@@ -528,6 +528,7 @@ let
           inherit name;
           inherit (w) wasmFile manifest;
           wasmDir = m.wasmWidgets.${name};
+          thin = m.thin;
           host = m.host;
         })
         wasmWidgetCatalog;
@@ -535,7 +536,7 @@ let
 
   armv7PackageDefs = import ./nix/packages.nix {
     inherit bmc armv7Pkgs deps;
-    inherit (wasmWidgetsModule) wasmWidgets host mkWasmWidget;
+    inherit (wasmWidgetsModule) wasmWidgets thin host mkWasmWidget;
   };
 
   initArtifacts = import ./nix/init-artifacts.nix {

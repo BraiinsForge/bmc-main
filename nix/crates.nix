@@ -83,6 +83,10 @@ exampleCrates // {
     path = "./bmc-wasm-thin";
     packageName = "bmc-wasm-thin";
   };
+  wasm-host = defineCrate {
+    path = "./bmc-wasm-host";
+    packageName = "bmc-wasm-host";
+  };
   widget-wasm = defineCrate {
     path = "./widgets/wasm";
     packageName = "bmc-widget-wasm";

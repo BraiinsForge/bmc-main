@@ -3,7 +3,7 @@
 # Single source of truth for what packages exist. Each entry pairs
 # build logic with release metadata. Consumers (e.g. init-artifacts)
 # select the subset they need.
-{ bmc, armv7Pkgs, deps, wasmWidgets, host, mkWasmWidget }:
+{ bmc, armv7Pkgs, deps, wasmWidgets, thin, host, mkWasmWidget }:
 let
   inherit (bmc.lib) mkWidgetPackage;
   inherit (bmc) crates;
@@ -64,7 +64,7 @@ in
       wasmDir = wasmWidgets.hello-widget;
       wasmFile = "hello_widget.wasm";
       manifest = ../bmc-wasm-runtime/examples/hello-widget/manifest.json;
-      inherit host;
+      inherit thin host;
     };
     version = "0.1.0";
     category = "widget";
@@ -78,7 +78,7 @@ in
       wasmDir = wasmWidgets.calendar;
       wasmFile = "calendar.wasm";
       manifest = ../bmc-wasm-runtime/examples/calendar/manifest.json;
-      inherit host;
+      inherit thin host;
     };
     version = "0.1.0";
     category = "widget";
@@ -92,7 +92,7 @@ in
       wasmDir = wasmWidgets.spacex-launch;
       wasmFile = "spacex_launch.wasm";
       manifest = ../bmc-wasm-runtime/examples/spacex-launch/manifest.json;
-      inherit host;
+      inherit thin host;
     };
     version = "0.1.0";
     category = "widget";
@@ -106,7 +106,7 @@ in
       wasmDir = wasmWidgets.iss-position;
       wasmFile = "iss_position.wasm";
       manifest = ../bmc-wasm-runtime/examples/iss-position/manifest.json;
-      inherit host;
+      inherit thin host;
     };
     version = "0.1.0";
     category = "widget";
@@ -120,7 +120,7 @@ in
       wasmDir = wasmWidgets.home-assistant;
       wasmFile = "home_assistant.wasm";
       manifest = ../bmc-wasm-runtime/examples/home-assistant/manifest.json;
-      inherit host;
+      inherit thin host;
     };
     version = "0.1.0";
     category = "widget";
@@ -134,7 +134,7 @@ in
       wasmDir = wasmWidgets.media-control;
       wasmFile = "media_control.wasm";
       manifest = ../bmc-wasm-runtime/examples/media-control/manifest.json;
-      inherit host;
+      inherit thin host;
     };
     version = "0.1.0";
     category = "widget";
@@ -148,7 +148,7 @@ in
       wasmDir = wasmWidgets.mesh-demo;
       wasmFile = "mesh_demo.wasm";
       manifest = ../bmc-wasm-runtime/examples/mesh-demo/manifest.json;
-      inherit host;
+      inherit thin host;
     };
     version = "0.1.0";
     category = "widget";
@@ -162,7 +162,7 @@ in
       wasmDir = wasmWidgets.metronome;
       wasmFile = "metronome.wasm";
       manifest = ../bmc-wasm-runtime/examples/metronome/manifest.json;
-      inherit host;
+      inherit thin host;
     };
     version = "0.1.0";
     category = "widget";
@@ -176,7 +176,7 @@ in
       wasmDir = wasmWidgets.pomodoro;
       wasmFile = "pomodoro.wasm";
       manifest = ../bmc-wasm-runtime/examples/pomodoro/manifest.json;
-      inherit host;
+      inherit thin host;
     };
     version = "0.1.0";
     category = "widget";
@@ -188,7 +188,7 @@ in
       wasmDir = wasmWidgets.params-demo;
       wasmFile = "params_demo.wasm";
       manifest = ../bmc-wasm-runtime/examples/params-demo/manifest.json;
-      inherit host;
+      inherit thin host;
     };
     version = "0.1.0";
     category = "widget";
