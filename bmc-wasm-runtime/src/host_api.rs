@@ -40,6 +40,18 @@ pub struct CompletedFetch {
     pub body: Vec<u8>,
 }
 
+#[cfg(feature = "testing")]
+impl CompletedFetch {
+    pub fn test_sentinel() -> Self {
+        Self {
+            request_id: bmc_wasm_protocol::FetchRequestId::from_wire(1)
+                .expect("BUG: 1 is non-zero so from_wire returns Some"),
+            status: 0,
+            body: Vec::new(),
+        }
+    }
+}
+
 /// A delayed fetch waiting for its fire time.
 pub struct DelayedFetch {
     pub fire_at_ms: u64,
@@ -646,6 +658,12 @@ pub(crate) struct HostState {
     /// from `RuntimeConfig::rng_seed`.
     pub rng_state: Option<u64>,
 
+    pub(crate) shut_down: bool,
+    #[cfg(feature = "testing")]
+    pub(crate) unload_ran: bool,
+    #[cfg(feature = "testing")]
+    pub(crate) delivered_events: u64,
+
     /// Sender for LED commands. `None` when LED control is unavailable.
     pub led_command_sender: Option<mpsc::Sender<bmc_led::data::LedCommand>>,
 
@@ -738,6 +756,11 @@ impl HostState {
             taffy: TaffyTree::with_capacity(64),
             resource_limits,
             rng_state: None, // None = auto-seed on first use (from monotonic_ms)
+            shut_down: false,
+            #[cfg(feature = "testing")]
+            unload_ran: false,
+            #[cfg(feature = "testing")]
+            delivered_events: 0,
             led_command_sender: None,
             audio: AudioRegistry::new(),
             guest_id: GuestId::alloc(),
@@ -832,6 +855,35 @@ impl HostState {
         self.cached_encoded_params
             .as_deref()
             .expect("BUG: just inserted Some")
+    }
+
+    pub(crate) fn shutdown_workers(&mut self) {
+        if self.shut_down {
+            return;
+        }
+        self.shut_down = true;
+
+        for browse in self.mdns_browses.values() {
+            let _ = browse.stop_tx.send(());
+        }
+        for search in self.ssdp_searches.values() {
+            let _ = search.stop_tx.send(());
+        }
+        for broadcast in self.udp_broadcasts.values() {
+            let _ = broadcast.stop_tx.send(());
+        }
+        for listener in self.http_listeners.values() {
+            let _ = listener.stop_tx.send(());
+        }
+
+        self.mdns_browses.clear();
+        self.ssdp_searches.clear();
+        self.udp_broadcasts.clear();
+        self.http_listeners.clear();
+        self.websockets.clear();
+        self.sockets.clear();
+        self.http_response_txs.clear();
+        self.mdns_registrations.clear();
     }
 }
 
