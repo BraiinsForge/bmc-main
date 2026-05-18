@@ -118,10 +118,30 @@ impl WidgetSlot {
         peer_pid: libc::pid_t,
         factory: Rc<dyn RenderTargetFactory>,
     ) -> Result<Self> {
+        tracing::info!(
+            peer_pid,
+            wasm = %wasm_path.display(),
+            "connecting widget Wayland fd"
+        );
         let (surface, initial) = DeckWidgetSurfaceClient::connect_with_fd(wayland_fd)
             .context("DeckWidgetSurfaceClient::connect_with_fd")?;
+        tracing::info!(
+            peer_pid,
+            wasm = %wasm_path.display(),
+            w = initial.width,
+            h = initial.height,
+            params = initial.params.len(),
+            settings = initial.settings.len(),
+            "widget Wayland configure received"
+        );
         let wasm_bytes =
             std::fs::read(wasm_path).with_context(|| format!("read {}", wasm_path.display()))?;
+        tracing::info!(
+            peer_pid,
+            wasm = %wasm_path.display(),
+            bytes = wasm_bytes.len(),
+            "wasm module read"
+        );
         let mut runtime = WasmWidgetRuntime::new(
             &wasm_bytes,
             initial.width,
@@ -137,6 +157,13 @@ impl WidgetSlot {
             },
         )?;
         runtime.set_time(chrono::Local::now().fixed_offset(), 0);
+        tracing::info!(
+            peer_pid,
+            wasm = %wasm_path.display(),
+            w = initial.width,
+            h = initial.height,
+            "wasm runtime initialized; waiting for lifecycle event"
+        );
 
         Ok(Self {
             surface,
@@ -297,6 +324,7 @@ impl WidgetSlot {
     }
 
     pub fn apply_lifecycle(&mut self, now: Instant, shared: &SharedHost) {
+        let previous = self.lifecycle.current();
         let w = self.surface.width();
         let h = self.surface.height();
         let mut ctx = SlotApplyCtx {
@@ -308,6 +336,18 @@ impl WidgetSlot {
             height: h,
         };
         self.lifecycle.apply(&mut ctx, now);
+        let current = self.lifecycle.current();
+        if previous != current {
+            tracing::info!(
+                peer_pid = self.peer_pid,
+                wasm = %self.wasm_basename,
+                ?previous,
+                ?current,
+                blocked = self.lifecycle.blocked(),
+                render_target = self.render_target.is_some(),
+                "slot lifecycle applied"
+            );
+        }
     }
 
     pub fn render(
@@ -382,6 +422,27 @@ impl WidgetSlot {
         self.surface.flush()?;
         self.schedule_next_runtime_frame(Instant::now());
         self.frame_count += 1;
+        if self.frame_count <= 3 || self.frame_count.is_multiple_of(120) {
+            tracing::info!(
+                peer_pid = self.peer_pid,
+                wasm = %self.wasm_basename,
+                frame = self.frame_count,
+                delta_ms,
+                ?status,
+                wants_immediate,
+                "widget frame submitted"
+            );
+        } else {
+            tracing::debug!(
+                peer_pid = self.peer_pid,
+                wasm = %self.wasm_basename,
+                frame = self.frame_count,
+                delta_ms,
+                ?status,
+                wants_immediate,
+                "widget frame submitted"
+            );
+        }
         Ok(status)
     }
 
@@ -410,11 +471,44 @@ impl WidgetSlot {
     fn on_wayland_event(&mut self, event: WidgetEvent) {
         match event {
             WidgetEvent::Lifecycle(state) => {
-                self.lifecycle.on_event(map_protocol_lifecycle(state));
+                let target = map_protocol_lifecycle(state);
+                let previous_target = self.lifecycle.target();
+                let effect = self.lifecycle.on_event(target);
+                if effect.request_render {
+                    self.surface.mark_needs_render();
+                }
+                tracing::info!(
+                    peer_pid = self.peer_pid,
+                    wasm = %self.wasm_basename,
+                    ?previous_target,
+                    ?target,
+                    request_render = effect.request_render,
+                    "lifecycle event received"
+                );
             }
-            WidgetEvent::Setting(_) | WidgetEvent::Shutdown => {}
+            WidgetEvent::Setting(setting) => {
+                tracing::info!(
+                    peer_pid = self.peer_pid,
+                    wasm = %self.wasm_basename,
+                    ?setting,
+                    "setting event received"
+                );
+            }
+            WidgetEvent::Shutdown => {
+                tracing::info!(
+                    peer_pid = self.peer_pid,
+                    wasm = %self.wasm_basename,
+                    "shutdown event received"
+                );
+            }
             WidgetEvent::ParamUpdate(params) => {
                 if let Ok(table) = bmc_wasm_runtime::parse_params_json(&params) {
+                    tracing::info!(
+                        peer_pid = self.peer_pid,
+                        wasm = %self.wasm_basename,
+                        params = table.len(),
+                        "param update received"
+                    );
                     self.runtime.deliver_params_update(table);
                     self.surface.mark_needs_render();
                 }

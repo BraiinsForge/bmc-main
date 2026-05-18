@@ -18,9 +18,11 @@ pub fn send_load_and_wait_ack(
     let msg = HelloMsg::Load {
         wasm_path: wasm.display().to_string(),
     };
+    tracing::info!(wasm = %wasm.display(), "sending Hello with Wayland fd");
     send_hello_with_fd(&control, &msg, wayland.as_fd()).context("send Hello with Wayland fd")?;
     drop(wayland);
     wait_for_ack(&control, ack_wait)?;
+    tracing::info!(wasm = %wasm.display(), "received host Ack::Ok");
     Ok(control)
 }
 

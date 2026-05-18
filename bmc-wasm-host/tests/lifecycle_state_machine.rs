@@ -400,3 +400,11 @@ fn self_transitions_in_bufferfree_set_are_no_ops() {
         assert_eq!(mock.destroy_calls.get(), 0);
     }
 }
+
+#[test]
+fn render_set_lifecycle_event_requests_surface_render() {
+    let mut sm = LifecycleStateMachine::new();
+    let effect = sm.on_event(LifecycleState::Entering);
+
+    assert!(effect.request_render);
+}

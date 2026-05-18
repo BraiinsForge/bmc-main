@@ -24,12 +24,15 @@ struct Args {
 }
 
 fn main() -> Result<()> {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    bmc_wasm_host::logging::init();
 
     let args = Args::parse();
     let socket_path = args.host_socket.unwrap_or_else(default_socket_path);
+    tracing::info!(
+        socket = %socket_path.display(),
+        release_lock_fd = ?args.release_lock_fd,
+        "starting bmc-wasm-host"
+    );
 
     let (listener, release_lock) = match prepare_listener(&socket_path, args.release_lock_fd)? {
         StartupDecision::Run {
@@ -56,5 +59,6 @@ fn main() -> Result<()> {
         tracing::error!(?e, "host exited with FatalError");
         std::process::exit(1);
     }
+    tracing::info!("bmc-wasm-host exiting cleanly");
     Ok(())
 }

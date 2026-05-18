@@ -55,6 +55,11 @@ impl FontCache {
 
 impl SharedHost {
     pub fn init(display_max_w: u32, display_max_h: u32) -> anyhow::Result<Self> {
+        tracing::info!(
+            display_max_w,
+            display_max_h,
+            "initializing shared wasm host renderer"
+        );
         let egl = EglContext::new()?;
         let scratch = SharedRenderScratch::new(&egl, display_max_w, display_max_h)?;
         let renderer = unsafe {
@@ -66,6 +71,7 @@ impl SharedHost {
                 0,
             )?
         };
+        tracing::info!("shared wasm host renderer initialized");
         Ok(Self {
             egl,
             scratch,
