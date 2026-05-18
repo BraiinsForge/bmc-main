@@ -1782,23 +1782,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bmc-widget-wasm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bmc-render",
- "bmc-wasm-protocol",
- "bmc-wasm-runtime",
- "bmc-widget",
- "chrono",
- "clap",
- "glow 0.16.0",
- "serde_json",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "borrow-or-share"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

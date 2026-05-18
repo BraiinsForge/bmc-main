@@ -791,11 +791,12 @@ impl WasmWidgetRuntime {
         !self.store.data().http_listeners.is_empty()
     }
 
-    /// Fan out to every `deliver_*` entry point in `widgets/wasm`'s historical order.
+    /// Fan out to every `deliver_*` entry point in a fixed order.
     ///
-    /// The multi-slot host's main loop calls this per slot per iteration; the order
-    /// matches `widgets/wasm/src/wayland.rs:294-300` so payload ordering observable to
-    /// the guest is byte-identical between the standalone widget and the hosted slot.
+    /// The multi-slot host's main loop calls this per slot per iteration. The
+    /// ordering below is the canonical sequence guests observe; the
+    /// `deliver_*` calls must stay in this order so payload ordering remains
+    /// stable across host revisions.
     pub fn poll_deliveries(&mut self) {
         self.deliver_fetch_responses();
         self.deliver_ws_messages();
