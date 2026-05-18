@@ -926,6 +926,87 @@ impl WasmWidgetRuntime {
             let _ = stop_rx.recv();
         })
     }
+
+    pub fn test_start_mdns_browse(&mut self, service_type: &str) {
+        use super::background::mdns_browse_thread;
+        use crate::host_api::{ActiveMdnsBrowse, MdnsEvent};
+        use bmc_wasm_protocol::MdnsBrowseId;
+
+        let svc = if service_type.ends_with(".local.") {
+            service_type.to_owned()
+        } else {
+            format!("{service_type}.local.")
+        };
+
+        let state = self.store.data_mut();
+        let (event_tx, event_rx) = std::sync::mpsc::channel::<MdnsEvent>();
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+        let browse_id = MdnsBrowseId::alloc(&mut state.next_mdns_browse_id);
+        state
+            .mdns_browses
+            .insert(browse_id, ActiveMdnsBrowse { event_rx, stop_tx });
+        std::thread::spawn(move || {
+            mdns_browse_thread(vec![svc], event_tx, stop_rx);
+        });
+    }
+
+    pub fn test_register_mdns(
+        &mut self,
+        service_type: &str,
+        instance_name: &str,
+        host: &str,
+        addr: &str,
+        port: u16,
+    ) {
+        use crate::host_api::ActiveMdnsRegistration;
+        use bmc_wasm_protocol::MdnsRegId;
+        use std::collections::HashMap;
+
+        let svc_type = if service_type.ends_with(".local.") {
+            service_type.to_owned()
+        } else {
+            format!("{service_type}.local.")
+        };
+
+        let daemon = match mdns_sd::ServiceDaemon::new() {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::error!("test_register_mdns: daemon creation failed: {e}");
+                return;
+            }
+        };
+
+        let info = match mdns_sd::ServiceInfo::new(
+            &svc_type,
+            instance_name,
+            host,
+            addr,
+            port,
+            HashMap::<String, String>::new(),
+        ) {
+            Ok(info) => info,
+            Err(e) => {
+                tracing::error!("test_register_mdns: ServiceInfo creation failed: {e}");
+                return;
+            }
+        };
+        let fullname = info.get_fullname().to_owned();
+
+        if let Err(e) = daemon.register(info) {
+            tracing::error!("test_register_mdns: register failed: {e}");
+            return;
+        }
+
+        let state = self.store.data_mut();
+        let reg_id = MdnsRegId::alloc(&mut state.next_mdns_reg_id);
+        state
+            .mdns_registrations
+            .insert(reg_id, ActiveMdnsRegistration { daemon, fullname });
+    }
+
+    pub fn test_take_mdns_events(&mut self) -> Vec<crate::host_api::CapturedMdnsEvent> {
+        std::mem::take(&mut self.store.data_mut().mdns_captured_events)
+    }
 }
 
 impl Drop for WasmWidgetRuntime {

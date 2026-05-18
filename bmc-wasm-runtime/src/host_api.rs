@@ -316,6 +316,13 @@ pub struct ActiveUdpBroadcast {
     pub stop_tx: mpsc::Sender<()>,
 }
 
+/// A decoded mDNS Found event accumulated for testing inspection.
+#[cfg(feature = "testing")]
+#[derive(Debug)]
+pub struct CapturedMdnsEvent {
+    pub fullname: String,
+}
+
 /// An active mDNS service registration.
 pub struct ActiveMdnsRegistration {
     /// The daemon owning this registration.
@@ -663,6 +670,8 @@ pub(crate) struct HostState {
     pub(crate) unload_ran: bool,
     #[cfg(feature = "testing")]
     pub(crate) delivered_events: u64,
+    #[cfg(feature = "testing")]
+    pub mdns_captured_events: Vec<CapturedMdnsEvent>,
 
     /// Sender for LED commands. `None` when LED control is unavailable.
     pub led_command_sender: Option<mpsc::Sender<bmc_led::data::LedCommand>>,
@@ -761,6 +770,8 @@ impl HostState {
             unload_ran: false,
             #[cfg(feature = "testing")]
             delivered_events: 0,
+            #[cfg(feature = "testing")]
+            mdns_captured_events: Vec::new(),
             led_command_sender: None,
             audio: AudioRegistry::new(),
             guest_id: GuestId::alloc(),
