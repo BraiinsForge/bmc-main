@@ -347,6 +347,7 @@ mod tests {
             DateFormat::DdMmYyyyDash,
             DateFormat::YyyyMDSlash,
             DateFormat::YyyyMmDdDot,
+            DateFormat::YyyyMmDdDash,
         ] {
             let snap = SystemSnapshot {
                 settings: SystemSettings {

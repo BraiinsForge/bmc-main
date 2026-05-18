@@ -1552,6 +1552,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmc-render",
+ "bmc-wasm-protocol",
  "bmc-wasm-runtime",
  "bmc-wasm-thin-protocol",
  "bmc-widget",

@@ -10,8 +10,11 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
-use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, WasmWidgetRuntime};
+use bmc_wasm_runtime::{
+    NextAlarm as RuntimeNextAlarm, RenderStatus, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
+};
 use bmc_widget::surface::{DeckWidgetSurfaceClient, WidgetEvent, WidgetSurface};
+use bmc_widget_protocol::{NextAlarm as WireNextAlarm, SettingUpdate};
 use glow::HasContext;
 use serde_json::{Map, Value};
 
@@ -105,6 +108,13 @@ pub struct WidgetSlot {
     pub monotonic_origin: Instant,
     pub frame_count: u64,
     pub initial_params: Map<String, Value>,
+    /// Deck-wide system snapshot accumulated from `SettingUpdate` wayland
+    /// events. Seeded from the compositor's initial configure batch,
+    /// then mutated per-field by each subsequent setting delivery.
+    ///
+    /// After a drain that touched any setting, the latest snapshot is pushed
+    /// to the runtime via `deliver_system_update`.
+    pub pending_system: SystemSnapshot,
     pub peer_pid: libc::pid_t,
     pub wasm_basename: String,
     pub control_socket: UnixStream,
@@ -143,6 +153,16 @@ impl WidgetSlot {
             bytes = wasm_bytes.len(),
             "wasm module read"
         );
+        // Seed the system snapshot from any per-field setting events
+        // the compositor  included in the initial configure batch.
+        //
+        // The runtime sees the same bytes via `RuntimeConfig::system`
+        // before `init` runs, so the widget's first frame observes
+        // operator values.
+        let mut pending_system = SystemSnapshot::default();
+        for setting in &initial.settings {
+            apply_setting_update(&mut pending_system, setting);
+        }
         let mut runtime = WasmWidgetRuntime::new(
             &wasm_bytes,
             initial.width,
@@ -154,6 +174,7 @@ impl WidgetSlot {
                         BTreeMap::default()
                     },
                 ),
+                system: pending_system.clone(),
                 ..RuntimeConfig::default()
             },
         )?;
@@ -176,6 +197,7 @@ impl WidgetSlot {
             monotonic_origin: Instant::now(),
             frame_count: 0,
             initial_params: initial.params,
+            pending_system,
             peer_pid,
             wasm_basename: wasm_path
                 .file_name()
@@ -188,8 +210,53 @@ impl WidgetSlot {
 
     pub fn dispatch_wayland_events(&mut self) -> Result<()> {
         self.surface.poll_dispatch(0)?;
+        // The compositor fans a single localization save into one per-field setting
+        // event per setting; per-event delivery would call `on_system_update`
+        // (and re-render) N times for one operator action.
+        //
+        // Collect Setting events into `pending_system` during the drain
+        // and push a single `deliver_system_update` after the loop.
+        // Similarly, every `ParamUpdate` carries the full params set per the
+        // compositor↔widget contract; multiple updates in one drain collapse
+        // to the latest event — never merged.
+        let mut system_dirty = false;
+        let mut latest_params: Option<serde_json::Map<String, Value>> = None;
         for event in <DeckWidgetSurfaceClient as WidgetSurface>::drain_events(&mut self.surface) {
-            self.on_wayland_event(event);
+            match event {
+                WidgetEvent::Setting(setting) => {
+                    apply_setting_update(&mut self.pending_system, &setting);
+                    system_dirty = true;
+                }
+                WidgetEvent::ParamUpdate(params) => latest_params = Some(params),
+                event @ (WidgetEvent::Lifecycle(_)
+                | WidgetEvent::Shutdown
+                | WidgetEvent::TouchDown { .. }
+                | WidgetEvent::TouchMotion { .. }
+                | WidgetEvent::TouchUp { .. }
+                | WidgetEvent::TouchCancel) => self.on_wayland_event(&event),
+            }
+        }
+        if system_dirty {
+            tracing::info!(
+                peer_pid = self.peer_pid,
+                wasm = %self.wasm_basename,
+                "settings drained from wayland — delivering system snapshot to runtime"
+            );
+            self.runtime
+                .deliver_system_update(self.pending_system.clone());
+            self.surface.mark_needs_render();
+        }
+        if let Some(params) = latest_params
+            && let Ok(table) = bmc_wasm_runtime::parse_params_json(&params)
+        {
+            tracing::info!(
+                peer_pid = self.peer_pid,
+                wasm = %self.wasm_basename,
+                params = table.len(),
+                "param update received"
+            );
+            self.runtime.deliver_params_update(table);
+            self.surface.mark_needs_render();
         }
         let released_slots = self.surface.drain_released_slots();
         if let Some(egl_target) = self
@@ -499,10 +566,10 @@ impl WidgetSlot {
         drop(self.control_socket);
     }
 
-    fn on_wayland_event(&mut self, event: WidgetEvent) {
+    fn on_wayland_event(&mut self, event: &WidgetEvent) {
         match event {
             WidgetEvent::Lifecycle(state) => {
-                let target = map_protocol_lifecycle(state);
+                let target = map_protocol_lifecycle(*state);
                 let previous_target = self.lifecycle.target();
                 let effect = self.lifecycle.on_event(target);
                 if effect.request_render {
@@ -517,13 +584,11 @@ impl WidgetSlot {
                     "lifecycle event received"
                 );
             }
-            WidgetEvent::Setting(setting) => {
-                tracing::info!(
-                    peer_pid = self.peer_pid,
-                    wasm = %self.wasm_basename,
-                    ?setting,
-                    "setting event received"
-                );
+            WidgetEvent::Setting(_) | WidgetEvent::ParamUpdate(_) => {
+                // The drain loop in `dispatch_wayland_events` filters
+                // Setting and ParamUpdate events into their coalescing
+                // paths and never dispatches them here.
+                unreachable!("Setting/ParamUpdate handled in dispatch_wayland_events drain");
             }
             WidgetEvent::Shutdown => {
                 tracing::info!(
@@ -532,26 +597,14 @@ impl WidgetSlot {
                     "shutdown event received"
                 );
             }
-            WidgetEvent::ParamUpdate(params) => {
-                if let Ok(table) = bmc_wasm_runtime::parse_params_json(&params) {
-                    tracing::info!(
-                        peer_pid = self.peer_pid,
-                        wasm = %self.wasm_basename,
-                        params = table.len(),
-                        "param update received"
-                    );
-                    self.runtime.deliver_params_update(table);
-                    self.surface.mark_needs_render();
-                }
-            }
             WidgetEvent::TouchDown { x, y, .. } => {
                 #[expect(
                     clippy::cast_possible_truncation,
                     reason = "touch coordinates from Wayland are pixel positions; f64→f32 precision loss is acceptable"
                 )]
                 self.push_touch(bmc_render::interaction::TouchEvent::Down {
-                    x: x as f32,
-                    y: y as f32,
+                    x: *x as f32,
+                    y: *y as f32,
                 });
             }
             WidgetEvent::TouchMotion { x, y, .. } => {
@@ -560,8 +613,8 @@ impl WidgetSlot {
                     reason = "touch coordinates from Wayland are pixel positions; f64→f32 precision loss is acceptable"
                 )]
                 self.push_touch(bmc_render::interaction::TouchEvent::Move {
-                    x: x as f32,
-                    y: y as f32,
+                    x: *x as f32,
+                    y: *y as f32,
                 });
             }
             WidgetEvent::TouchUp { .. } => {
@@ -576,6 +629,123 @@ impl WidgetSlot {
     fn push_touch(&mut self, event: bmc_render::interaction::TouchEvent) {
         self.runtime.push_touch_event(event);
         self.surface.mark_needs_render();
+    }
+}
+
+/// Fold a per-field [`SettingUpdate`] (wayland-wire) into
+/// the [`SystemSnapshot`] the host maintains per widget slot.
+///
+/// The host bridges the wayland-wire enums (`bmc_shared_time::*`,
+/// `bmc_shared_utils::*`, `bmc_widget_protocol::*`) and the wasmi-wire
+/// enums (`bmc_wasm_protocol::system::*`).
+///
+/// The wasm runtime intentionally does not depend on the bmc-shared crates,
+/// so the translation lives here.
+///
+/// `NightMode` is not part of the snapshot — it ships through
+/// a separate resolved channel — so that arm is a no-op here.
+fn apply_setting_update(snap: &mut SystemSnapshot, update: &SettingUpdate) {
+    match update {
+        SettingUpdate::Timezone(tz) => snap.settings.timezone.clone_from(tz),
+        SettingUpdate::TimeFormat(t) => snap.settings.time_format = time_format_to_wasmi(*t),
+        SettingUpdate::DateFormat(d) => snap.settings.date_format = date_format_to_wasmi(*d),
+        SettingUpdate::NumberFormat(n) => snap.settings.number_format = number_format_to_wasmi(*n),
+        SettingUpdate::TemperatureUnit(u) => {
+            snap.settings.temperature_unit = temperature_unit_to_wasmi(*u);
+        }
+        SettingUpdate::FirstDayOfWeek(w) => snap.settings.first_day_of_week = weekday_to_wasmi(*w),
+        SettingUpdate::UnitSystem(u) => snap.settings.unit_system = unit_system_to_wasmi(*u),
+        SettingUpdate::NextAlarm(na) => {
+            snap.next_alarm = na.as_ref().map(next_alarm_to_runtime);
+        }
+        SettingUpdate::NightMode(_) => {
+            // Night-mode lands via its own resolved channel;
+            // not part of the wasmi-wire `SystemSnapshot`.
+        }
+    }
+}
+
+fn time_format_to_wasmi(
+    t: bmc_widget_protocol::TimeSystem,
+) -> bmc_wasm_protocol::system::TimeFormat {
+    use bmc_wasm_protocol::system::TimeFormat as W;
+    use bmc_widget_protocol::TimeSystem as H;
+    match t {
+        H::Hour12 => W::Hour12,
+        H::Hour24 => W::Hour24,
+    }
+}
+
+fn date_format_to_wasmi(
+    d: bmc_widget_protocol::DateFormat,
+) -> bmc_wasm_protocol::system::DateFormat {
+    use bmc_wasm_protocol::system::DateFormat as W;
+    use bmc_widget_protocol::DateFormat as H;
+    match d {
+        H::DdMmYyyyDot => W::DdMmYyyyDot,
+        H::DdMmYyyySlash => W::DdMmYyyySlash,
+        H::DMYyyySlash => W::DMYyyySlash,
+        H::MDYyyySlash => W::MDYyyySlash,
+        H::DdMmYyyyDash => W::DdMmYyyyDash,
+        H::YyyyMDSlash => W::YyyyMDSlash,
+        H::YyyyMmDdDot => W::YyyyMmDdDot,
+        H::YyyyMmDdDash => W::YyyyMmDdDash,
+    }
+}
+
+fn number_format_to_wasmi(
+    n: bmc_widget_protocol::NumberFormat,
+) -> bmc_wasm_protocol::system::NumberFormat {
+    use bmc_wasm_protocol::system::NumberFormat as W;
+    use bmc_widget_protocol::NumberFormat as H;
+    match n {
+        H::SpaceGroupCommaDecimal => W::SpaceGroupCommaDecimal,
+        H::CommaGroupDotDecimal => W::CommaGroupDotDecimal,
+        H::DotGroupCommaDecimal => W::DotGroupCommaDecimal,
+        H::SpaceGroupDotDecimal => W::SpaceGroupDotDecimal,
+    }
+}
+
+fn temperature_unit_to_wasmi(
+    u: bmc_widget_protocol::TemperatureUnit,
+) -> bmc_wasm_protocol::system::TemperatureUnit {
+    use bmc_wasm_protocol::system::TemperatureUnit as W;
+    use bmc_widget_protocol::TemperatureUnit as H;
+    match u {
+        H::Celsius => W::Celsius,
+        H::Fahrenheit => W::Fahrenheit,
+    }
+}
+
+fn weekday_to_wasmi(w: bmc_widget_protocol::WeekDay) -> bmc_wasm_protocol::system::Weekday {
+    use bmc_wasm_protocol::system::Weekday as W;
+    use bmc_widget_protocol::WeekDay as H;
+    match w {
+        H::Monday => W::Monday,
+        H::Tuesday => W::Tuesday,
+        H::Wednesday => W::Wednesday,
+        H::Thursday => W::Thursday,
+        H::Friday => W::Friday,
+        H::Saturday => W::Saturday,
+        H::Sunday => W::Sunday,
+    }
+}
+
+fn unit_system_to_wasmi(
+    u: bmc_widget_protocol::UnitSystem,
+) -> bmc_wasm_protocol::system::UnitSystem {
+    use bmc_wasm_protocol::system::UnitSystem as W;
+    use bmc_widget_protocol::UnitSystem as H;
+    match u {
+        H::Metric => W::Metric,
+        H::Imperial => W::Imperial,
+    }
+}
+
+fn next_alarm_to_runtime(na: &WireNextAlarm) -> RuntimeNextAlarm {
+    RuntimeNextAlarm {
+        fire_at_utc_ms: na.fire_at_utc_ms,
+        name: na.name.clone(),
     }
 }
 
@@ -618,7 +788,51 @@ fn normalize_gl_state(egl: &bmc_widget::egl::EglContext, w: u32, h: u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{RendererAssetEvictor, evict_renderer_assets};
+    use super::{
+        RendererAssetEvictor, SystemSnapshot, apply_setting_update, evict_renderer_assets,
+    };
+    use bmc_widget_protocol::{NextAlarm as WireNextAlarm, SettingUpdate};
+
+    #[test]
+    fn apply_setting_update_timezone_folds_into_snapshot() {
+        let mut snap = SystemSnapshot::default();
+        apply_setting_update(
+            &mut snap,
+            &SettingUpdate::Timezone("Europe/Prague".to_owned()),
+        );
+        assert_eq!(snap.settings.timezone, "Europe/Prague");
+    }
+
+    #[test]
+    fn apply_setting_update_next_alarm_some_translates_payload() {
+        let mut snap = SystemSnapshot::default();
+        apply_setting_update(
+            &mut snap,
+            &SettingUpdate::NextAlarm(Some(WireNextAlarm {
+                fire_at_utc_ms: 1_700_000_000_000,
+                name: "Wake up".to_owned(),
+            })),
+        );
+        let na = snap
+            .next_alarm
+            .expect("BUG: NextAlarm(Some) must populate the snapshot");
+        assert_eq!(na.fire_at_utc_ms, 1_700_000_000_000);
+        assert_eq!(na.name, "Wake up");
+    }
+
+    #[test]
+    fn apply_setting_update_next_alarm_none_clears_snapshot_field() {
+        let mut snap = SystemSnapshot {
+            next_alarm: Some(bmc_wasm_runtime::NextAlarm {
+                fire_at_utc_ms: 1,
+                name: "stale".to_owned(),
+            }),
+            ..SystemSnapshot::default()
+        };
+        apply_setting_update(&mut snap, &SettingUpdate::NextAlarm(None));
+        assert_eq!(snap.next_alarm, None);
+    }
+
 
     #[derive(Debug)]
     struct RecordingEvictor {

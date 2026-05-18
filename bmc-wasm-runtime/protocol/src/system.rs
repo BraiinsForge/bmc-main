@@ -103,6 +103,7 @@ pub enum DateFormat {
     #[cfg_attr(feature = "serde", serde(rename = "yyyy_m_d_slash"))]
     YyyyMDSlash = 5,
     YyyyMmDdDot = 6,
+    YyyyMmDdDash = 7,
 }
 
 impl DateFormat {
@@ -119,6 +120,7 @@ impl DateFormat {
             4 => Ok(Self::DdMmYyyyDash),
             5 => Ok(Self::YyyyMDSlash),
             6 => Ok(Self::YyyyMmDdDot),
+            7 => Ok(Self::YyyyMmDdDash),
             _ => Err(tag),
         }
     }
@@ -303,6 +305,7 @@ mod tests {
             (4, DateFormat::DdMmYyyyDash),
             (5, DateFormat::YyyyMDSlash),
             (6, DateFormat::YyyyMmDdDot),
+            (7, DateFormat::YyyyMmDdDash),
         ];
         for (tag, variant) in expected {
             assert_eq!(
@@ -312,7 +315,7 @@ mod tests {
             );
             assert_eq!(variant as u8, tag);
         }
-        assert_eq!(DateFormat::try_from_u8(7), Err(7));
+        assert_eq!(DateFormat::try_from_u8(8), Err(8));
     }
 
     #[test]
