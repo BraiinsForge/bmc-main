@@ -1,0 +1,31 @@
+[package]
+name = "bmc-wasm-host"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+femtovg = { workspace = true }
+glow = { workspace = true }
+libc = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+wayland-client = { workspace = true }
+
+bmc-render = { path = "../bmc-render" }
+bmc-wasm-runtime = { workspace = true }
+bmc-wasm-thin-protocol = { path = "../bmc-wasm-thin-protocol" }
+bmc-widget = { workspace = true, features = ["gpu"] }
+bmc-widget-protocol = { workspace = true }
+
+[dev-dependencies]
+mdns-sd = { workspace = true }
+serial_test = "3"
+tempfile = { workspace = true }

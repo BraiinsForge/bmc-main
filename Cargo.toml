@@ -35,6 +35,7 @@ members = [
     "bmc-virt/ipc",
     "bmc-virt/leds",
     "bmc-virt/relay",
+    "bmc-wasm-host",
     "bmc-wasm-runtime",
     "bmc-wasm-runtime/icon-compiler",
     "bmc-wasm-runtime/protocol",
