@@ -1,11 +1,16 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
 use std::path::PathBuf;
-use std::time::Duration;
 
 use anyhow::Result;
-use bmc_wasm_host::control::{DEFAULT_SOCKET_PATH, ListenSocket, try_handshake};
+use bmc_wasm_host::control::{DEFAULT_SOCKET_PATH, ListenSocket};
 use clap::Parser;
+
+// Device display maximum — the staging FBO is sized to this so any slot's surface fits without
+// reallocation. Match the Braiins Deck's physical resolution; widgets render at smaller sizes
+// and the scratch is reused across them.
+const DECK_DISPLAY_MAX_WIDTH: u32 = 1280;
+const DECK_DISPLAY_MAX_HEIGHT: u32 = 480;
 
 #[derive(Parser, Debug)]
 #[command(about = "bmc-wasm-host — multi-widget WASM daemon (Stage 5)")]
@@ -28,22 +33,12 @@ fn main() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("bind {}: {e}", socket_path.display()))?;
     tracing::info!(socket = %socket_path.display(), "listening");
 
-    for incoming in listener.as_listener().incoming() {
-        match incoming {
-            Ok(client) => {
-                tracing::info!("accepted connection");
-                match try_handshake(&client) {
-                    Ok(msg) => {
-                        tracing::info!(?msg, "handshake parsed; replying Err (stage-5 stub)");
-                    }
-                    Err(e) => tracing::warn!(?e, "handshake failed"),
-                }
-            }
-            Err(e) => {
-                tracing::warn!(?e, "accept error, sleeping briefly");
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
+    let mut shared =
+        bmc_wasm_host::host::SharedHost::init(DECK_DISPLAY_MAX_WIDTH, DECK_DISPLAY_MAX_HEIGHT)?;
+    let exit = bmc_wasm_host::main_loop::run(&mut shared, &listener);
+    if let Err(e) = exit {
+        tracing::error!(?e, "host exited with FatalError");
+        std::process::exit(1);
     }
     Ok(())
 }

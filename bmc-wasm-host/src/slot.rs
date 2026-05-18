@@ -72,6 +72,27 @@ fn evict_renderer_assets(renderer: &mut impl RendererAssetEvictor, asset_namespa
     renderer.evict_renderer_prefix(asset_namespace)
 }
 
+#[derive(Debug)]
+pub enum ControlSocketStatus {
+    WouldBlock,
+    PeerClosed,
+    UnsolicitedByte(u8),
+    Error(std::io::Error),
+}
+
+#[must_use]
+pub fn classify_control_socket_read(
+    result: std::io::Result<usize>,
+    byte: u8,
+) -> ControlSocketStatus {
+    match result {
+        Ok(0) => ControlSocketStatus::PeerClosed,
+        Ok(_) => ControlSocketStatus::UnsolicitedByte(byte),
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => ControlSocketStatus::WouldBlock,
+        Err(e) => ControlSocketStatus::Error(e),
+    }
+}
+
 #[expect(missing_debug_implementations)]
 pub struct WidgetSlot {
     pub surface: DeckWidgetSurfaceClient,
@@ -148,14 +169,14 @@ impl WidgetSlot {
     pub fn dispatch_control_socket(&mut self) -> Result<()> {
         use std::io::Read;
         let mut buf = [0_u8; 1];
-        match (&self.control_socket).read(&mut buf) {
-            Ok(0) => Err(anyhow::anyhow!("control socket EOF")),
-            Ok(_) => Err(anyhow::anyhow!(
-                "unsolicited byte on control socket (protocol violation): {:#04x}",
-                buf[0]
+        let result = (&self.control_socket).read(&mut buf);
+        match classify_control_socket_read(result, buf[0]) {
+            ControlSocketStatus::WouldBlock => Ok(()),
+            ControlSocketStatus::PeerClosed => Err(anyhow::anyhow!("control socket EOF")),
+            ControlSocketStatus::UnsolicitedByte(b) => Err(anyhow::anyhow!(
+                "unsolicited byte on control socket (protocol violation): {b:#04x}"
             )),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(()),
-            Err(e) => Err(anyhow::Error::from(e)),
+            ControlSocketStatus::Error(e) => Err(anyhow::Error::from(e)),
         }
     }
 

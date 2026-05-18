@@ -31,11 +31,14 @@ const GPU_PATH: &str = "/dev/dri/renderD128";
 const EGL_NATIVE_PIXMAP_KHR: u32 = 0x30B0;
 const EGL_NONE: i32 = 0x3038;
 const EGL_NO_IMAGE: *mut c_void = ptr::null_mut();
+const EGL_CONTEXT_LOST: i32 = 0x300E;
 
 // GL_OES_EGL_image extension
 const GL_TEXTURE_2D: u32 = 0x0DE1;
 
 // EGL/GL extension function pointer types
+type EglGetError = unsafe extern "C" fn() -> i32;
+
 type EglCreateImageKhr = unsafe extern "C" fn(
     dpy: *mut c_void,
     ctx: *mut c_void,
@@ -94,6 +97,8 @@ pub struct EglContext {
     context: EGLContext,
     /// OpenGL ES context via glow.
     gl: glow::Context,
+    /// `eglGetError` for context-loss probing.
+    egl_get_error: EglGetError,
     /// `eglCreateImageKHR` extension.
     egl_create_image: EglCreateImageKhr,
     /// `eglDestroyImageKHR` extension.
@@ -145,6 +150,7 @@ impl EglContext {
             .context("Failed to make EGL context current (surfaceless)")?;
 
         // Load EGL/GL extensions
+        let egl_get_error: EglGetError = load_egl_proc("eglGetError")?;
         let egl_create_image: EglCreateImageKhr = load_egl_proc("eglCreateImageKHR")?;
         let egl_destroy_image: EglDestroyImageKhr = load_egl_proc("eglDestroyImageKHR")?;
         let gl_image_target_texture: GlEglImageTargetTexture2DOes =
@@ -168,6 +174,7 @@ impl EglContext {
             egl_display,
             context: egl_context,
             gl,
+            egl_get_error,
             egl_create_image,
             egl_destroy_image,
             gl_image_target_texture,
@@ -584,6 +591,16 @@ impl EglContext {
         // is only dangerous if called with the wrong signature, which is the
         // caller's responsibility.
         unsafe { smithay::backend::egl::get_proc_address(symbol) }
+    }
+
+    /// Probe whether the EGL context has been lost.
+    ///
+    /// Reads the thread-local EGL error state. The host's main thread is the
+    /// only thread that calls EGL, so the global last-error read is safe.
+    #[must_use]
+    pub fn is_context_lost(&self) -> bool {
+        // SAFETY: eglGetError reads thread-local EGL state; no mutable aliasing.
+        unsafe { (self.egl_get_error)() == EGL_CONTEXT_LOST }
     }
 }
 
