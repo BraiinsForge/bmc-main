@@ -18,3 +18,11 @@ bmc-wasm-thin-protocol = { path = "../bmc-wasm-thin-protocol" }
 [dev-dependencies]
 bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
 tempfile = { workspace = true }
+
+[[bin]]
+name = "bmc-wasm-thin-fakehost"
+path = "src/bin/bmc-wasm-thin-fakehost.rs"
+
+[[test]]
+name = "spawn_lock"
+path = "tests/spawn_lock.rs"
