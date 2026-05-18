@@ -13,6 +13,8 @@ use std::path::Path;
 use anyhow::{Context as _, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::system::SystemSnapshot;
+
 // ── Header ──────────────────────────────────────────────────────────
 
 /// Metadata stored at the top of a unified fixture file.
@@ -39,6 +41,15 @@ pub struct FixtureHeader {
     /// means the first `ParamDelivery` will look like every key changed.
     #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub initial_params: serde_json::Map<String, serde_json::Value>,
+    /// Initial deck-wide system snapshot (timezone, formatting preferences,
+    /// next-alarm) before any `SystemDelivery` event fires.
+    ///
+    /// Per-field `#[serde(default)]` on [`SystemSnapshot`] / [`crate::system::SystemSettings`]
+    /// means fixtures recorded before this field existed (or before a given
+    /// sub-field was added) fall through to typed defaults rather than
+    /// failing fixture load.
+    #[serde(default)]
+    pub initial_system: SystemSnapshot,
 }
 
 // ── Body encoding ───────────────────────────────────────────────────
@@ -130,16 +141,25 @@ pub enum UnifiedEvent {
         from: f32,
         to: f32,
     },
-    /// Operator-driven params update — full snapshot delivered to the widget runtime.
-    /// Replay calls `WasmWidgetRuntime::deliver_params_update`, which bumps the version
-    /// counter and fires `on_params_update`. Capture writes one of these per change the
-    /// operator made in the testbed param-mutation UI, plus one for the initial delivery
-    /// so a fixture replay reproduces the pre-change state too.
+    /// Operator-driven params update — full snapshot delivered to
+    /// the widget runtime. Replay calls `WasmWidgetRuntime::deliver_params_update`,
+    /// which bumps the version counter and fires `on_params_update`.
+    ///
+    /// Capture writes one of these per change the operator made
+    /// in the testbed param-mutation UI, plus one for the initial
+    /// delivery so a fixture replay reproduces the pre-change state too.
     ///
     /// Values are stored as raw JSON for diffability; the `bmc-widget-manifest` parser
     /// re-derives the typed `ParamValue` at replay time, same as the wayland edge.
     ParamDelivery {
         params: serde_json::Map<String, serde_json::Value>,
+    },
+    /// Operator-driven system-snapshot update — full deck-wide snapshot
+    /// delivered to the widget runtime. Parallel to [`Self::ParamDelivery`]
+    /// for the system channel: replay calls `WasmWidgetRuntime::deliver_system_update`,
+    /// which bumps the system version counter and fires the unified `on_params_update` hook.
+    SystemDelivery {
+        system: SystemSnapshot,
     },
 
     // ── HTTP fetch ──────────────────────────────────────────────
@@ -303,6 +323,7 @@ pub fn validate_fixture(fixture: &UnifiedFixture) -> Result<()> {
             }
             UnifiedEvent::Fetch { .. }
             | UnifiedEvent::ParamDelivery { .. }
+            | UnifiedEvent::SystemDelivery { .. }
             | UnifiedEvent::SsdpFound { .. }
             | UnifiedEvent::SsdpRemoved { .. }
             | UnifiedEvent::MdnsFound { .. }
@@ -389,6 +410,7 @@ mod tests {
                 time: "2026-03-10T18:00:00".into(),
                 kv: HashMap::new(),
                 initial_params: serde_json::Map::new(),
+                initial_system: SystemSnapshot::default(),
             },
             events: vec![TimelineEvent {
                 at_ms: 0,
@@ -422,6 +444,7 @@ mod tests {
                 time: "2026-01-01T12:00:00".into(),
                 kv: HashMap::new(),
                 initial_params: serde_json::Map::new(),
+                initial_system: SystemSnapshot::default(),
             },
             events: vec![TimelineEvent {
                 at_ms: 0,
@@ -441,6 +464,7 @@ mod tests {
                 time: "2026-01-01T12:00:00".into(),
                 kv: HashMap::new(),
                 initial_params: serde_json::Map::new(),
+                initial_system: SystemSnapshot::default(),
             },
             events: vec![
                 TimelineEvent {
@@ -470,6 +494,7 @@ mod tests {
                 time: "2026-01-01T12:00:00".into(),
                 kv: HashMap::new(),
                 initial_params: serde_json::Map::new(),
+                initial_system: SystemSnapshot::default(),
             },
             events: vec![
                 TimelineEvent {
@@ -498,6 +523,7 @@ mod tests {
                 time: "2026-01-01T12:00:00".into(),
                 kv: HashMap::new(),
                 initial_params: serde_json::Map::new(),
+                initial_system: SystemSnapshot::default(),
             },
             events: vec![
                 TimelineEvent {
@@ -527,6 +553,7 @@ mod tests {
                 time: "2026-01-01T12:00:00".into(),
                 kv: HashMap::new(),
                 initial_params: serde_json::Map::new(),
+                initial_system: SystemSnapshot::default(),
             },
             events: vec![
                 TimelineEvent {
@@ -556,6 +583,7 @@ mod tests {
                 time: "2026-03-10T18:00:00".into(),
                 kv: HashMap::from([("theme".into(), "dark".into())]),
                 initial_params: serde_json::Map::new(),
+                initial_system: SystemSnapshot::default(),
             },
             events: vec![
                 TimelineEvent {
@@ -737,6 +765,7 @@ mod tests {
                 time: "2026-03-10T18:00:00".into(),
                 kv: HashMap::from([("theme".into(), "dark".into())]),
                 initial_params: serde_json::Map::new(),
+                initial_system: SystemSnapshot::default(),
             },
             events: vec![
                 TimelineEvent {

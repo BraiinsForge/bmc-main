@@ -27,6 +27,8 @@
 mod paint;
 mod params_ui;
 mod recording;
+mod system_ui;
+mod ui_helpers;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -41,7 +43,7 @@ use bmc_render::interaction::TouchEvent;
 use bmc_render::renderer::Renderer as _;
 use bmc_wasm_runtime::fixtures::{self, find_widget_root, seed_kv_from_secrets, snapshot_kv_dir};
 use bmc_wasm_runtime::unified_fixture::TimelineEvent;
-use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, WasmWidgetRuntime};
+use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime};
 
 use paint::{
     GlProcAddress, TileGpu, draw_checkerboard, paint_led_strip, paint_timing_chart,
@@ -115,9 +117,10 @@ const STATS_Y: u32 = ROW1_Y + row_stride(TILE_MEDIUM_H);
 const STATS_W: u32 = PREVIEW_WIDTH - M - STATS_X;
 const STATS_H: u32 = PREVIEW_HEIGHT - M - STATS_Y;
 
-/// Width of the right-side params sidebar when the manifest declares any params.
-/// Added to the window's outer size so the tile area stays at native dimensions
-/// instead of getting squeezed.
+/// Width of the right-side sidebar housing both the per-widget Params
+/// section (when the manifest declares any) and the deck-wide System
+/// section (always shown). Added to the window's outer size so the tile
+/// area stays at native dimensions instead of getting squeezed.
 pub(crate) const PARAM_PANEL_W: u32 = 320;
 
 // ── CLI ─────────────────────────────────────────────────────────────
@@ -261,14 +264,10 @@ fn main() -> Result<()> {
     let (manifest_path, manifest) = load_manifest(&cli.wasm_path, cli.manifest_path.clone())?;
     let params = manifest_default_params(&manifest);
 
-    // Window width includes the param sidebar when the manifest declares any params; the
-    // central tile area stays at native dimensions so widgets are never squeezed.
-    let sidebar_w = if manifest.params.is_empty() {
-        0
-    } else {
-        PARAM_PANEL_W
-    };
-    let outer_w = (PREVIEW_WIDTH + sidebar_w) as f32;
+    // Window width includes the right-side sidebar that houses both Params
+    // (when the manifest declares any) and the always-on System section.
+    // Central tile area stays at native dimensions so widgets are never squeezed.
+    let outer_w = (PREVIEW_WIDTH + PARAM_PANEL_W) as f32;
     let outer_h = PREVIEW_HEIGHT as f32;
 
     println!("Loading widget from: {}", cli.wasm_path.display());
@@ -497,6 +496,11 @@ pub(crate) struct TestbedApp {
     /// underlying runtimes are kept in sync via `deliver_params_update` on each change.
     pub(crate) params:
         std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
+    /// Current deck-wide system snapshot. Mutated by the system-mutation UI
+    /// on the left sidebar; tile runtimes are kept in sync via `deliver_system_update`
+    /// on each change. Pre-recording UI changes are captured into `RecordingState::system_snapshot`;
+    /// subsequent changes produce `UnifiedEvent::SystemDelivery` entries in the timeline.
+    pub(crate) system: SystemSnapshot,
     gl: Arc<eframe::glow::Context>,
     pub(crate) tiles: Vec<PreviewTile>,
     clock: Clock,
@@ -575,6 +579,20 @@ impl TestbedApp {
         let (watcher, watcher_rx) =
             setup_watcher(&cli.wasm_path).map_err(|e| format!("watcher: {e}"))?;
 
+        // Starting system snapshot for the testbed.
+        // The real-device path populates this from the wayland `SettingUpdate` stream;
+        // the testbed bootstraps with defaults plus a sensible non-empty timezone
+        // so the demo cells aren't blank on first paint.
+        //
+        // Operator changes go through `apply_system_update` and propagate to every tile.
+        let pending_system = SystemSnapshot {
+            settings: bmc_wasm_runtime::SystemSettings {
+                timezone: "Europe/Prague".to_owned(),
+                ..bmc_wasm_runtime::SystemSettings::default()
+            },
+            next_alarm: None,
+        };
+
         let recording_state = cli.record_size.as_ref().map(|size_name| {
             let active_tile = record_size_to_idx(size_name);
             let widget_root = find_widget_root(&cli.wasm_path);
@@ -599,6 +617,10 @@ impl TestbedApp {
                 recording_start: std::time::Instant::now(),
                 kv_snapshot: std::collections::HashMap::new(),
                 params_snapshot,
+                // Testbed's starting `SystemSnapshot`, mirroring
+                // `params_snapshot`. Replay installs this directly into
+                // `RuntimeConfig::system`.
+                system_snapshot: pending_system.clone(),
                 start_time_iso,
                 auto_capture: true,
             }
@@ -608,11 +630,13 @@ impl TestbedApp {
         Ok(Self {
             cli,
             requested_size,
-            // 30 attempts at ~16ms = ~0.5 s of negotiation. More than enough for any
-            // compositor to settle, far less than long enough to feel like the UI froze.
+            // 30 attempts at ~16ms = ~0.5 s of negotiation.
+            // More than enough for any compositor to settle,
+            // far less than long enough to feel like the UI froze.
             size_pin_attempts: 30,
             manifest,
             params,
+            system: pending_system,
             gl,
             tiles: Vec::new(),
             clock: Clock {
@@ -670,6 +694,7 @@ impl TestbedApp {
             let rt_config = RuntimeConfig {
                 mesh_msaa_samples: 4,
                 params: self.params.clone(),
+                system: self.system.clone(),
                 led_command_sender: Some(led_tx),
                 ..RuntimeConfig::default()
             };
@@ -762,6 +787,7 @@ impl TestbedApp {
             };
             rt_config.mesh_msaa_samples = 4;
             rt_config.params = self.params.clone();
+            rt_config.system = self.system.clone();
             rt_config.led_command_sender = Some(led_tx);
             // SAFETY: eframe keeps the GL context current for the app's lifetime.
             let renderer = unsafe {
@@ -937,38 +963,49 @@ impl TestbedApp {
             0.0
         };
         // Stats table — egui::Grid gives column alignment without manual width math.
-        // Right-aligning numbers inside their cells via RichText keeps the digit columns
-        // visually anchored even as values change width.
+        // Value strings are padded with leading spaces to a fixed width (`{:>5}`)
+        // so under a monospace font the digit columns stay anchored even
+        // as the number widens from single digit to triple digit between frames.
+        // 5 digits covers up to 99 999 µs (~100 ms / frame), well past
+        // the realistic budget for any sub-stage.
         let mono = egui::FontId::monospace(11.0);
         let val_color = egui::Color32::from_gray(220);
-        let lbl_color = egui::Color32::from_gray(160);
-        let cell_lbl = |txt: &str| egui::RichText::new(txt).font(mono.clone()).color(lbl_color);
-        let cell_val = |txt: String| egui::RichText::new(txt).font(mono.clone()).color(val_color);
+        let lbl = |txt: &str| ui_helpers::key_label(txt, 160);
+        let cell_us = |n: u32| {
+            egui::RichText::new(format!("{n:>5} µs"))
+                .font(mono.clone())
+                .color(val_color)
+        };
+        let cell_fps = |f: f32| {
+            egui::RichText::new(format!("{f:>5.1} fps"))
+                .font(mono.clone())
+                .color(val_color)
+        };
         egui::Grid::new("testbed_stats_table")
             .num_columns(4)
             .spacing([12.0, 2.0])
             .min_col_width(0.0)
             .show(&mut child, |g| {
-                g.label(cell_lbl("frame avg:"));
-                g.label(cell_val(format!("{avg_us} µs")));
-                g.label(cell_lbl(""));
-                g.label(cell_val(format!("{fps:.1} fps")));
+                g.add(lbl("frame avg:"));
+                g.label(cell_us(avg_us));
+                g.add(lbl(""));
+                g.label(cell_fps(fps));
                 g.end_row();
                 if let Some(t) = self.tiles.first().map(|t| t.runtime.last_timings()) {
-                    g.label(cell_lbl("FULL wasm:"));
-                    g.label(cell_val(format!("{} µs", t.wasm_us)));
-                    g.label(cell_lbl("deser:"));
-                    g.label(cell_val(format!("{} µs", t.deserialize_us)));
+                    g.add(lbl("FULL wasm:"));
+                    g.label(cell_us(t.wasm_us));
+                    g.add(lbl("deser:"));
+                    g.label(cell_us(t.deserialize_us));
                     g.end_row();
-                    g.label(cell_lbl("layout:"));
-                    g.label(cell_val(format!("{} µs", t.layout_us)));
-                    g.label(cell_lbl("render:"));
-                    g.label(cell_val(format!("{} µs", t.render_us)));
+                    g.add(lbl("layout:"));
+                    g.label(cell_us(t.layout_us));
+                    g.add(lbl("render:"));
+                    g.label(cell_us(t.render_us));
                     g.end_row();
-                    g.label(cell_lbl("flush:"));
-                    g.label(cell_val(format!("{} µs", t.flush_us)));
-                    g.label(cell_lbl(""));
-                    g.label(cell_lbl(""));
+                    g.add(lbl("flush:"));
+                    g.label(cell_us(t.flush_us));
+                    g.add(lbl(""));
+                    g.add(lbl(""));
                     g.end_row();
                 }
             });
@@ -1081,10 +1118,12 @@ impl eframe::App for TestbedApp {
         }
         let time_s = self.clock.start_instant.elapsed().as_secs_f32();
 
-        // Param-mutation sidebar — must be added BEFORE the CentralPanel so it claims
-        // its 320 px slice from the right edge first. Changes propagate to all tile
-        // runtimes and (when recording) append a `ParamDelivery` event to the timeline.
-        self.paint_params_panel(root_ui);
+        // Right-side sidebar housing Params (top) and System (bottom) —
+        // must be added BEFORE the CentralPanel so it claims its 320 px
+        // slice from the right edge first. Changes propagate to all tile
+        // runtimes and (when recording) append `ParamDelivery` /
+        // `SystemDelivery` events to the timeline.
+        self.paint_right_panel(root_ui);
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -1099,11 +1138,13 @@ impl eframe::App for TestbedApp {
                         origin + egui::vec2(tile.x as f32, tile.y as f32),
                         egui::vec2(tile.gpu.width as f32, tile.gpu.height as f32),
                     );
-                    // Recording mode focuses on a single size — non-active tiles get a flat
-                    // dark slab instead of the WASM texture (whose FBO contents are stale
-                    // since `render_tiles` skipped them), and don't receive touch events or
-                    // an LED strip. The active tile gets a thin orange border so the operator
-                    // can see which one's live.
+                    // Recording mode focuses on a single size — non-active tiles get
+                    // a flat dark slab instead of the WASM texture (whose FBO contents
+                    // are stale since `render_tiles` skipped them), and don't receive
+                    // touch events or an LED strip.
+                    //
+                    // The active tile gets a thin orange border so
+                    // the operator can see which one's live.
                     let is_inactive_record =
                         active_record_idx.is_some_and(|active| active != tile_idx);
                     if is_inactive_record {
@@ -1118,9 +1159,9 @@ impl eframe::App for TestbedApp {
                         .image(tile.gpu.egui_tex_id, rect, uv, egui::Color32::WHITE);
 
                     if active_record_idx == Some(tile_idx) {
-                        // `Inside` so the bottom edge stays inside the tile rect — `Outside`
-                        // would paint one row below, which `paint_led_strip` then overwrites
-                        // with the LED strip background.
+                        // `Inside` so the bottom edge stays inside the tile rect
+                        // — `Outside` would paint one row below, which `paint_led_strip`
+                        // then overwrites with the LED strip background.
                         ui.painter().rect_stroke(
                             rect,
                             0.0,
@@ -1129,8 +1170,10 @@ impl eframe::App for TestbedApp {
                         );
                     }
 
-                    // Touch / mouse routing: allocate the same rect for click+drag so we
-                    // can forward pointer events to the runtime in tile-local coordinates.
+                    // Touch / mouse routing: allocate the same rect for click+drag
+                    // so we can forward pointer events to the runtime in tile-local
+                    // coordinates.
+                    //
                     // Recording state is threaded in only for the active recording tile
                     // so gestures on other tiles don't pollute the fixture timeline.
                     let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());

@@ -4,9 +4,9 @@ version = 4
 
 [[package]]
 name = "ab_glyph"
-version = "0.2.30"
+version = "0.2.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e0f4f6fbdc5ee39f2ede9f5f3ec79477271a6d6a2baff22310d51736bda6cea"
+checksum = "01c0457472c38ea5bd1c3b5ada5e368271cb550be7a4ca4a0b4634e9913f6cc2"
 dependencies = [
  "ab_glyph_rasterizer",
  "owned_ttf_parser",
@@ -1600,6 +1600,7 @@ dependencies = [
  "clap",
  "eframe",
  "egui",
+ "egui_autocomplete",
  "femtovg",
  "flate2",
  "formato",
@@ -3005,6 +3006,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_autocomplete"
+version = "13.0.0"
+source = "git+https://github.com/yvind/egui_autocomplete.git?rev=01153df7c1915bb1196d0d97acf44a2783890016#01153df7c1915bb1196d0d97acf44a2783890016"
+dependencies = [
+ "egui",
+ "fuzzy-matcher",
+ "serde",
+]
+
+[[package]]
 name = "egui_extras"
 version = "0.34.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3771,6 +3782,15 @@ dependencies = [
  "pin-project-lite",
  "pin-utils",
  "slab",
+]
+
+[[package]]
+name = "fuzzy-matcher"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54614a3312934d066701a80f20f15fa3b56d67ac7722b39eea5b4c9dd1d66c94"
+dependencies = [
+ "thread_local",
 ]
 
 [[package]]

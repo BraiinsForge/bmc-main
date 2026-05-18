@@ -32,6 +32,64 @@ pub(super) struct GestureTracker {
 
 /// Delay between a user action and its auto-inserted capture event (ms).
 pub(super) const AUTO_CAPTURE_DELAY_MS: u64 = 500;
+
+/// Append a delivery event to the timeline at `recording_start.elapsed()`
+/// and, when `auto_capture` is on, attach a debounced auto-`Capture`
+/// 500 ms later so each settled state yields one baseline frame.
+///
+/// # Debounce
+///
+/// Slider drags, text typing, and rapid system mutations produce
+/// one delivery per intermediate value (dozens per second).
+///
+/// A naive "Capture 500 ms after every delivery" rule would mint hundreds
+/// of nearly-identical frames. Instead, when a new delivery arrives
+/// and the most-recently-pushed auto-Capture's `at_ms` is still
+/// in the future relative to the new delivery, slide that Capture
+/// forward to `at_ms + 500` rather than appending another.
+///
+/// Net effect: one Capture per cluster of changes ≤500 ms apart,
+/// fired 500 ms after the cluster's last delivery.
+///
+/// The scan-backwards approach matches only `Capture { duration_ms: None,
+/// fps: None }` so gesture-path animation Captures (with concrete duration)
+/// never get slid forward by a param / system delivery.
+pub(super) fn record_delivery(rec: &mut RecordingState, make_event: impl FnOnce() -> UnifiedEvent) {
+    let at_ms = rec.recording_start.elapsed().as_millis() as u64;
+    rec.events.push(TimelineEvent {
+        at_ms,
+        event: make_event(),
+    });
+    if !rec.auto_capture {
+        return;
+    }
+    let capture_at = at_ms + AUTO_CAPTURE_DELAY_MS;
+    let pending = rec
+        .events
+        .iter_mut()
+        .rev()
+        .find(|e| {
+            matches!(
+                e.event,
+                UnifiedEvent::Capture {
+                    duration_ms: None,
+                    fps: None,
+                }
+            )
+        })
+        .filter(|e| e.at_ms > at_ms);
+    if let Some(prev_capture) = pending {
+        prev_capture.at_ms = capture_at;
+    } else {
+        rec.events.push(TimelineEvent {
+            at_ms: capture_at,
+            event: UnifiedEvent::Capture {
+                duration_ms: None,
+                fps: None,
+            },
+        });
+    }
+}
 /// Pixel threshold separating "click" from "drag" / "scroll" gestures.
 const GESTURE_THRESHOLD: f32 = 5.0;
 
@@ -56,6 +114,12 @@ pub(super) struct RecordingState {
     /// initial `RuntimeConfig::params`, so the first `ParamDelivery` event
     /// in `events` diffs against them rather than against an empty snapshot.
     pub(super) params_snapshot: serde_json::Map<String, serde_json::Value>,
+    /// Snapshot of the deck-wide system state at recording start.
+    /// Same role as [`Self::params_snapshot`] but for the `system` channel
+    /// — installed into `RuntimeConfig::system` by replay so the first
+    /// `SystemDelivery` event diffs against the actual starting state
+    /// rather than the `SystemSnapshot::default()` fallback.
+    pub(super) system_snapshot: bmc_wasm_runtime::SystemSnapshot,
     /// Start time (ISO 8601) captured at recording start.
     pub(super) start_time_iso: String,
     /// When true, a Capture event is auto-inserted after each user action.
@@ -85,6 +149,7 @@ fn format_event_label(event: &UnifiedEvent) -> String {
             format!("drag #{element}  {from:.0}→{to:.0}")
         }
         UnifiedEvent::ParamDelivery { params } => format!("params Δ{} key(s)", params.len()),
+        UnifiedEvent::SystemDelivery { .. } => "system Δ".to_owned(),
         UnifiedEvent::Fetch {
             method,
             url,
@@ -355,6 +420,7 @@ impl TestbedApp {
                 time: rec.start_time_iso,
                 kv: rec.kv_snapshot,
                 initial_params: rec.params_snapshot,
+                initial_system: rec.system_snapshot,
             },
             events: merged,
         };

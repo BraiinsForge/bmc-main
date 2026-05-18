@@ -54,6 +54,7 @@ notify = { workspace = true, optional = true }
 # Mirrors what `bmc-virt-console` does so patterns stay consistent across host UIs.
 eframe = { workspace = true, optional = true }
 egui = { workspace = true, optional = true }
+egui_autocomplete = { workspace = true, optional = true }
 
 # Fixtures (shared between capture and testbed)
 flate2 = { workspace = true, optional = true }
@@ -78,7 +79,7 @@ profiling = ["ii-stopwatch/enabled", "bmc-render/profiling"]
 audio = ["rodio"]
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
 fixtures = ["host", "base64", "flate2", "owo-colors", "toml"]
-testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "eframe", "egui"]
+testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "eframe", "egui", "egui_autocomplete"]
 capture = ["host", "askama", "base64", "clap", "khronos-egl", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile"]
 
 [[bin]]

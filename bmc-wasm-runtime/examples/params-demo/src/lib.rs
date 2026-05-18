@@ -1,7 +1,8 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
 //! Read-back exemplar for the manifest params slice of the SDK.
-//! Every cell on screen is what `params::current().get_*("key")` returned this frame.
+//! Every cell on screen is what `params::current().get_*("key")`
+//! returned this frame.
 //!
 //! When the operator changes a param at runtime, the affected cell briefly
 //! tints amber and fades back — proof that `on_params_update` is wired
@@ -44,7 +45,15 @@ thread_local! {
         const { RefCell::new(BTreeMap::new()) };
 }
 
-const BG_COLOR: Color = Color::from_hex(0x14_16_1B);
+/// Outer canvas visible only in the gaps between panes — `TEAL_90`.
+/// Slightly lighter than [`PANE_BG`] so the gap reads as a hairline tint
+/// between adjacent dark panels.
+const BG_COLOR: Color = TEAL_90;
+/// Pane (column) fill — `TEAL_100`, opaque. Solid so the pane shade
+/// is the same regardless of what's behind it (the SMALL variant has
+/// no outer canvas, so any alpha would render it inconsistently
+/// against the surrounding testbed UI).
+const PANE_BG: Color = TEAL_100;
 /// Decay duration of the amber change-highlight tint, in milliseconds.
 /// 800 ms is long enough to register as "something flashed" without lingering
 /// past the next likely operator action.
@@ -64,13 +73,31 @@ pub extern "C" fn on_params_update() {
     if let Some(previous) = Params::previous() {
         changed.extend(Params::current().changed_keys(&previous));
     }
-    // System fields don't have a key-set abstraction — compare each field
-    // by value between the current and previous snapshots.
-    // Stamps "timezone" and "next_alarm" so the matching demo cells tint amber on change.
+    // System fields don't have a key-set abstraction — compare
+    // each field by value between the current and previous snapshots
+    // so the matching demo cells tint amber on change.
     let sys_cur = system::current();
     let sys_prev = system::previous();
     if sys_cur.timezone() != sys_prev.timezone() {
         changed.push("timezone");
+    }
+    if sys_cur.time_format() != sys_prev.time_format() {
+        changed.push("time_format");
+    }
+    if sys_cur.date_format() != sys_prev.date_format() {
+        changed.push("date_format");
+    }
+    if sys_cur.number_format() != sys_prev.number_format() {
+        changed.push("number_format");
+    }
+    if sys_cur.first_day_of_week() != sys_prev.first_day_of_week() {
+        changed.push("first_day_of_week");
+    }
+    if sys_cur.temperature_unit() != sys_prev.temperature_unit() {
+        changed.push("temperature_unit");
+    }
+    if sys_cur.unit_system() != sys_prev.unit_system() {
+        changed.push("unit_system");
     }
     if next_alarm_value(&sys_cur) != next_alarm_value(&sys_prev) {
         changed.push("next_alarm");
@@ -90,8 +117,8 @@ pub extern "C" fn on_params_update() {
 
 /// Owned (fire_at_utc_ms, name) pair for change-detection comparison.
 /// `system::next_alarm()` returns a borrowed view that doesn't outlive
-/// the `Snapshot`; this helper copies it into an owned shape so
-/// a stale `Snapshot` can be dropped between the two reads.
+/// the `Snapshot`; this helper copies it into an owned shape
+/// so a stale `Snapshot` can be dropped between the two reads.
 fn next_alarm_value(snap: &system::Snapshot) -> Option<(i64, String)> {
     snap.next_alarm()
         .map(|n| (n.fire_at_utc_ms, n.name.to_owned()))
@@ -114,8 +141,9 @@ fn decay_tint(key: &str) -> Color {
 }
 
 /// Advance the decay state by `delta_ms` and return whether any decay is still active.
-/// Called once at the end of every `render`; if it returns `true`, the widget requests another
-/// frame so the tint continues animating without operator interaction.
+/// Called once at the end of every `render`; if it returns `true`,
+/// the widget requests another frame so the tint continues animating
+/// without operator interaction.
 fn tick_decay(delta_ms: u32) -> bool {
     DECAY_MS_REMAINING.with(|m| {
         let mut m = m.borrow_mut();
@@ -128,8 +156,8 @@ fn tick_decay(delta_ms: u32) -> bool {
 }
 
 /// Layout-tunable sizes per widget-size variant.
-/// `small` shrinks fonts / padding / gaps so the full per-key grid fits in 317×238; bigger
-/// variants get more generous spacing for legibility.
+/// `small` shrinks fonts / padding / gaps so the full per-key grid fits in 317×238;
+/// bigger variants get more generous spacing for legibility.
 #[derive(Clone, Copy)]
 struct Sizes {
     section_header: u32,
@@ -167,6 +195,21 @@ const SIZES_SMALL: Sizes = Sizes {
     footer_size: 7,
 };
 
+/// Mid-tier used by the LARGE tile's two-pane layout: bigger than SMALL,
+/// smaller than FULL. LARGE has 2× the vertical room of MEDIUM at the same
+/// width, so the rows can breathe.
+const SIZES_MEDIUM: Sizes = Sizes {
+    section_header: 13,
+    key: 12,
+    hint: 9,
+    value: 12,
+    col_padding: 10.0,
+    col_gap: 10.0,
+    cell_gap: 5.0,
+    label_width: 130.0,
+    footer_size: 9,
+};
+
 #[unsafe(no_mangle)]
 pub extern "C" fn render(delta_ms: u32) {
     let size = widget_size();
@@ -174,15 +217,25 @@ pub extern "C" fn render(delta_ms: u32) {
     let h = size.height;
     let p = Params::current();
 
-    match size.variant {
-        // Small (317×238) and Medium (638×238) both lack the vertical room for the two-line
-        // grid layout (Required has 10 entries, each a key+hint line pair). They fall back to
-        // the compact single-line variant; Medium just gets wider rows than Small.
-        SizeVariant::Small | SizeVariant::Medium => render_compact(w, h, &p, &SIZES_SMALL),
-        SizeVariant::Large | SizeVariant::Full => {
-            render_grid(w, h, &p, &SIZES_FULL);
-        }
-    }
+    // Per-variant choice of layout function and `Sizes` tier.
+    // Keeping the dispatch in one tuple-match means the actual call site
+    // below stays identical across variants — only the (function pointer, sizes)
+    // pair differs. A future widget adopting the same scaled-layout pattern
+    // can copy this shape verbatim.
+    let (render_layout, sizes): (fn(u32, u32, &Params, &Sizes), &Sizes) = match size.variant {
+        // Small (317×238): single-column compact — narrow tile,
+        // can only afford one stream of rows.
+        SizeVariant::Small => (render_compact, &SIZES_SMALL),
+        // Medium (638×238): same vertical budget as Small but 2× the width;
+        // split into a params/system two-pane so the right half isn't wasted.
+        SizeVariant::Medium => (render_two_pane, &SIZES_SMALL),
+        // Large (638×480): same two-pane shape as Medium with bigger fonts /
+        // padding — LARGE has 2× the height, so rows can breathe.
+        SizeVariant::Large => (render_two_pane, &SIZES_MEDIUM),
+        // Full (1280×480): three-column grid with key + hint subtitle.
+        SizeVariant::Full => (render_grid, &SIZES_FULL),
+    };
+    render_layout(w, h, &p, sizes);
 
     // Advance the per-key decay-highlight counters and keep requesting frames
     // while any cell is still mid-fade. The host caps the cadence
@@ -193,70 +246,128 @@ pub extern "C" fn render(delta_ms: u32) {
     }
 }
 
-/// Compact single-column layout for the small variant.
+/// Compact single-column layout for the Small variant.
 /// Each row is a one-liner (`key  value`) — the hint subtitle
 /// is dropped to win vertical density, and the full 317 px tile
-/// width is available for values, so URLs and longer strings don't wrap.
-/// All 14 keys stack with comfortable gap.
+/// width is available for values, so URLs and longer strings
+/// don't wrap. The 14 params stack with `timezone` + `next_alarm`
+/// appended as a teaser of the System snapshot.
 fn render_compact(w: u32, h: u32, p: &Params, sizes: &Sizes) {
+    let sys = system::current();
+    let mut rows = params_rows(p, sizes);
+    rows.push(kv_line("timezone", sys.timezone(), sizes));
+    rows.push(kv_line("next_alarm", format_next_alarm(&sys), sizes));
     let _ = render_ui(
         w,
         h,
         col(
-            props!(flex: 1.0, gap: sizes.cell_gap, background: GRAY_90.with_alpha(0.85), padding: sizes.col_padding),
+            props!(flex: 1.0, gap: sizes.cell_gap, background: PANE_BG, padding: sizes.col_padding),
+            rows,
+        ),
+    );
+}
+
+/// Two-pane compact layout for the Medium / Large variants.
+/// Left pane: all 14 params; right pane: the full 8-field system snapshot.
+/// `Sizes` controls scale so the same shape works at MEDIUM (cramped)
+/// and LARGE (breathing room).
+fn render_two_pane(w: u32, h: u32, p: &Params, sizes: &Sizes) {
+    let pane_props =
+        props!(flex: 1.0, gap: sizes.cell_gap, background: PANE_BG, padding: sizes.col_padding);
+    let _ = render_ui(
+        w,
+        h,
+        row(
+            props!(background: BG_COLOR, gap: sizes.col_gap / 2.0, flex: 1.0),
             [
-                kv_line("free_string", &p.free_string, sizes),
-                kv_line(
-                    "string_enum",
-                    fmt!(
-                        "{} ({})",
-                        p.string_enum.as_manifest_value(),
-                        p.string_enum.as_manifest_label()
-                    ),
-                    sizes,
-                ),
-                kv_line("string_uri", &p.string_uri, sizes),
-                kv_line("string_date", &p.string_date, sizes),
-                kv_line("integer_range", fmt!("{}", p.integer_range), sizes),
-                kv_line(
-                    "integer_enum",
-                    fmt!(
-                        "{} ({})",
-                        p.integer_enum.as_manifest_value(),
-                        p.integer_enum.as_manifest_label()
-                    ),
-                    sizes,
-                ),
-                kv_line("double_range", format_f64_fixed(p.double_range, 2), sizes),
-                kv_line(
-                    "double_enum",
-                    fmt!(
-                        "{} ({})",
-                        format_f64_fixed(p.double_enum.as_manifest_value(), 2),
-                        p.double_enum.as_manifest_label(),
-                    ),
-                    sizes,
-                ),
-                kv_line(
-                    "boolean_flag",
-                    if p.boolean_flag { "on" } else { "off" },
-                    sizes,
-                ),
-                kv_line("tz", &p.tz, sizes),
-                kv_line_opt_str("optional_string", p.optional_string.as_deref(), sizes),
-                kv_line_opt_i32("optional_integer", p.optional_integer, sizes),
-                kv_line_opt_f64("optional_double", p.optional_double, sizes),
-                kv_line_opt_bool("optional_boolean", p.optional_boolean, sizes),
-                kv_line("timezone", system::current().timezone(), sizes),
-                kv_line("next_alarm", format_next_alarm(&system::current()), sizes),
+                col(pane_props, params_rows(p, sizes)),
+                col(pane_props, system_rows(sizes)),
             ],
         ),
     );
 }
 
+/// 14-row params list, one `kv_line` per manifest entry.
+/// Shared by [`render_compact`] (Small) and [`render_two_pane`] (Medium / Large).
+fn params_rows(p: &Params, sizes: &Sizes) -> Vec<Node> {
+    vec![
+        kv_line("free_string", &p.free_string, sizes),
+        kv_line(
+            "string_enum",
+            fmt!(
+                "{} ({})",
+                p.string_enum.as_manifest_value(),
+                p.string_enum.as_manifest_label()
+            ),
+            sizes,
+        ),
+        kv_line("string_uri", &p.string_uri, sizes),
+        kv_line("string_date", &p.string_date, sizes),
+        kv_line("integer_range", fmt!("{}", p.integer_range), sizes),
+        kv_line(
+            "integer_enum",
+            fmt!(
+                "{} ({})",
+                p.integer_enum.as_manifest_value(),
+                p.integer_enum.as_manifest_label()
+            ),
+            sizes,
+        ),
+        kv_line("double_range", format_f64_fixed(p.double_range, 2), sizes),
+        kv_line(
+            "double_enum",
+            fmt!(
+                "{} ({})",
+                format_f64_fixed(p.double_enum.as_manifest_value(), 2),
+                p.double_enum.as_manifest_label(),
+            ),
+            sizes,
+        ),
+        kv_line(
+            "boolean_flag",
+            if p.boolean_flag { "on" } else { "off" },
+            sizes,
+        ),
+        kv_line("tz", &p.tz, sizes),
+        kv_line_opt_str("optional_string", p.optional_string.as_deref(), sizes),
+        kv_line_opt_i32("optional_integer", p.optional_integer, sizes),
+        kv_line_opt_f64("optional_double", p.optional_double, sizes),
+        kv_line_opt_bool("optional_boolean", p.optional_boolean, sizes),
+    ]
+}
+
+/// 8-row system-snapshot list for the right pane of [`render_two_pane`].
+/// One `kv_line` per `SystemSnapshot` field; the `next_alarm` cell
+/// renders the active alarm (or `(none)`).
+fn system_rows(sizes: &Sizes) -> Vec<Node> {
+    let sys = system::current();
+    vec![
+        kv_line("timezone", sys.timezone(), sizes),
+        kv_line("time_format", time_format_label(sys.time_format()), sizes),
+        kv_line("date_format", date_format_label(sys.date_format()), sizes),
+        kv_line(
+            "number_format",
+            number_format_label(sys.number_format()),
+            sizes,
+        ),
+        kv_line(
+            "first_day_of_week",
+            weekday_label(sys.first_day_of_week()),
+            sizes,
+        ),
+        kv_line(
+            "temperature_unit",
+            temperature_unit_label(sys.temperature_unit()),
+            sizes,
+        ),
+        kv_line("unit_system", unit_system_label(sys.unit_system()), sizes),
+        kv_line("next_alarm", format_next_alarm(&sys), sizes),
+    ]
+}
+
 /// Single-line cell used by [`render_compact`].
 /// Wider label column than the 2-line variant since there's no hint underneath.
-/// Background routes through [`decay_tint`] so the cell briefly flashes amber
+/// Background routes through [`decay_tint`] so the cell briefly flashes
 /// when its key changes (transparent the rest of the time).
 fn kv_line(key: &str, value: impl Into<String>, sizes: &Sizes) -> Node {
     row(
@@ -298,12 +409,13 @@ fn kv_line_opt_bool(key: &str, value: Option<bool>, sizes: &Sizes) -> Node {
     kv_line(key, display, sizes)
 }
 
-/// Full per-key grid. Layout tuning comes from [`Sizes`]; the cell structure (label column with
-/// hint subtitle, value to the right) stays identical across variants so the small view differs
-/// from the others only in pixels, not shape.
+/// Full per-key grid. Layout tuning comes from [`Sizes`];
+/// the cell structure (label column with hint subtitle,
+/// value to the right) stays identical across variants
+/// so the small view differs from the others only in pixels, not shape.
 fn render_grid(w: u32, h: u32, p: &Params, sizes: &Sizes) {
     let required = col(
-        props!(flex: 1.0, gap: sizes.cell_gap, background: GRAY_90.with_alpha(0.85), padding: sizes.col_padding),
+        props!(flex: 1.0, gap: sizes.cell_gap, background: PANE_BG, padding: sizes.col_padding),
         [
             section_header("Required (per ParamKind variant)", sizes),
             kv("free_string", "", &p.free_string, sizes),
@@ -361,26 +473,17 @@ fn render_grid(w: u32, h: u32, p: &Params, sizes: &Sizes) {
         ],
     );
 
-    // The header speaks of 14 keys because the typed struct mirrors the manifest one-to-one;
-    // the optional cells fall back to `(unset)` when the host delivered null.
-    let sys = system::current();
+    // The header speaks of 14 keys because the typed struct mirrors
+    // the manifest one-to-one; the optional cells fall back to `(unset)`
+    // when the host delivered null.
     let optional = col(
-        props!(flex: 1.0, gap: sizes.cell_gap, background: GRAY_90.with_alpha(0.85), padding: sizes.col_padding),
+        props!(flex: 1.0, gap: sizes.cell_gap, background: PANE_BG, padding: sizes.col_padding),
         [
             section_header("Optional, no default (null-on-wire)", sizes),
             kv_opt_str("optional_string", "", p.optional_string.as_deref(), sizes),
             kv_opt_i32("optional_integer", "", p.optional_integer, sizes),
             kv_opt_f64("optional_double", "", p.optional_double, sizes),
             kv_opt_bool("optional_boolean", "", p.optional_boolean, sizes),
-            spacer(0.5),
-            section_header("System (deck-wide)", sizes),
-            kv("timezone", "IANA identifier", sys.timezone(), sizes),
-            kv(
-                "next_alarm",
-                "soonest scheduled",
-                format_next_alarm(&sys),
-                sizes,
-            ),
             spacer(1.0),
             text(
                 "Snapshot carries 14 key(s)",
@@ -393,12 +496,66 @@ fn render_grid(w: u32, h: u32, p: &Params, sizes: &Sizes) {
         ],
     );
 
+    // Third column for the deck-wide system snapshot
+    // — separates conceptual groups so the Required and Optional columns
+    //   aren't crowded out by the 8 system entries.
+    let sys = system::current();
+    let system_col = col(
+        props!(flex: 1.0, gap: sizes.cell_gap, background: PANE_BG, padding: sizes.col_padding),
+        [
+            section_header("System (deck-wide)", sizes),
+            kv("timezone", "IANA identifier", sys.timezone(), sizes),
+            kv(
+                "time_format",
+                "12h / 24h",
+                time_format_label(sys.time_format()),
+                sizes,
+            ),
+            kv(
+                "date_format",
+                "layout / separators",
+                date_format_label(sys.date_format()),
+                sizes,
+            ),
+            kv(
+                "number_format",
+                "thousands / decimal",
+                number_format_label(sys.number_format()),
+                sizes,
+            ),
+            kv(
+                "first_day_of_week",
+                "calendar start",
+                weekday_label(sys.first_day_of_week()),
+                sizes,
+            ),
+            kv(
+                "temperature_unit",
+                "°C / °F",
+                temperature_unit_label(sys.temperature_unit()),
+                sizes,
+            ),
+            kv(
+                "unit_system",
+                "metric / imperial",
+                unit_system_label(sys.unit_system()),
+                sizes,
+            ),
+            kv(
+                "next_alarm",
+                "soonest scheduled",
+                format_next_alarm(&sys),
+                sizes,
+            ),
+        ],
+    );
+
     let _ = render_ui(
         w,
         h,
         row(
-            props!(background: BG_COLOR, gap: sizes.col_gap, flex: 1.0),
-            [required, optional],
+            props!(background: BG_COLOR, gap: sizes.col_gap / 2.0, flex: 1.0),
+            [required, optional, system_col],
         ),
     );
 }
@@ -414,7 +571,7 @@ fn section_header(label: &str, sizes: &Sizes) -> Node {
 /// Label column width and font sizes come from [`Sizes`] so the same shape renders
 /// at multiple scales without forking the cell structure.
 ///
-/// Background routes through [`decay_tint`] so the cell briefly flashes amber
+/// Background routes through [`decay_tint`] so the cell briefly flashes
 /// when its key changes (transparent the rest of the time).
 fn kv(key: &str, hint: &str, value: impl Into<String>, sizes: &Sizes) -> Node {
     row(
@@ -447,6 +604,70 @@ fn kv_opt_f64(key: &str, hint: &str, value: Option<f64>, sizes: &Sizes) -> Node 
     match value {
         Some(v) => kv(key, hint, format_f64_fixed(v, 2), sizes),
         None => kv(key, hint, "(unset)", sizes),
+    }
+}
+
+/// Friendly labels for the six enum-typed system fields.
+/// Matches the labels used in the testbed's system-mutation
+/// sidebar so the operator's pick and the demo readout read the same.
+fn time_format_label(t: system::TimeFormat) -> &'static str {
+    use system::TimeFormat;
+    match t {
+        TimeFormat::Hour12 => "Hour12",
+        TimeFormat::Hour24 => "Hour24",
+    }
+}
+
+fn date_format_label(d: system::DateFormat) -> &'static str {
+    use system::DateFormat;
+    match d {
+        DateFormat::DdMmYyyyDot => "DD.MM.YYYY",
+        DateFormat::DdMmYyyySlash => "DD/MM/YYYY",
+        DateFormat::DMYyyySlash => "D/M/YYYY",
+        DateFormat::MDYyyySlash => "M/D/YYYY",
+        DateFormat::DdMmYyyyDash => "DD-MM-YYYY",
+        DateFormat::YyyyMDSlash => "YYYY/M/D",
+        DateFormat::YyyyMmDdDot => "YYYY.MM.DD",
+        DateFormat::YyyyMmDdDash => "YYYY-MM-DD",
+    }
+}
+
+fn number_format_label(n: system::NumberFormat) -> &'static str {
+    use system::NumberFormat;
+    match n {
+        NumberFormat::SpaceGroupCommaDecimal => "1 234 567,89",
+        NumberFormat::CommaGroupDotDecimal => "1,234,567.89",
+        NumberFormat::DotGroupCommaDecimal => "1.234.567,89",
+        NumberFormat::SpaceGroupDotDecimal => "1 234 567.89",
+    }
+}
+
+fn weekday_label(w: system::Weekday) -> &'static str {
+    use system::Weekday;
+    match w {
+        Weekday::Monday => "Mon",
+        Weekday::Tuesday => "Tue",
+        Weekday::Wednesday => "Wed",
+        Weekday::Thursday => "Thu",
+        Weekday::Friday => "Fri",
+        Weekday::Saturday => "Sat",
+        Weekday::Sunday => "Sun",
+    }
+}
+
+fn temperature_unit_label(u: system::TemperatureUnit) -> &'static str {
+    use system::TemperatureUnit;
+    match u {
+        TemperatureUnit::Celsius => "Celsius",
+        TemperatureUnit::Fahrenheit => "Fahrenheit",
+    }
+}
+
+fn unit_system_label(u: system::UnitSystem) -> &'static str {
+    use system::UnitSystem;
+    match u {
+        UnitSystem::Metric => "Metric",
+        UnitSystem::Imperial => "Imperial",
     }
 }
 

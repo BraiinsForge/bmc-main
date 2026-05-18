@@ -30,8 +30,10 @@
 //! ```
 //!
 //! Per-field kind-tagging keeps wire layout extensible:
-//! a future field gets a new `SystemFieldKind` variant without renumbering and without bumping a version.
-//! The decoder dispatches on the byte; unknown kinds surface as a `DecodeError::UnknownFieldKind`.
+//! a future field gets a new `SystemFieldKind` variant without renumbering
+//! and without bumping a version. The SDK decoder dispatches on the byte
+//! and silently skips unknown kinds — widgets compiled against an older
+//! SDK degrade to default field values rather than refusing the snapshot.
 
 use bmc_wasm_protocol::system::{
     DateFormat, NumberFormat, SystemFieldKind, TemperatureUnit, TimeFormat, UnitSystem, Weekday,
@@ -161,14 +163,27 @@ fn push_kind(out: &mut Vec<u8>, kind: SystemFieldKind) {
 }
 
 fn push_str(out: &mut Vec<u8>, s: &str) {
-    // The system schema does not currently include strings longer than
-    // `u16::MAX`: timezone IANA names are short, and the alarm display name
-    // is operator-typed with a UI-side cap well below 65 535 bytes.
-    // Saturating keeps the encoder total — the decoder sees the actual byte
-    // slice that was written.
-    let len = u16::try_from(s.len()).unwrap_or(u16::MAX);
-    out.extend_from_slice(&len.to_le_bytes());
-    out.extend_from_slice(&s.as_bytes()[..len as usize]);
+    // Defensive truncation at the wire layer. Upstream caps (gRPC
+    // `ALARM_NAME_MAX_BYTES`, compositor `cap_alarm_name`) mean strings
+    // reaching here are already ≤ 256 bytes in production; the `u16::MAX`
+    // cap below is belt-and-braces for fixtures / future fields.
+    // Walks back to a UTF-8 char boundary so the SDK's `from_utf8` decode
+    // doesn't reject the field for a mid-codepoint cut.
+    let original_len = s.len();
+    let mut len = original_len.min(u16::MAX as usize);
+    while len > 0 && !s.is_char_boundary(len) {
+        len -= 1;
+    }
+    if len < original_len {
+        tracing::warn!(
+            original_len,
+            truncated_to = len,
+            "wasmi-wire string truncated at encoder; upstream input cap should have caught this"
+        );
+    }
+    let len_u16 = u16::try_from(len).expect("BUG: len capped at u16::MAX");
+    out.extend_from_slice(&len_u16.to_le_bytes());
+    out.extend_from_slice(&s.as_bytes()[..len]);
 }
 
 fn estimate_size(snapshot: &SystemSnapshot) -> usize {

@@ -37,8 +37,16 @@
 //! that depend on either re-check inside the same hook and diff
 //! via `current()` vs `previous()`.
 
-use bmc_wasm_protocol::system::{
-    DateFormat, NumberFormat, SystemFieldKind, TemperatureUnit, TimeFormat, UnitSystem, Weekday,
+use bmc_wasm_protocol::system::SystemFieldKind;
+
+// Re-export the wasmi-wire enums under `bmc_wasm_sdk::system::*`
+// so widget authors writing `system::TimeFormat` don't have to
+// dig through the protocol crate's module hierarchy.
+//
+// `SystemFieldKind` stays internal to the SDK's
+// snapshot walker — widgets don't need it.
+pub use bmc_wasm_protocol::system::{
+    DateFormat, NumberFormat, TemperatureUnit, TimeFormat, UnitSystem, Weekday,
 };
 
 /// Owned snapshot of the host-delivered deck-wide system state.
@@ -68,8 +76,8 @@ pub struct NextAlarmView<'a> {
 impl Snapshot {
     /// Build a `Snapshot` from an owned packed-byte buffer.
     ///
-    /// The host owns the wire layout; a malformed buffer here means
-    /// the host messed up, not the widget.
+    /// The host owns the wire layout; a malformed buffer here
+    /// means the host messed up, not the widget.
     ///
     /// Accessors stop on the first parse error
     /// and yield the default value for the missing entry.

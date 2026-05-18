@@ -170,15 +170,16 @@ fn run_unified_capture(
     );
 
     // Parse start time from fixture header (overrides config/CLI).
-    // Must include timezone offset (e.g. 2026-03-10T18:00:00+02:00).
+    // Accepts any RFC 3339 timestamp — must include timezone offset;
+    // fractional seconds are optional (the testbed's `Local::now().to_rfc3339()`
+    // emits them, hand-authored fixtures usually don't).
     let mut system_time =
-        chrono::DateTime::parse_from_str(&fixture.header.time, "%Y-%m-%dT%H:%M:%S%:z")
-            .with_context(|| {
-                format!(
-                    "invalid time '{}' in fixture header — must include timezone (e.g. 2026-03-10T18:00:00+02:00)",
-                    fixture.header.time
-                )
-            })?;
+        chrono::DateTime::parse_from_rfc3339(&fixture.header.time).with_context(|| {
+            format!(
+                "invalid time '{}' in fixture header — must be RFC 3339 with timezone (e.g. 2026-03-10T18:00:00+02:00)",
+                fixture.header.time
+            )
+        })?;
 
     // Prepare KV directory — seed from fixture header KV, not secrets.ini
     let kv_dir = prepare_unified_kv_dir(ctx, config, &widget_name, &fixture);
@@ -186,12 +187,20 @@ fn run_unified_capture(
     // Extract fetch interceptors and network events from the unified timeline
     let (fetch_interceptor, network_events) = split_unified_events(&fixture);
 
-    // Initial params snapshot — baked into the fixture header so replay is fully
-    // self-contained (no `manifest.json` lookup at replay time, which used to walk up
-    // from the wasm binary and silently returned an empty map in CI's nix-build
-    // sandbox where the wasm artifact is divorced from its source tree).
+    // Initial params snapshot — baked into the fixture header so replay
+    // is fully self-contained (no `manifest.json` lookup at replay time,
+    // which used to walk up from the wasm binary and silently returned
+    // an empty map in CI's nix-build sandbox where the wasm artifact
+    // is divorced from its source tree).
     let initial_params = bmc_wasm_runtime::parse_params_json(&fixture.header.initial_params)
         .expect("BUG: capture fixture initial_params must be valid");
+
+    // Initial system snapshot — same shape as initial_params, parsed
+    // Typed at the fixture boundary — serde deserialises `initial_system`
+    // into a `SystemSnapshot` at fixture-load time; per-field
+    // `#[serde(default)]` makes fixtures pre-dating individual fields
+    // fall through to typed defaults rather than failing load.
+    let initial_system = fixture.header.initial_system.clone();
 
     // Build runtime config
     let mut rt_config = RuntimeConfig {
@@ -199,6 +208,7 @@ fn run_unified_capture(
         mesh_msaa_samples: 4,
         rng_seed: Some(42),
         params: initial_params,
+        system: initial_system,
         ..RuntimeConfig::default()
     };
     if !fetch_interceptor.is_empty() {
@@ -234,6 +244,7 @@ fn run_unified_capture(
                     | UnifiedEvent::Scroll { .. }
                     | UnifiedEvent::Drag { .. }
                     | UnifiedEvent::ParamDelivery { .. }
+                    | UnifiedEvent::SystemDelivery { .. }
             )
         })
         .collect();
@@ -520,13 +531,20 @@ fn run_unified_capture(
                         &mut frame_count,
                     )?;
                 }
-                // Operator-driven params update — call `deliver_params_update` on the runtime
-                // and let the widget's `on_params_update` hook fire. The version counter is
-                // bumped by the runtime; we don't need to advance any timeline-side state.
+                // Operator-driven params update — call `deliver_params_update`
+                // on the runtime and let the widget's `on_params_update` hook fire.
+                // The version counter is bumped by the runtime;
+                // we don't need to advance any timeline-side state.
                 UnifiedEvent::ParamDelivery { params } => {
                     let table = bmc_wasm_runtime::parse_params_json(params)
                         .expect("BUG: capture ParamDelivery params must be valid");
                     runtime.deliver_params_update(table);
+                }
+                // System-snapshot delivery — same shape as ParamDelivery
+                // but for deck-wide settings.
+                // Fires the unified `on_params_update` hook.
+                UnifiedEvent::SystemDelivery { system } => {
+                    runtime.deliver_system_update(system.clone());
                 }
                 // Network events are handled by inject_fixture_events/fetch_interceptor
                 UnifiedEvent::Fetch { .. }
@@ -860,6 +878,7 @@ fn split_unified_events(
             | UnifiedEvent::Scroll { .. }
             | UnifiedEvent::Drag { .. }
             | UnifiedEvent::ParamDelivery { .. }
+            | UnifiedEvent::SystemDelivery { .. }
             | UnifiedEvent::AudioPlay { .. }
             | UnifiedEvent::LedSetEffect { .. }
             | UnifiedEvent::LedSetBrightness { .. }

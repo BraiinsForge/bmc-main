@@ -7,33 +7,23 @@
 //! plus appends a `ParamDelivery` event when recording is active.
 
 #![expect(
-    clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
     reason = "PARAM_PANEL_W u32 → f32 cast on a fixed UI constant"
 )]
 
-use bmc_wasm_runtime::unified_fixture::{TimelineEvent, UnifiedEvent};
+use bmc_wasm_runtime::unified_fixture::UnifiedEvent;
 
-use super::recording::AUTO_CAPTURE_DELAY_MS;
+use super::recording::record_delivery;
+use super::ui_helpers::{combo_cell, key_label};
 use super::{PARAM_PANEL_W, TestbedApp};
 
 impl TestbedApp {
     /// Push a new params snapshot to every tile's runtime via `deliver_params_update`,
     /// update the local cache, and (when recording is active) append a `ParamDelivery`
-    /// event to the timeline plus a debounced auto-`Capture` event so each *settled*
-    /// param state yields one frame in the baseline.
+    /// event to the timeline plus a debounced auto-`Capture`.
+    /// See [`super::recording::record_delivery`] for the debounce semantics.
     ///
     /// A no-op when the new snapshot matches the cached one.
-    ///
-    /// # Debounce
-    ///
-    /// Slider drags and text typing produce one `ParamDelivery` per intermediate value
-    /// (dozens per second). A naive "Capture 500 ms after every delivery" rule would
-    /// mint hundreds of nearly-identical frames. Instead, when a new delivery arrives
-    /// and the most-recently-pushed Capture's `at_ms` is still in the future relative
-    /// to the new delivery's time, slide that Capture forward to `at_ms + 500` instead
-    /// of appending a new one. Net effect: one Capture per cluster of changes ≤500 ms
-    /// apart, fired 500 ms after the cluster's last delivery.
     fn apply_params_update(
         &mut self,
         new_params: std::collections::BTreeMap<
@@ -52,114 +42,120 @@ impl TestbedApp {
         self.params = new_params;
 
         if let Some(rec) = self.recording_mode.state.as_mut() {
-            let at_ms = rec.recording_start.elapsed().as_millis() as u64;
             let json_params: serde_json::Map<String, serde_json::Value> = self
                 .params
                 .iter()
                 .map(|(k, v)| (k.as_str().to_owned(), v.to_json_value()))
                 .collect();
-            rec.events.push(TimelineEvent {
-                at_ms,
-                event: UnifiedEvent::ParamDelivery {
-                    params: json_params,
-                },
+            record_delivery(rec, || UnifiedEvent::ParamDelivery {
+                params: json_params,
             });
-            if rec.auto_capture {
-                let capture_at = at_ms + AUTO_CAPTURE_DELAY_MS;
-                // Scan backwards for the most recent auto-Capture and slide it forward
-                // if it's still pending (its at_ms > current at_ms). Position-based
-                // lookup (e.g. `events[len-2]`) doesn't work — once we slide the prior
-                // Capture, subsequent deliveries get pushed past it and the position
-                // shifts. Match only `duration_ms: None, fps: None` (the auto-capture
-                // shape) so we never slide a gesture-path animation Capture, which has
-                // a concrete duration and shouldn't be debounced against params.
-                let pending = rec
-                    .events
-                    .iter_mut()
-                    .rev()
-                    .find(|e| {
-                        matches!(
-                            e.event,
-                            UnifiedEvent::Capture {
-                                duration_ms: None,
-                                fps: None
-                            }
-                        )
-                    })
-                    .filter(|e| e.at_ms > at_ms);
-                if let Some(prev_capture) = pending {
-                    prev_capture.at_ms = capture_at;
-                } else {
-                    rec.events.push(TimelineEvent {
-                        at_ms: capture_at,
-                        event: UnifiedEvent::Capture {
-                            duration_ms: None,
-                            fps: None,
-                        },
-                    });
-                }
-            }
         }
     }
 
-    /// Render the param-mutation form as a fixed right-side sidebar.
+    /// Render the unified right-side sidebar:
+    ///  - per-widget Params (when the manifest declares any) on top,
+    ///  - deck-wide System always below.
     ///
-    /// Only shown when the manifest declares any params;
     /// The window's outer width is extended by `PARAM_PANEL_W` at startup
     /// to host this panel without compressing the central tile area.
     ///
-    /// Each declared key gets a type-appropriate egui input (text / number / dropdown / checkbox / clear-to-null)
-    /// honouring manifest constraints (`enum_values`, `min` / `max` / `step`, `optional`).
-    ///
-    /// Two columns aligned by `egui::Grid` so the labels and controls stack cleanly regardless of key length.
-    pub(super) fn paint_params_panel(&mut self, root_ui: &mut egui::Ui) {
-        if self.manifest.params.is_empty() {
-            return;
-        }
-        // Take the current snapshot out so we can mutate while the egui closure borrows it,
-        // then put it back via `apply_params_update` which detects diffs and propagates.
-        let mut working = self.params.clone();
-        let manifest_params = self.manifest.params.clone();
-        let mut changed = false;
+    /// Both sections share a single vertical [`egui::ScrollArea`]
+    /// so long param/system lists scroll together rather than stealing
+    /// each other's height.
+    pub(super) fn paint_right_panel(&mut self, root_ui: &mut egui::Ui) {
         let style = root_ui.ctx().style();
+        let has_params = !self.manifest.params.is_empty();
+        // Take the current snapshots out so we can mutate while
+        // the egui closure borrows `self`, then put them back
+        // via `apply_params_update` / `apply_system_update`
+        // which detect diffs and propagate to every tile.
+        let mut working_params = self.params.clone();
+        let manifest_params = self.manifest.params.clone();
+        let mut working_system = self.system.clone();
+        let mut params_changed = false;
+        let mut system_changed = false;
 
-        egui::SidePanel::right("params_panel")
+        egui::SidePanel::right("right_panel")
             .resizable(false)
             .exact_width(PARAM_PANEL_W as f32)
-            .frame(egui::Frame::side_top_panel(&style).inner_margin(egui::Margin::same(8)))
+            .frame(egui::Frame::side_top_panel(&style).inner_margin(egui::Margin::ZERO))
             .show_inside(root_ui, |ui| {
-                ui.label(
-                    egui::RichText::new("Params")
-                        .color(egui::Color32::from_gray(160))
-                        .strong(),
-                );
-                ui.separator();
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |scroll| {
-                        egui::Grid::new("params_grid")
-                            .num_columns(2)
-                            .spacing([12.0, 4.0])
-                            .min_col_width(0.0)
-                            .show(scroll, |grid| {
-                                for (key, def) in &manifest_params {
-                                    let current = working.entry(key.clone()).or_insert_with(|| {
-                                        bmc_widget_manifest::ParamValue::from_param_kind_default(
-                                            &def.kind,
-                                        )
-                                    });
-                                    if paint_param_row(grid, key.as_str(), def, current) {
-                                        changed = true;
-                                    }
-                                }
+                        if has_params {
+                            section_header_bar(scroll, "Params", PARAMS_ACCENT);
+                            egui::Frame::NONE
+                                .inner_margin(egui::Margin::same(8))
+                                .show(scroll, |inner| {
+                                    egui::Grid::new("params_grid")
+                                        .num_columns(2)
+                                        .spacing([12.0, 4.0])
+                                        .min_col_width(0.0)
+                                        .show(inner, |grid| {
+                                            for (key, def) in &manifest_params {
+                                                let current = working_params
+                                                    .entry(key.clone())
+                                                    .or_insert_with(|| {
+                                                        bmc_widget_manifest::ParamValue::from_param_kind_default(
+                                                            &def.kind,
+                                                        )
+                                                    });
+                                                if paint_param_row(grid, key.as_str(), def, current) {
+                                                    params_changed = true;
+                                                }
+                                            }
+                                        });
+                                });
+                            scroll.add_space(12.0);
+                        }
+                        section_header_bar(scroll, "System", SYSTEM_ACCENT);
+                        egui::Frame::NONE
+                            .inner_margin(egui::Margin::same(8))
+                            .show(scroll, |inner| {
+                                system_changed =
+                                    Self::paint_system_section(inner, &mut working_system);
                             });
                     });
             });
 
-        if changed {
-            self.apply_params_update(working);
+        if params_changed {
+            self.apply_params_update(working_params);
+        }
+        if system_changed {
+            self.apply_system_update(working_system);
         }
     }
+}
+
+// TODO(BDK-476): replace with named palette references (`ORANGE_40` / `TEAL_40`)
+// once `Color` is extracted to a shared no_std crate that the testbed
+// (egui consumer) can depend on without dragging the host into the wasmi-wire protocol's dep tree.
+// The hex values below mirror those two palette swatches verbatim.
+const PARAMS_ACCENT: egui::Color32 = egui::Color32::from_rgb(0xFE, 0x84, 0x31);
+const SYSTEM_ACCENT: egui::Color32 = egui::Color32::from_rgb(0x00, 0xBA, 0xC5);
+
+/// Render a section header as a full-width horizontal accent banner with
+/// black text — no left stripe.
+///
+/// Painted directly via [`egui::Painter`] into a single allocated rect
+/// rather than via a nested `Frame` + `Layout`: the latter let the inner
+/// ui's min-size expand into the surrounding ScrollArea's full vertical,
+/// turning the banner into a panel-tall solid block.
+pub(super) fn section_header_bar(ui: &mut egui::Ui, text: &str, accent: egui::Color32) {
+    let width = ui.available_width();
+    let bar_height: f32 = 26.0;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, bar_height), egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 0.0, egui::Color32::BLACK);
+    painter.text(
+        rect.min + egui::vec2(10.0, bar_height / 2.0),
+        egui::Align2::LEFT_CENTER,
+        text,
+        egui::FontId::proportional(14.0),
+        accent,
+    );
 }
 
 // ── Param-mutation inputs ───────────────────────────────────────────
@@ -169,8 +165,9 @@ impl TestbedApp {
 ///
 /// Returns `true` when the operator changed the value this frame.
 ///
-/// Caller (`paint_params_panel`) wraps this in `egui::Grid::show` so the two columns
-/// stay aligned across rows regardless of key length or input width.
+/// Caller (`paint_params_panel`) wraps this in `egui::Grid::show`
+/// so the two columns stay aligned across rows regardless
+/// of key length or input width.
 fn paint_param_row(
     grid: &mut egui::Ui,
     key: &str,
@@ -180,15 +177,8 @@ fn paint_param_row(
     use bmc_widget_manifest::{ParamKind, ParamValue};
 
     let mut changed = false;
+    let label_resp = grid.add(key_label(key, 180));
 
-    // Column 1: monospace key label
-    grid.label(
-        egui::RichText::new(key)
-            .font(egui::FontId::monospace(11.0))
-            .color(egui::Color32::from_gray(180)),
-    );
-
-    // Column 2: optional toggle + typed input on one row
     grid.horizontal(|row| {
         if def.is_optional {
             let is_null = matches!(value, ParamValue::Null);
@@ -198,8 +188,9 @@ fn paint_param_row(
             if row.small_button(label).clicked() {
                 if is_null {
                     *value = ParamValue::from_param_kind_default(&def.kind);
-                    // If the default is also Null (optional-without-default), seed with a
-                    // type-appropriate zero so the input below has something to edit.
+                    // If the default is also Null (optional-without-default),
+                    // seed with a type-appropriate zero so the input below
+                    // has something to edit.
                     if matches!(value, ParamValue::Null) {
                         *value = match &def.kind {
                             ParamKind::String { .. } | ParamKind::Timezone { .. } => {
@@ -220,7 +211,7 @@ fn paint_param_row(
                 return;
             }
         }
-        changed |= paint_typed_input(row, key, &def.kind, value);
+        changed |= paint_typed_input(row, key, &def.kind, value, &label_resp);
     });
     grid.end_row();
     changed
@@ -266,70 +257,69 @@ fn paint_typed_input(
     key: &str,
     kind: &bmc_widget_manifest::ParamKind,
     value: &mut bmc_widget_manifest::ParamValue,
+    label_resp: &egui::Response,
 ) -> bool {
     use bmc_widget_manifest::{ParamKind, ParamValue};
 
     let row_h = ui.spacing().interact_size.y;
     let cell_w = ui.available_width();
     let cell = egui::vec2(cell_w, row_h);
+    let focus_on_label_click = |r: &egui::Response| {
+        if label_resp.clicked() {
+            r.request_focus();
+        }
+    };
     match (kind, value) {
         (ParamKind::String { enum_values, .. }, ParamValue::String(s))
             if !enum_values.is_empty() =>
         {
-            let mut changed = false;
-            ui.allocate_ui(cell, |slot| {
-                egui::ComboBox::from_id_salt(key)
-                    .selected_text(s.clone())
-                    .width(cell_w)
-                    .show_ui(slot, |menu| {
-                        for opt in enum_values {
-                            if menu.selectable_label(*s == opt.value, &opt.label).clicked() {
-                                s.clone_from(&opt.value);
-                                changed = true;
-                            }
-                        }
-                    });
-            });
-            changed
+            combo_cell(ui, key, cell_w, s.clone(), |menu| {
+                let mut changed = false;
+                for opt in enum_values {
+                    if menu.selectable_label(*s == opt.value, &opt.label).clicked() {
+                        s.clone_from(&opt.value);
+                        changed = true;
+                    }
+                }
+                changed
+            })
         }
         (ParamKind::String { .. } | ParamKind::Timezone { .. }, ParamValue::String(s)) => {
-            ui.add_sized(cell, egui::TextEdit::singleline(s)).changed()
+            let resp = ui.add_sized(cell, egui::TextEdit::singleline(s));
+            focus_on_label_click(&resp);
+            resp.changed()
         }
         (ParamKind::Integer { enum_values, .. }, ParamValue::Integer(n))
             if !enum_values.is_empty() =>
         {
-            let mut changed = false;
             let label = enum_values
                 .iter()
                 .find(|o| o.value == *n)
                 .map_or_else(|| n.to_string(), |o| o.label.clone());
-            ui.allocate_ui(cell, |slot| {
-                egui::ComboBox::from_id_salt(key)
-                    .selected_text(label)
-                    .width(cell_w)
-                    .show_ui(slot, |menu| {
-                        for opt in enum_values {
-                            if menu.selectable_label(*n == opt.value, &opt.label).clicked() {
-                                *n = opt.value;
-                                changed = true;
-                            }
-                        }
-                    });
-            });
-            changed
+            combo_cell(ui, key, cell_w, label, |menu| {
+                let mut changed = false;
+                for opt in enum_values {
+                    if menu.selectable_label(*n == opt.value, &opt.label).clicked() {
+                        *n = opt.value;
+                        changed = true;
+                    }
+                }
+                changed
+            })
         }
         (ParamKind::Integer { min, max, step, .. }, ParamValue::Integer(n)) => {
-            // Bounded ranges use a `Slider` with `trailing_fill` so the cell shows the
-            // value as a progress fill against `min..=max` (the GIMP-style look). Unbounded
-            // integers fall back to a `DragValue` since `Slider` requires a finite range.
+            // Bounded ranges use a `Slider` with `trailing_fill` so the cell shows
+            // the value as a progress fill against `min..=max` (the GIMP-style look).
+            // Unbounded integers fall back to a `DragValue` since `Slider` requires a finite range.
             if let (Some(lo), Some(hi)) = (min, max) {
                 stretched_slider(ui, cell_w, |sl| {
-                    sl.add(
+                    let resp = sl.add(
                         egui::Slider::new(n, *lo..=*hi)
                             .step_by(step.map_or(1.0, f64::from))
                             .trailing_fill(true),
-                    )
-                    .changed()
+                    );
+                    focus_on_label_click(&resp);
+                    resp.changed()
                 })
             } else {
                 let mut dv = egui::DragValue::new(n).speed(step.map_or(1.0, f64::from));
@@ -338,46 +328,44 @@ fn paint_typed_input(
                 } else if let Some(hi) = max {
                     dv = dv.range(i32::MIN..=*hi);
                 }
-                ui.add_sized(cell, dv).changed()
+                let resp = ui.add_sized(cell, dv);
+                focus_on_label_click(&resp);
+                resp.changed()
             }
         }
         (ParamKind::Double { enum_values, .. }, ParamValue::Double(f))
             if !enum_values.is_empty() =>
         {
-            let mut changed = false;
             let label = enum_values
                 .iter()
                 .find(|o| (o.value - *f).abs() < f64::EPSILON)
                 .map_or_else(|| format!("{f}"), |o| o.label.clone());
-            ui.allocate_ui(cell, |slot| {
-                egui::ComboBox::from_id_salt(key)
-                    .selected_text(label)
-                    .width(cell_w)
-                    .show_ui(slot, |menu| {
-                        for opt in enum_values {
-                            if menu
-                                .selectable_label((opt.value - *f).abs() < f64::EPSILON, &opt.label)
-                                .clicked()
-                            {
-                                *f = opt.value;
-                                changed = true;
-                            }
-                        }
-                    });
-            });
-            changed
+            combo_cell(ui, key, cell_w, label, |menu| {
+                let mut changed = false;
+                for opt in enum_values {
+                    if menu
+                        .selectable_label((opt.value - *f).abs() < f64::EPSILON, &opt.label)
+                        .clicked()
+                    {
+                        *f = opt.value;
+                        changed = true;
+                    }
+                }
+                changed
+            })
         }
         (ParamKind::Double { min, max, step, .. }, ParamValue::Double(f)) => {
             // Same dispatch as Integer: bounded ranges get the filled-slider treatment,
             // unbounded fall back to DragValue.
             if let (Some(lo), Some(hi)) = (min, max) {
                 stretched_slider(ui, cell_w, |sl| {
-                    sl.add(
+                    let resp = sl.add(
                         egui::Slider::new(f, *lo..=*hi)
                             .step_by(step.unwrap_or(0.0))
                             .trailing_fill(true),
-                    )
-                    .changed()
+                    );
+                    focus_on_label_click(&resp);
+                    resp.changed()
                 })
             } else {
                 let mut dv = egui::DragValue::new(f).speed(step.unwrap_or(0.1));
@@ -386,15 +374,25 @@ fn paint_typed_input(
                 } else if let Some(hi) = max {
                     dv = dv.range(f64::NEG_INFINITY..=*hi);
                 }
-                ui.add_sized(cell, dv).changed()
+                let resp = ui.add_sized(cell, dv);
+                focus_on_label_click(&resp);
+                resp.changed()
             }
         }
-        // Checkbox stays at its natural icon size — stretching it would make the entire row
-        // a giant click target with the box ghosted in the corner.
-        (ParamKind::Boolean { .. }, ParamValue::Boolean(b)) => ui.checkbox(b, "").changed(),
-        // Type mismatch (value's variant doesn't match kind) — shouldn't happen with a
-        // well-formed manifest + default-init path, but render a read-only label rather than
-        // crashing if it does.
+        // Checkbox stays at its natural icon size — stretching it
+        // would make the entire row a giant click target with
+        // the box ghosted in the corner.
+        (ParamKind::Boolean { .. }, ParamValue::Boolean(b)) => {
+            let cb_changed = ui.checkbox(b, "").changed();
+            let label_clicked = label_resp.clicked();
+            if label_clicked {
+                *b = !*b;
+            }
+            cb_changed || label_clicked
+        }
+        // Type mismatch (value's variant doesn't match kind)
+        // — shouldn't happen with a well-formed manifest + default-init path,
+        // but render a read-only label rather than crashing if it does.
         _ => {
             ui.label(
                 egui::RichText::new("(type mismatch)")
