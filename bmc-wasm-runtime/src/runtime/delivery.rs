@@ -9,6 +9,8 @@ use bmc_wasm_protocol::{
     UdpBroadcastId, WebsocketId,
 };
 
+#[cfg(feature = "testing")]
+use crate::host_api::CapturedMdnsEvent;
 use crate::host_api::{
     CompletedFetch, FixtureEvent, FixtureEventKind, HttpInboundRequest, MdnsEvent, SocketEvent,
     SsdpEvent, UdpBroadcastEvent, WsEvent,
@@ -471,6 +473,22 @@ impl WasmWidgetRuntime {
 
         if events.is_empty() {
             return false;
+        }
+
+        #[cfg(feature = "testing")]
+        {
+            let state = self.store.data_mut();
+            for (_, event) in &events {
+                if let MdnsEvent::Found(json) = event {
+                    let fullname = serde_json::from_str::<serde_json::Value>(json)
+                        .ok()
+                        .and_then(|v| v["name"].as_str().map(str::to_owned))
+                        .unwrap_or_default();
+                    state
+                        .mdns_captured_events
+                        .push(CapturedMdnsEvent { fullname });
+                }
+            }
         }
 
         let on_mdns_event = self

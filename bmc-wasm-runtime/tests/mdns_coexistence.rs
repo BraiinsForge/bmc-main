@@ -1,0 +1,77 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+#![cfg(all(target_os = "linux", feature = "testing"))]
+
+use std::time::{Duration, Instant};
+
+use bmc_wasm_runtime::{RuntimeConfig, WasmWidgetRuntime};
+
+mod common;
+use common::headless_egl;
+
+fn probe_wat() -> &'static str {
+    r#"
+    (module
+      (memory (export "memory") 1)
+      (func (export "__bmc_sdk_version") (result i64)
+        i64.const 65536)
+      (func (export "render") (param i32)))
+    "#
+}
+
+#[test]
+fn two_runtimes_one_process_see_each_others_mdns_announcements() {
+    let gl = headless_egl::try_init(256, 256).expect(
+        "BUG: headless EGL initialization required to run this test; \
+                 fail loud rather than silent-pass on environments lacking EGL",
+    );
+    let _force_use = (&gl.display, gl.fbo_id, gl.proc_address());
+    let wasm = wat::parse_str(probe_wat()).expect("BUG: probe WAT must parse");
+
+    let mut a = WasmWidgetRuntime::new(&wasm, 256, 256, RuntimeConfig::default())
+        .expect("BUG: runtime A must construct");
+    let mut b = WasmWidgetRuntime::new(&wasm, 256, 256, RuntimeConfig::default())
+        .expect("BUG: runtime B must construct");
+
+    // Start browse + registration through the runtime path, not by talking to mdns-sd directly.
+    a.test_start_mdns_browse("_bdk469-test._tcp.local.");
+    b.test_start_mdns_browse("_bdk469-test._tcp.local.");
+    a.test_register_mdns(
+        "_bdk469-test._tcp.local.",
+        "instance-a",
+        "host-a.local.",
+        "127.0.0.1",
+        12001,
+    );
+    b.test_register_mdns(
+        "_bdk469-test._tcp.local.",
+        "instance-b",
+        "host-b.local.",
+        "127.0.0.1",
+        12002,
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut saw_b_on_a = false;
+    let mut saw_a_on_b = false;
+    while Instant::now() < deadline && (!saw_b_on_a || !saw_a_on_b) {
+        a.poll_deliveries();
+        b.poll_deliveries();
+
+        for event in a.test_take_mdns_events() {
+            if event.fullname.contains("instance-b") {
+                saw_b_on_a = true;
+            }
+        }
+        for event in b.test_take_mdns_events() {
+            if event.fullname.contains("instance-a") {
+                saw_a_on_b = true;
+            }
+        }
+
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    assert!(saw_b_on_a, "runtime A did not receive instance-b within 2s");
+    assert!(saw_a_on_b, "runtime B did not receive instance-a within 2s");
+}
