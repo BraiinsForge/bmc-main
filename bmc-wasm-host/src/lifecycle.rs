@@ -64,6 +64,26 @@ pub struct SlotApplyCtx<'a> {
     pub height: u32,
 }
 
+impl LifecycleEgl for bmc_widget::egl::EglContext {
+    fn as_egl_context(&self) -> &Self {
+        self
+    }
+}
+
+impl LifecycleSurface for bmc_widget::surface::DeckWidgetSurfaceClient {
+    fn as_deck_widget_surface(&self) -> &Self {
+        self
+    }
+
+    fn mint_wl_buffer(
+        &self,
+        dmabuf: &bmc_widget::egl::DmaBufInfo,
+    ) -> Result<wayland_client::protocol::wl_buffer::WlBuffer, String> {
+        self.mint_wl_buffer_via_dmabuf(dmabuf)
+            .map_err(|e| format!("{e:?}"))
+    }
+}
+
 impl LifecycleStateMachine {
     #[must_use]
     pub fn new() -> Self {

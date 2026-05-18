@@ -223,6 +223,126 @@ impl fmt::Debug for DeckWidgetSurfaceClient {
 }
 
 impl DeckWidgetSurfaceClient {
+    /// Connect to the Wayland display using an already-open file descriptor.
+    ///
+    /// Equivalent to [`Self::connect`] but takes an `OwnedFd` pointing at an
+    /// open Wayland socket instead of reading `WAYLAND_DISPLAY` from the
+    /// environment. Used by the multi-widget host to give each slot its own
+    /// dedicated Wayland connection over a pre-created socket pair.
+    pub fn connect_with_fd(wayland_fd: std::os::fd::OwnedFd) -> Result<(Self, InitialState)> {
+        use std::os::unix::net::UnixStream;
+        let stream = UnixStream::from(wayland_fd);
+        let backend = wayland_backend::client::Backend::connect(stream)
+            .map_err(|e| anyhow::anyhow!("wayland_backend::Backend::connect: {e}"))?;
+        let conn = Connection::from_backend(backend);
+
+        let mut queue = conn.new_event_queue();
+        let qh = queue.handle();
+
+        let display = conn.display();
+        display.get_registry(&qh, ());
+
+        let mut state = DeckWidgetSurfaceState {
+            running: true,
+            width: 0,
+            height: 0,
+            needs_render: false,
+            frame_count: 0,
+            compositor: None,
+            widget_manager: None,
+            linux_dmabuf: None,
+            seat: None,
+            touch: None,
+            surface: None,
+            widget_surface: None,
+            configure_done: false,
+            pending_size: None,
+            pending_params: serde_json::Map::new(),
+            pending_initial_settings: Vec::new(),
+            pending_events: Vec::new(),
+        };
+
+        queue
+            .roundtrip(&mut state)
+            .context("Failed to roundtrip for globals")?;
+
+        let compositor = state
+            .compositor
+            .as_ref()
+            .context("wl_compositor not available")?;
+        let widget_manager = state
+            .widget_manager
+            .as_ref()
+            .context("deck_widget_manager_v1 not available")?;
+        anyhow::ensure!(
+            state.linux_dmabuf.is_some(),
+            "zwp_linux_dmabuf_v1 not available"
+        );
+
+        let surface = compositor.create_surface(&qh, ());
+        let widget_surface = widget_manager.get_widget_surface(&surface, &qh, ());
+
+        surface.commit();
+
+        state.surface = Some(surface);
+        state.widget_surface = Some(widget_surface);
+
+        let deadline = Instant::now() + CONFIGURE_TIMEOUT;
+        while !state.configure_done {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let remaining_ms = i32::try_from(remaining.as_millis()).unwrap_or(i32::MAX);
+            match poll_dispatch(&conn, &mut queue, &mut state, remaining_ms)
+                .context("Wayland dispatch while awaiting configure_done")?
+            {
+                PollOutcome::Events => {}
+                PollOutcome::Timeout => anyhow::bail!(
+                    "timed out after {:?} waiting for configure_done",
+                    CONFIGURE_TIMEOUT
+                ),
+            }
+        }
+
+        let (size, width, height) = state
+            .pending_size
+            .context("configure_done without prior configure event")?;
+        state.width = width;
+        state.height = height;
+
+        let initial = InitialState {
+            size,
+            width,
+            height,
+            params: std::mem::take(&mut state.pending_params),
+            settings: std::mem::take(&mut state.pending_initial_settings),
+        };
+
+        tracing::info!(
+            "Deck widget surface ready (fd): {}x{} size={:?} params={} settings={}",
+            width,
+            height,
+            size,
+            initial.params.len(),
+            initial.settings.len(),
+        );
+
+        Ok((
+            Self {
+                conn,
+                queue,
+                state,
+                cached_buffers: Vec::new(),
+            },
+            initial,
+        ))
+    }
+
+    /// Returns the file descriptor that the Wayland event queue polls on.
+    #[must_use]
+    pub fn fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        use std::os::unix::io::AsFd;
+        self.conn.as_fd()
+    }
+
     /// Connect to the Wayland display, create a `deck_widget_v1` surface,
     /// and block until the compositor has finished emitting its initial
     /// configure batch.
@@ -405,6 +525,42 @@ impl DeckWidgetSurfaceClient {
     /// harmless and ignored.
     pub fn invalidate_cached_buffers(&mut self) {
         invalidate_cached_wl_buffers(&mut self.cached_buffers);
+    }
+
+    pub fn submit_buffer_with_wl_buffer(
+        &self,
+        info: &DmaBufInfo,
+        buffer: &wl_buffer::WlBuffer,
+        request_frame: bool,
+    ) -> Result<()> {
+        self.submit_wl_buffer(buffer, info, request_frame)
+    }
+
+    pub fn flush(&self) -> Result<()> {
+        self.conn.flush().context("Wayland flush failed")
+    }
+
+    pub fn mint_wl_buffer_via_dmabuf(&self, info: &DmaBufInfo) -> Result<wl_buffer::WlBuffer> {
+        let linux_dmabuf = self
+            .state
+            .linux_dmabuf
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("linux_dmabuf not bound"))?;
+        Ok(crate::surface::common::create_buffer_from_dmabuf(
+            linux_dmabuf,
+            info,
+            &self.queue.handle(),
+        ))
+    }
+
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.state.width
+    }
+
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        self.state.height
     }
 
     /// Request the first frame callback (call once after setup, before the
