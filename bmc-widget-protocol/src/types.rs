@@ -3,6 +3,7 @@
 use bmc_shared_time::time::{DateFormat, TimeSystem, WeekDay};
 use bmc_shared_utils::number_format::NumberFormat;
 use bmc_shared_utils::temperature::TemperatureUnit;
+use bmc_shared_utils::unit_system::UnitSystem;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,7 +39,7 @@ pub struct WidgetInitialConfig {
     pub params: serde_json::Map<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Localization {
     pub date_format: DateFormat,
@@ -46,6 +47,23 @@ pub struct Localization {
     pub number_format: NumberFormat,
     pub temperature_unit: TemperatureUnit,
     pub first_day_of_week: WeekDay,
+    pub unit_system: UnitSystem,
+}
+
+/// Resolved soonest-to-fire alarm derived host-side
+/// from the operator's alarm list.
+///
+/// Distinct from the alarms-list storage shape itself
+/// — widgets only see the next-to-fire entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NextAlarm {
+    /// UTC milliseconds since the Unix epoch at which the alarm
+    /// fires next. Timezone-invariant; widgets pair this with the
+    /// `Timezone` setting for local-time rendering.
+    pub fire_at_utc_ms: i64,
+    /// Operator-typed display name.
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -75,19 +93,22 @@ pub enum SettingUpdate {
     NumberFormat(NumberFormat),
     TemperatureUnit(TemperatureUnit),
     FirstDayOfWeek(WeekDay),
+    UnitSystem(UnitSystem),
+    NextAlarm(Option<NextAlarm>),
 }
 
 impl SettingUpdate {
-    /// Expand a full `Localization` struct into the 5 per-field
+    /// Expand a full `Localization` struct into the per-field
     /// `SettingUpdate` values that should be broadcast together.
     #[must_use]
-    pub fn from_localization(loc: &Localization) -> [SettingUpdate; 5] {
+    pub fn from_localization(loc: &Localization) -> [SettingUpdate; 6] {
         [
             SettingUpdate::DateFormat(loc.date_format),
             SettingUpdate::TimeFormat(loc.time_format),
             SettingUpdate::NumberFormat(loc.number_format),
             SettingUpdate::TemperatureUnit(loc.temperature_unit),
             SettingUpdate::FirstDayOfWeek(loc.first_day_of_week),
+            SettingUpdate::UnitSystem(loc.unit_system),
         ]
     }
 }
@@ -197,13 +218,15 @@ mod tests {
             number_format: NumberFormat::SpaceGroupCommaDecimal,
             temperature_unit: TemperatureUnit::Celsius,
             first_day_of_week: WeekDay::Monday,
+            unit_system: UnitSystem::Metric,
         };
-        let json = serde_json::to_value(&loc).expect("BUG: serialization should not fail");
+        let json = serde_json::to_value(loc).expect("BUG: serialization should not fail");
         assert!(json["dateFormat"].is_string());
         assert!(json["timeFormat"].is_string());
         assert!(json["numberFormat"].is_string());
         assert!(json["temperatureUnit"].is_string());
         assert!(json["firstDayOfWeek"].is_string());
+        assert!(json["unitSystem"].is_string());
     }
 
     #[test]

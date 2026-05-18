@@ -185,6 +185,32 @@
       <arg name="value" type="uint" enum="weekday"/>
     </event>
 
+    <event name="unit_system">
+      <arg name="value" type="uint" enum="unit_system"/>
+    </event>
+
+    <event name="next_alarm">
+      <description summary="resolved next-to-fire alarm">
+        Soonest upcoming alarm derived host-side from the operator's alarm
+        list. Sent on connect and whenever the next-to-fire entry changes
+        (alarm add/edit/delete/fire/snooze, or timezone change).
+
+        `fire_at_utc_ms_hi` and `fire_at_utc_ms_lo` carry the high and low
+        32 bits of a signed 64-bit milliseconds-since-UNIX-epoch timestamp,
+        matching the hi/lo split pattern from wp_presentation_feedback. Both
+        args are zero when `present` is `absent`.
+      </description>
+      <arg name="present" type="uint" enum="presence"/>
+      <arg name="fire_at_utc_ms_hi" type="int"
+           summary="high 32 bits of the signed 64-bit ms timestamp"/>
+      <arg name="fire_at_utc_ms_lo" type="uint"
+           summary="low 32 bits of the signed 64-bit ms timestamp"/>
+      <arg name="name" type="string"
+           summary="operator-typed display name (max 256 UTF-8 bytes;
+                    compositor truncates over-long inputs with a trailing
+                    '…' on a char boundary). Empty when absent."/>
+    </event>
+
     <event name="lifecycle">
       <description summary="widget lifecycle state changed">
         Emitted whenever the widget's lifecycle state changes. The initial
@@ -299,6 +325,16 @@
       <entry name="friday" value="5"/>
       <entry name="saturday" value="6"/>
       <entry name="sunday" value="7"/>
+    </enum>
+
+    <enum name="unit_system">
+      <entry name="metric" value="0"/>
+      <entry name="imperial" value="1"/>
+    </enum>
+
+    <enum name="presence">
+      <entry name="absent" value="0"/>
+      <entry name="present" value="1"/>
     </enum>
   </interface>
 </protocol>

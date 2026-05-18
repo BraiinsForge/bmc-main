@@ -204,6 +204,7 @@ where
                 localization_rx,
                 system_manager.subscribe_night_mode(),
                 manager.watch_timezone_updates(),
+                alarm_controller.subscribe_next_alarm(),
             );
         }
 
@@ -212,12 +213,14 @@ where
             let localization = config_guard.localization_config();
             let timezone = manager.timezone();
             let night_mode_active = *system_manager.subscribe_night_mode().borrow();
+            let next_alarm = alarm_controller.subscribe_next_alarm().borrow().clone();
             widget_coordinator
                 .spawn_initial_widgets(
                     &config_guard.scenes,
                     &localization,
                     &timezone,
                     night_mode_active,
+                    next_alarm,
                 )
                 .await;
         }

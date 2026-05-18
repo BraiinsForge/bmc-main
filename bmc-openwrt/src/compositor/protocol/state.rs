@@ -14,8 +14,8 @@ use std::collections::HashMap;
 
 use super::conversions::{
     date_format_to_protocol, night_mode_to_protocol, number_format_to_protocol,
-    size_type_to_protocol, temperature_unit_to_protocol, time_format_to_protocol,
-    weekday_to_protocol,
+    presence_to_protocol, size_type_to_protocol, temperature_unit_to_protocol,
+    time_format_to_protocol, unit_system_to_protocol, weekday_to_protocol,
 };
 use crate::compositor::widget_tracker::LifecycleState;
 
@@ -416,7 +416,59 @@ fn emit_setting(surface: &DeckWidgetSurfaceV1, setting: &SettingUpdate) {
             surface.temperature_unit(temperature_unit_to_protocol(*u));
         }
         SettingUpdate::FirstDayOfWeek(w) => surface.first_day_of_week(weekday_to_protocol(*w)),
+        SettingUpdate::UnitSystem(u) => surface.unit_system(unit_system_to_protocol(*u)),
+        SettingUpdate::NextAlarm(next) => {
+            // wayland has no native 64-bit integer; split fire_at_utc_ms
+            // into high/low halves the same way wp_presentation_feedback
+            // splits tv_sec into tv_sec_hi/tv_sec_lo.
+            let (present, fire_at_utc_ms_hi, fire_at_utc_ms_lo, name) = match next {
+                Some(na) => {
+                    // Decompose i64 into i32 hi + u32 lo via little-endian
+                    // bytes — sign-loss-free, no `as` casts required.
+                    let bytes = na.fire_at_utc_ms.to_le_bytes();
+                    let lo = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                    let hi = i32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+                    (true, hi, lo, cap_alarm_name(&na.name))
+                }
+                None => (false, 0, 0, String::new()),
+            };
+            surface.next_alarm(
+                presence_to_protocol(present),
+                fire_at_utc_ms_hi,
+                fire_at_utc_ms_lo,
+                name,
+            );
+        }
     }
+}
+
+/// Cap on `next_alarm.name` bytes. Belt-and-braces
+/// — operator input is also capped at the gRPC boundary,
+/// but on-disk config can bypass that path.
+const NEXT_ALARM_NAME_MAX_BYTES: usize = 256;
+
+const NEXT_ALARM_NAME_ELLIPSIS: &str = "…";
+
+/// Truncate `name` to fit `NEXT_ALARM_NAME_MAX_BYTES` with a trailing
+/// ellipsis on a UTF-8 char boundary, or return verbatim if it fits.
+fn cap_alarm_name(name: &str) -> String {
+    if name.len() <= NEXT_ALARM_NAME_MAX_BYTES {
+        return name.to_owned();
+    }
+    let budget = NEXT_ALARM_NAME_MAX_BYTES - NEXT_ALARM_NAME_ELLIPSIS.len();
+    let mut out = String::with_capacity(NEXT_ALARM_NAME_MAX_BYTES);
+    let mut used = 0;
+    // Char walk; `&str` indexing is forbidden by `string_slice` lint.
+    for c in name.chars() {
+        let c_len = c.len_utf8();
+        if used + c_len > budget {
+            break;
+        }
+        out.push(c);
+        used += c_len;
+    }
+    out.push_str(NEXT_ALARM_NAME_ELLIPSIS);
+    out
 }
 
 #[cfg(test)]
@@ -507,5 +559,49 @@ mod tests {
         assert_eq!(pid, None);
         assert!(state.drain_disconnected().is_empty());
         assert!(state.widgets.contains_key("alpha"));
+    }
+
+    #[test]
+    fn cap_alarm_name_passes_through_when_within_budget() {
+        let name = "Wake up";
+        assert_eq!(cap_alarm_name(name), name);
+    }
+
+    #[test]
+    fn cap_alarm_name_passes_through_exactly_at_budget() {
+        let name = "a".repeat(NEXT_ALARM_NAME_MAX_BYTES);
+        assert_eq!(cap_alarm_name(&name), name);
+    }
+
+    #[test]
+    fn cap_alarm_name_truncates_with_ellipsis_when_over_budget() {
+        let name = "a".repeat(NEXT_ALARM_NAME_MAX_BYTES + 50);
+        let capped = cap_alarm_name(&name);
+        assert!(
+            capped.len() <= NEXT_ALARM_NAME_MAX_BYTES,
+            "capped output must fit in {NEXT_ALARM_NAME_MAX_BYTES} bytes; got {}",
+            capped.len()
+        );
+        assert!(
+            capped.ends_with(NEXT_ALARM_NAME_ELLIPSIS),
+            "truncated output must end with ellipsis"
+        );
+    }
+
+    #[test]
+    fn cap_alarm_name_truncates_on_utf8_char_boundary() {
+        // 254 ASCII bytes + 'é' (2 bytes) + 'é' (2 bytes) = 258 bytes.
+        // Raw byte cut at 253 (budget = 256 - 3 ellipsis bytes) would
+        // land in the middle of the first multibyte 'é'; the helper
+        // must walk back to the boundary at 254.
+        let mut name = "a".repeat(254);
+        name.push('é');
+        name.push('é');
+        let capped = cap_alarm_name(&name);
+        let head = capped
+            .strip_suffix(NEXT_ALARM_NAME_ELLIPSIS)
+            .expect("BUG: truncated output must end with ellipsis");
+        assert!(head.chars().all(|c| c == 'a'));
+        assert!(capped.len() <= NEXT_ALARM_NAME_MAX_BYTES);
     }
 }

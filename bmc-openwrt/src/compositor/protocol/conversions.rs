@@ -4,7 +4,7 @@
 
 use bmc_widget_protocol::server::deck_widget_surface_v1;
 use bmc_widget_protocol::{
-    DateFormat, NumberFormat, SizeType, TemperatureUnit, TimeSystem, WeekDay,
+    DateFormat, NumberFormat, SizeType, TemperatureUnit, TimeSystem, UnitSystem, WeekDay,
 };
 
 pub fn size_type_to_protocol(s: SizeType) -> deck_widget_surface_v1::SizeType {
@@ -73,6 +73,19 @@ pub fn weekday_to_protocol(w: WeekDay) -> deck_widget_surface_v1::Weekday {
 pub fn night_mode_to_protocol(enabled: bool) -> deck_widget_surface_v1::NightModeState {
     use deck_widget_surface_v1::NightModeState as P;
     if enabled { P::On } else { P::Off }
+}
+
+pub fn unit_system_to_protocol(u: UnitSystem) -> deck_widget_surface_v1::UnitSystem {
+    use deck_widget_surface_v1::UnitSystem as P;
+    match u {
+        UnitSystem::Metric => P::Metric,
+        UnitSystem::Imperial => P::Imperial,
+    }
+}
+
+pub fn presence_to_protocol(present: bool) -> deck_widget_surface_v1::Presence {
+    use deck_widget_surface_v1::Presence as P;
+    if present { P::Present } else { P::Absent }
 }
 
 pub fn led_effect_from_protocol(

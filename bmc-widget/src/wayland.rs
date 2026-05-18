@@ -12,7 +12,7 @@
 //! `wl_seat`/`wl_touch`, and DMA-BUF buffer management.
 
 use bmc_widget_protocol::{
-    ActionPayload, SettingUpdate, SizeType,
+    ActionPayload, NextAlarm, SettingUpdate, SizeType,
     client::{
         deck_widget_manager_v1::DeckWidgetManagerV1, deck_widget_surface_v1::DeckWidgetSurfaceV1,
     },
@@ -383,7 +383,9 @@ fn dispatch_event<H: WidgetEventHandler>(handler: &mut H, event: WidgetEvent) {
 pub(crate) mod from_protocol {
     use bmc_widget_protocol::client::deck_widget_surface_v1 as p;
     use bmc_widget_protocol::wayland_client::WEnum;
-    use bmc_widget_protocol::{DateFormat, NumberFormat, TemperatureUnit, TimeSystem, WeekDay};
+    use bmc_widget_protocol::{
+        DateFormat, NumberFormat, TemperatureUnit, TimeSystem, UnitSystem, WeekDay,
+    };
 
     pub fn night_mode(w: WEnum<p::NightModeState>) -> Option<bool> {
         match w.into_result().ok()? {
@@ -435,6 +437,26 @@ pub(crate) mod from_protocol {
 
     pub fn weekday(w: WEnum<p::Weekday>) -> Option<WeekDay> {
         w.into_result().ok().map(WeekDay::from)
+    }
+
+    pub fn unit_system(w: WEnum<p::UnitSystem>) -> Option<UnitSystem> {
+        match w.into_result().ok()? {
+            p::UnitSystem::Metric => Some(UnitSystem::Metric),
+            p::UnitSystem::Imperial => Some(UnitSystem::Imperial),
+            _ => None,
+        }
+    }
+
+    /// `present` discriminator for the `next_alarm` event.
+    /// Returns `true` for `present`, `false` for `absent`;
+    /// unknown variants resolve to `None` so the caller
+    /// can drop the event.
+    pub fn presence(w: WEnum<p::Presence>) -> Option<bool> {
+        match w.into_result().ok()? {
+            p::Presence::Absent => Some(false),
+            p::Presence::Present => Some(true),
+            _ => None,
+        }
     }
 
     pub fn lifecycle_state(w: WEnum<p::LifecycleState>) -> Option<p::LifecycleState> {
@@ -571,6 +593,33 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
             Event::FirstDayOfWeek { value } => {
                 if let Some(v) = from_protocol::weekday(value) {
                     push_setting(state, SettingUpdate::FirstDayOfWeek(v));
+                }
+            }
+            Event::UnitSystem { value } => {
+                if let Some(v) = from_protocol::unit_system(value) {
+                    push_setting(state, SettingUpdate::UnitSystem(v));
+                }
+            }
+            Event::NextAlarm {
+                present,
+                fire_at_utc_ms_hi,
+                fire_at_utc_ms_lo,
+                name,
+            } => {
+                if let Some(present) = from_protocol::presence(present) {
+                    let next = if present {
+                        // i64 reassembly from the wayland-protocol hi/lo split
+                        // (presentation-time `tv_sec_hi`/`tv_sec_lo` pattern).
+                        let fire_at_utc_ms =
+                            (i64::from(fire_at_utc_ms_hi) << 32) | i64::from(fire_at_utc_ms_lo);
+                        Some(NextAlarm {
+                            fire_at_utc_ms,
+                            name,
+                        })
+                    } else {
+                        None
+                    };
+                    push_setting(state, SettingUpdate::NextAlarm(next));
                 }
             }
             Event::Shutdown => {

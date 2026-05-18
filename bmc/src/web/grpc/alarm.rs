@@ -98,6 +98,8 @@ impl GrpcAlarmService for AlarmService {
 
         let mut all_field_violations = FieldViolations::new();
 
+        all_field_violations.extend(validate_alarm_name("name", &name));
+
         let (time, violations) = parse_time("time", &time);
         all_field_violations.extend(violations);
 
@@ -144,6 +146,8 @@ impl GrpcAlarmService for AlarmService {
         } = request;
 
         let mut all_field_violations = FieldViolations::new();
+
+        all_field_violations.extend(validate_alarm_name("name", &name));
 
         let (id, violations) = parse_alarm_id("id", &id);
         all_field_violations.extend(violations);
@@ -324,6 +328,33 @@ fn parse_alarm_id(field: &str, input: &str) -> ParseOutput<AlarmId> {
     });
 
     (maybe_id, field_violations)
+}
+
+/// Maximum operator-typed alarm name length, in UTF-8 bytes.
+///
+/// Matched verbatim by the wayland `next_alarm.name` arg's documented
+/// cap (`bmc-widget-protocol/protocol/deck-widget-v1.xml`) and enforced
+/// belt-and-braces in the compositor's setting-broadcast relay
+/// (`bmc-openwrt/src/compositor/protocol/state.rs`).
+///
+/// Validating here as well lets the gRPC layer reject oversize input
+/// at the operator boundary with a clean `InvalidArgument` rather
+/// than silently truncating it downstream.
+const ALARM_NAME_MAX_BYTES: usize = 256;
+
+fn validate_alarm_name(field: &str, value: &str) -> FieldViolations {
+    let mut field_violations = FieldViolations::new();
+    if value.len() > ALARM_NAME_MAX_BYTES {
+        field_violations.push(
+            field,
+            format!(
+                "Alarm name must be at most {ALARM_NAME_MAX_BYTES} bytes \
+                 (got {} bytes)",
+                value.len()
+            ),
+        );
+    }
+    field_violations
 }
 
 fn map_weekday_vec(value: Vec<i32>) -> HashSet<WeekDay> {

@@ -106,7 +106,9 @@ fn build_initial_config(initial: &ProtocolInitialState) -> Result<InitialConfig,
             SettingUpdate::NightMode(_)
             | SettingUpdate::NumberFormat(_)
             | SettingUpdate::TemperatureUnit(_)
-            | SettingUpdate::FirstDayOfWeek(_) => {}
+            | SettingUpdate::FirstDayOfWeek(_)
+            | SettingUpdate::UnitSystem(_)
+            | SettingUpdate::NextAlarm(_) => {}
         }
     }
 
@@ -161,7 +163,9 @@ impl WidgetEventHandler for EventHandler {
             SettingUpdate::NightMode(_)
             | SettingUpdate::NumberFormat(_)
             | SettingUpdate::TemperatureUnit(_)
-            | SettingUpdate::FirstDayOfWeek(_) => {
+            | SettingUpdate::FirstDayOfWeek(_)
+            | SettingUpdate::UnitSystem(_)
+            | SettingUpdate::NextAlarm(_) => {
                 // Clock widget doesn't use these settings.
             }
         }

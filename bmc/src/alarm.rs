@@ -17,6 +17,7 @@ use bmc_scheduler::{
 };
 use bmc_shared_time::time::Timezone;
 use bmc_shared_time::time::WeekDay;
+use bmc_widget_protocol::NextAlarm;
 use chrono::{NaiveTime, Timelike};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -31,7 +32,7 @@ use tokio::{
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{error, info, trace, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -332,15 +333,35 @@ impl CurrentRunningAlarm {
     }
 }
 
+/// Per-scheduled-alarm bookkeeping: cron job id + display name.
+#[derive(Clone, Debug)]
+struct ScheduledAlarm {
+    job_id: Uuid,
+    name: String,
+}
+
+/// Outstanding snooze waiting to re-fire. `cancel`
+/// halts the spawned sleep task on stop / removal
+/// so the alarm doesn't re-fire after the user stops it.
+#[derive(Debug)]
+struct PendingSnooze {
+    cancel: CancellationToken,
+    fire_at_utc_ms: i64,
+    name: String,
+}
+
 #[derive(Clone, Debug)]
 struct AlarmScheduler {
     scheduler: JobScheduler,
-    active_alarms: Arc<Mutex<HashMap<AlarmId, Uuid>>>,
+    active_alarms: Arc<Mutex<HashMap<AlarmId, ScheduledAlarm>>>,
     alarm_bus: AlarmBus,
     timezone_receiver: tokio::sync::watch::Receiver<Timezone>,
     alarm_sender: mpsc::Sender<ActiveAlarm>,
     current_alarm: Arc<Mutex<Option<CurrentRunningAlarm>>>,
     sound_controller: SoundController,
+    next_alarm_sender: tokio::sync::watch::Sender<Option<NextAlarm>>,
+    /// Snoozes that haven't fired yet, keyed by alarm id.
+    pending_snoozes: Arc<Mutex<HashMap<AlarmId, PendingSnooze>>>,
 }
 
 impl AlarmScheduler {
@@ -354,6 +375,7 @@ impl AlarmScheduler {
         sound_controller: SoundController,
     ) -> Self {
         let (alarm_sender, alarm_receiver) = mpsc::channel(1);
+        let (next_alarm_sender, _) = tokio::sync::watch::channel(None);
 
         let this = Self {
             scheduler,
@@ -363,6 +385,8 @@ impl AlarmScheduler {
             alarm_sender,
             current_alarm: Arc::default(),
             sound_controller,
+            next_alarm_sender,
+            pending_snoozes: Arc::default(),
         };
 
         this.spawn_timezone_listener();
@@ -400,7 +424,8 @@ impl AlarmScheduler {
                         "Starting alarm"
                     );
 
-                    //NOTE: Check if active_alarm is really enabled. It could happen that alarm is snoozed and then it is manually removed or disabled
+                    // NOTE: Check if active_alarm is really enabled.
+                    // It could happen that alarm is snoozed and then it is manually removed or disabled
                     if !self_
                         .active_alarms
                         .lock()
@@ -414,8 +439,11 @@ impl AlarmScheduler {
 
                     let token = CancellationToken::new();
 
-                    // NOTE: Spawn task with playing alarm sound. Reason why this task isn't in the tokio::select! section below is that bmc-audio crate uses tokio::select!
-                    // internally for playing sound and cancelling of the process. Having this part in tokio::select! could lead to errors when cancelling sound playing.
+                    // NOTE: Spawn task with playing alarm sound.
+                    // Reason why this task isn't in the tokio::select! section below is
+                    // that bmc-audio crate uses tokio::select! internally for playing sound
+                    // and cancelling of the process. Having this part in tokio::select!
+                    // could lead to errors when cancelling sound playing.
                     let sound_join_handle = if let Some(sound) = active_alarm.data.sound.clone() {
                         Some(tokio::spawn({
                             let sound_controller = self_.sound_controller.clone();
@@ -490,10 +518,22 @@ impl AlarmScheduler {
                     match cmd {
                         AlarmCmd::StopAll => {
                             info!("Received StopAll command");
+                            let drained: Vec<(AlarmId, PendingSnooze)> =
+                                self_.pending_snoozes.lock().await.drain().collect();
+                            if !drained.is_empty() {
+                                for (_, snooze) in drained {
+                                    snooze.cancel.cancel();
+                                }
+                                self_.recompute_next_alarm_time().await;
+                            }
                             self_.cancel_current_alarm().await;
                         }
                         AlarmCmd::Stop { id } => {
                             info!(alarm_id = %id, "Received Stop command");
+                            if let Some(pending) = self_.pending_snoozes.lock().await.remove(&id) {
+                                pending.cancel.cancel();
+                                self_.recompute_next_alarm_time().await;
+                            }
                             if let Some(alarm) = self_
                                 .current_alarm
                                 .lock()
@@ -504,39 +544,72 @@ impl AlarmScheduler {
                                 self_.alarm_bus.send_event(AlarmEvent::Stopped { id });
                             }
                         }
-                        AlarmCmd::Snooze => {
-                            info!("Received Snooze command");
-                            if let Some(active_alarm) = self_.current_alarm.lock().await.take() {
-                                let mut alarm = active_alarm.alarm.clone();
-                                active_alarm.cancel().await;
-                                self_.alarm_bus.send_event(AlarmEvent::Snoozed);
-
-                                if let Some(snooze) = alarm.snooze_options.as_ref() {
-                                    let duration = snooze.duration.duration();
-
-                                    tokio::spawn({
-                                        let self_ = self_.clone();
-                                        alarm.snooze_count += 1;
-                                        let snooze_count = alarm.snooze_count;
-                                        let alarm_id = alarm.id.clone();
-
-                                        async move {
-                                            info!(
-                                                alarm_id = %alarm_id,
-                                                snooze_count = snooze_count,
-                                                snooze_duration_secs = duration.as_secs(),
-                                                "Alarm snoozed, will retrigger after duration"
-                                            );
-                                            tokio::time::sleep(duration).await;
-                                            if let Err(err) = self_.alarm_sender.send(alarm).await {
-                                                warn!(error = %err, "Failed to trigger snoozed alarm");
-                                            }
-                                        }
-                                    });
-                                }
-                            }
-                        }
+                        AlarmCmd::Snooze => self_.handle_snooze_command().await,
                     }
+                }
+            }
+        });
+    }
+
+    /// Stop the running alarm and register a cancellable
+    /// pending snooze that re-fires through `alarm_sender`.
+    /// Re-snoozing the same alarm cancels the prior pending entry.
+    async fn handle_snooze_command(&self) {
+        info!("Received Snooze command");
+        let Some(active_alarm) = self.current_alarm.lock().await.take() else {
+            return;
+        };
+        let mut alarm = active_alarm.alarm.clone();
+        active_alarm.cancel().await;
+        self.alarm_bus.send_event(AlarmEvent::Snoozed);
+
+        let Some(snooze) = alarm.snooze_options.as_ref() else {
+            return;
+        };
+        let duration = snooze.duration.duration();
+        let fire_at_utc_ms = chrono::Utc::now().timestamp_millis().saturating_add(
+            i64::try_from(duration.as_millis()).expect("BUG: snooze duration must fit in i64 ms"),
+        );
+        let cancel = CancellationToken::new();
+        let alarm_id = alarm.id.clone();
+        alarm.snooze_count += 1;
+        let snooze_count = alarm.snooze_count;
+
+        let stale = self.pending_snoozes.lock().await.insert(
+            alarm_id.clone(),
+            PendingSnooze {
+                cancel: cancel.clone(),
+                fire_at_utc_ms,
+                name: alarm.name.clone(),
+            },
+        );
+        if let Some(stale) = stale {
+            stale.cancel.cancel();
+        }
+        self.recompute_next_alarm_time().await;
+
+        let self_ = self.clone();
+        let alarm_id_log = alarm_id.clone();
+        tokio::spawn(async move {
+            info!(
+                alarm_id = %alarm_id_log,
+                snooze_count = snooze_count,
+                snooze_duration_secs = duration.as_secs(),
+                "Alarm snoozed, will retrigger after duration"
+            );
+            tokio::select! {
+                () = tokio::time::sleep(duration) => {
+                    self_.pending_snoozes.lock().await.remove(&alarm_id);
+                    self_.recompute_next_alarm_time().await;
+                    if let Err(err) = self_.alarm_sender.send(alarm).await {
+                        warn!(error = %err, "Failed to trigger snoozed alarm");
+                    }
+                }
+                () = cancel.cancelled() => {
+                    info!(
+                        alarm_id = %alarm_id_log,
+                        "Snoozed alarm cancelled before retrigger"
+                    );
                 }
             }
         });
@@ -585,10 +658,13 @@ impl AlarmScheduler {
             )
             .await?;
 
-        self.active_alarms
-            .lock()
-            .await
-            .insert(alarm_data.id.clone(), schedule_id);
+        self.active_alarms.lock().await.insert(
+            alarm_data.id.clone(),
+            ScheduledAlarm {
+                job_id: schedule_id,
+                name: alarm_data.name.clone(),
+            },
+        );
 
         info!(
             alarm_id = %alarm_data.id,
@@ -603,13 +679,19 @@ impl AlarmScheduler {
     }
 
     async fn remove(&self, id: &AlarmId) -> anyhow::Result<()> {
-        if let Some(ref job_id) = self.active_alarms.lock().await.remove(id) {
+        if let Some(scheduled) = self.active_alarms.lock().await.remove(id) {
             self.alarm_bus.stop_alarm(id);
 
             self.scheduler
-                .cancel(job_id)
+                .cancel(&scheduled.job_id)
                 .await
                 .map_err(|e| anyhow!("Failed to remove scheduled alarm, err: {e}"))?;
+        }
+
+        // Drop any pending snooze for this alarm so a deletion-while-
+        // snoozed doesn't cause the already-removed alarm to re-fire.
+        if let Some(pending) = self.pending_snoozes.lock().await.remove(id) {
+            pending.cancel.cancel();
         }
 
         self.recompute_next_alarm_time().await;
@@ -619,20 +701,86 @@ impl AlarmScheduler {
     async fn recompute_next_alarm_time(&self) {
         let Ok(alarms) = self.scheduler.jobs_by_source(Self::SCHEDULER_SOURCE).await else {
             error!("Failed to get scheduled alarms from scheduler");
+            if let Err(e) = self.next_alarm_sender.send(None) {
+                trace!(?e, "next_alarm watch has no subscribers");
+            }
             return;
         };
 
-        let timezone = self.timezone_receiver.borrow().clone();
-
-        let maybe_next_alarm_dt = alarms
+        let next = alarms
             .into_iter()
-            .filter_map(|alarm| alarm.next_tick)
-            .sorted()
-            .next()
-            .map(|next_tick| next_tick.with_timezone(timezone.chrono()).fixed_offset());
+            .filter_map(|alarm| alarm.next_tick.map(|t| (t, alarm.job_id)))
+            .sorted_by_key(|(t, _)| *t)
+            .next();
 
-        info!(next_alarm = ?maybe_next_alarm_dt, "Recomputed next alarm time");
+        let scheduler_next = if let Some((next_tick, job_id)) = next {
+            // Linear scan over the small configured alarm set.
+            let lookup = self
+                .active_alarms
+                .lock()
+                .await
+                .values()
+                .find(|s| s.job_id == job_id)
+                .map(|s| s.name.clone());
+            let Some(name) = lookup else {
+                // Race window: `jobs_by_source` and `active_alarms.lock` are
+                // not held under a unifying lock, so a concurrent
+                // `remove_alarm` can clear the map between the two awaits
+                // while the scheduler still reports this job_id. Skip the
+                // broadcast — the previously resolved value remains valid
+                // and the next scheduler tick will observe consistent state.
+                warn!(
+                    ?job_id,
+                    "Scheduler reports alarm not present in active_alarms; \
+                     skipping next-alarm broadcast"
+                );
+                return;
+            };
+            Some(NextAlarm {
+                fire_at_utc_ms: next_tick.timestamp_millis(),
+                name,
+            })
+        } else {
+            None
+        };
+
+        // Snoozes are off-scheduler; merge them in so the
+        // broadcast reflects whichever firing is actually soonest.
+        let snooze_candidates: Vec<NextAlarm> = self
+            .pending_snoozes
+            .lock()
+            .await
+            .values()
+            .map(|s| NextAlarm {
+                fire_at_utc_ms: s.fire_at_utc_ms,
+                name: s.name.clone(),
+            })
+            .collect();
+        let next_alarm = pick_soonest_next_alarm(scheduler_next, snooze_candidates);
+
+        info!(next_alarm = ?next_alarm, "Recomputed next alarm time");
+        // Fired on every scheduler tick, even on no changes to the next alarm.
+        self.next_alarm_sender.send_if_modified(|current| {
+            if *current == next_alarm {
+                false
+            } else {
+                *current = next_alarm;
+                true
+            }
+        });
     }
+}
+
+/// Soonest firing across scheduler-derived candidate + pending
+/// snoozes. Pure for testability; ties broken by `min_by_key` order.
+fn pick_soonest_next_alarm(
+    scheduler_next: Option<NextAlarm>,
+    pending_snoozes: Vec<NextAlarm>,
+) -> Option<NextAlarm> {
+    pending_snoozes
+        .into_iter()
+        .chain(scheduler_next)
+        .min_by_key(|n| n.fire_at_utc_ms)
 }
 
 #[derive(Debug, Clone)]
@@ -694,6 +842,11 @@ impl AlarmController {
         });
 
         controller
+    }
+
+    /// Subscribe to the soonest-to-fire alarm watch channel.
+    pub(crate) fn subscribe_next_alarm(&self) -> tokio::sync::watch::Receiver<Option<NextAlarm>> {
+        self.scheduler.next_alarm_sender.subscribe()
     }
 
     pub(crate) async fn alarms(&self) -> Vec<AlarmData> {
@@ -1035,5 +1188,70 @@ mod tests {
         assert_eq!(String::from("0 58 14 * * 1,2,3,4,5,6,7"), cron_string);
 
         Ok(())
+    }
+
+    fn na(fire: i64, name: &str) -> NextAlarm {
+        NextAlarm {
+            fire_at_utc_ms: fire,
+            name: name.to_owned(),
+        }
+    }
+
+    #[test]
+    fn pick_soonest_returns_none_when_no_candidates() {
+        assert_eq!(pick_soonest_next_alarm(None, vec![]), None);
+    }
+
+    #[test]
+    fn pick_soonest_returns_scheduler_alone_when_no_snoozes() {
+        let sched = na(1000, "morning");
+        assert_eq!(
+            pick_soonest_next_alarm(Some(sched.clone()), vec![]),
+            Some(sched)
+        );
+    }
+
+    #[test]
+    fn pick_soonest_returns_snooze_alone_when_no_scheduler() {
+        let snooze = na(500, "snoozed");
+        assert_eq!(
+            pick_soonest_next_alarm(None, vec![snooze.clone()]),
+            Some(snooze)
+        );
+    }
+
+    #[test]
+    fn pick_soonest_prefers_snooze_when_it_fires_first() {
+        let sched = na(1000, "morning cron");
+        let snooze = na(400, "snoozed");
+        assert_eq!(
+            pick_soonest_next_alarm(Some(sched), vec![snooze.clone()]),
+            Some(snooze)
+        );
+    }
+
+    #[test]
+    fn pick_soonest_prefers_scheduler_when_it_fires_first() {
+        // A scheduled alarm dated before any pending snooze
+        // keeps the broadcast pointing at the cron entry.
+        //
+        // Should not happen with current UX (snooze << next cron),
+        // but the merge rule has to be order-independent.
+        let sched = na(100, "morning cron");
+        let snooze = na(900, "snoozed");
+        assert_eq!(
+            pick_soonest_next_alarm(Some(sched.clone()), vec![snooze]),
+            Some(sched)
+        );
+    }
+
+    #[test]
+    fn pick_soonest_picks_earliest_among_multiple_snoozes() {
+        let sched = na(2000, "cron");
+        let snoozes = vec![na(1500, "later snooze"), na(800, "earlier snooze")];
+        assert_eq!(
+            pick_soonest_next_alarm(Some(sched), snoozes),
+            Some(na(800, "earlier snooze"))
+        );
     }
 }

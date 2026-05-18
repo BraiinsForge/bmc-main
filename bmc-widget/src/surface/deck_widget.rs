@@ -22,7 +22,7 @@ use wayland_client::WEnum;
 
 use crate::egl::DmaBufInfo;
 use crate::wayland::from_protocol;
-use bmc_widget_protocol::SettingUpdate;
+use bmc_widget_protocol::{NextAlarm, SettingUpdate};
 
 use super::common::{
     BufferSlotMap, PollOutcome, ReleasedBufferSet, blocking_dispatch_impl,
@@ -878,6 +878,33 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
             deck_widget_surface_v1::Event::FirstDayOfWeek { value } => {
                 if let Some(v) = from_protocol::weekday(value) {
                     push_setting(state, SettingUpdate::FirstDayOfWeek(v));
+                }
+            }
+            deck_widget_surface_v1::Event::UnitSystem { value } => {
+                if let Some(v) = from_protocol::unit_system(value) {
+                    push_setting(state, SettingUpdate::UnitSystem(v));
+                }
+            }
+            deck_widget_surface_v1::Event::NextAlarm {
+                present,
+                fire_at_utc_ms_hi,
+                fire_at_utc_ms_lo,
+                name,
+            } => {
+                if let Some(present) = from_protocol::presence(present) {
+                    let next = if present {
+                        // i64 reassembly from the wayland-protocol hi/lo split
+                        // (presentation-time `tv_sec_hi`/`tv_sec_lo` pattern).
+                        let fire_at_utc_ms =
+                            (i64::from(fire_at_utc_ms_hi) << 32) | i64::from(fire_at_utc_ms_lo);
+                        Some(NextAlarm {
+                            fire_at_utc_ms,
+                            name,
+                        })
+                    } else {
+                        None
+                    };
+                    push_setting(state, SettingUpdate::NextAlarm(next));
                 }
             }
             deck_widget_surface_v1::Event::Shutdown => {
