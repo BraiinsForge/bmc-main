@@ -358,3 +358,195 @@ pub fn read_ack(sock: &UnixStream) -> io::Result<AckMsg> {
         )),
     }
 }
+
+#[derive(Debug, Default)]
+enum AckDecoderState {
+    #[default]
+    NeedTag,
+    NeedErrLen,
+    NeedErrBody {
+        len: usize,
+    },
+    Done,
+}
+
+#[derive(Debug, Default)]
+pub struct AckDecoder {
+    buf: Vec<u8>,
+    state: AckDecoderState,
+}
+
+impl AckDecoder {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push(&mut self, bytes: &[u8]) -> io::Result<Option<AckMsg>> {
+        self.buf.extend_from_slice(bytes);
+        loop {
+            match self.state {
+                AckDecoderState::Done => {
+                    // Any bytes arriving after a complete frame are a protocol error;
+                    // the Stage 5 Ack contract is exactly one frame per Hello.
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "trailing bytes after Ack frame",
+                    ));
+                }
+                AckDecoderState::NeedTag => {
+                    if self.buf.is_empty() {
+                        return Ok(None);
+                    }
+                    let tag = self.buf[0];
+                    self.buf.drain(..1);
+                    match tag {
+                        TAG_ACK_OK => {
+                            self.state = AckDecoderState::Done;
+                            if !self.buf.is_empty() {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    "trailing bytes after Ack frame",
+                                ));
+                            }
+                            return Ok(Some(AckMsg::Ok));
+                        }
+                        TAG_ACK_ERR => {
+                            self.state = AckDecoderState::NeedErrLen;
+                        }
+                        other => {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!("unknown Ack tag: {other:#04x}"),
+                            ));
+                        }
+                    }
+                }
+                AckDecoderState::NeedErrLen => {
+                    if self.buf.len() < 4 {
+                        return Ok(None);
+                    }
+                    let len =
+                        u32::from_le_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]]);
+                    if len > MAX_STRING_LEN {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "string exceeds 64 KiB",
+                        ));
+                    }
+                    self.buf.drain(..4);
+                    self.state = AckDecoderState::NeedErrBody { len: len as usize };
+                }
+                AckDecoderState::NeedErrBody { len } => {
+                    if self.buf.len() < len {
+                        return Ok(None);
+                    }
+                    let body: Vec<u8> = self.buf.drain(..len).collect();
+                    let s = String::from_utf8(body)
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                    self.state = AckDecoderState::Done;
+                    if !self.buf.is_empty() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "trailing bytes after Ack frame",
+                        ));
+                    }
+                    return Ok(Some(AckMsg::Err(s)));
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ack_decoder_yields_ok_for_single_byte() {
+        let mut d = AckDecoder::new();
+        let got = d.push(&[TAG_ACK_OK]).expect("BUG: Ack::Ok is well formed");
+        assert_eq!(got, Some(AckMsg::Ok));
+    }
+
+    #[test]
+    fn ack_decoder_buffers_err_across_multiple_pushes() {
+        let mut d = AckDecoder::new();
+        assert_eq!(
+            d.push(&[TAG_ACK_ERR])
+                .expect("BUG: partial frame must not error"),
+            None
+        );
+        let len_bytes = 5_u32.to_le_bytes();
+        assert_eq!(
+            d.push(&len_bytes[..2])
+                .expect("BUG: partial length must not error"),
+            None
+        );
+        assert_eq!(
+            d.push(&len_bytes[2..])
+                .expect("BUG: completed length must not error"),
+            None
+        );
+        assert_eq!(
+            d.push(b"he").expect("BUG: partial body must not error"),
+            None
+        );
+        let got = d.push(b"llo").expect("BUG: complete frame must decode");
+        assert_eq!(got, Some(AckMsg::Err("hello".into())));
+    }
+
+    #[test]
+    fn ack_decoder_rejects_unknown_tag() {
+        let mut d = AckDecoder::new();
+        let err = d
+            .push(&[0xFF])
+            .expect_err("unknown tag must be InvalidData");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn ack_decoder_rejects_trailing_bytes_after_ok() {
+        let mut d = AckDecoder::new();
+        let err = d
+            .push(&[TAG_ACK_OK, 0x00])
+            .expect_err("trailing bytes after Ack::Ok must be rejected");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn ack_decoder_rejects_trailing_bytes_after_err() {
+        let mut d = AckDecoder::new();
+        let mut frame = vec![TAG_ACK_ERR];
+        frame.extend_from_slice(&2_u32.to_le_bytes());
+        frame.extend_from_slice(b"hi");
+        frame.push(0xAB);
+        let err = d
+            .push(&frame)
+            .expect_err("trailing bytes after Ack::Err must be rejected");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn ack_decoder_rejects_oversize_string_length() {
+        let mut d = AckDecoder::new();
+        let mut frame = vec![TAG_ACK_ERR];
+        frame.extend_from_slice(&(MAX_STRING_LEN + 1).to_le_bytes());
+        let err = d
+            .push(&frame)
+            .expect_err("oversize Ack::Err length must be rejected");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn ack_decoder_rejects_invalid_utf8() {
+        let mut d = AckDecoder::new();
+        let mut frame = vec![TAG_ACK_ERR];
+        frame.extend_from_slice(&2_u32.to_le_bytes());
+        frame.extend_from_slice(&[0xFF, 0xFE]);
+        let err = d
+            .push(&frame)
+            .expect_err("invalid UTF-8 in Ack::Err must be rejected");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+}
