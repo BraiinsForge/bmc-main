@@ -3,8 +3,15 @@
 use std::io;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::time::Duration;
 
+use anyhow::Context as _;
 use bmc_wasm_thin_protocol::{AckMsg, HelloMsg, recv_hello_with_fd, write_ack};
+
+use crate::host::SharedHost;
+use crate::render_target::EglRenderTargetFactory;
+use crate::slot::WidgetSlot;
 
 pub const DEFAULT_SOCKET_PATH: &str = "/run/bmc/wasm-host-v1.sock";
 
@@ -59,9 +66,72 @@ impl Drop for ListenSocket {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "client ownership is transferred to the slot's control_socket field via try_clone; \
+              passing by value signals intent to the caller that accept_and_load takes custody"
+)]
+pub fn accept_and_load(
+    client: UnixStream,
+    _shared: &mut SharedHost,
+) -> Result<WidgetSlot, anyhow::Error> {
+    client
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .map_err(anyhow::Error::from)?;
+    let (msg, wayland_fd) = recv_hello_with_fd(&client).map_err(|e| {
+        let _ = write_ack(&client, &AckMsg::Err(format!("recv: {e}")));
+        e
+    })?;
+    client.set_read_timeout(None).map_err(anyhow::Error::from)?;
+
+    let HelloMsg::Load { wasm_path } = msg;
+    let path = PathBuf::from(&wasm_path);
+    let peer_pid = peer_pid_of(&client).unwrap_or(0);
+
+    let factory: Rc<dyn crate::render_target::RenderTargetFactory> =
+        Rc::new(EglRenderTargetFactory);
+
+    let slot =
+        WidgetSlot::from_handshake(&path, wayland_fd, client.try_clone()?, peer_pid, factory)
+            .map_err(|e| {
+                let _ = write_ack(&client, &AckMsg::Err(format!("load: {e}")));
+                e
+            })?;
+
+    write_ack(&client, &AckMsg::Ok)?;
+    slot.control_socket
+        .set_nonblocking(true)
+        .context("control_socket.set_nonblocking(true)")?;
+    Ok(slot)
+}
+
 pub fn try_handshake(client: &UnixStream) -> io::Result<HelloMsg> {
     let (msg, fd) = recv_hello_with_fd(client)?;
     drop(fd);
-    write_ack(client, &AckMsg::Err("slot machinery not wired yet".into()))?;
+    write_ack(
+        client,
+        &AckMsg::Err("slot loading is only available through the Task 9 main loop".into()),
+    )?;
     Ok(msg)
+}
+
+fn peer_pid_of(client: &UnixStream) -> Option<libc::pid_t> {
+    use std::os::fd::AsRawFd;
+    let fd = client.as_raw_fd();
+    let mut creds: libc::ucred = unsafe { std::mem::zeroed() };
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "size_of::<ucred> is small enough to fit in socklen_t (u32) on any realistic platform"
+    )]
+    let mut len: libc::socklen_t = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&raw mut creds).cast::<libc::c_void>(),
+            &raw mut len,
+        )
+    };
+    (rc == 0).then_some(creds.pid)
 }

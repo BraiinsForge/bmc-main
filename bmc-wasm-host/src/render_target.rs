@@ -94,3 +94,57 @@ pub trait RenderTargetFactory {
 
     fn destroy(&self, target: RenderTarget, egl: &dyn LifecycleEgl);
 }
+
+#[derive(Debug)]
+pub struct EglRenderTargetFactory;
+
+impl RenderTargetFactory for EglRenderTargetFactory {
+    fn allocate(
+        &self,
+        egl: &dyn LifecycleEgl,
+        surface: &dyn LifecycleSurface,
+        width: u32,
+        height: u32,
+    ) -> Result<RenderTarget, RenderTargetError> {
+        use bmc_widget::egl::{Depth, DoubleBufferState};
+
+        let egl = egl.as_egl_context();
+        let surface = surface.as_deck_widget_surface();
+
+        let mut buffers = DoubleBufferState::new(width, height, Depth::Disabled);
+        buffers
+            .ensure_current(egl)
+            .map_err(RenderTargetError::Egl)?;
+        let (dmabuf_a, _) = buffers.export_and_swap().map_err(RenderTargetError::Egl)?;
+        buffers
+            .ensure_current(egl)
+            .map_err(RenderTargetError::Egl)?;
+        let (dmabuf_b, _) = buffers.export_and_swap().map_err(RenderTargetError::Egl)?;
+
+        let wl_buffer_a = surface
+            .mint_wl_buffer(&dmabuf_a)
+            .map_err(RenderTargetError::Wayland)?;
+        let wl_buffer_b = surface
+            .mint_wl_buffer(&dmabuf_b)
+            .map_err(RenderTargetError::Wayland)?;
+
+        Ok(RenderTarget::new_egl(
+            buffers,
+            [wl_buffer_a, wl_buffer_b],
+            width,
+            height,
+        ))
+    }
+
+    fn destroy(&self, target: RenderTarget, egl: &dyn LifecycleEgl) {
+        let egl = egl.as_egl_context();
+        let Ok(mut target) = target.into_egl() else {
+            tracing::error!("BUG: EglRenderTargetFactory::destroy received a non-EGL RenderTarget");
+            return;
+        };
+        target.buffers.destroy_all(egl);
+        let [a, b] = target.wl_buffers;
+        a.destroy();
+        b.destroy();
+    }
+}

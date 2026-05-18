@@ -1078,6 +1078,7 @@ fn shared_scratch_uv_scale(max_width: u32, max_height: u32, w: u32, h: u32) -> (
 pub struct SharedRenderScratch {
     staging: WidgetExportBuffer,
     blit: BlitResources,
+    staging_fbo_id_at_construction: u32,
 }
 
 impl fmt::Debug for SharedRenderScratch {
@@ -1098,12 +1099,32 @@ impl SharedRenderScratch {
             .allocate_widget_export_buffer(max_width, max_height, Depth::Disabled)
             .context("Failed to allocate SharedRenderScratch staging")?;
         match BlitResources::new(ctx.gl()) {
-            Ok(blit) => Ok(Self { staging, blit }),
+            Ok(blit) => {
+                let staging_fbo_id_at_construction = staging.fbo_id();
+                Ok(Self {
+                    staging,
+                    blit,
+                    staging_fbo_id_at_construction,
+                })
+            }
             Err(e) => {
                 ctx.destroy_widget_export_buffer(staging);
                 Err(e)
             }
         }
+    }
+
+    /// The raw GL framebuffer id of the shared staging FBO.
+    ///
+    /// The id is stable for the host's lifetime: `SharedRenderScratch::new` allocates
+    /// the FBO once and `begin_frame` only re-binds the existing handle (sets the
+    /// viewport / clears attachments). The host's `FemtoVgRenderer` is constructed
+    /// against this id at startup, so any future change that rebinds the staging FBO
+    /// to a fresh id would silently corrupt every slot's render. The
+    /// `debug_assert_eq!` in `begin_frame` catches regressions in debug builds.
+    #[must_use]
+    pub fn staging_fbo_id(&self) -> u32 {
+        self.staging.fbo_id()
     }
 
     /// Bind the staging FBO, set viewport to `(w, h)`, and clear color +
@@ -1116,6 +1137,14 @@ impl SharedRenderScratch {
     #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
     #[must_use]
     pub fn begin_frame(&self, ctx: &EglContext, w: u32, h: u32) -> u32 {
+        debug_assert_eq!(
+            self.staging.fbo_id(),
+            self.staging_fbo_id_at_construction,
+            "BUG: SharedRenderScratch::begin_frame rebound the staging FBO to a fresh id; \
+             the host's FemtoVgRenderer was constructed against the original id and will \
+             silently write to the wrong target. If a future change legitimately needs to \
+             re-create the FBO, update SharedHost::init to re-bake the renderer's target.",
+        );
         let gl = ctx.gl();
         unsafe {
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.staging.fbo()));
