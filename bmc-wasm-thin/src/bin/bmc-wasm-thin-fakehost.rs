@@ -1,0 +1,66 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+//! Test helper binary used by `tests/spawn_lock.rs`. The thin spawn path
+//! exec's `Config::host_bin`; pointing it at this binary stands in for a
+//! real `bmc-wasm-host` during tests.
+
+use std::env;
+use std::fmt::Write as FmtWrite;
+use std::fs::File;
+use std::io::Write as IoWrite;
+use std::os::unix::net::UnixListener;
+use std::path::Path;
+use std::time::Duration;
+
+fn main() {
+    let socket = env::var("BMC_THIN_FAKE_HOST_SOCKET").expect("BUG: fake host socket env");
+    let lock_fd: i32 = env::var("BMC_THIN_FAKE_HOST_RELEASE_LOCK_FD")
+        .expect("BUG: fake host lock fd env")
+        .parse()
+        .expect("BUG: fake host lock fd integer");
+    let accepts: usize = env::var("BMC_THIN_FAKE_HOST_ACCEPTS")
+        .ok()
+        .map_or(1, |s| s.parse().expect("BUG: fake host accepts integer"));
+    if let Ok(report_path) = env::var("BMC_THIN_FAKE_HOST_FD_REPORT") {
+        report_inherited_fds(Path::new(&report_path), lock_fd);
+    }
+    let listener = UnixListener::bind(&socket).expect("BUG: fake host bind");
+    std::thread::sleep(Duration::from_millis(100));
+    unsafe {
+        libc::close(lock_fd);
+    }
+    let mut accepted = Vec::new();
+    for _ in 0..accepts {
+        let (stream, _addr) = listener.accept().expect("BUG: fake host accept");
+        accepted.push(stream);
+    }
+    std::process::exit(0);
+}
+
+fn report_inherited_fds(report_path: &Path, lock_fd: i32) {
+    // Snapshot /proc/self/fd, then drop the iterator so its transient
+    // dirfd is closed. Filter the snapshot by re-checking each entry via
+    // `read_link` on `/proc/self/fd/<n>`: read_link does not allocate a
+    // new fd, so the dirfd's symlink now resolves to ENOENT and that
+    // entry drops out, leaving only the stable application fds.
+    let reader = std::fs::read_dir("/proc/self/fd").expect("BUG: read_dir /proc/self/fd");
+    let snapshot: Vec<i32> = reader
+        .filter_map(|entry| {
+            let entry = entry.expect("BUG: read_dir entry");
+            entry.file_name().to_string_lossy().parse::<i32>().ok()
+        })
+        .collect();
+    let mut fds: Vec<i32> = snapshot
+        .into_iter()
+        .filter(|&fd| std::fs::read_link(format!("/proc/self/fd/{fd}")).is_ok())
+        .collect();
+    fds.retain(|&fd| fd > 2);
+    fds.sort_unstable();
+    let mut out = File::create(report_path).expect("BUG: create fd report");
+    let mut line = String::new();
+    for fd in &fds {
+        writeln!(line, "{fd}").expect("BUG: write fd line");
+    }
+    writeln!(line, "LOCK={lock_fd}").expect("BUG: write lock line");
+    IoWrite::write_all(&mut out, line.as_bytes()).expect("BUG: write fd report");
+}

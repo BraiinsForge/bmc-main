@@ -281,6 +281,7 @@ rodio = { version = "0.20", default-features = false }
 roxmltree = "0.20.0"
 rrule = "0.14.0"
 rtnetlink = { git = "https://github.com/rust-netlink/rtnetlink.git", rev = "d6e8b4c" } # FIXME: change to a crates.io version after they update netlink-packet-route
+rustix = { version = "0.38", default-features = false, features = ["fs", "std"] }
 rustls = { version = "0.23.37", default-features = false, features = ["logging", "ring", "std", "tls12"] }
 schemars = "1.2.1"
 semver = { version = "1.0.26", features = ["serde"] }
