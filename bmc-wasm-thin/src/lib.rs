@@ -20,5 +20,5 @@ pub fn run(config: Config) -> Result<()> {
     let control = spawn::connect_or_spawn(&config)?;
     let control =
         host_client::send_load_and_wait_ack(control, &config.wasm, wayland, config.ack_wait)?;
-    host_client::idle_until_exit(control)
+    host_client::idle_until_exit(control).map(|_| ())
 }

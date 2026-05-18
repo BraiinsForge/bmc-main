@@ -11,6 +11,7 @@ anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 libc = { workspace = true }
 rustix = { workspace = true }
+signal-hook = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
@@ -27,3 +28,7 @@ path = "src/bin/bmc-wasm-thin-fakehost.rs"
 [[test]]
 name = "spawn_lock"
 path = "tests/spawn_lock.rs"
+
+[[test]]
+name = "idle_signal"
+path = "tests/idle_signal.rs"
