@@ -10,17 +10,19 @@
 #                   is built via buildCrate so its src closure is narrowed
 #                   by docker-spider — change one widget, only that
 #                   widget's wasm rebuilds.
-#   - host:         cross-compiled bmc-widget-wasm + autopatchelf for the
+#   - thin:         cross-compiled bmc-wasm-thin + autopatchelf for the
+#                   selected profile (typically armv7-glibc-release)
+#   - host:         cross-compiled bmc-wasm-host + autopatchelf for the
 #                   selected profile (typically armv7-glibc-release)
 #   - mkWasmWidget: build one lib/bmc-widgets/<name>/ tree (shell wrapper
-#                   + .wasm blob + manifest) that execs the shared host
+#                   + .wasm blob + manifest) that execs the thin wrapper
 { pkgs
 , profile               # bmc.profiles.<arch>-<profile> for the host build
 , wasmReleaseProfile    # bmc.profiles.wasm-release for collecting .wasm
 , crates                # bmc.crates
 , autopatchelfBinaries  # bmc.lib.autopatchelfBinaries
 , widgetRuntimeDeps     # deps.widgetRuntimeDeps (expects .native fn)
-, hostFeatures ? [ ]    # cargo features for the bmc-widget-wasm host build
+, hostFeatures ? [ ]    # cargo features for the bmc-wasm-host build
 , wasmExampleNames      # list of example crate names (e.g. "hello-widget")
 }:
 let
@@ -58,11 +60,19 @@ let
 
   wasmWidgets = lib.genAttrs wasmExampleNames mkWidgetWasm;
 
+  # Per-widget thin wrapper binary. One build, any number of widgets
+  # exec it. autopatchelfBinaries (not mkWidgetPackage) — the thin has
+  # no manifest of its own. The binary ends up at $out/bin/bmc-wasm-thin.
+  thin = autopatchelfBinaries {
+    drv = profile.buildCrate crates.wasm-thin { };
+    runtimeDeps = widgetRuntimeDeps.native profile.pkgs;
+  };
+
   # Shared host binary (one build, any number of widgets use it).
   # autopatchelfBinaries (not mkWidgetPackage) — the host has no manifest
-  # of its own. The binary ends up at $out/bin/bmc-widget-wasm.
+  # of its own. The binary ends up at $out/bin/bmc-wasm-host.
   host = autopatchelfBinaries {
-    drv = profile.buildCrate crates.widget-wasm {
+    drv = profile.buildCrate crates.wasm-host {
       features = hostFeatures;
     };
     # widgetRuntimeDeps.native is a function; call with the profile's
@@ -83,7 +93,8 @@ let
     , wasmDir       # derivation with all *.wasm files flat in $out/
     , wasmFile      # e.g. "hello_widget.wasm" (cargo: hyphens → underscores)
     , manifest      # path to per-widget manifest.json
-    , host          # host derivation with bin/bmc-widget-wasm
+    , thin          # thin derivation with bin/bmc-wasm-thin
+    , host          # host derivation with bin/bmc-wasm-host
     }:
     pkgs.runCommand "bmc-widget-${name}" { } ''
       base=$out/lib/bmc-widgets/${name}
@@ -97,12 +108,14 @@ let
       # \$@ must survive into the generated script for runtime args.
       cat > "$base/bin/${name}" <<EOF
       #!/bin/sh
-      exec ${host}/bin/bmc-widget-wasm \\
-        --wasm $out/lib/bmc-widgets/${name}/lib/wasm/${name}.wasm "\$@"
+      exec ${thin}/bin/bmc-wasm-thin \\
+        --wasm $out/lib/bmc-widgets/${name}/lib/wasm/${name}.wasm \\
+        --host-bin ${host}/bin/bmc-wasm-host \\
+        "\$@"
       EOF
       chmod +x "$base/bin/${name}"
     '';
 in
 {
-  inherit wasmExamples wasmWidgets host mkWasmWidget;
+  inherit wasmExamples wasmWidgets thin host mkWasmWidget;
 }
