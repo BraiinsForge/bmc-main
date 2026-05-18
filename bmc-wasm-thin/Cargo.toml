@@ -1,0 +1,20 @@
+[package]
+name = "bmc-wasm-thin"
+version = "0.1.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+libc = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+bmc-wasm-thin-protocol = { path = "../bmc-wasm-thin-protocol" }
+
+[dev-dependencies]
+bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
+tempfile = { workspace = true }

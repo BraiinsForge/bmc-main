@@ -1655,9 +1655,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-wasm-thin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bmc-wasm-protocol",
+ "bmc-wasm-thin-protocol",
+ "clap",
+ "libc",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "bmc-wasm-thin-protocol"
 version = "0.1.0"
 dependencies = [
+ "bmc-wasm-protocol",
  "libc",
 ]
 

@@ -13,8 +13,6 @@ use crate::host::SharedHost;
 use crate::render_target::EglRenderTargetFactory;
 use crate::slot::WidgetSlot;
 
-pub const DEFAULT_SOCKET_PATH: &str = "/run/bmc/wasm-host-v1.sock";
-
 #[derive(Debug)]
 pub struct ListenSocket {
     listener: UnixListener,
