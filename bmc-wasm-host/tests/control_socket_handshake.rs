@@ -21,15 +21,15 @@ struct ChildGuard(Child);
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
-        // Task 6's host is intentionally an accept loop without lifetime management.
-        // The real lifetime-managed poll loop arrives in Task 9, so this test owns
-        // process cleanup explicitly, including early-return / panic paths.
+        // The host's main loop initializes DRM/EGL, so this test is `#[ignore]`-d in CI
+        // and owns its child process cleanup explicitly.
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
 }
 
 #[test]
+#[ignore = "Task 9 real main initializes SharedHost/EGL and needs /dev/dri/renderD128; run on device in Stage 6"]
 fn handshake_with_nonwayland_fd_returns_err_ack() {
     let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed for handshake test");
     let socket_path = tmp.path().join("host.sock");
