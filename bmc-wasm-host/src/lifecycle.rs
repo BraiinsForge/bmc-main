@@ -28,6 +28,11 @@ pub enum LifecycleState {
     Leaving,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LifecycleEventEffect {
+    pub request_render: bool,
+}
+
 #[must_use]
 pub fn has_render_target(s: LifecycleState) -> bool {
     matches!(
@@ -112,8 +117,12 @@ impl LifecycleStateMachine {
         self.retry_at
     }
 
-    pub fn on_event(&mut self, new_target: LifecycleState) {
+    pub fn on_event(&mut self, new_target: LifecycleState) -> LifecycleEventEffect {
+        let previous_target = self.target;
         self.target = new_target;
+        LifecycleEventEffect {
+            request_render: has_render_target(new_target) && previous_target != new_target,
+        }
     }
 
     #[must_use]
@@ -147,6 +156,12 @@ impl LifecycleStateMachine {
                     self.current = self.target;
                     self.blocked = false;
                     self.retry_at = None;
+                    tracing::info!(
+                        state = ?self.current,
+                        w = ctx.width,
+                        h = ctx.height,
+                        "render target allocated"
+                    );
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -168,6 +183,7 @@ impl LifecycleStateMachine {
             self.current = self.target;
             self.blocked = false;
             self.retry_at = None;
+            tracing::info!(state = ?self.current, "render target released");
         } else {
             self.current = self.target;
             // If we were blocked while owing an allocation but the compositor has since

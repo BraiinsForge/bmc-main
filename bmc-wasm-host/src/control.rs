@@ -73,6 +73,8 @@ pub fn accept_and_load(
     client: UnixStream,
     _shared: &mut SharedHost,
 ) -> Result<WidgetSlot, anyhow::Error> {
+    let peer_pid = peer_pid_of(&client).unwrap_or(0);
+    tracing::info!(peer_pid, "thin control connection accepted");
     client
         .set_read_timeout(Some(Duration::from_millis(250)))
         .map_err(anyhow::Error::from)?;
@@ -84,7 +86,11 @@ pub fn accept_and_load(
 
     let HelloMsg::Load { wasm_path } = msg;
     let path = PathBuf::from(&wasm_path);
-    let peer_pid = peer_pid_of(&client).unwrap_or(0);
+    tracing::info!(
+        peer_pid,
+        wasm = %path.display(),
+        "thin requested wasm load"
+    );
 
     let factory: Rc<dyn crate::render_target::RenderTargetFactory> =
         Rc::new(EglRenderTargetFactory);
@@ -97,6 +103,11 @@ pub fn accept_and_load(
             })?;
 
     write_ack(&client, &AckMsg::Ok)?;
+    tracing::info!(
+        peer_pid,
+        wasm = %path.display(),
+        "widget load acknowledged"
+    );
     slot.control_socket
         .set_nonblocking(true)
         .context("control_socket.set_nonblocking(true)")?;

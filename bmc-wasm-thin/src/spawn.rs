@@ -117,7 +117,13 @@ pub fn connect_or_spawn_with_launcher<L: HostLauncher>(
     launcher: &L,
 ) -> Result<UnixStream> {
     match UnixStream::connect(&config.host_socket) {
-        Ok(stream) => return Ok(stream),
+        Ok(stream) => {
+            tracing::info!(
+                host_socket = %config.host_socket.display(),
+                "connected to existing bmc-wasm-host"
+            );
+            return Ok(stream);
+        }
         Err(e) if classify_connect_error(&e) == ConnectFailure::Spawnable => {}
         Err(e) => {
             return Err(e).with_context(|| format!("connect {}", config.host_socket.display()));
@@ -131,6 +137,10 @@ pub fn connect_or_spawn_with_launcher<L: HostLauncher>(
     if rc != 0 {
         let err = io::Error::last_os_error();
         if err.raw_os_error() == Some(libc::EWOULDBLOCK) {
+            tracing::info!(
+                lockfile = %config.lockfile.display(),
+                "another thin owns host startup; waiting for readiness"
+            );
             drop(owner_lock);
             wait_for_readiness(&config.lockfile, config.host_wait)?;
             return final_connect(config);
@@ -141,6 +151,10 @@ pub fn connect_or_spawn_with_launcher<L: HostLauncher>(
     launcher.before_spawn_owner_reconnect(config)?;
     match UnixStream::connect(&config.host_socket) {
         Ok(stream) => {
+            tracing::info!(
+                host_socket = %config.host_socket.display(),
+                "host appeared before this thin spawned one"
+            );
             drop(owner_lock);
             return Ok(stream);
         }
@@ -150,6 +164,12 @@ pub fn connect_or_spawn_with_launcher<L: HostLauncher>(
         }
     }
 
+    tracing::info!(
+        host_bin = %config.host_bin.display(),
+        host_socket = %config.host_socket.display(),
+        release_lock_fd = owner_lock.as_raw_fd(),
+        "spawning bmc-wasm-host"
+    );
     launcher.spawn_host(config, owner_lock.as_raw_fd())?;
     drop(owner_lock);
     wait_for_readiness(&config.lockfile, config.host_wait)?;
@@ -158,7 +178,13 @@ pub fn connect_or_spawn_with_launcher<L: HostLauncher>(
 
 fn final_connect(config: &Config) -> Result<UnixStream> {
     match UnixStream::connect(&config.host_socket) {
-        Ok(stream) => Ok(stream),
+        Ok(stream) => {
+            tracing::info!(
+                host_socket = %config.host_socket.display(),
+                "connected to ready bmc-wasm-host"
+            );
+            Ok(stream)
+        }
         Err(e) if classify_connect_error(&e) == ConnectFailure::Spawnable => {
             anyhow::bail!(
                 "bmc-wasm-host released readiness lock but {} is not accepting connections: {e}",

@@ -287,7 +287,10 @@ pub fn run(shared: &mut SharedHost, listener: &ListenSocket) -> Result<(), Fatal
             match listener.as_listener().accept() {
                 Ok((client, _)) => match accept_and_load(client, shared) {
                     Ok(slot) => {
-                        slots.insert(slot);
+                        let peer_pid = slot.peer_pid;
+                        let wasm = slot.wasm_basename.clone();
+                        let slot_id = slots.insert(slot);
+                        tracing::info!(slot_id, peer_pid, wasm = %wasm, "slot inserted");
                         lifetime.note_accept();
                     }
                     Err(e) => tracing::warn!(?e, "load failed; slot rejected"),
