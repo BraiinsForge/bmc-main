@@ -8,3 +8,4 @@ pub mod lifecycle;
 pub mod main_loop;
 pub mod render_target;
 pub mod slot;
+pub mod startup;
