@@ -79,6 +79,10 @@ exampleCrates // {
     path = "./widgets/flip-clock";
     packageName = "bmc-widget-flip-clock";
   };
+  wasm-thin = defineCrate {
+    path = "./bmc-wasm-thin";
+    packageName = "bmc-wasm-thin";
+  };
   widget-wasm = defineCrate {
     path = "./widgets/wasm";
     packageName = "bmc-widget-wasm";

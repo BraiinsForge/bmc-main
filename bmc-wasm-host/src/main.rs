@@ -3,7 +3,8 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use bmc_wasm_host::control::{DEFAULT_SOCKET_PATH, ListenSocket};
+use bmc_wasm_host::control::ListenSocket;
+use bmc_wasm_thin_protocol::default_socket_path;
 use clap::Parser;
 
 // Device display maximum — the staging FBO is sized to this so any slot's surface fits without
@@ -25,9 +26,7 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     let args = Args::parse();
-    let socket_path = args
-        .host_socket
-        .unwrap_or_else(|| DEFAULT_SOCKET_PATH.into());
+    let socket_path = args.host_socket.unwrap_or_else(default_socket_path);
 
     let listener = ListenSocket::bind(&socket_path)
         .map_err(|e| anyhow::anyhow!("bind {}: {e}", socket_path.display()))?;

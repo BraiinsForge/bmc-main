@@ -9,10 +9,40 @@ use std::mem::size_of;
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 
-const MAX_STRING_LEN: u32 = 64 * 1024;
+pub const MAX_STRING_LEN: u32 = 64 * 1024;
 const TAG_HELLO_LOAD: u8 = 0x01;
 const TAG_ACK_OK: u8 = 0x00;
 const TAG_ACK_ERR: u8 = 0x01;
+
+#[must_use]
+pub fn socket_path_for_sdk_major(major: u16) -> std::path::PathBuf {
+    std::path::PathBuf::from(format!("/run/bmc/wasm-host-sdk-v{major}.sock"))
+}
+
+#[must_use]
+pub fn default_socket_path() -> std::path::PathBuf {
+    socket_path_for_sdk_major(bmc_wasm_protocol::SDK_VERSION.0)
+}
+
+#[must_use]
+pub fn default_lockfile_path() -> std::path::PathBuf {
+    derive_lockfile_path(&default_socket_path())
+}
+
+#[must_use]
+pub fn derive_lockfile_path(socket_path: &std::path::Path) -> std::path::PathBuf {
+    if socket_path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("sock"))
+    {
+        let mut p = socket_path.to_path_buf();
+        p.set_extension("lock");
+        return p;
+    }
+    let mut s = socket_path.as_os_str().to_owned();
+    s.push(".lock");
+    std::path::PathBuf::from(s)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HelloMsg {
