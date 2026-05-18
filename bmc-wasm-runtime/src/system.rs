@@ -87,8 +87,9 @@ pub struct SystemSettings {
 /// this derived entry to avoid replicating schedule resolution.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NextAlarm {
-    /// Wall-clock UTC milliseconds since the Unix epoch
-    /// at which the alarm fires next.
+    /// UTC milliseconds since the Unix epoch at which the alarm
+    /// fires next. Timezone-invariant; widgets pair this with
+    /// `Snapshot::timezone()` for local-time rendering.
     pub fire_at_utc_ms: i64,
     /// Display name shown alongside the time (operator-typed).
     pub name: String,
@@ -276,8 +277,8 @@ mod tests {
             next_alarm: None,
         };
         let bytes = encode(&snap);
-        // Last entry's kind byte is `NextAlarm`, followed by `0` (None) and
-        // no payload.
+        // Last entry's kind byte is `NextAlarm`,
+        // followed by `0` (None) and no payload.
         assert_eq!(bytes[bytes.len() - 2], SystemFieldKind::NextAlarm as u8);
         assert_eq!(bytes[bytes.len() - 1], 0);
     }
@@ -323,9 +324,9 @@ mod tests {
 
     #[test]
     fn encode_uses_each_enum_variant_with_expected_tag() {
-        // One snapshot per enum variant for every multi-variant enum; the
-        // payload byte for that entry must match `variant as u8`. Regression
-        // guard against silent renumbering on either side of the wire.
+        // One snapshot per enum variant for every multi-variant enum;
+        // the payload byte for that entry must match `variant as u8`.
+        // Regression guard against silent renumbering on either side of the wire.
         for tf in [TimeFormat::Hour12, TimeFormat::Hour24] {
             let snap = SystemSnapshot {
                 settings: SystemSettings {

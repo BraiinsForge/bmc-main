@@ -25,6 +25,7 @@
 // via `just wasm::gen params-demo` after editing the manifest.
 mod manifest_params;
 
+use bmc_wasm_sdk::system;
 #[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
@@ -52,15 +53,29 @@ const DECAY_MS: u32 = 800;
 /// Decays linearly to 0 over `DECAY_MS`.
 const TINT_PEAK_ALPHA: f32 = 0.45;
 
-/// Lifecycle hook fired by the host on every params delivery after the first.
-/// Diffs `current()` against `previous()` and stamps every changed key with a fresh decay
-/// window; the render path consumes the per-key counter to tint the affected cells.
+/// Lifecycle hook fired by the host on every params- or system-snapshot delivery
+/// after the first. Diffs `current()` against `previous()` on both channels
+/// and stamps every changed key with a fresh decay window;
+/// the render path consumes the per-key counter to tint the affected cells.
 #[unsafe(no_mangle)]
 pub extern "C" fn on_params_update() {
-    let Some(previous) = Params::previous() else {
-        return;
-    };
-    let changed = Params::current().changed_keys(&previous);
+    let mut changed: Vec<&'static str> = Vec::new();
+
+    if let Some(previous) = Params::previous() {
+        changed.extend(Params::current().changed_keys(&previous));
+    }
+    // System fields don't have a key-set abstraction — compare each field
+    // by value between the current and previous snapshots.
+    // Stamps "timezone" and "next_alarm" so the matching demo cells tint amber on change.
+    let sys_cur = system::current();
+    let sys_prev = system::previous();
+    if sys_cur.timezone() != sys_prev.timezone() {
+        changed.push("timezone");
+    }
+    if next_alarm_value(&sys_cur) != next_alarm_value(&sys_prev) {
+        changed.push("next_alarm");
+    }
+
     if changed.is_empty() {
         return;
     }
@@ -73,7 +88,17 @@ pub extern "C" fn on_params_update() {
     request_frame();
 }
 
-/// Background tint for a cell whose key is mid-decay. Returns transparent when no decay is active.
+/// Owned (fire_at_utc_ms, name) pair for change-detection comparison.
+/// `system::next_alarm()` returns a borrowed view that doesn't outlive
+/// the `Snapshot`; this helper copies it into an owned shape so
+/// a stale `Snapshot` can be dropped between the two reads.
+fn next_alarm_value(snap: &system::Snapshot) -> Option<(i64, String)> {
+    snap.next_alarm()
+        .map(|n| (n.fire_at_utc_ms, n.name.to_owned()))
+}
+
+/// Background tint for a cell whose key is mid-decay.
+/// Returns transparent when no decay is active.
 /// Alpha fades linearly from `TINT_PEAK_ALPHA` at t=0 to 0 at t=`DECAY_MS`.
 fn decay_tint(key: &str) -> Color {
     let remaining = DECAY_MS_REMAINING.with(|m| m.borrow().get(key).copied().unwrap_or(0));
@@ -159,18 +184,19 @@ pub extern "C" fn render(delta_ms: u32) {
         }
     }
 
-    // Advance the per-key decay-highlight counters and keep requesting frames while any cell is
-    // still mid-fade. The host caps the cadence at `animation_frame_delay_ms` (~33 ms), so the
-    // decay budget gets ~24 frames at 800 ms — smooth enough to read as a fade.
+    // Advance the per-key decay-highlight counters and keep requesting frames
+    // while any cell is still mid-fade. The host caps the cadence
+    // at `animation_frame_delay_ms` (~33 ms), so the decay budget gets ~24 frames
+    // at 800 ms — smooth enough to read as a fade.
     if tick_decay(delta_ms) {
         request_frame();
     }
 }
 
 /// Compact single-column layout for the small variant.
-/// Each row is a one-liner (`key  value`) — the hint subtitle is dropped to win vertical
-/// density, and the full 317 px tile width is available for values, so URLs and longer strings
-/// don't wrap.
+/// Each row is a one-liner (`key  value`) — the hint subtitle
+/// is dropped to win vertical density, and the full 317 px tile
+/// width is available for values, so URLs and longer strings don't wrap.
 /// All 14 keys stack with comfortable gap.
 fn render_compact(w: u32, h: u32, p: &Params, sizes: &Sizes) {
     let _ = render_ui(
@@ -221,6 +247,8 @@ fn render_compact(w: u32, h: u32, p: &Params, sizes: &Sizes) {
                 kv_line_opt_i32("optional_integer", p.optional_integer, sizes),
                 kv_line_opt_f64("optional_double", p.optional_double, sizes),
                 kv_line_opt_bool("optional_boolean", p.optional_boolean, sizes),
+                kv_line("timezone", system::current().timezone(), sizes),
+                kv_line("next_alarm", format_next_alarm(&system::current()), sizes),
             ],
         ),
     );
@@ -335,6 +363,7 @@ fn render_grid(w: u32, h: u32, p: &Params, sizes: &Sizes) {
 
     // The header speaks of 14 keys because the typed struct mirrors the manifest one-to-one;
     // the optional cells fall back to `(unset)` when the host delivered null.
+    let sys = system::current();
     let optional = col(
         props!(flex: 1.0, gap: sizes.cell_gap, background: GRAY_90.with_alpha(0.85), padding: sizes.col_padding),
         [
@@ -343,6 +372,15 @@ fn render_grid(w: u32, h: u32, p: &Params, sizes: &Sizes) {
             kv_opt_i32("optional_integer", "", p.optional_integer, sizes),
             kv_opt_f64("optional_double", "", p.optional_double, sizes),
             kv_opt_bool("optional_boolean", "", p.optional_boolean, sizes),
+            spacer(0.5),
+            section_header("System (deck-wide)", sizes),
+            kv("timezone", "IANA identifier", sys.timezone(), sizes),
+            kv(
+                "next_alarm",
+                "soonest scheduled",
+                format_next_alarm(&sys),
+                sizes,
+            ),
             spacer(1.0),
             text(
                 "Snapshot carries 14 key(s)",
@@ -409,6 +447,19 @@ fn kv_opt_f64(key: &str, hint: &str, value: Option<f64>, sizes: &Sizes) -> Node 
     match value {
         Some(v) => kv(key, hint, format_f64_fixed(v, 2), sizes),
         None => kv(key, hint, "(unset)", sizes),
+    }
+}
+
+/// Format the system snapshot's next-alarm entry for display in the demo.
+/// `"(none)"` when no alarm is scheduled; otherwise `"name @ YYYY-MM-DD HH:MM"`
+/// using the host's `chrono` formatter through `format_date`.
+fn format_next_alarm(snap: &system::Snapshot) -> String {
+    match snap.next_alarm() {
+        Some(next) => {
+            let when = format_date(next.fire_at_utc_ms / 1000, "%Y-%m-%d %H:%M");
+            fmt!("{} @ {}", next.name, when)
+        }
+        None => "(none)".to_owned(),
     }
 }
 

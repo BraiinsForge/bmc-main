@@ -89,13 +89,18 @@
 //! }
 //! ```
 //!
-//! Optional — fires whenever the host delivers a new params snapshot *after* the initial one
-//! staged for `init`. The hook gets no arguments; read [`params::current`] (or the typed accessor)
-//! for the new state and [`params::previous`] for the old — diff to react only to keys whose value
-//! actually changed. See [`params`] for the byte-level protocol and snapshot caching.
+//! Optional — fires whenever the host delivers a new snapshot on either
+//! the per-widget [`params`] channel or the deck-wide [`system`] channel,
+//! *after* the initial values staged for `init`. Widget authors learn one
+//! hook: "deck-side state changed, re-check what I depend on."
 //!
-//! The initial params delivery (the one staged before `init` runs) does NOT fire this hook
-//! — only operator-driven changes mid-life do.
+//! Read [`params::current`] / [`system::current`] for the new state
+//! and the matching `previous()` for the old — diff to react only
+//! to fields whose value actually changed. See each module for
+//! the byte-level protocol and snapshot caching.
+//!
+//! The initial deliveries (staged before `init` runs) do NOT fire
+//! this hook — only operator-driven mid-life changes do.
 //!
 //! ### `unload`
 //!
@@ -113,9 +118,10 @@
 //! A handful of host imports are only meaningful inside specific hooks.
 //! The runtime enforces this and surfaces violations in one of two ways:
 //!
-//! - **trap** — the import returns a wasmi trap, which propagates out of the offending
-//!   guest call and kills the widget. Used when calling the import from the wrong phase
-//!   indicates a structural widget bug whose silent no-op would mask a real failure.
+//! - **trap** — the import returns a wasmi trap, which propagates out
+//!   of the offending guest call and kills the widget.
+//!   Used when calling the import from the wrong phase indicates a structural
+//!   widget bug whose silent no-op would mask a real failure.
 //! - **soft-fail** — the import logs a warn-once and returns a "nothing here" sentinel
 //!   (`None` for touch reads, no-op for frame requests). Used when reading defensively
 //!   is reasonable and the widget composes naturally with the sentinel.
@@ -128,11 +134,11 @@
 //! | All other imports (params, KV, fetch, log, …)       | ✓      | ✓        | ✓                  | ✓        |
 //!
 //! ¹ Returns the touch-not-present sentinel after a one-time warn.
-//!   Defensive reads compose naturally — the widget gets `None` the same
-//!   way it would on a frame where no touch occurred.
+//!   Defensive reads compose naturally — the widget gets `None`
+//!   the same way it would on a frame where no touch occurred.
 //!
-//! ² Silently dropped after a one-time warn. Honouring the request would
-//!   queue work on a runtime that's about to be dropped.
+//! ² Silently dropped after a one-time warn. Honouring the request
+//!   would queue work on a runtime that's about to be dropped.
 
 // wasm32: usize == u32, so these truncation warnings are false positives.
 // cast_sign_loss only fires on wasm32 (gated FFI code).
@@ -182,6 +188,7 @@ pub mod params;
 pub mod progress_bar;
 #[cfg(target_arch = "wasm32")]
 pub mod slot;
+pub mod system;
 // Snapshot-cache machinery is wasm32-only (consumed by the wasm-target public API)
 // plus pulled in under `cfg(test)` for the unit tests that exercise the generic with a mock host.
 // Native non-test builds don't use it — gate it so the dead-code lint stays happy.
