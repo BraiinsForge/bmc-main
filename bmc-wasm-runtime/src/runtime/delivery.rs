@@ -745,6 +745,35 @@ impl WasmWidgetRuntime {
         !self.store.data().http_listeners.is_empty()
     }
 
+    /// Fan out to every `deliver_*` entry point in `widgets/wasm`'s historical order.
+    ///
+    /// The multi-slot host's main loop calls this per slot per iteration; the order
+    /// matches `widgets/wasm/src/wayland.rs:294-300` so payload ordering observable to
+    /// the guest is byte-identical between the standalone widget and the hosted slot.
+    pub fn poll_deliveries(&mut self) {
+        self.deliver_fetch_responses();
+        self.deliver_ws_messages();
+        self.deliver_socket_events();
+        self.deliver_mdns_events();
+        self.deliver_ssdp_events();
+        self.deliver_udp_broadcast_events();
+        self.deliver_http_requests();
+    }
+
+    /// Predicate consumed by the multi-slot host's `compute_poll_timeout` to clamp the
+    /// `poll(2)` wakeup to 100 ms whenever any slot still has async work that could
+    /// produce a delivery before the next render or lifecycle event.
+    #[must_use]
+    pub fn has_pending_io(&self) -> bool {
+        self.has_pending_fetches()
+            || self.has_active_websockets()
+            || self.has_active_sockets()
+            || self.has_active_mdns_browses()
+            || self.has_active_ssdp_searches()
+            || self.has_active_udp_broadcasts()
+            || self.has_active_http_listeners()
+    }
+
     fn alloc_guest_bytes(
         &mut self,
         alloc_func: wasmi::TypedFunc<u32, u32>,
