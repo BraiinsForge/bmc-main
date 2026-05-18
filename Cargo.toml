@@ -40,6 +40,7 @@ members = [
     "bmc-wasm-runtime/protocol",
     "bmc-wasm-runtime/sdk",
     "bmc-wasm-runtime/sdk-macros",
+    "bmc-wasm-thin-protocol",
     "bmc-widget",
     "bmc-widget-codegen",
     "bmc-widget-manifest",

@@ -1629,6 +1629,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-wasm-thin-protocol"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "bmc-widget"
 version = "0.1.0"
 dependencies = [
