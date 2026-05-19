@@ -361,7 +361,7 @@ fn render_suzanne(w: u32, h: u32, _delta_ms: u32) {
                 ..Default::default()
             },
         )
-        .transition(400, Easing::EaseOut),
+        .transition("mesh", 400, Easing::EaseOut),
     )];
 
     let layout: Vec<Node> = vec![

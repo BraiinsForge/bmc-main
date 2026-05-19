@@ -549,7 +549,7 @@ fn render_analog_round(
                 &HAND_HOUR_ROUND,
             ),
         )
-        .transition(500, Easing::EaseOut),
+        .transition("hour-hand", 500, Easing::EaseOut),
     );
 
     draws.push(
@@ -565,7 +565,7 @@ fn render_analog_round(
                 &HAND_MINUTE_ROUND,
             ),
         )
-        .transition(500, Easing::EaseOut),
+        .transition("minute-hand", 500, Easing::EaseOut),
     );
 
     // Centre-circle stack — order matters (later draws cover earlier ones):
@@ -594,7 +594,7 @@ fn render_analog_round(
                     &HAND_SECOND_ROUND,
                 ),
             )
-            .transition(200, Easing::EaseOut),
+            .transition("second-hand", 200, Easing::EaseOut),
         );
         draws.push(centre_icon(
             centre_x,

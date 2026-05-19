@@ -729,7 +729,7 @@ fn map_panel(data: &IssData, delta_ms: u32) -> Node {
             light: (data.solar_lat as f32, data.solar_lon as f32),
             atmosphere
         )
-        .transition(250, Easing::EaseOut),
+        .transition("earth-sphere", 250, Easing::EaseOut),
     );
 
     // Layer 1: orbit ground track projected onto the 3D globe

@@ -94,8 +94,17 @@ pub struct HostAnimationDef {
 }
 
 /// Host-side transition definition.
+///
+/// `id_hash` is the FNV1a-32 digest of the widget's
+/// `Draw::transition` id argument.
+///
+/// The transition state map keys on `(canvas_index, id_hash)`
+/// so transition state follows the logical draw across
+/// tree-shape changes — adding or removing a sibling
+/// no longer reshuffles state into the wrong draws.
 #[derive(Debug, Clone)]
 pub struct HostTransitionDef {
+    pub id_hash: u32,
     pub duration_ms: u32,
     pub easing: Easing,
 }
@@ -794,10 +803,12 @@ impl<'a> TreeReader<'a> {
                 };
 
                 let transition = if has_transition {
+                    let id_hash = self.read_u32()?;
                     let duration_ms = self.read_u32()?;
                     let easing = Easing::from_u8(self.read_u8()?)
                         .ok_or_else(|| anyhow::anyhow!("invalid Easing for transition"))?;
                     Some(HostTransitionDef {
+                        id_hash,
                         duration_ms,
                         easing,
                     })
@@ -992,12 +1003,14 @@ use crate::components::progress_bar::{ProgressBarData, render_progress_bar};
 use crate::components::{ButtonSize, ButtonStyle, draw_button};
 use crate::interaction::InteractionState;
 use crate::renderer::Renderer;
-use crate::{AnimationState, FrameTimings, ModalState, ScrollState, TransitionState};
+use crate::{
+    AnimationState, FrameTimings, ModalState, ScrollState, TransitionState, TransitionStateKey,
+};
 
 /// Mutable animation context threaded through the render pipeline.
 pub(crate) struct AnimationContext<'a> {
     pub(crate) animation_states: &'a mut HashMap<u64, AnimationState>,
-    pub(crate) transition_states: &'a mut HashMap<(u16, u16), TransitionState>,
+    pub(crate) transition_states: &'a mut HashMap<TransitionStateKey, TransitionState>,
     pub(crate) delta_ms: u32,
     pub(crate) frame_counter: u64,
     pub(crate) draw_counter: u32,
@@ -1103,7 +1116,7 @@ pub struct ProcessContext<'a> {
     pub modal_states: &'a mut HashMap<String, ModalState>,
     pub scroll_states: &'a mut HashMap<String, ScrollState>,
     pub animation_states: &'a mut HashMap<u64, AnimationState>,
-    pub transition_states: &'a mut HashMap<(u16, u16), TransitionState>,
+    pub transition_states: &'a mut HashMap<TransitionStateKey, TransitionState>,
     pub taffy: &'a mut TaffyTree<NodeContext>,
     pub frame_counter: u64,
     pub delta_ms: u32,

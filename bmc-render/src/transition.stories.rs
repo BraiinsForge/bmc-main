@@ -17,10 +17,11 @@ fn position(c: &mut StoryCtx) {
         (300, 60),
         canvas(
             props!(width: 300, height: 60),
-            [
-                Draw::rect(x.get(), 14.0, 32.0, 32.0, BLUE_50)
-                    .transition(500, Easing::EaseOutCubic),
-            ],
+            [Draw::rect(x.get(), 14.0, 32.0, 32.0, BLUE_50).transition(
+                "rect",
+                500,
+                Easing::EaseOutCubic,
+            )],
         ),
     );
 }
@@ -39,7 +40,13 @@ fn color(c: &mut StoryCtx) {
         (300, 120),
         canvas(
             props!(width: 300, height: 120),
-            [Draw::rect(126.0, 36.0, 48.0, 48.0, color).transition(800, Easing::EaseInOut)],
+            [
+                Draw::rect(126.0, 36.0, 48.0, 48.0, color).transition(
+                    "rect",
+                    800,
+                    Easing::EaseInOut,
+                ),
+            ],
         ),
     );
 }
@@ -55,8 +62,13 @@ fn size(c: &mut StoryCtx) {
         (300, 140),
         canvas(
             props!(width: 300, height: 140),
-            [Draw::rect(150.0 - s / 2.0, 70.0 - s / 2.0, s, s, VIOLET_50)
-                .transition(300, Easing::EaseOut)],
+            [
+                Draw::rect(150.0 - s / 2.0, 70.0 - s / 2.0, s, s, VIOLET_50).transition(
+                    "rect",
+                    300,
+                    Easing::EaseOut,
+                ),
+            ],
         ),
     );
 }

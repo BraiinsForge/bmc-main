@@ -310,7 +310,7 @@ fn beat_indicators(beat: u32, playing: bool, max_r: f32) -> Node {
             let cy = cell / 2.0;
             canvas(
                 props!(width: cell, height: cell),
-                [Draw::circle(cx, cy, r, color).transition(150, Easing::EaseOut)],
+                [Draw::circle(cx, cy, r, color).transition("dot", 150, Easing::EaseOut)],
             )
         })
         .collect();

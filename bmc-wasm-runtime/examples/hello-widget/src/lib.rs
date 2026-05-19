@@ -187,7 +187,7 @@ fn clock_canvas(size: f32, hour_angle: f32, minute_angle: f32, second_angle: f32
             hour_angle,
             Draw::rect(c - 3.0, c - hour_top, 6.0, hour_height, GRAY_10),
         )
-        .transition(500, EaseOut),
+        .transition("hour-hand", 500, EaseOut),
     );
     // Minute hand
     draws.push(
@@ -195,7 +195,7 @@ fn clock_canvas(size: f32, hour_angle: f32, minute_angle: f32, second_angle: f32
             minute_angle,
             Draw::rect(c - 2.0, c - minute_top, 4.0, minute_height, GRAY_30),
         )
-        .transition(500, EaseOut),
+        .transition("minute-hand", 500, EaseOut),
     );
     // Second hand
     draws.push(
@@ -203,7 +203,7 @@ fn clock_canvas(size: f32, hour_angle: f32, minute_angle: f32, second_angle: f32
             second_angle,
             Draw::rect(c - 1.0, c - second_top, 1.0, second_height, RED_50),
         )
-        .transition(200, EaseOut),
+        .transition("second-hand", 200, EaseOut),
     );
     // Center dot
     draws.push(Draw::centered(Draw::rect(0.0, 0.0, 8.0, 8.0, GRAY_10)));

@@ -115,6 +115,17 @@ pub struct TransitionState {
     pub last_seen_frame: u64,
 }
 
+/// Composite key for the host's `transition_states` map:
+/// `(canvas_index, transition_id_hash)`.
+///
+/// The hash side is the FNV1a-32 digest of the widget's
+/// `Draw::transition(id, ...)` argument. Keying on the widget-supplied
+/// id (instead of the draw's position within the canvas) lets transition
+/// state follow the logical draw across tree-shape changes — an optional
+/// sibling appearing or disappearing no longer reshuffles state into
+/// the wrong draws.
+pub type TransitionStateKey = (u16, u32);
+
 /// State for a modal dialog (animation, scroll)
 #[derive(Debug, Default)]
 pub struct ModalState {

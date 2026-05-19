@@ -959,12 +959,25 @@ impl Draw {
     }
 
     /// Add a transition — host smoothly interpolates when static values change.
+    ///
+    /// `id` is a widget-supplied stable identifier
+    /// for this draw (e.g. `"hour-hand"`).
+    ///
+    ///  The host keys transition state on `(canvas_index, fnv1a_32(id))`
+    /// so the interpolation tracks the logical draw across tree-shape
+    /// changes — appearing or vanishing siblings no longer reshuffle
+    /// transition state into the wrong draws.
+    ///
+    /// Use distinct ids per draw within the same canvas;
+    /// reusing an id silently aliases two transitions
+    /// to the same state slot.
     #[must_use]
-    pub fn transition(self, duration_ms: u32, easing: Easing) -> Self {
-        self.transition_with_color_space(duration_ms, easing, ColorSpace::default())
+    pub fn transition(self, id: &str, duration_ms: u32, easing: Easing) -> Self {
+        self.transition_with_color_space(id, duration_ms, easing, ColorSpace::default())
     }
 
     /// Add a transition with explicit color interpolation space.
+    /// See [`Draw::transition`] for the `id` semantics.
     #[must_use]
     #[expect(
         clippy::wildcard_enum_match_arm,
@@ -972,11 +985,13 @@ impl Draw {
     )]
     pub fn transition_with_color_space(
         self,
+        id: &str,
         duration_ms: u32,
         easing: Easing,
         color_space: ColorSpace,
     ) -> Self {
         let transition = Some(TransitionDef {
+            id_hash: fnv1a_32(id),
             duration_ms,
             easing,
         });
@@ -1560,6 +1575,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             }
 
             if let Some(t) = transition {
+                buf.write_u32(t.id_hash);
                 buf.write_u32(t.duration_ms);
                 buf.write_u8(t.easing as u8);
             }

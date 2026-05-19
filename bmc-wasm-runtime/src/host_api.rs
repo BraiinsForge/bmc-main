@@ -22,7 +22,7 @@ use taffy::prelude::*;
 use bmc_render::interaction::InteractionState;
 use bmc_render::renderer::Renderer;
 use bmc_render::tree::NodeContext;
-use bmc_render::{AnimationState, ModalState, ScrollState, TransitionState};
+use bmc_render::{AnimationState, ModalState, ScrollState, TransitionState, TransitionStateKey};
 use bmc_wasm_protocol::{
     AudioId, FetchRequestId, HttpListenerId, HttpRequestId, JsonId, MdnsBrowseId, MdnsRegId,
     SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, XmlId,
@@ -500,7 +500,7 @@ pub(crate) struct HostState {
     pub animation_states: HashMap<u64, AnimationState>,
 
     /// Running transition states, keyed by (canvas_index, draw_index).
-    pub transition_states: HashMap<(u16, u16), TransitionState>,
+    pub transition_states: HashMap<TransitionStateKey, TransitionState>,
 
     /// Monotonic frame counter for GC.
     pub frame_counter: u64,

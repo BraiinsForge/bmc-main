@@ -19,10 +19,40 @@ pub struct AnimationDef {
 }
 
 /// Definition of a transition (serialized to host).
+///
+/// `id_hash` is an FNV1a-32 digest of a widget-supplied id string,
+/// computed at call time by [`Draw::transition`].
+///
+/// The host keys transition state on `(canvas_index, id_hash)`
+/// so the interpolation follows the *logical* draw across tree-shape
+/// changes (e.g. an optional sibling appearing or disappearing).
+///
+/// Without an id the host would key on draw position, which silently
+/// swaps state between draws when their relative order shifts.
 #[derive(Clone, Debug)]
 pub struct TransitionDef {
+    pub id_hash: u32,
     pub duration_ms: u32,
     pub easing: Easing,
+}
+
+/// FNV1a-32 hash of `s`. Used by [`Draw::transition`]
+/// to derive a stable per-draw key from the widget-supplied
+/// id string at call time.
+///
+/// Const so `Draw::transition("hour-hand", …)` const-folds
+/// the hash at compile time for `&'static str` ids.
+#[must_use]
+pub const fn fnv1a_32(s: &str) -> u32 {
+    let bytes = s.as_bytes();
+    let mut hash: u32 = 0x811c_9dc5;
+    let mut i = 0;
+    while i < bytes.len() {
+        hash ^= bytes[i] as u32;
+        hash = hash.wrapping_mul(0x0100_0193);
+        i += 1;
+    }
+    hash
 }
 
 /// Path interpolation mode.

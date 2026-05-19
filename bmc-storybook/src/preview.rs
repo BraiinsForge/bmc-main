@@ -12,7 +12,7 @@ use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::interaction::InteractionState;
 use bmc_render::renderer::Renderer;
 use bmc_render::tree::{NodeContext, TouchHit};
-use bmc_render::{AnimationState, ModalState, ScrollState, TransitionState};
+use bmc_render::{AnimationState, ModalState, ScrollState, TransitionState, TransitionStateKey};
 use bmc_storybook_api::{DocBlock, FrameSize};
 use taffy::TaffyTree;
 
@@ -102,7 +102,7 @@ pub struct FrameState {
     pub modal_states: HashMap<String, ModalState>,
     pub scroll_states: HashMap<String, ScrollState>,
     pub animation_states: HashMap<u64, AnimationState>,
-    pub transition_states: HashMap<(u16, u16), TransitionState>,
+    pub transition_states: HashMap<TransitionStateKey, TransitionState>,
     pub taffy: TaffyTree<NodeContext>,
     pub frame_counter: u64,
     pub content_size: (f32, f32),

@@ -371,10 +371,15 @@ fn render_draw_inner(
                 }
             }
 
-            // Process transition
+            // Process transition.
+            //
+            // The key is `(canvas_index, id_hash)` so transition state
+            // follows the widget-supplied id across tree-shape changes
+            // — an optional sibling appearing or disappearing no
+            // longer reshuffles state into the wrong draws.
             if let Some(trans_def) = transition {
                 let current_values = extract_draw_values(inner);
-                let key = (anim_ctx.canvas_index, anim_ctx.draw_in_canvas);
+                let key = (anim_ctx.canvas_index, trans_def.id_hash);
                 let state = anim_ctx.transition_states.entry(key).or_insert_with(|| {
                     TransitionState {
                         from: current_values,
