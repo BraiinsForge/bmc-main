@@ -38,6 +38,11 @@ impl HostLifetime {
         self.last_disconnect = Some(now);
     }
 
+    pub fn note_failed_load(&mut self, now: Instant) {
+        self.ever_had_slot = true;
+        self.last_disconnect = Some(now);
+    }
+
     #[must_use]
     pub fn should_continue(&self, slots_len: usize, now: Instant) -> bool {
         if slots_len > 0 {
@@ -136,7 +141,9 @@ pub fn compute_poll_timeout_from_inputs(
     if slots.iter().any(|s| s.has_pending_io) {
         push(&mut best, Duration::from_millis(100));
     }
-    if let Some(d) = grace_remaining {
+    if slots.is_empty()
+        && let Some(d) = grace_remaining
+    {
         push(&mut best, d);
     }
     match best {
@@ -293,7 +300,12 @@ pub fn run(shared: &mut SharedHost, listener: &ListenSocket) -> Result<(), Fatal
                         tracing::info!(slot_id, peer_pid, wasm = %wasm, "slot inserted");
                         lifetime.note_accept();
                     }
-                    Err(e) => tracing::warn!(?e, "load failed; slot rejected"),
+                    Err(e) => {
+                        if slots.is_empty() {
+                            lifetime.note_failed_load(Instant::now());
+                        }
+                        tracing::warn!(?e, "load failed; slot rejected");
+                    }
                 },
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(e) if e.raw_os_error() == Some(libc::EINTR) => {}

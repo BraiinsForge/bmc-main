@@ -125,6 +125,15 @@ fn grace_remainder_contributes_when_no_slots() {
 }
 
 #[test]
+fn grace_remainder_does_not_contribute_when_slot_is_active() {
+    let slot = SlotPollInputs::default();
+    assert_eq!(
+        compute_poll_timeout_from_inputs(&[slot], Some(Duration::ZERO)),
+        -1,
+    );
+}
+
+#[test]
 fn minimum_across_multiple_slot_contributions_wins() {
     let s1 = SlotPollInputs {
         is_renderable: true,

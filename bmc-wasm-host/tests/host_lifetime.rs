@@ -38,3 +38,31 @@ fn reaccept_clears_disconnect_state() {
     lt.note_accept();
     assert!(lt.should_continue(1, Instant::now() + Duration::from_millis(200)));
 }
+
+#[test]
+fn failed_first_load_uses_disconnect_grace_window() {
+    let mut lt = HostLifetime::new();
+    let t0 = Instant::now();
+
+    lt.note_failed_load(t0);
+
+    assert!(lt.should_continue(0, t0));
+    assert!(lt.should_continue(0, t0 + Duration::from_millis(99)));
+    assert!(!lt.should_continue(0, t0 + Duration::from_millis(100)));
+    assert_eq!(
+        lt.poll_timeout_contribution(t0 + Duration::from_millis(25)),
+        Some(Duration::from_millis(75)),
+    );
+}
+
+#[test]
+fn accept_after_failed_load_clears_grace_state() {
+    let mut lt = HostLifetime::new();
+    let t0 = Instant::now();
+
+    lt.note_failed_load(t0);
+    lt.note_accept();
+
+    assert!(lt.should_continue(1, t0 + Duration::from_millis(200)));
+    assert_eq!(lt.poll_timeout_contribution(t0), None);
+}
