@@ -49,9 +49,9 @@ pub extern "C" fn render(_delta_ms: u32) {
 }
 ```
 
-`init` / `on_params_update` / `unload` are all optional — define them only when you need them. The full widget lifecycle
-(when each hook fires, which host imports are legal in each phase, the trap-vs-soft-fail guard matrix) lives in the
-[`bmc_wasm_sdk`](sdk/src/lib.rs) crate-level rustdoc — render it locally with:
+`init` / `on_params_update` / `on_system_update` / `unload` are all optional — define them only when you need them. The
+full widget lifecycle (when each hook fires, which host imports are legal in each phase, the trap-vs-soft-fail guard
+matrix) lives in the [`bmc_wasm_sdk`](sdk/src/lib.rs) crate-level rustdoc — render it locally with:
 
 ```bash
 just wasm::docs

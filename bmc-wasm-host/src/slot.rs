@@ -641,9 +641,6 @@ impl WidgetSlot {
 ///
 /// The wasm runtime intentionally does not depend on the bmc-shared crates,
 /// so the translation lives here.
-///
-/// `NightMode` is not part of the snapshot — it ships through
-/// a separate resolved channel — so that arm is a no-op here.
 fn apply_setting_update(snap: &mut SystemSnapshot, update: &SettingUpdate) {
     match update {
         SettingUpdate::Timezone(tz) => snap.settings.timezone.clone_from(tz),
@@ -658,10 +655,7 @@ fn apply_setting_update(snap: &mut SystemSnapshot, update: &SettingUpdate) {
         SettingUpdate::NextAlarm(na) => {
             snap.next_alarm = na.as_ref().map(next_alarm_to_runtime);
         }
-        SettingUpdate::NightMode(_) => {
-            // Night-mode lands via its own resolved channel;
-            // not part of the wasmi-wire `SystemSnapshot`.
-        }
+        SettingUpdate::NightMode(active) => snap.night_mode = *active,
     }
 }
 
@@ -833,6 +827,22 @@ mod tests {
         assert_eq!(snap.next_alarm, None);
     }
 
+    #[test]
+    fn apply_setting_update_night_mode_active_sets_snapshot_field() {
+        let mut snap = SystemSnapshot::default();
+        apply_setting_update(&mut snap, &SettingUpdate::NightMode(true));
+        assert!(snap.night_mode);
+    }
+
+    #[test]
+    fn apply_setting_update_night_mode_inactive_clears_snapshot_field() {
+        let mut snap = SystemSnapshot {
+            night_mode: true,
+            ..SystemSnapshot::default()
+        };
+        apply_setting_update(&mut snap, &SettingUpdate::NightMode(false));
+        assert!(!snap.night_mode);
+    }
 
     #[derive(Debug)]
     struct RecordingEvictor {

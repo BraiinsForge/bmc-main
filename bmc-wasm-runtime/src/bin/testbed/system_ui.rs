@@ -4,8 +4,8 @@
 //! Counterpart to [`crate::params_ui`]'s Params section for the
 //! [`SystemSnapshot`] channel.
 //!
-//! Eight controls (timezone text, six enum dropdowns, next-alarm sub-form)
-//! mutate a working copy of `TestbedApp::system`; on any change
+//! Nine controls (timezone text, six enum dropdowns, next-alarm sub-form,
+//! night-mode checkbox) mutate a working copy of `TestbedApp::system`; on any change
 //! [`TestbedApp::apply_system_update`] pushes the new snapshot to every
 //! tile's runtime via [`WasmWidgetRuntime::deliver_system_update`], records
 //! a `UnifiedEvent::SystemDelivery` event, and (when auto-capture is on)
@@ -55,7 +55,7 @@ impl TestbedApp {
     /// widget, so this section is always shown — there's no manifest-empty
     /// short-circuit.
     ///
-    /// Controls map 1:1 to the eight `SystemSnapshot` fields plus a toggle
+    /// Controls map 1:1 to the nine `SystemSnapshot` fields, plus a toggle
     /// that switches `next_alarm` between `None` and `Some { … }`. Returns
     /// `true` when any control mutated `working`.
     pub(super) fn paint_system_section(
@@ -112,6 +112,7 @@ impl TestbedApp {
                     unit_system_label,
                 );
                 changed |= paint_next_alarm_rows(grid, &mut working.next_alarm);
+                changed |= paint_night_mode_row(grid, &mut working.night_mode);
             });
         changed
     }
@@ -229,6 +230,17 @@ fn paint_next_alarm_rows(grid: &mut egui::Ui, next_alarm: &mut Option<NextAlarm>
         });
     }
     changed
+}
+
+fn paint_night_mode_row(grid: &mut egui::Ui, active: &mut bool) -> bool {
+    row(grid, "night_mode", |slot, _w, label| {
+        let cb_changed = slot.checkbox(active, "").changed();
+        let label_clicked = label.clicked();
+        if label_clicked {
+            *active = !*active;
+        }
+        cb_changed || label_clicked
+    })
 }
 
 // ── Enum variant tables + labels ────────────────────────────────────

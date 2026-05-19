@@ -34,18 +34,15 @@ pub enum SystemFieldKind {
     TemperatureUnit = 5,
     UnitSystem = 6,
     NextAlarm = 7,
+    NightMode = 8,
 }
 
-impl SystemFieldKind {
-    /// Decode a wire-format byte into a known field kind.
-    ///
-    /// `Err(tag)` surfaces the unknown byte so the caller
-    /// can include it in its own error variant.
-    ///
-    /// # Errors
-    /// Returns the unknown byte if it does not match
-    /// any known field kind.
-    pub fn try_from_u8(tag: u8) -> Result<Self, u8> {
+impl TryFrom<u8> for SystemFieldKind {
+    /// `Err(tag)` surfaces the unknown byte so the caller can include
+    /// it in its own error variant.
+    type Error = u8;
+
+    fn try_from(tag: u8) -> Result<Self, Self::Error> {
         match tag {
             0 => Ok(Self::Timezone),
             1 => Ok(Self::TimeFormat),
@@ -55,6 +52,7 @@ impl SystemFieldKind {
             5 => Ok(Self::TemperatureUnit),
             6 => Ok(Self::UnitSystem),
             7 => Ok(Self::NextAlarm),
+            8 => Ok(Self::NightMode),
             _ => Err(tag),
         }
     }
@@ -72,12 +70,10 @@ pub enum TimeFormat {
     Hour24 = 1,
 }
 
-impl TimeFormat {
-    /// Decode a wire-format byte into a known variant.
-    ///
-    /// # Errors
-    /// Returns the unknown byte if it does not match any known variant.
-    pub fn try_from_u8(tag: u8) -> Result<Self, u8> {
+impl TryFrom<u8> for TimeFormat {
+    type Error = u8;
+
+    fn try_from(tag: u8) -> Result<Self, Self::Error> {
         match tag {
             0 => Ok(Self::Hour12),
             1 => Ok(Self::Hour24),
@@ -106,12 +102,10 @@ pub enum DateFormat {
     YyyyMmDdDash = 7,
 }
 
-impl DateFormat {
-    /// Decode a wire-format byte into a known variant.
-    ///
-    /// # Errors
-    /// Returns the unknown byte if it does not match any known variant.
-    pub fn try_from_u8(tag: u8) -> Result<Self, u8> {
+impl TryFrom<u8> for DateFormat {
+    type Error = u8;
+
+    fn try_from(tag: u8) -> Result<Self, Self::Error> {
         match tag {
             0 => Ok(Self::DdMmYyyyDot),
             1 => Ok(Self::DdMmYyyySlash),
@@ -144,12 +138,10 @@ pub enum NumberFormat {
     SpaceGroupDotDecimal = 3,
 }
 
-impl NumberFormat {
-    /// Decode a wire-format byte into a known variant.
-    ///
-    /// # Errors
-    /// Returns the unknown byte if it does not match any known variant.
-    pub fn try_from_u8(tag: u8) -> Result<Self, u8> {
+impl TryFrom<u8> for NumberFormat {
+    type Error = u8;
+
+    fn try_from(tag: u8) -> Result<Self, Self::Error> {
         match tag {
             0 => Ok(Self::SpaceGroupCommaDecimal),
             1 => Ok(Self::CommaGroupDotDecimal),
@@ -183,12 +175,10 @@ pub enum Weekday {
     Sunday = 7,
 }
 
-impl Weekday {
-    /// Decode a wire-format byte into a known variant.
-    ///
-    /// # Errors
-    /// Returns the unknown byte if it does not match any known variant.
-    pub fn try_from_u8(tag: u8) -> Result<Self, u8> {
+impl TryFrom<u8> for Weekday {
+    type Error = u8;
+
+    fn try_from(tag: u8) -> Result<Self, Self::Error> {
         match tag {
             1 => Ok(Self::Monday),
             2 => Ok(Self::Tuesday),
@@ -214,12 +204,10 @@ pub enum TemperatureUnit {
     Fahrenheit = 1,
 }
 
-impl TemperatureUnit {
-    /// Decode a wire-format byte into a known variant.
-    ///
-    /// # Errors
-    /// Returns the unknown byte if it does not match any known variant.
-    pub fn try_from_u8(tag: u8) -> Result<Self, u8> {
+impl TryFrom<u8> for TemperatureUnit {
+    type Error = u8;
+
+    fn try_from(tag: u8) -> Result<Self, Self::Error> {
         match tag {
             0 => Ok(Self::Celsius),
             1 => Ok(Self::Fahrenheit),
@@ -240,12 +228,10 @@ pub enum UnitSystem {
     Imperial = 1,
 }
 
-impl UnitSystem {
-    /// Decode a wire-format byte into a known variant.
-    ///
-    /// # Errors
-    /// Returns the unknown byte if it does not match any known variant.
-    pub fn try_from_u8(tag: u8) -> Result<Self, u8> {
+impl TryFrom<u8> for UnitSystem {
+    type Error = u8;
+
+    fn try_from(tag: u8) -> Result<Self, Self::Error> {
         match tag {
             0 => Ok(Self::Metric),
             1 => Ok(Self::Imperial),
@@ -269,30 +255,31 @@ mod tests {
             (5, SystemFieldKind::TemperatureUnit),
             (6, SystemFieldKind::UnitSystem),
             (7, SystemFieldKind::NextAlarm),
+            (8, SystemFieldKind::NightMode),
         ];
         for (tag, variant) in expected {
             assert_eq!(
-                SystemFieldKind::try_from_u8(tag)
+                SystemFieldKind::try_from(tag)
                     .expect("BUG: tag in test table must round-trip to its variant"),
                 variant
             );
             assert_eq!(variant as u8, tag);
         }
-        assert_eq!(SystemFieldKind::try_from_u8(8), Err(8));
-        assert_eq!(SystemFieldKind::try_from_u8(255), Err(255));
+        assert_eq!(SystemFieldKind::try_from(9), Err(9));
+        assert_eq!(SystemFieldKind::try_from(255), Err(255));
     }
 
     #[test]
     fn time_format_round_trips_every_tag() {
         for (tag, variant) in [(0, TimeFormat::Hour12), (1, TimeFormat::Hour24)] {
             assert_eq!(
-                TimeFormat::try_from_u8(tag)
+                TimeFormat::try_from(tag)
                     .expect("BUG: tag in test table must round-trip to its variant"),
                 variant
             );
             assert_eq!(variant as u8, tag);
         }
-        assert_eq!(TimeFormat::try_from_u8(2), Err(2));
+        assert_eq!(TimeFormat::try_from(2), Err(2));
     }
 
     #[test]
@@ -309,13 +296,13 @@ mod tests {
         ];
         for (tag, variant) in expected {
             assert_eq!(
-                DateFormat::try_from_u8(tag)
+                DateFormat::try_from(tag)
                     .expect("BUG: tag in test table must round-trip to its variant"),
                 variant
             );
             assert_eq!(variant as u8, tag);
         }
-        assert_eq!(DateFormat::try_from_u8(8), Err(8));
+        assert_eq!(DateFormat::try_from(8), Err(8));
     }
 
     #[test]
@@ -328,13 +315,13 @@ mod tests {
         ];
         for (tag, variant) in expected {
             assert_eq!(
-                NumberFormat::try_from_u8(tag)
+                NumberFormat::try_from(tag)
                     .expect("BUG: tag in test table must round-trip to its variant"),
                 variant
             );
             assert_eq!(variant as u8, tag);
         }
-        assert_eq!(NumberFormat::try_from_u8(4), Err(4));
+        assert_eq!(NumberFormat::try_from(4), Err(4));
     }
 
     #[test]
@@ -350,14 +337,14 @@ mod tests {
         ];
         for (tag, variant) in expected {
             assert_eq!(
-                Weekday::try_from_u8(tag)
+                Weekday::try_from(tag)
                     .expect("BUG: tag in test table must round-trip to its variant"),
                 variant
             );
             assert_eq!(variant as u8, tag);
         }
-        assert_eq!(Weekday::try_from_u8(0), Err(0));
-        assert_eq!(Weekday::try_from_u8(8), Err(8));
+        assert_eq!(Weekday::try_from(0), Err(0));
+        assert_eq!(Weekday::try_from(8), Err(8));
     }
 
     #[test]
@@ -367,25 +354,25 @@ mod tests {
             (1, TemperatureUnit::Fahrenheit),
         ] {
             assert_eq!(
-                TemperatureUnit::try_from_u8(tag)
+                TemperatureUnit::try_from(tag)
                     .expect("BUG: tag in test table must round-trip to its variant"),
                 variant
             );
             assert_eq!(variant as u8, tag);
         }
-        assert_eq!(TemperatureUnit::try_from_u8(2), Err(2));
+        assert_eq!(TemperatureUnit::try_from(2), Err(2));
     }
 
     #[test]
     fn unit_system_round_trips_every_tag() {
         for (tag, variant) in [(0, UnitSystem::Metric), (1, UnitSystem::Imperial)] {
             assert_eq!(
-                UnitSystem::try_from_u8(tag)
+                UnitSystem::try_from(tag)
                     .expect("BUG: tag in test table must round-trip to its variant"),
                 variant
             );
             assert_eq!(variant as u8, tag);
         }
-        assert_eq!(UnitSystem::try_from_u8(2), Err(2));
+        assert_eq!(UnitSystem::try_from(2), Err(2));
     }
 }

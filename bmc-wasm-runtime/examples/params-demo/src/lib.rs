@@ -62,53 +62,68 @@ const DECAY_MS: u32 = 800;
 /// Decays linearly to 0 over `DECAY_MS`.
 const TINT_PEAK_ALPHA: f32 = 0.45;
 
-/// Lifecycle hook fired by the host on every params- or system-snapshot delivery
-/// after the first. Diffs `current()` against `previous()` on both channels
-/// and stamps every changed key with a fresh decay window;
-/// the render path consumes the per-key counter to tint the affected cells.
+/// Lifecycle hook fired by the host on every params-snapshot delivery
+/// after the first. Diffs `Params::current()` against `Params::previous()`
+/// and stamps every changed key with a fresh decay window so the matching
+/// demo cells tint amber.
+///
+/// Channel isolation: this hook fires only on params deliveries. System
+/// deliveries land in [`on_system_update`] — the two channels have
+/// separate hooks so each diff sees a fresh, just-rotated `previous()`.
 #[unsafe(no_mangle)]
 pub extern "C" fn on_params_update() {
-    let mut changed: Vec<&'static str> = Vec::new();
+    let Some(previous) = Params::previous() else {
+        return;
+    };
+    stamp_decay(Params::current().changed_keys(&previous));
+}
 
-    if let Some(previous) = Params::previous() {
-        changed.extend(Params::current().changed_keys(&previous));
-    }
-    // System fields don't have a key-set abstraction — compare
-    // each field by value between the current and previous snapshots
-    // so the matching demo cells tint amber on change.
-    let sys_cur = system::current();
-    let sys_prev = system::previous();
-    if sys_cur.timezone() != sys_prev.timezone() {
+/// Lifecycle hook fired by the host on every system-snapshot delivery
+/// after the first. System fields don't have a key-set abstraction —
+/// compare each field by value between current and previous snapshots
+/// so the matching demo cells tint amber on change.
+#[unsafe(no_mangle)]
+pub extern "C" fn on_system_update() {
+    let cur = system::current();
+    let prev = system::previous();
+    let mut changed: Vec<&'static str> = Vec::new();
+    if cur.timezone() != prev.timezone() {
         changed.push("timezone");
     }
-    if sys_cur.time_format() != sys_prev.time_format() {
+    if cur.time_format() != prev.time_format() {
         changed.push("time_format");
     }
-    if sys_cur.date_format() != sys_prev.date_format() {
+    if cur.date_format() != prev.date_format() {
         changed.push("date_format");
     }
-    if sys_cur.number_format() != sys_prev.number_format() {
+    if cur.number_format() != prev.number_format() {
         changed.push("number_format");
     }
-    if sys_cur.first_day_of_week() != sys_prev.first_day_of_week() {
+    if cur.first_day_of_week() != prev.first_day_of_week() {
         changed.push("first_day_of_week");
     }
-    if sys_cur.temperature_unit() != sys_prev.temperature_unit() {
+    if cur.temperature_unit() != prev.temperature_unit() {
         changed.push("temperature_unit");
     }
-    if sys_cur.unit_system() != sys_prev.unit_system() {
+    if cur.unit_system() != prev.unit_system() {
         changed.push("unit_system");
     }
-    if next_alarm_value(&sys_cur) != next_alarm_value(&sys_prev) {
+    if next_alarm_value(&cur) != next_alarm_value(&prev) {
         changed.push("next_alarm");
     }
+    stamp_decay(changed);
+}
 
-    if changed.is_empty() {
+/// Push `keys` into the decay map and request a follow-up frame.
+/// A no-op on an empty `keys` so callers can `stamp_decay(diff_result)`
+/// unconditionally without branching on emptiness.
+fn stamp_decay(keys: Vec<&'static str>) {
+    if keys.is_empty() {
         return;
     }
     DECAY_MS_REMAINING.with(|m| {
         let mut m = m.borrow_mut();
-        for key in changed {
+        for key in keys {
             m.insert(key.to_owned(), DECAY_MS);
         }
     });
@@ -255,7 +270,11 @@ pub extern "C" fn render(delta_ms: u32) {
 fn render_compact(w: u32, h: u32, p: &Params, sizes: &Sizes) {
     let sys = system::current();
     let mut rows = params_rows(p, sizes);
-    rows.push(kv_line("timezone", sys.timezone(), sizes));
+    rows.push(kv_line(
+        "timezone",
+        sys.timezone().unwrap_or(MISSING_LABEL),
+        sizes,
+    ));
     rows.push(kv_line("next_alarm", format_next_alarm(&sys), sizes));
     let _ = render_ui(
         w,
@@ -342,7 +361,7 @@ fn params_rows(p: &Params, sizes: &Sizes) -> Vec<Node> {
 fn system_rows(sizes: &Sizes) -> Vec<Node> {
     let sys = system::current();
     vec![
-        kv_line("timezone", sys.timezone(), sizes),
+        kv_line("timezone", sys.timezone().unwrap_or(MISSING_LABEL), sizes),
         kv_line("time_format", time_format_label(sys.time_format()), sizes),
         kv_line("date_format", date_format_label(sys.date_format()), sizes),
         kv_line(
@@ -504,7 +523,12 @@ fn render_grid(w: u32, h: u32, p: &Params, sizes: &Sizes) {
         props!(flex: 1.0, gap: sizes.cell_gap, background: PANE_BG, padding: sizes.col_padding),
         [
             section_header("System (deck-wide)", sizes),
-            kv("timezone", "IANA identifier", sys.timezone(), sizes),
+            kv(
+                "timezone",
+                "IANA identifier",
+                sys.timezone().unwrap_or(MISSING_LABEL),
+                sizes,
+            ),
             kv(
                 "time_format",
                 "12h / 24h",
@@ -607,67 +631,76 @@ fn kv_opt_f64(key: &str, hint: &str, value: Option<f64>, sizes: &Sizes) -> Node 
     }
 }
 
-/// Friendly labels for the six enum-typed system fields.
-/// Matches the labels used in the testbed's system-mutation
-/// sidebar so the operator's pick and the demo readout read the same.
-fn time_format_label(t: system::TimeFormat) -> &'static str {
+/// Display label for an absent or malformed system snapshot entry.
+const MISSING_LABEL: &str = "—";
+
+/// Friendly labels for the six enum-typed system fields. Each accepts
+/// the SDK's `Option<T>` directly and renders [`MISSING_LABEL`] when
+/// the entry is absent — matches the testbed's system-mutation sidebar.
+fn time_format_label(t: Option<system::TimeFormat>) -> &'static str {
     use system::TimeFormat;
     match t {
-        TimeFormat::Hour12 => "Hour12",
-        TimeFormat::Hour24 => "Hour24",
+        Some(TimeFormat::Hour12) => "Hour12",
+        Some(TimeFormat::Hour24) => "Hour24",
+        None => MISSING_LABEL,
     }
 }
 
-fn date_format_label(d: system::DateFormat) -> &'static str {
+fn date_format_label(d: Option<system::DateFormat>) -> &'static str {
     use system::DateFormat;
     match d {
-        DateFormat::DdMmYyyyDot => "DD.MM.YYYY",
-        DateFormat::DdMmYyyySlash => "DD/MM/YYYY",
-        DateFormat::DMYyyySlash => "D/M/YYYY",
-        DateFormat::MDYyyySlash => "M/D/YYYY",
-        DateFormat::DdMmYyyyDash => "DD-MM-YYYY",
-        DateFormat::YyyyMDSlash => "YYYY/M/D",
-        DateFormat::YyyyMmDdDot => "YYYY.MM.DD",
-        DateFormat::YyyyMmDdDash => "YYYY-MM-DD",
+        Some(DateFormat::DdMmYyyyDot) => "DD.MM.YYYY",
+        Some(DateFormat::DdMmYyyySlash) => "DD/MM/YYYY",
+        Some(DateFormat::DMYyyySlash) => "D/M/YYYY",
+        Some(DateFormat::MDYyyySlash) => "M/D/YYYY",
+        Some(DateFormat::DdMmYyyyDash) => "DD-MM-YYYY",
+        Some(DateFormat::YyyyMDSlash) => "YYYY/M/D",
+        Some(DateFormat::YyyyMmDdDot) => "YYYY.MM.DD",
+        Some(DateFormat::YyyyMmDdDash) => "YYYY-MM-DD",
+        None => MISSING_LABEL,
     }
 }
 
-fn number_format_label(n: system::NumberFormat) -> &'static str {
+fn number_format_label(n: Option<system::NumberFormat>) -> &'static str {
     use system::NumberFormat;
     match n {
-        NumberFormat::SpaceGroupCommaDecimal => "1 234 567,89",
-        NumberFormat::CommaGroupDotDecimal => "1,234,567.89",
-        NumberFormat::DotGroupCommaDecimal => "1.234.567,89",
-        NumberFormat::SpaceGroupDotDecimal => "1 234 567.89",
+        Some(NumberFormat::SpaceGroupCommaDecimal) => "1 234 567,89",
+        Some(NumberFormat::CommaGroupDotDecimal) => "1,234,567.89",
+        Some(NumberFormat::DotGroupCommaDecimal) => "1.234.567,89",
+        Some(NumberFormat::SpaceGroupDotDecimal) => "1 234 567.89",
+        None => MISSING_LABEL,
     }
 }
 
-fn weekday_label(w: system::Weekday) -> &'static str {
+fn weekday_label(w: Option<system::Weekday>) -> &'static str {
     use system::Weekday;
     match w {
-        Weekday::Monday => "Mon",
-        Weekday::Tuesday => "Tue",
-        Weekday::Wednesday => "Wed",
-        Weekday::Thursday => "Thu",
-        Weekday::Friday => "Fri",
-        Weekday::Saturday => "Sat",
-        Weekday::Sunday => "Sun",
+        Some(Weekday::Monday) => "Mon",
+        Some(Weekday::Tuesday) => "Tue",
+        Some(Weekday::Wednesday) => "Wed",
+        Some(Weekday::Thursday) => "Thu",
+        Some(Weekday::Friday) => "Fri",
+        Some(Weekday::Saturday) => "Sat",
+        Some(Weekday::Sunday) => "Sun",
+        None => MISSING_LABEL,
     }
 }
 
-fn temperature_unit_label(u: system::TemperatureUnit) -> &'static str {
+fn temperature_unit_label(u: Option<system::TemperatureUnit>) -> &'static str {
     use system::TemperatureUnit;
     match u {
-        TemperatureUnit::Celsius => "Celsius",
-        TemperatureUnit::Fahrenheit => "Fahrenheit",
+        Some(TemperatureUnit::Celsius) => "Celsius",
+        Some(TemperatureUnit::Fahrenheit) => "Fahrenheit",
+        None => MISSING_LABEL,
     }
 }
 
-fn unit_system_label(u: system::UnitSystem) -> &'static str {
+fn unit_system_label(u: Option<system::UnitSystem>) -> &'static str {
     use system::UnitSystem;
     match u {
-        UnitSystem::Metric => "Metric",
-        UnitSystem::Imperial => "Imperial",
+        Some(UnitSystem::Metric) => "Metric",
+        Some(UnitSystem::Imperial) => "Imperial",
+        None => MISSING_LABEL,
     }
 }
 

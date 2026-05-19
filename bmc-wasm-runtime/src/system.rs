@@ -27,6 +27,7 @@
 //!   u8 kind = SystemFieldKind::UnitSystem      → u8 wire tag
 //!   u8 kind = SystemFieldKind::NextAlarm       → u8 present (0 = None, 1 = Some),
 //!                                                if present followed by i64 LE fire_at_utc_ms + u16 LE name_len + utf-8 bytes
+//!   u8 kind = SystemFieldKind::NightMode       → u8 active (0 = inactive, 1 = active)
 //! ```
 //!
 //! Per-field kind-tagging keeps wire layout extensible:
@@ -57,6 +58,13 @@ pub struct SystemSnapshot {
     pub settings: SystemSettings,
     #[serde(default)]
     pub next_alarm: Option<NextAlarm>,
+    /// Whether deck-wide night mode is currently active.
+    /// Derived by `bmc::night_mode::NightModeController` from
+    /// the enable toggle, the operator-configured time interval,
+    /// and the wall-clock crossing the interval bounds; only
+    /// the derived bool reaches widgets.
+    #[serde(default)]
+    pub night_mode: bool,
 }
 
 /// Operator-controlled settings affecting widget rendering.
@@ -148,6 +156,10 @@ pub fn encode(snapshot: &SystemSnapshot) -> Vec<u8> {
     }
     count += 1;
 
+    push_kind(&mut out, SystemFieldKind::NightMode);
+    out.push(u8::from(snapshot.night_mode));
+    count += 1;
+
     out[0..4].copy_from_slice(&count.to_le_bytes());
     out
 }
@@ -192,7 +204,8 @@ fn estimate_size(snapshot: &SystemSnapshot) -> usize {
     //   timezone   : 1 + 2 + len
     //   six enums  : 1 + 1 = 2 each, six times
     //   next_alarm : 1 + 1 [+ 8 + 2 + name_len when Some]
-    let mut total = 4 + 1 + 2 + snapshot.settings.timezone.len() + 6 * 2 + 2;
+    //   night_mode : 1 + 1
+    let mut total = 4 + 1 + 2 + snapshot.settings.timezone.len() + 6 * 2 + 2 + 2;
     if let Some(next) = &snapshot.next_alarm {
         total += 8 + 2 + next.name.len();
     }
@@ -218,14 +231,15 @@ mod tests {
                 fire_at_utc_ms: 1_700_000_000_000,
                 name: "Wake up".into(),
             }),
+            night_mode: true,
         }
     }
 
     #[test]
     fn encode_emits_correct_count_header_and_kind_bytes() {
         let bytes = encode(&sample());
-        // count = 8 (timezone + 6 enums + next_alarm)
-        assert_eq!(&bytes[0..4], &8_u32.to_le_bytes());
+        // count = 9 (timezone + 6 enums + next_alarm + night_mode)
+        assert_eq!(&bytes[0..4], &9_u32.to_le_bytes());
 
         // First entry's kind byte is `Timezone`.
         assert_eq!(bytes[4], SystemFieldKind::Timezone as u8);
@@ -239,7 +253,7 @@ mod tests {
         let snap = sample();
         let bytes = encode(&snap);
         let count = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        assert_eq!(count, 8);
+        assert_eq!(count, 9);
 
         let mut offset = 4;
         // Timezone
@@ -282,6 +296,12 @@ mod tests {
             Ok("Wake up")
         );
         offset += name_len;
+
+        // NightMode: kind + active byte.
+        assert_eq!(bytes[offset], SystemFieldKind::NightMode as u8);
+        offset += 1;
+        assert_eq!(bytes[offset], 1, "night_mode active");
+        offset += 1;
         assert_eq!(offset, bytes.len());
     }
 
@@ -290,12 +310,26 @@ mod tests {
         let snap = SystemSnapshot {
             settings: SystemSettings::default(),
             next_alarm: None,
+            night_mode: false,
         };
         let bytes = encode(&snap);
-        // Last entry's kind byte is `NextAlarm`,
-        // followed by `0` (None) and no payload.
-        assert_eq!(bytes[bytes.len() - 2], SystemFieldKind::NextAlarm as u8);
+        // Trailing layout: NextAlarm + 0 (None), then NightMode + 0 (inactive).
+        assert_eq!(bytes[bytes.len() - 4], SystemFieldKind::NextAlarm as u8);
+        assert_eq!(bytes[bytes.len() - 3], 0);
+        assert_eq!(bytes[bytes.len() - 2], SystemFieldKind::NightMode as u8);
         assert_eq!(bytes[bytes.len() - 1], 0);
+    }
+
+    #[test]
+    fn encode_emits_night_mode_active_when_set() {
+        let snap = SystemSnapshot {
+            settings: SystemSettings::default(),
+            next_alarm: None,
+            night_mode: true,
+        };
+        let bytes = encode(&snap);
+        assert_eq!(bytes[bytes.len() - 2], SystemFieldKind::NightMode as u8);
+        assert_eq!(bytes[bytes.len() - 1], 1);
     }
 
     /// Walk the encoded stream and return the single-byte payload
@@ -304,7 +338,7 @@ mod tests {
     fn enum_tag_byte(bytes: &[u8], kind: SystemFieldKind) -> u8 {
         let mut offset = 4; // skip count header
         while offset < bytes.len() {
-            let entry_kind = SystemFieldKind::try_from_u8(bytes[offset])
+            let entry_kind = SystemFieldKind::try_from(bytes[offset])
                 .expect("BUG: encoder only emits known SystemFieldKind variants");
             offset += 1;
             if entry_kind == kind {
@@ -320,7 +354,8 @@ mod tests {
                 | SystemFieldKind::NumberFormat
                 | SystemFieldKind::FirstDayOfWeek
                 | SystemFieldKind::TemperatureUnit
-                | SystemFieldKind::UnitSystem => 1,
+                | SystemFieldKind::UnitSystem
+                | SystemFieldKind::NightMode => 1,
                 SystemFieldKind::NextAlarm => {
                     if bytes[offset] == 0 {
                         1
@@ -348,7 +383,7 @@ mod tests {
                     time_format: tf,
                     ..Default::default()
                 },
-                next_alarm: None,
+                ..Default::default()
             };
             assert_eq!(
                 enum_tag_byte(&encode(&snap), SystemFieldKind::TimeFormat),
@@ -370,7 +405,7 @@ mod tests {
                     date_format: df,
                     ..Default::default()
                 },
-                next_alarm: None,
+                ..Default::default()
             };
             assert_eq!(
                 enum_tag_byte(&encode(&snap), SystemFieldKind::DateFormat),
@@ -388,7 +423,7 @@ mod tests {
                     number_format: nf,
                     ..Default::default()
                 },
-                next_alarm: None,
+                ..Default::default()
             };
             assert_eq!(
                 enum_tag_byte(&encode(&snap), SystemFieldKind::NumberFormat),
@@ -409,7 +444,7 @@ mod tests {
                     first_day_of_week: wd,
                     ..Default::default()
                 },
-                next_alarm: None,
+                ..Default::default()
             };
             assert_eq!(
                 enum_tag_byte(&encode(&snap), SystemFieldKind::FirstDayOfWeek),
@@ -422,7 +457,7 @@ mod tests {
                     temperature_unit: tu,
                     ..Default::default()
                 },
-                next_alarm: None,
+                ..Default::default()
             };
             assert_eq!(
                 enum_tag_byte(&encode(&snap), SystemFieldKind::TemperatureUnit),
@@ -435,7 +470,7 @@ mod tests {
                     unit_system: us,
                     ..Default::default()
                 },
-                next_alarm: None,
+                ..Default::default()
             };
             assert_eq!(
                 enum_tag_byte(&encode(&snap), SystemFieldKind::UnitSystem),
@@ -470,18 +505,25 @@ mod tests {
         let bytes = encode(&snap);
         let decoded = Snapshot::from_bytes(bytes);
 
-        assert_eq!(decoded.timezone(), "Europe/Bratislava");
-        assert_eq!(decoded.time_format(), TimeFormat::Hour12);
-        assert_eq!(decoded.date_format(), DateFormat::YyyyMmDdDot);
-        assert_eq!(decoded.number_format(), NumberFormat::CommaGroupDotDecimal);
-        assert_eq!(decoded.first_day_of_week(), Weekday::Sunday);
-        assert_eq!(decoded.temperature_unit(), TemperatureUnit::Fahrenheit);
-        assert_eq!(decoded.unit_system(), UnitSystem::Imperial);
+        assert_eq!(decoded.timezone(), Some("Europe/Bratislava"));
+        assert_eq!(decoded.time_format(), Some(TimeFormat::Hour12));
+        assert_eq!(decoded.date_format(), Some(DateFormat::YyyyMmDdDot));
+        assert_eq!(
+            decoded.number_format(),
+            Some(NumberFormat::CommaGroupDotDecimal)
+        );
+        assert_eq!(decoded.first_day_of_week(), Some(Weekday::Sunday));
+        assert_eq!(
+            decoded.temperature_unit(),
+            Some(TemperatureUnit::Fahrenheit)
+        );
+        assert_eq!(decoded.unit_system(), Some(UnitSystem::Imperial));
         let next = decoded
             .next_alarm()
             .expect("BUG: sample() encodes next_alarm = Some(...)");
         assert_eq!(next.fire_at_utc_ms, 1_700_000_000_000);
         assert_eq!(next.name, "Wake up");
+        assert_eq!(decoded.night_mode(), Some(true));
     }
 
     /// Cross-validate the `next_alarm: None` path — host encoder writes
@@ -493,6 +535,7 @@ mod tests {
         let snap = SystemSnapshot {
             settings: SystemSettings::default(),
             next_alarm: None,
+            night_mode: false,
         };
         let bytes = encode(&snap);
         let decoded = Snapshot::from_bytes(bytes);
@@ -520,6 +563,7 @@ mod tests {
                 fire_at_utc_ms: 1,
                 name,
             }),
+            night_mode: false,
         };
         let decoded = Snapshot::from_bytes(encode(&snap));
         let next = decoded
@@ -545,6 +589,7 @@ mod tests {
         let original = SystemSnapshot {
             settings: sample().settings,
             next_alarm: None,
+            night_mode: false,
         };
         let json = serde_json::to_value(&original).expect("BUG: serialize");
         let parsed: SystemSnapshot = serde_json::from_value(json).expect("BUG: deserialize");

@@ -154,10 +154,10 @@ pub enum UnifiedEvent {
     ParamDelivery {
         params: serde_json::Map<String, serde_json::Value>,
     },
-    /// Operator-driven system-snapshot update — full deck-wide snapshot
-    /// delivered to the widget runtime. Parallel to [`Self::ParamDelivery`]
-    /// for the system channel: replay calls `WasmWidgetRuntime::deliver_system_update`,
-    /// which bumps the system version counter and fires the unified `on_params_update` hook.
+    /// Operator-driven system snapshot delivery.
+    /// Replay calls `WasmWidgetRuntime::deliver_system_update`,
+    /// which bumps the system version and fires `on_system_update`
+    /// on the widget.
     SystemDelivery {
         system: SystemSnapshot,
     },

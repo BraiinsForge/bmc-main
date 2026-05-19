@@ -234,12 +234,19 @@ pub struct WasmWidgetRuntime {
     /// Symmetric counterpart to `init`; gives a widget a chance to release
     /// its own ephemeral state before the host-side safety sweep runs.
     unload_func: Option<wasmi::TypedFunc<(), ()>>,
-    /// Optional guest export fired for every params- or system-snapshot delivery
+    /// Optional guest export fired for every params-snapshot delivery
     /// **after** the initial one.
     /// The first delivery is observed through `params::current()` inside `init`.
     /// Subsequent deliveries arrive via [`Self::deliver_params_update`], which calls
     /// this hook under [`Lifecycle::ParamsUpdate`].
     on_params_update_func: Option<wasmi::TypedFunc<(), ()>>,
+    /// Optional guest export fired for every system-snapshot delivery
+    /// **after** the initial one. Sibling of [`Self::on_params_update_func`]
+    /// for the `system` channel; isolating the two hooks lets a widget diff
+    /// `system::current()` vs `system::previous()` inside this export without
+    /// risking a stale read on the params channel (which doesn't rotate
+    /// on a system-only delivery).
+    on_system_update_func: Option<wasmi::TypedFunc<(), ()>>,
     sdk_version: (u16, u16, u16),
     /// Instruction budget reset before each WASM frame execution.
     pub(super) fuel_per_frame: u64,
@@ -317,6 +324,9 @@ impl WasmWidgetRuntime {
         let on_params_update_func = instance
             .get_typed_func::<(), ()>(&store, "on_params_update")
             .ok();
+        let on_system_update_func = instance
+            .get_typed_func::<(), ()>(&store, "on_system_update")
+            .ok();
 
         // Apply config before init() so interceptors/KV/params are available immediately.
         let state = store.data_mut();
@@ -366,6 +376,7 @@ impl WasmWidgetRuntime {
             render_func,
             unload_func,
             on_params_update_func,
+            on_system_update_func,
             sdk_version,
             fuel_per_frame,
             fuel_strikes: 0,
@@ -669,19 +680,27 @@ impl WasmWidgetRuntime {
         >,
     ) -> bool {
         self.set_params(params);
-        self.fire_on_params_update_hook()
+        self.fire_update_hook(
+            self.on_params_update_func,
+            "on_params_update",
+            Lifecycle::ParamsUpdate,
+        )
     }
 
     /// Deliver an updated deck-wide [`SystemSnapshot`] (timezone, formatting
-    /// preferences, next-alarm, …) to the running widget.
+    /// preferences, next-alarm, night-mode flag) to the running widget.
     ///
     /// Parallel to [`Self::deliver_params_update`] for the `system` channel:
     /// stages the snapshot, bumps the version counter, invalidates the
-    /// encoded-cache, and — if the widget exported `on_params_update` — calls
-    /// it under [`Lifecycle::ParamsUpdate`] with a fresh fuel budget. The
-    /// guest sees system updates through the same lifecycle hook as params
-    /// updates so widget authors learn one rule: "deck-side state changed,
-    /// re-check what I depend on."
+    /// encoded-cache, and — if the widget exported `on_system_update` — calls
+    /// it under [`Lifecycle::SystemUpdate`] with a fresh fuel budget.
+    ///
+    /// The two channels have **separate** hooks (`on_params_update`
+    /// for the params channel, `on_system_update` for the system channel)
+    /// so a widget diffing snapshots can rely on `*::previous()`
+    /// being fresh — a unified hook would re-fire on the *other*
+    /// channel's deliveries and surface the previous-channel's
+    /// stale rotation as a spurious diff.
     ///
     /// No rollback on trap (by design); see [`Self::deliver_params_update`].
     ///
@@ -691,28 +710,35 @@ impl WasmWidgetRuntime {
     /// callers ignore it.
     pub fn deliver_system_update(&mut self, snapshot: SystemSnapshot) -> bool {
         self.store.data_mut().system.replace(snapshot);
-        self.fire_on_params_update_hook()
+        self.fire_update_hook(
+            self.on_system_update_func,
+            "on_system_update",
+            Lifecycle::SystemUpdate,
+        )
     }
 
     /// Common tail of `deliver_params_update` / `deliver_system_update`:
-    /// invoke the guest's `on_params_update` export under
-    /// `Lifecycle::ParamsUpdate` with a fresh fuel budget, swallowing traps
-    /// (the snapshot is already staged so the next `render` picks it up).
-    fn fire_on_params_update_hook(&mut self) -> bool {
-        let Some(hook) = self.on_params_update_func else {
+    /// invoke the named guest export with a fresh fuel budget under
+    /// the matching lifecycle phase, swallowing traps (the snapshot
+    /// is already staged so the next `render` picks it up).
+    fn fire_update_hook(
+        &mut self,
+        hook: Option<wasmi::TypedFunc<(), ()>>,
+        hook_name: &'static str,
+        phase: Lifecycle,
+    ) -> bool {
+        let Some(hook) = hook else {
             return false;
         };
         if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
-            tracing::warn!("on_params_update: could not set fuel: {e}");
+            tracing::warn!("{hook_name}: could not set fuel: {e}");
             return false;
         }
-        let call_result = in_lifecycle(&mut self.store, Lifecycle::ParamsUpdate, |s| {
-            hook.call(s, ())
-        });
+        let call_result = in_lifecycle(&mut self.store, phase, |s| hook.call(s, ()));
         match call_result {
             Ok(()) => true,
             Err(e) => {
-                tracing::warn!("on_params_update trapped: {e}");
+                tracing::warn!("{hook_name} trapped: {e}");
                 false
             }
         }

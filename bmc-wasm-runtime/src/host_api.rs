@@ -160,6 +160,9 @@ pub(crate) enum Lifecycle {
     /// `on_params_update` is on the stack. State mutation + `request_frame` are legal;
     /// submitting a tree is not (the next render is the rendering opportunity).
     ParamsUpdate,
+    /// `on_system_update` is on the stack. Same import surface as [`Self::ParamsUpdate`],
+    /// but a separate phase so traps and logs name the right hook.
+    SystemUpdate,
     /// `unload` is on the stack. Synchronous cleanup only; frame requests no-op.
     Unload,
 }

@@ -27,15 +27,16 @@
 //!     NextAlarm       → u8 present (0 = None, 1 = Some);
 //!                       if present, i64 LE fire_at_utc_ms + u16 LE
 //!                       name_len + utf-8 bytes
+//!     NightMode       → u8 active (0 = inactive, 1 = active)
 //! ```
 //!
 //! ## Snapshot lifecycle
 //!
 //! Mirrors [`crate::params`]: [`current`] returns the latest snapshot,
-//! [`previous`] the one just before it. The `on_params_update` lifecycle
-//! hook fires on both params- and system-snapshot changes, so widgets
-//! that depend on either re-check inside the same hook and diff
-//! via `current()` vs `previous()`.
+//! [`previous`] the one just before it. The `on_system_update`
+//! lifecycle hook fires on system-snapshot changes (sibling of `on_params_update`
+//! for the system channel); diff `current()` vs `previous()` inside the hook
+//! to react only to fields whose value actually changed.
 
 use bmc_wasm_protocol::system::SystemFieldKind;
 
@@ -78,69 +79,72 @@ impl Snapshot {
     ///
     /// The host owns the wire layout; a malformed buffer here
     /// means the host messed up, not the widget.
-    ///
-    /// Accessors stop on the first parse error
-    /// and yield the default value for the missing entry.
+    /// Accessors return `None` for a missing or malformed entry
+    /// — widgets pick the fallback that fits the rendering
+    /// at each call site.
     #[must_use]
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
         Self { bytes }
     }
 
     /// IANA timezone identifier (e.g. `Europe/Bratislava`).
-    /// Returns an empty string if the entry is missing or malformed.
     #[must_use]
-    pub fn timezone(&self) -> &str {
+    pub fn timezone(&self) -> Option<&str> {
         self.find(SystemFieldKind::Timezone)
             .and_then(|payload| read_str(payload))
-            .unwrap_or("")
     }
 
     #[must_use]
-    pub fn time_format(&self) -> TimeFormat {
+    pub fn time_format(&self) -> Option<TimeFormat> {
         self.find(SystemFieldKind::TimeFormat)
             .and_then(read_u8_tag)
-            .and_then(|t| TimeFormat::try_from_u8(t).ok())
-            .unwrap_or_default()
+            .and_then(|t| TimeFormat::try_from(t).ok())
     }
 
     #[must_use]
-    pub fn date_format(&self) -> DateFormat {
+    pub fn date_format(&self) -> Option<DateFormat> {
         self.find(SystemFieldKind::DateFormat)
             .and_then(read_u8_tag)
-            .and_then(|t| DateFormat::try_from_u8(t).ok())
-            .unwrap_or_default()
+            .and_then(|t| DateFormat::try_from(t).ok())
     }
 
     #[must_use]
-    pub fn number_format(&self) -> NumberFormat {
+    pub fn number_format(&self) -> Option<NumberFormat> {
         self.find(SystemFieldKind::NumberFormat)
             .and_then(read_u8_tag)
-            .and_then(|t| NumberFormat::try_from_u8(t).ok())
-            .unwrap_or_default()
+            .and_then(|t| NumberFormat::try_from(t).ok())
     }
 
     #[must_use]
-    pub fn first_day_of_week(&self) -> Weekday {
+    pub fn first_day_of_week(&self) -> Option<Weekday> {
         self.find(SystemFieldKind::FirstDayOfWeek)
             .and_then(read_u8_tag)
-            .and_then(|t| Weekday::try_from_u8(t).ok())
-            .unwrap_or_default()
+            .and_then(|t| Weekday::try_from(t).ok())
     }
 
     #[must_use]
-    pub fn temperature_unit(&self) -> TemperatureUnit {
+    pub fn temperature_unit(&self) -> Option<TemperatureUnit> {
         self.find(SystemFieldKind::TemperatureUnit)
             .and_then(read_u8_tag)
-            .and_then(|t| TemperatureUnit::try_from_u8(t).ok())
-            .unwrap_or_default()
+            .and_then(|t| TemperatureUnit::try_from(t).ok())
     }
 
     #[must_use]
-    pub fn unit_system(&self) -> UnitSystem {
+    pub fn unit_system(&self) -> Option<UnitSystem> {
         self.find(SystemFieldKind::UnitSystem)
             .and_then(read_u8_tag)
-            .and_then(|t| UnitSystem::try_from_u8(t).ok())
-            .unwrap_or_default()
+            .and_then(|t| UnitSystem::try_from(t).ok())
+    }
+
+    /// Whether deck-wide night mode is currently active.
+    /// Derived host-side from the enable toggle, the operator
+    /// configured time interval, and the wall-clock crossing
+    /// the interval bounds — widgets only see the resolved bool.
+    #[must_use]
+    pub fn night_mode(&self) -> Option<bool> {
+        self.find(SystemFieldKind::NightMode)
+            .and_then(read_u8_tag)
+            .map(|b| b != 0)
     }
 
     /// Resolved next-to-fire alarm, or `None` when no alarm is scheduled.
@@ -150,9 +154,11 @@ impl Snapshot {
     #[must_use]
     pub fn next_alarm(&self) -> Option<NextAlarmView<'_>> {
         let payload = self.find(SystemFieldKind::NextAlarm)?;
-        let present = *payload.first()?;
-        if present == 0 {
-            return None;
+        // Wire spec: 0 = None, 1 = Some. Anything else is malformed —
+        // reject it as None rather than fabricate an alarm from garbage.
+        match *payload.first()? {
+            1 => {}
+            _ => return None,
         }
         // present == 1 → i64 (8) + u16 name_len + name bytes
         let after_flag = payload.get(1..)?;
@@ -183,11 +189,12 @@ impl Snapshot {
         while remaining > 0 {
             let entry_kind_byte = *self.bytes.get(offset)?;
             offset = offset.checked_add(1)?;
-            let entry_kind = SystemFieldKind::try_from_u8(entry_kind_byte).ok()?;
+            let entry_kind = SystemFieldKind::try_from(entry_kind_byte).ok()?;
             let payload_start = offset;
             let payload_len = entry_payload_len(&self.bytes, payload_start, entry_kind)?;
             if entry_kind == kind {
-                return self.bytes.get(payload_start..payload_start + payload_len);
+                let end = payload_start.checked_add(payload_len)?;
+                return self.bytes.get(payload_start..end);
             }
             offset = offset.checked_add(payload_len)?;
             remaining -= 1;
@@ -209,19 +216,19 @@ fn entry_payload_len(bytes: &[u8], offset: usize, kind: SystemFieldKind) -> Opti
         | SystemFieldKind::NumberFormat
         | SystemFieldKind::FirstDayOfWeek
         | SystemFieldKind::TemperatureUnit
-        | SystemFieldKind::UnitSystem => Some(1),
-        SystemFieldKind::NextAlarm => {
-            let present = *bytes.get(offset)?;
-            if present == 0 {
-                Some(1)
-            } else {
+        | SystemFieldKind::UnitSystem
+        | SystemFieldKind::NightMode => Some(1),
+        SystemFieldKind::NextAlarm => match *bytes.get(offset)? {
+            0 => Some(1),
+            1 => {
                 // present(1) + fire_at_utc_ms(8) + name_len(2) + name bytes
-                let name_len_off = offset + 1 + 8;
+                let name_len_off = offset.checked_add(9)?;
                 let name_len =
                     u16::from_le_bytes(*bytes.get(name_len_off..)?.first_chunk::<2>()?) as usize;
                 Some(1 + 8 + 2 + name_len)
             }
-        }
+            _ => None,
+        },
     }
 }
 
@@ -259,7 +266,7 @@ pub fn current() -> Snapshot {
 /// Snapshot delivered immediately before [`current`].
 ///
 /// [`Snapshot::default`] until at least one update has been observed.
-/// Inside `on_params_update`, holds the just-replaced snapshot
+/// Inside `on_system_update`, holds the just-replaced snapshot
 /// — diff against [`current`] to react only to fields whose value actually changed.
 #[cfg(target_arch = "wasm32")]
 #[must_use]
@@ -412,6 +419,13 @@ mod tests {
             self
         }
 
+        fn night_mode(mut self, active: bool) -> Self {
+            self.count += 1;
+            self.out.push(SystemFieldKind::NightMode as u8);
+            self.out.push(u8::from(active));
+            self
+        }
+
         fn build(mut self) -> Vec<u8> {
             let head = self.count.to_le_bytes();
             self.out[0..4].copy_from_slice(&head);
@@ -420,16 +434,17 @@ mod tests {
     }
 
     #[test]
-    fn default_snapshot_returns_default_field_values() {
+    fn default_snapshot_yields_none_on_every_field() {
         let s = Snapshot::default();
-        assert_eq!(s.timezone(), "");
-        assert_eq!(s.time_format(), TimeFormat::default());
-        assert_eq!(s.date_format(), DateFormat::default());
-        assert_eq!(s.number_format(), NumberFormat::default());
-        assert_eq!(s.first_day_of_week(), Weekday::default());
-        assert_eq!(s.temperature_unit(), TemperatureUnit::default());
-        assert_eq!(s.unit_system(), UnitSystem::default());
+        assert_eq!(s.timezone(), None);
+        assert_eq!(s.time_format(), None);
+        assert_eq!(s.date_format(), None);
+        assert_eq!(s.number_format(), None);
+        assert_eq!(s.first_day_of_week(), None);
+        assert_eq!(s.temperature_unit(), None);
+        assert_eq!(s.unit_system(), None);
         assert_eq!(s.next_alarm(), None);
+        assert_eq!(s.night_mode(), None);
     }
 
     #[test]
@@ -443,20 +458,40 @@ mod tests {
             .temperature_unit(TemperatureUnit::Fahrenheit)
             .unit_system(UnitSystem::Imperial)
             .next_alarm_some(1_700_000_000_000, "Wake up")
+            .night_mode(true)
             .build();
         let s = Snapshot::from_bytes(bytes);
-        assert_eq!(s.timezone(), "Europe/Bratislava");
-        assert_eq!(s.time_format(), TimeFormat::Hour12);
-        assert_eq!(s.date_format(), DateFormat::YyyyMmDdDot);
-        assert_eq!(s.number_format(), NumberFormat::CommaGroupDotDecimal);
-        assert_eq!(s.first_day_of_week(), Weekday::Sunday);
-        assert_eq!(s.temperature_unit(), TemperatureUnit::Fahrenheit);
-        assert_eq!(s.unit_system(), UnitSystem::Imperial);
+        assert_eq!(s.timezone(), Some("Europe/Bratislava"));
+        assert_eq!(s.time_format(), Some(TimeFormat::Hour12));
+        assert_eq!(s.date_format(), Some(DateFormat::YyyyMmDdDot));
+        assert_eq!(s.number_format(), Some(NumberFormat::CommaGroupDotDecimal));
+        assert_eq!(s.first_day_of_week(), Some(Weekday::Sunday));
+        assert_eq!(s.temperature_unit(), Some(TemperatureUnit::Fahrenheit));
+        assert_eq!(s.unit_system(), Some(UnitSystem::Imperial));
         let next = s
             .next_alarm()
             .expect("BUG: sample bytes encode next_alarm = Some(...)");
         assert_eq!(next.fire_at_utc_ms, 1_700_000_000_000);
         assert_eq!(next.name, "Wake up");
+        assert_eq!(s.night_mode(), Some(true));
+    }
+
+    #[test]
+    fn night_mode_inactive_decodes_false() {
+        let bytes = PackedBuilder::new().night_mode(false).build();
+        let s = Snapshot::from_bytes(bytes);
+        assert_eq!(s.night_mode(), Some(false));
+    }
+
+    #[test]
+    fn night_mode_missing_entry_returns_none() {
+        // No NightMode entry — accessor must yield None.
+        let bytes = PackedBuilder::new()
+            .timezone("UTC")
+            .next_alarm_none()
+            .build();
+        let s = Snapshot::from_bytes(bytes);
+        assert_eq!(s.night_mode(), None);
     }
 
     #[test]
@@ -467,25 +502,50 @@ mod tests {
     }
 
     #[test]
-    fn truncated_buffer_falls_back_to_defaults() {
+    fn next_alarm_rejects_invalid_present_byte() {
+        // Wire spec: 0 = None, 1 = Some. A non-{0,1} present byte
+        // must yield None rather than fabricate an alarm out of garbage.
+        // Guards against a one-bit flip in the byte stream materialising
+        // a phantom alarm.
+        for present in [2_u8, 7, 42, 255] {
+            let mut bytes = PackedBuilder::new()
+                .next_alarm_some(1_700_000_000_000, "garbage")
+                .build();
+            // Locate and overwrite the present byte (the byte after
+            // SystemFieldKind::NextAlarm in the stream).
+            let tag = SystemFieldKind::NextAlarm as u8;
+            let tag_idx = bytes
+                .iter()
+                .position(|&b| b == tag)
+                .expect("BUG: builder emitted NextAlarm tag");
+            bytes[tag_idx + 1] = present;
+            let s = Snapshot::from_bytes(bytes);
+            assert_eq!(
+                s.next_alarm(),
+                None,
+                "present byte {present} must reject as None"
+            );
+        }
+    }
+
+    #[test]
+    fn truncated_buffer_yields_none_past_the_cut() {
         let mut bytes = PackedBuilder::new()
             .timezone("Europe/Bratislava")
             .time_format(TimeFormat::Hour12)
             .build();
         bytes.truncate(bytes.len() - 1);
         let s = Snapshot::from_bytes(bytes);
-        // The first entry parses fine; the second can't be reached
-        // after the truncation removes its tag byte.
-        //
-        // Both accessors fall back to default (timezone for
-        // the second-traversal path that fails to advance).
-        assert_eq!(s.timezone(), "Europe/Bratislava");
-        assert_eq!(s.time_format(), TimeFormat::default());
+        // Timezone fits before the truncation.
+        // time_format can't be reached after the truncation
+        // removes its payload byte, so the accessor yields None.
+        assert_eq!(s.timezone(), Some("Europe/Bratislava"));
+        assert_eq!(s.time_format(), None);
     }
 
     #[test]
-    fn current_and_previous_are_default_on_native() {
-        assert_eq!(current().timezone(), "");
-        assert_eq!(previous().timezone(), "");
+    fn current_and_previous_are_none_on_native() {
+        assert_eq!(current().timezone(), None);
+        assert_eq!(previous().timezone(), None);
     }
 }

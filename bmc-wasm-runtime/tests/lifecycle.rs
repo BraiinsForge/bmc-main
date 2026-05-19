@@ -154,7 +154,7 @@ fn system_probe_widget_wat() -> &'static str {
 
       (func (export "render") (param i32))
 
-      (func (export "on_params_update")
+      (func (export "on_system_update")
         global.get $update_count
         i32.const 1
         i32.add
@@ -175,7 +175,7 @@ fn system_probe_widget_wat() -> &'static str {
         global.get $last_system_snapshot_len)
 
       ;; Lets the test read the initial version/snapshot length directly,
-      ;; even when the widget didn't export `on_params_update` for the
+      ;; even when the widget didn't export `on_system_update` for the
       ;; initial delivery (initial deliveries don't fire the hook).
       (func (export "probe_system_version") (result i64)
         call $host_system_version)
@@ -183,6 +183,38 @@ fn system_probe_widget_wat() -> &'static str {
         i32.const 0
         i32.const 4096
         call $host_system_snapshot))
+    "#
+}
+
+/// Widget exporting both `on_params_update` and `on_system_update`
+/// with independent counters, for asserting channel isolation.
+fn dual_probe_widget_wat() -> &'static str {
+    r#"
+    (module
+      (memory (export "memory") 1)
+
+      (global $params_count (mut i32) (i32.const 0))
+      (global $system_count (mut i32) (i32.const 0))
+
+      (func (export "__bmc_sdk_version") (result i64)
+        i64.const 65536)
+
+      (func (export "render") (param i32))
+
+      (func (export "on_params_update")
+        global.get $params_count
+        i32.const 1
+        i32.add
+        global.set $params_count)
+
+      (func (export "on_system_update")
+        global.get $system_count
+        i32.const 1
+        i32.add
+        global.set $system_count)
+
+      (func (export "params_count") (result i32) global.get $params_count)
+      (func (export "system_count") (result i32) global.get $system_count))
     "#
 }
 
@@ -202,7 +234,7 @@ fn oob_system_snapshot_traps_wat() -> &'static str {
 
       (func (export "render") (param i32))
 
-      (func (export "on_params_update")
+      (func (export "on_system_update")
         i32.const -1     ;; out_ptr = u32::MAX in two's complement
         i32.const 4096   ;; out_cap
         call $host_system_snapshot
@@ -418,6 +450,7 @@ fn sample_system_snapshot() -> SystemSnapshot {
             fire_at_utc_ms: 1_700_000_000_000,
             name: "Wake up".into(),
         }),
+        night_mode: false,
     }
 }
 
@@ -431,12 +464,12 @@ fn host_system_snapshot_returns_initial_settings() {
     let (mut runtime, _renderer) =
         build_runtime_with_system(system_probe_widget_wat(), &gl, BTreeMap::new(), snapshot);
 
-    // Initial delivery via RuntimeConfig::system must NOT fire on_params_update —
+    // Initial delivery via RuntimeConfig::system must NOT fire on_system_update —
     // it's the staged state for the first frame, not an update event.
     assert_eq!(
         runtime.call_export_i32("update_count"),
         Some(0),
-        "RuntimeConfig::system is the initial delivery — on_params_update must NOT fire for it"
+        "RuntimeConfig::system is the initial delivery — on_system_update must NOT fire for it"
     );
 
     let version = runtime
@@ -457,7 +490,7 @@ fn host_system_snapshot_returns_initial_settings() {
 }
 
 #[test]
-fn deliver_system_update_fires_on_params_update_hook_and_advances_version() {
+fn deliver_system_update_fires_on_system_update_hook_and_advances_version() {
     let Some(gl) = headless_egl::try_init(320, 240) else {
         return;
     };
@@ -468,7 +501,7 @@ fn deliver_system_update_fires_on_params_update_hook_and_advances_version() {
     let hook_ran = runtime.deliver_system_update(first_delivery);
     assert!(
         hook_ran,
-        "deliver_system_update must invoke the unified on_params_update hook"
+        "deliver_system_update must invoke the on_system_update hook"
     );
     assert_eq!(runtime.call_export_i32("update_count"), Some(1));
 
@@ -518,6 +551,48 @@ fn host_system_snapshot_traps_on_oob_out_ptr() {
         !hook_ran,
         "host_system_snapshot with an OOB out_ptr must trap the ABI violation, \
          which surfaces as `deliver_system_update` returning false"
+    );
+}
+
+/// Channel isolation: a params-only delivery must NOT fire the system hook.
+#[test]
+fn deliver_params_update_does_not_fire_on_system_update_hook() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+
+    let (mut runtime, _renderer) = build_runtime(dual_probe_widget_wat(), &gl, BTreeMap::new());
+
+    let mut delivery = BTreeMap::new();
+    delivery.insert(key("foo"), ParamValue::String("hello".into()));
+    let hook_ran = runtime.deliver_params_update(delivery);
+
+    assert!(hook_ran, "on_params_update must fire on a params delivery");
+    assert_eq!(runtime.call_export_i32("params_count"), Some(1));
+    assert_eq!(
+        runtime.call_export_i32("system_count"),
+        Some(0),
+        "params-only delivery must NOT fire on_system_update"
+    );
+}
+
+/// Channel isolation: a system-only delivery must NOT fire the params hook.
+#[test]
+fn deliver_system_update_does_not_fire_on_params_update_hook() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+
+    let (mut runtime, _renderer) = build_runtime(dual_probe_widget_wat(), &gl, BTreeMap::new());
+
+    let hook_ran = runtime.deliver_system_update(sample_system_snapshot());
+
+    assert!(hook_ran, "on_system_update must fire on a system delivery");
+    assert_eq!(runtime.call_export_i32("system_count"), Some(1));
+    assert_eq!(
+        runtime.call_export_i32("params_count"),
+        Some(0),
+        "system-only delivery must NOT fire on_params_update"
     );
 }
 

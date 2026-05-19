@@ -7,7 +7,9 @@
 //! and a probe-then-fetch snapshot reader. The SDK keeps `current` + `previous`
 //! typed snapshots per channel, refreshes them only when the host's version differs,
 //! and rotates `current → previous` on each version bump so widgets can diff against
-//! the just-replaced state inside `on_params_update`.
+//! the just-replaced state inside the matching channel's lifecycle hook
+//! (`on_params_update` for the params channel, `on_system_update` for
+//! the system channel).
 //!
 //! This module owns the generic machinery; each channel module
 //! (e.g. `params`, `system` later) plugs in its own snapshot type

@@ -591,6 +591,7 @@ impl TestbedApp {
                 ..bmc_wasm_runtime::SystemSettings::default()
             },
             next_alarm: None,
+            night_mode: false,
         };
 
         let recording_state = cli.record_size.as_ref().map(|size_name| {

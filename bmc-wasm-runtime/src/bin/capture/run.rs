@@ -195,11 +195,9 @@ fn run_unified_capture(
     let initial_params = bmc_wasm_runtime::parse_params_json(&fixture.header.initial_params)
         .expect("BUG: capture fixture initial_params must be valid");
 
-    // Initial system snapshot — same shape as initial_params, parsed
-    // Typed at the fixture boundary — serde deserialises `initial_system`
-    // into a `SystemSnapshot` at fixture-load time; per-field
-    // `#[serde(default)]` makes fixtures pre-dating individual fields
-    // fall through to typed defaults rather than failing load.
+    // Initial system snapshot — serde-deserialised at fixture load;
+    // `#[serde(default)]` on each field lets older fixtures fall back
+    // to typed defaults instead of failing load.
     let initial_system = fixture.header.initial_system.clone();
 
     // Build runtime config
@@ -541,8 +539,9 @@ fn run_unified_capture(
                     runtime.deliver_params_update(table);
                 }
                 // System-snapshot delivery — same shape as ParamDelivery
-                // but for deck-wide settings.
-                // Fires the unified `on_params_update` hook.
+                // but for deck-wide settings. Fires the widget's
+                // `on_system_update` hook (channel-isolated sibling
+                // of `on_params_update`).
                 UnifiedEvent::SystemDelivery { system } => {
                     runtime.deliver_system_update(system.clone());
                 }

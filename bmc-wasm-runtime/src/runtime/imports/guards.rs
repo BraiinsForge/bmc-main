@@ -2,7 +2,8 @@
 
 //! Lifecycle-phase guards for guest imports.
 //!
-//! Most host imports are only meaningful inside specific guest-call phases (`init` / `render` / `on_params_update` / `unload`).
+//! Most host imports are only meaningful inside specific guest-call phases
+//! (`init` / `render` / `on_params_update` / `on_system_update` / `unload`).
 //! The runtime tracks the active phase in [`HostState::current_lifecycle`].
 //! This module checks the matrix at each import call site and surfaces violations as:
 //!
@@ -42,8 +43,8 @@ fn lifecycle_trap(
 ///
 /// Use for imports whose effects are only meaningful in a render frame
 /// (`host_submit_tree`, touch readback). A violation is a widget bug — calling render-only
-/// imports from `on_params_update` would, e.g., race the next real render or stash a stale
-/// tree, so trapping is the only honest behaviour.
+/// imports from `on_params_update` / `on_system_update` would, e.g., race the next real
+/// render or stash a stale tree, so trapping is the only honest behaviour.
 pub(super) fn require_render(
     caller: &Caller<'_, HostState>,
     import_name: &'static str,

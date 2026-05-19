@@ -28,12 +28,19 @@
 //!        │  calls `render(delta_ms)`            │── once per visible frame
 //!        │      ↓                               │
 //!        │  may fire `on_params_update`         │── after each operator-driven
-//!        │      (when params version bumps)     │   `params` change
+//!        │      (when params version bumps)     │   per-widget `params` change
+//!        │      ↓                               │
+//!        │  may fire `on_system_update`         │── after each deck-wide
+//!        │      (when system version bumps)     │   `system` snapshot change
 //!        │      ↓                               │
 //!        │  may fire `unload`                   │── when the widget is being torn
 //!        │      (terminal — runs once)          │   down (scene swap, hot reload)
 //!        └──────────────────────────────────────┘
 //! ```
+//!
+//! `on_params_update` and `on_system_update` are independent exports —
+//! each only fires when its own channel's version bumps. A widget can export
+//! one, both, or neither.
 //!
 //! The host always invokes hooks one at a time on the wasm thread — there
 //! is no concurrent execution inside a widget.
@@ -89,18 +96,41 @@
 //! }
 //! ```
 //!
-//! Optional — fires whenever the host delivers a new snapshot on either
-//! the per-widget [`params`] channel or the deck-wide [`system`] channel,
-//! *after* the initial values staged for `init`. Widget authors learn one
-//! hook: "deck-side state changed, re-check what I depend on."
+//! Optional — fires for every per-widget [`params`] snapshot delivery
+//! *after* the initial values staged for `init`. Inside the hook,
+//! [`params::previous`] holds the just-replaced snapshot — diff against
+//! [`params::current`] to react only to keys whose value actually
+//! changed. See [`params`] for the byte-level protocol and caching.
 //!
-//! Read [`params::current`] / [`system::current`] for the new state
-//! and the matching `previous()` for the old — diff to react only
-//! to fields whose value actually changed. See each module for
-//! the byte-level protocol and snapshot caching.
+//! Channel isolation: this hook fires only on params deliveries.
+//! The deck-wide [`system`] channel has its own [`on_system_update`](#on_system_update)
+//! hook so each diff sees a fresh, just-rotated `previous()` — a unified hook
+//! would re-fire on the other channel's deliveries and surface its stale rotation
+//! as a spurious diff.
 //!
-//! The initial deliveries (staged before `init` runs) do NOT fire
+//! The initial delivery (staged before `init` runs) does NOT fire
 //! this hook — only operator-driven mid-life changes do.
+//!
+//! ### `on_system_update`
+//!
+//! ```rust,ignore
+//! #[unsafe(no_mangle)]
+//! pub extern "C" fn on_system_update() {
+//!     let cur = system::current();
+//!     let prev = system::previous();
+//!     // diff cur vs prev field-by-field
+//! }
+//! ```
+//!
+//! Optional — fires for every deck-wide [`system`] snapshot delivery
+//! *after* the initial values staged for `init`. Sibling of
+//! `on_params_update` for the system channel; same lifecycle and import
+//! semantics, same "initial delivery doesn't fire" rule.
+//!
+//! Use this when a widget renders something that depends on deck-wide
+//! state (timezone, formats, next-alarm, night-mode, …) and needs to
+//! react to mid-life changes rather than just re-reading
+//! [`system::current`] on every `render`.
 //!
 //! ### `unload`
 //!
@@ -126,12 +156,17 @@
 //!   (`None` for touch reads, no-op for frame requests). Used when reading defensively
 //!   is reasonable and the widget composes naturally with the sentinel.
 //!
-//! | Import                                              | `init` | `render` | `on_params_update` | `unload` |
-//! |-----------------------------------------------------|:------:|:--------:|:------------------:|:--------:|
-//! | `render_ui` / `host_submit_tree`                    | trap   | ✓        | trap               | trap     |
-//! | `Touch::click` / `Touch::drag` (touch readback)     | None¹  | ✓        | None¹              | None¹    |
-//! | `request_frame` / `request_frame_after`             | ✓      | ✓        | ✓                  | no-op²   |
-//! | All other imports (params, KV, fetch, log, …)       | ✓      | ✓        | ✓                  | ✓        |
+//! `on_params_update` and `on_system_update` share the same import-legality
+//! row — both run with state-mutation legal, tree-submission illegal.
+//!
+//! | Import                                              | `init` | `render` | `on_*_update`* | `unload` |
+//! |-----------------------------------------------------|:------:|:--------:|:--------------:|:--------:|
+//! | `render_ui` / `host_submit_tree`                    | trap   | ✓        | trap           | trap     |
+//! | `Touch::click` / `Touch::drag` (touch readback)     | None¹  | ✓        | None¹          | None¹    |
+//! | `request_frame` / `request_frame_after`             | ✓      | ✓        | ✓              | no-op²   |
+//! | All other imports (params, KV, fetch, log, …)       | ✓      | ✓        | ✓              | ✓        |
+//!
+//! \* Same gating for both `on_params_update` and `on_system_update`.
 //!
 //! ¹ Returns the touch-not-present sentinel after a one-time warn.
 //!   Defensive reads compose naturally — the widget gets `None`
