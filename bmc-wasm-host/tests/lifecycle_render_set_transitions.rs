@@ -82,7 +82,7 @@ fn ctx<'a>(
     }
 }
 
-fn seeded_render_set_state(
+fn seeded_target_owning_state(
     source: LifecycleState,
 ) -> (
     LifecycleStateMachine,
@@ -106,7 +106,7 @@ fn seeded_render_set_state(
     assert_eq!(sm.current(), source);
     assert!(
         target.is_some(),
-        "render-set source must seed a render target"
+        "target-owning source must seed a render target"
     );
     assert_eq!(mock.alloc_calls.get(), 1);
     assert_eq!(mock.destroy_calls.get(), 0);
@@ -116,13 +116,13 @@ fn seeded_render_set_state(
 }
 
 #[test]
-fn render_set_self_and_intra_set_transitions_do_not_churn_target() {
-    use LifecycleState::{Entering, Leaving, Visible};
-    let render_set = [Entering, Visible, Leaving];
+fn target_owning_self_and_intra_set_transitions_do_not_churn_target() {
+    use LifecycleState::{Entering, Leaving, Prepared, Visible};
+    let target_owning_set = [Prepared, Entering, Visible, Leaving];
 
-    for source in render_set {
-        for target_state in render_set {
-            let (mut sm, mut target, mock, factory) = seeded_render_set_state(source);
+    for source in target_owning_set {
+        for target_state in target_owning_set {
+            let (mut sm, mut target, mock, factory) = seeded_target_owning_state(source);
             let egl = StubEgl;
             let surface = StubSurface;
 
@@ -141,27 +141,24 @@ fn render_set_self_and_intra_set_transitions_do_not_churn_target() {
 }
 
 #[test]
-fn render_set_to_buffer_free_transitions_destroy_exactly_once() {
+fn target_owning_to_dormant_transitions_destroy_exactly_once() {
     use LifecycleState::{Dormant, Entering, Leaving, Prepared, Visible};
-    let render_set = [Entering, Visible, Leaving];
-    let buffer_free = [Prepared, Dormant];
+    let target_owning_set = [Prepared, Entering, Visible, Leaving];
 
-    for source in render_set {
-        for target_state in buffer_free {
-            let (mut sm, mut target, mock, factory) = seeded_render_set_state(source);
-            let egl = StubEgl;
-            let surface = StubSurface;
+    for source in target_owning_set {
+        let (mut sm, mut target, mock, factory) = seeded_target_owning_state(source);
+        let egl = StubEgl;
+        let surface = StubSurface;
 
-            sm.on_event(target_state);
-            sm.apply(
-                &mut ctx(&factory, &mut target, &egl, &surface),
-                Instant::now(),
-            );
+        sm.on_event(Dormant);
+        sm.apply(
+            &mut ctx(&factory, &mut target, &egl, &surface),
+            Instant::now(),
+        );
 
-            assert_eq!(sm.current(), target_state);
-            assert!(target.is_none());
-            assert_eq!(mock.alloc_calls.get(), 0);
-            assert_eq!(mock.destroy_calls.get(), 1);
-        }
+        assert_eq!(sm.current(), Dormant);
+        assert!(target.is_none());
+        assert_eq!(mock.alloc_calls.get(), 0);
+        assert_eq!(mock.destroy_calls.get(), 1);
     }
 }

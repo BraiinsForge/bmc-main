@@ -97,24 +97,30 @@ fn ctx_no_target<'a>(
 }
 
 #[test]
-fn dormant_to_prepared_is_no_op_on_resources() {
+fn dormant_to_prepared_with_failing_factory_marks_blocked_and_retries() {
     let mock: Rc<MockFactory> = Rc::new(MockFactory::new());
     let factory: Rc<dyn RenderTargetFactory> = mock.clone();
+    mock.fail(1);
+
     let mut target: Option<RenderTarget> = None;
     let egl = StubEgl;
     let surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(LifecycleState::Prepared);
+    let t0 = Instant::now();
     sm.apply(
         &mut ctx_no_target(&factory, &mut target, &egl, &surface),
-        Instant::now(),
+        t0,
     );
 
-    assert_eq!(sm.current(), LifecycleState::Prepared);
-    assert!(!sm.blocked());
+    assert_eq!(sm.current(), LifecycleState::Dormant);
+    assert_eq!(sm.target(), LifecycleState::Prepared);
+    assert!(sm.blocked());
     assert!(target.is_none());
-    assert_eq!(mock.alloc_calls.get(), 0);
+    assert!(!sm.needs_retry(t0));
+    assert!(sm.needs_retry(t0 + Duration::from_secs(1)));
+    assert_eq!(mock.alloc_calls.get(), 1);
     assert_eq!(mock.destroy_calls.get(), 0);
 }
 
@@ -254,8 +260,54 @@ fn entering_to_dormant_while_blocked_clears_blocked_and_does_not_call_destroy() 
     assert_eq!(mock.destroy_calls.get(), 0);
 }
 
+// Parametric coverage for the spec's 5x5 transition matrix. Each starting state in the
+// buffer-free state Dormant is driven toward every target-owning state
+// {Prepared, Entering, Visible, Leaving}; we use a factory configured to always fail so the post-
+// transition state is observable without needing a real RenderTarget.
 #[test]
-fn dormant_to_prepared_round_trip_is_no_op() {
+fn all_transitions_from_dormant_to_target_owning_states_invoke_allocate() {
+    use LifecycleState::{Dormant, Entering, Leaving, Prepared, Visible};
+    let targets = [Prepared, Entering, Visible, Leaving];
+
+    for target_state in targets {
+        let mock: Rc<MockFactory> = Rc::new(MockFactory::new());
+        let factory: Rc<dyn RenderTargetFactory> = mock.clone();
+        mock.fail(1);
+
+        let mut target: Option<RenderTarget> = None;
+        let egl = StubEgl;
+        let surface = StubSurface;
+
+        let mut sm = LifecycleStateMachine::new();
+        sm.on_event(target_state);
+        sm.apply(
+            &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+            Instant::now(),
+        );
+
+        assert_eq!(
+            mock.alloc_calls.get(),
+            1,
+            "{Dormant:?} -> {target_state:?} must call allocate"
+        );
+        assert!(
+            sm.blocked(),
+            "{Dormant:?} -> {target_state:?} with failing factory must mark blocked"
+        );
+        assert_eq!(
+            sm.current(),
+            Dormant,
+            "current must stay until allocation succeeds"
+        );
+        assert_eq!(sm.target(), target_state);
+        assert!(target.is_none());
+        assert_eq!(mock.destroy_calls.get(), 0);
+    }
+}
+
+// Dormant self-transitions do not require any target resources.
+#[test]
+fn dormant_self_transition_is_no_op() {
     let mock: Rc<MockFactory> = Rc::new(MockFactory::new());
     let factory: Rc<dyn RenderTargetFactory> = mock.clone();
     let mut target: Option<RenderTarget> = None;
@@ -263,148 +315,22 @@ fn dormant_to_prepared_round_trip_is_no_op() {
     let surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
-    sm.on_event(LifecycleState::Prepared);
-    sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
-        Instant::now(),
-    );
     sm.on_event(LifecycleState::Dormant);
     sm.apply(
         &mut ctx_no_target(&factory, &mut target, &egl, &surface),
         Instant::now(),
     );
-    sm.on_event(LifecycleState::Prepared);
-    sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
-        Instant::now(),
-    );
 
-    assert_eq!(sm.current(), LifecycleState::Prepared);
+    assert_eq!(sm.current(), LifecycleState::Dormant);
+    assert!(!sm.blocked());
     assert_eq!(mock.alloc_calls.get(), 0);
     assert_eq!(mock.destroy_calls.get(), 0);
 }
 
-// Parametric coverage for the spec's 5x5 transition matrix. Each starting state in the
-// buffer-free set {Dormant, Prepared} is driven toward every target in the render-set
-// {Entering, Visible, Leaving}; we use a factory configured to always fail so the post-
-// transition state is observable without needing a real RenderTarget.
 #[test]
-fn all_transitions_from_bufferfree_to_render_set_invoke_allocate() {
-    use LifecycleState::{Dormant, Entering, Leaving, Prepared, Visible};
-    let starts = [Dormant, Prepared];
-    let targets = [Entering, Visible, Leaving];
-
-    for start in starts {
-        for target_state in targets {
-            let mock: Rc<MockFactory> = Rc::new(MockFactory::new());
-            let factory: Rc<dyn RenderTargetFactory> = mock.clone();
-            mock.fail(1);
-
-            let mut target: Option<RenderTarget> = None;
-            let egl = StubEgl;
-            let surface = StubSurface;
-
-            let mut sm = LifecycleStateMachine::new();
-            // Drive the SM into `start` without touching the factory (both start and Dormant
-            // are buffer-free, and the SM starts at Dormant by construction).
-            sm.on_event(start);
-            sm.apply(
-                &mut ctx_no_target(&factory, &mut target, &egl, &surface),
-                Instant::now(),
-            );
-            assert_eq!(sm.current(), start, "setup: SM should reach {start:?}");
-            assert_eq!(mock.alloc_calls.get(), 0, "setup must not touch factory");
-
-            sm.on_event(target_state);
-            sm.apply(
-                &mut ctx_no_target(&factory, &mut target, &egl, &surface),
-                Instant::now(),
-            );
-
-            assert_eq!(
-                mock.alloc_calls.get(),
-                1,
-                "{start:?} -> {target_state:?} must call allocate"
-            );
-            assert!(
-                sm.blocked(),
-                "{start:?} -> {target_state:?} with failing factory must mark blocked"
-            );
-            assert_eq!(
-                sm.current(),
-                start,
-                "current must stay until allocation succeeds"
-            );
-            assert_eq!(sm.target(), target_state);
-            assert!(target.is_none());
-            assert_eq!(mock.destroy_calls.get(), 0);
-        }
-    }
-}
-
-// All 4 non-self transitions inside the buffer-free set {Dormant, Prepared}: factory must
-// never be touched and `current` advances to the target.
-#[test]
-fn all_transitions_inside_bufferfree_set_are_no_ops() {
-    use LifecycleState::{Dormant, Prepared};
-    for (start, target_state) in [(Dormant, Prepared), (Prepared, Dormant)] {
-        let mock: Rc<MockFactory> = Rc::new(MockFactory::new());
-        let factory: Rc<dyn RenderTargetFactory> = mock.clone();
-        let mut target: Option<RenderTarget> = None;
-        let egl = StubEgl;
-        let surface = StubSurface;
-
-        let mut sm = LifecycleStateMachine::new();
-        sm.on_event(start);
-        sm.apply(
-            &mut ctx_no_target(&factory, &mut target, &egl, &surface),
-            Instant::now(),
-        );
-        sm.on_event(target_state);
-        sm.apply(
-            &mut ctx_no_target(&factory, &mut target, &egl, &surface),
-            Instant::now(),
-        );
-
-        assert_eq!(sm.current(), target_state);
-        assert!(!sm.blocked());
-        assert_eq!(mock.alloc_calls.get(), 0);
-        assert_eq!(mock.destroy_calls.get(), 0);
-    }
-}
-
-// Self-transitions for the buffer-free states {Dormant, Prepared} are no-ops on resources.
-#[test]
-fn self_transitions_in_bufferfree_set_are_no_ops() {
-    for start in [LifecycleState::Dormant, LifecycleState::Prepared] {
-        let mock: Rc<MockFactory> = Rc::new(MockFactory::new());
-        let factory: Rc<dyn RenderTargetFactory> = mock.clone();
-        let mut target: Option<RenderTarget> = None;
-        let egl = StubEgl;
-        let surface = StubSurface;
-
-        let mut sm = LifecycleStateMachine::new();
-        sm.on_event(start);
-        sm.apply(
-            &mut ctx_no_target(&factory, &mut target, &egl, &surface),
-            Instant::now(),
-        );
-        sm.on_event(start);
-        sm.apply(
-            &mut ctx_no_target(&factory, &mut target, &egl, &surface),
-            Instant::now(),
-        );
-
-        assert_eq!(sm.current(), start);
-        assert_eq!(mock.alloc_calls.get(), 0);
-        assert_eq!(mock.destroy_calls.get(), 0);
-    }
-}
-
-#[test]
-fn render_set_lifecycle_event_requests_surface_render() {
+fn prepared_lifecycle_event_requests_surface_render() {
     let mut sm = LifecycleStateMachine::new();
-    let effect = sm.on_event(LifecycleState::Entering);
+    let effect = sm.on_event(LifecycleState::Prepared);
 
     assert!(effect.request_render);
 }

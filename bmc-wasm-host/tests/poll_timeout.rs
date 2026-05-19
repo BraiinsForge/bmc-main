@@ -21,6 +21,18 @@ fn renderable_dirty_slot_with_elapsed_floor_returns_zero() {
 }
 
 #[test]
+fn prepared_dirty_slot_without_frame_callbacks_returns_zero() {
+    let slot = SlotPollInputs {
+        is_renderable: true,
+        frame_callback_enabled: false,
+        surface_needs_render: true,
+        min_inter_frame_remaining: None,
+        ..SlotPollInputs::default()
+    };
+    assert_eq!(compute_poll_timeout_from_inputs(&[slot], None), 0);
+}
+
+#[test]
 fn renderable_dirty_slot_with_pending_floor_returns_remaining_ms() {
     let slot = SlotPollInputs {
         is_renderable: true,
@@ -69,6 +81,19 @@ fn entering_slot_wanting_next_frame_does_not_force_zero_timeout() {
     let slot = SlotPollInputs {
         is_renderable: true,
         frame_callback_enabled: false, // Entering
+        animation_wants_immediate: true,
+        surface_needs_render: false,
+        next_frame_delay: Some(0),
+        ..SlotPollInputs::default()
+    };
+    assert_eq!(compute_poll_timeout_from_inputs(&[slot], None), -1);
+}
+
+#[test]
+fn prepared_slot_wanting_next_frame_without_dirty_surface_does_not_wake() {
+    let slot = SlotPollInputs {
+        is_renderable: true,
+        frame_callback_enabled: false,
         animation_wants_immediate: true,
         surface_needs_render: false,
         next_frame_delay: Some(0),
