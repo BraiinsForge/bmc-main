@@ -323,7 +323,9 @@ pub fn run(shared: &mut SharedHost, listener: &ListenSocket) -> Result<(), Fatal
                 to_teardown.push(*id);
                 continue;
             }
-            slot.apply_lifecycle(Instant::now(), shared);
+            let now = Instant::now();
+            slot.apply_lifecycle(now, shared);
+            slot.advance_runtime_time(chrono::Local::now().fixed_offset(), now);
             slot.runtime.poll_deliveries_with_renderer(renderer_ptr);
         }
 
@@ -336,8 +338,7 @@ pub fn run(shared: &mut SharedHost, listener: &ListenSocket) -> Result<(), Fatal
                 continue;
             }
             let delta_ms = slot.tick_delta(now);
-            slot.runtime
-                .set_time(chrono::Local::now().fixed_offset(), slot.monotonic_ms(now));
+            slot.advance_runtime_time(chrono::Local::now().fixed_offset(), now);
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 slot.render(renderer_ptr, delta_ms, shared)

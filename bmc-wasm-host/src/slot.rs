@@ -300,6 +300,14 @@ impl WidgetSlot {
         u64::try_from(now.duration_since(self.monotonic_origin).as_millis()).unwrap_or(u64::MAX)
     }
 
+    pub fn advance_runtime_time(
+        &mut self,
+        system_time: chrono::DateTime<chrono::FixedOffset>,
+        now: Instant,
+    ) {
+        self.runtime.set_time(system_time, self.monotonic_ms(now));
+    }
+
     pub fn apply_lifecycle(&mut self, now: Instant, shared: &SharedHost) {
         let previous = self.lifecycle.current();
         let w = self.surface.width();
