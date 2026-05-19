@@ -1,11 +1,16 @@
 # WASM widget packaging primitives.
 #
-# Reusable pieces only — widget entries live in nix/packages.nix so they
-# surface under .#deck-packages.<widget>, alongside digital-clock and
-# flip-clock.
+# Reusable pieces only — widget entries are derived from `wasmWidgetCatalog`
+# in workspace.nix (filesystem-scanned) and surfaced under
+# `.#deck-packages.<widget>` via nix/packages.nix.
 #
 # Exports:
-#   - wasmExamples: flattened *.wasm from a wasm-release workspace build
+#   - wasmExamples: flattened *.wasm from the SDK examples workspace.
+#                   Single workspace cargo build, so its cache key is the full
+#                   examples src — capture/regression tooling consumes this
+#                   when it wants every example .wasm at once.
+#                   Production widgets in `widgets-wasm/` get per-widget
+#                   derivations via `wasmWidgets` only.
 #   - wasmWidgets:  per-widget wasm derivations keyed by widget name; each
 #                   is built via buildCrate so its src closure is narrowed
 #                   by docker-spider — change one widget, only that
@@ -17,18 +22,18 @@
 #   - mkWasmWidget: build one lib/bmc-widgets/<name>/ tree (shell wrapper
 #                   + .wasm blob + manifest) that execs the thin wrapper
 { pkgs
-, profile               # bmc.profiles.<arch>-<profile> for the host build
-, wasmReleaseProfile    # bmc.profiles.wasm-release for collecting .wasm
-, crates                # bmc.crates
-, autopatchelfBinaries  # bmc.lib.autopatchelfBinaries
-, widgetRuntimeDeps     # deps.widgetRuntimeDeps (expects .native fn)
-, hostFeatures ? [ ]    # cargo features for the bmc-wasm-host build
-, wasmExampleNames      # list of example crate names (e.g. "hello-widget")
+, profile                # bmc.profiles.<arch>-<profile> for the host build
+, wasmReleaseProfiles    # attrset { wasmExamples = profile; wasmWidgets = profile; ... }
+, crates                 # bmc.crates
+, autopatchelfBinaries   # bmc.lib.autopatchelfBinaries
+, widgetRuntimeDeps      # deps.widgetRuntimeDeps (expects .native fn)
+, widgetCatalog          # workspace.nix:wasmWidgetCatalog (name → entry)
+, hostFeatures ? [ ]     # cargo features for the bmc-wasm-host build
 }:
 let
   lib = pkgs.lib;
 
-  # Reference-cleaning installPhase shared by wasmExamples and per-example
+  # Reference-cleaning installPhase shared by the examples-bundle and per-widget
   # wasm builds. rustc bakes panic-location strings that point into
   # $cargoVendorDir (e.g. bytes/chrono source files). The compile-time
   # toolchain remap scrubs the toolchain path, but not the vendor one —
@@ -46,19 +51,23 @@ let
     allowedReferences = [ ];
   };
 
-  # All examples in one *.wasm-blob tree. Single workspace cargo build,
-  # so its cache key is the full workspace src. Used by `capture.nix` to
-  # expose the `wasm-examples` flake package and as the manual override
-  # target when a wrapper caller wants every wasm at once. Do NOT use
-  # this for per-widget pipelines — touching anything in repo invalidates it.
-  wasmExamples = wasmReleaseProfile.build.overrideAttrs wasmInstallOverrides;
+  # All SDK examples in one *.wasm-blob tree.
+  # Single workspace cargo build, cache key is the full examples src.
+  # Used by `capture.nix` to expose the `wasm-examples` flake package.
+  # Not used for per-widget pipelines — touching anything in the examples workspace invalidates it.
+  wasmExamples = wasmReleaseProfiles.wasmExamples.build.overrideAttrs wasmInstallOverrides;
 
-  # Per-widget wasm derivation, ensuring rebuilds happen only on actual
-  # changes of the widget.
+  # Per-widget wasm derivation.
+  # Picks the release profile that owns the widget's workspace,
+  # so docker-spider narrows the src closure to that widget's crate.
   mkWidgetWasm = name:
-    (wasmReleaseProfile.buildCrate crates."widget-example-${name}" { }).overrideAttrs wasmInstallOverrides;
+    let
+      entry = widgetCatalog.${name};
+      releaseProfile = wasmReleaseProfiles.${entry.workspaceName};
+    in
+    (releaseProfile.buildCrate crates."wasm-widget-${name}" { }).overrideAttrs wasmInstallOverrides;
 
-  wasmWidgets = lib.genAttrs wasmExampleNames mkWidgetWasm;
+  wasmWidgets = lib.mapAttrs (name: _: mkWidgetWasm name) widgetCatalog;
 
   # Per-widget thin wrapper binary. One build, any number of widgets
   # exec it. autopatchelfBinaries (not mkWidgetPackage) — the thin has

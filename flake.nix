@@ -40,7 +40,7 @@
         };
         checks = import ./nix/checks.nix {
           inherit pkgs ty-bin capture;
-          inherit (workspace) wasmWidgets;
+          inherit (workspace) wasmWidgets wasmWidgetCatalog;
           inherit (workspace.bmc) profiles;
         };
         content-checks = nixlib.braiinschk.${localSystem} {

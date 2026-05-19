@@ -1,7 +1,12 @@
-{ pkgs, ty-bin, profiles, capture, wasmWidgets }:
+{ pkgs, ty-bin, profiles, capture, wasmWidgets, wasmWidgetCatalog }:
 
 let
   lib = pkgs.lib;
+
+  # Widgets eligible for visual regression — only those
+  # with a populated `capture/config.toml`.
+  # Other widgets compile but don't ship capture fixtures yet.
+  regressionCatalog = lib.filterAttrs (_: w: w.hasCaptureConfig) wasmWidgetCatalog;
 
   # One regression derivation per widget. Each pins to:
   #   - that widget's source dir only (per-widget src cache key)
@@ -14,10 +19,10 @@ let
   # has `keep-failed = true` so the sandbox survives at
   # /tmp/nix-build-wasm-regression-<name>.drv-* for CI to scrape (see
   # .gitlab-ci.yml).
-  mkWidgetCheck = name: pkgs.runCommand "wasm-regression-${name}"
+  mkWidgetCheck = name: entry: pkgs.runCommand "wasm-regression-${name}"
     {
       nativeBuildInputs = [ capture.package ];
-      src = ../bmc-wasm-runtime/examples + "/${name}";
+      src = entry.src;
       wasm = wasmWidgets.${name};
     } ''
     widgets=$(mktemp -d)
@@ -31,7 +36,7 @@ let
     mkdir -p $out
   '';
 
-  widgetChecks = lib.mapAttrs (name: _: mkWidgetCheck name) wasmWidgets;
+  widgetChecks = lib.mapAttrs mkWidgetCheck regressionCatalog;
 in
 {
   cargo-deny = profiles.fast.mkCargoDeny {
@@ -96,6 +101,7 @@ in
           # subprojects with their own nix dev shell, deps, and lint setup
           (lib.fileset.unions [
             ../bmc-wasm-runtime/examples
+            ../widgets-wasm
             ../bmc-virt/harness
           ]);
       };

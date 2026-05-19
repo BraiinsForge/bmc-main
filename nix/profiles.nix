@@ -17,6 +17,23 @@ let
   mkAarch64 = attrs: workspaces.full.mkBuildProfile ({
     pkgs = aarch64Pkgs;
   } // attrs);
+
+  # Each wasm widget workspace gets its own pair of release/debug profiles.
+  # `mkBuildProfile` is workspace-bound (it pins the cargo Cargo.toml path),
+  # so we instantiate the same shape per workspace rather than parameterizing
+  # at build time.
+  mkWasmRelease = workspace: workspace.mkBuildProfile {
+    minimalDeps = true;
+    rustProfile = "release";
+    rustCrossTargetOverride = "wasm32-unknown-unknown";
+    inherit pkgs;
+  };
+  mkWasmDebug = workspace: workspace.mkBuildProfile {
+    minimalDeps = true;
+    rustProfile = "dev";
+    rustCrossTargetOverride = "wasm32-unknown-unknown";
+    inherit pkgs;
+  };
 in
 {
   # fast profile (no cross compilation, non-portable native binaries)
@@ -95,18 +112,12 @@ in
     rustProfile = "dev";
     pkgs = armv7Pkgs;
   };
-  wasm-release = workspaces.wasmExamples.mkBuildProfile {
-    minimalDeps = true;
-    rustProfile = "release";
-    rustCrossTargetOverride = "wasm32-unknown-unknown";
-    inherit pkgs;
-  };
-  wasm-debug = workspaces.wasmExamples.mkBuildProfile {
-    minimalDeps = true;
-    rustProfile = "dev";
-    rustCrossTargetOverride = "wasm32-unknown-unknown";
-    inherit pkgs;
-  };
+  # Per-workspace wasm profiles. `wasm-widgets.nix` selects between them
+  # based on each widget's workspace tag in the catalog.
+  wasm-examples-release = mkWasmRelease workspaces.wasmExamples;
+  wasm-examples-debug = mkWasmDebug workspaces.wasmExamples;
+  wasm-widgets-release = mkWasmRelease workspaces.wasmWidgets;
+  wasm-widgets-debug = mkWasmDebug workspaces.wasmWidgets;
   # glibc profiles for bmc-virt (x86_64, dynamically linked)
   x86_64-release = mkX86 { minimalDeps = true; rustProfile = "release"; };
   x86_64-debug = mkX86 { minimalDeps = false; rustProfile = "dev"; };

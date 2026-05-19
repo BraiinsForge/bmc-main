@@ -229,35 +229,84 @@ let
   # reuse this so the remap isn't silently lost.
   wasmRemapFlags = mkStorePathRemapFlag "${pkgs.ii.rust.toolchain}";
 
-  workspaceWasmExamples = pkgs.ii.rust.mkWorkspaceConfig {
+  mkWasmWorkspace = workspacePath: pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
-    workspacePath = "bmc-wasm-runtime/examples";
+    inherit workspacePath;
     nativeDeps = _pkgs: (commonDeps.buildDeps _pkgs);
     env = {
       CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS = wasmRemapFlags;
     };
   };
 
-  # Discover WASM example crates that participate in capture/regression
-  # tooling. This intentionally includes regression-only examples such as
-  # stress-test; deck-shipped widgets are selected separately by
-  # wasmWidgetCatalog and nix/packages.nix.
-  wasmExampleNames = lib.filter
-    (n: builtins.pathExists (./bmc-wasm-runtime/examples + "/${n}/Cargo.toml")
-      && builtins.pathExists (./bmc-wasm-runtime/examples + "/${n}/capture/config.toml"))
-    (lib.attrNames (builtins.readDir ./bmc-wasm-runtime/examples));
+  workspaceWasmExamples = mkWasmWorkspace "bmc-wasm-runtime/examples";
+  workspaceWasmWidgets = mkWasmWorkspace "widgets-wasm";
+
+  # Roots that host wasm widget crates.
+  # Each is a cargo workspace whose immediate subdirectories
+  # are individual widget crates (each with a manifest.json).
+  #
+  # Mirrors `bmc-wasm-runtime/tools/widget_root.py`.
+  # Adding a root means updating both.
+  wasmWidgetRoots = [
+    {
+      workspaceName = "wasmExamples";
+      src = ./bmc-wasm-runtime/examples;
+      workspace = workspaceWasmExamples;
+    }
+    {
+      workspaceName = "wasmWidgets";
+      src = ./widgets-wasm;
+      workspace = workspaceWasmWidgets;
+    }
+  ];
+
+  # Filesystem-derived catalog of every wasm widget across every root.
+  # Single source of truth for downstream consumers (crates.nix, packages.nix,
+  # checks.nix, wasm-widgets.nix).
+  #
+  # A widget is anything with `Cargo.toml` in a subdir of one of the roots;
+  # per-entry flags drive which downstream consumer picks it up:
+  #   - `isShippable` (has manifest.json): nix/packages.nix deck packages
+  #   - `hasCaptureConfig`: nix/checks.nix regression checks
+  #
+  # Regression-only crates (e.g. stress-test) have no manifest.
+  wasmWidgetCatalog =
+    let
+      mkEntry = root: name:
+        let
+          crateDir = root.src + "/${name}";
+          manifestPath = crateDir + "/manifest.json";
+          captureConfigPath = crateDir + "/capture/config.toml";
+          isShippable = builtins.pathExists manifestPath;
+        in
+        lib.nameValuePair name {
+          inherit name isShippable;
+          inherit (root) workspaceName workspace;
+          src = crateDir;
+          manifest = if isShippable then manifestPath else null;
+          wasmFile = (builtins.replaceStrings [ "-" ] [ "_" ] name) + ".wasm";
+          hasCaptureConfig = builtins.pathExists captureConfigPath;
+        };
+      discover = root: lib.filter
+        (n: builtins.pathExists (root.src + "/${n}/Cargo.toml"))
+        (lib.attrNames (builtins.readDir root.src));
+    in
+    lib.listToAttrs (lib.concatMap
+      (root: map (mkEntry root) (discover root))
+      wasmWidgetRoots);
 
   bmc = {
     armv7-nixpkgs = armv7Pkgs;
     lib = import ./nix/lib.nix { inherit pkgs lib armv7Pkgs; };
     crates = import ./nix/crates.nix {
-      inherit lib wasmExampleNames;
+      inherit lib wasmWidgetCatalog;
       inherit (pkgs.ii.rust) defineCrate;
     };
     workspaces = {
       full = workspace;
       minimal = workspaceMinimal;
       wasmExamples = workspaceWasmExamples;
+      wasmWidgets = workspaceWasmWidgets;
     };
     profiles = import ./nix/profiles.nix {
       inherit (bmc) workspaces;
@@ -462,8 +511,12 @@ let
   # profile to cross-compile the bmc-wasm-host for every consumer
   # arch (armv7 deck + x86_64/aarch64 VM).
   wasmWidgetsFor = profile: hostFeatures: import ./nix/wasm-widgets.nix {
-    inherit pkgs profile hostFeatures wasmExampleNames;
-    wasmReleaseProfile = bmc.profiles.wasm-release;
+    inherit pkgs profile hostFeatures;
+    widgetCatalog = wasmWidgetCatalog;
+    wasmReleaseProfiles = {
+      wasmExamples = bmc.profiles.wasm-examples-release;
+      wasmWidgets = bmc.profiles.wasm-widgets-release;
+    };
     crates = bmc.crates;
     autopatchelfBinaries = bmc.lib.autopatchelfBinaries;
     inherit (deps) widgetRuntimeDeps;
@@ -471,71 +524,31 @@ let
 
   wasmWidgetsModule = wasmWidgetsFor bmc.profiles.armv7-glibc-release [ ];
 
-  # Shared wasm widget catalog: name → { wasmFile, manifest }. Mirrors
-  # the per-widget entries in nix/packages.nix; both consumers (deck
-  # release tarball and combined widgets tree below) iterate it.
-  wasmWidgetCatalog = {
-    hello-widget = {
-      wasmFile = "hello_widget.wasm";
-      manifest = ./bmc-wasm-runtime/examples/hello-widget/manifest.json;
-    };
-    calendar = {
-      wasmFile = "calendar.wasm";
-      manifest = ./bmc-wasm-runtime/examples/calendar/manifest.json;
-    };
-    spacex-launch = {
-      wasmFile = "spacex_launch.wasm";
-      manifest = ./bmc-wasm-runtime/examples/spacex-launch/manifest.json;
-    };
-    iss-position = {
-      wasmFile = "iss_position.wasm";
-      manifest = ./bmc-wasm-runtime/examples/iss-position/manifest.json;
-    };
-    home-assistant = {
-      wasmFile = "home_assistant.wasm";
-      manifest = ./bmc-wasm-runtime/examples/home-assistant/manifest.json;
-    };
-    media-control = {
-      wasmFile = "media_control.wasm";
-      manifest = ./bmc-wasm-runtime/examples/media-control/manifest.json;
-    };
-    mesh-demo = {
-      wasmFile = "mesh_demo.wasm";
-      manifest = ./bmc-wasm-runtime/examples/mesh-demo/manifest.json;
-    };
-    metronome = {
-      wasmFile = "metronome.wasm";
-      manifest = ./bmc-wasm-runtime/examples/metronome/manifest.json;
-    };
-    pomodoro = {
-      wasmFile = "pomodoro.wasm";
-      manifest = ./bmc-wasm-runtime/examples/pomodoro/manifest.json;
-    };
-    params-demo = {
-      wasmFile = "params_demo.wasm";
-      manifest = ./bmc-wasm-runtime/examples/params-demo/manifest.json;
-    };
-  };
-
-  # Build all wasm widgets against `profile`'s host binary, joined into
-  # a single lib/bmc-widgets/<name>/ tree (same shape as mkAllWidgets).
+  # Build every shippable wasm widget (has manifest.json) against
+  # `profile`'s host binary, joined into a single lib/bmc-widgets/<name>/
+  # tree (same shape as mkAllWidgets).
+  # Regression-only crates without a manifest are excluded.
   mkAllWasmWidgets = { profile, hostFeatures ? [ ] }:
-    let m = wasmWidgetsFor profile hostFeatures; in
+    let
+      m = wasmWidgetsFor profile hostFeatures;
+      shippable = lib.filterAttrs (_: w: w.isShippable) wasmWidgetCatalog;
+    in
     pkgs.symlinkJoin {
       name = "bmc-wasm-widgets";
       paths = lib.mapAttrsToList
-        (name: w: m.mkWasmWidget {
+        (name: entry: m.mkWasmWidget {
           inherit name;
-          inherit (w) wasmFile manifest;
+          inherit (entry) wasmFile manifest;
           wasmDir = m.wasmWidgets.${name};
           thin = m.thin;
           host = m.host;
         })
-        wasmWidgetCatalog;
+        shippable;
     };
 
   armv7PackageDefs = import ./nix/packages.nix {
     inherit bmc armv7Pkgs deps;
+    inherit wasmWidgetCatalog;
     inherit (wasmWidgetsModule) wasmWidgets thin host mkWasmWidget;
   };
 
@@ -549,7 +562,7 @@ let
 
 in
 {
-  inherit commonDeps bmc deps makeRustflagsEnv;
+  inherit commonDeps bmc deps makeRustflagsEnv wasmWidgetCatalog;
   inherit (wasmWidgetsModule) wasmExamples wasmWidgets;
   checks = frontend.checks;
   # Nested attrset of cross-built deck packages.

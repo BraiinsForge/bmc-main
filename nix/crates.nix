@@ -1,20 +1,20 @@
 # crates: All Rust crate definitions for the workspace.
-{ defineCrate, lib, wasmExampleNames }:
+{ defineCrate, lib, wasmWidgetCatalog }:
 let
-  # Per-example wasm crate defs, generated from the discovered example
-  # names. Paths are relative to the wasm-release workspace root
-  # (bmc-wasm-runtime/examples/), and the cargo package name matches the
-  # directory name for every example in this workspace.
-  exampleCrates = lib.listToAttrs (map
-    (name: lib.nameValuePair "widget-example-${name}" (defineCrate {
+  # Per-widget wasm crate defs, generated from the filesystem-derived catalog.
+  # `path` stays relative to the widget's own workspace (cargo resolves against
+  # the workspace `Cargo.toml`), so the catalog's `workspaceName` tag drives 
+  # which release profile picks the crate up in `nix/wasm-widgets.nix`.
+  wasmWidgetCrates = lib.mapAttrs'
+    (name: _entry: lib.nameValuePair "wasm-widget-${name}" (defineCrate {
       path = "./${name}";
       packageName = name;
       # Use --package, not --bin, since wasm is cdylib
       binName = false;
     }))
-    wasmExampleNames);
+    wasmWidgetCatalog;
 in
-exampleCrates // {
+wasmWidgetCrates // {
   bmc-mock = defineCrate {
     path = "./bmc-mock";
     packageName = "bmc-mock";
