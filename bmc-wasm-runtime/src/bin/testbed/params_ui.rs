@@ -14,7 +14,7 @@
 use bmc_wasm_runtime::unified_fixture::UnifiedEvent;
 
 use super::recording::record_delivery;
-use super::ui_helpers::{combo_cell, key_label};
+use super::ui_helpers::{RADIO_GROUP_MAX_VARIANTS, combo_cell, key_label, radio_group_cell};
 use super::{PARAM_PANEL_W, TestbedApp};
 
 impl TestbedApp {
@@ -273,16 +273,26 @@ fn paint_typed_input(
         (ParamKind::String { enum_values, .. }, ParamValue::String(s))
             if !enum_values.is_empty() =>
         {
-            combo_cell(ui, key, cell_w, s.clone(), |menu| {
+            // Snapshot the collapsed-state label before `populate`
+            // captures `s` mutably; the radio branch ignores it.
+            let combo_label = s.clone();
+            let populate = |inner: &mut egui::Ui| {
                 let mut changed = false;
                 for opt in enum_values {
-                    if menu.selectable_label(*s == opt.value, &opt.label).clicked() {
-                        s.clone_from(&opt.value);
+                    if inner
+                        .radio_value(s, opt.value.clone(), &opt.label)
+                        .changed()
+                    {
                         changed = true;
                     }
                 }
                 changed
-            })
+            };
+            if enum_values.len() <= RADIO_GROUP_MAX_VARIANTS {
+                radio_group_cell(ui, key, cell_w, populate)
+            } else {
+                combo_cell(ui, key, cell_w, combo_label, populate)
+            }
         }
         (ParamKind::String { .. } | ParamKind::Timezone { .. }, ParamValue::String(s)) => {
             let resp = ui.add_sized(cell, egui::TextEdit::singleline(s));
@@ -292,20 +302,26 @@ fn paint_typed_input(
         (ParamKind::Integer { enum_values, .. }, ParamValue::Integer(n))
             if !enum_values.is_empty() =>
         {
-            let label = enum_values
+            // Combo collapsed-state label snapshot before `populate`
+            // captures `n` mutably (the radio branch doesn't read it).
+            let combo_label = enum_values
                 .iter()
                 .find(|o| o.value == *n)
                 .map_or_else(|| n.to_string(), |o| o.label.clone());
-            combo_cell(ui, key, cell_w, label, |menu| {
+            let populate = |inner: &mut egui::Ui| {
                 let mut changed = false;
                 for opt in enum_values {
-                    if menu.selectable_label(*n == opt.value, &opt.label).clicked() {
-                        *n = opt.value;
+                    if inner.radio_value(n, opt.value, &opt.label).changed() {
                         changed = true;
                     }
                 }
                 changed
-            })
+            };
+            if enum_values.len() <= RADIO_GROUP_MAX_VARIANTS {
+                radio_group_cell(ui, key, cell_w, populate)
+            } else {
+                combo_cell(ui, key, cell_w, combo_label, populate)
+            }
         }
         (ParamKind::Integer { min, max, step, .. }, ParamValue::Integer(n)) => {
             // Bounded ranges use a `Slider` with `trailing_fill` so the cell shows
@@ -336,27 +352,37 @@ fn paint_typed_input(
         (ParamKind::Double { enum_values, .. }, ParamValue::Double(f))
             if !enum_values.is_empty() =>
         {
-            let label = enum_values
+            // Combo collapsed-state label snapshot before `populate`
+            // captures `f` mutably (the radio branch doesn't read it).
+            let combo_label = enum_values
                 .iter()
                 .find(|o| (o.value - *f).abs() < f64::EPSILON)
                 .map_or_else(|| format!("{f}"), |o| o.label.clone());
-            combo_cell(ui, key, cell_w, label, |menu| {
+            let populate = |inner: &mut egui::Ui| {
                 let mut changed = false;
                 for opt in enum_values {
-                    if menu
-                        .selectable_label((opt.value - *f).abs() < f64::EPSILON, &opt.label)
-                        .clicked()
-                    {
-                        *f = opt.value;
+                    // `radio_value` requires `PartialEq`; f64 is `PartialEq`
+                    // but its equality is bit-exact.
+                    //
+                    // The manifest values round-trip cleanly through serde
+                    // so this is fine for typical enums (Linear / Mac / sRGB etc.)
+                    // — if a future manifest needs near-equality, switch
+                    // to a `selectable_value` with epsilon comparison.
+                    if inner.radio_value(f, opt.value, &opt.label).changed() {
                         changed = true;
                     }
                 }
                 changed
-            })
+            };
+            if enum_values.len() <= RADIO_GROUP_MAX_VARIANTS {
+                radio_group_cell(ui, key, cell_w, populate)
+            } else {
+                combo_cell(ui, key, cell_w, combo_label, populate)
+            }
         }
         (ParamKind::Double { min, max, step, .. }, ParamValue::Double(f)) => {
-            // Same dispatch as Integer: bounded ranges get the filled-slider treatment,
-            // unbounded fall back to DragValue.
+            // Same dispatch as Integer: bounded ranges get
+            // the filled-slider treatment, unbounded fall back to DragValue.
             if let (Some(lo), Some(hi)) = (min, max) {
                 stretched_slider(ui, cell_w, |sl| {
                     let resp = sl.add(

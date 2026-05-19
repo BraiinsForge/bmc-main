@@ -18,6 +18,12 @@ pub(super) fn key_label(text: &str, gray: u8) -> egui::Label {
     .sense(egui::Sense::click())
 }
 
+/// Enum params with at most this many variants render as an always-visible
+/// radio group (`radio_group_cell`); larger sets fall back to a `combo_cell`
+/// dropdown. Tweak the threshold here — there's only one call site per
+/// enum kind in `params_ui.rs` / `system_ui.rs`.
+pub(super) const RADIO_GROUP_MAX_VARIANTS: usize = 5;
+
 /// Outer `ComboBox` shell. `populate` runs only while the popup is open
 /// and returns whether the user picked a different option.
 ///
@@ -41,4 +47,32 @@ pub(super) fn combo_cell(
         .show_ui(ui, populate)
         .inner
         .unwrap_or(false)
+}
+
+/// Always-visible vertical radio group for small enum-valued params.
+/// `populate` adds one `radio_value` per option and returns whether the
+/// selection changed. No popup, no collapsed state — every variant
+/// reachable in a single click.
+///
+/// ```text
+/// (•) Analog (round)        ← populate(): for v in variants { radio_value }
+/// ( ) Analog (rectangular)
+/// (•) Digital
+/// ```
+pub(super) fn radio_group_cell(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    width: f32,
+    populate: impl FnOnce(&mut egui::Ui) -> bool,
+) -> bool {
+    ui.push_id(id_salt, |scope| {
+        scope
+            .vertical(|col| {
+                col.set_min_width(width);
+                col.set_max_width(width);
+                populate(col)
+            })
+            .inner
+    })
+    .inner
 }
