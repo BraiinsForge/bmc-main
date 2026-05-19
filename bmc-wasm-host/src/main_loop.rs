@@ -312,7 +312,7 @@ pub fn run(shared: &mut SharedHost, listener: &ListenSocket) -> Result<(), Fatal
                 continue;
             }
             slot.apply_lifecycle(Instant::now(), shared);
-            slot.runtime.poll_deliveries();
+            slot.runtime.poll_deliveries_with_renderer(renderer_ptr);
         }
 
         let now = Instant::now();
