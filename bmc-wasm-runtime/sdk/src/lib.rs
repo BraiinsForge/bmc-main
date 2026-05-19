@@ -235,6 +235,7 @@ pub mod socket;
 pub mod ssdp;
 pub mod text;
 pub mod tree;
+pub mod tz;
 #[cfg(target_arch = "wasm32")]
 pub mod udp_broadcast;
 #[cfg(target_arch = "wasm32")]
@@ -248,7 +249,7 @@ pub use bmc_wasm_sdk_macros::*;
 #[cfg(target_arch = "wasm32")]
 pub use format::{
     FormatDateOpts, FormatTimeOpts, format_date, format_duration, format_f64_fixed, format_time,
-    strftime,
+    local_unix_secs, resolve_tz_offset, strftime,
 };
 pub use host::*;
 #[cfg(target_arch = "wasm32")]
@@ -264,6 +265,7 @@ pub use orientation::Orientation;
 #[cfg(target_arch = "wasm32")]
 pub use slot::*;
 pub use tree::*;
+pub use tz::Tz;
 pub use ufmt;
 #[cfg(target_arch = "wasm32")]
 pub use ws::{Ws, WsEvent, ws_connect};

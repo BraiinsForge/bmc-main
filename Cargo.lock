@@ -1593,6 +1593,7 @@ dependencies = [
  "base64 0.22.1",
  "bmc-led",
  "bmc-render",
+ "bmc-shared-time",
  "bmc-wasm-protocol",
  "bmc-wasm-sdk",
  "bmc-widget-manifest",
@@ -1655,6 +1656,7 @@ dependencies = [
 name = "bmc-wasm-sdk-macros"
 version = "0.1.0"
 dependencies = [
+ "bmc-shared-time",
  "proc-macro2",
  "quote",
  "syn 2.0.100",

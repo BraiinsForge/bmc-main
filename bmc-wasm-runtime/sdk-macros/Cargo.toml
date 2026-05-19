@@ -10,6 +10,12 @@ proc-macro = true
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }
+# Proc-macros run host-side at compile time; pulling bmc-shared-time
+# (and its chrono-tz / serde deps) into the macro's compile closure
+# does not affect wasm widget binaries. Used by `tz!` to validate
+# IANA names against the deck's supported list (single source of truth,
+# sourced from openwrt/LuCI's `zoneinfo.uc`).
+bmc-shared-time = { path = "../../bmc-shared/time" }
 
 [lints.rust]
 unused_must_use = "deny"

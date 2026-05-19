@@ -152,6 +152,14 @@ pub fn generate(manifest: &Manifest, manifest_relpath: &str) -> Result<String> {
             /// Snapshot delivered immediately before [`current`]; `None` until at
             /// least one update has been observed (i.e. during `init` and the
             /// first `render`).
+            #[expect(
+                clippy::allow_attributes,
+                reason = "wrapping a dead_code allow on a per-widget-optional API"
+            )]
+            #[allow(
+                dead_code,
+                reason = "for widgets that diff against the prior snapshot in on_params_update"
+            )]
             #[must_use]
             pub fn previous() -> Option<Self> {
                 let prev = snapshot::previous();
@@ -168,6 +176,14 @@ pub fn generate(manifest: &Manifest, manifest_relpath: &str) -> Result<String> {
             /// inside-hook value of `previous()` to get the set of keys to react
             /// to. Field-by-field `PartialEq`; emitted in struct-field order so
             /// the result is deterministic.
+            #[expect(
+                clippy::allow_attributes,
+                reason = "wrapping a dead_code allow on a per-widget-optional API"
+            )]
+            #[allow(
+                dead_code,
+                reason = "for widgets that react per-key inside on_params_update"
+            )]
             #[must_use]
             pub fn changed_keys(&self, other: &Self) -> Vec<&'static str> {
                 let mut out = Vec::new();
@@ -339,12 +355,29 @@ fn emit_enum_decl(decl: &EnumDecl) -> TokenStream {
                     )]
                     pub const ALL: &'static [Self] = &[#(#all_self),*];
 
+                    /// Manifest wire value for this variant.
+                    #[expect(
+                        clippy::allow_attributes,
+                        reason = "wrapping a dead_code allow on a per-widget-optional API"
+                    )]
+                    #[allow(
+                        dead_code,
+                        reason = "for widgets serialising the variant back to its manifest spelling"
+                    )]
                     #[must_use]
                     pub fn as_manifest_value(self) -> &'static str {
                         match self { #(#to_arms,)* }
                     }
 
                     /// Human-readable label declared in the manifest's `enum_values`.
+                    #[expect(
+                        clippy::allow_attributes,
+                        reason = "wrapping a dead_code allow on a per-widget-optional API"
+                    )]
+                    #[allow(
+                        dead_code,
+                        reason = "for widgets rendering a pick-one UI or labelling the current value"
+                    )]
                     #[must_use]
                     pub fn as_manifest_label(self) -> &'static str {
                         match self { #(#label_arms,)* }
@@ -402,12 +435,29 @@ fn emit_enum_decl(decl: &EnumDecl) -> TokenStream {
                     )]
                     pub const ALL: &'static [Self] = &[#(#all_self),*];
 
+                    /// Manifest wire value for this variant.
+                    #[expect(
+                        clippy::allow_attributes,
+                        reason = "wrapping a dead_code allow on a per-widget-optional API"
+                    )]
+                    #[allow(
+                        dead_code,
+                        reason = "for widgets serialising the variant back to its manifest spelling"
+                    )]
                     #[must_use]
                     pub fn as_manifest_value(self) -> i32 {
                         match self { #(#to_arms,)* }
                     }
 
                     /// Human-readable label declared in the manifest's `enum_values`.
+                    #[expect(
+                        clippy::allow_attributes,
+                        reason = "wrapping a dead_code allow on a per-widget-optional API"
+                    )]
+                    #[allow(
+                        dead_code,
+                        reason = "for widgets rendering a pick-one UI or labelling the current value"
+                    )]
                     #[must_use]
                     pub fn as_manifest_label(self) -> &'static str {
                         match self { #(#label_arms,)* }
@@ -467,12 +517,29 @@ fn emit_enum_decl(decl: &EnumDecl) -> TokenStream {
                     )]
                     pub const ALL: &'static [Self] = &[#(#all_self),*];
 
+                    /// Manifest wire value for this variant.
+                    #[expect(
+                        clippy::allow_attributes,
+                        reason = "wrapping a dead_code allow on a per-widget-optional API"
+                    )]
+                    #[allow(
+                        dead_code,
+                        reason = "for widgets serialising the variant back to its manifest spelling"
+                    )]
                     #[must_use]
                     pub fn as_manifest_value(self) -> f64 {
                         match self { #(#to_arms,)* }
                     }
 
                     /// Human-readable label declared in the manifest's `enum_values`.
+                    #[expect(
+                        clippy::allow_attributes,
+                        reason = "wrapping a dead_code allow on a per-widget-optional API"
+                    )]
+                    #[allow(
+                        dead_code,
+                        reason = "for widgets rendering a pick-one UI or labelling the current value"
+                    )]
                     #[must_use]
                     pub fn as_manifest_label(self) -> &'static str {
                         match self { #(#label_arms,)* }

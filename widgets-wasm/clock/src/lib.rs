@@ -3,12 +3,17 @@
 //! Clock widget — three render modes (analog round / analog rectangular / digital)
 //! and four sizes (Small / Medium / Large / Full).
 
-use bmc_wasm_sdk::host::SystemTime;
+mod manifest_params;
+
+use bmc_wasm_sdk::host::{SystemTime, request_frame, request_frame_after};
 use bmc_wasm_sdk::system::TimeFormat;
 use bmc_wasm_sdk::{
-    FontWeight, FormatTimeOpts, GRAY_60, Node, WHITE, WidgetSize, center, col, format_time, props,
-    render_ui, request_frame_after, row, spacer, style, system, text, widget_size,
+    FontWeight, FormatTimeOpts, GRAY_60, Node, Tz, WHITE, WidgetSize, center, col, format_time,
+    local_unix_secs, props, render_ui, resolve_tz_offset, row, spacer, strftime, style, system,
+    text, widget_size,
 };
+
+use manifest_params::{NumbersFontStyle, Params};
 
 // ── Per-size template parameters ───────────────────────────────────────
 //
@@ -83,29 +88,7 @@ const DIGITAL_SMALL: DigitalSizeParams = DigitalSizeParams {
     show_utc_offset: false,
 };
 
-/// Manifest-derived widget params. Stage A defaults are the canonical
-/// `ClockWidget::Default` values from `bmc-display/src/data.rs`. Live
-/// per-instance values land in Stage C.
-#[derive(Clone, Copy)]
-struct ClockParams {
-    show_date: bool,
-    show_seconds: bool,
-    show_timezone: bool,
-    numbers_weight: FontWeight,
-}
-
-impl Default for ClockParams {
-    fn default() -> Self {
-        Self {
-            show_date: true,
-            show_seconds: true,
-            show_timezone: true,
-            numbers_weight: FontWeight::SemiBold,
-        }
-    }
-}
-
-// ── Top-level entry ────────────────────────────────────────────────────
+// ── Lifecycle entries ──────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
@@ -115,14 +98,26 @@ pub extern "C" fn render(_delta_ms: u32) {
         ..
     } = widget_size();
     let now = SystemTime::now();
-    let params = ClockParams::default();
+    let params = Params::current();
     let size = pick_size(w, h);
+    let effective_tz = params.timezone_override.as_deref().map(Tz::from_runtime);
 
-    let root = render_digital(now, params, size);
+    let root = render_digital(now, &params, size, effective_tz.as_ref());
 
     let _ = render_ui(w, h, root);
     // Re-render once per second so the displayed time advances.
     request_frame_after(1000);
+}
+
+/// Fired on every params- or system-snapshot delivery after the first.
+/// Trigger an immediate re-render so operator changes don't wait for
+/// the next 1s tick.
+///
+/// The render path re-reads `Params::current()` and `system::current()`
+/// itself, so no explicit diffing is needed here.
+#[unsafe(no_mangle)]
+pub extern "C" fn on_params_update() {
+    request_frame();
 }
 
 /// Resolve `widget_size()` dimensions to the matching per-size `const`.
@@ -138,15 +133,28 @@ fn pick_size(w: u32, h: u32) -> &'static DigitalSizeParams {
     }
 }
 
+fn font_weight(style: NumbersFontStyle) -> FontWeight {
+    match style {
+        NumbersFontStyle::Regular => FontWeight::Regular,
+        NumbersFontStyle::SemiBold => FontWeight::SemiBold,
+        NumbersFontStyle::Bold => FontWeight::Bold,
+    }
+}
+
 // ── Digital template ───────────────────────────────────────────────────
 
-fn render_digital(now: SystemTime, params: ClockParams, size: &DigitalSizeParams) -> Node {
+fn render_digital(
+    now: SystemTime,
+    params: &Params,
+    size: &DigitalSizeParams,
+    tz: Option<&Tz>,
+) -> Node {
     let time_format = system::current().time_format();
     let is_12h = matches!(time_format, TimeFormat::Hour12);
 
-    let header_node = header(now, params, size);
-    let time_node = time_row(now, params, size, is_12h);
-    let ampm_row_node = (!size.ampm_inline && is_12h).then(|| ampm_line(now, size));
+    let header_node = header(now, params, size, tz);
+    let time_node = time_row(now, params, size, is_12h, tz);
+    let ampm_row_node = (!size.ampm_inline && is_12h).then(|| ampm_line(now, size, tz));
     let alarm_node = size.show_alarm.then(|| alarm_row(size, is_12h)).flatten();
 
     let mut children: Vec<Node> = Vec::with_capacity(8);
@@ -172,11 +180,16 @@ fn render_digital(now: SystemTime, params: ClockParams, size: &DigitalSizeParams
 
 // ── Header (date + timezone) ───────────────────────────────────────────
 
-fn header(now: SystemTime, params: ClockParams, size: &DigitalSizeParams) -> Option<Node> {
+fn header(
+    now: SystemTime,
+    params: &Params,
+    size: &DigitalSizeParams,
+    tz: Option<&Tz>,
+) -> Option<Node> {
     if !params.show_date && !params.show_timezone {
         return None;
     }
-    let text_str = compose_header(now, params, size);
+    let text_str = compose_header(now, params, size, tz);
     Some(center(
         props!(),
         [text(
@@ -186,71 +199,84 @@ fn header(now: SystemTime, params: ClockParams, size: &DigitalSizeParams) -> Opt
     ))
 }
 
-fn compose_header(now: SystemTime, params: ClockParams, size: &DigitalSizeParams) -> String {
+fn compose_header(
+    now: SystemTime,
+    params: &Params,
+    size: &DigitalSizeParams,
+    tz: Option<&Tz>,
+) -> String {
     match (params.show_date, params.show_timezone) {
         (true, true) => {
-            let mut s = compose_date(now, size);
+            let mut s = compose_date(now, size, tz);
             s.push_str("    ");
-            s.push_str(&compose_timezone(size));
+            s.push_str(&compose_timezone(now, size, tz));
             s
         }
-        (true, false) => compose_date(now, size),
-        (false, true) => compose_timezone(size),
+        (true, false) => compose_date(now, size, tz),
+        (false, true) => compose_timezone(now, size, tz),
         (false, false) => String::new(),
     }
 }
 
-fn compose_date(now: SystemTime, size: &DigitalSizeParams) -> String {
-    let mut s = String::new();
-    if size.show_weekday {
-        s.push_str(weekday_name(now.weekday));
-        s.push(' ');
-    }
-    push_u8(&mut s, now.day);
-    s.push(' ');
-    s.push_str(month_name(now.month));
-    if size.show_year {
-        s.push_str(", ");
-        push_u16(&mut s, now.year);
-    }
-    s
+/// Compose the date string from per-size visibility flags.
+/// Uses strftime so the weekday / month-name come from
+/// the host's chrono (correct locale + correct timezone
+/// when `tz` is an override).
+fn compose_date(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> String {
+    let shifted = local_unix_secs(&now, tz);
+    let pattern = match (size.show_weekday, size.show_year) {
+        (false, false) => "%-d %B",
+        (true, false) => "%a %-d %B",
+        (false, true) => "%-d %B, %Y",
+        (true, true) => "%a %-d %B, %Y",
+    };
+    strftime(shifted, pattern)
 }
 
-fn compose_timezone(size: &DigitalSizeParams) -> String {
-    let snap = system::current();
-    let tz = snap.timezone();
+fn compose_timezone(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> String {
+    let (label, offset_secs) = match tz {
+        Some(tz) => (
+            tz.iana().to_owned(),
+            resolve_tz_offset(tz, now.unix_secs).unwrap_or(now.utc_offset_secs),
+        ),
+        None => (system::current().timezone().to_owned(), now.utc_offset_secs),
+    };
     if size.show_utc_offset {
-        // Format the system's current offset; SystemTime carries it as
-        // signed seconds and the host has already applied it to the
-        // decomposed fields.
-        let offset_secs = SystemTime::now().utc_offset_secs;
-        let mut s = String::from(tz);
+        let mut s = label;
         s.push_str(" (");
         push_utc_offset(&mut s, offset_secs);
         s.push(')');
         s
     } else {
-        tz.to_owned()
+        label
     }
 }
 
 // ── Time row (time text + optional inline AM/PM) ───────────────────────
 
-fn time_row(now: SystemTime, params: ClockParams, size: &DigitalSizeParams, is_12h: bool) -> Node {
+fn time_row(
+    now: SystemTime,
+    params: &Params,
+    size: &DigitalSizeParams,
+    is_12h: bool,
+    tz: Option<&Tz>,
+) -> Node {
+    let weight = font_weight(params.numbers_font_style) as u16;
     let time_str = format_time(
         now,
         FormatTimeOpts {
+            timezone: tz.cloned(),
             with_seconds: params.show_seconds,
             ..FormatTimeOpts::default()
         },
     );
     let time_node = text(
         time_str,
-        style!(size: size.time_font_size as u32, weight: params.numbers_weight as u16, color: WHITE),
+        style!(size: size.time_font_size as u32, weight: weight, color: WHITE),
     );
 
     if size.ampm_inline && is_12h {
-        let ampm = ampm_glyph(now);
+        let ampm = ampm_glyph(now, tz);
         // AM/PM placed to the right of the time text. The slint sets
         // `x: time-text.x + time-text.width + 32px` and a y-offset; we
         // approximate with a row + gap. Exact pixel-level placement is
@@ -270,18 +296,26 @@ fn time_row(now: SystemTime, params: ClockParams, size: &DigitalSizeParams, is_1
     }
 }
 
-fn ampm_line(now: SystemTime, size: &DigitalSizeParams) -> Node {
+fn ampm_line(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> Node {
     center(
         props!(),
         [text(
-            ampm_glyph(now),
+            ampm_glyph(now, tz),
             style!(size: size.ampm_font_size as u32, weight: 400, color: GRAY_60),
         )],
     )
 }
 
-fn ampm_glyph(now: SystemTime) -> &'static str {
-    if now.hour >= 12 { "PM" } else { "AM" }
+/// `"AM"` / `"PM"` for the given moment in the effective timezone.
+/// Uses strftime so the AM/PM boundary follows the override tz,
+/// not just the system tz.
+fn ampm_glyph(now: SystemTime, tz: Option<&Tz>) -> &'static str {
+    let shifted = local_unix_secs(&now, tz);
+    // %H is 00–23; cheap branch on the leading digit beats
+    // a host call to chrono's `%p` for the AM/PM string.
+    let hour_str = strftime(shifted, "%H");
+    let hour: u8 = hour_str.parse().unwrap_or(0);
+    if hour >= 12 { "PM" } else { "AM" }
 }
 
 // ── Alarm row (Full only when next_alarm = Some) ───────────────────────
@@ -293,10 +327,7 @@ fn alarm_row(size: &DigitalSizeParams, is_12h: bool) -> Option<Node> {
     // until the SDK exposes a tint primitive, render the formatted time
     // alone and revisit the bell icon when image colorize ships
     // (see CLOCK-WIDGET-WASM-PORT-PLAN.md, SDK gaps #1).
-    let _ = alarm;
-    let alarm_time = format_alarm_time(snap.next_alarm()?, is_12h);
-    // Bottom padding is appended as a separate spacer in `render_digital`,
-    // not as a prop on the alarm row (PropsData has only uniform `padding`).
+    let alarm_time = format_alarm_time(alarm, is_12h);
     Some(center(
         props!(gap: 8.0),
         [text(
@@ -308,10 +339,12 @@ fn alarm_row(size: &DigitalSizeParams, is_12h: bool) -> Option<Node> {
 
 fn format_alarm_time(alarm: bmc_wasm_sdk::system::NextAlarmView<'_>, is_12h: bool) -> String {
     let secs = alarm.fire_at_utc_ms / 1000;
-    // Reuse the canonical strftime path so the formatting flows through
-    // the same host-side chrono pipeline as the main clock readout.
+    // Alarm fire time is operator-set in the system tz;
+    // render it in the same tz here. `timezone_override`
+    // doesn't shift the alarm row (alarms are a system-tz
+    // construct, not an event-local-tz one).
     let pattern = if is_12h { "%I:%M %p" } else { "%H:%M" };
-    bmc_wasm_sdk::strftime(secs, pattern)
+    strftime(secs, pattern)
 }
 
 // ── Spacers and number helpers ─────────────────────────────────────────
@@ -321,14 +354,6 @@ fn spacer_px(h: f32) -> Node {
     // `spacer(flex)` primitive is flex-based; for px-exact padding we
     // emit a node with a literal `height` prop instead.
     col(props!(height: h), Vec::<Node>::new())
-}
-
-fn push_u8(s: &mut String, n: u8) {
-    push_u32(s, n as u32);
-}
-
-fn push_u16(s: &mut String, n: u16) {
-    push_u32(s, n as u32);
 }
 
 fn push_u32(s: &mut String, n: u32) {
@@ -354,39 +379,4 @@ fn push_utc_offset(s: &mut String, offset_secs: i32) {
     push_pad2(s, hours);
     s.push(':');
     push_pad2(s, mins);
-}
-
-// Widget-local weekday/month name tables. The slint widget reads
-// `datetime.weekday` and `datetime.month-name` strings pre-rendered by
-// the host's chrono formatter; on wasm we lift them from `SystemTime`'s
-// decomposed fields. Move to the SDK when a second widget needs them.
-
-fn weekday_name(weekday: u8) -> &'static str {
-    // SystemTime convention: 0 = Monday, 6 = Sunday.
-    match weekday {
-        0 => "Mon",
-        1 => "Tue",
-        2 => "Wed",
-        3 => "Thu",
-        4 => "Fri",
-        5 => "Sat",
-        _ => "Sun",
-    }
-}
-
-fn month_name(month: u8) -> &'static str {
-    match month {
-        1 => "January",
-        2 => "February",
-        3 => "March",
-        4 => "April",
-        5 => "May",
-        6 => "June",
-        7 => "July",
-        8 => "August",
-        9 => "September",
-        10 => "October",
-        11 => "November",
-        _ => "December",
-    }
 }

@@ -10,6 +10,7 @@
 
 mod fmt_capture;
 mod json;
+mod tz;
 
 use proc_macro::TokenStream;
 
@@ -44,4 +45,23 @@ pub fn json(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn fmt_impl(input: TokenStream) -> TokenStream {
     fmt_capture::expand(input.into()).into()
+}
+
+/// Compile-time-validated IANA timezone literal.
+///
+/// Validates the supplied name against the deck's supported-timezone
+/// list (`bmc_shared_time::timezone_variants_raw::TIMEZONE_VARIANTS_RAW`,
+/// sourced from openwrt/LuCI's `zoneinfo.uc`).
+///
+/// Unknown names yield a compile error at the call site.
+///
+/// # Examples
+///
+/// ```ignore
+/// let la = tz!("America/Los_Angeles");
+/// // tz!("Bogus/Name"); // compile_error!: not in the supported list
+/// ```
+#[proc_macro]
+pub fn tz(input: TokenStream) -> TokenStream {
+    tz::expand(input.into()).into()
 }

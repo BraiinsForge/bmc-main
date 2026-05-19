@@ -20,7 +20,14 @@ unsafe extern "C" {
         out_ptr: *mut u8,
         out_len: u32,
     ) -> i32;
+    /// Resolve `(tz_name, unix_secs)` to the UTC offset in seconds.
+    /// Returns `i32::MIN` when the name is not in the deck's supported timezone list.
+    fn host_resolve_tz(name_ptr: *const u8, name_len: u32, unix_secs: i64) -> i32;
 }
+
+/// Sentinel returned by `host_resolve_tz` for unknown IANA names.
+/// Real UTC offsets are bounded to ±14 hours, so this value never collides.
+const TZ_UNKNOWN: i32 = i32::MIN;
 
 /// Read a host formatting result from a 64-byte stack buffer.
 fn read_host_buf(buf: &[u8; 64], len: i32) -> String {
@@ -103,25 +110,34 @@ pub fn strftime(timestamp: i64, format: &str) -> String {
 // and the event's local timezone, or rendering metric and imperial side-by-side.
 
 use crate::system::{self, DateFormat, TimeFormat};
+use crate::tz::Tz;
 
 /// Overrides for [`format_time`]. Any `Some`-valued field replaces the
 /// corresponding `system::current()` preference for this call only.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct FormatTimeOpts {
-    /// Override the system's [`TimeFormat`]. `None` uses
-    /// `system::current().time_format()`.
+    /// Override the system's [`TimeFormat`].
+    /// `None` uses `system::current().time_format()`.
     pub format: Option<TimeFormat>,
+    /// Override the timezone the moment is rendered in.
+    /// `None` uses the host-applied system timezone already baked
+    /// into [`crate::host::SystemTime::utc_offset_secs`].
+    /// Unknown names fall back to the system timezone (see `host_resolve_tz`).
+    pub timezone: Option<Tz>,
     /// Include seconds in the output (e.g. `12:34` vs `12:34:56`).
     pub with_seconds: bool,
 }
 
 /// Overrides for [`format_date`]. Any `Some`-valued field replaces the
 /// corresponding `system::current()` preference for this call only.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct FormatDateOpts {
-    /// Override the system's [`DateFormat`]. `None` uses
-    /// `system::current().date_format()`.
+    /// Override the system's [`DateFormat`].
+    /// `None` uses `system::current().date_format()`.
     pub format: Option<DateFormat>,
+    /// Override the timezone the moment is rendered in.
+    /// See [`FormatTimeOpts::timezone`].
+    pub timezone: Option<Tz>,
 }
 
 /// Format the time component of a [`SystemTime`] per the user's
@@ -146,12 +162,12 @@ pub fn format_time(now: crate::host::SystemTime, opts: FormatTimeOpts) -> String
         (TimeFormat::Hour12, false) => "%I:%M",
         (TimeFormat::Hour12, true) => "%I:%M:%S",
     };
-    strftime(now.unix_secs, pattern)
+    strftime(local_unix_secs(&now, opts.timezone.as_ref()), pattern)
 }
 
-/// Format the date component of a [`SystemTime`] per the user's
-/// preferences, with per-call overrides. Output mirrors the operator's
-/// configured locale (e.g. `12.03.2026` vs `03/12/2026`).
+/// Format the date component of a [`SystemTime`] per the user's preferences,
+/// with per-call overrides. Output mirrors the operator's configured locale
+/// (e.g. `12.03.2026` vs `03/12/2026`).
 ///
 /// # Example
 /// ```ignore
@@ -173,7 +189,44 @@ pub fn format_date(now: crate::host::SystemTime, opts: FormatDateOpts) -> String
         DateFormat::YyyyMmDdDot => "%Y.%m.%d",
         DateFormat::YyyyMmDdDash => "%Y-%m-%d",
     };
-    strftime(now.unix_secs, pattern)
+    strftime(local_unix_secs(&now, opts.timezone.as_ref()), pattern)
+}
+
+/// Shift `now.unix_secs` (UTC epoch) by the effective UTC offset
+/// so a downstream `strftime` (which formats in UTC) prints local
+/// wall-clock digits.
+///
+/// When `tz` is `None`, the pre-applied
+/// [`crate::host::SystemTime::utc_offset_secs`] is used — no host round-trip.
+/// Otherwise, `host_resolve_tz` looks up the offset for the override at the moment
+/// `unix_secs`; unknown names fall back to the system offset.
+///
+/// Useful for `strftime` patterns the high-level helpers don't cover
+/// (e.g. composed weekday + day + month-name strings).
+#[must_use]
+pub fn local_unix_secs(now: &crate::host::SystemTime, tz: Option<&Tz>) -> i64 {
+    let offset_secs = match tz {
+        None => now.utc_offset_secs,
+        Some(tz) => resolve_tz_offset(tz, now.unix_secs).unwrap_or(now.utc_offset_secs),
+    };
+    now.unix_secs + i64::from(offset_secs)
+}
+
+/// Resolve the UTC offset (in seconds) for an IANA-name timezone at a
+/// moment. Returns `None` when the host doesn't recognise the name.
+#[must_use]
+pub fn resolve_tz_offset(tz: &Tz, unix_secs: i64) -> Option<i32> {
+    let name = tz.iana().as_bytes();
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "IANA names ship well under u32 bytes; truncation would be a programmer bug"
+    )]
+    let offset = unsafe { host_resolve_tz(name.as_ptr(), name.len() as u32, unix_secs) };
+    if offset == TZ_UNKNOWN {
+        None
+    } else {
+        Some(offset)
+    }
 }
 
 /// Format a number with user-preferred grouping and decimal separators.

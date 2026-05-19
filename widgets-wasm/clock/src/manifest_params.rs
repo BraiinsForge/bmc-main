@@ -1,0 +1,221 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+// AUTO-GENERATED FROM ../manifest.json by `bmc-widget-codegen` v0.1.0.
+// Do not edit by hand. Run `just wasm::gen <widget>` after changing the manifest.
+
+use bmc_wasm_sdk::params as snapshot;
+use bmc_wasm_sdk::params::typed::ParamRead;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClockStyle {
+    AnalogRound,
+    AnalogRect,
+    Digital,
+}
+impl ClockStyle {
+    /// Every variant, in manifest-declaration order. Useful when a widget
+    /// wants to render a "pick one" UI or audit the enum exhaustively.
+    #[expect(
+        clippy::allow_attributes,
+        reason = "wrapping a dead_code allow on a per-widget-optional API"
+    )]
+    #[allow(
+        dead_code,
+        reason = "for widgets rendering a pick-one UI or auditing the enum exhaustively"
+    )]
+    pub const ALL: &'static [Self] = &[Self::AnalogRound, Self::AnalogRect, Self::Digital];
+    /// Manifest wire value for this variant.
+    #[expect(
+        clippy::allow_attributes,
+        reason = "wrapping a dead_code allow on a per-widget-optional API"
+    )]
+    #[allow(
+        dead_code,
+        reason = "for widgets serialising the variant back to its manifest spelling"
+    )]
+    #[must_use]
+    pub fn as_manifest_value(self) -> &'static str {
+        match self {
+            Self::AnalogRound => "analog_round",
+            Self::AnalogRect => "analog_rect",
+            Self::Digital => "digital",
+        }
+    }
+    /// Human-readable label declared in the manifest's `enum_values`.
+    #[expect(
+        clippy::allow_attributes,
+        reason = "wrapping a dead_code allow on a per-widget-optional API"
+    )]
+    #[allow(
+        dead_code,
+        reason = "for widgets rendering a pick-one UI or labelling the current value"
+    )]
+    #[must_use]
+    pub fn as_manifest_label(self) -> &'static str {
+        match self {
+            Self::AnalogRound => "Analog (round)",
+            Self::AnalogRect => "Analog (rectangular)",
+            Self::Digital => "Digital",
+        }
+    }
+    #[must_use]
+    pub fn from_manifest_value(s: &str) -> Option<Self> {
+        match s {
+            "analog_round" => Some(Self::AnalogRound),
+            "analog_rect" => Some(Self::AnalogRect),
+            "digital" => Some(Self::Digital),
+            _ => None,
+        }
+    }
+}
+bmc_wasm_sdk::impl_manifest_str_enum!(ClockStyle);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NumbersFontStyle {
+    Regular,
+    SemiBold,
+    Bold,
+}
+impl NumbersFontStyle {
+    /// Every variant, in manifest-declaration order. Useful when a widget
+    /// wants to render a "pick one" UI or audit the enum exhaustively.
+    #[expect(
+        clippy::allow_attributes,
+        reason = "wrapping a dead_code allow on a per-widget-optional API"
+    )]
+    #[allow(
+        dead_code,
+        reason = "for widgets rendering a pick-one UI or auditing the enum exhaustively"
+    )]
+    pub const ALL: &'static [Self] = &[Self::Regular, Self::SemiBold, Self::Bold];
+    /// Manifest wire value for this variant.
+    #[expect(
+        clippy::allow_attributes,
+        reason = "wrapping a dead_code allow on a per-widget-optional API"
+    )]
+    #[allow(
+        dead_code,
+        reason = "for widgets serialising the variant back to its manifest spelling"
+    )]
+    #[must_use]
+    pub fn as_manifest_value(self) -> &'static str {
+        match self {
+            Self::Regular => "regular",
+            Self::SemiBold => "semi-bold",
+            Self::Bold => "bold",
+        }
+    }
+    /// Human-readable label declared in the manifest's `enum_values`.
+    #[expect(
+        clippy::allow_attributes,
+        reason = "wrapping a dead_code allow on a per-widget-optional API"
+    )]
+    #[allow(
+        dead_code,
+        reason = "for widgets rendering a pick-one UI or labelling the current value"
+    )]
+    #[must_use]
+    pub fn as_manifest_label(self) -> &'static str {
+        match self {
+            Self::Regular => "Regular",
+            Self::SemiBold => "Semi-bold",
+            Self::Bold => "Bold",
+        }
+    }
+    #[must_use]
+    pub fn from_manifest_value(s: &str) -> Option<Self> {
+        match s {
+            "regular" => Some(Self::Regular),
+            "semi-bold" => Some(Self::SemiBold),
+            "bold" => Some(Self::Bold),
+            _ => None,
+        }
+    }
+}
+bmc_wasm_sdk::impl_manifest_str_enum!(NumbersFontStyle);
+#[derive(Clone, Debug, PartialEq)]
+pub struct Params {
+    pub clock_style: ClockStyle,
+    pub numbers_font_style: NumbersFontStyle,
+    pub show_date: bool,
+    pub show_seconds: bool,
+    pub show_timezone: bool,
+    pub timezone_override: Option<String>,
+}
+impl Params {
+    /// Materialise a typed snapshot from a dynamic [`snapshot::Params`].
+    #[must_use]
+    pub fn from_snapshot(snap: &snapshot::Params) -> Self {
+        Self {
+            clock_style: <ClockStyle as ParamRead>::read_required(snap, "clock_style"),
+            numbers_font_style: <NumbersFontStyle as ParamRead>::read_required(
+                snap,
+                "numbers_font_style",
+            ),
+            show_date: <bool as ParamRead>::read_required(snap, "show_date"),
+            show_seconds: <bool as ParamRead>::read_required(snap, "show_seconds"),
+            show_timezone: <bool as ParamRead>::read_required(snap, "show_timezone"),
+            timezone_override: <String as ParamRead>::read_optional(snap, "timezone_override"),
+        }
+    }
+    /// Latest typed snapshot delivered for this widget instance.
+    #[must_use]
+    pub fn current() -> Self {
+        Self::from_snapshot(&snapshot::current())
+    }
+    /// Snapshot delivered immediately before [`current`]; `None` until at
+    /// least one update has been observed (i.e. during `init` and the
+    /// first `render`).
+    #[expect(
+        clippy::allow_attributes,
+        reason = "wrapping a dead_code allow on a per-widget-optional API"
+    )]
+    #[allow(
+        dead_code,
+        reason = "for widgets that diff against the prior snapshot in on_params_update"
+    )]
+    #[must_use]
+    pub fn previous() -> Option<Self> {
+        let prev = snapshot::previous();
+        if prev.is_empty() {
+            None
+        } else {
+            Some(Self::from_snapshot(&prev))
+        }
+    }
+    /// Manifest keys whose value differs between `self` and `other`.
+    ///
+    /// Intended for `on_params_update` diffing — pass `current()` and the
+    /// inside-hook value of `previous()` to get the set of keys to react
+    /// to. Field-by-field `PartialEq`; emitted in struct-field order so
+    /// the result is deterministic.
+    #[expect(
+        clippy::allow_attributes,
+        reason = "wrapping a dead_code allow on a per-widget-optional API"
+    )]
+    #[allow(
+        dead_code,
+        reason = "for widgets that react per-key inside on_params_update"
+    )]
+    #[must_use]
+    pub fn changed_keys(&self, other: &Self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if self.clock_style != other.clock_style {
+            out.push("clock_style");
+        }
+        if self.numbers_font_style != other.numbers_font_style {
+            out.push("numbers_font_style");
+        }
+        if self.show_date != other.show_date {
+            out.push("show_date");
+        }
+        if self.show_seconds != other.show_seconds {
+            out.push("show_seconds");
+        }
+        if self.show_timezone != other.show_timezone {
+            out.push("show_timezone");
+        }
+        if self.timezone_override != other.timezone_override {
+            out.push("timezone_override");
+        }
+        out
+    }
+}

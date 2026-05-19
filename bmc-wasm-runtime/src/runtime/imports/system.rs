@@ -5,10 +5,15 @@
 
 #![expect(clippy::cast_possible_truncation)]
 
+use std::str::FromStr;
+
 use anyhow::Result;
-use chrono::{Datelike, Timelike};
+use bmc_shared_time::time::Timezone;
+use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
+use chrono_tz::OffsetComponents;
 use wasmi::{Caller, Extern, Linker};
 
+use super::super::memory::read_string;
 use crate::host_api::HostState;
 
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
@@ -17,6 +22,7 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_widget_size_import(linker)?;
     register_system_version(linker)?;
     register_system_snapshot(linker)?;
+    register_resolve_tz_import(linker)?;
     Ok(())
 }
 
@@ -127,6 +133,44 @@ fn register_system_snapshot(linker: &mut Linker<HostState>) -> Result<()> {
             }
             data[start..end].copy_from_slice(&bytes);
             Ok(needed)
+        },
+    )?;
+    Ok(())
+}
+
+/// `host_resolve_tz(name_ptr: *const u8, name_len: u32, unix_secs: i64) -> i32`
+/// — look up the UTC offset (in seconds) for an IANA timezone at a moment.
+///
+/// Validates the name against the deck's supported list (the same
+/// `bmc_shared_time::timezone_variant::TIMEZONE_VARIANTS` that backs
+/// `tz!`'s compile-time check, sourced from openwrt/LuCI's
+/// `zoneinfo.uc`). Returns `i32::MIN` when the name is unknown
+/// — real UTC offsets are bounded to ±14 hours, so the sentinel never collides.
+fn register_resolve_tz_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_resolve_tz",
+        |caller: Caller<'_, HostState>, name_ptr: u32, name_len: u32, unix_secs: i64| -> i32 {
+            let Some(name) = read_string(&caller, name_ptr, name_len) else {
+                return i32::MIN;
+            };
+            let Ok(tz) = Timezone::from_str(&name) else {
+                return i32::MIN;
+            };
+            let Some(dt) = DateTime::<Utc>::from_timestamp(unix_secs, 0) else {
+                return i32::MIN;
+            };
+            // Evaluate the offset at the *requested* moment, not "now",
+            // so DST transitions are respected when the caller asks about
+            // a past/future time.
+            let offset = tz.chrono().offset_from_utc_datetime(&dt.naive_utc());
+            let total = offset.base_utc_offset() + offset.dst_offset();
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "UTC offsets are bounded to ±14h ≈ ±50400s, fits in i32 with headroom"
+            )]
+            let secs = total.num_seconds() as i32;
+            secs
         },
     )?;
     Ok(())
