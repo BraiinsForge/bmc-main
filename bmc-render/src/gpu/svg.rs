@@ -10,8 +10,8 @@ use std::fmt;
 
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
-    SVG_FLAG_EVENODD, SVG_FLAG_HAS_FILL, SVG_FLAG_HAS_STROKE, SVG_OP_CLOSE, SVG_OP_CUBIC_TO,
-    SVG_OP_LINE_TO, SVG_OP_MOVE_TO, SVG_OP_QUAD_TO, SVG_RESERVED_MIN, SvgId,
+    SVG_FLAG_EVENODD, SVG_FLAG_HAS_FILL, SVG_FLAG_HAS_ID, SVG_FLAG_HAS_STROKE, SVG_OP_CLOSE,
+    SVG_OP_CUBIC_TO, SVG_OP_LINE_TO, SVG_OP_MOVE_TO, SVG_OP_QUAD_TO, SVG_RESERVED_MIN, SvgId,
 };
 use femtovg::{FillRule, Paint, Path};
 
@@ -32,6 +32,13 @@ pub struct IconPath {
 #[expect(missing_debug_implementations)]
 pub struct RegisteredSvg {
     pub paths: Vec<IconPath>,
+    /// Map of SVG path `id` attribute → index into `paths`.
+    /// Built at registration from paths that ship with a non-empty id,
+    /// used at draw time to resolve `Draw::svg(...).fill(id, color)` overrides.
+    ///
+    /// Paths without an id (most internal `<path>` elements)
+    /// don't appear here and are unreachable via per-id fills.
+    pub paths_by_id: HashMap<String, usize>,
     pub viewbox_w: f32,
     pub viewbox_h: f32,
 }
@@ -161,8 +168,16 @@ impl SvgRegistry {
 
 /// Render a registered icon onto the canvas.
 ///
-/// `color == TRANSPARENT` → use original SVG colors.
-/// `color != TRANSPARENT` → tint all fills/strokes with the given color.
+/// Override precedence (per path):
+/// 1. `fills` override matching the path's `id` wins,
+///    recolouring the fill paint only;
+/// 2. otherwise `color != TRANSPARENT` tints every fill
+///    and stroke with that single colour;
+/// 3. otherwise the path's stored SVG colours are used.
+///
+/// `fills` is small (typically 1–4 entries per draw) so a linear
+/// lookup per path is faster than hashing in practice and keeps
+/// the guest from caring about hash collisions.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_svg(
     canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
@@ -173,6 +188,7 @@ pub fn draw_svg(
     h: f32,
     color: Color,
     anti_alias: bool,
+    fills: &[(String, Color)],
 ) {
     if icon.viewbox_w <= 0.0 || icon.viewbox_h <= 0.0 {
         return;
@@ -191,9 +207,21 @@ pub fn draw_svg(
         Some(to_femtovg_color(color.to_u32()))
     };
 
-    for icon_path in &icon.paths {
+    // Resolve `fills` against `paths_by_id` once per draw so
+    // the per-path inner loop only sees `Option<femtovg::Color>`.
+    let mut path_overrides: Vec<Option<femtovg::Color>> = vec![None; icon.paths.len()];
+    for (id, override_color) in fills {
+        if let Some(&idx) = icon.paths_by_id.get(id) {
+            path_overrides[idx] = Some(to_femtovg_color(override_color.to_u32()));
+        }
+    }
+
+    for (idx, icon_path) in icon.paths.iter().enumerate() {
+        let path_override = path_overrides[idx];
         if let Some(fill_color) = icon_path.fill_color {
-            let paint_color = tint.unwrap_or_else(|| to_femtovg_color(fill_color));
+            let paint_color = path_override
+                .or(tint)
+                .unwrap_or_else(|| to_femtovg_color(fill_color));
             let mut paint = Paint::color(paint_color);
             paint.set_anti_alias(anti_alias);
             if icon_path.is_evenodd {
@@ -202,7 +230,9 @@ pub fn draw_svg(
             canvas.fill_path(&icon_path.path, &paint);
         }
         if let Some(stroke_color) = icon_path.stroke_color {
-            let paint_color = tint.unwrap_or_else(|| to_femtovg_color(stroke_color));
+            let paint_color = path_override
+                .or(tint)
+                .unwrap_or_else(|| to_femtovg_color(stroke_color));
             let mut paint = Paint::color(paint_color);
             paint.set_line_width(icon_path.stroke_width);
             canvas.stroke_path(&icon_path.path, &paint);
@@ -222,22 +252,29 @@ fn parse_svg(data: &[u8]) -> anyhow::Result<RegisteredSvg> {
     let path_count = r.read_u16()?;
 
     let mut paths = Vec::with_capacity(path_count as usize);
-    for _ in 0..path_count {
-        paths.push(read_icon_path(&mut r)?);
+    let mut paths_by_id = HashMap::new();
+    for idx in 0..path_count {
+        let (path, id) = read_icon_path(&mut r)?;
+        if let Some(id) = id {
+            paths_by_id.insert(id, idx as usize);
+        }
+        paths.push(path);
     }
 
     Ok(RegisteredSvg {
         paths,
+        paths_by_id,
         viewbox_w,
         viewbox_h,
     })
 }
 
-fn read_icon_path(r: &mut IconReader<'_>) -> anyhow::Result<IconPath> {
+fn read_icon_path(r: &mut IconReader<'_>) -> anyhow::Result<(IconPath, Option<String>)> {
     let flags = r.read_u8()?;
     let has_fill = flags & SVG_FLAG_HAS_FILL != 0;
     let has_stroke = flags & SVG_FLAG_HAS_STROKE != 0;
     let is_evenodd = flags & SVG_FLAG_EVENODD != 0;
+    let has_id = flags & SVG_FLAG_HAS_ID != 0;
 
     let fill_color = if has_fill { Some(r.read_u32()?) } else { None };
 
@@ -250,6 +287,18 @@ fn read_icon_path(r: &mut IconReader<'_>) -> anyhow::Result<IconPath> {
         stroke_color = None;
         stroke_width = 0.0;
     }
+
+    let id = if has_id {
+        let id_len = r.read_u16()? as usize;
+        let bytes = r.read_bytes(id_len)?;
+        Some(
+            std::str::from_utf8(bytes)
+                .map_err(|e| anyhow::anyhow!("path id is not valid UTF-8: {e}"))?
+                .to_owned(),
+        )
+    } else {
+        None
+    };
 
     let op_count = r.read_u16()?;
     let mut path = Path::new();
@@ -290,13 +339,16 @@ fn read_icon_path(r: &mut IconReader<'_>) -> anyhow::Result<IconPath> {
         }
     }
 
-    Ok(IconPath {
-        path,
-        fill_color,
-        stroke_color,
-        stroke_width,
-        is_evenodd,
-    })
+    Ok((
+        IconPath {
+            path,
+            fill_color,
+            stroke_color,
+            stroke_width,
+            is_evenodd,
+        },
+        id,
+    ))
 }
 
 struct IconReader<'a> {
@@ -320,6 +372,15 @@ impl IconReader<'_> {
         }
         let v = u16::from_le_bytes([self.data[self.pos], self.data[self.pos + 1]]);
         self.pos += 2;
+        Ok(v)
+    }
+
+    fn read_bytes(&mut self, n: usize) -> anyhow::Result<&[u8]> {
+        if self.pos + n > self.data.len() {
+            anyhow::bail!("unexpected end of icon data");
+        }
+        let v = &self.data[self.pos..self.pos + n];
+        self.pos += n;
         Ok(v)
     }
 

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <circle id="outer-ring" cx="50" cy="50" r="45" fill="#393939"/>
+    <circle id="middle-ring" cx="50" cy="50" r="30" fill="#525252"/>
+    <circle id="inner-dot" cx="50" cy="50" r="12" fill="#7a7a7a"/>
+</svg>

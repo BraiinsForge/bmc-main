@@ -7,10 +7,12 @@
 //! ```text
 //! [viewbox_w: f32][viewbox_h: f32][path_count: u16]
 //!   for each path:
-//!     [flags: u8]              // bit 0: has_fill, bit 1: has_stroke, bit 2: even-odd fill
+//!     [flags: u8]              // bit 0: has_fill, bit 1: has_stroke,
+//!                              // bit 2: even-odd fill, bit 3: has_id
 //!     [fill_color: u32]        // RGBA, present if has_fill
 //!     [stroke_color: u32]      // RGBA, present if has_stroke
 //!     [stroke_width: f32]      // present if has_stroke
+//!     [id_len: u16][id_bytes]  // UTF-8, present if has_id
 //!     [op_count: u16]
 //!       for each op: [type: u8][data...]
 //! ```
@@ -38,6 +40,12 @@ pub const SVG_FLAG_HAS_STROKE: u8 = 0x02;
 
 /// Flag bit: path uses even-odd fill rule (instead of default non-zero)
 pub const SVG_FLAG_EVENODD: u8 = 0x04;
+
+/// Flag bit: path carries an `id` string (`[id_len: u16][id_bytes]`
+/// follow the colour / stroke-width block). Widgets address paths
+/// by id when calling `Draw::svg(...).fill(id, color)` to override
+/// per-path fills.
+pub const SVG_FLAG_HAS_ID: u8 = 0x08;
 
 // ── Built-in icon IDs ───────────────────────────────────────────────
 // Reserved range `SVG_RESERVED_MIN..=0xFFFF` for host-bundled SVGs.

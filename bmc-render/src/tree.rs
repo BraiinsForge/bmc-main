@@ -132,6 +132,9 @@ pub enum DrawCommand {
         color: Color,
         icon_id: Option<SvgId>,
         anti_alias: bool,
+        /// Per-path fill overrides keyed by the SVG path `id`.
+        /// Empty by default; populated by `Draw::svg(...).fill(id, color)`.
+        fills: Vec<(String, Color)>,
     },
     Bitmap {
         x: f32,
@@ -350,6 +353,15 @@ impl<'a> TreeReader<'a> {
 
     fn read_f32(&mut self) -> Result<f32> {
         Ok(f32::from_bits(self.read_u32()?))
+    }
+
+    fn read_bytes(&mut self, n: usize) -> Result<&'a [u8]> {
+        if self.pos + n > self.data.len() {
+            bail!("unexpected end of tree data");
+        }
+        let v = &self.data[self.pos..self.pos + n];
+        self.pos += n;
+        Ok(v)
     }
 
     /// Decode an `Option<SvgId>`. Wire zero lifts to `None`.
@@ -685,6 +697,17 @@ impl<'a> TreeReader<'a> {
                 let color = Color::from_raw(self.read_u32()?);
                 let icon_id = self.read_icon_id()?;
                 let anti_alias = self.read_u8()? != 0;
+                let fill_count = self.read_u16()? as usize;
+                let mut fills = Vec::with_capacity(fill_count);
+                for _ in 0..fill_count {
+                    let id_len = self.read_u16()? as usize;
+                    let id_bytes = self.read_bytes(id_len)?;
+                    let id = std::str::from_utf8(id_bytes)
+                        .map_err(|e| anyhow::anyhow!("DRAW_ICON fill id is not valid UTF-8: {e}"))?
+                        .to_owned();
+                    let color = Color::from_raw(self.read_u32()?);
+                    fills.push((id, color));
+                }
                 Ok(DrawCommand::Svg {
                     x,
                     y,
@@ -693,6 +716,7 @@ impl<'a> TreeReader<'a> {
                     color,
                     icon_id,
                     anti_alias,
+                    fills,
                 })
             }
             DRAW_BITMAP => {

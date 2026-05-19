@@ -513,6 +513,7 @@ fn render_key_content(
             icon_fg,
             icon_id,
             true,
+            &[],
         );
     } else {
         let font_size = scale.px(key_font_size(key.code));

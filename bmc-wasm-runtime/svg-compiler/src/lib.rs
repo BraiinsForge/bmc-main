@@ -9,10 +9,12 @@
 //
 // [viewbox_w: f32][viewbox_h: f32][path_count: u16]
 //   for each path:
-//     [flags: u8]              bit 0: has_fill, bit 1: has_stroke
+//     [flags: u8]              bit 0: has_fill, bit 1: has_stroke,
+//                              bit 2: even-odd fill, bit 3: has_id
 //     [fill_color: u32]        RGBA, present if has_fill
 //     [stroke_color: u32]      RGBA, present if has_stroke
 //     [stroke_width: f32]      present if has_stroke
+//     [id_len: u16][id_bytes]  UTF-8, present if has_id
 //     [op_count: u16]
 //       0x00 MoveTo  [x: f32][y: f32]
 //       0x01 LineTo  [x: f32][y: f32]
@@ -29,6 +31,7 @@ const OP_CLOSE: u8 = 0x04;
 const FLAG_HAS_FILL: u8 = 0x01;
 const FLAG_HAS_STROKE: u8 = 0x02;
 const FLAG_EVENODD: u8 = 0x04;
+const FLAG_HAS_ID: u8 = 0x08;
 
 /// Compile an SVG string into compact binary path data.
 ///
@@ -60,6 +63,11 @@ struct PathInfo {
     stroke_color: Option<u32>,
     stroke_width: f32,
     is_evenodd: bool,
+    /// `id` attribute from the source SVG path, or empty if absent.
+    /// Widgets address paths by id when calling `Draw::svg(...).fill(id, color)`,
+    /// so preserving meaningful ids (per the project's svgo config)
+    /// feeds the fill-by-id colorize pipeline.
+    id: String,
     ops: Vec<PathOp>,
 }
 
@@ -119,6 +127,7 @@ fn collect_paths(group: &usvg::Group, out: &mut Vec<PathInfo>) {
                     stroke_color,
                     stroke_width,
                     is_evenodd,
+                    id: path.id().to_owned(),
                     ops,
                 });
             }
@@ -157,6 +166,9 @@ fn write_path(buf: &mut Vec<u8>, info: &PathInfo) {
     if info.is_evenodd {
         flags |= FLAG_EVENODD;
     }
+    if !info.id.is_empty() {
+        flags |= FLAG_HAS_ID;
+    }
     buf.push(flags);
 
     if let Some(color) = info.fill_color {
@@ -165,6 +177,12 @@ fn write_path(buf: &mut Vec<u8>, info: &PathInfo) {
     if let Some(color) = info.stroke_color {
         buf.extend_from_slice(&color.to_le_bytes());
         buf.extend_from_slice(&info.stroke_width.to_le_bytes());
+    }
+    if !info.id.is_empty() {
+        let id_len = u16::try_from(info.id.len())
+            .unwrap_or_else(|_| panic!("path id `{}` exceeds u16::MAX bytes", info.id));
+        buf.extend_from_slice(&id_len.to_le_bytes());
+        buf.extend_from_slice(info.id.as_bytes());
     }
 
     let op_count =

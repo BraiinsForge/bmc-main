@@ -81,7 +81,12 @@ pub trait Renderer {
     /// `tag`. Idempotent: re-registering the same tag returns the cached ID.
     fn register_svg(&mut self, tag: &str, data: &[u8]) -> Option<SvgId>;
 
-    /// Draw a registered icon at the given position and size.
+    /// Draw a registered SVG at the given position and size.
+    ///
+    /// `fills` carries optional per-path colour overrides keyed
+    /// by the path's `id` attribute (see `Draw::svg(...).fill(id, color)`).
+    /// Pass an empty slice when no per-path recolouring is needed;
+    /// the renderer falls back to the whole-icon `color` tint or the SVG's own colours.
     #[expect(clippy::too_many_arguments)]
     fn draw_svg(
         &mut self,
@@ -92,6 +97,7 @@ pub trait Renderer {
         color: Color,
         icon_id: SvgId,
         anti_alias: bool,
+        fills: &[(String, Color)],
     );
 
     // -- Bitmaps --

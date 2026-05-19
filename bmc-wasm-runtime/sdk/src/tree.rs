@@ -432,6 +432,11 @@ pub enum Draw {
         color: Color,
         icon_id: Option<SvgId>,
         anti_alias: bool,
+        /// Per-path fill colour overrides, keyed by the path's `id`
+        /// attribute. Built via the chained `.fill(id, color)` setter.
+        /// Empty `Vec` is the default (no overrides) so the underlying
+        /// SVG colours flow through.
+        fills: Vec<(String, Color)>,
     },
     /// Bitmap (raster image) at absolute local position
     Bitmap {
@@ -579,6 +584,7 @@ impl Draw {
             color,
             icon_id,
             anti_alias: false,
+            fills: Vec::new(),
         }
     }
 
@@ -602,6 +608,7 @@ impl Draw {
             color,
             icon_id: icon_id.into(),
             anti_alias: false,
+            fills: Vec::new(),
         }
     }
 
@@ -613,6 +620,27 @@ impl Draw {
         } = self
         {
             *anti_alias = true;
+        }
+        self
+    }
+
+    /// Override the fill colour of the SVG path whose `id` attribute
+    /// matches `id`. Chainable: multiple `.fill(...)` calls layer
+    /// overrides over the same draw.
+    ///
+    /// ```ignore
+    /// Draw::svg(0.0, 0.0, 390.0, 390.0, &DIAL_ROUND, TRANSPARENT)
+    ///     .fill("ticks-large", WHITE)
+    ///     .fill("rim-outer", GRAY_60)
+    /// ```
+    ///
+    /// Paths with no matching id fall through to the whole-icon
+    /// `color` tint (when non-`TRANSPARENT`) or the SVG's own
+    /// fill colour. No-op on non-SVG draw kinds.
+    #[must_use]
+    pub fn fill(mut self, id: impl Into<String>, color: Color) -> Self {
+        if let Self::Svg { ref mut fills, .. } = self {
+            fills.push((id.into(), color));
         }
         self
     }
@@ -1447,6 +1475,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             color,
             icon_id,
             anti_alias,
+            fills,
         } => {
             buf.write_u8(DRAW_ICON);
             buf.write_f32(*x);
@@ -1456,6 +1485,16 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_color(*color);
             buf.write_icon_id(*icon_id);
             buf.write_u8(u8::from(*anti_alias));
+            let fill_count = u16::try_from(fills.len())
+                .expect("BUG: Draw::Svg has more than u16::MAX fill overrides");
+            buf.write_u16(fill_count);
+            for (id, color) in fills {
+                let id_len =
+                    u16::try_from(id.len()).expect("BUG: SVG path id exceeds u16::MAX bytes");
+                buf.write_u16(id_len);
+                buf.write_bytes(id.as_bytes());
+                buf.write_color(*color);
+            }
         }
         Draw::Bitmap {
             x,

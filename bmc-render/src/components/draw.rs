@@ -129,6 +129,7 @@ fn render_draw_inner(
             color,
             icon_id,
             anti_alias,
+            fills,
         } => {
             let Some(icon_id) = *icon_id else { return };
             let ew = *w * scale;
@@ -144,7 +145,7 @@ fn render_draw_inner(
                 base_color
             };
             if rotation == 0.0 {
-                renderer.draw_svg(rx, ry, ew, eh, final_color, icon_id, *anti_alias);
+                renderer.draw_svg(rx, ry, ew, eh, final_color, icon_id, *anti_alias, fills);
             } else {
                 let pivot_x = cx + cw / 2.0;
                 let pivot_y = cy + ch / 2.0;
@@ -159,6 +160,7 @@ fn render_draw_inner(
                     final_color,
                     icon_id,
                     *anti_alias,
+                    fills,
                 );
                 renderer.restore();
             }

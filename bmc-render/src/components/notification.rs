@@ -196,6 +196,7 @@ pub fn render_notification_banner(
         accent,
         icon_id,
         false,
+        &[],
     );
 
     // Text

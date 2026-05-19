@@ -411,15 +411,14 @@ impl Renderer for FemtoVgRenderer {
             self.font_regular
         };
         let size = style.size as f32;
-        // Translate the input anchor `y` to a top-of-glyph-box `y_top` so
-        // every downstream offset (outline ring, underline, strikethrough)
-        // works off a single reference. The renderer keeps `Baseline::Top`.
-        // `Baseline` uses an 0.8 ascender ratio — close enough for the
-        // deck's font set; switch to femtovg metrics if a future widget
-        // wants pixel-perfect alphabetic alignment.
+        // Translate the input anchor `y` to a top-of-glyph-box `y_top`.
+        // The `0.65` multiplier for `Center` puts the *visible* glyph
+        // mid-line on `y` — femtovg's `Baseline::Top` corresponds to
+        // the top of the line box (above the ascender), so the visible
+        // mid-line sits well below `y - size / 2`.
         let y_top = match style.vertical_align {
             VerticalAlign::Top => y,
-            VerticalAlign::Center => y - size / 2.0,
+            VerticalAlign::Center => y - size * 0.65,
             VerticalAlign::Bottom => y - size,
             VerticalAlign::Baseline => y - size * 0.8,
         };
@@ -559,9 +558,10 @@ impl Renderer for FemtoVgRenderer {
         color: Color,
         icon_id: SvgId,
         anti_alias: bool,
+        fills: &[(String, Color)],
     ) {
         if let Some(icon) = self.icon_registry.get(icon_id) {
-            super::svg::draw_svg(&mut self.canvas, icon, x, y, w, h, color, anti_alias);
+            super::svg::draw_svg(&mut self.canvas, icon, x, y, w, h, color, anti_alias, fills);
         }
     }
 

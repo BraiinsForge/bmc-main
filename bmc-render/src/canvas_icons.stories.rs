@@ -3,6 +3,7 @@
 use crate::prelude::*;
 
 const STAR: Svg = include_svg!("bmc-wasm-runtime/sdk/assets/icons/star.svg");
+const MULTI_PATH: Svg = include_svg!("bmc-render/assets/stories/multi-path.svg");
 
 story_meta! { title: "Canvas/Icons" }
 
@@ -65,4 +66,34 @@ fn custom(c: &mut StoryCtx) {
     );
 
     c.ui.prose("Last icon uses anti alias.");
+}
+
+#[story]
+fn fill_by_id(c: &mut StoryCtx) {
+    c.ui.header(
+        "Fill by SVG path id",
+        "Override individual `<path id=\"…\">` colours per draw",
+    );
+
+    let size = 80.0;
+    c.ui.div(
+        (520, 100),
+        canvas(
+            props!(width: 520, height: 100),
+            [
+                // No overrides — SVG's stored greys flow through.
+                Draw::svg(10.0, 10.0, size, size, &MULTI_PATH, TRANSPARENT),
+                // Whole-icon tint via the existing `color` arg.
+                Draw::svg(130.0, 10.0, size, size, &MULTI_PATH, BLUE_50),
+                // Single path recoloured; the others keep their SVG colours.
+                Draw::svg(250.0, 10.0, size, size, &MULTI_PATH, TRANSPARENT)
+                    .fill("inner-dot", RED_50),
+                // Layered overrides chain naturally.
+                Draw::svg(370.0, 10.0, size, size, &MULTI_PATH, TRANSPARENT)
+                    .fill("outer-ring", GREEN_50)
+                    .fill("middle-ring", YELLOW_30)
+                    .fill("inner-dot", ORANGE_50),
+            ],
+        ),
+    );
 }
