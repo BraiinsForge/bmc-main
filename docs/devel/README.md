@@ -16,6 +16,12 @@ Wayland protocol. Covers the spawn-environment contract (no BMC-specific env var
 `SO_PEERCRED` on the Wayland socket, the configure-batch handshake widgets use to fetch their initial state, and the
 runtime hot-reload path that pushes fresh params on the existing surface for geometry-stable updates.
 
+### [Widget Lifecycle](widget-lifecycle.md)
+
+How the compositor derives widget lifecycle state from scene cycling and drag state, then sends
+`deck_widget_surface_v1.lifecycle` events over Wayland. Covers initial lifecycle emission after the configure batch,
+release/acquire batching, client flush ordering, valid transitions, and client-side event delivery.
+
 ### [Scene Management gRPC](grpc/scene-management.md)
 
 Frontend-facing API contract for scene and widget management. Covers `SceneManagementService` RPCs, full-update
@@ -34,3 +40,12 @@ System-level concerns around widget manifests: on-disk location, compositor disc
 into the runtime, and the rationale behind the validation rules. The per-field grammar is intentionally not duplicated
 here — it lives in the Rust types of `bmc-widget-manifest` and is mirrored into the committed `manifest.schema.json`
 artifact (with rustdoc propagated into the schema's `description` fields).
+
+### WASM Host
+
+Implementation notes for the multi-widget WASM runtime:
+
+- [Process Model](wasm-host/process-model.md) - thin wrapper lifetime, Wayland fd passing, lazy host daemon startup, the
+  thin/host control protocol, and teardown behavior.
+- [Render Loop](wasm-host/render-loop.md) - slot lifecycle states, render-target ownership, render gating, frame
+  scheduling, runtime delivery polling, and compositor lifecycle emission.
