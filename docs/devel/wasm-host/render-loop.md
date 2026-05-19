@@ -146,9 +146,7 @@ is `0`, so the host loops without sleeping.
 
 Current implementation detail: pending runtime I/O contributes a 100 ms timeout if any slot reports
 `runtime.has_pending_io()`. This is not lifecycle-gated today, so a dormant slot with pending background work can still
-keep the host waking at that cadence. The BDK-469 cold-slot scheduling devlog describes a proposed refinement where
-dormant delivery polling would use a slower cold cadence and explicit runtime deadlines, but that is not the behavior in
-this branch.
+keep the host waking at that cadence.
 
 ## Runtime Deliveries
 
@@ -158,10 +156,6 @@ Wayland/control dispatch and lifecycle application.
 This delivery polling can process host work such as completed fetches, sockets, WebSocket events, discovery events, and
 delayed work. A delivery callback may mutate guest state and request a frame. Lifecycle gating still decides whether
 that frame request can become an actual render.
-
-Today, runtime time is advanced immediately before rendering. That means delivery/timer behavior for slots that never
-render is more limited than the future cold-slot design described in BDK-469. Do not document dormant timed delivery as
-precisely scheduled until the runtime exposes and the host uses explicit delivery deadlines.
 
 ## Compositor Lifecycle Emission
 
