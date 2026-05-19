@@ -68,11 +68,7 @@ impl RenderTargetFactory for MockFactory {
             self.fail_next.set(pending - 1);
             return Err(RenderTargetError::Wayland("mock fail".into()));
         }
-        unreachable!(
-            "MockFactory is configured to never succeed in these tests; the lifecycle tests \
-             cover failure-path and no-op transitions. The success path is exercised by the \
-             EglRenderTargetFactory path during slot integration in Task 8 and end-to-end in Stage 6.",
-        )
+        Ok(RenderTarget::new_stub(128, 128))
     }
 
     fn destroy(&self, _: RenderTarget, _: &dyn LifecycleEgl) {
@@ -94,6 +90,50 @@ fn ctx_no_target<'a>(
         width: 128,
         height: 128,
     }
+}
+
+#[test]
+#[should_panic(expected = "BUG: allocating render target while one already exists")]
+fn dormant_to_target_owning_state_panics_if_target_already_exists() {
+    let mock: Rc<MockFactory> = Rc::new(MockFactory::new());
+    let factory: Rc<dyn RenderTargetFactory> = mock.clone();
+    mock.fail(1);
+
+    let mut target = Some(RenderTarget::new_stub(128, 128));
+    let egl = StubEgl;
+    let surface = StubSurface;
+
+    let mut sm = LifecycleStateMachine::new();
+    sm.on_event(LifecycleState::Entering);
+    sm.apply(
+        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+        Instant::now(),
+    );
+}
+
+#[test]
+#[should_panic(expected = "BUG: releasing render target while none exists")]
+fn target_owning_to_dormant_panics_if_target_is_missing() {
+    let mock: Rc<MockFactory> = Rc::new(MockFactory::new());
+    let factory: Rc<dyn RenderTargetFactory> = mock.clone();
+
+    let mut target: Option<RenderTarget> = None;
+    let egl = StubEgl;
+    let surface = StubSurface;
+
+    let mut sm = LifecycleStateMachine::new();
+    sm.on_event(LifecycleState::Entering);
+    sm.apply(
+        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+        Instant::now(),
+    );
+    target = None;
+
+    sm.on_event(LifecycleState::Dormant);
+    sm.apply(
+        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+        Instant::now(),
+    );
 }
 
 #[test]

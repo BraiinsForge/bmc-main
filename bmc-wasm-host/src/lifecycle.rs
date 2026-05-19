@@ -147,6 +147,10 @@ impl LifecycleStateMachine {
         }
 
         if target_needs && !current_has {
+            assert!(
+                ctx.render_target.is_none(),
+                "BUG: allocating render target while one already exists"
+            );
             match ctx
                 .factory
                 .allocate(ctx.egl, ctx.surface, ctx.width, ctx.height)
@@ -175,10 +179,14 @@ impl LifecycleStateMachine {
                 }
             }
         } else if !target_needs && current_has {
-            let target = ctx.render_target.take().expect(
-                "BUG: has_render_target(current) is true so render_target must be Some — \
-                 the slot's lifecycle current state and its render_target field are out of sync",
+            assert!(
+                ctx.render_target.is_some(),
+                "BUG: releasing render target while none exists"
             );
+            let target = ctx
+                .render_target
+                .take()
+                .expect("BUG: releasing render target while none exists");
             ctx.factory.destroy(target, ctx.egl);
             self.current = self.target;
             self.blocked = false;
