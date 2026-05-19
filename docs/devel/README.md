@@ -34,3 +34,12 @@ System-level concerns around widget manifests: on-disk location, compositor disc
 into the runtime, and the rationale behind the validation rules. The per-field grammar is intentionally not duplicated
 here — it lives in the Rust types of `bmc-widget-manifest` and is mirrored into the committed `manifest.schema.json`
 artifact (with rustdoc propagated into the schema's `description` fields).
+
+### WASM Host
+
+Implementation notes for the multi-widget WASM runtime:
+
+- [Process Model](wasm-host/process-model.md) - thin wrapper lifetime, Wayland fd passing, lazy host daemon startup, the
+  thin/host control protocol, and teardown behavior.
+- [Render Loop](wasm-host/render-loop.md) - slot lifecycle states, render-target ownership, render gating, frame
+  scheduling, runtime delivery polling, and compositor lifecycle emission.
