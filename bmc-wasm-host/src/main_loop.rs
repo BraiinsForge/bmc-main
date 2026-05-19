@@ -5,6 +5,7 @@ use std::os::fd::AsRawFd;
 use std::ptr::NonNull;
 use std::time::{Duration, Instant};
 
+use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
 
 use crate::control::{ListenSocket, accept_and_load};
@@ -234,7 +235,11 @@ impl SlotTable {
     }
 }
 
-pub fn drain_and_shutdown(slots: &mut SlotTable, shared: &mut SharedHost) -> usize {
+pub fn drain_and_shutdown(
+    slots: &mut SlotTable,
+    shared: &mut SharedHost,
+    renderer: &mut FemtoVgRenderer,
+) -> usize {
     let ids: Vec<SlotId> = slots.iter_mut().map(|(id, _)| *id).collect();
     let mut count = 0;
     for id in ids {
@@ -244,7 +249,7 @@ pub fn drain_and_shutdown(slots: &mut SlotTable, shared: &mut SharedHost) -> usi
                 wasm = %slot.wasm_basename,
                 "slot drained on fatal exit",
             );
-            slot.shutdown(shared);
+            slot.shutdown(shared, renderer);
             count += 1;
         }
     }
@@ -255,9 +260,10 @@ pub fn drain_if_err<T>(
     result: Result<T, FatalError>,
     slots: &mut SlotTable,
     shared: &mut SharedHost,
+    renderer: &mut FemtoVgRenderer,
 ) -> Result<T, FatalError> {
     if result.is_err() {
-        let drained = drain_and_shutdown(slots, shared);
+        let drained = drain_and_shutdown(slots, shared, renderer);
         tracing::warn!(drained, "fatal exit drained slots");
     }
     result
@@ -271,6 +277,7 @@ const LISTENER_INDEX: usize = 0;
 )]
 fn run_loop(
     shared: &mut SharedHost,
+    renderer: &mut FemtoVgRenderer,
     listener: &ListenSocket,
     slots: &mut SlotTable,
 ) -> Result<(), FatalError> {
@@ -278,9 +285,9 @@ fn run_loop(
         .set_nonblocking()
         .map_err(FatalError::ControlSocketBindFailed)?;
 
-    let renderer_raw: *mut dyn Renderer = core::ptr::addr_of_mut!(shared.renderer);
+    let renderer_raw: *mut dyn Renderer = &raw mut *renderer;
     let renderer_ptr = NonNull::new(renderer_raw)
-        .expect("BUG: addr_of_mut! is a compiler intrinsic that cannot return a null pointer");
+        .expect("BUG: &raw mut from a live &mut produces a non-null pointer");
 
     let mut lifetime = HostLifetime::new();
 
@@ -394,7 +401,7 @@ fn run_loop(
             for id in to_teardown {
                 if let Some(slot) = slots.remove(&id) {
                     tracing::info!(peer_pid = slot.peer_pid, wasm = %slot.wasm_basename, "slot teardown");
-                    slot.shutdown(shared);
+                    slot.shutdown(shared, renderer);
                 }
             }
             if slots.is_empty() {
@@ -407,13 +414,23 @@ fn run_loop(
 
 pub fn run_with_slots(
     shared: &mut SharedHost,
+    renderer: &mut FemtoVgRenderer,
     listener: &ListenSocket,
     slots: &mut SlotTable,
 ) -> Result<(), FatalError> {
-    drain_if_err(run_loop(shared, listener, slots), slots, shared)
+    drain_if_err(
+        run_loop(shared, renderer, listener, slots),
+        slots,
+        shared,
+        renderer,
+    )
 }
 
-pub fn run(shared: &mut SharedHost, listener: &ListenSocket) -> Result<(), FatalError> {
+pub fn run(
+    shared: &mut SharedHost,
+    renderer: &mut FemtoVgRenderer,
+    listener: &ListenSocket,
+) -> Result<(), FatalError> {
     let mut slots = SlotTable::new();
-    run_with_slots(shared, listener, &mut slots)
+    run_with_slots(shared, renderer, listener, &mut slots)
 }

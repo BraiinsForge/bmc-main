@@ -7,11 +7,18 @@ use bmc_widget::egl::{EglContext, SharedRenderScratch};
 use femtovg::FontId;
 use sha2::{Digest, Sha256};
 
+/// State shared across all widget slots within a host.
+///
+/// Aliasing invariant: `SharedHost` does NOT own the `Renderer`. The
+/// renderer is owned by `main_loop::run` and parked behind a `NonNull` for
+/// host imports to reborrow. Adding a `Renderer` (or anything containing
+/// one) here would alias the parked pointer when the main loop passes
+/// `&mut shared` and the parked `NonNull<dyn Renderer>` to the same call,
+/// producing UB.
 #[expect(missing_debug_implementations)]
 pub struct SharedHost {
     pub egl: EglContext,
     pub scratch: SharedRenderScratch,
-    pub renderer: FemtoVgRenderer,
     pub font_cache: FontCache,
 }
 
@@ -54,7 +61,7 @@ impl FontCache {
 }
 
 impl SharedHost {
-    pub fn init(display_max_w: u32, display_max_h: u32) -> anyhow::Result<Self> {
+    pub fn init(display_max_w: u32, display_max_h: u32) -> anyhow::Result<(Self, FemtoVgRenderer)> {
         tracing::info!(
             display_max_w,
             display_max_h,
@@ -72,11 +79,13 @@ impl SharedHost {
             )?
         };
         tracing::info!("shared wasm host renderer initialized");
-        Ok(Self {
-            egl,
-            scratch,
+        Ok((
+            Self {
+                egl,
+                scratch,
+                font_cache: FontCache::new(),
+            },
             renderer,
-            font_cache: FontCache::new(),
-        })
+        ))
     }
 }

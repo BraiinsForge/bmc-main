@@ -46,7 +46,7 @@ fn main() -> Result<()> {
     };
     tracing::info!(socket = %socket_path.display(), "listening");
 
-    let mut shared =
+    let (mut shared, mut renderer) =
         bmc_wasm_host::host::SharedHost::init(DECK_DISPLAY_MAX_WIDTH, DECK_DISPLAY_MAX_HEIGHT)?;
 
     if let Some(lock) = release_lock {
@@ -54,7 +54,7 @@ fn main() -> Result<()> {
         tracing::info!("released host readiness lock");
     }
 
-    let exit = bmc_wasm_host::main_loop::run(&mut shared, &listener);
+    let exit = bmc_wasm_host::main_loop::run(&mut shared, &mut renderer, &listener);
     if let Err(e) = exit {
         tracing::error!(?e, "host exited with FatalError");
         std::process::exit(1);

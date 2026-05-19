@@ -8,6 +8,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
 use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, WasmWidgetRuntime};
 use bmc_widget::surface::{DeckWidgetSurfaceClient, WidgetEvent, WidgetSurface};
@@ -476,11 +477,11 @@ impl WidgetSlot {
         Ok(status)
     }
 
-    pub fn shutdown(mut self, shared: &mut SharedHost) {
+    pub fn shutdown(mut self, shared: &mut SharedHost, renderer: &mut FemtoVgRenderer) {
         let asset_namespace = self.runtime.asset_namespace();
         drop(self.runtime);
 
-        let evicted_renderer_assets = evict_renderer_assets(&mut shared.renderer, &asset_namespace);
+        let evicted_renderer_assets = evict_renderer_assets(renderer, &asset_namespace);
         if evicted_renderer_assets > 0 {
             tracing::debug!(
                 peer_pid = self.peer_pid,
