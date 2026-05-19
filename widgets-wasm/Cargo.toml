@@ -1,0 +1,42 @@
+[package]
+name = "bmc-wasm-widgets"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+
+[lints]
+workspace = true
+
+[workspace]
+resolver = "3"
+members = [
+    "clock",
+]
+
+# Shared lints for all production widget crates
+[workspace.lints.rust]
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+doc_markdown = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+pedantic = { level = "warn", priority = -1 }
+
+[workspace.dependencies]
+
+# Shared profiles — all widgets are tiny WASM binaries optimized for size
+[profile.dev]
+opt-level = "z"
+lto = true
+panic = "abort"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "z"
+panic = "abort"
+strip = true

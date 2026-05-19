@@ -3,32 +3,32 @@
 use bmc_widget_manifest::Manifest;
 use std::str::FromStr;
 
+/// Roots that host shipping widget manifests. Mirrors
+/// `workspace.nix:wasmWidgetRoots` + `bmc-wasm-runtime/tools/widget_root.py`
+/// for the wasm side, plus the native-widget `widgets/` root.
+/// Adding a root means updating all three lists.
+const MANIFEST_ROOTS: &[&str] = &["widgets", "bmc-wasm-runtime/examples", "widgets-wasm"];
+
 fn manifest_paths() -> Vec<std::path::PathBuf> {
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("BUG: no parent");
-    let widgets_dir = workspace.join("widgets");
-    let wasm_examples_dir = workspace.join("bmc-wasm-runtime/examples");
     let mut out = vec![];
-    for entry in std::fs::read_dir(&widgets_dir).expect("BUG: read widgets dir") {
-        let entry = entry.expect("BUG: read entry");
-        let path = entry.path().join("manifest.json");
-        if path.exists() {
-            out.push(path);
-        }
-    }
-    match std::fs::read_dir(&wasm_examples_dir) {
-        Ok(entries) => {
-            for entry in entries {
-                let entry = entry.expect("BUG: read entry");
-                let path = entry.path().join("manifest.json");
-                if path.exists() {
-                    out.push(path);
+    for root in MANIFEST_ROOTS {
+        let dir = workspace.join(root);
+        match std::fs::read_dir(&dir) {
+            Ok(entries) => {
+                for entry in entries {
+                    let entry = entry.expect("BUG: read entry");
+                    let path = entry.path().join("manifest.json");
+                    if path.exists() {
+                        out.push(path);
+                    }
                 }
             }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => panic!("BUG: read {}: {e}", dir.display()),
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => panic!("BUG: read wasm examples dir: {e}"),
     }
     out
 }
@@ -52,5 +52,17 @@ fn shipping_manifests_include_wasm_runtime_examples() {
             .iter()
             .any(|path| path.ends_with(examples_root.join("hello-widget/manifest.json"))),
         "BUG: wasm runtime example manifests are not included in shipping manifest scan"
+    );
+}
+
+#[test]
+fn shipping_manifests_include_widgets_wasm() {
+    let paths = manifest_paths();
+    let widgets_wasm_root = std::path::Path::new("widgets-wasm");
+    assert!(
+        paths
+            .iter()
+            .any(|path| path.ends_with(widgets_wasm_root.join("clock/manifest.json"))),
+        "BUG: widgets-wasm manifests are not included in shipping manifest scan"
     );
 }

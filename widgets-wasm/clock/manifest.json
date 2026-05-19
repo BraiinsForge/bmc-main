@@ -1,0 +1,85 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "fbc867c9-b722-4bdb-8738-c15d20fe2b88",
+  "version": "0.1.0",
+  "name": "Clock",
+  "description": "Analog and digital clock with multiple sizes and styles",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/clock",
+  "settings": [],
+  "sizes": [
+    "small",
+    "medium",
+    "large",
+    "full"
+  ],
+  "params": {
+    "clock_style": {
+      "name": "Clock style",
+      "description": "Visual style of the clock face",
+      "type": "string",
+      "default_value": "digital",
+      "enum_values": [
+        {
+          "value": "analog_round",
+          "label": "Analog (round)"
+        },
+        {
+          "value": "analog_rect",
+          "label": "Analog (rectangular)"
+        },
+        {
+          "value": "digital",
+          "label": "Digital"
+        }
+      ]
+    },
+    "numbers_font_style": {
+      "name": "Number weight",
+      "description": "Font weight of numerals and digital readout",
+      "type": "string",
+      "default_value": "semi-bold",
+      "enum_values": [
+        {
+          "value": "regular",
+          "label": "Regular"
+        },
+        {
+          "value": "semi-bold",
+          "label": "Semi-bold"
+        },
+        {
+          "value": "bold",
+          "label": "Bold"
+        }
+      ]
+    },
+    "show_date": {
+      "name": "Show date",
+      "description": "Display the date alongside the time",
+      "type": "boolean",
+      "default_value": true
+    },
+    "show_seconds": {
+      "name": "Show seconds",
+      "description": "Display seconds and the second hand",
+      "type": "boolean",
+      "default_value": true
+    },
+    "show_timezone": {
+      "name": "Show timezone",
+      "description": "Display the timezone label",
+      "type": "boolean",
+      "default_value": true
+    },
+    "timezone_override": {
+      "name": "Timezone override",
+      "description": "IANA timezone to display instead of the system timezone; unset means follow the system",
+      "type": "timezone",
+      "optional": true
+    }
+  }
+}
