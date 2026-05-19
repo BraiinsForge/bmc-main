@@ -61,6 +61,17 @@ fn async_io_ceiling_clamps_lower_than_slot_delay() {
 }
 
 #[test]
+fn non_rendering_slot_with_pending_io_wakes_for_delivery_polling() {
+    let slot = SlotPollInputs {
+        is_renderable: false,
+        has_pending_io: true,
+        ..SlotPollInputs::default()
+    };
+
+    assert_eq!(compute_poll_timeout_from_inputs(&[slot], None), 100);
+}
+
+#[test]
 fn entering_slot_wanting_next_frame_does_not_force_zero_timeout() {
     // Locks in the frame-callback gate: Entering has frame_callback_enabled = false,
     // so even if the runtime returns wants_next_frame()/animation_wants_immediate,

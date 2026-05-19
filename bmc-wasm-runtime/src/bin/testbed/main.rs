@@ -841,19 +841,13 @@ impl TestbedApp {
             tile.runtime.set_time(system_time, monotonic_ms);
             tile.renderer
                 .begin_frame(tile.gpu.width, tile.gpu.height, 1.0);
-            tile.runtime.deliver_fetch_responses();
-            tile.runtime.deliver_ws_messages();
-            tile.runtime.deliver_socket_events();
-            tile.runtime.deliver_mdns_events();
-            tile.runtime.deliver_ssdp_events();
-            tile.runtime.deliver_udp_broadcast_events();
-            tile.runtime.deliver_http_requests();
 
             // `*mut FemtoVgRenderer` → `*mut dyn Renderer` is a coercion, not an `as` cast.
             let renderer_raw: *mut dyn bmc_render::renderer::Renderer =
                 core::ptr::addr_of_mut!(tile.renderer);
             let renderer_ptr = std::ptr::NonNull::new(renderer_raw)
                 .expect("BUG: addr_of_mut! cannot produce null");
+            tile.runtime.poll_deliveries_with_renderer(renderer_ptr);
             let outcome = tile
                 .runtime
                 .with_renderer(renderer_ptr, |rt| rt.render(delta_ms));

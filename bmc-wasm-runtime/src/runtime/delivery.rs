@@ -8,6 +8,9 @@ use bmc_wasm_protocol::{
     FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, SocketId, SsdpSearchId,
     UdpBroadcastId, WebsocketId,
 };
+use std::ptr::NonNull;
+
+use bmc_render::renderer::Renderer;
 
 #[cfg(feature = "testing")]
 use crate::host_api::CapturedMdnsEvent;
@@ -805,6 +808,18 @@ impl WasmWidgetRuntime {
         self.deliver_ssdp_events();
         self.deliver_udp_broadcast_events();
         self.deliver_http_requests();
+    }
+
+    /// Fan out to every `deliver_*` entry point while renderer-backed imports
+    /// are available to guest callbacks.
+    ///
+    /// Dynamic assets can arrive from async callbacks rather than `render`
+    /// itself. For example, media-control receives MPD album art on a socket
+    /// callback and registers it as a bitmap before requesting the next frame.
+    /// The caller-owned renderer therefore has to be parked while delivery
+    /// callbacks run, not just while `render()` runs.
+    pub fn poll_deliveries_with_renderer(&mut self, renderer: NonNull<dyn Renderer>) {
+        self.with_renderer(renderer, Self::poll_deliveries);
     }
 
     /// Predicate consumed by the multi-slot host's `compute_poll_timeout` to clamp the

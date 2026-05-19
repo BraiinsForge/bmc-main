@@ -258,7 +258,7 @@ fn run_unified_capture(
         while monotonic_ms < target_ms {
             runtime.set_time(system_time, monotonic_ms);
             runtime.inject_fixture_events(fixture_ms);
-            deliver_all_io(&mut runtime);
+            deliver_all_io(&mut runtime, &mut renderer);
             if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
                 bail!("widget died at frame {frame_count}");
             }
@@ -284,7 +284,7 @@ fn run_unified_capture(
                     for _ in 0..config.settle_delay {
                         runtime.set_time(system_time, monotonic_ms);
                         runtime.inject_fixture_events(fixture_ms);
-                        deliver_all_io(&mut runtime);
+                        deliver_all_io(&mut runtime, &mut renderer);
                         if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
                             bail!("widget died during settle at frame {frame_count}");
                         }
@@ -334,7 +334,7 @@ fn run_unified_capture(
                         while monotonic_ms < next_capture_at {
                             runtime.set_time(system_time, monotonic_ms);
                             runtime.inject_fixture_events(fixture_ms);
-                            deliver_all_io(&mut runtime);
+                            deliver_all_io(&mut runtime, &mut renderer);
                             if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
                                 bail!("widget died at frame {frame_count}");
                             }
@@ -347,7 +347,7 @@ fn run_unified_capture(
                         // Render and capture
                         runtime.set_time(system_time, monotonic_ms);
                         runtime.inject_fixture_events(fixture_ms);
-                        deliver_all_io(&mut runtime);
+                        deliver_all_io(&mut runtime, &mut renderer);
                         if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
                             bail!("widget died at frame {frame_count}");
                         }
@@ -590,7 +590,7 @@ fn tick_one_frame(
 ) -> Result<()> {
     runtime.set_time(*system_time, *monotonic_ms);
     runtime.inject_fixture_events(*fixture_ms);
-    deliver_all_io(runtime);
+    deliver_all_io(runtime, renderer);
     if !render_frame(runtime, renderer, ctx, *frame_count) {
         bail!("widget died at frame {}", *frame_count);
     }
@@ -629,17 +629,21 @@ fn render_frame(
 }
 
 /// Deliver all async I/O to the runtime. Returns true if any data arrived.
-fn deliver_all_io(runtime: &mut WasmWidgetRuntime) -> bool {
+fn deliver_all_io(runtime: &mut WasmWidgetRuntime, renderer: &mut FemtoVgRenderer) -> bool {
     let had_pending_fetches = runtime.has_pending_fetches();
-    runtime.deliver_fetch_responses();
-    let fetches_completed = had_pending_fetches && !runtime.has_pending_fetches();
-    let had_ws = runtime.deliver_ws_messages();
-    let had_socket = runtime.deliver_socket_events();
-    let had_mdns = runtime.deliver_mdns_events();
-    let had_ssdp = runtime.deliver_ssdp_events();
-    let had_udp = runtime.deliver_udp_broadcast_events();
-    runtime.deliver_http_requests();
-    fetches_completed || had_ws || had_socket || had_mdns || had_ssdp || had_udp
+    let raw: *mut dyn Renderer = core::ptr::addr_of_mut!(*renderer);
+    let ptr = std::ptr::NonNull::new(raw).expect("BUG: addr_of_mut! cannot produce null");
+    runtime.with_renderer(ptr, |runtime| {
+        runtime.deliver_fetch_responses();
+        let fetches_completed = had_pending_fetches && !runtime.has_pending_fetches();
+        let had_ws = runtime.deliver_ws_messages();
+        let had_socket = runtime.deliver_socket_events();
+        let had_mdns = runtime.deliver_mdns_events();
+        let had_ssdp = runtime.deliver_ssdp_events();
+        let had_udp = runtime.deliver_udp_broadcast_events();
+        runtime.deliver_http_requests();
+        fetches_completed || had_ws || had_socket || had_mdns || had_ssdp || had_udp
+    })
 }
 
 // ── KV directory setup ──────────────────────────────────────────────
