@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="290" height="290" fill="none" viewBox="0 0 63 290">
+    <g filter="url(#hand-hour_svg__a)">
+        <path fill="#f4f4f4" d="m27.247 30.499 3.126-10.497c.353-1.185 2.031-1.185 2.384 0l3.127 10.497q.036.12.047.245l7.67 86.379q.012.13-.004.258c-.665 5.108-4.207 15.442-12.158 15.617-8.16.179-12.025-11.808-11.818-15.744l7.58-86.509q.01-.126.046-.247"/>
+    </g>
+    <defs>
+        <filter id="hand-hour_svg__a" width="61.306" height="151.199" x=".957" y=".457" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
+            <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+            <feColorMatrix in="SourceAlpha" result="hardAlpha" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0"/>
+            <feMorphology in="SourceAlpha" operator="dilate" radius="6.219" result="effect1_dropShadow_1138_15248"/>
+            <feOffset/>
+            <feGaussianBlur stdDeviation="6.219"/>
+            <feComposite in2="hardAlpha" operator="out"/>
+            <feColorMatrix values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.5 0"/>
+            <feBlend in2="BackgroundImageFix" result="effect1_dropShadow_1138_15248"/>
+            <feBlend in="SourceGraphic" in2="effect1_dropShadow_1138_15248" result="shape"/>
+        </filter>
+    </defs>
+</svg>

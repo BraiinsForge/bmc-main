@@ -88,7 +88,7 @@
           runtimeInputs = with pkgs; [ fd svgo ];
           text = ''
             fd --extension svg --type f \
-               '.' 'bmc-virt' 'bmc-wasm-runtime' \
+               '.' 'bmc-virt' 'bmc-wasm-runtime' 'widgets-wasm' \
                --exec-batch svgo --quiet --config svgo.config.js {}
           '';
         };

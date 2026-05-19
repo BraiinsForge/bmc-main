@@ -5,6 +5,17 @@ export default {
     plugins: [
         {
             name: 'preset-default',
+            params: {
+                overrides: {
+                    // Preserve `id` attributes (preset-default's
+                    // `cleanupIds` would otherwise drop unused ones).
+                    // Filter SVGs reference their own ids via `url(#…)`
+                    // and asset filenames sometimes carry the original
+                    // id as a stable handle — keeping ids avoids those
+                    // silent breakages.
+                    cleanupIds: false,
+                },
+            },
         },
         // Explicitly remove <title> elements (not in preset-default in this svgo version).
         'removeTitle',
