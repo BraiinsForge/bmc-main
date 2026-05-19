@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" fill="none" viewBox="0 0 50 400">
-    <g filter="url(#hand-minute_svg__a)">
+    <g filter="url(#a)">
         <path fill="#f4f4f4" d="m20.643 24.54 3.119-10.637c.353-1.204 2.031-1.204 2.384 0l3.12 10.637q.042.148.05.303l7.683 172.056q.004.105-.008.209c-.657 5.178-4.197 15.712-12.163 15.89-8.161.182-12.027-11.995-11.82-15.993l7.584-172.162q.008-.155.05-.304"/>
     </g>
     <defs>
-        <filter id="hand-minute_svg__a" width="48.875" height="224.875" x=".563" y=".563" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
+        <filter id="a" width="48.875" height="224.875" x=".563" y=".563" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
             <feFlood flood-opacity="0" result="BackgroundImageFix"/>
             <feColorMatrix in="SourceAlpha" result="hardAlpha" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0"/>
             <feOffset/>

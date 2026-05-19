@@ -19,8 +19,6 @@ export default {
         },
         // Explicitly remove <title> elements (not in preset-default in this svgo version).
         'removeTitle',
-        // Prefix IDs to avoid collisions when multiple SVGs are inlined in the same page.
-        'prefixIds',
         // Drop elements that are invisible: fill:none (or no fill) and no stroke.
         // Catches leftover bounding-box rects from design tools.
         {
