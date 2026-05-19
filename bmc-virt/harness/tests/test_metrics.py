@@ -31,7 +31,7 @@ class TestSnapshotFromAck:
             "loadavg": [0.50, 0.40, 0.30],
             "uptime_s": 12_345.67,
             "processes": {
-                "bmc-widget-wasm": {
+                "bmc-wasm-host": {
                     "pid": 3246,
                     "vm_size_kb": 108_504,
                     "vm_rss_kb": 22_980,
@@ -50,7 +50,7 @@ class TestSnapshotFromAck:
         assert snap.uptime_s == 12_345.67
         assert snap.raw["Shmem"] == 70_000
 
-        proc = snap.processes["bmc-widget-wasm"]
+        proc = snap.processes["bmc-wasm-host"]
         assert proc.pid == 3246
         assert proc.vm_rss_kb == 22_980
         assert proc.rss_shmem_kb == 13_052
@@ -60,10 +60,10 @@ class TestSnapshotFromAck:
             "meminfo": {"MemTotal": 1, "MemAvailable": 1},
             "loadavg": [0.0, 0.0, 0.0],
             "uptime_s": 0.0,
-            "processes": {"bmc-widget-wasm": {"pid": None}},
+            "processes": {"bmc-wasm-host": {"pid": None}},
         }
         snap = _snapshot_from_ack(payload, "")
-        assert snap.processes["bmc-widget-wasm"] == ProcSnapshot(pid=None)
+        assert snap.processes["bmc-wasm-host"] == ProcSnapshot(pid=None)
 
     def test_empty_payload_falls_back_to_zeros(self) -> None:
         snap = _snapshot_from_ack({}, "label")

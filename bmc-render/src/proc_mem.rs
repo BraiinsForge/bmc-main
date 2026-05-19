@@ -108,7 +108,7 @@ mod tests {
     #[test]
     fn parses_status_memory_fields() {
         let raw = "\
-Name:\tbmc-widget-wasm
+Name:\tbmc-wasm-host
 Pid:\t3246
 VmSize:\t  108504 kB
 VmRSS:\t   22980 kB

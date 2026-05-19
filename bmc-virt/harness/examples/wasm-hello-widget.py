@@ -24,7 +24,7 @@ CONFIG_PATH = OUTPUT_DIR / "scene-config.json"
 WASM_LOG_PATH = OUTPUT_DIR / "wasm-widget.log"
 BMC_APP_LOG_PATH = OUTPUT_DIR / "bmc-openwrt.log"
 
-# Baked into bmc-widget-wasm (see widgets/wasm/src/main.rs).
+# Baked into bmc-wasm-host (see widgets/wasm/src/main.rs).
 REMOTE_WASM_LOG = "/var/log/bmc/wasm-widget.log"
 
 # UID from bmc-wasm-runtime/examples/hello-widget/manifest.json. The

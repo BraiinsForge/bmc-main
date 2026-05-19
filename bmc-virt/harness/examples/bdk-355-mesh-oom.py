@@ -8,7 +8,7 @@ plus a 0.5 s background poll of system + per-process RSS.
 
 Prereqs:
     - VM running with mesh-demo deployable.
-    - For the runtime ``mesh::profile`` log lines, the VM's bmc-widget-wasm
+    - For the runtime ``mesh::profile`` log lines, the VM's bmc-wasm-host
       must be built with ``--features profiling`` and bmc-openwrt's RUST_LOG
       must include ``mesh::profile=info``. The script does not check this —
       a missing ``mesh::profile`` log just means you only get the harness's
@@ -62,7 +62,7 @@ WASM_WIDGET_TYPE_ID = "550e8400-e29b-41d4-a716-446655440100"
 # victim; the compositor is the second-stage victim when its tokio runtime
 # fails to fork. Both are captured so missing-pid samples are visible in the
 # chart and table.
-TRACKED_PROCESSES = ["bmc-widget-wasm", "bmc-openwrt"]
+TRACKED_PROCESSES = ["bmc-wasm-host", "bmc-openwrt"]
 
 # Cadence of the background poller. 500 ms is fine-grained enough to see
 # the per-tap upload curve without flooding the SSH channel.

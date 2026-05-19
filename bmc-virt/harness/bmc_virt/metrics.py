@@ -76,11 +76,11 @@ class MetricsCollector:
     Without interval (default): purely imperative, each capture() polls once.
     With interval: a background thread polls automatically, close() stops it.
 
-    Pass ``processes=["bmc-widget-wasm", "bmc-openwrt"]`` to also sample each
+    Pass ``processes=["bmc-wasm-host", "bmc-openwrt"]`` to also sample each
     listed process's VmRSS / RssAnon / RssShmem from /proc/<pid>/status.
 
     Usage (imperative):
-        m = vm.metrics.start("My test", processes=["bmc-widget-wasm"])
+        m = vm.metrics.start("My test", processes=["bmc-wasm-host"])
         m.capture("before")
         # ... do stuff ...
         m.capture("after")

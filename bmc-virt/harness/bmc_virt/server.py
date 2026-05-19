@@ -697,7 +697,7 @@ def _read_processes(names: list[str]) -> dict[str, dict[str, Any]]:
     """For each name, find the first matching pid and return its memory fields.
 
     Match is by /proc/<pid>/comm (kernel comm name, 15-char limit). For
-    ``bmc-widget-wasm`` (15 chars) and ``bmc-openwrt`` (11 chars) this is
+    ``bmc-wasm-host`` (14 chars, fits) and ``bmc-openwrt`` (11 chars) this is
     exact; longer names are truncated by the kernel and the caller would
     need to pass the truncated form. Missing processes record ``pid=None``.
     """
