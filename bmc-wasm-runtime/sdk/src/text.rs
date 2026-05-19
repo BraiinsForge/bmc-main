@@ -36,6 +36,21 @@ pub enum Interpolation {
     CatmullRom = 1,
 }
 
+/// Named CSS font weights. The text primitive carries a raw `u16` weight
+/// (see [`Span::weight`]); this enum is the typed convention for widgets
+/// that prefer named weights, and converts directly via `weight as u16`.
+///
+/// Only the weights the deck's font set ships with are enumerated. Add
+/// more here as fonts gain them — keep the discriminants matching the
+/// CSS standard so the renderer's `weight >= 600` threshold stays valid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u16)]
+pub enum FontWeight {
+    Regular = 400,
+    SemiBold = 600,
+    Bold = 700,
+}
+
 /// A text span with optional style overrides
 #[derive(Clone, Debug)]
 pub struct Span {

@@ -894,9 +894,9 @@ fn event_color(event: &CalendarEvent, state: &CalendarState) -> Color {
 /// Format event time respecting the user's 24h/12h preference.
 fn event_time(event: &CalendarEvent, state: &CalendarState) -> String {
     if state.use_24h {
-        format_date(event.start, "%H:%M")
+        strftime(event.start, "%H:%M")
     } else {
-        format_date(event.start, "%-I:%M %p")
+        strftime(event.start, "%-I:%M %p")
     }
 }
 

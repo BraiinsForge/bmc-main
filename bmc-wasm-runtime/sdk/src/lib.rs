@@ -246,7 +246,10 @@ pub use bmc_render_macros::*;
 pub use bmc_wasm_protocol::*;
 pub use bmc_wasm_sdk_macros::*;
 #[cfg(target_arch = "wasm32")]
-pub use format::{format_date, format_duration, format_f64_fixed};
+pub use format::{
+    FormatDateOpts, FormatTimeOpts, format_date, format_duration, format_f64_fixed, format_time,
+    strftime,
+};
 pub use host::*;
 #[cfg(target_arch = "wasm32")]
 pub use json::JsonDoc;

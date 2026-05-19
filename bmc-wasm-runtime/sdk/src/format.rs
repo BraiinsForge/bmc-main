@@ -62,17 +62,21 @@ pub fn _host_format_temperature(value: f64, decimals: u32) -> String {
 
 /// Format a unix timestamp using a chrono strftime pattern.
 ///
+/// Low-level escape hatch — most callers should use the enum-level
+/// helpers [`format_time`] / [`format_date`] that default to the
+/// user's system preferences.
+///
 /// Uses the host's `chrono` library for proper date/time formatting.
 /// See <https://docs.rs/chrono/latest/chrono/format/strftime/> for pattern syntax.
 ///
 /// # Example
 /// ```ignore
 /// let ts = parse_date("2026-03-04T04:19:23+00:00").unwrap();
-/// let s = format_date(ts, "%m/%d %H:%M"); // "03/04 04:19"
-/// let s = format_date(ts, "%d.%m.%Y %H:%M:%S"); // "04.03.2026 04:19:23"
+/// let s = strftime(ts, "%m/%d %H:%M"); // "03/04 04:19"
+/// let s = strftime(ts, "%d.%m.%Y %H:%M:%S"); // "04.03.2026 04:19:23"
 /// ```
 #[must_use]
-pub fn format_date(timestamp: i64, format: &str) -> String {
+pub fn strftime(timestamp: i64, format: &str) -> String {
     let mut buf = [0_u8; 64];
     let len = unsafe {
         host_format_date(
@@ -84,6 +88,92 @@ pub fn format_date(timestamp: i64, format: &str) -> String {
         )
     };
     read_host_buf(&buf, len)
+}
+
+// ── System-bound time / date formatters ───────────────────────────────
+//
+// Each formatter defaults every dimension to the corresponding
+// `system::current()` field; `opts` overrides per call.
+//
+// This is the intended SDK convention for every formatting helper going forward
+// (unit-system / temperature / number-format helpers when those land).
+//
+// Use-cases the override flag must accommodate:
+// rendering an event's time in both the user's configured timezone
+// and the event's local timezone, or rendering metric and imperial side-by-side.
+
+use crate::system::{self, DateFormat, TimeFormat};
+
+/// Overrides for [`format_time`]. Any `Some`-valued field replaces the
+/// corresponding `system::current()` preference for this call only.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FormatTimeOpts {
+    /// Override the system's [`TimeFormat`]. `None` uses
+    /// `system::current().time_format()`.
+    pub format: Option<TimeFormat>,
+    /// Include seconds in the output (e.g. `12:34` vs `12:34:56`).
+    pub with_seconds: bool,
+}
+
+/// Overrides for [`format_date`]. Any `Some`-valued field replaces the
+/// corresponding `system::current()` preference for this call only.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FormatDateOpts {
+    /// Override the system's [`DateFormat`]. `None` uses
+    /// `system::current().date_format()`.
+    pub format: Option<DateFormat>,
+}
+
+/// Format the time component of a [`SystemTime`] per the user's
+/// preferences, with per-call overrides. AM/PM is **not** included in
+/// the output — render it as a separate element when
+/// `system::current().time_format()` is [`TimeFormat::Hour12`].
+///
+/// # Example
+/// ```ignore
+/// let now = SystemTime::now();
+/// let s = format_time(now, FormatTimeOpts::default());                       // "13:45"
+/// let s = format_time(now, FormatTimeOpts { with_seconds: true, ..default }); // "13:45:09"
+/// ```
+#[must_use]
+pub fn format_time(now: crate::host::SystemTime, opts: FormatTimeOpts) -> String {
+    let format = opts
+        .format
+        .unwrap_or_else(|| system::current().time_format());
+    let pattern = match (format, opts.with_seconds) {
+        (TimeFormat::Hour24, false) => "%H:%M",
+        (TimeFormat::Hour24, true) => "%H:%M:%S",
+        (TimeFormat::Hour12, false) => "%I:%M",
+        (TimeFormat::Hour12, true) => "%I:%M:%S",
+    };
+    strftime(now.unix_secs, pattern)
+}
+
+/// Format the date component of a [`SystemTime`] per the user's
+/// preferences, with per-call overrides. Output mirrors the operator's
+/// configured locale (e.g. `12.03.2026` vs `03/12/2026`).
+///
+/// # Example
+/// ```ignore
+/// let now = SystemTime::now();
+/// let s = format_date(now, FormatDateOpts::default()); // "12.03.2026"
+/// ```
+#[must_use]
+pub fn format_date(now: crate::host::SystemTime, opts: FormatDateOpts) -> String {
+    let format = opts
+        .format
+        .unwrap_or_else(|| system::current().date_format());
+    let pattern = match format {
+        DateFormat::DdMmYyyyDot => "%d.%m.%Y",
+        DateFormat::DdMmYyyySlash => "%d/%m/%Y",
+        DateFormat::DMYyyySlash => "%-d/%-m/%Y",
+        DateFormat::MDYyyySlash => "%-m/%-d/%Y",
+        DateFormat::DdMmYyyyDash => "%d-%m-%Y",
+        DateFormat::YyyyMDSlash => "%Y/%-m/%-d",
+        DateFormat::YyyyMmDdDot => "%Y.%m.%d",
+        DateFormat::YyyyMmDdDash => "%Y-%m-%d",
+    };
+    strftime(now.unix_secs, pattern)
 }
 
 /// Format a number with user-preferred grouping and decimal separators.

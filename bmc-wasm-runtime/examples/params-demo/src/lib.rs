@@ -706,11 +706,11 @@ fn unit_system_label(u: Option<system::UnitSystem>) -> &'static str {
 
 /// Format the system snapshot's next-alarm entry for display in the demo.
 /// `"(none)"` when no alarm is scheduled; otherwise `"name @ YYYY-MM-DD HH:MM"`
-/// using the host's `chrono` formatter through `format_date`.
+/// using the host's `chrono` formatter through `strftime`.
 fn format_next_alarm(snap: &system::Snapshot) -> String {
     match snap.next_alarm() {
         Some(next) => {
-            let when = format_date(next.fire_at_utc_ms / 1000, "%Y-%m-%d %H:%M");
+            let when = strftime(next.fire_at_utc_ms / 1000, "%Y-%m-%d %H:%M");
             fmt!("{} @ {}", next.name, when)
         }
         None => "(none)".to_owned(),

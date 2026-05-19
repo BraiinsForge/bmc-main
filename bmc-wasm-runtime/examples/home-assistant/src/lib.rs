@@ -54,7 +54,7 @@ fn fmt_f1(v: f32) -> String {
 /// Format an ISO 8601 date string compactly using the host's chrono formatter.
 fn fmt_iso_date(s: &str) -> Option<String> {
     let ts = parse_date(s)?;
-    Some(format_date(ts, "%d/%m/%Y %H:%M:%S"))
+    Some(strftime(ts, "%d/%m/%Y %H:%M:%S"))
 }
 
 fn domain_of(entity_id: &str) -> String {
