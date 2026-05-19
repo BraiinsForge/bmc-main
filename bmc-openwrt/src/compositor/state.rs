@@ -80,6 +80,23 @@ use std::time::{Duration, Instant};
 ///   page-flip boundary instead of drifting across frames.
 const FRAME_CALLBACK_MIN_INTERVAL: Duration = Duration::from_millis(32);
 
+fn remove_destroyed_widget_buffers<T>(
+    widget_buffers: &mut Vec<(T, InstanceId)>,
+    destroyed_id: &ObjectId,
+    buffer_id: impl Fn(&T) -> ObjectId,
+) -> Vec<InstanceId> {
+    let mut removed = Vec::new();
+    widget_buffers.retain(|(buffer, instance_id)| {
+        if buffer_id(buffer) == *destroyed_id {
+            removed.push(instance_id.clone());
+            false
+        } else {
+            true
+        }
+    });
+    removed
+}
+
 #[expect(clippy::struct_field_names)]
 pub struct CompositorState {
     display_handle: DisplayHandle,
@@ -743,8 +760,27 @@ impl ShmHandler for CompositorState {
 
 impl BufferHandler for CompositorState {
     fn buffer_destroyed(&mut self, buffer: &WlBuffer) {
-        // Track destroyed buffer for texture cache invalidation
-        self.invalidated_buffers.push(buffer.id());
+        // Track destroyed buffer for texture cache invalidation.
+        let buffer_id = buffer.id();
+        self.invalidated_buffers.push(buffer_id.clone());
+
+        // Smithay reports destroyed buffers as no longer usable. If a widget
+        // still points at this buffer, drop the render candidate too; otherwise
+        // scene transitions keep trying to draw an id whose texture was just
+        // evicted.
+        let removed_instances =
+            remove_destroyed_widget_buffers(&mut self.widget_buffers, &buffer_id, WlBuffer::id);
+        if !removed_instances.is_empty() {
+            self.dirty_buffers.retain(|id| id != &buffer_id);
+        }
+        for instance_id in removed_instances {
+            self.mark_widget_output_damage(&instance_id);
+            tracing::debug!(
+                "Dropped destroyed buffer {:?} for widget {}",
+                buffer_id,
+                instance_id
+            );
+        }
     }
 }
 
@@ -938,9 +974,14 @@ wl::delegate_dispatch!(
 
 #[cfg(test)]
 mod tests {
-    use super::{OutputDamage, OutputDamageTracker, should_complete_frame_callback};
+    use super::{
+        OutputDamage, OutputDamageTracker, remove_destroyed_widget_buffers,
+        should_complete_frame_callback,
+    };
     use std::collections::HashMap;
     use std::num::NonZeroU64;
+
+    use smithay::reexports::wayland_server::backend::ObjectId;
 
     fn gen_n(n: u64) -> NonZeroU64 {
         NonZeroU64::new(n).expect("BUG: test generation must be non-zero")
@@ -1045,6 +1086,21 @@ mod tests {
         assert_eq!(
             tracker.snapshot(),
             OutputDamage::Widgets(std::collections::HashSet::new()),
+        );
+    }
+
+    #[test]
+    fn destroyed_widget_buffer_is_removed_from_render_set() {
+        let destroyed_id = ObjectId::null();
+        let mut widget_buffers = vec![(destroyed_id.clone(), String::from("clock-left"))];
+
+        let removed =
+            remove_destroyed_widget_buffers(&mut widget_buffers, &destroyed_id, Clone::clone);
+
+        assert_eq!(removed, vec![String::from("clock-left")]);
+        assert!(
+            widget_buffers.is_empty(),
+            "destroyed buffers must not remain render candidates after texture invalidation",
         );
     }
 }
