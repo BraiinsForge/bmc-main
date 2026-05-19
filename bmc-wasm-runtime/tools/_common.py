@@ -11,6 +11,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from widget_root import resolve as resolve_widget_root
+
 WASM_TARGET = 'wasm32-unknown-unknown'
 
 # ── ANSI helpers ─────────────────────────────────────────────────────
@@ -23,7 +25,8 @@ RESET = '\033[0m' if IS_TTY else ''
 GREEN = '\033[32m' if IS_TTY else ''
 RED = '\033[31m' if IS_TTY else ''
 
-COL_WIDTH = 50  # alignment column for right-side timings
+# alignment column for right-side timings
+COL_WIDTH = 50
 
 
 def section(title: str) -> None:
@@ -76,24 +79,19 @@ def require_tools(*tools: tuple[str, str]) -> None:
 
 
 def build_example_wasm(example: str) -> Path:
-    """Build a widget example in release mode and return the .wasm path."""
-    example_dir = Path(f'examples/{example}')
+    """Build a widget in release mode and return the .wasm path.
+
+    The widget's workspace root is resolved via `widget_root.py`.
+    Works for both the SDK examples in `bmc-wasm-runtime/examples/`
+    and production widgets in `widgets-wasm/`.
+    """
+
     wasm_name = example.replace('-', '_')
+    workspace_dir = resolve_widget_root(example)
 
-    if not example_dir.is_dir():
-        available = sorted(p.name for p in Path('examples').iterdir() if p.is_dir())
-        print(
-            f"Error: example '{example}' not found (no directory {example_dir}).\n"
-            f'Available examples: {", ".join(available)}',
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # Examples share a workspace at examples/Cargo.toml — build from there
-    # so cargo uses the shared target dir. --message-format=json emits one
-    # compiler-artifact message per built target; parse it so we get the
-    # exact .wasm path even with a custom CARGO_TARGET_DIR.
-    workspace_dir = example_dir.parent
+    # --message-format=json emits one compiler-artifact message per built
+    # target; parse it so we get the exact .wasm path even with a custom
+    # CARGO_TARGET_DIR.
     result = subprocess.run(
         [
             'cargo',
@@ -121,7 +119,7 @@ def build_example_wasm(example: str) -> Path:
             if path.endswith('.wasm'):
                 return Path(path)
 
-    raise RuntimeError(f"no .wasm artifact found for example '{example}'")
+    raise RuntimeError(f"no .wasm artifact found for widget '{example}'")
 
 
 def extract_crate(sym: str) -> str:
@@ -177,9 +175,9 @@ def crate_breakdown_from_thread(
 ) -> tuple[Counter[str], int]:
     """Compute inclusive crate-level breakdown from a samply thread.
 
-    Returns (crate_counter, total_samples). The counter maps crate name to
-    sample count, deduplicated per-stack (a crate appearing multiple times
-    in one stack counts once).
+    Returns (crate_counter, total_samples).
+    The counter maps crate name to sample count, deduplicated per-stack
+    (a crate appearing multiple times in one stack counts once).
     """
     strings: list[str] = thread['stringArray']
     func_table: dict = thread['funcTable']
@@ -203,7 +201,7 @@ def crate_breakdown_from_thread(
             fi = frame_list[s]
             func_idx = frame_table['func'][fi]
             sym = strings[func_table['name'][func_idx]]
-            crate = extract_crate(symbols.get(sym, sym))
+            crate = extract_crate(symbols[sym] if sym in symbols else sym)
             if crate not in seen_crates:
                 crate_time[crate] += count
                 seen_crates.add(crate)

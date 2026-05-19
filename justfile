@@ -64,12 +64,12 @@ validate-full:
 
 # === WASM Runtime ===
 
-# Validate the bmc-wasm-runtime crate (format, lint, clippy, test, build examples).
+# Validate the bmc-wasm-runtime crate (format, lint, clippy, test, build all wasm widget workspaces).
 validate-wasm: format validate-wasm-deny validate-wasm-no-fmt
     cargo clippy -p bmc-wasm-runtime --all-targets --features testbed -- -D warnings
     cargo clippy -p bmc-wasm-runtime --bin capture --features capture -- -D warnings
     cargo nextest run -p bmc-wasm-runtime
-    cd bmc-wasm-runtime/examples && cargo build --target wasm32-unknown-unknown --workspace
+    for root in $(bmc-wasm-runtime/tools/widget_root.py); do (cd "$root" && cargo build --target wasm32-unknown-unknown --workspace) || exit 1; done
 
 # Block bloat crates from creeping into the wasm32 dep graph (source: `nix/checks.nix::cargo-deny-wasm`).
 validate-wasm-deny:

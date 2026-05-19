@@ -4,23 +4,16 @@
 # Each recipe is a dumb delegation to a proper tool (cargo, python, mprocs).
 # Keep it that way — if a target needs real logic, write a script under
 # tools/ and call it from here.
+#
+# Multi-root: wasm widgets live in `examples/` (SDK examples)
+# and `widgets-wasm/` (production widgets). Each widget's workspace root
+# is resolved at recipe execution time via `tools/widget_root.py`.
 
 dir := source_directory()
 wasm_target := "wasm32-unknown-unknown"
 cargo_features := "--features testbed"
 
-# Built wasm artifact paths for a given example (rust converts hyphens to
-# underscores in generated binary names — use `replace(EXAMPLE, '-', '_')`).
-# Resolves the cargo target directory via metadata so CARGO_TARGET_DIR /
-# config.toml overrides are honored instead of assuming ./target.
-
-examples_target := shell('cargo metadata --manifest-path "$1" --format-version=1 --no-deps | grep -o "\"target_directory\":\"[^\"]*\"" | cut -d "\"" -f 4', dir + "/examples/Cargo.toml")
-wasm_file := examples_target + "/" + wasm_target + "/release"
-wasm_file_debug := examples_target + "/" + wasm_target + "/debug"
-
-# Visual regression paths.
-
-widgets_dir := dir + "/examples"
+# Visual regression output (shared across all widget roots).
 output_dir := dir + "/captures"
 
 [private]
@@ -29,49 +22,68 @@ default:
 
 # === Build / clean ===
 
-# Remove cargo build artifacts for both the host and examples workspaces.
+# Remove cargo build artifacts for the host workspace and every widget workspace.
 clean:
+    #!/usr/bin/env bash
+    set -euo pipefail
     cargo clean --manifest-path {{ dir }}/Cargo.toml
-    cargo clean --manifest-path {{ dir }}/examples/Cargo.toml
+    for root in $({{ dir }}/tools/widget_root.py); do
+        cargo clean --manifest-path "$root/Cargo.toml"
+    done
 
 # === Dev / run ===
 
-# Hot-reload dev: build testbed + example + run in an mprocs split.
-dev EXAMPLE ARGS="":
+# Hot-reload dev: build testbed + widget + run in an mprocs split.
+dev WIDGET ARGS="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
+    target=$(cargo metadata --manifest-path "$root/Cargo.toml" --format-version=1 --no-deps \
+        | grep -o '"target_directory":"[^"]*"' | cut -d '"' -f 4)
+    wasm_file="$target/{{ wasm_target }}/debug/$(echo {{ WIDGET }} | tr - _).wasm"
     cargo build {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml
-    cargo build --manifest-path {{ dir }}/examples/Cargo.toml -p {{ EXAMPLE }} --target {{ wasm_target }}
+    cargo build --manifest-path "$root/Cargo.toml" -p {{ WIDGET }} --target {{ wasm_target }}
     RUST_LOG=bmc_wasm_runtime=debug mprocs \
         --names "watch,testbed" \
-        "cd {{ dir }}/examples && cargo watch -x 'build -p {{ EXAMPLE }} --target {{ wasm_target }}'" \
-        "cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- {{ wasm_file_debug }}/{{ replace(EXAMPLE, '-', '_') }}.wasm {{ ARGS }}"
+        "cd '$root' && cargo watch -x 'build -p {{ WIDGET }} --target {{ wasm_target }}'" \
+        "cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- '$wasm_file' {{ ARGS }}"
 
-# Run a release-built example once in the testbed.
-run EXAMPLE ARGS="":
-    cargo build --manifest-path {{ dir }}/examples/Cargo.toml -p {{ EXAMPLE }} --release --target {{ wasm_target }}
-    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- {{ wasm_file }}/{{ replace(EXAMPLE, '-', '_') }}.wasm {{ ARGS }}
+# Run a release-built widget once in the testbed.
+run WIDGET ARGS="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
+    target=$(cargo metadata --manifest-path "$root/Cargo.toml" --format-version=1 --no-deps \
+        | grep -o '"target_directory":"[^"]*"' | cut -d '"' -f 4)
+    wasm_file="$target/{{ wasm_target }}/release/$(echo {{ WIDGET }} | tr - _).wasm"
+    cargo build --manifest-path "$root/Cargo.toml" -p {{ WIDGET }} --release --target {{ wasm_target }}
+    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" {{ ARGS }}
 
 # === Profiling / size ===
 
-# Record a perf profile of EXAMPLE. Extra args go to perf_record.py.
-profile EXAMPLE ARGS="":
-    {{ dir }}/tools/perf_record.py -e {{ EXAMPLE }} {{ ARGS }}
+# Record a perf profile of WIDGET. Extra args go to perf_record.py.
+profile WIDGET ARGS="":
+    {{ dir }}/tools/perf_record.py -e {{ WIDGET }} {{ ARGS }}
 
-# Report the built wasm binary size for EXAMPLE.
-size EXAMPLE:
-    {{ dir }}/tools/wasm_size.py -e {{ EXAMPLE }}
+# Report the built wasm binary size for WIDGET.
+size WIDGET:
+    {{ dir }}/tools/wasm_size.py -e {{ WIDGET }}
 
-# Fail if EXAMPLE's wasm binary exceeds the configured size limit.
-size-check EXAMPLE:
-    {{ dir }}/tools/wasm_size.py -e {{ EXAMPLE }} --check
+# Fail if WIDGET's wasm binary exceeds the configured size limit.
+size-check WIDGET:
+    {{ dir }}/tools/wasm_size.py -e {{ WIDGET }} --check
 
 # === Codegen ===
 
 # Regenerate `manifest_params.rs` from `manifest.json`.
-gen EXAMPLE:
+gen WIDGET:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
     cargo run -p bmc-widget-codegen \
         --manifest-path {{ dir }}/../Cargo.toml -- \
-            --manifest {{ widgets_dir }}/{{ EXAMPLE }}/manifest.json \
-            --out {{ widgets_dir }}/{{ EXAMPLE }}/src/manifest_params.rs
+            --manifest "$root/{{ WIDGET }}/manifest.json" \
+            --out "$root/{{ WIDGET }}/src/manifest_params.rs"
 
 # === Docs ===
 
@@ -82,40 +94,63 @@ docs:
 # === Recording ===
 
 # Record an interactive session. SIZE = full | small | etc.
-record EXAMPLE SIZE="full":
-    cargo build --manifest-path {{ dir }}/examples/Cargo.toml -p {{ EXAMPLE }} --release --target {{ wasm_target }}
-    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- {{ wasm_file }}/{{ replace(EXAMPLE, '-', '_') }}.wasm --record={{ SIZE }}
+record WIDGET SIZE="full":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
+    target=$(cargo metadata --manifest-path "$root/Cargo.toml" --format-version=1 --no-deps \
+        | grep -o '"target_directory":"[^"]*"' | cut -d '"' -f 4)
+    wasm_file="$target/{{ wasm_target }}/release/$(echo {{ WIDGET }} | tr - _).wasm"
+    cargo build --manifest-path "$root/Cargo.toml" -p {{ WIDGET }} --release --target {{ wasm_target }}
+    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --record={{ SIZE }}
 
 # === Visual regression ===
 
-# Capture a single example. Extra args go to the capture binary.
-capture EXAMPLE ARGS="":
-    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- run-all -e {{ EXAMPLE }} \
-        --widgets-dir {{ widgets_dir }} --output-dir {{ output_dir }} {{ ARGS }}
+# Capture a single widget. Extra args go to the capture binary.
+capture WIDGET ARGS="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
+    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- run-all -e {{ WIDGET }} \
+        --widgets-dir "$root" --output-dir {{ output_dir }} {{ ARGS }}
 
-# Capture every example.
+# Capture every widget in every workspace.
 capture-all ARGS="":
-    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- run-all \
-        --widgets-dir {{ widgets_dir }} --output-dir {{ output_dir }} {{ ARGS }}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for root in $({{ dir }}/tools/widget_root.py); do
+        cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- run-all \
+            --widgets-dir "$root" --output-dir {{ output_dir }} {{ ARGS }}
+    done
 
-# Re-capture then update baselines for an example.
-update-baselines EXAMPLE: (capture EXAMPLE)
+# Re-capture then update baselines for a widget.
+update-baselines WIDGET: (capture WIDGET)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
     cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- set-baseline \
-        --capture-dir={{ widgets_dir }}/{{ EXAMPLE }}/capture \
-        --output={{ output_dir }}/{{ EXAMPLE }}
+        --capture-dir="$root/{{ WIDGET }}/capture" \
+        --output={{ output_dir }}/{{ WIDGET }}
 
-# Verify one example against baselines.
-verify EXAMPLE:
-    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- verify -e {{ EXAMPLE }} \
-        --widgets-dir {{ widgets_dir }} --output-dir {{ output_dir }}
+# Verify one widget against baselines.
+verify WIDGET:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
+    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- verify -e {{ WIDGET }} \
+        --widgets-dir "$root" --output-dir {{ output_dir }}
 
-# Verify all examples in parallel.
+# Verify all widgets in parallel, across every workspace.
 verify-all:
-    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- verify --parallel \
-        --widgets-dir {{ widgets_dir }} --output-dir {{ output_dir }}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for root in $({{ dir }}/tools/widget_root.py); do
+        cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- verify --parallel \
+            --widgets-dir "$root" --output-dir {{ output_dir }}
+    done
 
 # Preview a capture. Pass SIZE=small etc. to filter, or omit for all sizes.
-preview EXAMPLE SIZE="" ARGS="":
+preview WIDGET SIZE="" ARGS="":
     cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- preview \
-        --output={{ output_dir }}/{{ EXAMPLE }} \
+        --output={{ output_dir }}/{{ WIDGET }} \
         {{ if SIZE != "" { "-s " + SIZE } else { "" } }} {{ ARGS }}
