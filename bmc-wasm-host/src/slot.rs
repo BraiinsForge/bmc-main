@@ -58,6 +58,20 @@ pub fn duration_to_timeout_millis(duration: Duration) -> u32 {
     u32::try_from(duration.as_millis()).unwrap_or(u32::MAX)
 }
 
+trait RendererAssetEvictor {
+    fn evict_renderer_prefix(&mut self, prefix: &str) -> usize;
+}
+
+impl<T: Renderer + ?Sized> RendererAssetEvictor for T {
+    fn evict_renderer_prefix(&mut self, prefix: &str) -> usize {
+        Renderer::evict_prefix(self, prefix)
+    }
+}
+
+fn evict_renderer_assets(renderer: &mut impl RendererAssetEvictor, asset_namespace: &str) -> usize {
+    renderer.evict_renderer_prefix(asset_namespace)
+}
+
 #[expect(missing_debug_implementations)]
 pub struct WidgetSlot {
     pub surface: DeckWidgetSurfaceClient,
@@ -431,8 +445,21 @@ impl WidgetSlot {
         Ok(status)
     }
 
-    pub fn shutdown(mut self, shared: &SharedHost) {
+    pub fn shutdown(mut self, shared: &mut SharedHost) {
+        let asset_namespace = self.runtime.asset_namespace();
         drop(self.runtime);
+
+        let evicted_renderer_assets = evict_renderer_assets(&mut shared.renderer, &asset_namespace);
+        if evicted_renderer_assets > 0 {
+            tracing::debug!(
+                peer_pid = self.peer_pid,
+                wasm = %self.wasm_basename,
+                asset_namespace = %asset_namespace,
+                evicted_renderer_assets,
+                "widget renderer assets evicted"
+            );
+        }
+
         if let Some(target) = self.render_target.take() {
             self.factory.destroy(target, &shared.egl);
         }
@@ -554,5 +581,34 @@ fn normalize_gl_state(egl: &bmc_widget::egl::EglContext, w: u32, h: u32) {
         gl.stencil_mask(0xFF);
         gl.active_texture(glow::TEXTURE0);
         gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RendererAssetEvictor, evict_renderer_assets};
+
+    #[derive(Debug)]
+    struct RecordingEvictor {
+        result: usize,
+        prefixes: Vec<String>,
+    }
+
+    impl RendererAssetEvictor for RecordingEvictor {
+        fn evict_renderer_prefix(&mut self, prefix: &str) -> usize {
+            self.prefixes.push(prefix.to_owned());
+            self.result
+        }
+    }
+
+    #[test]
+    fn evict_renderer_assets_uses_exact_runtime_namespace() {
+        let mut evictor = RecordingEvictor {
+            result: 3,
+            prefixes: Vec::new(),
+        };
+
+        assert_eq!(evict_renderer_assets(&mut evictor, "42"), 3);
+        assert_eq!(evictor.prefixes, vec!["42".to_owned()]);
     }
 }
