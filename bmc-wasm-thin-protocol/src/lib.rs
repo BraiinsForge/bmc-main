@@ -71,21 +71,6 @@ fn write_lenstr<W: Write>(w: &mut W, s: &str) -> io::Result<()> {
     w.write_all(bytes)
 }
 
-fn read_lenstr<R: Read>(r: &mut R) -> io::Result<String> {
-    let mut len_bytes = [0_u8; 4];
-    r.read_exact(&mut len_bytes)?;
-    let len = u32::from_le_bytes(len_bytes);
-    if len > MAX_STRING_LEN {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "string exceeds 64 KiB",
-        ));
-    }
-    let mut buf = vec![0_u8; len as usize];
-    r.read_exact(&mut buf)?;
-    String::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-}
-
 fn int_cmsg_space() -> usize {
     unsafe {
         libc::CMSG_SPACE(
@@ -357,29 +342,6 @@ pub fn write_ack(sock: &UnixStream, msg: &AckMsg) -> io::Result<()> {
     }
     let mut sock_w = sock;
     sock_w.write_all(&buf)
-}
-
-pub fn read_ack(sock: &UnixStream) -> io::Result<AckMsg> {
-    let mut sock_r = sock;
-    let mut ver_bytes = [0_u8; 2];
-    sock_r.read_exact(&mut ver_bytes)?;
-    let version = u16::from_le_bytes(ver_bytes);
-    if version != PROTOCOL_VERSION {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("protocol version mismatch: expected {PROTOCOL_VERSION}, got {version}"),
-        ));
-    }
-    let mut tag = [0_u8; 1];
-    sock_r.read_exact(&mut tag)?;
-    match tag[0] {
-        TAG_ACK_OK => Ok(AckMsg::Ok),
-        TAG_ACK_ERR => Ok(AckMsg::Err(read_lenstr(&mut sock_r)?)),
-        other => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("unknown Ack tag: {other:#04x}"),
-        )),
-    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

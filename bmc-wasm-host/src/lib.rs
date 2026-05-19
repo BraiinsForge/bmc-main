@@ -2,7 +2,7 @@
 
 //! `bmc-wasm-host` library surface, re-exported for integration tests.
 
-pub mod control;
+pub(crate) mod control;
 pub mod host;
 pub mod lifecycle;
 pub mod logging;

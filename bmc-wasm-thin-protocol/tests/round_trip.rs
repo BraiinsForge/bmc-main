@@ -1,12 +1,26 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
+use std::io::Read;
 use std::mem::size_of;
 use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::net::UnixStream;
 
 use bmc_wasm_thin_protocol::{
-    AckMsg, HelloMsg, PROTOCOL_VERSION, read_ack, recv_hello_with_fd, send_hello_with_fd, write_ack,
+    AckDecoder, AckMsg, HelloMsg, PROTOCOL_VERSION, recv_hello_with_fd, send_hello_with_fd,
+    write_ack,
 };
+
+fn decode_ack(sock: &UnixStream) -> std::io::Result<AckMsg> {
+    let mut dec = AckDecoder::new();
+    let mut buf = [0_u8; 64];
+    let mut sock_r = sock;
+    loop {
+        let n = sock_r.read(&mut buf)?;
+        if let Some(msg) = dec.push(&buf[..n])? {
+            return Ok(msg);
+        }
+    }
+}
 
 fn pair() -> (UnixStream, UnixStream) {
     UnixStream::pair()
@@ -62,14 +76,14 @@ fn ack_ok_and_err_round_trip() {
     let (writer, reader) = pair();
     write_ack(&writer, &AckMsg::Ok).expect("BUG: local socketpair write_ack Ok must succeed");
     assert!(matches!(
-        read_ack(&reader).expect("BUG: local socketpair read_ack Ok must succeed"),
+        decode_ack(&reader).expect("BUG: local socketpair decode_ack Ok must succeed"),
         AckMsg::Ok,
     ));
 
     let (writer2, reader2) = pair();
     write_ack(&writer2, &AckMsg::Err("boom".into()))
         .expect("BUG: local socketpair write_ack Err must succeed");
-    match read_ack(&reader2).expect("BUG: local socketpair read_ack Err must succeed") {
+    match decode_ack(&reader2).expect("BUG: local socketpair decode_ack Err must succeed") {
         AckMsg::Err(msg) => assert_eq!(msg, "boom"),
         AckMsg::Ok => panic!("expected Err"),
     }

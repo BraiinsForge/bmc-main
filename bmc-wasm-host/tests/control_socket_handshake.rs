@@ -5,7 +5,9 @@ use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use bmc_wasm_thin_protocol::{AckMsg, HelloMsg, read_ack, send_hello_with_fd};
+use std::io::Read;
+
+use bmc_wasm_thin_protocol::{AckDecoder, AckMsg, HelloMsg, send_hello_with_fd};
 
 fn wait_for_socket(path: &std::path::Path, deadline: Instant) {
     while Instant::now() < deadline {
@@ -64,7 +66,22 @@ fn handshake_with_nonwayland_fd_returns_err_ack() {
     drop(fd_to_send);
     drop(fd_keep);
 
-    let ack = read_ack(&client).expect("BUG: host handshake contract requires an Ack after Hello");
+    let ack = {
+        let mut dec = AckDecoder::new();
+        let mut buf = [0_u8; 64];
+        let mut sock_r = &client;
+        loop {
+            let n = sock_r
+                .read(&mut buf)
+                .expect("BUG: host handshake contract requires an Ack after Hello");
+            if let Some(msg) = dec
+                .push(&buf[..n])
+                .expect("BUG: host handshake contract requires a valid Ack frame")
+            {
+                break msg;
+            }
+        }
+    };
     match ack {
         AckMsg::Err(_) => {}
         AckMsg::Ok => panic!("expected Err Ack, got Ok"),

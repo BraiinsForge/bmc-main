@@ -114,16 +114,6 @@ pub fn accept_and_load(
     Ok(slot)
 }
 
-pub fn try_handshake(client: &UnixStream) -> io::Result<HelloMsg> {
-    let (msg, fd) = recv_hello_with_fd(client)?;
-    drop(fd);
-    write_ack(
-        client,
-        &AckMsg::Err("slot loading is only available through the Task 9 main loop".into()),
-    )?;
-    Ok(msg)
-}
-
 fn peer_pid_of(client: &UnixStream) -> Option<libc::pid_t> {
     use std::os::fd::AsRawFd;
     let fd = client.as_raw_fd();
