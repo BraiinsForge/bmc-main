@@ -185,7 +185,7 @@ in
   params-demo = {
     pkg = mkWasmWidget {
       name = "params-demo";
-      wasmDir = wasmExamples;
+      wasmDir = wasmWidgets.params-demo;
       wasmFile = "params_demo.wasm";
       manifest = ../bmc-wasm-runtime/examples/params-demo/manifest.json;
       inherit host;
