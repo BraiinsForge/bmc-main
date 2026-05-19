@@ -226,13 +226,12 @@ impl WidgetTracker {
     ///
     /// - The widget in the active scene is `Visible` (idle) or `Leaving`
     ///   (during a drag).
-    /// - The widget in the drag-direction neighbour scene is `Entering`
-    ///   (during a drag).
-    /// - Idle: the widgets in the immediate cycle neighbours (both -1 and
-    ///   +1) are `Prepared`. In a 2-scene cycle the two neighbour indices
-    ///   wrap to the same scene, so the single neighbouring widget is
-    ///   simply marked `Prepared` once.
-    /// - All other widgets are `Dormant`.
+    /// - The widgets in the immediate cycle neighbours (both -1 and +1)
+    ///   are `Prepared` regardless of drag state. In a 2-scene cycle the
+    ///   two neighbour indices wrap to the same scene, so the single
+    ///   neighbouring widget is simply marked `Prepared` once.
+    /// - During a drag, the widget in the drag-direction neighbour scene
+    ///   is promoted from `Prepared` to `Entering`.
     ///
     /// Pure function of `(scenes, current_index, drag_offset)` — no GL,
     /// no Wayland.
@@ -267,22 +266,20 @@ impl WidgetTracker {
             }
         }
 
-        if dragging {
-            if let Some(neighbour) = self.drag_neighbor_scene() {
+        for direction in [-1_i32, 1] {
+            if let Some(neighbour) = self.neighbor_scene(direction) {
                 for widget in &neighbour.widgets {
                     if widget.visible {
-                        out.insert(widget.instance_id.clone(), LifecycleState::Entering);
+                        out.insert(widget.instance_id.clone(), LifecycleState::Prepared);
                     }
                 }
             }
-        } else {
-            for direction in [-1_i32, 1] {
-                if let Some(neighbour) = self.neighbor_scene(direction) {
-                    for widget in &neighbour.widgets {
-                        if widget.visible {
-                            out.insert(widget.instance_id.clone(), LifecycleState::Prepared);
-                        }
-                    }
+        }
+
+        if dragging && let Some(neighbour) = self.drag_neighbor_scene() {
+            for widget in &neighbour.widgets {
+                if widget.visible {
+                    out.insert(widget.instance_id.clone(), LifecycleState::Entering);
                 }
             }
         }
@@ -634,8 +631,8 @@ mod tests {
         );
         assert_eq!(
             states.get("c"),
-            Some(&LifecycleState::Dormant),
-            "the unaffected scene stays dormant"
+            Some(&LifecycleState::Prepared),
+            "the opposite neighbour stays prepared"
         );
     }
 
@@ -654,7 +651,29 @@ mod tests {
         let states = t.lifecycle_states();
         assert_eq!(states.get("b"), Some(&LifecycleState::Leaving));
         assert_eq!(states.get("a"), Some(&LifecycleState::Entering));
-        assert_eq!(states.get("c"), Some(&LifecycleState::Dormant));
+        assert_eq!(states.get("c"), Some(&LifecycleState::Prepared));
+    }
+
+    #[test]
+    fn lifecycle_drag_in_three_scene_cycle_keeps_opposite_neighbour_prepared() {
+        // Bug: while swiping from scene 1 to scene 2 in a 3-scene cycle,
+        // scene 0 (the wrap-around neighbour of scene 2) was transiently
+        // dropped to Dormant even though it stays one swipe away through
+        // the whole gesture.
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![
+            scene_with_widget("a"),
+            scene_with_widget("b"),
+            scene_with_widget("c"),
+        ]);
+        t.set_active_scene_index(1);
+        t.start_drag();
+        t.update_drag(-100);
+
+        let states = t.lifecycle_states();
+        assert_eq!(states.get("a"), Some(&LifecycleState::Prepared));
+        assert_eq!(states.get("b"), Some(&LifecycleState::Leaving));
+        assert_eq!(states.get("c"), Some(&LifecycleState::Entering));
     }
 
     #[test]
