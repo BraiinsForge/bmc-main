@@ -14,9 +14,11 @@ pub trait LifecycleEgl {
 pub trait LifecycleSurface {
     fn as_deck_widget_surface(&self) -> &bmc_widget::surface::DeckWidgetSurfaceClient;
     fn mint_wl_buffer(
-        &self,
+        &mut self,
         dmabuf: &bmc_widget::egl::DmaBufInfo,
+        slot: usize,
     ) -> Result<wayland_client::protocol::wl_buffer::WlBuffer, String>;
+    fn destroy_minted_wl_buffer(&mut self, buffer: wayland_client::protocol::wl_buffer::WlBuffer);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,7 +68,7 @@ pub struct LifecycleStateMachine {
 pub struct SlotApplyCtx<'a> {
     pub factory: &'a Rc<dyn RenderTargetFactory>,
     pub egl: &'a dyn LifecycleEgl,
-    pub surface: &'a dyn LifecycleSurface,
+    pub surface: &'a mut dyn LifecycleSurface,
     pub render_target: &'a mut Option<RenderTarget>,
     pub width: u32,
     pub height: u32,
@@ -84,11 +86,16 @@ impl LifecycleSurface for bmc_widget::surface::DeckWidgetSurfaceClient {
     }
 
     fn mint_wl_buffer(
-        &self,
+        &mut self,
         dmabuf: &bmc_widget::egl::DmaBufInfo,
+        slot: usize,
     ) -> Result<wayland_client::protocol::wl_buffer::WlBuffer, String> {
-        self.mint_wl_buffer_via_dmabuf(dmabuf)
+        bmc_widget::surface::DeckWidgetSurfaceClient::mint_wl_buffer_for_slot(self, dmabuf, slot)
             .map_err(|e| format!("{e:?}"))
+    }
+
+    fn destroy_minted_wl_buffer(&mut self, buffer: wayland_client::protocol::wl_buffer::WlBuffer) {
+        bmc_widget::surface::DeckWidgetSurfaceClient::destroy_minted_wl_buffer(self, buffer);
     }
 }
 
@@ -124,7 +131,9 @@ impl LifecycleStateMachine {
         let previous_target = self.target;
         self.target = new_target;
         LifecycleEventEffect {
-            request_render: has_render_target(new_target) && previous_target != new_target,
+            request_render: has_render_target(new_target)
+                && !has_render_target(previous_target)
+                && previous_target != new_target,
         }
     }
 
@@ -190,7 +199,7 @@ impl LifecycleStateMachine {
                 .render_target
                 .take()
                 .expect("BUG: releasing render target while none exists");
-            ctx.factory.destroy(target, ctx.egl);
+            ctx.factory.destroy(target, ctx.egl, ctx.surface);
             self.current = self.target;
             self.blocked = false;
             self.retry_at = None;

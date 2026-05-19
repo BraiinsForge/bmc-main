@@ -18,7 +18,7 @@ use crate::host::SharedHost;
 use crate::lifecycle::{
     LifecycleState, LifecycleStateMachine, SlotApplyCtx, frame_callback_enabled, should_render,
 };
-use crate::render_target::{RenderTarget, RenderTargetFactory};
+use crate::render_target::{EglRenderTarget, RenderTarget, RenderTargetFactory};
 
 /// Per-slot inter-frame floor — caps a misbehaving widget that returns
 /// `wants_next_frame() == true` every iteration at ~120 fps.
@@ -169,6 +169,16 @@ impl WidgetSlot {
         for event in <DeckWidgetSurfaceClient as WidgetSurface>::drain_events(&mut self.surface) {
             self.on_wayland_event(event);
         }
+        let released_slots = self.surface.drain_released_slots();
+        if let Some(egl_target) = self
+            .render_target
+            .as_mut()
+            .and_then(RenderTarget::as_egl_mut)
+        {
+            for slot in released_slots {
+                egl_target.mark_released(slot);
+            }
+        }
         Ok(())
     }
 
@@ -209,6 +219,14 @@ impl WidgetSlot {
     }
 
     #[must_use]
+    pub fn render_buffer_available(&self) -> bool {
+        self.render_target
+            .as_ref()
+            .and_then(RenderTarget::as_egl)
+            .is_none_or(EglRenderTarget::current_slot_available)
+    }
+
+    #[must_use]
     pub fn surface_needs_render(&self) -> bool {
         self.surface.needs_render()
     }
@@ -238,7 +256,7 @@ impl WidgetSlot {
     pub fn needs_render(&self, now: Instant) -> bool {
         let gate = if !self.is_renderable() {
             RenderGate::NotRenderable
-        } else if self.is_blocked() {
+        } else if self.is_blocked() || !self.render_buffer_available() {
             RenderGate::Blocked
         } else {
             RenderGate::Renderable
@@ -278,7 +296,7 @@ impl WidgetSlot {
         crate::main_loop::SlotPollInputs {
             retry_in: self.retry_in(now),
             is_renderable: self.is_renderable(),
-            is_blocked: self.is_blocked(),
+            is_blocked: self.is_blocked() || !self.render_buffer_available(),
             frame_callback_enabled: self.frame_callback_enabled(),
             animation_wants_immediate: self.runtime_frame_due(now),
             surface_needs_render: self.surface_needs_render(),
@@ -329,7 +347,7 @@ impl WidgetSlot {
         let mut ctx = SlotApplyCtx {
             factory: &self.factory,
             egl: &shared.egl,
-            surface: &self.surface,
+            surface: &mut self.surface,
             render_target: &mut self.render_target,
             width: w,
             height: h,
@@ -415,10 +433,14 @@ impl WidgetSlot {
         );
         self.surface.submit_buffer_with_wl_buffer(
             &dmabuf,
-            &egl_target.wl_buffers[slot_idx],
+            egl_target
+                .wl_buffers
+                .get(slot_idx)
+                .expect("BUG: DoubleBufferState returned a slot outside the wl_buffer array"),
             wants_immediate,
         )?;
         self.surface.flush()?;
+        egl_target.mark_presented(slot_idx);
         self.schedule_next_runtime_frame(Instant::now());
         self.frame_count += 1;
         if self.frame_count <= 3 || self.frame_count.is_multiple_of(120) {
@@ -461,7 +483,7 @@ impl WidgetSlot {
         }
 
         if let Some(target) = self.render_target.take() {
-            self.factory.destroy(target, &shared.egl);
+            self.factory.destroy(target, &shared.egl, &mut self.surface);
         }
         drop(self.surface);
         drop(self.control_socket);

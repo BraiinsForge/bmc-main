@@ -26,11 +26,18 @@ impl LifecycleSurface for StubSurface {
         )
     }
     fn mint_wl_buffer(
-        &self,
+        &mut self,
         _: &bmc_widget::egl::DmaBufInfo,
+        _: usize,
     ) -> Result<wayland_client::protocol::wl_buffer::WlBuffer, String> {
         unimplemented!(
             "MockFactory never calls mint_wl_buffer — the production path is exercised in Stage 6"
+        )
+    }
+
+    fn destroy_minted_wl_buffer(&mut self, _: wayland_client::protocol::wl_buffer::WlBuffer) {
+        unimplemented!(
+            "MockFactory never calls destroy_minted_wl_buffer — the production path is exercised in Stage 6"
         )
     }
 }
@@ -58,7 +65,7 @@ impl RenderTargetFactory for MockFactory {
     fn allocate(
         &self,
         _: &dyn LifecycleEgl,
-        _: &dyn LifecycleSurface,
+        _: &mut dyn LifecycleSurface,
         _: u32,
         _: u32,
     ) -> Result<RenderTarget, RenderTargetError> {
@@ -71,7 +78,7 @@ impl RenderTargetFactory for MockFactory {
         Ok(RenderTarget::new_stub(128, 128))
     }
 
-    fn destroy(&self, _: RenderTarget, _: &dyn LifecycleEgl) {
+    fn destroy(&self, _: RenderTarget, _: &dyn LifecycleEgl, _: &mut dyn LifecycleSurface) {
         self.destroy_calls.set(self.destroy_calls.get() + 1);
     }
 }
@@ -80,7 +87,7 @@ fn ctx_no_target<'a>(
     factory: &'a Rc<dyn RenderTargetFactory>,
     target: &'a mut Option<RenderTarget>,
     egl: &'a StubEgl,
-    surface: &'a StubSurface,
+    surface: &'a mut StubSurface,
 ) -> SlotApplyCtx<'a> {
     SlotApplyCtx {
         factory,
@@ -101,12 +108,12 @@ fn dormant_to_target_owning_state_panics_if_target_already_exists() {
 
     let mut target = Some(RenderTarget::new_stub(128, 128));
     let egl = StubEgl;
-    let surface = StubSurface;
+    let mut surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(LifecycleState::Entering);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
         Instant::now(),
     );
 }
@@ -119,19 +126,19 @@ fn target_owning_to_dormant_panics_if_target_is_missing() {
 
     let mut target: Option<RenderTarget> = None;
     let egl = StubEgl;
-    let surface = StubSurface;
+    let mut surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(LifecycleState::Entering);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
         Instant::now(),
     );
     target = None;
 
     sm.on_event(LifecycleState::Dormant);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
         Instant::now(),
     );
 }
@@ -144,13 +151,13 @@ fn dormant_to_prepared_with_failing_factory_marks_blocked_and_retries() {
 
     let mut target: Option<RenderTarget> = None;
     let egl = StubEgl;
-    let surface = StubSurface;
+    let mut surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(LifecycleState::Prepared);
     let t0 = Instant::now();
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
         t0,
     );
 
@@ -172,13 +179,13 @@ fn dormant_to_entering_with_failing_factory_marks_blocked_and_retries() {
 
     let mut target: Option<RenderTarget> = None;
     let egl = StubEgl;
-    let surface = StubSurface;
+    let mut surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(LifecycleState::Entering);
     let t0 = Instant::now();
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
         t0,
     );
 
@@ -199,13 +206,13 @@ fn second_failure_resets_retry_timer() {
 
     let mut target: Option<RenderTarget> = None;
     let egl = StubEgl;
-    let surface = StubSurface;
+    let mut surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(LifecycleState::Entering);
     let t0 = Instant::now();
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
         t0,
     );
     let first_retry = sm
@@ -214,7 +221,7 @@ fn second_failure_resets_retry_timer() {
 
     let t1 = t0 + Duration::from_secs(1) + Duration::from_millis(10);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
         t1,
     );
     let second_retry = sm
@@ -237,13 +244,13 @@ fn apply_within_retry_window_does_not_call_factory() {
 
     let mut target: Option<RenderTarget> = None;
     let egl = StubEgl;
-    let surface = StubSurface;
+    let mut surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(LifecycleState::Entering);
     let t0 = Instant::now();
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
         t0,
     );
     assert_eq!(mock.alloc_calls.get(), 1);
@@ -252,7 +259,7 @@ fn apply_within_retry_window_does_not_call_factory() {
     // these must touch the factory.
     for step_ms in [1, 5, 50, 100, 200, 400, 600, 800, 900, 999] {
         sm.apply(
-            &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+            &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
             t0 + Duration::from_millis(step_ms),
         );
         assert_eq!(
@@ -264,7 +271,7 @@ fn apply_within_retry_window_does_not_call_factory() {
 
     // Once the timer has elapsed, the next apply IS allowed to retry.
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
         t0 + Duration::from_millis(1_001),
     );
     assert_eq!(mock.alloc_calls.get(), 2);
@@ -278,19 +285,19 @@ fn entering_to_dormant_while_blocked_clears_blocked_and_does_not_call_destroy() 
 
     let mut target: Option<RenderTarget> = None;
     let egl = StubEgl;
-    let surface = StubSurface;
+    let mut surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(LifecycleState::Entering);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
         Instant::now(),
     );
     assert!(sm.blocked());
 
     sm.on_event(LifecycleState::Dormant);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
         Instant::now(),
     );
 
@@ -316,12 +323,12 @@ fn all_transitions_from_dormant_to_target_owning_states_invoke_allocate() {
 
         let mut target: Option<RenderTarget> = None;
         let egl = StubEgl;
-        let surface = StubSurface;
+        let mut surface = StubSurface;
 
         let mut sm = LifecycleStateMachine::new();
         sm.on_event(target_state);
         sm.apply(
-            &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+            &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
             Instant::now(),
         );
 
@@ -352,12 +359,12 @@ fn dormant_self_transition_is_no_op() {
     let factory: Rc<dyn RenderTargetFactory> = mock.clone();
     let mut target: Option<RenderTarget> = None;
     let egl = StubEgl;
-    let surface = StubSurface;
+    let mut surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(LifecycleState::Dormant);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &surface),
+        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
         Instant::now(),
     );
 
@@ -373,4 +380,29 @@ fn prepared_lifecycle_event_requests_surface_render() {
     let effect = sm.on_event(LifecycleState::Prepared);
 
     assert!(effect.request_render);
+}
+
+#[test]
+fn target_owning_lifecycle_transitions_do_not_request_fresh_surface_render() {
+    let mock: Rc<MockFactory> = Rc::new(MockFactory::new());
+    let factory: Rc<dyn RenderTargetFactory> = mock.clone();
+    let mut target: Option<RenderTarget> = None;
+    let egl = StubEgl;
+    let mut surface = StubSurface;
+
+    let mut sm = LifecycleStateMachine::new();
+    sm.on_event(LifecycleState::Prepared);
+    sm.apply(
+        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        Instant::now(),
+    );
+
+    assert_eq!(sm.current(), LifecycleState::Prepared);
+    assert!(target.is_some());
+
+    let entering = sm.on_event(LifecycleState::Entering);
+    let visible = sm.on_event(LifecycleState::Visible);
+
+    assert!(!entering.request_render);
+    assert!(!visible.request_render);
 }
