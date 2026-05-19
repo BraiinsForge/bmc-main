@@ -39,7 +39,10 @@ pub struct LifecycleEventEffect {
 pub fn has_render_target(s: LifecycleState) -> bool {
     matches!(
         s,
-        LifecycleState::Entering | LifecycleState::Visible | LifecycleState::Leaving
+        LifecycleState::Prepared
+            | LifecycleState::Entering
+            | LifecycleState::Visible
+            | LifecycleState::Leaving
     )
 }
 
@@ -148,7 +151,7 @@ impl LifecycleStateMachine {
         // iteration from `main_loop::run`) would hammer the factory thousands of times
         // per second while CMA is exhausted. The skip only applies while we still owe an
         // allocation (target wants a buffer, we don't have one); if the compositor has
-        // since demoted the slot back to a buffer-free state, target_needs is false and
+        // since demoted the slot back to the buffer-free state, target_needs is false and
         // execution falls through to the release / no-op branches below, which clear
         // `blocked` as a side-effect of the transition.
         if self.blocked && target_needs && !current_has && self.retry_at.is_some_and(|t| now < t) {

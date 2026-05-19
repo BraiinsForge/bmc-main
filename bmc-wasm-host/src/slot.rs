@@ -494,7 +494,7 @@ impl WidgetSlot {
             let phase_start = HostRenderProfiling::start_phase();
             let target = self.render_target.as_mut().expect(
                 "BUG: render() called on a slot without a render target — \
-                 needs_render() should have gated this off when lifecycle ∉ {Entering, Visible, Leaving}",
+                 needs_render() should have gated this off when lifecycle ∉ {Prepared, Entering, Visible, Leaving}",
             );
             let target_width = target.width;
             let target_height = target.height;
