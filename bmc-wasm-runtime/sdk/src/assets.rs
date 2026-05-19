@@ -13,28 +13,28 @@
 
 #![cfg_attr(target_arch = "wasm32", expect(clippy::cast_sign_loss))]
 
-use bmc_wasm_protocol::{AudioId, BitmapId, IconId, MeshId};
+use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, SvgId};
 
 #[cfg(target_arch = "wasm32")]
 use crate::host;
 use crate::mesh::Mesh;
 
 #[cfg(not(target_arch = "wasm32"))]
-type IconRegistrar = fn(&str, &[u8]) -> Option<IconId>;
+type IconRegistrar = fn(&str, &[u8]) -> Option<SvgId>;
 #[cfg(not(target_arch = "wasm32"))]
 type BitmapRegistrar = fn(&str, &[u8]) -> Option<BitmapId>;
 #[cfg(not(target_arch = "wasm32"))]
 type MeshRegistrar = fn(&str, &[u8]) -> Option<MeshId>;
 
-// ── Icon ─────────────────────────────────────────────────────────────
+// ── Svg ─────────────────────────────────────────────────────────────
 
-/// Compiled icon data (output of `include_icon!` proc macro).
+/// Compiled icon data (output of `include_svg!` proc macro).
 ///
 /// `data` is the compact binary representation of SVG paths produced at
 /// compile time. `name` is a stable, host-unique tag (typically
 /// `"<crate>::<file_stem>"`) used by the host to dedup registrations.
 #[derive(Debug)]
-pub struct Icon {
+pub struct Svg {
     pub data: &'static [u8],
     pub name: &'static str,
 }
@@ -57,10 +57,10 @@ pub fn init_icon_registrar(f: IconRegistrar) {
 
 /// Register an icon (host-side dedup by `icon.name`) and return its ID.
 #[must_use]
-pub fn ensure_registered(icon: &Icon) -> Option<IconId> {
+pub fn ensure_registered(icon: &Svg) -> Option<SvgId> {
     #[cfg(target_arch = "wasm32")]
     {
-        host::register_icon(icon.name, icon.data)
+        host::register_svg(icon.name, icon.data)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {

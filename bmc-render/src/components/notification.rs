@@ -33,7 +33,7 @@ pub(crate) struct NotificationData {
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /// Returns (accent_color, icon_id) for a notification kind byte.
-fn notification_accent(kind: u8) -> (Color, IconId) {
+fn notification_accent(kind: u8) -> (Color, SvgId) {
     match kind {
         0 => (RED_60, ICON_ERROR),
         1 => (ORANGE_40, ICON_WARNING),
@@ -171,7 +171,7 @@ pub fn render_notification_banner(
     title: &str,
     subtitle: &str,
     accent: Color,
-    icon_id: IconId,
+    icon_id: SvgId,
     x: f32,
     y: f32,
     w: f32,
@@ -188,7 +188,7 @@ pub fn render_notification_banner(
     let title_line_h = notification_title_style().size as f32 * 1.3;
     let icon_x = x + NOTIF_BORDER_W + NOTIF_PAD;
     let icon_y = y + NOTIF_PAD + (title_line_h - NOTIF_ICON_SIZE) / 2.0;
-    renderer.draw_icon(
+    renderer.draw_svg(
         icon_x,
         icon_y,
         NOTIF_ICON_SIZE,

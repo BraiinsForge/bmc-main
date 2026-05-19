@@ -6,7 +6,7 @@
 //! internally if the backend requires it.
 
 use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{BitmapId, IconId, MeshId};
+use bmc_wasm_protocol::{BitmapId, MeshId, SvgId};
 
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::tree::{SpanData, TextStyle};
@@ -79,18 +79,18 @@ pub trait Renderer {
 
     /// Register icon data (compact binary from proc macro) under a stable
     /// `tag`. Idempotent: re-registering the same tag returns the cached ID.
-    fn register_icon(&mut self, tag: &str, data: &[u8]) -> Option<IconId>;
+    fn register_svg(&mut self, tag: &str, data: &[u8]) -> Option<SvgId>;
 
     /// Draw a registered icon at the given position and size.
     #[expect(clippy::too_many_arguments)]
-    fn draw_icon(
+    fn draw_svg(
         &mut self,
         x: f32,
         y: f32,
         w: f32,
         h: f32,
         color: Color,
-        icon_id: IconId,
+        icon_id: SvgId,
         anti_alias: bool,
     );
 

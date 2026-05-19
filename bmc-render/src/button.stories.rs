@@ -2,8 +2,8 @@
 
 use crate::prelude::*;
 
-/// Custom icon loaded from SVG at compile time via `include_icon!`.
-const STAR: Icon = include_icon!("bmc-wasm-runtime/sdk/assets/icons/star.svg");
+/// Custom icon loaded from SVG at compile time via `include_svg!`.
+const STAR: Svg = include_svg!("bmc-wasm-runtime/sdk/assets/icons/star.svg");
 
 story_meta! { title: "Button" }
 
@@ -121,7 +121,7 @@ fn icons(c: &mut StoryCtx) {
     let on_custom_1 = c.action("custom-1");
     let on_custom_2 = c.action("custom-2");
 
-    c.ui.header("Custom icon", "SVG loaded via include_icon!");
+    c.ui.header("Custom icon", "SVG loaded via include_svg!");
     c.ui.div(
         (500, AutoH),
         row(

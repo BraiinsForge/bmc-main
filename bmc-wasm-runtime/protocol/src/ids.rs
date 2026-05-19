@@ -3,7 +3,7 @@
 //! Opaque newtype IDs for registered host-side resources.
 //!
 //! Prevents accidentally passing the wrong kind of ID to the wrong call
-//! (e.g. a bitmap ID where an icon ID is expected, or a WebSocket ID where
+//! (e.g. a bitmap ID where an SVG ID is expected, or a WebSocket ID where
 //! a socket ID is expected). Absent IDs are modelled as `Option<*Id>`,
 //! never as a magic in-band sentinel.
 //!
@@ -50,8 +50,8 @@ macro_rules! define_id {
 // ── Renderer resources (u16 wire) ───────────────────────────────────
 
 define_id! {
-    /// Opaque handle returned by icon registration.
-    IconId, "icon", u16
+    /// Opaque handle returned by SVG registration.
+    SvgId, "svg", u16
 }
 
 define_id! {

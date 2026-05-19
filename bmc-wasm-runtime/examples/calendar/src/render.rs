@@ -99,8 +99,8 @@ static THEMES: std::sync::LazyLock<ThemeSet> = std::sync::LazyLock::new(|| Theme
 });
 static THEME_KEY: AtomicU8 = AtomicU8::new(ThemeKey::Dark as u8);
 
-const THEME_DARK_ICON: Icon = include_icon!("assets/icons/theme-dark.svg");
-const THEME_LIGHT_ICON: Icon = include_icon!("assets/icons/theme-light.svg");
+const THEME_DARK_ICON: Svg = include_svg!("assets/icons/theme-dark.svg");
+const THEME_LIGHT_ICON: Svg = include_svg!("assets/icons/theme-light.svg");
 
 pub fn set_theme_key(key: ThemeKey) {
     THEME_KEY.store(key as u8, Ordering::Relaxed);
@@ -171,7 +171,7 @@ fn theme_toggle_fab(theme: &Theme) -> Node {
             // Button face — uses sidebar surface for theme-aware contrast
             Draw::circle(r, r, r - 1.0, theme.surface_sidebar),
             // Icon
-            Draw::icon_builtin(
+            Draw::svg_builtin(
                 icon_inset,
                 icon_inset,
                 icon_size,

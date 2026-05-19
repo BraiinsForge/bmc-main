@@ -63,14 +63,14 @@ thread_local! {
     static RENDERER_PTR: Cell<*mut FemtoVgRenderer> = const { Cell::new(std::ptr::null_mut()) };
 }
 
-pub(crate) fn registrar_icon(tag: &str, data: &[u8]) -> Option<bmc_wasm_sdk::IconId> {
+pub(crate) fn registrar_icon(tag: &str, data: &[u8]) -> Option<bmc_wasm_sdk::SvgId> {
     let ptr = RENDERER_PTR.with(Cell::get);
     assert!(
         !ptr.is_null(),
         "icon registrar called from a non-render thread; \
          RENDERER_PTR is thread-local and stories must not register assets from spawned threads"
     );
-    unsafe { &mut *ptr }.register_icon(tag, data)
+    unsafe { &mut *ptr }.register_svg(tag, data)
 }
 
 pub(crate) fn registrar_bitmap(tag: &str, data: &[u8]) -> Option<bmc_wasm_sdk::BitmapId> {

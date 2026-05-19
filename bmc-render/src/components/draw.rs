@@ -46,7 +46,7 @@ pub(crate) fn render_draw_command(
 pub(crate) fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
     match draw {
         DrawCommand::Rect { w, h, .. }
-        | DrawCommand::Icon { w, h, .. }
+        | DrawCommand::Svg { w, h, .. }
         | DrawCommand::Bitmap { w, h, .. }
         | DrawCommand::Sphere { w, h, .. }
         | DrawCommand::Mesh { w, h, .. }
@@ -121,7 +121,7 @@ fn render_draw_inner(
                 renderer.restore();
             }
         }
-        DrawCommand::Icon {
+        DrawCommand::Svg {
             x,
             y,
             w,
@@ -144,14 +144,14 @@ fn render_draw_inner(
                 base_color
             };
             if rotation == 0.0 {
-                renderer.draw_icon(rx, ry, ew, eh, final_color, icon_id, *anti_alias);
+                renderer.draw_svg(rx, ry, ew, eh, final_color, icon_id, *anti_alias);
             } else {
                 let pivot_x = cx + cw / 2.0;
                 let pivot_y = cy + ch / 2.0;
                 renderer.save();
                 renderer.translate(pivot_x, pivot_y);
                 renderer.rotate(rotation);
-                renderer.draw_icon(
+                renderer.draw_svg(
                     rx - pivot_x,
                     ry - pivot_y,
                     ew,
@@ -816,7 +816,7 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             ..Default::default()
         },
         DrawCommand::Rect { x, y, w, h, color }
-        | DrawCommand::Icon {
+        | DrawCommand::Svg {
             x, y, w, h, color, ..
         } => PrevDrawValues {
             x: *x,

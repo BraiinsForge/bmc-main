@@ -2253,7 +2253,7 @@ fn render_discovering(size: WidgetSize) -> Node {
         let mut children = vec![
             canvas(
                 props!(width: icon_sz, height: icon_sz),
-                vec![Draw::icon(
+                vec![Draw::svg(
                     0.0,
                     0.0,
                     icon_sz,
@@ -2709,7 +2709,7 @@ fn render_album_art(media: &MediaState, art_size: f32) -> Node {
             draws.push(Draw::rect(0.0, 0.0, inner, inner, GRAY_80));
         }
         draws.push(Draw::centered(
-            Draw::icon(0.0, 0.0, icon_sz, icon_sz, placeholder_icon, icon_color).with_anti_alias(),
+            Draw::svg(0.0, 0.0, icon_sz, icon_sz, placeholder_icon, icon_color).with_anti_alias(),
         ));
         canvas(
             props!(width: inner, height: inner, max_height: inner),
@@ -2980,9 +2980,9 @@ fn render_controls_stacked(media: &MediaState) -> Node {
 }
 
 struct ControlsData {
-    play_icon: &'static Icon,
+    play_icon: &'static Svg,
     play_disabled: bool,
-    mute_icon: &'static Icon,
+    mute_icon: &'static Svg,
     vol_str: String,
     vol_frac: f32,
 }

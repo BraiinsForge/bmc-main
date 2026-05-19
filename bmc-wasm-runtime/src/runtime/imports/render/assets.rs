@@ -6,7 +6,7 @@
 
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{BitmapId, IconId, MeshId};
+use bmc_wasm_protocol::{BitmapId, MeshId, SvgId};
 use wasmi::{Caller, Extern, Linker};
 
 use crate::host_api::HostState;
@@ -21,7 +21,7 @@ fn read_tag(caller: &Caller<'_, HostState>, ptr: u32, len: u32) -> Option<String
 }
 
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
-    register_icon_import(linker)?;
+    register_svg_import(linker)?;
     register_bitmap_import(linker)?;
     register_bitmap_nearest_import(linker)?;
     register_mesh_import(linker)?;
@@ -30,10 +30,10 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     Ok(())
 }
 
-fn register_icon_import(linker: &mut Linker<HostState>) -> Result<()> {
+fn register_svg_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
-        "host_register_icon",
+        "host_register_svg",
         |mut caller: Caller<'_, HostState>,
          tag_ptr: u32,
          tag_len: u32,
@@ -49,8 +49,8 @@ fn register_icon_import(linker: &mut Linker<HostState>) -> Result<()> {
             let tag = caller.data_mut().namespaced_tag(&tag);
             super::super::with_renderer(&mut caller, |renderer| {
                 renderer
-                    .register_icon(&tag, &data)
-                    .map_or(0, IconId::to_wire)
+                    .register_svg(&tag, &data)
+                    .map_or(0, SvgId::to_wire)
                     .into()
             })
         },

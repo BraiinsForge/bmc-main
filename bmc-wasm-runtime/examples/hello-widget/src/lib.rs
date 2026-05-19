@@ -18,11 +18,11 @@ use AnimProperty::{Rotate, Scale};
 use Easing::{EaseInOut, EaseOut, Linear};
 use LoopMode::{Forever, PingPong};
 
-const STAR: Icon = include_icon!("assets/star.svg");
-const SETTINGS: Icon = include_icon!("assets/settings.svg");
-const CHECKMARK: Icon = include_icon!("assets/checkmark.svg");
-const WARNING: Icon = include_icon!("assets/warning.svg");
-const SEARCH: Icon = include_icon!("assets/search.svg");
+const STAR: Svg = include_svg!("assets/star.svg");
+const SETTINGS: Svg = include_svg!("assets/settings.svg");
+const CHECKMARK: Svg = include_svg!("assets/checkmark.svg");
+const WARNING: Svg = include_svg!("assets/warning.svg");
+const SEARCH: Svg = include_svg!("assets/search.svg");
 
 thread_local! {
     static COUNTS: RefCell<[u32; 4]> = const { RefCell::new([0; 4]) };
@@ -216,29 +216,29 @@ fn icons_section() -> Node {
         props!(gap: 12.0, flex: 1.0),
         [
             text("Icons", style!(size: 20, color: GRAY_10)),
-            text("Custom (include_icon!)", style!(size: 12, color: GRAY_50)),
+            text("Custom (include_svg!)", style!(size: 12, color: GRAY_50)),
             canvas(
                 props!(width: 180.0, height: 40.0),
                 [
-                    Draw::icon(0.0, 4.0, 32.0, 32.0, &STAR, VIOLET_50),
-                    Draw::icon(40.0, 4.0, 32.0, 32.0, &SETTINGS, GREEN_50),
-                    Draw::icon(80.0, 4.0, 32.0, 32.0, &CHECKMARK, RED_50),
-                    Draw::icon(120.0, 4.0, 32.0, 32.0, &WARNING, ORANGE_50),
+                    Draw::svg(0.0, 4.0, 32.0, 32.0, &STAR, VIOLET_50),
+                    Draw::svg(40.0, 4.0, 32.0, 32.0, &SETTINGS, GREEN_50),
+                    Draw::svg(80.0, 4.0, 32.0, 32.0, &CHECKMARK, RED_50),
+                    Draw::svg(120.0, 4.0, 32.0, 32.0, &WARNING, ORANGE_50),
                 ],
             ),
-            text("Built-in (icon_builtin)", style!(size: 12, color: GRAY_50)),
+            text("Built-in (svg_builtin)", style!(size: 12, color: GRAY_50)),
             canvas(
                 props!(width: 100.0, height: 40.0),
                 [
-                    Draw::icon_builtin(0.0, 4.0, 32.0, 32.0, ICON_CLOSE, GRAY_10),
-                    Draw::icon_builtin(40.0, 4.0, 32.0, 32.0, ICON_CLOSE, RED_50),
+                    Draw::svg_builtin(0.0, 4.0, 32.0, 32.0, ICON_CLOSE, GRAY_10),
+                    Draw::svg_builtin(40.0, 4.0, 32.0, 32.0, ICON_CLOSE, RED_50),
                 ],
             ),
             text("Animated", style!(size: 12, color: GRAY_50)),
             canvas(
                 props!(width: 64.0, height: 64.0),
                 [Draw::centered(
-                    Draw::icon(0.0, 0.0, 32.0, 32.0, &STAR, ORANGE_50)
+                    Draw::svg(0.0, 0.0, 32.0, 32.0, &STAR, ORANGE_50)
                         .animate(Rotate, 0.0, TAU, 3_000, Linear, Forever)
                         .animate(Scale, 0.6, 1.0, 1_500, EaseInOut, PingPong),
                 )],
@@ -467,18 +467,18 @@ fn medium_icon_showcase_section() -> Node {
             canvas(
                 props!(width: 164.0, height: 28.0),
                 [
-                    Draw::icon(0.0, 0.0, 28.0, 28.0, &STAR, ORANGE_50),
-                    Draw::icon(34.0, 0.0, 28.0, 28.0, &SETTINGS, GREEN_50),
-                    Draw::icon(68.0, 0.0, 28.0, 28.0, &CHECKMARK, RED_50),
-                    Draw::icon(102.0, 0.0, 28.0, 28.0, &WARNING, VIOLET_50),
-                    Draw::icon_builtin(136.0, 0.0, 28.0, 28.0, ICON_CLOSE, GRAY_10),
+                    Draw::svg(0.0, 0.0, 28.0, 28.0, &STAR, ORANGE_50),
+                    Draw::svg(34.0, 0.0, 28.0, 28.0, &SETTINGS, GREEN_50),
+                    Draw::svg(68.0, 0.0, 28.0, 28.0, &CHECKMARK, RED_50),
+                    Draw::svg(102.0, 0.0, 28.0, 28.0, &WARNING, VIOLET_50),
+                    Draw::svg_builtin(136.0, 0.0, 28.0, 28.0, ICON_CLOSE, GRAY_10),
                 ],
             ),
             text("Animated", style!(size: 12, color: GRAY_40)),
             canvas(
                 props!(width: 34.0, height: 28.0),
                 [Draw::centered(
-                    Draw::icon(0.0, 0.0, 24.0, 24.0, &STAR, ORANGE_50)
+                    Draw::svg(0.0, 0.0, 24.0, 24.0, &STAR, ORANGE_50)
                         .animate(Rotate, 0.0, TAU, 3_000, Linear, Forever)
                         .animate(Scale, 0.6, 1.0, 1_500, EaseInOut, PingPong),
                 )],
@@ -548,10 +548,10 @@ fn large_icon_showcase_section() -> Node {
                     canvas(
                         props!(width: 180.0, height: 34.0),
                         [
-                            Draw::icon(0.0, 1.0, 32.0, 32.0, &STAR, ORANGE_50),
-                            Draw::icon(38.0, 1.0, 32.0, 32.0, &SETTINGS, GREEN_50),
-                            Draw::icon(76.0, 1.0, 32.0, 32.0, &CHECKMARK, RED_50),
-                            Draw::icon(114.0, 1.0, 32.0, 32.0, &WARNING, VIOLET_50),
+                            Draw::svg(0.0, 1.0, 32.0, 32.0, &STAR, ORANGE_50),
+                            Draw::svg(38.0, 1.0, 32.0, 32.0, &SETTINGS, GREEN_50),
+                            Draw::svg(76.0, 1.0, 32.0, 32.0, &CHECKMARK, RED_50),
+                            Draw::svg(114.0, 1.0, 32.0, 32.0, &WARNING, VIOLET_50),
                         ],
                     ),
                 ],
@@ -563,8 +563,8 @@ fn large_icon_showcase_section() -> Node {
                     canvas(
                         props!(width: 72.0, height: 34.0),
                         [
-                            Draw::icon_builtin(0.0, 1.0, 32.0, 32.0, ICON_CLOSE, GRAY_10),
-                            Draw::icon_builtin(38.0, 1.0, 32.0, 32.0, ICON_CLOSE, RED_50),
+                            Draw::svg_builtin(0.0, 1.0, 32.0, 32.0, ICON_CLOSE, GRAY_10),
+                            Draw::svg_builtin(38.0, 1.0, 32.0, 32.0, ICON_CLOSE, RED_50),
                         ],
                     ),
                 ],
@@ -576,7 +576,7 @@ fn large_icon_showcase_section() -> Node {
                     canvas(
                         props!(width: 48.0, height: 34.0),
                         [Draw::centered(
-                            Draw::icon(0.0, 0.0, 28.0, 28.0, &STAR, ORANGE_50)
+                            Draw::svg(0.0, 0.0, 28.0, 28.0, &STAR, ORANGE_50)
                                 .animate(Rotate, 0.0, TAU, 3_000, Linear, Forever)
                                 .animate(Scale, 0.6, 1.0, 1_500, EaseInOut, PingPong),
                         )],

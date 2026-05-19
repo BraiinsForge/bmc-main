@@ -110,7 +110,7 @@ pub fn number_input(key: &str, value: i32, p: &NumberInputProps) -> Node {
     if let Some((icon_id, color)) = status {
         input_children.push(canvas(
             props!(width: 18.0, height: 18.0),
-            [Draw::icon_builtin(1.0, 1.0, 14.0, 14.0, icon_id, color)],
+            [Draw::svg_builtin(1.0, 1.0, 14.0, 14.0, icon_id, color)],
         ));
         input_children.push(row(props!(width: 12.0), []));
     }

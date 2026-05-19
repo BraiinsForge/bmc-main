@@ -6,7 +6,7 @@ use std::fmt::Write;
 use std::fs;
 use std::path::Path;
 
-/// Maps SVG file stem → name of the protocol-side `IconId` constant.
+/// Maps SVG file stem → name of the protocol-side `SvgId` constant.
 ///
 /// The build script emits a table that *references* these constants by name
 /// rather than reconstructing IDs from raw `u16` values. This keeps the
@@ -58,7 +58,7 @@ fn main() {
                 let svg = fs::read_to_string(&path)
                     .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
 
-                let compiled = bmc_icon_compiler::compile_svg(&svg);
+                let compiled = bmc_svg_compiler::compile_svg(&svg);
 
                 // Write binary blob
                 let bin_name = format!("icon_{stem}.bin");
@@ -86,9 +86,9 @@ fn main() {
     // crate's named constants directly so no `from_wire`/`from_raw` boundary
     // is exposed in generated code.
     let mut generated = String::from(
-        "use bmc_wasm_protocol::IconId;\n\
+        "use bmc_wasm_protocol::SvgId;\n\
          /// Built-in icon data compiled from SVGs at build time.\n\
-         pub const BUILTIN_ICON_DATA: &[(IconId, &[u8])] = &[\n",
+         pub const BUILTIN_ICON_DATA: &[(SvgId, &[u8])] = &[\n",
     );
     for (stem, const_name) in &entries {
         writeln!(

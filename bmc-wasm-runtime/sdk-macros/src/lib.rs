@@ -4,7 +4,7 @@
 //!
 //! Provides `json!` for compile-time JSON templates and `fmt!` backing macro.
 //!
-//! Asset macros (`include_icon!`, `include_bitmap!`, `include_mesh!`,
+//! Asset macros (`include_svg!`, `include_bitmap!`, `include_mesh!`,
 //! `include_nine_patch!`, `include_skin!`, `include_audio!`) live in
 //! `bmc-render-macros`.
 

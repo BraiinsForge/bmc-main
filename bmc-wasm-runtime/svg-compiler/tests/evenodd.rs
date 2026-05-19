@@ -1,6 +1,6 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-use bmc_icon_compiler::compile_svg;
+use bmc_svg_compiler::compile_svg;
 
 const FLAG_HAS_FILL: u8 = 0x01;
 const FLAG_EVENODD: u8 = 0x04;

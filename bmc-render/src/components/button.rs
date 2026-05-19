@@ -9,7 +9,7 @@ use crate::interaction::{InteractionState, Rect};
 use crate::renderer::Renderer;
 use crate::tree::ButtonSkinData;
 
-use bmc_wasm_protocol::IconId;
+use bmc_wasm_protocol::SvgId;
 use bmc_wasm_protocol::colors::Color;
 pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
 
@@ -86,7 +86,7 @@ pub fn draw_button(
     h: f32,
     style: ButtonStyle,
     size: ButtonSize,
-    icon_id: Option<IconId>,
+    icon_id: Option<SvgId>,
     disabled: bool,
     skin: Option<&ButtonSkinData>,
 ) -> (bool, Option<(f32, f32)>) {
@@ -180,7 +180,7 @@ fn draw_button_disabled(
     h: f32,
     style: ButtonStyle,
     size: ButtonSize,
-    icon_id: Option<IconId>,
+    icon_id: Option<SvgId>,
     skin: Option<&ButtonSkinData>,
 ) {
     let fg_color = if let Some(skin) = skin {
@@ -216,7 +216,7 @@ fn draw_button_content(
     w: f32,
     h: f32,
     size: ButtonSize,
-    icon_id: Option<IconId>,
+    icon_id: Option<SvgId>,
     fg_color: Color,
 ) {
     let font_size = size.font_size();
@@ -230,7 +230,7 @@ fn draw_button_content(
         (Some(icon_id), true) => {
             let icon_x = x + pad;
             let icon_y = y + (h - icon_sz) / 2.0;
-            renderer.draw_icon(icon_x, icon_y, icon_sz, icon_sz, fg_color, icon_id, false);
+            renderer.draw_svg(icon_x, icon_y, icon_sz, icon_sz, fg_color, icon_id, false);
 
             let text_h = font_size * 1.3;
             let text_x = icon_x + icon_sz + gap;
@@ -244,7 +244,7 @@ fn draw_button_content(
             // Icon-only: keep centered
             let icon_x = x + (w - icon_sz) / 2.0;
             let icon_y = y + (h - icon_sz) / 2.0;
-            renderer.draw_icon(icon_x, icon_y, icon_sz, icon_sz, fg_color, icon_id, false);
+            renderer.draw_svg(icon_x, icon_y, icon_sz, icon_sz, fg_color, icon_id, false);
         }
         (None, _) => {
             let text_h = font_size * 1.3;

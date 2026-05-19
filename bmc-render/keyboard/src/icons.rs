@@ -2,13 +2,13 @@
 
 //! Keyboard icon assets compiled from Carbon Design System SVGs (Apache 2.0).
 //!
-//! Icons are compiled at build time via `include_icon!` and registered with
+//! Icons are compiled at build time via `include_svg!` and registered with
 //! the renderer on each call. Registration is idempotent host-side, so
 //! re-registering returns the cached ID without re-parsing.
 //!
 //! ## Fail-soft on registration failure
 //!
-//! If [`Renderer::register_icon`] returns `None` (renderer-side parse failure
+//! If [`Renderer::register_svg`] returns `None` (renderer-side parse failure
 //! or ID-space exhaustion — see BDK-458 for ID-lifecycle), the function key's
 //! icon spot renders blank: function keys (Shift / Backspace / Enter) carry
 //! an empty `key.label`, so the renderer's text path draws nothing. The
@@ -20,22 +20,22 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 
 use bmc_render::renderer::Renderer;
-use bmc_render_macros::include_icon;
-use bmc_wasm_protocol::IconId;
-use bmc_wasm_sdk::assets::Icon;
+use bmc_render_macros::include_svg;
+use bmc_wasm_protocol::SvgId;
+use bmc_wasm_sdk::assets::Svg;
 
 // Carbon Design System icons (Apache 2.0).
 // TODO(kubijo): manually clean up SVGs — remove padding, scale to 24, union paths.
-const ICON_SHIFT: Icon = include_icon!("bmc-render/keyboard/assets/icons/shift.svg");
-const ICON_BACKSPACE: Icon = include_icon!("bmc-render/keyboard/assets/icons/backspace.svg");
-const ICON_ENTER: Icon = include_icon!("bmc-render/keyboard/assets/icons/enter.svg");
+const ICON_SHIFT: Svg = include_svg!("bmc-render/keyboard/assets/icons/shift.svg");
+const ICON_BACKSPACE: Svg = include_svg!("bmc-render/keyboard/assets/icons/backspace.svg");
+const ICON_ENTER: Svg = include_svg!("bmc-render/keyboard/assets/icons/enter.svg");
 
 thread_local! {
     static WARNED: RefCell<HashSet<&'static str>> = RefCell::new(HashSet::new());
 }
 
-fn id_for(renderer: &mut dyn Renderer, icon: &Icon) -> Option<IconId> {
-    let id = renderer.register_icon(icon.name, icon.data);
+fn id_for(renderer: &mut dyn Renderer, icon: &Svg) -> Option<SvgId> {
+    let id = renderer.register_svg(icon.name, icon.data);
     if id.is_none() {
         WARNED.with_borrow_mut(|w| {
             if w.insert(icon.name) {
@@ -49,14 +49,14 @@ fn id_for(renderer: &mut dyn Renderer, icon: &Icon) -> Option<IconId> {
     id
 }
 
-pub fn shift_id(renderer: &mut dyn Renderer) -> Option<IconId> {
+pub fn shift_id(renderer: &mut dyn Renderer) -> Option<SvgId> {
     id_for(renderer, &ICON_SHIFT)
 }
 
-pub fn backspace_id(renderer: &mut dyn Renderer) -> Option<IconId> {
+pub fn backspace_id(renderer: &mut dyn Renderer) -> Option<SvgId> {
     id_for(renderer, &ICON_BACKSPACE)
 }
 
-pub fn enter_id(renderer: &mut dyn Renderer) -> Option<IconId> {
+pub fn enter_id(renderer: &mut dyn Renderer) -> Option<SvgId> {
     id_for(renderer, &ICON_ENTER)
 }

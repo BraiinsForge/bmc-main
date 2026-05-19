@@ -1056,13 +1056,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bmc-icon-compiler"
-version = "0.1.0"
-dependencies = [
- "usvg 0.45.1",
-]
-
-[[package]]
 name = "bmc-ipc"
 version = "0.1.0"
 dependencies = [
@@ -1283,8 +1276,8 @@ name = "bmc-render"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bmc-icon-compiler",
  "bmc-render-skin",
+ "bmc-svg-compiler",
  "bmc-wasm-protocol",
  "cosmic-text",
  "femtovg",
@@ -1316,8 +1309,8 @@ dependencies = [
 name = "bmc-render-macros"
 version = "0.1.0"
 dependencies = [
- "bmc-icon-compiler",
  "bmc-render-skin",
+ "bmc-svg-compiler",
  "bmc-wasm-protocol",
  "gltf",
  "image",
@@ -1472,6 +1465,13 @@ dependencies = [
  "tracing-subscriber",
  "walkdir",
  "zip",
+]
+
+[[package]]
+name = "bmc-svg-compiler"
+version = "0.1.0"
+dependencies = [
+ "usvg 0.45.1",
 ]
 
 [[package]]

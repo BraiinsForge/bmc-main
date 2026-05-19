@@ -5,11 +5,11 @@
 
 pub mod animation;
 pub mod colors;
-pub mod icon;
 pub mod ids;
 pub mod mesh;
 pub mod nodes;
 pub mod params;
+pub mod svg;
 pub mod system;
 pub mod tags;
 pub mod text;
@@ -18,10 +18,10 @@ pub mod versioned_snapshot;
 
 pub use animation::*;
 pub use colors::*;
-pub use icon::*;
 pub use ids::*;
 pub use mesh::*;
 pub use nodes::*;
+pub use svg::*;
 pub use tags::*;
 pub use text::*;
 pub use version::*;

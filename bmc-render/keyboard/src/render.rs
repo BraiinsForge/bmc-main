@@ -2,7 +2,7 @@
 
 //! Keyboard rendering — key grid, visual feedback, layout computation.
 
-use bmc_wasm_protocol::IconId;
+use bmc_wasm_protocol::SvgId;
 use bmc_wasm_protocol::colors::Color;
 
 use bmc_render::interaction::Rect;
@@ -475,14 +475,14 @@ fn render_key_content(
 ) {
     let icon_size = scale.px(28.0);
 
-    // Icon keys: shift/backspace/enter with empty labels get SVG icons.
+    // SVG keys: shift/backspace/enter with empty labels get SVG icons.
     // If the label is non-empty (e.g. "=\\<" on symbols layer), render text instead.
     //
     // If icon registration returns `None` (parse failure / ID-space exhaustion)
     // the function key renders blank — the empty `key.label` falls through to
     // the text branch which draws nothing. See `icons::id_for` for the
     // log-once and the BDK-458 follow-up on the registry-lifecycle side.
-    let icon: Option<IconId> = match key.code {
+    let icon: Option<SvgId> = match key.code {
         KeyCode::Shift if key.label.is_empty() => icons::shift_id(ctx.renderer),
         KeyCode::Backspace if key.label.is_empty() => icons::backspace_id(ctx.renderer),
         KeyCode::Enter if key.label.is_empty() => icons::enter_id(ctx.renderer),
@@ -505,7 +505,7 @@ fn render_key_content(
         } else {
             fg
         };
-        ctx.renderer.draw_icon(
+        ctx.renderer.draw_svg(
             bounds.x + (bounds.w - icon_size) / 2.0,
             bounds.y + (bounds.h - icon_size) / 2.0,
             icon_size,

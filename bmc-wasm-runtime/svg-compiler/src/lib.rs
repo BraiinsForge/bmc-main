@@ -2,10 +2,10 @@
 
 //! Shared SVG-to-binary icon compiler.
 //!
-//! Used by both the `include_icon!` proc macro (compile-time) and the
-//! host runtime `build.rs` (for built-in icons).
+//! Used by both the `include_svg!` proc macro (compile-time)
+//! and the host runtime `build.rs` (for built-in icons).
 
-// ── Icon binary format ──────────────────────────────────────────────
+// ── Svg binary format ──────────────────────────────────────────────
 //
 // [viewbox_w: f32][viewbox_h: f32][path_count: u16]
 //   for each path:

@@ -374,7 +374,7 @@ macro_rules! button {
     };
 
     // Terminal — all fields consumed, build the node.
-    // `icon:` accepts either `IconId` or `Option<IconId>` (std provides
+    // `icon:` accepts either `SvgId` or `Option<SvgId>` (std provides
     // `From<T> for Option<T>`, so `.into()` covers both).
     (@acc [$id:expr] [$label:expr] [style: $s:expr] [size: $sz:expr] [icon: $i:expr] [disabled: $d:expr] [skin: $sk:expr] $(,)?) => {
         $crate::make_button($crate::__macro_string_from($id), $crate::__macro_string_from($label), $s, $sz, $i.into(), $d, $sk)

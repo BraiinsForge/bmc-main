@@ -21,9 +21,9 @@ use std::vec::Vec;
 use bmc_wasm_protocol::{
     AnimProperty, BitmapId, Color, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON,
     DRAW_MESH, DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED,
-    DRAW_SPHERE, DRAW_TEXT, Easing, IconId, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS,
-    NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR,
-    NODE_ROW, NODE_SCROLL, NODE_SPACER,
+    DRAW_SPHERE, DRAW_TEXT, Easing, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS, NODE_CENTER,
+    NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW,
+    NODE_SCROLL, NODE_SPACER, SvgId,
 };
 
 use crate::PropsFieldValue;
@@ -96,8 +96,8 @@ impl TreeBuffer {
         self.data.extend_from_slice(&c.to_u32().to_le_bytes());
     }
 
-    fn write_icon_id(&mut self, id: Option<IconId>) {
-        self.write_u16(id.map_or(0, IconId::to_wire));
+    fn write_icon_id(&mut self, id: Option<SvgId>) {
+        self.write_u16(id.map_or(0, SvgId::to_wire));
     }
 
     fn write_bitmap_id(&mut self, id: Option<BitmapId>) {
@@ -170,7 +170,7 @@ impl TreeBuffer {
         label: &str,
         style: ButtonStyle,
         size: ButtonSize,
-        icon_id: Option<IconId>,
+        icon_id: Option<SvgId>,
         disabled: bool,
     ) {
         self.write_u8(NODE_BUTTON);
@@ -423,14 +423,14 @@ pub enum Draw {
     },
     /// Rotate any draw command around its center
     Rotated { angle: f32, inner: Box<Draw> },
-    /// Icon at absolute local position
-    Icon {
+    /// Svg at absolute local position
+    Svg {
         x: f32,
         y: f32,
         w: f32,
         h: f32,
         color: Color,
-        icon_id: Option<IconId>,
+        icon_id: Option<SvgId>,
         anti_alias: bool,
     },
     /// Bitmap (raster image) at absolute local position
@@ -561,7 +561,7 @@ impl Draw {
         }
     }
 
-    /// Icon at local position within canvas.
+    /// Svg at local position within canvas.
     ///
     /// On first call for a given icon, registers its compiled data with the host.
     /// Subsequent calls reuse the cached host ID — zero per-frame overhead.
@@ -569,9 +569,9 @@ impl Draw {
     /// Use `TRANSPARENT` (0) as color to render with original SVG colors,
     /// or pass a color to tint the entire icon.
     #[must_use]
-    pub fn icon(x: f32, y: f32, w: f32, h: f32, icon_data: &Icon, color: Color) -> Self {
+    pub fn svg(x: f32, y: f32, w: f32, h: f32, icon_data: &Svg, color: Color) -> Self {
         let icon_id = ensure_registered(icon_data);
-        Self::Icon {
+        Self::Svg {
             x,
             y,
             w,
@@ -586,15 +586,15 @@ impl Draw {
     ///
     /// Use `ICON_CLOSE` or other `ICON_*` constants from the protocol crate.
     #[must_use]
-    pub fn icon_builtin(
+    pub fn svg_builtin(
         x: f32,
         y: f32,
         w: f32,
         h: f32,
-        icon_id: impl Into<Option<IconId>>,
+        icon_id: impl Into<Option<SvgId>>,
         color: Color,
     ) -> Self {
-        Self::Icon {
+        Self::Svg {
             x,
             y,
             w,
@@ -608,7 +608,7 @@ impl Draw {
     /// Enable anti-aliasing on this draw command (currently only affects icons).
     #[must_use]
     pub fn with_anti_alias(mut self) -> Self {
-        if let Self::Icon {
+        if let Self::Svg {
             ref mut anti_alias, ..
         } = self
         {
@@ -994,7 +994,7 @@ pub enum Node {
         label: String,
         style: ButtonStyle,
         size: ButtonSize,
-        icon_id: Option<IconId>,
+        icon_id: Option<SvgId>,
         disabled: bool,
         skin: Option<ButtonSkin>,
     },
@@ -1090,7 +1090,7 @@ pub fn make_button(
     label: String,
     style: ButtonStyle,
     size: ButtonSize,
-    icon_id: Option<IconId>,
+    icon_id: Option<SvgId>,
     disabled: bool,
     skin: Option<ButtonSkin>,
 ) -> Node {
@@ -1439,7 +1439,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*r);
             buf.write_color(*color);
         }
-        Draw::Icon {
+        Draw::Svg {
             x,
             y,
             w,

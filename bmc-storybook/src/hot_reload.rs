@@ -485,7 +485,7 @@ impl HotReloader {
         // pointers which call back through RENDERER_PTR.
         unsafe {
             type InitFn = fn(
-                fn(&str, &[u8]) -> Option<bmc_wasm_sdk::IconId>,
+                fn(&str, &[u8]) -> Option<bmc_wasm_sdk::SvgId>,
                 fn(&str, &[u8]) -> Option<bmc_wasm_sdk::BitmapId>,
                 fn(&str, &[u8]) -> Option<bmc_wasm_sdk::MeshId>,
                 fn(&str, &[u8]) -> Option<bmc_wasm_sdk::BitmapId>,

@@ -25,7 +25,7 @@ rgb.workspace = true
 taffy.workspace = true
 
 [build-dependencies]
-bmc-icon-compiler = { path = "../bmc-wasm-runtime/icon-compiler" }
+bmc-svg-compiler = { path = "../bmc-wasm-runtime/svg-compiler" }
 bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]

@@ -7,7 +7,7 @@
 
 //! Proc macros for compiling and embedding assets at build time.
 //!
-//! Provides `include_icon!`, `include_bitmap!`, `include_mesh!`,
+//! Provides `include_svg!`, `include_bitmap!`, `include_mesh!`,
 //! `include_nine_patch!`, `include_skin!`, and `include_audio!`.
 
 mod mesh;
@@ -216,14 +216,14 @@ fn include_mesh_impl(path_lit: &LitStr) -> syn::Result<proc_macro2::TokenStream>
 /// # Usage
 ///
 /// ```ignore
-/// const STAR: Icon = include_icon!("assets/star.svg");
+/// const STAR: Svg = include_svg!("assets/star.svg");
 /// ```
 ///
 /// The path is resolved relative to the crate's `CARGO_MANIFEST_DIR`,
 /// with fallback to parent directories for cross-crate story files.
 /// Cargo tracks the SVG file for recompilation when it changes.
 #[proc_macro]
-pub fn include_icon(input: TokenStream) -> TokenStream {
+pub fn include_svg(input: TokenStream) -> TokenStream {
     let path_lit = parse_macro_input!(input as LitStr);
     let rel_path = path_lit.value();
 
@@ -233,7 +233,7 @@ pub fn include_icon(input: TokenStream) -> TokenStream {
     let svg_data = std::fs::read_to_string(&full_path)
         .unwrap_or_else(|e| panic!("failed to read SVG `{}`: {e}", full_path.display()));
 
-    let compiled = bmc_icon_compiler::compile_svg(&svg_data);
+    let compiled = bmc_svg_compiler::compile_svg(&svg_data);
     let name = asset_tag(&full_path);
 
     // Emit const-compatible expression.
@@ -241,7 +241,7 @@ pub fn include_icon(input: TokenStream) -> TokenStream {
     let expanded = quote! {
         {
             const _TRACK: &[u8] = include_bytes!(#abs_path);
-            bmc_wasm_sdk::Icon { data: &[#(#compiled),*], name: #name }
+            bmc_wasm_sdk::Svg { data: &[#(#compiled),*], name: #name }
         }
     };
 

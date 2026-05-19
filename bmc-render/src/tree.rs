@@ -122,13 +122,13 @@ pub enum DrawCommand {
         r: f32,
         color: Color,
     },
-    Icon {
+    Svg {
         x: f32,
         y: f32,
         w: f32,
         h: f32,
         color: Color,
-        icon_id: Option<IconId>,
+        icon_id: Option<SvgId>,
         anti_alias: bool,
     },
     Bitmap {
@@ -233,7 +233,7 @@ pub enum TreeNode {
         label: String,
         style: u8,
         size: u8,
-        icon_id: Option<IconId>,
+        icon_id: Option<SvgId>,
         disabled: bool,
         skin: Option<ButtonSkinData>,
     },
@@ -350,9 +350,9 @@ impl<'a> TreeReader<'a> {
         Ok(f32::from_bits(self.read_u32()?))
     }
 
-    /// Decode an `Option<IconId>`. Wire zero lifts to `None`.
-    fn read_icon_id(&mut self) -> Result<Option<IconId>> {
-        Ok(IconId::from_wire(self.read_u16()?))
+    /// Decode an `Option<SvgId>`. Wire zero lifts to `None`.
+    fn read_icon_id(&mut self) -> Result<Option<SvgId>> {
+        Ok(SvgId::from_wire(self.read_u16()?))
     }
 
     /// Decode an `Option<BitmapId>`. Wire zero lifts to `None`.
@@ -683,7 +683,7 @@ impl<'a> TreeReader<'a> {
                 let color = Color::from_raw(self.read_u32()?);
                 let icon_id = self.read_icon_id()?;
                 let anti_alias = self.read_u8()? != 0;
-                Ok(DrawCommand::Icon {
+                Ok(DrawCommand::Svg {
                     x,
                     y,
                     w,
@@ -1022,7 +1022,7 @@ pub(crate) struct ButtonContext {
     label: String,
     style: u8,
     size: u8,
-    icon_id: Option<IconId>,
+    icon_id: Option<SvgId>,
     disabled: bool,
     skin: Option<ButtonSkinData>,
 }

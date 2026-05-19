@@ -11,7 +11,7 @@
 //!
 //! - **Static asset** baked in at compile time (icons, UI bitmaps, sound
 //!   effects that ship with the widget): use `include_bitmap!` /
-//!   `include_icon!` / `include_mesh!` / `include_audio!` and the matching
+//!   `include_svg!` / `include_mesh!` / `include_audio!` and the matching
 //!   `ensure_*_registered` helper. The host dedups by the macro-emitted
 //!   tag, so repeated calls are free.
 //! - **Dynamic asset** whose bytes are fetched at runtime and change over
@@ -26,12 +26,12 @@
 //! coexist safely — eviction respects segment boundaries (`:`).
 //!
 //! Slots are wasm32-only. On native targets (storybook) they panic; static
-//! assets registered via `Bitmap`/`Icon`/`Mesh`/`Audio` cover the storybook
+//! assets registered via `Bitmap`/`Svg`/`Mesh`/`Audio` cover the storybook
 //! use case.
 
 #![cfg(target_arch = "wasm32")]
 
-use bmc_wasm_protocol::{AudioId, BitmapId, IconId, MeshId};
+use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, SvgId};
 
 use crate::host;
 
@@ -91,9 +91,9 @@ define_slot! {
 
 define_slot! {
     /// Slot for a dynamic icon (compact binary SVG-path representation
-    /// from the `include_icon!` macro's wire format).
-    IconSlot => IconId,
-    |name, data| host::register_icon(name, data)
+    /// from the `include_svg!` macro's wire format).
+    IconSlot => SvgId,
+    |name, data| host::register_svg(name, data)
 }
 
 define_slot! {

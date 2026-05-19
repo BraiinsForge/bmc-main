@@ -8,7 +8,7 @@
 
 // Re-export from protocol — single source of truth for wire-format enums
 #[cfg(target_arch = "wasm32")]
-use bmc_wasm_protocol::{AudioId, BitmapId, IconId, MeshId};
+use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, SvgId};
 pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
 
 // ============================================================================
@@ -57,8 +57,8 @@ mod ffi {
         fn host_get_touch_click(key_ptr: *const u8, key_len: u32, out_ptr: *mut u8) -> i32;
         fn host_get_touch_drag(key_ptr: *const u8, key_len: u32, out_ptr: *mut u8) -> i32;
 
-        // Icon registration. The host dedups by tag.
-        pub(super) fn host_register_icon(
+        // Svg registration. The host dedups by tag.
+        pub(super) fn host_register_svg(
             tag_ptr: *const u8,
             tag_len: u32,
             data_ptr: *const u8,
@@ -201,9 +201,9 @@ mod ffi {
     /// Wire `0` lifts to `None`.
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
-    pub fn register_icon(tag: &str, data: &[u8]) -> Option<IconId> {
-        IconId::from_wire(unsafe {
-            host_register_icon(
+    pub fn register_svg(tag: &str, data: &[u8]) -> Option<SvgId> {
+        SvgId::from_wire(unsafe {
+            host_register_svg(
                 tag.as_ptr(),
                 tag.len() as u32,
                 data.as_ptr(),

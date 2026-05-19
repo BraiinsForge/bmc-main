@@ -12,16 +12,16 @@ use std::num::NonZeroU32;
 
 use anyhow::Result;
 use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{BitmapId, IconId, MeshId};
+use bmc_wasm_protocol::{BitmapId, MeshId, SvgId};
 use cosmic_text::fontdb;
 use femtovg::renderer::OpenGl;
 use femtovg::{Canvas, FontId, Paint, Path, RenderTarget};
 use glow::HasContext;
 
 use super::bitmap::BitmapRegistry;
-use super::icons::IconRegistry;
 use super::mesh::{MeshDrawArgs, MeshRenderer};
 use super::sphere::SphereRenderer;
+use super::svg::SvgRegistry;
 use super::text::{ParagraphLayoutCache, to_femtovg_color};
 use crate::renderer::Renderer;
 use crate::tree::{SpanData, TextAlign, TextStyle};
@@ -49,7 +49,7 @@ pub struct FemtoVgRenderer {
     font_fallback: FontId,
     font_system: cosmic_text::FontSystem,
     paragraph_cache: ParagraphLayoutCache,
-    icon_registry: IconRegistry,
+    icon_registry: SvgRegistry,
     bitmap_registry: BitmapRegistry,
     sphere: Option<SphereRenderer>,
     /// `BitmapId` currently bound as the sphere's source texture. Used to
@@ -205,7 +205,7 @@ impl FemtoVgRenderer {
         db.load_font_data(FONT_FALLBACK.to_vec());
         let font_system = cosmic_text::FontSystem::new_with_locale_and_db("en-US".into(), db);
 
-        let mut icon_registry = IconRegistry::new();
+        let mut icon_registry = SvgRegistry::new();
         icon_registry.register_builtins();
 
         Ok(Self {
@@ -258,7 +258,7 @@ impl FemtoVgRenderer {
     pub fn drop_all(&mut self) {
         self.release_gpu_assets();
         self.sphere_bitmap_id = None;
-        self.icon_registry = IconRegistry::new();
+        self.icon_registry = SvgRegistry::new();
         self.icon_registry.register_builtins();
     }
 
@@ -534,22 +534,22 @@ impl Renderer for FemtoVgRenderer {
 
     // -- Icons --
 
-    fn register_icon(&mut self, tag: &str, data: &[u8]) -> Option<IconId> {
+    fn register_svg(&mut self, tag: &str, data: &[u8]) -> Option<SvgId> {
         self.icon_registry.register(tag, data)
     }
 
-    fn draw_icon(
+    fn draw_svg(
         &mut self,
         x: f32,
         y: f32,
         w: f32,
         h: f32,
         color: Color,
-        icon_id: IconId,
+        icon_id: SvgId,
         anti_alias: bool,
     ) {
         if let Some(icon) = self.icon_registry.get(icon_id) {
-            super::icons::draw_icon(&mut self.canvas, icon, x, y, w, h, color, anti_alias);
+            super::svg::draw_svg(&mut self.canvas, icon, x, y, w, h, color, anti_alias);
         }
     }
 

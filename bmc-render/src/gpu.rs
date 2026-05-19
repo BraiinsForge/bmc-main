@@ -3,10 +3,10 @@
 //! GPU-accelerated rendering backend (FemtoVG + cosmic-text).
 
 pub mod bitmap;
-pub mod icons;
 pub mod mesh;
 mod renderer;
 mod sphere;
+pub mod svg;
 pub mod text;
 
 pub mod builtin_icons {

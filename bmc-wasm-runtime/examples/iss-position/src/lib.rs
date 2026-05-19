@@ -58,7 +58,7 @@ fn globe_zoom_to_camera(zoom: f32) -> f32 {
 /// - lower = snappier
 /// - higher = smoother
 const GLOBE_SMOOTH_MS: f64 = 300.0;
-const ISS_ICON: Icon = include_icon!("assets/icon-iss.svg");
+const ISS_ICON: Svg = include_svg!("assets/icon-iss.svg");
 
 const MARKET_COLOR: Color = BLUE_70;
 const ORBIT_COLOR: Color = MARKET_COLOR.with_alpha(0.8);
@@ -766,7 +766,7 @@ fn map_panel(data: &IssData, delta_ms: u32) -> Node {
     let cy = MAP_H / 2.0;
     draws.push(Draw::circle(cx, cy, MARKER_GLOW_R, MARKER_GLOW_COLOR));
     draws.push(Draw::circle(cx, cy, MARKER_SOLID_R, MARKET_COLOR));
-    draws.push(Draw::icon(
+    draws.push(Draw::svg(
         cx - MARKER_SIZE / 2.0,
         cy - MARKER_SIZE / 2.0,
         MARKER_SIZE,

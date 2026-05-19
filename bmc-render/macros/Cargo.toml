@@ -7,8 +7,8 @@ edition = "2024"
 proc-macro = true
 
 [dependencies]
-bmc-icon-compiler = { path = "../../bmc-wasm-runtime/icon-compiler" }
 bmc-render-skin = { path = "../skin" }
+bmc-svg-compiler = { path = "../../bmc-wasm-runtime/svg-compiler" }
 bmc-wasm-protocol = { path = "../../bmc-wasm-runtime/protocol" }
 gltf = { workspace = true, features = ["extras"] }
 image = { workspace = true, default-features = false, features = ["png"] }

@@ -1,17 +1,17 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! Icon registry — parses compact binary icon data into FemtoVG paths.
+//! Svg registry — parses compact binary icon data into FemtoVG paths.
 //!
-//! Icons are registered once (on first use from WASM) and persist for the
-//! runtime lifetime. Each registered icon gets an opaque `u16` ID.
+//! Icons are registered once (on first use from WASM) and persist
+//! for the runtime lifetime. Each registered icon gets an opaque `u16` ID.
 
 use std::collections::HashMap;
 use std::fmt;
 
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
-    ICON_FLAG_EVENODD, ICON_FLAG_HAS_FILL, ICON_FLAG_HAS_STROKE, ICON_OP_CLOSE, ICON_OP_CUBIC_TO,
-    ICON_OP_LINE_TO, ICON_OP_MOVE_TO, ICON_OP_QUAD_TO, ICON_RESERVED_MIN, IconId,
+    SVG_FLAG_EVENODD, SVG_FLAG_HAS_FILL, SVG_FLAG_HAS_STROKE, SVG_OP_CLOSE, SVG_OP_CUBIC_TO,
+    SVG_OP_LINE_TO, SVG_OP_MOVE_TO, SVG_OP_QUAD_TO, SVG_RESERVED_MIN, SvgId,
 };
 use femtovg::{FillRule, Paint, Path};
 
@@ -30,7 +30,7 @@ pub struct IconPath {
 
 /// A fully parsed icon ready for rendering.
 #[expect(missing_debug_implementations)]
-pub struct RegisteredIcon {
+pub struct RegisteredSvg {
     pub paths: Vec<IconPath>,
     pub viewbox_w: f32,
     pub viewbox_h: f32,
@@ -38,24 +38,24 @@ pub struct RegisteredIcon {
 
 /// Registry mapping opaque IDs to parsed FemtoVG icon data.
 ///
-/// User registrations are deduped by tag: re-registering the same tag returns
-/// the cached ID without re-parsing.
-pub struct IconRegistry {
-    icons: HashMap<IconId, RegisteredIcon>,
-    by_tag: HashMap<String, IconId>,
+/// User registrations are deduped by tag: re-registering
+/// the same tag returns the cached ID without re-parsing.
+pub struct SvgRegistry {
+    icons: HashMap<SvgId, RegisteredSvg>,
+    by_tag: HashMap<String, SvgId>,
     next_id: u16,
 }
 
-impl fmt::Debug for IconRegistry {
+impl fmt::Debug for SvgRegistry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("IconRegistry")
+        f.debug_struct("SvgRegistry")
             .field("count", &self.icons.len())
             .field("next_id", &self.next_id)
             .finish_non_exhaustive()
     }
 }
 
-impl IconRegistry {
+impl SvgRegistry {
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -65,26 +65,27 @@ impl IconRegistry {
         }
     }
 
-    /// Parse binary icon data and register it under `tag`. Idempotent: a second
-    /// call with the same tag returns the cached ID without re-parsing.
+    /// Parse binary icon data and register it under `tag`.
+    /// Idempotent: a second call with the same tag returns
+    /// the cached ID without re-parsing.
     ///
-    /// The counter only advances on successful parse — failed registrations
-    /// don't burn an ID.
+    /// The counter only advances on successful parse
+    /// — failed registrations don't burn an ID.
     ///
-    /// Returns `None` once user-icon allocation reaches `ICON_RESERVED_MIN`,
+    /// Returns `None` once user-icon allocation reaches `SVG_RESERVED_MIN`,
     /// to avoid colliding with builtin/dev icon IDs that share this map.
-    pub fn register(&mut self, tag: &str, data: &[u8]) -> Option<IconId> {
+    pub fn register(&mut self, tag: &str, data: &[u8]) -> Option<SvgId> {
         if let Some(&id) = self.by_tag.get(tag) {
             return Some(id);
         }
-        if self.next_id >= ICON_RESERVED_MIN {
+        if self.next_id >= SVG_RESERVED_MIN {
             tracing::error!(
-                "user icon registry exhausted at 0x{:04X} (reserved range starts at 0x{ICON_RESERVED_MIN:04X})",
+                "user icon registry exhausted at 0x{:04X} (reserved range starts at 0x{SVG_RESERVED_MIN:04X})",
                 self.next_id,
             );
             return None;
         }
-        let icon = match parse_icon(data) {
+        let icon = match parse_svg(data) {
             Ok(i) => i,
             Err(e) => {
                 tracing::error!("failed to parse icon data ({tag}): {e}");
@@ -92,15 +93,15 @@ impl IconRegistry {
             }
         };
 
-        let id = IconId::alloc(&mut self.next_id);
+        let id = SvgId::alloc(&mut self.next_id);
         self.icons.insert(id, icon);
         self.by_tag.insert(tag.to_owned(), id);
         Some(id)
     }
 
     /// Parse binary icon data and register it with an explicit ID.
-    pub fn register_with_id(&mut self, id: IconId, data: &[u8]) {
-        match parse_icon(data) {
+    pub fn register_with_id(&mut self, id: SvgId, data: &[u8]) {
+        match parse_svg(data) {
             Ok(icon) => {
                 self.icons.insert(id, icon);
             }
@@ -121,16 +122,16 @@ impl IconRegistry {
     }
 
     #[must_use]
-    pub fn get(&self, id: IconId) -> Option<&RegisteredIcon> {
+    pub fn get(&self, id: SvgId) -> Option<&RegisteredSvg> {
         self.icons.get(&id)
     }
 
-    /// Evict a tag-registered icon. Returns `true` if a tag was found and
-    /// removed. Built-in icons (registered via `register_with_id`, no tag)
-    /// are unaffected.
+    /// Evict a tag-registered icon. Returns `true` if a tag was found
+    /// and removed. Built-in icons (registered via `register_with_id`,
+    /// no tag) are unaffected.
     ///
-    /// IDs are not recycled — registering a fresh tag after eviction
-    /// allocates a new ID via `next_id`.
+    /// IDs are not recycled — registering a fresh tag
+    /// after eviction allocates a new ID via `next_id`.
     pub fn evict(&mut self, tag: &str) -> bool {
         let Some(id) = self.by_tag.remove(tag) else {
             return false;
@@ -138,8 +139,8 @@ impl IconRegistry {
         self.icons.remove(&id).is_some()
     }
 
-    /// Evict every tag matching `prefix` at segment boundaries (the tag is
-    /// either exactly `prefix` or a descendant under it).
+    /// Evict every tag matching `prefix` at segment boundaries.
+    /// The tag is either exactly `prefix` or a descendant under it.
     /// Returns the number of tags removed.
     pub fn evict_prefix(&mut self, prefix: &str) -> usize {
         let tags: Vec<String> = self
@@ -163,9 +164,9 @@ impl IconRegistry {
 /// `color == TRANSPARENT` → use original SVG colors.
 /// `color != TRANSPARENT` → tint all fills/strokes with the given color.
 #[expect(clippy::too_many_arguments)]
-pub fn draw_icon(
+pub fn draw_svg(
     canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
-    icon: &RegisteredIcon,
+    icon: &RegisteredSvg,
     x: f32,
     y: f32,
     w: f32,
@@ -213,7 +214,7 @@ pub fn draw_icon(
 
 // ── Binary format parsing ───────────────────────────────────────────
 
-fn parse_icon(data: &[u8]) -> anyhow::Result<RegisteredIcon> {
+fn parse_svg(data: &[u8]) -> anyhow::Result<RegisteredSvg> {
     let mut r = IconReader { data, pos: 0 };
 
     let viewbox_w = r.read_f32()?;
@@ -225,7 +226,7 @@ fn parse_icon(data: &[u8]) -> anyhow::Result<RegisteredIcon> {
         paths.push(read_icon_path(&mut r)?);
     }
 
-    Ok(RegisteredIcon {
+    Ok(RegisteredSvg {
         paths,
         viewbox_w,
         viewbox_h,
@@ -234,9 +235,9 @@ fn parse_icon(data: &[u8]) -> anyhow::Result<RegisteredIcon> {
 
 fn read_icon_path(r: &mut IconReader<'_>) -> anyhow::Result<IconPath> {
     let flags = r.read_u8()?;
-    let has_fill = flags & ICON_FLAG_HAS_FILL != 0;
-    let has_stroke = flags & ICON_FLAG_HAS_STROKE != 0;
-    let is_evenodd = flags & ICON_FLAG_EVENODD != 0;
+    let has_fill = flags & SVG_FLAG_HAS_FILL != 0;
+    let has_stroke = flags & SVG_FLAG_HAS_STROKE != 0;
+    let is_evenodd = flags & SVG_FLAG_EVENODD != 0;
 
     let fill_color = if has_fill { Some(r.read_u32()?) } else { None };
 
@@ -256,24 +257,24 @@ fn read_icon_path(r: &mut IconReader<'_>) -> anyhow::Result<IconPath> {
     for _ in 0..op_count {
         let op = r.read_u8()?;
         match op {
-            ICON_OP_MOVE_TO => {
+            SVG_OP_MOVE_TO => {
                 let x = r.read_f32()?;
                 let y = r.read_f32()?;
                 path.move_to(x, y);
             }
-            ICON_OP_LINE_TO => {
+            SVG_OP_LINE_TO => {
                 let x = r.read_f32()?;
                 let y = r.read_f32()?;
                 path.line_to(x, y);
             }
-            ICON_OP_QUAD_TO => {
+            SVG_OP_QUAD_TO => {
                 let cx = r.read_f32()?;
                 let cy = r.read_f32()?;
                 let x = r.read_f32()?;
                 let y = r.read_f32()?;
                 path.quad_to(cx, cy, x, y);
             }
-            ICON_OP_CUBIC_TO => {
+            SVG_OP_CUBIC_TO => {
                 let cx1 = r.read_f32()?;
                 let cy1 = r.read_f32()?;
                 let cx2 = r.read_f32()?;
@@ -282,7 +283,7 @@ fn read_icon_path(r: &mut IconReader<'_>) -> anyhow::Result<IconPath> {
                 let y = r.read_f32()?;
                 path.bezier_to(cx1, cy1, cx2, cy2, x, y);
             }
-            ICON_OP_CLOSE => {
+            SVG_OP_CLOSE => {
                 path.close();
             }
             _ => anyhow::bail!("unknown icon path op: 0x{op:02x}"),
@@ -356,7 +357,7 @@ mod tests {
 
     #[test]
     fn evict_removes_tag_and_id() {
-        let mut reg = IconRegistry::new();
+        let mut reg = SvgRegistry::new();
         let data = minimal_icon();
 
         let id = reg
@@ -372,7 +373,7 @@ mod tests {
 
     #[test]
     fn evict_prefix_only_touches_matching_tags() {
-        let mut reg = IconRegistry::new();
+        let mut reg = SvgRegistry::new();
         let data = minimal_icon();
 
         let id_a1 = reg.register("a:1", &data).expect("BUG: register a:1");
@@ -387,7 +388,7 @@ mod tests {
 
     #[test]
     fn evict_prefix_respects_segment_boundaries() {
-        let mut reg = IconRegistry::new();
+        let mut reg = SvgRegistry::new();
         let data = minimal_icon();
 
         let id_foo = reg.register("foo", &data).expect("BUG: register foo");
@@ -405,9 +406,9 @@ mod tests {
 
     #[test]
     fn evict_does_not_touch_register_with_id_entries() {
-        let mut reg = IconRegistry::new();
+        let mut reg = SvgRegistry::new();
         let data = minimal_icon();
-        let builtin = IconId::from_wire(ICON_RESERVED_MIN).expect("BUG: reserved id ctor");
+        let builtin = SvgId::from_wire(SVG_RESERVED_MIN).expect("BUG: reserved id ctor");
 
         reg.register_with_id(builtin, &data);
         let user = reg

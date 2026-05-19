@@ -22,10 +22,10 @@ const CHIME_WORK: Audio = include_audio!("assets/sounds/chime_work.wav");
 const CHIME_BREAK: Audio = include_audio!("assets/sounds/chime_break.wav");
 const CHIME_DONE: Audio = include_audio!("assets/sounds/chime_done.wav");
 
-const ICON_PLAY: Icon = include_icon!("assets/icons/start.svg");
-const ICON_PAUSE: Icon = include_icon!("assets/icons/pause.svg");
-const ICON_STOP: Icon = include_icon!("assets/icons/stop.svg");
-const ICON_SETTINGS: Icon = include_icon!("assets/icons/settings.svg");
+const ICON_PLAY: Svg = include_svg!("assets/icons/start.svg");
+const ICON_PAUSE: Svg = include_svg!("assets/icons/pause.svg");
+const ICON_STOP: Svg = include_svg!("assets/icons/stop.svg");
+const ICON_SETTINGS: Svg = include_svg!("assets/icons/settings.svg");
 
 // ── Constants ────────────────────────────────────────────────────────
 
