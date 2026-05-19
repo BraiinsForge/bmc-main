@@ -51,7 +51,9 @@ const DEBUG_COLORS: [Color; 6] = [
 pub use crate::components::notification::{
     measure_notification_banner, render_notification_banner,
 };
-pub use bmc_wasm_protocol::{CrossAlign, PropsData, TextAlign, TextOverflow, TextStyle};
+pub use bmc_wasm_protocol::{
+    CrossAlign, PropsData, TextAlign, TextOverflow, TextStyle, VerticalAlign,
+};
 
 /// A text span with style overrides
 #[derive(Clone, Debug)]

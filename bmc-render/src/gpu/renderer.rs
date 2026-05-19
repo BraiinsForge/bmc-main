@@ -24,7 +24,7 @@ use super::sphere::SphereRenderer;
 use super::svg::SvgRegistry;
 use super::text::{ParagraphLayoutCache, to_femtovg_color};
 use crate::renderer::Renderer;
-use crate::tree::{SpanData, TextAlign, TextStyle};
+use crate::tree::{SpanData, TextAlign, TextStyle, VerticalAlign};
 
 // Embed BraiinsSans fonts at compile time from the top-level assets directory.
 const FONT_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/BraiinsSans-Regular.otf");
@@ -411,6 +411,18 @@ impl Renderer for FemtoVgRenderer {
             self.font_regular
         };
         let size = style.size as f32;
+        // Translate the input anchor `y` to a top-of-glyph-box `y_top` so
+        // every downstream offset (outline ring, underline, strikethrough)
+        // works off a single reference. The renderer keeps `Baseline::Top`.
+        // `Baseline` uses an 0.8 ascender ratio — close enough for the
+        // deck's font set; switch to femtovg metrics if a future widget
+        // wants pixel-perfect alphabetic alignment.
+        let y_top = match style.vertical_align {
+            VerticalAlign::Top => y,
+            VerticalAlign::Center => y - size / 2.0,
+            VerticalAlign::Bottom => y - size,
+            VerticalAlign::Baseline => y - size * 0.8,
+        };
         let mut paint = Paint::color(to_femtovg_color(style.color.to_u32()));
         paint.set_font(&[font, self.font_fallback]);
         paint.set_font_size(size);
@@ -458,12 +470,12 @@ impl Renderer for FemtoVgRenderer {
                 ] {
                     let _ = self
                         .canvas
-                        .fill_text(draw_x + dx, y + dy, text, &outline_paint);
+                        .fill_text(draw_x + dx, y_top + dy, text, &outline_paint);
                 }
             }
         }
 
-        let _ = self.canvas.fill_text(draw_x, y, text, &paint);
+        let _ = self.canvas.fill_text(draw_x, y_top, text, &paint);
 
         // Decorations
         if style.underline || style.strikethrough {
@@ -474,11 +486,11 @@ impl Renderer for FemtoVgRenderer {
             let thickness = (size / 14.0).max(1.0);
 
             if style.underline {
-                let uy = y + size + 1.0;
+                let uy = y_top + size + 1.0;
                 self.fill_rect(draw_x, uy, width, thickness, style.color);
             }
             if style.strikethrough {
-                let sy = y + size / 2.0;
+                let sy = y_top + size / 2.0;
                 self.fill_rect(draw_x, sy, width, thickness, style.color);
             }
         }

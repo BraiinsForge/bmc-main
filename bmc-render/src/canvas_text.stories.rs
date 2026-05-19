@@ -75,3 +75,47 @@ fn alignment(c: &mut StoryCtx) {
         ),
     );
 }
+
+#[story]
+fn vertical_alignment(c: &mut StoryCtx) {
+    c.ui.header(
+        "Vertical Alignment",
+        "Top / Center / Bottom / Baseline anchored at the same `y`",
+    );
+
+    // Horizontal guide line at y=50. Each label is anchored at that y;
+    // visible position differs by vertical_align.
+    c.ui.div(
+        (480, 100),
+        canvas(
+            props!(width: 480, height: 100),
+            [
+                Draw::rect(0.0, 50.0, 480.0, 1.0, GRAY_80),
+                Draw::text(
+                    10.0,
+                    50.0,
+                    "Top",
+                    style!(size: 16, color: WHITE, valign: VerticalAlign::Top),
+                ),
+                Draw::text(
+                    130.0,
+                    50.0,
+                    "Center",
+                    style!(size: 16, color: BLUE_50, valign: VerticalAlign::Center),
+                ),
+                Draw::text(
+                    260.0,
+                    50.0,
+                    "Bottom",
+                    style!(size: 16, color: RED_50, valign: VerticalAlign::Bottom),
+                ),
+                Draw::text(
+                    380.0,
+                    50.0,
+                    "Baseline",
+                    style!(size: 16, color: GREEN_50, valign: VerticalAlign::Baseline),
+                ),
+            ],
+        ),
+    );
+}

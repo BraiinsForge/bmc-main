@@ -644,6 +644,7 @@ macro_rules! style {
     (@route $ts:expr, $p:expr, strikethrough: $v:expr) => { $ts.strikethrough = $v; };
     (@route $ts:expr, $p:expr, line_height: $v:expr) => { $ts.line_height = $v; };
     (@route $ts:expr, $p:expr, align: $v:expr) => { $ts.align = $v; };
+    (@route $ts:expr, $p:expr, valign: $v:expr) => { $ts.vertical_align = $v; };
     (@route $ts:expr, $p:expr, text_overflow: $v:expr) => { $ts.text_overflow = $v; };
     (@route $ts:expr, $p:expr, max_width: $v:expr) => { $ts.max_width = $v; };
     (@route $ts:expr, $p:expr, outline_color: $v:expr) => { $ts.outline_color = $v; };

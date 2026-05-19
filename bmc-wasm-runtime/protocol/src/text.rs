@@ -5,7 +5,7 @@
 use crate::colors::{Color, GRAY_10, TRANSPARENT};
 use crate::ids::BitmapId;
 
-/// Text alignment
+/// Horizontal text alignment.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TextAlign {
@@ -13,6 +13,32 @@ pub enum TextAlign {
     Left = 0,
     Center = 1,
     Right = 2,
+}
+
+/// Vertical anchor for the `(x, y)` of a single-line canvas-mode
+/// `Draw::text`. Maps directly onto the renderer's femtovg baselines.
+///
+/// `Top` (the default) keeps the historical behaviour: `y` is the top
+/// edge of the glyph box. `Center` puts the visual centre on `y` —
+/// matching the natural anchor for badges, date windows, callouts and
+/// anything else that wants the text centred on a layout anchor
+/// without offset-by-half-font-size fudges at the call site.
+///
+/// `Baseline` is the typographic baseline (alphabetic). Useful when
+/// aligning text to a rule drawn at the same `y`.
+///
+/// Note: this affects `Draw::text` (canvas mode) only. Multi-line
+/// paragraph text built via `text(...)` / `paragraph(...)` is
+/// positioned by the parent layout's cross-align, which the wider
+/// `Node` tree already handles.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum VerticalAlign {
+    #[default]
+    Top = 0,
+    Center = 1,
+    Bottom = 2,
+    Baseline = 3,
 }
 
 /// Cross-axis alignment for row/column containers.
@@ -98,7 +124,7 @@ pub enum TextOverflow {
     Ellipsis = 2,
 }
 
-/// Text style for paragraphs (24 bytes serialized)
+/// Text style for paragraphs (28 bytes serialized).
 #[derive(Clone, Copy, Debug)]
 pub struct TextStyle {
     pub size: u32,      // default: 16
@@ -110,9 +136,10 @@ pub struct TextStyle {
     pub strikethrough: bool,
     pub line_height: f32, // default: 1.4 (multiplier)
     pub align: TextAlign,
-    pub text_overflow: TextOverflow, // default: Wrap
-    pub outline_color: Color,        // default: TRANSPARENT (no outline)
-    pub outline_width: f32,          // default: 0.0 (no outline)
+    pub text_overflow: TextOverflow,   // default: Wrap
+    pub outline_color: Color,          // default: TRANSPARENT (no outline)
+    pub outline_width: f32,            // default: 0.0 (no outline)
+    pub vertical_align: VerticalAlign, // default: Top
 }
 
 impl Default for TextStyle {
@@ -130,15 +157,16 @@ impl Default for TextStyle {
             text_overflow: TextOverflow::Wrap,
             outline_color: TRANSPARENT,
             outline_width: 0.0,
+            vertical_align: VerticalAlign::Top,
         }
     }
 }
 
 impl TextStyle {
-    pub const SIZE: usize = 24;
+    pub const SIZE: usize = 28;
 
-    /// Serialize to 24 bytes:
-    /// [size: u32][color: u32][max_width: u32][flags: u32][outline_color: u32][outline_width: f32]
+    /// Serialize to 28 bytes:
+    /// [size: u32][color: u32][max_width: u32][flags: u32][outline_color: u32][outline_width: f32][flags2: u32]
     /// flags bits:
     ///   0-11:  weight (0-4095)
     ///   12-23: line_height × 100
@@ -147,6 +175,9 @@ impl TextStyle {
     ///   26:    strikethrough
     ///   27-28: align
     ///   29-30: text_overflow (0=wrap, 1=clip, 2=ellipsis)
+    /// flags2 bits:
+    ///   0-1:   vertical_align (0=top, 1=center, 2=bottom, 3=baseline)
+    ///   2-31:  reserved
     #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         let mut buf = [0_u8; Self::SIZE];
@@ -173,13 +204,15 @@ impl TextStyle {
             | strike_bit
             | align_bits
             | overflow_bits;
+        let flags2 = self.vertical_align as u32 & 0x3;
         buf[12..16].copy_from_slice(&flags.to_le_bytes());
         buf[16..20].copy_from_slice(&self.outline_color.to_u32().to_le_bytes());
         buf[20..24].copy_from_slice(&self.outline_width.to_le_bytes());
+        buf[24..28].copy_from_slice(&flags2.to_le_bytes());
         buf
     }
 
-    /// Deserialize from 24 bytes
+    /// Deserialize from 28 bytes
     #[must_use]
     pub fn from_bytes(data: &[u8]) -> Self {
         let size = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
@@ -189,6 +222,7 @@ impl TextStyle {
         let outline_color =
             Color::from_raw(u32::from_le_bytes([data[16], data[17], data[18], data[19]]));
         let outline_width = f32::from_le_bytes([data[20], data[21], data[22], data[23]]);
+        let flags2 = u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
 
         let weight = (flags & 0xFFF) as u16;
         // 12-bit value (max 4095) fits exactly in f32 mantissa (23 bits), no precision loss
@@ -208,6 +242,12 @@ impl TextStyle {
             2 => TextOverflow::Ellipsis,
             _ => TextOverflow::Wrap,
         };
+        let vertical_align = match flags2 & 0x3 {
+            1 => VerticalAlign::Center,
+            2 => VerticalAlign::Bottom,
+            3 => VerticalAlign::Baseline,
+            _ => VerticalAlign::Top,
+        };
 
         Self {
             size,
@@ -222,6 +262,7 @@ impl TextStyle {
             text_overflow,
             outline_color,
             outline_width,
+            vertical_align,
         }
     }
 }
@@ -354,5 +395,63 @@ impl PropsData {
             inset_bottom: f32::from_le_bytes([data[58], data[59], data[60], data[61]]),
             inset_left: f32::from_le_bytes([data[62], data[63], data[64], data[65]]),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_style_round_trips_default() {
+        let s = TextStyle::default();
+        let bytes = s.to_bytes();
+        let back = TextStyle::from_bytes(&bytes);
+        assert_eq!(back.vertical_align, VerticalAlign::Top);
+        assert_eq!(back.align, TextAlign::Left);
+    }
+
+    #[test]
+    fn text_style_round_trips_every_vertical_align() {
+        for variant in [
+            VerticalAlign::Top,
+            VerticalAlign::Center,
+            VerticalAlign::Bottom,
+            VerticalAlign::Baseline,
+        ] {
+            let s = TextStyle {
+                vertical_align: variant,
+                ..TextStyle::default()
+            };
+            let bytes = s.to_bytes();
+            let back = TextStyle::from_bytes(&bytes);
+            assert_eq!(back.vertical_align, variant);
+        }
+    }
+
+    #[test]
+    fn text_style_vertical_align_independent_of_other_fields() {
+        let s = TextStyle {
+            size: 32,
+            weight: 700,
+            italic: true,
+            underline: true,
+            strikethrough: true,
+            line_height: 1.6,
+            align: TextAlign::Right,
+            text_overflow: TextOverflow::Ellipsis,
+            vertical_align: VerticalAlign::Baseline,
+            ..TextStyle::default()
+        };
+        let back = TextStyle::from_bytes(&s.to_bytes());
+        assert_eq!(back.size, 32);
+        assert_eq!(back.weight, 700);
+        assert!(back.italic);
+        assert!(back.underline);
+        assert!(back.strikethrough);
+        assert!((back.line_height - 1.6).abs() < 0.01);
+        assert_eq!(back.align, TextAlign::Right);
+        assert_eq!(back.text_overflow, TextOverflow::Ellipsis);
+        assert_eq!(back.vertical_align, VerticalAlign::Baseline);
     }
 }
