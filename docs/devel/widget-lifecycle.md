@@ -1,8 +1,7 @@
 # Widget Lifecycle via `deck_widget_v1`
 
-This document describes the widget lifecycle event sent by the compositor over the `deck_widget_v1` Wayland protocol.
-It focuses on where lifecycle state comes from, when the compositor emits it, and what contract widget clients can rely
-on.
+This document describes the widget lifecycle event sent by the compositor over the `deck_widget_v1` Wayland protocol. It
+focuses on where lifecycle state comes from, when the compositor emits it, and what contract widget clients can rely on.
 
 For widget geometry, params, settings, and the initial configure batch, see
 [`widget-runtime-configuration.md`](widget-runtime-configuration.md). For how the WASM host uses lifecycle events to
@@ -28,13 +27,13 @@ do not care about lifecycle can ignore it.
 
 The protocol enum lives in `bmc-widget-protocol/protocol/deck-widget-v1.xml`.
 
-| Protocol state | Value | Meaning |
-| --- | ---: | --- |
-| `dormant` | 0 | Widget is off-screen and should not need a render target. |
-| `prepared` | 1 | Widget is an immediate scene-cycling neighbour and may be pre-rendered. |
-| `entering` | 2 | Widget is the drag-direction neighbour currently moving onto the screen. |
-| `visible` | 3 | Widget is the active on-screen widget while no scene drag is moving it out. |
-| `leaving` | 4 | Widget is the active widget currently moving off-screen during a drag. |
+| Protocol state | Value | Meaning                                                                     |
+| -------------- | ----: | --------------------------------------------------------------------------- |
+| `dormant`      |     0 | Widget is off-screen and should not need a render target.                   |
+| `prepared`     |     1 | Widget is an immediate scene-cycling neighbour and may be pre-rendered.     |
+| `entering`     |     2 | Widget is the drag-direction neighbour currently moving onto the screen.    |
+| `visible`      |     3 | Widget is the active on-screen widget while no scene drag is moving it out. |
+| `leaving`      |     4 | Widget is the active widget currently moving off-screen during a drag.      |
 
 The compositor only emits lifecycle for widgets that have a `deck_widget_surface_v1` surface. Widgets still receive the
 initial configure batch first; lifecycle is sent after the widget has an attached surface and the compositor has marked
@@ -142,13 +141,13 @@ flush boundary between them.
 
 The protocol documents these compositor-emitted transitions:
 
-| From | To |
-| --- | --- |
-| `Dormant` | `Prepared`, `Visible`, `Entering` |
-| `Prepared` | `Dormant`, `Visible`, `Entering` |
-| `Visible` | `Dormant`, `Prepared`, `Leaving` |
-| `Entering` | `Visible`, `Prepared`, `Dormant` |
-| `Leaving` | `Dormant`, `Prepared`, `Visible` |
+| From       | To                                |
+| ---------- | --------------------------------- |
+| `Dormant`  | `Prepared`, `Visible`, `Entering` |
+| `Prepared` | `Dormant`, `Visible`, `Entering`  |
+| `Visible`  | `Dormant`, `Prepared`, `Leaving`  |
+| `Entering` | `Visible`, `Prepared`, `Dormant`  |
+| `Leaving`  | `Dormant`, `Prepared`, `Visible`  |
 
 Clients should still tolerate repeated states and missing intermediate states. Process restarts, delayed connection,
 scene-list replacement, and client disconnects can make a widget's local history shorter than the compositor's scene

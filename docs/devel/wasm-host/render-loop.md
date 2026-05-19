@@ -35,21 +35,21 @@ There is no per-widget render thread. Heavy GPU state is shared in `SharedHost`:
 - `FemtoVgRenderer`;
 - `FontCache`.
 
-Each slot owns its own `WasmWidgetRuntime`, Wayland surface client, control socket, lifecycle state machine, and optional
-render target.
+Each slot owns its own `WasmWidgetRuntime`, Wayland surface client, control socket, lifecycle state machine, and
+optional render target.
 
 ## Lifecycle States
 
 The compositor sends `deck_widget_surface_v1.lifecycle` events. The host maps those protocol values to
 `bmc-wasm-host::lifecycle::LifecycleState`:
 
-| State | Has render target | May render | Continuous frame callbacks | Meaning |
-| --- | --- | --- | --- | --- |
-| `Dormant` | No | No | No | Off-screen. Keeps runtime state but owns no GPU export buffers. |
-| `Prepared` | Yes | Yes, when dirty | No | Immediate neighbour. Can pre-render one fresh frame. |
-| `Entering` | Yes | Yes, when dirty | No | Drag target entering the screen. Host avoids continuous animation here. |
-| `Visible` | Yes | Yes | Yes | Active on-screen widget. |
-| `Leaving` | Yes | Yes | Yes | Current widget leaving during a drag. |
+| State      | Has render target | May render      | Continuous frame callbacks | Meaning                                                                 |
+| ---------- | ----------------- | --------------- | -------------------------- | ----------------------------------------------------------------------- |
+| `Dormant`  | No                | No              | No                         | Off-screen. Keeps runtime state but owns no GPU export buffers.         |
+| `Prepared` | Yes               | Yes, when dirty | No                         | Immediate neighbour. Can pre-render one fresh frame.                    |
+| `Entering` | Yes               | Yes, when dirty | No                         | Drag target entering the screen. Host avoids continuous animation here. |
+| `Visible`  | Yes               | Yes             | Yes                        | Active on-screen widget.                                                |
+| `Leaving`  | Yes               | Yes             | Yes                        | Current widget leaving during a drag.                                   |
 
 The key host predicates are:
 
@@ -65,7 +65,8 @@ just because the guest runtime asks for the next frame.
 Each slot starts as `Dormant` with `render_target = None`.
 
 When a lifecycle event arrives, the slot updates its target state. If the new target has a render target and differs
-from the previous target, the slot marks its Wayland surface dirty so the host will render after applying the transition.
+from the previous target, the slot marks its Wayland surface dirty so the host will render after applying the
+transition.
 
 `LifecycleStateMachine::apply` is responsible for target ownership:
 
@@ -107,15 +108,15 @@ Dirty surface renders come from lifecycle changes, param updates, touch input, a
 
 When a slot is eligible, `WidgetSlot::render` does the GPU work:
 
-1. Clear the surface dirty flag.
-2. Ensure the slot has a current export buffer in its double-buffer state.
-3. Bind the shared scratch staging FBO for this slot's size.
-4. Normalize GL state before handing control to the runtime renderer.
-5. Begin a femtovg frame on the shared renderer.
-6. Call `runtime.with_renderer(..., |rt| rt.render(delta_ms))`.
-7. Flush femtovg.
-8. Blit from shared scratch into the slot's current export FBO.
-9. Finish GL work.
+01. Clear the surface dirty flag.
+02. Ensure the slot has a current export buffer in its double-buffer state.
+03. Bind the shared scratch staging FBO for this slot's size.
+04. Normalize GL state before handing control to the runtime renderer.
+05. Begin a femtovg frame on the shared renderer.
+06. Call `runtime.with_renderer(..., |rt| rt.render(delta_ms))`.
+07. Flush femtovg.
+08. Blit from shared scratch into the slot's current export FBO.
+09. Finish GL work.
 10. Export the current buffer metadata and swap to the next buffer slot.
 11. Submit the matching cached `wl_buffer` to the compositor.
 12. Flush the Wayland connection.
