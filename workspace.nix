@@ -563,7 +563,7 @@ let
 in
 {
   inherit commonDeps bmc deps makeRustflagsEnv wasmWidgetCatalog;
-  inherit (wasmWidgetsModule) wasmExamples wasmWidgets;
+  inherit (wasmWidgetsModule) wasmExamples wasmWidgetsBundle wasmWidgets;
   checks = frontend.checks;
   # Nested attrset of cross-built deck packages.
   #

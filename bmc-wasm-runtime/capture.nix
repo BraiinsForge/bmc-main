@@ -2,7 +2,7 @@
 #
 # Source-filtered to avoid recompilation when unrelated workspace crates change.
 # Wrapped with runtime deps (odiff, ffmpeg, mesa llvmpipe) for headless CI use.
-{ self, pkgs, commonDeps, profiles, wasmExamples }:
+{ pkgs, commonDeps, profiles, wasmExamples, wasmWidgetsBundle }:
 let
   lib = pkgs.lib;
   inherit (pkgs) ii;
@@ -80,5 +80,5 @@ let
 in
 {
   package = wrapped;
-  inherit unwrapped wasmExamples;
+  inherit unwrapped wasmExamples wasmWidgetsBundle;
 }

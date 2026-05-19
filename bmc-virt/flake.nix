@@ -554,7 +554,9 @@
               --no-link --print-out-paths)
 
             header "Building WASM widgets"
-            WASM_WIDGETS=$(${pkgs.nix}/bin/nix build -L "$GUEST_PKG_PREFIX.wasm-examples" \
+            WASM_EXAMPLES=$(${pkgs.nix}/bin/nix build -L "$GUEST_PKG_PREFIX.wasm-examples" \
+              --no-link --print-out-paths)
+            WASM_WIDGETS=$(${pkgs.nix}/bin/nix build -L "$GUEST_PKG_PREFIX.wasm-widgets" \
               --no-link --print-out-paths)
 
             header "Building console app (host-native)"
@@ -855,8 +857,10 @@
             mkdir -p "$TMP_GUEST_OVERLAY/usr/share/bmc/sounds"
             cp -a ${./data/sounds}/. "$TMP_GUEST_OVERLAY/usr/share/bmc/sounds/"
 
-            # Prebuilt WASM examples used by VM configs and harnesses.
+            # Prebuilt WASM bytes used by VM configs and harnesses
+            # — SDK examples plus production widgets, both flat in WASM_DIR.
             mkdir -p "$TMP_GUEST_OVERLAY${guestPaths.WASM_DIR}"
+            cp -a "$WASM_EXAMPLES"/. "$TMP_GUEST_OVERLAY${guestPaths.WASM_DIR}/"
             cp -a "$WASM_WIDGETS"/. "$TMP_GUEST_OVERLAY${guestPaths.WASM_DIR}/"
 
             # Fonts

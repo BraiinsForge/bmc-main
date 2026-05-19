@@ -34,9 +34,9 @@
         workspace = import ./workspace.nix { inherit self pkgs; };
         inherit (workspace) commonDeps bmc;
         capture = import ./bmc-wasm-runtime/capture.nix {
-          inherit self pkgs commonDeps;
+          inherit pkgs commonDeps;
           inherit (workspace.bmc) profiles;
-          inherit (workspace) wasmExamples;
+          inherit (workspace) wasmExamples wasmWidgetsBundle;
         };
         checks = import ./nix/checks.nix {
           inherit pkgs ty-bin capture;
@@ -139,6 +139,10 @@
             "bmc-shared/ii-net-drv/*"
             # Harness has its own formatter config (bmc-virt/harness/pyproject.toml)
             "bmc-virt/harness/**/*.py"
+            # yamlfmt canonicalises folded scalars to a single line (collapsing
+            # the readable multi-line `>-` form used for WORKSPACE_LINTS_IGNORE_PATHS).
+            # Skip entirely; CI YAML is stable enough to hand-format.
+            ".gitlab-ci.yml"
           ];
         };
 
@@ -156,6 +160,7 @@
         packages = workspace.packages // {
           wasm-capture = capture.package;
           wasm-examples = capture.wasmExamples;
+          wasm-widgets = capture.wasmWidgetsBundle;
         };
 
         apps.fmt-svg = {

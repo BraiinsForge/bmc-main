@@ -57,6 +57,12 @@ let
   # Not used for per-widget pipelines — touching anything in the examples workspace invalidates it.
   wasmExamples = wasmReleaseProfiles.wasmExamples.build.overrideAttrs wasmInstallOverrides;
 
+  # All production widgets (widgets-wasm/) in one *.wasm-blob tree.
+  # Mirror of `wasmExamples` for the production-widget workspace.
+  # Exposed as the `wasm-widgets` flake package;
+  # consumed by bmc-virt to populate the guest overlay's WASM_DIR alongside `wasm-examples`.
+  wasmWidgetsBundle = wasmReleaseProfiles.wasmWidgets.build.overrideAttrs wasmInstallOverrides;
+
   # Per-widget wasm derivation.
   # Picks the release profile that owns the widget's workspace,
   # so docker-spider narrows the src closure to that widget's crate.
@@ -126,5 +132,5 @@ let
     '';
 in
 {
-  inherit wasmExamples wasmWidgets thin host mkWasmWidget;
+  inherit wasmExamples wasmWidgetsBundle wasmWidgets thin host mkWasmWidget;
 }
