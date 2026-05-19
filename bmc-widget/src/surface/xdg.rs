@@ -4,7 +4,7 @@ use std::fmt;
 
 use anyhow::{Context, Result};
 use wayland_client::{
-    Connection, Dispatch, EventQueue, QueueHandle,
+    Connection, Dispatch, EventQueue, Proxy, QueueHandle,
     protocol::{wl_buffer, wl_compositor, wl_registry, wl_surface},
 };
 use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1;
@@ -13,7 +13,8 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 use crate::egl::DmaBufInfo;
 
 use super::common::{
-    PollOutcome, blocking_dispatch_impl, create_buffer_from_dmabuf, impl_common_dispatch,
+    BufferSlotMap, PollOutcome, ReleasedBufferSet, blocking_dispatch_impl,
+    create_buffer_from_dmabuf, drain_released_buffer_slots, impl_common_dispatch,
     invalidate_cached_wl_buffers, poll_dispatch, submit_buffer_to_surface,
 };
 use super::{WidgetEvent, WidgetSurface};
@@ -45,6 +46,15 @@ pub struct XdgSurfaceState {
     xdg_surface: Option<xdg_surface::XdgSurface>,
     xdg_toplevel: Option<xdg_toplevel::XdgToplevel>,
     configured: bool,
+    buffer_slots: BufferSlotMap,
+    released_buffers: ReleasedBufferSet,
+}
+
+impl XdgSurfaceState {
+    /// Drain slot ids released by the compositor.
+    pub fn drain_released_slots(&mut self) -> Vec<usize> {
+        drain_released_buffer_slots(&self.buffer_slots, &mut self.released_buffers)
+    }
 }
 
 impl fmt::Debug for XdgSurfaceState {
@@ -57,6 +67,8 @@ impl fmt::Debug for XdgSurfaceState {
             .field("size_changed", &self.size_changed)
             .field("frame_count", &self.frame_count)
             .field("configured", &self.configured)
+            .field("buffer_slots", &self.buffer_slots.len())
+            .field("released_buffers", &self.released_buffers.len())
             .finish_non_exhaustive()
     }
 }
@@ -118,6 +130,8 @@ impl XdgSurfaceClient {
             xdg_surface: None,
             xdg_toplevel: None,
             configured: false,
+            buffer_slots: BufferSlotMap::new(),
+            released_buffers: ReleasedBufferSet::new(),
         };
 
         queue
@@ -197,6 +211,7 @@ impl XdgSurfaceClient {
 
         if self.cached_buffers[slot].is_none() {
             let buffer = create_buffer_from_dmabuf(linux_dmabuf, info, &qh);
+            self.state.buffer_slots.insert(buffer.id(), slot);
             self.cached_buffers[slot] = Some(buffer);
             tracing::debug!("Cached wl_buffer for slot {slot}");
         }
@@ -225,7 +240,16 @@ impl XdgSurfaceClient {
     /// Destroys any cached `wl_buffer`s. Call this when the surface is
     /// resized or when the underlying DMA-BUF export buffers are recreated.
     pub fn invalidate_cached_buffers(&mut self) {
-        invalidate_cached_wl_buffers(&mut self.cached_buffers);
+        invalidate_cached_wl_buffers(
+            &mut self.cached_buffers,
+            &mut self.state.buffer_slots,
+            &mut self.state.released_buffers,
+        );
+    }
+
+    /// Drain slot ids released by the compositor.
+    pub fn drain_released_slots(&mut self) -> Vec<usize> {
+        self.state.drain_released_slots()
     }
 
     /// Request the first frame callback (call once after setup, before the
@@ -322,6 +346,10 @@ impl WidgetSurface for XdgSurfaceClient {
 
     fn invalidate_cached_buffers(&mut self) {
         XdgSurfaceClient::invalidate_cached_buffers(self);
+    }
+
+    fn drain_released_slots(&mut self) -> Vec<usize> {
+        XdgSurfaceClient::drain_released_slots(self)
     }
 
     fn drain_events(&mut self) -> Vec<WidgetEvent> {
@@ -451,16 +479,52 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for XdgSurfaceState {
 
 impl Dispatch<wl_buffer::WlBuffer, ()> for XdgSurfaceState {
     fn event(
-        _: &mut Self,
-        _buffer: &wl_buffer::WlBuffer,
+        state: &mut Self,
+        buffer: &wl_buffer::WlBuffer,
         event: wl_buffer::Event,
         (): &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         if let wl_buffer::Event::Release = event {
-            // XDG only supports slot-based cached wl_buffer submission, so
-            // release is intentionally ignored here.
+            let buffer_id = buffer.id();
+            if state.buffer_slots.contains_key(&buffer_id) {
+                state.released_buffers.insert(buffer_id);
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::XdgSurfaceState;
+
+    #[test]
+    fn drain_released_slots_returns_and_clears_ids() {
+        let mut state = XdgSurfaceState {
+            running: true,
+            width: 64,
+            height: 64,
+            needs_render: false,
+            size_changed: false,
+            frame_count: 0,
+            compositor: None,
+            xdg_wm_base: None,
+            linux_dmabuf: None,
+            surface: None,
+            xdg_surface: None,
+            xdg_toplevel: None,
+            configured: false,
+            buffer_slots: super::BufferSlotMap::new(),
+            released_buffers: super::ReleasedBufferSet::new(),
+        };
+        let buffer_id = wayland_backend::client::ObjectId::null();
+        state.buffer_slots.insert(buffer_id.clone(), 3);
+        state.released_buffers.insert(buffer_id);
+
+        let drained = state.drain_released_slots();
+
+        assert_eq!(drained, vec![3]);
+        assert!(state.released_buffers.is_empty());
     }
 }

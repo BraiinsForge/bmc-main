@@ -151,3 +151,20 @@ fn blocked_renderable_slot_skips_frame_branches_but_contributes_retry() {
     // Only retry_in contributes; surface_needs_render is gated off by is_blocked.
     assert_eq!(compute_poll_timeout_from_inputs(&[slot], None), 900);
 }
+
+#[test]
+fn buffer_blocked_dirty_slot_does_not_spin_without_retry_timer() {
+    // A renderable slot whose current EGL export slot is still presented is
+    // blocked for rendering but has no lifecycle retry timer. It must sleep
+    // until Wayland fd readiness delivers wl_buffer.release.
+    let slot = SlotPollInputs {
+        is_renderable: true,
+        is_blocked: true,
+        surface_needs_render: true,
+        animation_wants_immediate: true,
+        next_frame_delay: Some(0),
+        ..SlotPollInputs::default()
+    };
+
+    assert_eq!(compute_poll_timeout_from_inputs(&[slot], None), -1);
+}

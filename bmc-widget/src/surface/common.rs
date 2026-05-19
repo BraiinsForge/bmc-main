@@ -1,10 +1,14 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-use std::os::fd::AsFd;
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    os::fd::AsFd,
+};
 
 use anyhow::{Context, Result};
+use wayland_backend::client::ObjectId;
 use wayland_client::{
-    Dispatch, EventQueue, QueueHandle,
+    Dispatch, EventQueue, Proxy, QueueHandle,
     protocol::{wl_buffer, wl_callback, wl_surface},
 };
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -23,6 +27,12 @@ pub use bmc_widget_protocol::{LifecycleState, SettingUpdate};
 /// (also used by `crate::wayland::WidgetProtocolClient::wait_for_configure`).
 pub use crate::poll::PollOutcome;
 pub(crate) use crate::poll::poll_dispatch;
+
+/// Mapping from `wl_buffer` object id to reusable buffer slot.
+pub(crate) type BufferSlotMap = HashMap<ObjectId, usize>;
+
+/// Set of tracked `wl_buffer` object ids released by the compositor.
+pub(crate) type ReleasedBufferSet = HashSet<ObjectId>;
 
 /// Block until a Wayland event arrives, then dispatch all pending events.
 ///
@@ -43,12 +53,23 @@ pub(crate) fn blocking_dispatch_impl<S: 'static>(
 /// Shared implementation for
 /// [`crate::surface::XdgSurfaceClient::invalidate_cached_buffers`] and
 /// [`crate::surface::DeckWidgetSurfaceClient::invalidate_cached_buffers`].
+///
+/// This also removes pending release notifications for cached buffers that
+/// were actually destroyed. Release notifications for unrelated tracked
+/// buffers, such as host-owned minted buffers, remain pending.
+#[expect(
+    clippy::mutable_key_type,
+    reason = "ObjectId has interior mutability but is safe to use as a HashMap key"
+)]
 pub(crate) fn invalidate_cached_wl_buffers(
     cached_buffers: &mut [Option<wl_buffer::WlBuffer>],
+    buffer_slots: &mut BufferSlotMap,
+    released_buffers: &mut ReleasedBufferSet,
 ) -> u32 {
     let mut destroyed = 0_u32;
     for cached in cached_buffers {
         if let Some(buf) = cached.take() {
+            unregister_wl_buffer_slot(buffer_slots, released_buffers, &buf.id());
             buf.destroy();
             destroyed += 1;
         }
@@ -57,6 +78,36 @@ pub(crate) fn invalidate_cached_wl_buffers(
         tracing::debug!("Destroyed {destroyed} cached wl_buffer(s)");
     }
     destroyed
+}
+
+#[expect(
+    clippy::mutable_key_type,
+    reason = "ObjectId has interior mutability but is safe to use as a HashMap key"
+)]
+pub(crate) fn unregister_wl_buffer_slot(
+    buffer_slots: &mut BufferSlotMap,
+    released_buffers: &mut ReleasedBufferSet,
+    buffer_id: &ObjectId,
+) -> Option<usize> {
+    released_buffers.remove(buffer_id);
+    buffer_slots.remove(buffer_id)
+}
+
+#[expect(
+    clippy::mutable_key_type,
+    reason = "ObjectId has interior mutability but is safe to use as a HashMap key"
+)]
+pub(crate) fn drain_released_buffer_slots(
+    buffer_slots: &BufferSlotMap,
+    released_buffers: &mut ReleasedBufferSet,
+) -> Vec<usize> {
+    let mut released_slots = BTreeSet::new();
+    for buffer_id in std::mem::take(released_buffers) {
+        if let Some(&slot) = buffer_slots.get(&buffer_id) {
+            released_slots.insert(slot);
+        }
+    }
+    released_slots.into_iter().collect()
 }
 
 /// Attach buffer, damage, optionally request frame callback, and commit.
@@ -157,6 +208,10 @@ pub trait WidgetSurface {
     ) -> anyhow::Result<()>;
     /// Invalidate cached `wl_buffer`s (call on resize).
     fn invalidate_cached_buffers(&mut self);
+    /// Drain slot ids whose submitted `wl_buffer`s were released.
+    ///
+    /// Returns deduplicated ids since the previous drain call.
+    fn drain_released_slots(&mut self) -> Vec<usize>;
     /// Drain pending compositor events.
     fn drain_events(&mut self) -> Vec<WidgetEvent>;
 }
@@ -315,3 +370,81 @@ macro_rules! impl_common_dispatch {
 }
 
 pub(crate) use impl_common_dispatch;
+
+#[cfg(test)]
+mod tests {
+    use wayland_client::protocol::wl_buffer;
+
+    use wayland_backend::client::ObjectId;
+
+    use super::{
+        BufferSlotMap, ReleasedBufferSet, drain_released_buffer_slots,
+        invalidate_cached_wl_buffers, unregister_wl_buffer_slot,
+    };
+
+    #[test]
+    fn invalidate_cached_wl_buffers_keeps_released_buffers_when_no_cached_buffers_destroyed() {
+        let mut cached_buffers: Vec<Option<wl_buffer::WlBuffer>> = Vec::new();
+        #[expect(
+            clippy::mutable_key_type,
+            reason = "ObjectId has interior mutability but is safe to use as a HashMap key"
+        )]
+        let mut buffer_slots = BufferSlotMap::new();
+        #[expect(
+            clippy::mutable_key_type,
+            reason = "ObjectId has interior mutability but is safe to use as a HashSet key"
+        )]
+        let mut released_buffers = ReleasedBufferSet::from([ObjectId::null()]);
+
+        let destroyed = invalidate_cached_wl_buffers(
+            &mut cached_buffers,
+            &mut buffer_slots,
+            &mut released_buffers,
+        );
+
+        assert_eq!(destroyed, 0);
+        assert!(released_buffers.contains(&ObjectId::null()));
+    }
+
+    #[test]
+    fn unregister_wl_buffer_slot_removes_only_matching_pending_buffer() {
+        let buffer_id = ObjectId::null();
+        #[expect(
+            clippy::mutable_key_type,
+            reason = "ObjectId has interior mutability but is safe to use as a HashMap key"
+        )]
+        let mut buffer_slots = BufferSlotMap::from([(buffer_id.clone(), 7)]);
+        #[expect(
+            clippy::mutable_key_type,
+            reason = "ObjectId has interior mutability but is safe to use as a HashSet key"
+        )]
+        let mut released_buffers = ReleasedBufferSet::from([buffer_id.clone()]);
+
+        let removed =
+            unregister_wl_buffer_slot(&mut buffer_slots, &mut released_buffers, &buffer_id);
+
+        assert_eq!(removed, Some(7));
+        assert!(!buffer_slots.contains_key(&buffer_id));
+        assert!(released_buffers.is_empty());
+    }
+
+    #[test]
+    fn drain_released_buffer_slots_resolves_pending_buffers_to_slots() {
+        let buffer_id = ObjectId::null();
+        #[expect(
+            clippy::mutable_key_type,
+            reason = "ObjectId has interior mutability but is safe to use as a HashMap key"
+        )]
+        let buffer_slots = BufferSlotMap::from([(buffer_id.clone(), 7)]);
+        #[expect(
+            clippy::mutable_key_type,
+            reason = "ObjectId has interior mutability but is safe to use as a HashSet key"
+        )]
+        let mut released_buffers = ReleasedBufferSet::from([buffer_id]);
+
+        let released_slots = drain_released_buffer_slots(&buffer_slots, &mut released_buffers);
+
+        assert_eq!(released_slots, vec![7]);
+        assert!(released_buffers.is_empty());
+    }
+}

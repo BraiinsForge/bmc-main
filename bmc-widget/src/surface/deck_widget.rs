@@ -1,11 +1,14 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-use std::fmt;
-use std::time::{Duration, Instant};
+use std::{
+    fmt,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
+use wayland_backend::client::ObjectId;
 use wayland_client::{
-    Connection, Dispatch, EventQueue, QueueHandle,
+    Connection, Dispatch, EventQueue, Proxy, QueueHandle,
     protocol::{wl_buffer, wl_compositor, wl_registry, wl_seat, wl_surface, wl_touch},
 };
 use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1;
@@ -22,8 +25,10 @@ use crate::wayland::from_protocol;
 use bmc_widget_protocol::SettingUpdate;
 
 use super::common::{
-    PollOutcome, blocking_dispatch_impl, create_buffer_from_dmabuf, impl_common_dispatch,
+    BufferSlotMap, PollOutcome, ReleasedBufferSet, blocking_dispatch_impl,
+    create_buffer_from_dmabuf, drain_released_buffer_slots, impl_common_dispatch,
     invalidate_cached_wl_buffers, poll_dispatch, submit_buffer_to_surface,
+    unregister_wl_buffer_slot,
 };
 use super::{WidgetEvent, WidgetSurface};
 
@@ -137,6 +142,8 @@ pub struct DeckWidgetSurfaceState {
     pending_initial_settings: Vec<SettingUpdate>,
 
     pending_events: Vec<DeckWidgetEvent>,
+    buffer_slots: BufferSlotMap,
+    released_buffers: ReleasedBufferSet,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +187,19 @@ impl DeckWidgetSurfaceState {
     pub fn drain_events(&mut self) -> std::vec::Drain<'_, DeckWidgetEvent> {
         self.pending_events.drain(..)
     }
+
+    /// Drain slot ids released by the compositor.
+    pub fn drain_released_slots(&mut self) -> Vec<usize> {
+        drain_released_buffer_slots(&self.buffer_slots, &mut self.released_buffers)
+    }
+
+    fn unregister_wl_buffer_id(&mut self, buffer_id: &ObjectId) -> Option<usize> {
+        unregister_wl_buffer_slot(
+            &mut self.buffer_slots,
+            &mut self.released_buffers,
+            buffer_id,
+        )
+    }
 }
 
 impl fmt::Debug for DeckWidgetSurfaceState {
@@ -192,6 +212,8 @@ impl fmt::Debug for DeckWidgetSurfaceState {
             .field("frame_count", &self.frame_count)
             .field("configure_done", &self.configure_done)
             .field("pending_events", &self.pending_events.len())
+            .field("buffer_slots", &self.buffer_slots.len())
+            .field("released_buffers", &self.released_buffers.len())
             .finish_non_exhaustive()
     }
 }
@@ -260,6 +282,8 @@ impl DeckWidgetSurfaceClient {
             pending_params: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
             pending_events: Vec::new(),
+            buffer_slots: BufferSlotMap::new(),
+            released_buffers: ReleasedBufferSet::new(),
         };
 
         queue
@@ -379,6 +403,8 @@ impl DeckWidgetSurfaceClient {
             pending_params: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
             pending_events: Vec::new(),
+            buffer_slots: BufferSlotMap::new(),
+            released_buffers: ReleasedBufferSet::new(),
         };
 
         queue
@@ -493,6 +519,7 @@ impl DeckWidgetSurfaceClient {
 
         if self.cached_buffers[slot].is_none() {
             let buffer = create_buffer_from_dmabuf(linux_dmabuf, info, &qh);
+            self.state.buffer_slots.insert(buffer.id(), slot);
             self.cached_buffers[slot] = Some(buffer);
             tracing::debug!("Cached wl_buffer for slot {slot}");
         }
@@ -524,7 +551,11 @@ impl DeckWidgetSurfaceClient {
     /// Late `wl_buffer::Release` events from previously cached buffers are
     /// harmless and ignored.
     pub fn invalidate_cached_buffers(&mut self) {
-        invalidate_cached_wl_buffers(&mut self.cached_buffers);
+        invalidate_cached_wl_buffers(
+            &mut self.cached_buffers,
+            &mut self.state.buffer_slots,
+            &mut self.state.released_buffers,
+        );
     }
 
     pub fn submit_buffer_with_wl_buffer(
@@ -540,6 +571,13 @@ impl DeckWidgetSurfaceClient {
         self.conn.flush().context("Wayland flush failed")
     }
 
+    /// Mint a `wl_buffer` directly from DMA-BUF info without release tracking.
+    ///
+    /// This compatibility path does not register the returned buffer in the
+    /// release tracker, so `wl_buffer.release` events for it are not reported
+    /// by [`Self::drain_released_slots`]. Callers that need release tracking
+    /// must use [`Self::mint_wl_buffer_for_slot`] and destroy the returned
+    /// buffer through [`Self::destroy_minted_wl_buffer`].
     pub fn mint_wl_buffer_via_dmabuf(&self, info: &DmaBufInfo) -> Result<wl_buffer::WlBuffer> {
         let linux_dmabuf = self
             .state
@@ -551,6 +589,31 @@ impl DeckWidgetSurfaceClient {
             info,
             &self.queue.handle(),
         ))
+    }
+
+    pub fn mint_wl_buffer_for_slot(
+        &mut self,
+        info: &DmaBufInfo,
+        slot: usize,
+    ) -> Result<wl_buffer::WlBuffer> {
+        let buffer = self.mint_wl_buffer_via_dmabuf(info)?;
+        self.state.buffer_slots.insert(buffer.id(), slot);
+        Ok(buffer)
+    }
+
+    /// Destroy a host-owned minted `wl_buffer` and stop tracking its slot.
+    ///
+    /// Use this for buffers created by [`Self::mint_wl_buffer_for_slot`].
+    /// Cached buffers remain owned by [`Self::invalidate_cached_buffers`].
+    pub fn destroy_minted_wl_buffer(&mut self, buffer: wl_buffer::WlBuffer) {
+        self.state.unregister_wl_buffer_id(&buffer.id());
+        buffer.destroy();
+        drop(buffer);
+    }
+
+    /// Drain slot ids released by the compositor.
+    pub fn drain_released_slots(&mut self) -> Vec<usize> {
+        self.state.drain_released_slots()
     }
 
     #[must_use]
@@ -655,6 +718,10 @@ impl WidgetSurface for DeckWidgetSurfaceClient {
 
     fn invalidate_cached_buffers(&mut self) {
         DeckWidgetSurfaceClient::invalidate_cached_buffers(self);
+    }
+
+    fn drain_released_slots(&mut self) -> Vec<usize> {
+        DeckWidgetSurfaceClient::drain_released_slots(self)
     }
 
     fn drain_events(&mut self) -> Vec<WidgetEvent> {
@@ -872,16 +939,18 @@ fn handle_params_json(
 
 impl Dispatch<wl_buffer::WlBuffer, ()> for DeckWidgetSurfaceState {
     fn event(
-        _: &mut Self,
-        _buffer: &wl_buffer::WlBuffer,
+        state: &mut Self,
+        buffer: &wl_buffer::WlBuffer,
         event: wl_buffer::Event,
         (): &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         if let wl_buffer::Event::Release = event {
-            // deck_widget surfaces only support slot-based cached wl_buffer
-            // submission, so release is intentionally ignored.
+            let buffer_id = buffer.id();
+            if state.buffer_slots.contains_key(&buffer_id) {
+                state.released_buffers.insert(buffer_id);
+            }
         }
     }
 }
@@ -968,8 +1037,8 @@ mod tests {
     use std::rc::Rc;
 
     use super::{
-        DeckWidgetEvent, ReleasableTouch, TouchCapabilityChange, WidgetEvent, handle_params_json,
-        sync_touch_capability,
+        DeckWidgetEvent, DeckWidgetSurfaceState, ReleasableTouch, TouchCapabilityChange,
+        WidgetEvent, handle_params_json, sync_touch_capability,
     };
     use bmc_widget_protocol::LifecycleState;
 
@@ -1048,5 +1117,72 @@ mod tests {
     fn deck_widget_event_shutdown_still_translates_to_widget_event_shutdown() {
         let translated: WidgetEvent = DeckWidgetEvent::Shutdown.into();
         assert!(matches!(translated, WidgetEvent::Shutdown));
+    }
+
+    #[test]
+    fn drain_released_slots_returns_and_clears_ids() {
+        let mut state = DeckWidgetSurfaceState {
+            running: true,
+            width: 64,
+            height: 64,
+            needs_render: false,
+            frame_count: 0,
+            compositor: None,
+            widget_manager: None,
+            linux_dmabuf: None,
+            seat: None,
+            touch: None,
+            surface: None,
+            widget_surface: None,
+            configure_done: false,
+            pending_size: None,
+            pending_params: serde_json::Map::new(),
+            pending_initial_settings: Vec::new(),
+            pending_events: Vec::new(),
+            buffer_slots: super::BufferSlotMap::new(),
+            released_buffers: super::ReleasedBufferSet::new(),
+        };
+        let buffer_id = wayland_backend::client::ObjectId::null();
+        state.buffer_slots.insert(buffer_id.clone(), 3);
+        state.released_buffers.insert(buffer_id);
+
+        let drained = state.drain_released_slots();
+
+        assert_eq!(drained, vec![3]);
+        assert!(state.released_buffers.is_empty());
+    }
+
+    #[test]
+    fn unregister_wl_buffer_id_removes_mapping_and_pending_release() {
+        let mut state = DeckWidgetSurfaceState {
+            running: true,
+            width: 64,
+            height: 64,
+            needs_render: false,
+            frame_count: 0,
+            compositor: None,
+            widget_manager: None,
+            linux_dmabuf: None,
+            seat: None,
+            touch: None,
+            surface: None,
+            widget_surface: None,
+            configure_done: false,
+            pending_size: None,
+            pending_params: serde_json::Map::new(),
+            pending_initial_settings: Vec::new(),
+            pending_events: Vec::new(),
+            buffer_slots: super::BufferSlotMap::new(),
+            released_buffers: super::ReleasedBufferSet::new(),
+        };
+        let buffer_id = wayland_backend::client::ObjectId::null();
+        state.buffer_slots.insert(buffer_id.clone(), 7);
+        state.released_buffers.insert(buffer_id.clone());
+
+        let removed = state.unregister_wl_buffer_id(&buffer_id);
+
+        assert_eq!(removed, Some(7));
+        assert!(!state.buffer_slots.contains_key(&buffer_id));
+        assert!(!state.released_buffers.contains(&buffer_id));
     }
 }

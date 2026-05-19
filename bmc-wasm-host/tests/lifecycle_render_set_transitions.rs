@@ -23,10 +23,15 @@ impl LifecycleSurface for StubSurface {
     }
 
     fn mint_wl_buffer(
-        &self,
+        &mut self,
         _: &bmc_widget::egl::DmaBufInfo,
+        _: usize,
     ) -> Result<wayland_client::protocol::wl_buffer::WlBuffer, String> {
         unimplemented!("CountingFactory never calls mint_wl_buffer in this fixture")
+    }
+
+    fn destroy_minted_wl_buffer(&mut self, _: wayland_client::protocol::wl_buffer::WlBuffer) {
+        unimplemented!("CountingFactory never calls destroy_minted_wl_buffer in this fixture")
     }
 }
 
@@ -53,7 +58,7 @@ impl RenderTargetFactory for CountingFactory {
     fn allocate(
         &self,
         _: &dyn LifecycleEgl,
-        _: &dyn LifecycleSurface,
+        _: &mut dyn LifecycleSurface,
         width: u32,
         height: u32,
     ) -> Result<RenderTarget, RenderTargetError> {
@@ -61,7 +66,7 @@ impl RenderTargetFactory for CountingFactory {
         Ok(RenderTarget::new_stub(width, height))
     }
 
-    fn destroy(&self, _: RenderTarget, _: &dyn LifecycleEgl) {
+    fn destroy(&self, _: RenderTarget, _: &dyn LifecycleEgl, _: &mut dyn LifecycleSurface) {
         self.destroy_calls.set(self.destroy_calls.get() + 1);
     }
 }
@@ -70,7 +75,7 @@ fn ctx<'a>(
     factory: &'a Rc<dyn RenderTargetFactory>,
     target: &'a mut Option<RenderTarget>,
     egl: &'a StubEgl,
-    surface: &'a StubSurface,
+    surface: &'a mut StubSurface,
 ) -> SlotApplyCtx<'a> {
     SlotApplyCtx {
         factory,
@@ -94,12 +99,12 @@ fn seeded_render_set_state(
     let factory: Rc<dyn RenderTargetFactory> = mock.clone();
     let mut target = None;
     let egl = StubEgl;
-    let surface = StubSurface;
+    let mut surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(source);
     sm.apply(
-        &mut ctx(&factory, &mut target, &egl, &surface),
+        &mut ctx(&factory, &mut target, &egl, &mut surface),
         Instant::now(),
     );
 
@@ -124,11 +129,11 @@ fn render_set_self_and_intra_set_transitions_do_not_churn_target() {
         for target_state in render_set {
             let (mut sm, mut target, mock, factory) = seeded_render_set_state(source);
             let egl = StubEgl;
-            let surface = StubSurface;
+            let mut surface = StubSurface;
 
             sm.on_event(target_state);
             sm.apply(
-                &mut ctx(&factory, &mut target, &egl, &surface),
+                &mut ctx(&factory, &mut target, &egl, &mut surface),
                 Instant::now(),
             );
 
@@ -150,11 +155,11 @@ fn render_set_to_buffer_free_transitions_destroy_exactly_once() {
         for target_state in buffer_free {
             let (mut sm, mut target, mock, factory) = seeded_render_set_state(source);
             let egl = StubEgl;
-            let surface = StubSurface;
+            let mut surface = StubSurface;
 
             sm.on_event(target_state);
             sm.apply(
-                &mut ctx(&factory, &mut target, &egl, &surface),
+                &mut ctx(&factory, &mut target, &egl, &mut surface),
                 Instant::now(),
             );
 

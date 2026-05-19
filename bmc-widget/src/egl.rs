@@ -756,6 +756,12 @@ impl DoubleBufferState {
         self.height
     }
 
+    /// Current back-buffer slot index.
+    #[must_use]
+    pub fn current_slot(&self) -> usize {
+        self.current_buffer
+    }
+
     /// Ensure the current back buffer is allocated, return a reference to it.
     pub fn ensure_current(&mut self, ctx: &EglContext) -> Result<&ExportBuffer> {
         let idx = self.current_buffer;
@@ -1276,6 +1282,7 @@ mod tests {
 
         assert_eq!(state.width(), 640);
         assert_eq!(state.height(), 480);
+        assert_eq!(state.current_slot(), 0);
         assert_eq!(state.current_buffer, 0);
         assert!(state.buffers.iter().all(Option::is_none));
         assert!(state.current_ref().is_none());
