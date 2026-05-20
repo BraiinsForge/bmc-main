@@ -45,22 +45,24 @@ This is the primary means of deployment throughout day-to-day development. This 
 packages, though. So for faster iteration on a single component, like a native widget or compositor, you might prefer
 `nix-cargo-deploy.sh`
 
-Builds a Nix flake package and copies its entire closure to the device's `/nix/store` using `nix copy`, then installs it
-into the bmc profile via `bmc-nix-cli`. The device must already be initialized with `nix-init.sh`.
+Builds Nix flake packages and copies their entire closures to the device's `/nix/store` using `nix copy`, then installs
+them into the bmc profile via one `bmc-nix-cli` call. The device must already be initialized with `nix-init.sh`.
 
-The first argument is a full flake URI. Index packages (exposed under `deck-packages`) are auto-detected and their
-`.pkg` output is built. Raw nixpkgs derivations (e.g. `armv7-nixpkgs`) are built directly.
+Package arguments are full flake URIs. Index packages (exposed under `deck-packages`) are auto-detected and their `.pkg`
+output is built. Raw nixpkgs derivations (e.g. `armv7-nixpkgs`) are built directly. If the last argument looks like an
+IPv4 address, it is used as the device IP; otherwise the script uses `DEVICE_IP`.
 
 ```sh
 # To deploy our Deck packages
 ./scripts/nix-deploy.sh '.#deck-packages.core' 192.168.1.2
 ./scripts/nix-deploy.sh '.#deck-packages.digital-clock' 192.168.1.2
+./scripts/nix-deploy.sh '.#deck-packages.core' '.#deck-packages.pomodoro' 192.168.1.2
 # To deploy packages from nixpkgs
 ./scripts/nix-deploy.sh '.#armv7-nixpkgs.strace' 192.168.1.2
 ./scripts/nix-deploy.sh '.#armv7-nixpkgs.file' 192.168.1.2
 ```
 
-The script prints the `/nix/store/...` path of the deployed package. You can then run binaries from that path on the
+The script prints the `/nix/store/...` path of each deployed package. You can then run binaries from those paths on the
 device.
 
 Nixpkgs is exposed as pkgs, the armv7 packages are exposed as "armv7-nixpkgs". So you can for example do
