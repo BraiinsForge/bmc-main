@@ -28,6 +28,8 @@ use std::collections::HashMap;
 
 use bmc_wasm_protocol::{MdnsBrowseId, MdnsRegId};
 
+use crate::fmt;
+
 // Host function imports
 unsafe extern "C" {
     fn host_mdns_browse(svc_types_ptr: *const u8, svc_types_len: u32) -> u32;
@@ -126,7 +128,7 @@ pub fn mdns_register(
 ) -> Option<MdnsRegistration> {
     let txt_str: String = txt
         .iter()
-        .map(|(k, v)| format!("{k}={v}"))
+        .map(|(k, v)| fmt!("{k}={v}"))
         .collect::<Vec<_>>()
         .join("\n");
     MdnsRegId::from_wire(unsafe {

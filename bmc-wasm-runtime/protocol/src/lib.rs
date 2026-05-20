@@ -3,8 +3,6 @@
 //! Shared protocol definitions for WASM widgets.
 //! This crate contains constants and types shared between the SDK (WASM) and host.
 
-#![no_std]
-
 pub mod animation;
 pub mod colors;
 pub mod icon;

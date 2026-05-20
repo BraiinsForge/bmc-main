@@ -90,6 +90,17 @@ thread_local! {
     static SERVER: RefCell<Option<State >> = const { RefCell::new(None) };
 }
 
+/// Zero-pad a non-negative integer to two digits (`5` → `"05"`, `12` → `"12"`).
+/// Negative or 3+ digit values pass through unchanged.
+/// `ufmt` has no width specifier, so we do this by hand.
+fn pad2(n: i64) -> String {
+    if (0..10).contains(&n) {
+        fmt!("0{n}")
+    } else {
+        fmt!("{n}")
+    }
+}
+
 // ── Public API ───────────────────────────────────────────────────
 
 /// Connect to a Jellyfin or Emby device.
@@ -423,8 +434,14 @@ fn on_sessions_response(response: &FetchResponse) {
                         let season_num = doc.i64(&fmt!("{}/ParentIndexNumber", np));
                         let episode_num = doc.i64(&fmt!("{}/IndexNumber", np));
                         let series_val = match (season_num, episode_num) {
-                            (Some(s), Some(e)) => format!("{series} S{s:02}E{e:02}"),
-                            (None, Some(e)) => format!("{series} E{e:02}"),
+                            (Some(s), Some(e)) => {
+                                let (s, e) = (pad2(s), pad2(e));
+                                fmt!("{series} S{s}E{e}")
+                            }
+                            (None, Some(e)) => {
+                                let e = pad2(e);
+                                fmt!("{series} E{e}")
+                            }
                             _ => series,
                         };
                         state.status.fields.push(("Series".into(), series_val));

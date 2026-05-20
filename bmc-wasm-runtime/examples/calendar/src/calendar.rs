@@ -348,7 +348,7 @@ fn ical_to_iso(s: &str) -> String {
     let day = &s[6..8];
 
     if s.len() == 8 {
-        return format!("{year}-{month}-{day}T00:00:00Z");
+        return fmt!("{year}-{month}-{day}T00:00:00Z");
     }
 
     if s.len() >= 15 && s.as_bytes()[8] == b'T' {
@@ -356,7 +356,7 @@ fn ical_to_iso(s: &str) -> String {
         let min = &s[11..13];
         let sec = &s[13..15];
         let suffix = if s.ends_with('Z') { "Z" } else { "" };
-        return format!("{year}-{month}-{day}T{hour}:{min}:{sec}{suffix}");
+        return fmt!("{year}-{month}-{day}T{hour}:{min}:{sec}{suffix}");
     }
 
     s.to_string()

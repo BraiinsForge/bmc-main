@@ -4,6 +4,7 @@
 
 use bmc_wasm_protocol::Color;
 
+use crate::fmt;
 use crate::tree::Node;
 
 /// A labeled button action for modal footers.
@@ -118,11 +119,11 @@ pub fn modal(
     let (pk, pl, sk, sl, danger) = match &props.footer {
         Some(f) => {
             let (sk, sl) = match &f.secondary {
-                Some(s) => (format!("{modal_key}::secondary"), s.label.to_owned()),
+                Some(s) => (fmt!("{modal_key}::secondary"), s.label.to_owned()),
                 None => (String::new(), String::new()),
             };
             (
-                format!("{modal_key}::primary"),
+                fmt!("{modal_key}::primary"),
                 f.primary.label.to_owned(),
                 sk,
                 sl,

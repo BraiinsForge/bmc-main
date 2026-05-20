@@ -58,15 +58,23 @@ validate-full:
 # === WASM Runtime ===
 
 # Validate the bmc-wasm-runtime crate (format, lint, clippy, test, build examples).
-validate-wasm: format validate-protocol-no-std
+validate-wasm: format validate-wasm-deny validate-wasm-no-fmt
     cargo clippy -p bmc-wasm-runtime --all-targets --features testbed -- -D warnings
     cargo clippy -p bmc-wasm-runtime --bin capture --features capture -- -D warnings
     cargo nextest run -p bmc-wasm-runtime
     cd bmc-wasm-runtime/examples && cargo build --target wasm32-unknown-unknown --workspace
 
-# Verify `bmc-wasm-protocol` stays no_std-clean (riscv = bare-metal, no libstd).
-validate-protocol-no-std:
-    cargo build -p bmc-wasm-protocol --target riscv32imc-unknown-none-elf
+# Block bloat crates from creeping into the wasm32 dep graph (source: `nix/checks.nix::cargo-deny-wasm`).
+validate-wasm-deny:
+    nix build -L ".#checks.{{ NIX_SYSTEM }}.cargo-deny-wasm"
+
+# Block allocating fmt macros in widget code (source: `nix/checks.nix::no-fmt-in-wasm`).
+validate-wasm-no-fmt:
+    nix build -L ".#checks.{{ NIX_SYSTEM }}.no-fmt-in-wasm"
+
+# Fast local ast-grep scan (same `rules/` as validate-wasm-no-fmt, no nix build).
+ast-grep:
+    nix-shell -p ast-grep --run "ast-grep scan --error"
 
 # === Storybook ===
 

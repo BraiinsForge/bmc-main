@@ -130,8 +130,8 @@ impl TestbedApp {
 }
 
 // TODO(BDK-476): replace with named palette references (`ORANGE_40` / `TEAL_40`)
-// once `Color` is extracted to a shared no_std crate that the testbed
-// (egui consumer) can depend on without dragging the host into the wasmi-wire protocol's dep tree.
+// once `Color` is extracted to a shared crate that the testbed (egui consumer)
+// can depend on without dragging the host into the wasmi-wire protocol's dep tree.
 // The hex values below mirror those two palette swatches verbatim.
 const PARAMS_ACCENT: egui::Color32 = egui::Color32::from_rgb(0xFE, 0x84, 0x31);
 const SYSTEM_ACCENT: egui::Color32 = egui::Color32::from_rgb(0x00, 0xBA, 0xC5);

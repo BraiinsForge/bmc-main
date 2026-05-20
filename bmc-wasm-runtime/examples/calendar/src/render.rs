@@ -317,7 +317,7 @@ fn render_month_grid_canvas(
     draws.push(Draw::text(
         4.0,
         2.0,
-        format!("{month_name} {}", grid.year),
+        fmt!("{month_name} {}", grid.year),
         style!(size: 18, weight: 700, color: theme.text_primary),
     ));
 
@@ -373,7 +373,7 @@ fn draw_grid_week(
             draws.push(Draw::text(
                 cx + 10.0,
                 wy + 1.0,
-                format!("{}", cell.day),
+                fmt!("{}", cell.day),
                 style!(size: 11, weight: 700, color: WHITE, align: TextAlign::Center),
             ));
         } else {
@@ -385,7 +385,7 @@ fn draw_grid_week(
             draws.push(Draw::text(
                 cx + 3.0,
                 wy + 2.0,
-                format!("{}", cell.day),
+                fmt!("{}", cell.day),
                 style!(size: size, weight: weight, color: color),
             ));
         }
@@ -411,7 +411,7 @@ fn draw_grid_week(
         let label = match &event.description {
             Some(desc) if bar_w > 120.0 && desc != &event.summary => {
                 let max_chars = (bar_w / 5.0) as usize;
-                let combined = format!("{} — {desc}", event.summary);
+                let combined = fmt!("{} — {desc}", event.summary);
                 truncate_str(&combined, max_chars).to_string()
             }
             _ => event.summary.clone(),
@@ -459,7 +459,7 @@ fn draw_grid_week(
                 draws.push(Draw::text(
                     cx + 3.0,
                     ey,
-                    format!("+{remaining}"),
+                    fmt!("+{remaining}"),
                     style!(size: 9, color: theme.text_secondary),
                 ));
                 break;
@@ -476,7 +476,7 @@ fn draw_grid_week(
             let label = if event.all_day {
                 "\u{2022} all day".to_string()
             } else {
-                let full = format!("{} {}", event_time(event, state), event.summary);
+                let full = fmt!("{} {}", event_time(event, state), event.summary);
                 truncate_str(&full, max_chars).to_string()
             };
             draws.push(Draw::text(
@@ -657,7 +657,7 @@ fn render_today_card(state: &CalendarState) -> Vec<Node> {
         .unwrap_or(&"???");
 
     children.push(text(
-        format!("{weekday}, {month} {}", now.day),
+        fmt!("{weekday}, {month} {}", now.day),
         style!(size: 24, weight: 700, color: theme.text_primary),
     ));
     children.push(text("Today", style!(size: 14, color: theme.text_primary)));
@@ -667,7 +667,7 @@ fn render_today_card(state: &CalendarState) -> Vec<Node> {
     if let Some(group) = today_group {
         let count = group.all_day.len() + group.timed.len();
         children.push(text(
-            format!("{count} event{}", if count == 1 { "" } else { "s" }),
+            fmt!("{count} event{}", if count == 1 { "" } else { "s" }),
             style!(size: 16, color: theme.text_primary),
         ));
 
@@ -682,7 +682,7 @@ fn render_today_card(state: &CalendarState) -> Vec<Node> {
             children.push(text("Next:", style!(size: 12, color: theme.text_primary)));
             let time = event_time(event, state);
             children.push(text(
-                format!("{time} {}", event.summary),
+                fmt!("{time} {}", event.summary),
                 style!(size: 14, color: theme.text_primary),
             ));
         }
@@ -725,11 +725,11 @@ fn day_header(group: &DayGroup, wide: bool) -> Node {
         .unwrap_or(&"???");
 
     let label = if group.is_today {
-        format!("Today \u{2022} {weekday}, {month} {}", group.day)
+        fmt!("Today \u{2022} {weekday}, {month} {}", group.day)
     } else if wide {
-        format!("{weekday}, {month} {}", group.day)
+        fmt!("{weekday}, {month} {}", group.day)
     } else {
-        format!("{weekday} {}/{}", group.month, group.day)
+        fmt!("{weekday} {}/{}", group.month, group.day)
     };
 
     let pad = if wide { 8.0 } else { 4.0 };

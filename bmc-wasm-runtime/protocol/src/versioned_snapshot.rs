@@ -14,9 +14,6 @@
 //! is enforced once and reused everywhere. Channels just thread their own
 //! payload type through it.
 
-extern crate alloc;
-use alloc::vec::Vec;
-
 /// Encode a snapshot value into the channel's packed wire format.
 ///
 /// The wire format itself is the channel's concern;

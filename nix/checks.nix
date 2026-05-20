@@ -39,6 +39,36 @@ in
     checks = [ "bans" "sources" ];
   };
 
+  # Wasm-side cargo-deny — blocks bloat crates (serde, tokio, hyper, …)
+  # from the wasm32 dep graph so they can't creep into widget binaries.
+  # Target restriction lives in `deny-wasm.toml`'s `[graph].targets`.
+  cargo-deny-wasm = profiles.fast.mkCargoDeny {
+    config = "deny-wasm.toml";
+    checks = [ "bans" "sources" ];
+  };
+
+  # Block allocating fmt macros (format!, println!, dbg!, …)
+  # in widget code via ast-grep. cargo-deny is crate-level
+  # — this is macro-level.
+  no-fmt-in-wasm = pkgs.runCommand "no-fmt-in-wasm"
+    {
+      nativeBuildInputs = [ pkgs.ast-grep ];
+      src = lib.fileset.toSource {
+        root = ../.;
+        fileset = lib.fileset.unions [
+          ../sgconfig.yml
+          ../rules
+          ../bmc-wasm-runtime/sdk/src
+          ../bmc-wasm-runtime/protocol/src
+          ../bmc-wasm-runtime/examples
+        ];
+      };
+    } ''
+    cd $src
+    ast-grep scan --error
+    touch $out
+  '';
+
   docs-wasm = profiles.fast.mkCargoDoc {
     package = "bmc-wasm-sdk";
   };

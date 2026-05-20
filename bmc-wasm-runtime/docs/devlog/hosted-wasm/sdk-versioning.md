@@ -28,7 +28,7 @@ open for backwards-compatible minor bumps later.
 
 ### Where the version lives
 
-The canonical constant is in `bmc-wasm-protocol` (the shared `no_std` crate used by both SDK and host). The SDK's
+The canonical constant is in `bmc-wasm-protocol` (the shared wire-format crate used by both SDK and host). The SDK's
 exported function references it — any widget depending on `bmc-wasm-sdk` gets the version export automatically. No
 widget code changes needed.
 

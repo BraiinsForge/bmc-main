@@ -582,11 +582,11 @@ macro_rules! ws {
 /// Lightweight string interpolation without pulling in `core::fmt`.
 /// Drop-in replacement for `format!()` in widget code.
 ///
-/// Supports captured variable syntax like `std::format!`:
-/// - `fmt!("{year}-{month}")` desugars to `ufmt::uwrite!(s, "{}-{}", year, month)`
-/// - `fmt!("{val:x}")` desugars to `ufmt::uwrite!(s, "{:x}", val)`
-/// - `fmt!("{}-{}", a, b)` still works (positional args pass through)
-/// - Mixed: `fmt!("{year}-{}", month)` — captured args append after positional ones
+/// Supports captured variable syntax like `std::format!`.
+/// Positional and captured args interleave by their position in the format string,
+/// so `fmt!("{year}-{}", month)` prints `year-month` (not `month-year`).
+/// Format specs are limited to what `ufmt` accepts (`{:?}`, `{:#?}`, `{:x}`,
+/// `{:X}`, `{:b}`, `{:o}`); width / fill / precision are not supported.
 #[macro_export]
 macro_rules! fmt {
     ($($arg:tt)*) => {

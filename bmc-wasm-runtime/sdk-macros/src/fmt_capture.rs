@@ -48,19 +48,32 @@ impl Parse for FmtInput {
     }
 }
 
+/// One argument slot in a rewritten format string, in the order the
+/// `uwrite!` call must receive them.
+enum ArgSlot {
+    /// `{}` / `{:spec}` — fill from the macro's positional args at this 0-based index.
+    Positional(usize),
+    /// `{ident}` / `{ident:spec}` — captured identifier path (dotted paths supported).
+    Captured(String),
+}
+
 /// Result of rewriting a format string.
 struct Rewritten {
     /// The new format string with captures replaced by `{}` or `{:spec}`.
     format_string: String,
-    /// Captured identifier expressions (e.g. `year`, `self.field`).
-    captured: Vec<String>,
+    /// Argument slots in the order `uwrite!` must consume them.
+    args: Vec<ArgSlot>,
 }
 
-/// Walk the format string and rewrite `{ident}` / `{ident:spec}` into
-/// `{}` / `{:spec}`, collecting captured identifiers.
+/// Walk the format string. Each `{}` / `{:spec}` becomes a `Positional`
+/// slot (filled from the macro caller's positional args in order); each
+/// `{ident}` / `{ident:spec}` becomes a `Captured` slot. Slots are recorded
+/// in format-string order so `uwrite!` consumes them correctly when
+/// positional and captured placeholders interleave.
 fn rewrite_format_string(raw: &str) -> Rewritten {
     let mut out = String::with_capacity(raw.len());
-    let mut captured = Vec::new();
+    let mut args: Vec<ArgSlot> = Vec::new();
+    let mut positional_seen: usize = 0;
     let chars: Vec<char> = raw.chars().collect();
     let len = chars.len();
     let mut i = 0;
@@ -88,15 +101,16 @@ fn rewrite_format_string(raw: &str) -> Rewritten {
             let next = chars[i];
 
             if next == '}' {
-                // `{}` — plain positional arg
+                // `{}` — anonymous positional, fill from macro positional args in order.
                 out.push_str("{}");
+                args.push(ArgSlot::Positional(positional_seen));
+                positional_seen += 1;
                 i += 1;
                 continue;
             }
 
-            if next == ':' || next == '?' || next == '#' {
-                // `{:spec}`, `{?}`, `{#...}` — positional with spec, emit as-is
-                // Collect everything up to `}`
+            if next == ':' {
+                // `{:spec}` — anonymous positional with spec.
                 out.push('{');
                 while i < len && chars[i] != '}' {
                     out.push(chars[i]);
@@ -106,45 +120,32 @@ fn rewrite_format_string(raw: &str) -> Rewritten {
                     out.push('}');
                     i += 1;
                 }
-                continue;
-            }
-
-            // Check if this is a digit (positional index like `{0}`, `{1:x}`)
-            if next.is_ascii_digit() {
-                // Positional index — emit as-is
-                out.push('{');
-                while i < len && chars[i] != '}' {
-                    out.push(chars[i]);
-                    i += 1;
-                }
-                if i < len {
-                    out.push('}');
-                    i += 1;
-                }
+                args.push(ArgSlot::Positional(positional_seen));
+                positional_seen += 1;
                 continue;
             }
 
             // Check if this starts an identifier (capture candidate)
             if next.is_ascii_alphabetic() || next == '_' {
-                let ident_start = i;
+                let ident_start = char_to_byte(&chars, i, raw);
                 // Collect identifier: alphanumeric, underscore, dots (for paths)
                 while i < len
                     && (chars[i].is_ascii_alphanumeric() || chars[i] == '_' || chars[i] == '.')
                 {
                     i += 1;
                 }
-                let ident = &raw[ident_start..char_to_byte(&chars, i, raw)];
+                let ident = raw[ident_start..char_to_byte(&chars, i, raw)].to_string();
 
                 if i < len && chars[i] == '}' {
-                    // `{ident}` — capture without spec
+                    // `{ident}` — capture without spec.
                     out.push_str("{}");
-                    captured.push(ident.to_string());
+                    args.push(ArgSlot::Captured(ident));
                     i += 1;
                     continue;
                 }
 
                 if i < len && chars[i] == ':' {
-                    // `{ident:spec}` — capture with format spec
+                    // `{ident:spec}` — capture with format spec.
                     i += 1; // skip `:`
                     let spec_start = i;
                     while i < len && chars[i] != '}' {
@@ -155,7 +156,7 @@ fn rewrite_format_string(raw: &str) -> Rewritten {
                     out.push_str("{:");
                     out.push_str(spec);
                     out.push('}');
-                    captured.push(ident.to_string());
+                    args.push(ArgSlot::Captured(ident));
                     if i < len {
                         i += 1; // skip `}`
                     }
@@ -182,7 +183,7 @@ fn rewrite_format_string(raw: &str) -> Rewritten {
 
     Rewritten {
         format_string: out,
-        captured,
+        args,
     }
 }
 
@@ -221,26 +222,132 @@ pub fn expand(input: TokenStream) -> TokenStream {
     let rewritten = rewrite_format_string(&raw);
 
     let new_fmt = LitStr::new(&rewritten.format_string, parsed.format_str.span());
-    let positional = &parsed.positional_args;
 
     // Use the span from the format string literal so that captured identifiers
     // resolve at the call site (important when the proc macro is invoked through
     // a declarative macro wrapper like `fmt!`).
     let call_span = parsed.format_str.span();
 
-    // Convert captured identifiers to token streams with correct spans.
-    // Supports dotted paths like `self.field` or `foo.bar`.
-    let captured_tokens: Vec<TokenStream> = rewritten
-        .captured
+    // Build the arg list in format-string order: each `{}`/`{:spec}`
+    // slot points back to the macro caller's positional arg at that index,
+    // and each `{ident}` slot expands to the captured identifier path.
+    let arg_tokens: Vec<TokenStream> = rewritten
+        .args
         .iter()
-        .map(|ident_str| ident_path_tokens(ident_str, call_span))
+        .map(|slot| match slot {
+            ArgSlot::Positional(idx) => {
+                let expr = &parsed.positional_args[*idx];
+                quote_spanned!(call_span => #expr)
+            }
+            ArgSlot::Captured(ident_str) => ident_path_tokens(ident_str, call_span),
+        })
         .collect();
 
     let ufmt_path = &parsed.ufmt_path;
 
     quote_spanned! { call_span => {
         let mut __fmt_buf = ::std::string::String::new();
-        _ = #ufmt_path::uwrite!(__fmt_buf, #new_fmt #(, #positional)* #(, #captured_tokens)*);
+        _ = #ufmt_path::uwrite!(__fmt_buf, #new_fmt #(, #arg_tokens)*);
         __fmt_buf
     }}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ArgSlot, rewrite_format_string};
+
+    fn rewrite(raw: &str) -> (String, Vec<ArgSlot>) {
+        let r = rewrite_format_string(raw);
+        (r.format_string, r.args)
+    }
+
+    fn pos(idx: usize) -> ArgSlot {
+        ArgSlot::Positional(idx)
+    }
+
+    fn cap(s: &str) -> ArgSlot {
+        ArgSlot::Captured(s.into())
+    }
+
+    impl PartialEq for ArgSlot {
+        fn eq(&self, other: &Self) -> bool {
+            match (self, other) {
+                (Self::Positional(a), Self::Positional(b)) => a == b,
+                (Self::Captured(a), Self::Captured(b)) => a == b,
+                _ => false,
+            }
+        }
+    }
+
+    impl core::fmt::Debug for ArgSlot {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            match self {
+                Self::Positional(idx) => write!(f, "Positional({idx})"),
+                Self::Captured(s) => write!(f, "Captured({s:?})"),
+            }
+        }
+    }
+
+    #[test]
+    fn positional_only_passes_through_in_order() {
+        let (s, args) = rewrite("{} = {}");
+        assert_eq!(s, "{} = {}");
+        assert_eq!(args, vec![pos(0), pos(1)]);
+    }
+
+    #[test]
+    fn captures_simple_ident() {
+        let (s, args) = rewrite("{year}-{month}");
+        assert_eq!(s, "{}-{}");
+        assert_eq!(args, vec![cap("year"), cap("month")]);
+    }
+
+    #[test]
+    fn captures_with_format_spec() {
+        let (s, args) = rewrite("{val:x}");
+        assert_eq!(s, "{:x}");
+        assert_eq!(args, vec![cap("val")]);
+    }
+
+    #[test]
+    fn captures_dotted_path() {
+        let (s, args) = rewrite("{self.field}");
+        assert_eq!(s, "{}");
+        assert_eq!(args, vec![cap("self.field")]);
+    }
+
+    #[test]
+    fn escaped_braces_preserved() {
+        let (s, args) = rewrite("{{literal}} {x}");
+        assert_eq!(s, "{{literal}} {}");
+        assert_eq!(args, vec![cap("x")]);
+    }
+
+    #[test]
+    fn capture_after_multibyte_char() {
+        // Regression: the parser used a char index where a byte index
+        // was required, slicing into the middle of a multi-byte char
+        // before the capture and producing a garbage identifier.
+        let (s, args) = rewrite("{} — {desc}");
+        assert_eq!(s, "{} — {}");
+        assert_eq!(args, vec![pos(0), cap("desc")]);
+    }
+
+    #[test]
+    fn capture_after_multiple_multibyte_chars() {
+        let (s, args) = rewrite("Today \u{2022} {weekday}, {month} {}");
+        assert_eq!(s, "Today \u{2022} {}, {} {}");
+        assert_eq!(args, vec![cap("weekday"), cap("month"), pos(0)]);
+    }
+
+    #[test]
+    fn capture_before_positional_keeps_format_order() {
+        // Regression: `fmt!("{ident} {}", arg)` used to emit
+        // `uwrite!(buf, "{} {}", arg, ident)`, which printed "arg ident"
+        // instead of the intended "ident arg". The args list now follows
+        // format-string order, so the captured slot is consumed first.
+        let (s, args) = rewrite("{month_name} {}");
+        assert_eq!(s, "{} {}");
+        assert_eq!(args, vec![cap("month_name"), pos(0)]);
+    }
 }

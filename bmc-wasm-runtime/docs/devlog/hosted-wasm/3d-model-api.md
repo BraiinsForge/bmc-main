@@ -139,8 +139,8 @@ New easing functions for natural settle animations.
 
 Replace hand-rolled quaternion/matrix math with `glam` crate. Fix D6/D20 face selection, orientation, and highlight.
 
-**SDK**: `glam` as optional `math-3d` feature with `libm` backend (no_std WASM). `Orientation` gets `From/Into<Quat>`.
-`host::random_u32()` host-seeded PRNG for deterministic capture/replay.
+**SDK**: `glam` as optional `math-3d` feature with `libm` backend (wasm-friendly, no host-stdlib pull). `Orientation`
+gets `From/Into<Quat>`. `host::random_u32()` host-seeded PRNG for deterministic capture/replay.
 
 **Host**: `glam` unconditional. `quat_to_mat3` uses `glam::Mat3::from_quat`. `host_random_u32` xorshift64 PRNG with
 `RuntimeConfig::rng_seed` (`None` = auto-seed, `Some(s)` = deterministic). Capture/recording use `rng_seed: Some(42)`.

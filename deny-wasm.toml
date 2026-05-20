@@ -1,0 +1,145 @@
+# cargo-deny configuration for the wasm32 dep graph.
+#
+# Invoked via `just validate-wasm-deny`, which adds
+# `--target wasm32-unknown-unknown` so this analysis
+# only sees crates that would land in widget binaries.
+#
+# The host-side dep hygiene check lives in `deny.toml`.
+#
+# Bans are deliberately leaf-and-trunk: trunk bans (tokio, serde, tracing)
+# catch transitive pulls across whole ecosystems; explicit leaf names
+# (reqwest, hyper, tracing-subscriber) stay listed for documentation
+# — CI failure messages name the specific crate, which is easier
+# to grep than tracing a chain back to its trunk.
+
+[graph]
+targets = ["wasm32-unknown-unknown"]
+all-features = false
+
+[advisories]
+unmaintained = "workspace"
+
+# Only check `bans.deny`; version-dedup hygiene is the host-side `deny.toml`'s job.
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+
+deny = [
+    # ── Async runtimes ─────────────────────────────────────────────────
+    # Widgets do async via host imports (`fetch`, `request_frame_after`).
+    # Banning the trunks catches reqwest, hyper, tonic, axum, etc. transitively.
+    { name = "tokio" },
+    { name = "tokio-util" },
+    { name = "tokio-stream" },
+    { name = "tokio-rustls" },
+    { name = "mio" },
+    { name = "async-std" },
+    { name = "smol" },
+    { name = "async-channel" },
+    { name = "futures" },
+    { name = "futures-util" },
+
+    # ── HTTP ───────────────────────────────────────────────────────────
+    # Widgets use the `fetch` host import. Trunk bans on `tokio` already
+    # catch most of these; explicit names make failures self-documenting.
+    { name = "reqwest" },
+    { name = "hyper" },
+    { name = "hyper-rustls" },
+    { name = "hyper-tls" },
+    { name = "h2" },
+    { name = "http" },
+    { name = "http-body" },
+    { name = "ureq" },
+    { name = "attohttpc" },
+    { name = "url" },
+
+    # ── Serde and friends ──────────────────────────────────────────────
+    # The wasmi-wire byte protocol is the widget data shape; serde derives
+    # pull `format!` machinery and bloat compile times. `bmc-wasm-protocol`
+    # gates serde behind an opt-in feature for host callers only
+    # — this ban asserts the gate holds on wasm builds.
+    { name = "serde" },
+    { name = "serde_derive" },
+    { name = "serde_json" },
+    { name = "serde_yaml" },
+    { name = "serde_urlencoded" },
+    { name = "schemars" },
+
+    # ── Logging ────────────────────────────────────────────────────────
+    # Widgets emit logs via the `log()` host import.
+    { name = "log" },
+    { name = "env_logger" },
+    { name = "tracing" },
+    { name = "tracing-core" },
+    { name = "tracing-subscriber" },
+    { name = "slog" },
+
+    # ── Time ───────────────────────────────────────────────────────────
+    # Widgets get formatted time via the `format_date` host import.
+    { name = "chrono" },
+    { name = "time" },
+
+    # ── Error helpers that pull `format!` ──────────────────────────────
+    # `anyhow` uses `format!` for context strings; widgets do errors
+    # via `ufmt` patterns. `thiserror` is intentionally allowed — it's
+    # a build-time derive that doesn't pull `format!` into the binary.
+    { name = "anyhow" },
+
+    # ── CLI parsing ────────────────────────────────────────────────────
+    # Widgets aren't CLIs.
+    { name = "clap" },
+    { name = "structopt" },
+    { name = "argh" },
+    { name = "pico-args" },
+    { name = "lexopt" },
+
+    # ── Config parsing ─────────────────────────────────────────────────
+    # Widgets get config via the params channel.
+    { name = "toml" },
+
+    # ── Regex ──────────────────────────────────────────────────────────
+    # Heavy state machines; widgets do simpler matching.
+    { name = "regex" },
+    { name = "regex-automata" },
+    { name = "regex-syntax" },
+
+    # ── Concurrency primitives ─────────────────────────────────────────
+    # Widgets are single-threaded.
+    { name = "parking_lot" },
+    { name = "crossbeam-channel" },
+    { name = "crossbeam-utils" },
+    { name = "crossbeam-epoch" },
+    { name = "dashmap" },
+    { name = "flume" },
+    { name = "rayon" },
+
+    # ── Database ───────────────────────────────────────────────────────
+    # Host-only; widgets get scoped KV via host imports.
+    { name = "diesel" },
+    { name = "sqlx" },
+    { name = "rusqlite" },
+
+    # ── gRPC / protobuf ────────────────────────────────────────────────
+    # Host-only.
+    { name = "tonic" },
+    { name = "prost" },
+    { name = "prost-types" },
+
+    # ── Superseded by std ──────────────────────────────────────────────
+    # `std::sync::OnceLock` and `std::sync::LazyLock` cover these
+    # in the stable toolchain we target.
+    { name = "lazy_static" },
+    { name = "once_cell" },
+]
+
+# ── Sources ───────────────────────────────────────────────────────────
+[sources]
+unknown-registry = "deny"
+unknown-git = "warn"
+allow-registry = [
+    "https://github.com/rust-lang/crates.io-index",
+    "sparse+http://registry.ii.zone/api/v1/crates/",
+]
+allow-git = [
+    "ssh://git@gitlab.ii.zone/tooling/tooling.git",
+]

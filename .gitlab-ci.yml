@@ -57,6 +57,20 @@ cargo-deny:
   script:
     - nix build -L .#checks.x86_64-linux.cargo-deny
 
+cargo-deny-wasm:
+  extends: .nix
+  stage: check
+  needs: []
+  script:
+    - nix build -L .#checks.x86_64-linux.cargo-deny-wasm
+
+no-fmt-in-wasm:
+  extends: .nix
+  stage: check
+  needs: []
+  script:
+    - nix build -L .#checks.x86_64-linux.no-fmt-in-wasm
+
 "docs: wasm":
   extends: .nix
   stage: check
