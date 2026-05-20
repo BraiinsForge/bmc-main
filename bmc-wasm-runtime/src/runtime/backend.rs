@@ -362,12 +362,24 @@ impl WasmWidgetRuntime {
                 udp_event_txs: HashMap::new(),
             });
         }
+        let guest_id = state.guest_id;
+        tracing::info!(
+            guest_id = %guest_id,
+            width,
+            height,
+            has_unload = unload_func.is_some(),
+            has_on_params_update = on_params_update_func.is_some(),
+            has_on_system_update = on_system_update_func.is_some(),
+            "runtime instantiated"
+        );
 
         // Call init — all host config (including widget dimensions) is in place.
         // The guest reads its viewport via `widget_size()` / `host_widget_size`
         // rather than init arguments, so the typed func is `() -> ()`.
         if let Ok(init_func) = instance.get_typed_func::<(), ()>(&store, "init") {
+            tracing::trace!(guest_id = %guest_id, "calling widget init");
             in_lifecycle(&mut store, Lifecycle::Init, |s| init_func.call(s, ()))?;
+            tracing::trace!(guest_id = %guest_id, "widget init completed");
         }
 
         Ok(Self {
@@ -403,8 +415,23 @@ impl WasmWidgetRuntime {
     /// (last good frame is shown with a warning bar). After
     /// [`Self::max_fuel_strikes`] consecutive fuel-outs the widget is killed
     /// and [`RenderStatus::Dead`] is returned on every subsequent call.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "carries trace-level instrumentation for BDK-293 hot-reload freeze investigation; remove the expect when the tracing comes back out"
+    )]
     pub fn render(&mut self, delta_ms: u32) -> Result<RenderStatus> {
         let state = self.store.data_mut();
+        tracing::trace!(
+            guest_id = %state.guest_id,
+            delta_ms,
+            fuel_dead = self.fuel_dead,
+            cached_tree = state.cached_tree.is_some(),
+            interaction_pending = state.interaction.has_pending_events(),
+            animation_only_candidate = state.frame_schedule.is_animation_only_frame(),
+            deferred_wasm_render_at_ms = state.frame_schedule.deferred_wasm_render_at_ms,
+            monotonic_ms = state.monotonic_ms,
+            "render start"
+        );
 
         // Dead widget — show overlay on every frame.
         // Use `reset_fuel_state()` to revive (e.g. from a testbed button).
@@ -413,6 +440,7 @@ impl WasmWidgetRuntime {
             state.begin_render_frame();
             Self::render_cached_tree(state, delta_ms);
             Self::draw_dead_overlay(state);
+            tracing::trace!(guest_id = %state.guest_id, "render skipped because widget is dead");
             return Ok(RenderStatus::Dead);
         }
 
@@ -437,6 +465,11 @@ impl WasmWidgetRuntime {
 
         if animation_only {
             Self::render_cached_tree(state, delta_ms);
+            tracing::trace!(
+                guest_id = %state.guest_id,
+                delta_ms,
+                "render replayed cached tree without wasm"
+            );
             return Ok(RenderStatus::Ok);
         }
 
@@ -450,6 +483,12 @@ impl WasmWidgetRuntime {
         let wasm_t0 = Instant::now();
         ii_stopwatch::stopwatch_start!(self.wasm_w);
         let render_func = self.render_func;
+        tracing::trace!(
+            guest_id = %self.store.data().guest_id,
+            wasm_delta,
+            fuel_per_frame = self.fuel_per_frame,
+            "calling widget render"
+        );
         let call_result = in_lifecycle(&mut self.store, Lifecycle::Render, |s| {
             render_func.call(s, wasm_delta)
         });
@@ -470,8 +509,18 @@ impl WasmWidgetRuntime {
 
         match call_result {
             Ok(()) => {
-                self.store.data_mut().last_timings.wasm_us = wasm_t0.elapsed().as_micros() as u32;
+                let wasm_us = wasm_t0.elapsed().as_micros() as u32;
+                self.store.data_mut().last_timings.wasm_us = wasm_us;
                 self.fuel_strikes = 0;
+                tracing::trace!(
+                    guest_id = %self.store.data().guest_id,
+                    wasm_delta,
+                    wasm_us,
+                    wants_next_frame = self.wants_next_frame(),
+                    next_frame_delay_ms = self.next_frame_delay(),
+                    has_deferred_render = self.has_deferred_render(),
+                    "widget render completed"
+                );
                 Ok(RenderStatus::Ok)
             }
             Err(e) if e.as_trap_code() == Some(wasmi::TrapCode::OutOfFuel) => {
@@ -499,7 +548,14 @@ impl WasmWidgetRuntime {
                 state.frame_schedule.widget_delay_ms = Some(0);
                 Ok(RenderStatus::FuelExhausted)
             }
-            Err(e) => Err(e.into()),
+            Err(e) => {
+                tracing::warn!(
+                    guest_id = %self.store.data().guest_id,
+                    trap = %e,
+                    "widget render trapped"
+                );
+                Err(e.into())
+            }
         }
     }
 
@@ -837,6 +893,12 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn sdk_version(&self) -> (u16, u16, u16) {
         self.sdk_version
+    }
+
+    /// Stable per-runtime identity used in host logs and asset namespacing.
+    #[must_use]
+    pub fn guest_id(&self) -> crate::host_api::GuestId {
+        self.store.data().guest_id
     }
 
     /// The SDK version the host expects (major, minor, patch).

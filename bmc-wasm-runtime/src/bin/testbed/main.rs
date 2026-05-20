@@ -359,8 +359,15 @@ fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, std::sync::mpsc::Re
                     p.canonicalize().ok().as_ref() == Some(&target)
                 });
                 if targets_match {
+                    tracing::debug!(
+                        kind = ?event.kind,
+                        paths = ?event.paths,
+                        "hot reload: watcher fired"
+                    );
                     let _ = tx.send(());
                 }
+            } else if let Err(e) = res {
+                tracing::warn!("hot reload: watcher error: {e}");
             }
         },
         notify::Config::default(),
@@ -662,17 +669,24 @@ impl TestbedApp {
     }
 
     /// Drain pending watcher events; if any fired, rebuild every tile's `WasmWidgetRuntime`
-    /// from the (now-updated) wasm bytes on disk.
-    /// FBO + texture are kept across reloads since their dimensions don't change.
-    fn poll_hot_reload(&mut self, frame: &mut eframe::Frame) {
-        let mut needs_reload = self.hot_reload.manual_reload;
+    /// (and the host-owned `TileGpu`; see [`Self::reload_one_tile`] for why) from the
+    /// (now-updated) wasm bytes on disk.
+    fn poll_hot_reload(&mut self) {
+        let manual = self.hot_reload.manual_reload;
         self.hot_reload.manual_reload = false;
+        let mut watcher_events = 0_usize;
         while self.hot_reload.watcher_rx.try_recv().is_ok() {
-            needs_reload = true;
+            watcher_events += 1;
         }
+        let needs_reload = manual || watcher_events > 0;
         if !needs_reload {
             return;
         }
+        tracing::debug!(
+            manual,
+            watcher_events,
+            "hot reload: trigger drained, beginning rebuild"
+        );
         let wasm_bytes = match std::fs::read(&self.cli.wasm_path) {
             Ok(b) => b,
             Err(e) => {
@@ -684,14 +698,18 @@ impl TestbedApp {
             }
         };
         tracing::info!(
-            "hot reload: rebuilding {} tile runtime(s)",
-            self.tiles.len()
+            wasm_bytes = wasm_bytes.len(),
+            tiles = self.tiles.len(),
+            "hot reload: rebuilding tile runtime(s)"
         );
-        for tile in &mut self.tiles {
+        let params = self.params.clone();
+        let system = self.system.clone();
+        for idx in 0..self.tiles.len() {
+            let tile = &mut self.tiles[idx];
             let (led_tx, led_rx) = std::sync::mpsc::channel();
             let rt_config = RuntimeConfig {
-                params: self.params.clone(),
-                system: self.system.clone(),
+                params: params.clone(),
+                system: system.clone(),
                 led_command_sender: Some(led_tx),
                 ..RuntimeConfig::default()
             };
@@ -710,7 +728,6 @@ impl TestbedApp {
                 }
             }
         }
-        let _ = frame;
     }
 
     /// Build the four widget tiles on first `ui` call (where `eframe::Frame` is available
@@ -856,7 +873,14 @@ impl TestbedApp {
                 .with_renderer(renderer_ptr, |rt| rt.render(delta_ms));
             match outcome {
                 Ok(RenderStatus::Ok) => {
-                    tile.ever_rendered = true;
+                    if !tile.ever_rendered {
+                        tracing::info!(
+                            label = %tile.label,
+                            guest_id = %tile.runtime.guest_id(),
+                            "tile: first render after construction/reload"
+                        );
+                        tile.ever_rendered = true;
+                    }
                 }
                 Ok(RenderStatus::FuelExhausted) => {
                     tracing::warn!("{}: fuel exhausted", tile.label);
@@ -1068,7 +1092,7 @@ impl eframe::App for TestbedApp {
             return;
         }
         // Hot reload check — rebuild runtimes if the wasm changed on disk.
-        self.poll_hot_reload(frame);
+        self.poll_hot_reload();
 
         let now = std::time::Instant::now();
         let delta = now.duration_since(self.clock.last_frame);

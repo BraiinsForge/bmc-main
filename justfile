@@ -15,6 +15,8 @@ NIX_DEV := if env("IN_NIX_SHELL", "") == "" { "nix develop --command" } else { "
 # Global env vars
 
 export FORCE_COLOR := "1"
+# Default tracing filter for `just wasm::dev` and friends; overridable by the caller's env.
+export RUST_LOG := env('RUST_LOG', 'bmc_wasm_runtime=debug,testbed=debug')
 
 [private]
 default:

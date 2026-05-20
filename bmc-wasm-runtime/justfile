@@ -43,7 +43,7 @@ dev WIDGET ARGS="":
     wasm_file="$target/{{ wasm_target }}/debug/$(echo {{ WIDGET }} | tr - _).wasm"
     cargo build {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml
     cargo build --manifest-path "$root/Cargo.toml" -p {{ WIDGET }} --target {{ wasm_target }}
-    RUST_LOG=bmc_wasm_runtime=debug mprocs \
+    mprocs \
         --names "watch,testbed" \
         "cd '$root' && cargo watch -x 'build -p {{ WIDGET }} --target {{ wasm_target }}'" \
         "cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- '$wasm_file' {{ ARGS }}"
