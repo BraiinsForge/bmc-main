@@ -144,13 +144,17 @@ fn row<R>(
     r
 }
 
-/// Searchable IANA timezone picker over `chrono_tz::TZ_VARIANTS`.
-/// Field is also the search input; popup filters as you type.
+fn supported_tz_names() -> impl Iterator<Item = &'static str> {
+    bmc_shared_time::time::Timezone::list()
+        .iter()
+        .map(bmc_shared_time::time::Timezone::iana)
+}
+
+/// Searchable IANA timezone picker over [`supported_tz_names`].
 fn paint_timezone_row(grid: &mut egui::Ui, value: &mut String) -> bool {
     row(grid, "timezone", |slot, _w, label| {
-        let tz_names = chrono_tz::TZ_VARIANTS.iter().map(|tz| tz.name());
         let resp = slot.add(
-            egui_autocomplete::AutoCompleteTextEdit::new(value, tz_names)
+            egui_autocomplete::AutoCompleteTextEdit::new(value, supported_tz_names())
                 .max_suggestions(20)
                 .highlight_matches(true)
                 .popup_on_focus(true),
@@ -332,5 +336,26 @@ fn unit_system_label(u: UnitSystem) -> &'static str {
     match u {
         UnitSystem::Metric => "Metric",
         UnitSystem::Imperial => "Imperial",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::supported_tz_names;
+    use bmc_shared_time::time::Timezone;
+    use std::str::FromStr;
+
+    #[test]
+    fn dropdown_names_all_resolve_via_host_validator() {
+        let mut unresolved: Vec<&str> = supported_tz_names()
+            .filter(|name| Timezone::from_str(name).is_err())
+            .collect();
+        unresolved.sort_unstable();
+        assert!(
+            unresolved.is_empty(),
+            "testbed offers {} tz name(s) the host validator rejects: {:?}",
+            unresolved.len(),
+            unresolved,
+        );
     }
 }
