@@ -33,13 +33,11 @@ skip = [
     { crate = "webpki-roots@0.25" },
 
     # rand 0.8 → 0.9 migration (see BDK-465).
-    # `wasi@0.11` ships transitively via `getrandom 0.2` and drops with the same migration.
     { crate = "getrandom@0.2" },
     { crate = "getrandom@0.3" },
     { crate = "rand@0.8" },
     { crate = "rand_chacha@0.3" },
     { crate = "rand_core@0.6" },
-    { crate = "wasi@0.11" },
 
     # Font/text ecosystem (cosmic-text pulls swash+harfrust with different versions)
     { crate = "font-types@0.10" },
@@ -173,4 +171,9 @@ allow-registry = [
 ]
 allow-git = [
     "ssh://git@gitlab.ii.zone/tooling/tooling.git",
+    # Pinned upstream forks used in the workspace:
+    # - egui_autocomplete: pulled by bmc-widget-wasm via bmc-wasm-runtime
+    # - smithay: pulled by bmc-widget (compositor) and bmc-openwrt
+    "https://github.com/yvind/egui_autocomplete.git",
+    "https://github.com/Smithay/smithay.git",
 ]
