@@ -585,11 +585,17 @@ fn date_pattern(format: system::DateFormat, show_weekday: bool, show_year: bool)
     }
 }
 
+/// City-only portion of an IANA timezone name; underscores normalised to spaces.
+/// `Europe/Prague` → `Prague`; `America/New_York` → `New York`.
+fn tz_city(iana: &str) -> String {
+    iana.rsplit('/').next().unwrap_or(iana).replace('_', " ")
+}
+
 /// Returns `(label, resolved)` where `resolved` is `false` when the
 /// host doesn't recognise the tz name — caller paints the label red.
 fn compose_timezone(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> (String, bool) {
     let effective = effective_tz(tz);
-    let label = effective.iana().to_owned();
+    let label = tz_city(effective.iana());
     let offset = resolve_tz_offset(&effective, now.unix_secs);
     if size.show_utc_offset {
         let mut s = label;
@@ -813,7 +819,7 @@ fn render_analog_round(
             iana_owned = system::current().timezone().unwrap_or("Etc/GMT").to_owned();
             iana_owned.as_str()
         };
-        let city = iana.rsplit('/').next().unwrap_or(iana).replace('_', " ");
+        let city = tz_city(iana);
         let offset = resolve_tz_offset(&effective, now.unix_secs);
         let offset_str = match offset {
             Some(secs) => {
@@ -1110,7 +1116,7 @@ fn render_analog_rect(
             iana_owned = system::current().timezone().unwrap_or("Etc/GMT").to_owned();
             iana_owned.as_str()
         };
-        let city = iana.rsplit('/').next().unwrap_or(iana).replace('_', " ");
+        let city = tz_city(iana);
         let offset = resolve_tz_offset(&effective, now.unix_secs);
         let line = match offset {
             Some(secs) => {
@@ -1492,13 +1498,17 @@ fn push_pad2(s: &mut String, n: u32) {
     push_u32(s, n);
 }
 
+/// `+H` for whole-hour offsets, `+H:MM` for fractional.
+/// Sign always emitted; hours unpadded; minutes zero-padded.
 fn push_utc_offset(s: &mut String, offset_secs: i32) {
     let sign = if offset_secs < 0 { '-' } else { '+' };
     let abs = offset_secs.unsigned_abs();
     let hours = abs / 3_600;
     let mins = (abs % 3_600) / 60;
     s.push(sign);
-    push_pad2(s, hours);
-    s.push(':');
-    push_pad2(s, mins);
+    push_u32(s, hours);
+    if mins != 0 {
+        s.push(':');
+        push_pad2(s, mins);
+    }
 }
