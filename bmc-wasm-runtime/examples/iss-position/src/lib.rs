@@ -233,7 +233,7 @@ pub extern "C" fn render(_delta_ms: u32) {
             WidgetState::Error(msg) => col(
                 props!(padding: 32.0, gap: 16.0, background: BLACK),
                 [
-                    text("ISS Position", style!(size: 24, weight: 600)),
+                    text("ISS Position", style!(size: 24, weight: FontWeight::BOLD)),
                     notification(NotificationKind::Error, "Failed to load data", msg),
                 ],
             ),
@@ -561,7 +561,7 @@ fn render_debug_landmarks(draws: &mut Vec<Draw>, center: &SmoothedCenter, zoom: 
                 x + 12.0,
                 y - 3.0,
                 label,
-                style!(size: 12, color: color, weight: 600),
+                style!(size: 12, color: color, weight: FontWeight::BOLD),
             ));
         }
     }
@@ -619,7 +619,7 @@ fn table_row(label: &str, value: &str, font_size: u32) -> Node {
             spacer(1.0),
             text(
                 value,
-                style!(size: font_size, weight: 600, line_height: 1.2),
+                style!(size: font_size, weight: FontWeight::BOLD, line_height: 1.2),
             ),
         ],
     )
@@ -790,7 +790,7 @@ fn render_full(data: &IssData, next_update: &str, delta_ms: u32) -> Node {
             col(
                 props!(padding: 32.0, flex: 1.0),
                 [
-                    text("ISS Position", style!(size: 24, weight: 600)),
+                    text("ISS Position", style!(size: 24, weight: FontWeight::BOLD)),
                     data_table_full(24, data, next_update),
                 ],
             ),
@@ -804,7 +804,7 @@ fn render_large(data: &IssData, next_update: &str) -> Node {
     col(
         props!(padding: 24.0, background: BLACK),
         [
-            text("ISS Position", style!(size: 22, weight: 600)),
+            text("ISS Position", style!(size: 22, weight: FontWeight::BOLD)),
             data_table_full(18, data, next_update),
         ],
     )
@@ -815,7 +815,7 @@ fn render_medium(data: &IssData) -> Node {
     col(
         props!(padding: 24.0, background: BLACK),
         [
-            text("ISS Position", style!(size: 20, weight: 600)),
+            text("ISS Position", style!(size: 20, weight: FontWeight::BOLD)),
             data_table_compact(20, data),
         ],
     )
@@ -826,7 +826,7 @@ fn render_small(data: &IssData) -> Node {
     col(
         props!(padding: 16.0, background: BLACK),
         [
-            text("ISS Position", style!(size: 18, weight: 600)),
+            text("ISS Position", style!(size: 18, weight: FontWeight::BOLD)),
             data_table_compact(16, data),
         ],
     )

@@ -2320,7 +2320,7 @@ fn render_discovering(size: WidgetSize) -> Node {
             [
                 text(
                     "Select a device",
-                    style!(size: title_sz, color: GRAY_20, weight: 600),
+                    style!(size: title_sz, color: GRAY_20, weight: FontWeight::BOLD),
                 ),
                 scroll("session_list", props!(flex: 1.0, gap: 2.0), buttons),
             ],
@@ -2750,7 +2750,7 @@ fn render_track_info(media: &MediaState, size: WidgetSize) -> Node {
 
     let mut children: Vec<Node> = vec![text(
         title,
-        style!(size: title_size, color: GRAY_10, weight: 600),
+        style!(size: title_size, color: GRAY_10, weight: FontWeight::BOLD),
     )];
 
     if has_track {

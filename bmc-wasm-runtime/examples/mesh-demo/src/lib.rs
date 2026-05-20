@@ -575,7 +575,7 @@ fn render_tray(w: u32, h: u32, delta_ms: u32) {
                     ),
                     [text(
                         fmt!("\u{03A3} {}", total),
-                        style!(size: 14, color: WHITE, weight: 700),
+                        style!(size: 14, color: WHITE, weight: FontWeight::BOLD),
                     )],
                 ),
             ],
@@ -609,7 +609,7 @@ fn render_tray(w: u32, h: u32, delta_ms: u32) {
                 ),
                 [text(
                     "Tap again to remove",
-                    style!(size: 20, color: WHITE, weight: 700),
+                    style!(size: 20, color: WHITE, weight: FontWeight::BOLD),
                 )],
             )],
         ));

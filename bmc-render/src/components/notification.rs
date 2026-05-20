@@ -45,7 +45,7 @@ fn notification_accent(kind: u8) -> (Color, SvgId) {
 fn notification_title_style() -> TextStyle {
     TextStyle {
         size: 14,
-        weight: 600,
+        weight: FontWeight::SEMIBOLD,
         color: GRAY_10,
         ..Default::default()
     }
@@ -54,7 +54,7 @@ fn notification_title_style() -> TextStyle {
 fn notification_subtitle_style() -> TextStyle {
     TextStyle {
         size: 14,
-        weight: 400,
+        weight: FontWeight::REGULAR,
         color: GRAY_50,
         ..Default::default()
     }

@@ -587,7 +587,7 @@ fn render_grid(w: u32, h: u32, p: &Params, sizes: &Sizes) {
 fn section_header(label: &str, sizes: &Sizes) -> Node {
     text(
         label,
-        style!(size: sizes.section_header, weight: 700, color: GRAY_10),
+        style!(size: sizes.section_header, weight: FontWeight::BOLD, color: GRAY_10),
     )
 }
 

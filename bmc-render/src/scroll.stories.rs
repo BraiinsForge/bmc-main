@@ -30,7 +30,7 @@ fn examples(c: &mut StoryCtx) {
             [
                 text(
                     "Header",
-                    style!(size: 18, weight: 700, color: WHITE, padding: 8),
+                    style!(size: 18, weight: FontWeight::BOLD, color: WHITE, padding: 8),
                 ),
                 col(
                     props!(gap: 4, padding: 8),

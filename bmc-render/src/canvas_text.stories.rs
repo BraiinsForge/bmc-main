@@ -22,7 +22,7 @@ fn styles(c: &mut StoryCtx) {
                     10.0,
                     48.0,
                     "Bold 20px",
-                    style!(size: 20, weight: 700, color: GREEN_50),
+                    style!(size: 20, weight: FontWeight::BOLD, color: GREEN_50),
                 ),
                 Draw::text(
                     10.0,

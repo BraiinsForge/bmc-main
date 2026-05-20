@@ -300,7 +300,10 @@ fn text_wrapping_demo() -> Node {
                 style!(size: 14, line_height: 1.4),
                 [
                     span("Lorem ipsum dolor sit amet, ", ()),
-                    span("consectetur adipiscing elit", style!(weight: 700)),
+                    span(
+                        "consectetur adipiscing elit",
+                        style!(weight: FontWeight::BOLD),
+                    ),
                     span(
                         ". Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea ",
                         (),
@@ -322,7 +325,7 @@ fn text_styles_demo() -> Node {
                 style!(size: 14, line_height: 1.5),
                 [
                     span("Normal, ", ()),
-                    span("bold", style!(weight: 700)),
+                    span("bold", style!(weight: FontWeight::BOLD)),
                     span(", ", ()),
                     span("italic", style!(italic: true)),
                     span(", ", ()),
@@ -330,7 +333,7 @@ fn text_styles_demo() -> Node {
                     span(", ", ()),
                     span("strikethrough", style!(strikethrough: true)),
                     span(", and ", ()),
-                    span("colored", style!(color: GREEN_50, weight: 700)),
+                    span("colored", style!(color: GREEN_50, weight: FontWeight::BOLD)),
                     span(" text.", ()),
                 ],
             ),
@@ -343,7 +346,7 @@ fn led_section() -> Node {
         props!(flex: 1.0, gap: 4.0, background: GRAY_90, padding: 8.0,
             cross_align: CrossAlign::Center),
         [
-            text("LED Effects", style!(size: 14, weight: 700)),
+            text("LED Effects", style!(size: 14, weight: FontWeight::BOLD)),
             row(
                 props!(gap: 4.0, background: GRAY_90, padding: 8.0, wrap: true, cross_align: CrossAlign::Center),
                 [
@@ -420,7 +423,10 @@ fn small_led_effects_section() -> Node {
     row(
         props!(gap: 5.0, background: GRAY_90.with_alpha(0.45), padding: 5.0, wrap: true, cross_align: CrossAlign::Center),
         [
-            text("LED", style!(size: 11, weight: 700, color: GRAY_40)),
+            text(
+                "LED",
+                style!(size: 11, weight: FontWeight::BOLD, color: GRAY_40),
+            ),
             button!("led_solid", "Solid", size: Small),
             button!("led_breathe", "Breathe", size: Small),
             button!("led_knight", "Knight", size: Small),
@@ -449,7 +455,10 @@ fn medium_led_effects_section() -> Node {
     row(
         props!(gap: 5.0, background: GRAY_90.with_alpha(0.45), padding: 6.0, wrap: true, cross_align: CrossAlign::Center),
         [
-            text("LED", style!(size: 12, weight: 700, color: GRAY_40)),
+            text(
+                "LED",
+                style!(size: 12, weight: FontWeight::BOLD, color: GRAY_40),
+            ),
             button!("led_solid", "Solid", size: Small),
             button!("led_breathe", "Breathe", size: Small),
             button!("led_chase", "Chase", size: Small),
@@ -464,7 +473,10 @@ fn medium_icon_showcase_section() -> Node {
     row(
         props!(gap: 12.0, background: GRAY_90.with_alpha(0.45), padding: 6.0, cross_align: CrossAlign::Center),
         [
-            text("Icons", style!(size: 12, weight: 700, color: GRAY_40)),
+            text(
+                "Icons",
+                style!(size: 12, weight: FontWeight::BOLD, color: GRAY_40),
+            ),
             canvas(
                 props!(width: 164.0, height: 28.0),
                 [
@@ -592,7 +604,10 @@ fn large_led_effects_section() -> Node {
     row(
         props!(gap: 6.0, background: GRAY_90.with_alpha(0.45), padding: 8.0, wrap: true, cross_align: CrossAlign::Center),
         [
-            text("LED", style!(size: 12, weight: 700, color: GRAY_40)),
+            text(
+                "LED",
+                style!(size: 12, weight: FontWeight::BOLD, color: GRAY_40),
+            ),
             button!("led_solid", "Solid Red", size: Small),
             button!("led_breathe", "Breathe Green", size: Small),
             button!("led_chase", "Chase Blue", size: Small),
@@ -776,7 +791,10 @@ fn about_modal() -> Node {
                 "This is a showcase of the WASM widget SDK capabilities.",
                 style!(size: 14, line_height: 1.5),
             ),
-            text("Features demonstrated:", style!(size: 14, weight: 700)),
+            text(
+                "Features demonstrated:",
+                style!(size: 14, weight: FontWeight::BOLD),
+            ),
             text(
                 "\u{2022} Button styles (Primary, Secondary, Tertiary, Danger)",
                 style!(size: 14),
@@ -804,7 +822,7 @@ fn about_modal() -> Node {
             spacer(1.0),
             text(
                 "Scroll Test Content",
-                style!(size: 16, weight: 700, color: VIOLET_50),
+                style!(size: 16, weight: FontWeight::BOLD, color: VIOLET_50),
             ),
             text(
                 "The following paragraphs test scrolling.",

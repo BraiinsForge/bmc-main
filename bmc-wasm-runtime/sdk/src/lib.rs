@@ -621,7 +621,7 @@ macro_rules! fmt {
 /// text("Hello", style!(size: 24, color: WHITE, padding: 8.0))
 /// paragraph(style!(size: 16, line_height: 1.3), [
 ///     span("Click ", ()),
-///     span("Save", style!(weight: 700)),
+///     span("Save", style!(weight: FontWeight::BOLD)),
 ///     span(" to confirm.", ()),
 /// ])
 /// ```

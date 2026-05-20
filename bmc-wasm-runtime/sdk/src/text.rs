@@ -2,7 +2,9 @@
 
 //! Text primitives: spans, styles, and text/paragraph builders.
 
-use bmc_wasm_protocol::{AnimProperty, Color, Easing, GRAY_10, LoopMode, PropsData, TextStyle};
+use bmc_wasm_protocol::{
+    AnimProperty, Color, Easing, FontWeight, GRAY_10, LoopMode, PropsData, TextStyle,
+};
 
 use crate::tree::Node;
 
@@ -66,26 +68,11 @@ pub enum Interpolation {
     CatmullRom = 1,
 }
 
-/// Named CSS font weights. The text primitive carries a raw `u16` weight
-/// (see [`Span::weight`]); this enum is the typed convention for widgets
-/// that prefer named weights, and converts directly via `weight as u16`.
-///
-/// Only the weights the deck's font set ships with are enumerated. Add
-/// more here as fonts gain them — keep the discriminants matching the
-/// CSS standard so the renderer's `weight >= 600` threshold stays valid.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u16)]
-pub enum FontWeight {
-    Regular = 400,
-    SemiBold = 600,
-    Bold = 700,
-}
-
 /// A text span with optional style overrides
 #[derive(Clone, Debug)]
 pub struct Span {
     pub text: String,
-    pub weight: Option<u16>,
+    pub weight: Option<FontWeight>,
     pub color: Option<Color>,
     pub italic: bool,
     pub underline: bool,
@@ -103,7 +90,7 @@ impl Span {
     /// Note: strikethrough is in the extra byte if needed
     #[must_use]
     pub fn flags(&self) -> u16 {
-        let weight_bits = self.weight.unwrap_or(0) & 0xFFF;
+        let weight_bits = self.weight.map_or(0, |w| w.0) & 0xFFF;
         let has_weight = if self.weight.is_some() { 1 << 12 } else { 0 };
         let has_color = if self.color.is_some() { 1 << 13 } else { 0 };
         let italic_bit = if self.italic { 1 << 14 } else { 0 };
@@ -130,7 +117,7 @@ impl IntoSpanStyle for () {
 impl IntoSpanStyle for StyleResult {
     fn apply(self, span: &mut Span) {
         let ts = self.0;
-        if ts.weight != 400 {
+        if ts.weight != FontWeight::REGULAR {
             span.weight = Some(ts.weight);
         }
         if ts.color != GRAY_10 {
@@ -147,7 +134,7 @@ impl IntoSpanStyle for StyleResult {
 /// # Examples
 /// ```ignore
 /// span("plain text", ())
-/// span("bold", style!(weight: 700))
+/// span("bold", style!(weight: FontWeight::BOLD))
 /// span("colored", style!(color: RED_50))
 /// ```
 pub fn span(text: impl Into<String>, style: impl IntoSpanStyle) -> Span {

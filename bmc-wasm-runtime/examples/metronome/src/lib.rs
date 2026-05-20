@@ -172,7 +172,7 @@ fn build_small(bpm: u32, playing: bool, beat: u32) -> Node {
                 props!(),
                 [text(
                     fmt!("{} BPM", bpm),
-                    style!(size: 36, weight: 700, color: WHITE),
+                    style!(size: 36, weight: FontWeight::BOLD, color: WHITE),
                 )],
             ),
             // Tap tempo (centered via spacers)
@@ -208,7 +208,7 @@ fn build_medium(bpm: u32, playing: bool, beat: u32) -> Node {
                         props!(),
                         [text(
                             fmt!("{} BPM", bpm),
-                            style!(size: 64, weight: 700, color: WHITE),
+                            style!(size: 64, weight: FontWeight::BOLD, color: WHITE),
                         )],
                     ),
                     row(
@@ -252,7 +252,7 @@ fn build_large(size: WidgetSize, bpm: u32, playing: bool, beat: u32) -> Node {
             // Title
             text(
                 "Metronome",
-                style!(size: title_size, weight: 700, color: GRAY_50),
+                style!(size: title_size, weight: FontWeight::BOLD, color: GRAY_50),
             ),
             spacer(1.0),
             // BPM display
@@ -260,7 +260,7 @@ fn build_large(size: WidgetSize, bpm: u32, playing: bool, beat: u32) -> Node {
                 props!(),
                 [text(
                     fmt!("{} BPM", bpm),
-                    style!(size: bpm_size, weight: 700, color: WHITE),
+                    style!(size: bpm_size, weight: FontWeight::BOLD, color: WHITE),
                 )],
             ),
             // Tap tempo (centered via spacers)

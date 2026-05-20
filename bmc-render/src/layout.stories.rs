@@ -30,7 +30,10 @@ fn examples(_: &mut StoryCtx) -> Node {
             col(
                 props!(gap: 12, width: 400),
                 [
-                    text("Header", style!(size: 20, weight: 700, color: WHITE)),
+                    text(
+                        "Header",
+                        style!(size: 20, weight: FontWeight::BOLD, color: WHITE),
+                    ),
                     row(
                         props!(gap: 8),
                         [

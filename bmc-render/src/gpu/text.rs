@@ -32,7 +32,32 @@ use cosmic_text::{
 };
 use femtovg::{Canvas, FontId, Paint, renderer::OpenGl};
 
-use crate::tree::{SpanData, TextAlign, TextStyle};
+use crate::tree::{FontWeight, SpanData, TextAlign, TextStyle};
+
+/// Three weight-variant fonts used to render text spans. The renderer picks
+/// the closest match for each span's `weight` via [`WeightedFonts::select`].
+#[derive(Clone, Copy, Debug)]
+pub struct WeightedFonts {
+    pub regular: FontId,
+    pub semibold: FontId,
+    pub bold: FontId,
+}
+
+impl WeightedFonts {
+    /// Pick the FemtoVG font for a CSS weight. Thresholds match the named
+    /// `FontWeight` constants so an intermediate weight (e.g. `FontWeight(500)`
+    /// for Medium) falls onto the closest available asset.
+    #[must_use]
+    pub fn select(self, weight: FontWeight) -> FontId {
+        if weight >= FontWeight::BOLD {
+            self.bold
+        } else if weight >= FontWeight::SEMIBOLD {
+            self.semibold
+        } else {
+            self.regular
+        }
+    }
+}
 
 // ── Paragraph layout cache ──────────────────────────────────────────
 
@@ -129,8 +154,7 @@ impl ParagraphLayoutCache {
         &mut self,
         font_system: &mut FontSystem,
         canvas: &mut Canvas<OpenGl>,
-        font_regular: FontId,
-        font_bold: FontId,
+        fonts: WeightedFonts,
         base_style: &TextStyle,
         spans: &[SpanData],
         x: f32,
@@ -167,14 +191,13 @@ impl ParagraphLayoutCache {
                     let style = spans[current_span].resolve_style(base_style);
                     draw_text_segment(
                         canvas,
-                        font_regular,
-                        font_bold,
+                        fonts,
                         &segment_text,
                         x + segment_start_x + align_offset,
                         baseline_y,
                         &style,
                     );
-                    let w = segment_width(canvas, font_regular, font_bold, &segment_text, &style);
+                    let w = segment_width(canvas, fonts, &segment_text, &style);
                     draw_decorations_for_segment(
                         canvas,
                         x + segment_start_x + align_offset,
@@ -200,14 +223,13 @@ impl ParagraphLayoutCache {
                 let style = spans[current_span].resolve_style(base_style);
                 draw_text_segment(
                     canvas,
-                    font_regular,
-                    font_bold,
+                    fonts,
                     &segment_text,
                     x + segment_start_x + align_offset,
                     baseline_y,
                     &style,
                 );
-                let w = segment_width(canvas, font_regular, font_bold, &segment_text, &style);
+                let w = segment_width(canvas, fonts, &segment_text, &style);
                 draw_decorations_for_segment(
                     canvas,
                     x + segment_start_x + align_offset,
@@ -304,7 +326,7 @@ fn shape_paragraph(
 pub fn build_attrs(style: &TextStyle) -> Attrs<'static> {
     let mut attrs = Attrs::new()
         .family(Family::Name("Braiins Sans"))
-        .weight(Weight(style.weight));
+        .weight(Weight(u16::from(style.weight)));
 
     if style.italic {
         attrs = attrs.style(Style::Italic);
@@ -340,15 +362,6 @@ fn find_span(byte_offset: usize, span_offsets: &[(usize, usize, usize)]) -> usiz
     0
 }
 
-/// Select FemtoVG font based on weight.
-fn select_font(font_regular: FontId, font_bold: FontId, weight: u16) -> FontId {
-    if weight >= 600 {
-        font_bold
-    } else {
-        font_regular
-    }
-}
-
 /// Convert RGBA u32 to femtovg Color.
 #[must_use]
 pub fn to_femtovg_color(color: u32) -> femtovg::Color {
@@ -367,14 +380,13 @@ pub fn to_femtovg_color(color: u32) -> femtovg::Color {
 /// (= `line_top + centering_offset + max_ascent`).
 fn draw_text_segment(
     canvas: &mut Canvas<OpenGl>,
-    font_regular: FontId,
-    font_bold: FontId,
+    fonts: WeightedFonts,
     text: &str,
     x: f32,
     baseline_y: f32,
     style: &TextStyle,
 ) {
-    let font = select_font(font_regular, font_bold, style.weight);
+    let font = fonts.select(style.weight);
     let mut paint = Paint::color(to_femtovg_color(style.color.to_u32()));
     paint.set_font(&[font]);
     paint.set_font_size(style.size as f32);
@@ -385,12 +397,11 @@ fn draw_text_segment(
 /// Measure text segment width using FemtoVG.
 fn segment_width(
     canvas: &mut Canvas<OpenGl>,
-    font_regular: FontId,
-    font_bold: FontId,
+    fonts: WeightedFonts,
     text: &str,
     style: &TextStyle,
 ) -> f32 {
-    let font = select_font(font_regular, font_bold, style.weight);
+    let font = fonts.select(style.weight);
     let mut paint = Paint::color(to_femtovg_color(style.color.to_u32()));
     paint.set_font(&[font]);
     paint.set_font_size(style.size as f32);

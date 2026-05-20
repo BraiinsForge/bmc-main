@@ -289,7 +289,10 @@ fn header(is_small: bool) -> Node {
             row(
                 props!(gap: 8.0),
                 [
-                    text("Home Assistant", style!(size: title_size, weight: 700)),
+                    text(
+                        "Home Assistant",
+                        style!(size: title_size, weight: FontWeight::BOLD),
+                    ),
                     text("\u{2022}", style!(size: title_size, color: GRAY_50)),
                     status_indicator(is_small),
                 ],
@@ -429,7 +432,7 @@ fn entity_row(entity: &EntityState, variant: SizeVariant) -> Node {
                     spacer(1.0),
                     text(
                         &display_value,
-                        style!(size: font_size, weight: 600, color: state_color, text_overflow: TextOverflow::Clip),
+                        style!(size: font_size, weight: FontWeight::BOLD, color: state_color, text_overflow: TextOverflow::Clip),
                     ),
                 ],
             ),
@@ -476,7 +479,7 @@ fn gauge_bar_with_label(label: &str, frac: f32, bg_color: Color, font_size: u32)
                 label,
                 style!(
                     size: font_size,
-                    weight: 600,
+                    weight: FontWeight::BOLD,
                     color: WHITE,
                     align: TextAlign::Center,
                     outline_color: bg_color.brightness(0.4),

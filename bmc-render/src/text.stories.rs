@@ -14,9 +14,18 @@ fn examples(_ctx: &mut StoryCtx) -> Node {
             col(
                 props!(gap: 8),
                 [
-                    text("Heading 1", style!(size: 32, weight: 700, color: WHITE)),
-                    text("Heading 2", style!(size: 24, weight: 700, color: WHITE)),
-                    text("Heading 3", style!(size: 20, weight: 600, color: WHITE)),
+                    text(
+                        "Heading 1",
+                        style!(size: 32, weight: FontWeight::BOLD, color: WHITE),
+                    ),
+                    text(
+                        "Heading 2",
+                        style!(size: 24, weight: FontWeight::BOLD, color: WHITE),
+                    ),
+                    text(
+                        "Heading 3",
+                        style!(size: 20, weight: FontWeight::SEMIBOLD, color: WHITE),
+                    ),
                     text("Body text (16px)", style!(size: 16, color: GRAY_10)),
                     text("Caption text (13px)", style!(size: 13, color: GRAY_30)),
                     text("Small text (11px)", style!(size: 11, color: GRAY_50)),
@@ -31,7 +40,7 @@ fn examples(_ctx: &mut StoryCtx) -> Node {
                         style!(size: 16, color: GRAY_10, line_height: 1.4),
                         [
                             span("This is ", ()),
-                            span("bold", style!(weight: 700)),
+                            span("bold", style!(weight: FontWeight::BOLD)),
                             span(" and this is ", ()),
                             span("italic", style!(italic: true)),
                             span(".", ()),

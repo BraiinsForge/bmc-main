@@ -22,12 +22,13 @@ use super::bitmap::BitmapRegistry;
 use super::mesh::{MeshDrawArgs, MeshRenderer};
 use super::sphere::SphereRenderer;
 use super::svg::SvgRegistry;
-use super::text::{ParagraphLayoutCache, to_femtovg_color};
+use super::text::{ParagraphLayoutCache, WeightedFonts, to_femtovg_color};
 use crate::renderer::Renderer;
 use crate::tree::{SpanData, TextAlign, TextStyle, VerticalAlign};
 
 // Embed BraiinsSans fonts at compile time from the top-level assets directory.
 const FONT_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/BraiinsSans-Regular.otf");
+const FONT_SEMIBOLD: &[u8] = include_bytes!("../../../assets/fonts/BraiinsSans-SemiBold.otf");
 const FONT_BOLD: &[u8] = include_bytes!("../../../assets/fonts/BraiinsSans-Bold.otf");
 /// Fallback font for glyphs not covered by BraiinsSans (Greek, symbols, etc.).
 const FONT_FALLBACK: &[u8] = include_bytes!("../../../assets/fonts/NotoSans-Regular.ttf");
@@ -44,8 +45,7 @@ pub struct FemtoVgRenderer {
     /// `current_render_target` is already `Screen` — which is always true since it's
     /// the default. We must explicitly bind the FBO before each flush.)
     screen_fbo: Option<glow::NativeFramebuffer>,
-    font_regular: FontId,
-    font_bold: FontId,
+    fonts: WeightedFonts,
     font_fallback: FontId,
     font_system: cosmic_text::FontSystem,
     paragraph_cache: ParagraphLayoutCache,
@@ -191,8 +191,11 @@ impl FemtoVgRenderer {
         canvas.set_size(width, height, 1.0);
 
         // Load fonts into FemtoVG for GPU rendering
-        let font_regular = canvas.add_font_mem(FONT_REGULAR)?;
-        let font_bold = canvas.add_font_mem(FONT_BOLD)?;
+        let fonts = WeightedFonts {
+            regular: canvas.add_font_mem(FONT_REGULAR)?,
+            semibold: canvas.add_font_mem(FONT_SEMIBOLD)?,
+            bold: canvas.add_font_mem(FONT_BOLD)?,
+        };
         let font_fallback = canvas.add_font_mem(FONT_FALLBACK)?;
 
         // Build cosmic-text FontSystem with all embedded fonts.
@@ -201,6 +204,7 @@ impl FemtoVgRenderer {
         // glyphs BraiinsSans doesn't cover (Greek, Cyrillic, etc.).
         let mut db = fontdb::Database::new();
         db.load_font_data(FONT_REGULAR.to_vec());
+        db.load_font_data(FONT_SEMIBOLD.to_vec());
         db.load_font_data(FONT_BOLD.to_vec());
         db.load_font_data(FONT_FALLBACK.to_vec());
         let font_system = cosmic_text::FontSystem::new_with_locale_and_db("en-US".into(), db);
@@ -212,8 +216,7 @@ impl FemtoVgRenderer {
             gl,
             canvas,
             screen_fbo,
-            font_regular,
-            font_bold,
+            fonts,
             font_fallback,
             font_system,
             paragraph_cache: ParagraphLayoutCache::new(),
@@ -387,7 +390,7 @@ impl Renderer for FemtoVgRenderer {
 
     fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) {
         let mut paint = Paint::color(to_femtovg_color(color.to_u32()));
-        paint.set_font(&[self.font_regular, self.font_fallback]);
+        paint.set_font(&[self.fonts.regular, self.font_fallback]);
         paint.set_font_size(size);
         paint.set_text_baseline(femtovg::Baseline::Top);
         let _ = self.canvas.fill_text(x, y, text, &paint);
@@ -395,7 +398,7 @@ impl Renderer for FemtoVgRenderer {
 
     fn measure_text(&mut self, text: &str, size: f32) -> f32 {
         let mut paint = Paint::color(femtovg::Color::white());
-        paint.set_font(&[self.font_regular, self.font_fallback]);
+        paint.set_font(&[self.fonts.regular, self.font_fallback]);
         paint.set_font_size(size);
         self.canvas
             .measure_text(0.0, 0.0, text, &paint)
@@ -405,11 +408,7 @@ impl Renderer for FemtoVgRenderer {
     // -- Canvas text --
 
     fn draw_canvas_text(&mut self, text: &str, x: f32, y: f32, style: &TextStyle) {
-        let font = if style.weight >= 600 {
-            self.font_bold
-        } else {
-            self.font_regular
-        };
+        let font = self.fonts.select(style.weight);
         let size = style.size as f32;
         // Translate the input anchor `y` to a top-of-glyph-box `y_top`.
         // The `0.65` multiplier for `Center` puts the *visible* glyph
@@ -518,8 +517,7 @@ impl Renderer for FemtoVgRenderer {
         self.paragraph_cache.draw(
             &mut self.font_system,
             &mut self.canvas,
-            self.font_regular,
-            self.font_bold,
+            self.fonts,
             style,
             spans,
             x,

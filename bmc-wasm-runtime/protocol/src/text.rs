@@ -124,13 +124,45 @@ pub enum TextOverflow {
     Ellipsis = 2,
 }
 
+/// CSS-style font weight, stored as a raw `u16` so widget code can use
+/// either the named constants ([`Self::REGULAR`], [`Self::SEMIBOLD`],
+/// [`Self::BOLD`]) or an arbitrary intermediate value (`FontWeight(500)`).
+/// Only the weights the deck's font set ships with have named constants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct FontWeight(pub u16);
+
+impl FontWeight {
+    pub const REGULAR: Self = Self(400);
+    pub const SEMIBOLD: Self = Self(600);
+    pub const BOLD: Self = Self(700);
+}
+
+impl Default for FontWeight {
+    fn default() -> Self {
+        Self::REGULAR
+    }
+}
+
+impl From<u16> for FontWeight {
+    fn from(w: u16) -> Self {
+        Self(w)
+    }
+}
+
+impl From<FontWeight> for u16 {
+    fn from(w: FontWeight) -> Self {
+        w.0
+    }
+}
+
 /// Text style for paragraphs (28 bytes serialized).
 #[derive(Clone, Copy, Debug)]
 pub struct TextStyle {
-    pub size: u32,      // default: 16
-    pub color: Color,   // default: GRAY_10
-    pub max_width: u32, // default: 0 (use container width)
-    pub weight: u16,    // default: 400, 700 = bold
+    pub size: u32,          // default: 16
+    pub color: Color,       // default: GRAY_10
+    pub max_width: u32,     // default: 0 (use container width)
+    pub weight: FontWeight, // default: FontWeight::REGULAR
     pub italic: bool,
     pub underline: bool,
     pub strikethrough: bool,
@@ -148,7 +180,7 @@ impl Default for TextStyle {
             size: 16,
             color: GRAY_10,
             max_width: 0,
-            weight: 400,
+            weight: FontWeight::REGULAR,
             italic: false,
             underline: false,
             strikethrough: false,
@@ -185,7 +217,7 @@ impl TextStyle {
         buf[4..8].copy_from_slice(&self.color.to_u32().to_le_bytes());
         buf[8..12].copy_from_slice(&self.max_width.to_le_bytes());
 
-        let weight_bits = u32::from(self.weight) & 0xFFF;
+        let weight_bits = u32::from(self.weight.0) & 0xFFF;
         // line_height scaled to 12-bit fixed point, clamped to valid range
         let lh_scaled = (self.line_height * 100.0).clamp(0.0, 4095.0);
         // SAFETY: clamped to [0, 4095], fits in u32 without truncation or sign loss
@@ -224,7 +256,7 @@ impl TextStyle {
         let outline_width = f32::from_le_bytes([data[20], data[21], data[22], data[23]]);
         let flags2 = u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
 
-        let weight = (flags & 0xFFF) as u16;
+        let weight = FontWeight((flags & 0xFFF) as u16);
         // 12-bit value (max 4095) fits exactly in f32 mantissa (23 bits), no precision loss
         let lh_fixed = (flags >> 12) & 0xFFF;
         #[expect(clippy::cast_precision_loss)]
@@ -433,7 +465,7 @@ mod tests {
     fn text_style_vertical_align_independent_of_other_fields() {
         let s = TextStyle {
             size: 32,
-            weight: 700,
+            weight: FontWeight::BOLD,
             italic: true,
             underline: true,
             strikethrough: true,
@@ -445,7 +477,7 @@ mod tests {
         };
         let back = TextStyle::from_bytes(&s.to_bytes());
         assert_eq!(back.size, 32);
-        assert_eq!(back.weight, 700);
+        assert_eq!(back.weight, FontWeight::BOLD);
         assert!(back.italic);
         assert!(back.underline);
         assert!(back.strikethrough);

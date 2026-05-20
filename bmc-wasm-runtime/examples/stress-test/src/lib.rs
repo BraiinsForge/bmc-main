@@ -5,8 +5,8 @@
 //! modes to exercise the host fuel budget enforcement.
 
 use bmc_wasm_sdk::{
-    GRAY_10, GRAY_50, GRAY_70, Node, ORANGE_50, RED_50, WidgetSize, button, col, props, render_ui,
-    row, spacer, style, text, widget_size,
+    FontWeight, GRAY_10, GRAY_50, GRAY_70, Node, ORANGE_50, RED_50, WidgetSize, button, col, props,
+    render_ui, row, spacer, style, text, widget_size,
 };
 use std::cell::Cell;
 
@@ -43,7 +43,7 @@ pub extern "C" fn render(_delta_ms: u32) {
                 text("Mode:", style!(size: 18, color: GRAY_70)),
                 text(
                     MODE_NAMES[mode as usize],
-                    style!(size: 18, weight: 700, color: mode_color),
+                    style!(size: 18, weight: FontWeight::BOLD, color: mode_color),
                 ),
             ],
         ),

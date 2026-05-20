@@ -443,7 +443,7 @@ fn header_row(title: Option<(&str, u32)>) -> Node {
     if let Some((label, size)) = title {
         children.push(text(
             label.to_owned(),
-            style!(size: size, weight: 700, color: GRAY_50),
+            style!(size: size, weight: FontWeight::BOLD, color: GRAY_50),
         ));
     }
     children.push(spacer(1.0));
@@ -603,14 +603,14 @@ fn build_small(size: WidgetSize, phase: Phase, running: bool) -> Node {
                                 props!(),
                                 [text(
                                     phase_label(phase),
-                                    style!(size: 14, weight: 700, color: phase_color(phase)),
+                                    style!(size: 14, weight: FontWeight::BOLD, color: phase_color(phase)),
                                 )],
                             ),
                             center(
                                 props!(),
                                 [text(
                                     remaining_text(phase),
-                                    style!(size: 48, weight: 700, color: WHITE),
+                                    style!(size: 48, weight: FontWeight::BOLD, color: WHITE),
                                 )],
                             ),
                             center(props!(), [session_dots(10.0, 12)]),
@@ -652,14 +652,14 @@ fn build_medium(size: WidgetSize, phase: Phase, running: bool) -> Node {
                                 props!(),
                                 [text(
                                     phase_label(phase),
-                                    style!(size: 16, weight: 700, color: phase_color(phase)),
+                                    style!(size: 16, weight: FontWeight::BOLD, color: phase_color(phase)),
                                 )],
                             ),
                             center(
                                 props!(),
                                 [text(
                                     remaining_text(phase),
-                                    style!(size: 64, weight: 700, color: WHITE),
+                                    style!(size: 64, weight: FontWeight::BOLD, color: WHITE),
                                 )],
                             ),
                             center(props!(), [session_dots(14.0, 14)]),
@@ -702,7 +702,7 @@ fn build_large(size: WidgetSize, phase: Phase, running: bool) -> Node {
                 props!(),
                 [text(
                     phase_label(phase),
-                    style!(size: 20, weight: 600, color: phase_color(phase)),
+                    style!(size: 20, weight: FontWeight::BOLD, color: phase_color(phase)),
                 )],
             ),
             row(
@@ -716,7 +716,7 @@ fn build_large(size: WidgetSize, phase: Phase, running: bool) -> Node {
                                 props!(),
                                 [text(
                                     remaining_text(phase),
-                                    style!(size: timer_size, weight: 700, color: WHITE, line_height: 1.0),
+                                    style!(size: timer_size, weight: FontWeight::BOLD, color: WHITE, line_height: 1.0),
                                 )],
                             ),
                             center(props!(), [session_dots(dot_size, 16)]),

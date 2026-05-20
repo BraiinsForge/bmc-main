@@ -101,7 +101,7 @@ pub extern "C" fn render(_delta_ms: u32) {
                         props!(gap: 8.0),
                         [
                             text("Space X", style!(size: 24, color: GRAY_30)),
-                            text("Next Launch", style!(size: 24, weight: 600)),
+                            text("Next Launch", style!(size: 24, weight: FontWeight::BOLD)),
                         ],
                     ),
                     notification(NotificationKind::Error, "Failed to load launch data", msg),
@@ -255,7 +255,7 @@ fn table_row(label: &str, value: &str, font_size: u32) -> Node {
             spacer(1.0),
             text(
                 value,
-                style!(size: font_size, weight: 600, line_height: 1.2),
+                style!(size: font_size, weight: FontWeight::BOLD, line_height: 1.2),
             ),
         ],
     )
@@ -346,11 +346,14 @@ fn render_full(height: u32, data: &LaunchData, countdown: &str, status: &str) ->
                         props!(gap: 8.0),
                         [
                             text("Space X", style!(size: 24, color: GRAY_30)),
-                            text("Next Launch", style!(size: 24, weight: 600)),
+                            text("Next Launch", style!(size: 24, weight: FontWeight::BOLD)),
                         ],
                     ),
                     // Mission title
-                    text(&data.mission_name, style!(size: 32, weight: 600)),
+                    text(
+                        &data.mission_name,
+                        style!(size: 32, weight: FontWeight::BOLD),
+                    ),
                     text("Mission name", style!(size: 24, color: GRAY_30)),
                     // Distribute space around tables
                     spacer(1.0),
@@ -380,14 +383,17 @@ fn render_large(data: &LaunchData, countdown: &str, status: &str) -> Node {
                 props!(gap: 8.0),
                 [
                     text("Space X", style!(size: 22, color: GRAY_30)),
-                    text("Next Launch", style!(size: 22, weight: 600)),
+                    text("Next Launch", style!(size: 22, weight: FontWeight::BOLD)),
                 ],
             ),
             // Mission title
             col(
                 props!(gap: 4.0),
                 [
-                    text(&data.mission_name, style!(size: 28, weight: 600)),
+                    text(
+                        &data.mission_name,
+                        style!(size: 28, weight: FontWeight::BOLD),
+                    ),
                     text("Mission name", style!(size: 22, color: GRAY_30)),
                 ],
             ),
@@ -412,7 +418,10 @@ fn render_medium(data: &LaunchData, countdown: &str, status: &str) -> Node {
                 props!(gap: 8.0),
                 [
                     text("Space X", style!(size: 20, color: GRAY_30)),
-                    text(&data.mission_name, style!(size: 20, weight: 600)),
+                    text(
+                        &data.mission_name,
+                        style!(size: 20, weight: FontWeight::BOLD),
+                    ),
                 ],
             ),
             spacer(1.0),
@@ -432,7 +441,10 @@ fn render_small(data: &LaunchData, countdown: &str, status: &str) -> Node {
     col(
         props!(padding: 24.0, gap: 8.0, background: BLACK),
         [
-            text(&data.mission_name, style!(size: 20, weight: 600)),
+            text(
+                &data.mission_name,
+                style!(size: 20, weight: FontWeight::BOLD),
+            ),
             spacer(1.0),
             launch_info_table(20, 8.0, data, countdown, status),
         ],

@@ -52,14 +52,14 @@ pub use crate::components::notification::{
     measure_notification_banner, render_notification_banner,
 };
 pub use bmc_wasm_protocol::{
-    CrossAlign, PropsData, TextAlign, TextOverflow, TextStyle, VerticalAlign,
+    CrossAlign, FontWeight, PropsData, TextAlign, TextOverflow, TextStyle, VerticalAlign,
 };
 
 /// A text span with style overrides
 #[derive(Clone, Debug)]
 pub struct SpanData {
     pub text: String,
-    pub weight: Option<u16>,
+    pub weight: Option<FontWeight>,
     pub color: Option<Color>,
     pub italic: bool,
     pub underline: bool,
@@ -436,7 +436,7 @@ impl<'a> TreeReader<'a> {
         let has_color = (flags >> 13) & 1 != 0;
 
         let weight = if has_weight {
-            Some(flags & 0xFFF)
+            Some(FontWeight(flags & 0xFFF))
         } else {
             None
         };

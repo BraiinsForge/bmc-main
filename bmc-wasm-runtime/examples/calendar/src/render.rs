@@ -318,7 +318,7 @@ fn render_month_grid_canvas(
         4.0,
         2.0,
         fmt!("{month_name} {}", grid.year),
-        style!(size: 18, weight: 700, color: theme.text_primary),
+        style!(size: 18, weight: FontWeight::BOLD, color: theme.text_primary),
     ));
 
     // Day name headers
@@ -329,7 +329,7 @@ fn render_month_grid_canvas(
             cx,
             TITLE_H,
             *name,
-            style!(size: 11, weight: 700, color: theme.text_secondary, align: TextAlign::Center),
+            style!(size: 11, weight: FontWeight::BOLD, color: theme.text_secondary, align: TextAlign::Center),
         ));
     }
 
@@ -374,13 +374,13 @@ fn draw_grid_week(
                 cx + 10.0,
                 wy + 1.0,
                 fmt!("{}", cell.day),
-                style!(size: 11, weight: 700, color: WHITE, align: TextAlign::Center),
+                style!(size: 11, weight: FontWeight::BOLD, color: WHITE, align: TextAlign::Center),
             ));
         } else {
             let (color, size, weight) = if cell.is_current_month {
-                (theme.text_primary, 11, 400)
+                (theme.text_primary, 11, FontWeight::REGULAR)
             } else {
-                (theme.text_secondary, 11, 400)
+                (theme.text_secondary, 11, FontWeight::REGULAR)
             };
             draws.push(Draw::text(
                 cx + 3.0,
@@ -658,7 +658,7 @@ fn render_today_card(state: &CalendarState) -> Vec<Node> {
 
     children.push(text(
         fmt!("{weekday}, {month} {}", local.day),
-        style!(size: 24, weight: 700, color: theme.text_primary),
+        style!(size: 24, weight: FontWeight::BOLD, color: theme.text_primary),
     ));
     children.push(text("Today", style!(size: 14, color: theme.text_primary)));
 
@@ -739,7 +739,7 @@ fn day_header(group: &DayGroup, wide: bool) -> Node {
         &label,
         style!(
             size: font_size,
-            weight: 700,
+            weight: FontWeight::BOLD,
             color: theme.text_day_header,
             padding: pad
         ),
