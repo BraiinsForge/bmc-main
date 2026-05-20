@@ -421,37 +421,39 @@ fn header(
     if !params.show_date && !params.show_timezone {
         return None;
     }
-    let text_str = compose_header(now, params, size, tz);
+    let date_str = if params.show_date {
+        compose_date(now, size, tz)
+    } else {
+        String::new()
+    };
+    let (tz_str, tz_resolved) = if params.show_timezone {
+        compose_timezone(now, size, tz)
+    } else {
+        (String::new(), true)
+    };
+    let separator = if !date_str.is_empty() && !tz_str.is_empty() {
+        "    "
+    } else {
+        ""
+    };
+    let tz_color = if tz_resolved { palette.text } else { RED_50 };
+    let base = style!(
+        size: u32::from(size.header_font_size),
+        weight: FontWeight::REGULAR,
+        color: palette.text,
+        align: TextAlign::Center,
+    );
     Some(center(
         props!(),
-        [text(
-            text_str,
-            style!(
-                size: u32::from(size.header_font_size),
-                weight: FontWeight::REGULAR,
-                color: palette.text
-            ),
+        [paragraph(
+            base,
+            [
+                span(date_str, ()),
+                span(separator, ()),
+                span(tz_str, style!(color: tz_color)),
+            ],
         )],
     ))
-}
-
-fn compose_header(
-    now: SystemTime,
-    params: &Params,
-    size: &DigitalSizeParams,
-    tz: Option<&Tz>,
-) -> String {
-    match (params.show_date, params.show_timezone) {
-        (true, true) => {
-            let mut s = compose_date(now, size, tz);
-            s.push_str("    ");
-            s.push_str(&compose_timezone(now, size, tz));
-            s
-        }
-        (true, false) => compose_date(now, size, tz),
-        (false, true) => compose_timezone(now, size, tz),
-        (false, false) => String::new(),
-    }
 }
 
 /// Compose the date string from per-size visibility flags.
@@ -469,18 +471,23 @@ fn compose_date(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> S
     strftime(shifted, pattern)
 }
 
-fn compose_timezone(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> String {
+/// Returns `(label, resolved)` where `resolved` is `false` when the
+/// host doesn't recognise the tz name — caller paints the label red.
+fn compose_timezone(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> (String, bool) {
     let effective = effective_tz(tz);
     let label = effective.iana().to_owned();
-    let offset_secs = resolve_tz_offset(&effective, now.unix_secs).unwrap_or(0);
+    let offset = resolve_tz_offset(&effective, now.unix_secs);
     if size.show_utc_offset {
         let mut s = label;
         s.push_str(" (");
-        push_utc_offset(&mut s, offset_secs);
+        match offset {
+            Some(secs) => push_utc_offset(&mut s, secs),
+            None => s.push_str("unknown"),
+        }
         s.push(')');
-        s
+        (s, offset.is_some())
     } else {
-        label
+        (label, offset.is_some())
     }
 }
 
@@ -693,9 +700,20 @@ fn render_analog_round(
             iana_owned.as_str()
         };
         let city = iana.rsplit('/').next().unwrap_or(iana).replace('_', " ");
-        let offset_secs = resolve_tz_offset(&effective, now.unix_secs).unwrap_or(0);
-        let mut offset_str = String::new();
-        push_utc_offset(&mut offset_str, offset_secs);
+        let offset = resolve_tz_offset(&effective, now.unix_secs);
+        let offset_str = match offset {
+            Some(secs) => {
+                let mut s = String::new();
+                push_utc_offset(&mut s, secs);
+                s
+            }
+            None => "unknown".to_owned(),
+        };
+        let tz_color = if offset.is_some() {
+            palette.text
+        } else {
+            RED_50
+        };
         let city_size = size.timezone_font_size;
         let offset_size = city_size.saturating_mul(85) / 100;
         let line_h =
@@ -710,7 +728,7 @@ fn render_analog_round(
             style!(
                 size: city_size,
                 weight: weight,
-                color: palette.text,
+                color: tz_color,
                 align: TextAlign::Center,
                 valign: VerticalAlign::Center,
             ),
@@ -722,7 +740,7 @@ fn render_analog_round(
             style!(
                 size: offset_size,
                 weight: weight,
-                color: palette.text,
+                color: tz_color,
                 align: TextAlign::Center,
                 valign: VerticalAlign::Center,
             ),
