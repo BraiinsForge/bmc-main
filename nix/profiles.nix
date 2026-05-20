@@ -61,13 +61,15 @@ in
       MESA_LOADER_DRIVER_OVERRIDE = "llvmpipe";
       LIBGL_ALWAYS_SOFTWARE = "1";
     } // rustflags.makeRustflagsEnv {
-      # Embed `-Wl,-rpath,${mesa}/lib` into the produced test binaries
-      # so `libEGL.so.1` resolves at runtime.
-      #
-      # bmc-render doesn't list Mesa in its Cargo deps,
-      # and a `build.rs` rpath patch doesn't propagate to test binaries
-      # (only to library outputs).
-      runtimePackages = [ ciPkgs.mesa ];
+      # Libraries needed for compositor tests.
+      runtimePackages = with ciPkgs; [
+        mesa
+        wayland
+        libxkbcommon
+        libdrm
+        libinput
+        libGL
+      ];
       rustCrossTarget = ciPkgs.stdenv.hostPlatform.rust.rustcTarget;
     };
   };
