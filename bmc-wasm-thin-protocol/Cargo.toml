@@ -7,5 +7,9 @@ edition = "2024"
 workspace = true
 
 [dependencies]
+bincode = { workspace = true }
 bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
+nix = { workspace = true }
+
+[dev-dependencies]
 libc = { workspace = true }

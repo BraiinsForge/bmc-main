@@ -6,8 +6,8 @@ use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::net::UnixStream;
 
 use bmc_wasm_thin_protocol::{
-    AckDecoder, AckMsg, HelloMsg, PROTOCOL_VERSION, recv_hello_with_fd, send_hello_with_fd,
-    write_ack,
+    AckDecoder, AckMsg, HelloMsg, MAX_FRAME_LEN, PROTOCOL_VERSION, recv_hello_with_fd,
+    send_hello_with_fd, write_ack,
 };
 
 fn decode_ack(sock: &UnixStream) -> std::io::Result<AckMsg> {
@@ -42,6 +42,56 @@ fn int_cmsg_len_for(n: usize) -> usize {
             u32::try_from(n * size_of::<libc::c_int>())
                 .expect("BUG: n * sizeof(c_int) fits in u32 for small n"),
         ) as usize
+    }
+}
+
+const FRAME_HEADER_LEN: usize = 6;
+
+fn build_frame_bytes<E: bincode::Encode>(version: u16, payload: &E) -> Vec<u8> {
+    let body = bincode::encode_to_vec(payload, bincode::config::standard())
+        .expect("BUG: encode HelloMsg/AckMsg payload");
+    let frame_len = u32::try_from(body.len()).expect("BUG: encoded body fits u32");
+    let mut frame = Vec::with_capacity(FRAME_HEADER_LEN + body.len());
+    frame.extend_from_slice(&version.to_le_bytes());
+    frame.extend_from_slice(&frame_len.to_le_bytes());
+    frame.extend_from_slice(&body);
+    frame
+}
+
+fn raw_sendmsg_with_fd(sender: &UnixStream, payload: &[u8], fd: std::os::fd::BorrowedFd<'_>) {
+    let iov = libc::iovec {
+        iov_base: payload.as_ptr().cast_mut().cast::<libc::c_void>(),
+        iov_len: payload.len(),
+    };
+    let fd_int: libc::c_int = fd.as_raw_fd();
+    let cmsg_space = int_cmsg_space_for(1);
+    let mut cmsg_buf = vec![0_u8; cmsg_space];
+
+    let hdr = libc::msghdr {
+        msg_name: std::ptr::null_mut(),
+        msg_namelen: 0,
+        msg_iov: (&raw const iov).cast_mut(),
+        msg_iovlen: 1,
+        msg_control: cmsg_buf.as_mut_ptr().cast::<libc::c_void>(),
+        msg_controllen: cmsg_space,
+        msg_flags: 0,
+    };
+    unsafe {
+        let cmsg: *mut libc::cmsghdr = libc::CMSG_FIRSTHDR(&raw const hdr);
+        (*cmsg).cmsg_level = libc::SOL_SOCKET;
+        (*cmsg).cmsg_type = libc::SCM_RIGHTS;
+        (*cmsg).cmsg_len = int_cmsg_len_for(1);
+        #[expect(
+            clippy::cast_ptr_alignment,
+            reason = "CMSG_DATA alignment is guaranteed by the kernel ABI"
+        )]
+        std::ptr::write(libc::CMSG_DATA(cmsg).cast::<libc::c_int>(), fd_int);
+        let n = libc::sendmsg(sender.as_raw_fd(), &raw const hdr, libc::MSG_NOSIGNAL);
+        assert!(
+            n > 0,
+            "raw sendmsg must succeed: {}",
+            std::io::Error::last_os_error(),
+        );
     }
 }
 
@@ -90,62 +140,27 @@ fn ack_ok_and_err_round_trip() {
 }
 
 #[test]
-fn oversize_string_is_rejected_before_alloc() {
-    // The receiver checks the cmsg before parsing the length, so we have to attach a
-    // valid SCM_RIGHTS payload to actually exercise the 64 KiB cap on `wasm_path`.
-    // We bypass `send_hello_with_fd` because its `write_lenstr` rejects oversize bytes
-    // on the sender side; the cap on the receiver is what we want to lock in.
+fn oversize_frame_is_rejected_before_alloc() {
+    // The receiver checks the cmsg before parsing the frame length, so we attach a valid
+    // SCM_RIGHTS payload to actually exercise the MAX_FRAME_LEN cap on the receiver. We
+    // splice a too-large frame_len field by hand because no real encoded payload can
+    // legitimately exceed MAX_FRAME_LEN (build_frame on the sender side rejects it first).
     let (sender, receiver) = pair();
     let (fd_a, _fd_b) = pair();
 
-    let oversize_len: u32 = (64 * 1024) + 1;
-    let mut payload: Vec<u8> = Vec::with_capacity(7);
+    let oversize_len: u32 = MAX_FRAME_LEN + 1;
+    let mut payload: Vec<u8> = Vec::with_capacity(FRAME_HEADER_LEN);
     payload.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
-    payload.push(0x01_u8); // TAG_HELLO_LOAD
     payload.extend_from_slice(&oversize_len.to_le_bytes());
 
-    let iov = libc::iovec {
-        iov_base: payload.as_ptr().cast_mut().cast::<libc::c_void>(),
-        iov_len: payload.len(),
-    };
-    let fd_int: libc::c_int = fd_a.as_raw_fd();
-    let cmsg_space = int_cmsg_space_for(1);
-    let mut cmsg_buf = vec![0_u8; cmsg_space];
-
-    let hdr = libc::msghdr {
-        msg_name: std::ptr::null_mut(),
-        msg_namelen: 0,
-        msg_iov: (&raw const iov).cast_mut(),
-        msg_iovlen: 1,
-        msg_control: cmsg_buf.as_mut_ptr().cast::<libc::c_void>(),
-        msg_controllen: cmsg_space,
-        msg_flags: 0,
-    };
-    unsafe {
-        let cmsg: *mut libc::cmsghdr = libc::CMSG_FIRSTHDR(&raw const hdr);
-        (*cmsg).cmsg_level = libc::SOL_SOCKET;
-        (*cmsg).cmsg_type = libc::SCM_RIGHTS;
-        (*cmsg).cmsg_len = int_cmsg_len_for(1);
-        #[expect(
-            clippy::cast_ptr_alignment,
-            reason = "CMSG_DATA alignment is guaranteed by the kernel ABI"
-        )]
-        std::ptr::write(libc::CMSG_DATA(cmsg).cast::<libc::c_int>(), fd_int);
-        let n = libc::sendmsg(sender.as_raw_fd(), &raw const hdr, libc::MSG_NOSIGNAL);
-        assert!(
-            n > 0,
-            "raw sendmsg must succeed: {}",
-            std::io::Error::last_os_error(),
-        );
-    }
+    raw_sendmsg_with_fd(&sender, &payload, fd_a.as_fd());
     drop(sender);
 
-    let err =
-        recv_hello_with_fd(&receiver).expect_err("BUG: oversize wasm_path length must be rejected");
+    let err = recv_hello_with_fd(&receiver).expect_err("BUG: oversize frame_len must be rejected");
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     let msg = err.to_string();
     assert!(
-        msg.contains("64 KiB") || msg.contains("wasm_path exceeds"),
+        msg.contains("MAX_FRAME_LEN"),
         "oversize-length branch must produce the size-cap error, got: {msg}",
     );
 }
@@ -155,17 +170,14 @@ fn hello_without_scm_rights_is_protocol_error() {
     use std::io::Write;
 
     let (sender, receiver) = pair();
-    let path = "/x".as_bytes();
-    let mut buf = PROTOCOL_VERSION.to_le_bytes().to_vec();
-    buf.push(0x01_u8); // TAG_HELLO_LOAD
-    buf.extend_from_slice(
-        &u32::try_from(path.len())
-            .expect("BUG: path length fits in u32")
-            .to_le_bytes(),
+    let frame = build_frame_bytes(
+        PROTOCOL_VERSION,
+        &HelloMsg::Load {
+            wasm_path: "/x".into(),
+        },
     );
-    buf.extend_from_slice(path);
     (&sender)
-        .write_all(&buf)
+        .write_all(&frame)
         .expect("BUG: local socketpair write_all must succeed");
     drop(sender);
 
@@ -186,15 +198,12 @@ fn too_many_fds_are_rejected_without_leaking_received_fd() {
     let (fd_a, _fd_b) = pair();
     let (extra_a, _extra_b) = pair();
 
-    let path = "/x".as_bytes();
-    let mut payload = PROTOCOL_VERSION.to_le_bytes().to_vec();
-    payload.push(0x01_u8); // TAG_HELLO_LOAD
-    payload.extend_from_slice(
-        &u32::try_from(path.len())
-            .expect("BUG: path length fits in u32")
-            .to_le_bytes(),
+    let payload = build_frame_bytes(
+        PROTOCOL_VERSION,
+        &HelloMsg::Load {
+            wasm_path: "/x".into(),
+        },
     );
-    payload.extend_from_slice(path);
 
     let iov = libc::iovec {
         iov_base: payload.as_ptr().cast_mut().cast::<libc::c_void>(),
@@ -244,21 +253,18 @@ fn too_many_fds_are_rejected_without_leaking_received_fd() {
 
 #[test]
 fn hello_with_wrong_version_is_rejected_before_payload() {
-    use std::os::fd::AsFd;
-
     let (a, b) = pair();
     let dummy = UnixStream::pair()
         .expect("BUG: test fixture requires UnixStream::pair to succeed")
         .0;
 
-    bmc_wasm_thin_protocol::test_helpers::send_hello_with_fd_versioned(
-        &a,
+    let frame = build_frame_bytes(
         0xFFFF,
-        bmc_wasm_thin_protocol::test_helpers::TAG_HELLO_LOAD_VALUE,
-        b"/tmp/x.wasm",
-        dummy.as_fd(),
-    )
-    .expect("BUG: test fixture expects raw sendmsg to succeed on connected socketpair");
+        &HelloMsg::Load {
+            wasm_path: "/tmp/x.wasm".into(),
+        },
+    );
+    raw_sendmsg_with_fd(&a, &frame, dummy.as_fd());
 
     let err = recv_hello_with_fd(&b).expect_err("must reject bogus version");
     assert!(err.to_string().contains("protocol version"), "got {err}");
@@ -266,18 +272,17 @@ fn hello_with_wrong_version_is_rejected_before_payload() {
 
 #[test]
 fn ack_decoder_rejects_runaway_input() {
-    use bmc_wasm_thin_protocol::{AckDecoder, MAX_STRING_LEN, PROTOCOL_VERSION};
-
     let mut dec = AckDecoder::new();
-    dec.push(&PROTOCOL_VERSION.to_le_bytes())
-        .expect("BUG: AckDecoder must accept the protocol version prefix");
-    dec.push(&[0x01])
-        .expect("BUG: AckDecoder must accept the Err tag byte");
-    dec.push(&MAX_STRING_LEN.to_le_bytes())
-        .expect("BUG: AckDecoder must accept the length prefix");
+    // Feed a header that claims a body almost as large as MAX_FRAME_LEN, then drip bytes until
+    // the decoder's buffer-cap check trips.
+    let oversize: u32 = MAX_FRAME_LEN;
+    let mut header = PROTOCOL_VERSION.to_le_bytes().to_vec();
+    header.extend_from_slice(&oversize.to_le_bytes());
+    dec.push(&header)
+        .expect("BUG: AckDecoder must accept the frame header");
     let chunk = vec![0_u8; 8 * 1024];
     let mut last: Result<Option<_>, _> = Ok(None);
-    for _ in 0..16 {
+    for _ in 0..32 {
         last = dec.push(&chunk);
         if last.is_err() {
             break;
@@ -290,16 +295,22 @@ fn ack_decoder_rejects_runaway_input() {
 }
 
 #[test]
-fn ack_decoder_rejects_unknown_tag_distinctly() {
-    use bmc_wasm_thin_protocol::{AckDecoder, PROTOCOL_VERSION};
-
+fn ack_decoder_rejects_oversize_frame_len() {
     let mut dec = AckDecoder::new();
-    dec.push(&PROTOCOL_VERSION.to_le_bytes())
-        .expect("BUG: AckDecoder must accept the protocol version prefix");
-    let err = dec.push(&[0x42]).expect_err("unknown tag must reject");
-    assert!(
-        format!("{err}").contains("unknown Ack tag")
-            || format!("{err}").to_lowercase().contains("unknown"),
-        "got {err}"
-    );
+    let oversize: u32 = MAX_FRAME_LEN + 1;
+    let mut header = PROTOCOL_VERSION.to_le_bytes().to_vec();
+    header.extend_from_slice(&oversize.to_le_bytes());
+    let err = dec
+        .push(&header)
+        .expect_err("oversize frame_len must reject");
+    assert!(err.to_string().contains("MAX_FRAME_LEN"), "got {err}",);
+}
+
+#[test]
+fn ack_decoder_rejects_wrong_version() {
+    let mut dec = AckDecoder::new();
+    let mut header = 0xFFFF_u16.to_le_bytes().to_vec();
+    header.extend_from_slice(&0_u32.to_le_bytes());
+    let err = dec.push(&header).expect_err("wrong version must reject");
+    assert!(err.to_string().contains("protocol version"), "got {err}",);
 }

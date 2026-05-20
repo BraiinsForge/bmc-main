@@ -115,22 +115,9 @@ pub fn accept_and_load(
 }
 
 fn peer_pid_of(client: &UnixStream) -> Option<libc::pid_t> {
-    use std::os::fd::AsRawFd;
-    let fd = client.as_raw_fd();
-    let mut creds: libc::ucred = unsafe { std::mem::zeroed() };
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "size_of::<ucred> is small enough to fit in socklen_t (u32) on any realistic platform"
-    )]
-    let mut len: libc::socklen_t = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    let rc = unsafe {
-        libc::getsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            (&raw mut creds).cast::<libc::c_void>(),
-            &raw mut len,
-        )
-    };
-    (rc == 0).then_some(creds.pid)
+    use nix::sys::socket::getsockopt;
+    use nix::sys::socket::sockopt::PeerCredentials;
+    getsockopt(client, PeerCredentials)
+        .ok()
+        .map(|creds| creds.pid())
 }
