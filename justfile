@@ -26,6 +26,7 @@ default:
 validate: format clippy
     just manifest::check-schema
     nix build -L ".#checks.{{ NIX_SYSTEM }}.content"
+    nix build -L ".#checks.{{ NIX_SYSTEM }}.docs-wasm"
     @echo "validate: OK"
 
 # Auto-format everything (nix fmt + SVG pass).

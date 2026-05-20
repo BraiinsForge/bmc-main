@@ -5,26 +5,104 @@
 
 mod manifest_params;
 
-use bmc_wasm_sdk::host::{SystemTime, request_frame, request_frame_after};
 use bmc_wasm_sdk::system::TimeFormat;
-use bmc_wasm_sdk::{
-    Draw, Easing, FontWeight, FormatTimeOpts, GRAY_60, Node, Svg, TRANSPARENT, Tz, WHITE,
-    WidgetSize, canvas, center, col, format_time, include_svg, local_unix_secs, props, render_ui,
-    resolve_tz_offset, row, spacer, strftime, style, system, text, widget_size,
-};
+#[expect(
+    clippy::wildcard_imports,
+    reason = "widget render code uses many SDK exports and macros in one file"
+)]
+use bmc_wasm_sdk::*;
 
 use manifest_params::{ClockStyle, NumbersFontStyle, Params};
 
+// ── Palette ────────────────────────────────────────────────────────────
+//
+// One set of colours per render mode (day / night).
+// The host signals night via `system::current().night_mode()`;
+// the renderer reads it once per frame and threads
+// the palette through the render functions.
+
+#[derive(Clone, Copy)]
+struct ClockPalette {
+    /// Most prominent foreground: digital time text, hour and minute
+    /// hands. White in day, red in night.
+    primary: Color,
+    /// Second-hand accent (orange in day, red in night).
+    second_hand: Color,
+    /// Subdued text: header date/timezone, AM/PM label.
+    text: Color,
+    /// Date-window day-number text and 1px border ring.
+    date_window: Color,
+    /// Alarm-bell glyph + adjacent alarm time text.
+    alarm_bell: Color,
+    /// Dial small ticks (between the big numeral positions).
+    tick_small: Color,
+    /// Dial big ticks at 12 / 3 / 6 / 9 positions.
+    tick_large: Color,
+    /// Dial outer rim ring.
+    dial_rim: Color,
+    /// Centre-circle stack — bigger white disc behind the hands.
+    centre_white: Color,
+    /// Centre-circle stack — orange pivot dot under the second hand.
+    centre_orange: Color,
+    /// Centre-circle stack — outer stroke ring.
+    centre_stroke: Color,
+}
+
+const PALETTE_DAY: ClockPalette = ClockPalette {
+    primary: WHITE,
+    second_hand: ORANGE_40,
+    text: GRAY_60,
+    date_window: GRAY_60,
+    alarm_bell: GRAY_60,
+    tick_small: GRAY_70,
+    tick_large: WHITE,
+    dial_rim: GRAY_80,
+    centre_white: WHITE,
+    centre_orange: ORANGE_40,
+    centre_stroke: GRAY_60,
+};
+
+const PALETTE_NIGHT: ClockPalette = ClockPalette {
+    primary: RED_50,
+    second_hand: RED_50,
+    text: RED_50,
+    date_window: RED_50,
+    alarm_bell: RED_50,
+    tick_small: RED_80,
+    tick_large: RED_50,
+    dial_rim: RED_100,
+    centre_white: RED_50,
+    centre_orange: RED_50,
+    centre_stroke: RED_60,
+};
+
+fn clock_palette(night_mode: bool) -> ClockPalette {
+    if night_mode {
+        PALETTE_NIGHT
+    } else {
+        PALETTE_DAY
+    }
+}
+
+fn f32_from_u32(value: u32) -> f32 {
+    f32::from(u16::try_from(value).expect("BUG: widget dimensions and font sizes fit in u16"))
+}
+
+fn f32_from_usize(value: usize) -> f32 {
+    f32::from(u16::try_from(value).expect("BUG: short widget labels fit in u16"))
+}
+
 // ── AnalogRound assets ─────────────────────────────────────────────────
 
-const DIAL_ROUND: Svg = include_svg!("assets/round-dial.svg");
-const HAND_HOUR_ROUND: Svg = include_svg!("assets/hand-hour.svg");
-const HAND_MINUTE_ROUND: Svg = include_svg!("assets/hand-minute.svg");
-const HAND_SECOND_ROUND: Svg = include_svg!("assets/hand-second.svg");
-const CENTER_WHITE: Svg = include_svg!("assets/center-circle-white.svg");
-const CENTER_ORANGE: Svg = include_svg!("assets/center-circle-orange.svg");
-const CENTER_BLACK: Svg = include_svg!("assets/center-circle-black.svg");
-const CENTER_STROKE: Svg = include_svg!("assets/center-circle-stroke.svg");
+const DIAL_ROUND: Svg = include_svg!("assets/analog/dial-round.svg");
+// const DIAL_RECT: Svg = include_svg!("assets/analog/dial-rect.svg");
+const HAND_HOUR: Svg = include_svg!("assets/analog/hand-hour.svg");
+const HAND_MINUTE: Svg = include_svg!("assets/analog/hand-minute.svg");
+const HAND_SECOND: Svg = include_svg!("assets/analog/hand-second.svg");
+const CENTER_WHITE: Svg = include_svg!("assets/analog/center-circle-white.svg");
+const CENTER_ORANGE: Svg = include_svg!("assets/analog/center-circle-orange.svg");
+const CENTER_BLACK: Svg = include_svg!("assets/analog/center-circle-black.svg");
+const CENTER_STROKE: Svg = include_svg!("assets/analog/center-circle-stroke.svg");
 const ALARM_BELL: Svg = include_svg!("assets/alarm-bell.svg");
 
 // ── Per-size template parameters ───────────────────────────────────────
@@ -33,6 +111,10 @@ const ALARM_BELL: Svg = include_svg!("assets/alarm-bell.svg");
 // — one template function reads these.
 
 #[derive(Clone, Copy)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "fixed per-size tables encode several independent display toggles"
+)]
 struct DigitalSizeParams {
     time_font_size: u16,
     header_font_size: u16,
@@ -171,24 +253,29 @@ pub extern "C" fn render(_delta_ms: u32) {
     let now = SystemTime::now();
     let params = Params::current();
     let effective_tz = params.timezone_override.as_deref().map(Tz::from_runtime);
+    let palette = clock_palette(system::current().night_mode().unwrap_or(false));
+    let viewport_w = f32_from_u32(w);
+    let viewport_h = f32_from_u32(h);
 
     let root = match params.clock_style {
-        ClockStyle::Digital => {
-            render_digital(now, &params, pick_digital_size(w, h), effective_tz.as_ref())
-        }
         ClockStyle::AnalogRound => render_analog_round(
             now,
             &params,
             pick_analog_round_size(w, h),
             effective_tz.as_ref(),
-            w as f32,
-            h as f32,
+            &palette,
+            viewport_w,
+            viewport_h,
         ),
         // AnalogRect has no dedicated renderer yet; route it to Digital
         // so an operator-set value doesn't blank the widget.
-        ClockStyle::AnalogRect => {
-            render_digital(now, &params, pick_digital_size(w, h), effective_tz.as_ref())
-        }
+        ClockStyle::Digital | ClockStyle::AnalogRect => render_digital(
+            now,
+            &params,
+            pick_digital_size(w, h),
+            effective_tz.as_ref(),
+            &palette,
+        ),
     };
 
     let _ = render_ui(w, h, root);
@@ -196,14 +283,22 @@ pub extern "C" fn render(_delta_ms: u32) {
     request_frame_after(1000);
 }
 
-/// Fired on every params- or system-snapshot delivery after the first.
+/// Fires after every per-widget params delivery (operator change).
 /// Trigger an immediate re-render so operator changes don't wait for
 /// the next 1s tick.
-///
-/// The render path re-reads `Params::current()` and `system::current()`
-/// itself, so no explicit diffing is needed here.
 #[unsafe(no_mangle)]
 pub extern "C" fn on_params_update() {
+    request_frame();
+}
+
+/// Fires after every deck-wide system snapshot delivery
+/// (timezone, formats, next-alarm, night-mode, …).
+///
+/// Same reason for immediate re-render — night-mode flips
+/// shouldn't sit on screen for up to a second before
+/// the palette swap takes effect.
+#[unsafe(no_mangle)]
+pub extern "C" fn on_system_update() {
     request_frame();
 }
 
@@ -231,9 +326,9 @@ fn pick_analog_round_size(w: u32, h: u32) -> &'static AnalogRoundSizeParams {
 
 fn font_weight(style: NumbersFontStyle) -> FontWeight {
     match style {
-        NumbersFontStyle::Regular => FontWeight::Regular,
-        NumbersFontStyle::SemiBold => FontWeight::SemiBold,
-        NumbersFontStyle::Bold => FontWeight::Bold,
+        NumbersFontStyle::Regular => FontWeight::REGULAR,
+        NumbersFontStyle::SemiBold => FontWeight::SEMIBOLD,
+        NumbersFontStyle::Bold => FontWeight::BOLD,
     }
 }
 
@@ -244,14 +339,18 @@ fn render_digital(
     params: &Params,
     size: &DigitalSizeParams,
     tz: Option<&Tz>,
+    palette: &ClockPalette,
 ) -> Node {
     let time_format = system::current().time_format();
     let is_12h = matches!(time_format, TimeFormat::Hour12);
 
-    let header_node = header(now, params, size, tz);
-    let time_node = time_row(now, params, size, is_12h, tz);
-    let ampm_row_node = (!size.ampm_inline && is_12h).then(|| ampm_line(now, size, tz));
-    let alarm_node = size.show_alarm.then(|| alarm_row(size, is_12h)).flatten();
+    let header_node = header(now, params, size, tz, palette);
+    let time_node = time_row(now, params, size, is_12h, tz, palette);
+    let ampm_row_node = (!size.ampm_inline && is_12h).then(|| ampm_line(now, size, tz, palette));
+    let alarm_node = size
+        .show_alarm
+        .then(|| alarm_row(size, is_12h, palette))
+        .flatten();
 
     let mut children: Vec<Node> = Vec::with_capacity(8);
     // Top padding: PropsData has only uniform `padding`; emit a fixed-height
@@ -281,6 +380,7 @@ fn header(
     params: &Params,
     size: &DigitalSizeParams,
     tz: Option<&Tz>,
+    palette: &ClockPalette,
 ) -> Option<Node> {
     if !params.show_date && !params.show_timezone {
         return None;
@@ -290,7 +390,11 @@ fn header(
         props!(),
         [text(
             text_str,
-            style!(size: size.header_font_size as u32, weight: 400, color: GRAY_60),
+            style!(
+                size: u32::from(size.header_font_size),
+                weight: FontWeight::REGULAR,
+                color: palette.text
+            ),
         )],
     ))
 }
@@ -316,8 +420,7 @@ fn compose_header(
 
 /// Compose the date string from per-size visibility flags.
 /// Uses strftime so the weekday / month-name come from
-/// the host's chrono (correct locale + correct timezone
-/// when `tz` is an override).
+/// the host's chrono (correct locale + correct timezone).
 fn compose_date(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> String {
     let system_tz = Tz::from_runtime(system::current().timezone());
     let effective = tz.unwrap_or(&system_tz);
@@ -355,8 +458,9 @@ fn time_row(
     size: &DigitalSizeParams,
     is_12h: bool,
     tz: Option<&Tz>,
+    palette: &ClockPalette,
 ) -> Node {
-    let weight = font_weight(params.numbers_font_style) as u16;
+    let weight = font_weight(params.numbers_font_style);
     let time_str = format_time(
         now,
         FormatTimeOpts {
@@ -367,7 +471,11 @@ fn time_row(
     );
     let time_node = text(
         time_str,
-        style!(size: size.time_font_size as u32, weight: weight, color: WHITE),
+        style!(
+            size: u32::from(size.time_font_size),
+            weight: weight,
+            color: palette.primary
+        ),
     );
 
     if size.ampm_inline && is_12h {
@@ -382,7 +490,11 @@ fn time_row(
                 time_node,
                 text(
                     ampm,
-                    style!(size: size.ampm_font_size as u32, weight: 400, color: GRAY_60),
+                    style!(
+                        size: u32::from(size.ampm_font_size),
+                        weight: FontWeight::REGULAR,
+                        color: palette.text
+                    ),
                 ),
             ],
         )
@@ -391,33 +503,39 @@ fn time_row(
     }
 }
 
-fn ampm_line(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> Node {
+fn ampm_line(
+    now: SystemTime,
+    size: &DigitalSizeParams,
+    tz: Option<&Tz>,
+    palette: &ClockPalette,
+) -> Node {
     center(
         props!(),
         [text(
             ampm_glyph(now, tz),
-            style!(size: size.ampm_font_size as u32, weight: 400, color: GRAY_60),
+            style!(
+                size: u32::from(size.ampm_font_size),
+                weight: FontWeight::REGULAR,
+                color: palette.text
+            ),
         )],
     )
 }
 
 /// `"AM"` / `"PM"` for the given moment in the effective timezone.
-/// Uses strftime so the AM/PM boundary follows the override tz,
-/// not just the system tz.
 fn ampm_glyph(now: SystemTime, tz: Option<&Tz>) -> &'static str {
     let system_tz = Tz::from_runtime(system::current().timezone());
     let effective = tz.unwrap_or(&system_tz);
-    let shifted = local_unix_secs(&now, effective);
-    // %H is 00–23; cheap branch on the leading digit beats
-    // a host call to chrono's `%p` for the AM/PM string.
-    let hour_str = strftime(shifted, "%H");
-    let hour: u8 = hour_str.parse().unwrap_or(0);
-    if hour >= 12 { "PM" } else { "AM" }
+    if now.local(effective).hour >= 12 {
+        "PM"
+    } else {
+        "AM"
+    }
 }
 
 // ── Alarm row (Full only when next_alarm = Some) ───────────────────────
 
-fn alarm_row(size: &DigitalSizeParams, is_12h: bool) -> Option<Node> {
+fn alarm_row(size: &DigitalSizeParams, is_12h: bool, palette: &ClockPalette) -> Option<Node> {
     let snap = system::current();
     let alarm = snap.next_alarm()?;
     let alarm_time = format_alarm_time(alarm, is_12h);
@@ -425,7 +543,11 @@ fn alarm_row(size: &DigitalSizeParams, is_12h: bool) -> Option<Node> {
         props!(gap: 8.0),
         [text(
             alarm_time,
-            style!(size: size.header_font_size as u32, weight: 400, color: GRAY_60),
+            style!(
+                size: u32::from(size.header_font_size),
+                weight: FontWeight::REGULAR,
+                color: palette.alarm_bell
+            ),
         )],
     ))
 }
@@ -449,32 +571,45 @@ fn format_alarm_time(alarm: bmc_wasm_sdk::system::NextAlarmView<'_>, is_12h: boo
 //
 // Per-size template parameters live in `AnalogRoundSizeParams` consts above.
 
-/// Hour-hand SVG dims: viewBox 0 0 63 290 rendered into a 290×290 square
-/// via `xMidYMid meet` → content centered horizontally with (290 − 63) / 2 = 113.5 px
-/// letterboxing on each side.
-/// Pivot is (31, 121) in viewBox coords;
-/// in render coords that becomes (113.5 + 31, 121) = (144.5, 121).
-const HAND_HOUR_VIEWPORT: f32 = 290.0;
-const HAND_HOUR_PIVOT_X: f32 = 144.5;
-const HAND_HOUR_PIVOT_Y: f32 = 121.0;
+/// Uniform shrink applied to every hand viewport + its pivot
+/// so the hand tips land inside the dial rim per the Figma reference.
+/// The SVG assets bake in slint's drop-shadow padding which makes
+/// the hands oversized relative to the visible dial; tune by eye.
+const HAND_SHRINK: f32 = 0.85;
 
-/// Minute-hand: viewBox 0 0 50 400 → 400×400 viewport, letterbox 175 →
-/// pivot at (175 + 25, 200) = (200, 200) = viewport centre.
-const HAND_MINUTE_VIEWPORT: f32 = 400.0;
-const HAND_MINUTE_PIVOT_X: f32 = 200.0;
-const HAND_MINUTE_PIVOT_Y: f32 = 200.0;
+/// Hour-hand SVG dims: viewBox 0 0 63 290 rendered into
+/// a 290×290 square via `xMidYMid meet` → content centered
+/// horizontally with (290 − 63) / 2 = 113.5 px letterboxing
+/// on each side.
+///
+/// Pivot is (31, 121) in viewBox coords; in render coords
+/// that becomes (113.5 + 31, 121) = (144.5, 121).
+const HAND_HOUR_VIEWPORT: f32 = 290.0 * HAND_SHRINK;
+const HAND_HOUR_PIVOT_X: f32 = 144.5 * HAND_SHRINK;
+const HAND_HOUR_PIVOT_Y: f32 = 121.0 * HAND_SHRINK;
 
-/// Second-hand: viewBox 0 0 4 398 → 398×398 viewport, letterbox 197 →
-/// pivot at (197 + 2, 198) = (199, 198), basically viewport centre.
-const HAND_SECOND_VIEWPORT: f32 = 398.0;
-const HAND_SECOND_PIVOT_X: f32 = 199.0;
-const HAND_SECOND_PIVOT_Y: f32 = 198.0;
+/// Minute-hand: viewBox 0 0 50 400 → 400×400 viewport, letterbox 175
+/// → pivot at (175 + 25, 200) = (200, 200) = viewport centre.
+const HAND_MINUTE_VIEWPORT: f32 = 400.0 * HAND_SHRINK;
+const HAND_MINUTE_PIVOT_X: f32 = 200.0 * HAND_SHRINK;
+const HAND_MINUTE_PIVOT_Y: f32 = 200.0 * HAND_SHRINK;
 
+/// Second-hand: viewBox 0 0 4 398 → 398×398 viewport, letterbox 197
+/// → pivot at (197 + 2, 198) = (199, 198), basically viewport centre.
+const HAND_SECOND_VIEWPORT: f32 = 398.0 * HAND_SHRINK;
+const HAND_SECOND_PIVOT_X: f32 = 199.0 * HAND_SHRINK;
+const HAND_SECOND_PIVOT_Y: f32 = 198.0 * HAND_SHRINK;
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "this renderer intentionally keeps one draw-order-sensitive template together"
+)]
 fn render_analog_round(
     now: SystemTime,
     params: &Params,
     size: &AnalogRoundSizeParams,
     tz: Option<&Tz>,
+    palette: &ClockPalette,
     viewport_w: f32,
     viewport_h: f32,
 ) -> Node {
@@ -485,46 +620,108 @@ fn render_analog_round(
     let centre_x = viewport_w / 2.0;
     let centre_y = viewport_h / 2.0;
     let dial_top_y = centre_y - size.canvas / 2.0;
-    // Decomposed local time in the effective timezone — the SystemTime
-    // struct holds system-tz fields; for an override we re-derive hour
-    // / minute / second from `local_unix_secs`.
-    let (hour12, minute, second) = local_clock_components(&now, tz);
+    let system_tz = Tz::from_runtime(system::current().timezone());
+    let effective_tz = tz.unwrap_or(&system_tz);
+    let (hour12, minute, second) = local_clock_components(&now, effective_tz);
 
     let mut draws: Vec<Draw> = Vec::with_capacity(16);
 
     // Dial — single 390-native SVG, rendered at `size.canvas`
-    // so the dial scales 1:1 (Full / Large) or down to 195 (Small / Medium).
-    // Centred on the viewport midpoint so its midpoint coincides
-    // with the hand pivots.
+    // so it scales 1:1 (Full / Large) or down to 195 (Small / Medium).
+    // Per-path `.fill()` overrides recolour the named paths
+    // to the active palette; the SVG's stored colours act
+    // only as fallback.
     let dial_x = centre_x - size.canvas / 2.0;
     let dial_y = centre_y - size.canvas / 2.0;
-    draws.push(Draw::svg(
-        dial_x,
-        dial_y,
-        size.canvas,
-        size.canvas,
-        &DIAL_ROUND,
-        TRANSPARENT,
-    ));
+    draws.push(
+        Draw::svg(
+            dial_x,
+            dial_y,
+            size.canvas,
+            size.canvas,
+            &DIAL_ROUND,
+            TRANSPARENT,
+        )
+        .with_anti_alias()
+        .fill("ticks-small", palette.tick_small)
+        .fill("ticks-large", palette.tick_large)
+        .fill("rim-outer", palette.dial_rim),
+    );
 
-    // Timezone text inside the dial. `size.timezone_y` is in dial-inner-rect
-    // coords (390 or 195); we translate to widget viewport via `dial_top_y`.
+    // Timezone label inside the dial: two stacked lines, city on top,
+    // signed `±HH:MM` offset below. The IANA region prefix is dropped
+    // so the city fits the dial inner-rect on Small/Medium; the offset
+    // line disambiguates same-named cities across regions.
     if params.show_timezone {
-        let label = tz.map_or_else(
-            || system::current().timezone().to_owned(),
-            |t| t.iana().to_owned(),
-        );
+        let iana_owned;
+        let iana = if let Some(t) = tz {
+            t.iana()
+        } else {
+            iana_owned = system::current().timezone().unwrap_or("Etc/GMT").to_owned();
+            iana_owned.as_str()
+        };
+        let city = iana.rsplit('/').next().unwrap_or(iana).replace('_', " ");
+        let offset_secs = resolve_tz_offset(effective_tz, now.unix_secs).unwrap_or(0);
+        let mut offset_str = String::new();
+        push_utc_offset(&mut offset_str, offset_secs);
+        let city_size = size.timezone_font_size;
+        let offset_size = city_size.saturating_mul(85) / 100;
+        let line_h =
+            f32::from(u16::try_from(city_size).expect("BUG: timezone font size fits in u16"))
+                * 1.05;
+        let group_centre_y = dial_top_y + size.timezone_y;
+        let weight = font_weight(params.numbers_font_style);
         draws.push(Draw::text(
             centre_x,
-            dial_top_y + size.timezone_y,
-            label,
+            group_centre_y - line_h / 2.0,
+            city,
             style!(
-                size: size.timezone_font_size,
-                weight: 400,
-                color: GRAY_60,
-                align: bmc_wasm_sdk::TextAlign::Center,
+                size: city_size,
+                weight: weight,
+                color: palette.text,
+                align: TextAlign::Center,
+                valign: VerticalAlign::Center,
             ),
         ));
+        draws.push(Draw::text(
+            centre_x,
+            group_centre_y + line_h / 2.0,
+            offset_str,
+            style!(
+                size: offset_size,
+                weight: weight,
+                color: palette.text,
+                align: TextAlign::Center,
+                valign: VerticalAlign::Center,
+            ),
+        ));
+    }
+
+    // Date window (Full / Large only, when `show_date` is set).
+    // 60×60 hollow circle with the day-of-month text inside;
+    // the border ring is a 32-point Catmull-Rom closed path stroked at 1px.
+    //
+    // Drawn before the hands so the hour/minute/second hands sweep
+    // over it; the design has the date window living *under* the hands.
+    let numbers_weight = font_weight(params.numbers_font_style);
+    if size.show_date_window && params.show_date {
+        date_window(
+            centre_x,
+            dial_top_y,
+            &now,
+            effective_tz,
+            palette,
+            numbers_weight,
+            &mut draws,
+        );
+    }
+
+    // Alarm row (Full only when an alarm is scheduled).
+    // Anchored in the left margin of the wider Full viewport,
+    // at the dial's vertical mid-point.
+    if size.show_alarm {
+        let dial_left_x = centre_x - size.canvas / 2.0;
+        analog_alarm_row(dial_left_x, centre_y, palette, numbers_weight, &mut draws);
     }
 
     // Hour and minute hands always rendered; second hand gated on `show_seconds`.
@@ -547,7 +744,8 @@ fn render_analog_round(
                 HAND_HOUR_VIEWPORT,
                 HAND_HOUR_PIVOT_X,
                 HAND_HOUR_PIVOT_Y,
-                &HAND_HOUR_ROUND,
+                &HAND_HOUR,
+                palette.primary,
             ),
         )
         .transition("hour-hand", 500, Easing::EaseOut),
@@ -563,7 +761,8 @@ fn render_analog_round(
                 HAND_MINUTE_VIEWPORT,
                 HAND_MINUTE_PIVOT_X,
                 HAND_MINUTE_PIVOT_Y,
-                &HAND_MINUTE_ROUND,
+                &HAND_MINUTE,
+                palette.primary,
             ),
         )
         .transition("minute-hand", 500, Easing::EaseOut),
@@ -578,6 +777,7 @@ fn render_analog_round(
         size.scale,
         54.0,
         &CENTER_WHITE,
+        palette.centre_white,
     ));
 
     if params.show_seconds {
@@ -592,7 +792,8 @@ fn render_analog_round(
                     HAND_SECOND_VIEWPORT,
                     HAND_SECOND_PIVOT_X,
                     HAND_SECOND_PIVOT_Y,
-                    &HAND_SECOND_ROUND,
+                    &HAND_SECOND,
+                    palette.second_hand,
                 ),
             )
             .transition("second-hand", 200, Easing::EaseOut),
@@ -603,14 +804,18 @@ fn render_analog_round(
             size.scale,
             16.0,
             &CENTER_ORANGE,
+            palette.centre_orange,
         ));
     }
+    // The CENTER_BLACK disc always stays black — it's the "hole"
+    // in the centre stack regardless of palette.
     draws.push(centre_icon(
         centre_x,
         centre_y,
         size.scale,
         8.0,
         &CENTER_BLACK,
+        TRANSPARENT,
     ));
     draws.push(centre_icon(
         centre_x,
@@ -618,32 +823,14 @@ fn render_analog_round(
         size.scale,
         10.0,
         &CENTER_STROKE,
+        palette.centre_stroke,
     ));
-
-    // Date window (Full / Large only, when `show_date` is set).
-    // 60×60 hollow circle with the day-of-month text inside; the border
-    // ring is a 32-point Catmull-Rom closed path stroked at 1px.
-    if size.show_date_window && params.show_date {
-        date_window(centre_x, dial_top_y, &now, tz, &mut draws);
-    }
-
-    // Alarm row (Full only when an alarm is scheduled).
-    //
-    // The design floats this left of the dial in the wider Full viewport;
-    // without a "draw outside the dial canvas" primitive we anchor it
-    // below the dial centre instead. The visual baseline review will
-    // confirm or push back on this placement.
-    if size.show_alarm {
-        analog_alarm_row(centre_x, dial_top_y, &mut draws);
-    }
 
     canvas(props!(width: viewport_w, height: viewport_h), draws)
 }
 
-fn local_clock_components(now: &SystemTime, tz: Option<&Tz>) -> (u8, u8, u8) {
-    let system_tz = Tz::from_runtime(system::current().timezone());
-    let effective = tz.unwrap_or(&system_tz);
-    let local = now.local(effective);
+fn local_clock_components(now: &SystemTime, tz: &Tz) -> (u8, u8, u8) {
+    let local = now.local(tz);
     (local.hour, local.minute, local.second)
 }
 
@@ -671,6 +858,10 @@ fn second_angle(second: u8) -> f32 {
 ///
 /// The SDK's rotation primitive then rotates the hand
 /// around its own pivot (since the rotation axis is canvas-centre).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "hand placement is a flat geometry helper over explicit SVG metrics"
+)]
 fn place_hand_at_pivot(
     centre_x: f32,
     centre_y: f32,
@@ -679,12 +870,13 @@ fn place_hand_at_pivot(
     pivot_x: f32,
     pivot_y: f32,
     icon: &'static Svg,
+    tint: Color,
 ) -> Draw {
     let w = viewport * scale;
     let h = viewport * scale;
     let top_left_x = centre_x - pivot_x * scale;
     let top_left_y = centre_y - pivot_y * scale;
-    Draw::svg(top_left_x, top_left_y, w, h, icon, TRANSPARENT)
+    Draw::svg(top_left_x, top_left_y, w, h, icon, tint).with_anti_alias()
 }
 
 fn centre_icon(
@@ -693,18 +885,21 @@ fn centre_icon(
     scale: f32,
     native_side: f32,
     icon: &'static Svg,
+    tint: Color,
 ) -> Draw {
     let side = native_side * scale;
     let top_left_x = centre_x - side / 2.0;
     let top_left_y = centre_y - side / 2.0;
-    Draw::svg(top_left_x, top_left_y, side, side, icon, TRANSPARENT)
+    Draw::svg(top_left_x, top_left_y, side, side, icon, tint).with_anti_alias()
 }
 
 fn date_window(
     centre_x: f32,
     dial_top_y: f32,
     now: &SystemTime,
-    tz: Option<&Tz>,
+    tz: &Tz,
+    palette: &ClockPalette,
+    weight: FontWeight,
     draws: &mut Vec<Draw>,
 ) {
     // The date window is a 60×60 box anchored inside the dial inner-rect
@@ -715,60 +910,82 @@ fn date_window(
     let radius = 30.0;
     // 32-point closed smooth path → visually round 1px border.
     let mut ring_pts: Vec<(f32, f32)> = Vec::with_capacity(32);
-    for i in 0..32 {
-        let theta = (i as f32 / 32.0) * std::f32::consts::TAU;
+    for i in 0_u16..32 {
+        let theta = (f32::from(i) / 32.0) * std::f32::consts::TAU;
         ring_pts.push((cx + radius * theta.cos(), cy + radius * theta.sin()));
     }
     draws.push(Draw::path(
         ring_pts,
         1.0,
-        GRAY_60,
+        palette.date_window,
         true,
         false,
-        bmc_wasm_sdk::Interpolation::CatmullRom,
+        Interpolation::CatmullRom,
     ));
-    // Day number — read decomposed `day` in the effective timezone.
-    let system_tz = Tz::from_runtime(system::current().timezone());
-    let effective = tz.unwrap_or(&system_tz);
-    let day_str = format!("{}", now.local(effective).day);
+    // `VerticalAlign::Center` keeps the digit visually centred
+    // on the ring instead of sitting half a font-size below it.
+    let day_str = format!("{}", now.local(tz).day);
     draws.push(Draw::text(
         cx,
         cy,
         day_str,
         style!(
             size: 24,
-            weight: 400,
-            color: GRAY_60,
-            align: bmc_wasm_sdk::TextAlign::Center,
+            weight: weight,
+            color: palette.date_window,
+            align: TextAlign::Center,
+            valign: VerticalAlign::Center,
         ),
     ));
 }
 
-fn analog_alarm_row(centre_x: f32, dial_top_y: f32, draws: &mut Vec<Draw>) {
+fn analog_alarm_row(
+    dial_left_x: f32,
+    row_y: f32,
+    palette: &ClockPalette,
+    weight: FontWeight,
+    draws: &mut Vec<Draw>,
+) {
     let snap = system::current();
     let Some(alarm) = snap.next_alarm() else {
         return;
     };
-    // ALARM_BELL is registered with the host so the asset is ready for
-    // draw; the row renders text-only because the design pairs the time
-    // with a palette-tinted bell and the SDK has no per-path SVG tint.
-    let _ = ALARM_BELL;
     let is_12h = matches!(system::current().time_format(), TimeFormat::Hour12);
     let alarm_time = format_alarm_time(alarm, is_12h);
-    // y=178 inside the dial inner-rect, horizontally centred
-    // under the dial centre.
-    //
-    // The design floats this row left of the dial; without
-    // an out-of-canvas anchor primitive we centre it instead.
+    // The bell + time group sits in the left viewport margin, ending
+    // a fixed gap away from the dial's left edge so the group reads
+    // as a satellite of the dial without overlapping it.
+    let bell_size = 24.0_f32;
+    let gap = 8.0_f32;
+    let margin_to_dial = 32.0_f32;
+    // Approximate alarm-time text width — the SDK doesn't expose text
+    // measurement to widgets, so a per-glyph mean fits `%H:%M` / `%I:%M %p`.
+    let approx_char_w = 12.0_f32;
+    let approx_time_w = f32_from_usize(alarm_time.len()) * approx_char_w;
+    let group_w = bell_size + gap + approx_time_w;
+    let group_right = dial_left_x - margin_to_dial;
+    let group_left = group_right - group_w;
+    draws.push(
+        Draw::svg(
+            group_left,
+            row_y - bell_size / 2.0,
+            bell_size,
+            bell_size,
+            &ALARM_BELL,
+            palette.alarm_bell,
+        )
+        .with_anti_alias(),
+    );
     draws.push(Draw::text(
-        centre_x,
-        dial_top_y + 178.0,
+        group_left + bell_size + gap,
+        row_y,
         alarm_time,
         style!(
             size: 24,
-            weight: 400,
-            color: GRAY_60,
-            align: bmc_wasm_sdk::TextAlign::Center,
+            weight: weight,
+            color: palette.alarm_bell,
+            align: TextAlign::Left,
+            valign: VerticalAlign::Center,
         ),
     ));
 }
