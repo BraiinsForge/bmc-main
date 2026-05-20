@@ -478,28 +478,41 @@ fn render_digital(
     let ampm_row_node = (!size.ampm_inline && is_12h).then(|| ampm_line(now, size, tz, palette));
     let alarm_node = size
         .show_alarm
-        .then(|| alarm_row(size, is_12h, palette))
+        .then(|| alarm_row(size, params, palette))
         .flatten();
 
-    let mut children: Vec<Node> = Vec::with_capacity(8);
-    // Top padding: PropsData has only uniform `padding`; emit a fixed-height
-    // spacer node instead.
-    children.push(spacer_px(size.top_padding));
-    if let Some(n) = header_node {
-        children.push(n);
-    }
-    children.push(spacer(1.0));
-    children.push(time_node);
-    children.push(spacer(1.0));
-    if let Some(n) = ampm_row_node {
-        children.push(n);
-    }
-    if let Some(n) = alarm_node {
-        children.push(n);
-    }
-    children.push(spacer_px(size.bottom_padding));
+    // Fixed-height slots above/below the flex-spaced time row,
+    // so the time row's vertical centre stays put as header /
+    // ampm / alarm toggle on and off.
+    //
+    // One row is enough: ampm-inline and show-alarm are mutually
+    // exclusive per size (Full has alarm + inline ampm; the rest have
+    // standalone ampm and no alarm), so the footer is at most one row.
+    let slot_h = f32::from(size.header_font_size) * 1.2;
+    let header_slot = col(
+        props!(height: slot_h),
+        header_node.into_iter().collect::<Vec<_>>(),
+    );
+    let footer_slot = col(
+        props!(height: slot_h),
+        [ampm_row_node, alarm_node]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>(),
+    );
 
-    col(props!(flex: 1.0), children)
+    col(
+        props!(flex: 1.0),
+        [
+            spacer_px(size.top_padding),
+            header_slot,
+            spacer(1.0),
+            time_node,
+            spacer(1.0),
+            footer_slot,
+            spacer_px(size.bottom_padding),
+        ],
+    )
 }
 
 // ── Header (date + timezone) ───────────────────────────────────────────
@@ -524,29 +537,25 @@ fn header(
     } else {
         (String::new(), true)
     };
-    let separator = if !date_str.is_empty() && !tz_str.is_empty() {
-        "    "
-    } else {
-        ""
-    };
     let tz_color = if tz_resolved { palette.text } else { RED_50 };
-    let base = style!(
+    let date_style = style!(
         size: u32::from(size.header_font_size),
         weight: FontWeight::REGULAR,
         color: palette.text,
-        align: TextAlign::Center,
     );
-    Some(center(
-        props!(),
-        [paragraph(
-            base,
-            [
-                span(date_str, ()),
-                span(separator, ()),
-                span(tz_str, style!(color: tz_color)),
-            ],
-        )],
-    ))
+    let tz_style = style!(
+        size: u32::from(size.header_font_size),
+        weight: FontWeight::REGULAR,
+        color: tz_color,
+    );
+    let mut row_children: Vec<Node> = Vec::with_capacity(2);
+    if !date_str.is_empty() {
+        row_children.push(text(date_str, date_style));
+    }
+    if !tz_str.is_empty() {
+        row_children.push(text(tz_str, tz_style));
+    }
+    Some(center(props!(), [row(props!(gap: 80.0), row_children)]))
 }
 
 /// Compose the date string from per-size visibility flags.
@@ -693,22 +702,102 @@ fn ampm_glyph(now: SystemTime, tz: Option<&Tz>) -> &'static str {
     }
 }
 
-// ── Alarm row (Full only when next_alarm = Some) ───────────────────────
+// ── Alarm row — single renderer shared by digital + both analog modes ──
 
-fn alarm_row(size: &DigitalSizeParams, is_12h: bool, palette: &ClockPalette) -> Option<Node> {
+/// Where the bell+time group sits on the row.
+#[derive(Copy, Clone)]
+enum AlarmAnchor {
+    /// Bell's left edge sits at x.
+    LeftX(f32),
+    /// Alarm-time text's right edge sits at x.
+    RightX(f32),
+}
+
+/// Emit the alarm-bell + alarm-time pair at the given vertical centre `y`,
+/// anchored per `AlarmAnchor`. Bell and text use a single `bell_size`
+/// so they share the same line-box (font size = `bell_size as u32`).
+/// Returns the rendered group width;
+/// 0 when no alarm is set (no draws emitted).
+fn alarm_row_draws(
+    anchor: AlarmAnchor,
+    y: f32,
+    bell_size: f32,
+    font_weight: FontWeight,
+    color: Color,
+    draws: &mut Vec<Draw>,
+) -> f32 {
     let snap = system::current();
-    let alarm = snap.next_alarm()?;
+    let Some(alarm) = snap.next_alarm() else {
+        return 0.0;
+    };
+    let is_12h = matches!(snap.time_format(), Some(TimeFormat::Hour12));
     let alarm_time = format_alarm_time(alarm, is_12h);
+    let gap = 8.0_f32;
+    // Approximate alarm-time width — the SDK doesn't expose text measurement
+    // to widgets. `0.6 * font` per char is the tightest safe heuristic
+    // for Inter `%H:%M` / `%I:%M %p` digits (each digit ≈ 0.55em,
+    // plus headroom for the wider `M` glyph and trailing space in 12h mode).
+    let approx_char_w = bell_size * 0.6;
+    let approx_time_w = f32_from_usize(alarm_time.len()) * approx_char_w;
+    let total_w = bell_size + gap + approx_time_w;
+    let x = match anchor {
+        AlarmAnchor::LeftX(x) => x,
+        AlarmAnchor::RightX(rx) => rx - total_w,
+    };
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "bell_size is a positive widget-pixel value well under u32 max"
+    )]
+    let font_size = bell_size as u32;
+    draws.push(
+        Draw::svg(
+            x,
+            y - bell_size / 2.0,
+            bell_size,
+            bell_size,
+            &ALARM_BELL,
+            color,
+        )
+        .with_anti_alias(),
+    );
+    draws.push(Draw::text(
+        x + bell_size + gap,
+        y,
+        alarm_time,
+        style!(
+            size: font_size,
+            weight: font_weight,
+            color: color,
+            align: TextAlign::Left,
+            valign: VerticalAlign::Center,
+        ),
+    ));
+    total_w
+}
+
+/// Build the digital alarm-row node: a fixed-size canvas
+/// wrapping `alarm_row_draws`. `None` when no alarm is set.
+fn alarm_row(size: &DigitalSizeParams, params: &Params, palette: &ClockPalette) -> Option<Node> {
+    if system::current().next_alarm().is_none() {
+        return None;
+    }
+    let bell = f32::from(size.header_font_size);
+    let mut draws: Vec<Draw> = Vec::with_capacity(2);
+    let total_w = alarm_row_draws(
+        AlarmAnchor::LeftX(0.0),
+        bell / 2.0,
+        bell,
+        font_weight(params.numbers_font_style),
+        palette.alarm_bell,
+        &mut draws,
+    );
+    if total_w <= 0.0 {
+        return None;
+    }
     Some(center(
-        props!(gap: 8.0),
-        [text(
-            alarm_time,
-            style!(
-                size: u32::from(size.header_font_size),
-                weight: FontWeight::REGULAR,
-                color: palette.alarm_bell
-            ),
-        )],
+        props!(),
+        [canvas(props!(width: total_w, height: bell), draws)],
     ))
 }
 
@@ -887,11 +976,19 @@ fn render_analog_round(
     }
 
     // Alarm row (Full only when an alarm is scheduled).
-    // Anchored in the left margin of the wider Full viewport,
-    // at the dial's vertical mid-point.
+    // Right-anchored next to the dial's left edge so the group
+    // reads as a satellite of the dial without overlapping it.
     if size.show_alarm {
         let dial_left_x = centre_x - size.canvas / 2.0;
-        analog_alarm_row(dial_left_x, centre_y, palette, numbers_weight, &mut draws);
+        let margin_to_dial = 32.0_f32;
+        alarm_row_draws(
+            AlarmAnchor::RightX(dial_left_x - margin_to_dial),
+            centre_y,
+            24.0,
+            numbers_weight,
+            palette.alarm_bell,
+            &mut draws,
+        );
     }
 
     // Hour and minute hands always rendered; second hand gated on `show_seconds`.
@@ -1155,7 +1252,14 @@ fn render_analog_rect(
 
     // Alarm row (Full only when an alarm is scheduled).
     if size.show_alarm {
-        rect_alarm_row(centre_y, palette, &mut draws);
+        alarm_row_draws(
+            AlarmAnchor::LeftX(250.0),
+            centre_y,
+            40.0,
+            numerals_weight,
+            palette.alarm_bell,
+            &mut draws,
+        );
     }
 
     // Hour and minute hands always rendered;
@@ -1254,41 +1358,6 @@ fn render_analog_rect(
     ));
 
     canvas(props!(width: viewport_w, height: viewport_h), draws)
-}
-
-fn rect_alarm_row(row_y: f32, palette: &ClockPalette, draws: &mut Vec<Draw>) {
-    let snap = system::current();
-    let Some(alarm) = snap.next_alarm() else {
-        return;
-    };
-    let is_12h = matches!(snap.time_format(), Some(TimeFormat::Hour12));
-    let alarm_time = format_alarm_time(alarm, is_12h);
-    let bell_size = 36.0_f32;
-    let row_x = 250.0_f32;
-    let spacing = 6.0_f32;
-    draws.push(
-        Draw::svg(
-            row_x,
-            row_y - bell_size / 2.0,
-            bell_size,
-            bell_size,
-            &ALARM_BELL,
-            palette.alarm_bell,
-        )
-        .with_anti_alias(),
-    );
-    draws.push(Draw::text(
-        row_x + bell_size + spacing,
-        row_y,
-        alarm_time,
-        style!(
-            size: 40,
-            weight: FontWeight::REGULAR,
-            color: palette.alarm_bell,
-            align: TextAlign::Left,
-            valign: VerticalAlign::Center,
-        ),
-    ));
 }
 
 fn local_clock_components(now: &SystemTime, tz: &Tz) -> (u8, u8, u8) {
@@ -1419,57 +1488,6 @@ fn date_window(
             weight: weight,
             color: palette.date_window,
             align: TextAlign::Center,
-            valign: VerticalAlign::Center,
-        ),
-    ));
-}
-
-fn analog_alarm_row(
-    dial_left_x: f32,
-    row_y: f32,
-    palette: &ClockPalette,
-    weight: FontWeight,
-    draws: &mut Vec<Draw>,
-) {
-    let snap = system::current();
-    let Some(alarm) = snap.next_alarm() else {
-        return;
-    };
-    let is_12h = matches!(system::current().time_format(), Some(TimeFormat::Hour12));
-    let alarm_time = format_alarm_time(alarm, is_12h);
-    // The bell + time group sits in the left viewport margin, ending
-    // a fixed gap away from the dial's left edge so the group reads
-    // as a satellite of the dial without overlapping it.
-    let bell_size = 24.0_f32;
-    let gap = 8.0_f32;
-    let margin_to_dial = 32.0_f32;
-    // Approximate alarm-time text width — the SDK doesn't expose text
-    // measurement to widgets, so a per-glyph mean fits `%H:%M` / `%I:%M %p`.
-    let approx_char_w = 12.0_f32;
-    let approx_time_w = f32_from_usize(alarm_time.len()) * approx_char_w;
-    let group_w = bell_size + gap + approx_time_w;
-    let group_right = dial_left_x - margin_to_dial;
-    let group_left = group_right - group_w;
-    draws.push(
-        Draw::svg(
-            group_left,
-            row_y - bell_size / 2.0,
-            bell_size,
-            bell_size,
-            &ALARM_BELL,
-            palette.alarm_bell,
-        )
-        .with_anti_alias(),
-    );
-    draws.push(Draw::text(
-        group_left + bell_size + gap,
-        row_y,
-        alarm_time,
-        style!(
-            size: 24,
-            weight: weight,
-            color: palette.alarm_bell,
-            align: TextAlign::Left,
             valign: VerticalAlign::Center,
         ),
     ));
