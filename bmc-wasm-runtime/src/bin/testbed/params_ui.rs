@@ -177,9 +177,27 @@ fn paint_param_row(
     use bmc_widget_manifest::{ParamKind, ParamValue};
 
     let mut changed = false;
-    let label_resp = grid.add(key_label(key, 180));
+    // Top-align the key label within its cell so a tall row (radio group)
+    // has its label anchored at the first option, not vertically centred
+    // halfway down the group. `left_to_right` keeps the label on a single
+    // line; `Align::TOP` anchors it at the row's top edge.
+    let label_resp = grid
+        .with_layout(egui::Layout::left_to_right(egui::Align::TOP), |row| {
+            egui::Frame::NONE
+                .inner_margin(egui::Margin {
+                    top: 3,
+                    ..Default::default()
+                })
+                .show(row, |inner| inner.add(key_label(key, 180)))
+                .inner
+        })
+        .inner;
 
-    grid.horizontal(|row| {
+    // Top-align inside the row so a tall multi-line input (radio group)
+    // can only extend downward; the default `horizontal()` centers
+    // children vertically, which overflows tall inputs both up and down
+    // into adjacent Grid rows.
+    grid.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |row| {
         if def.is_optional {
             let is_null = matches!(value, ParamValue::Null);
             // Plain-text labels — `✗` and similar dingbats aren't in egui's bundled font

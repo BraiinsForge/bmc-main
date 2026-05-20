@@ -244,7 +244,9 @@ pub(super) fn paint_led_strip(
         tile_origin + egui::vec2(tile.x as f32, tile.y as f32 + tile.gpu.height as f32),
         egui::vec2(strip_w, strip_h),
     );
-    painter.rect_filled(strip_rect, 0.0, egui::Color32::BLACK);
+    // Semi-transparent so the testbed checkerboard reads through the
+    // diffuser gap — full black flattened the gap into a hard bar.
+    painter.rect_filled(strip_rect, 0.0, egui::Color32::from_black_alpha(75));
 
     let Some(scene) = tile.led_scene.as_ref().filter(|_| tile.led_enabled) else {
         return;
