@@ -10,6 +10,15 @@ use bmc_wasm_sdk::*;
 use crate::DAYS_AHEAD;
 use crate::ical_parser::RawEvent;
 
+/// Project `now` into the system tz's local fields, falling back to UTC
+/// when the snapshot has no timezone or the host can't resolve it.
+fn system_tz_local(now: &SystemTime) -> LocalDateTime {
+    system::current()
+        .timezone()
+        .and_then(|name| now.local(&Tz::from_runtime(name)))
+        .unwrap_or_else(|| now.utc())
+}
+
 /// A single calendar event after RRULE expansion.
 #[derive(Debug, Clone)]
 pub struct CalendarEvent {
@@ -106,12 +115,11 @@ pub struct CalendarState {
 impl CalendarState {
     pub fn new() -> Self {
         let now = SystemTime::now();
-        let system_tz = Tz::from_runtime(system::current().timezone());
         Self {
             sources: Vec::new(),
             events: Vec::new(),
             day_groups: Vec::new(),
-            local: now.local(&system_tz),
+            local: system_tz_local(&now),
             now,
             any_loading: true,
             dirty: false,
@@ -124,8 +132,7 @@ impl CalendarState {
     /// Update the current time and its system-tz projection.
     pub fn update_time(&mut self) {
         self.now = SystemTime::now();
-        let system_tz = Tz::from_runtime(system::current().timezone());
-        self.local = self.now.local(&system_tz);
+        self.local = system_tz_local(&self.now);
     }
 
     /// Returns `true` if there are unparsed chunks remaining.

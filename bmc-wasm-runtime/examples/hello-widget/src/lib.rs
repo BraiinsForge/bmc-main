@@ -126,8 +126,11 @@ fn icon_buttons_section() -> Node {
 }
 
 fn animations_section(time: &SystemTime) -> Node {
-    let system_tz = Tz::from_runtime(system::current().timezone());
-    let secs = time.local(&system_tz).seconds_since_midnight() as f32;
+    let secs = system::current()
+        .timezone()
+        .and_then(|name| time.local(&Tz::from_runtime(name)))
+        .unwrap_or_else(|| time.utc())
+        .seconds_since_midnight() as f32;
     let second_angle = secs / 60.0 * TAU;
     let minute_angle = secs / 3_600.0 * TAU;
     let hour_angle = secs / 43_200.0 * TAU;
@@ -436,7 +439,11 @@ fn small_led_effects_section() -> Node {
 }
 
 fn small_clock(time: &SystemTime, size: f32) -> Node {
-    let secs = time.seconds_since_midnight() as f32;
+    let secs = system::current()
+        .timezone()
+        .and_then(|name| time.local(&Tz::from_runtime(name)))
+        .unwrap_or_else(|| time.utc())
+        .seconds_since_midnight() as f32;
     let second_angle = secs / 60.0 * TAU;
     let minute_angle = secs / 3_600.0 * TAU;
     let hour_angle = secs / 43_200.0 * TAU;
@@ -639,7 +646,11 @@ fn compact_animation(size: f32, label: &str, label_size: u32) -> Node {
 }
 
 fn compact_clock(time: &SystemTime, size: f32, label_size: u32) -> Node {
-    let secs = time.seconds_since_midnight() as f32;
+    let secs = system::current()
+        .timezone()
+        .and_then(|name| time.local(&Tz::from_runtime(name)))
+        .unwrap_or_else(|| time.utc())
+        .seconds_since_midnight() as f32;
     let second_angle = secs / 60.0 * TAU;
     let minute_angle = secs / 3_600.0 * TAU;
     let hour_angle = secs / 43_200.0 * TAU;

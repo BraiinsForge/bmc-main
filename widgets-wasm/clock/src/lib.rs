@@ -76,6 +76,43 @@ const PALETTE_NIGHT: ClockPalette = ClockPalette {
     centre_stroke: RED_60,
 };
 
+/// Resolve `tz` → system tz → Etc/GMT (UTC) into a concrete `Tz`.
+/// Projection paths (hands, digits) use this;
+/// the timezone-line code instead consults the raw Option chain
+/// so it can render a visible signal when nothing was configured.
+fn effective_tz(tz: Option<&Tz>) -> Tz {
+    if let Some(t) = tz {
+        return t.clone();
+    }
+    if let Some(name) = system::current().timezone() {
+        return Tz::from_runtime(name);
+    }
+    Tz::from_runtime("Etc/GMT")
+}
+
+/// `tz` → system tz → UTC fallback chain for projection paths
+/// (hands, digits). Timezone-line code uses fallible `.local(tz)`
+/// directly so it can render a visible signal on lookup failure.
+fn local_or_system(now: &SystemTime, tz: &Tz) -> LocalDateTime {
+    now.local(tz)
+        .or_else(|| {
+            system::current()
+                .timezone()
+                .and_then(|name| now.local(&Tz::from_runtime(name)))
+        })
+        .unwrap_or_else(|| now.utc())
+}
+
+fn local_unix_secs_or_system(now: &SystemTime, tz: &Tz) -> i64 {
+    local_unix_secs(now, tz)
+        .or_else(|| {
+            system::current()
+                .timezone()
+                .and_then(|name| local_unix_secs(now, &Tz::from_runtime(name)))
+        })
+        .unwrap_or(now.unix_secs)
+}
+
 fn clock_palette(night_mode: bool) -> ClockPalette {
     if night_mode {
         PALETTE_NIGHT
@@ -341,8 +378,7 @@ fn render_digital(
     tz: Option<&Tz>,
     palette: &ClockPalette,
 ) -> Node {
-    let time_format = system::current().time_format();
-    let is_12h = matches!(time_format, TimeFormat::Hour12);
+    let is_12h = matches!(system::current().time_format(), Some(TimeFormat::Hour12));
 
     let header_node = header(now, params, size, tz, palette);
     let time_node = time_row(now, params, size, is_12h, tz, palette);
@@ -422,9 +458,8 @@ fn compose_header(
 /// Uses strftime so the weekday / month-name come from
 /// the host's chrono (correct locale + correct timezone).
 fn compose_date(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> String {
-    let system_tz = Tz::from_runtime(system::current().timezone());
-    let effective = tz.unwrap_or(&system_tz);
-    let shifted = local_unix_secs(&now, effective);
+    let effective = effective_tz(tz);
+    let shifted = local_unix_secs_or_system(&now, &effective);
     let pattern = match (size.show_weekday, size.show_year) {
         (false, false) => "%-d %B",
         (true, false) => "%a %-d %B",
@@ -435,10 +470,9 @@ fn compose_date(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> S
 }
 
 fn compose_timezone(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> String {
-    let system_tz = Tz::from_runtime(system::current().timezone());
-    let effective = tz.unwrap_or(&system_tz);
+    let effective = effective_tz(tz);
     let label = effective.iana().to_owned();
-    let offset_secs = resolve_tz_offset(effective, now.unix_secs).unwrap_or(0);
+    let offset_secs = resolve_tz_offset(&effective, now.unix_secs).unwrap_or(0);
     if size.show_utc_offset {
         let mut s = label;
         s.push_str(" (");
@@ -524,9 +558,8 @@ fn ampm_line(
 
 /// `"AM"` / `"PM"` for the given moment in the effective timezone.
 fn ampm_glyph(now: SystemTime, tz: Option<&Tz>) -> &'static str {
-    let system_tz = Tz::from_runtime(system::current().timezone());
-    let effective = tz.unwrap_or(&system_tz);
-    if now.local(effective).hour >= 12 {
+    let effective = effective_tz(tz);
+    if local_or_system(&now, &effective).hour >= 12 {
         "PM"
     } else {
         "AM"
@@ -620,9 +653,8 @@ fn render_analog_round(
     let centre_x = viewport_w / 2.0;
     let centre_y = viewport_h / 2.0;
     let dial_top_y = centre_y - size.canvas / 2.0;
-    let system_tz = Tz::from_runtime(system::current().timezone());
-    let effective_tz = tz.unwrap_or(&system_tz);
-    let (hour12, minute, second) = local_clock_components(&now, effective_tz);
+    let effective = effective_tz(tz);
+    let (hour12, minute, second) = local_clock_components(&now, &effective);
 
     let mut draws: Vec<Draw> = Vec::with_capacity(16);
 
@@ -661,7 +693,7 @@ fn render_analog_round(
             iana_owned.as_str()
         };
         let city = iana.rsplit('/').next().unwrap_or(iana).replace('_', " ");
-        let offset_secs = resolve_tz_offset(effective_tz, now.unix_secs).unwrap_or(0);
+        let offset_secs = resolve_tz_offset(&effective, now.unix_secs).unwrap_or(0);
         let mut offset_str = String::new();
         push_utc_offset(&mut offset_str, offset_secs);
         let city_size = size.timezone_font_size;
@@ -709,7 +741,7 @@ fn render_analog_round(
             centre_x,
             dial_top_y,
             &now,
-            effective_tz,
+            &effective,
             palette,
             numbers_weight,
             &mut draws,
@@ -830,7 +862,7 @@ fn render_analog_round(
 }
 
 fn local_clock_components(now: &SystemTime, tz: &Tz) -> (u8, u8, u8) {
-    let local = now.local(tz);
+    let local = local_or_system(now, tz);
     (local.hour, local.minute, local.second)
 }
 
@@ -924,7 +956,7 @@ fn date_window(
     ));
     // `VerticalAlign::Center` keeps the digit visually centred
     // on the ring instead of sitting half a font-size below it.
-    let day_str = format!("{}", now.local(tz).day);
+    let day_str = format!("{}", local_or_system(now, tz).day);
     draws.push(Draw::text(
         cx,
         cy,
@@ -950,7 +982,7 @@ fn analog_alarm_row(
     let Some(alarm) = snap.next_alarm() else {
         return;
     };
-    let is_12h = matches!(system::current().time_format(), TimeFormat::Hour12);
+    let is_12h = matches!(system::current().time_format(), Some(TimeFormat::Hour12));
     let alarm_time = format_alarm_time(alarm, is_12h);
     // The bell + time group sits in the left viewport margin, ending
     // a fixed gap away from the dial's left edge so the group reads

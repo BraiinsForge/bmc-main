@@ -22,9 +22,6 @@ pub struct AnimationDef {
 
 /// Definition of a transition (serialized to host).
 ///
-/// `id_hash` is an FNV1a-32 digest of a widget-supplied id string,
-/// computed at call time by [`Draw::transition`].
-///
 /// The host keys transition state on `(canvas_index, id_hash)`
 /// so the interpolation follows the *logical* draw across tree-shape
 /// changes (e.g. an optional sibling appearing or disappearing).
@@ -38,9 +35,8 @@ pub struct TransitionDef {
     pub easing: Easing,
 }
 
-/// FNV1a-32 hash of `s`. Used by [`Draw::transition`]
-/// to derive a stable per-draw key from the widget-supplied
-/// id string at call time.
+/// FNV1a-32 hash of `s`. Used by to derive a stable per-draw key
+/// from the widget-supplied id string at call time.
 ///
 /// Const so `Draw::transition("hour-hand", …)` const-folds
 /// the hash at compile time for `&'static str` ids.

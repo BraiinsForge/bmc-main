@@ -474,7 +474,6 @@ pub fn widget_size() -> WidgetSize {
 }
 
 /// UTC instant. Wire format is the 8-byte LE `i64` of `unix_secs`.
-/// Project into a zone via [`Self::local`] / [`Self::utc`].
 #[derive(Debug, Clone, Copy)]
 pub struct SystemTime {
     pub unix_secs: i64,
@@ -511,10 +510,12 @@ impl SystemTime {
         }
     }
 
+    /// Project into local wall-clock fields for `tz`.
+    /// Returns `None` when the host doesn't recognise the tz name.
     #[cfg(target_arch = "wasm32")]
     #[must_use]
-    pub fn local(&self, tz: &crate::Tz) -> LocalDateTime {
-        decompose(crate::format::local_unix_secs(self, tz))
+    pub fn local(&self, tz: &crate::Tz) -> Option<LocalDateTime> {
+        crate::format::local_unix_secs(self, tz).map(decompose)
     }
 
     #[cfg(target_arch = "wasm32")]

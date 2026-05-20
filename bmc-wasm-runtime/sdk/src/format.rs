@@ -155,16 +155,18 @@ pub struct FormatDateOpts {
 pub fn format_time(now: crate::host::SystemTime, opts: FormatTimeOpts) -> String {
     let format = opts
         .format
-        .unwrap_or_else(|| system::current().time_format());
+        .or_else(|| system::current().time_format())
+        .unwrap_or_default();
     let pattern = match (format, opts.with_seconds) {
         (TimeFormat::Hour24, false) => "%H:%M",
         (TimeFormat::Hour24, true) => "%H:%M:%S",
         (TimeFormat::Hour12, false) => "%I:%M",
         (TimeFormat::Hour12, true) => "%I:%M:%S",
     };
-    let system_tz = Tz::from_runtime(system::current().timezone());
-    let tz = opts.timezone.as_ref().unwrap_or(&system_tz);
-    strftime(local_unix_secs(&now, tz), pattern)
+    strftime(
+        local_unix_secs_or_system(&now, opts.timezone.as_ref()),
+        pattern,
+    )
 }
 
 /// Format the date component of a [`SystemTime`] per the user's preferences,
@@ -180,7 +182,8 @@ pub fn format_time(now: crate::host::SystemTime, opts: FormatTimeOpts) -> String
 pub fn format_date(now: crate::host::SystemTime, opts: FormatDateOpts) -> String {
     let format = opts
         .format
-        .unwrap_or_else(|| system::current().date_format());
+        .or_else(|| system::current().date_format())
+        .unwrap_or_default();
     let pattern = match format {
         DateFormat::DdMmYyyyDot => "%d.%m.%Y",
         DateFormat::DdMmYyyySlash => "%d/%m/%Y",
@@ -191,18 +194,35 @@ pub fn format_date(now: crate::host::SystemTime, opts: FormatDateOpts) -> String
         DateFormat::YyyyMmDdDot => "%Y.%m.%d",
         DateFormat::YyyyMmDdDash => "%Y-%m-%d",
     };
-    let system_tz = Tz::from_runtime(system::current().timezone());
-    let tz = opts.timezone.as_ref().unwrap_or(&system_tz);
-    strftime(local_unix_secs(&now, tz), pattern)
+    strftime(
+        local_unix_secs_or_system(&now, opts.timezone.as_ref()),
+        pattern,
+    )
 }
 
-/// Shift `now.unix_secs` by `tz`'s UTC offset so a downstream
-/// `strftime` (which formats in UTC) prints local wall-clock digits.
-/// Unknown tz falls back to no shift (`offset = 0`, UTC).
+/// `local_unix_secs` with a fallback chain: requested tz → system tz → raw UTC.
+/// Used by the string-returning format helpers.
+fn local_unix_secs_or_system(now: &crate::host::SystemTime, tz: Option<&Tz>) -> i64 {
+    if let Some(t) = tz
+        && let Some(secs) = local_unix_secs(now, t)
+    {
+        return secs;
+    }
+    if let Some(name) = system::current().timezone() {
+        let system_tz = Tz::from_runtime(name);
+        if let Some(secs) = local_unix_secs(now, &system_tz) {
+            return secs;
+        }
+    }
+    now.unix_secs
+}
+
+/// Shift `now.unix_secs` by `tz`'s UTC offset for a downstream `strftime`.
+/// Returns `None` when the host doesn't recognise the tz name.
 #[must_use]
-pub fn local_unix_secs(now: &crate::host::SystemTime, tz: &Tz) -> i64 {
-    let offset_secs = resolve_tz_offset(tz, now.unix_secs).unwrap_or(0);
-    now.unix_secs + i64::from(offset_secs)
+pub fn local_unix_secs(now: &crate::host::SystemTime, tz: &Tz) -> Option<i64> {
+    let offset_secs = resolve_tz_offset(tz, now.unix_secs)?;
+    Some(now.unix_secs + i64::from(offset_secs))
 }
 
 /// Resolve the UTC offset (in seconds) for an IANA-name timezone at a
