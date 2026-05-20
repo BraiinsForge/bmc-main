@@ -26,7 +26,7 @@
 //! }
 //! ```
 
-use crate::host::SystemTime;
+use crate::host::LocalDateTime;
 
 unsafe extern "C" {
     fn host_expand_rrule(
@@ -121,7 +121,7 @@ fn push_str(buf: &mut Vec<u8>, s: &str) {
 ///
 /// Returns `None` if the timezone name is unknown.
 #[must_use]
-pub fn tz_convert(unix_secs: i64, timezone: &str) -> Option<SystemTime> {
+pub fn tz_convert(unix_secs: i64, timezone: &str) -> Option<LocalDateTime> {
     let mut buf = [0u8; 20];
     let rc = unsafe {
         host_tz_convert(
@@ -134,11 +134,11 @@ pub fn tz_convert(unix_secs: i64, timezone: &str) -> Option<SystemTime> {
     if rc < 0 {
         return None;
     }
-    Some(SystemTime {
-        unix_secs: i64::from_le_bytes([
-            buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
-        ]),
-        utc_offset_secs: i32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]),
+    // Host's tz_convert still emits the legacy 20-byte layout.
+    // Pick out year/month/day/hour/minute/second/weekday;
+    // drop the redundant unix_secs (the caller passed it in)
+    // and utc_offset_secs.
+    Some(LocalDateTime {
         year: u16::from_le_bytes([buf[12], buf[13]]),
         month: buf[14],
         day: buf[15],

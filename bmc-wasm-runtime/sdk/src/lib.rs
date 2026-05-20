@@ -177,7 +177,7 @@
 
 // wasm32: usize == u32, so these truncation warnings are false positives.
 // cast_sign_loss only fires on wasm32 (gated FFI code).
-#![expect(clippy::cast_possible_truncation, clippy::cast_lossless)]
+#![expect(clippy::cast_possible_truncation)]
 #![cfg_attr(target_arch = "wasm32", expect(clippy::cast_sign_loss))]
 
 // Embed protocol version as a WASM export.

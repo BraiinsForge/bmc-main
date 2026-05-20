@@ -87,8 +87,10 @@ pub struct CalendarState {
     pub events: Vec<CalendarEvent>,
     /// Events grouped by day.
     pub day_groups: Vec<DayGroup>,
-    /// Current time (updated each frame).
+    /// Current UTC instant (updated each frame).
     pub now: SystemTime,
+    /// `now` projected into the system timezone, refreshed alongside `now`.
+    pub local: LocalDateTime,
     /// Whether any source is still loading.
     pub any_loading: bool,
     /// Whether raw events have changed and need rebuilding.
@@ -103,11 +105,14 @@ pub struct CalendarState {
 
 impl CalendarState {
     pub fn new() -> Self {
+        let now = SystemTime::now();
+        let system_tz = Tz::from_runtime(system::current().timezone());
         Self {
             sources: Vec::new(),
             events: Vec::new(),
             day_groups: Vec::new(),
-            now: SystemTime::now(),
+            local: now.local(&system_tz),
+            now,
             any_loading: true,
             dirty: false,
             parse_queue: VecDeque::new(),
@@ -116,9 +121,11 @@ impl CalendarState {
         }
     }
 
-    /// Update the current time.
+    /// Update the current time and its system-tz projection.
     pub fn update_time(&mut self) {
         self.now = SystemTime::now();
+        let system_tz = Tz::from_runtime(system::current().timezone());
+        self.local = self.now.local(&system_tz);
     }
 
     /// Returns `true` if there are unparsed chunks remaining.
@@ -172,7 +179,7 @@ impl CalendarState {
 
         // Inject test multi-day events for development (never compiled into release)
         #[cfg(debug_assertions)]
-        inject_test_events(&mut events, &self.now);
+        inject_test_events(&mut events, &self.now, &self.local);
 
         // Sort by start time, all-day events first within each day
         events.sort_by(|a, b| {
@@ -192,13 +199,13 @@ impl CalendarState {
     fn rebuild_day_groups(&mut self) {
         self.day_groups.clear();
 
-        let today_year = self.now.year;
-        let today_month = self.now.month;
-        let today_day = self.now.day;
+        let today_year = self.local.year;
+        let today_month = self.local.month;
+        let today_day = self.local.day;
 
         for (event_idx, event) in self.events.iter().enumerate() {
             // Convert event start to local time for grouping
-            let local = calendar::tz_convert(event.start, "Local").unwrap_or(self.now);
+            let local = calendar::tz_convert(event.start, "Local").unwrap_or(self.local);
 
             let needs_new_group = self.day_groups.last().is_none_or(|g| {
                 g.year != local.year || g.month != local.month || g.day != local.day
@@ -405,7 +412,7 @@ pub struct EventSpan {
 impl CalendarState {
     /// Build a month calendar grid for the current month.
     pub fn build_month_grid(&self) -> MonthGrid {
-        let now = &self.now;
+        let now = &self.local;
         let fdow = self.first_day_of_week;
 
         // Weekday of the 1st of current month (0=Mon..6=Sun)
@@ -457,7 +464,7 @@ impl CalendarState {
 
         // Assign events to cells / spans
         for (ei, event) in self.events.iter().enumerate() {
-            let start_local = calendar::tz_convert(event.start, "Local").unwrap_or(self.now);
+            let start_local = calendar::tz_convert(event.start, "Local").unwrap_or(self.local);
             let sd = (start_local.year, start_local.month, start_local.day);
 
             if event.end - event.start > 86_400 {
@@ -470,7 +477,7 @@ impl CalendarState {
                     event.end
                 };
                 let end_local =
-                    calendar::tz_convert(end_ts.max(event.start), "Local").unwrap_or(self.now);
+                    calendar::tz_convert(end_ts.max(event.start), "Local").unwrap_or(self.local);
                 let ed = (end_local.year, end_local.month, end_local.day);
 
                 for week in &mut weeks {
@@ -590,11 +597,11 @@ fn next_month(year: u16, month: u8) -> (u16, u8) {
 /// Inject synthetic multi-day events for testing grid rendering.
 /// Only compiled when the `test-events` feature is active.
 #[cfg(debug_assertions)]
-fn inject_test_events(events: &mut Vec<CalendarEvent>, now: &SystemTime) {
+fn inject_test_events(events: &mut Vec<CalendarEvent>, now: &SystemTime, local: &LocalDateTime) {
     let today_midnight = now.unix_secs
-        - i64::from(now.hour) * 3_600
-        - i64::from(now.minute) * 60
-        - i64::from(now.second);
+        - i64::from(local.hour) * 3_600
+        - i64::from(local.minute) * 60
+        - i64::from(local.second);
 
     // 3-day event starting today (spans within a week)
     events.push(CalendarEvent {

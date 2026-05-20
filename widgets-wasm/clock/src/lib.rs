@@ -319,7 +319,9 @@ fn compose_header(
 /// the host's chrono (correct locale + correct timezone
 /// when `tz` is an override).
 fn compose_date(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> String {
-    let shifted = local_unix_secs(&now, tz);
+    let system_tz = Tz::from_runtime(system::current().timezone());
+    let effective = tz.unwrap_or(&system_tz);
+    let shifted = local_unix_secs(&now, effective);
     let pattern = match (size.show_weekday, size.show_year) {
         (false, false) => "%-d %B",
         (true, false) => "%a %-d %B",
@@ -330,13 +332,10 @@ fn compose_date(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> S
 }
 
 fn compose_timezone(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> String {
-    let (label, offset_secs) = match tz {
-        Some(tz) => (
-            tz.iana().to_owned(),
-            resolve_tz_offset(tz, now.unix_secs).unwrap_or(now.utc_offset_secs),
-        ),
-        None => (system::current().timezone().to_owned(), now.utc_offset_secs),
-    };
+    let system_tz = Tz::from_runtime(system::current().timezone());
+    let effective = tz.unwrap_or(&system_tz);
+    let label = effective.iana().to_owned();
+    let offset_secs = resolve_tz_offset(effective, now.unix_secs).unwrap_or(0);
     if size.show_utc_offset {
         let mut s = label;
         s.push_str(" (");
@@ -406,7 +405,9 @@ fn ampm_line(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> Node
 /// Uses strftime so the AM/PM boundary follows the override tz,
 /// not just the system tz.
 fn ampm_glyph(now: SystemTime, tz: Option<&Tz>) -> &'static str {
-    let shifted = local_unix_secs(&now, tz);
+    let system_tz = Tz::from_runtime(system::current().timezone());
+    let effective = tz.unwrap_or(&system_tz);
+    let shifted = local_unix_secs(&now, effective);
     // %H is 00–23; cheap branch on the leading digit beats
     // a host call to chrono's `%p` for the AM/PM string.
     let hour_str = strftime(shifted, "%H");
@@ -640,19 +641,10 @@ fn render_analog_round(
 }
 
 fn local_clock_components(now: &SystemTime, tz: Option<&Tz>) -> (u8, u8, u8) {
-    match tz {
-        None => (now.hour, now.minute, now.second),
-        Some(_) => {
-            // Override path — strftime decomposes the shifted unix_secs.
-            let shifted = local_unix_secs(now, tz);
-            let hms = strftime(shifted, "%H %M %S");
-            let mut parts = hms.split_ascii_whitespace();
-            let h: u8 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-            let m: u8 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-            let s: u8 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-            (h, m, s)
-        }
-    }
+    let system_tz = Tz::from_runtime(system::current().timezone());
+    let effective = tz.unwrap_or(&system_tz);
+    let local = now.local(effective);
+    (local.hour, local.minute, local.second)
 }
 
 /// Hour-hand angle: `hour12 * 30° + minute * 0.5°`.
@@ -736,10 +728,9 @@ fn date_window(
         bmc_wasm_sdk::Interpolation::CatmullRom,
     ));
     // Day number — read decomposed `day` in the effective timezone.
-    let day_str = match tz {
-        None => format!("{}", now.day),
-        Some(_) => strftime(local_unix_secs(now, tz), "%-d"),
-    };
+    let system_tz = Tz::from_runtime(system::current().timezone());
+    let effective = tz.unwrap_or(&system_tz);
+    let day_str = format!("{}", now.local(effective).day);
     draws.push(Draw::text(
         cx,
         cy,

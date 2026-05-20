@@ -126,7 +126,8 @@ fn icon_buttons_section() -> Node {
 }
 
 fn animations_section(time: &SystemTime) -> Node {
-    let secs = time.seconds_since_midnight() as f32;
+    let system_tz = Tz::from_runtime(system::current().timezone());
+    let secs = time.local(&system_tz).seconds_since_midnight() as f32;
     let second_angle = secs / 60.0 * TAU;
     let minute_angle = secs / 3_600.0 * TAU;
     let hour_angle = secs / 43_200.0 * TAU;

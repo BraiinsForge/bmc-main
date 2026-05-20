@@ -76,11 +76,13 @@ fn save_u32(key: &str, val: u32) {
 
 fn today_string() -> [u8; 10] {
     let now = SystemTime::now();
+    let system_tz = Tz::from_runtime(system::current().timezone());
+    let local = now.local(&system_tz);
     let mut buf = [0u8; 10];
     // Manual zero-padded date: YYYY-MM-DD
-    let year = now.year as u32;
-    let month = now.month as u32;
-    let day = now.day as u32;
+    let year = u32::from(local.year);
+    let month = u32::from(local.month);
+    let day = u32::from(local.day);
     let s = fmt!(
         "{}{}{}{}-{}{}-{}{}",
         year / 1_000,

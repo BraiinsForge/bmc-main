@@ -162,7 +162,9 @@ pub fn format_time(now: crate::host::SystemTime, opts: FormatTimeOpts) -> String
         (TimeFormat::Hour12, false) => "%I:%M",
         (TimeFormat::Hour12, true) => "%I:%M:%S",
     };
-    strftime(local_unix_secs(&now, opts.timezone.as_ref()), pattern)
+    let system_tz = Tz::from_runtime(system::current().timezone());
+    let tz = opts.timezone.as_ref().unwrap_or(&system_tz);
+    strftime(local_unix_secs(&now, tz), pattern)
 }
 
 /// Format the date component of a [`SystemTime`] per the user's preferences,
@@ -189,26 +191,17 @@ pub fn format_date(now: crate::host::SystemTime, opts: FormatDateOpts) -> String
         DateFormat::YyyyMmDdDot => "%Y.%m.%d",
         DateFormat::YyyyMmDdDash => "%Y-%m-%d",
     };
-    strftime(local_unix_secs(&now, opts.timezone.as_ref()), pattern)
+    let system_tz = Tz::from_runtime(system::current().timezone());
+    let tz = opts.timezone.as_ref().unwrap_or(&system_tz);
+    strftime(local_unix_secs(&now, tz), pattern)
 }
 
-/// Shift `now.unix_secs` (UTC epoch) by the effective UTC offset
-/// so a downstream `strftime` (which formats in UTC) prints local
-/// wall-clock digits.
-///
-/// When `tz` is `None`, the pre-applied
-/// [`crate::host::SystemTime::utc_offset_secs`] is used — no host round-trip.
-/// Otherwise, `host_resolve_tz` looks up the offset for the override at the moment
-/// `unix_secs`; unknown names fall back to the system offset.
-///
-/// Useful for `strftime` patterns the high-level helpers don't cover
-/// (e.g. composed weekday + day + month-name strings).
+/// Shift `now.unix_secs` by `tz`'s UTC offset so a downstream
+/// `strftime` (which formats in UTC) prints local wall-clock digits.
+/// Unknown tz falls back to no shift (`offset = 0`, UTC).
 #[must_use]
-pub fn local_unix_secs(now: &crate::host::SystemTime, tz: Option<&Tz>) -> i64 {
-    let offset_secs = match tz {
-        None => now.utc_offset_secs,
-        Some(tz) => resolve_tz_offset(tz, now.unix_secs).unwrap_or(now.utc_offset_secs),
-    };
+pub fn local_unix_secs(now: &crate::host::SystemTime, tz: &Tz) -> i64 {
+    let offset_secs = resolve_tz_offset(tz, now.unix_secs).unwrap_or(0);
     now.unix_secs + i64::from(offset_secs)
 }
 

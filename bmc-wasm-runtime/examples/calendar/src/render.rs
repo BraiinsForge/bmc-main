@@ -570,7 +570,7 @@ fn render_agenda_stream(state: &CalendarState, compact: bool) -> Vec<Node> {
 
     // Insert a "Today" placeholder if no events today
     if !has_today {
-        let today = &state.now;
+        let today = &state.local;
         let placeholder = DayGroup {
             year: today.year,
             month: today.month,
@@ -650,14 +650,14 @@ fn render_today_card(state: &CalendarState) -> Vec<Node> {
     let mut children = Vec::new();
 
     // Today's date header
-    let now = &state.now;
-    let weekday = WEEKDAYS.get(now.weekday as usize).unwrap_or(&"???");
+    let local = &state.local;
+    let weekday = WEEKDAYS.get(local.weekday as usize).unwrap_or(&"???");
     let month = MONTHS
-        .get(now.month.wrapping_sub(1) as usize)
+        .get(local.month.wrapping_sub(1) as usize)
         .unwrap_or(&"???");
 
     children.push(text(
-        fmt!("{weekday}, {month} {}", now.day),
+        fmt!("{weekday}, {month} {}", local.day),
         style!(size: 24, weight: 700, color: theme.text_primary),
     ));
     children.push(text("Today", style!(size: 14, color: theme.text_primary)));
@@ -672,7 +672,7 @@ fn render_today_card(state: &CalendarState) -> Vec<Node> {
         ));
 
         // Show next upcoming event
-        let now_ts = now.unix_secs;
+        let now_ts = state.now.unix_secs;
         let next = group
             .timed
             .iter()

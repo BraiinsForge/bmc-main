@@ -473,22 +473,16 @@ pub fn widget_size() -> WidgetSize {
     WidgetSize::from_dimensions(0, 0)
 }
 
-/// Date-time with timezone, provided by the host.
-///
-/// 20-byte wire format (little-endian):
-/// - `[0..8]`   `i64`  unix seconds since epoch
-/// - `[8..12]`  `i32`  UTC offset in seconds
-/// - `[12..14]` `u16`  year
-/// - `[14]`     `u8`   month (1–12)
-/// - `[15]`     `u8`   day (1–31)
-/// - `[16]`     `u8`   hour (0–23)
-/// - `[17]`     `u8`   minute (0–59)
-/// - `[18]`     `u8`   second (0–59)
-/// - `[19]`     `u8`   weekday (0=Mon … 6=Sun)
+/// UTC instant. Wire format is the 8-byte LE `i64` of `unix_secs`.
+/// Project into a zone via [`Self::local`] / [`Self::utc`].
 #[derive(Debug, Clone, Copy)]
 pub struct SystemTime {
     pub unix_secs: i64,
-    pub utc_offset_secs: i32,
+}
+
+/// Decomposed wall-clock view of a `SystemTime` in a specific zone.
+#[derive(Debug, Clone, Copy)]
+pub struct LocalDateTime {
     pub year: u16,
     pub month: u8,
     pub day: u8,
@@ -499,32 +493,61 @@ pub struct SystemTime {
     pub weekday: u8,
 }
 
+impl LocalDateTime {
+    #[must_use]
+    pub fn seconds_since_midnight(&self) -> u32 {
+        u32::from(self.hour) * 3_600 + u32::from(self.minute) * 60 + u32::from(self.second)
+    }
+}
+
 impl SystemTime {
-    /// Get current system time from the host.
     #[cfg(target_arch = "wasm32")]
     #[must_use]
     pub fn now() -> Self {
-        let mut buf = [0u8; 20];
+        let mut buf = [0u8; 8];
         unsafe { ffi::host_get_system_time(buf.as_mut_ptr()) }
         Self {
-            unix_secs: i64::from_le_bytes([
-                buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
-            ]),
-            utc_offset_secs: i32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]),
-            year: u16::from_le_bytes([buf[12], buf[13]]),
-            month: buf[14],
-            day: buf[15],
-            hour: buf[16],
-            minute: buf[17],
-            second: buf[18],
-            weekday: buf[19],
+            unix_secs: i64::from_le_bytes(buf),
         }
     }
 
-    /// Seconds elapsed since midnight (local time).
+    #[cfg(target_arch = "wasm32")]
     #[must_use]
-    pub fn seconds_since_midnight(&self) -> u32 {
-        self.hour as u32 * 3_600 + self.minute as u32 * 60 + self.second as u32
+    pub fn local(&self, tz: &crate::Tz) -> LocalDateTime {
+        decompose(crate::format::local_unix_secs(self, tz))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[must_use]
+    pub fn utc(&self) -> LocalDateTime {
+        decompose(self.unix_secs)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn decompose(unix_secs: i64) -> LocalDateTime {
+    fn parse<T: core::str::FromStr + Default>(p: Option<&str>) -> T {
+        p.and_then(|s| s.parse().ok()).unwrap_or_default()
+    }
+    let s = crate::format::strftime(unix_secs, "%Y %m %d %H %M %S %u");
+    let mut parts = s.split_ascii_whitespace();
+    let year: u16 = parse(parts.next());
+    let month: u8 = parse(parts.next());
+    let day: u8 = parse(parts.next());
+    let hour: u8 = parse(parts.next());
+    let minute: u8 = parse(parts.next());
+    let second: u8 = parse(parts.next());
+    // `%u` is ISO weekday: 1=Mon, 7=Sun. Re-map to 0=Mon, 6=Sun.
+    let iso_weekday: u8 = parse(parts.next());
+    let weekday = iso_weekday.saturating_sub(1);
+    LocalDateTime {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        weekday,
     }
 }
 

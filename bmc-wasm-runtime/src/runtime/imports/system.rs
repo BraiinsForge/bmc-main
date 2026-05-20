@@ -9,7 +9,7 @@ use std::str::FromStr;
 
 use anyhow::Result;
 use bmc_shared_time::time::Timezone;
-use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use chrono_tz::OffsetComponents;
 use wasmi::{Caller, Extern, Linker};
 
@@ -47,26 +47,14 @@ fn register_system_time_import(linker: &mut Linker<HostState>) -> Result<()> {
         "env",
         "host_get_system_time",
         |mut caller: Caller<'_, HostState>, out_ptr: u32| {
-            let now = caller.data().system_time;
-            let mut buf = [0_u8; 20];
-            buf[0..8].copy_from_slice(&now.timestamp().to_le_bytes());
-            buf[8..12].copy_from_slice(&now.offset().local_minus_utc().to_le_bytes());
-            #[expect(clippy::cast_sign_loss)]
-            let year = now.year() as u16;
-            buf[12..14].copy_from_slice(&year.to_le_bytes());
-            buf[14] = now.month() as u8;
-            buf[15] = now.day() as u8;
-            buf[16] = now.hour() as u8;
-            buf[17] = now.minute() as u8;
-            buf[18] = now.second() as u8;
-            buf[19] = now.weekday().num_days_from_monday() as u8;
-
+            let unix_secs = caller.data().system_time.timestamp();
+            let buf = unix_secs.to_le_bytes();
             let memory = caller.get_export("memory").and_then(Extern::into_memory);
             if let Some(memory) = memory {
                 let data = memory.data_mut(&mut caller);
                 let start = out_ptr as usize;
-                if start + 20 <= data.len() {
-                    data[start..start + 20].copy_from_slice(&buf);
+                if start + 8 <= data.len() {
+                    data[start..start + 8].copy_from_slice(&buf);
                 }
             }
         },
