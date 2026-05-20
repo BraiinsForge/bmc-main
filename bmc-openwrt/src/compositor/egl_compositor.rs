@@ -1266,10 +1266,13 @@ fn handle_clear_pid_command(state: &mut AppState, instance_id: &InstanceId, expe
         instance_id,
         expected_pid
     );
-    state
+    if state
         .compositor
-        .clear_pid_for_instance(instance_id, expected_pid);
-    state.compositor.lifecycle.forget(instance_id);
+        .clear_pid_for_instance(instance_id, expected_pid)
+        .is_some()
+    {
+        state.compositor.lifecycle.forget(instance_id);
+    }
 }
 
 fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
@@ -1643,11 +1646,80 @@ impl Compositor for EglCompositor {
 #[cfg(test)]
 mod tests {
     use super::{
-        Emission, LifecycleSink, LifecycleState, RedrawState, clamp_initial_lifecycle,
-        dispatch_timeout, emit_lifecycle_batches,
+        AppState, CompositorState, Emission, GestureState, LifecycleSink, LifecycleState,
+        RedrawState, clamp_initial_lifecycle, dispatch_timeout, emit_lifecycle_batches,
+        handle_clear_pid_command,
     };
     use bmc::compositor::InstanceId;
-    use std::time::Duration;
+    use bmc_widget_protocol::{SizeType, WidgetInitialConfig};
+    use smithay::reexports::{
+        calloop::EventLoop,
+        wayland_server::{Display, ListeningSocket},
+    };
+    use std::{
+        collections::{HashMap, HashSet},
+        path::PathBuf,
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    };
+    use tokio::sync::mpsc;
+
+    fn make_widget_config() -> WidgetInitialConfig {
+        WidgetInitialConfig {
+            size: SizeType::Small,
+            width: 100,
+            height: 100,
+            params: serde_json::Map::new(),
+        }
+    }
+
+    fn make_test_socket_path() -> PathBuf {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("BUG: system time should be after Unix epoch")
+            .as_nanos();
+        let dir = PathBuf::from("/tmp/claude-1001/bmc-openwrt-tests");
+        std::fs::create_dir_all(&dir).expect("BUG: test socket directory should be creatable");
+        dir.join(format!("clear-pid-{timestamp}-{}", std::process::id()))
+    }
+
+    fn make_app_state() -> AppState {
+        let event_loop: EventLoop<'static, AppState> =
+            EventLoop::try_new().expect("BUG: test event loop should initialize");
+        let display: Display<CompositorState> =
+            Display::new().expect("BUG: test Wayland display should initialize");
+        let compositor = CompositorState::new(&display, 480, 1280, 480, 1280, 60_000, "test-seat");
+        let listening_socket = ListeningSocket::bind_absolute(make_test_socket_path())
+            .expect("BUG: test Wayland socket should bind");
+        let (action_tx, _) = mpsc::unbounded_channel();
+        let (event_tx, _) = mpsc::unbounded_channel();
+
+        AppState {
+            display,
+            compositor,
+            scene_renderer: None,
+            listening_socket,
+            action_tx,
+            event_tx,
+            gesture: GestureState::new(),
+            gesture_slot: None,
+            active_touch_slots: HashSet::new(),
+            scene_drag_active: false,
+            touch_frame_dirty: false,
+            logical_width: 480,
+            logical_height: 1280,
+            should_exit: false,
+            redraw_state: RedrawState::Idle,
+            loop_handle: event_loop.handle(),
+            retry_libinput: None,
+            touch_retry_pending: false,
+        }
+    }
+
+    fn lifecycle_map(
+        pairs: &[(InstanceId, LifecycleState)],
+    ) -> HashMap<InstanceId, LifecycleState> {
+        pairs.iter().cloned().collect()
+    }
 
     /// Records `send`/`flush` calls in order. `send` returns a synthetic
     /// per-instance `ClientId` so the test can verify that the flush
@@ -1786,6 +1858,47 @@ mod tests {
             flush_after_release < acquire_send,
             "release flush must happen before acquire send for the same client; \
              otherwise the host can't reclaim the pool buffer before the new one is requested",
+        );
+    }
+
+    #[test]
+    fn stale_clear_pid_keeps_lifecycle_history_for_live_respawned_widget() {
+        let mut state = make_app_state();
+        let instance_id = String::from("alpha");
+        state
+            .compositor
+            .deck_widget_state
+            .register_widget(instance_id.clone(), make_widget_config());
+        state
+            .compositor
+            .deck_widget_state
+            .set_widget_pid(&instance_id, 200);
+        let _ = state.compositor.deck_widget_state.drain_connected();
+
+        let _ = state.compositor.lifecycle.step(&lifecycle_map(&[(
+            instance_id.clone(),
+            LifecycleState::Visible,
+        )]));
+
+        handle_clear_pid_command(&mut state, &instance_id, 100);
+
+        assert!(
+            state
+                .compositor
+                .deck_widget_state
+                .drain_disconnected()
+                .is_empty(),
+            "stale clear must not unregister the live respawned widget",
+        );
+
+        let emission = state.compositor.lifecycle.step(&lifecycle_map(&[(
+            instance_id.clone(),
+            LifecycleState::Dormant,
+        )]));
+        assert_eq!(
+            emission.releases,
+            vec![(instance_id, LifecycleState::Dormant)],
+            "stale clear must preserve the last emitted lifecycle state so the next Dormant transition releases render targets",
         );
     }
 

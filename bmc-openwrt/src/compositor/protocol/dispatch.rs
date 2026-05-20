@@ -57,13 +57,18 @@ pub trait DeckWidgetHandler {
     /// Bundled with render-state cleanup for the same reason
     /// `unregister_widget` is: the two protocol-state unregister
     /// entry points must not diverge on which side owns cleanup.
-    fn clear_pid_for_instance(&mut self, instance_id: &InstanceId, expected_pid: u32) {
+    fn clear_pid_for_instance(
+        &mut self,
+        instance_id: &InstanceId,
+        expected_pid: u32,
+    ) -> Option<u32> {
         let pid = self
             .deck_widget_state()
             .clear_pid_for_instance(instance_id, expected_pid);
         if pid.is_some() {
             self.drop_widget_render_state(instance_id, pid);
         }
+        pid
     }
 }
 
