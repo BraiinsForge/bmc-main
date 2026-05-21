@@ -481,6 +481,17 @@ impl WidgetSlot {
         }
     }
 
+    fn compact_prepared_render_target(&mut self, shared: &SharedHost) {
+        if self.lifecycle.current() != LifecycleState::Prepared {
+            return;
+        }
+        let Some(target) = self.render_target.as_mut() else {
+            return;
+        };
+        self.factory
+            .compact_for_prepared(target, &shared.egl, &mut self.surface);
+    }
+
     pub fn render(
         &mut self,
         ptr: NonNull<dyn Renderer>,
@@ -563,6 +574,7 @@ impl WidgetSlot {
             frame_start,
             HostRenderFrameContext::new(target_width, target_height, wants_immediate, status),
         );
+        self.compact_prepared_render_target(shared);
         self.schedule_next_runtime_frame(frame_start_instant);
         self.frame_count += 1;
         if self.frame_count <= 3 || self.frame_count.is_multiple_of(120) {
@@ -604,11 +616,10 @@ impl WidgetSlot {
         );
         let phase_start = HostRenderProfiling::start_phase();
         let wl_buffer = egl_target
-            .wl_buffers
-            .get(slot_idx)
-            .expect("BUG: DoubleBufferState returned a slot outside the wl_buffer array");
+            .wl_buffer_for_slot(&mut self.surface, dmabuf, slot_idx)
+            .map_err(anyhow::Error::msg)?;
         self.surface
-            .submit_buffer_with_wl_buffer(dmabuf, wl_buffer, wants_immediate)?;
+            .submit_buffer_with_wl_buffer(dmabuf, &wl_buffer, wants_immediate)?;
         HostRenderProfiling::log_phase(&self.wasm_basename, "wayland_attach_commit", phase_start);
 
         let phase_start = HostRenderProfiling::start_phase();
