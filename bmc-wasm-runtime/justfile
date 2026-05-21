@@ -111,17 +111,15 @@ capture WIDGET ARGS="":
     #!/usr/bin/env bash
     set -euo pipefail
     root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
-    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- run-all -e {{ WIDGET }} \
-        --widgets-dir "$root" --output-dir {{ output_dir }} {{ ARGS }}
+    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- run-all --widget {{ WIDGET }} \
+        --workspace "$root" --output-dir {{ output_dir }} {{ ARGS }}
 
 # Capture every widget in every workspace.
 capture-all ARGS="":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    for root in $({{ dir }}/tools/widget_root.py); do
-        cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- run-all \
-            --widgets-dir "$root" --output-dir {{ output_dir }} {{ ARGS }}
-    done
+    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- run-all \
+        --workspace {{ dir }}/examples \
+        --workspace {{ dir }}/../widgets-wasm \
+        --output-dir {{ output_dir }} {{ ARGS }}
 
 # Re-capture then update baselines for a widget.
 update-baselines WIDGET: (capture WIDGET)
@@ -137,20 +135,18 @@ verify WIDGET:
     #!/usr/bin/env bash
     set -euo pipefail
     root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
-    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- verify -e {{ WIDGET }} \
-        --widgets-dir "$root" --output-dir {{ output_dir }}
+    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- verify --widget {{ WIDGET }} \
+        --workspace "$root" --output-dir {{ output_dir }}
 
-# Verify all widgets in parallel, across every workspace.
+# Verify every widget in parallel, across every workspace.
 verify-all:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    for root in $({{ dir }}/tools/widget_root.py); do
-        cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- verify --parallel \
-            --widgets-dir "$root" --output-dir {{ output_dir }}
-    done
+    cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- verify --parallel \
+        --workspace {{ dir }}/examples \
+        --workspace {{ dir }}/../widgets-wasm \
+        --output-dir {{ output_dir }}
 
 # Preview a capture. Pass SIZE=small etc. to filter, or omit for all sizes.
 preview WIDGET SIZE="" ARGS="":
     cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- preview \
         --output={{ output_dir }}/{{ WIDGET }} \
-        {{ if SIZE != "" { "-s " + SIZE } else { "" } }} {{ ARGS }}
+        {{ if SIZE != "" { "--size " + SIZE } else { "" } }} {{ ARGS }}

@@ -29,10 +29,10 @@ let
     ln -s "$src" "$widgets/${name}"
     mkdir captures
     wasm-capture verify \
-      --widgets-dir="$widgets" \
+      --workspace="$widgets" \
       --wasm-dir="$wasm" \
       --output-dir=captures \
-      --example=${name}
+      --widget=${name}
     mkdir -p $out
   '';
 

@@ -1,10 +1,12 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! `run-all` subcommand — build and capture all (or one) widget examples.
+//! `run-all` subcommand — build and capture every widget across the given
+//! cargo workspaces.
 //!
-//! Replaces `tools/capture_run.py`. Discovers examples, builds their WASM via
-//! a single workspace `cargo build`, then runs `capture run` for each
-//! size×variant combination.
+//! Discovers widgets (immediate `Cargo.toml`-bearing subdirs of each workspace),
+//! builds their WASM (one `cargo build --workspace` per workspace, or consumes
+//! pre-built `.wasm` files per workspace), then runs `capture run`
+//! for each size×variant combination.
 
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -28,126 +30,61 @@ const COL_WIDTH: usize = 50;
 // ── Public interface ────────────────────────────────────────────────
 
 pub struct RunAllArgs {
-    pub example: Option<String>,
-    /// Directory containing pre-built `.wasm` files. When set, cargo build is
-    /// skipped and files are expected as `<name>.wasm` (underscored) in this
-    /// directory. When `None`, the workspace is built locally.
-    pub wasm_dir: Option<PathBuf>,
-    /// Root directory containing widget subdirectories (each with `capture/`).
-    /// Defaults to `examples`.
-    pub widgets_dir: Option<PathBuf>,
-    /// Root output directory for captures. Layout: `<output_dir>/<name>/current/<size>/`.
-    /// Defaults to `captures`.
-    pub output_dir: Option<PathBuf>,
+    pub widget: Option<String>,
+    /// Cargo workspaces hosting widget crates.
+    /// Each must contain immediate subdirs with `Cargo.toml`
+    /// (one per widget). Non-empty.
+    pub workspaces: Vec<PathBuf>,
+    /// Pre-built `.wasm` directories paired positionally with `workspaces`.
+    /// Length must be 0 (build everything from source) or equal to `workspaces.len()`
+    /// (skip cargo build for that workspace and read `<wasm_dir>/<widget>.wasm` instead).
+    pub wasm_dirs: Vec<PathBuf>,
+    /// Root output directory for captures. Layout: `<output_dir>/<widget>/current/<size>/`.
+    /// Widget names are globally unique across workspaces (enforced at discovery time),
+    /// so no per-workspace namespacing is needed.
+    pub output_dir: PathBuf,
     /// Capture widgets in parallel. `Some(0)` = nproc/2 threads,
     /// `Some(n)` = n threads, `None` = sequential.
     pub parallel: Option<usize>,
 }
 
+/// Resolved widget — knows its workspace and pre-built wasm dir (if any).
+#[derive(Clone)]
+pub struct WidgetEntry {
+    pub name: String,
+    pub workspace: PathBuf,
+    /// Pre-built wasm dir, if `--wasm-dir` paired with this workspace.
+    /// When `None`, the workspace will be built locally.
+    pub wasm_dir: Option<PathBuf>,
+}
+
 pub fn execute(args: &RunAllArgs) -> Result<()> {
-    let widgets_dir = args
-        .widgets_dir
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("examples"));
-    let output_dir = args
-        .output_dir
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("captures"));
-
-    if !widgets_dir.is_dir() {
-        bail!(
-            "'{}' directory not found — run from bmc-wasm-runtime/ or pass --widgets-dir",
-            widgets_dir.display()
-        );
-    }
-
-    let examples = match &args.example {
-        Some(name) => {
-            let dir = widgets_dir.join(name);
-            if !dir.join("Cargo.toml").exists() {
-                let available = discover_examples(&widgets_dir)?;
-                bail!(
-                    "example '{name}' not found.\nAvailable: {}",
-                    available.join(", ")
-                );
-            }
-            vec![name.clone()]
-        }
-        None => discover_examples(&widgets_dir)?,
-    };
+    let widgets = resolve_widgets(&args.workspaces, &args.wasm_dirs, args.widget.as_deref())?;
 
     let capture_binary =
         std::env::current_exe().context("failed to resolve capture binary path")?;
 
-    // ── Resolve WASM directory ───────────────────────────────────────
-    let wasm_dir = if let Some(dir) = &args.wasm_dir {
-        section("Build (prebuilt)");
-        for example in &examples {
-            let wasm = wasm_in_dir(dir, example);
-            if !wasm.exists() {
-                eprintln!("  {} {}", "✗".red(), example.red());
-                bail!("--wasm-dir: expected .wasm not found at {}", wasm.display());
-            }
-            eprintln!("  {} {}", "✓".green(), example.green());
-        }
-        eprintln!();
-        dir.clone()
-    } else {
-        section("Build");
-        let build_t0 = Instant::now();
-
-        build_wasm_workspace(&widgets_dir, &examples)?;
-
-        for example in &examples {
-            eprintln!("  {} {}", "✓".green(), example.green());
-        }
-
-        let build_elapsed = build_t0.elapsed().as_secs_f64();
-        eprintln!(
-            "  {}",
-            format!("compiled in {}", format_time(build_elapsed)).dimmed()
-        );
-        eprintln!();
-        default_wasm_dir(&widgets_dir)
-    };
+    // ── Build (or accept pre-built wasm) ─────────────────────────────
+    build_phase(&args.workspaces, &args.wasm_dirs, &widgets)?;
 
     // ── Capture ─────────────────────────────────────────────────────
     section("Capture");
     let capture_t0 = Instant::now();
 
     if let Some(n) = args.parallel {
-        if examples.len() > 1 {
+        if widgets.len() > 1 {
             #[expect(clippy::integer_division)]
             let threads = if n == 0 {
                 std::thread::available_parallelism().map_or(2, |p| (p.get() / 2).max(1))
             } else {
                 n
             };
-            capture_parallel(
-                &capture_binary,
-                &wasm_dir,
-                &widgets_dir,
-                &output_dir,
-                &examples,
-                threads,
-            )?;
+            capture_parallel(&capture_binary, &args.output_dir, &widgets, threads)?;
         } else {
-            capture_sequential(
-                &capture_binary,
-                &wasm_dir,
-                &widgets_dir,
-                &output_dir,
-                &examples,
-            )?;
+            capture_sequential(&capture_binary, &args.output_dir, &widgets)?;
         }
     } else {
-        capture_sequential(
-            &capture_binary,
-            &wasm_dir,
-            &widgets_dir,
-            &output_dir,
-            &examples,
-        )?;
+        capture_sequential(&capture_binary, &args.output_dir, &widgets)?;
     }
 
     let capture_elapsed = capture_t0.elapsed().as_secs_f64();
@@ -159,12 +96,149 @@ pub fn execute(args: &RunAllArgs) -> Result<()> {
     Ok(())
 }
 
-// ── Example discovery ───────────────────────────────────────────────
+// ── Discovery + validation ──────────────────────────────────────────
 
-/// Discover all example widgets under the given directory.
-pub fn discover_examples(widgets_dir: &Path) -> Result<Vec<String>> {
-    let mut names: Vec<String> = std::fs::read_dir(widgets_dir)
-        .with_context(|| format!("failed to read {} directory", widgets_dir.display()))?
+/// Validate the workspaces/wasm-dirs pairing, walk each workspace,
+/// and return the flat widget list (filtered by `widget_filter` if set).
+pub fn resolve_widgets(
+    workspaces: &[PathBuf],
+    wasm_dirs: &[PathBuf],
+    widget_filter: Option<&str>,
+) -> Result<Vec<WidgetEntry>> {
+    if workspaces.is_empty() {
+        bail!("--workspace: at least one workspace required");
+    }
+    if !wasm_dirs.is_empty() && wasm_dirs.len() != workspaces.len() {
+        bail!(
+            "--wasm-dir count ({}) must match --workspace count ({}) when given",
+            wasm_dirs.len(),
+            workspaces.len(),
+        );
+    }
+
+    for ws in workspaces {
+        if !ws.is_dir() {
+            bail!("--workspace: '{}' is not a directory", ws.display());
+        }
+    }
+
+    let mut all: Vec<WidgetEntry> = Vec::new();
+    for (i, ws) in workspaces.iter().enumerate() {
+        let names = discover_widgets(ws)?;
+        let wasm_dir = wasm_dirs.get(i).cloned();
+        for name in names {
+            all.push(WidgetEntry {
+                name,
+                workspace: ws.clone(),
+                wasm_dir: wasm_dir.clone(),
+            });
+        }
+    }
+
+    // Globally-unique widget names across workspaces.
+    let mut by_name: std::collections::HashMap<&str, Vec<&Path>> = std::collections::HashMap::new();
+    for w in &all {
+        by_name
+            .entry(w.name.as_str())
+            .or_default()
+            .push(w.workspace.as_path());
+    }
+    let mut dupes: Vec<(String, Vec<PathBuf>)> = by_name
+        .into_iter()
+        .filter(|(_, ws)| ws.len() > 1)
+        .map(|(n, ws)| {
+            (
+                n.to_owned(),
+                ws.into_iter().map(Path::to_path_buf).collect(),
+            )
+        })
+        .collect();
+    dupes.sort_by(|a, b| a.0.cmp(&b.0));
+    if let Some((name, ws_paths)) = dupes.first() {
+        let where_ = ws_paths
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        bail!("widget '{name}' is defined in multiple workspaces: {where_}");
+    }
+
+    if let Some(filter) = widget_filter {
+        let matches: Vec<WidgetEntry> = all.into_iter().filter(|w| w.name == filter).collect();
+        if matches.is_empty() {
+            bail!("widget '{filter}' not found in any --workspace");
+        }
+        return Ok(matches);
+    }
+    Ok(all)
+}
+
+// ── Build phase ─────────────────────────────────────────────────────
+
+/// Render the unified Build section: one `cargo build --workspace`
+/// per source-built workspace, plus pre-built validation for
+/// any workspace with a paired `--wasm-dir`.
+fn build_phase(
+    workspaces: &[PathBuf],
+    wasm_dirs: &[PathBuf],
+    widgets: &[WidgetEntry],
+) -> Result<()> {
+    section("Build");
+    let build_t0 = Instant::now();
+
+    for (i, ws) in workspaces.iter().enumerate() {
+        let widget_names: Vec<String> = widgets
+            .iter()
+            .filter(|w| w.workspace == *ws)
+            .map(|w| w.name.clone())
+            .collect();
+        if widget_names.is_empty() {
+            continue;
+        }
+
+        let ws_label = workspace_label(ws);
+        if let Some(dir) = wasm_dirs.get(i) {
+            for name in &widget_names {
+                let wasm = wasm_in_dir(dir, name);
+                if !wasm.exists() {
+                    eprintln!("  {} {}/{}", "✗".red(), ws_label.red().dimmed(), name.red());
+                    bail!("--wasm-dir: expected .wasm not found at {}", wasm.display());
+                }
+                eprintln!(
+                    "  {} {}/{}",
+                    "✓".green(),
+                    ws_label.green().dimmed(),
+                    name.green()
+                );
+            }
+        } else {
+            build_wasm_workspace(ws, &widget_names)?;
+            for name in &widget_names {
+                eprintln!(
+                    "  {} {}/{}",
+                    "✓".green(),
+                    ws_label.green().dimmed(),
+                    name.green()
+                );
+            }
+        }
+    }
+
+    let build_elapsed = build_t0.elapsed().as_secs_f64();
+    eprintln!(
+        "  {}",
+        format!("compiled in {}", format_time(build_elapsed)).dimmed()
+    );
+    eprintln!();
+    Ok(())
+}
+
+// ── Widget discovery ────────────────────────────────────────────────
+
+/// Discover all widget crate names under the given workspace.
+pub fn discover_widgets(workspace: &Path) -> Result<Vec<String>> {
+    let mut names: Vec<String> = std::fs::read_dir(workspace)
+        .with_context(|| format!("failed to read {} directory", workspace.display()))?
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let path = entry.path();
@@ -181,46 +255,64 @@ pub fn discover_examples(widgets_dir: &Path) -> Result<Vec<String>> {
 
 // ── WASM paths ──────────────────────────────────────────────────────
 
-/// Default output directory when building locally.
-fn default_wasm_dir(widgets_dir: &Path) -> PathBuf {
-    widgets_dir.join("target").join(WASM_TARGET).join("release")
+/// Default wasm output directory when building a workspace locally.
+fn default_wasm_dir(workspace: &Path) -> PathBuf {
+    workspace.join("target").join(WASM_TARGET).join("release")
 }
 
-/// Resolve the `.wasm` path for an example within a given directory.
-fn wasm_in_dir(dir: &Path, example: &str) -> PathBuf {
-    let name = example.replace('-', "_");
+/// Resolve the `.wasm` path for a widget within a given directory.
+fn wasm_in_dir(dir: &Path, widget: &str) -> PathBuf {
+    let name = widget.replace('-', "_");
     dir.join(format!("{name}.wasm"))
 }
 
-/// Example capture directory (where `config.toml` and fixtures live).
-fn capture_dir(widgets_dir: &Path, example: &str) -> PathBuf {
-    widgets_dir.join(example).join("capture")
+/// Resolve the `wasmDir` for a widget — either the paired `--wasm-dir`
+/// or the workspace's local cargo target dir.
+fn wasm_dir_for(entry: &WidgetEntry) -> PathBuf {
+    entry
+        .wasm_dir
+        .clone()
+        .unwrap_or_else(|| default_wasm_dir(&entry.workspace))
+}
+
+/// Widget capture directory (where `config.toml` and fixtures live).
+pub fn capture_dir(workspace: &Path, widget: &str) -> PathBuf {
+    workspace.join(widget).join("capture")
+}
+
+/// Last path component of a workspace, used as the `<workspace>/<widget>`
+/// display prefix in status lines and the HTML report.
+pub fn workspace_label(workspace: &Path) -> &str {
+    workspace
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("?")
 }
 
 // ── WASM building ───────────────────────────────────────────────────
 
-/// Build one or all examples from the examples/ workspace.
+/// Build one or all widgets from a single cargo workspace.
 ///
 /// Uses a single `cargo build` from the workspace root — cargo handles
 /// parallelism internally, so we don't need to spawn threads.
-fn build_wasm_workspace(widgets_dir: &Path, examples: &[String]) -> Result<()> {
+fn build_wasm_workspace(workspace: &Path, widgets: &[String]) -> Result<()> {
     let mut cmd = Command::new("cargo");
     cmd.args(["build", "--release", "--target", WASM_TARGET])
-        .current_dir(widgets_dir);
+        .current_dir(workspace);
 
-    if examples.len() == 1 {
-        cmd.args(["-p", &examples[0]]);
+    if widgets.len() == 1 {
+        cmd.args(["-p", &widgets[0]]);
     } else {
         cmd.arg("--workspace");
     }
 
     let output = cmd
         .output()
-        .context("failed to spawn cargo build for examples workspace")?;
+        .with_context(|| format!("failed to spawn cargo build for {}", workspace.display()))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("cargo build failed for examples workspace:\n{stderr}");
+        bail!("cargo build failed for {}:\n{stderr}", workspace.display());
     }
     Ok(())
 }
@@ -230,14 +322,13 @@ fn build_wasm_workspace(widgets_dir: &Path, examples: &[String]) -> Result<()> {
 /// Capture a single widget (all sizes × variants). Returns elapsed seconds.
 fn capture_widget(
     binary: &Path,
-    wasm_dir: &Path,
-    widgets_dir: &Path,
     output_dir: &Path,
-    example: &str,
+    entry: &WidgetEntry,
     show_progress: bool,
 ) -> Result<f64> {
-    let wasm = wasm_in_dir(wasm_dir, example);
-    let cap_dir = capture_dir(widgets_dir, example);
+    let example = entry.name.as_str();
+    let wasm = wasm_in_dir(&wasm_dir_for(entry), example);
+    let cap_dir = capture_dir(&entry.workspace, example);
     let output_root = output_dir.join(example).join("current");
 
     // Wipe previous captures so stale frames don't linger.
@@ -303,28 +394,20 @@ fn capture_widget(
     Ok(t0.elapsed().as_secs_f64())
 }
 
-fn capture_sequential(
-    binary: &Path,
-    wasm_dir: &Path,
-    widgets_dir: &Path,
-    output_dir: &Path,
-    examples: &[String],
-) -> Result<()> {
+fn capture_sequential(binary: &Path, output_dir: &Path, widgets: &[WidgetEntry]) -> Result<()> {
     let is_tty = std::io::stderr().is_terminal();
-    for example in examples {
-        let elapsed = capture_widget(binary, wasm_dir, widgets_dir, output_dir, example, is_tty)?;
+    for entry in widgets {
+        let elapsed = capture_widget(binary, output_dir, entry, is_tty)?;
         clear_progress();
-        widget_status_line(example, elapsed);
+        widget_status_line(workspace_label(&entry.workspace), &entry.name, elapsed);
     }
     Ok(())
 }
 
 fn capture_parallel(
     binary: &Path,
-    wasm_dir: &Path,
-    widgets_dir: &Path,
     output_dir: &Path,
-    examples: &[String],
+    widgets: &[WidgetEntry],
     threads: usize,
 ) -> Result<()> {
     use rayon::prelude::*;
@@ -335,24 +418,27 @@ fn capture_parallel(
         .context("failed to create thread pool")?;
 
     let results: Vec<_> = pool.install(|| {
-        examples
+        widgets
             .par_iter()
-            .map(|example| {
-                let result =
-                    capture_widget(binary, wasm_dir, widgets_dir, output_dir, example, false);
-                (example.as_str(), result)
+            .map(|entry| {
+                let result = capture_widget(binary, output_dir, entry, false);
+                (
+                    workspace_label(&entry.workspace).to_owned(),
+                    entry.name.clone(),
+                    result,
+                )
             })
             .collect()
     });
 
     let mut first_error = None;
-    for (name, result) in &results {
+    for (ws, name, result) in &results {
         match result {
-            Ok(elapsed) => widget_status_line(name, *elapsed),
+            Ok(elapsed) => widget_status_line(ws, name, *elapsed),
             Err(e) => {
-                eprintln!("  {} {} {e:#}", "✗".red(), name.red());
+                eprintln!("  {} {}/{} {e:#}", "✗".red(), ws.red().dimmed(), name.red());
                 if first_error.is_none() {
-                    first_error = Some(format!("capture failed for {name}"));
+                    first_error = Some(format!("capture failed for {ws}/{name}"));
                 }
             }
         }
@@ -398,10 +484,10 @@ fn list_variants(binary: &Path, wasm: &Path, capture_dir: &Path) -> Vec<String> 
 
 // ── Display helpers ─────────────────────────────────────────────────
 
-fn widget_status_line(name: &str, elapsed: f64) {
+fn widget_status_line(ws: &str, name: &str, elapsed: f64) {
     let time_str = format_time(elapsed);
-    let label = format!("  {} {}", "✓".green(), name.green());
-    let visible_len = 2 + 2 + name.len() + 1;
+    let label = format!("  {} {}/{}", "✓".green(), ws.green().dimmed(), name.green());
+    let visible_len = 2 + 2 + ws.len() + 1 + name.len() + 1;
     let dots = COL_WIDTH
         .saturating_sub(visible_len)
         .saturating_sub(time_str.len())

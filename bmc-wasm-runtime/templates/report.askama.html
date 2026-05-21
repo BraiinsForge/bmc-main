@@ -34,6 +34,7 @@ h1 { margin-bottom: 8px; }
 }
 .widget[open] summary::before { content: "▾"; }
 .widget summary h2 { font-size: 1.1em; margin: 0; flex: 0 0 auto; }
+.ws-prefix { color: #666; font-weight: 400; }
 .widget-body { padding: 0 16px 12px; }
 .status { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 0.8em;
           font-weight: bold; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -152,7 +153,7 @@ h1 { margin-bottom: 8px; }
 {% for report in reports %}
 <details class="widget" id="widget-{{ report.widget }}"{% if !report.is_clean %} open{% endif %}>
 <summary>
-  <h2>{{ report.widget }}</h2>
+  <h2>{%- if !report.workspace.is_empty() -%}<span class="ws-prefix">{{ report.workspace }}/</span>{%- endif -%}{{ report.widget }}</h2>
   {%- if report.no_baseline -%}
     <span class="status no-baseline">no baseline</span>
   {%- else if report.is_clean -%}
@@ -172,7 +173,7 @@ h1 { margin-bottom: 8px; }
 <div class="row no-baseline" data-status="no-baseline">
   <div class="row-header">
     <span class="tag no-baseline">no baseline</span>
-    <span class="hint">capture set-baseline -e {{ report.widget }}</span>
+    <span class="hint">just wasm::update-baselines {{ report.widget }}</span>
   </div>
 </div>
 {% else %}
@@ -203,7 +204,7 @@ h1 { margin-bottom: 8px; }
   {% for report in reports %}
   <a class="minimap-item {{ report.minimap_status }}" href="#widget-{{ report.widget }}">
     <span class="minimap-pill"></span>
-    <span class="minimap-name">{{ report.widget }}</span>
+    <span class="minimap-name">{%- if !report.workspace.is_empty() -%}<span class="ws-prefix">{{ report.workspace }}/</span>{%- endif -%}{{ report.widget }}</span>
     <span class="minimap-count">{{ report.minimap_count }}</span>
   </a>
   {% endfor %}

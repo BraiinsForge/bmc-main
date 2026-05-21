@@ -19,7 +19,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use owo_colors::OwoColorize;
 
 use bmc_wasm_runtime::capture_config;
@@ -31,6 +31,17 @@ use bmc_wasm_runtime::capture_config;
 struct Cli {
     #[command(subcommand)]
     command: Command,
+}
+
+/// Workspaces to discover widgets in, with optional pre-built wasm.
+#[derive(Args)]
+struct WorkspaceArgs {
+    /// Cargo workspace containing widget crates (repeatable).
+    #[arg(long, required = true)]
+    workspace: Vec<PathBuf>,
+    /// Pre-built .wasm dir, one per --workspace (same order). Skips cargo build.
+    #[arg(long)]
+    wasm_dir: Vec<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -59,23 +70,18 @@ enum Command {
         #[arg(long)]
         capture_dir: PathBuf,
     },
-    /// Build and capture all (or one) widget examples.
+    /// Build and capture every widget across the given workspaces (or one widget).
     RunAll {
-        /// Capture only this example (omit to capture all).
-        #[arg(short, long)]
-        example: Option<String>,
-        /// Directory containing pre-built .wasm files (skips cargo build).
-        /// Each file is expected as `<example_name>.wasm` (underscored).
+        /// Capture only this widget (omit to capture all).
         #[arg(long)]
-        wasm_dir: Option<PathBuf>,
-        /// Root directory containing widget subdirectories (default: examples).
-        #[arg(long)]
-        widgets_dir: Option<PathBuf>,
-        /// Root output directory for captures (default: captures).
-        #[arg(long)]
-        output_dir: Option<PathBuf>,
+        widget: Option<String>,
+        #[command(flatten)]
+        ws: WorkspaceArgs,
+        /// Root output directory for captures.
+        #[arg(long, required = true)]
+        output_dir: PathBuf,
         /// Capture widgets in parallel. Optionally specify thread count (default: nproc/2).
-        #[arg(short = 'p', long, num_args = 0..=1, default_missing_value = "0")]
+        #[arg(long, num_args = 0..=1, default_missing_value = "0")]
         parallel: Option<usize>,
     },
     /// Compare current captures against baselines for a single widget.
@@ -89,34 +95,30 @@ enum Command {
         /// Color distance threshold for per-pixel comparison.
         /// Small values tolerate minor anti-aliasing and image decode differences
         /// across GPU/Mesa versions (e.g. CI vs local).
-        #[arg(short, long, default_value = "0.1")]
+        #[arg(long, default_value = "0.1")]
         threshold: f64,
     },
-    /// Capture all widgets and diff against baselines (CI entry point).
+    /// Capture every widget across the given workspaces
+    /// and diff against baselines (CI entry point).
     Verify {
-        /// Verify only this example (omit to verify all).
-        #[arg(short, long)]
-        example: Option<String>,
+        /// Verify only this widget (omit to verify all).
+        #[arg(long)]
+        widget: Option<String>,
         /// Color distance threshold for per-pixel comparison.
-        /// Small values tolerate minor anti-aliasing and image decode differences
-        /// across GPU/Mesa versions (e.g. CI vs local).
-        #[arg(short, long, default_value = "0.1")]
+        /// Small values tolerate minor anti-aliasing and image decode
+        /// differences across GPU/Mesa versions (e.g. CI vs local).
+        #[arg(long, default_value = "0.1")]
         threshold: f64,
         /// Path to write HTML report.
         #[arg(long)]
         html: Option<PathBuf>,
-        /// Directory containing pre-built .wasm files (skips cargo build).
-        /// Each file is expected as `<example_name>.wasm` (underscored).
-        #[arg(long)]
-        wasm_dir: Option<PathBuf>,
-        /// Root directory containing widget subdirectories (default: examples).
-        #[arg(long)]
-        widgets_dir: Option<PathBuf>,
-        /// Root output directory for captures (default: captures).
-        #[arg(long)]
-        output_dir: Option<PathBuf>,
+        #[command(flatten)]
+        ws: WorkspaceArgs,
+        /// Root output directory for captures.
+        #[arg(long, required = true)]
+        output_dir: PathBuf,
         /// Capture widgets in parallel. Optionally specify thread count (default: nproc/2).
-        #[arg(short = 'p', long, num_args = 0..=1, default_missing_value = "0")]
+        #[arg(long, num_args = 0..=1, default_missing_value = "0")]
         parallel: Option<usize>,
     },
     /// Generate mp4 preview videos from captured frames.
@@ -125,7 +127,7 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
         /// Only generate previews for this size (e.g. "full").
-        #[arg(short, long)]
+        #[arg(long)]
         size: Option<String>,
         /// Frame rate for the output video.
         #[arg(long, default_value = "4")]
@@ -231,15 +233,14 @@ fn dispatch() -> Result<()> {
             })
         }
         Command::RunAll {
-            example,
-            wasm_dir,
-            widgets_dir,
+            widget,
+            ws,
             output_dir,
             parallel,
         } => run_all::execute(&run_all::RunAllArgs {
-            example,
-            wasm_dir,
-            widgets_dir,
+            widget,
+            workspaces: ws.workspace,
+            wasm_dirs: ws.wasm_dir,
             output_dir,
             parallel,
         }),
@@ -248,28 +249,29 @@ fn dispatch() -> Result<()> {
             output,
             threshold,
         } => {
-            let (_report, _baseline_tmp) = diff::execute(&diff::DiffArgs {
+            let (report, _baseline_tmp, elapsed) = diff::execute(&diff::DiffArgs {
+                workspace: String::new(),
                 capture_dir,
                 output,
                 threshold,
                 quiet_progress: false,
             })?;
+            eprintln!("{}", diff::widget_status_line(&report, elapsed));
             Ok(())
         }
         Command::Verify {
-            example,
+            widget,
             threshold,
             html,
-            wasm_dir,
-            widgets_dir,
+            ws,
             output_dir,
             parallel,
         } => verify::execute(&verify::VerifyArgs {
-            example,
+            widget,
             threshold,
             html,
-            wasm_dir,
-            widgets_dir,
+            workspaces: ws.workspace,
+            wasm_dirs: ws.wasm_dir,
             output_dir,
             parallel,
         }),

@@ -21,6 +21,9 @@ use super::tools::resolve_tool;
 // ── Public interface ────────────────────────────────────────────────
 
 pub struct DiffArgs {
+    /// Workspace prefix for status-line / report display.
+    /// Empty when the caller has no workspace context (standalone `diff`).
+    pub workspace: String,
     /// Path to the `capture/` directory containing `baselines.7z`.
     pub capture_dir: PathBuf,
     /// Path to the widget's output directory (contains `current/`, `diff/`).
@@ -31,21 +34,17 @@ pub struct DiffArgs {
     pub quiet_progress: bool,
 }
 
-/// Run diff for a single widget. Returns the report and keeps the baseline
-/// temp dir alive until the caller drops it.
-pub fn execute(args: &DiffArgs) -> Result<(WidgetReport, Option<tempfile::TempDir>)> {
+/// Run diff for a single widget. Returns the report, the baseline temp dir
+/// (kept alive until the caller drops it), and elapsed seconds.
+///
+/// The caller prints `widget_status_line` — so a parallel orchestrator
+/// can collect and print in input order rather than thread-completion order.
+pub fn execute(args: &DiffArgs) -> Result<(WidgetReport, Option<tempfile::TempDir>, f64)> {
     let odiff_bin = resolve_tool("odiff", "odiff")?;
     let t0 = Instant::now();
     let (report, baseline_tmp) = diff_one_widget(args, &odiff_bin, args.quiet_progress)?;
     let elapsed = t0.elapsed().as_secs_f64();
-
-    let widget_name = args
-        .output
-        .file_name()
-        .map_or("widget", |n| n.to_str().unwrap_or("widget"));
-    eprintln!("{}", widget_status_line(widget_name, &report, elapsed));
-
-    Ok((report, baseline_tmp))
+    Ok((report, baseline_tmp, elapsed))
 }
 
 // ── Per-widget diff ─────────────────────────────────────────────────
@@ -67,6 +66,7 @@ fn diff_one_widget(
     if !baseline_archive.exists() || !current_dir.exists() {
         return Ok((
             WidgetReport {
+                workspace: args.workspace.clone(),
                 widget: widget_name,
                 no_baseline: true,
                 ..Default::default()
@@ -90,7 +90,10 @@ fn diff_one_widget(
         &current_dir,
         &diff_dir,
         args.threshold,
-        &widget_name,
+        WidgetLabel {
+            workspace: &args.workspace,
+            widget: &widget_name,
+        },
         odiff_bin,
         quiet,
     )?;
@@ -100,17 +103,26 @@ fn diff_one_widget(
 
 // ── Directory comparison ────────────────────────────────────────────
 
+/// Display labels for one widget — `<workspace>/<widget>`
+/// shows up in status lines and the HTML report.
+#[derive(Copy, Clone)]
+struct WidgetLabel<'a> {
+    workspace: &'a str,
+    widget: &'a str,
+}
+
 fn diff_directories(
     baseline_dir: &Path,
     current_dir: &Path,
     diff_dir: &Path,
     threshold: f64,
-    widget_name: &str,
+    label: WidgetLabel<'_>,
     odiff_bin: &Path,
     quiet: bool,
 ) -> Result<WidgetReport> {
     let mut report = WidgetReport {
-        widget: widget_name.to_owned(),
+        workspace: label.workspace.to_owned(),
+        widget: label.widget.to_owned(),
         ..Default::default()
     };
 
@@ -350,6 +362,10 @@ fn parse_json_f64(json: &str, key: &str) -> Option<f64> {
 
 #[derive(Default)]
 pub struct WidgetReport {
+    /// Last path component of the widget's workspace dir, e.g. `examples`,
+    /// `widgets-wasm`. Empty when produced by a standalone `diff` invocation
+    /// that has no workspace context.
+    pub workspace: String,
     pub widget: String,
     pub results: Vec<DiffResult>,
     pub passed: u32,
@@ -391,6 +407,7 @@ struct ReportTemplate<'a> {
 
 /// View model for the template — owns the data URI strings.
 struct WidgetReportView {
+    workspace: String,
     widget: String,
     results: Vec<DiffResultView>,
     passed: u32,
@@ -472,6 +489,7 @@ pub fn generate_html_report(reports: &[WidgetReport], output: &Path) -> Result<(
                 ("fail", format!("{}/{total}", r.failed))
             };
             WidgetReportView {
+                workspace: r.workspace.clone(),
                 widget: r.widget.clone(),
                 results,
                 passed: r.passed,
@@ -778,7 +796,7 @@ fn clear_progress() {
     }
 }
 
-pub fn widget_status_line(name: &str, report: &WidgetReport, elapsed: f64) -> String {
+pub fn widget_status_line(report: &WidgetReport, elapsed: f64) -> String {
     let total = report.passed + report.failed + report.missing + report.new_count;
     let ok =
         !report.no_baseline && report.failed == 0 && report.missing == 0 && report.new_count == 0;
@@ -808,31 +826,39 @@ pub fn widget_status_line(name: &str, report: &WidgetReport, elapsed: f64) -> St
     };
 
     let time_str = format!("{elapsed:.1}s");
+    let ws = report.workspace.as_str();
+    let name = report.widget.as_str();
+    let has_ws = !ws.is_empty();
+    let visible_label = if has_ws {
+        2 + 2 + ws.len() + 1 + name.len() + 1
+    } else {
+        2 + 2 + name.len() + 1
+    };
+    let visible_right = 1 + visible_len(&right_text) + 2 + time_str.len();
+    let dots = COL_WIDTH
+        .saturating_sub(visible_label + visible_right)
+        .max(1);
 
     if ok {
-        let visible_label = 2 + 2 + name.len() + 1;
-        let visible_right = 1 + visible_len(&right_text) + 2 + time_str.len();
-        let dots = COL_WIDTH
-            .saturating_sub(visible_label + visible_right)
-            .max(1);
+        let label = if has_ws {
+            format!("{} {}/{}", mark.green(), ws.green().dimmed(), name.green())
+        } else {
+            format!("{} {}", mark.green(), name.green())
+        };
         format!(
-            "  {} {} {} {} {}",
-            mark.green(),
-            name.green(),
+            "  {label} {} {} {}",
             "·".repeat(dots).dimmed(),
             right_text.green(),
             time_str.dimmed()
         )
     } else {
-        let visible_label = 2 + 2 + name.len() + 1;
-        let visible_right = 1 + visible_len(&right_text) + 2 + time_str.len();
-        let dots = COL_WIDTH
-            .saturating_sub(visible_label + visible_right)
-            .max(1);
+        let label = if has_ws {
+            format!("{} {}/{}", mark.red(), ws.red().dimmed(), name.red())
+        } else {
+            format!("{} {}", mark.red(), name.red())
+        };
         format!(
-            "  {} {} {} {} {}",
-            mark.red(),
-            name.red(),
+            "  {label} {} {} {}",
             "·".repeat(dots).dimmed(),
             right_text.red(),
             time_str.dimmed()
@@ -843,11 +869,15 @@ pub fn widget_status_line(name: &str, report: &WidgetReport, elapsed: f64) -> St
 pub fn print_failure_details(reports: &[WidgetReport]) {
     let mut lines = Vec::new();
     for report in reports {
+        let label = if report.workspace.is_empty() {
+            report.widget.clone()
+        } else {
+            format!("{}/{}", report.workspace, report.widget)
+        };
         if report.no_baseline {
             lines.push(format!(
-                "  {} {} — run `capture set-baseline`",
+                "  {} {label} — run `capture set-baseline`",
                 "NO BASELINE:".red(),
-                report.widget,
             ));
             continue;
         }
@@ -873,7 +903,7 @@ pub fn print_failure_details(reports: &[WidgetReport]) {
         }
         lines.push(format!(
             "  {} {}",
-            format!("{}:", report.widget).red(),
+            format!("{label}:").red(),
             parts.join(", ").dimmed()
         ));
     }

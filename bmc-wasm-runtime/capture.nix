@@ -45,36 +45,7 @@ let
       ];
     };
     text = ''
-      # Auto-detect flags not explicitly provided by the caller.
-      # --wasm-dir is intentionally NOT auto-injected — callers pass it
-      # explicitly so the wrapper derivation stays decoupled from the
-      # workspace-wide wasmExamples build.
-      has_widgets_dir=false
-      has_output_dir=false
-      for arg in "$@"; do
-        case "$arg" in
-          --widgets-dir | --widgets-dir=*) has_widgets_dir=true ;;
-          --output-dir | --output-dir=*)   has_output_dir=true ;;
-        esac
-      done
-
-      extra_args=()
-
-      # Resolve widgets-dir: try repo root first, then bmc-wasm-runtime/.
-      if [ "$has_widgets_dir" = false ]; then
-        if [ -d "bmc-wasm-runtime/examples" ]; then
-          extra_args+=(--widgets-dir=bmc-wasm-runtime/examples)
-        fi
-      fi
-
-      # Resolve output-dir: mirror the widgets-dir prefix.
-      if [ "$has_output_dir" = false ]; then
-        if [ -d "bmc-wasm-runtime" ]; then
-          extra_args+=(--output-dir=bmc-wasm-runtime/captures)
-        fi
-      fi
-
-      exec capture "$@" "''${extra_args[@]}"
+      exec capture "$@"
     '';
   };
 in

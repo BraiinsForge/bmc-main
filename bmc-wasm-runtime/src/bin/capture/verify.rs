@@ -15,28 +15,19 @@ use rayon::prelude::*;
 // ── Public interface ────────────────────────────────────────────────
 
 pub struct VerifyArgs {
-    pub example: Option<String>,
+    pub widget: Option<String>,
     pub threshold: f64,
     pub html: Option<PathBuf>,
-    pub wasm_dir: Option<PathBuf>,
-    pub widgets_dir: Option<PathBuf>,
-    pub output_dir: Option<PathBuf>,
+    pub workspaces: Vec<PathBuf>,
+    pub wasm_dirs: Vec<PathBuf>,
+    pub output_dir: PathBuf,
     pub parallel: Option<usize>,
 }
 
 pub fn execute(args: &VerifyArgs) -> Result<()> {
-    let widgets_dir = args
-        .widgets_dir
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("examples"));
-    let output_dir = args
-        .output_dir
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("captures"));
-
     // Print run configuration
     eprintln!();
-    let filter = args.example.as_deref().unwrap_or("all");
+    let filter = args.widget.as_deref().unwrap_or("all");
     let parallel_str = match args.parallel {
         Some(0) => "auto".to_owned(),
         Some(n) => n.to_string(),
@@ -54,9 +45,9 @@ pub fn execute(args: &VerifyArgs) -> Result<()> {
 
     // Step 1: Capture all (or one) widget
     super::run_all::execute(&super::run_all::RunAllArgs {
-        example: args.example.clone(),
-        wasm_dir: args.wasm_dir.clone(),
-        widgets_dir: args.widgets_dir.clone(),
+        widget: args.widget.clone(),
+        workspaces: args.workspaces.clone(),
+        wasm_dirs: args.wasm_dirs.clone(),
         output_dir: args.output_dir.clone(),
         parallel: args.parallel,
     })?;
@@ -64,26 +55,25 @@ pub fn execute(args: &VerifyArgs) -> Result<()> {
     eprintln!();
 
     // Step 2: Diff each widget against baselines (parallel — each thread
-    // spawns its own odiff server since the server handles one request at
-    // a time).
-    let examples = match &args.example {
-        Some(name) => vec![name.clone()],
-        None => super::run_all::discover_examples(&widgets_dir)?,
-    };
+    // spawns its own odiff server since the server
+    // handles one request at a time).
+    let widgets =
+        super::run_all::resolve_widgets(&args.workspaces, &args.wasm_dirs, args.widget.as_deref())?;
 
     super::diff::section("Compare");
 
-    let results: Vec<_> = examples
+    let results: Vec<_> = widgets
         .par_iter()
-        .map(|example| {
-            let cap_dir = widgets_dir.join(example).join("capture");
-            let widget_output = output_dir.join(example);
+        .map(|entry| {
+            let cap_dir = super::run_all::capture_dir(&entry.workspace, &entry.name);
+            let widget_output = args.output_dir.join(&entry.name);
 
             super::diff::execute(&super::diff::DiffArgs {
+                workspace: super::run_all::workspace_label(&entry.workspace).to_owned(),
                 capture_dir: cap_dir,
                 output: widget_output,
                 threshold: args.threshold,
-                quiet_progress: examples.len() > 1,
+                quiet_progress: widgets.len() > 1,
             })
         })
         .collect();
@@ -92,8 +82,12 @@ pub fn execute(args: &VerifyArgs) -> Result<()> {
     let mut baseline_dirs = Vec::new();
     let mut has_failures = false;
 
+    // `discover_widgets` sorts alphabetically and rayon's
+    // `par_iter().collect()` preserves input order,
+    // so Compare prints stably.
     for result in results {
-        let (report, baseline_tmp) = result?;
+        let (report, baseline_tmp, elapsed) = result?;
+        eprintln!("{}", super::diff::widget_status_line(&report, elapsed));
         if report.has_failures() {
             has_failures = true;
         }
@@ -101,7 +95,7 @@ pub fn execute(args: &VerifyArgs) -> Result<()> {
         baseline_dirs.extend(baseline_tmp);
     }
 
-    if has_failures && let Err(e) = super::diff::generate_comparisons(&reports, &output_dir) {
+    if has_failures && let Err(e) = super::diff::generate_comparisons(&reports, &args.output_dir) {
         eprintln!(
             "\n  {} failed to generate comparison media: {e:#}",
             "warning:".yellow().bold()
@@ -112,7 +106,7 @@ pub fn execute(args: &VerifyArgs) -> Result<()> {
     let html_path = args
         .html
         .clone()
-        .unwrap_or_else(|| output_dir.join("report.html"));
+        .unwrap_or_else(|| args.output_dir.join("report.html"));
     super::diff::generate_html_report(&reports, &html_path)?;
 
     // Drop baseline temp dirs now that comparisons and report are done
