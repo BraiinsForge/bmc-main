@@ -212,5 +212,12 @@ impl LifecycleStateMachine {
             self.blocked = false;
             self.retry_at = None;
         }
+
+        if self.current == LifecycleState::Prepared
+            && let Some(target) = ctx.render_target.as_mut()
+        {
+            ctx.factory
+                .compact_for_prepared(target, ctx.egl, ctx.surface);
+        }
     }
 }

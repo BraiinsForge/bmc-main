@@ -46,6 +46,7 @@ struct MockFactory {
     fail_next: Cell<u32>,
     alloc_calls: Cell<u32>,
     destroy_calls: Cell<u32>,
+    compact_calls: Cell<u32>,
 }
 
 impl MockFactory {
@@ -54,6 +55,7 @@ impl MockFactory {
             fail_next: Cell::new(0),
             alloc_calls: Cell::new(0),
             destroy_calls: Cell::new(0),
+            compact_calls: Cell::new(0),
         }
     }
     fn fail(&self, n: u32) {
@@ -80,6 +82,15 @@ impl RenderTargetFactory for MockFactory {
 
     fn destroy(&self, _: RenderTarget, _: &dyn LifecycleEgl, _: &mut dyn LifecycleSurface) {
         self.destroy_calls.set(self.destroy_calls.get() + 1);
+    }
+
+    fn compact_for_prepared(
+        &self,
+        _: &mut RenderTarget,
+        _: &dyn LifecycleEgl,
+        _: &mut dyn LifecycleSurface,
+    ) {
+        self.compact_calls.set(self.compact_calls.get() + 1);
     }
 }
 
@@ -380,6 +391,27 @@ fn prepared_lifecycle_event_requests_surface_render() {
     let effect = sm.on_event(LifecycleState::Prepared);
 
     assert!(effect.request_render);
+}
+
+#[test]
+fn prepared_state_compacts_render_target_after_allocation() {
+    let mock: Rc<MockFactory> = Rc::new(MockFactory::new());
+    let factory: Rc<dyn RenderTargetFactory> = mock.clone();
+
+    let mut target: Option<RenderTarget> = None;
+    let egl = StubEgl;
+    let mut surface = StubSurface;
+
+    let mut sm = LifecycleStateMachine::new();
+    sm.on_event(LifecycleState::Prepared);
+    sm.apply(
+        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        Instant::now(),
+    );
+
+    assert_eq!(sm.current(), LifecycleState::Prepared);
+    assert!(target.is_some());
+    assert_eq!(mock.compact_calls.get(), 1);
 }
 
 #[test]

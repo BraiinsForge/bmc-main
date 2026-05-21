@@ -796,6 +796,11 @@ impl DoubleBufferState {
     }
 
     #[must_use]
+    pub fn allocated_slots(&self) -> [bool; 2] {
+        [self.buffers[0].is_some(), self.buffers[1].is_some()]
+    }
+
+    #[must_use]
     fn next_slot(current_buffer: usize) -> usize {
         debug_assert!(
             current_buffer < 2,
@@ -847,6 +852,18 @@ impl DoubleBufferState {
             if let Some(buf) = buffer.take() {
                 ctx.destroy_export_buffer(buf);
             }
+        }
+    }
+
+    pub fn destroy_slot(&mut self, ctx: &EglContext, slot: usize) -> bool {
+        let Some(buffer) = self.buffers.get_mut(slot) else {
+            return false;
+        };
+        if let Some(buf) = buffer.take() {
+            ctx.destroy_export_buffer(buf);
+            true
+        } else {
+            false
         }
     }
 }

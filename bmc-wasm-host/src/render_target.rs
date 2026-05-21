@@ -25,7 +25,7 @@ pub struct RenderTarget {
 #[expect(missing_debug_implementations)]
 pub struct EglRenderTarget {
     pub buffers: bmc_widget::egl::DoubleBufferState,
-    pub wl_buffers: [wayland_client::protocol::wl_buffer::WlBuffer; 2],
+    pub wl_buffers: [Option<wayland_client::protocol::wl_buffer::WlBuffer>; 2],
     release_state: RenderSlotReleaseState,
 }
 
@@ -58,6 +58,35 @@ impl RenderSlotReleaseState {
             *available = true;
         }
     }
+
+    #[must_use]
+    pub fn prepared_compaction_slots(
+        &self,
+        allocated_slots: [bool; 2],
+        current_slot: usize,
+    ) -> Vec<usize> {
+        let allocated_count = allocated_slots
+            .iter()
+            .filter(|allocated| **allocated)
+            .count();
+        if allocated_count <= 1 {
+            return Vec::new();
+        }
+
+        let Some(slot) = (0..allocated_slots.len())
+            .find(|slot| {
+                allocated_slots[*slot] && self.is_available(*slot) && *slot != current_slot
+            })
+            .or_else(|| {
+                (0..allocated_slots.len())
+                    .find(|slot| allocated_slots[*slot] && self.is_available(*slot))
+            })
+        else {
+            return Vec::new();
+        };
+
+        vec![slot]
+    }
 }
 
 impl Default for RenderSlotReleaseState {
@@ -79,6 +108,44 @@ impl EglRenderTarget {
     pub fn mark_released(&mut self, slot: usize) {
         self.release_state.mark_released(slot);
     }
+
+    pub fn wl_buffer_for_slot(
+        &mut self,
+        surface: &mut dyn LifecycleSurface,
+        dmabuf: &bmc_widget::egl::DmaBufInfo,
+        slot: usize,
+    ) -> Result<wayland_client::protocol::wl_buffer::WlBuffer, String> {
+        let Some(wl_buffer) = self.wl_buffers.get_mut(slot) else {
+            return Err(format!(
+                "DoubleBufferState returned invalid slot id: {slot}"
+            ));
+        };
+        if wl_buffer.is_none() {
+            *wl_buffer = Some(surface.mint_wl_buffer(dmabuf, slot)?);
+        }
+        Ok(wl_buffer
+            .as_ref()
+            .expect("BUG: wl_buffer should exist after mint above")
+            .clone())
+    }
+
+    pub fn compact_for_prepared(
+        &mut self,
+        egl: &dyn LifecycleEgl,
+        surface: &mut dyn LifecycleSurface,
+    ) {
+        let egl = egl.as_egl_context();
+        let slots = self
+            .release_state
+            .prepared_compaction_slots(self.buffers.allocated_slots(), self.buffers.current_slot());
+        for slot in slots {
+            if self.buffers.destroy_slot(egl, slot)
+                && let Some(buffer) = self.wl_buffers[slot].take()
+            {
+                surface.destroy_minted_wl_buffer(buffer);
+            }
+        }
+    }
 }
 
 impl RenderTarget {
@@ -89,10 +156,11 @@ impl RenderTarget {
         width: u32,
         height: u32,
     ) -> Self {
+        let [wl_buffer_a, wl_buffer_b] = wl_buffers;
         Self {
             inner: Box::new(EglRenderTarget {
                 buffers,
-                wl_buffers,
+                wl_buffers: [Some(wl_buffer_a), Some(wl_buffer_b)],
                 release_state: RenderSlotReleaseState::new(),
             }),
             width,
@@ -157,6 +225,14 @@ pub trait RenderTargetFactory {
         egl: &dyn LifecycleEgl,
         surface: &mut dyn LifecycleSurface,
     );
+
+    fn compact_for_prepared(
+        &self,
+        _target: &mut RenderTarget,
+        _egl: &dyn LifecycleEgl,
+        _surface: &mut dyn LifecycleSurface,
+    ) {
+    }
 }
 
 #[derive(Debug)]
@@ -240,8 +316,23 @@ impl RenderTargetFactory for EglRenderTargetFactory {
             return;
         };
         target.buffers.destroy_all(egl);
-        let [a, b] = target.wl_buffers;
-        surface.destroy_minted_wl_buffer(a);
-        surface.destroy_minted_wl_buffer(b);
+        for buffer in target.wl_buffers.into_iter().flatten() {
+            surface.destroy_minted_wl_buffer(buffer);
+        }
+    }
+
+    fn compact_for_prepared(
+        &self,
+        target: &mut RenderTarget,
+        egl: &dyn LifecycleEgl,
+        surface: &mut dyn LifecycleSurface,
+    ) {
+        let Some(target) = target.as_egl_mut() else {
+            tracing::error!(
+                "BUG: EglRenderTargetFactory::compact_for_prepared received a non-EGL RenderTarget"
+            );
+            return;
+        };
+        target.compact_for_prepared(egl, surface);
     }
 }
