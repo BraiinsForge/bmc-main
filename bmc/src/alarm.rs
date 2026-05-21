@@ -32,7 +32,7 @@ use tokio::{
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, trace, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -723,48 +723,46 @@ async fn recompute_and_broadcast_next_alarm(
     pending_snoozes: &Mutex<HashMap<AlarmId, PendingSnooze>>,
     next_alarm_sender: &tokio::sync::watch::Sender<Option<NextAlarm>>,
 ) {
-    let Ok(alarms) = scheduler.jobs_by_source(scheduler_source).await else {
-        error!("Failed to get scheduled alarms from scheduler");
-        if let Err(e) = next_alarm_sender.send(None) {
-            trace!(?e, "next_alarm watch has no subscribers");
+    // Scheduler-side lookup failures (transport error, empty list, or race window
+    // where `jobs_by_source` reports a job_id that `active_alarms` no longer holds)
+    // all collapse to "no scheduler candidate". The snooze merge below still runs,
+    // so a pending snooze is never masked by a scheduler-side miss.
+    let scheduler_next = match scheduler.jobs_by_source(scheduler_source).await {
+        Err(e) => {
+            error!(?e, "Failed to get scheduled alarms from scheduler");
+            None
         }
-        return;
-    };
-
-    let next = alarms
-        .into_iter()
-        .filter_map(|alarm| alarm.next_tick.map(|t| (t, alarm.job_id)))
-        .sorted_by_key(|(t, _)| *t)
-        .next();
-
-    let scheduler_next = if let Some((next_tick, job_id)) = next {
-        // Linear scan over the small configured alarm set.
-        let lookup = active_alarms
-            .lock()
-            .await
-            .values()
-            .find(|s| s.job_id == job_id)
-            .map(|s| s.name.clone());
-        let Some(name) = lookup else {
-            // Race window: `jobs_by_source` and `active_alarms.lock`  are not held
-            // under a unifying lock, so a concurrent `remove_alarm` can clear the map
-            // between the two awaits while the scheduler still reports this job_id.
-            //
-            // Skip the broadcast — the previously resolved value remains valid
-            // and the next scheduler tick will observe consistent state.
-            warn!(
-                ?job_id,
-                "Scheduler reports alarm not present in active_alarms; \
-                 skipping next-alarm broadcast"
-            );
-            return;
-        };
-        Some(NextAlarm {
-            fire_at_utc_ms: next_tick.timestamp_millis(),
-            name,
-        })
-    } else {
-        None
+        Ok(alarms) => {
+            let next = alarms
+                .into_iter()
+                .filter_map(|alarm| alarm.next_tick.map(|t| (t, alarm.job_id)))
+                .sorted_by_key(|(t, _)| *t)
+                .next();
+            if let Some((next_tick, job_id)) = next {
+                // Linear scan over the small configured alarm set.
+                let name = active_alarms
+                    .lock()
+                    .await
+                    .values()
+                    .find(|s| s.job_id == job_id)
+                    .map(|s| s.name.clone());
+                if let Some(name) = name {
+                    Some(NextAlarm {
+                        fire_at_utc_ms: next_tick.timestamp_millis(),
+                        name,
+                    })
+                } else {
+                    warn!(
+                        ?job_id,
+                        "Scheduler reports alarm not present in active_alarms; \
+                         dropping scheduler-side candidate and broadcasting any snooze",
+                    );
+                    None
+                }
+            } else {
+                None
+            }
+        }
     };
 
     // Snoozes are off-scheduler;

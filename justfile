@@ -5,6 +5,13 @@ mod wasm 'bmc-wasm-runtime/justfile'
 CI_TOOLS_REV := "c75e453c0e3fd5fe167a9437b86e48b54c2aa81c"
 NIX_SYSTEM := "$(nix eval --impure --raw --expr builtins.currentSystem)"
 
+# Auto-enter the dev shell for recipes that link against system libs
+# (e.g. `cargo nextest` needs wayland-client to compile bmc).
+# `cargo check`/`clippy` skip linking, so they don't need this wrap.
+# No-op when already inside a `nix develop` shell (IN_NIX_SHELL set
+# by nix); otherwise wrap the command in `nix develop --command`.
+NIX_DEV := if env("IN_NIX_SHELL", "") == "" { "nix develop --command" } else { "" }
+
 # Global env vars
 
 export FORCE_COLOR := "1"
@@ -36,9 +43,9 @@ clippy:
       --all-targets -- \
         -D warnings
 
-# Run nextest for a single crate with mem-box caps
+# Run nextest for a single crate with mem-box caps (auto-enters nix shell).
 test crate:
-    scripts/mem-box.sh cargo nextest run -p {{ crate }}
+    {{ NIX_DEV }} scripts/mem-box.sh cargo nextest run -p {{ crate }}
 
 # Pedantic rust diff vs master — stricter than clippy (mem-box caps memory).
 rust-pedantic:
