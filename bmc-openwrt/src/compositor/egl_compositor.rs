@@ -38,7 +38,7 @@ use smithay::reexports::{
 };
 use smithay::utils::{Logical, Point};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     os::fd::AsFd,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock, Mutex},
@@ -1230,6 +1230,23 @@ fn emit_lifecycle_transitions(state: &mut AppState) {
     emit_lifecycle_batches(&emission, &mut sink);
 }
 
+#[must_use]
+fn dormant_widget_ids(
+    lifecycle_states: &HashMap<InstanceId, LifecycleState>,
+) -> HashSet<InstanceId> {
+    lifecycle_states
+        .iter()
+        .filter(|(_, state)| **state == LifecycleState::Dormant)
+        .map(|(instance_id, _)| instance_id.clone())
+        .collect()
+}
+
+fn release_dormant_widget_buffers(state: &mut AppState) {
+    let lifecycle_states = state.compositor.widgets.lifecycle_states();
+    let dormant_ids = dormant_widget_ids(&lifecycle_states);
+    state.compositor.release_widget_buffers_for(&dormant_ids);
+}
+
 /// Pure ordering logic, split from [`emit_lifecycle_transitions`] so
 /// tests can drive it with an in-memory sink. Sends the release batch,
 /// flushes, then sends the acquire batch, flushes — the flush boundary
@@ -1282,6 +1299,7 @@ fn clamp_initial_lifecycle(state: LifecycleState) -> LifecycleState {
 fn after_scene_change(state: &mut AppState) {
     state.compositor.mark_full_output_damage();
     emit_lifecycle_transitions(state);
+    release_dormant_widget_buffers(state);
 }
 
 fn handle_clear_pid_command(state: &mut AppState, instance_id: &InstanceId, expected_pid: u32) {
@@ -1677,8 +1695,8 @@ impl Compositor for EglCompositor {
 mod tests {
     use super::{
         AppState, CompositorState, Emission, GestureState, LifecycleSink, LifecycleState,
-        RedrawState, clamp_initial_lifecycle, dispatch_timeout, emit_lifecycle_batches,
-        handle_clear_pid_command,
+        RedrawState, clamp_initial_lifecycle, dispatch_timeout, dormant_widget_ids,
+        emit_lifecycle_batches, handle_clear_pid_command,
     };
     use bmc::compositor::InstanceId;
     use bmc_widget_protocol::{ViewportShape, WidgetInitialConfig};
@@ -1890,6 +1908,20 @@ mod tests {
             flush_after_release < acquire_send,
             "release flush must happen before acquire send for the same client; \
              otherwise the host can't reclaim the pool buffer before the new one is requested",
+        );
+    }
+
+    #[test]
+    fn dormant_widget_ids_excludes_prepared_neighbors() {
+        let states = lifecycle_map(&[
+            (String::from("visible"), LifecycleState::Visible),
+            (String::from("prepared"), LifecycleState::Prepared),
+            (String::from("dormant"), LifecycleState::Dormant),
+        ]);
+
+        assert_eq!(
+            dormant_widget_ids(&states),
+            HashSet::from([String::from("dormant")]),
         );
     }
 
