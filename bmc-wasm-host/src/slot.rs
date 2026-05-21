@@ -120,6 +120,7 @@ pub struct WidgetSlot {
     pub runtime: WasmWidgetRuntime,
     pub lifecycle: LifecycleStateMachine,
     pub render_target: Option<RenderTarget>,
+    pub retired_render_targets: Vec<RenderTarget>,
     pub factory: Rc<dyn RenderTargetFactory>,
     pub last_render_at: Option<Instant>,
     pub monotonic_origin: Instant,
@@ -213,6 +214,7 @@ impl WidgetSlot {
             runtime,
             lifecycle: LifecycleStateMachine::new(),
             render_target: None,
+            retired_render_targets: Vec::new(),
             factory,
             last_render_at: None,
             monotonic_origin: Instant::now(),
@@ -279,17 +281,41 @@ impl WidgetSlot {
             self.runtime.deliver_params_update(table);
             self.surface.mark_needs_render();
         }
-        let released_slots = self.surface.drain_released_slots();
+        let released_buffers = self.surface.drain_released_buffers();
         if let Some(egl_target) = self
             .render_target
             .as_mut()
             .and_then(RenderTarget::as_egl_mut)
         {
-            for slot in released_slots {
-                egl_target.mark_released(slot);
+            for released in &released_buffers {
+                egl_target.mark_released_buffer(released);
+            }
+        }
+        for target in &mut self.retired_render_targets {
+            let Some(egl_target) = target.as_egl_mut() else {
+                continue;
+            };
+            for released in &released_buffers {
+                egl_target.mark_released_buffer(released);
             }
         }
         Ok(())
+    }
+
+    pub fn reclaim_retired_render_targets(&mut self, shared: &SharedHost) {
+        let mut pending = Vec::new();
+        for mut target in self.retired_render_targets.drain(..) {
+            match self
+                .factory
+                .destroy_released_slots(&mut target, &shared.egl, &mut self.surface)
+            {
+                crate::render_target::RenderTargetCleanup::Complete => {}
+                crate::render_target::RenderTargetCleanup::PendingRelease => {
+                    pending.push(target);
+                }
+            }
+        }
+        self.retired_render_targets = pending;
     }
 
     pub fn dispatch_control_socket(&mut self) -> Result<()> {
@@ -463,6 +489,7 @@ impl WidgetSlot {
             egl: &shared.egl,
             surface: &mut self.surface,
             render_target: &mut self.render_target,
+            retired_render_targets: Some(&mut self.retired_render_targets),
             width: w,
             height: h,
         };
@@ -645,6 +672,9 @@ impl WidgetSlot {
         }
 
         if let Some(target) = self.render_target.take() {
+            self.factory.destroy(target, &shared.egl, &mut self.surface);
+        }
+        for target in self.retired_render_targets.drain(..) {
             self.factory.destroy(target, &shared.egl, &mut self.surface);
         }
         drop(self.surface);

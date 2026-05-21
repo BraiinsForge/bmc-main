@@ -7,7 +7,9 @@ use std::time::Instant;
 use bmc_wasm_host::lifecycle::{
     LifecycleEgl, LifecycleState, LifecycleStateMachine, LifecycleSurface, SlotApplyCtx,
 };
-use bmc_wasm_host::render_target::{RenderTarget, RenderTargetError, RenderTargetFactory};
+use bmc_wasm_host::render_target::{
+    RenderTarget, RenderTargetCleanup, RenderTargetError, RenderTargetFactory,
+};
 
 struct StubEgl;
 impl LifecycleEgl for StubEgl {
@@ -69,6 +71,16 @@ impl RenderTargetFactory for CountingFactory {
     fn destroy(&self, _: RenderTarget, _: &dyn LifecycleEgl, _: &mut dyn LifecycleSurface) {
         self.destroy_calls.set(self.destroy_calls.get() + 1);
     }
+
+    fn destroy_released_slots(
+        &self,
+        _: &mut RenderTarget,
+        _: &dyn LifecycleEgl,
+        _: &mut dyn LifecycleSurface,
+    ) -> RenderTargetCleanup {
+        self.destroy_calls.set(self.destroy_calls.get() + 1);
+        RenderTargetCleanup::Complete
+    }
 }
 
 fn ctx<'a>(
@@ -82,6 +94,7 @@ fn ctx<'a>(
         egl,
         surface,
         render_target: target,
+        retired_render_targets: None,
         width: 128,
         height: 128,
     }

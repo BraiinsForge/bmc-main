@@ -3,6 +3,7 @@
 use std::any::Any;
 
 use crate::lifecycle::{LifecycleEgl, LifecycleSurface};
+use bmc_widget::surface::ReleasedBuffer;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RenderTargetError {
@@ -27,6 +28,12 @@ pub struct EglRenderTarget {
     pub buffers: bmc_widget::egl::DoubleBufferState,
     pub wl_buffers: [Option<wayland_client::protocol::wl_buffer::WlBuffer>; 2],
     release_state: RenderSlotReleaseState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderTargetCleanup {
+    Complete,
+    PendingRelease,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +64,21 @@ impl RenderSlotReleaseState {
         if let Some(available) = self.available.get_mut(slot) {
             *available = true;
         }
+    }
+
+    #[must_use]
+    pub fn destroyable_slots(&self, allocated_slots: [bool; 2]) -> Vec<usize> {
+        allocated_slots
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, allocated)| {
+                if *allocated && self.is_available(slot) {
+                    Some(slot)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     #[must_use]
@@ -109,6 +131,18 @@ impl EglRenderTarget {
         self.release_state.mark_released(slot);
     }
 
+    pub fn mark_released_buffer(&mut self, released: &ReleasedBuffer) {
+        for (slot, wl_buffer) in self.wl_buffers.iter().enumerate() {
+            if wl_buffer
+                .as_ref()
+                .is_some_and(|buffer| released.matches(buffer))
+            {
+                self.release_state.mark_released(slot);
+                return;
+            }
+        }
+    }
+
     pub fn wl_buffer_for_slot(
         &mut self,
         surface: &mut dyn LifecycleSurface,
@@ -144,6 +178,34 @@ impl EglRenderTarget {
             {
                 surface.destroy_minted_wl_buffer(buffer);
             }
+        }
+    }
+
+    pub fn destroy_released_slots(
+        &mut self,
+        egl: &dyn LifecycleEgl,
+        surface: &mut dyn LifecycleSurface,
+    ) -> RenderTargetCleanup {
+        let egl = egl.as_egl_context();
+        let slots = self
+            .release_state
+            .destroyable_slots(self.buffers.allocated_slots());
+        for slot in slots {
+            if self.buffers.destroy_slot(egl, slot)
+                && let Some(buffer) = self.wl_buffers[slot].take()
+            {
+                surface.destroy_minted_wl_buffer(buffer);
+            }
+        }
+        if self
+            .buffers
+            .allocated_slots()
+            .iter()
+            .any(|allocated| *allocated)
+        {
+            RenderTargetCleanup::PendingRelease
+        } else {
+            RenderTargetCleanup::Complete
         }
     }
 }
@@ -233,6 +295,13 @@ pub trait RenderTargetFactory {
         _surface: &mut dyn LifecycleSurface,
     ) {
     }
+
+    fn destroy_released_slots(
+        &self,
+        target: &mut RenderTarget,
+        egl: &dyn LifecycleEgl,
+        surface: &mut dyn LifecycleSurface,
+    ) -> RenderTargetCleanup;
 }
 
 #[derive(Debug)]
@@ -334,5 +403,20 @@ impl RenderTargetFactory for EglRenderTargetFactory {
             return;
         };
         target.compact_for_prepared(egl, surface);
+    }
+
+    fn destroy_released_slots(
+        &self,
+        target: &mut RenderTarget,
+        egl: &dyn LifecycleEgl,
+        surface: &mut dyn LifecycleSurface,
+    ) -> RenderTargetCleanup {
+        let Some(target) = target.as_egl_mut() else {
+            tracing::error!(
+                "BUG: EglRenderTargetFactory::destroy_released_slots received a non-EGL RenderTarget"
+            );
+            return RenderTargetCleanup::Complete;
+        };
+        target.destroy_released_slots(egl, surface)
     }
 }

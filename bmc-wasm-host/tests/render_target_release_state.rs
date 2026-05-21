@@ -60,3 +60,16 @@ fn prepared_compaction_keeps_the_only_allocated_slot() {
 
     assert!(state.prepared_compaction_slots([true, false], 1).is_empty());
 }
+
+#[test]
+fn destroyable_slots_exclude_presented_buffers_until_release() {
+    let mut state = RenderSlotReleaseState::new();
+
+    state.mark_presented(0);
+
+    assert_eq!(state.destroyable_slots([true, true]), vec![1]);
+
+    state.mark_released(0);
+
+    assert_eq!(state.destroyable_slots([true, true]), vec![0, 1]);
+}
