@@ -107,6 +107,33 @@ pub(crate) fn invalidate_cached_wl_buffers(
     clippy::mutable_key_type,
     reason = "ObjectId has interior mutability but is safe to use as a HashMap key"
 )]
+pub(crate) fn invalidate_cached_wl_buffer_slots(
+    cached_buffers: &mut [Option<wl_buffer::WlBuffer>],
+    buffer_slots: &mut BufferSlotMap,
+    released_buffers: &mut ReleasedBufferSet,
+    slots: &[usize],
+) -> u32 {
+    let mut destroyed = 0_u32;
+    for slot in slots {
+        let Some(cached) = cached_buffers.get_mut(*slot) else {
+            continue;
+        };
+        if let Some(buf) = cached.take() {
+            unregister_wl_buffer_slot(buffer_slots, released_buffers, &buf.id());
+            buf.destroy();
+            destroyed += 1;
+        }
+    }
+    if destroyed > 0 {
+        tracing::debug!("Destroyed {destroyed} cached wl_buffer slot(s)");
+    }
+    destroyed
+}
+
+#[expect(
+    clippy::mutable_key_type,
+    reason = "ObjectId has interior mutability but is safe to use as a HashMap key"
+)]
 pub(crate) fn unregister_wl_buffer_slot(
     buffer_slots: &mut BufferSlotMap,
     released_buffers: &mut ReleasedBufferSet,
@@ -246,6 +273,8 @@ pub trait WidgetSurface {
     ) -> anyhow::Result<()>;
     /// Invalidate cached `wl_buffer`s (call on resize).
     fn invalidate_cached_buffers(&mut self);
+    /// Invalidate selected cached `wl_buffer` slots.
+    fn invalidate_cached_buffer_slots(&mut self, slots: &[usize]);
     /// Drain slot ids whose submitted `wl_buffer`s were released.
     ///
     /// Returns deduplicated ids since the previous drain call.

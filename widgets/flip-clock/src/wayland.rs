@@ -105,6 +105,8 @@ impl FlipState {
 enum LoopPhase {
     /// A render is due now.
     RenderPending,
+    /// A render is due once the compositor releases the next export slot.
+    WaitingForBufferRelease,
     /// Waiting indefinitely for the compositor's next frame callback.
     WaitingForCallback,
     /// Idle — waiting for the next wall-clock-second boundary.
@@ -115,7 +117,7 @@ impl LoopPhase {
     fn poll_timeout_ms(self) -> i32 {
         match self {
             Self::RenderPending => 0,
-            Self::WaitingForCallback => -1,
+            Self::WaitingForBufferRelease | Self::WaitingForCallback => -1,
             Self::WaitingForIdleTimeout => ms_to_next_second_boundary(),
         }
     }
@@ -281,6 +283,10 @@ impl RenderLoopState {
 }
 
 /// Shared render loop that works with any [`WidgetSurface`] backend.
+#[expect(
+    clippy::too_many_lines,
+    reason = "single event loop keeps state transitions local"
+)]
 fn run_render_loop(
     surface: &mut dyn WidgetSurface,
     animation_mode: AnimationMode,
@@ -290,7 +296,7 @@ fn run_render_loop(
     let mut egl = EglState::new(surface.width(), surface.height())?;
     tracing::info!("GBM-based EGL initialized, starting render loop");
 
-    let mut renderer = Renderer::new(egl.gl(), surface.width(), surface.height())?;
+    let renderer = Renderer::new(egl.gl(), surface.width(), surface.height())?;
     tracing::info!("OpenGL ES renderer initialized");
 
     let digit_textures = DigitTextures::new(egl.gl())?;
@@ -339,22 +345,27 @@ fn run_render_loop(
         }
         state.handle_events(other_events.into_iter(), egl.gl(), surface)?;
 
-        if surface.take_size_changed() {
-            let (w, h) = (surface.width(), surface.height());
-            surface.invalidate_cached_buffers();
-            egl.resize(w, h);
-            renderer.resize(w, h);
+        let released_slots = surface.drain_released_slots();
+        if !released_slots.is_empty() {
+            egl.mark_released_slots(released_slots);
+            if is_on_screen(state.lifecycle) && state.phase == LoopPhase::WaitingForBufferRelease {
+                state.phase = LoopPhase::RenderPending;
+            }
         }
 
-        if !matches!(
-            state.lifecycle,
-            Some(LifecycleState::Visible | LifecycleState::Entering | LifecycleState::Leaving)
-        ) {
+        release_released_offscreen_buffers(&state, &mut egl, surface);
+
+        if !is_on_screen(state.lifecycle) {
             state.phase = LoopPhase::WaitingForIdleTimeout;
             continue;
         }
 
         if state.phase != LoopPhase::RenderPending {
+            continue;
+        }
+
+        if !egl.current_buffer_available() {
+            state.phase = LoopPhase::WaitingForBufferRelease;
             continue;
         }
 
@@ -413,6 +424,25 @@ fn run_render_loop(
     Ok(())
 }
 
+fn is_on_screen(lifecycle: Option<LifecycleState>) -> bool {
+    matches!(
+        lifecycle,
+        Some(LifecycleState::Visible | LifecycleState::Entering | LifecycleState::Leaving)
+    )
+}
+
+fn release_released_offscreen_buffers(
+    state: &RenderLoopState,
+    egl: &mut EglState,
+    surface: &mut dyn WidgetSurface,
+) {
+    if is_on_screen(state.lifecycle) {
+        return;
+    }
+    let slots = egl.destroy_released_buffers();
+    surface.invalidate_cached_buffer_slots(&slots);
+}
+
 /// Apply a new lifecycle state from the compositor.
 ///
 /// Buffers are kept allocated while the widget is currently visible to the
@@ -447,14 +477,9 @@ fn apply_lifecycle_change(
             tracing::info!(
                 ?previous,
                 ?new_state,
-                "lifecycle: -> off-screen; releasing DMA-BUF export buffers"
+                "lifecycle: -> off-screen; releasing available DMA-BUF export buffers"
             );
-            // The compositor pins the underlying CMA memory via its
-            // imported wl_buffer / DMA-BUF refs, so destroying only our
-            // local end leaks it until the wl_buffer proxies are
-            // explicitly destroyed.
-            surface.invalidate_cached_buffers();
-            egl.destroy_buffers();
+            release_released_offscreen_buffers(state, egl, surface);
         }
         _ => {
             tracing::info!(?previous, ?new_state, "lifecycle: unknown future variant");

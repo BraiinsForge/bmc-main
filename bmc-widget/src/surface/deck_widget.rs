@@ -26,8 +26,8 @@ use crate::wayland::from_protocol;
 use super::common::{
     BufferSlotMap, PollOutcome, ReleasedBuffer, ReleasedBufferSet, blocking_dispatch_impl,
     create_buffer_from_dmabuf, drain_released_buffer_slots, drain_released_buffers,
-    impl_common_dispatch, invalidate_cached_wl_buffers, poll_dispatch, submit_buffer_to_surface,
-    unregister_wl_buffer_slot,
+    impl_common_dispatch, invalidate_cached_wl_buffer_slots, invalidate_cached_wl_buffers,
+    poll_dispatch, submit_buffer_to_surface, unregister_wl_buffer_slot,
 };
 use super::{WidgetEvent, WidgetSurface};
 
@@ -570,6 +570,15 @@ impl DeckWidgetSurfaceClient {
         );
     }
 
+    pub fn invalidate_cached_buffer_slots(&mut self, slots: &[usize]) {
+        invalidate_cached_wl_buffer_slots(
+            &mut self.cached_buffers,
+            &mut self.state.buffer_slots,
+            &mut self.state.released_buffers,
+            slots,
+        );
+    }
+
     pub fn submit_buffer_with_wl_buffer(
         &self,
         info: &DmaBufInfo,
@@ -735,6 +744,10 @@ impl WidgetSurface for DeckWidgetSurfaceClient {
 
     fn invalidate_cached_buffers(&mut self) {
         DeckWidgetSurfaceClient::invalidate_cached_buffers(self);
+    }
+
+    fn invalidate_cached_buffer_slots(&mut self, slots: &[usize]) {
+        DeckWidgetSurfaceClient::invalidate_cached_buffer_slots(self, slots);
     }
 
     fn drain_released_slots(&mut self) -> Vec<usize> {

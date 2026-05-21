@@ -435,12 +435,6 @@ impl Renderer {
         }
     }
 
-    /// Update viewport dimensions
-    pub fn resize(&mut self, width: u32, height: u32) {
-        self.width = width;
-        self.height = height;
-    }
-
     /// Get projection matrix for current viewport
     pub fn projection(&self) -> Mat4 {
         // Use orthographic projection - no perspective distortion
