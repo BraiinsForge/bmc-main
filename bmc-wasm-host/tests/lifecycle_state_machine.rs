@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 use bmc_wasm_host::lifecycle::{
     LifecycleEgl, LifecycleState, LifecycleStateMachine, LifecycleSurface, SlotApplyCtx,
 };
-use bmc_wasm_host::render_target::{RenderTarget, RenderTargetError, RenderTargetFactory};
+use bmc_wasm_host::render_target::{
+    RenderTarget, RenderTargetCleanup, RenderTargetError, RenderTargetFactory,
+};
 
 struct StubEgl;
 impl LifecycleEgl for StubEgl {
@@ -44,8 +46,10 @@ impl LifecycleSurface for StubSurface {
 
 struct MockFactory {
     fail_next: Cell<u32>,
+    defer_destroy_released_slots: Cell<bool>,
     alloc_calls: Cell<u32>,
     destroy_calls: Cell<u32>,
+    destroy_released_calls: Cell<u32>,
     compact_calls: Cell<u32>,
 }
 
@@ -53,13 +57,18 @@ impl MockFactory {
     fn new() -> Self {
         Self {
             fail_next: Cell::new(0),
+            defer_destroy_released_slots: Cell::new(false),
             alloc_calls: Cell::new(0),
             destroy_calls: Cell::new(0),
+            destroy_released_calls: Cell::new(0),
             compact_calls: Cell::new(0),
         }
     }
     fn fail(&self, n: u32) {
         self.fail_next.set(n);
+    }
+    fn defer_destroy_released_slots(&self) {
+        self.defer_destroy_released_slots.set(true);
     }
 }
 
@@ -84,6 +93,21 @@ impl RenderTargetFactory for MockFactory {
         self.destroy_calls.set(self.destroy_calls.get() + 1);
     }
 
+    fn destroy_released_slots(
+        &self,
+        _: &mut RenderTarget,
+        _: &dyn LifecycleEgl,
+        _: &mut dyn LifecycleSurface,
+    ) -> RenderTargetCleanup {
+        self.destroy_released_calls
+            .set(self.destroy_released_calls.get() + 1);
+        if self.defer_destroy_released_slots.get() {
+            RenderTargetCleanup::PendingRelease
+        } else {
+            RenderTargetCleanup::Complete
+        }
+    }
+
     fn compact_for_prepared(
         &self,
         _: &mut RenderTarget,
@@ -105,6 +129,25 @@ fn ctx_no_target<'a>(
         egl,
         surface,
         render_target: target,
+        retired_render_targets: None,
+        width: 128,
+        height: 128,
+    }
+}
+
+fn ctx_with_retired_targets<'a>(
+    factory: &'a Rc<dyn RenderTargetFactory>,
+    target: &'a mut Option<RenderTarget>,
+    retired_targets: &'a mut Vec<RenderTarget>,
+    egl: &'a StubEgl,
+    surface: &'a mut StubSurface,
+) -> SlotApplyCtx<'a> {
+    SlotApplyCtx {
+        factory,
+        egl,
+        surface,
+        render_target: target,
+        retired_render_targets: Some(retired_targets),
         width: 128,
         height: 128,
     }
@@ -318,10 +361,46 @@ fn entering_to_dormant_while_blocked_clears_blocked_and_does_not_call_destroy() 
     assert_eq!(mock.destroy_calls.get(), 0);
 }
 
-// Parametric coverage for the spec's 5x5 transition matrix. Each starting state in the
-// buffer-free state Dormant is driven toward every target-owning state
-// {Prepared, Entering, Visible, Leaving}; we use a factory configured to always fail so the post-
-// transition state is observable without needing a real RenderTarget.
+#[test]
+fn target_owning_to_dormant_retires_target_when_cleanup_is_pending_release() {
+    let mock: Rc<MockFactory> = Rc::new(MockFactory::new());
+    let factory: Rc<dyn RenderTargetFactory> = mock.clone();
+
+    let mut target: Option<RenderTarget> = None;
+    let mut retired_targets = Vec::new();
+    let egl = StubEgl;
+    let mut surface = StubSurface;
+
+    let mut sm = LifecycleStateMachine::new();
+    sm.on_event(LifecycleState::Entering);
+    sm.apply(
+        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        Instant::now(),
+    );
+
+    mock.defer_destroy_released_slots();
+    sm.on_event(LifecycleState::Dormant);
+    sm.apply(
+        &mut ctx_with_retired_targets(
+            &factory,
+            &mut target,
+            &mut retired_targets,
+            &egl,
+            &mut surface,
+        ),
+        Instant::now(),
+    );
+
+    assert_eq!(sm.current(), LifecycleState::Dormant);
+    assert!(target.is_none());
+    assert_eq!(retired_targets.len(), 1);
+    assert_eq!(mock.destroy_released_calls.get(), 1);
+    assert_eq!(mock.destroy_calls.get(), 0);
+}
+
+// Parametric coverage for buffer-free to target-owning transitions. Dormant is driven
+// toward each target-owning state; we use a factory configured to always fail so the
+// post-transition state is observable without needing a real RenderTarget.
 #[test]
 fn all_transitions_from_dormant_to_target_owning_states_invoke_allocate() {
     use LifecycleState::{Dormant, Entering, Leaving, Prepared, Visible};

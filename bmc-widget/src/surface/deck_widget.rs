@@ -24,9 +24,9 @@ use crate::egl::DmaBufInfo;
 use crate::wayland::from_protocol;
 
 use super::common::{
-    BufferSlotMap, PollOutcome, ReleasedBufferSet, blocking_dispatch_impl,
-    create_buffer_from_dmabuf, drain_released_buffer_slots, impl_common_dispatch,
-    invalidate_cached_wl_buffers, poll_dispatch, submit_buffer_to_surface,
+    BufferSlotMap, PollOutcome, ReleasedBuffer, ReleasedBufferSet, blocking_dispatch_impl,
+    create_buffer_from_dmabuf, drain_released_buffer_slots, drain_released_buffers,
+    impl_common_dispatch, invalidate_cached_wl_buffers, poll_dispatch, submit_buffer_to_surface,
     unregister_wl_buffer_slot,
 };
 use super::{WidgetEvent, WidgetSurface};
@@ -194,6 +194,11 @@ impl DeckWidgetSurfaceState {
     /// Drain slot ids released by the compositor.
     pub fn drain_released_slots(&mut self) -> Vec<usize> {
         drain_released_buffer_slots(&self.buffer_slots, &mut self.released_buffers)
+    }
+
+    /// Drain buffer ids released by the compositor.
+    pub fn drain_released_buffers(&mut self) -> Vec<ReleasedBuffer> {
+        drain_released_buffers(&self.buffer_slots, &mut self.released_buffers)
     }
 
     fn unregister_wl_buffer_id(&mut self, buffer_id: &ObjectId) -> Option<usize> {
@@ -621,6 +626,11 @@ impl DeckWidgetSurfaceClient {
     /// Drain slot ids released by the compositor.
     pub fn drain_released_slots(&mut self) -> Vec<usize> {
         self.state.drain_released_slots()
+    }
+
+    /// Drain buffer ids released by the compositor.
+    pub fn drain_released_buffers(&mut self) -> Vec<ReleasedBuffer> {
+        self.state.drain_released_buffers()
     }
 
     #[must_use]

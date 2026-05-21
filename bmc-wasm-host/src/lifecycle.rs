@@ -3,7 +3,7 @@
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use crate::render_target::{RenderTarget, RenderTargetFactory};
+use crate::render_target::{RenderTarget, RenderTargetCleanup, RenderTargetFactory};
 
 const RETRY_AFTER_FAILURE: Duration = Duration::from_secs(1);
 
@@ -70,6 +70,7 @@ pub struct SlotApplyCtx<'a> {
     pub egl: &'a dyn LifecycleEgl,
     pub surface: &'a mut dyn LifecycleSurface,
     pub render_target: &'a mut Option<RenderTarget>,
+    pub retired_render_targets: Option<&'a mut Vec<RenderTarget>>,
     pub width: u32,
     pub height: u32,
 }
@@ -199,7 +200,19 @@ impl LifecycleStateMachine {
                 .render_target
                 .take()
                 .expect("BUG: releasing render target while none exists");
-            ctx.factory.destroy(target, ctx.egl, ctx.surface);
+            let mut target = target;
+            match ctx
+                .factory
+                .destroy_released_slots(&mut target, ctx.egl, ctx.surface)
+            {
+                RenderTargetCleanup::Complete => {}
+                RenderTargetCleanup::PendingRelease => {
+                    ctx.retired_render_targets
+                        .as_deref_mut()
+                        .expect("BUG: pending render-target cleanup requires retired storage")
+                        .push(target);
+                }
+            }
             self.current = self.target;
             self.blocked = false;
             self.retry_at = None;

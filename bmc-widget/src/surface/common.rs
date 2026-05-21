@@ -34,6 +34,29 @@ pub(crate) type BufferSlotMap = HashMap<ObjectId, usize>;
 /// Set of tracked `wl_buffer` object ids released by the compositor.
 pub(crate) type ReleasedBufferSet = HashSet<ObjectId>;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleasedBuffer {
+    id: ObjectId,
+    slot: usize,
+}
+
+impl ReleasedBuffer {
+    #[must_use]
+    pub(crate) fn new(id: ObjectId, slot: usize) -> Self {
+        Self { id, slot }
+    }
+
+    #[must_use]
+    pub fn slot(&self) -> usize {
+        self.slot
+    }
+
+    #[must_use]
+    pub fn matches(&self, buffer: &wl_buffer::WlBuffer) -> bool {
+        self.id == buffer.id()
+    }
+}
+
 /// Block until a Wayland event arrives, then dispatch all pending events.
 ///
 /// Shared implementation used by both [`crate::surface::XdgSurfaceClient`] and
@@ -102,12 +125,27 @@ pub(crate) fn drain_released_buffer_slots(
     released_buffers: &mut ReleasedBufferSet,
 ) -> Vec<usize> {
     let mut released_slots = BTreeSet::new();
-    for buffer_id in std::mem::take(released_buffers) {
-        if let Some(&slot) = buffer_slots.get(&buffer_id) {
-            released_slots.insert(slot);
-        }
+    for released in drain_released_buffers(buffer_slots, released_buffers) {
+        released_slots.insert(released.slot());
     }
     released_slots.into_iter().collect()
+}
+
+#[expect(
+    clippy::mutable_key_type,
+    reason = "ObjectId has interior mutability but is safe to use as a HashMap key"
+)]
+pub(crate) fn drain_released_buffers(
+    buffer_slots: &BufferSlotMap,
+    released_buffers: &mut ReleasedBufferSet,
+) -> Vec<ReleasedBuffer> {
+    let mut released = Vec::new();
+    for buffer_id in std::mem::take(released_buffers) {
+        if let Some(&slot) = buffer_slots.get(&buffer_id) {
+            released.push(ReleasedBuffer::new(buffer_id, slot));
+        }
+    }
+    released
 }
 
 /// Attach buffer, damage, optionally request frame callback, and commit.
