@@ -699,76 +699,98 @@ impl AlarmScheduler {
     }
 
     async fn recompute_next_alarm_time(&self) {
-        let Ok(alarms) = self.scheduler.jobs_by_source(Self::SCHEDULER_SOURCE).await else {
-            error!("Failed to get scheduled alarms from scheduler");
-            if let Err(e) = self.next_alarm_sender.send(None) {
-                trace!(?e, "next_alarm watch has no subscribers");
-            }
-            return;
-        };
+        recompute_and_broadcast_next_alarm(
+            &self.scheduler,
+            Self::SCHEDULER_SOURCE,
+            &self.active_alarms,
+            &self.pending_snoozes,
+            &self.next_alarm_sender,
+        )
+        .await;
+    }
+}
 
-        let next = alarms
-            .into_iter()
-            .filter_map(|alarm| alarm.next_tick.map(|t| (t, alarm.job_id)))
-            .sorted_by_key(|(t, _)| *t)
-            .next();
+/// Resolve the soonest pending alarm across the scheduler
+/// and any in-flight snoozes, then broadcast it on `next_alarm_sender`.
+///
+/// Extracted from `AlarmScheduler::recompute_next_alarm_time`
+/// so the behavior is unit-testable without standing up
+/// the full controller.
+async fn recompute_and_broadcast_next_alarm(
+    scheduler: &JobScheduler,
+    scheduler_source: &str,
+    active_alarms: &Mutex<HashMap<AlarmId, ScheduledAlarm>>,
+    pending_snoozes: &Mutex<HashMap<AlarmId, PendingSnooze>>,
+    next_alarm_sender: &tokio::sync::watch::Sender<Option<NextAlarm>>,
+) {
+    let Ok(alarms) = scheduler.jobs_by_source(scheduler_source).await else {
+        error!("Failed to get scheduled alarms from scheduler");
+        if let Err(e) = next_alarm_sender.send(None) {
+            trace!(?e, "next_alarm watch has no subscribers");
+        }
+        return;
+    };
 
-        let scheduler_next = if let Some((next_tick, job_id)) = next {
-            // Linear scan over the small configured alarm set.
-            let lookup = self
-                .active_alarms
-                .lock()
-                .await
-                .values()
-                .find(|s| s.job_id == job_id)
-                .map(|s| s.name.clone());
-            let Some(name) = lookup else {
-                // Race window: `jobs_by_source` and `active_alarms.lock` are
-                // not held under a unifying lock, so a concurrent
-                // `remove_alarm` can clear the map between the two awaits
-                // while the scheduler still reports this job_id. Skip the
-                // broadcast — the previously resolved value remains valid
-                // and the next scheduler tick will observe consistent state.
-                warn!(
-                    ?job_id,
-                    "Scheduler reports alarm not present in active_alarms; \
-                     skipping next-alarm broadcast"
-                );
-                return;
-            };
-            Some(NextAlarm {
-                fire_at_utc_ms: next_tick.timestamp_millis(),
-                name,
-            })
-        } else {
-            None
-        };
+    let next = alarms
+        .into_iter()
+        .filter_map(|alarm| alarm.next_tick.map(|t| (t, alarm.job_id)))
+        .sorted_by_key(|(t, _)| *t)
+        .next();
 
-        // Snoozes are off-scheduler; merge them in so the
-        // broadcast reflects whichever firing is actually soonest.
-        let snooze_candidates: Vec<NextAlarm> = self
-            .pending_snoozes
+    let scheduler_next = if let Some((next_tick, job_id)) = next {
+        // Linear scan over the small configured alarm set.
+        let lookup = active_alarms
             .lock()
             .await
             .values()
-            .map(|s| NextAlarm {
-                fire_at_utc_ms: s.fire_at_utc_ms,
-                name: s.name.clone(),
-            })
-            .collect();
-        let next_alarm = pick_soonest_next_alarm(scheduler_next, snooze_candidates);
+            .find(|s| s.job_id == job_id)
+            .map(|s| s.name.clone());
+        let Some(name) = lookup else {
+            // Race window: `jobs_by_source` and `active_alarms.lock`  are not held
+            // under a unifying lock, so a concurrent `remove_alarm` can clear the map
+            // between the two awaits while the scheduler still reports this job_id.
+            //
+            // Skip the broadcast — the previously resolved value remains valid
+            // and the next scheduler tick will observe consistent state.
+            warn!(
+                ?job_id,
+                "Scheduler reports alarm not present in active_alarms; \
+                 skipping next-alarm broadcast"
+            );
+            return;
+        };
+        Some(NextAlarm {
+            fire_at_utc_ms: next_tick.timestamp_millis(),
+            name,
+        })
+    } else {
+        None
+    };
 
-        info!(next_alarm = ?next_alarm, "Recomputed next alarm time");
-        // Fired on every scheduler tick, even on no changes to the next alarm.
-        self.next_alarm_sender.send_if_modified(|current| {
-            if *current == next_alarm {
-                false
-            } else {
-                *current = next_alarm;
-                true
-            }
-        });
-    }
+    // Snoozes are off-scheduler;
+    // merge them in so the broadcast reflects
+    // whichever firing is actually soonest.
+    let snooze_candidates: Vec<NextAlarm> = pending_snoozes
+        .lock()
+        .await
+        .values()
+        .map(|s| NextAlarm {
+            fire_at_utc_ms: s.fire_at_utc_ms,
+            name: s.name.clone(),
+        })
+        .collect();
+    let next_alarm = pick_soonest_next_alarm(scheduler_next, snooze_candidates);
+
+    info!(next_alarm = ?next_alarm, "Recomputed next alarm time");
+    // Fired on every scheduler tick, even on no changes to the next alarm.
+    next_alarm_sender.send_if_modified(|current| {
+        if *current == next_alarm {
+            false
+        } else {
+            *current = next_alarm;
+            true
+        }
+    });
 }
 
 /// Soonest firing across scheduler-derived candidate + pending
@@ -1253,5 +1275,216 @@ mod tests {
             pick_soonest_next_alarm(Some(sched), snoozes),
             Some(na(800, "earlier snooze"))
         );
+    }
+
+    // Tests that pin the full contract of `recompute_and_broadcast_next_alarm`
+    // — across empty / present scheduler entries, race-window lookup misses,
+    // and the snooze merge — so the next refactor can't silently drop a branch.
+    //
+    // NOTE: the `Err` arm of `JobScheduler::jobs_by_source` (which broadcasts `None`)
+    // isn't covered here. `JobScheduler` is a concrete struct whose only failure mode
+    // is internal lock poisoning, unreachable from its public API.
+    //
+    // Exercising that branch at function level would require trait-abstracting
+    // the scheduler — left as follow-up.
+    mod recompute {
+        use std::str::FromStr;
+
+        use bmc_scheduler::{
+            Cron, JobScheduler,
+            scheduler::{JobConfig, Schedule, Task},
+        };
+        use chrono::{DateTime, Utc};
+        use tempfile::TempDir;
+
+        use super::*;
+
+        async fn make_scheduler() -> (JobScheduler, TempDir) {
+            let temp_dir = TempDir::new().expect("BUG: failed to create tempdir");
+            let (_tz_tx, tz_rx) = tokio::sync::watch::channel(Timezone::default());
+            let scheduler = JobScheduler::init(tz_rx, Some(temp_dir.path().join("crontab"))).await;
+            (scheduler, temp_dir)
+        }
+
+        async fn schedule_alarm_job(
+            scheduler: &JobScheduler,
+            name: &str,
+        ) -> (AlarmId, ScheduledAlarm, DateTime<Utc>) {
+            let cron = Cron::from_str("0 0 12 * * *").expect("BUG: failed to parse cron");
+            let task: bmc_scheduler::BoxedTask = Box::new(|| Box::pin(async {}));
+            let job_id = scheduler
+                .schedule(
+                    Schedule::Cron(cron),
+                    Task::Async(task),
+                    JobConfig::new(AlarmScheduler::SCHEDULER_SOURCE),
+                )
+                .await
+                .expect("BUG: failed to schedule cron job");
+            let next_tick = scheduler
+                .jobs_by_source(AlarmScheduler::SCHEDULER_SOURCE)
+                .await
+                .expect("BUG: failed to fetch jobs by source")
+                .into_iter()
+                .find(|j| j.job_id == job_id)
+                .and_then(|j| j.next_tick)
+                .expect("BUG: scheduler left next_tick unset on the freshly scheduled job");
+            (
+                AlarmId::generate(),
+                ScheduledAlarm {
+                    job_id,
+                    name: name.to_owned(),
+                },
+                next_tick,
+            )
+        }
+
+        fn pending_snooze(fire_at_utc_ms: i64, name: &str) -> PendingSnooze {
+            PendingSnooze {
+                cancel: CancellationToken::new(),
+                fire_at_utc_ms,
+                name: name.to_owned(),
+            }
+        }
+
+        async fn run(
+            scheduler: &JobScheduler,
+            active: Arc<Mutex<HashMap<AlarmId, ScheduledAlarm>>>,
+            snoozes: Arc<Mutex<HashMap<AlarmId, PendingSnooze>>>,
+        ) -> Option<NextAlarm> {
+            let (tx, rx) = tokio::sync::watch::channel::<Option<NextAlarm>>(None);
+            recompute_and_broadcast_next_alarm(
+                scheduler,
+                AlarmScheduler::SCHEDULER_SOURCE,
+                &active,
+                &snoozes,
+                &tx,
+            )
+            .await;
+            rx.borrow().clone()
+        }
+
+        #[tokio::test]
+        async fn empty_scheduler_and_no_snoozes_broadcasts_none() {
+            let (scheduler, _temp_dir) = make_scheduler().await;
+            let active: Arc<Mutex<HashMap<AlarmId, ScheduledAlarm>>> = Arc::default();
+            let snoozes: Arc<Mutex<HashMap<AlarmId, PendingSnooze>>> = Arc::default();
+            assert_eq!(run(&scheduler, active, snoozes).await, None);
+        }
+
+        #[tokio::test]
+        async fn empty_scheduler_with_snooze_broadcasts_snooze() {
+            let (scheduler, _temp_dir) = make_scheduler().await;
+            let active: Arc<Mutex<HashMap<AlarmId, ScheduledAlarm>>> = Arc::default();
+            let snoozes: Arc<Mutex<HashMap<AlarmId, PendingSnooze>>> = Arc::default();
+            snoozes
+                .lock()
+                .await
+                .insert(AlarmId::generate(), pending_snooze(42, "snooze"));
+            assert_eq!(
+                run(&scheduler, active, snoozes).await,
+                Some(NextAlarm {
+                    fire_at_utc_ms: 42,
+                    name: "snooze".to_owned(),
+                }),
+            );
+        }
+
+        #[tokio::test]
+        async fn scheduled_alarm_resolves_to_its_next_tick() {
+            let (scheduler, _temp_dir) = make_scheduler().await;
+            let (alarm_id, scheduled, tick) = schedule_alarm_job(&scheduler, "morning").await;
+            let active: Arc<Mutex<HashMap<AlarmId, ScheduledAlarm>>> = Arc::default();
+            active.lock().await.insert(alarm_id, scheduled);
+            let snoozes: Arc<Mutex<HashMap<AlarmId, PendingSnooze>>> = Arc::default();
+            assert_eq!(
+                run(&scheduler, active, snoozes).await,
+                Some(NextAlarm {
+                    fire_at_utc_ms: tick.timestamp_millis(),
+                    name: "morning".to_owned(),
+                }),
+            );
+        }
+
+        #[tokio::test]
+        async fn scheduler_wins_when_it_fires_before_snooze() {
+            let (scheduler, _temp_dir) = make_scheduler().await;
+            let (alarm_id, scheduled, tick) = schedule_alarm_job(&scheduler, "morning").await;
+            let active: Arc<Mutex<HashMap<AlarmId, ScheduledAlarm>>> = Arc::default();
+            active.lock().await.insert(alarm_id, scheduled);
+            let snoozes: Arc<Mutex<HashMap<AlarmId, PendingSnooze>>> = Arc::default();
+            let later = tick.timestamp_millis() + 1_000_000;
+            snoozes
+                .lock()
+                .await
+                .insert(AlarmId::generate(), pending_snooze(later, "late snooze"));
+            assert_eq!(
+                run(&scheduler, active, snoozes).await,
+                Some(NextAlarm {
+                    fire_at_utc_ms: tick.timestamp_millis(),
+                    name: "morning".to_owned(),
+                }),
+            );
+        }
+
+        #[tokio::test]
+        async fn snooze_wins_when_it_fires_before_scheduler() {
+            let (scheduler, _temp_dir) = make_scheduler().await;
+            let (alarm_id, scheduled, tick) = schedule_alarm_job(&scheduler, "morning").await;
+            let active: Arc<Mutex<HashMap<AlarmId, ScheduledAlarm>>> = Arc::default();
+            active.lock().await.insert(alarm_id, scheduled);
+            let snoozes: Arc<Mutex<HashMap<AlarmId, PendingSnooze>>> = Arc::default();
+            let earlier = tick.timestamp_millis() - 1_000_000;
+            snoozes
+                .lock()
+                .await
+                .insert(AlarmId::generate(), pending_snooze(earlier, "early snooze"));
+            assert_eq!(
+                run(&scheduler, active, snoozes).await,
+                Some(NextAlarm {
+                    fire_at_utc_ms: earlier,
+                    name: "early snooze".to_owned(),
+                }),
+            );
+        }
+
+        // Race window between `jobs_by_source` and `active_alarms` lookup:
+        // scheduler still reports a job_id whose entry has just been removed from `active_alarms`.
+        // A pending snooze must still drive the broadcast — silently dropping it masks the snooze on every widget.
+        #[tokio::test]
+        async fn race_miss_with_snooze_broadcasts_snooze() {
+            let (scheduler, _temp_dir) = make_scheduler().await;
+            // Schedule a job so `jobs_by_source` returns one,
+            // but don't insert it into `active_alarms` — the lookup misses.
+            let _ = schedule_alarm_job(&scheduler, "ignored").await;
+            let active: Arc<Mutex<HashMap<AlarmId, ScheduledAlarm>>> = Arc::default();
+            let snoozes: Arc<Mutex<HashMap<AlarmId, PendingSnooze>>> = Arc::default();
+            snoozes
+                .lock()
+                .await
+                .insert(AlarmId::generate(), pending_snooze(42, "snooze"));
+            assert_eq!(
+                run(&scheduler, active, snoozes).await,
+                Some(NextAlarm {
+                    fire_at_utc_ms: 42,
+                    name: "snooze".to_owned(),
+                }),
+            );
+        }
+
+        // Race window with no snooze: scheduler reports a job whose `active_alarms`
+        // entry has just been removed. The broadcast must still update — leaving
+        // the watch on a stale value lies to widgets about the next alarm.
+        //
+        // Currently this case skips the broadcast entirely; once the early-return
+        // is removed it will broadcast `None`, which is the correct "no alarm" signal
+        // for a UI showing nothing scheduled and no snoozes.
+        #[tokio::test]
+        async fn race_miss_without_snooze_broadcasts_none() {
+            let (scheduler, _temp_dir) = make_scheduler().await;
+            let _ = schedule_alarm_job(&scheduler, "ignored").await;
+            let active: Arc<Mutex<HashMap<AlarmId, ScheduledAlarm>>> = Arc::default();
+            let snoozes: Arc<Mutex<HashMap<AlarmId, PendingSnooze>>> = Arc::default();
+            assert_eq!(run(&scheduler, active, snoozes).await, None);
+        }
     }
 }
