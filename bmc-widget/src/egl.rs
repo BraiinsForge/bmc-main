@@ -923,6 +923,16 @@ impl DoubleBufferedEglState {
         self.buffers.current_ref()
     }
 
+    #[must_use]
+    pub fn current_slot(&self) -> usize {
+        self.buffers.current_slot()
+    }
+
+    #[must_use]
+    pub fn allocated_slots(&self) -> [bool; 2] {
+        self.buffers.allocated_slots()
+    }
+
     /// Buffer width in pixels.
     #[must_use]
     pub fn width(&self) -> u32 {
@@ -945,6 +955,10 @@ impl DoubleBufferedEglState {
     /// Resize and drop any existing export buffers.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.buffers.resize(&self.ctx, width, height);
+    }
+
+    pub fn destroy_slot(&mut self, slot: usize) -> bool {
+        self.buffers.destroy_slot(&self.ctx, slot)
     }
 
     /// Destroy all allocated export buffers, freeing the underlying CMA
