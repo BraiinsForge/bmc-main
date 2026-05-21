@@ -6,6 +6,9 @@ edition = "2024"
 [lints]
 workspace = true
 
+[features]
+profiling = []
+
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }

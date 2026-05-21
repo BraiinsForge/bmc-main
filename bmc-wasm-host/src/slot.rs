@@ -451,7 +451,9 @@ impl WidgetSlot {
         shared: &mut SharedHost,
     ) -> Result<RenderStatus> {
         let _ = self.surface.take_render_requested();
-        let (dmabuf, slot_idx, status) = {
+        let frame_start = HostRenderProfiling::start_phase();
+        let (dmabuf, slot_idx, status, target_width, target_height) = {
+            let phase_start = HostRenderProfiling::start_phase();
             let target = self.render_target.as_mut().expect(
                 "BUG: render() called on a slot without a render target — \
                  needs_render() should have gated this off when lifecycle ∉ {Entering, Visible, Leaving}",
@@ -474,50 +476,54 @@ impl WidgetSlot {
                      raw-pointer reborrow must produce a non-null reference",
                 )
                 .begin_frame(target_width, target_height, 1.0);
+            HostRenderProfiling::log_phase(&self.wasm_basename, "frame_setup", phase_start);
+
+            let phase_start = HostRenderProfiling::start_phase();
             let status = self.runtime.with_renderer(ptr, |rt| rt.render(delta_ms))?;
+            HostRenderProfiling::log_phase(&self.wasm_basename, "runtime_render", phase_start);
+
+            let phase_start = HostRenderProfiling::start_phase();
             unsafe { ptr.as_ptr().as_mut() }
                 .expect(
                     "BUG: renderer pointer was NonNull when stored, \
                      raw-pointer reborrow must produce a non-null reference",
                 )
                 .flush();
+            HostRenderProfiling::log_phase(&self.wasm_basename, "femtovg_flush", phase_start);
 
             let current_export = egl_target.buffers.current_ref().expect(
                 "BUG: ensure_current succeeded above, so DoubleBufferState::current_ref \
                  must return Some; an internal invariant of DoubleBufferState was violated",
             );
+            let phase_start = HostRenderProfiling::start_phase();
             shared
                 .scratch
                 .blit_to(&shared.egl, current_export.fbo, target_width, target_height);
+            HostRenderProfiling::log_phase(&self.wasm_basename, "staging_blit", phase_start);
 
+            let phase_start = HostRenderProfiling::start_phase();
             unsafe {
                 shared.egl.gl().finish();
             }
+            HostRenderProfiling::log_phase(&self.wasm_basename, "gl_finish", phase_start);
 
+            let phase_start = HostRenderProfiling::start_phase();
             let (dmabuf, slot_idx) = egl_target.buffers.export_and_swap()?;
-            (dmabuf, slot_idx, status)
+            HostRenderProfiling::log_phase(&self.wasm_basename, "export_and_swap", phase_start);
+            (dmabuf, slot_idx, status, target_width, target_height)
         };
 
         let wants_immediate = self.frame_callback_enabled()
             && self.runtime.wants_next_frame()
             && self.runtime.next_frame_delay().is_none();
-        let target = self
-            .render_target
-            .as_mut()
-            .expect("BUG: render target must still be present after export_and_swap");
-        let egl_target = target.as_egl_mut().expect(
-            "BUG: EglRenderTargetFactory allocated all WidgetSlot render targets in Task 8",
+        self.submit_exported_buffer(&dmabuf, slot_idx, wants_immediate)?;
+        HostRenderProfiling::log_frame(
+            &self.wasm_basename,
+            self.frame_count + 1,
+            delta_ms,
+            frame_start,
+            HostRenderFrameContext::new(target_width, target_height, wants_immediate, status),
         );
-        self.surface.submit_buffer_with_wl_buffer(
-            &dmabuf,
-            egl_target
-                .wl_buffers
-                .get(slot_idx)
-                .expect("BUG: DoubleBufferState returned a slot outside the wl_buffer array"),
-            wants_immediate,
-        )?;
-        self.surface.flush()?;
-        egl_target.mark_presented(slot_idx);
         self.schedule_next_runtime_frame(Instant::now());
         self.frame_count += 1;
         if self.frame_count <= 3 || self.frame_count.is_multiple_of(120) {
@@ -542,6 +548,35 @@ impl WidgetSlot {
             );
         }
         Ok(status)
+    }
+
+    fn submit_exported_buffer(
+        &mut self,
+        dmabuf: &bmc_widget::egl::DmaBufInfo,
+        slot_idx: usize,
+        wants_immediate: bool,
+    ) -> Result<()> {
+        let target = self
+            .render_target
+            .as_mut()
+            .expect("BUG: render target must still be present after export_and_swap");
+        let egl_target = target.as_egl_mut().expect(
+            "BUG: EglRenderTargetFactory allocated all WidgetSlot render targets in Task 8",
+        );
+        let phase_start = HostRenderProfiling::start_phase();
+        let wl_buffer = egl_target
+            .wl_buffers
+            .get(slot_idx)
+            .expect("BUG: DoubleBufferState returned a slot outside the wl_buffer array");
+        self.surface
+            .submit_buffer_with_wl_buffer(dmabuf, wl_buffer, wants_immediate)?;
+        HostRenderProfiling::log_phase(&self.wasm_basename, "wayland_attach_commit", phase_start);
+
+        let phase_start = HostRenderProfiling::start_phase();
+        self.surface.flush()?;
+        HostRenderProfiling::log_phase(&self.wasm_basename, "wayland_flush", phase_start);
+        egl_target.mark_presented(slot_idx);
+        Ok(())
     }
 
     pub fn shutdown(mut self, shared: &mut SharedHost, renderer: &mut FemtoVgRenderer) {
@@ -758,6 +793,126 @@ fn map_protocol_lifecycle(s: bmc_widget_protocol::LifecycleState) -> LifecycleSt
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HostRenderProfiling;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HostRenderFrameContext {
+    target_width: u32,
+    target_height: u32,
+    wants_immediate: bool,
+    status: RenderStatus,
+}
+
+impl HostRenderFrameContext {
+    fn new(
+        target_width: u32,
+        target_height: u32,
+        wants_immediate: bool,
+        status: RenderStatus,
+    ) -> Self {
+        Self {
+            target_width,
+            target_height,
+            wants_immediate,
+            status,
+        }
+    }
+}
+
+#[cfg(feature = "profiling")]
+type HostRenderPhaseStart = Instant;
+
+#[cfg(not(feature = "profiling"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HostRenderPhaseStart;
+
+impl HostRenderProfiling {
+    #[cfg(feature = "profiling")]
+    const DEFAULT_FRAME_SUMMARY_INTERVAL: u64 = 120;
+
+    #[cfg(feature = "profiling")]
+    fn start_phase() -> HostRenderPhaseStart {
+        Instant::now()
+    }
+
+    #[cfg(not(feature = "profiling"))]
+    fn start_phase() -> HostRenderPhaseStart {
+        HostRenderPhaseStart
+    }
+
+    #[cfg(feature = "profiling")]
+    fn log_phase(wasm: &str, phase: &str, started: HostRenderPhaseStart) {
+        tracing::debug!(
+            wasm,
+            phase,
+            elapsed_us = started.elapsed().as_micros(),
+            "wasm host render phase"
+        );
+    }
+
+    #[cfg(not(feature = "profiling"))]
+    fn log_phase(_wasm: &str, _phase: &str, _started: HostRenderPhaseStart) {}
+
+    #[cfg(feature = "profiling")]
+    fn log_frame(
+        wasm: &str,
+        frame: u64,
+        delta_ms: u32,
+        started: HostRenderPhaseStart,
+        context: HostRenderFrameContext,
+    ) {
+        let elapsed_us = started.elapsed().as_micros();
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "profiling output only needs approximate FPS"
+        )]
+        let render_fps = if elapsed_us == 0 {
+            f64::INFINITY
+        } else {
+            1_000_000.0 / elapsed_us as f64
+        };
+
+        tracing::debug!(
+            wasm,
+            frame,
+            delta_ms,
+            total_us = elapsed_us,
+            render_fps,
+            target_width = context.target_width,
+            target_height = context.target_height,
+            wants_immediate = context.wants_immediate,
+            status = ?context.status,
+            "wasm host render frame"
+        );
+
+        if frame.is_multiple_of(Self::DEFAULT_FRAME_SUMMARY_INTERVAL) {
+            tracing::info!(
+                wasm,
+                frame,
+                delta_ms,
+                total_us = elapsed_us,
+                render_fps,
+                target_width = context.target_width,
+                target_height = context.target_height,
+                wants_immediate = context.wants_immediate,
+                status = ?context.status,
+                "wasm host render frame summary"
+            );
+        }
+    }
+
+    #[cfg(not(feature = "profiling"))]
+    fn log_frame(
+        _wasm: &str,
+        _frame: u64,
+        _delta_ms: u32,
+        _started: HostRenderPhaseStart,
+        _context: HostRenderFrameContext,
+    ) {
+    }
+}
+
 #[expect(
     clippy::cast_possible_wrap,
     reason = "GL viewport dimensions fit in i32"
@@ -783,7 +938,8 @@ fn normalize_gl_state(egl: &bmc_widget::egl::EglContext, w: u32, h: u32) {
 #[cfg(test)]
 mod tests {
     use super::{
-        RendererAssetEvictor, SystemSnapshot, apply_setting_update, evict_renderer_assets,
+        HostRenderFrameContext, RendererAssetEvictor, SystemSnapshot, apply_setting_update,
+        evict_renderer_assets,
     };
     use bmc_widget_protocol::{NextAlarm as WireNextAlarm, SettingUpdate};
 
@@ -866,5 +1022,16 @@ mod tests {
 
         assert_eq!(evict_renderer_assets(&mut evictor, "42"), 3);
         assert_eq!(evictor.prefixes, vec!["42".to_owned()]);
+    }
+
+    #[test]
+    fn host_render_frame_context_carries_summary_dimensions_and_status() {
+        let context =
+            HostRenderFrameContext::new(638, 480, true, bmc_wasm_runtime::RenderStatus::Ok);
+
+        assert_eq!(context.target_width, 638);
+        assert_eq!(context.target_height, 480);
+        assert!(context.wants_immediate);
+        assert_eq!(context.status, bmc_wasm_runtime::RenderStatus::Ok);
     }
 }
