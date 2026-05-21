@@ -2,7 +2,7 @@
 
 //! Compositor state management combining Smithay handlers with deck_widget_v1 protocol.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::lifecycle_emitter::LifecycleEmitter;
 use super::protocol::{
@@ -432,6 +432,19 @@ impl CompositorState {
 
         for (buffer, _) in removed {
             self.invalidated_buffers.push(buffer.id());
+        }
+    }
+
+    pub fn release_widget_buffers_for(&mut self, instance_ids: &HashSet<InstanceId>) {
+        let removed: Vec<_> = self
+            .widget_buffers
+            .extract_if(.., |(_, id)| instance_ids.contains(id))
+            .collect();
+
+        for (buffer, instance_id) in removed {
+            tracing::debug!("Releasing off-screen buffer for dormant widget {instance_id}");
+            self.invalidated_buffers.push(buffer.id());
+            buffer.release();
         }
     }
 
