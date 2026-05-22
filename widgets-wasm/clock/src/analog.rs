@@ -133,6 +133,27 @@ pub(crate) fn place_hand_at_pivot(
     Draw::svg(top_left_x, top_left_y, w, h, icon, tint).with_anti_alias()
 }
 
+/// Hand drop shadow — ~6 px Gaussian, 50 % black, scaled with the dial.
+pub(crate) fn hand_shadow(scale: f32) -> DropShadow {
+    DropShadow {
+        dx: 0.0,
+        dy: 0.0,
+        blur: 6.0 * scale,
+        color: Color::from_rgba(0, 0, 0, 0x80),
+    }
+}
+
+/// Shadow the centre disc casts onto the hands beneath it — dark and slightly
+/// offset, reading cleanly because it lands on the white hand surfaces.
+pub(crate) fn centre_shadow(scale: f32) -> DropShadow {
+    DropShadow {
+        dx: 0.0,
+        dy: 3.0 * scale,
+        blur: 5.0 * scale,
+        color: Color::from_rgba(0, 0, 0, 0xA0),
+    }
+}
+
 pub(crate) fn centre_icon(
     centre_x: f32,
     centre_y: f32,

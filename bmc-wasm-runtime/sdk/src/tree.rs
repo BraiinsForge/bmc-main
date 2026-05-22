@@ -21,9 +21,9 @@ use std::vec::Vec;
 use bmc_wasm_protocol::{
     AnimProperty, BitmapId, Color, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON,
     DRAW_MESH, DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED,
-    DRAW_SPHERE, DRAW_TEXT, Easing, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS, NODE_CENTER,
-    NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW,
-    NODE_SCROLL, NODE_SPACER, SvgId,
+    DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Easing, LoopMode, MeshId,
+    NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION,
+    NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL, NODE_SPACER, SvgId,
 };
 
 use crate::PropsFieldValue;
@@ -395,6 +395,20 @@ use crate::TouchHit;
 #[cfg(target_arch = "wasm32")]
 use crate::host;
 
+/// Parameters for `Draw::with_drop_shadow`.
+/// Mirrors CSS `drop-shadow(dx dy blur color)`.
+#[derive(Clone, Copy, Debug)]
+pub struct DropShadow {
+    /// Horizontal offset in screen pixels (positive = right).
+    pub dx: f32,
+    /// Vertical offset in screen pixels (positive = down).
+    pub dy: f32,
+    /// Gaussian-blur sigma in screen pixels. Capped at `DROP_SHADOW_BLUR_MAX`.
+    pub blur: f32,
+    /// Shadow colour, including alpha.
+    pub color: Color,
+}
+
 /// Draw command for canvas children (local coordinates)
 #[derive(Clone, Debug)]
 pub enum Draw {
@@ -423,6 +437,14 @@ pub enum Draw {
     },
     /// Rotate any draw command around its center
     Rotated { angle: f32, inner: Box<Draw> },
+    /// Drop shadow behind any draw command — see [`DropShadow`].
+    Shadow {
+        dx: f32,
+        dy: f32,
+        blur: f32,
+        color: Color,
+        inner: Box<Draw>,
+    },
     /// Svg at absolute local position
     Svg {
         x: f32,
@@ -563,6 +585,35 @@ impl Draw {
         Self::Rotated {
             angle,
             inner: Box::new(inner),
+        }
+    }
+
+    /// Wrap this draw in a screen-space drop shadow, replacing
+    /// any prior shadow (shadows do not stack).
+    /// `blur` is clamped to `[0.0, DROP_SHADOW_BLUR_MAX]`;
+    /// over-cap values also fire a debug assert.
+    #[must_use]
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "any non-Shadow Draw is wrapped identically; new variants don't change the wrap"
+    )]
+    pub fn with_drop_shadow(self, shadow: DropShadow) -> Self {
+        debug_assert!(
+            shadow.blur <= DROP_SHADOW_BLUR_MAX,
+            "BUG: drop-shadow blur {} exceeds cap {DROP_SHADOW_BLUR_MAX}",
+            shadow.blur,
+        );
+        let blur = shadow.blur.clamp(0.0, DROP_SHADOW_BLUR_MAX);
+        let inner = match self {
+            Self::Shadow { inner, .. } => inner,
+            other => Box::new(other),
+        };
+        Self::Shadow {
+            dx: shadow.dx,
+            dy: shadow.dy,
+            blur,
+            color: shadow.color,
+            inner,
         }
     }
 
@@ -1544,6 +1595,20 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*angle);
             serialize_draw(buf, inner);
         }
+        Draw::Shadow {
+            dx,
+            dy,
+            blur,
+            color,
+            inner,
+        } => {
+            buf.write_u8(DRAW_SHADOW);
+            buf.write_f32(*dx);
+            buf.write_f32(*dy);
+            buf.write_f32(*blur);
+            buf.write_color(*color);
+            serialize_draw(buf, inner);
+        }
         Draw::Modified {
             animations,
             transition,
@@ -1803,4 +1868,110 @@ pub fn render_ui(width: u32, height: u32, root: Node) -> TreeRenderResult {
     }
 
     result
+}
+
+#[cfg(test)]
+mod drop_shadow_tests {
+    use super::*;
+
+    fn rect() -> Draw {
+        Draw::rect(0.0, 0.0, 10.0, 10.0, Color::from_rgb(0xFF, 0xFF, 0xFF))
+    }
+
+    #[test]
+    fn with_drop_shadow_wraps_the_draw() {
+        let shadowed = rect().with_drop_shadow(DropShadow {
+            dx: 1.0,
+            dy: 2.0,
+            blur: 4.0,
+            color: Color::from_rgba(0, 0, 0, 0x80),
+        });
+        let Draw::Shadow {
+            dx,
+            dy,
+            blur,
+            inner,
+            ..
+        } = shadowed
+        else {
+            panic!("with_drop_shadow should produce Draw::Shadow");
+        };
+        assert_eq!((dx, dy, blur), (1.0, 2.0, 4.0));
+        assert!(matches!(*inner, Draw::Rect { .. }));
+    }
+
+    #[test]
+    fn with_drop_shadow_does_not_stack() {
+        let restacked = rect()
+            .with_drop_shadow(DropShadow {
+                dx: 1.0,
+                dy: 1.0,
+                blur: 4.0,
+                color: Color::from_rgba(0, 0, 0, 0x80),
+            })
+            .with_drop_shadow(DropShadow {
+                dx: 9.0,
+                dy: 9.0,
+                blur: 8.0,
+                color: Color::from_rgba(0, 0, 0, 0xC0),
+            });
+        let Draw::Shadow {
+            dx, blur, inner, ..
+        } = restacked
+        else {
+            panic!("expected Draw::Shadow");
+        };
+        // Second call replaces the first — params are the latest.
+        assert_eq!((dx, blur), (9.0, 8.0));
+        // The inner stays the original Rect, not a nested Shadow.
+        assert!(matches!(*inner, Draw::Rect { .. }), "shadows must not nest",);
+    }
+
+    #[test]
+    #[expect(clippy::float_cmp, reason = "clamp output is an exact bound")]
+    fn with_drop_shadow_clamps_blur_to_range() {
+        // Negative blur clamps to 0 without tripping the debug assertion
+        // (the assertion only fires for values *above* the cap).
+        let shadowed = rect().with_drop_shadow(DropShadow {
+            dx: 0.0,
+            dy: 0.0,
+            blur: -5.0,
+            color: Color::from_rgb(0, 0, 0),
+        });
+        let Draw::Shadow { blur, .. } = shadowed else {
+            panic!("expected Draw::Shadow");
+        };
+        assert_eq!(blur, 0.0);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "drop-shadow blur")]
+    fn with_drop_shadow_asserts_on_over_cap_blur() {
+        let _ = rect().with_drop_shadow(DropShadow {
+            dx: 0.0,
+            dy: 0.0,
+            blur: DROP_SHADOW_BLUR_MAX + 50.0,
+            color: Color::from_rgb(0, 0, 0),
+        });
+    }
+
+    #[test]
+    fn serialize_draw_emits_shadow_then_inner() {
+        let shadowed = rect().with_drop_shadow(DropShadow {
+            dx: 1.0,
+            dy: 2.0,
+            blur: 4.0,
+            color: Color::from_rgba(0, 0, 0, 0x80),
+        });
+        let mut buf = TreeBuffer::new();
+        serialize_draw(&mut buf, &shadowed);
+        let bytes = buf.into_bytes();
+        // [DRAW_SHADOW][dx:4][dy:4][blur:4][color:4][inner...]
+        assert_eq!(bytes[0], DRAW_SHADOW);
+        assert_eq!(
+            bytes[17], DRAW_RECT,
+            "the wrapped draw must follow the 16-byte shadow header",
+        );
+    }
 }

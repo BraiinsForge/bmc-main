@@ -6,5 +6,8 @@ edition = "2024"
 [dependencies]
 usvg.workspace = true
 
+[dev-dependencies]
+roxmltree.workspace = true
+
 [lints]
 workspace = true

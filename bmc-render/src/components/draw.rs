@@ -55,6 +55,7 @@ pub(crate) fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
         DrawCommand::Centered { inner }
         | DrawCommand::Rotated { inner, .. }
         | DrawCommand::Modified { inner, .. }
+        | DrawCommand::Shadow { inner, .. }
         | DrawCommand::Orbit { inner, .. } => get_draw_bounds(inner),
         DrawCommand::Text { .. } => (0.0, 0.0),
         DrawCommand::Path { points, .. } => {
@@ -314,6 +315,36 @@ fn render_draw_inner(
                 color_override,
                 anim_ctx,
             );
+        }
+        DrawCommand::Shadow {
+            dx,
+            dy,
+            blur,
+            color,
+            inner,
+        } => {
+            // FBO is canvas-sized; the closure draws at FBO-local (0, 0)
+            // and `drop_shadow` composites at the canvas origin (cx, cy).
+            let fbo_w = cw.ceil().max(1.0) as u32;
+            let fbo_h = ch.ceil().max(1.0) as u32;
+            renderer.drop_shadow(cx, cy, fbo_w, fbo_h, *dx, *dy, *blur, *color, &mut |r| {
+                render_draw_inner(
+                    r,
+                    inner,
+                    0.0,
+                    0.0,
+                    cw,
+                    ch,
+                    offset_x,
+                    offset_y,
+                    rotation,
+                    scale,
+                    alpha,
+                    orbit_angle_offset,
+                    color_override,
+                    anim_ctx,
+                );
+            });
         }
         DrawCommand::Modified {
             animations,
@@ -857,9 +888,9 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             vals.rotation = *angle;
             vals
         }
-        DrawCommand::Centered { inner } | DrawCommand::Modified { inner, .. } => {
-            extract_draw_values(inner)
-        }
+        DrawCommand::Centered { inner }
+        | DrawCommand::Modified { inner, .. }
+        | DrawCommand::Shadow { inner, .. } => extract_draw_values(inner),
         DrawCommand::Path { color, .. } => PrevDrawValues {
             color: *color,
             ..Default::default()

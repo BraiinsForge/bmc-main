@@ -137,6 +137,12 @@ pub const DRAW_NINE_PATCH: u8 = 0x48;
 pub const DRAW_CENTERED: u8 = 0x60;
 pub const DRAW_ORBIT: u8 = 0x61;
 pub const DRAW_ROTATED: u8 = 0x62;
+pub const DRAW_SHADOW: u8 = 0x63;
+
+/// Hard cap on Gaussian-blur sigma for a `DRAW_SHADOW`.
+/// Clamped against by both the SDK (on encode)
+/// and the host renderer (on decode).
+pub const DROP_SHADOW_BLUR_MAX: f32 = 16.0;
 
 // Draw commands — modifiers (0x80–0x9F)
 pub const DRAW_MODIFIED: u8 = 0x80;

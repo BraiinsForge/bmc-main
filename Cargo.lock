@@ -1471,6 +1471,7 @@ dependencies = [
 name = "bmc-svg-compiler"
 version = "0.1.0"
 dependencies = [
+ "roxmltree 0.20.0",
  "usvg 0.45.1",
 ]
 

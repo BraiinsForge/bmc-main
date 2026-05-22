@@ -156,6 +156,13 @@ pub enum DrawCommand {
         angle: f32,
         inner: Box<DrawCommand>,
     },
+    Shadow {
+        dx: f32,
+        dy: f32,
+        blur: f32,
+        color: Color,
+        inner: Box<DrawCommand>,
+    },
     Modified {
         animations: Vec<HostAnimationDef>,
         transition: Option<HostTransitionDef>,
@@ -763,6 +770,20 @@ impl<'a> TreeReader<'a> {
                 let inner = self.read_draw()?;
                 Ok(DrawCommand::Rotated {
                     angle,
+                    inner: Box::new(inner),
+                })
+            }
+            DRAW_SHADOW => {
+                let dx = self.read_f32()?;
+                let dy = self.read_f32()?;
+                let blur = self.read_f32()?;
+                let color = Color::from_raw(self.read_u32()?);
+                let inner = self.read_draw()?;
+                Ok(DrawCommand::Shadow {
+                    dx,
+                    dy,
+                    blur,
+                    color,
                     inner: Box::new(inner),
                 })
             }
@@ -2080,5 +2101,41 @@ mod tests {
     fn test_props_size() {
         // In-memory size may differ from wire SIZE due to alignment padding
         assert!(std::mem::size_of::<PropsData>() >= PropsData::SIZE);
+    }
+
+    #[test]
+    fn read_draw_decodes_shadow() {
+        // Wire layout: [DRAW_SHADOW][dx f32][dy f32][blur f32][color u32][inner draw]
+        let mut bytes = vec![DRAW_SHADOW];
+        bytes.extend_from_slice(&2.0_f32.to_le_bytes());
+        bytes.extend_from_slice(&3.0_f32.to_le_bytes());
+        bytes.extend_from_slice(&7.5_f32.to_le_bytes());
+        bytes.extend_from_slice(&0x1122_3344_u32.to_le_bytes());
+        // Inner: a plain rect — [DRAW_RECT][x][y][w][h][color].
+        bytes.push(DRAW_RECT);
+        for v in [1.0_f32, 1.0, 4.0, 5.0] {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        bytes.extend_from_slice(&0xFF00_FF00_u32.to_le_bytes());
+
+        let draw = TreeReader::new(&bytes)
+            .read_draw()
+            .expect("BUG: test buffer encodes a valid DRAW_SHADOW");
+        let DrawCommand::Shadow {
+            dx,
+            dy,
+            blur,
+            color,
+            inner,
+        } = draw
+        else {
+            panic!("expected DrawCommand::Shadow, got {draw:?}");
+        };
+        assert_eq!((dx, dy, blur), (2.0, 3.0, 7.5));
+        assert_eq!(color, Color::from_raw(0x1122_3344));
+        assert!(
+            matches!(*inner, DrawCommand::Rect { .. }),
+            "shadow inner should decode as the wrapped rect",
+        );
     }
 }

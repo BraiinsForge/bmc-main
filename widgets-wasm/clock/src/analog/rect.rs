@@ -20,8 +20,8 @@ use super::{
     CENTER_BLACK, CENTER_ORANGE, CENTER_STROKE, CENTER_WHITE, HAND_HOUR, HAND_HOUR_PIVOT_X,
     HAND_HOUR_PIVOT_Y, HAND_HOUR_VIEWPORT, HAND_MINUTE, HAND_MINUTE_PIVOT_X, HAND_MINUTE_PIVOT_Y,
     HAND_MINUTE_VIEWPORT, HAND_SECOND, HAND_SECOND_PIVOT_X, HAND_SECOND_PIVOT_Y,
-    HAND_SECOND_VIEWPORT, centre_icon, hour_angle, local_clock_components, minute_angle,
-    place_hand_at_pivot, second_angle,
+    HAND_SECOND_VIEWPORT, centre_icon, centre_shadow, hand_shadow, hour_angle,
+    local_clock_components, minute_angle, place_hand_at_pivot, second_angle,
 };
 
 // ── Assets ─────────────────────────────────────────────────────────────
@@ -293,6 +293,9 @@ pub(crate) fn render(
     // so the existing round pivots apply.
     let hour_angle = hour_angle(hour12, minute);
     let minute_angle = minute_angle(minute);
+    // No shadow on the hour hand — lowest hand layer,
+    // its shadow would only fall on the dark dial.
+    // The minute hand's lands on the hour hand.
     draws.push(
         Draw::rotated(
             hour_angle,
@@ -323,21 +326,27 @@ pub(crate) fn render(
                 palette.primary,
             ),
         )
+        .with_drop_shadow(hand_shadow(size.hand_scale))
         .transition("minute-hand", 500, Easing::EaseOut),
     );
 
     // Centre-circle stack — draw order matters.
     // White goes under the second hand so the hand reads against it;
     // orange covers the second-hand root; black + stroke sit on top regardless.
-    draws.push(centre_icon(
-        centre_x,
-        centre_y,
-        size.hand_scale,
-        54.0,
-        &CENTER_WHITE,
-        palette.centre_white,
-    ));
+    // The white disc's shadow makes it sit visibly above the hands.
+    draws.push(
+        centre_icon(
+            centre_x,
+            centre_y,
+            size.hand_scale,
+            54.0,
+            &CENTER_WHITE,
+            palette.centre_white,
+        )
+        .with_drop_shadow(centre_shadow(size.hand_scale)),
+    );
     if params.show_seconds {
+        // No shadow on the seconds hand — barely visible, real perf cost.
         let second_angle = second_angle(second);
         draws.push(
             Draw::rotated(

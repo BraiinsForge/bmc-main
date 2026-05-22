@@ -33,6 +33,16 @@ const FONT_BOLD: &[u8] = include_bytes!("../../../assets/fonts/BraiinsSans-Bold.
 /// Fallback font for glyphs not covered by BraiinsSans (Greek, symbols, etc.).
 const FONT_FALLBACK: &[u8] = include_bytes!("../../../assets/fonts/NotoSans-Regular.ttf");
 
+/// Offscreen textures for `drop_shadow`, kept alive across frames
+/// so the two textures aren't reallocated every frame;
+/// resized only on a size change.
+struct ShadowFboPool {
+    width: u32,
+    height: u32,
+    unblurred: femtovg::ImageId,
+    blurred: femtovg::ImageId,
+}
+
 /// GPU-accelerated renderer backed by FemtoVG (OpenGL ES 2.0+).
 ///
 /// Owns the FemtoVG canvas, font IDs, cosmic-text `FontSystem`, and a
@@ -61,6 +71,10 @@ pub struct FemtoVgRenderer {
     mesh_msaa_samples: u32,
     width: f32,
     height: f32,
+    /// Device-pixel ratio from the last `begin_frame`;
+    /// shadow FBOs are sized in physical pixels off it.
+    dpi_scale: f32,
+    shadow_fbo_pool: Option<ShadowFboPool>,
     frame_counter: u64,
 }
 
@@ -133,6 +147,7 @@ impl FemtoVgRenderer {
     ) {
         self.width = width as f32;
         self.height = height as f32;
+        self.dpi_scale = dpi_scale;
         self.frame_counter += 1;
         self.canvas.set_render_target(RenderTarget::Image(image_id));
         #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -148,6 +163,72 @@ impl FemtoVgRenderer {
     /// Restore rendering to the screen FBO.
     pub fn set_render_target_screen(&mut self) {
         self.canvas.set_render_target(RenderTarget::Screen);
+    }
+
+    /// Run `inner` translated to the canvas origin `(cx, cy)`.
+    /// Used by the `drop_shadow` fallbacks,
+    /// since the closure draws at FBO-local `(0, 0)`.
+    fn render_inner_translated(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        inner: &mut dyn FnMut(&mut dyn Renderer),
+    ) {
+        self.canvas.save();
+        self.canvas.translate(cx, cy);
+        inner(self);
+        self.canvas.restore();
+    }
+
+    /// Borrow the pooled FBO pair at `width × height`,
+    /// allocating or resizing as needed.
+    /// `None` only if the GPU refuses the allocation.
+    ///
+    /// Single pair: two `drop_shadow` calls in one frame
+    /// at different sizes would realloc each call.
+    ///
+    /// Clock shadows are all canvas-sized, so they don't;
+    /// a multi-entry pool would be needed otherwise.
+    fn acquire_shadow_fbos(
+        &mut self,
+        width: u32,
+        height: u32,
+    ) -> Option<(femtovg::ImageId, femtovg::ImageId)> {
+        if let Some(pool) = &self.shadow_fbo_pool
+            && pool.width == width
+            && pool.height == height
+        {
+            return Some((pool.unblurred, pool.blurred));
+        }
+        if let Some(stale) = self.shadow_fbo_pool.take() {
+            self.canvas.delete_image(stale.unblurred);
+            self.canvas.delete_image(stale.blurred);
+        }
+        let unblurred = self
+            .canvas
+            .create_image_empty(
+                width as usize,
+                height as usize,
+                femtovg::PixelFormat::Rgba8,
+                femtovg::ImageFlags::empty(),
+            )
+            .ok()?;
+        let Ok(blurred) = self.canvas.create_image_empty(
+            width as usize,
+            height as usize,
+            femtovg::PixelFormat::Rgba8,
+            femtovg::ImageFlags::empty(),
+        ) else {
+            self.canvas.delete_image(unblurred);
+            return None;
+        };
+        self.shadow_fbo_pool = Some(ShadowFboPool {
+            width,
+            height,
+            unblurred,
+            blurred,
+        });
+        Some((unblurred, blurred))
     }
 
     /// Create a new GPU renderer targeting a specific FBO.
@@ -228,6 +309,8 @@ impl FemtoVgRenderer {
             mesh_msaa_samples,
             width: width as f32,
             height: height as f32,
+            dpi_scale: 1.0,
+            shadow_fbo_pool: None,
             frame_counter: 0,
         })
     }
@@ -271,6 +354,10 @@ impl FemtoVgRenderer {
         }
         if let Some(mesh) = self.mesh_renderer.take() {
             mesh.destroy(&self.gl, &mut self.canvas);
+        }
+        if let Some(pool) = self.shadow_fbo_pool.take() {
+            self.canvas.delete_image(pool.unblurred);
+            self.canvas.delete_image(pool.blurred);
         }
         self.bitmap_registry.clear(&mut self.canvas);
     }
@@ -737,11 +824,109 @@ impl Renderer for FemtoVgRenderer {
         super::bitmap::draw_bitmap(&mut self.canvas, image_id, x, y, w, h);
     }
 
+    // -- Drop shadow --
+
+    fn drop_shadow(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        fbo_w: u32,
+        fbo_h: u32,
+        dx: f32,
+        dy: f32,
+        blur: f32,
+        color: Color,
+        inner: &mut dyn FnMut(&mut dyn Renderer),
+    ) {
+        if fbo_w == 0 || fbo_h == 0 {
+            self.render_inner_translated(cx, cy, inner);
+            return;
+        }
+
+        // Physical-pixel FBO size, so the offscreen pass matches screen DPI
+        // and the composite doesn't upscale a half-resolution buffer.
+        let dpi = self.dpi_scale.max(1.0);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "FBO dimensions are small positive pixel counts after ceil()"
+        )]
+        let (pw, ph) = (
+            ((fbo_w as f32) * dpi).ceil() as u32,
+            ((fbo_h as f32) * dpi).ceil() as u32,
+        );
+
+        let Some((unblurred, blurred)) = self.acquire_shadow_fbos(pw, ph) else {
+            tracing::warn!("drop_shadow: FBO pool allocation failed; falling back to no shadow");
+            self.render_inner_translated(cx, cy, inner);
+            return;
+        };
+
+        // Rasterise the inner draw into `unblurred` at FBO-local coordinates.
+        // `reset` drops transform + scissor; the device-pixel ratio is canvas-level
+        // and survives, so logical coords still scale to physical.
+        self.canvas.save();
+        self.canvas.reset();
+        self.canvas
+            .set_render_target(RenderTarget::Image(unblurred));
+        self.canvas
+            .clear_rect(0, 0, pw, ph, femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0));
+
+        inner(self);
+
+        // Sigma is logical pixels; scale to physical.
+        // Clamp mirrors the SDK cap so a malformed
+        // wire value can't request an unbounded blur.
+        let sigma = blur.clamp(0.0, bmc_wasm_protocol::DROP_SHADOW_BLUR_MAX) * dpi;
+        if sigma > 0.0 {
+            self.canvas.filter_image(
+                blurred,
+                femtovg::ImageFilter::GaussianBlur { sigma },
+                unblurred,
+            );
+        }
+
+        // No mid-frame flush: femtovg replays its queue in submission order
+        // and the target switch is an ordering barrier, so the composites
+        // below read fully-rendered textures. That same ordering lets one
+        // pooled pair serve every shadow in a frame — draw N's composites
+        // are queued before draw N+1's `clear_rect`. A flush here,
+        // or out-of-order shadow rendering, would break that.
+        self.canvas.set_render_target(RenderTarget::Screen);
+        self.canvas.restore();
+
+        let composite_src = if sigma > 0.0 { blurred } else { unblurred };
+        let tint = to_femtovg_color(color.to_u32());
+        let fbo_w_f = fbo_w as f32;
+        let fbo_h_f = fbo_h as f32;
+
+        // Each composite flips Y so the GL FBO's bottom-left-origin texture
+        // lands right-side-up; paint and path anchor at (0, 0) in flipped space.
+        self.canvas.save();
+        self.canvas.translate(cx + dx, cy + dy + fbo_h_f);
+        self.canvas.scale(1.0, -1.0);
+        let shadow_paint = Paint::image_tint(composite_src, 0.0, 0.0, fbo_w_f, fbo_h_f, 0.0, tint);
+        let mut shadow_path = Path::new();
+        shadow_path.rect(0.0, 0.0, fbo_w_f, fbo_h_f);
+        self.canvas.fill_path(&shadow_path, &shadow_paint);
+        self.canvas.restore();
+
+        self.canvas.save();
+        self.canvas.translate(cx, cy + fbo_h_f);
+        self.canvas.scale(1.0, -1.0);
+        let asset_paint = Paint::image(unblurred, 0.0, 0.0, fbo_w_f, fbo_h_f, 0.0, 1.0);
+        let mut asset_path = Path::new();
+        asset_path.rect(0.0, 0.0, fbo_w_f, fbo_h_f);
+        self.canvas.fill_path(&asset_path, &asset_paint);
+        self.canvas.restore();
+    }
+
     // -- Frame lifecycle --
 
     fn begin_frame(&mut self, width: u32, height: u32, dpi_scale: f32) {
         self.width = width as f32;
         self.height = height as f32;
+        self.dpi_scale = dpi_scale;
         self.frame_counter += 1;
         // FemtoVG's `set_render_target(Screen)` skips the SetRenderTarget command
         // when the Canvas already thinks it's targeting Screen (the default).

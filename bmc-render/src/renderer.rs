@@ -210,6 +210,27 @@ pub trait Renderer {
     /// If `smooth` is true, use Catmull-Rom spline interpolation.
     fn fill_path_points(&mut self, points: &[(f32, f32)], color: Color, smooth: bool);
 
+    // -- Drop shadow --
+
+    /// Backend hook for `DrawCommand::Shadow`. `(cx, cy)` is the canvas origin;
+    /// `(fbo_w, fbo_h)` an offscreen size holding the inner content;
+    /// `inner` rasterises the wrapped draw at FBO-local coordinates.
+    ///
+    /// Backends without offscreen targets may stub this to just run `inner`.
+    #[expect(clippy::too_many_arguments)]
+    fn drop_shadow(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        fbo_w: u32,
+        fbo_h: u32,
+        dx: f32,
+        dy: f32,
+        blur: f32,
+        color: Color,
+        inner: &mut dyn FnMut(&mut dyn Renderer),
+    );
+
     // -- Frame lifecycle --
 
     /// Begin a frame with DPI scaling.
