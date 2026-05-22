@@ -502,10 +502,13 @@ impl WidgetSlot {
             HostRenderProfiling::log_phase(&self.wasm_basename, "staging_blit", phase_start);
 
             let phase_start = HostRenderProfiling::start_phase();
+            // Implicit dmabuf sync is provided downstream by the compositor /
+            // Wayland producer-consumer path; we only need the GL commands in
+            // flight, not completed, before export_and_swap.
             unsafe {
-                shared.egl.gl().finish();
+                shared.egl.gl().flush();
             }
-            HostRenderProfiling::log_phase(&self.wasm_basename, "gl_finish", phase_start);
+            HostRenderProfiling::log_phase(&self.wasm_basename, "gl_flush", phase_start);
 
             let phase_start = HostRenderProfiling::start_phase();
             let (dmabuf, slot_idx) = egl_target.buffers.export_and_swap()?;
