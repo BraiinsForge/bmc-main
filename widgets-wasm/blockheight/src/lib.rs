@@ -88,6 +88,10 @@ fn font_weight(style: manifest_params::NumbersFontStyle) -> FontWeight {
 struct BlockData {
     height: u32,
     timestamp_utc: String,
+    /// `format_date + ", " + format_time` against the current host
+    /// snapshot. `None` until first computed in `render`, and cleared by
+    /// `on_system_update` when the snapshot may have changed.
+    formatted_timestamp: Option<String>,
 }
 
 enum State {
@@ -141,6 +145,7 @@ fn on_block_data(response: &FetchResponse) {
                 Some(BlockData {
                     height,
                     timestamp_utc,
+                    formatted_timestamp: None,
                 })
             }
         }
@@ -251,5 +256,62 @@ fn format_height() -> String {
 }
 
 fn format_timestamp() -> String {
-    NOT_AVAILABLE.to_string()
+    STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        let State::Loaded(data) = &mut *state else {
+            return NOT_AVAILABLE.to_string();
+        };
+        if let Some(cached) = &data.formatted_timestamp {
+            return cached.clone();
+        }
+        let formatted = format_timestamp_str(&data.timestamp_utc);
+        data.formatted_timestamp = Some(formatted.clone());
+        formatted
+    })
+}
+
+fn format_timestamp_str(raw_utc: &str) -> String {
+    let mut rfc3339 = String::with_capacity(raw_utc.len() + 1);
+    rfc3339.push_str(raw_utc);
+    rfc3339.push('Z');
+
+    let Some(unix_secs) = parse_date(&rfc3339) else {
+        return NOT_AVAILABLE.to_string();
+    };
+    let now = SystemTime { unix_secs };
+
+    let tz = system::current().timezone().map(Tz::from_runtime);
+
+    let date_str = format_date(
+        now,
+        FormatDateOpts {
+            timezone: tz.clone(),
+            ..FormatDateOpts::default()
+        },
+    );
+    let time_str = format_time(
+        now,
+        FormatTimeOpts {
+            timezone: tz,
+            ..FormatTimeOpts::default()
+        },
+    );
+    if date_str.is_empty() || time_str.is_empty() {
+        return NOT_AVAILABLE.to_string();
+    }
+    let mut out = String::with_capacity(date_str.len() + 2 + time_str.len());
+    out.push_str(&date_str);
+    out.push_str(", ");
+    out.push_str(&time_str);
+    out
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn on_system_update() {
+    STATE.with(|s| {
+        if let State::Loaded(data) = &mut *s.borrow_mut() {
+            data.formatted_timestamp = None;
+        }
+    });
+    request_frame();
 }
