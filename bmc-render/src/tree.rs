@@ -52,7 +52,8 @@ pub use crate::components::notification::{
     measure_notification_banner, render_notification_banner,
 };
 pub use bmc_wasm_protocol::{
-    CrossAlign, FontWeight, PropsData, TextAlign, TextOverflow, TextStyle, VerticalAlign,
+    CrossAlign, FontFamily, FontWeight, PropsData, TextAlign, TextOverflow, TextStyle,
+    VerticalAlign,
 };
 
 /// A text span with style overrides

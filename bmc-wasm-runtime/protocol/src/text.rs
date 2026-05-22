@@ -156,6 +156,17 @@ impl From<FontWeight> for u16 {
     }
 }
 
+/// Font family selector. `Sans = 0` keeps existing serialized widgets on
+/// the historical Braiins Sans face; `DeckSans` switches to the display
+/// face used by the legacy slint deck.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum FontFamily {
+    #[default]
+    Sans = 0,
+    DeckSans = 1,
+}
+
 /// Text style for paragraphs (28 bytes serialized).
 #[derive(Clone, Copy, Debug)]
 pub struct TextStyle {
@@ -172,6 +183,7 @@ pub struct TextStyle {
     pub outline_color: Color,          // default: TRANSPARENT (no outline)
     pub outline_width: f32,            // default: 0.0 (no outline)
     pub vertical_align: VerticalAlign, // default: Top
+    pub family: FontFamily,            // default: Sans
 }
 
 impl Default for TextStyle {
@@ -190,6 +202,7 @@ impl Default for TextStyle {
             outline_color: TRANSPARENT,
             outline_width: 0.0,
             vertical_align: VerticalAlign::Top,
+            family: FontFamily::Sans,
         }
     }
 }
@@ -209,7 +222,8 @@ impl TextStyle {
     ///   29-30: text_overflow (0=wrap, 1=clip, 2=ellipsis)
     /// flags2 bits:
     ///   0-1:   vertical_align (0=top, 1=center, 2=bottom, 3=baseline)
-    ///   2-31:  reserved
+    ///   2-3:   family (0=sans, 1=deck-sans)
+    ///   4-31:  reserved
     #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         let mut buf = [0_u8; Self::SIZE];
@@ -236,7 +250,7 @@ impl TextStyle {
             | strike_bit
             | align_bits
             | overflow_bits;
-        let flags2 = self.vertical_align as u32 & 0x3;
+        let flags2 = (self.vertical_align as u32 & 0x3) | ((self.family as u32 & 0x3) << 2);
         buf[12..16].copy_from_slice(&flags.to_le_bytes());
         buf[16..20].copy_from_slice(&self.outline_color.to_u32().to_le_bytes());
         buf[20..24].copy_from_slice(&self.outline_width.to_le_bytes());
@@ -280,6 +294,10 @@ impl TextStyle {
             3 => VerticalAlign::Baseline,
             _ => VerticalAlign::Top,
         };
+        let family = match (flags2 >> 2) & 0x3 {
+            1 => FontFamily::DeckSans,
+            _ => FontFamily::Sans,
+        };
 
         Self {
             size,
@@ -295,6 +313,7 @@ impl TextStyle {
             outline_color,
             outline_width,
             vertical_align,
+            family,
         }
     }
 }
@@ -441,6 +460,32 @@ mod tests {
         let back = TextStyle::from_bytes(&bytes);
         assert_eq!(back.vertical_align, VerticalAlign::Top);
         assert_eq!(back.align, TextAlign::Left);
+        assert_eq!(back.family, FontFamily::Sans);
+    }
+
+    #[test]
+    fn text_style_round_trips_every_family() {
+        for variant in [FontFamily::Sans, FontFamily::DeckSans] {
+            let s = TextStyle {
+                family: variant,
+                ..TextStyle::default()
+            };
+            let bytes = s.to_bytes();
+            let back = TextStyle::from_bytes(&bytes);
+            assert_eq!(back.family, variant);
+        }
+    }
+
+    #[test]
+    fn text_style_family_independent_of_vertical_align() {
+        let s = TextStyle {
+            family: FontFamily::DeckSans,
+            vertical_align: VerticalAlign::Baseline,
+            ..TextStyle::default()
+        };
+        let back = TextStyle::from_bytes(&s.to_bytes());
+        assert_eq!(back.family, FontFamily::DeckSans);
+        assert_eq!(back.vertical_align, VerticalAlign::Baseline);
     }
 
     #[test]

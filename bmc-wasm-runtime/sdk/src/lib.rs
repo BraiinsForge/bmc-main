@@ -639,6 +639,7 @@ macro_rules! style {
     // Text style fields
     (@route $ts:expr, $p:expr, size: $v:expr) => { $ts.size = $v; };
     (@route $ts:expr, $p:expr, weight: $v:expr) => { $ts.weight = $v; };
+    (@route $ts:expr, $p:expr, family: $v:expr) => { $ts.family = $v; };
     (@route $ts:expr, $p:expr, italic: $v:expr) => { $ts.italic = $v; };
     (@route $ts:expr, $p:expr, underline: $v:expr) => { $ts.underline = $v; };
     (@route $ts:expr, $p:expr, strikethrough: $v:expr) => { $ts.strikethrough = $v; };
