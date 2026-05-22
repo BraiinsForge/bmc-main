@@ -44,6 +44,10 @@ Browser-based interface hosted by the device for managing scenes, widgets, and s
 config forms are manifest-driven — any installed widget (including out-of-tree) is configurable without a firmware
 rebuild.
 
+### [Widgets](widgets/README.md)
+
+Information about all implemented official widgets.
+
 ### Audio & Alarms
 
 *Not yet documented.* Alarm scheduling with repeat patterns, snooze, and custom sound playback through the on-board
