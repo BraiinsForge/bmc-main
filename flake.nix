@@ -57,6 +57,7 @@
           name = "bmc-local-env";
           packages = (commonDeps.frontendDeps pkgs)
             ++ (with pkgs; [
+            cargo-watch
             ffmpeg-headless
             odiff
           ]);
