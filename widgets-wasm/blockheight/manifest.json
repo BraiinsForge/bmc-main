@@ -1,0 +1,50 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "7cb584a8-1f26-42a0-867e-955aadd2391c",
+  "version": "0.1.0",
+  "name": "Block Height",
+  "description": "Latest Bitcoin block height with optional timestamp",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/blockheight",
+  "settings": [
+    "localization",
+    "timezone"
+  ],
+  "sizes": [
+    "small",
+    "medium",
+    "large",
+    "full"
+  ],
+  "params": {
+    "numbers_font_style": {
+      "name": "Numbers font style",
+      "description": "Font weight of the block height numeral",
+      "type": "string",
+      "default_value": "bold",
+      "enum_values": [
+        {
+          "value": "regular",
+          "label": "Regular"
+        },
+        {
+          "value": "semi-bold",
+          "label": "Semi-bold"
+        },
+        {
+          "value": "bold",
+          "label": "Bold"
+        }
+      ]
+    },
+    "show_timestamp": {
+      "name": "Show time and date",
+      "description": "Display the block time and date under the height",
+      "type": "boolean",
+      "default_value": true
+    }
+  }
+}
