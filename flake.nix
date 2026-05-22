@@ -60,6 +60,7 @@
             cargo-watch
             ffmpeg-headless
             odiff
+            python3
           ]);
         };
 
