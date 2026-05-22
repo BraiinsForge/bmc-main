@@ -307,6 +307,11 @@ fn format_timestamp_str(raw_utc: &str) -> String {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn on_params_update() {
+    request_frame();
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn on_system_update() {
     STATE.with(|s| {
         if let State::Loaded(data) = &mut *s.borrow_mut() {
