@@ -250,10 +250,19 @@ impl FemtoVgRenderer {
         self.canvas
             .clear_rect(0, 0, pw, ph, femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0));
     }
-}
 
-impl Drop for FemtoVgRenderer {
-    fn drop(&mut self) {
+    /// Drop every caller-registered bitmap and icon plus the lazy-init sphere
+    /// and mesh renderers, returning the renderer to its post-`new` state.
+    /// Shaders, fonts, the screen FBO binding, and the paragraph layout cache
+    /// are preserved.
+    pub fn drop_all(&mut self) {
+        self.release_gpu_assets();
+        self.sphere_bitmap_id = None;
+        self.icon_registry = IconRegistry::new();
+        self.icon_registry.register_builtins();
+    }
+
+    fn release_gpu_assets(&mut self) {
         if let Some(sphere) = self.sphere.take() {
             sphere.destroy(&self.gl, &mut self.canvas);
         }
@@ -261,6 +270,12 @@ impl Drop for FemtoVgRenderer {
             mesh.destroy(&self.gl, &mut self.canvas);
         }
         self.bitmap_registry.clear(&mut self.canvas);
+    }
+}
+
+impl Drop for FemtoVgRenderer {
+    fn drop(&mut self) {
+        self.release_gpu_assets();
     }
 }
 

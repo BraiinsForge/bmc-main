@@ -673,9 +673,6 @@ impl TestbedApp {
         if !needs_reload {
             return;
         }
-        let Some(get_proc) = Self::gl_proc_address() else {
-            return;
-        };
         let wasm_bytes = match std::fs::read(&self.cli.wasm_path) {
             Ok(b) => b,
             Err(e) => {
@@ -693,33 +690,14 @@ impl TestbedApp {
         for tile in &mut self.tiles {
             let (led_tx, led_rx) = std::sync::mpsc::channel();
             let rt_config = RuntimeConfig {
-                mesh_msaa_samples: 4,
                 params: self.params.clone(),
                 system: self.system.clone(),
                 led_command_sender: Some(led_tx),
                 ..RuntimeConfig::default()
             };
-            // Rebuild the renderer too so atlases/caches don't bleed across reloads.
-            //
-            // SAFETY: eframe keeps the GL context current for the app's lifetime.
-            let new_renderer = match unsafe {
-                FemtoVgRenderer::new(
-                    proc_loader(get_proc.clone()),
-                    tile.gpu.width,
-                    tile.gpu.height,
-                    tile.gpu.fbo_id(),
-                    rt_config.mesh_msaa_samples,
-                )
-            } {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!("hot reload: {} renderer: {e}", tile.label);
-                    continue;
-                }
-            };
+            tile.renderer.drop_all();
             match WasmWidgetRuntime::new(&wasm_bytes, tile.gpu.width, tile.gpu.height, rt_config) {
                 Ok(rt) => {
-                    tile.renderer = new_renderer;
                     tile.runtime = rt;
                     tile.led_rx = led_rx;
                     tile.led_scene = None;
@@ -732,8 +710,6 @@ impl TestbedApp {
                 }
             }
         }
-        // Avoid an unused-`frame` warning while we keep the parameter for future texture
-        // re-registration in case the reload ever changes tile dimensions.
         let _ = frame;
     }
 
