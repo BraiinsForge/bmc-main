@@ -232,7 +232,7 @@ impl SceneRenderer {
             OutputDamage::Widgets(_) => Vec::new(),
         };
 
-        let mut drawn_regions = Vec::new();
+        let mut renderable_items = Vec::new();
 
         ii_stopwatch::stopwatch_start!(self.compose_w);
         for (buffer_id, placement, x_offset) in &to_render {
@@ -242,10 +242,6 @@ impl SceneRenderer {
             };
 
             let tex_size = texture.size();
-            let src: Rectangle<f64, BufferCoord> = Rectangle::from_loc_and_size(
-                (0.0, 0.0),
-                (f64::from(tex_size.w), f64::from(tex_size.h)),
-            );
 
             #[expect(clippy::cast_possible_wrap)]
             let logical_x = placement.position.x as i32 + x_offset;
@@ -269,7 +265,6 @@ impl SceneRenderer {
             let physical_y = output_height - logical_x - phys_h;
 
             let dst = Rectangle::from_loc_and_size((physical_x, physical_y), (phys_w, phys_h));
-            drawn_regions.push(dst);
 
             if let OutputDamage::Widgets(dirty_widgets) = output_damage
                 && dirty_widgets.contains(&placement.instance_id)
@@ -277,11 +272,36 @@ impl SceneRenderer {
                 damage_rects.push(dst);
             }
 
-            let damage = texture_damage_rect(dst);
+            renderable_items.push((buffer_id.clone(), placement.instance_id.clone(), dst));
+        }
+
+        let drawn_regions: Vec<_> = renderable_items.iter().map(|(_, _, dst)| *dst).collect();
+
+        // Clear regions not covered by any widget before drawing widgets.
+        // Clearing after widget draws can overpaint widget content on the
+        // target hardware when the clear path and rotated texture path mix.
+        let clear_regions = uncovered_output_regions(output_rect, drawn_regions);
+        if !clear_regions.is_empty() {
+            frame
+                .clear(BACKGROUND_COLOR, &clear_regions)
+                .context("Failed to clear uncovered output regions")?;
+        }
+
+        for (buffer_id, instance_id, dst) in &renderable_items {
+            let Some(texture) = self.texture_cache.get(buffer_id) else {
+                tracing::warn!("No cached texture for buffer {:?}", buffer_id);
+                continue;
+            };
+            let tex_size = texture.size();
+            let src: Rectangle<f64, BufferCoord> = Rectangle::from_loc_and_size(
+                (0.0, 0.0),
+                (f64::from(tex_size.w), f64::from(tex_size.h)),
+            );
+            let damage = texture_damage_rect(*dst);
             if let Err(e) = frame.render_texture_from_to(
                 texture,
                 src,
-                dst,
+                *dst,
                 &[damage],
                 &[],
                 Transform::_270,
@@ -289,19 +309,10 @@ impl SceneRenderer {
                 None,
                 &[],
             ) {
-                tracing::warn!("Failed to render widget {}: {:?}", placement.instance_id, e);
+                tracing::warn!("Failed to render widget {}: {:?}", instance_id, e);
             }
         }
         ii_stopwatch::stopwatch_stop!(self.compose_w);
-
-        // Clear regions not covered by any widget so gaps and edge strips
-        // get a deterministic background instead of stale pool content.
-        let clear_regions = uncovered_output_regions(output_rect, drawn_regions);
-        if !clear_regions.is_empty() {
-            frame
-                .clear(BACKGROUND_COLOR, &clear_regions)
-                .context("Failed to clear uncovered output regions")?;
-        }
 
         ii_stopwatch::stopwatch_start!(self.finish_w);
         let _sync = frame.finish().context("Failed to finish frame")?;
