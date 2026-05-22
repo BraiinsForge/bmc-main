@@ -41,6 +41,11 @@ into the runtime, and the rationale behind the validation rules. The per-field g
 here — it lives in the Rust types of `bmc-widget-manifest` and is mirrored into the committed `manifest.schema.json`
 artifact (with rustdoc propagated into the schema's `description` fields).
 
+### [WASM Widgets](wasm-widgets/)
+
+How WASM widgets consume host-delivered inputs. Covers per-widget params generated from `manifest.json`, hardcoded
+deck-wide system settings exposed by the SDK, update hooks, examples, and testbed usage.
+
 ### WASM Host
 
 Implementation notes for the multi-widget WASM runtime:

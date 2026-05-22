@@ -1,0 +1,15 @@
+# WASM Widgets
+
+Developer-facing notes for writing WASM widgets.
+
+## Documents
+
+### [Params](params.md)
+
+How a widget declares per-instance operator configuration in `manifest.json`, regenerates the typed `manifest_params.rs`
+module, reads params from widget code, reacts to `on_params_update`, and exercises params in the testbed.
+
+### [System Settings](system-settings.md)
+
+How a widget reads the host-defined deck-wide system snapshot: timezone, formatting settings, next alarm, and night
+mode. Covers the fixed SDK accessors, update hook, and the testbed's System panel.
