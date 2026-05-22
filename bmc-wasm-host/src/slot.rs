@@ -384,11 +384,17 @@ impl WidgetSlot {
         }
     }
 
-    pub fn schedule_next_runtime_frame(&mut self, now: Instant) {
+    /// Schedule the next runtime frame relative to `anchor` — the instant
+    /// the just-rendered frame *started*, not the instant it finished.
+    ///
+    /// Anchoring to the start makes the widget's requested delay
+    /// the true frame period; render time is absorbed into
+    /// the interval instead of stacking on top.
+    pub fn schedule_next_runtime_frame(&mut self, anchor: Instant) {
         self.next_frame_due_at = if self.runtime.wants_next_frame() {
             Some(match self.runtime.next_frame_delay() {
-                None => now,
-                Some(delay_ms) => now + Duration::from_millis(delay_ms.into()),
+                None => anchor,
+                Some(delay_ms) => anchor + Duration::from_millis(delay_ms.into()),
             })
         } else {
             None
@@ -450,6 +456,7 @@ impl WidgetSlot {
         shared: &mut SharedHost,
     ) -> Result<RenderStatus> {
         let _ = self.surface.take_render_requested();
+        let frame_start_instant = Instant::now();
         let frame_start = HostRenderProfiling::start_phase();
         let (dmabuf, slot_idx, status, target_width, target_height) = {
             let phase_start = HostRenderProfiling::start_phase();
@@ -522,7 +529,7 @@ impl WidgetSlot {
             frame_start,
             HostRenderFrameContext::new(target_width, target_height, wants_immediate, status),
         );
-        self.schedule_next_runtime_frame(Instant::now());
+        self.schedule_next_runtime_frame(frame_start_instant);
         self.frame_count += 1;
         if self.frame_count <= 3 || self.frame_count.is_multiple_of(120) {
             tracing::info!(
