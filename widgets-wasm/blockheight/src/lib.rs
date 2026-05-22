@@ -21,6 +21,70 @@ const RETRY_MS: u32 = 10_000;
 
 const NOT_AVAILABLE: &str = "--";
 
+#[derive(Clone, Copy)]
+struct SizeParams {
+    number_font_size: u32,
+    timestamp_font_size: u32,
+    padding_left: f32,
+    padding_top: f32,
+    padding_bottom: f32,
+}
+
+const SMALL: SizeParams = SizeParams {
+    number_font_size: 64,
+    timestamp_font_size: 24,
+    padding_left: 16.0,
+    padding_top: 8.0,
+    padding_bottom: 16.0,
+};
+const MEDIUM: SizeParams = SizeParams {
+    number_font_size: 96,
+    timestamp_font_size: 24,
+    padding_left: 16.0,
+    padding_top: 8.0,
+    padding_bottom: 16.0,
+};
+const LARGE: SizeParams = SizeParams {
+    number_font_size: 120,
+    timestamp_font_size: 32,
+    padding_left: 16.0,
+    padding_top: 8.0,
+    padding_bottom: 16.0,
+};
+const FULL: SizeParams = SizeParams {
+    number_font_size: 200,
+    timestamp_font_size: 48,
+    padding_left: 24.0,
+    padding_top: 16.0,
+    padding_bottom: 60.0,
+};
+
+fn size_params(variant: SizeVariant) -> &'static SizeParams {
+    match variant {
+        SizeVariant::Full => &FULL,
+        SizeVariant::Large => &LARGE,
+        SizeVariant::Medium => &MEDIUM,
+        SizeVariant::Small => &SMALL,
+    }
+}
+
+const CUBE_ICON: Svg = include_svg!("assets/cube.svg");
+const CUBE_PX: f32 = 24.0;
+const HEADER_GAP_PX: f32 = 12.0;
+const HEADER_FONT_PX: u32 = 24;
+const HEADER_COLOR: Color = GRAY_60;
+const HEIGHT_COLOR: Color = WHITE;
+const TIMESTAMP_COLOR: Color = GRAY_60;
+
+fn font_weight(style: manifest_params::NumbersFontStyle) -> FontWeight {
+    use manifest_params::NumbersFontStyle;
+    match style {
+        NumbersFontStyle::Regular => FontWeight::REGULAR,
+        NumbersFontStyle::SemiBold => FontWeight::SEMIBOLD,
+        NumbersFontStyle::Bold => FontWeight::BOLD,
+    }
+}
+
 struct BlockData {
     height: u32,
     timestamp_utc: String,
@@ -103,7 +167,89 @@ fn on_block_data(response: &FetchResponse) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
-    let size = widget_size();
-    let root = col(props!(background: BLACK), Vec::<Node>::new());
-    let _ = render_ui(size.width, size.height, root);
+    let WidgetSize {
+        width,
+        height,
+        variant,
+    } = widget_size();
+    let size = size_params(variant);
+    let params = manifest_params::Params::current();
+
+    let header_overlay = row(
+        props!(
+            inset_top: size.padding_top,
+            inset_left: size.padding_left,
+            gap: HEADER_GAP_PX,
+            cross_align: CrossAlign::Center,
+        ),
+        [
+            canvas(
+                props!(width: CUBE_PX, height: CUBE_PX),
+                vec![Draw::svg(
+                    0.0,
+                    0.0,
+                    CUBE_PX,
+                    CUBE_PX,
+                    &CUBE_ICON,
+                    HEADER_COLOR,
+                )],
+            ),
+            text(
+                "Block Height",
+                style!(
+                    size: HEADER_FONT_PX,
+                    weight: FontWeight::REGULAR,
+                    color: HEADER_COLOR,
+                ),
+            ),
+        ],
+    );
+
+    let height_node = center(
+        props!(flex: 1.0),
+        [text(
+            format_height(),
+            style!(
+                size: size.number_font_size,
+                weight: font_weight(params.numbers_font_style),
+                color: HEIGHT_COLOR,
+                family: FontFamily::DeckSans,
+            ),
+        )],
+    );
+
+    let mut root_children: Vec<Node> = vec![header_overlay, height_node];
+
+    if params.show_timestamp {
+        root_children.push(center(
+            props!(
+                inset_bottom: size.padding_bottom,
+                inset_left: 0.0,
+                inset_right: 0.0,
+            ),
+            [text(
+                format_timestamp(),
+                style!(
+                    size: size.timestamp_font_size,
+                    weight: FontWeight::REGULAR,
+                    color: TIMESTAMP_COLOR,
+                ),
+            )],
+        ));
+    }
+
+    let root = col(props!(background: BLACK), root_children);
+
+    let _ = render_ui(width, height, root);
+}
+
+fn format_height() -> String {
+    STATE.with(|s| match &*s.borrow() {
+        State::Loaded(data) => format_number!(f64::from(data.height), 0),
+        State::Loading | State::Error => NOT_AVAILABLE.to_string(),
+    })
+}
+
+fn format_timestamp() -> String {
+    NOT_AVAILABLE.to_string()
 }
