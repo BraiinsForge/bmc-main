@@ -3,8 +3,8 @@
 //! Paragraph layout (cosmic-text) and rendering (FemtoVG).
 //!
 //! cosmic-text handles shaping + line-breaking, FemtoVG renders on the GPU.
-//! Both use rustybuzz internally with the same BraiinsSans font binary,
-//! so glyph advances match.
+//! Both use rustybuzz internally with the same font binaries (Braiins Sans
+//! + Braiins Deck Sans), so glyph advances match per family.
 //!
 //! # Coordinate model
 //!
@@ -32,7 +32,7 @@ use cosmic_text::{
 };
 use femtovg::{Canvas, FontId, Paint, renderer::OpenGl};
 
-use crate::tree::{FontWeight, SpanData, TextAlign, TextStyle};
+use crate::tree::{FontFamily, FontWeight, SpanData, TextAlign, TextStyle};
 
 /// Three weight-variant fonts used to render text spans. The renderer picks
 /// the closest match for each span's `weight` via [`WeightedFonts::select`].
@@ -55,6 +55,26 @@ impl WeightedFonts {
             self.semibold
         } else {
             self.regular
+        }
+    }
+}
+
+/// Multi-family font set held by the renderer. Each family ships in three
+/// weights; selection takes both the requested family and weight so widgets
+/// can opt into the display face via [`FontFamily::DeckSans`].
+#[derive(Clone, Copy, Debug)]
+pub struct Fonts {
+    pub sans: WeightedFonts,
+    pub deck_sans: WeightedFonts,
+}
+
+impl Fonts {
+    /// Pick the FemtoVG font for a `(family, weight)` pair.
+    #[must_use]
+    pub fn select(self, family: FontFamily, weight: FontWeight) -> FontId {
+        match family {
+            FontFamily::Sans => self.sans.select(weight),
+            FontFamily::DeckSans => self.deck_sans.select(weight),
         }
     }
 }
@@ -154,7 +174,7 @@ impl ParagraphLayoutCache {
         &mut self,
         font_system: &mut FontSystem,
         canvas: &mut Canvas<OpenGl>,
-        fonts: WeightedFonts,
+        fonts: Fonts,
         base_style: &TextStyle,
         spans: &[SpanData],
         x: f32,
@@ -250,6 +270,7 @@ fn cache_key(base_style: &TextStyle, spans: &[SpanData], max_width: Option<f32>)
 
     base_style.size.hash(&mut hasher);
     base_style.weight.hash(&mut hasher);
+    (base_style.family as u8).hash(&mut hasher);
     base_style.italic.hash(&mut hasher);
     base_style.line_height.to_bits().hash(&mut hasher);
     (base_style.align as u8).hash(&mut hasher);
@@ -324,8 +345,12 @@ fn shape_paragraph(
 /// Build cosmic_text Attrs from a resolved TextStyle.
 #[must_use]
 pub fn build_attrs(style: &TextStyle) -> Attrs<'static> {
+    let family_name = match style.family {
+        FontFamily::Sans => "Braiins Sans",
+        FontFamily::DeckSans => "Braiins Deck Sans",
+    };
     let mut attrs = Attrs::new()
-        .family(Family::Name("Braiins Sans"))
+        .family(Family::Name(family_name))
         .weight(Weight(u16::from(style.weight)));
 
     if style.italic {
@@ -380,13 +405,13 @@ pub fn to_femtovg_color(color: u32) -> femtovg::Color {
 /// (= `line_top + centering_offset + max_ascent`).
 fn draw_text_segment(
     canvas: &mut Canvas<OpenGl>,
-    fonts: WeightedFonts,
+    fonts: Fonts,
     text: &str,
     x: f32,
     baseline_y: f32,
     style: &TextStyle,
 ) {
-    let font = fonts.select(style.weight);
+    let font = fonts.select(style.family, style.weight);
     let mut paint = Paint::color(to_femtovg_color(style.color.to_u32()));
     paint.set_font(&[font]);
     paint.set_font_size(style.size as f32);
@@ -395,13 +420,8 @@ fn draw_text_segment(
 }
 
 /// Measure text segment width using FemtoVG.
-fn segment_width(
-    canvas: &mut Canvas<OpenGl>,
-    fonts: WeightedFonts,
-    text: &str,
-    style: &TextStyle,
-) -> f32 {
-    let font = fonts.select(style.weight);
+fn segment_width(canvas: &mut Canvas<OpenGl>, fonts: Fonts, text: &str, style: &TextStyle) -> f32 {
+    let font = fonts.select(style.family, style.weight);
     let mut paint = Paint::color(to_femtovg_color(style.color.to_u32()));
     paint.set_font(&[font]);
     paint.set_font_size(style.size as f32);
