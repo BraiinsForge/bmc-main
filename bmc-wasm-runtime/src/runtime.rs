@@ -9,6 +9,8 @@ mod imports;
 mod memory;
 mod time;
 
+pub(crate) use background::build_fetch_agent;
+
 // Re-export the `ParamsSnapshot` newtype so `HostState` (in `host_api`)
 // can compose it with `VersionedSnapshotCache` without `imports` itself becoming public.
 //

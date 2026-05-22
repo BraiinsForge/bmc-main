@@ -2,9 +2,26 @@
 
 //! Background HTTP fetch helpers for the WASM runtime.
 
+use std::time::Duration;
+
+use ureq::Agent;
+
+/// Global cap on every ureq operation (DNS, connect, send, recv).
+/// ureq 3.x defaults to no timeout, so without this a stalled peer can
+/// hang the background fetch thread for OS-level TCP timeouts (minutes).
+const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+
+pub(crate) fn build_fetch_agent() -> Agent {
+    Agent::config_builder()
+        .timeout_global(Some(FETCH_TIMEOUT))
+        .build()
+        .into()
+}
+
 /// Perform an HTTP request, returning `(status_code, body)`.
 /// Returns `(0, empty_body)` on network errors.
 pub(in crate::runtime) fn do_fetch(
+    agent: &Agent,
     method: &str,
     url: &str,
     headers: &[(String, String)],
@@ -13,9 +30,9 @@ pub(in crate::runtime) fn do_fetch(
     let result = match method {
         "POST" | "PUT" | "PATCH" => {
             let mut req = match method {
-                "POST" => ureq::post(url),
-                "PUT" => ureq::put(url),
-                _ => ureq::patch(url),
+                "POST" => agent.post(url),
+                "PUT" => agent.put(url),
+                _ => agent.patch(url),
             };
             for (k, v) in headers {
                 req = req.header(k, v);
@@ -27,9 +44,9 @@ pub(in crate::runtime) fn do_fetch(
         }
         _ => {
             let mut req = match method {
-                "DELETE" => ureq::delete(url),
-                "HEAD" => ureq::head(url),
-                _ => ureq::get(url),
+                "DELETE" => agent.delete(url),
+                "HEAD" => agent.head(url),
+                _ => agent.get(url),
             };
             for (k, v) in headers {
                 req = req.header(k, v);

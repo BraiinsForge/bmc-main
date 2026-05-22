@@ -892,8 +892,10 @@ impl WasmWidgetRuntime {
             }
 
             let tx = state.fetch_tx.clone();
+            let agent = state.fetch_agent.clone();
             std::thread::spawn(move || {
-                let (status, resp_body) = do_fetch(&method, &url, &headers, body.as_deref());
+                let (status, resp_body) =
+                    do_fetch(&agent, &method, &url, &headers, body.as_deref());
                 tracing::info!(
                     request_id = request_id.to_wire(),
                     status,

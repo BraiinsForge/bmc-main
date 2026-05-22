@@ -628,6 +628,10 @@ pub(crate) struct HostState {
     /// Maps `request_id` → fixture key (e.g. "GET https://...") for the observer.
     pub fetch_keys: HashMap<FetchRequestId, String>,
 
+    /// Shared `ureq::Agent` with a 10s global timeout, cloned into every
+    /// background fetch thread. Also provides connection-pool reuse.
+    pub fetch_agent: ureq::Agent,
+
     /// Whether to record network events for fixture generation.
     pub record_events: bool,
 
@@ -753,6 +757,7 @@ impl HostState {
             fetch_interceptor: None,
             fetch_observer: None,
             fetch_keys: HashMap::new(),
+            fetch_agent: crate::runtime::build_fetch_agent(),
             record_events: false,
             event_fixtures: None,
             recorded_events: Vec::new(),
