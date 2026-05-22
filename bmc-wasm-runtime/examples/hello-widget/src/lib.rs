@@ -1,7 +1,14 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 #![allow(clippy::cast_precision_loss)]
+#![cfg_attr(
+    not(target_arch = "wasm32"),
+    expect(
+        dead_code,
+        reason = "native builds exercise pure layout selection; the render tree is used by the wasm entrypoint"
+    )
+)]
 
-#[expect(clippy::wildcard_imports)]
+#[cfg_attr(not(test), expect(clippy::wildcard_imports))]
 use bmc_wasm_sdk::*;
 
 use std::cell::{Cell, RefCell};
@@ -23,6 +30,47 @@ thread_local! {
 }
 
 const BG_COLOR: Color = Color::from_hex(0x66_23_47);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HelloLayout {
+    SmallCompact,
+    MediumCompact,
+    LargeCompact,
+    FullShowcase,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompactControls {
+    TwoCounterButtons,
+    SmallAnimationClockModalAndSubsetLedEffects,
+    MediumButtonsModalLedEffectsIconShowcaseAndAnimatedText,
+    LargeButtonsModalColorsIconsLedEffectsAndRichText,
+    FullShowcase,
+}
+
+fn hello_layout(variant: SizeVariant) -> HelloLayout {
+    match variant {
+        SizeVariant::Small => HelloLayout::SmallCompact,
+        SizeVariant::Medium => HelloLayout::MediumCompact,
+        SizeVariant::Large => HelloLayout::LargeCompact,
+        SizeVariant::Full => HelloLayout::FullShowcase,
+    }
+}
+
+#[cfg(test)]
+fn compact_controls(layout: HelloLayout) -> CompactControls {
+    match layout {
+        HelloLayout::SmallCompact => CompactControls::SmallAnimationClockModalAndSubsetLedEffects,
+        HelloLayout::MediumCompact => {
+            CompactControls::MediumButtonsModalLedEffectsIconShowcaseAndAnimatedText
+        }
+        HelloLayout::LargeCompact => {
+            CompactControls::LargeButtonsModalColorsIconsLedEffectsAndRichText
+        }
+        HelloLayout::FullShowcase => CompactControls::FullShowcase,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Sections — each returns a Node, composed in render() like React components
@@ -88,35 +136,45 @@ fn animations_section(time: &SystemTime) -> Node {
         [
             text("Animations", style!(size: 20, color: GRAY_10)),
             text("Pulse + Spin + Color", style!(size: 14, color: GRAY_40)),
-            canvas(
-                props!(width: 64.0, height: 64.0),
-                [Draw::centered(
-                    Draw::rect(0.0, 0.0, 32.0, 32.0, RED_50)
-                        .animate(Rotate, 0.0, TAU, 4_000, Linear, Forever)
-                        .animate(Scale, 0.5, 1.0, 1_000, EaseInOut, PingPong)
-                        .animate_color(RED_50, GREEN_50, 3_000, EaseInOut, PingPong),
-                )],
-            ),
+            pulse_canvas(64.0),
             text("Clock", style!(size: 14, color: GRAY_40)),
-            clock_canvas(hour_angle, minute_angle, second_angle),
+            clock_canvas(128.0, hour_angle, minute_angle, second_angle),
         ],
     )
 }
 
-fn clock_canvas(hour_angle: f32, minute_angle: f32, second_angle: f32) -> Node {
-    const S: f32 = 128.0;
-    const C: f32 = S / 2.0; // center = 64
+fn pulse_canvas(size: f32) -> Node {
+    canvas(
+        props!(width: size, height: size),
+        [Draw::centered(
+            Draw::rect(0.0, 0.0, size * 0.5, size * 0.5, RED_50)
+                .animate(Rotate, 0.0, TAU, 4_000, Linear, Forever)
+                .animate(Scale, 0.5, 1.0, 1_000, EaseInOut, PingPong)
+                .animate_color(RED_50, GREEN_50, 3_000, EaseInOut, PingPong),
+        )],
+    )
+}
+
+fn clock_canvas(size: f32, hour_angle: f32, minute_angle: f32, second_angle: f32) -> Node {
+    let c = size / 2.0;
+    let mark_radius = size * 0.421_875;
+    let hour_top = size * 0.25;
+    let hour_height = size * 0.281_25;
+    let minute_top = size * 0.156_25;
+    let minute_height = size * 0.375;
+    let second_top = size * 0.093_75;
+    let second_height = size * 0.437_5;
 
     let mut draws: Vec<Draw> = Vec::with_capacity(18);
 
     // Circle background
-    draws.push(Draw::circle(C, C, C, GRAY_80));
+    draws.push(Draw::circle(c, c, c, GRAY_80));
 
     // 12 hour marks
     for i in 0..12 {
         let angle = i as f32 / 12.0 * TAU - FRAC_PI_2;
         draws.push(Draw::orbit(
-            54.0,
+            mark_radius,
             angle,
             Draw::rect(0.0, 0.0, 3.0, 3.0, GRAY_50),
         ));
@@ -127,7 +185,7 @@ fn clock_canvas(hour_angle: f32, minute_angle: f32, second_angle: f32) -> Node {
     draws.push(
         Draw::rotated(
             hour_angle,
-            Draw::rect(C - 3.0, C - 32.0, 6.0, 36.0, GRAY_10),
+            Draw::rect(c - 3.0, c - hour_top, 6.0, hour_height, GRAY_10),
         )
         .transition(500, EaseOut),
     );
@@ -135,7 +193,7 @@ fn clock_canvas(hour_angle: f32, minute_angle: f32, second_angle: f32) -> Node {
     draws.push(
         Draw::rotated(
             minute_angle,
-            Draw::rect(C - 2.0, C - 44.0, 4.0, 48.0, GRAY_30),
+            Draw::rect(c - 2.0, c - minute_top, 4.0, minute_height, GRAY_30),
         )
         .transition(500, EaseOut),
     );
@@ -143,14 +201,14 @@ fn clock_canvas(hour_angle: f32, minute_angle: f32, second_angle: f32) -> Node {
     draws.push(
         Draw::rotated(
             second_angle,
-            Draw::rect(C - 1.0, C - 52.0, 1.0, 56.0, RED_50),
+            Draw::rect(c - 1.0, c - second_top, 1.0, second_height, RED_50),
         )
         .transition(200, EaseOut),
     );
     // Center dot
     draws.push(Draw::centered(Draw::rect(0.0, 0.0, 8.0, 8.0, GRAY_10)));
 
-    canvas(props!(width: S, height: S), draws)
+    canvas(props!(width: size, height: size), draws)
 }
 
 fn icons_section() -> Node {
@@ -300,6 +358,382 @@ fn led_section() -> Node {
     )
 }
 
+fn medium_controls_section(counts: [u32; 4]) -> Node {
+    row(
+        props!(gap: 8.0, flex: 1.0, cross_align: CrossAlign::Center),
+        [
+            col(
+                props!(gap: 5.0),
+                [
+                    row(
+                        props!(gap: 5.0),
+                        [
+                            button!("primary", fmt!("Primary {}", counts[0]), style: Primary, size: Small),
+                            button!("secondary", fmt!("Secondary {}", counts[1]), style: Secondary, size: Small),
+                        ],
+                    ),
+                    row(
+                        props!(gap: 5.0),
+                        [
+                            button!("tertiary", fmt!("Tertiary {}", counts[2]), style: Tertiary, size: Small),
+                            button!("danger", fmt!("Danger {}", counts[3]), style: Danger, size: Small),
+                        ],
+                    ),
+                ],
+            ),
+            col(
+                props!(gap: 5.0),
+                [
+                    row(
+                        props!(gap: 5.0),
+                        [
+                            button!("open_modal", "Open Modal", style: Primary, size: Small),
+                            button!("settings", "", style: Primary, size: Small, icon: tree::ensure_registered(&SETTINGS)),
+                        ],
+                    ),
+                    row(
+                        props!(gap: 5.0),
+                        [
+                            button!("apply", "", style: Secondary, size: Small, icon: tree::ensure_registered(&CHECKMARK)),
+                            button!("search", "", style: Secondary, size: Small, icon: tree::ensure_registered(&SEARCH)),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+}
+
+fn small_controls_section(counts: [u32; 4]) -> Node {
+    row(
+        props!(gap: 5.0, wrap: true, cross_align: CrossAlign::Center),
+        [
+            button!("primary", fmt!("Primary {}", counts[0]), style: Primary, size: Small),
+            button!("secondary", fmt!("Secondary {}", counts[1]), style: Secondary, size: Small),
+            button!("open_modal", "Open Modal", style: Primary, size: Small),
+        ],
+    )
+}
+
+fn small_led_effects_section() -> Node {
+    row(
+        props!(gap: 5.0, background: GRAY_90.with_alpha(0.45), padding: 5.0, wrap: true, cross_align: CrossAlign::Center),
+        [
+            text("LED", style!(size: 11, weight: 700, color: GRAY_40)),
+            button!("led_solid", "Solid", size: Small),
+            button!("led_breathe", "Breathe", size: Small),
+            button!("led_knight", "Knight", size: Small),
+            button!("led_off", "Off", style: Secondary, size: Small),
+        ],
+    )
+}
+
+fn small_clock(time: &SystemTime, size: f32) -> Node {
+    let secs = time.seconds_since_midnight() as f32;
+    let second_angle = secs / 60.0 * TAU;
+    let minute_angle = secs / 3_600.0 * TAU;
+    let hour_angle = secs / 43_200.0 * TAU;
+
+    clock_canvas(size, hour_angle, minute_angle, second_angle)
+}
+
+fn small_panel(child: Node) -> Node {
+    center(
+        props!(flex: 1.0, background: GRAY_90.with_alpha(0.45), padding: 4.0),
+        [child],
+    )
+}
+
+fn medium_led_effects_section() -> Node {
+    row(
+        props!(gap: 5.0, background: GRAY_90.with_alpha(0.45), padding: 6.0, wrap: true, cross_align: CrossAlign::Center),
+        [
+            text("LED", style!(size: 12, weight: 700, color: GRAY_40)),
+            button!("led_solid", "Solid", size: Small),
+            button!("led_breathe", "Breathe", size: Small),
+            button!("led_chase", "Chase", size: Small),
+            button!("led_knight", "Knight", size: Small),
+            button!("led_snake", "Snake", size: Small),
+            button!("led_off", "Off", style: Secondary, size: Small),
+        ],
+    )
+}
+
+fn medium_icon_showcase_section() -> Node {
+    row(
+        props!(gap: 12.0, background: GRAY_90.with_alpha(0.45), padding: 6.0, cross_align: CrossAlign::Center),
+        [
+            text("Icons", style!(size: 12, weight: 700, color: GRAY_40)),
+            canvas(
+                props!(width: 164.0, height: 28.0),
+                [
+                    Draw::icon(0.0, 0.0, 28.0, 28.0, &STAR, ORANGE_50),
+                    Draw::icon(34.0, 0.0, 28.0, 28.0, &SETTINGS, GREEN_50),
+                    Draw::icon(68.0, 0.0, 28.0, 28.0, &CHECKMARK, RED_50),
+                    Draw::icon(102.0, 0.0, 28.0, 28.0, &WARNING, VIOLET_50),
+                    Draw::icon_builtin(136.0, 0.0, 28.0, 28.0, ICON_CLOSE, GRAY_10),
+                ],
+            ),
+            text("Animated", style!(size: 12, color: GRAY_40)),
+            canvas(
+                props!(width: 34.0, height: 28.0),
+                [Draw::centered(
+                    Draw::icon(0.0, 0.0, 24.0, 24.0, &STAR, ORANGE_50)
+                        .animate(Rotate, 0.0, TAU, 3_000, Linear, Forever)
+                        .animate(Scale, 0.6, 1.0, 1_500, EaseInOut, PingPong),
+                )],
+            ),
+        ],
+    )
+}
+
+fn large_controls_section(counts: [u32; 4]) -> Node {
+    col(
+        props!(gap: 6.0, background: GRAY_90.with_alpha(0.45), padding: 8.0),
+        [row(
+            props!(gap: 6.0, wrap: true, cross_align: CrossAlign::Center),
+            [
+                button!("primary", fmt!("Primary {}", counts[0]), style: Primary, size: Small),
+                button!("secondary", fmt!("Secondary {}", counts[1]), style: Secondary, size: Small),
+                button!("tertiary", fmt!("Tertiary {}", counts[2]), style: Tertiary, size: Small),
+                button!("danger", fmt!("Danger {}", counts[3]), style: Danger, size: Small),
+                button!("open_modal", "Open Modal", style: Primary, size: Small),
+            ],
+        )],
+    )
+}
+
+fn large_colors_and_icons_section() -> Node {
+    row(
+        props!(gap: 10.0, background: GRAY_90.with_alpha(0.45), padding: 8.0, cross_align: CrossAlign::Center),
+        [
+            col(
+                props!(gap: 4.0, flex: 1.0),
+                [
+                    text("Colors", style!(size: 12, color: GRAY_40)),
+                    canvas(
+                        props!(width: 180.0, height: 28.0),
+                        [
+                            Draw::rect(0.0, 0.0, 28.0, 24.0, VIOLET_50),
+                            Draw::rect(36.0, 0.0, 28.0, 24.0, GREEN_50),
+                            Draw::rect(72.0, 0.0, 28.0, 24.0, RED_50),
+                            Draw::rect(108.0, 0.0, 28.0, 24.0, ORANGE_50),
+                            Draw::rect(144.0, 0.0, 28.0, 24.0, GRAY_50),
+                        ],
+                    ),
+                ],
+            ),
+            row(
+                props!(gap: 6.0, wrap: true, cross_align: CrossAlign::Center),
+                [
+                    button!("settings", "Settings", style: Primary, size: Small, icon: tree::ensure_registered(&SETTINGS)),
+                    button!("apply", "Apply", style: Secondary, size: Small, icon: tree::ensure_registered(&CHECKMARK)),
+                    button!("search", "", style: Secondary, size: Small, icon: tree::ensure_registered(&SEARCH)),
+                    button!("warning", "", style: Danger, size: Small, icon: tree::ensure_registered(&WARNING)),
+                    button!("close", "", style: Primary, size: Small, icon: ICON_CLOSE),
+                ],
+            ),
+        ],
+    )
+}
+
+fn large_icon_showcase_section() -> Node {
+    row(
+        props!(gap: 12.0, background: GRAY_90.with_alpha(0.45), padding: 8.0, cross_align: CrossAlign::Center),
+        [
+            col(
+                props!(gap: 4.0, flex: 1.0),
+                [
+                    text("Custom Icons", style!(size: 12, color: GRAY_40)),
+                    canvas(
+                        props!(width: 180.0, height: 34.0),
+                        [
+                            Draw::icon(0.0, 1.0, 32.0, 32.0, &STAR, ORANGE_50),
+                            Draw::icon(38.0, 1.0, 32.0, 32.0, &SETTINGS, GREEN_50),
+                            Draw::icon(76.0, 1.0, 32.0, 32.0, &CHECKMARK, RED_50),
+                            Draw::icon(114.0, 1.0, 32.0, 32.0, &WARNING, VIOLET_50),
+                        ],
+                    ),
+                ],
+            ),
+            col(
+                props!(gap: 4.0, cross_align: CrossAlign::Center),
+                [
+                    text("Built-in", style!(size: 12, color: GRAY_40)),
+                    canvas(
+                        props!(width: 72.0, height: 34.0),
+                        [
+                            Draw::icon_builtin(0.0, 1.0, 32.0, 32.0, ICON_CLOSE, GRAY_10),
+                            Draw::icon_builtin(38.0, 1.0, 32.0, 32.0, ICON_CLOSE, RED_50),
+                        ],
+                    ),
+                ],
+            ),
+            col(
+                props!(gap: 4.0, cross_align: CrossAlign::Center),
+                [
+                    text("Animated Icon", style!(size: 12, color: GRAY_40)),
+                    canvas(
+                        props!(width: 48.0, height: 34.0),
+                        [Draw::centered(
+                            Draw::icon(0.0, 0.0, 28.0, 28.0, &STAR, ORANGE_50)
+                                .animate(Rotate, 0.0, TAU, 3_000, Linear, Forever)
+                                .animate(Scale, 0.6, 1.0, 1_500, EaseInOut, PingPong),
+                        )],
+                    ),
+                ],
+            ),
+        ],
+    )
+}
+
+fn large_led_effects_section() -> Node {
+    row(
+        props!(gap: 6.0, background: GRAY_90.with_alpha(0.45), padding: 8.0, wrap: true, cross_align: CrossAlign::Center),
+        [
+            text("LED", style!(size: 12, weight: 700, color: GRAY_40)),
+            button!("led_solid", "Solid Red", size: Small),
+            button!("led_breathe", "Breathe Green", size: Small),
+            button!("led_chase", "Chase Blue", size: Small),
+            button!("led_knight", "Knight Rider", size: Small),
+            button!("led_snake", "Snake Cyan", size: Small),
+            button!("led_off", "LEDs Off", style: Secondary, size: Small),
+        ],
+    )
+}
+
+fn large_rich_text_section() -> Node {
+    col(
+        props!(gap: 4.0, background: GRAY_90.with_alpha(0.45), padding: 8.0),
+        [
+            text("Rich Text", style!(size: 12, color: GRAY_40)),
+            text_styles_demo(),
+        ],
+    )
+}
+
+fn compact_animation(size: f32, label: &str, label_size: u32) -> Node {
+    col(
+        props!(gap: 8.0, cross_align: CrossAlign::Center),
+        [
+            pulse_canvas(size),
+            text(label, style!(size: label_size, color: GRAY_40)),
+        ],
+    )
+}
+
+fn compact_clock(time: &SystemTime, size: f32, label_size: u32) -> Node {
+    let secs = time.seconds_since_midnight() as f32;
+    let second_angle = secs / 60.0 * TAU;
+    let minute_angle = secs / 3_600.0 * TAU;
+    let hour_angle = secs / 43_200.0 * TAU;
+
+    col(
+        props!(gap: 8.0, cross_align: CrossAlign::Center),
+        [
+            clock_canvas(size, hour_angle, minute_angle, second_angle),
+            text("Clock", style!(size: label_size, color: GRAY_40)),
+        ],
+    )
+}
+
+fn small_compact(time: &SystemTime, counts: [u32; 4]) -> Node {
+    col(
+        props!(background: BG_COLOR, padding: 6.0, gap: 5.0),
+        [
+            row(
+                props!(gap: 5.0, flex: 1.0),
+                [
+                    small_panel(pulse_canvas(54.0)),
+                    small_panel(small_clock(time, 72.0)),
+                ],
+            ),
+            small_controls_section(counts),
+            small_led_effects_section(),
+            about_modal(),
+        ],
+    )
+}
+
+fn medium_compact(time: &SystemTime, counts: [u32; 4]) -> Node {
+    col(
+        props!(background: BG_COLOR, padding: 10.0, gap: 8.0),
+        [
+            row(
+                props!(gap: 12.0, flex: 1.0, cross_align: CrossAlign::Center),
+                [
+                    compact_animation(68.0, "Pulse + Spin + Color", 11),
+                    medium_controls_section(counts),
+                    compact_clock(time, 84.0, 11),
+                ],
+            ),
+            medium_led_effects_section(),
+            medium_icon_showcase_section(),
+            about_modal(),
+        ],
+    )
+}
+
+fn large_panel(child: Node) -> Node {
+    center(
+        props!(flex: 1.0, background: GRAY_90.with_alpha(0.45), padding: 4.0),
+        [child],
+    )
+}
+
+fn large_compact(time: &SystemTime, counts: [u32; 4]) -> Node {
+    col(
+        props!(background: BG_COLOR, padding: 6.0, gap: 5.0),
+        [
+            row(
+                props!(gap: 5.0, flex: 1.0),
+                [
+                    large_panel(compact_animation(54.0, "Pulse + Spin + Color", 11)),
+                    large_panel(compact_clock(time, 72.0, 11)),
+                ],
+            ),
+            large_controls_section(counts),
+            large_colors_and_icons_section(),
+            large_icon_showcase_section(),
+            large_led_effects_section(),
+            large_rich_text_section(),
+            about_modal(),
+        ],
+    )
+}
+
+fn full_showcase(time: &SystemTime, counts: [u32; 4]) -> Node {
+    col(
+        props!(background: BG_COLOR, padding: 8.0, gap: 8.0),
+        [
+            row(
+                props!(gap: 6.0),
+                [
+                    buttons_section(counts),
+                    animations_section(time),
+                    icons_section(),
+                    colors_section(),
+                ],
+            ),
+            row(
+                props!(gap: 6.0),
+                [icon_buttons_section(), rich_text_section(), led_section()],
+            ),
+            about_modal(),
+        ],
+    )
+}
+
+fn build_ui(size: WidgetSize, time: &SystemTime, counts: [u32; 4]) -> Node {
+    match hello_layout(size.variant) {
+        HelloLayout::SmallCompact => small_compact(time, counts),
+        HelloLayout::MediumCompact => medium_compact(time, counts),
+        HelloLayout::LargeCompact => large_compact(time, counts),
+        HelloLayout::FullShowcase => full_showcase(time, counts),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
 fn handle_led_clicks(result: &TreeRenderResult) {
     if result.clicks.contains_key("led_solid") {
         led::enable();
@@ -400,6 +834,7 @@ fn about_modal() -> Node {
     )
 }
 
+#[cfg(target_arch = "wasm32")]
 fn handle_clicks(result: &bmc_wasm_sdk::TreeRenderResult) {
     let counter_buttons = ["primary", "secondary", "tertiary", "danger"];
     for (i, id) in counter_buttons.iter().enumerate() {
@@ -427,38 +862,55 @@ fn handle_clicks(result: &bmc_wasm_sdk::TreeRenderResult) {
 // ---------------------------------------------------------------------------
 
 #[unsafe(no_mangle)]
+#[cfg(target_arch = "wasm32")]
 pub extern "C" fn render(_delta_ms: u32) {
     let WidgetSize {
         width: w,
         height: h,
-        ..
+        variant,
     } = widget_size();
+    let size = WidgetSize {
+        variant,
+        width: w,
+        height: h,
+    };
     let time = SystemTime::now();
     let counts = COUNTS.with(|c| *c.borrow());
 
-    let result = render_ui(
-        w,
-        h,
-        col(
-            props!(background: BG_COLOR, padding: 8.0, gap: 8.0),
-            [
-                row(
-                    props!(gap: 6.0),
-                    [
-                        buttons_section(counts),
-                        animations_section(&time),
-                        icons_section(),
-                        colors_section(),
-                    ],
-                ),
-                row(
-                    props!(gap: 6.0),
-                    [icon_buttons_section(), rich_text_section(), led_section()],
-                ),
-                about_modal(),
-            ],
-        ),
-    );
+    let result = render_ui(w, h, build_ui(size, &time, counts));
 
     handle_clicks(&result);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CompactControls, HelloLayout, compact_controls, hello_layout};
+    use bmc_wasm_sdk::SizeVariant;
+
+    #[test]
+    fn compact_variants_drop_full_showcase_content_that_would_overflow() {
+        assert_eq!(hello_layout(SizeVariant::Small), HelloLayout::SmallCompact);
+        assert_eq!(
+            hello_layout(SizeVariant::Medium),
+            HelloLayout::MediumCompact
+        );
+        assert_eq!(hello_layout(SizeVariant::Large), HelloLayout::LargeCompact);
+        assert_eq!(hello_layout(SizeVariant::Full), HelloLayout::FullShowcase);
+    }
+
+    #[test]
+    fn large_compact_layout_uses_buttons_modal_colors_icons_led_effects_and_rich_text() {
+        assert_eq!(
+            compact_controls(HelloLayout::SmallCompact),
+            CompactControls::SmallAnimationClockModalAndSubsetLedEffects
+        );
+        assert_eq!(
+            compact_controls(HelloLayout::MediumCompact),
+            CompactControls::MediumButtonsModalLedEffectsIconShowcaseAndAnimatedText
+        );
+        assert_eq!(
+            compact_controls(HelloLayout::LargeCompact),
+            CompactControls::LargeButtonsModalColorsIconsLedEffectsAndRichText
+        );
+    }
 }
