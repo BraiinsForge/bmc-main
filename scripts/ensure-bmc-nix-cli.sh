@@ -41,13 +41,19 @@ nix copy --to "ssh://root@${device}?remote-program=${REMOTE_NIX_STORE}" "${store
 
 # Self-install: run the just-copied bmc-nix-cli to register itself in the
 # bmc profile, so future invocations find it at ${PROFILE_CLI}.
+#
+# `add-packages` prints the new profile generation path to stdout;
+# redirect it to stderr so this script's only stdout line stays
+# the final ${PROFILE_CLI} echo — callers capture stdout via $(...)
+# and a multi-line capture corrupts it.
 echo >&2 "Registering bmc-nix-cli in ${PROFILE_DIR}..."
+
 # shellcheck disable=SC2029 # Intentional client-side expansion
 ssh "root@${device}" \
     "PATH=/run/current-profile/bin:\$PATH \
      ${store_path}/bin/bmc-nix-cli add-packages \
         --profile-dir ${PROFILE_DIR} \
-        --name bmc-nix-cli --version '${version}' --store-path '${store_path}'"
+        --name bmc-nix-cli --version '${version}' --store-path '${store_path}'" >&2
 
 echo >&2 "bmc-nix-cli bootstrapped at ${PROFILE_CLI}"
 echo "${PROFILE_CLI}"
