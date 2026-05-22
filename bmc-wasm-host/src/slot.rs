@@ -61,6 +61,24 @@ pub fn duration_to_timeout_millis(duration: Duration) -> u32 {
     u32::try_from(duration.as_millis()).unwrap_or(u32::MAX)
 }
 
+#[must_use]
+pub fn refresh_runtime_frame_due_at(
+    existing_due_at: Option<Instant>,
+    wants_next_frame: bool,
+    next_frame_delay: Option<u32>,
+    anchor: Instant,
+) -> Option<Instant> {
+    if !wants_next_frame {
+        return None;
+    }
+
+    let candidate = match next_frame_delay {
+        None => anchor,
+        Some(delay_ms) => anchor + Duration::from_millis(delay_ms.into()),
+    };
+    Some(existing_due_at.map_or(candidate, |existing| existing.min(candidate)))
+}
+
 trait RendererAssetEvictor {
     fn evict_renderer_prefix(&mut self, prefix: &str) -> usize;
 }
@@ -399,6 +417,15 @@ impl WidgetSlot {
         } else {
             None
         };
+    }
+
+    pub fn refresh_next_runtime_frame_after_delivery(&mut self, anchor: Instant) {
+        self.next_frame_due_at = refresh_runtime_frame_due_at(
+            self.next_frame_due_at,
+            self.runtime.wants_next_frame(),
+            self.runtime.next_frame_delay(),
+            anchor,
+        );
     }
 
     pub fn tick_delta(&mut self, now: Instant) -> u32 {
