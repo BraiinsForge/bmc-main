@@ -76,8 +76,8 @@
       "default_value": true
     },
     "timezone_override": {
-      "name": "Timezone override",
-      "description": "IANA timezone to display instead of the system timezone; unset means follow the system",
+      "name": "Timezone",
+      "description": "Timezone to display the clock in. Defaults to the system timezone.",
       "type": "timezone",
       "optional": true
     }
