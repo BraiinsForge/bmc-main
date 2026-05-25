@@ -1014,10 +1014,9 @@ impl Draw {
     /// `id` is a widget-supplied stable identifier
     /// for this draw (e.g. `"hour-hand"`).
     ///
-    ///  The host keys transition state on `(canvas_index, fnv1a_32(id))`
-    /// so the interpolation tracks the logical draw across tree-shape
-    /// changes — appearing or vanishing siblings no longer reshuffle
-    /// transition state into the wrong draws.
+    /// The host keys transition state on `(canvas_index, fnv1a_32(id))`,
+    /// so interpolation tracks the logical draw regardless of sibling
+    /// order in the tree.
     ///
     /// Use distinct ids per draw within the same canvas;
     /// reusing an id silently aliases two transitions
