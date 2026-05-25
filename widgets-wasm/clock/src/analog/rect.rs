@@ -136,10 +136,6 @@ fn pick_size(variant: SizeVariant) -> &'static AnalogRectSizeParams {
     clippy::too_many_lines,
     reason = "this renderer intentionally keeps one draw-order-sensitive template together"
 )]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "render collects all frame inputs; a context struct is a later refactor"
-)]
 pub(crate) fn render(
     now: SystemTime,
     params: &Params,
@@ -148,10 +144,10 @@ pub(crate) fn render(
     h: u32,
     tz: Option<&Tz>,
     palette: &ClockPalette,
-    viewport_w: f32,
-    viewport_h: f32,
 ) -> Node {
     let size = pick_size(variant);
+    let viewport_w = f32_from_u32(w);
+    let viewport_h = f32_from_u32(h);
     let centre_x = viewport_w / 2.0;
     let centre_y = viewport_h / 2.0;
     let label = resolve_tz_for_label(tz, now.unix_secs);

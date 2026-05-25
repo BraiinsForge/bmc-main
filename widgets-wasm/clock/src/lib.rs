@@ -22,7 +22,7 @@ mod shared;
 use bmc_wasm_sdk::*;
 
 use manifest_params::{ClockStyle, Params};
-use shared::{clock_palette, f32_from_u32};
+use shared::clock_palette;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
@@ -35,32 +35,14 @@ pub extern "C" fn render(_delta_ms: u32) {
     let params = Params::current();
     let effective_tz = params.timezone_override.as_deref().map(Tz::from_runtime);
     let palette = clock_palette(system::current().night_mode().unwrap_or(false));
-    let viewport_w = f32_from_u32(w);
-    let viewport_h = f32_from_u32(h);
 
     let root = match params.clock_style {
-        ClockStyle::AnalogRound => analog::round::render(
-            now,
-            &params,
-            variant,
-            w,
-            h,
-            effective_tz.as_ref(),
-            &palette,
-            viewport_w,
-            viewport_h,
-        ),
-        ClockStyle::AnalogRect => analog::rect::render(
-            now,
-            &params,
-            variant,
-            w,
-            h,
-            effective_tz.as_ref(),
-            &palette,
-            viewport_w,
-            viewport_h,
-        ),
+        ClockStyle::AnalogRound => {
+            analog::round::render(now, &params, variant, w, h, effective_tz.as_ref(), &palette)
+        }
+        ClockStyle::AnalogRect => {
+            analog::rect::render(now, &params, variant, w, h, effective_tz.as_ref(), &palette)
+        }
         ClockStyle::Digital => {
             digital::render(now, &params, variant, w, h, effective_tz.as_ref(), &palette)
         }

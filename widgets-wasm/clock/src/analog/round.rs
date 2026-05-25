@@ -15,8 +15,8 @@ use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Params;
 use crate::shared::{
-    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, font_weight, local_or_system,
-    push_utc_offset, resolve_tz_for_label,
+    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, f32_from_u32, font_weight,
+    local_or_system, push_utc_offset, resolve_tz_for_label,
 };
 
 use super::{
@@ -107,10 +107,6 @@ fn pick_size(variant: SizeVariant) -> &'static AnalogRoundSizeParams {
     clippy::too_many_lines,
     reason = "this renderer intentionally keeps one draw-order-sensitive template together"
 )]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "render collects all frame inputs; a context struct is a later refactor"
-)]
 pub(crate) fn render(
     now: SystemTime,
     params: &Params,
@@ -119,10 +115,10 @@ pub(crate) fn render(
     h: u32,
     tz: Option<&Tz>,
     palette: &ClockPalette,
-    viewport_w: f32,
-    viewport_h: f32,
 ) -> Node {
     let size = pick_size(variant);
+    let viewport_w = f32_from_u32(w);
+    let viewport_h = f32_from_u32(h);
     // Single canvas at the widget viewport size — the SDK's `Draw::rotated`
     // pivots around canvas centre, so making the canvas match the widget
     // and centering the dial at the canvas centre lets every hand rotate
