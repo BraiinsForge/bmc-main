@@ -38,7 +38,7 @@
       ]
     },
     "numbers_font_style": {
-      "name": "Number weight",
+      "name": "Numbers font style",
       "description": "Font weight of numerals and digital readout",
       "type": "string",
       "default_value": "semi-bold",
