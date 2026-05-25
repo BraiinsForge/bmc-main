@@ -163,13 +163,9 @@ pub(crate) fn render(
             .fill("minor", palette.tick_small),
     );
 
-    // Numerals 12 / 3 / 6 / 9. All four anchor at the glyph centre
-    // (`VerticalAlign::Center`); 12 and 6 use a half-font-height
-    // offset so their visible glyphs end up the same distance
-    // from top/bottom edges.
-    //
-    // Mixing Top/Bottom for 12/6 with Center for 3/9 produced
-    // uneven cap-vs-descender leading and read as bottom-heavy.
+    // Numerals 12 / 3 / 6 / 9 — all four anchor at the glyph centre
+    // (`VerticalAlign::Center`); 12 and 6 offset by half-font-height
+    // for a symmetric inset against the top/bottom edges.
     let numerals_half = f32_from_u32(size.numerals_font_size) / 2.0;
     let numerals_center = style!(
         size: size.numerals_font_size,
