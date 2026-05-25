@@ -88,16 +88,13 @@ const DIGITAL_SMALL: DigitalSizeParams = DigitalSizeParams {
     show_utc_offset: false,
 };
 
-/// Resolve `widget_size()` dimensions to the matching per-size `const`.
-/// The host delivers raw `(width, height)`;
-/// we match the four canonical `WidgetSize` viewports (Full / Large / Medium / Small)
-/// and fall back to `DIGITAL_SMALL` for anything outside the catalogue.
-fn pick_size(w: u32, h: u32) -> &'static DigitalSizeParams {
-    match (w, h) {
-        (1280, 480) => &DIGITAL_FULL,
-        (638, 480) => &DIGITAL_LARGE,
-        (638, 238) => &DIGITAL_MEDIUM,
-        _ => &DIGITAL_SMALL,
+/// Resolve the SDK-classified `SizeVariant` to the matching per-size `const`.
+fn pick_size(variant: SizeVariant) -> &'static DigitalSizeParams {
+    match variant {
+        SizeVariant::Full => &DIGITAL_FULL,
+        SizeVariant::Large => &DIGITAL_LARGE,
+        SizeVariant::Medium => &DIGITAL_MEDIUM,
+        SizeVariant::Small => &DIGITAL_SMALL,
     }
 }
 
@@ -106,12 +103,13 @@ fn pick_size(w: u32, h: u32) -> &'static DigitalSizeParams {
 pub(crate) fn render(
     now: SystemTime,
     params: &Params,
+    variant: SizeVariant,
     w: u32,
     h: u32,
     tz: Option<&Tz>,
     palette: &ClockPalette,
 ) -> Node {
-    let size = pick_size(w, h);
+    let size = pick_size(variant);
     let is_12h = matches!(system::current().time_format(), Some(TimeFormat::Hour12));
 
     let label = resolve_tz_for_label(tz, now.unix_secs);

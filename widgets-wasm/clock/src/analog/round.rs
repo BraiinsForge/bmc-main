@@ -92,12 +92,12 @@ const ANALOG_ROUND_SMALL: AnalogRoundSizeParams = AnalogRoundSizeParams {
     timezone_font_size: 16,
 };
 
-fn pick_size(w: u32, h: u32) -> &'static AnalogRoundSizeParams {
-    match (w, h) {
-        (1280, 480) => &ANALOG_ROUND_FULL,
-        (638, 480) => &ANALOG_ROUND_LARGE,
-        (638, 238) => &ANALOG_ROUND_MEDIUM,
-        _ => &ANALOG_ROUND_SMALL,
+fn pick_size(variant: SizeVariant) -> &'static AnalogRoundSizeParams {
+    match variant {
+        SizeVariant::Full => &ANALOG_ROUND_FULL,
+        SizeVariant::Large => &ANALOG_ROUND_LARGE,
+        SizeVariant::Medium => &ANALOG_ROUND_MEDIUM,
+        SizeVariant::Small => &ANALOG_ROUND_SMALL,
     }
 }
 
@@ -114,6 +114,7 @@ fn pick_size(w: u32, h: u32) -> &'static AnalogRoundSizeParams {
 pub(crate) fn render(
     now: SystemTime,
     params: &Params,
+    variant: SizeVariant,
     w: u32,
     h: u32,
     tz: Option<&Tz>,
@@ -121,7 +122,7 @@ pub(crate) fn render(
     viewport_w: f32,
     viewport_h: f32,
 ) -> Node {
-    let size = pick_size(w, h);
+    let size = pick_size(variant);
     // Single canvas at the widget viewport size — the SDK's `Draw::rotated`
     // pivots around canvas centre, so making the canvas match the widget
     // and centering the dial at the canvas centre lets every hand rotate

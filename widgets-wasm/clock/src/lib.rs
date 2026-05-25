@@ -29,7 +29,7 @@ pub extern "C" fn render(_delta_ms: u32) {
     let WidgetSize {
         width: w,
         height: h,
-        ..
+        variant,
     } = widget_size();
     let now = SystemTime::now();
     let params = Params::current();
@@ -42,6 +42,7 @@ pub extern "C" fn render(_delta_ms: u32) {
         ClockStyle::AnalogRound => analog::round::render(
             now,
             &params,
+            variant,
             w,
             h,
             effective_tz.as_ref(),
@@ -52,6 +53,7 @@ pub extern "C" fn render(_delta_ms: u32) {
         ClockStyle::AnalogRect => analog::rect::render(
             now,
             &params,
+            variant,
             w,
             h,
             effective_tz.as_ref(),
@@ -59,7 +61,9 @@ pub extern "C" fn render(_delta_ms: u32) {
             viewport_w,
             viewport_h,
         ),
-        ClockStyle::Digital => digital::render(now, &params, w, h, effective_tz.as_ref(), &palette),
+        ClockStyle::Digital => {
+            digital::render(now, &params, variant, w, h, effective_tz.as_ref(), &palette)
+        }
     };
 
     let _ = render_ui(w, h, root);

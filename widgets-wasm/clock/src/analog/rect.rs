@@ -121,12 +121,12 @@ const ANALOG_RECT_SMALL: AnalogRectSizeParams = AnalogRectSizeParams {
     show_alarm: false,
 };
 
-fn pick_size(w: u32, h: u32) -> &'static AnalogRectSizeParams {
-    match (w, h) {
-        (1280, 480) => &ANALOG_RECT_FULL,
-        (638, 480) => &ANALOG_RECT_LARGE,
-        (638, 238) => &ANALOG_RECT_MEDIUM,
-        _ => &ANALOG_RECT_SMALL,
+fn pick_size(variant: SizeVariant) -> &'static AnalogRectSizeParams {
+    match variant {
+        SizeVariant::Full => &ANALOG_RECT_FULL,
+        SizeVariant::Large => &ANALOG_RECT_LARGE,
+        SizeVariant::Medium => &ANALOG_RECT_MEDIUM,
+        SizeVariant::Small => &ANALOG_RECT_SMALL,
     }
 }
 
@@ -143,6 +143,7 @@ fn pick_size(w: u32, h: u32) -> &'static AnalogRectSizeParams {
 pub(crate) fn render(
     now: SystemTime,
     params: &Params,
+    variant: SizeVariant,
     w: u32,
     h: u32,
     tz: Option<&Tz>,
@@ -150,7 +151,7 @@ pub(crate) fn render(
     viewport_w: f32,
     viewport_h: f32,
 ) -> Node {
-    let size = pick_size(w, h);
+    let size = pick_size(variant);
     let centre_x = viewport_w / 2.0;
     let centre_y = viewport_h / 2.0;
     let label = resolve_tz_for_label(tz, now.unix_secs);
