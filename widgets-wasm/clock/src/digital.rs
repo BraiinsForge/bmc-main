@@ -13,7 +13,7 @@ use bmc_wasm_sdk::*;
 use crate::manifest_params::Params;
 use crate::shared::{
     AlarmAnchor, ClockPalette, alarm_row_draws, effective_tz, font_weight, local_or_system,
-    push_utc_offset, tz_city,
+    push_utc_offset,
 };
 
 // ── Per-size template parameters ───────────────────────────────────────
@@ -245,7 +245,7 @@ pub(crate) fn date_pattern(
 /// paints the label red.
 fn compose_timezone(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> (String, bool) {
     let effective = effective_tz(tz);
-    let label = tz_city(effective.iana());
+    let label = effective.city();
     let offset = resolve_tz_offset(&effective, now.unix_secs);
     if size.show_utc_offset {
         let mut s = label;

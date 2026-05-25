@@ -109,12 +109,6 @@ pub(crate) fn local_or_system(now: &SystemTime, tz: &Tz) -> LocalDateTime {
         .unwrap_or_else(|| now.utc())
 }
 
-/// City-only portion of an IANA timezone name; underscores normalised
-/// to spaces. `Europe/Prague` → `Prague`; `America/New_York` → `New York`.
-pub(crate) fn tz_city(iana: &str) -> String {
-    iana.rsplit('/').next().unwrap_or(iana).replace('_', " ")
-}
-
 // ── Numeric helpers ────────────────────────────────────────────────────
 
 pub(crate) fn f32_from_u32(value: u32) -> f32 {

@@ -25,7 +25,7 @@ use crate::digital::date_pattern;
 use crate::manifest_params::Params;
 use crate::shared::{
     AlarmAnchor, ClockPalette, alarm_row_draws, effective_tz, f32_from_u32, font_weight,
-    push_utc_offset, tz_city,
+    push_utc_offset,
 };
 
 use super::{
@@ -244,14 +244,7 @@ pub(crate) fn render(
     // Unresolvable tz falls back to "(unknown)" and switches
     // to the night-red colour so an operator typo is visible at a glance.
     if params.show_timezone {
-        let iana_owned;
-        let iana = if let Some(t) = tz {
-            t.iana()
-        } else {
-            iana_owned = system::current().timezone().unwrap_or("Etc/GMT").to_owned();
-            iana_owned.as_str()
-        };
-        let city = tz_city(iana);
+        let city = effective.city();
         let offset = resolve_tz_offset(&effective, now.unix_secs);
         let line = match offset {
             Some(secs) => {

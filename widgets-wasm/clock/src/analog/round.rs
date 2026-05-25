@@ -16,7 +16,7 @@ use bmc_wasm_sdk::*;
 use crate::manifest_params::Params;
 use crate::shared::{
     AlarmAnchor, ClockPalette, alarm_row_draws, effective_tz, font_weight, local_or_system,
-    push_utc_offset, tz_city,
+    push_utc_offset,
 };
 
 use super::{
@@ -157,14 +157,7 @@ pub(crate) fn render(
     // so the city fits the dial inner-rect on Small/Medium; the offset
     // line disambiguates same-named cities across regions.
     if params.show_timezone {
-        let iana_owned;
-        let iana = if let Some(t) = tz {
-            t.iana()
-        } else {
-            iana_owned = system::current().timezone().unwrap_or("Etc/GMT").to_owned();
-            iana_owned.as_str()
-        };
-        let city = tz_city(iana);
+        let city = effective.city();
         let offset = resolve_tz_offset(&effective, now.unix_secs);
         let offset_str = match offset {
             Some(secs) => {

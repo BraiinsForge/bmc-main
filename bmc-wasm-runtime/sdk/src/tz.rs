@@ -53,4 +53,12 @@ impl Tz {
     pub fn iana(&self) -> &str {
         &self.0
     }
+
+    /// City portion of the IANA name; underscores normalised to spaces.
+    /// `Europe/Prague` → `"Prague"`; `America/New_York` → `"New York"`.
+    #[must_use]
+    pub fn city(&self) -> String {
+        let iana = self.iana();
+        iana.rsplit('/').next().unwrap_or(iana).replace('_', " ")
+    }
 }
