@@ -256,8 +256,18 @@ pub fn discover_widgets(workspace: &Path) -> Result<Vec<String>> {
 // ── WASM paths ──────────────────────────────────────────────────────
 
 /// Default wasm output directory when building a workspace locally.
-fn default_wasm_dir(workspace: &Path) -> PathBuf {
-    workspace.join("target").join(WASM_TARGET).join("release")
+fn default_wasm_dir(workspace: &Path, cargo_target_dir: Option<&Path>) -> PathBuf {
+    let target_dir = cargo_target_dir.map_or_else(
+        || workspace.join("target"),
+        |dir| {
+            if dir.is_absolute() {
+                dir.to_path_buf()
+            } else {
+                workspace.join(dir)
+            }
+        },
+    );
+    target_dir.join(WASM_TARGET).join("release")
 }
 
 /// Resolve the `.wasm` path for a widget within a given directory.
@@ -269,10 +279,10 @@ fn wasm_in_dir(dir: &Path, widget: &str) -> PathBuf {
 /// Resolve the `wasmDir` for a widget — either the paired `--wasm-dir`
 /// or the workspace's local cargo target dir.
 fn wasm_dir_for(entry: &WidgetEntry) -> PathBuf {
-    entry
-        .wasm_dir
-        .clone()
-        .unwrap_or_else(|| default_wasm_dir(&entry.workspace))
+    entry.wasm_dir.clone().unwrap_or_else(|| {
+        let cargo_target_dir = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from);
+        default_wasm_dir(&entry.workspace, cargo_target_dir.as_deref())
+    })
 }
 
 /// Widget capture directory (where `config.toml` and fixtures live).
@@ -526,5 +536,39 @@ fn format_time(seconds: f64) -> String {
         let minutes = (seconds / 60.0).floor() as u32;
         let secs = seconds % 60.0;
         format!("{minutes}m {secs:.0}s")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WASM_TARGET, default_wasm_dir};
+    use std::path::Path;
+
+    #[test]
+    fn default_wasm_dir_uses_absolute_cargo_target_dir() {
+        let workspace = Path::new("/workspace/widgets-wasm");
+
+        let dir = default_wasm_dir(workspace, Some(Path::new("/tmp/cargo-target")));
+
+        assert_eq!(
+            dir,
+            Path::new("/tmp/cargo-target")
+                .join(WASM_TARGET)
+                .join("release")
+        );
+    }
+
+    #[test]
+    fn default_wasm_dir_resolves_relative_cargo_target_dir_from_workspace() {
+        let workspace = Path::new("/workspace/widgets-wasm");
+
+        let dir = default_wasm_dir(workspace, Some(Path::new("cargo-target")));
+
+        assert_eq!(
+            dir,
+            Path::new("/workspace/widgets-wasm/cargo-target")
+                .join(WASM_TARGET)
+                .join("release")
+        );
     }
 }
