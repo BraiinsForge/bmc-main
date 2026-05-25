@@ -179,32 +179,28 @@ fn header(
             system_offset_secs, ..
         } => *system_offset_secs,
     };
-    let date_str = if params.show_date {
-        compose_date(now, size, offset_secs)
-    } else {
-        String::new()
-    };
-    let (tz_str, tz_color) = if params.show_timezone {
-        compose_timezone(label, size, palette)
-    } else {
-        (String::new(), palette.text)
-    };
+    let date_str: Option<String> = params
+        .show_date
+        .then(|| compose_date(now, size, offset_secs));
+    let tz: Option<(String, Color)> = params
+        .show_timezone
+        .then(|| compose_timezone(label, size, palette));
     let date_style = style!(
         size: u32::from(size.header_font_size),
         weight: FontWeight::REGULAR,
         color: palette.text,
     );
-    let tz_style = style!(
-        size: u32::from(size.header_font_size),
-        weight: FontWeight::REGULAR,
-        color: tz_color,
-    );
     let mut row_children: Vec<Node> = Vec::with_capacity(2);
-    if !date_str.is_empty() {
-        row_children.push(text(date_str, date_style));
+    if let Some(s) = date_str {
+        row_children.push(text(s, date_style));
     }
-    if !tz_str.is_empty() {
-        row_children.push(text(tz_str, tz_style));
+    if let Some((s, color)) = tz {
+        let tz_style = style!(
+            size: u32::from(size.header_font_size),
+            weight: FontWeight::REGULAR,
+            color: color,
+        );
+        row_children.push(text(s, tz_style));
     }
     Some(center(props!(), [row(props!(gap: 80.0), row_children)]))
 }
