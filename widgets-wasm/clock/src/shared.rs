@@ -119,32 +119,18 @@ pub(crate) fn f32_from_usize(value: usize) -> f32 {
     f32::from(u16::try_from(value).expect("BUG: short widget labels fit in u16"))
 }
 
-pub(crate) fn push_u32(s: &mut String, n: u32) {
-    if n >= 10 {
-        push_u32(s, n / 10);
-    }
-    s.push((b'0' + (n % 10) as u8) as char);
-}
-
-pub(crate) fn push_pad2(s: &mut String, n: u32) {
-    if n < 10 {
-        s.push('0');
-    }
-    push_u32(s, n);
-}
-
 /// `+H` for whole-hour offsets, `+H:MM` for fractional.
 /// Sign always emitted; hours unpadded; minutes zero-padded.
 pub(crate) fn push_utc_offset(s: &mut String, offset_secs: i32) {
     let sign = if offset_secs < 0 { '-' } else { '+' };
     let abs = offset_secs.unsigned_abs();
-    let hours = abs / 3_600;
-    let mins = (abs % 3_600) / 60;
+    let hours = i64::from(abs / 3_600);
+    let mins = i64::from((abs % 3_600) / 60);
     s.push(sign);
-    push_u32(s, hours);
+    bmc_wasm_sdk::format::push_int(s, hours);
     if mins != 0 {
         s.push(':');
-        push_pad2(s, mins);
+        bmc_wasm_sdk::format::push_pad2(s, mins);
     }
 }
 

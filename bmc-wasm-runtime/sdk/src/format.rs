@@ -330,16 +330,16 @@ pub fn format_duration(remaining_secs: i64, show_seconds: bool) -> String {
     out
 }
 
-/// Push a non-negative integer as decimal digits.
-fn push_int(s: &mut String, n: i64) {
+/// Append `n`'s decimal digits to `s` (smallest representation, no padding).
+pub fn push_int(s: &mut String, n: i64) {
     if n >= 10 {
         push_int(s, n / 10);
     }
     s.push((b'0' + (n % 10) as u8) as char);
 }
 
-/// Push a value 0–99 as exactly two decimal digits.
-fn push_pad2(s: &mut String, n: i64) {
+/// Append `n`'s decimal digits to `s`, zero-padded to two characters.
+pub fn push_pad2(s: &mut String, n: i64) {
     if n < 10 {
         s.push('0');
     }
