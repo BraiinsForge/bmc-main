@@ -3,6 +3,11 @@
 // AUTO-GENERATED FROM ../manifest.json by `bmc-widget-codegen` v0.1.0.
 // Do not edit by hand. Run `just wasm::gen <widget>` after changing the manifest.
 
+#![expect(
+    dead_code,
+    reason = "fields are widget-specific; not every key is used by every render path"
+)]
+
 use bmc_wasm_sdk::params as snapshot;
 use bmc_wasm_sdk::params::typed::ParamRead;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,24 +19,8 @@ pub enum ClockStyle {
 impl ClockStyle {
     /// Every variant, in manifest-declaration order. Useful when a widget
     /// wants to render a "pick one" UI or audit the enum exhaustively.
-    #[expect(
-        clippy::allow_attributes,
-        reason = "wrapping a dead_code allow on a per-widget-optional API"
-    )]
-    #[allow(
-        dead_code,
-        reason = "for widgets rendering a pick-one UI or auditing the enum exhaustively"
-    )]
     pub const ALL: &'static [Self] = &[Self::AnalogRound, Self::AnalogRect, Self::Digital];
     /// Manifest wire value for this variant.
-    #[expect(
-        clippy::allow_attributes,
-        reason = "wrapping a dead_code allow on a per-widget-optional API"
-    )]
-    #[allow(
-        dead_code,
-        reason = "for widgets serialising the variant back to its manifest spelling"
-    )]
     #[must_use]
     pub fn as_manifest_value(self) -> &'static str {
         match self {
@@ -41,14 +30,6 @@ impl ClockStyle {
         }
     }
     /// Human-readable label declared in the manifest's `enum_values`.
-    #[expect(
-        clippy::allow_attributes,
-        reason = "wrapping a dead_code allow on a per-widget-optional API"
-    )]
-    #[allow(
-        dead_code,
-        reason = "for widgets rendering a pick-one UI or labelling the current value"
-    )]
     #[must_use]
     pub fn as_manifest_label(self) -> &'static str {
         match self {
@@ -77,24 +58,8 @@ pub enum NumbersFontStyle {
 impl NumbersFontStyle {
     /// Every variant, in manifest-declaration order. Useful when a widget
     /// wants to render a "pick one" UI or audit the enum exhaustively.
-    #[expect(
-        clippy::allow_attributes,
-        reason = "wrapping a dead_code allow on a per-widget-optional API"
-    )]
-    #[allow(
-        dead_code,
-        reason = "for widgets rendering a pick-one UI or auditing the enum exhaustively"
-    )]
     pub const ALL: &'static [Self] = &[Self::Regular, Self::SemiBold, Self::Bold];
     /// Manifest wire value for this variant.
-    #[expect(
-        clippy::allow_attributes,
-        reason = "wrapping a dead_code allow on a per-widget-optional API"
-    )]
-    #[allow(
-        dead_code,
-        reason = "for widgets serialising the variant back to its manifest spelling"
-    )]
     #[must_use]
     pub fn as_manifest_value(self) -> &'static str {
         match self {
@@ -104,14 +69,6 @@ impl NumbersFontStyle {
         }
     }
     /// Human-readable label declared in the manifest's `enum_values`.
-    #[expect(
-        clippy::allow_attributes,
-        reason = "wrapping a dead_code allow on a per-widget-optional API"
-    )]
-    #[allow(
-        dead_code,
-        reason = "for widgets rendering a pick-one UI or labelling the current value"
-    )]
     #[must_use]
     pub fn as_manifest_label(self) -> &'static str {
         match self {
@@ -164,14 +121,6 @@ impl Params {
     /// Snapshot delivered immediately before [`current`]; `None` until at
     /// least one update has been observed (i.e. during `init` and the
     /// first `render`).
-    #[expect(
-        clippy::allow_attributes,
-        reason = "wrapping a dead_code allow on a per-widget-optional API"
-    )]
-    #[allow(
-        dead_code,
-        reason = "for widgets that diff against the prior snapshot in on_params_update"
-    )]
     #[must_use]
     pub fn previous() -> Option<Self> {
         let prev = snapshot::previous();
@@ -187,14 +136,6 @@ impl Params {
     /// inside-hook value of `previous()` to get the set of keys to react
     /// to. Field-by-field `PartialEq`; emitted in struct-field order so
     /// the result is deterministic.
-    #[expect(
-        clippy::allow_attributes,
-        reason = "wrapping a dead_code allow on a per-widget-optional API"
-    )]
-    #[allow(
-        dead_code,
-        reason = "for widgets that react per-key inside on_params_update"
-    )]
     #[must_use]
     pub fn changed_keys(&self, other: &Self) -> Vec<&'static str> {
         let mut out = Vec::new();
