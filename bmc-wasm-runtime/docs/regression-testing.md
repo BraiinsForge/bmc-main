@@ -1,22 +1,9 @@
-# Visual Regression Testing
+# Visual Regression Testing — Internals
 
-Pixel-level visual regression testing for WASM widgets using headless EGL capture, odiff comparison, and CI integration
-via GitLab.
-
-## Quick start
-
-```bash
-# Local: capture all widgets and diff against baselines
-make regression-test-all
-
-# Single widget:
-make regression-test EXAMPLE=calendar
-
-# Locally reproduce the CI gate (per-widget derivations); on regression
-# the per-widget build sandbox is preserved by --keep-failed, with
-# captures + report.html under /tmp/nix-build-wasm-regression-<name>.drv-*/captures/
-nix build --keep-failed -L --keep-going .#checks.x86_64-linux.wasm-regression
-```
+Pixel-level visual regression for WASM widgets using headless EGL capture and odiff comparison. This document covers the
+internals: capture pipeline, nix wrapper, capture binary, fixture format, replay loop. For the widget-author workflow
+(opt-in, recording fixtures, refreshing baselines), see
+[`docs/devel/wasm-widgets/regression-testing.md`](../../docs/devel/wasm-widgets/regression-testing.md).
 
 ## Pipeline
 
@@ -117,25 +104,7 @@ connection), the event is deferred and retried next frame:
 inject_fixture_events(fixture_ms)  →  deliver_all_io()  →  render()  →  advance clocks
 ```
 
-## Baseline management
+## Baseline format
 
 Baselines are 7z archives per widget (`capture/baselines.7z`), compressed natively via `sevenz-rust2` with solid LZMA2.
-
-To update baselines after intentional visual changes:
-
-```bash
-make update-baselines EXAMPLE=calendar
-```
-
-## Makefile targets
-
-```bash
-make capture EXAMPLE=x            # capture one widget at all sizes
-make capture-all                   # capture all widgets
-make update-baselines EXAMPLE=x   # capture + compress into baselines.7z
-make regression-test EXAMPLE=x    # capture + diff one widget
-make regression-test-all           # capture + diff all widgets
-make preview EXAMPLE=x            # generate mp4 preview from captures
-make preview EXAMPLE=x SIZE=full  # preview one size only
-make record EXAMPLE=x SIZE=full   # record fixtures interactively
-```
+One archive per widget; one frame per declared size inside.

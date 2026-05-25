@@ -88,7 +88,8 @@ Small) simultaneously in a masonry layout with a performance overlay. Pass extra
 ## Visual Regression Testing
 
 Pixel-level visual regression testing using headless EGL capture and [odiff](https://github.com/dmtrKovalenko/odiff)
-comparison. See docs/devlog/hosted-wasm/visual-regression-testing.md for architecture details.
+comparison. See `docs/regression-testing.md` for internals and `docs/devel/wasm-widgets/regression-testing.md` (in the
+workspace root) for the widget-author workflow.
 
 ```bash
 make regression-test EXAMPLE=hello-widget   # capture + diff one widget
