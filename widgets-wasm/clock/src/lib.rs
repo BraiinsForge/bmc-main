@@ -44,7 +44,7 @@ pub extern "C" fn render(_delta_ms: u32) {
             analog::rect::render(now, &params, variant, w, h, effective_tz.as_ref(), &palette)
         }
         ClockStyle::Digital => {
-            digital::render(now, &params, variant, w, h, effective_tz.as_ref(), &palette)
+            digital::render(now, &params, variant, effective_tz.as_ref(), &palette)
         }
     };
 

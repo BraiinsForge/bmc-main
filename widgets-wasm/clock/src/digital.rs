@@ -104,8 +104,6 @@ pub(crate) fn render(
     now: SystemTime,
     params: &Params,
     variant: SizeVariant,
-    w: u32,
-    h: u32,
     tz: Option<&Tz>,
     palette: &ClockPalette,
 ) -> Node {
