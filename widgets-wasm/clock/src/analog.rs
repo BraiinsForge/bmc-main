@@ -100,8 +100,8 @@ pub(crate) fn second_angle(second: u8) -> f32 {
     SECOND_ANGLE_STATE.with(|s| unwrap_angle(s, target))
 }
 
-pub(crate) fn local_clock_components(now: &SystemTime, tz: &Tz) -> (u8, u8, u8) {
-    let local = local_or_system(now, tz);
+pub(crate) fn local_clock_components(now: &SystemTime, offset_secs: i32) -> (u8, u8, u8) {
+    let local = local_or_system(now, offset_secs);
     (local.hour, local.minute, local.second)
 }
 

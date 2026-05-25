@@ -24,7 +24,7 @@ use bmc_wasm_sdk::*;
 use crate::digital::date_pattern;
 use crate::manifest_params::Params;
 use crate::shared::{
-    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, effective_tz, f32_from_u32, font_weight,
+    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, f32_from_u32, font_weight,
     push_utc_offset, resolve_tz_for_label,
 };
 
@@ -136,6 +136,10 @@ fn pick_size(w: u32, h: u32) -> &'static AnalogRectSizeParams {
     clippy::too_many_lines,
     reason = "this renderer intentionally keeps one draw-order-sensitive template together"
 )]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "render collects all frame inputs; a context struct is a later refactor"
+)]
 pub(crate) fn render(
     now: SystemTime,
     params: &Params,
@@ -149,8 +153,14 @@ pub(crate) fn render(
     let size = pick_size(w, h);
     let centre_x = viewport_w / 2.0;
     let centre_y = viewport_h / 2.0;
-    let effective = effective_tz(tz);
-    let (hour12, minute, second) = local_clock_components(&now, &effective);
+    let label = resolve_tz_for_label(tz, now.unix_secs);
+    let offset_secs = match &label {
+        TzLabel::Resolved { offset_secs, .. } => *offset_secs,
+        TzLabel::Unknown {
+            system_offset_secs, ..
+        } => *system_offset_secs,
+    };
+    let (hour12, minute, second) = local_clock_components(&now, offset_secs);
     let numerals_weight = font_weight(params.numbers_font_style);
 
     let mut draws: Vec<Draw> = Vec::with_capacity(20);
@@ -223,7 +233,7 @@ pub(crate) fn render(
     // Vertically centred at the viewport mid-line, left-anchored at a fixed inset
     // that puts the row to the right of the dial graphic.
     if size.show_date_row && params.show_date {
-        let shifted = format::local_unix_secs_or_system(&now, Some(&effective));
+        let shifted = now.unix_secs + i64::from(offset_secs);
         let fmt = system::current().date_format().unwrap_or_default();
         let date_str = strftime(shifted, date_pattern(fmt, true, false));
         draws.push(Draw::text(
@@ -244,19 +254,18 @@ pub(crate) fn render(
     // Unresolvable tz falls back to "(unknown)" and switches
     // to the night-red colour so an operator typo is visible at a glance.
     if params.show_timezone {
-        let label = resolve_tz_for_label(tz, now.unix_secs);
-        let (line, tz_color) = match label {
+        let (line, tz_color) = match &label {
             TzLabel::Resolved { city, offset_secs } => {
                 let mut s = String::with_capacity(city.len() + 10);
-                s.push_str(&city);
+                s.push_str(city);
                 s.push_str(" (");
-                push_utc_offset(&mut s, offset_secs);
+                push_utc_offset(&mut s, *offset_secs);
                 s.push(')');
                 (s, palette.text)
             }
             TzLabel::Unknown { city, .. } => {
                 let mut s = String::with_capacity(city.len() + 10);
-                s.push_str(&city);
+                s.push_str(city);
                 s.push_str(" (unknown)");
                 (s, RED_50)
             }

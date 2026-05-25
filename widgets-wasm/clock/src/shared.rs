@@ -86,6 +86,10 @@ pub(crate) fn clock_palette(night_mode: bool) -> ClockPalette {
 /// Projection paths (hands, digits) use this;
 /// the timezone-line code instead consults the raw Option chain
 /// so it can render a visible signal when nothing was configured.
+#[expect(
+    dead_code,
+    reason = "retained for future callers; renderers now use offset_secs"
+)]
 pub(crate) fn effective_tz(tz: Option<&Tz>) -> Tz {
     if let Some(t) = tz {
         return t.clone();
@@ -96,17 +100,14 @@ pub(crate) fn effective_tz(tz: Option<&Tz>) -> Tz {
     Tz::from_runtime("Etc/GMT")
 }
 
-/// `tz` → system tz → UTC fallback chain for projection paths
-/// (hands, digits). Timezone-line code uses fallible `.local(tz)`
-/// directly so it can render a visible signal on lookup failure.
-pub(crate) fn local_or_system(now: &SystemTime, tz: &Tz) -> LocalDateTime {
-    now.local(tz)
-        .or_else(|| {
-            system::current()
-                .timezone()
-                .and_then(|name| now.local(&Tz::from_runtime(name)))
-        })
-        .unwrap_or_else(|| now.utc())
+/// Apply a precomputed UTC offset to `now.unix_secs` and decompose
+/// to wall-clock fields. The caller is responsible for resolving
+/// the offset once per `render()` (see `resolve_tz_for_label`).
+pub(crate) fn local_or_system(now: &SystemTime, offset_secs: i32) -> LocalDateTime {
+    SystemTime {
+        unix_secs: now.unix_secs + i64::from(offset_secs),
+    }
+    .utc()
 }
 
 // ── Numeric helpers ────────────────────────────────────────────────────
@@ -248,7 +249,6 @@ pub(crate) enum TzLabel {
     /// When the system tz also fails to resolve, `system_offset_secs` is 0.
     Unknown {
         city: String,
-        #[expect(dead_code, reason = "consumed by downstream tz projection path")]
         system_offset_secs: i32,
     },
 }

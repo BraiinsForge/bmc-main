@@ -15,8 +15,8 @@ use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Params;
 use crate::shared::{
-    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, effective_tz, font_weight,
-    local_or_system, push_utc_offset, resolve_tz_for_label,
+    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, font_weight, local_or_system,
+    push_utc_offset, resolve_tz_for_label,
 };
 
 use super::{
@@ -107,6 +107,10 @@ fn pick_size(w: u32, h: u32) -> &'static AnalogRoundSizeParams {
     clippy::too_many_lines,
     reason = "this renderer intentionally keeps one draw-order-sensitive template together"
 )]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "render collects all frame inputs; a context struct is a later refactor"
+)]
 pub(crate) fn render(
     now: SystemTime,
     params: &Params,
@@ -125,8 +129,14 @@ pub(crate) fn render(
     let centre_x = viewport_w / 2.0;
     let centre_y = viewport_h / 2.0;
     let dial_top_y = centre_y - size.canvas / 2.0;
-    let effective = effective_tz(tz);
-    let (hour12, minute, second) = local_clock_components(&now, &effective);
+    let label = resolve_tz_for_label(tz, now.unix_secs);
+    let offset_secs = match &label {
+        TzLabel::Resolved { offset_secs, .. } => *offset_secs,
+        TzLabel::Unknown {
+            system_offset_secs, ..
+        } => *system_offset_secs,
+    };
+    let (hour12, minute, second) = local_clock_components(&now, offset_secs);
 
     let mut draws: Vec<Draw> = Vec::with_capacity(16);
 
@@ -157,7 +167,6 @@ pub(crate) fn render(
     // so the city fits the dial inner-rect on Small/Medium; the offset
     // line disambiguates same-named cities across regions.
     if params.show_timezone {
-        let label = resolve_tz_for_label(tz, now.unix_secs);
         let (city, offset_str, tz_color) = match &label {
             TzLabel::Resolved { city, offset_secs } => {
                 let mut s = String::new();
@@ -211,7 +220,7 @@ pub(crate) fn render(
             centre_x,
             dial_top_y,
             &now,
-            &effective,
+            offset_secs,
             palette,
             numbers_weight,
             &mut draws,
@@ -353,7 +362,7 @@ fn date_window(
     centre_x: f32,
     dial_top_y: f32,
     now: &SystemTime,
-    tz: &Tz,
+    offset_secs: i32,
     palette: &ClockPalette,
     weight: FontWeight,
     draws: &mut Vec<Draw>,
@@ -380,7 +389,7 @@ fn date_window(
     ));
     // `VerticalAlign::Center` keeps the digit visually centred
     // on the ring instead of sitting half a font-size below it.
-    let day_str = format!("{}", local_or_system(now, tz).day);
+    let day_str = format!("{}", local_or_system(now, offset_secs).day);
     draws.push(Draw::text(
         cx,
         cy,

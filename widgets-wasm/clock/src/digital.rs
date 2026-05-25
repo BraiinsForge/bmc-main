@@ -12,8 +12,8 @@ use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Params;
 use crate::shared::{
-    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, effective_tz, font_weight,
-    local_or_system, push_utc_offset, resolve_tz_for_label,
+    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, font_weight, local_or_system,
+    push_utc_offset, resolve_tz_for_label,
 };
 
 // ── Per-size template parameters ───────────────────────────────────────
@@ -114,9 +114,18 @@ pub(crate) fn render(
     let size = pick_size(w, h);
     let is_12h = matches!(system::current().time_format(), Some(TimeFormat::Hour12));
 
-    let header_node = header(now, params, size, tz, palette);
-    let time_node = time_row(now, params, size, is_12h, tz, palette);
-    let ampm_row_node = (!size.ampm_inline && is_12h).then(|| ampm_line(now, size, tz, palette));
+    let label = resolve_tz_for_label(tz, now.unix_secs);
+    let offset_secs = match &label {
+        TzLabel::Resolved { offset_secs, .. } => *offset_secs,
+        TzLabel::Unknown {
+            system_offset_secs, ..
+        } => *system_offset_secs,
+    };
+
+    let header_node = header(now, params, size, &label, palette);
+    let time_node = time_row(now, params, size, is_12h, tz, offset_secs, palette);
+    let ampm_row_node =
+        (!size.ampm_inline && is_12h).then(|| ampm_line(now, size, offset_secs, palette));
     let alarm_node = size
         .show_alarm
         .then(|| alarm_row(size, params, palette))
@@ -162,19 +171,25 @@ fn header(
     now: SystemTime,
     params: &Params,
     size: &DigitalSizeParams,
-    tz: Option<&Tz>,
+    label: &TzLabel,
     palette: &ClockPalette,
 ) -> Option<Node> {
     if !params.show_date && !params.show_timezone {
         return None;
     }
+    let offset_secs = match label {
+        TzLabel::Resolved { offset_secs, .. } => *offset_secs,
+        TzLabel::Unknown {
+            system_offset_secs, ..
+        } => *system_offset_secs,
+    };
     let date_str = if params.show_date {
-        compose_date(now, size, tz)
+        compose_date(now, size, offset_secs)
     } else {
         String::new()
     };
     let (tz_str, tz_color) = if params.show_timezone {
-        compose_timezone(now, size, tz, palette)
+        compose_timezone(label, size, palette)
     } else {
         (String::new(), palette.text)
     };
@@ -201,9 +216,8 @@ fn header(
 /// Compose the date string from per-size visibility flags.
 /// Uses strftime so the weekday / month-name come from
 /// the host's chrono (correct locale + correct timezone).
-fn compose_date(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> String {
-    let effective = effective_tz(tz);
-    let shifted = format::local_unix_secs_or_system(&now, Some(&effective));
+fn compose_date(now: SystemTime, size: &DigitalSizeParams, offset_secs: i32) -> String {
+    let shifted = now.unix_secs + i64::from(offset_secs);
     let fmt = system::current().date_format().unwrap_or_default();
     strftime(
         shifted,
@@ -240,31 +254,29 @@ pub(crate) fn date_pattern(
 }
 
 fn compose_timezone(
-    now: SystemTime,
+    label: &TzLabel,
     size: &DigitalSizeParams,
-    tz: Option<&Tz>,
     palette: &ClockPalette,
 ) -> (String, Color) {
-    let label = resolve_tz_for_label(tz, now.unix_secs);
     match label {
         TzLabel::Resolved { city, offset_secs } => {
             if size.show_utc_offset {
-                let mut s = city;
+                let mut s = city.clone();
                 s.push_str(" (");
-                push_utc_offset(&mut s, offset_secs);
+                push_utc_offset(&mut s, *offset_secs);
                 s.push(')');
                 (s, palette.text)
             } else {
-                (city, palette.text)
+                (city.clone(), palette.text)
             }
         }
         TzLabel::Unknown { city, .. } => {
             if size.show_utc_offset {
-                let mut s = city;
+                let mut s = city.clone();
                 s.push_str(" (unknown)");
                 (s, RED_50)
             } else {
-                (city, RED_50)
+                (city.clone(), RED_50)
             }
         }
     }
@@ -278,6 +290,7 @@ fn time_row(
     size: &DigitalSizeParams,
     is_12h: bool,
     tz: Option<&Tz>,
+    offset_secs: i32,
     palette: &ClockPalette,
 ) -> Node {
     let weight = font_weight(params.numbers_font_style);
@@ -299,7 +312,7 @@ fn time_row(
     );
 
     if size.ampm_inline && is_12h {
-        let ampm = ampm_glyph(now, tz);
+        let ampm = ampm_glyph(now, offset_secs);
         // AM/PM sits to the right of the time text, separated by a 32px gap.
         // Pixel-exact anchoring to the time text's right edge would
         // need an anchor primitive the SDK doesn't yet expose;
@@ -326,13 +339,13 @@ fn time_row(
 fn ampm_line(
     now: SystemTime,
     size: &DigitalSizeParams,
-    tz: Option<&Tz>,
+    offset_secs: i32,
     palette: &ClockPalette,
 ) -> Node {
     center(
         props!(),
         [text(
-            ampm_glyph(now, tz),
+            ampm_glyph(now, offset_secs),
             style!(
                 size: u32::from(size.ampm_font_size),
                 weight: FontWeight::REGULAR,
@@ -343,9 +356,8 @@ fn ampm_line(
 }
 
 /// `"AM"` / `"PM"` for the given moment in the effective timezone.
-fn ampm_glyph(now: SystemTime, tz: Option<&Tz>) -> &'static str {
-    let effective = effective_tz(tz);
-    if local_or_system(&now, &effective).hour >= 12 {
+fn ampm_glyph(now: SystemTime, offset_secs: i32) -> &'static str {
+    if local_or_system(&now, offset_secs).hour >= 12 {
         "PM"
     } else {
         "AM"
@@ -357,9 +369,7 @@ fn ampm_glyph(now: SystemTime, tz: Option<&Tz>) -> &'static str {
 /// Build the digital alarm-row node: a fixed-size canvas
 /// wrapping `alarm_row_draws`. `None` when no alarm is set.
 fn alarm_row(size: &DigitalSizeParams, params: &Params, palette: &ClockPalette) -> Option<Node> {
-    if system::current().next_alarm().is_none() {
-        return None;
-    }
+    system::current().next_alarm()?;
     let bell = f32::from(size.header_font_size);
     let mut draws: Vec<Draw> = Vec::with_capacity(2);
     let total_w = alarm_row_draws(
