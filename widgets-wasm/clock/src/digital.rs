@@ -13,7 +13,7 @@ use bmc_wasm_sdk::*;
 use crate::manifest_params::Params;
 use crate::shared::{
     AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, font_weight, local_or_system,
-    push_utc_offset, resolve_tz_for_label,
+    push_utc_offset, resolve_tz_for_label, time_font_family,
 };
 
 // ── Per-size template parameters ───────────────────────────────────────
@@ -323,7 +323,8 @@ fn time_row(
         style!(
             size: u32::from(size.time_font_size),
             weight: weight,
-            color: palette.primary
+            color: palette.primary,
+            family: time_font_family(),
         ),
     );
 

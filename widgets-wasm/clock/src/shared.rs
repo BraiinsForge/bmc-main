@@ -145,6 +145,29 @@ pub(crate) fn font_weight(style: NumbersFontStyle) -> FontWeight {
     }
 }
 
+pub(crate) const fn time_font_family() -> FontFamily {
+    FontFamily::DeckSans
+}
+
+pub(crate) const fn alarm_row_font_family() -> FontFamily {
+    FontFamily::DeckSans
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn time_text_uses_deck_sans_family() {
+        assert_eq!(time_font_family(), FontFamily::DeckSans);
+    }
+
+    #[test]
+    fn alarm_row_text_uses_deck_sans_family() {
+        assert_eq!(alarm_row_font_family(), FontFamily::DeckSans);
+    }
+}
+
 // ── Alarm row — single renderer shared by digital + both analog modes ──
 
 const ALARM_BELL: Svg = include_svg!("assets/alarm-bell.svg");
@@ -195,10 +218,15 @@ pub(crate) fn alarm_row_draws(
         reason = "bell_size is a positive widget-pixel value well under u32 max"
     )]
     let font_size = bell_size as u32;
+    // Optical compensation: the bell's visual mass sits below its viewBox
+    // centre (cy=13/24) and digit glyphs sit above the font's EM-box
+    // centre (where `VerticalAlign::Center` anchors), so geometric
+    // centring leaves the bell visibly lower than the digits.
+    let optical_offset = bell_size * 0.08;
     draws.push(
         Draw::svg(
             x,
-            y - bell_size / 2.0,
+            y - bell_size / 2.0 - optical_offset,
             bell_size,
             bell_size,
             &ALARM_BELL,
@@ -214,6 +242,7 @@ pub(crate) fn alarm_row_draws(
             size: font_size,
             weight: font_weight,
             color: color,
+            family: alarm_row_font_family(),
             align: TextAlign::Left,
             valign: VerticalAlign::Center,
         ),
