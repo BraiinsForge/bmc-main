@@ -515,7 +515,7 @@ impl SystemTime {
     #[cfg(target_arch = "wasm32")]
     #[must_use]
     pub fn local(&self, tz: &crate::Tz) -> Option<LocalDateTime> {
-        crate::format::local_unix_secs(self, tz).map(decompose)
+        crate::calendar::tz_convert(self.unix_secs, tz.iana())
     }
 
     #[cfg(target_arch = "wasm32")]
