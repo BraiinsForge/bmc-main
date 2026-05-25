@@ -226,12 +226,19 @@ pub(crate) fn format_alarm_time(
     is_12h: bool,
 ) -> String {
     let secs = alarm.fire_at_utc_ms / 1000;
-    // Alarm fire time is operator-set in the system tz;
-    // render it in the same tz here. `timezone_override`
-    // doesn't shift the alarm row (alarms are a system-tz
-    // construct, not an event-local-tz one).
+    // Alarms are a system-wide construct (the deck wakes at the
+    // operator-set time); the per-widget `timezone_override` does
+    // not shift the alarm row. Shift the UTC timestamp by the system
+    // tz offset before strftime — `host_format_date` formats through
+    // DateTime::<Utc>, so without the shift an alarm set for
+    // 06:00 CEST would render as 04:00.
+    let offset_secs = system::current()
+        .timezone()
+        .and_then(|name| format::resolve_tz_offset(&Tz::from_runtime(name), secs))
+        .unwrap_or(0);
+    let shifted = secs + i64::from(offset_secs);
     let pattern = if is_12h { "%I:%M %p" } else { "%H:%M" };
-    strftime(secs, pattern)
+    strftime(shifted, pattern)
 }
 
 // ── TzLabel — single resolver for the per-renderer label row ──────────
