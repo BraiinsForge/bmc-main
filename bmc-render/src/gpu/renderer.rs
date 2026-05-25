@@ -515,39 +515,24 @@ impl Renderer for FemtoVgRenderer {
     fn draw_canvas_text(&mut self, text: &str, x: f32, y: f32, style: &TextStyle) {
         let font = self.fonts.select(style.family, style.weight);
         let size = style.size as f32;
-        // Translate the input anchor `y` to a top-of-glyph-box `y_top`.
-        // The `0.65` multiplier for `Center` puts the *visible* glyph
-        // mid-line on `y` — femtovg's `Baseline::Top` corresponds to
-        // the top of the line box (above the ascender), so the visible
-        // mid-line sits well below `y - size / 2`.
-        let y_top = match style.vertical_align {
-            VerticalAlign::Top => y,
-            VerticalAlign::Center => y - size * 0.65,
-            VerticalAlign::Bottom => y - size,
-            VerticalAlign::Baseline => y - size * 0.8,
-        };
         let mut paint = Paint::color(to_femtovg_color(style.color.to_u32()));
         paint.set_font(&[font, self.font_fallback]);
         paint.set_font_size(size);
-        paint.set_text_baseline(femtovg::Baseline::Top);
+        paint.set_text_baseline(femtovg_baseline(style.vertical_align));
+
+        let measured_width = match style.align {
+            TextAlign::Left => 0.0,
+            TextAlign::Center | TextAlign::Right => self
+                .canvas
+                .measure_text(0.0, 0.0, text, &paint)
+                .map_or(0.0, |m| m.width()),
+        };
 
         // Alignment: measure text width and offset x for Center/Right
         let draw_x = match style.align {
             TextAlign::Left => x,
-            TextAlign::Center => {
-                let width = self
-                    .canvas
-                    .measure_text(0.0, 0.0, text, &paint)
-                    .map_or(0.0, |m| m.width());
-                x - width / 2.0
-            }
-            TextAlign::Right => {
-                let width = self
-                    .canvas
-                    .measure_text(0.0, 0.0, text, &paint)
-                    .map_or(0.0, |m| m.width());
-                x - width
-            }
+            TextAlign::Center => x - measured_width / 2.0,
+            TextAlign::Right => x - measured_width,
         };
 
         // Text outline via 8-direction fill_text at each 1px ring up to outline_width.
@@ -556,7 +541,7 @@ impl Renderer for FemtoVgRenderer {
             let mut outline_paint = Paint::color(to_femtovg_color(style.outline_color.to_u32()));
             outline_paint.set_font(&[font, self.font_fallback]);
             outline_paint.set_font_size(size);
-            outline_paint.set_text_baseline(femtovg::Baseline::Top);
+            outline_paint.set_text_baseline(femtovg_baseline(style.vertical_align));
             #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let rings = style.outline_width.ceil() as u32;
             for ring in 1..=rings {
@@ -573,12 +558,12 @@ impl Renderer for FemtoVgRenderer {
                 ] {
                     let _ = self
                         .canvas
-                        .fill_text(draw_x + dx, y_top + dy, text, &outline_paint);
+                        .fill_text(draw_x + dx, y + dy, text, &outline_paint);
                 }
             }
         }
 
-        let _ = self.canvas.fill_text(draw_x, y_top, text, &paint);
+        let _ = self.canvas.fill_text(draw_x, y, text, &paint);
 
         // Decorations
         if style.underline || style.strikethrough {
@@ -589,11 +574,11 @@ impl Renderer for FemtoVgRenderer {
             let thickness = (size / 14.0).max(1.0);
 
             if style.underline {
-                let uy = y_top + size + 1.0;
+                let uy = y + size * 0.1;
                 self.fill_rect(draw_x, uy, width, thickness, style.color);
             }
             if style.strikethrough {
-                let sy = y_top + size / 2.0;
+                let sy = y - size * 0.3;
                 self.fill_rect(draw_x, sy, width, thickness, style.color);
             }
         }
@@ -988,6 +973,15 @@ impl Renderer for FemtoVgRenderer {
     }
 }
 
+fn femtovg_baseline(vertical_align: VerticalAlign) -> femtovg::Baseline {
+    match vertical_align {
+        VerticalAlign::Top => femtovg::Baseline::Top,
+        VerticalAlign::Center => femtovg::Baseline::Middle,
+        VerticalAlign::Bottom => femtovg::Baseline::Bottom,
+        VerticalAlign::Baseline => femtovg::Baseline::Alphabetic,
+    }
+}
+
 /// Build a FemtoVG `Path` from a sequence of points.
 ///
 /// - `smooth = false`: straight line segments (`move_to` + `line_to`).
@@ -1032,12 +1026,30 @@ fn build_femtovg_path(points: &[(f32, f32)], closed: bool, smooth: bool) -> Path
 #[cfg(test)]
 #[cfg(target_os = "linux")]
 mod tests {
-    use super::FemtoVgRenderer;
+    use super::{FemtoVgRenderer, femtovg_baseline};
     use crate::renderer::Renderer;
     use crate::test_harness::GlHarness;
+    use crate::tree::VerticalAlign;
     use glow::HasContext;
     use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
     use std::io::Cursor;
+
+    #[test]
+    fn canvas_text_vertical_align_maps_to_femtovg_baselines() {
+        assert_eq!(femtovg_baseline(VerticalAlign::Top), femtovg::Baseline::Top);
+        assert_eq!(
+            femtovg_baseline(VerticalAlign::Center),
+            femtovg::Baseline::Middle
+        );
+        assert_eq!(
+            femtovg_baseline(VerticalAlign::Bottom),
+            femtovg::Baseline::Bottom
+        );
+        assert_eq!(
+            femtovg_baseline(VerticalAlign::Baseline),
+            femtovg::Baseline::Alphabetic
+        );
+    }
 
     /// Encode a 1×1 RGBA PNG with the given pixel; minimum payload that
     /// rides through `BitmapRegistry::register`'s decode+upload path.
