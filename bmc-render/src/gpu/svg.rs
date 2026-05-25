@@ -207,17 +207,20 @@ pub fn draw_svg(
         Some(to_femtovg_color(color.to_u32()))
     };
 
-    // Resolve `fills` against `paths_by_id` once per draw so
-    // the per-path inner loop only sees `Option<femtovg::Color>`.
-    let mut path_overrides: Vec<Option<femtovg::Color>> = vec![None; icon.paths.len()];
-    for (id, override_color) in fills {
-        if let Some(&idx) = icon.paths_by_id.get(id) {
-            path_overrides[idx] = Some(to_femtovg_color(override_color.to_u32()));
-        }
-    }
+    // Resolve overrides on demand so `fills.is_empty()` (the common
+    // hot-path case for hands / centre stack) avoids a per-draw
+    // Vec<Option<…>> allocation. `fills` is typically 0–4 entries.
+    let override_for = |idx: usize| -> Option<femtovg::Color> {
+        fills.iter().find_map(|(id, override_color)| {
+            icon.paths_by_id
+                .get(id)
+                .filter(|&&i| i == idx)
+                .map(|_| to_femtovg_color(override_color.to_u32()))
+        })
+    };
 
     for (idx, icon_path) in icon.paths.iter().enumerate() {
-        let path_override = path_overrides[idx];
+        let path_override = override_for(idx);
         if let Some(fill_color) = icon_path.fill_color {
             let paint_color = path_override
                 .or(tint)
