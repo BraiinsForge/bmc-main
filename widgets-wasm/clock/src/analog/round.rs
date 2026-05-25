@@ -15,8 +15,8 @@ use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Params;
 use crate::shared::{
-    AlarmAnchor, ClockPalette, alarm_row_draws, effective_tz, font_weight, local_or_system,
-    push_utc_offset,
+    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, effective_tz, font_weight,
+    local_or_system, push_utc_offset, resolve_tz_for_label,
 };
 
 use super::{
@@ -157,20 +157,14 @@ pub(crate) fn render(
     // so the city fits the dial inner-rect on Small/Medium; the offset
     // line disambiguates same-named cities across regions.
     if params.show_timezone {
-        let city = effective.city();
-        let offset = resolve_tz_offset(&effective, now.unix_secs);
-        let offset_str = match offset {
-            Some(secs) => {
+        let label = resolve_tz_for_label(tz, now.unix_secs);
+        let (city, offset_str, tz_color) = match &label {
+            TzLabel::Resolved { city, offset_secs } => {
                 let mut s = String::new();
-                push_utc_offset(&mut s, secs);
-                s
+                push_utc_offset(&mut s, *offset_secs);
+                (city.clone(), s, palette.text)
             }
-            None => "unknown".to_owned(),
-        };
-        let tz_color = if offset.is_some() {
-            palette.text
-        } else {
-            RED_50
+            TzLabel::Unknown { city, .. } => (city.clone(), "unknown".to_owned(), RED_50),
         };
         let city_size = size.timezone_font_size;
         let offset_size = city_size.saturating_mul(85) / 100;

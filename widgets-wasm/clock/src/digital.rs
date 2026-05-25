@@ -12,8 +12,8 @@ use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Params;
 use crate::shared::{
-    AlarmAnchor, ClockPalette, alarm_row_draws, effective_tz, font_weight, local_or_system,
-    push_utc_offset,
+    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, effective_tz, font_weight,
+    local_or_system, push_utc_offset, resolve_tz_for_label,
 };
 
 // ── Per-size template parameters ───────────────────────────────────────
@@ -173,12 +173,11 @@ fn header(
     } else {
         String::new()
     };
-    let (tz_str, tz_resolved) = if params.show_timezone {
-        compose_timezone(now, size, tz)
+    let (tz_str, tz_color) = if params.show_timezone {
+        compose_timezone(now, size, tz, palette)
     } else {
-        (String::new(), true)
+        (String::new(), palette.text)
     };
-    let tz_color = if tz_resolved { palette.text } else { RED_50 };
     let date_style = style!(
         size: u32::from(size.header_font_size),
         weight: FontWeight::REGULAR,
@@ -240,24 +239,34 @@ pub(crate) fn date_pattern(
     }
 }
 
-/// Returns `(label, resolved)` where `resolved` is `false`
-/// when the host doesn't recognise the tz name — caller
-/// paints the label red.
-fn compose_timezone(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> (String, bool) {
-    let effective = effective_tz(tz);
-    let label = effective.city();
-    let offset = resolve_tz_offset(&effective, now.unix_secs);
-    if size.show_utc_offset {
-        let mut s = label;
-        s.push_str(" (");
-        match offset {
-            Some(secs) => push_utc_offset(&mut s, secs),
-            None => s.push_str("unknown"),
+fn compose_timezone(
+    now: SystemTime,
+    size: &DigitalSizeParams,
+    tz: Option<&Tz>,
+    palette: &ClockPalette,
+) -> (String, Color) {
+    let label = resolve_tz_for_label(tz, now.unix_secs);
+    match label {
+        TzLabel::Resolved { city, offset_secs } => {
+            if size.show_utc_offset {
+                let mut s = city;
+                s.push_str(" (");
+                push_utc_offset(&mut s, offset_secs);
+                s.push(')');
+                (s, palette.text)
+            } else {
+                (city, palette.text)
+            }
         }
-        s.push(')');
-        (s, offset.is_some())
-    } else {
-        (label, offset.is_some())
+        TzLabel::Unknown { city, .. } => {
+            if size.show_utc_offset {
+                let mut s = city;
+                s.push_str(" (unknown)");
+                (s, RED_50)
+            } else {
+                (city, RED_50)
+            }
+        }
     }
 }
 

@@ -235,3 +235,56 @@ pub(crate) fn format_alarm_time(
     let pattern = if is_12h { "%I:%M %p" } else { "%H:%M" };
     strftime(secs, pattern)
 }
+
+// ── TzLabel — single resolver for the per-renderer label row ──────────
+
+/// Result of the override → system → UTC tz-resolution chain, ready for
+/// both the label text and downstream `now.unix_secs` shifts.
+pub(crate) enum TzLabel {
+    /// Override (or system tz, when no override) resolved cleanly.
+    Resolved { city: String, offset_secs: i32 },
+    /// Override unresolvable; the label flips to red and `system_offset_secs`
+    /// carries the system-tz fallback so time projection still runs in local.
+    /// When the system tz also fails to resolve, `system_offset_secs` is 0.
+    Unknown {
+        city: String,
+        #[expect(dead_code, reason = "consumed by downstream tz projection path")]
+        system_offset_secs: i32,
+    },
+}
+
+/// Resolve `override_tz` → system tz → UTC into a `TzLabel`.
+/// `now_secs` is the moment whose tz offset to look up (DST varies by date).
+pub(crate) fn resolve_tz_for_label(override_tz: Option<&Tz>, now_secs: i64) -> TzLabel {
+    if let Some(t) = override_tz {
+        if let Some(offset_secs) = resolve_tz_offset(t, now_secs) {
+            return TzLabel::Resolved {
+                city: t.city(),
+                offset_secs,
+            };
+        }
+        let system_offset_secs = system::current()
+            .timezone()
+            .and_then(|name| resolve_tz_offset(&Tz::from_runtime(name), now_secs))
+            .unwrap_or(0);
+        return TzLabel::Unknown {
+            city: t.city(),
+            system_offset_secs,
+        };
+    }
+    if let Some(name) = system::current().timezone() {
+        let tz = Tz::from_runtime(name);
+        let city = tz.city();
+        return match resolve_tz_offset(&tz, now_secs) {
+            Some(offset_secs) => TzLabel::Resolved { city, offset_secs },
+            None => TzLabel::Unknown {
+                city,
+                system_offset_secs: 0,
+            },
+        };
+    }
+    TzLabel::Unknown {
+        city: "UTC".to_string(),
+        system_offset_secs: 0,
+    }
+}

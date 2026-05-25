@@ -24,8 +24,8 @@ use bmc_wasm_sdk::*;
 use crate::digital::date_pattern;
 use crate::manifest_params::Params;
 use crate::shared::{
-    AlarmAnchor, ClockPalette, alarm_row_draws, effective_tz, f32_from_u32, font_weight,
-    push_utc_offset,
+    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, effective_tz, f32_from_u32, font_weight,
+    push_utc_offset, resolve_tz_for_label,
 };
 
 use super::{
@@ -244,28 +244,22 @@ pub(crate) fn render(
     // Unresolvable tz falls back to "(unknown)" and switches
     // to the night-red colour so an operator typo is visible at a glance.
     if params.show_timezone {
-        let city = effective.city();
-        let offset = resolve_tz_offset(&effective, now.unix_secs);
-        let line = match offset {
-            Some(secs) => {
+        let label = resolve_tz_for_label(tz, now.unix_secs);
+        let (line, tz_color) = match label {
+            TzLabel::Resolved { city, offset_secs } => {
                 let mut s = String::with_capacity(city.len() + 10);
                 s.push_str(&city);
                 s.push_str(" (");
-                push_utc_offset(&mut s, secs);
+                push_utc_offset(&mut s, offset_secs);
                 s.push(')');
-                s
+                (s, palette.text)
             }
-            None => {
+            TzLabel::Unknown { city, .. } => {
                 let mut s = String::with_capacity(city.len() + 10);
                 s.push_str(&city);
                 s.push_str(" (unknown)");
-                s
+                (s, RED_50)
             }
-        };
-        let tz_color = if offset.is_some() {
-            palette.text
-        } else {
-            RED_50
         };
         draws.push(Draw::text(
             centre_x,
