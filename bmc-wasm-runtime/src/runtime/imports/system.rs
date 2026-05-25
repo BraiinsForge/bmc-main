@@ -5,8 +5,6 @@
 
 #![expect(clippy::cast_possible_truncation)]
 
-use std::str::FromStr;
-
 use anyhow::Result;
 use bmc_shared_time::time::Timezone;
 use chrono::{DateTime, TimeZone, Utc};
@@ -142,7 +140,7 @@ fn register_resolve_tz_import(linker: &mut Linker<HostState>) -> Result<()> {
             let Some(name) = read_string(&caller, name_ptr, name_len) else {
                 return i32::MIN;
             };
-            let Ok(tz) = Timezone::from_str(&name) else {
+            let Some(tz) = Timezone::lookup(&name) else {
                 return i32::MIN;
             };
             let Some(dt) = DateTime::<Utc>::from_timestamp(unix_secs, 0) else {

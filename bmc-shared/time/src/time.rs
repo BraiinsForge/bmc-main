@@ -8,7 +8,7 @@ use serde_with::DeserializeFromStr;
 use std::str::FromStr;
 use strum_macros::{Display, EnumString};
 
-use crate::timezone_variant::TIMEZONE_VARIANTS;
+use crate::timezone_variant::{TIMEZONE_BY_IANA, TIMEZONE_VARIANTS};
 
 const DEFAULT_CHRONO: chrono_tz::Tz = chrono_tz::Etc::GMT;
 const DEFAULT_POSIX: &str = "GMT0";
@@ -108,6 +108,13 @@ impl Timezone {
         TIMEZONE_VARIANTS.as_slice()
     }
 
+    /// O(1) lookup of a supported timezone by IANA name. Returns `None`
+    /// if the name is not in the curated list.
+    #[must_use]
+    pub fn lookup(iana: &str) -> Option<&'static Timezone> {
+        TIMEZONE_BY_IANA.get(iana).copied()
+    }
+
     /// Returns current timezone offset from UTC
     #[must_use]
     pub fn chrono_offset(&self) -> chrono_tz::TzOffset {
@@ -147,10 +154,9 @@ impl FromStr for Timezone {
     type Err = TimezoneError;
 
     fn from_str(iana: &str) -> Result<Self, Self::Err> {
-        match Self::list().iter().find(|tz| tz.iana() == iana) {
-            Some(timezone) => Ok(timezone.clone()),
-            None => Err(TimezoneError::ParseTimezone),
-        }
+        Self::lookup(iana)
+            .cloned()
+            .ok_or(TimezoneError::ParseTimezone)
     }
 }
 
