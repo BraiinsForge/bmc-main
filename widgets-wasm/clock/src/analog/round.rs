@@ -19,13 +19,7 @@ use crate::shared::{
     local_or_system, push_utc_offset, resolve_tz_for_label,
 };
 
-use super::{
-    CENTER_BLACK, CENTER_ORANGE, CENTER_STROKE, CENTER_WHITE, HAND_HOUR, HAND_HOUR_PIVOT_X,
-    HAND_HOUR_PIVOT_Y, HAND_HOUR_VIEWPORT, HAND_MINUTE, HAND_MINUTE_PIVOT_X, HAND_MINUTE_PIVOT_Y,
-    HAND_MINUTE_VIEWPORT, HAND_SECOND, HAND_SECOND_PIVOT_X, HAND_SECOND_PIVOT_Y,
-    HAND_SECOND_VIEWPORT, centre_icon, centre_shadow, hand_shadow, hour_angle,
-    local_clock_components, minute_angle, place_hand_at_pivot, second_angle,
-};
+use super::{hour_angle, local_clock_components, minute_angle, second_angle};
 
 // ── Asset ──────────────────────────────────────────────────────────────
 
@@ -240,115 +234,12 @@ pub(crate) fn render(
         );
     }
 
-    // Hour and minute hands always rendered; second hand gated on `show_seconds`.
-    // Each `place_hand_at_pivot` returns an icon with its SVG-coordinate pivot
-    // at canvas centre, ready for in-place rotation.
-    //
-    // Transitions match the cadence used by hello-widget (`200ms` for the fast-moving
-    // second hand, `500ms` for hour / minute) so the host's frame-by-frame interpolation
-    // gives a smooth sweep without a per-frame wasm wake-up.
-    let hour_angle = hour_angle(hour12, minute);
-    let minute_angle = minute_angle(minute);
-
-    // No shadow on the hour hand — lowest hand layer, its shadow would only
-    // fall on the dark dial. The minute hand's lands on the hour hand.
-    draws.push(
-        Draw::rotated(
-            hour_angle,
-            place_hand_at_pivot(
-                centre_x,
-                centre_y,
-                size.scale,
-                HAND_HOUR_VIEWPORT,
-                HAND_HOUR_PIVOT_X,
-                HAND_HOUR_PIVOT_Y,
-                &HAND_HOUR,
-                palette.primary,
-            ),
-        )
-        .transition("hour-hand", 500, Easing::EaseOut),
+    let h_ang = hour_angle(hour12, minute);
+    let m_ang = minute_angle(minute);
+    let s_ang = params.show_seconds.then(|| second_angle(second));
+    super::push_hands_and_centre(
+        centre_x, centre_y, size.scale, h_ang, m_ang, s_ang, palette, true, &mut draws,
     );
-
-    draws.push(
-        Draw::rotated(
-            minute_angle,
-            place_hand_at_pivot(
-                centre_x,
-                centre_y,
-                size.scale,
-                HAND_MINUTE_VIEWPORT,
-                HAND_MINUTE_PIVOT_X,
-                HAND_MINUTE_PIVOT_Y,
-                &HAND_MINUTE,
-                palette.primary,
-            ),
-        )
-        .with_drop_shadow(hand_shadow(size.scale))
-        .transition("minute-hand", 500, Easing::EaseOut),
-    );
-
-    // Centre-circle stack — order matters (later draws cover
-    // earlier ones): big white disc, optional orange
-    // (with second hand active), small black hole, white stroke ring.
-    // The white disc's shadow makes it sit visibly above the hands.
-    draws.push(
-        centre_icon(
-            centre_x,
-            centre_y,
-            size.scale,
-            54.0,
-            &CENTER_WHITE,
-            palette.centre_white,
-        )
-        .with_drop_shadow(centre_shadow(size.scale)),
-    );
-
-    if params.show_seconds {
-        // No shadow on the seconds hand — barely visible, real perf cost.
-        let second_angle = second_angle(second);
-        draws.push(
-            Draw::rotated(
-                second_angle,
-                place_hand_at_pivot(
-                    centre_x,
-                    centre_y,
-                    size.scale,
-                    HAND_SECOND_VIEWPORT,
-                    HAND_SECOND_PIVOT_X,
-                    HAND_SECOND_PIVOT_Y,
-                    &HAND_SECOND,
-                    palette.second_hand,
-                ),
-            )
-            .transition("second-hand", 200, Easing::EaseOut),
-        );
-        draws.push(centre_icon(
-            centre_x,
-            centre_y,
-            size.scale,
-            16.0,
-            &CENTER_ORANGE,
-            palette.centre_orange,
-        ));
-    }
-    // The CENTER_BLACK disc always stays black — it's
-    // the "hole" in the centre stack regardless of palette.
-    draws.push(centre_icon(
-        centre_x,
-        centre_y,
-        size.scale,
-        8.0,
-        &CENTER_BLACK,
-        TRANSPARENT,
-    ));
-    draws.push(centre_icon(
-        centre_x,
-        centre_y,
-        size.scale,
-        10.0,
-        &CENTER_STROKE,
-        palette.centre_stroke,
-    ));
 
     canvas(props!(width: viewport_w, height: viewport_h), draws)
 }

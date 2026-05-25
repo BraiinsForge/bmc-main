@@ -13,7 +13,7 @@ pub(crate) mod round;
 )]
 use bmc_wasm_sdk::*;
 
-use crate::shared::local_or_system;
+use crate::shared::{ClockPalette, local_or_system};
 
 // ── Hand assets ────────────────────────────────────────────────────────
 
@@ -166,4 +166,107 @@ pub(crate) fn centre_icon(
     let top_left_x = centre_x - side / 2.0;
     let top_left_y = centre_y - side / 2.0;
     Draw::svg(top_left_x, top_left_y, side, side, icon, tint).with_anti_alias()
+}
+
+/// Emit hour, minute, the centre-disc stack, and the optional second hand,
+/// all centred at `(cx, cy)` and scaled by `scale`.
+///
+/// Draw order (later items cover earlier ones):
+///   hour-hand → minute-hand → centre_white → second-hand + centre_orange
+///   (gated on `second_angle`) → centre_black → centre_stroke.
+///
+/// `with_shadows`: when `true`, the minute hand and the centre_white disc each
+/// get a drop shadow (round mode). When `false` those shadows are suppressed as
+/// an FBO-blur perf workaround (rect mode).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "flat geometry helper that must forward all hand/centre parameters without bundling unrelated concerns"
+)]
+pub(crate) fn push_hands_and_centre(
+    cx: f32,
+    cy: f32,
+    scale: f32,
+    h_ang: f32,
+    m_ang: f32,
+    second_angle: Option<f32>,
+    palette: &ClockPalette,
+    with_shadows: bool,
+    draws: &mut Vec<Draw>,
+) {
+    draws.push(
+        Draw::rotated(
+            h_ang,
+            place_hand_at_pivot(
+                cx,
+                cy,
+                scale,
+                HAND_HOUR_VIEWPORT,
+                HAND_HOUR_PIVOT_X,
+                HAND_HOUR_PIVOT_Y,
+                &HAND_HOUR,
+                palette.primary,
+            ),
+        )
+        .transition("hour-hand", 500, Easing::EaseOut),
+    );
+
+    let mut minute = Draw::rotated(
+        m_ang,
+        place_hand_at_pivot(
+            cx,
+            cy,
+            scale,
+            HAND_MINUTE_VIEWPORT,
+            HAND_MINUTE_PIVOT_X,
+            HAND_MINUTE_PIVOT_Y,
+            &HAND_MINUTE,
+            palette.primary,
+        ),
+    );
+    if with_shadows {
+        minute = minute.with_drop_shadow(hand_shadow(scale));
+    }
+    draws.push(minute.transition("minute-hand", 500, Easing::EaseOut));
+
+    let mut white = centre_icon(cx, cy, scale, 54.0, &CENTER_WHITE, palette.centre_white);
+    if with_shadows {
+        white = white.with_drop_shadow(centre_shadow(scale));
+    }
+    draws.push(white);
+
+    if let Some(angle) = second_angle {
+        draws.push(
+            Draw::rotated(
+                angle,
+                place_hand_at_pivot(
+                    cx,
+                    cy,
+                    scale,
+                    HAND_SECOND_VIEWPORT,
+                    HAND_SECOND_PIVOT_X,
+                    HAND_SECOND_PIVOT_Y,
+                    &HAND_SECOND,
+                    palette.second_hand,
+                ),
+            )
+            .transition("second-hand", 200, Easing::EaseOut),
+        );
+        draws.push(centre_icon(
+            cx,
+            cy,
+            scale,
+            16.0,
+            &CENTER_ORANGE,
+            palette.centre_orange,
+        ));
+    }
+    draws.push(centre_icon(cx, cy, scale, 8.0, &CENTER_BLACK, TRANSPARENT));
+    draws.push(centre_icon(
+        cx,
+        cy,
+        scale,
+        10.0,
+        &CENTER_STROKE,
+        palette.centre_stroke,
+    ));
 }

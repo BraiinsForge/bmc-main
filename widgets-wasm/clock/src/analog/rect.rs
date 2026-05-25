@@ -5,15 +5,14 @@
 
 // ── Drop shadows disabled ──────────────────────────────────────────────
 //
-// The minute-hand and centre-disc drop shadows are commented out below
-// (and the `centre_shadow` / `hand_shadow` import is too). Each shadow
-// renders through an offscreen FBO + Gaussian blur; on the Deck's Vivante
-// GC400 that costs ~400 ms/frame (device-measured 2026-05-22), which on
-// its own pushes the clock past its 1 s second-hand budget.
+// The minute-hand and centre-disc drop shadows are suppressed via the
+// `with_shadows = false` flag passed to `push_hands_and_centre`. Each
+// shadow renders through an offscreen FBO + Gaussian blur; on the Deck's
+// Vivante GC400 that costs ~400 ms/frame (device-measured 2026-05-22),
+// which on its own pushes the clock past its 1 s second-hand budget.
 //
-// Re-enable by uncommenting the import and the two `.with_drop_shadow(...)`
-// calls — but only once the blur is precomputed or otherwise cheap on
-// GC400-class hardware.
+// Re-enable by passing `true` — but only once the blur is precomputed or
+// otherwise cheap on GC400-class hardware.
 
 #[expect(
     clippy::wildcard_imports,
@@ -28,15 +27,7 @@ use crate::shared::{
     push_utc_offset, resolve_tz_for_label,
 };
 
-use super::{
-    CENTER_BLACK, CENTER_ORANGE, CENTER_STROKE, CENTER_WHITE, HAND_HOUR, HAND_HOUR_PIVOT_X,
-    HAND_HOUR_PIVOT_Y, HAND_HOUR_VIEWPORT, HAND_MINUTE, HAND_MINUTE_PIVOT_X, HAND_MINUTE_PIVOT_Y,
-    HAND_MINUTE_VIEWPORT, HAND_SECOND, HAND_SECOND_PIVOT_X, HAND_SECOND_PIVOT_Y,
-    HAND_SECOND_VIEWPORT, centre_icon, hour_angle, local_clock_components, minute_angle,
-    place_hand_at_pivot, second_angle,
-};
-// Shadow helpers — used by the disabled drop-shadow calls (see top-of-file note):
-// use super::{centre_shadow, hand_shadow};
+use super::{hour_angle, local_clock_components, minute_angle, second_angle};
 
 // ── Assets ─────────────────────────────────────────────────────────────
 
@@ -293,107 +284,20 @@ pub(crate) fn render(
         );
     }
 
-    // Hour and minute hands always rendered;
-    // second hand gated on `show_seconds`.
-    //
-    // The hand SVGs are shared with round mode,
-    // so the existing round pivots apply.
-    let hour_angle = hour_angle(hour12, minute);
-    let minute_angle = minute_angle(minute);
-    // No shadow on the hour hand — lowest hand layer,
-    // its shadow would only fall on the dark dial.
-    // The minute hand's lands on the hour hand.
-    draws.push(
-        Draw::rotated(
-            hour_angle,
-            place_hand_at_pivot(
-                centre_x,
-                centre_y,
-                size.hand_scale,
-                HAND_HOUR_VIEWPORT,
-                HAND_HOUR_PIVOT_X,
-                HAND_HOUR_PIVOT_Y,
-                &HAND_HOUR,
-                palette.primary,
-            ),
-        )
-        .transition("hour-hand", 500, Easing::EaseOut),
-    );
-    draws.push(
-        Draw::rotated(
-            minute_angle,
-            place_hand_at_pivot(
-                centre_x,
-                centre_y,
-                size.hand_scale,
-                HAND_MINUTE_VIEWPORT,
-                HAND_MINUTE_PIVOT_X,
-                HAND_MINUTE_PIVOT_Y,
-                &HAND_MINUTE,
-                palette.primary,
-            ),
-        )
-        // .with_drop_shadow(hand_shadow(size.hand_scale))
-        .transition("minute-hand", 500, Easing::EaseOut),
-    );
-
-    // Centre-circle stack — draw order matters.
-    // White goes under the second hand so the hand reads against it;
-    // orange covers the second-hand root; black + stroke sit on top regardless.
-    draws.push(
-        centre_icon(
-            centre_x,
-            centre_y,
-            size.hand_scale,
-            54.0,
-            &CENTER_WHITE,
-            palette.centre_white,
-        ), // .with_drop_shadow(centre_shadow(size.hand_scale))
-    );
-    if params.show_seconds {
-        // No shadow on the seconds hand — barely visible, real perf cost.
-        let second_angle = second_angle(second);
-        draws.push(
-            Draw::rotated(
-                second_angle,
-                place_hand_at_pivot(
-                    centre_x,
-                    centre_y,
-                    size.hand_scale,
-                    HAND_SECOND_VIEWPORT,
-                    HAND_SECOND_PIVOT_X,
-                    HAND_SECOND_PIVOT_Y,
-                    &HAND_SECOND,
-                    palette.second_hand,
-                ),
-            )
-            .transition("second-hand", 200, Easing::EaseOut),
-        );
-        draws.push(centre_icon(
-            centre_x,
-            centre_y,
-            size.hand_scale,
-            16.0,
-            &CENTER_ORANGE,
-            palette.centre_orange,
-        ));
-    }
-    draws.push(centre_icon(
+    let h_ang = hour_angle(hour12, minute);
+    let m_ang = minute_angle(minute);
+    let s_ang = params.show_seconds.then(|| second_angle(second));
+    super::push_hands_and_centre(
         centre_x,
         centre_y,
         size.hand_scale,
-        8.0,
-        &CENTER_BLACK,
-        TRANSPARENT,
-    ));
-    draws.push(centre_icon(
-        centre_x,
-        centre_y,
-        size.hand_scale,
-        10.0,
-        &CENTER_STROKE,
-        palette.centre_stroke,
-    ));
+        h_ang,
+        m_ang,
+        s_ang,
+        palette,
+        false,
+        &mut draws,
+    );
 
     canvas(props!(width: viewport_w, height: viewport_h), draws)
 }
