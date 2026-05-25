@@ -49,6 +49,39 @@ let
     preStart = "mkdir -p /tmp/runtime";
   };
 
+  # Firmware-bridging activation step.
+  #
+  # The host firmware currently does not ship /etc/init.d/nix-activator,
+  # so this activation entry lays it down on every activation and
+  # removes the legacy nix-mounter that the activator subsumes.
+  #
+  # Remove this derivation, the activation entry below, ./files/nix-activator,
+  # and the /etc/init.d/nix-activator + /etc/rc.d/S62nix-activator conffiles
+  # entries once the firmware bundles nix-activator natively.
+  firmware-init-services = armv7Pkgs.writeTextFile {
+    name = "firmware-init-services";
+    executable = true;
+    destination = "/bin/firmware-init-services";
+    text = ''
+      #!/bin/sh
+      set -e
+
+      src="${./files/nix-activator}"
+      target=/etc/init.d/nix-activator
+
+      mkdir -p /etc/init.d /etc/rc.d
+      if ! cmp -s "$src" "$target" 2>/dev/null; then
+          cp "$src" "$target.tmp"
+          chmod 755 "$target.tmp"
+          mv -Tf "$target.tmp" "$target"
+      fi
+      ln -sf ../init.d/nix-activator /etc/rc.d/S62nix-activator
+
+      rm -f /etc/init.d/nix-mounter
+      rm -f /etc/rc.d/S*nix-mounter /etc/rc.d/K*nix-mounter
+    '';
+  };
+
   start-service-orchestrator = armv7Pkgs.writeTextFile {
     name = "start-service-orchestrator";
     executable = true;
@@ -97,6 +130,7 @@ in
     ];
     activation = mkPrioritizedEntries ./activation ++ [
       { prefix = "055"; bin = profile.buildCrate crates.bmc-activation-copy-files { }; }
+      { prefix = "060"; bin = firmware-init-services; }
       { prefix = "090"; bin = start-service-orchestrator; }
     ];
     services = [ bmc-compositor ];
@@ -110,6 +144,8 @@ in
       "/root/.profile"
       "/var/log/bmc"
       "/etc/nix/nix.conf"
+      "/etc/init.d/nix-activator"
+      "/etc/rc.d/S62nix-activator"
     ];
   };
   version = "0.1.0";

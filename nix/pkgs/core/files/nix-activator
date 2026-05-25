@@ -1,0 +1,103 @@
+#!/bin/sh /etc/rc.common
+
+# Copyright (C) 2026 Braiins Systems s.r.o.
+#
+# This file is part of Braiins Open-Source Initiative (BOSI).
+#
+# BOSI is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Please, keep in mind that we may also license BOSI or any part thereof
+# under a proprietary license. For more information on the terms and conditions
+# of such proprietary license or if you have any other questions, please
+# contact us at opensource@braiins.com.
+
+START=62
+
+LOG() {
+	logger -t nix-activator "$*"
+}
+
+mount_nix() {
+	[ -d /mnt/data/nix ] || {
+		LOG "no /mnt/data/nix, skipping mount"
+		return 1
+	}
+
+	mkdir -p /nix
+	mount --bind /mnt/data/nix /nix || {
+		LOG "mount --bind /mnt/data/nix /nix failed"
+		return 1
+	}
+
+	return 0
+}
+
+find_latest_link() {
+	local dir link name n max latest
+
+	dir="$1"
+	max=0
+	latest=""
+
+	for link in "$dir"/*-link; do
+		[ -d "$link" ] || continue
+		[ -e "$link" ] || continue
+		name="${link##*/}"
+		n="${name%-link}"
+		case "$n" in
+			''|*[!0-9]*) continue ;;
+		esac
+		if [ "$n" -gt "$max" ]; then
+			max=$n
+			latest=$link
+		fi
+	done
+
+	[ -n "$latest" ] && printf '%s\n' "$latest"
+}
+
+activate_profile() {
+	local profile_dir
+	local current
+	local entrypoint
+
+	profile_dir="/nix/var/nix/gcroots/profiles/bmc"
+	current="$profile_dir/current"
+
+	# On initial Nix initialization there is no 'current' symlink yet:
+	# the old firmware upgrade script only downloads the Nix store, and
+	# the first boot on the new firmware picks up 1-link via this fallback.
+	if [ ! -L "$current" ]; then
+		current="$(find_latest_link "$profile_dir")"
+		if [ -z "$current" ]; then
+			LOG "no current profile and no generation links, skipping activation"
+			return 0
+		fi
+		LOG "no current profile, falling back to $current"
+	fi
+
+	entrypoint="$(readlink -f "$current")/core/activation/entrypoint"
+	if [ ! -x "$entrypoint" ]; then
+		LOG "activation entrypoint missing or not executable: $entrypoint"
+		return 1
+	fi
+
+	LOG "running activation entrypoint"
+	"$entrypoint"
+}
+
+boot() {
+	mount_nix || return 0
+	activate_profile || true
+}
