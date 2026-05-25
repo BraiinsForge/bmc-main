@@ -109,16 +109,6 @@ pub(crate) fn local_or_system(now: &SystemTime, tz: &Tz) -> LocalDateTime {
         .unwrap_or_else(|| now.utc())
 }
 
-pub(crate) fn local_unix_secs_or_system(now: &SystemTime, tz: &Tz) -> i64 {
-    local_unix_secs(now, tz)
-        .or_else(|| {
-            system::current()
-                .timezone()
-                .and_then(|name| local_unix_secs(now, &Tz::from_runtime(name)))
-        })
-        .unwrap_or(now.unix_secs)
-}
-
 /// City-only portion of an IANA timezone name; underscores normalised
 /// to spaces. `Europe/Prague` → `Prague`; `America/New_York` → `New York`.
 pub(crate) fn tz_city(iana: &str) -> String {

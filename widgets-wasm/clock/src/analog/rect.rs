@@ -25,7 +25,7 @@ use crate::digital::date_pattern;
 use crate::manifest_params::Params;
 use crate::shared::{
     AlarmAnchor, ClockPalette, alarm_row_draws, effective_tz, f32_from_u32, font_weight,
-    local_unix_secs_or_system, push_utc_offset, tz_city,
+    push_utc_offset, tz_city,
 };
 
 use super::{
@@ -223,7 +223,7 @@ pub(crate) fn render(
     // Vertically centred at the viewport mid-line, left-anchored at a fixed inset
     // that puts the row to the right of the dial graphic.
     if size.show_date_row && params.show_date {
-        let shifted = local_unix_secs_or_system(&now, &effective);
+        let shifted = format::local_unix_secs_or_system(&now, Some(&effective));
         let fmt = system::current().date_format().unwrap_or_default();
         let date_str = strftime(shifted, date_pattern(fmt, true, false));
         draws.push(Draw::text(

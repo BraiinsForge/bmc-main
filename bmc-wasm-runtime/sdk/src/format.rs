@@ -201,8 +201,11 @@ pub fn format_date(now: crate::host::SystemTime, opts: FormatDateOpts) -> String
 }
 
 /// `local_unix_secs` with a fallback chain: requested tz → system tz → raw UTC.
-/// Used by the string-returning format helpers.
-fn local_unix_secs_or_system(now: &crate::host::SystemTime, tz: Option<&Tz>) -> i64 {
+/// Used by the string-returning format helpers and by widgets that need to
+/// shift `now.unix_secs` into wall-clock seconds before handing to
+/// [`strftime`].
+#[must_use]
+pub fn local_unix_secs_or_system(now: &crate::host::SystemTime, tz: Option<&Tz>) -> i64 {
     if let Some(t) = tz
         && let Some(secs) = local_unix_secs(now, t)
     {

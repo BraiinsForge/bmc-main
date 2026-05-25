@@ -13,7 +13,7 @@ use bmc_wasm_sdk::*;
 use crate::manifest_params::Params;
 use crate::shared::{
     AlarmAnchor, ClockPalette, alarm_row_draws, effective_tz, font_weight, local_or_system,
-    local_unix_secs_or_system, push_utc_offset, tz_city,
+    push_utc_offset, tz_city,
 };
 
 // ── Per-size template parameters ───────────────────────────────────────
@@ -204,7 +204,7 @@ fn header(
 /// the host's chrono (correct locale + correct timezone).
 fn compose_date(now: SystemTime, size: &DigitalSizeParams, tz: Option<&Tz>) -> String {
     let effective = effective_tz(tz);
-    let shifted = local_unix_secs_or_system(&now, &effective);
+    let shifted = format::local_unix_secs_or_system(&now, Some(&effective));
     let fmt = system::current().date_format().unwrap_or_default();
     strftime(
         shifted,
