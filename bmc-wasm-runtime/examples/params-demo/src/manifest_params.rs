@@ -174,9 +174,26 @@ impl Params {
         }
     }
     /// Latest typed snapshot delivered for this widget instance.
+    /// Cached per-thread; only re-parses when `snapshot::version()` changes
+    /// since the last call.
     #[must_use]
     pub fn current() -> Self {
-        Self::from_snapshot(&snapshot::current())
+        thread_local! {
+            static CACHE : core::cell::RefCell < Option < (u64, Params) >> = const {
+            core::cell::RefCell::new(None) };
+        }
+        let v = snapshot::version();
+        CACHE.with(|cell| {
+            let mut cache = cell.borrow_mut();
+            if let Some((cv, ref params)) = *cache
+                && cv == v
+            {
+                return params.clone();
+            }
+            let fresh = Self::from_snapshot(&snapshot::current());
+            *cache = Some((v, fresh.clone()));
+            fresh
+        })
     }
     /// Snapshot delivered immediately before [`current`]; `None` until at
     /// least one update has been observed (i.e. during `init` and the

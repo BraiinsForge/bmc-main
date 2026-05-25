@@ -341,6 +341,22 @@ pub fn previous() -> Params {
     Params::default()
 }
 
+/// Monotonic version of the latest params snapshot the host has delivered.
+/// Cheap host call (no buffer copy); use it to gate per-frame re-parses.
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn version() -> u64 {
+    <WasmHost as crate::snapshot_cache::HostSnapshotProvider>::version(&WasmHost)
+}
+
+/// Non-wasm stub; widgets only run on wasm but the crate compiles for
+/// native targets in tests / docs.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn version() -> u64 {
+    0
+}
+
 // ── Wasm host bindings ──────────────────────────────────────────────
 
 #[cfg(target_arch = "wasm32")]
