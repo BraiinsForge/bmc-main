@@ -361,7 +361,6 @@ fn ampm_glyph(now: SystemTime, offset_secs: i32) -> &'static str {
 /// Build the digital alarm-row node: a fixed-size canvas
 /// wrapping `alarm_row_draws`. `None` when no alarm is set.
 fn alarm_row(size: &DigitalSizeParams, params: &Params, palette: &ClockPalette) -> Option<Node> {
-    system::current().next_alarm()?;
     let bell = f32::from(size.header_font_size);
     let mut draws: Vec<Draw> = Vec::with_capacity(2);
     let total_w = alarm_row_draws(
@@ -371,10 +370,7 @@ fn alarm_row(size: &DigitalSizeParams, params: &Params, palette: &ClockPalette) 
         font_weight(params.numbers_font_style),
         palette.alarm_bell,
         &mut draws,
-    );
-    if total_w <= 0.0 {
-        return None;
-    }
+    )?;
     Some(center(
         props!(),
         [canvas(props!(width: total_w, height: bell), draws)],

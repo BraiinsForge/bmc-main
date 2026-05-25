@@ -224,7 +224,7 @@ pub(crate) fn render(
     if size.show_alarm {
         let dial_left_x = centre_x - size.canvas / 2.0;
         let margin_to_dial = 32.0_f32;
-        alarm_row_draws(
+        let _ = alarm_row_draws(
             AlarmAnchor::RightX(dial_left_x - margin_to_dial),
             centre_y,
             24.0,

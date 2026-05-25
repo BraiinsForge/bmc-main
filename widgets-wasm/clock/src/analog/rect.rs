@@ -274,7 +274,7 @@ pub(crate) fn render(
 
     // Alarm row (Full only when an alarm is scheduled).
     if size.show_alarm {
-        alarm_row_draws(
+        let _ = alarm_row_draws(
             AlarmAnchor::LeftX(250.0),
             centre_y,
             40.0,

@@ -164,8 +164,7 @@ pub(crate) enum AlarmAnchor {
 /// Bell and text use a single `bell_size` so they share
 /// the same line-box (font size = `bell_size as u32`).
 ///
-/// Returns the rendered group width;
-/// 0 when no alarm is set (no draws emitted).
+/// Returns `Some(width)` when an alarm was emitted; `None` when no alarm is set.
 pub(crate) fn alarm_row_draws(
     anchor: AlarmAnchor,
     y: f32,
@@ -173,11 +172,9 @@ pub(crate) fn alarm_row_draws(
     font_weight: FontWeight,
     color: Color,
     draws: &mut Vec<Draw>,
-) -> f32 {
+) -> Option<f32> {
     let snap = system::current();
-    let Some(alarm) = snap.next_alarm() else {
-        return 0.0;
-    };
+    let alarm = snap.next_alarm()?;
     let is_12h = matches!(snap.time_format(), Some(TimeFormat::Hour12));
     let alarm_time = format_alarm_time(alarm, is_12h);
     let gap = 8.0_f32;
@@ -221,7 +218,7 @@ pub(crate) fn alarm_row_draws(
             valign: VerticalAlign::Center,
         ),
     ));
-    total_w
+    Some(total_w)
 }
 
 pub(crate) fn format_alarm_time(
