@@ -236,11 +236,11 @@ pub(crate) fn date_pattern(
     match (format, show_weekday, show_year) {
         (MDYyyySlash, true, false) => "%a, %B %-d",
         (MDYyyySlash, true, true) => "%a, %B %-d, %Y",
-        (MDYyyySlash, false, false) => "%B %-d",
+        (MDYyyySlash, false, false) => "%b %-d",
         (MDYyyySlash, false, true) => "%B %-d, %Y",
         (_, true, false) => "%a %-d %B",
         (_, true, true) => "%a %-d %B %Y",
-        (_, false, false) => "%-d %B",
+        (_, false, false) => "%-d %b",
         (_, false, true) => "%-d %B %Y",
     }
 }
