@@ -29,6 +29,14 @@ pub(crate) struct DigitalSizeParams {
     ampm_font_size: u16,
     top_padding: f32,
     bottom_padding: f32,
+    /// Gap between the date and timezone spans in the header row.
+    /// Small uses a tight value so a long city name (e.g. "Bahia Banderas")
+    /// fits inside the 317px viewport without spilling.
+    header_gap: f32,
+    /// Maximum lines the flex-wrapped header row may grow to.
+    /// Small reserves 2 so a long "City (UTC±HH:MM)" tz can drop below
+    /// the date instead of overflowing into the time row.
+    header_max_lines: u8,
     show_year: bool,
     show_weekday: bool,
     show_alarm: bool,
@@ -42,6 +50,8 @@ const DIGITAL_FULL: DigitalSizeParams = DigitalSizeParams {
     ampm_font_size: 40,
     top_padding: 32.0,
     bottom_padding: 32.0,
+    header_gap: 80.0,
+    header_max_lines: 1,
     show_year: true,
     show_weekday: true,
     show_alarm: true,
@@ -55,6 +65,8 @@ const DIGITAL_LARGE: DigitalSizeParams = DigitalSizeParams {
     ampm_font_size: 32,
     top_padding: 16.0,
     bottom_padding: 16.0,
+    header_gap: 32.0,
+    header_max_lines: 1,
     show_year: true,
     show_weekday: true,
     show_alarm: false,
@@ -68,6 +80,8 @@ const DIGITAL_MEDIUM: DigitalSizeParams = DigitalSizeParams {
     ampm_font_size: 24,
     top_padding: 16.0,
     bottom_padding: 16.0,
+    header_gap: 80.0,
+    header_max_lines: 1,
     show_year: true,
     show_weekday: true,
     show_alarm: false,
@@ -81,11 +95,13 @@ const DIGITAL_SMALL: DigitalSizeParams = DigitalSizeParams {
     ampm_font_size: 24,
     top_padding: 16.0,
     bottom_padding: 16.0,
+    header_gap: 8.0,
+    header_max_lines: 2,
     show_year: false,
     show_weekday: false,
     show_alarm: false,
     ampm_inline: false,
-    show_utc_offset: false,
+    show_utc_offset: true,
 };
 
 /// Resolve the SDK-classified `SizeVariant` to the matching per-size `const`.
@@ -131,16 +147,21 @@ pub(crate) fn render(
     // so the time row's vertical centre stays put as header /
     // ampm / alarm toggle on and off.
     //
-    // One row is enough: ampm-inline and show-alarm are mutually
-    // exclusive per size (Full has alarm + inline ampm; the rest have
-    // standalone ampm and no alarm), so the footer is at most one row.
-    let slot_h = f32::from(size.header_font_size) * 1.2;
+    // Footer is always one line: ampm-inline and show-alarm are
+    // mutually exclusive per size (Full has alarm + inline ampm;
+    // the rest have standalone ampm and no alarm).
+    //
+    // Header reserves `header_max_lines` so a flex-wrapped tz row
+    // (Small only, today) has room without spilling into the time row.
+    let line_h = f32::from(size.header_font_size) * 1.2;
+    let header_lines = f32::from(size.header_max_lines);
+    let header_slot_h = line_h * header_lines + size.header_gap * (header_lines - 1.0).max(0.0);
     let header_slot = col(
-        props!(height: slot_h),
+        props!(height: header_slot_h),
         header_node.into_iter().collect::<Vec<_>>(),
     );
     let footer_slot = col(
-        props!(height: slot_h),
+        props!(height: line_h),
         [ampm_row_node, alarm_node]
             .into_iter()
             .flatten()
@@ -182,7 +203,7 @@ fn header(
     let date_str: Option<String> = params
         .show_date
         .then(|| compose_date(now, size, offset_secs));
-    let tz: Option<(String, Color)> = params
+    let tz = params
         .show_timezone
         .then(|| compose_timezone(label, size, palette));
     let date_style = style!(
@@ -202,7 +223,10 @@ fn header(
         );
         row_children.push(text(s, tz_style));
     }
-    Some(center(props!(), [row(props!(gap: 80.0), row_children)]))
+    Some(center(
+        props!(),
+        [row(props!(gap: size.header_gap, wrap: true), row_children)],
+    ))
 }
 
 /// Compose the date string from per-size visibility flags.
