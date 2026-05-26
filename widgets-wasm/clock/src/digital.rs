@@ -329,23 +329,36 @@ fn time_row(
 
     if size.ampm_inline && is_12h {
         let ampm = ampm_glyph(now, offset_secs);
-        // AM/PM sits to the right of the time text, separated by a 32px gap.
-        // Pixel-exact anchoring to the time text's right edge would
-        // need an anchor primitive the SDK doesn't yet expose;
-        // the visible gap is close enough for the in-line `Hour12` layout.
-        row(
-            props!(gap: 32.0),
-            [
-                time_node,
-                text(
-                    ampm,
-                    style!(
-                        size: u32::from(size.ampm_font_size),
-                        weight: FontWeight::REGULAR,
-                        color: palette.text
-                    ),
-                ),
-            ],
+        // Keep the time text at the parent's horizontal centre when AM/PM
+        // appears: reserve a fixed slot for AM/PM on the right and mirror
+        // it with an empty slot of the same width on the left. The symmetric
+        // row then centres the time at the geometric middle, so switching
+        // 24h ↔ 12h doesn't shift the digits.
+        let ampm_slot_w = f32::from(size.ampm_font_size) * 1.5;
+        let ampm_text = text(
+            ampm,
+            style!(
+                size: u32::from(size.ampm_font_size),
+                weight: FontWeight::REGULAR,
+                color: palette.text,
+            ),
+        );
+        let left_reserve = col(props!(width: ampm_slot_w), Vec::<Node>::new());
+        // Lift AM/PM by half its own height: cross_align: Center aligns the
+        // text-box top to the row mid-line, but we want AM/PM's centre there.
+        // A bottom filler of `ampm_font_size` makes the slot taller by that
+        // amount, and centering shifts the (top-anchored) text up by half it.
+        let ampm_lift = f32::from(size.ampm_font_size);
+        let right_slot = col(
+            props!(width: ampm_slot_w, cross_align: CrossAlign::Start),
+            [ampm_text, spacer_px(ampm_lift)],
+        );
+        center(
+            props!(),
+            [row(
+                props!(gap: 32.0, cross_align: CrossAlign::Center),
+                [left_reserve, time_node, right_slot],
+            )],
         )
     } else {
         center(props!(), [time_node])
