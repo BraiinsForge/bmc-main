@@ -15,7 +15,6 @@ use bmc_wasm_runtime::{
 };
 use bmc_widget::surface::{DeckWidgetSurfaceClient, WidgetEvent, WidgetSurface};
 use bmc_widget_protocol::{NextAlarm as WireNextAlarm, SettingUpdate};
-use glow::HasContext;
 use serde_json::{Map, Value};
 
 use crate::host::SharedHost;
@@ -496,18 +495,14 @@ impl WidgetSlot {
                  must return Some; an internal invariant of DoubleBufferState was violated",
             );
             let phase_start = HostRenderProfiling::start_phase();
-            shared
-                .scratch
-                .blit_to(&shared.egl, current_export.fbo, target_width, target_height);
+            shared.blit_staging_to(current_export.fbo, target_width, target_height);
             HostRenderProfiling::log_phase(&self.wasm_basename, "staging_blit", phase_start);
 
             let phase_start = HostRenderProfiling::start_phase();
             // Implicit dmabuf sync is provided downstream by the compositor /
             // Wayland producer-consumer path; we only need the GL commands in
             // flight, not completed, before export_and_swap.
-            unsafe {
-                shared.egl.gl().flush();
-            }
+            shared.flush_gl();
             HostRenderProfiling::log_phase(&self.wasm_basename, "gl_flush", phase_start);
 
             let phase_start = HostRenderProfiling::start_phase();

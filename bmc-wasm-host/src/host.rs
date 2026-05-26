@@ -2,6 +2,7 @@
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_widget::egl::{EglContext, SharedRenderScratch};
+use glow::HasContext;
 
 /// State shared across all widget slots within a host.
 ///
@@ -48,5 +49,24 @@ impl SharedHost {
             },
             renderer,
         ))
+    }
+
+    /// Blit the staging color attachment into `dest_fbo` at `(w, h)`.
+    pub fn blit_staging_to(&self, dest_fbo: glow::Framebuffer, w: u32, h: u32) {
+        self.scratch.blit_to(&self.egl, dest_fbo, w, h);
+    }
+
+    /// Submit pending GL commands to the driver without blocking.
+    pub fn flush_gl(&self) {
+        // SAFETY: `EglContext::new` calls `make_current`; the context remains
+        // current on this thread for the lifetime of `SharedHost`.
+        unsafe {
+            self.egl.gl().flush();
+        }
+    }
+
+    /// Whether the EGL context has been reported lost (e.g., GPU reset).
+    pub fn is_context_lost(&self) -> bool {
+        self.egl.is_context_lost()
     }
 }

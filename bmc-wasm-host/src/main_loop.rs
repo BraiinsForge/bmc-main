@@ -389,7 +389,7 @@ fn run_loop(
                     "widget exceeded fuel budget"
                 ),
                 Ok(Ok(bmc_wasm_runtime::RenderStatus::Dead) | Err(_)) | Err(_) => {
-                    if shared.egl.is_context_lost() {
+                    if shared.is_context_lost() {
                         return Err(FatalError::EglContextLost);
                     }
                     to_teardown.push(*id);
