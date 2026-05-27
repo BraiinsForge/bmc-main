@@ -116,6 +116,11 @@ pub(super) struct PlatformCatalog {
 }
 
 impl PlatformCatalog {
+    /// Parse the catalog bundled with the testbed binary.
+    pub(super) fn bundled() -> Result<Self, String> {
+        Self::parse(include_str!("platforms.default.json"))
+    }
+
     /// Parse and fully validate a catalog from JSON text. Returns a single
     /// human-readable error string on the first problem found.
     pub(super) fn parse(json: &str) -> Result<Self, String> {
@@ -151,6 +156,20 @@ impl PlatformCatalog {
     /// Look up a platform by id.
     pub(super) fn platform(&self, id: &str) -> Option<&Platform> {
         self.platforms.iter().find(|p| p.id == id)
+    }
+
+    /// Resolve an explicit platform id, or the catalog default when omitted.
+    pub(super) fn select(&self, requested: Option<&str>) -> Result<&Platform, String> {
+        let id = requested.unwrap_or(self.default_platform.as_str());
+        self.platform(id).ok_or_else(|| {
+            let available_ids = self
+                .platforms
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("unknown platform id '{id}'; available platform ids: {available_ids}")
+        })
     }
 }
 
@@ -606,7 +625,7 @@ mod tests {
 
     #[test]
     fn bfm100_converts_to_round_runtime_display_info() {
-        let cat = PlatformCatalog::parse(BUNDLED).expect("BUG: bundled catalog must parse");
+        let cat = PlatformCatalog::bundled().expect("BUG: bundled catalog must parse");
         let p = cat.platform("BFM100").expect("BUG: BFM100 must exist");
         let display = p.display.to_runtime_display_info();
 
@@ -619,7 +638,7 @@ mod tests {
 
     #[test]
     fn bmm101_converts_to_rectangular_runtime_display_info() {
-        let cat = PlatformCatalog::parse(BUNDLED).expect("BUG: bundled catalog must parse");
+        let cat = PlatformCatalog::bundled().expect("BUG: bundled catalog must parse");
         let p = cat.platform("BMM101").expect("BUG: BMM101 must exist");
         let display = p.display.to_runtime_display_info();
 
@@ -640,5 +659,64 @@ mod tests {
             DisplayShape::Round.to_runtime_viewport_shape(),
             bmc_wasm_protocol::ViewportShape::Round
         );
+    }
+
+    #[test]
+    fn bundled_default_loads_default_platform() {
+        let cat = PlatformCatalog::bundled().expect("BUG: bundled catalog must load");
+        let platform = cat
+            .select(None)
+            .expect("BUG: default platform must be selectable");
+        assert_eq!(platform.id, "BMC100");
+    }
+
+    #[test]
+    fn select_bmc100() {
+        let cat = PlatformCatalog::bundled().expect("BUG: bundled catalog must load");
+        let platform = cat
+            .select(Some("BMC100"))
+            .expect("BUG: BMC100 must be selectable");
+        assert_eq!(platform.id, "BMC100");
+    }
+
+    #[test]
+    fn select_bmm100() {
+        let cat = PlatformCatalog::bundled().expect("BUG: bundled catalog must load");
+        let platform = cat
+            .select(Some("BMM100"))
+            .expect("BUG: BMM100 must be selectable");
+        assert_eq!((platform.display.width, platform.display.height), (320, 240));
+        assert_eq!(platform.widget_viewports.len(), 1);
+    }
+
+    #[test]
+    fn select_bmm101() {
+        let cat = PlatformCatalog::bundled().expect("BUG: bundled catalog must load");
+        let platform = cat
+            .select(Some("BMM101"))
+            .expect("BUG: BMM101 must be selectable");
+        assert_eq!((platform.display.width, platform.display.height), (480, 320));
+    }
+
+    #[test]
+    fn select_bfm100_is_round() {
+        let cat = PlatformCatalog::bundled().expect("BUG: bundled catalog must load");
+        let platform = cat
+            .select(Some("BFM100"))
+            .expect("BUG: BFM100 must be selectable");
+        assert_eq!((platform.display.width, platform.display.height), (480, 480));
+        assert!(matches!(platform.display.shape, DisplayShape::Round));
+    }
+
+    #[test]
+    fn select_missing_id_errors_clearly() {
+        let cat = PlatformCatalog::bundled().expect("BUG: bundled catalog must load");
+        let err = cat
+            .select(Some("NOPE"))
+            .expect_err("BUG: unknown platform must fail");
+        assert!(err.contains("NOPE"), "{err}");
+        for id in ["BMC100", "BMM100", "BMM101", "BFM100"] {
+            assert!(err.contains(id), "{err}");
+        }
     }
 }
