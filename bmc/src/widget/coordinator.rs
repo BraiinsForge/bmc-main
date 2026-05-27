@@ -538,4 +538,54 @@ mod tests {
         assert_eq!(size.width, 638);
         assert_eq!(size.height, 480);
     }
+
+    #[test]
+    fn fullscreen_scene_with_unknown_widget_is_unsupported() {
+        let registry = WidgetRegistry::new(vec![]);
+        let scene = crate::scene::Scene::fullscreen(uuid::Uuid::new_v4(), BTreeMap::new());
+        assert!(
+            !scene_supported_with_registry(&registry, &scene),
+            "BUG: fullscreen scene whose widget is absent from the registry must be unsupported",
+        );
+    }
+
+    #[test]
+    fn combined_scene_with_disallowed_span_is_unsupported() {
+        let registry = WidgetRegistry::new(vec![]);
+        let mut scene = crate::scene::Scene::combined();
+        let widget = Widget::new(
+            uuid::Uuid::new_v4(),
+            BTreeMap::new(),
+            crate::scene::WidgetPosition { row: 0, col: 0 },
+            crate::scene::WidgetPlacement::SlotSpan(crate::scene::SlotSpan {
+                columns: 3,
+                rows: 1,
+            }),
+        );
+        scene.widgets.insert(widget.id, widget);
+        assert!(
+            !scene_supported_with_registry(&registry, &scene),
+            "BUG: combined scene with a non-allow-list span must be unsupported",
+        );
+    }
+
+    #[test]
+    fn combined_scene_with_allowed_span_is_supported() {
+        let registry = WidgetRegistry::new(vec![]);
+        let mut scene = crate::scene::Scene::combined();
+        let widget = Widget::new(
+            uuid::Uuid::new_v4(),
+            BTreeMap::new(),
+            crate::scene::WidgetPosition { row: 0, col: 0 },
+            crate::scene::WidgetPlacement::SlotSpan(crate::scene::SlotSpan {
+                columns: 1,
+                rows: 1,
+            }),
+        );
+        scene.widgets.insert(widget.id, widget);
+        assert!(
+            scene_supported_with_registry(&registry, &scene),
+            "BUG: combined scene with an allow-list span must be supported",
+        );
+    }
 }
