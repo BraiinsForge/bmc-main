@@ -21,7 +21,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use eframe::glow::HasContext as _;
 
-use super::{LED_COUNT, LED_STRIP_H, PreviewTile};
+use super::{LED_STRIP_H, PreviewTile};
 
 // ── GL helpers ──────────────────────────────────────────────────────
 
@@ -192,7 +192,12 @@ pub(super) fn draw_checkerboard(painter: &egui::Painter, rect: egui::Rect) {
 
 /// Brightness ∈ [0, 1] for LED `phase` (0..1) at time `anim_t`.
 /// Ported from the prior FemtoVG-based strip with identical semantics.
-fn led_brightness(effect: bmc_led::data::LedEffect, phase: f32, anim_t: f32) -> f32 {
+fn led_brightness(
+    effect: bmc_led::data::LedEffect,
+    phase: f32,
+    anim_t: f32,
+    led_count: usize,
+) -> f32 {
     use bmc_led::data::LedEffect;
     match &effect {
         LedEffect::Solid(_) => 1.0,
@@ -206,12 +211,12 @@ fn led_brightness(effect: bmc_led::data::LedEffect, phase: f32, anim_t: f32) -> 
                 .abs()
                 .min((phase - pos + 1.0).abs())
                 .min((phase - pos - 1.0).abs());
-            (1.0 - dist * LED_COUNT as f32 * 0.5).max(0.02)
+            (1.0 - dist * led_count as f32 * 0.5).max(0.02)
         }
         LedEffect::KnightRider(_) | LedEffect::Scan(_) => {
             let pos = (anim_t.fract() * 2.0 - 1.0).abs();
             let dist = (phase - pos).abs();
-            (1.0 - dist * LED_COUNT as f32 * 0.5).max(0.02)
+            (1.0 - dist * led_count as f32 * 0.5).max(0.02)
         }
         LedEffect::Snake(_) => {
             let tail = (phase - anim_t.fract() + 1.0).fract();
@@ -238,6 +243,14 @@ pub(super) fn paint_led_strip(
     tile_origin: egui::Pos2,
     time_s: f32,
 ) {
+    let Some(led_count) = tile.led_count else {
+        return;
+    };
+    let led_count = led_count as usize;
+    if led_count == 0 {
+        return;
+    }
+
     let strip_w = tile.gpu.width as f32;
     let strip_h = LED_STRIP_H as f32;
     let strip_rect = egui::Rect::from_min_size(
@@ -267,11 +280,11 @@ pub(super) fn paint_led_strip(
     let is_full = tile.gpu.width >= 1280;
     let led_region_w = if is_full { strip_w * 0.5 } else { strip_w };
     let led_x_offset = (strip_w - led_region_w) / 2.0;
-    let led_spacing = led_region_w / LED_COUNT as f32;
+    let led_spacing = led_region_w / led_count as f32;
 
-    for idx in 0..LED_COUNT {
-        let phase = idx as f32 / LED_COUNT as f32;
-        let brightness = led_brightness(scene.effect, phase, anim_t);
+    for idx in 0..led_count {
+        let phase = idx as f32 / led_count as f32;
+        let brightness = led_brightness(scene.effect, phase, anim_t, led_count);
         if brightness <= 0.0 {
             continue;
         }
