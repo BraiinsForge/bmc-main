@@ -115,13 +115,6 @@ const SINGLE_STATS_H: u32 = 220;
 pub(crate) struct PlacedTile {
     pub(crate) label: String,
     pub(crate) kv_key: String,
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Task 7 consumes the retained shape for round preview treatment"
-        )
-    )]
     pub(crate) shape: platforms::DisplayShape,
     pub(crate) led_count: Option<u32>,
     pub(crate) x: u32,
@@ -979,6 +972,7 @@ pub(crate) struct PreviewTile {
     pub(crate) gpu: TileGpu,
     pub(crate) x: u32,
     pub(crate) y: u32,
+    pub(crate) shape: platforms::DisplayShape,
     label: String,
     logged_dead: bool,
     ever_rendered: bool,
@@ -1450,6 +1444,7 @@ impl TestbedApp {
                 gpu,
                 x,
                 y,
+                shape: placed.shape,
                 label,
                 logged_dead: false,
                 ever_rendered: false,
@@ -1723,6 +1718,16 @@ fn gpu_pool_len_after_init(pool_len: usize, needed_tiles: usize) -> usize {
     pool_len.saturating_sub(needed_tiles)
 }
 
+fn paint_tile_texture(ui: &egui::Ui, tile: &PreviewTile, rect: egui::Rect) {
+    // FemtoVG renders bottom-up into the FBO; flip V to display top-down.
+    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 1.0), egui::pos2(1.0, 0.0));
+    ui.painter()
+        .image(tile.gpu.egui_tex_id, rect, uv, egui::Color32::WHITE);
+    if paint::is_round(tile.shape) {
+        paint::paint_round_overlay(ui.painter(), rect);
+    }
+}
+
 // Process-wide cell holding the eframe-provided GL proc address loader, populated in
 // `TestbedApp::new` and read by `init_tiles` / `poll_hot_reload`.
 //
@@ -1829,10 +1834,7 @@ impl eframe::App for TestbedApp {
                         continue;
                     }
 
-                    // FemtoVG renders bottom-up into the FBO; flip V to display top-down.
-                    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 1.0), egui::pos2(1.0, 0.0));
-                    ui.painter()
-                        .image(tile.gpu.egui_tex_id, rect, uv, egui::Color32::WHITE);
+                    paint_tile_texture(ui, tile, rect);
 
                     if active_record_idx == Some(tile_idx) {
                         // `Inside` so the bottom edge stays inside the tile rect
