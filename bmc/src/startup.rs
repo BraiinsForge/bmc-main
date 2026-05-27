@@ -176,7 +176,11 @@ where
 
         let widget_manager = WidgetManager::init(config.widgets_paths.clone()).await;
         let widget_registry = widget_manager.registry();
-        let widget_coordinator = Arc::new(Coordinator::new(widget_manager, compositor.clone()));
+        let widget_coordinator = Arc::new(Coordinator::new(
+            widget_manager,
+            compositor.clone(),
+            widget_registry.clone(),
+        ));
 
         let compositor_for_wake = compositor.clone();
         tokio::spawn(async move {
