@@ -25,6 +25,38 @@ use super::recording::record_delivery;
 use super::ui_helpers::{combo_cell, key_label};
 
 impl TestbedApp {
+    /// Render the platform selector dropdown. Returns the newly chosen
+    /// platform id when the operator picks a different one.
+    pub(super) fn paint_platform_selector(&self, ui: &mut egui::Ui) -> Option<String> {
+        let mut chosen: Option<String> = None;
+        egui::Grid::new("platform_grid")
+            .num_columns(2)
+            .spacing([12.0, 4.0])
+            .min_col_width(0.0)
+            .show(ui, |grid| {
+                grid.add(key_label("platform", 180));
+                let cell_w = grid.available_width();
+                let current_label = self.catalog.platform(&self.active_platform_id).map_or_else(
+                    || self.active_platform_id.clone(),
+                    |p| format!("{} ({})", p.id, p.label),
+                );
+                combo_cell(grid, "platform", cell_w, current_label, |menu| {
+                    let mut changed = false;
+                    for p in &self.catalog.platforms {
+                        let selected = p.id == self.active_platform_id;
+                        let text = format!("{} ({})", p.id, p.label);
+                        if menu.selectable_label(selected, text).clicked() && !selected {
+                            chosen = Some(p.id.clone());
+                            changed = true;
+                        }
+                    }
+                    changed
+                });
+                grid.end_row();
+            });
+        chosen
+    }
+
     /// Push a new system snapshot to every tile's runtime
     /// via `deliver_system_update`, update the local cache,
     /// and (when recording is active) append a `SystemDelivery` event

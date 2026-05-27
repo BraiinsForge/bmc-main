@@ -44,9 +44,7 @@ use bmc_render::interaction::TouchEvent;
 use bmc_render::renderer::Renderer as _;
 use bmc_wasm_runtime::fixtures::{self, find_widget_root, seed_kv_from_secrets, snapshot_kv_dir};
 use bmc_wasm_runtime::unified_fixture::TimelineEvent;
-use bmc_wasm_runtime::{
-    RenderStatus, RuntimeConfig, RuntimeDisplayInfo, SystemSnapshot, WasmWidgetRuntime,
-};
+use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime};
 
 use paint::{
     GlProcAddress, TileGpu, draw_checkerboard, paint_led_strip, paint_timing_chart,
@@ -312,6 +310,44 @@ fn requested_window_size(layout: &TileLayout) -> egui::Vec2 {
         (layout.preview_w + PARAM_PANEL_W) as f32,
         layout.preview_h as f32,
     )
+}
+
+struct SwitchState {
+    active_platform_id: String,
+    layout: TileLayout,
+    requested_size: egui::Vec2,
+    needs_tile_rebuild: bool,
+}
+
+impl SwitchState {
+    fn new(active_platform_id: &str, platform: &platforms::Platform) -> Self {
+        let layout = TileLayout::for_platform(platform);
+        let requested_size = requested_window_size(&layout);
+        Self {
+            active_platform_id: active_platform_id.to_owned(),
+            layout,
+            requested_size,
+            needs_tile_rebuild: false,
+        }
+    }
+
+    fn switch_to(
+        &mut self,
+        catalog: &platforms::PlatformCatalog,
+        target_id: &str,
+    ) -> Result<bool, String> {
+        if target_id == self.active_platform_id {
+            return Ok(false);
+        }
+        let platform = catalog
+            .platform(target_id)
+            .ok_or_else(|| format!("platform '{target_id}' not found"))?;
+        target_id.clone_into(&mut self.active_platform_id);
+        self.layout = TileLayout::for_platform(platform);
+        self.requested_size = requested_window_size(&self.layout);
+        self.needs_tile_rebuild = true;
+        Ok(true)
+    }
 }
 
 fn validate_recording_target(
@@ -784,13 +820,9 @@ fn main() -> Result<()> {
 
     let rss_before_gl = current_rss_kb();
 
-    // `inner` + `max` only; deliberately no `with_min_inner_size`. Wayland's `Invalid
-    // min/max size` error fires when min > max, so omitting min sidesteps it while max==inner
-    // still caps the resize.
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(startup_size)
-            .with_max_inner_size(startup_size)
             .with_title("WASM Widget Testbed"),
         renderer: eframe::Renderer::Glow,
         vsync: true,
@@ -975,6 +1007,12 @@ impl PreviewTile {
             }
         }
     }
+
+    fn into_pooled_gpu(mut self, gl: &eframe::glow::Context) -> TileGpu {
+        self.renderer.drop_all();
+        self.gpu.detach_render_target(gl);
+        self.gpu
+    }
 }
 
 // ── App ─────────────────────────────────────────────────────────────
@@ -1003,21 +1041,14 @@ pub(crate) struct TestbedApp {
     pub(crate) system: SystemSnapshot,
     gl: Arc<eframe::glow::Context>,
     pub(crate) tiles: Vec<PreviewTile>,
+    gpu_pool: Vec<TileGpu>,
     clock: Clock,
     hot_reload: HotReload,
     perf: PerfState,
     pub(crate) recording_mode: RecordingMode,
     /// Active platform catalog, kept for the runtime selector.
-    #[expect(
-        dead_code,
-        reason = "Task 6 consumes the retained catalog for runtime platform switching"
-    )]
     pub(crate) catalog: platforms::PlatformCatalog,
     /// Id of the currently previewed platform.
-    #[expect(
-        dead_code,
-        reason = "Task 6 consumes the retained active platform id for runtime switching"
-    )]
     pub(crate) active_platform_id: String,
     /// Layout derived from the active platform's widget viewports.
     pub(crate) layout: TileLayout,
@@ -1162,6 +1193,7 @@ impl TestbedApp {
             system: pending_system,
             gl,
             tiles: Vec::new(),
+            gpu_pool: Vec::new(),
             clock: Clock {
                 last_frame: now,
                 start_instant: now,
@@ -1220,9 +1252,17 @@ impl TestbedApp {
             tiles = self.tiles.len(),
             "hot reload: rebuilding tile runtime(s)"
         );
+        let Some(platform) = self.catalog.platform(&self.active_platform_id) else {
+            tracing::error!(
+                "hot reload: active platform '{}' not in catalog",
+                self.active_platform_id
+            );
+            return;
+        };
         let params = self.params.clone();
         let system = self.system.clone();
         for idx in 0..self.tiles.len() {
+            let placed_shape = self.layout.tiles[idx].shape;
             let tile = &mut self.tiles[idx];
             let (led_tx, led_rx) = if tile.led_count.is_some() {
                 let (led_tx, led_rx) = std::sync::mpsc::channel();
@@ -1237,17 +1277,13 @@ impl TestbedApp {
                 ..RuntimeConfig::default()
             };
             tile.renderer.drop_all();
+            let geometry = RuntimeTileGeometry::for_viewport_shape(platform, placed_shape);
             match WasmWidgetRuntime::new(
                 &wasm_bytes,
                 tile.gpu.width,
                 tile.gpu.height,
-                bmc_wasm_protocol::ViewportShape::Rectangular,
-                RuntimeDisplayInfo {
-                    width: tile.gpu.width,
-                    height: tile.gpu.height,
-                    shape: bmc_wasm_protocol::DisplayShape::Rectangular,
-                    dpi: 1,
-                },
+                geometry.viewport_shape,
+                geometry.display,
                 rt_config,
             ) {
                 Ok(rt) => {
@@ -1263,6 +1299,53 @@ impl TestbedApp {
                 }
             }
         }
+    }
+
+    /// Switch the previewed platform, leaving params and system state intact.
+    /// Recording state is preserved by rejecting switches while recording is
+    /// active. Tiles are dropped so the lazy init path rebuilds runtime,
+    /// renderer, and GPU resources at the new viewport sizes.
+    pub(crate) fn switch_platform(&mut self, target_id: &str, ctx: &egui::Context) {
+        if target_id == self.active_platform_id {
+            return;
+        }
+        if let Err(reason) = can_switch_platform(self.recording_mode.state.is_some()) {
+            tracing::warn!("switch: refusing platform switch to '{target_id}': {reason}");
+            return;
+        }
+        let Some(current_platform) = self.catalog.platform(&self.active_platform_id) else {
+            tracing::error!(
+                "switch: active platform '{}' not in catalog",
+                self.active_platform_id
+            );
+            return;
+        };
+        let mut switch = SwitchState::new(&self.active_platform_id, current_platform);
+        switch.requested_size = self.requested_size;
+
+        match switch.switch_to(&self.catalog, target_id) {
+            Ok(false) => return,
+            Ok(true) => {}
+            Err(e) => {
+                tracing::error!("switch: {e}");
+                return;
+            }
+        }
+
+        self.active_platform_id = switch.active_platform_id;
+        self.layout = switch.layout;
+        self.requested_size = switch.requested_size;
+        if switch.needs_tile_rebuild {
+            let expected_pool_len =
+                gpu_pool_len_after_detach(self.gpu_pool.len(), self.tiles.len());
+            for tile in self.tiles.drain(..) {
+                self.gpu_pool.push(tile.into_pooled_gpu(&self.gl));
+            }
+            debug_assert_eq!(self.gpu_pool.len(), expected_pool_len);
+        }
+        self.size_pin_attempts = 30;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
+        ctx.request_repaint();
     }
 
     /// Build the four widget tiles on first `ui` call (where `eframe::Frame` is available
@@ -1295,11 +1378,17 @@ impl TestbedApp {
             .join("widget_data")
             .join(&widget_name);
 
+        let initial_pool_len = self.gpu_pool.len();
         let mut tiles = Vec::with_capacity(self.layout.tiles.len());
         for (tile_idx, placed) in self.layout.tiles.iter().enumerate() {
             let (x, y, w, h) = (placed.x, placed.y, placed.w, placed.h);
             let label = placed.label.clone();
-            let gpu = TileGpu::new(&self.gl, frame, w, h)?;
+            let gpu = if let Some(mut gpu) = self.gpu_pool.pop() {
+                gpu.reinitialize(&self.gl, w, h)?;
+                gpu
+            } else {
+                TileGpu::new(&self.gl, frame, w, h)?
+            };
             let (led_tx, led_rx) = if placed.led_count.is_some() {
                 let (led_tx, led_rx) = std::sync::mpsc::channel();
                 (Some(led_tx), Some(led_rx))
@@ -1370,6 +1459,10 @@ impl TestbedApp {
                 led_enabled: false,
             });
         }
+        debug_assert_eq!(
+            self.gpu_pool.len(),
+            gpu_pool_len_after_init(initial_pool_len, self.layout.tiles.len())
+        );
         let (major, minor, patch) = tiles[0].runtime.sdk_version();
         println!("Widget SDK version: {major}.{minor}.{patch}");
         // Snapshot the active recording tile's KV directory at start
@@ -1614,6 +1707,22 @@ impl TestbedApp {
     }
 }
 
+fn can_switch_platform(recording_active: bool) -> Result<(), &'static str> {
+    if recording_active {
+        Err("recording is active")
+    } else {
+        Ok(())
+    }
+}
+
+fn gpu_pool_len_after_detach(pool_len: usize, active_tiles: usize) -> usize {
+    pool_len + active_tiles
+}
+
+fn gpu_pool_len_after_init(pool_len: usize, needed_tiles: usize) -> usize {
+    pool_len.saturating_sub(needed_tiles)
+}
+
 // Process-wide cell holding the eframe-provided GL proc address loader, populated in
 // `TestbedApp::new` and read by `init_tiles` / `poll_hot_reload`.
 //
@@ -1627,11 +1736,8 @@ thread_local! {
 
 impl eframe::App for TestbedApp {
     fn ui(&mut self, root_ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        // One-shot resize lock. We deliberately do NOT re-send `InnerSize` here — on some
-        // Wayland compositors it gets clamped, undoing the larger startup hint. The
-        // post-frame `Resizable(false)` command pins whatever size the compositor actually
-        // gave us. Setting min/max here would re-trigger `wl_surface error 4` on the same
-        // compositors that rejected it at startup.
+        // One-shot resize lock. Avoid min/max size commands: on Wayland they can fail
+        // protocol validation while switching between narrow and wide platform layouts.
         if self.size_pin_attempts > 0 {
             let ctx = root_ui.ctx();
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(self.requested_size));
@@ -1915,6 +2021,75 @@ mod layout_tests {
         assert_eq!(layout.tiles[1].kv_key, "large");
         assert_eq!(layout.tiles[2].kv_key, "medium");
         assert_eq!(layout.tiles[3].kv_key, "small");
+    }
+
+    #[test]
+    fn switching_changes_layout_and_viewport_list() {
+        let cat = bundled();
+        let mut state = SwitchState::new(
+            "BMC100",
+            cat.platform("BMC100").expect("BUG: BMC100 must exist"),
+        );
+        assert_eq!(state.layout.tiles.len(), 4);
+        let from_size = state.requested_size;
+
+        let changed = state
+            .switch_to(&cat, "BMM101")
+            .expect("BUG: BMM101 must exist");
+
+        assert!(changed);
+        assert_eq!(state.active_platform_id, "BMM101");
+        assert!(state.needs_tile_rebuild);
+        assert_eq!(state.layout.tiles.len(), 1);
+        assert_eq!(
+            (state.layout.tiles[0].w, state.layout.tiles[0].h),
+            (480, 320)
+        );
+        assert!(
+            state.requested_size.x < from_size.x,
+            "narrow platform must request a smaller window",
+        );
+        assert_eq!(state.requested_size, requested_window_size(&state.layout));
+    }
+
+    #[test]
+    fn recording_blocks_platform_switching() {
+        assert_eq!(
+            can_switch_platform(false),
+            Ok(()),
+            "idle testbed should allow platform switches",
+        );
+        assert_eq!(
+            can_switch_platform(true),
+            Err("recording is active"),
+            "recording must keep active tile indexes and runtimes intact",
+        );
+    }
+
+    #[test]
+    fn gpu_pool_count_is_bounded_by_max_active_tiles() {
+        let mut pooled = 0;
+
+        pooled = gpu_pool_len_after_detach(pooled, 4);
+        assert_eq!(pooled, 4, "switching away from BMC100 pools four GPUs");
+
+        pooled = gpu_pool_len_after_init(pooled, 1);
+        assert_eq!(
+            pooled, 3,
+            "switching to one-tile BMM101 reuses one pooled GPU",
+        );
+
+        pooled = gpu_pool_len_after_detach(pooled, 1);
+        assert_eq!(
+            pooled, 4,
+            "switching away from BMM101 returns the reused GPU to the pool",
+        );
+
+        pooled = gpu_pool_len_after_init(pooled, 4);
+        assert_eq!(
+            pooled, 0,
+            "switching back to BMC100 reuses all four registered GPUs",
+        );
     }
 
     #[test]

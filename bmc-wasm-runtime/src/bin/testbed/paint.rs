@@ -28,14 +28,12 @@ use super::{LED_STRIP_H, PreviewTile};
 /// FBO + texture pair allocated against eframe's glow context. Each tile owns one;
 /// `WasmWidgetRuntime` renders into the FBO and we paint the texture in egui.
 pub(super) struct TileGpu {
-    fbo: eframe::glow::Framebuffer,
-    /// Held to keep the GL texture alive for as long as the FBO references it; the egui
-    /// painter samples this texture by id at draw time, but Rust doesn't see those reads
-    /// through the GL boundary, so without retaining we'd risk the texture being collected.
-    #[expect(
-        dead_code,
-        reason = "ownership marker — keeps the FBO's color attachment alive"
-    )]
+    fbo: Option<eframe::glow::Framebuffer>,
+    rbo: Option<eframe::glow::Renderbuffer>,
+    /// Registered with eframe via `register_native_glow_texture`; eframe owns
+    /// the native texture lifetime after registration. There is no public
+    /// unregister for this native id, so switch cleanup deletes only the GL
+    /// framebuffer/renderbuffer objects still owned by the testbed.
     texture: eframe::glow::Texture,
     pub(super) egui_tex_id: egui::TextureId,
     pub(super) width: u32,
@@ -57,82 +55,15 @@ impl TileGpu {
             let texture = gl
                 .create_texture()
                 .map_err(|e| anyhow::anyhow!("create_texture: {e}"))?;
-            gl.bind_texture(eframe::glow::TEXTURE_2D, Some(texture));
-            gl.tex_image_2d(
-                eframe::glow::TEXTURE_2D,
-                0,
-                eframe::glow::RGBA8 as i32,
-                width as i32,
-                height as i32,
-                0,
-                eframe::glow::RGBA,
-                eframe::glow::UNSIGNED_BYTE,
-                eframe::glow::PixelUnpackData::Slice(None),
-            );
-            gl.tex_parameter_i32(
-                eframe::glow::TEXTURE_2D,
-                eframe::glow::TEXTURE_MIN_FILTER,
-                eframe::glow::LINEAR as i32,
-            );
-            gl.tex_parameter_i32(
-                eframe::glow::TEXTURE_2D,
-                eframe::glow::TEXTURE_MAG_FILTER,
-                eframe::glow::LINEAR as i32,
-            );
-            gl.tex_parameter_i32(
-                eframe::glow::TEXTURE_2D,
-                eframe::glow::TEXTURE_WRAP_S,
-                eframe::glow::CLAMP_TO_EDGE as i32,
-            );
-            gl.tex_parameter_i32(
-                eframe::glow::TEXTURE_2D,
-                eframe::glow::TEXTURE_WRAP_T,
-                eframe::glow::CLAMP_TO_EDGE as i32,
-            );
-
-            let fbo = gl
-                .create_framebuffer()
-                .map_err(|e| anyhow::anyhow!("create_framebuffer: {e}"))?;
-            gl.bind_framebuffer(eframe::glow::FRAMEBUFFER, Some(fbo));
-            gl.framebuffer_texture_2d(
-                eframe::glow::FRAMEBUFFER,
-                eframe::glow::COLOR_ATTACHMENT0,
-                eframe::glow::TEXTURE_2D,
-                Some(texture),
-                0,
-            );
-
-            // Stencil renderbuffer — FemtoVG's stroke shader uses stencil.
-            let rbo = gl
-                .create_renderbuffer()
-                .map_err(|e| anyhow::anyhow!("create_renderbuffer: {e}"))?;
-            gl.bind_renderbuffer(eframe::glow::RENDERBUFFER, Some(rbo));
-            gl.renderbuffer_storage(
-                eframe::glow::RENDERBUFFER,
-                eframe::glow::DEPTH24_STENCIL8,
-                width as i32,
-                height as i32,
-            );
-            gl.framebuffer_renderbuffer(
-                eframe::glow::FRAMEBUFFER,
-                eframe::glow::DEPTH_STENCIL_ATTACHMENT,
-                eframe::glow::RENDERBUFFER,
-                Some(rbo),
-            );
-            gl.bind_renderbuffer(eframe::glow::RENDERBUFFER, None);
-
-            let status = gl.check_framebuffer_status(eframe::glow::FRAMEBUFFER);
-            if status != eframe::glow::FRAMEBUFFER_COMPLETE {
-                anyhow::bail!("FBO incomplete: {status:#x}");
-            }
-            gl.bind_framebuffer(eframe::glow::FRAMEBUFFER, None);
-            gl.bind_texture(eframe::glow::TEXTURE_2D, None);
+            configure_texture(gl, texture, width, height);
+            let (fbo, rbo) = create_render_target(gl, texture, width, height)?;
 
             let native = eframe::glow::NativeTexture(texture.0);
             let egui_tex_id = frame.register_native_glow_texture(native);
 
             Ok(Self {
-                fbo,
+                fbo: Some(fbo),
+                rbo: Some(rbo),
                 texture,
                 egui_tex_id,
                 width,
@@ -141,9 +72,146 @@ impl TileGpu {
         }
     }
 
+    /// Reuse this already-registered texture for a new tile size.
+    ///
+    /// `egui_tex_id` stays unchanged: eframe owns the native texture
+    /// registration and exposes no public unregister/replace API. The testbed
+    /// still owns the FBO/RBO that attach to that texture, so those are
+    /// recreated whenever the pooled texture is resized for a new tile.
+    pub(super) fn reinitialize(
+        &mut self,
+        gl: &eframe::glow::Context,
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        self.destroy_render_target(gl);
+        configure_texture(gl, self.texture, width, height);
+        let (fbo, rbo) = create_render_target(gl, self.texture, width, height)?;
+        self.fbo = Some(fbo);
+        self.rbo = Some(rbo);
+        self.width = width;
+        self.height = height;
+        Ok(())
+    }
+
     /// Numeric FBO ID for `WasmWidgetRuntime::new(... fbo_id ...)`.
     pub(super) fn fbo_id(&self) -> u32 {
-        self.fbo.0.get()
+        self.fbo
+            .expect("BUG: TileGpu framebuffer used after destroy")
+            .0
+            .get()
+    }
+
+    pub(super) fn detach_render_target(&mut self, gl: &eframe::glow::Context) {
+        self.destroy_render_target(gl);
+    }
+
+    fn destroy_render_target(&mut self, gl: &eframe::glow::Context) {
+        // SAFETY: called from egui's UI pass or from `reinitialize`, where
+        // eframe keeps the glow context current.
+        unsafe {
+            if let Some(fbo) = self.fbo.take() {
+                gl.delete_framebuffer(fbo);
+            }
+            if let Some(rbo) = self.rbo.take() {
+                gl.delete_renderbuffer(rbo);
+            }
+        }
+    }
+}
+
+fn configure_texture(
+    gl: &eframe::glow::Context,
+    texture: eframe::glow::Texture,
+    width: u32,
+    height: u32,
+) {
+    // SAFETY: callers run inside egui's UI pass, where eframe keeps the glow
+    // context current.
+    unsafe {
+        gl.bind_texture(eframe::glow::TEXTURE_2D, Some(texture));
+        gl.tex_image_2d(
+            eframe::glow::TEXTURE_2D,
+            0,
+            eframe::glow::RGBA8 as i32,
+            width as i32,
+            height as i32,
+            0,
+            eframe::glow::RGBA,
+            eframe::glow::UNSIGNED_BYTE,
+            eframe::glow::PixelUnpackData::Slice(None),
+        );
+        gl.tex_parameter_i32(
+            eframe::glow::TEXTURE_2D,
+            eframe::glow::TEXTURE_MIN_FILTER,
+            eframe::glow::LINEAR as i32,
+        );
+        gl.tex_parameter_i32(
+            eframe::glow::TEXTURE_2D,
+            eframe::glow::TEXTURE_MAG_FILTER,
+            eframe::glow::LINEAR as i32,
+        );
+        gl.tex_parameter_i32(
+            eframe::glow::TEXTURE_2D,
+            eframe::glow::TEXTURE_WRAP_S,
+            eframe::glow::CLAMP_TO_EDGE as i32,
+        );
+        gl.tex_parameter_i32(
+            eframe::glow::TEXTURE_2D,
+            eframe::glow::TEXTURE_WRAP_T,
+            eframe::glow::CLAMP_TO_EDGE as i32,
+        );
+        gl.bind_texture(eframe::glow::TEXTURE_2D, None);
+    }
+}
+
+fn create_render_target(
+    gl: &eframe::glow::Context,
+    texture: eframe::glow::Texture,
+    width: u32,
+    height: u32,
+) -> Result<(eframe::glow::Framebuffer, eframe::glow::Renderbuffer)> {
+    // SAFETY: callers run inside egui's UI pass, where eframe keeps the glow
+    // context current.
+    unsafe {
+        let fbo = gl
+            .create_framebuffer()
+            .map_err(|e| anyhow::anyhow!("create_framebuffer: {e}"))?;
+        gl.bind_framebuffer(eframe::glow::FRAMEBUFFER, Some(fbo));
+        gl.framebuffer_texture_2d(
+            eframe::glow::FRAMEBUFFER,
+            eframe::glow::COLOR_ATTACHMENT0,
+            eframe::glow::TEXTURE_2D,
+            Some(texture),
+            0,
+        );
+
+        // Stencil renderbuffer — FemtoVG's stroke shader uses stencil.
+        let rbo = gl
+            .create_renderbuffer()
+            .map_err(|e| anyhow::anyhow!("create_renderbuffer: {e}"))?;
+        gl.bind_renderbuffer(eframe::glow::RENDERBUFFER, Some(rbo));
+        gl.renderbuffer_storage(
+            eframe::glow::RENDERBUFFER,
+            eframe::glow::DEPTH24_STENCIL8,
+            width as i32,
+            height as i32,
+        );
+        gl.framebuffer_renderbuffer(
+            eframe::glow::FRAMEBUFFER,
+            eframe::glow::DEPTH_STENCIL_ATTACHMENT,
+            eframe::glow::RENDERBUFFER,
+            Some(rbo),
+        );
+        gl.bind_renderbuffer(eframe::glow::RENDERBUFFER, None);
+
+        let status = gl.check_framebuffer_status(eframe::glow::FRAMEBUFFER);
+        if status != eframe::glow::FRAMEBUFFER_COMPLETE {
+            anyhow::bail!("FBO incomplete: {status:#x}");
+        }
+        gl.bind_framebuffer(eframe::glow::FRAMEBUFFER, None);
+
+        Ok((fbo, rbo))
     }
 }
 

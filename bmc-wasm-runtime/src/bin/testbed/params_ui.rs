@@ -75,6 +75,7 @@ impl TestbedApp {
         let mut working_system = self.system.clone();
         let mut params_changed = false;
         let mut system_changed = false;
+        let mut chosen_platform: Option<String> = None;
 
         egui::SidePanel::right("right_panel")
             .resizable(false)
@@ -84,6 +85,14 @@ impl TestbedApp {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |scroll| {
+                        section_header_bar(scroll, "Platform", PARAMS_ACCENT);
+                        egui::Frame::NONE
+                            .inner_margin(egui::Margin::same(8))
+                            .show(scroll, |inner| {
+                                chosen_platform = self.paint_platform_selector(inner);
+                            });
+                        scroll.add_space(12.0);
+
                         if has_params {
                             section_header_bar(scroll, "Params", PARAMS_ACCENT);
                             egui::Frame::NONE
@@ -125,6 +134,10 @@ impl TestbedApp {
         }
         if system_changed {
             self.apply_system_update(working_system);
+        }
+        if let Some(target) = chosen_platform {
+            let ctx = root_ui.ctx().clone();
+            self.switch_platform(&target, &ctx);
         }
     }
 }
