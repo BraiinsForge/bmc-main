@@ -21,7 +21,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use eframe::glow::HasContext as _;
 
-use super::{LED_STRIP_H, PreviewTile};
+use super::{LED_STRIP_H, PreviewTile, platforms::DisplayShape};
 
 // ── GL helpers ──────────────────────────────────────────────────────
 
@@ -513,6 +513,68 @@ pub(super) fn paint_timing_legend(painter: &egui::Painter, rect: egui::Rect) {
     }
 }
 
+// ── Round visible-area overlay ─────────────────────────────────────
+
+/// For a column at horizontal offset `x` (0..=width) over a circle inscribed
+/// in a `width` x `height` tile, return the heights of the outside-circle caps
+/// at the top and bottom of that column, in pixels.
+pub(super) fn circle_outside_spans(x: f32, width: f32, height: f32) -> (f32, f32) {
+    let r = width.min(height) / 2.0;
+    let cx = width / 2.0;
+    let cy = height / 2.0;
+    let dx = (x - cx).abs();
+    if dx >= r {
+        return (cy, height - cy);
+    }
+    let half_chord = (r * r - dx * dx).sqrt();
+    let top = (cy - half_chord).max(0.0);
+    let bottom = (height - (cy + half_chord)).max(0.0);
+    (top, bottom)
+}
+
+/// Draw the round visible-area treatment over a tile rect.
+pub(super) fn paint_round_overlay(painter: &egui::Painter, rect: egui::Rect) {
+    if rect.width() < 2.0 || rect.height() < 2.0 {
+        return;
+    }
+    let dim = egui::Color32::from_rgba_unmultiplied(10, 10, 14, 200);
+    let cols = rect.width().ceil() as usize;
+    for col in 0..cols {
+        let x = col as f32;
+        let (top, bottom) = circle_outside_spans(x, rect.width(), rect.height());
+        let cx0 = rect.min.x + x;
+        let cx1 = (cx0 + 1.0).min(rect.max.x);
+        if top > 0.5 {
+            let cap = egui::Rect::from_min_max(
+                egui::pos2(cx0, rect.min.y),
+                egui::pos2(cx1, rect.min.y + top),
+            );
+            painter.rect_filled(cap, 0.0, dim);
+        }
+        if bottom > 0.5 {
+            let cap = egui::Rect::from_min_max(
+                egui::pos2(cx0, rect.max.y - bottom),
+                egui::pos2(cx1, rect.max.y),
+            );
+            painter.rect_filled(cap, 0.0, dim);
+        }
+    }
+    let center = rect.center();
+    let radius = rect.width().min(rect.height()) / 2.0;
+    painter.circle_stroke(
+        center,
+        radius,
+        egui::Stroke::new(
+            1.5,
+            egui::Color32::from_rgba_unmultiplied(200, 200, 220, 160),
+        ),
+    );
+}
+
+pub(super) fn is_round(shape: DisplayShape) -> bool {
+    matches!(shape, DisplayShape::Round)
+}
+
 // ── Perf report ─────────────────────────────────────────────────────
 
 pub(super) fn write_perf_report(path: &Path, samples: &[bmc_render::FrameTimings]) {
@@ -543,5 +605,39 @@ pub(super) fn write_perf_report(path: &Path, samples: &[bmc_render::FrameTimings
     ) {
         Ok(()) => println!("Perf report written to {}", path.display()),
         Err(e) => tracing::warn!("perf report: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod round_tests {
+    use super::circle_outside_spans;
+
+    #[test]
+    fn center_column_has_no_outside_span() {
+        let (top, bottom) = circle_outside_spans(240.0, 480.0, 480.0);
+        assert!(top.abs() < 0.5, "top dim height near zero at centre: {top}");
+        assert!(
+            bottom.abs() < 0.5,
+            "bottom dim height near zero at centre: {bottom}"
+        );
+    }
+
+    #[test]
+    fn edge_column_is_fully_outside() {
+        let (top, bottom) = circle_outside_spans(0.0, 480.0, 480.0);
+        assert!(
+            (top + bottom) >= 479.0,
+            "edge column fully dimmed: {top}+{bottom}"
+        );
+    }
+
+    #[test]
+    fn quarter_column_dims_symmetric_caps() {
+        let (top, bottom) = circle_outside_spans(120.0, 480.0, 480.0);
+        assert!(
+            (top - bottom).abs() < 0.5,
+            "caps symmetric: {top} vs {bottom}"
+        );
+        assert!(top > 0.0, "some dimming expected off-centre: {top}");
     }
 }
