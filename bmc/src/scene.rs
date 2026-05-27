@@ -10,47 +10,11 @@ use uuid::Uuid;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum WidgetSize {
+pub(crate) enum WidgetSize {
     Small,
     Medium,
     Large,
     Full,
-}
-
-impl WidgetSize {
-    #[must_use]
-    pub fn row_span(&self) -> u8 {
-        match self {
-            Self::Small | Self::Medium => 1,
-            Self::Large | Self::Full => 2,
-        }
-    }
-
-    #[must_use]
-    pub fn col_span(&self) -> u8 {
-        match self {
-            Self::Small => 1,
-            Self::Medium | Self::Large => 2,
-            Self::Full => 4,
-        }
-    }
-
-    #[must_use]
-    pub fn width(&self) -> u32 {
-        match self {
-            Self::Small => 317,
-            Self::Medium | Self::Large => 638,
-            Self::Full => 1280,
-        }
-    }
-
-    #[must_use]
-    pub fn height(&self) -> u32 {
-        match self {
-            Self::Small | Self::Medium => 238,
-            Self::Large | Self::Full => 480,
-        }
-    }
 }
 
 impl Display for WidgetSize {
@@ -65,13 +29,60 @@ impl Display for WidgetSize {
     }
 }
 
-impl From<WidgetSize> for bmc_ipc::SizeType {
+/// Where a widget sits on the display: full-screen, or spanning a block of
+/// grid slots.
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum WidgetPlacement {
+    /// Occupies the entire display.
+    Fullscreen,
+    /// Occupies a rectangular block of grid slots.
+    SlotSpan(SlotSpan),
+}
+
+/// A rectangular span of grid slots.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+pub struct SlotSpan {
+    /// Number of columns spanned.
+    pub columns: u32,
+    /// Number of rows spanned.
+    pub rows: u32,
+}
+
+impl WidgetPlacement {
+    #[must_use]
+    pub fn row_span(&self) -> u8 {
+        match self {
+            Self::Fullscreen => u8::try_from(WidgetPosition::MAX_ROWS).unwrap_or(u8::MAX),
+            Self::SlotSpan(s) => u8::try_from(s.rows).unwrap_or(u8::MAX),
+        }
+    }
+
+    #[must_use]
+    pub fn col_span(&self) -> u8 {
+        match self {
+            Self::Fullscreen => u8::try_from(WidgetPosition::MAX_COLS).unwrap_or(u8::MAX),
+            Self::SlotSpan(s) => u8::try_from(s.columns).unwrap_or(u8::MAX),
+        }
+    }
+}
+
+impl From<WidgetSize> for WidgetPlacement {
     fn from(size: WidgetSize) -> Self {
         match size {
-            WidgetSize::Small => Self::Small,
-            WidgetSize::Medium => Self::Medium,
-            WidgetSize::Large => Self::Large,
-            WidgetSize::Full => Self::Full,
+            WidgetSize::Small => Self::SlotSpan(SlotSpan {
+                columns: 1,
+                rows: 1,
+            }),
+            WidgetSize::Medium => Self::SlotSpan(SlotSpan {
+                columns: 2,
+                rows: 1,
+            }),
+            WidgetSize::Large => Self::SlotSpan(SlotSpan {
+                columns: 2,
+                rows: 2,
+            }),
+            WidgetSize::Full => Self::Fullscreen,
         }
     }
 }
@@ -115,15 +126,51 @@ impl From<Uuid> for WidgetId {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Widget {
     pub id: WidgetId,
     #[serde(flatten)]
     pub position: WidgetPosition,
-    pub size: WidgetSize,
+    pub placement: WidgetPlacement,
     pub widget_type_id: Uuid,
     #[serde(default)]
     pub params: BTreeMap<ParamKey, ParamValue>,
+}
+
+#[derive(Deserialize)]
+struct RawWidget {
+    id: WidgetId,
+    #[serde(flatten)]
+    position: WidgetPosition,
+    #[serde(default)]
+    placement: Option<WidgetPlacement>,
+    #[serde(default)]
+    size: Option<WidgetSize>,
+    widget_type_id: Uuid,
+    #[serde(default)]
+    params: BTreeMap<ParamKey, ParamValue>,
+}
+
+impl<'de> Deserialize<'de> for Widget {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = RawWidget::deserialize(d)?;
+        let placement = match (raw.placement, raw.size) {
+            (Some(p), _) => p,
+            (None, Some(size)) => WidgetPlacement::from(size),
+            (None, None) => {
+                return Err(serde::de::Error::custom(
+                    "widget requires `placement` or legacy `size`",
+                ));
+            }
+        };
+        Ok(Self {
+            id: raw.id,
+            position: raw.position,
+            placement,
+            widget_type_id: raw.widget_type_id,
+            params: raw.params,
+        })
+    }
 }
 
 impl Widget {
@@ -132,14 +179,14 @@ impl Widget {
         widget_type_id: Uuid,
         params: BTreeMap<ParamKey, ParamValue>,
         position: WidgetPosition,
-        size: WidgetSize,
+        placement: WidgetPlacement,
     ) -> Self {
         Self {
             id: WidgetId::generate(),
             widget_type_id,
             params,
             position,
-            size,
+            placement,
         }
     }
 
@@ -152,22 +199,22 @@ impl Widget {
 
     #[must_use]
     pub fn in_bounds(&self) -> bool {
-        let bottom = usize::from(self.position.row) + usize::from(self.size.row_span());
-        let right = usize::from(self.position.col) + usize::from(self.size.col_span());
+        let bottom = usize::from(self.position.row) + usize::from(self.placement.row_span());
+        let right = usize::from(self.position.col) + usize::from(self.placement.col_span());
         (bottom <= WidgetPosition::MAX_ROWS) && (right <= WidgetPosition::MAX_COLS)
     }
 
     #[must_use]
     pub fn overlaps(&self, other: &Self) -> bool {
         let self_left = usize::from(self.position.col);
-        let self_right = self_left + usize::from(self.size.col_span());
+        let self_right = self_left + usize::from(self.placement.col_span());
         let self_top = usize::from(self.position.row);
-        let self_bottom = self_top + usize::from(self.size.row_span());
+        let self_bottom = self_top + usize::from(self.placement.row_span());
 
         let other_left = usize::from(other.position.col);
-        let other_right = other_left + usize::from(other.size.col_span());
+        let other_right = other_left + usize::from(other.placement.col_span());
         let other_top = usize::from(other.position.row);
-        let other_bottom = other_top + usize::from(other.size.row_span());
+        let other_bottom = other_top + usize::from(other.placement.row_span());
 
         (self_left < other_right)
             && (self_right > other_left)
@@ -238,7 +285,7 @@ impl Scene {
             widget_uid,
             params,
             WidgetPosition { row: 0, col: 0 },
-            WidgetSize::Full,
+            WidgetPlacement::Fullscreen,
         );
         Self {
             id: SceneId::generate(),
@@ -324,7 +371,10 @@ mod tests {
                 row: u8::MAX,
                 col: 0,
             },
-            size: WidgetSize::Small,
+            placement: WidgetPlacement::SlotSpan(SlotSpan {
+                columns: 1,
+                rows: 1,
+            }),
             widget_type_id: Uuid::nil(),
             params: BTreeMap::new(),
         };
@@ -342,7 +392,10 @@ mod tests {
                 row: u8::MAX,
                 col: 0,
             },
-            size: WidgetSize::Small,
+            placement: WidgetPlacement::SlotSpan(SlotSpan {
+                columns: 1,
+                rows: 1,
+            }),
             widget_type_id: Uuid::nil(),
             params: BTreeMap::new(),
         };
@@ -354,56 +407,64 @@ mod tests {
     }
 
     #[test]
-    fn widget_size_into_size_type_maps_each_variant() {
-        assert_eq!(
-            bmc_ipc::SizeType::from(WidgetSize::Small),
-            bmc_ipc::SizeType::Small
-        );
-        assert_eq!(
-            bmc_ipc::SizeType::from(WidgetSize::Medium),
-            bmc_ipc::SizeType::Medium
-        );
-        assert_eq!(
-            bmc_ipc::SizeType::from(WidgetSize::Large),
-            bmc_ipc::SizeType::Large
-        );
-        assert_eq!(
-            bmc_ipc::SizeType::from(WidgetSize::Full),
-            bmc_ipc::SizeType::Full
-        );
-    }
-
-    #[test]
     fn clone_with_new_id_preserves_widget_iteration_order() {
         let positions = [
-            (0_u8, 0_u8, WidgetSize::Small),
-            (0, 1, WidgetSize::Small),
-            (0, 2, WidgetSize::Medium),
-            (1, 0, WidgetSize::Large),
+            (
+                0_u8,
+                0_u8,
+                WidgetPlacement::SlotSpan(SlotSpan {
+                    columns: 1,
+                    rows: 1,
+                }),
+            ),
+            (
+                0,
+                1,
+                WidgetPlacement::SlotSpan(SlotSpan {
+                    columns: 1,
+                    rows: 1,
+                }),
+            ),
+            (
+                0,
+                2,
+                WidgetPlacement::SlotSpan(SlotSpan {
+                    columns: 2,
+                    rows: 1,
+                }),
+            ),
+            (
+                1,
+                0,
+                WidgetPlacement::SlotSpan(SlotSpan {
+                    columns: 2,
+                    rows: 2,
+                }),
+            ),
         ];
         let widget_type = Uuid::new_v4();
         let mut source = Scene::combined();
-        for (row, col, size) in positions {
+        for (row, col, placement) in positions {
             let w = Widget::new(
                 widget_type,
                 BTreeMap::new(),
                 WidgetPosition { row, col },
-                size,
+                placement,
             );
             source.widgets.insert(w.id, w);
         }
-        let source_order: Vec<(u8, u8, WidgetSize)> = source
+        let source_order: Vec<(u8, u8, WidgetPlacement)> = source
             .widgets
             .values()
-            .map(|w| (w.position.row, w.position.col, w.size))
+            .map(|w| (w.position.row, w.position.col, w.placement.clone()))
             .collect();
 
         let cloned = source.clone_with_new_id();
 
-        let cloned_order: Vec<(u8, u8, WidgetSize)> = cloned
+        let cloned_order: Vec<(u8, u8, WidgetPlacement)> = cloned
             .widgets
             .values()
-            .map(|w| (w.position.row, w.position.col, w.size))
+            .map(|w| (w.position.row, w.position.col, w.placement.clone()))
             .collect();
 
         assert_eq!(
@@ -420,5 +481,103 @@ mod tests {
                 .all(|(a, b)| a != b),
             "BUG: each cloned widget must have a fresh id",
         );
+    }
+
+    #[test]
+    fn legacy_size_migrates_to_placement_on_deserialize() {
+        let json = r#"{
+            "id": "550e8400-e29b-41d4-a716-446655440010",
+            "row": 0,
+            "col": 0,
+            "size": "small",
+            "widget_type_id": "550e8400-e29b-41d4-a716-446655440011"
+        }"#;
+        let w: Widget = serde_json::from_str(json).expect("BUG: legacy widget must migrate");
+        assert_eq!(
+            w.placement,
+            WidgetPlacement::SlotSpan(SlotSpan {
+                columns: 1,
+                rows: 1
+            })
+        );
+    }
+
+    #[test]
+    fn legacy_full_size_migrates_to_fullscreen() {
+        let json = r#"{
+            "id": "550e8400-e29b-41d4-a716-446655440010",
+            "row": 0,
+            "col": 0,
+            "size": "full",
+            "widget_type_id": "550e8400-e29b-41d4-a716-446655440011"
+        }"#;
+        let w: Widget = serde_json::from_str(json).expect("BUG: legacy full must migrate");
+        assert_eq!(w.placement, WidgetPlacement::Fullscreen);
+    }
+
+    #[test]
+    fn legacy_medium_and_large_map_to_spans() {
+        let mk = |size: &str| -> Widget {
+            let json = format!(
+                r#"{{"id":"550e8400-e29b-41d4-a716-446655440010","row":0,"col":0,
+                     "size":"{size}",
+                     "widget_type_id":"550e8400-e29b-41d4-a716-446655440011"}}"#
+            );
+            serde_json::from_str(&json).expect("BUG: legacy size must migrate")
+        };
+        assert_eq!(
+            mk("medium").placement,
+            WidgetPlacement::SlotSpan(SlotSpan {
+                columns: 2,
+                rows: 1
+            })
+        );
+        assert_eq!(
+            mk("large").placement,
+            WidgetPlacement::SlotSpan(SlotSpan {
+                columns: 2,
+                rows: 2
+            })
+        );
+    }
+
+    #[test]
+    fn placement_serializes_in_new_shape() {
+        let w = Widget::new(
+            Uuid::nil(),
+            BTreeMap::new(),
+            WidgetPosition { row: 0, col: 0 },
+            WidgetPlacement::SlotSpan(SlotSpan {
+                columns: 2,
+                rows: 2,
+            }),
+        );
+        let json = serde_json::to_value(&w).expect("BUG: serialize widget");
+        assert_eq!(json["placement"]["slot_span"]["columns"], 2);
+        assert_eq!(json["placement"]["slot_span"]["rows"], 2);
+    }
+
+    #[test]
+    fn slot_span_in_bounds_and_overlap() {
+        let a = Widget::new(
+            Uuid::nil(),
+            BTreeMap::new(),
+            WidgetPosition { row: 0, col: 0 },
+            WidgetPlacement::SlotSpan(SlotSpan {
+                columns: 2,
+                rows: 2,
+            }),
+        );
+        assert!(a.in_bounds());
+        let b = Widget::new(
+            Uuid::nil(),
+            BTreeMap::new(),
+            WidgetPosition { row: 0, col: 1 },
+            WidgetPlacement::SlotSpan(SlotSpan {
+                columns: 2,
+                rows: 1,
+            }),
+        );
+        assert!(a.overlaps(&b));
     }
 }
