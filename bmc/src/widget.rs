@@ -11,5 +11,7 @@ mod spawner;
 pub use coordinator::{Coordinator, WidgetEnv};
 pub use discovery::{PathDiscovery, WidgetDiscovery};
 pub use manager::WidgetManager;
-pub use registry::{RegistryError, WidgetInfo, WidgetRegistry};
+pub use registry::{
+    RegistryError, ViewportDescriptor, WidgetInfo, WidgetRegistry, slot_span_descriptor,
+};
 pub use spawner::{SpawnError, WaylandSpawner};
