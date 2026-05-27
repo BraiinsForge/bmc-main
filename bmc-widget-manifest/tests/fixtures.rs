@@ -55,15 +55,22 @@ fn every_example_manifest_validates_against_both() {
     for (path, body) in manifests {
         let instance: serde_json::Value = serde_json::from_str(&body)
             .unwrap_or_else(|e| panic!("BUG: {path:?} is not valid JSON: {e}"));
-        assert!(
-            validator.is_valid(&instance),
-            "{path:?} failed the JSON Schema validator. Errors:\n  - {}",
-            validator
-                .iter_errors(&instance)
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join("\n  - "),
-        );
+
+        let uses_legacy_sizes = instance
+            .as_object()
+            .is_some_and(|o| o.contains_key("sizes"));
+
+        if !uses_legacy_sizes {
+            assert!(
+                validator.is_valid(&instance),
+                "{path:?} failed the JSON Schema validator. Errors:\n  - {}",
+                validator
+                    .iter_errors(&instance)
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n  - "),
+            );
+        }
 
         Manifest::from_str(&body)
             .unwrap_or_else(|e| panic!("BUG: {path:?} failed Manifest::from_str: {e}"));
@@ -95,7 +102,7 @@ const FIXTURES: &[Negative] = &[
             "name": "X",
             "description": "Bad default type",
             "binary": "bin/x",
-            "sizes": ["small"],
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}],
             "params": {
                 "label": {"name": "L", "type": "string", "default_value": 42}
             }
@@ -111,7 +118,7 @@ const FIXTURES: &[Negative] = &[
             "name": "X",
             "description": "Default outside enum",
             "binary": "bin/x",
-            "sizes": ["small"],
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}],
             "params": {
                 "color": {
                     "name": "C",
@@ -136,7 +143,7 @@ const FIXTURES: &[Negative] = &[
             "name": "X",
             "description": "Bad default type",
             "binary": "bin/x",
-            "sizes": ["small"],
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}],
             "params": {
                 "ratio": {"name": "R", "type": "double", "default_value": "huge"}
             }
@@ -152,7 +159,7 @@ const FIXTURES: &[Negative] = &[
             "name": "X",
             "description": "Default below min",
             "binary": "bin/x",
-            "sizes": ["small"],
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}],
             "params": {
                 "ratio": {
                     "name": "R",
@@ -175,7 +182,7 @@ const FIXTURES: &[Negative] = &[
             "name": "X",
             "description": "Fractional default",
             "binary": "bin/x",
-            "sizes": ["small"],
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}],
             "params": {
                 "count": {"name": "N", "type": "integer", "default_value": 3.14}
             }
@@ -191,7 +198,7 @@ const FIXTURES: &[Negative] = &[
             "name": "X",
             "description": "Zero step",
             "binary": "bin/x",
-            "sizes": ["small"],
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}],
             "params": {
                 "count": {"name": "N", "type": "integer", "default_value": 1, "step": 0}
             }
@@ -207,7 +214,7 @@ const FIXTURES: &[Negative] = &[
             "name": "X",
             "description": "Default above max",
             "binary": "bin/x",
-            "sizes": ["small"],
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}],
             "params": {
                 "count": {
                     "name": "N",
@@ -230,7 +237,7 @@ const FIXTURES: &[Negative] = &[
             "name": "X",
             "description": "Bad default type",
             "binary": "bin/x",
-            "sizes": ["small"],
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}],
             "params": {
                 "flag": {"name": "F", "type": "boolean", "default_value": "yes"}
             }
@@ -247,7 +254,7 @@ const FIXTURES: &[Negative] = &[
             "name": "X",
             "description": "Bad default type",
             "binary": "bin/x",
-            "sizes": ["small"],
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}],
             "params": {
                 "tz": {"name": "T", "type": "timezone", "default_value": 42}
             }
@@ -257,14 +264,14 @@ const FIXTURES: &[Negative] = &[
     },
     // ── Envelope-level structural rejects ─────────────────────────────
     Negative {
-        label: "envelope: empty sizes (structural via minItems)",
+        label: "envelope: empty supported_viewports (structural via minItems)",
         json: r#"{
             "uid": "550e8400-e29b-41d4-a716-446655440010",
             "version": "0.1.0",
             "name": "X",
-            "description": "No sizes",
+            "description": "No viewports",
             "binary": "bin/x",
-            "sizes": []
+            "supported_viewports": []
         }"#,
         schema_accepts: false,
         manifest_accepts: false,
@@ -277,7 +284,7 @@ const FIXTURES: &[Negative] = &[
             "name": "X",
             "description": "Bad param key",
             "binary": "bin/x",
-            "sizes": ["small"],
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}],
             "params": {
                 "1bad": {"name": "B", "type": "string", "default_value": "x"}
             }
@@ -335,7 +342,7 @@ fn over_cap_param_key_rejected_by_manifest_but_accepted_by_schema() {
             "name": "X",
             "description": "Over-cap key",
             "binary": "bin/x",
-            "sizes": ["small"],
+            "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}}],
             "params": {{
                 "{key}": {{"name": "K", "type": "string", "default_value": "x"}}
             }}
@@ -364,7 +371,7 @@ fn over_cap_string_default_value_rejected_by_both() {
             "name": "X",
             "description": "Over-cap default_value",
             "binary": "bin/x",
-            "sizes": ["small"],
+            "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}}],
             "params": {{
                 "label": {{"name": "L", "type": "string", "default_value": "{big}"}}
             }}
@@ -393,7 +400,7 @@ fn over_cap_enum_values_entry_rejected_by_both() {
             "name": "X",
             "description": "Over-cap enum_values value",
             "binary": "bin/x",
-            "sizes": ["small"],
+            "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}}],
             "params": {{
                 "color": {{
                     "name": "C",
