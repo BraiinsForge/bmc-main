@@ -4,6 +4,10 @@
 //!
 //! Shared between the capture binary and (in the future) testbed recording.
 //! Parses `capture/config.toml` from the widget crate root.
+//!
+//! Capture keeps its own `CAPTURE_SIZES` and does not yet consume the testbed
+//! platform catalog. Unifying capture sizes with the platform catalog is a
+//! separate later task.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

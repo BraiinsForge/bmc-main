@@ -685,7 +685,10 @@ mod tests {
         let platform = cat
             .select(Some("BMM100"))
             .expect("BUG: BMM100 must be selectable");
-        assert_eq!((platform.display.width, platform.display.height), (320, 240));
+        assert_eq!(
+            (platform.display.width, platform.display.height),
+            (320, 240)
+        );
         assert_eq!(platform.widget_viewports.len(), 1);
     }
 
@@ -695,7 +698,10 @@ mod tests {
         let platform = cat
             .select(Some("BMM101"))
             .expect("BUG: BMM101 must be selectable");
-        assert_eq!((platform.display.width, platform.display.height), (480, 320));
+        assert_eq!(
+            (platform.display.width, platform.display.height),
+            (480, 320)
+        );
     }
 
     #[test]
@@ -704,7 +710,10 @@ mod tests {
         let platform = cat
             .select(Some("BFM100"))
             .expect("BUG: BFM100 must be selectable");
-        assert_eq!((platform.display.width, platform.display.height), (480, 480));
+        assert_eq!(
+            (platform.display.width, platform.display.height),
+            (480, 480)
+        );
         assert!(matches!(platform.display.shape, DisplayShape::Round));
     }
 
