@@ -70,7 +70,7 @@ const BMC100_PLATFORM_DESCRIPTOR: PlatformDescriptor = PlatformDescriptor {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("unsupported widget size label")]
-struct UnsupportedWidgetSize;
+pub struct UnsupportedWidgetSize;
 
 impl TryFrom<web::WidgetSize> for scene::WidgetPlacement {
     type Error = UnsupportedWidgetSize;

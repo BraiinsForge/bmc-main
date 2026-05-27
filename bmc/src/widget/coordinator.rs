@@ -13,9 +13,59 @@ use crate::compositor::{
     Compositor, CompositorError, Position, SceneLayout, Size, WidgetPlacement,
 };
 use crate::config::LocalizationConfig;
-use crate::scene::{Scene, SceneId, Widget, WidgetSize};
+use crate::scene::{Scene, SceneId, Widget};
 
-use super::WidgetManager;
+use super::{WidgetManager, WidgetRegistry};
+
+const ACTIVE_FULLSCREEN_DESCRIPTOR: crate::widget::ViewportDescriptor =
+    crate::widget::ViewportDescriptor {
+        shape: bmc_widget_manifest::DisplayShape::Rectangular,
+        width: 1280,
+        height: 480,
+        dpi: 1,
+    };
+
+fn placement_viewport_size(
+    placement: &crate::scene::WidgetPlacement,
+    fullscreen_descriptor: &crate::widget::ViewportDescriptor,
+) -> Option<Size> {
+    let desc = match placement {
+        crate::scene::WidgetPlacement::Fullscreen => *fullscreen_descriptor,
+        crate::scene::WidgetPlacement::SlotSpan(s) => {
+            crate::widget::slot_span_descriptor(s.columns, s.rows)?
+        }
+    };
+    Some(Size {
+        width: desc.width,
+        height: desc.height,
+    })
+}
+
+fn placement_legacy_size_type(placement: &crate::scene::WidgetPlacement) -> Option<SizeType> {
+    match placement {
+        crate::scene::WidgetPlacement::Fullscreen => Some(SizeType::Full),
+        crate::scene::WidgetPlacement::SlotSpan(s) => match (s.columns, s.rows) {
+            (1, 1) => Some(SizeType::Small),
+            (2, 1) => Some(SizeType::Medium),
+            (2, 2) => Some(SizeType::Large),
+            _ => None,
+        },
+    }
+}
+
+fn scene_supported_with_registry(registry: &WidgetRegistry, scene: &Scene) -> bool {
+    match scene.kind {
+        crate::scene::SceneKind::Combined => scene.widgets.values().all(|w| match &w.placement {
+            crate::scene::WidgetPlacement::Fullscreen => false,
+            crate::scene::WidgetPlacement::SlotSpan(s) => {
+                crate::widget::slot_span_descriptor(s.columns, s.rows).is_some()
+            }
+        }),
+        crate::scene::SceneKind::Fullscreen => scene.widgets.values().next().is_some_and(|w| {
+            registry.supports_viewport(&w.widget_type_id, &ACTIVE_FULLSCREEN_DESCRIPTOR)
+        }),
+    }
+}
 
 /// Minimum environment the spawner puts on a widget process.
 ///
@@ -32,6 +82,7 @@ pub struct WidgetEnv {
 pub struct Coordinator {
     widget_manager: WidgetManager,
     compositor: Arc<dyn Compositor>,
+    widget_registry: Arc<WidgetRegistry>,
 }
 
 impl std::fmt::Debug for Coordinator {
@@ -43,10 +94,15 @@ impl std::fmt::Debug for Coordinator {
 }
 
 impl Coordinator {
-    pub fn new(widget_manager: WidgetManager, compositor: Arc<dyn Compositor>) -> Self {
+    pub fn new(
+        widget_manager: WidgetManager,
+        compositor: Arc<dyn Compositor>,
+        widget_registry: Arc<WidgetRegistry>,
+    ) -> Self {
         Self {
             widget_manager,
             compositor,
+            widget_registry,
         }
     }
 
@@ -184,7 +240,7 @@ impl Coordinator {
     pub fn refresh_scene_cycling(&self, scenes: &IndexMap<SceneId, Scene>) {
         let layouts: Vec<_> = scenes
             .values()
-            .filter(|s| s.enabled)
+            .filter(|s| s.enabled && self.scene_supported(s))
             .map(Self::scene_to_layout)
             .collect();
         debug!(
@@ -197,6 +253,11 @@ impl Coordinator {
     }
 
     pub async fn spawn_scene_widgets(&self, scene: &Scene) {
+        if !self.scene_supported(scene) {
+            debug!(scene_id = %scene.id, "skipping unsupported scene at spawn");
+            return;
+        }
+
         info!(
             scene_id = %scene.id,
             widget_count = scene.widgets.len(),
@@ -211,11 +272,21 @@ impl Coordinator {
     pub async fn spawn_widget(&self, scene_id: &crate::scene::SceneId, widget: &Widget) {
         let instance_id = widget.id.as_uuid().to_string();
         let position = Self::widget_to_position(widget);
-        let size = Self::widget_size_to_size(widget.size);
+        let Some(viewport) =
+            placement_viewport_size(&widget.placement, &ACTIVE_FULLSCREEN_DESCRIPTOR)
+        else {
+            warn!(
+                placement = ?widget.placement,
+                "skipping widget with unsupported slot span placement"
+            );
+            return;
+        };
+        let size = viewport;
         let initial_config = WidgetInitialConfig {
-            size: Self::widget_size_to_size_type(widget.size),
-            width: widget.size.width(),
-            height: widget.size.height(),
+            size: placement_legacy_size_type(&widget.placement)
+                .expect("BUG: viewport derivation already rejected unsupported spans"),
+            width: viewport.width,
+            height: viewport.height,
             params: params_to_json_map(&widget.params),
         };
 
@@ -255,7 +326,7 @@ impl Coordinator {
             scene_id = %scene_id,
             widget_id = %instance_id,
             widget_type = %widget.widget_type_id,
-            size = %widget.size,
+            placement = ?widget.placement,
             "spawning widget"
         );
 
@@ -335,6 +406,11 @@ impl Coordinator {
 
     /// Sets the active scene layout on the compositor.
     pub fn set_active_scene(&self, scene: &Scene) {
+        if !self.scene_supported(scene) {
+            warn!(scene_id = %scene.id, "refusing to activate unsupported scene");
+            return;
+        }
+
         let layout = Self::scene_to_layout(scene);
         info!(
             scene_id = %scene.id,
@@ -357,15 +433,30 @@ impl Coordinator {
         }
     }
 
+    fn scene_supported(&self, scene: &Scene) -> bool {
+        scene_supported_with_registry(&self.widget_registry, scene)
+    }
+
     fn scene_to_layout(scene: &Scene) -> SceneLayout {
         let widgets = scene
             .widgets
             .values()
-            .map(|widget| WidgetPlacement {
-                instance_id: widget.id.as_uuid().to_string(),
-                position: Self::widget_to_position(widget),
-                size: Self::widget_size_to_size(widget.size),
-                visible: true,
+            .filter_map(|widget| {
+                let Some(size) =
+                    placement_viewport_size(&widget.placement, &ACTIVE_FULLSCREEN_DESCRIPTOR)
+                else {
+                    debug!(
+                        placement = ?widget.placement,
+                        "skipping unsupported widget placement in layout"
+                    );
+                    return None;
+                };
+                Some(WidgetPlacement {
+                    instance_id: widget.id.as_uuid().to_string(),
+                    position: Self::widget_to_position(widget),
+                    size,
+                    visible: true,
+                })
             })
             .collect();
 
@@ -384,22 +475,6 @@ impl Coordinator {
         Position {
             x: u32::from(widget.position.col) * CELL_WIDTH,
             y: u32::from(widget.position.row) * CELL_HEIGHT,
-        }
-    }
-
-    fn widget_size_to_size(size: WidgetSize) -> Size {
-        Size {
-            width: size.width(),
-            height: size.height(),
-        }
-    }
-
-    fn widget_size_to_size_type(size: WidgetSize) -> SizeType {
-        match size {
-            WidgetSize::Small => SizeType::Small,
-            WidgetSize::Medium => SizeType::Medium,
-            WidgetSize::Large => SizeType::Large,
-            WidgetSize::Full => SizeType::Full,
         }
     }
 
@@ -422,4 +497,45 @@ fn params_to_json_map(
         .iter()
         .map(|(k, v)| (k.as_str().to_owned(), v.to_json_value()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::widget::ViewportDescriptor;
+    use bmc_widget_manifest::DisplayShape;
+
+    #[test]
+    fn placement_viewport_for_fullscreen_is_active_display() {
+        let desc = ViewportDescriptor {
+            shape: DisplayShape::Rectangular,
+            width: 1280,
+            height: 480,
+            dpi: 1,
+        };
+        let size = placement_viewport_size(&crate::scene::WidgetPlacement::Fullscreen, &desc)
+            .expect("BUG: fullscreen viewport must derive");
+        assert_eq!(size.width, 1280);
+        assert_eq!(size.height, 480);
+    }
+
+    #[test]
+    fn placement_viewport_for_slot_span_uses_allow_list() {
+        let desc = ViewportDescriptor {
+            shape: DisplayShape::Rectangular,
+            width: 1280,
+            height: 480,
+            dpi: 1,
+        };
+        let size = placement_viewport_size(
+            &crate::scene::WidgetPlacement::SlotSpan(crate::scene::SlotSpan {
+                columns: 2,
+                rows: 2,
+            }),
+            &desc,
+        )
+        .expect("BUG: slot span viewport must derive");
+        assert_eq!(size.width, 638);
+        assert_eq!(size.height, 480);
+    }
 }
