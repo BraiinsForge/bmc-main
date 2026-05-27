@@ -3,7 +3,7 @@
 use crate::data::{Account, AccountId, SceneCycling, deserialize_accounts, serialize_accounts};
 use crate::{
     alarm::{AlarmData, AlarmId},
-    scene::{Scene, SceneId, SceneKind, WidgetSize, deserialize_scenes, serialize_scenes},
+    scene::{Scene, SceneId, SceneKind, WidgetPlacement, deserialize_scenes, serialize_scenes},
     utils::replace_file,
 };
 use anyhow::{Context, Result, bail};
@@ -238,9 +238,9 @@ impl Config {
                             widget.id
                         );
                     }
-                    if widget.size != WidgetSize::Full {
+                    if widget.placement != WidgetPlacement::Fullscreen {
                         bail!(
-                            "Fullscreen scene `{}` has widget `{}` with incorrect size (expected `full`)",
+                            "Fullscreen scene `{}` has widget `{}` with incorrect placement (expected `fullscreen`)",
                             scene.id,
                             widget.id
                         );
@@ -248,9 +248,9 @@ impl Config {
                 }
                 SceneKind::Combined => {
                     for widget in scene.widgets.values() {
-                        if widget.size == WidgetSize::Full {
+                        if widget.placement == WidgetPlacement::Fullscreen {
                             bail!(
-                                "Combined scene `{}` has widget `{}` with incorrect size (expected `small`, `medium` or `large`)",
+                                "Combined scene `{}` has widget `{}` with incorrect placement (expected slot span, not fullscreen)",
                                 scene.id,
                                 widget.id
                             );
