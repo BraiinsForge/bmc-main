@@ -134,32 +134,92 @@ struct CliArgs {
     perf_report_path: Option<PathBuf>,
     perf_frames: u32,
     record_size: Option<String>,
+    platform_catalog_path: Option<PathBuf>,
+    platform_id: Option<String>,
 }
 
 fn parse_args() -> Result<CliArgs> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        anyhow::bail!(
-            "WASM Widget Testbed\n\
-             Usage: testbed <wasm_file> [--manifest=<path>] [--perf-report=<path>] \
-             [--perf-frames=<N>] [--record=<size>]"
-        );
-    }
+    parse_args_from(std::env::args())
+}
 
-    let wasm_path = PathBuf::from(&args[1]);
+fn usage() -> &'static str {
+    "WASM Widget Testbed\n\
+     Usage: testbed <wasm_file> [--manifest=<path>] [--perf-report=<path>] \
+     [--perf-frames=<N>] [--record=<size>] [--platform-catalog=<path>] \
+     [--platform-catalog <path>] [--platform=<id>] [--platform <id>]"
+}
+
+fn split_option_value<I>(
+    args: &mut std::iter::Peekable<I>,
+    option: &str,
+    value_name: &str,
+) -> Result<String>
+where
+    I: Iterator<Item = String>,
+{
+    let Some(value) = args.peek() else {
+        anyhow::bail!("{option} requires {value_name}\n{}", usage());
+    };
+    if value.starts_with("--") {
+        anyhow::bail!("{option} requires {value_name}\n{}", usage());
+    }
+    args.next()
+        .context("BUG: peeked split option value must still be present")
+}
+
+fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<CliArgs> {
+    let mut args = args.into_iter();
+    let _program = args.next();
+    let Some(wasm_arg) = args.next() else {
+        anyhow::bail!("{}", usage());
+    };
+
+    let wasm_path = PathBuf::from(wasm_arg);
     let mut perf_report_path = None;
     let mut perf_frames: u32 = 600;
     let mut record_size = None;
     let mut manifest_path = None;
-    for arg in &args[2..] {
+    let mut platform_catalog_path = None;
+    let mut platform_id = None;
+    let mut args = args.peekable();
+    while let Some(arg) = args.next() {
         if let Some(path) = arg.strip_prefix("--manifest=") {
             manifest_path = Some(PathBuf::from(path));
+        } else if arg == "--manifest" {
+            manifest_path = Some(PathBuf::from(split_option_value(
+                &mut args,
+                "--manifest",
+                "a path",
+            )?));
         } else if let Some(path) = arg.strip_prefix("--perf-report=") {
             perf_report_path = Some(PathBuf::from(path));
+        } else if arg == "--perf-report" {
+            perf_report_path = Some(PathBuf::from(split_option_value(
+                &mut args,
+                "--perf-report",
+                "a path",
+            )?));
         } else if let Some(n) = arg.strip_prefix("--perf-frames=") {
+            perf_frames = n.parse().unwrap_or(600);
+        } else if arg == "--perf-frames" {
+            let n = split_option_value(&mut args, "--perf-frames", "a frame count")?;
             perf_frames = n.parse().unwrap_or(600);
         } else if let Some(s) = arg.strip_prefix("--record=") {
             record_size = Some(s.to_owned());
+        } else if arg == "--record" {
+            record_size = Some(split_option_value(&mut args, "--record", "a size")?);
+        } else if let Some(path) = arg.strip_prefix("--platform-catalog=") {
+            platform_catalog_path = Some(PathBuf::from(path));
+        } else if arg == "--platform-catalog" {
+            platform_catalog_path = Some(PathBuf::from(split_option_value(
+                &mut args,
+                "--platform-catalog",
+                "a path",
+            )?));
+        } else if let Some(id) = arg.strip_prefix("--platform=") {
+            platform_id = Some(id.to_owned());
+        } else if arg == "--platform" {
+            platform_id = Some(split_option_value(&mut args, "--platform", "an id")?);
         }
     }
     Ok(CliArgs {
@@ -168,7 +228,196 @@ fn parse_args() -> Result<CliArgs> {
         perf_report_path,
         perf_frames,
         record_size,
+        platform_catalog_path,
+        platform_id,
     })
+}
+
+#[cfg(test)]
+mod platforms_startup_tests {
+    use super::*;
+
+    fn parse_test_args(args: &[&str]) -> Result<CliArgs> {
+        parse_args_from(args.iter().map(|arg| (*arg).to_owned()))
+    }
+
+    fn write_test_catalog() -> PathBuf {
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join(format!(
+            "testbed-platform-catalog-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            r#"{
+              "default_platform": "TEST",
+              "platforms": [
+                {
+                  "id": "TEST",
+                  "label": "Test Platform",
+                  "display": { "width": 111, "height": 222, "shape": "rectangular", "dpi": 1 },
+                  "slot_grid": null,
+                  "led_strip": null,
+                  "widget_viewports": [
+                    { "label": "Fullscreen", "placement": { "fullscreen": {} }, "shape": "rectangular", "width": 111, "height": 222 }
+                  ]
+                }
+              ]
+            }"#,
+        )
+        .expect("BUG: test catalog must be writable");
+        path
+    }
+
+    fn write_invalid_test_catalog() -> PathBuf {
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join(format!(
+            "testbed-invalid-platform-catalog-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, r#"{ "default_platform": "TEST", "platforms": [] }"#)
+            .expect("BUG: invalid test catalog must be writable");
+        path
+    }
+
+    #[test]
+    fn parse_args_accepts_platform_equals_forms() {
+        let cli = parse_test_args(&[
+            "testbed",
+            "widget.wasm",
+            "--platform-catalog=catalog.json",
+            "--platform=BMM100",
+        ])
+        .expect("BUG: platform equals args must parse");
+
+        assert_eq!(cli.wasm_path, PathBuf::from("widget.wasm"));
+        assert_eq!(
+            cli.platform_catalog_path,
+            Some(PathBuf::from("catalog.json"))
+        );
+        assert_eq!(cli.platform_id.as_deref(), Some("BMM100"));
+    }
+
+    #[test]
+    fn parse_args_accepts_platform_space_forms() {
+        let cli = parse_test_args(&[
+            "testbed",
+            "widget.wasm",
+            "--platform-catalog",
+            "catalog.json",
+            "--platform",
+            "BMM101",
+        ])
+        .expect("BUG: platform space args must parse");
+
+        assert_eq!(
+            cli.platform_catalog_path,
+            Some(PathBuf::from("catalog.json"))
+        );
+        assert_eq!(cli.platform_id.as_deref(), Some("BMM101"));
+    }
+
+    #[test]
+    fn parse_args_accepts_legacy_split_forms() {
+        let cli = parse_test_args(&[
+            "testbed",
+            "widget.wasm",
+            "--manifest",
+            "manifest.json",
+            "--perf-report",
+            "perf.json",
+            "--perf-frames",
+            "42",
+            "--record",
+            "small",
+        ])
+        .expect("BUG: legacy split args must parse");
+
+        assert_eq!(cli.manifest_path, Some(PathBuf::from("manifest.json")));
+        assert_eq!(cli.perf_report_path, Some(PathBuf::from("perf.json")));
+        assert_eq!(cli.perf_frames, 42);
+        assert_eq!(cli.record_size.as_deref(), Some("small"));
+    }
+
+    #[test]
+    fn parse_args_rejects_split_value_that_looks_like_flag() {
+        let result = parse_test_args(&[
+            "testbed",
+            "widget.wasm",
+            "--platform",
+            "--perf-report=out.json",
+        ]);
+        let Err(err) = result else {
+            panic!("BUG: split option must reject a following flag token");
+        };
+
+        let err = err.to_string();
+        assert!(err.contains("--platform requires an id"), "{err}");
+    }
+
+    #[test]
+    fn load_catalog_and_platform_uses_bundled_default() {
+        let cli =
+            parse_test_args(&["testbed", "widget.wasm"]).expect("BUG: minimal args must parse");
+
+        let (_catalog, selected_id) =
+            load_catalog_and_platform(&cli).expect("BUG: bundled default platform must load");
+
+        assert_eq!(selected_id, "BMC100");
+    }
+
+    #[test]
+    fn load_catalog_and_platform_uses_requested_platform() {
+        let cli = parse_test_args(&["testbed", "widget.wasm", "--platform", "BFM100"])
+            .expect("BUG: platform arg must parse");
+
+        let (_catalog, selected_id) =
+            load_catalog_and_platform(&cli).expect("BUG: requested platform must load");
+
+        assert_eq!(selected_id, "BFM100");
+    }
+
+    #[test]
+    fn load_catalog_and_platform_reads_requested_catalog_path() {
+        let catalog_path = write_test_catalog();
+        let cli = parse_test_args(&[
+            "testbed",
+            "widget.wasm",
+            "--platform-catalog",
+            catalog_path.to_str().expect("BUG: temp path must be UTF-8"),
+        ])
+        .expect("BUG: catalog path arg must parse");
+
+        let (catalog, selected_id) =
+            load_catalog_and_platform(&cli).expect("BUG: catalog file must load");
+
+        assert_eq!(selected_id, "TEST");
+        let platform = catalog
+            .select(Some(&selected_id))
+            .expect("BUG: selected test platform must exist");
+        assert_eq!(platform.display.width, 111);
+        let _ = std::fs::remove_file(catalog_path);
+    }
+
+    #[test]
+    fn load_catalog_and_platform_reports_parse_path_context() {
+        let catalog_path = write_invalid_test_catalog();
+        let cli = parse_test_args(&[
+            "testbed",
+            "widget.wasm",
+            "--platform-catalog",
+            catalog_path.to_str().expect("BUG: temp path must be UTF-8"),
+        ])
+        .expect("BUG: catalog path arg must parse");
+
+        let err = load_catalog_and_platform(&cli)
+            .expect_err("BUG: invalid catalog file must fail with context");
+        let err = format!("{err:#}");
+
+        assert!(err.contains("failed to parse"), "{err}");
+        assert!(err.contains(&catalog_path.display().to_string()), "{err}");
+        let _ = std::fs::remove_file(catalog_path);
+    }
 }
 
 /// Walk up the wasm path looking for `<package>/manifest.json` at each level.
@@ -204,6 +453,24 @@ fn load_manifest(
     let manifest = <bmc_widget_manifest::Manifest as std::str::FromStr>::from_str(&body)
         .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
     Ok((manifest_path, manifest))
+}
+
+fn load_catalog_and_platform(cli: &CliArgs) -> Result<(platforms::PlatformCatalog, String)> {
+    let catalog = if let Some(path) = cli.platform_catalog_path.as_ref() {
+        let body = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        platforms::PlatformCatalog::parse(&body)
+            .map_err(anyhow::Error::msg)
+            .with_context(|| format!("failed to parse {}", path.display()))?
+    } else {
+        platforms::PlatformCatalog::bundled().map_err(anyhow::Error::msg)?
+    };
+    let selected_id = catalog
+        .select(cli.platform_id.as_deref())
+        .map_err(anyhow::Error::msg)?
+        .id
+        .clone();
+    Ok((catalog, selected_id))
 }
 
 /// Initial params snapshot from the manifest: every declared key bound to its
@@ -266,6 +533,10 @@ fn main() -> Result<()> {
     let cli = parse_args()?;
     let (manifest_path, manifest) = load_manifest(&cli.wasm_path, cli.manifest_path.clone())?;
     let params = manifest_default_params(&manifest);
+    let (platform_catalog, selected_platform_id) = load_catalog_and_platform(&cli)?;
+    let selected_platform = platform_catalog
+        .select(Some(&selected_platform_id))
+        .map_err(anyhow::Error::msg)?;
 
     // Window width includes the right-side sidebar that houses both Params
     // (when the manifest declares any) and the always-on System section.
@@ -278,6 +549,16 @@ fn main() -> Result<()> {
     println!(
         "Params:              {} key(s) from manifest defaults",
         params.len()
+    );
+    println!(
+        "Platform: {} ({}) — display {}x{} {:?} dpi={}, {} viewport(s)",
+        selected_platform_id,
+        selected_platform.label,
+        selected_platform.display.width,
+        selected_platform.display.height,
+        selected_platform.display.shape,
+        selected_platform.display.dpi,
+        selected_platform.widget_viewports.len()
     );
     println!(
         "Display size: {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} (4 sizes); \
