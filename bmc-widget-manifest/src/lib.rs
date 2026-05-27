@@ -83,14 +83,21 @@ pub enum ManifestError {
     #[error("description exceeds maximum length of {max} characters")]
     DescriptionTooLong { max: usize },
 
-    /// The `sizes` array was empty. Every widget must declare at least
-    /// one supported size.
-    #[error("sizes array must not be empty")]
-    EmptySizes,
+    /// `supported_viewports` was empty after compatibility normalization.
+    #[error("supported_viewports must not be empty")]
+    EmptyViewports,
 
-    /// A `sizes` entry was not a recognised [`SizeType`] variant.
-    #[error("invalid size type: {0}")]
-    InvalidSizeType(String),
+    /// A viewport constraint violated a numeric rule (zero provided bound, or min > max).
+    #[error("invalid viewport constraint: {0}")]
+    InvalidViewport(String),
+
+    /// Two viewport constraints had identical display type and all six bounds.
+    #[error("duplicate viewport constraint")]
+    DuplicateViewport,
+
+    /// A manifest provided both legacy `sizes` and new `supported_viewports`.
+    #[error("manifest must not provide both `sizes` and `supported_viewports`")]
+    MixedSizesAndViewports,
 
     /// A `settings` entry was not a recognised [`SettingKey`] variant.
     #[error("invalid setting key: {0}")]
@@ -377,7 +384,10 @@ struct RawManifest {
     binary: PathBuf,
     #[serde(default)]
     settings: Vec<SettingKey>,
-    sizes: Vec<SizeType>,
+    #[serde(default)]
+    sizes: Option<Vec<SizeType>>,
+    #[serde(default)]
+    supported_viewports: Option<Vec<WidgetViewportConstraint>>,
     #[serde(default, deserialize_with = "deserialize_unique_params")]
     params: IndexMap<ParamKey, ParamDefinition>,
 }
@@ -449,9 +459,10 @@ pub struct Manifest {
     /// Order is preserved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub settings: Vec<SettingKey>,
-    /// Surface sizes the widget supports. Must be non-empty.
-    #[schemars(length(min = 1), with = "Vec<SizeTypeSchema>")]
-    pub sizes: Vec<SizeType>,
+    /// Viewport families this widget supports. Must be non-empty after
+    /// compatibility normalization of any legacy `sizes`.
+    #[schemars(length(min = 1))]
+    pub supported_viewports: Vec<WidgetViewportConstraint>,
     /// Per-instance parameter declarations, keyed by [`ParamKey`].
     /// Iteration order matches manifest order.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
@@ -476,9 +487,19 @@ impl Manifest {
     fn from_raw(raw: RawManifest) -> Result<Self, ManifestError> {
         let version =
             semver::Version::parse(&raw.version).map_err(|e| ManifestError::InvalidVersion {
-                version: raw.version,
+                version: raw.version.clone(),
                 source: e,
             })?;
+
+        let supported_viewports = match (raw.sizes, raw.supported_viewports) {
+            (Some(_), Some(_)) => return Err(ManifestError::MixedSizesAndViewports),
+            (Some(sizes), None) => sizes
+                .into_iter()
+                .map(WidgetViewportConstraint::from)
+                .collect(),
+            (None, Some(viewports)) => viewports,
+            (None, None) => Vec::new(),
+        };
 
         let manifest = Self {
             uid: raw.uid,
@@ -488,7 +509,7 @@ impl Manifest {
             author: raw.author,
             binary: raw.binary,
             settings: raw.settings,
-            sizes: raw.sizes,
+            supported_viewports,
             params: raw.params,
         };
 
@@ -515,8 +536,18 @@ impl Manifest {
             });
         }
 
-        if self.sizes.is_empty() {
-            return Err(ManifestError::EmptySizes);
+        if self.supported_viewports.is_empty() {
+            return Err(ManifestError::EmptyViewports);
+        }
+        for vp in &self.supported_viewports {
+            validate_viewport_constraint(vp)?;
+        }
+        for (i, a) in self.supported_viewports.iter().enumerate() {
+            for b in &self.supported_viewports[i + 1..] {
+                if a == b {
+                    return Err(ManifestError::DuplicateViewport);
+                }
+            }
         }
 
         for (key, param) in &self.params {
@@ -550,23 +581,56 @@ pub enum SettingKey {
     NightMode,
 }
 
-/// Schema-only mirror of [`bmc_ipc::SizeType`].
-/// Exists because the underlying enum does not derive [`JsonSchema`]
-/// (its crate does not depend on schemars), and we want the generated schema
-/// to enumerate the supported size names rather than treating the field as an opaque string.
-///
-/// The serde rename rule must stay in sync with the upstream type's `#[serde(rename_all = "lowercase")]`.
-#[derive(Debug, JsonSchema)]
+/// Visible display shape a widget viewport constraint targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-#[expect(
-    dead_code,
-    reason = "used only as a schema shim via #[schemars(with = ...)]"
-)]
-enum SizeTypeSchema {
-    Small,
-    Medium,
-    Large,
-    Full,
+pub enum DisplayShape {
+    /// Rectangular display.
+    Rectangular,
+    /// Round display.
+    Round,
+}
+
+/// A viewport family a widget author declares support for. Ranges are
+/// inclusive on both ends; `None` means unbounded in that direction, while
+/// `min_* == max_*` pins one exact value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct WidgetViewportConstraint {
+    /// Display shape this constraint targets.
+    #[serde(rename = "type")]
+    pub display_type: DisplayShape,
+    /// Inclusive minimum width in pixels, or unbounded.
+    pub min_width: Option<u32>,
+    /// Inclusive maximum width in pixels, or unbounded.
+    pub max_width: Option<u32>,
+    /// Inclusive minimum height in pixels, or unbounded.
+    pub min_height: Option<u32>,
+    /// Inclusive maximum height in pixels, or unbounded.
+    pub max_height: Option<u32>,
+    /// Inclusive minimum dpi, or unbounded.
+    pub min_dpi: Option<u32>,
+    /// Inclusive maximum dpi, or unbounded.
+    pub max_dpi: Option<u32>,
+}
+
+impl From<SizeType> for WidgetViewportConstraint {
+    fn from(size: SizeType) -> Self {
+        let (w, h) = match size {
+            SizeType::Small => (317, 238),
+            SizeType::Medium => (638, 238),
+            SizeType::Large => (638, 480),
+            SizeType::Full => (1280, 480),
+        };
+        Self {
+            display_type: DisplayShape::Rectangular,
+            min_width: Some(w),
+            max_width: Some(w),
+            min_height: Some(h),
+            max_height: Some(h),
+            min_dpi: None,
+            max_dpi: None,
+        }
+    }
 }
 
 /// Per-instance parameter declaration inside a manifest's `params` map.
@@ -770,6 +834,29 @@ impl ParamKind {
     }
 }
 
+fn validate_viewport_constraint(vp: &WidgetViewportConstraint) -> Result<(), ManifestError> {
+    let invalid = |reason: &str| ManifestError::InvalidViewport(reason.to_owned());
+    if vp.min_width == Some(0) || vp.max_width == Some(0) {
+        return Err(invalid("provided width min/max must be nonzero"));
+    }
+    if vp.min_height == Some(0) || vp.max_height == Some(0) {
+        return Err(invalid("provided height min/max must be nonzero"));
+    }
+    if vp.min_dpi == Some(0) || vp.max_dpi == Some(0) {
+        return Err(invalid("provided dpi min/max must be nonzero"));
+    }
+    if matches!((vp.min_width, vp.max_width), (Some(min), Some(max)) if min > max) {
+        return Err(invalid("min_width > max_width"));
+    }
+    if matches!((vp.min_height, vp.max_height), (Some(min), Some(max)) if min > max) {
+        return Err(invalid("min_height > max_height"));
+    }
+    if matches!((vp.min_dpi, vp.max_dpi), (Some(min), Some(max)) if min > max) {
+        return Err(invalid("min_dpi > max_dpi"));
+    }
+    Ok(())
+}
+
 fn check_finite(v: Option<f64>, what: &str) -> Result<(), String> {
     match v {
         Some(x) if !x.is_finite() => Err(format!("{what} must be finite (got {x})")),
@@ -924,7 +1011,10 @@ mod tests {
             "name": "Test Widget",
             "description": "A test widget",
             "binary": "bin/test",
-            "sizes": ["small"]
+            "supported_viewports": [
+                {"type":"rectangular","min_width":317,"max_width":317,
+                 "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}
+            ]
         }"#
     }
 
@@ -973,7 +1063,11 @@ mod tests {
         assert_eq!(manifest.name, "Test Widget");
         assert_eq!(manifest.description, "A test widget");
         assert_eq!(manifest.binary, PathBuf::from("bin/test"));
-        assert_eq!(manifest.sizes, vec![SizeType::Small]);
+        assert_eq!(manifest.supported_viewports.len(), 1);
+        assert_eq!(
+            manifest.supported_viewports[0].display_type,
+            DisplayShape::Rectangular
+        );
         assert!(manifest.author.is_none());
         assert!(manifest.settings.is_empty());
         assert!(manifest.params.is_empty());
@@ -997,13 +1091,22 @@ mod tests {
                 SettingKey::NightMode
             ]
         );
+        #[expect(
+            clippy::type_complexity,
+            reason = "test-only tuple for compact assertion"
+        )]
+        let viewport_bounds: Vec<(Option<u32>, Option<u32>, Option<u32>, Option<u32>)> = manifest
+            .supported_viewports
+            .iter()
+            .map(|c| (c.min_width, c.max_width, c.min_height, c.max_height))
+            .collect();
         assert_eq!(
-            manifest.sizes,
+            viewport_bounds,
             vec![
-                SizeType::Small,
-                SizeType::Medium,
-                SizeType::Large,
-                SizeType::Full
+                (Some(317), Some(317), Some(238), Some(238)),
+                (Some(638), Some(638), Some(238), Some(238)),
+                (Some(638), Some(638), Some(480), Some(480)),
+                (Some(1280), Some(1280), Some(480), Some(480)),
             ]
         );
         assert_eq!(manifest.params.len(), 2);
@@ -1050,20 +1153,6 @@ mod tests {
         }"#;
         let result = Manifest::from_str(json);
         assert!(matches!(result, Err(ManifestError::InvalidVersion { .. })));
-    }
-
-    #[test]
-    fn reject_empty_sizes() {
-        let json = r#"{
-            "uid": "550e8400-e29b-41d4-a716-446655440000",
-            "version": "1.0.0",
-            "name": "Test",
-            "description": "Test",
-            "binary": "bin/test",
-            "sizes": []
-        }"#;
-        let result = Manifest::from_str(json);
-        assert!(matches!(result, Err(ManifestError::EmptySizes)));
     }
 
     #[test]
@@ -1541,5 +1630,245 @@ mod tests {
         let manifest = Manifest::from_str(json).expect("BUG: parse");
         let keys: Vec<&str> = manifest.params.keys().map(ParamKey::as_str).collect();
         assert_eq!(keys, vec!["zebra", "alpha", "mango"]);
+    }
+
+    fn minimal_viewports_manifest_json() -> &'static str {
+        r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test Widget",
+            "description": "A test widget",
+            "binary": "bin/test",
+            "supported_viewports": [
+                {
+                    "type": "rectangular",
+                    "min_width": 317,
+                    "max_width": 317,
+                    "min_height": 238,
+                    "max_height": 238,
+                    "min_dpi": 1,
+                    "max_dpi": 1
+                }
+            ]
+        }"#
+    }
+
+    #[test]
+    fn parse_supported_viewports_manifest() {
+        let manifest =
+            Manifest::from_str(minimal_viewports_manifest_json()).expect("BUG: should parse");
+        assert_eq!(manifest.supported_viewports.len(), 1);
+        let vp = &manifest.supported_viewports[0];
+        assert_eq!(vp.display_type, DisplayShape::Rectangular);
+        assert_eq!(vp.min_width, Some(317));
+        assert_eq!(vp.max_width, Some(317));
+        assert_eq!(vp.min_height, Some(238));
+        assert_eq!(vp.max_height, Some(238));
+        assert_eq!(vp.min_dpi, Some(1));
+        assert_eq!(vp.max_dpi, Some(1));
+    }
+
+    #[test]
+    fn omitted_viewport_bounds_parse_as_unbounded() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test Widget",
+            "description": "A test widget",
+            "binary": "bin/test",
+            "supported_viewports": [
+                {
+                    "type": "rectangular",
+                    "min_height": 238,
+                    "max_height": 480
+                }
+            ]
+        }"#;
+        let manifest = Manifest::from_str(json).expect("BUG: optional bounds must parse");
+        let vp = &manifest.supported_viewports[0];
+        assert_eq!(vp.min_width, None);
+        assert_eq!(vp.max_width, None);
+        assert_eq!(vp.min_height, Some(238));
+        assert_eq!(vp.max_height, Some(480));
+        assert_eq!(vp.min_dpi, None);
+        assert_eq!(vp.max_dpi, None);
+    }
+
+    #[test]
+    fn legacy_sizes_normalize_to_exact_constraints() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test",
+            "description": "Test",
+            "binary": "bin/test",
+            "sizes": ["small", "medium", "large", "full"]
+        }"#;
+        let manifest = Manifest::from_str(json).expect("BUG: legacy sizes must normalize");
+        #[expect(
+            clippy::type_complexity,
+            reason = "test-only tuple for compact assertion"
+        )]
+        let got: Vec<(Option<u32>, Option<u32>, Option<u32>, Option<u32>)> = manifest
+            .supported_viewports
+            .iter()
+            .map(|c| (c.min_width, c.max_width, c.min_height, c.max_height))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (Some(317), Some(317), Some(238), Some(238)),
+                (Some(638), Some(638), Some(238), Some(238)),
+                (Some(638), Some(638), Some(480), Some(480)),
+                (Some(1280), Some(1280), Some(480), Some(480)),
+            ]
+        );
+        assert!(
+            manifest
+                .supported_viewports
+                .iter()
+                .all(|c| c.display_type == DisplayShape::Rectangular
+                    && c.min_dpi.is_none()
+                    && c.max_dpi.is_none())
+        );
+    }
+
+    #[test]
+    fn reject_empty_supported_viewports() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test",
+            "description": "Test",
+            "binary": "bin/test",
+            "supported_viewports": []
+        }"#;
+        assert!(matches!(
+            Manifest::from_str(json),
+            Err(ManifestError::EmptyViewports)
+        ));
+    }
+
+    #[test]
+    fn reject_zero_dimension_constraint() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test",
+            "description": "Test",
+            "binary": "bin/test",
+            "supported_viewports": [
+                {"type":"rectangular","min_width":0,"max_width":317,
+                 "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}
+            ]
+        }"#;
+        assert!(matches!(
+            Manifest::from_str(json),
+            Err(ManifestError::InvalidViewport(_))
+        ));
+    }
+
+    #[test]
+    fn reject_min_greater_than_max_constraint() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test",
+            "description": "Test",
+            "binary": "bin/test",
+            "supported_viewports": [
+                {"type":"rectangular","min_width":640,"max_width":320,
+                 "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}
+            ]
+        }"#;
+        assert!(matches!(
+            Manifest::from_str(json),
+            Err(ManifestError::InvalidViewport(_))
+        ));
+    }
+
+    #[test]
+    fn reject_unspecified_display_type() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test",
+            "description": "Test",
+            "binary": "bin/test",
+            "supported_viewports": [
+                {"type":"unspecified","min_width":317,"max_width":317,
+                 "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}
+            ]
+        }"#;
+        assert!(Manifest::from_str(json).is_err());
+    }
+
+    #[test]
+    fn reject_duplicate_constraints() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test",
+            "description": "Test",
+            "binary": "bin/test",
+            "supported_viewports": [
+                {"type":"rectangular","min_width":317,"max_width":317,
+                 "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1},
+                {"type":"rectangular","min_width":317,"max_width":317,
+                 "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}
+            ]
+        }"#;
+        assert!(matches!(
+            Manifest::from_str(json),
+            Err(ManifestError::DuplicateViewport)
+        ));
+    }
+
+    #[test]
+    fn reject_both_sizes_and_supported_viewports() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test",
+            "description": "Test",
+            "binary": "bin/test",
+            "sizes": ["small"],
+            "supported_viewports": [
+                {"type":"rectangular","min_width":317,"max_width":317,
+                 "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}
+            ]
+        }"#;
+        assert!(matches!(
+            Manifest::from_str(json),
+            Err(ManifestError::MixedSizesAndViewports)
+        ));
+    }
+
+    #[test]
+    fn reject_neither_sizes_nor_supported_viewports() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test",
+            "description": "Test",
+            "binary": "bin/test"
+        }"#;
+        assert!(matches!(
+            Manifest::from_str(json),
+            Err(ManifestError::EmptyViewports)
+        ));
+    }
+
+    #[test]
+    fn reject_unrecognized_legacy_size() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test",
+            "description": "Test",
+            "binary": "bin/test",
+            "sizes": ["enormous"]
+        }"#;
+        assert!(Manifest::from_str(json).is_err());
     }
 }

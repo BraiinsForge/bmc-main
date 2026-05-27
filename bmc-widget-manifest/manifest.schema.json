@@ -46,11 +46,11 @@
         "$ref": "#/$defs/SettingKey"
       }
     },
-    "sizes": {
-      "description": "Surface sizes the widget supports. Must be non-empty.",
+    "supported_viewports": {
+      "description": "Viewport families this widget supports. Must be non-empty after\ncompatibility normalization of any legacy `sizes`.",
       "type": "array",
       "items": {
-        "$ref": "#/$defs/SizeTypeSchema"
+        "$ref": "#/$defs/WidgetViewportConstraint"
       },
       "minItems": 1
     },
@@ -69,7 +69,7 @@
     "name",
     "description",
     "binary",
-    "sizes"
+    "supported_viewports"
   ],
   "$defs": {
     "Author": {
@@ -90,6 +90,21 @@
       },
       "required": [
         "name"
+      ]
+    },
+    "DisplayShape": {
+      "description": "Visible display shape a widget viewport constraint targets.",
+      "oneOf": [
+        {
+          "description": "Rectangular display.",
+          "type": "string",
+          "const": "rectangular"
+        },
+        {
+          "description": "Round display.",
+          "type": "string",
+          "const": "round"
+        }
       ]
     },
     "DoubleOption": {
@@ -362,16 +377,6 @@
         }
       ]
     },
-    "SizeTypeSchema": {
-      "description": "Schema-only mirror of [`bmc_ipc::SizeType`].\nExists because the underlying enum does not derive [`JsonSchema`]\n(its crate does not depend on schemars), and we want the generated schema\nto enumerate the supported size names rather than treating the field as an opaque string.\n\nThe serde rename rule must stay in sync with the upstream type's `#[serde(rename_all = \"lowercase\")]`.",
-      "type": "string",
-      "enum": [
-        "small",
-        "medium",
-        "large",
-        "full"
-      ]
-    },
     "StringFormat": {
       "description": "Optional structural hint on a `ParamKind::String`, instructing\nthe operator UI to render a specialised input (date picker, URI validator, etc.) instead of a free-form text field.",
       "oneOf": [
@@ -414,6 +419,73 @@
       "required": [
         "value",
         "label"
+      ]
+    },
+    "WidgetViewportConstraint": {
+      "description": "A viewport family a widget author declares support for. Ranges are\ninclusive on both ends; `None` means unbounded in that direction, while\n`min_* == max_*` pins one exact value.",
+      "type": "object",
+      "properties": {
+        "max_dpi": {
+          "description": "Inclusive maximum dpi, or unbounded.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_height": {
+          "description": "Inclusive maximum height in pixels, or unbounded.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_width": {
+          "description": "Inclusive maximum width in pixels, or unbounded.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "min_dpi": {
+          "description": "Inclusive minimum dpi, or unbounded.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "min_height": {
+          "description": "Inclusive minimum height in pixels, or unbounded.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "min_width": {
+          "description": "Inclusive minimum width in pixels, or unbounded.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "type": {
+          "description": "Display shape this constraint targets.",
+          "$ref": "#/$defs/DisplayShape"
+        }
+      },
+      "required": [
+        "type"
       ]
     }
   }
