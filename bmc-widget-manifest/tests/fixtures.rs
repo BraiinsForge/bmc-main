@@ -56,21 +56,15 @@ fn every_example_manifest_validates_against_both() {
         let instance: serde_json::Value = serde_json::from_str(&body)
             .unwrap_or_else(|e| panic!("BUG: {path:?} is not valid JSON: {e}"));
 
-        let uses_legacy_sizes = instance
-            .as_object()
-            .is_some_and(|o| o.contains_key("sizes"));
-
-        if !uses_legacy_sizes {
-            assert!(
-                validator.is_valid(&instance),
-                "{path:?} failed the JSON Schema validator. Errors:\n  - {}",
-                validator
-                    .iter_errors(&instance)
-                    .map(|e| e.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n  - "),
-            );
-        }
+        assert!(
+            validator.is_valid(&instance),
+            "{path:?} failed the JSON Schema validator. Errors:\n  - {}",
+            validator
+                .iter_errors(&instance)
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n  - "),
+        );
 
         Manifest::from_str(&body)
             .unwrap_or_else(|e| panic!("BUG: {path:?} failed Manifest::from_str: {e}"));
