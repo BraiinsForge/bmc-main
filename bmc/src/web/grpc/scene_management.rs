@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use bmc_grpc::web;
 use bmc_grpc::web::scene_management_service_server::SceneManagementService as GrpcSceneManagementService;
-use bmc_ipc::SizeType;
 use bmc_shared_time::time::Timezone;
 use bmc_widget_manifest::{ParamDefinition, ParamKind};
 use futures::stream::{BoxStream, StreamExt};
@@ -23,6 +22,139 @@ use crate::scene;
 use crate::web::grpc::GrpcError;
 use crate::web::grpc::shared::FieldViolations;
 use crate::widget::{Coordinator, WidgetRegistry};
+
+struct PlatformDescriptor {
+    fullscreen: crate::widget::ViewportDescriptor,
+    slot_sizes: &'static [(web::WidgetSize, crate::widget::ViewportDescriptor)],
+}
+
+const BMC100_SLOT_SIZE_DESCRIPTORS: &[(web::WidgetSize, crate::widget::ViewportDescriptor)] = &[
+    (
+        web::WidgetSize::Small,
+        crate::widget::ViewportDescriptor {
+            shape: bmc_widget_manifest::DisplayShape::Rectangular,
+            width: 317,
+            height: 238,
+            dpi: 1,
+        },
+    ),
+    (
+        web::WidgetSize::Medium,
+        crate::widget::ViewportDescriptor {
+            shape: bmc_widget_manifest::DisplayShape::Rectangular,
+            width: 638,
+            height: 238,
+            dpi: 1,
+        },
+    ),
+    (
+        web::WidgetSize::Large,
+        crate::widget::ViewportDescriptor {
+            shape: bmc_widget_manifest::DisplayShape::Rectangular,
+            width: 638,
+            height: 480,
+            dpi: 1,
+        },
+    ),
+];
+
+const BMC100_PLATFORM_DESCRIPTOR: PlatformDescriptor = PlatformDescriptor {
+    fullscreen: crate::widget::ViewportDescriptor {
+        shape: bmc_widget_manifest::DisplayShape::Rectangular,
+        width: 1280,
+        height: 480,
+        dpi: 1,
+    },
+    slot_sizes: BMC100_SLOT_SIZE_DESCRIPTORS,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("unsupported widget size label")]
+struct UnsupportedWidgetSize;
+
+impl TryFrom<web::WidgetSize> for scene::WidgetPlacement {
+    type Error = UnsupportedWidgetSize;
+
+    fn try_from(size: web::WidgetSize) -> Result<Self, Self::Error> {
+        match size {
+            web::WidgetSize::Small => Ok(Self::SlotSpan(scene::SlotSpan {
+                columns: 1,
+                rows: 1,
+            })),
+            web::WidgetSize::Medium => Ok(Self::SlotSpan(scene::SlotSpan {
+                columns: 2,
+                rows: 1,
+            })),
+            web::WidgetSize::Large => Ok(Self::SlotSpan(scene::SlotSpan {
+                columns: 2,
+                rows: 2,
+            })),
+            web::WidgetSize::Full => Ok(Self::Fullscreen),
+            web::WidgetSize::Unspecified => Err(UnsupportedWidgetSize),
+        }
+    }
+}
+
+impl TryFrom<&scene::WidgetPlacement> for web::WidgetSize {
+    type Error = UnsupportedWidgetSize;
+
+    fn try_from(placement: &scene::WidgetPlacement) -> Result<Self, Self::Error> {
+        match placement {
+            scene::WidgetPlacement::Fullscreen => Ok(Self::Full),
+            scene::WidgetPlacement::SlotSpan(s) => match (s.columns, s.rows) {
+                (1, 1) => Ok(Self::Small),
+                (2, 1) => Ok(Self::Medium),
+                (2, 2) => Ok(Self::Large),
+                _ => Err(UnsupportedWidgetSize),
+            },
+        }
+    }
+}
+
+impl PlatformDescriptor {
+    fn descriptor_for_size(
+        &self,
+        size: web::WidgetSize,
+    ) -> Option<crate::widget::ViewportDescriptor> {
+        if size == web::WidgetSize::Full {
+            return Some(self.fullscreen);
+        }
+        self.slot_sizes
+            .iter()
+            .find_map(|(label, descriptor)| (*label == size).then_some(*descriptor))
+    }
+
+    fn descriptor_for_placement(
+        &self,
+        placement: &scene::WidgetPlacement,
+    ) -> Option<crate::widget::ViewportDescriptor> {
+        web::WidgetSize::try_from(placement)
+            .ok()
+            .and_then(|size| self.descriptor_for_size(size))
+    }
+}
+
+fn supported_sizes_for_constraints(
+    platform: &PlatformDescriptor,
+    constraints: &[bmc_widget_manifest::WidgetViewportConstraint],
+) -> Vec<web::WidgetSize> {
+    platform
+        .slot_sizes
+        .iter()
+        .filter_map(|(size, descriptor)| {
+            constraints
+                .iter()
+                .any(|c| descriptor.matched_by(c))
+                .then_some(*size)
+        })
+        .chain(
+            constraints
+                .iter()
+                .any(|c| platform.fullscreen.matched_by(c))
+                .then_some(web::WidgetSize::Full),
+        )
+        .collect()
+}
 
 /// Wrap FieldViolations into InvalidArgument + BadRequest details. Callers
 /// must check `is_empty()` themselves — this builds the status unconditionally.
@@ -56,12 +188,8 @@ fn parse_widget_size(
     size: i32,
     path: &str,
     violations: &mut FieldViolations,
-) -> Option<scene::WidgetSize> {
+) -> Option<scene::WidgetPlacement> {
     match web::WidgetSize::try_from(size) {
-        Ok(web::WidgetSize::Small) => Some(scene::WidgetSize::Small),
-        Ok(web::WidgetSize::Medium) => Some(scene::WidgetSize::Medium),
-        Ok(web::WidgetSize::Large) => Some(scene::WidgetSize::Large),
-        Ok(web::WidgetSize::Full) => Some(scene::WidgetSize::Full),
         Ok(web::WidgetSize::Unspecified) => {
             violations.push(
                 path.to_owned(),
@@ -69,6 +197,7 @@ fn parse_widget_size(
             );
             None
         }
+        Ok(web_size) => scene::WidgetPlacement::try_from(web_size).ok(),
         Err(_) => {
             violations.push(
                 path.to_owned(),
@@ -110,7 +239,7 @@ fn parse_add_fullscreen_shape(
 struct ParsedAddWidgetShape {
     scene_id: Uuid,
     position: scene::WidgetPosition,
-    size: scene::WidgetSize,
+    placement: scene::WidgetPlacement,
     config_req: web::WidgetConfig,
     widget_uid: Uuid,
 }
@@ -122,7 +251,7 @@ fn parse_add_widget_shape(req: web::AddWidgetRequest) -> Result<ParsedAddWidgetS
     let proto_pos = req.position.unwrap_or_default();
     let row = parse_grid_axis(proto_pos.row, "position.row", &mut shape);
     let col = parse_grid_axis(proto_pos.col, "position.col", &mut shape);
-    let size = parse_widget_size(req.size, "size", &mut shape);
+    let placement = parse_widget_size(req.size, "size", &mut shape);
     let config_req = req.config.or_else(|| {
         shape.push("config", "config is required");
         None
@@ -135,16 +264,21 @@ fn parse_add_widget_shape(req: web::AddWidgetRequest) -> Result<ParsedAddWidgetS
         return Err(bad_request_status(shape));
     }
 
-    match (scene_id, row, col, size, config_req, widget_uid) {
-        (Some(scene_id), Some(row), Some(col), Some(size), Some(config_req), Some(widget_uid)) => {
-            Ok(ParsedAddWidgetShape {
-                scene_id,
-                position: scene::WidgetPosition { row, col },
-                size,
-                config_req,
-                widget_uid,
-            })
-        }
+    match (scene_id, row, col, placement, config_req, widget_uid) {
+        (
+            Some(scene_id),
+            Some(row),
+            Some(col),
+            Some(placement),
+            Some(config_req),
+            Some(widget_uid),
+        ) => Ok(ParsedAddWidgetShape {
+            scene_id,
+            position: scene::WidgetPosition { row, col },
+            placement,
+            config_req,
+            widget_uid,
+        }),
         _ => Err(Status::internal(
             "BUG: shape parsing succeeded with missing required values",
         )),
@@ -156,7 +290,7 @@ struct ParsedUpdateWidgetShape {
     widget_id: Uuid,
     proto_position: web::WidgetPosition,
     position: scene::WidgetPosition,
-    size: scene::WidgetSize,
+    placement: scene::WidgetPlacement,
     params: Option<web::WidgetDataStruct>,
 }
 
@@ -170,20 +304,20 @@ fn parse_update_widget_shape(
     let proto_position = req.position.unwrap_or_default();
     let row = parse_grid_axis(proto_position.row, "position.row", &mut shape);
     let col = parse_grid_axis(proto_position.col, "position.col", &mut shape);
-    let size = parse_widget_size(req.size, "size", &mut shape);
+    let placement = parse_widget_size(req.size, "size", &mut shape);
 
     if !shape.is_empty() {
         return Err(bad_request_status(shape));
     }
 
-    match (scene_id, widget_id, row, col, size) {
-        (Some(scene_id), Some(widget_id), Some(row), Some(col), Some(size)) => {
+    match (scene_id, widget_id, row, col, placement) {
+        (Some(scene_id), Some(widget_id), Some(row), Some(col), Some(placement)) => {
             Ok(ParsedUpdateWidgetShape {
                 scene_id,
                 widget_id,
                 proto_position,
                 position: scene::WidgetPosition { row, col },
-                size,
+                placement,
                 params: req.params,
             })
         }
@@ -266,15 +400,6 @@ fn param_value_to_wire(v: &bmc_widget_manifest::ParamValue) -> web::WidgetDataVa
         PV::String(s) => VK::StringValue(s.clone()),
     };
     web::WidgetDataValue { kind: Some(arm) }
-}
-
-fn size_type_to_proto(size: SizeType) -> i32 {
-    match size {
-        SizeType::Small => web::WidgetSize::Small.into(),
-        SizeType::Medium => web::WidgetSize::Medium.into(),
-        SizeType::Large => web::WidgetSize::Large.into(),
-        SizeType::Full => web::WidgetSize::Full.into(),
-    }
 }
 
 fn param_definition_to_proto(key: &str, def: &ParamDefinition) -> web::ManifestParamDefinition {
@@ -366,12 +491,13 @@ fn widget_info_to_proto(info: &crate::widget::WidgetInfo) -> web::WidgetManifest
         name: manifest.name.clone(),
         description: manifest.description.clone(),
         version: manifest.version.to_string(),
-        supported_sizes: manifest
-            .sizes
-            .iter()
-            .copied()
-            .map(size_type_to_proto)
-            .collect(),
+        supported_sizes: supported_sizes_for_constraints(
+            &BMC100_PLATFORM_DESCRIPTOR,
+            &manifest.supported_viewports,
+        )
+        .into_iter()
+        .map(Into::into)
+        .collect(),
         params: manifest
             .params
             .iter()
@@ -390,8 +516,8 @@ fn validate_widget_placement(
 ) -> Result<(), Status> {
     if !widget.in_bounds() {
         return Err(Status::invalid_argument(format!(
-            "widget at ({},{}) size {} is out of grid bounds",
-            widget.position.row, widget.position.col, widget.size,
+            "widget at ({},{}) size {:?} is out of grid bounds",
+            widget.position.row, widget.position.col, widget.placement,
         )));
     }
 
@@ -420,7 +546,7 @@ fn reject_remove_widget_in_fullscreen(kind: &scene::SceneKind) -> Result<(), Sta
 fn reject_update_widget_in_fullscreen(
     kind: &scene::SceneKind,
     new_position: web::WidgetPosition,
-    new_size: scene::WidgetSize,
+    new_placement: &scene::WidgetPlacement,
 ) -> Result<(), Status> {
     if *kind != scene::SceneKind::Fullscreen {
         return Ok(());
@@ -430,7 +556,7 @@ fn reject_update_widget_in_fullscreen(
             "cannot move widget in fullscreen scene",
         ));
     }
-    if new_size != scene::WidgetSize::Full {
+    if *new_placement != scene::WidgetPlacement::Fullscreen {
         return Err(Status::failed_precondition(
             "cannot resize widget in fullscreen scene",
         ));
@@ -464,16 +590,16 @@ enum UpdateWidgetAction {
 /// Inputs:
 /// - `showing` — whether the scene this widget belongs to is currently
 ///   on screen (enabled, or being previewed).
-/// - `size_changed` — whether the updated widget has a different size
+/// - `placement_changed` — whether the updated widget has a different placement
 ///   than the on-disk snapshot.
 /// - `params_changed` — whether the updated widget's typed params
 ///   differ from the on-disk snapshot.
 fn decide_update_widget_action(
     showing: bool,
-    size_changed: bool,
+    placement_changed: bool,
     params_changed: bool,
 ) -> UpdateWidgetAction {
-    match (showing, size_changed, params_changed) {
+    match (showing, placement_changed, params_changed) {
         (true, true, _) => UpdateWidgetAction::Respawn,
         (true, false, true) => UpdateWidgetAction::HotPushParams,
         (true, false, false) | (false, _, _) => UpdateWidgetAction::Nothing,
@@ -662,7 +788,9 @@ fn scene_widget_to_proto(widget: &scene::Widget) -> web::Widget {
             row: u32::from(widget.position.row),
             col: u32::from(widget.position.col),
         }),
-        size: size_type_to_proto(widget.size.into()),
+        size: web::WidgetSize::try_from(&widget.placement)
+            .unwrap_or(web::WidgetSize::Unspecified)
+            .into(),
         config: Some(web::WidgetConfig {
             widget_uid: widget.widget_type_id.to_string(),
             params: Some(params_to_widget_data_struct(&widget.params)),
@@ -781,11 +909,10 @@ impl GrpcSceneManagementService for SceneManagementService {
 
         if !self
             .widget_registry
-            .supports_size(&widget_uid, SizeType::Full)
+            .supports_viewport(&widget_uid, &BMC100_PLATFORM_DESCRIPTOR.fullscreen)
         {
             return Err(Status::failed_precondition(format!(
-                "widget {widget_uid} does not support size {:?}",
-                SizeType::Full,
+                "widget {widget_uid} does not support the active fullscreen viewport",
             )));
         }
 
@@ -1162,7 +1289,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let ParsedAddWidgetShape {
             scene_id,
             position,
-            size,
+            placement,
             config_req,
             widget_uid,
         } = parse_add_widget_shape(request.into_inner())?;
@@ -1173,9 +1300,18 @@ impl GrpcSceneManagementService for SceneManagementService {
             .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
         let manifest = &info.manifest;
 
-        if !self.widget_registry.supports_size(&widget_uid, size.into()) {
+        let Some(descriptor) = BMC100_PLATFORM_DESCRIPTOR.descriptor_for_placement(&placement)
+        else {
+            return Err(Status::failed_precondition(
+                "size is not supported on this platform",
+            ));
+        };
+        if !self
+            .widget_registry
+            .supports_viewport(&widget_uid, &descriptor)
+        {
             return Err(Status::failed_precondition(format!(
-                "widget {widget_uid} does not support size {size}",
+                "widget {widget_uid} does not support size viewport",
             )));
         }
 
@@ -1183,7 +1319,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let typed_params = validate_widget_params(manifest, &params, ValidateMode::Add)
             .map_err(bad_request_status)?;
 
-        let widget = scene::Widget::new(widget_uid, typed_params, position, size);
+        let widget = scene::Widget::new(widget_uid, typed_params, position, placement);
         let widget_id = widget.id.to_string();
 
         let scene_id_key = scene::SceneId::from(scene_id);
@@ -1223,7 +1359,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             widget_id,
             proto_position,
             position,
-            size,
+            placement,
             params,
         } = parse_update_widget_shape(request.into_inner())?;
 
@@ -1244,14 +1380,14 @@ impl GrpcSceneManagementService for SceneManagementService {
                 .get_mut(&scene_id_key)
                 .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
 
-            reject_update_widget_in_fullscreen(&scene.kind, proto_position, size)?;
+            reject_update_widget_in_fullscreen(&scene.kind, proto_position, &placement)?;
 
             let existing = scene
                 .widgets
                 .get(&widget_id_key)
                 .ok_or_else(|| Status::not_found(format!("widget not found: {widget_id}")))?;
             let widget_uid = existing.widget_type_id;
-            let previous_size = existing.size;
+            let previous_placement = existing.placement.clone();
 
             let info = self
                 .widget_registry
@@ -1259,9 +1395,18 @@ impl GrpcSceneManagementService for SceneManagementService {
                 .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
             let manifest = &info.manifest;
 
-            if !self.widget_registry.supports_size(&widget_uid, size.into()) {
+            let Some(descriptor) = BMC100_PLATFORM_DESCRIPTOR.descriptor_for_placement(&placement)
+            else {
+                return Err(Status::failed_precondition(
+                    "size is not supported on this platform",
+                ));
+            };
+            if !self
+                .widget_registry
+                .supports_viewport(&widget_uid, &descriptor)
+            {
                 return Err(Status::failed_precondition(format!(
-                    "widget {widget_uid} does not support size {size}",
+                    "widget {widget_uid} does not support size viewport",
                 )));
             }
 
@@ -1277,7 +1422,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             let updated_widget = scene::Widget {
                 id: widget_id_key,
                 position,
-                size,
+                placement,
                 widget_type_id: widget_uid,
                 params: typed_params,
             };
@@ -1291,7 +1436,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             Self::save_config(&mut config).await?;
 
             let instance_id = updated_widget.id.as_uuid().to_string();
-            let size_changed = previous_size != size;
+            let placement_changed = previous_placement != updated_widget.placement;
 
             // Position-only changes get picked up by
             // `restore_active_scene` below, so we only respawn when
@@ -1301,7 +1446,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             // The send happens under the still-held write lock so two
             // concurrent updates can't reorder against the
             // compositor.
-            match decide_update_widget_action(showing, size_changed, params_changed) {
+            match decide_update_widget_action(showing, placement_changed, params_changed) {
                 UpdateWidgetAction::Respawn => Some((instance_id, updated_widget)),
                 UpdateWidgetAction::HotPushParams => {
                     self.coordinator
@@ -1347,7 +1492,10 @@ mod tests {
         let result = reject_update_widget_in_fullscreen(
             &scene::SceneKind::Combined,
             pos,
-            scene::WidgetSize::Small,
+            &scene::WidgetPlacement::SlotSpan(scene::SlotSpan {
+                columns: 1,
+                rows: 1,
+            }),
         );
         assert!(result.is_ok());
     }
@@ -1358,7 +1506,7 @@ mod tests {
         let result = reject_update_widget_in_fullscreen(
             &scene::SceneKind::Fullscreen,
             pos,
-            scene::WidgetSize::Full,
+            &scene::WidgetPlacement::Fullscreen,
         );
         assert!(result.is_ok());
     }
@@ -1369,7 +1517,7 @@ mod tests {
         let err = reject_update_widget_in_fullscreen(
             &scene::SceneKind::Fullscreen,
             pos,
-            scene::WidgetSize::Full,
+            &scene::WidgetPlacement::Fullscreen,
         )
         .expect_err("BUG: must reject moved fullscreen widget");
         assert_eq!(err.code(), tonic::Code::FailedPrecondition);
@@ -1382,7 +1530,10 @@ mod tests {
         let err = reject_update_widget_in_fullscreen(
             &scene::SceneKind::Fullscreen,
             pos,
-            scene::WidgetSize::Small,
+            &scene::WidgetPlacement::SlotSpan(scene::SlotSpan {
+                columns: 1,
+                rows: 1,
+            }),
         )
         .expect_err("BUG: must reject resized fullscreen widget");
         assert_eq!(err.code(), tonic::Code::FailedPrecondition);
@@ -1596,7 +1747,15 @@ mod tests {
             author: None,
             binary: std::path::PathBuf::from("bin/test"),
             settings: vec![],
-            sizes: vec![bmc_ipc::SizeType::Small],
+            supported_viewports: vec![bmc_widget_manifest::WidgetViewportConstraint {
+                display_type: bmc_widget_manifest::DisplayShape::Rectangular,
+                min_width: Some(317),
+                max_width: Some(317),
+                min_height: Some(238),
+                max_height: Some(238),
+                min_dpi: Some(1),
+                max_dpi: Some(1),
+            }],
             params,
         }
     }
@@ -1624,7 +1783,15 @@ mod tests {
             author: None,
             binary: std::path::PathBuf::from("bin/test"),
             settings: vec![],
-            sizes: vec![bmc_ipc::SizeType::Small],
+            supported_viewports: vec![bmc_widget_manifest::WidgetViewportConstraint {
+                display_type: bmc_widget_manifest::DisplayShape::Rectangular,
+                min_width: Some(317),
+                max_width: Some(317),
+                min_height: Some(238),
+                max_height: Some(238),
+                min_dpi: Some(1),
+                max_dpi: Some(1),
+            }],
             params,
         }
     }
@@ -2504,6 +2671,152 @@ mod tests {
         assert_eq!(
             first_violation_desc(&manifest, &params),
             "Must be one of the listed options",
+        );
+    }
+
+    #[test]
+    fn widget_size_maps_to_internal_placement() {
+        assert_eq!(
+            scene::WidgetPlacement::try_from(web::WidgetSize::Small),
+            Ok(scene::WidgetPlacement::SlotSpan(scene::SlotSpan {
+                columns: 1,
+                rows: 1
+            }))
+        );
+        assert_eq!(
+            scene::WidgetPlacement::try_from(web::WidgetSize::Medium),
+            Ok(scene::WidgetPlacement::SlotSpan(scene::SlotSpan {
+                columns: 2,
+                rows: 1
+            }))
+        );
+        assert_eq!(
+            scene::WidgetPlacement::try_from(web::WidgetSize::Large),
+            Ok(scene::WidgetPlacement::SlotSpan(scene::SlotSpan {
+                columns: 2,
+                rows: 2
+            }))
+        );
+        assert_eq!(
+            scene::WidgetPlacement::try_from(web::WidgetSize::Full),
+            Ok(scene::WidgetPlacement::Fullscreen)
+        );
+        assert!(scene::WidgetPlacement::try_from(web::WidgetSize::Unspecified).is_err());
+    }
+
+    #[test]
+    fn internal_placement_maps_to_frontend_size_label() {
+        assert_eq!(
+            web::WidgetSize::try_from(&scene::WidgetPlacement::SlotSpan(scene::SlotSpan {
+                columns: 1,
+                rows: 1
+            })),
+            Ok(web::WidgetSize::Small)
+        );
+        assert_eq!(
+            web::WidgetSize::try_from(&scene::WidgetPlacement::SlotSpan(scene::SlotSpan {
+                columns: 2,
+                rows: 1
+            })),
+            Ok(web::WidgetSize::Medium)
+        );
+        assert_eq!(
+            web::WidgetSize::try_from(&scene::WidgetPlacement::SlotSpan(scene::SlotSpan {
+                columns: 2,
+                rows: 2
+            })),
+            Ok(web::WidgetSize::Large)
+        );
+        assert_eq!(
+            web::WidgetSize::try_from(&scene::WidgetPlacement::Fullscreen),
+            Ok(web::WidgetSize::Full)
+        );
+        assert!(
+            web::WidgetSize::try_from(&scene::WidgetPlacement::SlotSpan(scene::SlotSpan {
+                columns: 3,
+                rows: 1
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn platform_descriptor_maps_fullscreen_size() {
+        let desc = BMC100_PLATFORM_DESCRIPTOR
+            .descriptor_for_placement(&scene::WidgetPlacement::Fullscreen)
+            .expect("BUG: fullscreen must derive");
+        assert_eq!(desc, BMC100_PLATFORM_DESCRIPTOR.fullscreen);
+    }
+
+    #[test]
+    fn platform_descriptor_maps_bmc100_slot_sizes() {
+        let desc = BMC100_PLATFORM_DESCRIPTOR
+            .descriptor_for_size(web::WidgetSize::Large)
+            .expect("BUG: large must derive");
+        assert_eq!(desc.width, 638);
+        assert_eq!(desc.height, 480);
+    }
+
+    #[test]
+    fn platform_descriptor_rejects_unknown_slot_span() {
+        assert!(
+            BMC100_PLATFORM_DESCRIPTOR
+                .descriptor_for_placement(&scene::WidgetPlacement::SlotSpan(scene::SlotSpan {
+                    columns: 3,
+                    rows: 1
+                }))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn manifest_supported_sizes_are_calculated_from_constraints() {
+        let constraints = vec![bmc_widget_manifest::WidgetViewportConstraint {
+            display_type: bmc_widget_manifest::DisplayShape::Rectangular,
+            min_width: Some(638),
+            max_width: Some(638),
+            min_height: Some(480),
+            max_height: Some(480),
+            min_dpi: Some(1),
+            max_dpi: Some(1),
+        }];
+        assert_eq!(
+            supported_sizes_for_constraints(&BMC100_PLATFORM_DESCRIPTOR, &constraints),
+            vec![web::WidgetSize::Large]
+        );
+    }
+
+    #[test]
+    fn bmc100_slot_size_requires_exact_descriptor_match() {
+        let constraints = vec![bmc_widget_manifest::WidgetViewportConstraint {
+            display_type: bmc_widget_manifest::DisplayShape::Rectangular,
+            min_width: Some(638),
+            max_width: Some(638),
+            min_height: Some(480),
+            max_height: Some(480),
+            min_dpi: Some(2),
+            max_dpi: Some(2),
+        }];
+        assert!(
+            !supported_sizes_for_constraints(&BMC100_PLATFORM_DESCRIPTOR, &constraints)
+                .contains(&web::WidgetSize::Large)
+        );
+    }
+
+    #[test]
+    fn supported_sizes_include_fullscreen_when_full_descriptor_matches() {
+        let constraints = vec![bmc_widget_manifest::WidgetViewportConstraint {
+            display_type: bmc_widget_manifest::DisplayShape::Rectangular,
+            min_width: Some(1280),
+            max_width: Some(1280),
+            min_height: Some(480),
+            max_height: Some(480),
+            min_dpi: Some(1),
+            max_dpi: Some(1),
+        }];
+        assert_eq!(
+            supported_sizes_for_constraints(&BMC100_PLATFORM_DESCRIPTOR, &constraints),
+            vec![web::WidgetSize::Full]
         );
     }
 }
