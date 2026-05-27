@@ -26,6 +26,7 @@
 
 mod paint;
 mod params_ui;
+mod platforms;
 mod recording;
 mod system_ui;
 mod ui_helpers;
