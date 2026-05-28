@@ -16,6 +16,8 @@ pub struct DrmOutput {
     primary_plane: plane::Handle,
     width: u32,
     height: u32,
+    logical_width: u32,
+    logical_height: u32,
     /// Refresh rate of the selected mode, in mHz (matches `wl_output::mode`
     /// units so it can be forwarded directly to Wayland clients).
     refresh_mhz: i32,
@@ -31,7 +33,7 @@ pub struct DrmOutput {
 }
 
 impl DrmOutput {
-    pub fn new(display_path: &Path) -> Result<Self> {
+    pub fn new(display_path: &Path, display_profile: bmc_platform::DisplayProfile) -> Result<Self> {
         tracing::info!("Opening display device: {:?}", display_path);
 
         let display_file = OpenOptions::new()
@@ -62,9 +64,19 @@ impl DrmOutput {
 
         let mode_width = u32::from(mode.size().0);
         let mode_height = u32::from(mode.size().1);
-        // Panel reports 600x1280 but only 480x1280 is visible
-        let width = if mode_width == 600 { 480 } else { mode_width };
-        let height = mode_height;
+        let visible_area = display_profile.visible_area;
+        let width = visible_area.width;
+        let height = visible_area.height;
+        let (logical_width, logical_height) = logical_size_from_profile(&display_profile);
+        if (mode_width, mode_height) != (visible_area.width, visible_area.height) {
+            tracing::warn!(
+                mode_width,
+                mode_height,
+                visible_width = visible_area.width,
+                visible_height = visible_area.height,
+                "panel-reported mode does not match profile visible area; using profile",
+            );
+        }
 
         // `mode.vrefresh()` reports Hz; `wl_output::mode` expects mHz.
         #[expect(
@@ -74,9 +86,11 @@ impl DrmOutput {
         let refresh_mhz = (mode.vrefresh() * 1_000) as i32;
 
         tracing::info!(
-            "Buffer dimensions: {}x{} (mode {}x{})",
+            "Buffer dimensions: {}x{} physical, {}x{} logical (mode {}x{})",
             width,
             height,
+            logical_width,
+            logical_height,
             mode_width,
             mode_height
         );
@@ -87,6 +101,8 @@ impl DrmOutput {
             primary_plane,
             width,
             height,
+            logical_width,
+            logical_height,
             refresh_mhz,
             frame_count: 0,
             flip_pending: false,
@@ -153,9 +169,8 @@ impl DrmOutput {
         self.refresh_mhz
     }
 
-    /// Logical size (rotated for landscape orientation)
     pub fn logical_size(&self) -> (u32, u32) {
-        (self.height, self.width)
+        (self.logical_width, self.logical_height)
     }
 
     pub fn is_flip_pending(&self) -> bool {
@@ -232,5 +247,36 @@ impl DrmOutput {
         self.frame_count = self.frame_count.wrapping_add(1);
 
         Ok(())
+    }
+}
+
+#[must_use]
+fn logical_size_from_profile(display_profile: &bmc_platform::DisplayProfile) -> (u32, u32) {
+    (
+        display_profile.logical_width,
+        display_profile.logical_height,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::logical_size_from_profile;
+    use bmc_platform::{HardwareProfile, Product};
+
+    #[test]
+    fn logical_size_uses_profile_values_without_forcing_axis_swap() {
+        let bmm100 = HardwareProfile::for_product(Product::Bmm100);
+        assert_eq!(
+            logical_size_from_profile(&bmm100.display),
+            (320, 240),
+            "BMM100 has a Deg0 scanout transform, so logical size must not be swapped",
+        );
+
+        let bmm101 = HardwareProfile::for_product(Product::Bmm101);
+        assert_eq!(
+            logical_size_from_profile(&bmm101.display),
+            (480, 320),
+            "BMM101 has a Deg0 scanout transform, so logical size must not be swapped",
+        );
     }
 }

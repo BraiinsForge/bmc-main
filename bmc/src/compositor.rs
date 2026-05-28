@@ -8,6 +8,7 @@
 use thiserror::Error;
 use tokio::sync::mpsc;
 
+pub use bmc_platform::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
 pub use bmc_widget_protocol::{ActionPayload, SettingUpdate, WidgetInitialConfig};
 
 pub type InstanceId = String;
@@ -87,6 +88,10 @@ pub trait Compositor: Send + Sync {
 
     /// Get the Wayland display socket name. Returns `None` if not started.
     fn wayland_display(&self) -> Option<String>;
+
+    /// Hardware-neutral display and feature capabilities for the active
+    /// product, mapped from the hardware profile by the compositor.
+    fn hardware_capabilities(&self) -> HardwareCapabilities;
 
     /// Register a widget before spawning its process.
     ///
