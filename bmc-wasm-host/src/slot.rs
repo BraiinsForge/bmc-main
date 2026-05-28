@@ -180,10 +180,14 @@ impl WidgetSlot {
         for setting in &initial.settings {
             apply_setting_update(&mut pending_system, setting);
         }
+        let viewport_shape = bmc_wasm_protocol::ViewportShape::from(initial.viewport_shape);
+        let display = bmc_wasm_runtime::RuntimeDisplayInfo::from(initial.display);
         let mut runtime = WasmWidgetRuntime::new(
             &wasm_bytes,
             initial.width,
             initial.height,
+            viewport_shape,
+            display,
             RuntimeConfig {
                 params: bmc_wasm_runtime::parse_params_json(&initial.params).unwrap_or_else(
                     |err| {
