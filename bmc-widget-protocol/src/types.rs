@@ -22,6 +22,35 @@ pub struct SizeInfo {
     pub height: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DisplayShape {
+    Rectangular,
+    Round,
+}
+
+/// Active display geometry and shape delivered to a widget in the initial
+/// configure batch. `dpi` is advisory and currently an explicit fake value
+/// of 1 until panel active-area data is available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisplayInfo {
+    pub width: u32,
+    pub height: u32,
+    pub shape: DisplayShape,
+    pub dpi: u32,
+}
+
+impl DisplayInfo {
+    /// BMC100 Deck display: logical `1280x480`, rectangular, fake `dpi=1`.
+    /// Used as the stage-2 default until real per-platform values land.
+    pub const BMC100: Self = Self {
+        width: 1_280,
+        height: 480,
+        shape: DisplayShape::Rectangular,
+        dpi: 1,
+    };
+}
+
 /// Full initial configuration for a widget instance.
 ///
 /// The coordinator pushes one of these into the compositor before spawning
@@ -279,5 +308,28 @@ mod tests {
         let action = ActionPayload::StopLed {};
         let json = serde_json::to_value(&action).expect("BUG: serialization should not fail");
         assert_eq!(json["name"], "stop_led");
+    }
+
+    #[test]
+    fn display_info_bmc100_default_matches_deck_geometry() {
+        let display = DisplayInfo::BMC100;
+        assert_eq!(display.width, 1_280);
+        assert_eq!(display.height, 480);
+        assert_eq!(display.shape, DisplayShape::Rectangular);
+        assert_eq!(display.dpi, 1);
+    }
+
+    #[test]
+    fn display_shape_serializes_lowercase() {
+        assert_eq!(
+            serde_json::to_string(&DisplayShape::Rectangular)
+                .expect("BUG: serialization should not fail"),
+            r#""rectangular""#
+        );
+        assert_eq!(
+            serde_json::to_string(&DisplayShape::Round)
+                .expect("BUG: serialization should not fail"),
+            r#""round""#
+        );
     }
 }
