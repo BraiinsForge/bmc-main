@@ -44,6 +44,7 @@
       configure_done:
 
         configure(size_type, width, height)
+        display_info(display_width, display_height, display_shape, dpi)
         params(json)
         timezone / night_mode / date_format / ... (setting events)
         configure_done
@@ -120,6 +121,23 @@
       <arg name="size_type" type="uint" enum="size_type"/>
       <arg name="width" type="uint" summary="pixel width"/>
       <arg name="height" type="uint" summary="pixel height"/>
+    </event>
+
+    <event name="display_info">
+      <description summary="active display geometry and shape">
+        Delivered once on surface creation, after `configure` and before
+        `configure_done`. Carries the active display's logical pixel size,
+        shape, and DPI so widgets can branch on real geometry instead of
+        the legacy `size_type`. DPI is the platform's real display
+        density and is advisory during this development stage.
+
+        Widgets that do not bind this event ignore it; old widgets keep
+        working unchanged.
+      </description>
+      <arg name="display_width" type="uint" summary="logical display width in pixels"/>
+      <arg name="display_height" type="uint" summary="logical display height in pixels"/>
+      <arg name="display_shape" type="uint" enum="display_shape"/>
+      <arg name="dpi" type="uint" summary="display density; advisory"/>
     </event>
 
     <event name="params">
