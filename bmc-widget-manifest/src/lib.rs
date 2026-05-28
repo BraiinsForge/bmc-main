@@ -596,9 +596,9 @@ pub enum DisplayShape {
 /// `min_* == max_*` pins one exact value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct WidgetViewportConstraint {
-    /// Display shape this constraint targets.
+    /// Viewport shape this constraint targets.
     #[serde(rename = "type")]
-    pub display_type: DisplayShape,
+    pub viewport_shape: DisplayShape,
     /// Inclusive minimum width in pixels, or unbounded.
     pub min_width: Option<u32>,
     /// Inclusive maximum width in pixels, or unbounded.
@@ -622,7 +622,7 @@ impl From<SizeType> for WidgetViewportConstraint {
             SizeType::Full => (1280, 480),
         };
         Self {
-            display_type: DisplayShape::Rectangular,
+            viewport_shape: DisplayShape::Rectangular,
             min_width: Some(w),
             max_width: Some(w),
             min_height: Some(h),
@@ -1065,7 +1065,7 @@ mod tests {
         assert_eq!(manifest.binary, PathBuf::from("bin/test"));
         assert_eq!(manifest.supported_viewports.len(), 1);
         assert_eq!(
-            manifest.supported_viewports[0].display_type,
+            manifest.supported_viewports[0].viewport_shape,
             DisplayShape::Rectangular
         );
         assert!(manifest.author.is_none());
@@ -1659,7 +1659,7 @@ mod tests {
             Manifest::from_str(minimal_viewports_manifest_json()).expect("BUG: should parse");
         assert_eq!(manifest.supported_viewports.len(), 1);
         let vp = &manifest.supported_viewports[0];
-        assert_eq!(vp.display_type, DisplayShape::Rectangular);
+        assert_eq!(vp.viewport_shape, DisplayShape::Rectangular);
         assert_eq!(vp.min_width, Some(317));
         assert_eq!(vp.max_width, Some(317));
         assert_eq!(vp.min_height, Some(238));
@@ -1727,7 +1727,7 @@ mod tests {
             manifest
                 .supported_viewports
                 .iter()
-                .all(|c| c.display_type == DisplayShape::Rectangular
+                .all(|c| c.viewport_shape == DisplayShape::Rectangular
                     && c.min_dpi.is_none()
                     && c.max_dpi.is_none())
         );
@@ -1788,7 +1788,7 @@ mod tests {
     }
 
     #[test]
-    fn reject_unspecified_display_type() {
+    fn reject_unspecified_viewport_shape() {
         let json = r#"{
             "uid": "550e8400-e29b-41d4-a716-446655440000",
             "version": "1.0.0",

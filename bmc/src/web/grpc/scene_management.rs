@@ -32,7 +32,7 @@ const BMC100_SLOT_SIZE_DESCRIPTORS: &[(web::WidgetSize, crate::widget::ViewportD
     (
         web::WidgetSize::Small,
         crate::widget::ViewportDescriptor {
-            shape: bmc_widget_manifest::DisplayShape::Rectangular,
+            viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
             width: 317,
             height: 238,
             dpi: 217,
@@ -41,7 +41,7 @@ const BMC100_SLOT_SIZE_DESCRIPTORS: &[(web::WidgetSize, crate::widget::ViewportD
     (
         web::WidgetSize::Medium,
         crate::widget::ViewportDescriptor {
-            shape: bmc_widget_manifest::DisplayShape::Rectangular,
+            viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
             width: 638,
             height: 238,
             dpi: 217,
@@ -50,7 +50,7 @@ const BMC100_SLOT_SIZE_DESCRIPTORS: &[(web::WidgetSize, crate::widget::ViewportD
     (
         web::WidgetSize::Large,
         crate::widget::ViewportDescriptor {
-            shape: bmc_widget_manifest::DisplayShape::Rectangular,
+            viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
             width: 638,
             height: 480,
             dpi: 217,
@@ -60,7 +60,7 @@ const BMC100_SLOT_SIZE_DESCRIPTORS: &[(web::WidgetSize, crate::widget::ViewportD
 
 const BMC100_PLATFORM_DESCRIPTOR: PlatformDescriptor = PlatformDescriptor {
     fullscreen: crate::widget::ViewportDescriptor {
-        shape: bmc_widget_manifest::DisplayShape::Rectangular,
+        viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
         width: 1280,
         height: 480,
         dpi: 217,
@@ -1424,6 +1424,7 @@ impl GrpcSceneManagementService for SceneManagementService {
                 position,
                 placement,
                 widget_type_id: widget_uid,
+                viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
                 params: typed_params,
             };
             validate_widget_placement(scene, &updated_widget, Some(widget_id_key))?;
@@ -1748,7 +1749,7 @@ mod tests {
             binary: std::path::PathBuf::from("bin/test"),
             settings: vec![],
             supported_viewports: vec![bmc_widget_manifest::WidgetViewportConstraint {
-                display_type: bmc_widget_manifest::DisplayShape::Rectangular,
+                viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
                 min_width: Some(317),
                 max_width: Some(317),
                 min_height: Some(238),
@@ -1784,7 +1785,7 @@ mod tests {
             binary: std::path::PathBuf::from("bin/test"),
             settings: vec![],
             supported_viewports: vec![bmc_widget_manifest::WidgetViewportConstraint {
-                display_type: bmc_widget_manifest::DisplayShape::Rectangular,
+                viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
                 min_width: Some(317),
                 max_width: Some(317),
                 min_height: Some(238),
@@ -2772,7 +2773,7 @@ mod tests {
     #[test]
     fn manifest_supported_sizes_are_calculated_from_constraints() {
         let constraints = vec![bmc_widget_manifest::WidgetViewportConstraint {
-            display_type: bmc_widget_manifest::DisplayShape::Rectangular,
+            viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
             min_width: Some(638),
             max_width: Some(638),
             min_height: Some(480),
@@ -2789,7 +2790,7 @@ mod tests {
     #[test]
     fn bmc100_slot_size_requires_exact_descriptor_match() {
         let constraints = vec![bmc_widget_manifest::WidgetViewportConstraint {
-            display_type: bmc_widget_manifest::DisplayShape::Rectangular,
+            viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
             min_width: Some(638),
             max_width: Some(638),
             min_height: Some(480),
@@ -2806,7 +2807,7 @@ mod tests {
     #[test]
     fn supported_sizes_include_fullscreen_when_full_descriptor_matches() {
         let constraints = vec![bmc_widget_manifest::WidgetViewportConstraint {
-            display_type: bmc_widget_manifest::DisplayShape::Rectangular,
+            viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
             min_width: Some(1280),
             max_width: Some(1280),
             min_height: Some(480),

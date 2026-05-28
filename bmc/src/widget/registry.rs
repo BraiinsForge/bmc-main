@@ -51,8 +51,8 @@ pub enum RegistryError {
 /// Matched against a manifest's `supported_viewports` with inclusive ranges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ViewportDescriptor {
-    /// Display shape of the viewport.
-    pub shape: DisplayShape,
+    /// Viewport shape.
+    pub viewport_shape: DisplayShape,
     /// Width in pixels.
     pub width: u32,
     /// Height in pixels.
@@ -62,12 +62,12 @@ pub struct ViewportDescriptor {
 }
 
 impl ViewportDescriptor {
-    /// True when `constraint` covers this descriptor: equal display type and
+    /// True when `constraint` covers this descriptor: equal viewport shape and
     /// all of width/height/dpi inside the constraint's inclusive ranges.
     /// Missing min/max bounds are open-ended.
     #[must_use]
     pub fn matched_by(&self, constraint: &WidgetViewportConstraint) -> bool {
-        self.shape == constraint.display_type
+        self.viewport_shape == constraint.viewport_shape
             && constraint.min_width.is_none_or(|min| self.width >= min)
             && constraint.max_width.is_none_or(|max| self.width <= max)
             && constraint.min_height.is_none_or(|min| self.height >= min)
@@ -88,7 +88,7 @@ pub fn slot_span_descriptor(columns: u32, rows: u32) -> Option<ViewportDescripto
         _ => return None,
     };
     Some(ViewportDescriptor {
-        shape: DisplayShape::Rectangular,
+        viewport_shape: DisplayShape::Rectangular,
         width,
         height,
         dpi: 217,
@@ -176,7 +176,7 @@ mod tests {
         hmax: u32,
     ) -> WidgetViewportConstraint {
         WidgetViewportConstraint {
-            display_type: shape,
+            viewport_shape: shape,
             min_width: Some(wmin),
             max_width: Some(wmax),
             min_height: Some(hmin),
@@ -306,7 +306,7 @@ mod tests {
     fn descriptor_inside_inclusive_range_matches() {
         let c = constraint(DisplayShape::Rectangular, 160, 1280, 238, 480);
         let desc = ViewportDescriptor {
-            shape: DisplayShape::Rectangular,
+            viewport_shape: DisplayShape::Rectangular,
             width: 480,
             height: 480,
             dpi: 1,
@@ -318,7 +318,7 @@ mod tests {
     fn descriptor_outside_range_does_not_match() {
         let c = constraint(DisplayShape::Rectangular, 160, 320, 238, 480);
         let desc = ViewportDescriptor {
-            shape: DisplayShape::Rectangular,
+            viewport_shape: DisplayShape::Rectangular,
             width: 480,
             height: 480,
             dpi: 1,
@@ -330,7 +330,7 @@ mod tests {
     fn descriptor_shape_mismatch_does_not_match() {
         let c = constraint(DisplayShape::Round, 480, 480, 480, 480);
         let desc = ViewportDescriptor {
-            shape: DisplayShape::Rectangular,
+            viewport_shape: DisplayShape::Rectangular,
             width: 480,
             height: 480,
             dpi: 1,
@@ -341,7 +341,7 @@ mod tests {
     #[test]
     fn omitted_constraint_bounds_are_unbounded() {
         let c = WidgetViewportConstraint {
-            display_type: DisplayShape::Rectangular,
+            viewport_shape: DisplayShape::Rectangular,
             min_width: None,
             max_width: None,
             min_height: Some(480),
@@ -350,7 +350,7 @@ mod tests {
             max_dpi: None,
         };
         let desc = ViewportDescriptor {
-            shape: DisplayShape::Rectangular,
+            viewport_shape: DisplayShape::Rectangular,
             width: 10_000,
             height: 480,
             dpi: 999,
@@ -363,7 +363,7 @@ mod tests {
         assert_eq!(
             slot_span_descriptor(1, 1),
             Some(ViewportDescriptor {
-                shape: DisplayShape::Rectangular,
+                viewport_shape: DisplayShape::Rectangular,
                 width: 317,
                 height: 238,
                 dpi: 217
@@ -372,7 +372,7 @@ mod tests {
         assert_eq!(
             slot_span_descriptor(2, 1),
             Some(ViewportDescriptor {
-                shape: DisplayShape::Rectangular,
+                viewport_shape: DisplayShape::Rectangular,
                 width: 638,
                 height: 238,
                 dpi: 217
@@ -381,7 +381,7 @@ mod tests {
         assert_eq!(
             slot_span_descriptor(2, 2),
             Some(ViewportDescriptor {
-                shape: DisplayShape::Rectangular,
+                viewport_shape: DisplayShape::Rectangular,
                 width: 638,
                 height: 480,
                 dpi: 217
@@ -406,7 +406,7 @@ mod tests {
         let registry = WidgetRegistry::new(vec![widget]);
         let uid = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").expect("BUG: parse uid");
         let desc = ViewportDescriptor {
-            shape: DisplayShape::Rectangular,
+            viewport_shape: DisplayShape::Rectangular,
             width: 317,
             height: 238,
             dpi: 1,

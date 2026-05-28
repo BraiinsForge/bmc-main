@@ -480,7 +480,7 @@
           "minimum": 0
         },
         "type": {
-          "description": "Display shape this constraint targets.",
+          "description": "Viewport shape this constraint targets.",
           "$ref": "#/$defs/DisplayShape"
         }
       },
