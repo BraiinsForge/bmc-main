@@ -2,6 +2,7 @@ import invariant from 'invariant';
 import { cloneDeep } from 'es-toolkit';
 
 import * as pb from '@/proto';
+import { URLS } from '@/constants';
 import { assertUnreachable } from '@/lib/ts';
 
 import * as C from './const';
@@ -466,4 +467,9 @@ export function getValidWidgetSizes(pool: C.Located[], slot: Pick<C.Located, 'id
 
 export function combinedSceneAvailable(caps: null | pb.HardwareCapabilities): boolean {
     return caps?.combinedScenesSupported ?? false;
+}
+
+export function combinedEditorRedirectTarget(caps: null | pb.HardwareCapabilities): null | string {
+    if (caps === null) return null;
+    return caps.combinedScenesSupported ? null : URLS.pages.display.list;
 }

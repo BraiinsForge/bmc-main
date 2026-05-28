@@ -1,4 +1,4 @@
-import { Component } from 'react';
+import { Component, type ReactElement, useEffect } from 'react';
 import { Helmet } from '@dr.pogodin/react-helmet';
 import { type IntlShape, useIntl } from 'react-intl';
 import { debounce, cloneDeep } from 'es-toolkit';
@@ -57,6 +57,7 @@ interface State {
     manifestsLoading: boolean;
     scene: null | pb.Scene;
     timezones: pb.Timezone[];
+    hardwareCapabilities: null | pb.HardwareCapabilities;
 
     openDialogKind: OpenDialogKind;
     addPosition: null | pb.WidgetPosition;
@@ -70,6 +71,7 @@ const getInitialState = (): State => ({
     manifestsLoading: false,
     scene: null,
     timezones: [],
+    hardwareCapabilities: null,
     openDialogKind: null,
     addPosition: null,
     manifestForm: {
@@ -104,6 +106,7 @@ class View extends Component<Props, State> {
         this.#previewOpen();
         this.#loadManifestWidgets();
         this.#loadTimezones();
+        this.#loadHardwareCapabilities();
     }
     componentWillUnmount() {
         pb.abort.all(this);
@@ -123,6 +126,22 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
             // Silently ignore — manifest widgets are optional
             this.setState({ manifestsLoading: false });
+        }
+    };
+
+    private abortLoadHardwareCapabilities = pb.abort.get();
+    #loadHardwareCapabilities = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            const { signal } = this.abortLoadHardwareCapabilities.replace();
+            const hardwareCapabilities = await pb.rpc.hardware.getHardwareCapabilities({}, { signal });
+            this.setState({ hardwareCapabilities });
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to load hardware capabilities!' });
+            toast.error(msg);
         }
     };
 
@@ -612,7 +631,7 @@ class View extends Component<Props, State> {
 
     render() {
         const { intl } = this.props;
-        const { scene, openDialogKind, manifestForm, manifestWidgets, addPosition } = this.state;
+        const { scene, openDialogKind, manifestForm, manifestWidgets, addPosition, hardwareCapabilities } = this.state;
 
         const widgets: pb.Widget[] = scene?.kind.case === 'combined' ? scene.kind.value.widgets : [];
         const manifests = this.state.manifestLookup;
@@ -623,81 +642,98 @@ class View extends Component<Props, State> {
             : manifestWidgets;
 
         return (
-            <div className={css.root}>
-                <Helmet title={this.#txt.title} />
-                <header className={css.header}>
-                    <div className={css.headerLeft}>
-                        <Button
-                            id={$('go-back')}
-                            size="md"
-                            kind="secondary"
-                            onClick={this.#goBack}
-                            title={intl.formatMessage({ defaultMessage: 'Back to Scenes List' })}
-                            hasIconOnly
-                            renderIcon={IconChevronLeft}
-                            tooltipAlignment="start"
-                            tooltipPosition="bottom"
-                        />
-                        <h1 className={css.title} children={this.#txt.title} />
-                    </div>
-                </header>
+            <CombinedEditorCapabilityGate capabilities={hardwareCapabilities}>
+                <div className={css.root}>
+                    <Helmet title={this.#txt.title} />
+                    <header className={css.header}>
+                        <div className={css.headerLeft}>
+                            <Button
+                                id={$('go-back')}
+                                size="md"
+                                kind="secondary"
+                                onClick={this.#goBack}
+                                title={intl.formatMessage({ defaultMessage: 'Back to Scenes List' })}
+                                hasIconOnly
+                                renderIcon={IconChevronLeft}
+                                tooltipAlignment="start"
+                                tooltipPosition="bottom"
+                            />
+                            <h1 className={css.title} children={this.#txt.title} />
+                        </div>
+                    </header>
 
-                <main className={css.main}>
-                    <p
-                        className={css.explainer}
-                        children={intl.formatMessage({
-                            defaultMessage:
-                                "Drag and drop widgets to organize your screen layout. You'll see a live preview on your device as you make changes. Changes are saved automatically.",
-                        })}
+                    <main className={css.main}>
+                        <p
+                            className={css.explainer}
+                            children={intl.formatMessage({
+                                defaultMessage:
+                                    "Drag and drop widgets to organize your screen layout. You'll see a live preview on your device as you make changes. Changes are saved automatically.",
+                            })}
+                        />
+
+                        <Comp.CombinedSceneView
+                            widgets={widgets}
+                            manifests={manifests}
+                            onWidgetMove={this.#handleMove}
+                            onWidgetAdd={this.#handleAdd}
+                            onWidgetEdit={this.#handleEdit}
+                            onWidgetRemove={this.#handleRemove}
+                        />
+                        <ButtonGroup spaced className={css.footer}>
+                            <Button
+                                id={$('done')}
+                                children={intl.formatMessage({ defaultMessage: 'Done' })}
+                                onClick={this.#goBack}
+                            />
+                            <Button
+                                id={$('delete')}
+                                kind="secondary"
+                                children={intl.formatMessage({ defaultMessage: 'Delete Scene' })}
+                                onClick={this.#delete}
+                            />
+                        </ButtonGroup>
+                    </main>
+
+                    <Comp.FormSceneSelect
+                        isOpen={openDialogKind === 'scene-select'}
+                        onClose={this.#openDialogCancel}
+                        onManifestSelection={this.#handleManifestWidgetAdd}
+                        manifestWidgets={pickerWidgets}
+                        isLoading={this.state.manifestsLoading}
                     />
 
-                    <Comp.CombinedSceneView
-                        widgets={widgets}
-                        manifests={manifests}
-                        onWidgetMove={this.#handleMove}
-                        onWidgetAdd={this.#handleAdd}
-                        onWidgetEdit={this.#handleEdit}
-                        onWidgetRemove={this.#handleRemove}
+                    <Comp.FormWidgetManifest
+                        isOpen={openDialogKind === 'manifest'}
+                        onSave={this.#handleManifestFormDone}
+                        onCancel={this.#openDialogCancel}
+                        manifest={manifestForm.manifest}
+                        params={manifestForm.params}
+                        errors={manifestForm.errors}
+                        onParamChange={this.#handleManifestParamChange}
+                        timezones={this.state.timezones}
+                        size={manifestForm.size}
+                        sizeOptions={manifestForm.sizeOptions}
+                        onSizeChange={this.#handleManifestSizeChange}
                     />
-                    <ButtonGroup spaced className={css.footer}>
-                        <Button
-                            id={$('done')}
-                            children={intl.formatMessage({ defaultMessage: 'Done' })}
-                            onClick={this.#goBack}
-                        />
-                        <Button
-                            id={$('delete')}
-                            kind="secondary"
-                            children={intl.formatMessage({ defaultMessage: 'Delete Scene' })}
-                            onClick={this.#delete}
-                        />
-                    </ButtonGroup>
-                </main>
-
-                <Comp.FormSceneSelect
-                    isOpen={openDialogKind === 'scene-select'}
-                    onClose={this.#openDialogCancel}
-                    onManifestSelection={this.#handleManifestWidgetAdd}
-                    manifestWidgets={pickerWidgets}
-                    isLoading={this.state.manifestsLoading}
-                />
-
-                <Comp.FormWidgetManifest
-                    isOpen={openDialogKind === 'manifest'}
-                    onSave={this.#handleManifestFormDone}
-                    onCancel={this.#openDialogCancel}
-                    manifest={manifestForm.manifest}
-                    params={manifestForm.params}
-                    errors={manifestForm.errors}
-                    onParamChange={this.#handleManifestParamChange}
-                    timezones={this.state.timezones}
-                    size={manifestForm.size}
-                    sizeOptions={manifestForm.sizeOptions}
-                    onSizeChange={this.#handleManifestSizeChange}
-                />
-            </div>
+                </div>
+            </CombinedEditorCapabilityGate>
         );
     }
+}
+
+export function CombinedEditorCapabilityGate(props: {
+    capabilities: null | pb.HardwareCapabilities;
+    children: ReactElement;
+}): null | ReactElement {
+    const navigate = useNavigate();
+    const target = fn.combinedEditorRedirectTarget(props.capabilities);
+
+    useEffect(() => {
+        if (target !== null) navigate(target, { replace: true });
+    }, [navigate, target]);
+
+    if (props.capabilities === null || target !== null) return null;
+    return props.children;
 }
 
 export default function DisplayCombined() {
