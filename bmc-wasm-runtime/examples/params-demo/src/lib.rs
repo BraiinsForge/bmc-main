@@ -270,6 +270,7 @@ pub extern "C" fn render(delta_ms: u32) {
 fn render_compact(w: u32, h: u32, p: &Params, sizes: &Sizes) {
     let sys = system::current();
     let mut rows = params_rows(p, sizes);
+    rows.extend(geometry_rows(sizes));
     rows.push(kv_line(
         "timezone",
         sys.timezone().unwrap_or(MISSING_LABEL),
@@ -293,6 +294,8 @@ fn render_compact(w: u32, h: u32, p: &Params, sizes: &Sizes) {
 fn render_two_pane(w: u32, h: u32, p: &Params, sizes: &Sizes) {
     let pane_props =
         props!(flex: 1.0, gap: sizes.cell_gap, background: PANE_BG, padding: sizes.col_padding);
+    let mut right_rows = system_rows(sizes);
+    right_rows.extend(geometry_rows(sizes));
     let _ = render_ui(
         w,
         h,
@@ -300,7 +303,7 @@ fn render_two_pane(w: u32, h: u32, p: &Params, sizes: &Sizes) {
             props!(background: BG_COLOR, gap: sizes.col_gap / 2.0, flex: 1.0),
             [
                 col(pane_props, params_rows(p, sizes)),
-                col(pane_props, system_rows(sizes)),
+                col(pane_props, right_rows),
             ],
         ),
     );
@@ -382,6 +385,103 @@ fn system_rows(sizes: &Sizes) -> Vec<Node> {
         kv_line("unit_system", unit_system_label(sys.unit_system()), sizes),
         kv_line("next_alarm", format_next_alarm(&sys), sizes),
     ]
+}
+
+/// Two `kv_line` rows reporting the SDK's current viewport and display geometry.
+/// Shared by the compact, two-pane, and grid layouts so the same readout
+/// appears regardless of widget size, making the BFM round/BMC rectangular
+/// distinction visible in every variant.
+fn geometry_rows(sizes: &Sizes) -> Vec<Node> {
+    vec![
+        kv_line("viewport", viewport_text(widget_viewport()), sizes),
+        kv_line("display", display_text(display_info()), sizes),
+    ]
+}
+
+fn viewport_shape_label(shape: ViewportShape) -> &'static str {
+    match shape {
+        ViewportShape::Rectangular => "rectangular",
+        ViewportShape::Round => "round",
+    }
+}
+
+fn display_shape_label(shape: DisplayShape) -> &'static str {
+    match shape {
+        DisplayShape::Rectangular => "rectangular",
+        DisplayShape::Round => "round",
+    }
+}
+
+fn viewport_text(v: WidgetViewport) -> String {
+    fmt!("{}x{} {}", v.width, v.height, viewport_shape_label(v.shape))
+}
+
+fn display_text(d: DisplayInfo) -> String {
+    fmt!(
+        "{}x{} {} dpi={}",
+        d.width,
+        d.height,
+        display_shape_label(d.shape),
+        d.dpi
+    )
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::{
+        DisplayInfo, DisplayShape, ViewportShape, WidgetViewport, display_shape_label,
+        display_text, viewport_shape_label, viewport_text,
+    };
+
+    #[test]
+    fn shape_labels_are_stable() {
+        assert_eq!(
+            viewport_shape_label(ViewportShape::Rectangular),
+            "rectangular"
+        );
+        assert_eq!(viewport_shape_label(ViewportShape::Round), "round");
+        assert_eq!(
+            display_shape_label(DisplayShape::Rectangular),
+            "rectangular"
+        );
+        assert_eq!(display_shape_label(DisplayShape::Round), "round");
+    }
+
+    #[test]
+    fn viewport_text_renders_size_and_shape() {
+        let rect = viewport_text(WidgetViewport {
+            width: 480,
+            height: 320,
+            shape: ViewportShape::Rectangular,
+        });
+        assert_eq!(rect, "480x320 rectangular");
+
+        let round = viewport_text(WidgetViewport {
+            width: 480,
+            height: 480,
+            shape: ViewportShape::Round,
+        });
+        assert_eq!(round, "480x480 round");
+    }
+
+    #[test]
+    fn display_text_includes_dpi() {
+        let round = display_text(DisplayInfo {
+            width: 480,
+            height: 480,
+            shape: DisplayShape::Round,
+            dpi: 1,
+        });
+        assert_eq!(round, "480x480 round dpi=1");
+
+        let rect = display_text(DisplayInfo {
+            width: 1280,
+            height: 480,
+            shape: DisplayShape::Rectangular,
+            dpi: 2,
+        });
+        assert_eq!(rect, "1280x480 rectangular dpi=2");
+    }
 }
 
 /// Single-line cell used by [`render_compact`].
@@ -571,6 +671,13 @@ fn render_grid(w: u32, h: u32, p: &Params, sizes: &Sizes) {
                 format_next_alarm(&sys),
                 sizes,
             ),
+            kv(
+                "viewport",
+                "widget rect",
+                viewport_text(widget_viewport()),
+                sizes,
+            ),
+            kv("display", "panel rect", display_text(display_info()), sizes),
         ],
     );
 
