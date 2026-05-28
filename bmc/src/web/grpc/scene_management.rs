@@ -16,6 +16,8 @@ use tonic::{Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, StatusExt};
 use uuid::Uuid;
 
+use bmc_platform::HardwareCapabilities;
+
 use crate::config::ConfigHandle;
 use crate::data::{SceneCycling, SceneCyclingTransition};
 use crate::scene;
@@ -58,15 +60,12 @@ const BMC100_SLOT_SIZE_DESCRIPTORS: &[(web::WidgetSize, crate::widget::ViewportD
     ),
 ];
 
-const BMC100_PLATFORM_DESCRIPTOR: PlatformDescriptor = PlatformDescriptor {
-    fullscreen: crate::widget::ViewportDescriptor {
-        viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
-        width: 1280,
-        height: 480,
-        dpi: 217,
-    },
-    slot_sizes: BMC100_SLOT_SIZE_DESCRIPTORS,
-};
+#[cfg(test)]
+fn bmc100_platform_descriptor() -> PlatformDescriptor {
+    PlatformDescriptor::from(
+        &bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100).capabilities(),
+    )
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("unsupported widget size label")]
@@ -132,6 +131,51 @@ impl PlatformDescriptor {
             .ok()
             .and_then(|size| self.descriptor_for_size(size))
     }
+}
+
+impl From<&HardwareCapabilities> for PlatformDescriptor {
+    fn from(caps: &HardwareCapabilities) -> Self {
+        let fullscreen = crate::widget::ViewportDescriptor {
+            viewport_shape: widget_viewport_shape_from_caps(caps),
+            width: caps.display.width,
+            height: caps.display.height,
+            dpi: caps.display.dpi,
+        };
+        let slot_sizes: &'static [(web::WidgetSize, crate::widget::ViewportDescriptor)] =
+            if caps.slot_grid.is_some() {
+                BMC100_SLOT_SIZE_DESCRIPTORS
+            } else {
+                &[]
+            };
+        Self {
+            fullscreen,
+            slot_sizes,
+        }
+    }
+}
+
+fn reject_combined_when_no_slot_grid(caps: &HardwareCapabilities) -> Result<(), Status> {
+    if caps.slot_grid.is_none() {
+        return Err(Status::failed_precondition(
+            "combined scenes are not supported on this hardware",
+        ));
+    }
+    Ok(())
+}
+
+fn widget_viewport_shape_from_caps(
+    caps: &HardwareCapabilities,
+) -> bmc_widget_manifest::DisplayShape {
+    use crate::compositor::DisplayShape as Caps;
+    use bmc_widget_manifest::DisplayShape as Manifest;
+    match caps.display.shape {
+        Caps::Rectangular => Manifest::Rectangular,
+        Caps::Round => Manifest::Round,
+    }
+}
+
+fn stamp_widget_viewport_shape_from_caps(widget: &mut scene::Widget, caps: &HardwareCapabilities) {
+    widget.viewport_shape = widget_viewport_shape_from_caps(caps);
 }
 
 fn supported_sizes_for_constraints(
@@ -331,6 +375,7 @@ pub(crate) struct SceneManagementService {
     widget_registry: Arc<WidgetRegistry>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     coordinator: Arc<Coordinator>,
+    capabilities: HardwareCapabilities,
     /// Scene currently held open by a `preview_scene` stream. While set,
     /// that scene overrides the first-enabled pick in `restore_active_scene`
     /// so edits made during a preview stay focused on it.
@@ -347,11 +392,13 @@ impl SceneManagementService {
         widget_registry: Arc<WidgetRegistry>,
         config_handle: Arc<RwLock<ConfigHandle>>,
         coordinator: Arc<Coordinator>,
+        capabilities: HardwareCapabilities,
     ) -> Self {
         Self {
             widget_registry,
             config_handle,
             coordinator,
+            capabilities,
             preview_scene_id: Arc::default(),
         }
     }
@@ -484,20 +531,20 @@ fn string_format_to_proto(f: bmc_widget_manifest::StringFormat) -> web::StringFo
     }
 }
 
-fn widget_info_to_proto(info: &crate::widget::WidgetInfo) -> web::WidgetManifest {
+fn widget_info_to_proto(
+    info: &crate::widget::WidgetInfo,
+    platform: &PlatformDescriptor,
+) -> web::WidgetManifest {
     let manifest = &info.manifest;
     web::WidgetManifest {
         uid: manifest.uid.to_string(),
         name: manifest.name.clone(),
         description: manifest.description.clone(),
         version: manifest.version.to_string(),
-        supported_sizes: supported_sizes_for_constraints(
-            &BMC100_PLATFORM_DESCRIPTOR,
-            &manifest.supported_viewports,
-        )
-        .into_iter()
-        .map(Into::into)
-        .collect(),
+        supported_sizes: supported_sizes_for_constraints(platform, &manifest.supported_viewports)
+            .into_iter()
+            .map(Into::into)
+            .collect(),
         params: manifest
             .params
             .iter()
@@ -839,10 +886,11 @@ impl GrpcSceneManagementService for SceneManagementService {
         &self,
         _request: Request<()>,
     ) -> Result<Response<web::GetAvailableWidgetsResponse>, Status> {
+        let platform = PlatformDescriptor::from(&self.capabilities);
         let widgets = self
             .widget_registry
             .list()
-            .map(widget_info_to_proto)
+            .map(|info| widget_info_to_proto(info, &platform))
             .collect();
 
         Ok(Response::new(web::GetAvailableWidgetsResponse { widgets }))
@@ -861,7 +909,8 @@ impl GrpcSceneManagementService for SceneManagementService {
             .get(&uid)
             .ok_or_else(|| Status::not_found(format!("widget not found: {uid}")))?;
 
-        Ok(Response::new(widget_info_to_proto(info)))
+        let platform = PlatformDescriptor::from(&self.capabilities);
+        Ok(Response::new(widget_info_to_proto(info, &platform)))
     }
 
     // ── Scene read RPCs (from config) ──────────────────────────────────
@@ -907,9 +956,10 @@ impl GrpcSceneManagementService for SceneManagementService {
             .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
         let manifest = &info.manifest;
 
+        let platform = PlatformDescriptor::from(&self.capabilities);
         if !self
             .widget_registry
-            .supports_viewport(&widget_uid, &BMC100_PLATFORM_DESCRIPTOR.fullscreen)
+            .supports_viewport(&widget_uid, &platform.fullscreen)
         {
             return Err(Status::failed_precondition(format!(
                 "widget {widget_uid} does not support the active fullscreen viewport",
@@ -920,7 +970,10 @@ impl GrpcSceneManagementService for SceneManagementService {
         let typed_params = validate_widget_params(manifest, &params, ValidateMode::Add)
             .map_err(bad_request_status)?;
 
-        let scene = scene::Scene::fullscreen(widget_uid, typed_params);
+        let mut scene = scene::Scene::fullscreen(widget_uid, typed_params);
+        for widget in scene.widgets.values_mut() {
+            stamp_widget_viewport_shape_from_caps(widget, &self.capabilities);
+        }
         let scene_id = scene.id.to_string();
 
         let scene_enabled = scene.enabled;
@@ -944,6 +997,8 @@ impl GrpcSceneManagementService for SceneManagementService {
     }
 
     async fn add_combined_scene(&self, _request: Request<()>) -> Result<Response<String>, Status> {
+        reject_combined_when_no_slot_grid(&self.capabilities)?;
+
         let scene = scene::Scene {
             id: scene::SceneId::generate(),
             enabled: true,
@@ -1217,6 +1272,9 @@ impl GrpcSceneManagementService for SceneManagementService {
                 .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
 
             reject_remove_widget_in_fullscreen(&scene.kind)?;
+            if scene.kind == scene::SceneKind::Combined {
+                reject_combined_when_no_slot_grid(&self.capabilities)?;
+            }
 
             scene
                 .widgets
@@ -1300,8 +1358,8 @@ impl GrpcSceneManagementService for SceneManagementService {
             .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
         let manifest = &info.manifest;
 
-        let Some(descriptor) = BMC100_PLATFORM_DESCRIPTOR.descriptor_for_placement(&placement)
-        else {
+        let platform = PlatformDescriptor::from(&self.capabilities);
+        let Some(descriptor) = platform.descriptor_for_placement(&placement) else {
             return Err(Status::failed_precondition(
                 "size is not supported on this platform",
             ));
@@ -1319,7 +1377,8 @@ impl GrpcSceneManagementService for SceneManagementService {
         let typed_params = validate_widget_params(manifest, &params, ValidateMode::Add)
             .map_err(bad_request_status)?;
 
-        let widget = scene::Widget::new(widget_uid, typed_params, position, placement);
+        let mut widget = scene::Widget::new(widget_uid, typed_params, position, placement);
+        stamp_widget_viewport_shape_from_caps(&mut widget, &self.capabilities);
         let widget_id = widget.id.to_string();
 
         let scene_id_key = scene::SceneId::from(scene_id);
@@ -1332,6 +1391,10 @@ impl GrpcSceneManagementService for SceneManagementService {
                 .scenes
                 .get_mut(&scene_id_key)
                 .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
+
+            if scene.kind == scene::SceneKind::Combined {
+                reject_combined_when_no_slot_grid(&self.capabilities)?;
+            }
 
             validate_widget_placement(scene, &widget, None)?;
 
@@ -1381,6 +1444,9 @@ impl GrpcSceneManagementService for SceneManagementService {
                 .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
 
             reject_update_widget_in_fullscreen(&scene.kind, proto_position, &placement)?;
+            if scene.kind == scene::SceneKind::Combined {
+                reject_combined_when_no_slot_grid(&self.capabilities)?;
+            }
 
             let existing = scene
                 .widgets
@@ -1395,8 +1461,8 @@ impl GrpcSceneManagementService for SceneManagementService {
                 .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
             let manifest = &info.manifest;
 
-            let Some(descriptor) = BMC100_PLATFORM_DESCRIPTOR.descriptor_for_placement(&placement)
-            else {
+            let platform = PlatformDescriptor::from(&self.capabilities);
+            let Some(descriptor) = platform.descriptor_for_placement(&placement) else {
                 return Err(Status::failed_precondition(
                     "size is not supported on this platform",
                 ));
@@ -1419,7 +1485,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             // Build the post-update widget snapshot first so placement
             // validation runs against immutable state. If anything below
             // fails the in-memory ConfigHandle is left untouched.
-            let updated_widget = scene::Widget {
+            let mut updated_widget = scene::Widget {
                 id: widget_id_key,
                 position,
                 placement,
@@ -1427,6 +1493,7 @@ impl GrpcSceneManagementService for SceneManagementService {
                 viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
                 params: typed_params,
             };
+            stamp_widget_viewport_shape_from_caps(&mut updated_widget, &self.capabilities);
             validate_widget_placement(scene, &updated_widget, Some(widget_id_key))?;
 
             scene
@@ -2743,15 +2810,15 @@ mod tests {
 
     #[test]
     fn platform_descriptor_maps_fullscreen_size() {
-        let desc = BMC100_PLATFORM_DESCRIPTOR
+        let desc = bmc100_platform_descriptor()
             .descriptor_for_placement(&scene::WidgetPlacement::Fullscreen)
             .expect("BUG: fullscreen must derive");
-        assert_eq!(desc, BMC100_PLATFORM_DESCRIPTOR.fullscreen);
+        assert_eq!(desc, bmc100_platform_descriptor().fullscreen);
     }
 
     #[test]
     fn platform_descriptor_maps_bmc100_slot_sizes() {
-        let desc = BMC100_PLATFORM_DESCRIPTOR
+        let desc = bmc100_platform_descriptor()
             .descriptor_for_size(web::WidgetSize::Large)
             .expect("BUG: large must derive");
         assert_eq!(desc.width, 638);
@@ -2761,7 +2828,7 @@ mod tests {
     #[test]
     fn platform_descriptor_rejects_unknown_slot_span() {
         assert!(
-            BMC100_PLATFORM_DESCRIPTOR
+            bmc100_platform_descriptor()
                 .descriptor_for_placement(&scene::WidgetPlacement::SlotSpan(scene::SlotSpan {
                     columns: 3,
                     rows: 1
@@ -2782,7 +2849,7 @@ mod tests {
             max_dpi: None,
         }];
         assert_eq!(
-            supported_sizes_for_constraints(&BMC100_PLATFORM_DESCRIPTOR, &constraints),
+            supported_sizes_for_constraints(&bmc100_platform_descriptor(), &constraints),
             vec![web::WidgetSize::Large]
         );
     }
@@ -2799,7 +2866,7 @@ mod tests {
             max_dpi: Some(2),
         }];
         assert!(
-            !supported_sizes_for_constraints(&BMC100_PLATFORM_DESCRIPTOR, &constraints)
+            !supported_sizes_for_constraints(&bmc100_platform_descriptor(), &constraints)
                 .contains(&web::WidgetSize::Large)
         );
     }
@@ -2816,8 +2883,122 @@ mod tests {
             max_dpi: None,
         }];
         assert_eq!(
-            supported_sizes_for_constraints(&BMC100_PLATFORM_DESCRIPTOR, &constraints),
+            supported_sizes_for_constraints(&bmc100_platform_descriptor(), &constraints),
             vec![web::WidgetSize::Full]
         );
+    }
+
+    use crate::compositor::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
+
+    fn caps_with(
+        grid: Option<SlotGrid>,
+        display_shape: DisplayShape,
+        width: u32,
+        height: u32,
+    ) -> HardwareCapabilities {
+        HardwareCapabilities {
+            display: DisplayInfo {
+                width,
+                height,
+                shape: display_shape,
+                dpi: 1,
+            },
+            slot_grid: grid,
+        }
+    }
+
+    fn bmc100_caps(grid: Option<SlotGrid>) -> HardwareCapabilities {
+        caps_with(grid, DisplayShape::Rectangular, 1_280, 480)
+    }
+
+    #[test]
+    fn reject_combined_without_slot_grid_errors() {
+        let err = reject_combined_when_no_slot_grid(&bmc100_caps(None))
+            .expect_err("BUG: must reject combined ops without a slot grid");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+    }
+
+    #[test]
+    fn reject_combined_with_slot_grid_passes() {
+        assert!(
+            reject_combined_when_no_slot_grid(&bmc100_caps(Some(SlotGrid {
+                columns: 4,
+                rows: 2
+            })))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn widget_viewport_shape_from_caps_rectangular() {
+        let caps = caps_with(None, DisplayShape::Rectangular, 320, 240);
+        assert_eq!(
+            widget_viewport_shape_from_caps(&caps),
+            bmc_widget_manifest::DisplayShape::Rectangular,
+        );
+    }
+
+    #[test]
+    fn widget_viewport_shape_from_caps_round() {
+        let caps = caps_with(None, DisplayShape::Round, 480, 480);
+        assert_eq!(
+            widget_viewport_shape_from_caps(&caps),
+            bmc_widget_manifest::DisplayShape::Round,
+        );
+    }
+
+    #[test]
+    fn stamp_widget_viewport_shape_updates_fullscreen_scene_widget() {
+        let caps = caps_with(None, DisplayShape::Round, 480, 480);
+        let mut scene = scene::Scene::fullscreen(Uuid::new_v4(), BTreeMap::new());
+        let widget = scene
+            .widgets
+            .values_mut()
+            .next()
+            .expect("BUG: Scene::fullscreen always contains one widget");
+        stamp_widget_viewport_shape_from_caps(widget, &caps);
+        assert_eq!(
+            widget.viewport_shape,
+            bmc_widget_manifest::DisplayShape::Round,
+        );
+    }
+
+    #[test]
+    fn supported_sizes_use_fullscreen_descriptor_from_capabilities() {
+        let caps = caps_with(None, DisplayShape::Round, 480, 480);
+        let constraints = vec![bmc_widget_manifest::WidgetViewportConstraint {
+            viewport_shape: bmc_widget_manifest::DisplayShape::Round,
+            min_width: Some(480),
+            max_width: Some(480),
+            min_height: Some(480),
+            max_height: Some(480),
+            min_dpi: None,
+            max_dpi: None,
+        }];
+        let platform = PlatformDescriptor::from(&caps);
+        assert_eq!(
+            supported_sizes_for_constraints(&platform, &constraints),
+            vec![web::WidgetSize::Full]
+        );
+    }
+
+    #[test]
+    fn slot_sizes_present_when_slot_grid_present() {
+        let caps = bmc100_caps(Some(SlotGrid {
+            columns: 4,
+            rows: 2,
+        }));
+        let platform = PlatformDescriptor::from(&caps);
+        assert!(
+            !platform.slot_sizes.is_empty(),
+            "slot_grid present → slot sizes emitted"
+        );
+    }
+
+    #[test]
+    fn slot_sizes_empty_when_slot_grid_absent() {
+        let caps = caps_with(None, DisplayShape::Rectangular, 320, 240);
+        let platform = PlatformDescriptor::from(&caps);
+        assert!(platform.slot_sizes.is_empty());
     }
 }
