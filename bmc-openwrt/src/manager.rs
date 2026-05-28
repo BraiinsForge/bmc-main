@@ -295,7 +295,7 @@ impl BmcManager for Manager {
     }
 
     fn platform(&self) -> BosPlatform {
-        BosPlatform::BraiinsBmc
+        BosPlatform::Bmc1
     }
 
     async fn upgrade(&self, keep_settings: bool, upgrade_image_path: &Path) -> anyhow::Result<()> {

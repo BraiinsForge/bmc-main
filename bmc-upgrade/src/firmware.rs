@@ -155,4 +155,6 @@ pub enum FirmwareDownloadError {
     FetchUpgradeDetails,
     #[error("invalid version")]
     InvalidVersion,
+    #[error("platform has no upgrade asset")]
+    UnsupportedPlatform,
 }

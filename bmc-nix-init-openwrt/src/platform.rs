@@ -351,7 +351,7 @@ impl InitPlatform for OpenwrtPlatform {
     }
 
     fn platform(&self) -> bmc_platform::BosPlatform {
-        bmc_platform::BosPlatform::BraiinsBmc
+        bmc_platform::BosPlatform::Bmc1
     }
 
     async fn activate_generation(&self, profile_dir: &Path) -> Result<(), InitError> {

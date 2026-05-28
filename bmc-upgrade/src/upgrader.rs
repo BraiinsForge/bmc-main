@@ -295,7 +295,7 @@ mod tests {
         );
 
         let result = upgrader
-            .check_for_upgrade(BosPlatform::BraiinsBmc, "25.04".to_owned())
+            .check_for_upgrade(BosPlatform::Bmc1, "25.04".to_owned())
             .await;
 
         let detail = result
@@ -314,7 +314,7 @@ mod tests {
         );
 
         let result = upgrader
-            .check_for_upgrade(BosPlatform::BraiinsBmc, "25.06".to_owned())
+            .check_for_upgrade(BosPlatform::Bmc1, "25.06".to_owned())
             .await;
 
         assert!(result.expect("BUG: check failed").is_none());

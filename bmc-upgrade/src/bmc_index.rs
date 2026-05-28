@@ -36,7 +36,8 @@ impl FirmwareIndex for BmcIndex {
         platform: bmc_platform::BosPlatform,
         version: String,
     ) -> Result<Option<Vec<UpgradeMetadata>>, FirmwareDownloadError> {
-        let platform = platform.into();
+        let platform = index_bmc::BmcPlatform::try_from(platform)
+            .map_err(|_| FirmwareDownloadError::UnsupportedPlatform)?;
 
         let version = version
             .parse::<BosVersion>()
