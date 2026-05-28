@@ -12,20 +12,25 @@ use tokio::sync::{broadcast, watch};
 use tracing::{debug, info, warn};
 
 use crate::compositor::{
-    Compositor, CompositorError, Position, SceneLayout, Size, WidgetPlacement,
+    Compositor, CompositorError, HardwareCapabilities, Position, SceneLayout, Size, WidgetPlacement,
 };
 use crate::config::LocalizationConfig;
 use crate::scene::{Scene, SceneId, Widget};
 
 use super::{WidgetManager, WidgetRegistry};
 
-const ACTIVE_FULLSCREEN_DESCRIPTOR: crate::widget::ViewportDescriptor =
+#[must_use]
+pub(crate) fn fullscreen_descriptor_for_widget(
+    widget: &Widget,
+    caps: &HardwareCapabilities,
+) -> crate::widget::ViewportDescriptor {
     crate::widget::ViewportDescriptor {
-        viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
-        width: 1280,
-        height: 480,
-        dpi: 1,
-    };
+        viewport_shape: widget.viewport_shape,
+        width: caps.display.width,
+        height: caps.display.height,
+        dpi: caps.display.dpi,
+    }
+}
 
 fn placement_viewport_size(
     placement: &crate::scene::WidgetPlacement,
@@ -50,16 +55,26 @@ fn manifest_to_protocol_viewport_shape(shape: bmc_widget_manifest::DisplayShape)
     }
 }
 
-fn scene_supported_with_registry(registry: &WidgetRegistry, scene: &Scene) -> bool {
+pub fn scene_supported_with_registry(
+    registry: &WidgetRegistry,
+    scene: &Scene,
+    caps: &HardwareCapabilities,
+) -> bool {
     match scene.kind {
-        crate::scene::SceneKind::Combined => scene.widgets.values().all(|w| match &w.placement {
-            crate::scene::WidgetPlacement::Fullscreen => false,
-            crate::scene::WidgetPlacement::SlotSpan(s) => {
-                crate::widget::slot_span_descriptor(s.columns, s.rows).is_some()
+        crate::scene::SceneKind::Combined => {
+            if caps.slot_grid.is_none() {
+                return false;
             }
-        }),
+            scene.widgets.values().all(|w| match &w.placement {
+                crate::scene::WidgetPlacement::Fullscreen => false,
+                crate::scene::WidgetPlacement::SlotSpan(s) => {
+                    crate::widget::slot_span_descriptor(s.columns, s.rows).is_some()
+                }
+            })
+        }
         crate::scene::SceneKind::Fullscreen => scene.widgets.values().next().is_some_and(|w| {
-            registry.supports_viewport(&w.widget_type_id, &ACTIVE_FULLSCREEN_DESCRIPTOR)
+            let descriptor = fullscreen_descriptor_for_widget(w, caps);
+            registry.supports_viewport(&w.widget_type_id, &descriptor)
         }),
     }
 }
@@ -80,6 +95,7 @@ pub struct Coordinator {
     widget_manager: WidgetManager,
     compositor: Arc<dyn Compositor>,
     widget_registry: Arc<WidgetRegistry>,
+    hardware_capabilities: HardwareCapabilities,
 }
 
 impl std::fmt::Debug for Coordinator {
@@ -95,11 +111,13 @@ impl Coordinator {
         widget_manager: WidgetManager,
         compositor: Arc<dyn Compositor>,
         widget_registry: Arc<WidgetRegistry>,
+        hardware_capabilities: HardwareCapabilities,
     ) -> Self {
         Self {
             widget_manager,
             compositor,
             widget_registry,
+            hardware_capabilities,
         }
     }
 
@@ -238,7 +256,7 @@ impl Coordinator {
         let layouts: Vec<_> = scenes
             .values()
             .filter(|s| s.enabled && self.scene_supported(s))
-            .map(Self::scene_to_layout)
+            .map(|s| self.scene_to_layout(s))
             .collect();
         debug!(
             count = layouts.len(),
@@ -269,8 +287,9 @@ impl Coordinator {
     pub async fn spawn_widget(&self, scene_id: &crate::scene::SceneId, widget: &Widget) {
         let instance_id = widget.id.as_uuid().to_string();
         let position = Self::widget_to_position(widget);
-        let Some(viewport) =
-            placement_viewport_size(&widget.placement, &ACTIVE_FULLSCREEN_DESCRIPTOR)
+        let fullscreen_descriptor =
+            fullscreen_descriptor_for_widget(widget, &self.hardware_capabilities);
+        let Some(viewport) = placement_viewport_size(&widget.placement, &fullscreen_descriptor)
         else {
             warn!(
                 placement = ?widget.placement,
@@ -408,7 +427,7 @@ impl Coordinator {
             return;
         }
 
-        let layout = Self::scene_to_layout(scene);
+        let layout = self.scene_to_layout(scene);
         info!(
             scene_id = %scene.id,
             widget_count = layout.widgets.len(),
@@ -431,16 +450,17 @@ impl Coordinator {
     }
 
     fn scene_supported(&self, scene: &Scene) -> bool {
-        scene_supported_with_registry(&self.widget_registry, scene)
+        scene_supported_with_registry(&self.widget_registry, scene, &self.hardware_capabilities)
     }
 
-    fn scene_to_layout(scene: &Scene) -> SceneLayout {
+    fn scene_to_layout(&self, scene: &Scene) -> SceneLayout {
         let widgets = scene
             .widgets
             .values()
             .filter_map(|widget| {
-                let Some(size) =
-                    placement_viewport_size(&widget.placement, &ACTIVE_FULLSCREEN_DESCRIPTOR)
+                let fullscreen_descriptor =
+                    fullscreen_descriptor_for_widget(widget, &self.hardware_capabilities);
+                let Some(size) = placement_viewport_size(&widget.placement, &fullscreen_descriptor)
                 else {
                     debug!(
                         placement = ?widget.placement,
@@ -499,8 +519,24 @@ fn params_to_json_map(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compositor::{DisplayInfo, DisplayShape as CompositorDisplayShape, SlotGrid};
     use crate::widget::ViewportDescriptor;
     use bmc_widget_manifest::DisplayShape;
+
+    fn bmc100_capabilities() -> HardwareCapabilities {
+        HardwareCapabilities {
+            display: DisplayInfo {
+                width: 1280,
+                height: 480,
+                shape: CompositorDisplayShape::Rectangular,
+                dpi: 1,
+            },
+            slot_grid: Some(SlotGrid {
+                columns: 4,
+                rows: 2,
+            }),
+        }
+    }
 
     #[test]
     fn placement_viewport_for_fullscreen_is_active_display() {
@@ -541,7 +577,7 @@ mod tests {
         let registry = WidgetRegistry::new(vec![]);
         let scene = crate::scene::Scene::fullscreen(uuid::Uuid::new_v4(), BTreeMap::new());
         assert!(
-            !scene_supported_with_registry(&registry, &scene),
+            !scene_supported_with_registry(&registry, &scene, &bmc100_capabilities()),
             "BUG: fullscreen scene whose widget is absent from the registry must be unsupported",
         );
     }
@@ -561,7 +597,7 @@ mod tests {
         );
         scene.widgets.insert(widget.id, widget);
         assert!(
-            !scene_supported_with_registry(&registry, &scene),
+            !scene_supported_with_registry(&registry, &scene, &bmc100_capabilities()),
             "BUG: combined scene with a non-allow-list span must be unsupported",
         );
     }
@@ -581,8 +617,167 @@ mod tests {
         );
         scene.widgets.insert(widget.id, widget);
         assert!(
-            scene_supported_with_registry(&registry, &scene),
+            scene_supported_with_registry(&registry, &scene, &bmc100_capabilities()),
             "BUG: combined scene with an allow-list span must be supported",
         );
+    }
+}
+
+#[cfg(test)]
+mod support_tests {
+    use super::{fullscreen_descriptor_for_widget, scene_supported_with_registry};
+    use crate::compositor::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
+    use crate::scene::{Scene, Widget};
+    use crate::widget::{ViewportDescriptor, WidgetInfo, WidgetRegistry};
+    use bmc_widget_manifest::{
+        DisplayShape as ManifestDisplayShape, Manifest, WidgetViewportConstraint,
+    };
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    fn caps(
+        slot_grid: Option<SlotGrid>,
+        width: u32,
+        height: u32,
+        display_shape: DisplayShape,
+    ) -> HardwareCapabilities {
+        HardwareCapabilities {
+            display: DisplayInfo {
+                width,
+                height,
+                shape: display_shape,
+                dpi: 1,
+            },
+            slot_grid,
+        }
+    }
+
+    fn registry_with_widget(uid: Uuid, constraint: WidgetViewportConstraint) -> WidgetRegistry {
+        let manifest = Manifest {
+            uid,
+            version: semver::Version::new(1, 0, 0),
+            name: "test-widget".to_owned(),
+            description: "Test widget".to_owned(),
+            author: None,
+            binary: PathBuf::from("bin/widget"),
+            settings: vec![],
+            supported_viewports: vec![constraint],
+            params: indexmap::IndexMap::new(),
+        };
+        WidgetRegistry::new(vec![WidgetInfo {
+            manifest,
+            widget_dir: PathBuf::from("/test/widgets/test-widget"),
+            binary_path: PathBuf::from("/test/widgets/test-widget/bin/widget"),
+        }])
+    }
+
+    fn fullscreen_scene_with(widget_type_id: Uuid, viewport_shape: ManifestDisplayShape) -> Scene {
+        let mut scene = Scene::fullscreen(widget_type_id, BTreeMap::new());
+        for widget in scene.widgets.values_mut() {
+            widget.viewport_shape = viewport_shape;
+        }
+        scene
+    }
+
+    fn fullscreen_widget(widget_type_id: Uuid, viewport_shape: ManifestDisplayShape) -> Widget {
+        fullscreen_scene_with(widget_type_id, viewport_shape)
+            .widgets
+            .into_values()
+            .next()
+            .expect("BUG: Scene::fullscreen always contains one widget")
+    }
+
+    #[test]
+    fn fullscreen_descriptor_for_widget_uses_widget_viewport_shape() {
+        let widget = fullscreen_widget(Uuid::new_v4(), ManifestDisplayShape::Round);
+        let bmc = caps(None, 1_280, 480, DisplayShape::Rectangular);
+        assert_eq!(
+            fullscreen_descriptor_for_widget(&widget, &bmc),
+            ViewportDescriptor {
+                viewport_shape: ManifestDisplayShape::Round,
+                width: 1_280,
+                height: 480,
+                dpi: 1,
+            },
+        );
+    }
+
+    #[test]
+    fn combined_scene_unsupported_without_slot_grid() {
+        let scene = Scene::combined();
+        let registry = WidgetRegistry::new(std::iter::empty());
+        let no_grid = caps(None, 320, 240, DisplayShape::Rectangular);
+        assert!(!scene_supported_with_registry(&registry, &scene, &no_grid));
+    }
+
+    #[test]
+    fn combined_scene_supported_with_slot_grid() {
+        let scene = Scene::combined();
+        let registry = WidgetRegistry::new(std::iter::empty());
+        let grid = caps(
+            Some(SlotGrid {
+                columns: 4,
+                rows: 2,
+            }),
+            1_280,
+            480,
+            DisplayShape::Rectangular,
+        );
+        assert!(scene_supported_with_registry(&registry, &scene, &grid));
+    }
+
+    #[test]
+    fn fullscreen_scene_unsupported_when_manifest_rejects_descriptor() {
+        let widget_type_id = Uuid::new_v4();
+        let constraint = WidgetViewportConstraint {
+            viewport_shape: ManifestDisplayShape::Rectangular,
+            min_width: Some(1_280),
+            max_width: Some(1_280),
+            min_height: Some(480),
+            max_height: Some(480),
+            min_dpi: None,
+            max_dpi: None,
+        };
+        let registry = registry_with_widget(widget_type_id, constraint);
+        let scene = fullscreen_scene_with(widget_type_id, ManifestDisplayShape::Rectangular);
+        let bmm = caps(None, 320, 240, DisplayShape::Rectangular);
+        assert!(!scene_supported_with_registry(&registry, &scene, &bmm));
+    }
+
+    #[test]
+    fn fullscreen_scene_supported_when_manifest_accepts_descriptor() {
+        let widget_type_id = Uuid::new_v4();
+        let constraint = WidgetViewportConstraint {
+            viewport_shape: ManifestDisplayShape::Rectangular,
+            min_width: Some(1_280),
+            max_width: Some(1_280),
+            min_height: Some(480),
+            max_height: Some(480),
+            min_dpi: None,
+            max_dpi: None,
+        };
+        let registry = registry_with_widget(widget_type_id, constraint);
+        let scene = fullscreen_scene_with(widget_type_id, ManifestDisplayShape::Rectangular);
+        let bmc = caps(None, 1_280, 480, DisplayShape::Rectangular);
+        assert!(scene_supported_with_registry(&registry, &scene, &bmc));
+    }
+
+    #[test]
+    fn fullscreen_descriptor_carries_widget_viewport_shape_to_matcher() {
+        let widget_type_id = Uuid::new_v4();
+        let constraint = WidgetViewportConstraint {
+            viewport_shape: ManifestDisplayShape::Round,
+            min_width: Some(480),
+            max_width: Some(480),
+            min_height: Some(480),
+            max_height: Some(480),
+            min_dpi: None,
+            max_dpi: None,
+        };
+        let registry = registry_with_widget(widget_type_id, constraint);
+        let scene = fullscreen_scene_with(widget_type_id, ManifestDisplayShape::Round);
+        let bfm = caps(None, 480, 480, DisplayShape::Round);
+        assert!(scene_supported_with_registry(&registry, &scene, &bfm));
     }
 }
