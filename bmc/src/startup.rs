@@ -184,6 +184,7 @@ where
             widget_manager,
             compositor.clone(),
             widget_registry.clone(),
+            hardware_capabilities,
         ));
 
         let compositor_for_wake = compositor.clone();
