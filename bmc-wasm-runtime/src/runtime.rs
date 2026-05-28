@@ -19,6 +19,7 @@ pub(crate) use background::build_fetch_agent;
 // and through `super::encode_params` from this module's tests.
 pub(crate) use imports::params::ParamsSnapshot;
 
+pub use backend::DisplayInfo as RuntimeDisplayInfo;
 pub use backend::{
     FetchInterceptor, FetchObserver, RenderStatus, RuntimeConfig, RuntimeResourceLimits,
     WasmWidgetRuntime,

@@ -299,8 +299,15 @@ fn build_runtime_with_system(
         system: initial_system,
         ..RuntimeConfig::default()
     };
-    let runtime =
-        WasmWidgetRuntime::new(&wasm, 320, 240, config).expect("BUG: probe runtime must construct");
+    let runtime = WasmWidgetRuntime::new(
+        &wasm,
+        320,
+        240,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(320, 240),
+        config,
+    )
+    .expect("BUG: probe runtime must construct");
     (runtime, renderer)
 }
 

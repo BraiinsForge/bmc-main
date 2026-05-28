@@ -7,6 +7,19 @@
 //! binary. Each integration test that needs a helper here declares
 //! `mod common;` at the top.
 
+/// Rectangular logical display matching a test viewport. The runtime has no
+/// display default by design, so tests that do not exercise geometry supply
+/// this explicit fixture rather than relying on a fabricated default.
+#[must_use]
+pub fn test_display(width: u32, height: u32) -> bmc_wasm_runtime::RuntimeDisplayInfo {
+    bmc_wasm_runtime::RuntimeDisplayInfo {
+        width,
+        height,
+        shape: bmc_wasm_protocol::DisplayShape::Rectangular,
+        dpi: 1,
+    }
+}
+
 pub mod headless_egl {
     use anyhow::{Context, Result};
     use glutin::api::egl::device::Device;
