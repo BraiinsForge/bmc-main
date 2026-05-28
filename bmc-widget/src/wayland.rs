@@ -630,7 +630,7 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
                     state.pending_events.push(WidgetEvent::Lifecycle(s));
                 }
             }
-            _ => {}
+            Event::DisplayInfo { .. } | _ => {}
         }
     }
 }
