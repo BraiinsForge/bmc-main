@@ -275,6 +275,15 @@
       <entry name="full" value="3"/>
     </enum>
 
+    <enum name="display_shape">
+      <description summary="visible display shape">
+        Shape of the visible display area. Advisory layout metadata; the
+        widget coordinate space stays rectangular regardless of shape.
+      </description>
+      <entry name="rectangular" value="0"/>
+      <entry name="round" value="1"/>
+    </enum>
+
     <enum name="night_mode_state">
       <entry name="off" value="0"/>
       <entry name="on" value="1"/>
