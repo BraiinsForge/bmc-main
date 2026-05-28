@@ -5,6 +5,7 @@ import {
     AlarmService,
     AuthenticationService,
     ConfigurationService,
+    HardwareService,
     InitialSetupService,
     MetadataService,
     NetworkService,
@@ -21,6 +22,7 @@ export const rpc = {
     auth: getClient(AuthenticationService),
     alarm: getClient(AlarmService),
     config: getClient(ConfigurationService),
+    hardware: getClient(HardwareService),
     meta: getClient(MetadataService),
     net: getClient(NetworkService),
     sys: getClient(SystemService),
@@ -32,6 +34,7 @@ export const rpc = {
 export const services = {
     AccountManagementService,
     AuthenticationService,
+    HardwareService,
     InitialSetupService,
     MetadataService,
     SceneManagementService,
