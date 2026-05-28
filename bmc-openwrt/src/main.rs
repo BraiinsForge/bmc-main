@@ -9,6 +9,7 @@ use bmc::BmcManager;
 use bmc::Configuration;
 use bmc::compositor::Compositor;
 use bmc_led::apa102_spi::platform_led_driver::PlatformLedDriver;
+use bmc_led::disabled::DisabledLedDriver;
 use bmc_led::led_driver::LedDriverFactory;
 use bmc_openwrt::cli::Parser;
 use bmc_openwrt::compositor::EglCompositor;
@@ -33,6 +34,18 @@ const WIFI_PATH_HUBLESS: &str = "/sys/devices/platform/soc/5800d000.usbh-ehci/us
 const WIFI_PATH_HUBBED: &str =
     "/sys/devices/platform/soc/5800d000.usbh-ehci/usb3/3-1/3-1.1/3-1.1:1.0/";
 
+fn led_driver_for_profile(
+    profile: &bmc_platform::HardwareProfile,
+) -> bmc_led::led_driver::LedDriver {
+    match profile.led_strip.as_ref() {
+        Some(strip) => {
+            let device = strip.device.to_string_lossy().into_owned();
+            PlatformLedDriver::new(&device).0
+        }
+        None => DisabledLedDriver::new("/dev/null").0,
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -40,8 +53,6 @@ async fn main() -> Result<()> {
     bmc_openwrt::log::init(args.log_to_file);
 
     panic::set_hook(build_panic_hook_with_tracing());
-
-    let led_driver = PlatformLedDriver::new("/dev/spidev0.0");
 
     let mut config = Configuration {
         widgets_paths: args
@@ -123,6 +134,8 @@ async fn main() -> Result<()> {
     let profile = bmc_platform::HardwareProfile::for_product(manager.platform().product());
     info!(product = ?profile.product, "resolved hardware profile");
 
+    let led_driver = led_driver_for_profile(&profile);
+
     let Some(backlight_path) = profile.paths.backlight.as_ref() else {
         bail!(
             "hardware profile {:?} has no backlight path",
@@ -148,7 +161,7 @@ async fn main() -> Result<()> {
         manager,
         config,
         backlight_driver,
-        led_driver.0,
+        led_driver,
         bmc_index,
         Arc::new(Box::new(UEventButtons)),
         compositor,
