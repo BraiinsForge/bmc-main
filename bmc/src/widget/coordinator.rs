@@ -55,6 +55,28 @@ fn manifest_to_protocol_viewport_shape(shape: bmc_widget_manifest::DisplayShape)
     }
 }
 
+pub fn supported_scenes<'a>(
+    registry: &WidgetRegistry,
+    caps: &HardwareCapabilities,
+    scenes: &'a IndexMap<SceneId, Scene>,
+) -> Vec<&'a Scene> {
+    scenes
+        .values()
+        .filter(|s| s.enabled && scene_supported_with_registry(registry, s, caps))
+        .collect()
+}
+
+pub fn first_supported_active_scene<'a>(
+    registry: &WidgetRegistry,
+    caps: &HardwareCapabilities,
+    scenes: &'a IndexMap<SceneId, Scene>,
+) -> Option<&'a Scene> {
+    scenes
+        .values()
+        .filter(|s| s.enabled)
+        .find(|s| scene_supported_with_registry(registry, s, caps))
+}
+
 pub fn scene_supported_with_registry(
     registry: &WidgetRegistry,
     scene: &Scene,
@@ -238,13 +260,23 @@ impl Coordinator {
             let _ = self.compositor.broadcast_setting(setting);
         }
 
-        let enabled_count = scenes.values().filter(|s| s.enabled).count();
-        info!(count = enabled_count, "spawning widgets for enabled scenes");
-        for scene in scenes.values().filter(|s| s.enabled) {
+        let supported =
+            supported_scenes(&self.widget_registry, &self.hardware_capabilities, scenes);
+        info!(
+            count = supported.len(),
+            "spawning widgets for enabled scenes"
+        );
+        for scene in supported {
             self.spawn_scene_widgets(scene).await;
         }
 
         self.refresh_scene_cycling(scenes);
+
+        if let Some(scene) =
+            first_supported_active_scene(&self.widget_registry, &self.hardware_capabilities, scenes)
+        {
+            self.set_active_scene(scene);
+        }
 
         info!("all scene widgets spawned");
     }
@@ -253,11 +285,11 @@ impl Coordinator {
     /// drag-cycling state. Call after any scene-set or widget-layout
     /// mutation so swipe targets the post-mutation layouts.
     pub fn refresh_scene_cycling(&self, scenes: &IndexMap<SceneId, Scene>) {
-        let layouts: Vec<_> = scenes
-            .values()
-            .filter(|s| s.enabled && self.scene_supported(s))
-            .map(|s| self.scene_to_layout(s))
-            .collect();
+        let layouts: Vec<_> =
+            supported_scenes(&self.widget_registry, &self.hardware_capabilities, scenes)
+                .into_iter()
+                .map(|s| self.scene_to_layout(s))
+                .collect();
         debug!(
             count = layouts.len(),
             "refreshing scene cycling on compositor"
@@ -779,5 +811,73 @@ mod support_tests {
         let scene = fullscreen_scene_with(widget_type_id, ManifestDisplayShape::Round);
         let bfm = caps(None, 480, 480, DisplayShape::Round);
         assert!(scene_supported_with_registry(&registry, &scene, &bfm));
+    }
+
+    use super::{first_supported_active_scene, supported_scenes};
+    use crate::scene::SceneId;
+    use indexmap::IndexMap;
+
+    #[test]
+    fn filters_out_unsupported_scenes() {
+        let widget_uid = Uuid::new_v4();
+        let registry = registry_with_widget(
+            widget_uid,
+            WidgetViewportConstraint {
+                viewport_shape: ManifestDisplayShape::Rectangular,
+                min_width: Some(320),
+                max_width: Some(320),
+                min_height: Some(240),
+                max_height: Some(240),
+                min_dpi: None,
+                max_dpi: None,
+            },
+        );
+        let mut scenes: IndexMap<SceneId, Scene> = IndexMap::new();
+        let combined = Scene::combined();
+        let full = Scene::fullscreen(widget_uid, BTreeMap::new());
+        scenes.insert(combined.id, combined);
+        scenes.insert(full.id, full.clone());
+        let bmm = caps(None, 320, 240, DisplayShape::Rectangular);
+        let supported = supported_scenes(&registry, &bmm, &scenes);
+        assert_eq!(supported.len(), 1);
+        assert_eq!(supported[0].id, full.id);
+    }
+
+    #[test]
+    fn no_active_scene_when_all_unsupported() {
+        let mut scenes: IndexMap<SceneId, Scene> = IndexMap::new();
+        let combined = Scene::combined();
+        scenes.insert(combined.id, combined);
+        let registry = WidgetRegistry::new(std::iter::empty());
+        let bmm = caps(None, 320, 240, DisplayShape::Rectangular);
+        assert!(first_supported_active_scene(&registry, &bmm, &scenes).is_none());
+    }
+
+    #[test]
+    fn first_supported_scene_skips_unsupported() {
+        let widget_uid = Uuid::new_v4();
+        let registry = registry_with_widget(
+            widget_uid,
+            WidgetViewportConstraint {
+                viewport_shape: ManifestDisplayShape::Rectangular,
+                min_width: Some(320),
+                max_width: Some(320),
+                min_height: Some(240),
+                max_height: Some(240),
+                min_dpi: None,
+                max_dpi: None,
+            },
+        );
+        let mut scenes: IndexMap<SceneId, Scene> = IndexMap::new();
+        let combined = Scene::combined();
+        let full = Scene::fullscreen(widget_uid, BTreeMap::new());
+        let combined_id = combined.id;
+        let full_id = full.id;
+        scenes.insert(combined_id, combined);
+        scenes.insert(full_id, full);
+        let bmm = caps(None, 320, 240, DisplayShape::Rectangular);
+        let chosen = first_supported_active_scene(&registry, &bmm, &scenes)
+            .expect("BUG: full scene supported on BMM");
+        assert_eq!(chosen.id, full_id);
     }
 }
