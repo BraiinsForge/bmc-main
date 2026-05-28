@@ -12,7 +12,7 @@
 //! `wl_seat`/`wl_touch`, and DMA-BUF buffer management.
 
 use bmc_widget_protocol::{
-    ActionPayload, NextAlarm, SettingUpdate, SizeType,
+    ActionPayload, NextAlarm, SettingUpdate, ViewportShape,
     client::{
         deck_widget_manager_v1::DeckWidgetManagerV1, deck_widget_surface_v1::DeckWidgetSurfaceV1,
     },
@@ -38,9 +38,9 @@ const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(10);
 /// so the widget does not handle non-optional values by defaults.
 #[derive(Debug, Clone)]
 pub struct ProtocolInitialState {
-    pub size: SizeType,
     pub width: u32,
     pub height: u32,
+    pub viewport_shape: ViewportShape,
     pub display: bmc_widget_protocol::DisplayInfo,
     pub params: serde_json::Map<String, serde_json::Value>,
     pub settings: Vec<SettingUpdate>,
@@ -111,7 +111,7 @@ struct WidgetState {
 
     // Initial configure batch accumulation.
     configure_done: bool,
-    pending_size: Option<(SizeType, u32, u32)>,
+    pending_size: Option<(ViewportShape, u32, u32)>,
     pending_display: Option<bmc_widget_protocol::DisplayInfo>,
     pending_params: serde_json::Map<String, serde_json::Value>,
     pending_initial_settings: Vec<SettingUpdate>,
@@ -313,7 +313,7 @@ impl WidgetProtocolClient {
                 return Err(timeout_err());
             }
         }
-        let (size, width, height) = self.state.pending_size.ok_or_else(|| {
+        let (viewport_shape, width, height) = self.state.pending_size.ok_or_else(|| {
             WaylandError::Backend(
                 bmc_widget_protocol::wayland_client::backend::WaylandError::Io(
                     std::io::Error::new(
@@ -324,9 +324,9 @@ impl WidgetProtocolClient {
             )
         })?;
         Ok(ProtocolInitialState {
-            size,
             width,
             height,
+            viewport_shape,
             display: resolve_display(self.state.pending_display.take()),
             params: std::mem::take(&mut self.state.pending_params),
             settings: std::mem::take(&mut self.state.pending_initial_settings),
@@ -480,36 +480,58 @@ fn resolve_display(
     pending.unwrap_or(bmc_widget_protocol::DisplayInfo::BMC100)
 }
 
-fn display_shape_from_protocol(
-    w: bmc_widget_protocol::wayland_client::WEnum<
-        bmc_widget_protocol::client::deck_widget_surface_v1::DisplayShape,
+fn apply_configure_event(
+    state: &mut WidgetState,
+    width: u32,
+    height: u32,
+    viewport_shape: bmc_widget_protocol::wayland_client::WEnum<
+        bmc_widget_protocol::client::deck_widget_surface_v1::ViewportShape,
     >,
-) -> Option<bmc_widget_protocol::DisplayShape> {
-    use bmc_widget_protocol::client::deck_widget_surface_v1::DisplayShape as P;
-    match w.into_result().ok()? {
-        P::Rectangular => Some(bmc_widget_protocol::DisplayShape::Rectangular),
-        P::Round => Some(bmc_widget_protocol::DisplayShape::Round),
-        _ => None,
-    }
+) {
+    use bmc_widget_protocol::wayland_client::WEnum;
+    let Some(shape) = (match viewport_shape {
+        WEnum::Value(v) => Some(v.into()),
+        WEnum::Unknown(value) => {
+            tracing::warn!(
+                value,
+                "configure event carries unknown viewport_shape; ignoring event"
+            );
+            None
+        }
+    }) else {
+        return;
+    };
+    state.pending_size = Some((shape, width, height));
 }
 
 fn apply_display_info_event(
     state: &mut WidgetState,
-    display_width: u32,
-    display_height: u32,
-    display_shape: bmc_widget_protocol::wayland_client::WEnum<
+    width: u32,
+    height: u32,
+    shape: bmc_widget_protocol::wayland_client::WEnum<
         bmc_widget_protocol::client::deck_widget_surface_v1::DisplayShape,
     >,
     dpi: u32,
 ) {
-    if let Some(shape) = display_shape_from_protocol(display_shape) {
-        state.pending_display = Some(bmc_widget_protocol::DisplayInfo {
-            width: display_width,
-            height: display_height,
-            shape,
-            dpi,
-        });
-    }
+    use bmc_widget_protocol::wayland_client::WEnum;
+    let Some(shape) = (match shape {
+        WEnum::Value(v) => Some(v.into()),
+        WEnum::Unknown(value) => {
+            tracing::warn!(
+                value,
+                "display_info event carries unknown display_shape;  event"
+            );
+            None
+        }
+    }) else {
+        return;
+    };
+    state.pending_display = Some(bmc_widget_protocol::DisplayInfo {
+        width,
+        height,
+        shape,
+        dpi,
+    });
 }
 
 // Wayland dispatch implementations
@@ -567,7 +589,6 @@ impl Dispatch<DeckWidgetManagerV1, ()> for WidgetState {
 }
 
 impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
-    #[expect(clippy::too_many_lines)]
     fn event(
         state: &mut Self,
         _proxy: &DeckWidgetSurfaceV1,
@@ -577,25 +598,13 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
         _qh: &QueueHandle<Self>,
     ) {
         use bmc_widget_protocol::client::deck_widget_surface_v1::Event;
-        use bmc_widget_protocol::wayland_client::WEnum;
 
         match event {
             Event::Configure {
-                size_type,
                 width,
                 height,
-            } => {
-                use bmc_widget_protocol::client::deck_widget_surface_v1::SizeType as P;
-                let size = match size_type {
-                    WEnum::Value(P::Small) => Some(SizeType::Small),
-                    WEnum::Value(P::Medium) => Some(SizeType::Medium),
-                    WEnum::Value(P::Large) => Some(SizeType::Large),
-                    WEnum::Value(P::Full) => Some(SizeType::Full),
-                    WEnum::Value(_) | WEnum::Unknown(_) => None,
-                }
-                .unwrap_or(SizeType::Small);
-                state.pending_size = Some((size, width, height));
-            }
+                viewport_shape,
+            } => apply_configure_event(state, width, height, viewport_shape),
             Event::Params { json } => handle_params_json(
                 &mut state.pending_params,
                 &mut state.pending_events,
@@ -674,11 +683,11 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
                 }
             }
             Event::DisplayInfo {
-                display_width,
-                display_height,
-                display_shape,
+                width,
+                height,
+                shape,
                 dpi,
-            } => apply_display_info_event(state, display_width, display_height, display_shape, dpi),
+            } => apply_display_info_event(state, width, height, shape, dpi),
             _ => {}
         }
     }
@@ -832,5 +841,19 @@ mod tests {
                 dpi: 1,
             }),
         );
+    }
+
+    #[test]
+    fn configure_event_populates_viewport_shape() {
+        use bmc_widget_protocol::client::deck_widget_surface_v1::ViewportShape as P;
+        use bmc_widget_protocol::wayland_client::WEnum;
+        let mut state = test_widget_state();
+        apply_configure_event(&mut state, 317, 238, WEnum::Value(P::Round));
+        let (viewport_shape, width, height) = state
+            .pending_size
+            .expect("BUG: pending_size must be set after configure");
+        assert_eq!(viewport_shape, ViewportShape::Round);
+        assert_eq!(width, 317);
+        assert_eq!(height, 238);
     }
 }

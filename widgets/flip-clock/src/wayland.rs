@@ -152,10 +152,10 @@ pub fn connect_production() -> Result<(DeckWidgetSurfaceClient, bmc_widget::surf
 {
     let (surface, initial) = DeckWidgetSurfaceClient::connect()?;
     tracing::info!(
-        "Connected to Wayland display (production mode): {}x{} size={:?}",
+        "Connected to Wayland display (production mode): {}x{} viewport_shape={:?}",
         initial.width,
         initial.height,
-        initial.size
+        initial.viewport_shape
     );
     Ok((surface, initial))
 }

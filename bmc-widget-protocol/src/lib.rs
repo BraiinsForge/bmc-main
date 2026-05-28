@@ -65,6 +65,6 @@ pub use bmc_shared_utils::unit_system::UnitSystem;
 pub use client::deck_widget_surface_v1::LifecycleState;
 pub use types::{
     ActionPayload, DisplayInfo, DisplayShape, LedEffect, Localization, NextAlarm, RgbColor,
-    SettingUpdate, Settings, SizeInfo, SizeType, WidgetInitialConfig,
+    SettingUpdate, Settings, ViewportShape, WidgetInitialConfig,
 };
 pub use wayland_client;

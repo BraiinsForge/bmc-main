@@ -8,23 +8,17 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum SizeType {
-    Small,
-    Medium,
-    Large,
-    Full,
+pub enum DisplayShape {
+    Rectangular,
+    Round,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SizeInfo {
-    pub name: SizeType,
-    pub width: u32,
-    pub height: u32,
-}
-
+/// Widget viewport shape. Mirrors the Wayland `viewport_shape` enum.
+/// Declared separately from `DisplayShape` so the two can diverge in
+/// future versions of the protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum DisplayShape {
+pub enum ViewportShape {
     Rectangular,
     Round,
 }
@@ -58,9 +52,10 @@ impl DisplayInfo {
 /// (`configure`, `params`, setting events, `configure_done`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WidgetInitialConfig {
-    pub size: SizeType,
     pub width: u32,
     pub height: u32,
+    #[serde(default = "default_viewport_shape")]
+    pub viewport_shape: ViewportShape,
     /// Active display geometry/shape emitted to the widget as `display_info`.
     /// Defaults to the BMC100 Deck display so records written before this
     /// field existed still deserialize.
@@ -72,8 +67,50 @@ pub struct WidgetInitialConfig {
     pub params: serde_json::Map<String, serde_json::Value>,
 }
 
+fn default_viewport_shape() -> ViewportShape {
+    ViewportShape::Rectangular
+}
+
 fn default_display_info() -> DisplayInfo {
     DisplayInfo::BMC100
+}
+
+impl From<DisplayShape> for crate::server::deck_widget_surface_v1::DisplayShape {
+    fn from(shape: DisplayShape) -> Self {
+        match shape {
+            DisplayShape::Rectangular => Self::Rectangular,
+            DisplayShape::Round => Self::Round,
+        }
+    }
+}
+
+impl From<crate::client::deck_widget_surface_v1::DisplayShape> for DisplayShape {
+    fn from(wire: crate::client::deck_widget_surface_v1::DisplayShape) -> Self {
+        use crate::client::deck_widget_surface_v1::DisplayShape as P;
+        match wire {
+            P::Rectangular => Self::Rectangular,
+            P::Round => Self::Round,
+        }
+    }
+}
+
+impl From<ViewportShape> for crate::server::deck_widget_surface_v1::ViewportShape {
+    fn from(shape: ViewportShape) -> Self {
+        match shape {
+            ViewportShape::Rectangular => Self::Rectangular,
+            ViewportShape::Round => Self::Round,
+        }
+    }
+}
+
+impl From<crate::client::deck_widget_surface_v1::ViewportShape> for ViewportShape {
+    fn from(wire: crate::client::deck_widget_surface_v1::ViewportShape) -> Self {
+        use crate::client::deck_widget_surface_v1::ViewportShape as P;
+        match wire {
+            P::Rectangular => Self::Rectangular,
+            P::Round => Self::Round,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,36 +252,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn size_type_serializes_lowercase() {
-        assert_eq!(
-            serde_json::to_string(&SizeType::Small).expect("BUG: serialization should not fail"),
-            r#""small""#
-        );
-        assert_eq!(
-            serde_json::to_string(&SizeType::Medium).expect("BUG: serialization should not fail"),
-            r#""medium""#
-        );
-        assert_eq!(
-            serde_json::to_string(&SizeType::Large).expect("BUG: serialization should not fail"),
-            r#""large""#
-        );
-        assert_eq!(
-            serde_json::to_string(&SizeType::Full).expect("BUG: serialization should not fail"),
-            r#""full""#
-        );
-    }
-
-    #[test]
-    fn size_info_serializes_correctly() {
-        let size = SizeInfo {
-            name: SizeType::Large,
-            width: 638,
-            height: 480,
-        };
-        let json = serde_json::to_value(&size).expect("BUG: serialization should not fail");
-        assert_eq!(json["name"], "large");
-        assert_eq!(json["width"], 638);
-        assert_eq!(json["height"], 480);
+    fn widget_initial_config_defaults_viewport_shape_to_rectangular() {
+        let json = r#"{ "width": 317, "height": 238 }"#;
+        let config: WidgetInitialConfig = serde_json::from_str(json).expect("BUG: parse");
+        assert_eq!(config.viewport_shape, ViewportShape::Rectangular);
     }
 
     #[test]
@@ -329,7 +340,7 @@ mod tests {
 
     #[test]
     fn widget_initial_config_defaults_display_to_bmc100_when_absent() {
-        let json = r#"{ "size": "small", "width": 100, "height": 100 }"#;
+        let json = r#"{ "width": 100, "height": 100 }"#;
         let config: WidgetInitialConfig =
             serde_json::from_str(json).expect("BUG: config should deserialize");
         assert_eq!(config.display, DisplayInfo::BMC100);

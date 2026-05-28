@@ -49,14 +49,12 @@ impl From<FontStyleKind> for FontStyle {
     }
 }
 
-impl From<bmc_widget_protocol::SizeType> for WidgetSize {
-    fn from(size: bmc_widget_protocol::SizeType) -> Self {
-        match size {
-            bmc_widget_protocol::SizeType::Small => Self::Small,
-            bmc_widget_protocol::SizeType::Medium => Self::Medium,
-            bmc_widget_protocol::SizeType::Large => Self::Large,
-            bmc_widget_protocol::SizeType::Full => Self::Full,
-        }
+fn widget_size_from_dimensions(width: u32, height: u32) -> WidgetSize {
+    match (width, height) {
+        (1280, _) => WidgetSize::Full,
+        (_, 480) => WidgetSize::Large,
+        (_, 238) if width >= 638 => WidgetSize::Medium,
+        _ => WidgetSize::Small,
     }
 }
 
@@ -89,7 +87,7 @@ fn build_initial_config(initial: &ProtocolInitialState) -> Result<InitialConfig,
     let mut config = Config {
         width: initial.width,
         height: initial.height,
-        size: initial.size.into(),
+        size: widget_size_from_dimensions(initial.width, initial.height),
         show_seconds: params.show_seconds,
         show_timezone: params.show_timezone,
         font_style: FontStyle::from(params.font_style),

@@ -13,16 +13,15 @@ use wayland_client::{
 };
 use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1;
 
-use bmc_widget_protocol::SizeType;
 use bmc_widget_protocol::client::{
     deck_widget_manager_v1::DeckWidgetManagerV1,
     deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
 };
+use bmc_widget_protocol::{NextAlarm, SettingUpdate, ViewportShape};
 use wayland_client::WEnum;
 
 use crate::egl::DmaBufInfo;
 use crate::wayland::from_protocol;
-use bmc_widget_protocol::{NextAlarm, SettingUpdate};
 
 use super::common::{
     BufferSlotMap, PollOutcome, ReleasedBufferSet, blocking_dispatch_impl,
@@ -95,9 +94,9 @@ impl From<DeckWidgetEvent> for WidgetEvent {
 /// deserialize it into their own `#[derive(Deserialize)]` struct.
 #[derive(Debug, Clone)]
 pub struct InitialState {
-    pub size: SizeType,
     pub width: u32,
     pub height: u32,
+    pub viewport_shape: ViewportShape,
     pub display: bmc_widget_protocol::DisplayInfo,
     pub params: serde_json::Map<String, serde_json::Value>,
     pub settings: Vec<SettingUpdate>,
@@ -133,9 +132,9 @@ pub struct DeckWidgetSurfaceState {
     /// Becomes `true` when the compositor emits `configure_done`. Used by
     /// [`DeckWidgetSurfaceClient::connect`] to stop blocking.
     configure_done: bool,
-    /// Accumulated `configure` data (size class + dimensions). `None` until
+    /// Accumulated `configure` data (dimensions + viewport shape). `None` until
     /// the compositor emits its `configure` event.
-    pending_size: Option<(SizeType, u32, u32)>,
+    pending_size: Option<(ViewportShape, u32, u32)>,
     /// Accumulated `display_info` event. `None` until the compositor emits
     /// it; resolved to the BMC100 default for old compositors that do not.
     pending_display: Option<bmc_widget_protocol::DisplayInfo>,
@@ -331,26 +330,26 @@ impl DeckWidgetSurfaceClient {
             }
         }
 
-        let (size, width, height) = state
+        let (viewport_shape, width, height) = state
             .pending_size
             .context("configure_done without prior configure event")?;
         state.width = width;
         state.height = height;
 
         let initial = InitialState {
-            size,
             width,
             height,
+            viewport_shape,
             display: resolve_display(state.pending_display.take()),
             params: std::mem::take(&mut state.pending_params),
             settings: std::mem::take(&mut state.pending_initial_settings),
         };
 
         tracing::info!(
-            "Deck widget surface ready (fd): {}x{} size={:?} params={} settings={}",
+            "Deck widget surface ready (fd): {}x{} viewport_shape={:?} params={} settings={}",
             width,
             height,
-            size,
+            viewport_shape,
             initial.params.len(),
             initial.settings.len(),
         );
@@ -459,26 +458,26 @@ impl DeckWidgetSurfaceClient {
             }
         }
 
-        let (size, width, height) = state
+        let (viewport_shape, width, height) = state
             .pending_size
             .context("configure_done without prior configure event")?;
         state.width = width;
         state.height = height;
 
         let initial = InitialState {
-            size,
             width,
             height,
+            viewport_shape,
             display: resolve_display(state.pending_display.take()),
             params: std::mem::take(&mut state.pending_params),
             settings: std::mem::take(&mut state.pending_initial_settings),
         };
 
         tracing::info!(
-            "Deck widget surface ready: {}x{} size={:?} params={} settings={}",
+            "Deck widget surface ready: {}x{} viewport_shape={:?} params={} settings={}",
             width,
             height,
-            size,
+            viewport_shape,
             initial.params.len(),
             initial.settings.len(),
         );
@@ -808,51 +807,29 @@ impl Dispatch<DeckWidgetManagerV1, ()> for DeckWidgetSurfaceState {
     }
 }
 
-fn size_type_from_protocol(w: WEnum<deck_widget_surface_v1::SizeType>) -> Option<SizeType> {
-    match w.into_result().ok()? {
-        deck_widget_surface_v1::SizeType::Small => Some(SizeType::Small),
-        deck_widget_surface_v1::SizeType::Medium => Some(SizeType::Medium),
-        deck_widget_surface_v1::SizeType::Large => Some(SizeType::Large),
-        deck_widget_surface_v1::SizeType::Full => Some(SizeType::Full),
-        _ => None,
-    }
-}
-
 fn resolve_display(
     pending: Option<bmc_widget_protocol::DisplayInfo>,
 ) -> bmc_widget_protocol::DisplayInfo {
     pending.unwrap_or(bmc_widget_protocol::DisplayInfo::BMC100)
 }
 
-fn display_shape_from_protocol(
-    w: WEnum<deck_widget_surface_v1::DisplayShape>,
-) -> Option<bmc_widget_protocol::DisplayShape> {
-    match w.into_result().ok()? {
-        deck_widget_surface_v1::DisplayShape::Rectangular => {
-            Some(bmc_widget_protocol::DisplayShape::Rectangular)
-        }
-        deck_widget_surface_v1::DisplayShape::Round => {
-            Some(bmc_widget_protocol::DisplayShape::Round)
-        }
-        _ => None,
-    }
-}
-
 fn apply_display_info_event(
     state: &mut DeckWidgetSurfaceState,
-    display_width: u32,
-    display_height: u32,
-    display_shape: WEnum<deck_widget_surface_v1::DisplayShape>,
+    width: u32,
+    height: u32,
+    shape: WEnum<deck_widget_surface_v1::DisplayShape>,
     dpi: u32,
 ) {
-    if let Some(shape) = display_shape_from_protocol(display_shape) {
-        state.pending_display = Some(bmc_widget_protocol::DisplayInfo {
-            width: display_width,
-            height: display_height,
-            shape,
-            dpi,
-        });
-    }
+    let Some(shape) = shape.into_result().ok().map(Into::into) else {
+        tracing::warn!("display_info event carries unknown display_shape; ignoring event");
+        return;
+    };
+    state.pending_display = Some(bmc_widget_protocol::DisplayInfo {
+        width,
+        height,
+        shape,
+        dpi,
+    });
 }
 
 impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
@@ -867,26 +844,31 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
     ) {
         match event {
             deck_widget_surface_v1::Event::Configure {
-                size_type,
                 width,
                 height,
+                viewport_shape,
             } => {
-                let size = size_type_from_protocol(size_type).unwrap_or(SizeType::Small);
-                tracing::debug!("Configure: size={:?} {}x{}", size, width, height);
-                state.pending_size = Some((size, width, height));
+                let Some(shape) = (match viewport_shape {
+                    WEnum::Value(v) => Some(v.into()),
+                    WEnum::Unknown(value) => {
+                        tracing::warn!(
+                            value,
+                            "configure event carries unknown viewport_shape; ignoring event"
+                        );
+                        None
+                    }
+                }) else {
+                    return;
+                };
+                tracing::debug!("Configure: {}x{} viewport_shape={:?}", width, height, shape);
+                state.pending_size = Some((shape, width, height));
             }
             deck_widget_surface_v1::Event::DisplayInfo {
-                display_width,
-                display_height,
-                display_shape,
+                width,
+                height,
+                shape,
                 dpi,
-            } => apply_display_info_event(
-                state,
-                display_width,
-                display_height,
-                display_shape,
-                dpi,
-            ),
+            } => apply_display_info_event(state, width, height, shape, dpi),
             deck_widget_surface_v1::Event::Params { json } => {
                 handle_params_json(
                     &mut state.pending_params,
