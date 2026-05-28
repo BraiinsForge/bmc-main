@@ -33,7 +33,7 @@ impl FirmwareIndex for BmcIndex {
     async fn get_available_releases(
         &self,
         client: &Client,
-        platform: bmc_platform::BmcPlatform,
+        platform: bmc_platform::BosPlatform,
         version: String,
     ) -> Result<Option<Vec<UpgradeMetadata>>, FirmwareDownloadError> {
         let platform = platform.into();

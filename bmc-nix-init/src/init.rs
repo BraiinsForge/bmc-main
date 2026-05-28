@@ -129,7 +129,7 @@ pub trait InitPlatform: Send + Sync {
     ) -> impl std::future::Future<Output = Result<(), InitError>> + Send;
 
     /// Get the device platform identifier for firmware index lookup.
-    fn platform(&self) -> bmc_platform::BmcPlatform;
+    fn platform(&self) -> bmc_platform::BosPlatform;
 }
 
 /// Check if activation already ran this boot.
@@ -807,8 +807,8 @@ mod tests {
         ) -> Result<(), InitError> {
             Ok(())
         }
-        fn platform(&self) -> bmc_platform::BmcPlatform {
-            bmc_platform::BmcPlatform::BraiinsBmc
+        fn platform(&self) -> bmc_platform::BosPlatform {
+            bmc_platform::BosPlatform::BraiinsBmc
         }
     }
 

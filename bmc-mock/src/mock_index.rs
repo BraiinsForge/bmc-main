@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use bmc_platform::BmcPlatform;
+use bmc_platform::BosPlatform;
 use bmc_upgrade::firmware::{FirmwareDownloadError, FirmwareIndex, UpgradeMetadata};
 use chrono::NaiveDate;
 use reqwest::Client;
@@ -12,7 +12,7 @@ impl FirmwareIndex for MockIndex {
     async fn get_available_releases(
         &self,
         _client: &Client,
-        _platform: BmcPlatform,
+        _platform: BosPlatform,
         _version: String,
     ) -> Result<Option<Vec<UpgradeMetadata>>, FirmwareDownloadError> {
         let release = UpgradeMetadata::new(

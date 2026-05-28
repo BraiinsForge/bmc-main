@@ -17,7 +17,7 @@ use bmc::{
     BmcManager,
     manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
 };
-use bmc_platform::{BmcInfo, BmcPlatform, BosVersion};
+use bmc_platform::{BmcInfo, BosPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
 use bmc_shared_ii_net::wifi::{EncryptionType, WifiMode, WifiScanItem, WifiStatus};
 use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
@@ -294,8 +294,8 @@ impl BmcManager for Manager {
             .map(|bmc_info| bmc_info.bos_version.clone())
     }
 
-    fn platform(&self) -> BmcPlatform {
-        BmcPlatform::BraiinsBmc
+    fn platform(&self) -> BosPlatform {
+        BosPlatform::BraiinsBmc
     }
 
     async fn upgrade(&self, keep_settings: bool, upgrade_image_path: &Path) -> anyhow::Result<()> {

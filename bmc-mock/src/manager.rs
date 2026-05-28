@@ -7,7 +7,7 @@ use bmc::manager::{
     BmcState, IfaceData, InitialSetupError, NetworkProtocolConfig, WifiData, WifiEvent,
     WifiNetworkConfig,
 };
-use bmc_platform::{BmcPlatform, BosVersion};
+use bmc_platform::{BosPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
 use bmc_shared_ii_net::wifi::{
     EncryptionType, WifiConfiguration, WifiLinkState, WifiMode, WifiScanItem, WifiStatus,
@@ -93,8 +93,8 @@ impl bmc::BmcManager for Manager {
         Some(BosVersion::new(&25, &7))
     }
 
-    fn platform(&self) -> BmcPlatform {
-        BmcPlatform::BraiinsBmc
+    fn platform(&self) -> BosPlatform {
+        BosPlatform::BraiinsBmc
     }
 
     async fn upgrade(&self, keep_settings: bool, _upgrade_image_path: &Path) -> anyhow::Result<()> {

@@ -2,7 +2,7 @@
 
 use crate::bootloader_config::BootloaderConfig;
 use anyhow::anyhow;
-use bmc_platform::{BmcPlatform, BosVersion};
+use bmc_platform::{BosPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
 use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem, WifiStatus};
 use bmc_shared_time::time::Timezone;
@@ -25,7 +25,7 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
 
     async fn version(&self) -> Option<BosVersion>;
 
-    fn platform(&self) -> BmcPlatform;
+    fn platform(&self) -> BosPlatform;
 
     async fn upgrade(&self, keep_settings: bool, upgrade_image_path: &Path) -> anyhow::Result<()>;
 

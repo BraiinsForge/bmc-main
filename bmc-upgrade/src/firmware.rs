@@ -13,7 +13,7 @@ pub trait FirmwareIndex: Send + Sync + Debug + 'static {
     async fn get_available_releases(
         &self,
         client: &Client,
-        platform: bmc_platform::BmcPlatform,
+        platform: bmc_platform::BosPlatform,
         version: String,
     ) -> Result<Option<Vec<UpgradeMetadata>>, FirmwareDownloadError>;
 }
@@ -73,7 +73,7 @@ where
     pub async fn check_for_upgrade(
         &self,
         client: &Client,
-        platform: bmc_platform::BmcPlatform,
+        platform: bmc_platform::BosPlatform,
         version: String,
     ) -> Result<Option<UpgradeDetail>, FirmwareDownloadError> {
         let Some(release_info) = self
