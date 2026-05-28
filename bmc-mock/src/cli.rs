@@ -83,6 +83,11 @@ pub struct Config {
     /// Path to directory containing widget packages
     #[clap(long, default_value = "./result-widgets")]
     pub widgets_path: PathBuf,
+
+    /// Hardware profile to use: BMC100|BMM100|BMM101|BFM100.
+    /// Defaults to `BMC100`.
+    #[clap(long = "hardware-profile", default_value = "BMC100")]
+    pub hardware_profile: String,
 }
 
 impl From<Config> for Configuration {

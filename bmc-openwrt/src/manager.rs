@@ -38,6 +38,7 @@ use tracing::{debug, error, info};
 #[expect(clippy::struct_field_names)]
 pub struct Manager {
     bmc_info: Arc<Option<BmcInfo>>,
+    platform_override: Option<BosPlatform>,
     pub session_manager: OpenwrtSessionManager,
     timezone_sender: tokio::sync::watch::Sender<Timezone>,
     wifi_manager: Arc<OpenwrtWifiManager>,
@@ -75,6 +76,7 @@ impl Manager {
         timezone: Timezone,
         wifi_manager: Arc<OpenwrtWifiManager>,
         wifi_ap_ssid_base: String,
+        platform_override: Option<BosPlatform>,
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(timezone);
         let (wifi_event_sender, _) = tokio::sync::broadcast::channel(Self::WIFI_EVENTS_CAPACITY);
@@ -99,6 +101,7 @@ impl Manager {
 
         Self {
             bmc_info: Arc::new(bmc_info),
+            platform_override,
             session_manager,
             timezone_sender,
             wifi_manager,
@@ -295,7 +298,17 @@ impl BmcManager for Manager {
     }
 
     fn platform(&self) -> BosPlatform {
-        BosPlatform::Bmc1
+        if let Some(platform) = self.platform_override {
+            return platform;
+        }
+        self.bmc_info
+            .as_ref()
+            .as_ref()
+            .map(|info| info.bmc_platform)
+            .expect(
+                "BUG: bmc-openwrt requires /etc/bos_platform; \
+                 use --hardware-profile to override during development",
+            )
     }
 
     async fn upgrade(&self, keep_settings: bool, upgrade_image_path: &Path) -> anyhow::Result<()> {
