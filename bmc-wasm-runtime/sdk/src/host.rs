@@ -410,6 +410,62 @@ impl SizeVariant {
             Self::Medium | Self::Small => 238,
         }
     }
+
+    /// All variants. Order is irrelevant to the result — the comparator below
+    /// gives a total order — but keeping it explicit documents the candidate set.
+    const ALL: [SizeVariant; 4] = [
+        SizeVariant::Small,
+        SizeVariant::Medium,
+        SizeVariant::Large,
+        SizeVariant::Full,
+    ];
+
+    /// Pixel area of this variant's canonical dimensions.
+    #[must_use]
+    const fn area(self) -> u32 {
+        self.width() * self.height()
+    }
+
+    /// Normalized distance from `(w, h)` to this variant's canonical size:
+    /// `|w-vw|/vw + |h-vh|/vh`. Zero on an exact dimensional match.
+    #[must_use]
+    fn distance_from(self, w: u32, h: u32) -> f64 {
+        let vw = f64::from(self.width());
+        let vh = f64::from(self.height());
+        (f64::from(w) - vw).abs() / vw + (f64::from(h) - vh).abs() / vh
+    }
+
+    /// Classify a viewport to the closest BMC100 variant.
+    ///
+    /// Minimize the normalized distance; on a genuine distance tie, prefer the
+    /// larger-area variant so a non-BMC100 fullscreen display never collapses
+    /// to a compact layout. An exact dimensional match has distance 0 and so
+    /// always wins. Deterministic for identical inputs.
+    #[must_use]
+    pub fn closest(w: u32, h: u32) -> Self {
+        // Destructuring the fixed-size array seeds the fold from a concrete
+        // variant, so the result is `Self` rather than `Option<Self>` and the
+        // never-empty invariant is enforced at compile time.
+        let [first, rest @ ..] = Self::ALL;
+        rest.into_iter().fold(first, |best, cand| {
+            // `total_cmp` orders by distance without a float `==`
+            // (which `clippy::float_cmp` rejects under -D warnings);
+            // the `.then` tie-break makes the larger-area variant compare
+            // as "less" so it wins an exact distance tie. Variant areas
+            // are all distinct, so the comparator is never `Equal` and the
+            // result is fully deterministic.
+            if cand
+                .distance_from(w, h)
+                .total_cmp(&best.distance_from(w, h))
+                .then(best.area().cmp(&cand.area()))
+                .is_lt()
+            {
+                cand
+            } else {
+                best
+            }
+        })
+    }
 }
 
 /// Widget viewport dimensions and size variant.
@@ -427,14 +483,8 @@ pub struct WidgetSize {
 impl WidgetSize {
     #[must_use]
     pub fn from_dimensions(w: u32, h: u32) -> Self {
-        let variant = match (w, h) {
-            (1_280, 480) => SizeVariant::Full,
-            (638, 480) => SizeVariant::Large,
-            (638, 238) => SizeVariant::Medium,
-            _ => SizeVariant::Small,
-        };
         Self {
-            variant,
+            variant: SizeVariant::closest(w, h),
             width: w,
             height: h,
         }
@@ -584,5 +634,40 @@ impl TouchHit {
         } else {
             0.0
         }
+    }
+}
+
+#[cfg(test)]
+mod size_variant_tests {
+    use super::{SizeVariant, WidgetSize};
+
+    fn variant_of(w: u32, h: u32) -> SizeVariant {
+        WidgetSize::from_dimensions(w, h).variant
+    }
+
+    #[test]
+    fn exact_bmc100_dimensions_keep_their_variant() {
+        assert_eq!(variant_of(1_280, 480), SizeVariant::Full);
+        assert_eq!(variant_of(638, 480), SizeVariant::Large);
+        assert_eq!(variant_of(638, 238), SizeVariant::Medium);
+        assert_eq!(variant_of(317, 238), SizeVariant::Small);
+    }
+
+    #[test]
+    fn non_deck_fullscreen_viewports_map_to_closest_legacy_variant() {
+        assert_eq!(variant_of(320, 240), SizeVariant::Small);
+        // BMM101 (480x320) lands on Large by a thin margin: normalized
+        // distance Large 0.581 vs Medium 0.592. This assertion guards that
+        // margin — a change to any canonical variant size that flips BMM101
+        // from Large to Medium must update this test deliberately, not
+        // silently. If the mapping target is wrong, fix the spec, not the test.
+        assert_eq!(variant_of(480, 320), SizeVariant::Large);
+        assert_eq!(variant_of(480, 480), SizeVariant::Large);
+    }
+
+    #[test]
+    fn classification_is_deterministic() {
+        // Same input, same output across repeated calls.
+        assert_eq!(variant_of(200, 200), variant_of(200, 200));
     }
 }
