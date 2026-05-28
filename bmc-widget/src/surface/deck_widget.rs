@@ -98,6 +98,7 @@ pub struct InitialState {
     pub size: SizeType,
     pub width: u32,
     pub height: u32,
+    pub display: bmc_widget_protocol::DisplayInfo,
     pub params: serde_json::Map<String, serde_json::Value>,
     pub settings: Vec<SettingUpdate>,
 }
@@ -135,6 +136,9 @@ pub struct DeckWidgetSurfaceState {
     /// Accumulated `configure` data (size class + dimensions). `None` until
     /// the compositor emits its `configure` event.
     pending_size: Option<(SizeType, u32, u32)>,
+    /// Accumulated `display_info` event. `None` until the compositor emits
+    /// it; resolved to the BMC100 default for old compositors that do not.
+    pending_display: Option<bmc_widget_protocol::DisplayInfo>,
     /// Accumulated `params(json)` event (empty if the compositor sent
     /// `{}`).
     pending_params: serde_json::Map<String, serde_json::Value>,
@@ -279,6 +283,7 @@ impl DeckWidgetSurfaceClient {
             widget_surface: None,
             configure_done: false,
             pending_size: None,
+            pending_display: None,
             pending_params: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
             pending_events: Vec::new(),
@@ -336,6 +341,7 @@ impl DeckWidgetSurfaceClient {
             size,
             width,
             height,
+            display: resolve_display(state.pending_display.take()),
             params: std::mem::take(&mut state.pending_params),
             settings: std::mem::take(&mut state.pending_initial_settings),
         };
@@ -400,6 +406,7 @@ impl DeckWidgetSurfaceClient {
             widget_surface: None,
             configure_done: false,
             pending_size: None,
+            pending_display: None,
             pending_params: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
             pending_events: Vec::new(),
@@ -462,6 +469,7 @@ impl DeckWidgetSurfaceClient {
             size,
             width,
             height,
+            display: resolve_display(state.pending_display.take()),
             params: std::mem::take(&mut state.pending_params),
             settings: std::mem::take(&mut state.pending_initial_settings),
         };
@@ -810,7 +818,45 @@ fn size_type_from_protocol(w: WEnum<deck_widget_surface_v1::SizeType>) -> Option
     }
 }
 
+fn resolve_display(
+    pending: Option<bmc_widget_protocol::DisplayInfo>,
+) -> bmc_widget_protocol::DisplayInfo {
+    pending.unwrap_or(bmc_widget_protocol::DisplayInfo::BMC100)
+}
+
+fn display_shape_from_protocol(
+    w: WEnum<deck_widget_surface_v1::DisplayShape>,
+) -> Option<bmc_widget_protocol::DisplayShape> {
+    match w.into_result().ok()? {
+        deck_widget_surface_v1::DisplayShape::Rectangular => {
+            Some(bmc_widget_protocol::DisplayShape::Rectangular)
+        }
+        deck_widget_surface_v1::DisplayShape::Round => {
+            Some(bmc_widget_protocol::DisplayShape::Round)
+        }
+        _ => None,
+    }
+}
+
+fn apply_display_info_event(
+    state: &mut DeckWidgetSurfaceState,
+    display_width: u32,
+    display_height: u32,
+    display_shape: WEnum<deck_widget_surface_v1::DisplayShape>,
+    dpi: u32,
+) {
+    if let Some(shape) = display_shape_from_protocol(display_shape) {
+        state.pending_display = Some(bmc_widget_protocol::DisplayInfo {
+            width: display_width,
+            height: display_height,
+            shape,
+            dpi,
+        });
+    }
+}
+
 impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
+    #[expect(clippy::too_many_lines)]
     fn event(
         state: &mut Self,
         _: &DeckWidgetSurfaceV1,
@@ -829,6 +875,18 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
                 tracing::debug!("Configure: size={:?} {}x{}", size, width, height);
                 state.pending_size = Some((size, width, height));
             }
+            deck_widget_surface_v1::Event::DisplayInfo {
+                display_width,
+                display_height,
+                display_shape,
+                dpi,
+            } => apply_display_info_event(
+                state,
+                display_width,
+                display_height,
+                display_shape,
+                dpi,
+            ),
             deck_widget_surface_v1::Event::Params { json } => {
                 handle_params_json(
                     &mut state.pending_params,
@@ -1062,12 +1120,77 @@ mod tests {
     use serde_json::{Map, Value};
     use std::cell::Cell;
     use std::rc::Rc;
+    use wayland_client::WEnum;
 
     use super::{
         DeckWidgetEvent, DeckWidgetSurfaceState, ReleasableTouch, TouchCapabilityChange,
         WidgetEvent, handle_params_json, sync_touch_capability,
     };
     use bmc_widget_protocol::LifecycleState;
+    use bmc_widget_protocol::client::deck_widget_surface_v1;
+
+    fn test_surface_state() -> DeckWidgetSurfaceState {
+        DeckWidgetSurfaceState {
+            running: true,
+            width: 0,
+            height: 0,
+            needs_render: false,
+            frame_count: 0,
+            compositor: None,
+            widget_manager: None,
+            linux_dmabuf: None,
+            seat: None,
+            touch: None,
+            surface: None,
+            widget_surface: None,
+            configure_done: false,
+            pending_size: None,
+            pending_display: None,
+            pending_params: serde_json::Map::new(),
+            pending_initial_settings: Vec::new(),
+            pending_events: Vec::new(),
+            buffer_slots: super::BufferSlotMap::new(),
+            released_buffers: super::ReleasedBufferSet::new(),
+        }
+    }
+
+    #[test]
+    fn pending_display_defaults_to_bmc100_when_unset() {
+        let resolved = super::resolve_display(None);
+        assert_eq!(resolved, bmc_widget_protocol::DisplayInfo::BMC100);
+    }
+
+    #[test]
+    fn pending_display_uses_compositor_value_when_set() {
+        let round = bmc_widget_protocol::DisplayInfo {
+            width: 480,
+            height: 480,
+            shape: bmc_widget_protocol::DisplayShape::Round,
+            dpi: 1,
+        };
+        assert_eq!(super::resolve_display(Some(round)), round);
+    }
+
+    #[test]
+    fn display_info_event_updates_pending_display() {
+        let mut state = test_surface_state();
+        super::apply_display_info_event(
+            &mut state,
+            480,
+            480,
+            WEnum::Value(deck_widget_surface_v1::DisplayShape::Round),
+            1,
+        );
+        assert_eq!(
+            state.pending_display,
+            Some(bmc_widget_protocol::DisplayInfo {
+                width: 480,
+                height: 480,
+                shape: bmc_widget_protocol::DisplayShape::Round,
+                dpi: 1,
+            }),
+        );
+    }
 
     struct MockTouch {
         released: Rc<Cell<bool>>,
@@ -1163,6 +1286,7 @@ mod tests {
             widget_surface: None,
             configure_done: false,
             pending_size: None,
+            pending_display: None,
             pending_params: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
             pending_events: Vec::new(),
@@ -1196,6 +1320,7 @@ mod tests {
             widget_surface: None,
             configure_done: false,
             pending_size: None,
+            pending_display: None,
             pending_params: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
             pending_events: Vec::new(),
