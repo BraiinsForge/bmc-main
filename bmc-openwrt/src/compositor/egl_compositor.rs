@@ -1668,6 +1668,7 @@ mod tests {
             size: SizeType::Small,
             width: 100,
             height: 100,
+            display: bmc_widget_protocol::DisplayInfo::BMC100,
             params: serde_json::Map::new(),
         }
     }

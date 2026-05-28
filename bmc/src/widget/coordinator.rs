@@ -287,6 +287,7 @@ impl Coordinator {
                 .expect("BUG: viewport derivation already rejected unsupported spans"),
             width: viewport.width,
             height: viewport.height,
+            display: bmc_widget_protocol::DisplayInfo::BMC100,
             params: params_to_json_map(&widget.params),
         };
 
