@@ -112,6 +112,32 @@ mod tests {
     }
 
     #[test]
+    fn layout_covers_all_platform_viewports() {
+        let cases = [
+            ("BMC100", 1_280_u32, 480_u32),
+            ("BMM100", 320, 240),
+            ("BMM101", 480, 320),
+            ("BFM100", 480, 480),
+        ];
+        for (name, w, h) in cases {
+            let layout = ClockLayout::for_viewport(w, h);
+            let viewport_aspect = viewport_aspect(w, h);
+            assert!(
+                layout.frame_total_width() <= viewport_aspect + EPSILON,
+                "{name}: frame width must fit viewport {w}x{h}"
+            );
+            assert!(
+                layout.panel_height <= 1.0 + EPSILON,
+                "{name}: panel height must fit viewport {w}x{h}"
+            );
+            assert!(
+                layout.frame_total_width() > 0.0 && layout.panel_height > 0.0,
+                "{name}: layout must produce positive dimensions"
+            );
+        }
+    }
+
+    #[test]
     fn narrow_viewports_scale_down_from_fullscreen() {
         let full = ClockLayout::for_viewport(1280, 480);
         let large = ClockLayout::for_viewport(638, 480);
