@@ -1,4 +1,4 @@
-import { Component, createRef, Fragment } from 'react';
+import { Component, createRef, Fragment, type ReactElement } from 'react';
 import { debounce } from 'es-toolkit';
 import { Helmet } from '@dr.pogodin/react-helmet';
 import { type IntlShape, useIntl } from 'react-intl';
@@ -58,6 +58,7 @@ interface State {
     manifestLookup: pb.ManifestLookup;
     manifestsLoading: boolean;
     timezones: pb.Timezone[];
+    hardwareCapabilities: null | pb.HardwareCapabilities;
 
     cycle: {
         isOpen: boolean;
@@ -78,6 +79,7 @@ const getInitialState = (): State => ({
     manifestLookup: new Map(),
     manifestsLoading: false,
     timezones: [],
+    hardwareCapabilities: null,
 
     cycle: {
         isOpen: false,
@@ -122,6 +124,7 @@ class View extends Component<Props, State> {
         this.#loadScenes();
         this.#loadManifestWidgets();
         this.#loadTimezones();
+        this.#loadHardwareCapabilities();
     }
     componentWillUnmount() {
         this.#windowClickUnsubscribe();
@@ -156,6 +159,22 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load scene cycling settings!' });
+            toast.error(msg);
+        }
+    };
+
+    private abortLoadHardwareCapabilities = pb.abort.get();
+    #loadHardwareCapabilities = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            const { signal } = this.abortLoadHardwareCapabilities.replace();
+            const hardwareCapabilities = await pb.rpc.hardware.getHardwareCapabilities({}, { signal });
+            this.setState({ hardwareCapabilities });
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to load hardware capabilities!' });
             toast.error(msg);
         }
     };
@@ -816,9 +835,9 @@ class View extends Component<Props, State> {
                                     className={css.addMenuButton}
                                     onClick={this.#sceneAddChooseKind}
                                 />
-                                <MenuItem
+                                <CombinedSceneMenuAction
+                                    capabilities={this.state.hardwareCapabilities}
                                     label={formatMessage({ defaultMessage: 'Combined Scene' })}
-                                    className={css.addMenuButton}
                                     onClick={this.#sceneAddCombined}
                                 />
                             </MenuButton>
@@ -870,6 +889,15 @@ class View extends Component<Props, State> {
             </div>
         );
     }
+}
+
+export function CombinedSceneMenuAction(props: {
+    capabilities: null | pb.HardwareCapabilities;
+    label: string;
+    onClick: () => void;
+}): null | ReactElement {
+    if (!fn.combinedSceneAvailable(props.capabilities)) return null;
+    return <MenuItem label={props.label} className={css.addMenuButton} onClick={props.onClick} />;
 }
 
 interface ScreenCyclingConfigFormProps {
