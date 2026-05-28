@@ -62,10 +62,19 @@ pub struct WidgetInitialConfig {
     pub size: SizeType,
     pub width: u32,
     pub height: u32,
+    /// Active display geometry/shape emitted to the widget as `display_info`.
+    /// Defaults to the BMC100 Deck display so records written before this
+    /// field existed still deserialize.
+    #[serde(default = "default_display_info")]
+    pub display: DisplayInfo,
     /// Widget-specific params keyed by manifest entry name. Empty map
     /// means the widget has no configured params.
     #[serde(default)]
     pub params: serde_json::Map<String, serde_json::Value>,
+}
+
+fn default_display_info() -> DisplayInfo {
+    DisplayInfo::BMC100
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -317,6 +326,14 @@ mod tests {
         assert_eq!(display.height, 480);
         assert_eq!(display.shape, DisplayShape::Rectangular);
         assert_eq!(display.dpi, 1);
+    }
+
+    #[test]
+    fn widget_initial_config_defaults_display_to_bmc100_when_absent() {
+        let json = r#"{ "size": "small", "width": 100, "height": 100 }"#;
+        let config: WidgetInitialConfig =
+            serde_json::from_str(json).expect("BUG: config should deserialize");
+        assert_eq!(config.display, DisplayInfo::BMC100);
     }
 
     #[test]

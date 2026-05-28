@@ -64,7 +64,7 @@ pub use bmc_shared_utils::temperature::TemperatureUnit;
 pub use bmc_shared_utils::unit_system::UnitSystem;
 pub use client::deck_widget_surface_v1::LifecycleState;
 pub use types::{
-    ActionPayload, LedEffect, Localization, NextAlarm, RgbColor, SettingUpdate, Settings, SizeInfo,
-    SizeType, WidgetInitialConfig,
+    ActionPayload, DisplayInfo, DisplayShape, LedEffect, Localization, NextAlarm, RgbColor,
+    SettingUpdate, Settings, SizeInfo, SizeType, WidgetInitialConfig,
 };
 pub use wayland_client;
