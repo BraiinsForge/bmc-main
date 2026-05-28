@@ -133,8 +133,14 @@ pub struct Widget {
     pub position: WidgetPosition,
     pub placement: WidgetPlacement,
     pub widget_type_id: Uuid,
+    #[serde(default = "default_widget_viewport_shape")]
+    pub viewport_shape: bmc_widget_manifest::DisplayShape,
     #[serde(default)]
     pub params: BTreeMap<ParamKey, ParamValue>,
+}
+
+fn default_widget_viewport_shape() -> bmc_widget_manifest::DisplayShape {
+    bmc_widget_manifest::DisplayShape::Rectangular
 }
 
 #[derive(Deserialize)]
@@ -147,6 +153,8 @@ struct RawWidget {
     #[serde(default)]
     size: Option<WidgetSize>,
     widget_type_id: Uuid,
+    #[serde(default = "default_widget_viewport_shape")]
+    viewport_shape: bmc_widget_manifest::DisplayShape,
     #[serde(default)]
     params: BTreeMap<ParamKey, ParamValue>,
 }
@@ -167,6 +175,7 @@ impl<'de> Deserialize<'de> for Widget {
             id: raw.id,
             position: raw.position,
             placement,
+            viewport_shape: raw.viewport_shape,
             widget_type_id: raw.widget_type_id,
             params: raw.params,
         })
@@ -184,6 +193,7 @@ impl Widget {
         Self {
             id: WidgetId::generate(),
             widget_type_id,
+            viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
             params,
             position,
             placement,
@@ -376,6 +386,7 @@ mod tests {
                 rows: 1,
             }),
             widget_type_id: Uuid::nil(),
+            viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
             params: BTreeMap::new(),
         };
         assert!(
@@ -397,6 +408,7 @@ mod tests {
                 rows: 1,
             }),
             widget_type_id: Uuid::nil(),
+            viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
             params: BTreeMap::new(),
         };
         let b = a.clone_with_new_id();
@@ -579,5 +591,18 @@ mod tests {
             }),
         );
         assert!(a.overlaps(&b));
+    }
+
+    #[test]
+    fn legacy_widget_config_deserializes_with_rectangular_viewport_shape() {
+        let json = r#"{ "id": "00000000-0000-0000-0000-000000000000",
+                        "widget_type_id": "00000000-0000-0000-0000-000000000000",
+                        "row": 0, "col": 0,
+                        "placement": "fullscreen" }"#;
+        let widget: Widget = serde_json::from_str(json).expect("BUG: parse");
+        assert_eq!(
+            widget.viewport_shape,
+            bmc_widget_manifest::DisplayShape::Rectangular
+        );
     }
 }
