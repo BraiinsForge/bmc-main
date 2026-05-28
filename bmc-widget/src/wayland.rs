@@ -41,6 +41,7 @@ pub struct ProtocolInitialState {
     pub size: SizeType,
     pub width: u32,
     pub height: u32,
+    pub display: bmc_widget_protocol::DisplayInfo,
     pub params: serde_json::Map<String, serde_json::Value>,
     pub settings: Vec<SettingUpdate>,
 }
@@ -111,6 +112,7 @@ struct WidgetState {
     // Initial configure batch accumulation.
     configure_done: bool,
     pending_size: Option<(SizeType, u32, u32)>,
+    pending_display: Option<bmc_widget_protocol::DisplayInfo>,
     pending_params: serde_json::Map<String, serde_json::Value>,
     pending_initial_settings: Vec<SettingUpdate>,
 }
@@ -137,6 +139,7 @@ impl WidgetProtocolClient {
             pending_events: Vec::new(),
             configure_done: false,
             pending_size: None,
+            pending_display: None,
             pending_params: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
         };
@@ -324,6 +327,7 @@ impl WidgetProtocolClient {
             size,
             width,
             height,
+            display: resolve_display(self.state.pending_display.take()),
             params: std::mem::take(&mut self.state.pending_params),
             settings: std::mem::take(&mut self.state.pending_initial_settings),
         })
@@ -470,6 +474,44 @@ pub(crate) mod from_protocol {
     }
 }
 
+fn resolve_display(
+    pending: Option<bmc_widget_protocol::DisplayInfo>,
+) -> bmc_widget_protocol::DisplayInfo {
+    pending.unwrap_or(bmc_widget_protocol::DisplayInfo::BMC100)
+}
+
+fn display_shape_from_protocol(
+    w: bmc_widget_protocol::wayland_client::WEnum<
+        bmc_widget_protocol::client::deck_widget_surface_v1::DisplayShape,
+    >,
+) -> Option<bmc_widget_protocol::DisplayShape> {
+    use bmc_widget_protocol::client::deck_widget_surface_v1::DisplayShape as P;
+    match w.into_result().ok()? {
+        P::Rectangular => Some(bmc_widget_protocol::DisplayShape::Rectangular),
+        P::Round => Some(bmc_widget_protocol::DisplayShape::Round),
+        _ => None,
+    }
+}
+
+fn apply_display_info_event(
+    state: &mut WidgetState,
+    display_width: u32,
+    display_height: u32,
+    display_shape: bmc_widget_protocol::wayland_client::WEnum<
+        bmc_widget_protocol::client::deck_widget_surface_v1::DisplayShape,
+    >,
+    dpi: u32,
+) {
+    if let Some(shape) = display_shape_from_protocol(display_shape) {
+        state.pending_display = Some(bmc_widget_protocol::DisplayInfo {
+            width: display_width,
+            height: display_height,
+            shape,
+            dpi,
+        });
+    }
+}
+
 // Wayland dispatch implementations
 
 impl Dispatch<WlRegistry, GlobalListContents> for WidgetState {
@@ -525,6 +567,7 @@ impl Dispatch<DeckWidgetManagerV1, ()> for WidgetState {
 }
 
 impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
+    #[expect(clippy::too_many_lines)]
     fn event(
         state: &mut Self,
         _proxy: &DeckWidgetSurfaceV1,
@@ -630,7 +673,13 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
                     state.pending_events.push(WidgetEvent::Lifecycle(s));
                 }
             }
-            Event::DisplayInfo { .. } | _ => {}
+            Event::DisplayInfo {
+                display_width,
+                display_height,
+                display_shape,
+                dpi,
+            } => apply_display_info_event(state, display_width, display_height, display_shape, dpi),
+            _ => {}
         }
     }
 }
@@ -727,5 +776,61 @@ mod tests {
 
         assert_eq!(handler.shutdowns, 1);
         assert!(handler.lifecycle.is_empty());
+    }
+
+    fn test_widget_state() -> WidgetState {
+        WidgetState {
+            compositor: None,
+            manager: None,
+            wl_surface: None,
+            widget_surface: None,
+            pending_events: Vec::new(),
+            configure_done: false,
+            pending_size: None,
+            pending_display: None,
+            pending_params: serde_json::Map::new(),
+            pending_initial_settings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn resolve_display_defaults_to_bmc100() {
+        assert_eq!(
+            resolve_display(None),
+            bmc_widget_protocol::DisplayInfo::BMC100
+        );
+    }
+
+    #[test]
+    fn resolve_display_keeps_compositor_value() {
+        let info = bmc_widget_protocol::DisplayInfo {
+            width: 320,
+            height: 480,
+            shape: bmc_widget_protocol::DisplayShape::Rectangular,
+            dpi: 1,
+        };
+        assert_eq!(resolve_display(Some(info)), info);
+    }
+
+    #[test]
+    fn display_info_event_updates_pending_display() {
+        use bmc_widget_protocol::wayland_client::WEnum;
+        let mut state = test_widget_state();
+        apply_display_info_event(
+            &mut state,
+            480,
+            480,
+            WEnum::Value(bmc_widget_protocol::client::deck_widget_surface_v1::DisplayShape::Round),
+            1,
+        );
+        assert_eq!(
+            state.pending_display,
+            Some(bmc_widget_protocol::DisplayInfo {
+                width: 480,
+                height: 480,
+                shape: bmc_widget_protocol::DisplayShape::Round,
+                dpi: 1,
+            }),
+        );
     }
 }
