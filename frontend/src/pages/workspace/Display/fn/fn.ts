@@ -463,3 +463,7 @@ export function getValidWidgetSizes(pool: C.Located[], slot: Pick<C.Located, 'id
 
     return res;
 }
+
+export function combinedSceneAvailable(caps: null | pb.HardwareCapabilities): boolean {
+    return caps?.combinedScenesSupported ?? false;
+}
