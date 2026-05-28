@@ -22,6 +22,7 @@ use crate::widget::{Coordinator, WidgetManager, WidgetRegistry};
 use anyhow::Result;
 use bmc_button::Buttons;
 use bmc_led::led_driver::LedDriver;
+use bmc_platform::HardwareCapabilities;
 use bmc_scheduler::JobScheduler;
 use bmc_upgrade::firmware::FirmwareIndex;
 use tokio::net::TcpListener;
@@ -50,6 +51,7 @@ where
     system_manager: SystemManager<U>,
     sound_controller: SoundController,
     alarm_controller: AlarmController,
+    hardware_capabilities: HardwareCapabilities,
 }
 
 impl<T, U, V> App<T, U, V>
@@ -79,6 +81,8 @@ where
         compositor: Arc<dyn Compositor>,
     ) -> Result<Self> {
         let listener = TcpListener::bind(config.address).await?;
+
+        let hardware_capabilities = compositor.hardware_capabilities();
 
         let state_service = StateService::new();
 
@@ -244,6 +248,7 @@ where
             system_manager,
             sound_controller,
             alarm_controller,
+            hardware_capabilities,
         })
     }
 
@@ -266,6 +271,7 @@ where
             self.system_manager,
             self.sound_controller,
             self.alarm_controller,
+            self.hardware_capabilities,
         )
         .run(self.listener)
         .await?;

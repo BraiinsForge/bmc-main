@@ -1,41 +1,70 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
 use bmc_grpc::web;
+use bmc_grpc::web::hardware_service_server::HardwareService as GrpcHardwareService;
+use bmc_platform::HardwareCapabilities;
 use tonic::{Request, Response, Status};
 
-/// Temporary stage-2 hardware service returning BMC100-compatible
-/// capabilities so generated clients integrate before stage 3 wires the
-/// real compositor-backed values.
-pub(crate) struct HardwareService;
+#[must_use]
+pub(crate) fn caps_to_proto(caps: &HardwareCapabilities) -> web::HardwareCapabilities {
+    web::HardwareCapabilities {
+        combined_scenes_supported: caps.slot_grid.is_some(),
+    }
+}
 
-impl HardwareService {
-    pub(crate) fn new() -> Self {
-        Self
+pub(crate) struct HardwareCapabilitiesService {
+    capabilities: HardwareCapabilities,
+}
+
+impl HardwareCapabilitiesService {
+    pub(crate) fn new(capabilities: HardwareCapabilities) -> Self {
+        Self { capabilities }
     }
 }
 
 #[async_trait::async_trait]
-impl web::hardware_service_server::HardwareService for HardwareService {
+impl GrpcHardwareService for HardwareCapabilitiesService {
     async fn get_hardware_capabilities(
         &self,
         _request: Request<()>,
     ) -> Result<Response<web::HardwareCapabilities>, Status> {
-        Ok(Response::new(bmc100_capabilities()))
-    }
-}
-
-fn bmc100_capabilities() -> web::HardwareCapabilities {
-    web::HardwareCapabilities {
-        combined_scenes_supported: true,
+        Ok(Response::new(caps_to_proto(&self.capabilities)))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::caps_to_proto;
+    use bmc_platform::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
 
     #[test]
-    fn bmc100_supports_combined_scenes() {
-        assert!(bmc100_capabilities().combined_scenes_supported);
+    fn slot_grid_present_supports_combined_scenes() {
+        let proto = caps_to_proto(&HardwareCapabilities {
+            display: DisplayInfo {
+                width: 1_280,
+                height: 480,
+                shape: DisplayShape::Rectangular,
+                dpi: 1,
+            },
+            slot_grid: Some(SlotGrid {
+                columns: 4,
+                rows: 2,
+            }),
+        });
+        assert!(proto.combined_scenes_supported);
+    }
+
+    #[test]
+    fn absent_slot_grid_disables_combined_scenes() {
+        let proto = caps_to_proto(&HardwareCapabilities {
+            display: DisplayInfo {
+                width: 320,
+                height: 240,
+                shape: DisplayShape::Rectangular,
+                dpi: 1,
+            },
+            slot_grid: None,
+        });
+        assert!(!proto.combined_scenes_supported);
     }
 }

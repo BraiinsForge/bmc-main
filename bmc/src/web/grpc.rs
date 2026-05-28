@@ -19,6 +19,7 @@ use crate::web::SessionManager;
 use crate::web::session::extract_session;
 use crate::widget::{Coordinator, WidgetRegistry};
 use bmc_grpc::web;
+use bmc_platform::HardwareCapabilities;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::fmt::Display;
 use std::sync::Arc;
@@ -91,6 +92,7 @@ pub(crate) struct GrpcWeb<
     system_manager: SystemManager<V>,
     sound_controller: SoundController,
     alarm_controller: AlarmController,
+    hardware_capabilities: HardwareCapabilities,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -109,6 +111,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         system_manager: SystemManager<V>,
         sound_controller: SoundController,
         alarm_controller: AlarmController,
+        hardware_capabilities: HardwareCapabilities,
     ) -> Self {
         Self {
             manager,
@@ -122,6 +125,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             system_manager,
             sound_controller,
             alarm_controller,
+            hardware_capabilities,
         }
     }
 
@@ -154,7 +158,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         );
 
         let hardware_service = web::hardware_service_server::HardwareServiceServer::new(
-            hardware::HardwareService::new(),
+            hardware::HardwareCapabilitiesService::new(self.hardware_capabilities),
         );
 
         let initial_setup_service =
