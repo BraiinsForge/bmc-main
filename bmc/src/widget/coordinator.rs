@@ -2,7 +2,9 @@
 
 use bmc_shared_time::time::Timezone;
 use bmc_widget_manifest::{ParamKey, ParamValue};
-use bmc_widget_protocol::{Localization, NextAlarm, SettingUpdate, SizeType, WidgetInitialConfig};
+use bmc_widget_protocol::{
+    Localization, NextAlarm, SettingUpdate, ViewportShape, WidgetInitialConfig,
+};
 use indexmap::IndexMap;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -19,7 +21,7 @@ use super::{WidgetManager, WidgetRegistry};
 
 const ACTIVE_FULLSCREEN_DESCRIPTOR: crate::widget::ViewportDescriptor =
     crate::widget::ViewportDescriptor {
-        shape: bmc_widget_manifest::DisplayShape::Rectangular,
+        viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
         width: 1280,
         height: 480,
         dpi: 1,
@@ -41,15 +43,10 @@ fn placement_viewport_size(
     })
 }
 
-fn placement_legacy_size_type(placement: &crate::scene::WidgetPlacement) -> Option<SizeType> {
-    match placement {
-        crate::scene::WidgetPlacement::Fullscreen => Some(SizeType::Full),
-        crate::scene::WidgetPlacement::SlotSpan(s) => match (s.columns, s.rows) {
-            (1, 1) => Some(SizeType::Small),
-            (2, 1) => Some(SizeType::Medium),
-            (2, 2) => Some(SizeType::Large),
-            _ => None,
-        },
+fn manifest_to_protocol_viewport_shape(shape: bmc_widget_manifest::DisplayShape) -> ViewportShape {
+    match shape {
+        bmc_widget_manifest::DisplayShape::Rectangular => ViewportShape::Rectangular,
+        bmc_widget_manifest::DisplayShape::Round => ViewportShape::Round,
     }
 }
 
@@ -283,10 +280,9 @@ impl Coordinator {
         };
         let size = viewport;
         let initial_config = WidgetInitialConfig {
-            size: placement_legacy_size_type(&widget.placement)
-                .expect("BUG: viewport derivation already rejected unsupported spans"),
             width: viewport.width,
             height: viewport.height,
+            viewport_shape: manifest_to_protocol_viewport_shape(widget.viewport_shape),
             display: bmc_widget_protocol::DisplayInfo::BMC100,
             params: params_to_json_map(&widget.params),
         };
@@ -509,7 +505,7 @@ mod tests {
     #[test]
     fn placement_viewport_for_fullscreen_is_active_display() {
         let desc = ViewportDescriptor {
-            shape: DisplayShape::Rectangular,
+            viewport_shape: DisplayShape::Rectangular,
             width: 1280,
             height: 480,
             dpi: 1,
@@ -523,7 +519,7 @@ mod tests {
     #[test]
     fn placement_viewport_for_slot_span_uses_allow_list() {
         let desc = ViewportDescriptor {
-            shape: DisplayShape::Rectangular,
+            viewport_shape: DisplayShape::Rectangular,
             width: 1280,
             height: 480,
             dpi: 1,

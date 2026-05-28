@@ -13,10 +13,9 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use std::collections::HashMap;
 
 use super::conversions::{
-    date_format_to_protocol, display_shape_to_protocol, night_mode_to_protocol,
-    number_format_to_protocol, presence_to_protocol, size_type_to_protocol,
-    temperature_unit_to_protocol, time_format_to_protocol, unit_system_to_protocol,
-    weekday_to_protocol,
+    date_format_to_protocol, night_mode_to_protocol, number_format_to_protocol,
+    presence_to_protocol, temperature_unit_to_protocol, time_format_to_protocol,
+    unit_system_to_protocol, weekday_to_protocol,
 };
 use crate::compositor::widget_tracker::LifecycleState;
 
@@ -75,20 +74,42 @@ pub struct DeckWidgetProtocolState {
 /// The real implementation delegates to `DeckWidgetSurfaceV1`; the `#[cfg(test)]`
 /// implementation records events in a `Vec` for order/payload assertions.
 trait WidgetSurface {
-    fn configure(&self, size_type: bmc_widget_protocol::server::deck_widget_surface_v1::SizeType, width: u32, height: u32);
-    fn display_info(&self, display_width: u32, display_height: u32, display_shape: bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape, dpi: u32);
+    fn configure(
+        &self,
+        width: u32,
+        height: u32,
+        viewport_shape: bmc_widget_protocol::server::deck_widget_surface_v1::ViewportShape,
+    );
+    fn display_info(
+        &self,
+        width: u32,
+        height: u32,
+        shape: bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape,
+        dpi: u32,
+    );
     fn params(&self, params_json: String);
     fn emit_setting(&self, setting: &SettingUpdate);
     fn configure_done(&self);
 }
 
 impl WidgetSurface for DeckWidgetSurfaceV1 {
-    fn configure(&self, size_type: bmc_widget_protocol::server::deck_widget_surface_v1::SizeType, width: u32, height: u32) {
-        self.configure(size_type, width, height);
+    fn configure(
+        &self,
+        width: u32,
+        height: u32,
+        viewport_shape: bmc_widget_protocol::server::deck_widget_surface_v1::ViewportShape,
+    ) {
+        self.configure(width, height, viewport_shape);
     }
 
-    fn display_info(&self, display_width: u32, display_height: u32, display_shape: bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape, dpi: u32) {
-        self.display_info(display_width, display_height, display_shape, dpi);
+    fn display_info(
+        &self,
+        width: u32,
+        height: u32,
+        shape: bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape,
+        dpi: u32,
+    ) {
+        self.display_info(width, height, shape, dpi);
     }
 
     fn params(&self, params_json: String) {
@@ -119,11 +140,11 @@ impl DeckWidgetProtocolState {
 
     pub fn register_widget(&mut self, instance_id: InstanceId, config: WidgetInitialConfig) {
         tracing::info!(
-            "Registering widget {}: size={:?} {}x{}",
+            "Registering widget {}: {}x{} viewport_shape={:?}",
             instance_id,
-            config.size,
             config.width,
-            config.height
+            config.height,
+            config.viewport_shape
         );
         self.widgets.insert(
             instance_id.clone(),
@@ -387,16 +408,12 @@ impl DeckWidgetProtocolState {
         };
         let config = &widget.config;
 
-        surface.configure(
-            size_type_to_protocol(config.size),
-            config.width,
-            config.height,
-        );
+        surface.configure(config.width, config.height, config.viewport_shape.into());
 
         surface.display_info(
             config.display.width,
             config.display.height,
-            display_shape_to_protocol(config.display.shape),
+            config.display.shape.into(),
             config.display.dpi,
         );
 
@@ -537,11 +554,15 @@ fn cap_alarm_name(name: &str) -> String {
 #[cfg(test)]
 #[derive(Debug, Clone)]
 enum RecordedEvent {
-    Configure,
+    Configure(
+        u32,
+        u32,
+        bmc_widget_protocol::server::deck_widget_surface_v1::ViewportShape,
+    ),
     DisplayInfo {
-        display_width: u32,
-        display_height: u32,
-        display_shape: bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape,
+        width: u32,
+        height: u32,
+        shape: bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape,
         dpi: u32,
     },
     Params,
@@ -559,24 +580,26 @@ struct RecordingSurface {
 impl WidgetSurface for RecordingSurface {
     fn configure(
         &self,
-        _size_type: bmc_widget_protocol::server::deck_widget_surface_v1::SizeType,
-        _width: u32,
-        _height: u32,
+        width: u32,
+        height: u32,
+        viewport_shape: bmc_widget_protocol::server::deck_widget_surface_v1::ViewportShape,
     ) {
-        self.events.borrow_mut().push(RecordedEvent::Configure);
+        self.events
+            .borrow_mut()
+            .push(RecordedEvent::Configure(width, height, viewport_shape));
     }
 
     fn display_info(
         &self,
-        display_width: u32,
-        display_height: u32,
-        display_shape: bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape,
+        width: u32,
+        height: u32,
+        shape: bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape,
         dpi: u32,
     ) {
         self.events.borrow_mut().push(RecordedEvent::DisplayInfo {
-            display_width,
-            display_height,
-            display_shape,
+            width,
+            height,
+            shape,
             dpi,
         });
     }
@@ -610,7 +633,7 @@ impl RecordedEvents {
         self.0
             .iter()
             .map(|e| match e {
-                RecordedEvent::Configure => "configure",
+                RecordedEvent::Configure(..) => "configure",
                 RecordedEvent::DisplayInfo { .. } => "display_info",
                 RecordedEvent::Params => "params",
                 RecordedEvent::Setting => "setting",
@@ -619,24 +642,38 @@ impl RecordedEvents {
             .collect()
     }
 
-    fn display_info(
-        &self,
-    ) -> Option<(u32, u32, bmc_widget_protocol::DisplayShape, u32)> {
+    fn configure(&self) -> Option<(u32, u32, bmc_widget_protocol::ViewportShape)> {
+        self.0.iter().find_map(|e| {
+            if let RecordedEvent::Configure(w, h, s) = e {
+                use bmc_widget_protocol::server::deck_widget_surface_v1::ViewportShape as P;
+                let domain_shape = match s {
+                    P::Rectangular => bmc_widget_protocol::ViewportShape::Rectangular,
+                    P::Round => bmc_widget_protocol::ViewportShape::Round,
+                    _ => return None,
+                };
+                Some((*w, *h, domain_shape))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn display_info(&self) -> Option<(u32, u32, bmc_widget_protocol::DisplayShape, u32)> {
         self.0.iter().find_map(|e| {
             if let RecordedEvent::DisplayInfo {
-                display_width,
-                display_height,
-                display_shape,
+                width,
+                height,
+                shape,
                 dpi,
             } = e
             {
                 use bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape as P;
-                let domain_shape = match display_shape {
+                let domain_shape = match shape {
                     P::Rectangular => bmc_widget_protocol::DisplayShape::Rectangular,
                     P::Round => bmc_widget_protocol::DisplayShape::Round,
                     _ => return None,
                 };
-                Some((*display_width, *display_height, domain_shape, *dpi))
+                Some((*width, *height, domain_shape, *dpi))
             } else {
                 None
             }
@@ -646,15 +683,13 @@ impl RecordedEvents {
 
 #[cfg(test)]
 mod tests {
-    use bmc_widget_protocol::SizeType;
-
     use super::*;
 
     fn make_config() -> WidgetInitialConfig {
         WidgetInitialConfig {
-            size: SizeType::Small,
             width: 100,
             height: 100,
+            viewport_shape: bmc_widget_protocol::ViewportShape::Rectangular,
             display: bmc_widget_protocol::DisplayInfo::BMC100,
             params: serde_json::Map::new(),
         }
@@ -801,6 +836,10 @@ mod tests {
         assert_eq!(
             events.names(),
             ["configure", "display_info", "params", "configure_done",],
+        );
+        assert_eq!(
+            events.configure(),
+            Some((100, 100, bmc_widget_protocol::ViewportShape::Rectangular)),
         );
         assert_eq!(
             events.display_info(),

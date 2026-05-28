@@ -43,8 +43,8 @@
       emits initial configuration as a sequence of events, terminated by
       configure_done:
 
-        configure(size_type, width, height)
-        display_info(display_width, display_height, display_shape, dpi)
+        configure(width, height, viewport_shape)
+        display_info(width, height, shape, dpi)
         params(json)
         timezone / night_mode / date_format / ... (setting events)
         configure_done
@@ -112,31 +112,28 @@
     -->
 
     <event name="configure">
-      <description summary="widget geometry and size class">
-        Delivered once on surface creation. Carries the widget's
-        size class and its pixel dimensions. Follow-up `param_*` and
-        setting events refine configuration; the batch is terminated
-        by `configure_done`.
+      <description summary="widget geometry and viewport shape">
+        Delivered once on surface creation. Carries the widget's pixel
+        dimensions and the shape of its viewport. Follow-up `param_*` and
+        setting events refine configuration; the batch is terminated by
+        `configure_done`.
       </description>
-      <arg name="size_type" type="uint" enum="size_type"/>
       <arg name="width" type="uint" summary="pixel width"/>
       <arg name="height" type="uint" summary="pixel height"/>
+      <arg name="viewport_shape" type="uint" enum="viewport_shape"/>
     </event>
 
     <event name="display_info">
       <description summary="active display geometry and shape">
         Delivered once on surface creation, after `configure` and before
         `configure_done`. Carries the active display's logical pixel size,
-        shape, and DPI so widgets can branch on real geometry instead of
-        the legacy `size_type`. DPI is advisory during this development
-        stage and is currently an explicit fake value of 1.
-
-        Widgets that do not bind this event ignore it; old widgets keep
-        working unchanged.
+        shape, and DPI so widgets can adapt panel-wide rendering (e.g.
+        corner masking on a round panel). DPI is advisory during this
+        development stage and is currently an explicit fake value of 1.
       </description>
-      <arg name="display_width" type="uint" summary="logical display width in pixels"/>
-      <arg name="display_height" type="uint" summary="logical display height in pixels"/>
-      <arg name="display_shape" type="uint" enum="display_shape"/>
+      <arg name="width" type="uint" summary="logical display width in pixels"/>
+      <arg name="height" type="uint" summary="logical display height in pixels"/>
+      <arg name="shape" type="uint" enum="display_shape"/>
       <arg name="dpi" type="uint" summary="display density; advisory, fake value 1 for now"/>
     </event>
 
@@ -286,11 +283,15 @@
       <entry name="leaving"  value="4" summary="transitioning out under a drag"/>
     </enum>
 
-    <enum name="size_type">
-      <entry name="small" value="0"/>
-      <entry name="medium" value="1"/>
-      <entry name="large" value="2"/>
-      <entry name="full" value="3"/>
+    <enum name="viewport_shape">
+      <description summary="widget viewport shape">
+        Shape of the region the widget renders into. Kept separate from
+        `display_shape` so viewport shapes can evolve independently of
+        panel shapes in future versions of the protocol. Today both
+        enums declare the same two values.
+      </description>
+      <entry name="rectangular" value="0"/>
+      <entry name="round" value="1"/>
     </enum>
 
     <enum name="display_shape">

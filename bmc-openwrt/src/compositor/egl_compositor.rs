@@ -1651,7 +1651,7 @@ mod tests {
         handle_clear_pid_command,
     };
     use bmc::compositor::InstanceId;
-    use bmc_widget_protocol::{SizeType, WidgetInitialConfig};
+    use bmc_widget_protocol::{ViewportShape, WidgetInitialConfig};
     use smithay::reexports::{
         calloop::EventLoop,
         wayland_server::{Display, ListeningSocket},
@@ -1665,9 +1665,9 @@ mod tests {
 
     fn make_widget_config() -> WidgetInitialConfig {
         WidgetInitialConfig {
-            size: SizeType::Small,
             width: 100,
             height: 100,
+            viewport_shape: ViewportShape::Rectangular,
             display: bmc_widget_protocol::DisplayInfo::BMC100,
             params: serde_json::Map::new(),
         }
