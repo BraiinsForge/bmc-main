@@ -43,7 +43,9 @@ use bmc_render::interaction::TouchEvent;
 use bmc_render::renderer::Renderer as _;
 use bmc_wasm_runtime::fixtures::{self, find_widget_root, seed_kv_from_secrets, snapshot_kv_dir};
 use bmc_wasm_runtime::unified_fixture::TimelineEvent;
-use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime};
+use bmc_wasm_runtime::{
+    RenderStatus, RuntimeConfig, RuntimeDisplayInfo, SystemSnapshot, WasmWidgetRuntime,
+};
 
 use paint::{
     GlProcAddress, TileGpu, draw_checkerboard, paint_led_strip, paint_timing_chart,
@@ -714,7 +716,19 @@ impl TestbedApp {
                 ..RuntimeConfig::default()
             };
             tile.renderer.drop_all();
-            match WasmWidgetRuntime::new(&wasm_bytes, tile.gpu.width, tile.gpu.height, rt_config) {
+            match WasmWidgetRuntime::new(
+                &wasm_bytes,
+                tile.gpu.width,
+                tile.gpu.height,
+                bmc_wasm_protocol::ViewportShape::Rectangular,
+                RuntimeDisplayInfo {
+                    width: tile.gpu.width,
+                    height: tile.gpu.height,
+                    shape: bmc_wasm_protocol::DisplayShape::Rectangular,
+                    dpi: 1,
+                },
+                rt_config,
+            ) {
                 Ok(rt) => {
                     tile.runtime = rt;
                     tile.led_rx = led_rx;
@@ -794,8 +808,20 @@ impl TestbedApp {
                 )
             }
             .with_context(|| format!("create renderer for {label}"))?;
-            let runtime = WasmWidgetRuntime::new(&wasm_bytes, w, h, rt_config)
-                .with_context(|| format!("create runtime for {label}"))?;
+            let runtime = WasmWidgetRuntime::new(
+                &wasm_bytes,
+                w,
+                h,
+                bmc_wasm_protocol::ViewportShape::Rectangular,
+                RuntimeDisplayInfo {
+                    width: w,
+                    height: h,
+                    shape: bmc_wasm_protocol::DisplayShape::Rectangular,
+                    dpi: 1,
+                },
+                rt_config,
+            )
+            .with_context(|| format!("create runtime for {label}"))?;
             tiles.push(PreviewTile {
                 runtime,
                 renderer,

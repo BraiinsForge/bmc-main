@@ -53,8 +53,15 @@ fn loop_of_ten_frames_succeeds() {
     // SAFETY: HeadlessGl keeps the GL context current.
     let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 320, 240, gl.fbo_id, 0) }
         .expect("BUG: renderer construct");
-    let mut runtime = WasmWidgetRuntime::new(&wasm, 320, 240, RuntimeConfig::default())
-        .expect("BUG: runtime construct");
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        320,
+        240,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(320, 240),
+        RuntimeConfig::default(),
+    )
+    .expect("BUG: runtime construct");
 
     for _ in 0..10 {
         renderer.begin_frame(320, 240, 1.0);

@@ -25,6 +25,41 @@ use crate::system::SystemSnapshot;
 
 use super::ParamsSnapshot;
 
+/// Logical display geometry handed to [`WasmWidgetRuntime::new`].
+///
+/// Always supplied by the host from the Wayland handshake; there is no
+/// `Default` impl so an accidental fallback can't silently mask a missing
+/// handshake plumbing.
+#[derive(Debug, Clone, Copy)]
+pub struct DisplayInfo {
+    pub width: u32,
+    pub height: u32,
+    pub shape: bmc_wasm_protocol::DisplayShape,
+    pub dpi: u32,
+}
+
+impl From<bmc_widget_protocol::DisplayInfo> for DisplayInfo {
+    fn from(info: bmc_widget_protocol::DisplayInfo) -> Self {
+        Self {
+            width: info.width,
+            height: info.height,
+            shape: info.shape.into(),
+            dpi: info.dpi,
+        }
+    }
+}
+
+impl From<DisplayInfo> for bmc_widget_protocol::DisplayInfo {
+    fn from(info: DisplayInfo) -> Self {
+        Self {
+            width: info.width,
+            height: info.height,
+            shape: info.shape.into(),
+            dpi: info.dpi,
+        }
+    }
+}
+
 /// Write a `TouchHit` (4×f32 LE = 16 bytes) to WASM memory at `out_ptr`.
 pub(super) fn write_touch_hit(caller: &mut Caller<'_, HostState>, out_ptr: u32, hit: &TouchHit) {
     let memory = caller.get_export("memory").and_then(Extern::into_memory);
@@ -275,7 +310,20 @@ impl WasmWidgetRuntime {
     /// All configuration from [`RuntimeConfig`] is applied **before** the WASM
     /// `init()` export runs, so interceptors, KV, and event fixtures are available
     /// from the widget's first instruction.
-    pub fn new(wasm_bytes: &[u8], width: u32, height: u32, config: RuntimeConfig) -> Result<Self> {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "construction sets up engine, store, linker, host state, and stages \
+                  all RuntimeConfig fields before init() runs — splitting helpers \
+                  would scatter the ordering contract"
+    )]
+    pub fn new(
+        wasm_bytes: &[u8],
+        width: u32,
+        height: u32,
+        viewport_shape: bmc_wasm_protocol::ViewportShape,
+        display: DisplayInfo,
+        config: RuntimeConfig,
+    ) -> Result<Self> {
         // `mesh_msaa_samples` belongs to the caller-owned `FemtoVgRenderer` and is
         // dropped here via `..`. The field stays on `RuntimeConfig` so the capture
         // binary can plumb it through to its `FemtoVgRenderer::new` call.
@@ -317,21 +365,18 @@ impl WasmWidgetRuntime {
         let mut linker = Linker::new(&engine);
         Self::register_host_functions(&mut linker)?;
 
-        let instance = linker.instantiate_and_start(&mut store, &module)?;
-        let sdk_version = check_sdk_version(instance, &mut store)?;
-        let render_func = instance.get_typed_func::<u32, ()>(&store, "render")?;
-        let unload_func = instance.get_typed_func::<(), ()>(&store, "unload").ok();
-        let on_params_update_func = instance
-            .get_typed_func::<(), ()>(&store, "on_params_update")
-            .ok();
-        let on_system_update_func = instance
-            .get_typed_func::<(), ()>(&store, "on_system_update")
-            .ok();
-
-        // Apply config before init() so interceptors/KV/params are available immediately.
+        // Stage geometry + all RuntimeConfig before instantiation. wasmi runs
+        // the module's `start` section eagerly inside `instantiate_and_start`,
+        // so staging here guarantees no guest code — start section or later
+        // exports — ever observes the zero defaults from `HostState::new`.
         let state = store.data_mut();
         state.widget_width = width;
         state.widget_height = height;
+        state.viewport_shape = viewport_shape;
+        state.display_width = display.width;
+        state.display_height = display.height;
+        state.display_shape = display.shape;
+        state.display_dpi = display.dpi;
         state.kv_store_path = kv_store_path;
         state.fetch_interceptor = fetch_interceptor;
         state.fetch_observer = fetch_observer;
@@ -363,6 +408,18 @@ impl WasmWidgetRuntime {
             });
         }
         let guest_id = state.guest_id;
+
+        // State is staged; instantiate (running `start`, if any) and resolve exports.
+        let instance = linker.instantiate_and_start(&mut store, &module)?;
+        let sdk_version = check_sdk_version(instance, &mut store)?;
+        let render_func = instance.get_typed_func::<u32, ()>(&store, "render")?;
+        let unload_func = instance.get_typed_func::<(), ()>(&store, "unload").ok();
+        let on_params_update_func = instance
+            .get_typed_func::<(), ()>(&store, "on_params_update")
+            .ok();
+        let on_system_update_func = instance
+            .get_typed_func::<(), ()>(&store, "on_system_update")
+            .ok();
         tracing::info!(
             guest_id = %guest_id,
             width,
@@ -1003,6 +1060,27 @@ impl WasmWidgetRuntime {
         self.store.data().delivered_events
     }
 
+    #[cfg(test)]
+    #[must_use]
+    pub fn test_geometry(
+        &self,
+    ) -> (
+        bmc_wasm_protocol::ViewportShape,
+        u32,
+        u32,
+        bmc_wasm_protocol::DisplayShape,
+        u32,
+    ) {
+        let s = self.store.data();
+        (
+            s.viewport_shape,
+            s.display_width,
+            s.display_height,
+            s.display_shape,
+            s.display_dpi,
+        )
+    }
+
     #[cfg(feature = "testing")]
     #[must_use]
     pub fn test_unload_ran(&self) -> bool {
@@ -1152,5 +1230,52 @@ impl Drop for WasmWidgetRuntime {
         if evicted > 0 {
             tracing::debug!("widget teardown evicted {evicted} asset(s)");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DisplayInfo, RuntimeConfig, WasmWidgetRuntime};
+    use bmc_wasm_protocol::{DisplayShape, ViewportShape};
+
+    /// Minimal SDK-version-shaped widget so `WasmWidgetRuntime::new` finishes
+    /// instantiation without needing a renderer or GL context.
+    fn minimal_wat() -> &'static str {
+        r#"
+        (module
+          (memory (export "memory") 1)
+          (func (export "__bmc_sdk_version") (result i64)
+            i64.const 65536)
+          (func (export "render") (param i32)))
+        "#
+    }
+
+    #[test]
+    fn new_installs_geometry_on_host_state() {
+        let wasm = wat::parse_str(minimal_wat()).expect("BUG: minimal WAT must parse");
+        let rt = WasmWidgetRuntime::new(
+            &wasm,
+            480,
+            480,
+            ViewportShape::Round,
+            DisplayInfo {
+                width: 480,
+                height: 480,
+                shape: DisplayShape::Rectangular,
+                dpi: 42,
+            },
+            RuntimeConfig::default(),
+        )
+        .expect("BUG: runtime should construct from the minimal fixture");
+        assert_eq!(
+            rt.test_geometry(),
+            (
+                ViewportShape::Round,
+                480,
+                480,
+                DisplayShape::Rectangular,
+                42
+            )
+        );
     }
 }

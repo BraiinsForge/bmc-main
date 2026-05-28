@@ -107,8 +107,15 @@ fn renderer_keeps_widget_assets_alive_until_explicit_evict() {
     // SAFETY: HeadlessGl keeps the GL context current.
     let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
         .expect("BUG: renderer construct");
-    let mut runtime = WasmWidgetRuntime::new(&wasm, 64, 64, RuntimeConfig::default())
-        .expect("BUG: runtime construct");
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        64,
+        64,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(64, 64),
+        RuntimeConfig::default(),
+    )
+    .expect("BUG: runtime construct");
 
     // Capture the asset namespace BEFORE the runtime drops; the host-side
     // GuestId is the only handle we have on the prefix the renderer uses.

@@ -8,8 +8,9 @@ anyhow.workspace = true
 bmc-led.workspace = true
 bmc-render = { path = "../bmc-render" }
 bmc-shared-time = { path = "../bmc-shared/time" }
-bmc-wasm-protocol = { path = "protocol", features = ["serde"] }
+bmc-wasm-protocol = { path = "protocol", features = ["serde", "widget-protocol"] }
 bmc-widget-manifest.workspace = true
+bmc-widget-protocol.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 formato.workspace = true

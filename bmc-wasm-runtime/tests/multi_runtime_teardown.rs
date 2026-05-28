@@ -42,10 +42,24 @@ fn stop_channel_workers_join_within_200ms_on_drop() {
     let _force_use = (&gl.display, gl.fbo_id, gl.proc_address());
     let wasm = wat::parse_str(probe_wat()).expect("BUG: probe WAT must parse");
 
-    let mut a = WasmWidgetRuntime::new(&wasm, 256, 256, RuntimeConfig::default())
-        .expect("BUG: runtime A must construct");
-    let mut b = WasmWidgetRuntime::new(&wasm, 256, 256, RuntimeConfig::default())
-        .expect("BUG: runtime B must construct");
+    let mut a = WasmWidgetRuntime::new(
+        &wasm,
+        256,
+        256,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(256, 256),
+        RuntimeConfig::default(),
+    )
+    .expect("BUG: runtime A must construct");
+    let mut b = WasmWidgetRuntime::new(
+        &wasm,
+        256,
+        256,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(256, 256),
+        RuntimeConfig::default(),
+    )
+    .expect("BUG: runtime B must construct");
 
     // Spawn the workers we will observe through drop. Every kick helper returns a
     // JoinHandle for a thread that is *actually blocked* on a live receiver — not the

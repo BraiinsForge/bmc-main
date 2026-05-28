@@ -108,7 +108,9 @@ pub mod fixtures;
 pub mod unified_fixture;
 
 pub use host_api::{FixtureEvent, FixtureEventKind, FixtureEventState};
-pub use runtime::{RenderStatus, RuntimeConfig, RuntimeResourceLimits, WasmWidgetRuntime};
+pub use runtime::{
+    RenderStatus, RuntimeConfig, RuntimeDisplayInfo, RuntimeResourceLimits, WasmWidgetRuntime,
+};
 pub use system::{NextAlarm, SystemSettings, SystemSnapshot};
 
 /// Errors produced by [`parse_params_json`] when an entry violates the wire-format contract.

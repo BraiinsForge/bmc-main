@@ -76,6 +76,8 @@ fn delayed_fetch_fires_only_after_host_advances_monotonic_time() {
         &wasm,
         64,
         64,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(64, 64),
         RuntimeConfig {
             fetch_interceptor: Some(Box::new(|_method, _url| Some((200, b"ok".to_vec())))),
             ..RuntimeConfig::default()

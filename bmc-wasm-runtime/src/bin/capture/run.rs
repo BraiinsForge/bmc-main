@@ -1113,8 +1113,20 @@ fn setup_gl_and_runtime(
         )
     }
     .context("failed to create renderer")?;
-    let runtime = WasmWidgetRuntime::new(&wasm_bytes, ctx.width, ctx.height, rt_config)
-        .context("failed to create WASM runtime")?;
+    let runtime = WasmWidgetRuntime::new(
+        &wasm_bytes,
+        ctx.width,
+        ctx.height,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_wasm_runtime::RuntimeDisplayInfo {
+            width: ctx.width,
+            height: ctx.height,
+            shape: bmc_wasm_protocol::DisplayShape::Rectangular,
+            dpi: 1,
+        },
+        rt_config,
+    )
+    .context("failed to create WASM runtime")?;
 
     let keep_alive: Box<dyn std::any::Any> = Box::new((texture, surface, gl_context));
     Ok((gl, fbo, keep_alive, renderer, runtime))
@@ -1259,8 +1271,20 @@ fn setup_gl_and_runtime(
         )
     }
     .context("failed to create renderer")?;
-    let runtime = WasmWidgetRuntime::new(&wasm_bytes, ctx.width, ctx.height, rt_config)
-        .context("failed to create WASM runtime")?;
+    let runtime = WasmWidgetRuntime::new(
+        &wasm_bytes,
+        ctx.width,
+        ctx.height,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        bmc_wasm_runtime::RuntimeDisplayInfo {
+            width: ctx.width,
+            height: ctx.height,
+            shape: bmc_wasm_protocol::DisplayShape::Rectangular,
+            dpi: 1,
+        },
+        rt_config,
+    )
+    .context("failed to create WASM runtime")?;
 
     // Keep EGL state alive — dropping tears down the GL context.
     let keep_alive: Box<dyn std::any::Any> =

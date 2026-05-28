@@ -37,8 +37,15 @@ fn build(gl: &headless_egl::HeadlessGl) -> (WasmWidgetRuntime, bmc_render::gpu::
     let renderer =
         unsafe { bmc_render::gpu::FemtoVgRenderer::new(&mut proc, 320, 240, gl.fbo_id, 0) }
             .expect("BUG: probe renderer must construct");
-    let runtime = WasmWidgetRuntime::new(&wasm, 320, 240, RuntimeConfig::default())
-        .expect("BUG: probe runtime must construct");
+    let runtime = WasmWidgetRuntime::new(
+        &wasm,
+        320,
+        240,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(320, 240),
+        RuntimeConfig::default(),
+    )
+    .expect("BUG: probe runtime must construct");
     (runtime, renderer)
 }
 
@@ -103,8 +110,15 @@ fn host_import_reborrows_parked_pointer() {
     let mut renderer =
         unsafe { bmc_render::gpu::FemtoVgRenderer::new(&mut proc, 320, 240, gl.fbo_id, 0) }
             .expect("BUG: probe renderer must construct");
-    let mut runtime = WasmWidgetRuntime::new(&wasm, 320, 240, RuntimeConfig::default())
-        .expect("BUG: probe runtime must construct");
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        320,
+        240,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(320, 240),
+        RuntimeConfig::default(),
+    )
+    .expect("BUG: probe runtime must construct");
 
     renderer.begin_frame(320, 240, 1.0);
     let ptr = renderer_ptr(&mut renderer);
@@ -125,8 +139,15 @@ fn host_import_outside_render_scope_traps_guest() {
     let _renderer =
         unsafe { bmc_render::gpu::FemtoVgRenderer::new(&mut proc, 320, 240, gl.fbo_id, 0) }
             .expect("BUG: probe renderer must construct");
-    let mut runtime = WasmWidgetRuntime::new(&wasm, 320, 240, RuntimeConfig::default())
-        .expect("BUG: probe runtime must construct");
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        320,
+        240,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(320, 240),
+        RuntimeConfig::default(),
+    )
+    .expect("BUG: probe runtime must construct");
 
     // No `with_renderer` bracket — the painting import inside `render` must trap
     // the guest, surfacing as `RenderStatus::Dead` (after fuel-strike accumulation)
@@ -241,10 +262,24 @@ fn two_runtimes_share_one_renderer_without_cross_slot_bleeding() {
     let wasm_b = wat::parse_str(&wat_b).expect("BUG: WAT B must parse");
 
     let mut renderer = build_with_renderer(&gl);
-    let mut rt_a = WasmWidgetRuntime::new(&wasm_a, 64, 64, RuntimeConfig::default())
-        .expect("BUG: runtime A must construct");
-    let mut rt_b = WasmWidgetRuntime::new(&wasm_b, 64, 64, RuntimeConfig::default())
-        .expect("BUG: runtime B must construct");
+    let mut rt_a = WasmWidgetRuntime::new(
+        &wasm_a,
+        64,
+        64,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(64, 64),
+        RuntimeConfig::default(),
+    )
+    .expect("BUG: runtime A must construct");
+    let mut rt_b = WasmWidgetRuntime::new(
+        &wasm_b,
+        64,
+        64,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(64, 64),
+        RuntimeConfig::default(),
+    )
+    .expect("BUG: runtime B must construct");
 
     let ns_a = rt_a.asset_namespace();
     let ns_b = rt_b.asset_namespace();

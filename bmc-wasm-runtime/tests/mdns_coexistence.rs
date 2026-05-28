@@ -28,10 +28,24 @@ fn two_runtimes_one_process_see_each_others_mdns_announcements() {
     let _force_use = (&gl.display, gl.fbo_id, gl.proc_address());
     let wasm = wat::parse_str(probe_wat()).expect("BUG: probe WAT must parse");
 
-    let mut a = WasmWidgetRuntime::new(&wasm, 256, 256, RuntimeConfig::default())
-        .expect("BUG: runtime A must construct");
-    let mut b = WasmWidgetRuntime::new(&wasm, 256, 256, RuntimeConfig::default())
-        .expect("BUG: runtime B must construct");
+    let mut a = WasmWidgetRuntime::new(
+        &wasm,
+        256,
+        256,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(256, 256),
+        RuntimeConfig::default(),
+    )
+    .expect("BUG: runtime A must construct");
+    let mut b = WasmWidgetRuntime::new(
+        &wasm,
+        256,
+        256,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(256, 256),
+        RuntimeConfig::default(),
+    )
+    .expect("BUG: runtime B must construct");
 
     // Start browse + registration through the runtime path, not by talking to mdns-sd directly.
     a.test_start_mdns_browse("_bdk469-test._tcp.local.");
