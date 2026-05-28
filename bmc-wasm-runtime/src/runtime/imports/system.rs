@@ -18,6 +18,8 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_system_time_import(linker)?;
     register_random_import(linker)?;
     register_widget_size_import(linker)?;
+    register_widget_viewport_shape_import(linker)?;
+    register_display_info_import(linker)?;
     register_system_version(linker)?;
     register_system_snapshot(linker)?;
     register_resolve_tz_import(linker)?;
@@ -35,6 +37,41 @@ fn register_widget_size_import(linker: &mut Linker<HostState>) -> Result<()> {
         |caller: Caller<'_, HostState>| -> u64 {
             let s = caller.data();
             (u64::from(s.widget_width) << 32) | u64::from(s.widget_height)
+        },
+    )?;
+    Ok(())
+}
+
+/// Viewport shape from the Wayland configure event. This is the widget-facing
+/// shape signal used by SDK `widget_viewport().shape`.
+fn register_widget_viewport_shape_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_widget_viewport_shape",
+        |caller: Caller<'_, HostState>| -> u32 { u32::from(caller.data().viewport_shape) },
+    )?;
+    Ok(())
+}
+
+/// Display info, split across two single-register reads to mirror
+/// `host_widget_size`. `host_display_size` packs `(width << 32) | height`;
+/// `host_display_shape_dpi` packs `(shape_wire << 32) | dpi`. Both are set by
+/// the host at construction and never mutated; the SDK reads each once.
+fn register_display_info_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_display_size",
+        |caller: Caller<'_, HostState>| -> u64 {
+            let s = caller.data();
+            (u64::from(s.display_width) << 32) | u64::from(s.display_height)
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "host_display_shape_dpi",
+        |caller: Caller<'_, HostState>| -> u64 {
+            let s = caller.data();
+            (u64::from(u32::from(s.display_shape)) << 32) | u64::from(s.display_dpi)
         },
     )?;
     Ok(())
