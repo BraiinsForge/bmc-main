@@ -55,6 +55,22 @@ fn manifest_to_protocol_viewport_shape(shape: bmc_widget_manifest::DisplayShape)
     }
 }
 
+fn platform_to_protocol_display(
+    display: bmc_platform::DisplayInfo,
+) -> bmc_widget_protocol::DisplayInfo {
+    bmc_widget_protocol::DisplayInfo {
+        width: display.width,
+        height: display.height,
+        shape: match display.shape {
+            bmc_platform::DisplayShape::Rectangular => {
+                bmc_widget_protocol::DisplayShape::Rectangular
+            }
+            bmc_platform::DisplayShape::Round => bmc_widget_protocol::DisplayShape::Round,
+        },
+        dpi: display.dpi,
+    }
+}
+
 pub fn supported_scenes<'a>(
     registry: &WidgetRegistry,
     caps: &HardwareCapabilities,
@@ -334,7 +350,7 @@ impl Coordinator {
             width: viewport.width,
             height: viewport.height,
             viewport_shape: manifest_to_protocol_viewport_shape(widget.viewport_shape),
-            display: bmc_widget_protocol::DisplayInfo::BMC100,
+            display: platform_to_protocol_display(self.hardware_capabilities.display),
             params: params_to_json_map(&widget.params),
         };
 
@@ -631,6 +647,33 @@ mod tests {
         assert!(
             !scene_supported_with_registry(&registry, &scene, &bmc100_capabilities()),
             "BUG: combined scene with a non-allow-list span must be unsupported",
+        );
+    }
+
+    #[test]
+    fn platform_display_converts_to_protocol_display() {
+        let platform = bmc_platform::DisplayInfo {
+            width: 480,
+            height: 320,
+            shape: bmc_platform::DisplayShape::Rectangular,
+            dpi: 7,
+        };
+        let proto = platform_to_protocol_display(platform);
+        assert_eq!(proto.width, 480);
+        assert_eq!(proto.height, 320);
+        assert_eq!(proto.shape, bmc_widget_protocol::DisplayShape::Rectangular);
+        assert_eq!(proto.dpi, 7);
+        assert_ne!(proto, bmc_widget_protocol::DisplayInfo::BMC100);
+
+        let round = bmc_platform::DisplayInfo {
+            width: 480,
+            height: 480,
+            shape: bmc_platform::DisplayShape::Round,
+            dpi: 7,
+        };
+        assert_eq!(
+            platform_to_protocol_display(round).shape,
+            bmc_widget_protocol::DisplayShape::Round
         );
     }
 
