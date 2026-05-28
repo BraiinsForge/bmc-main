@@ -41,6 +41,7 @@ mod system;
 use super::SystemUpgradeService;
 mod alarm;
 mod configuration_service;
+mod hardware;
 mod initial_setup;
 mod led_test;
 mod network;
@@ -152,6 +153,10 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             metadata::MetadataService::new(self.manager.clone()),
         );
 
+        let hardware_service = web::hardware_service_server::HardwareServiceServer::new(
+            hardware::HardwareService::new(),
+        );
+
         let initial_setup_service =
             web::initial_setup_service_server::InitialSetupServiceServer::new(
                 initial_setup::InitialSetupService::new(self.manager.clone(), self.initial_setup),
@@ -210,6 +215,11 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                 tower::ServiceBuilder::new()
                     .layer(logging_layer.clone())
                     .service(GrpcWebLayer::new().layer(metadata_service)),
+            )
+            .add_service(
+                tower::ServiceBuilder::new()
+                    .layer(logging_layer.clone())
+                    .service(GrpcWebLayer::new().layer(hardware_service)),
             )
             .add_service(
                 tower::ServiceBuilder::new()
