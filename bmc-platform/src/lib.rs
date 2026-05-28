@@ -281,10 +281,10 @@ impl HardwareProfile {
             Product::Bmm101 => Self {
                 product,
                 display: DisplayProfile {
-                    logical_width: 320,
-                    logical_height: 480,
-                    advertised_width: 320,
-                    advertised_height: 480,
+                    logical_width: 480,
+                    logical_height: 320,
+                    advertised_width: 480,
+                    advertised_height: 320,
                     shape: DisplayShape::Rectangular,
                     dpi: 165,
                     scanout_transform: DisplayTransform::Deg0,
@@ -292,8 +292,8 @@ impl HardwareProfile {
                     visible_area: VisibleArea {
                         x: 0,
                         y: 0,
-                        width: 320,
-                        height: 480,
+                        width: 480,
+                        height: 320,
                     },
                     seam_overlap_px: 0,
                 },
@@ -492,6 +492,68 @@ mod test {
 
         let bfm = HardwareProfile::for_product(Product::Bfm100).capabilities();
         assert_eq!(bfm.display.shape, DisplayShape::Round);
+    }
+
+    #[test]
+    fn non_bmc100_profiles_have_expected_display_geometry() {
+        let cases = [
+            (
+                Product::Bmm100,
+                320,
+                240,
+                DisplayShape::Rectangular,
+                DisplayTransform::Deg0,
+            ),
+            (
+                Product::Bmm101,
+                480,
+                320,
+                DisplayShape::Rectangular,
+                DisplayTransform::Deg0,
+            ),
+            (
+                Product::Bfm100,
+                480,
+                480,
+                DisplayShape::Round,
+                DisplayTransform::Deg90,
+            ),
+        ];
+
+        for (product, width, height, shape, transform) in cases {
+            let profile = HardwareProfile::for_product(product);
+            assert_eq!(
+                (
+                    profile.display.logical_width,
+                    profile.display.logical_height
+                ),
+                (width, height),
+                "{product:?}: logical display"
+            );
+            assert_eq!(
+                (
+                    profile.display.advertised_width,
+                    profile.display.advertised_height
+                ),
+                (width, height),
+                "{product:?}: advertised mode"
+            );
+            assert_eq!(
+                (
+                    profile.display.visible_area.x,
+                    profile.display.visible_area.y,
+                    profile.display.visible_area.width,
+                    profile.display.visible_area.height,
+                ),
+                (0, 0, width, height),
+                "{product:?}: visible area"
+            );
+            assert_eq!(profile.display.shape, shape, "{product:?}: shape");
+            assert_eq!(
+                profile.display.scanout_transform, transform,
+                "{product:?}: scanout transform"
+            );
+        }
     }
 
     #[test]
