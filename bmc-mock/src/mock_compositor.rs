@@ -5,9 +5,10 @@
 //! Logs all compositor operations instead of rendering to a display.
 
 use bmc::compositor::{
-    Compositor, CompositorError, CompositorEvent, InstanceId, Position, SceneLayout, SettingUpdate,
-    Size, WidgetAction, WidgetInitialConfig,
+    Compositor, CompositorError, CompositorEvent, HardwareCapabilities, InstanceId, Position,
+    SceneLayout, SettingUpdate, Size, WidgetAction, WidgetInitialConfig,
 };
+use bmc_platform::{HardwareProfile, Product};
 use tokio::sync::mpsc;
 
 #[derive(Debug)]
@@ -16,11 +17,12 @@ pub struct MockCompositor {
     event_tx: mpsc::UnboundedSender<CompositorEvent>,
     event_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<CompositorEvent>>>,
     display_name: std::sync::Mutex<Option<String>>,
+    product: Product,
 }
 
 impl MockCompositor {
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(product: Product) -> Self {
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         Self {
@@ -28,13 +30,8 @@ impl MockCompositor {
             event_tx,
             event_rx: std::sync::Mutex::new(Some(event_rx)),
             display_name: std::sync::Mutex::new(None),
+            product,
         }
-    }
-}
-
-impl Default for MockCompositor {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -54,6 +51,10 @@ impl Compositor for MockCompositor {
             .lock()
             .expect("BUG: display_name lock poisoned")
             .clone()
+    }
+
+    fn hardware_capabilities(&self) -> HardwareCapabilities {
+        HardwareProfile::for_product(self.product).capabilities()
     }
 
     fn register_widget(
@@ -170,5 +171,21 @@ impl Compositor for MockCompositor {
     fn shutdown(&self) -> Result<(), CompositorError> {
         tracing::info!("MockCompositor: shutdown");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MockCompositor;
+    use bmc::compositor::Compositor;
+    use bmc_platform::{DisplayShape, Product};
+
+    #[test]
+    fn mock_reports_bmc100_capabilities() {
+        let caps = MockCompositor::new(Product::Bmc100).hardware_capabilities();
+        assert_eq!((caps.display.width, caps.display.height), (1_280, 480));
+        assert_eq!(caps.display.shape, DisplayShape::Rectangular);
+        assert_eq!(caps.display.dpi, 217);
+        assert_eq!(caps.slot_grid.map(|g| (g.columns, g.rows)), Some((4, 2)));
     }
 }

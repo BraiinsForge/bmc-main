@@ -2,6 +2,7 @@
 
 //! EGL Compositor implementation for bmc-openwrt.
 
+use super::scene_renderer::touch_to_logical;
 use super::{
     commands::CompositorCommand,
     device_access::{DeviceAccessConfig, RootLibinputInterface, set_libinput_debug_priority},
@@ -17,6 +18,7 @@ use bmc::compositor::{
     Compositor, CompositorError, CompositorEvent, InstanceId, Position, SceneLayout, Size,
     WidgetAction,
 };
+use bmc_platform::TouchTransform;
 use bmc_platform::linux_input::discover_touch_node;
 use bmc_widget_protocol::{SettingUpdate, WidgetInitialConfig};
 use smithay::backend::{
@@ -53,10 +55,6 @@ use std::{
 /// clock.
 static COMPOSITOR_BOOT: LazyLock<Instant> = LazyLock::new(Instant::now);
 use tokio::sync::mpsc;
-
-/// Physical display dimensions (panel reports 600x1280 but only 480x1280 is visible).
-const PHYSICAL_WIDTH: u32 = 480;
-const PHYSICAL_HEIGHT: u32 = 1_280;
 
 /// Synthetic refresh (mHz) advertised to clients in headless mode.
 /// Picked to be close to the 16 ms `FRAME_CALLBACK_TICK` cadence so
@@ -161,6 +159,7 @@ pub struct EglCompositor {
     event_rx: Mutex<Option<mpsc::UnboundedReceiver<CompositorEvent>>>,
     thread_handle: Mutex<Option<JoinHandle<()>>>,
     device_access: DeviceAccessConfig,
+    profile: bmc_platform::HardwareProfile,
     headless: bool,
 }
 
@@ -190,22 +189,32 @@ impl std::fmt::Debug for EglCompositor {
 
 impl EglCompositor {
     #[must_use]
-    pub fn new(headless: bool) -> Self {
-        Self::with_device_access_config(DeviceAccessConfig::default(), headless)
+    pub fn new(profile: bmc_platform::HardwareProfile, headless: bool) -> Self {
+        Self::with_device_access_config(DeviceAccessConfig::default(), profile, headless)
     }
 
     #[must_use]
-    pub fn with_device_paths(gpu_path: &str, display_path: &str, headless: bool) -> Self {
+    pub fn with_device_paths(
+        gpu_path: &str,
+        display_path: &str,
+        profile: bmc_platform::HardwareProfile,
+        headless: bool,
+    ) -> Self {
         Self::with_device_access_config(
             DeviceAccessConfig::default()
                 .with_render_node(gpu_path)
                 .with_scanout_node(display_path),
+            profile,
             headless,
         )
     }
 
     #[must_use]
-    pub fn with_device_access_config(device_access: DeviceAccessConfig, headless: bool) -> Self {
+    pub fn with_device_access_config(
+        device_access: DeviceAccessConfig,
+        profile: bmc_platform::HardwareProfile,
+        headless: bool,
+    ) -> Self {
         let (command_tx, command_channel) = calloop_channel::channel();
         let (action_tx, action_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
@@ -220,6 +229,7 @@ impl EglCompositor {
             event_rx: Mutex::new(Some(event_rx)),
             thread_handle: Mutex::new(None),
             device_access,
+            profile,
             headless,
         }
     }
@@ -236,6 +246,7 @@ impl EglCompositor {
         seat_name: &str,
         input_nodes: &[PathBuf],
         has_explicit_input_nodes: bool,
+        profile: &bmc_platform::HardwareProfile,
         headless: bool,
         command_channel: calloop_channel::Channel<CompositorCommand>,
         action_tx: mpsc::UnboundedSender<WidgetAction>,
@@ -258,6 +269,7 @@ impl EglCompositor {
             };
         }
 
+        let display_profile = &profile.display;
         let (
             scene_renderer,
             logical_width,
@@ -266,16 +278,12 @@ impl EglCompositor {
             physical_height,
             refresh_mhz,
         ) = if headless {
-            // Headless: skip EGL/DRM, use hardcoded panel dimensions.
-            // 90° rotation: logical = height x width.
-            // No real display mode exists, fall back to 60 Hz pacing to match
-            // the synthetic frame-callback timer below.
             (
                 None,
-                PHYSICAL_HEIGHT,
-                PHYSICAL_WIDTH,
-                PHYSICAL_WIDTH,
-                PHYSICAL_HEIGHT,
+                display_profile.logical_width,
+                display_profile.logical_height,
+                display_profile.visible_area.width,
+                display_profile.visible_area.height,
                 HEADLESS_REFRESH_MHZ,
             )
         } else {
@@ -284,10 +292,15 @@ impl EglCompositor {
                 "Failed to initialize EGL context"
             );
             let output = try_init!(
-                DrmOutput::new(scanout_node),
+                DrmOutput::new(scanout_node, *display_profile),
                 "Failed to initialize DRM output"
             );
-            let renderer = SceneRenderer::new(egl, output);
+            let renderer = SceneRenderer::new(
+                egl,
+                output,
+                display_profile.scanout_transform,
+                display_profile.seam_overlap_px,
+            );
             let (lw, lh) = renderer.logical_size();
             let pw = renderer.output().width();
             let ph = renderer.output().height();
@@ -296,7 +309,7 @@ impl EglCompositor {
         };
 
         tracing::info!(
-            "Display configured: {}x{} logical (rotated), {}x{} physical{}",
+            "Display configured: {}x{} logical, {}x{} physical{}",
             logical_width,
             logical_height,
             physical_width,
@@ -380,6 +393,7 @@ impl EglCompositor {
             touch_frame_dirty: false,
             logical_width,
             logical_height,
+            touch_transform: display_profile.touch_transform,
             should_exit: false,
             redraw_state: RedrawState::Idle,
             loop_handle: loop_handle.clone(),
@@ -770,10 +784,16 @@ struct AppState {
     /// the last `wl_touch.frame`. Ensures `wl_touch.frame` is sent exactly
     /// once per libinput `TouchFrame` that produced forwarding.
     touch_frame_dirty: bool,
-    /// Logical display width in pixels (for libinput coordinate transforms).
+    /// Logical (landscape) width used as the libinput coordinate range; the
+    /// GT911 reports its axes already in this orientation.
     logical_width: u32,
-    /// Logical display height in pixels (for libinput coordinate transforms).
+    /// Logical (landscape) height used as the libinput coordinate range; the
+    /// GT911 reports its axes already in this orientation.
     logical_height: u32,
+    /// Residual per-panel rotation applied to libinput samples to produce
+    /// logical-screen coordinates; the identity when the touch axes already
+    /// match the logical orientation.
+    touch_transform: TouchTransform,
     should_exit: bool,
     redraw_state: RedrawState,
     /// Calloop handle, used to (re-)arm the touch-discovery retry timer
@@ -893,19 +913,10 @@ impl AppState {
 
     /// Map a libinput absolute touch event into logical-screen space.
     ///
-    /// `x_transformed` / `y_transformed` rely on libinput already seeing
-    /// the panel in logical landscape orientation. On the shipping
-    /// Goodix GT911 the kernel driver's native `ABS_X` / `ABS_Y` axes
-    /// already align with landscape, so the identity calibration is
-    /// correct and no `LIBINPUT_CALIBRATION_MATRIX` udev tag or
-    /// `config_calibration_set_matrix()` call is set on the device.
-    ///
-    /// This invariant is specific to the current panel + kernel driver
-    /// combination. A panel swap (hardware rev, controller firmware
-    /// change) can silently break it — touches will land rotated 90°,
-    /// 180° or 270° with no runtime diagnostic. The inverse rotation on
-    /// the render side (`scene_renderer.rs`, `Transform::_270`) must
-    /// stay consistent with this assumption.
+    /// The GT911 reports its `ABS_X` / `ABS_Y` axes already aligned with the
+    /// logical landscape orientation the widget tree paints into, so the
+    /// sample is scaled directly against the logical dimensions. The profile's
+    /// `touch_transform` then applies any residual per-panel rotation.
     fn touch_location(
         &self,
         event: &impl AbsolutePositionEvent<LibinputInputBackend>,
@@ -914,13 +925,22 @@ impl AppState {
             clippy::cast_possible_wrap,
             reason = "logical dimensions are panel-sized and fit in i32"
         )]
-        let w = self.logical_width as i32;
+        let lw = self.logical_width as i32;
         #[expect(
             clippy::cast_possible_wrap,
             reason = "logical dimensions are panel-sized and fit in i32"
         )]
-        let h = self.logical_height as i32;
-        Point::<f64, Logical>::from((event.x_transformed(w), event.y_transformed(h)))
+        let lh = self.logical_height as i32;
+        let raw_x = event.x_transformed(lw);
+        let raw_y = event.y_transformed(lh);
+        let (lx, ly) = touch_to_logical(
+            raw_x,
+            raw_y,
+            f64::from(self.logical_width),
+            f64::from(self.logical_height),
+            self.touch_transform,
+        );
+        Point::<f64, Logical>::from((lx, ly))
     }
 
     fn on_touch_down(
@@ -1429,12 +1449,6 @@ fn process_protocol_events(state: &mut AppState) {
     }
 }
 
-impl Default for EglCompositor {
-    fn default() -> Self {
-        Self::new(false)
-    }
-}
-
 impl Compositor for EglCompositor {
     fn start(&self) -> Result<String, CompositorError> {
         {
@@ -1449,11 +1463,18 @@ impl Compositor for EglCompositor {
 
         let (ready_tx, ready_rx) = flume::bounded(1);
 
-        let render_node = self.device_access.resolved_render_node().to_path_buf();
-        let scanout_node = self.device_access.resolved_scanout_node().to_path_buf();
+        let render_node = self
+            .device_access
+            .render_node()
+            .map_or_else(|| self.profile.paths.render_node.clone(), Path::to_path_buf);
+        let scanout_node = self.device_access.scanout_node().map_or_else(
+            || self.profile.paths.scanout_node.clone(),
+            Path::to_path_buf,
+        );
         let seat_name = self.device_access.seat_name().to_owned();
         let has_explicit_input_nodes = self.device_access.has_explicit_input_nodes();
         let input_nodes = self.device_access.resolved_input_nodes();
+        let profile = self.profile.clone();
         let headless = self.headless;
         let command_channel = self
             .command_channel
@@ -1473,6 +1494,7 @@ impl Compositor for EglCompositor {
                     &seat_name,
                     &input_nodes,
                     has_explicit_input_nodes,
+                    &profile,
                     headless,
                     command_channel,
                     action_tx,
@@ -1514,6 +1536,10 @@ impl Compositor for EglCompositor {
             .lock()
             .expect("BUG: wayland_display lock poisoned");
         display.clone()
+    }
+
+    fn hardware_capabilities(&self) -> bmc_platform::HardwareCapabilities {
+        self.profile.capabilities()
     }
 
     fn register_widget(
@@ -1708,6 +1734,7 @@ mod tests {
             touch_frame_dirty: false,
             logical_width: 480,
             logical_height: 1280,
+            touch_transform: bmc_platform::TouchTransform::Deg0,
             should_exit: false,
             redraw_state: RedrawState::Idle,
             loop_handle: event_loop.handle(),

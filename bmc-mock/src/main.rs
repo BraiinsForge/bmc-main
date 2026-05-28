@@ -1,6 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use anyhow::Result;
+use bmc::BmcManager;
 use bmc::log;
 use bmc_led::led_driver::LedDriverFactory;
 use bmc_mock::MockSessionManager;
@@ -57,7 +58,7 @@ async fn main() -> Result<()> {
 
     let led_driver = PlatformLedDriver::new("");
 
-    let compositor = Arc::new(MockCompositor::new());
+    let compositor = Arc::new(MockCompositor::new(manager.platform().product()));
 
     bmc::entry::main(
         manager,

@@ -4,9 +4,10 @@ use std::panic;
 use std::path::PathBuf;
 use std::{str::FromStr, sync::Arc};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
+use bmc::BmcManager;
+use bmc::Configuration;
 use bmc::compositor::Compositor;
-use bmc::{BmcManager, Configuration};
 use bmc_led::apa102_spi::platform_led_driver::PlatformLedDriver;
 use bmc_led::led_driver::LedDriverFactory;
 use bmc_openwrt::cli::Parser;
@@ -39,10 +40,6 @@ async fn main() -> Result<()> {
     bmc_openwrt::log::init(args.log_to_file);
 
     panic::set_hook(build_panic_hook_with_tracing());
-
-    let mut backlight_driver = GenericBacklightDriver::new("/sys/class/backlight/display-bl");
-    backlight_driver.init()?;
-    let backlight_driver = Arc::new(Mutex::new(backlight_driver));
 
     let led_driver = PlatformLedDriver::new("/dev/spidev0.0");
 
@@ -123,8 +120,25 @@ async fn main() -> Result<()> {
         error!(?err, "Failed to setup init WiFi AP");
     }
 
+    let profile = bmc_platform::HardwareProfile::for_product(manager.platform().product());
+    info!(product = ?profile.product, "resolved hardware profile");
+
+    let Some(backlight_path) = profile.paths.backlight.as_ref() else {
+        bail!(
+            "hardware profile {:?} has no backlight path",
+            profile.product
+        );
+    };
+    let backlight_path = backlight_path.to_string_lossy().into_owned();
+    let mut backlight_driver = GenericBacklightDriver::new(&backlight_path);
+    backlight_driver.init()?;
+    let backlight_driver = Arc::new(Mutex::new(backlight_driver));
+
     // Initialize and start the EGL compositor
-    let compositor = Arc::new(EglCompositor::new(args.headless_compositor));
+    let compositor = Arc::new(EglCompositor::new(
+        profile.clone(),
+        args.headless_compositor,
+    ));
     let wayland_display = compositor
         .start()
         .expect("BUG: failed to start EGL compositor");

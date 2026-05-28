@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
+use bmc_platform::DisplayTransform;
 use smithay::{
     backend::renderer::{
         Bind, Color32F, Frame as RendererFrame, ImportDma, ImportMemWl, Renderer, Texture,
@@ -24,11 +25,53 @@ use super::state::OutputDamage;
 use super::widget_tracker::WidgetTracker;
 
 const BACKGROUND_COLOR: Color32F = Color32F::new(0.05, 0.05, 0.1, 1.0);
-/// Pixel overlap between adjacent scenes during transitions.
-/// Compensates for GL texture edge sampling artifacts under Transform::_270
-/// on the Vivante GC400. The neighbor scene renders after the active scene,
-/// painting over the seam.
-const SCENE_SEAM_OVERLAP: i32 = 4;
+
+#[must_use]
+pub fn scanout_transform(profile: DisplayTransform) -> Transform {
+    match profile {
+        DisplayTransform::Deg0 => Transform::Normal,
+        DisplayTransform::Deg90 => Transform::_90,
+        DisplayTransform::Deg270 => Transform::_270,
+    }
+}
+
+/// Map a widget's logical placement to its physical destination rectangle on the rotated panel.
+/// `output_w`/`output_h` are the **physical** panel dimensions (post-crop, pre-rotation) — the
+/// same values returned by `DrmOutput::width()` / `DrmOutput::height()`. `tex_w`/`tex_h` are
+/// texture dimensions in logical (un-rotated) space; the helper applies the axis swap when the
+/// scanout transform rotates by 90° or 270°.
+#[must_use]
+pub fn place_widget(
+    logical_x: i32,
+    logical_y: i32,
+    tex_w: i32,
+    tex_h: i32,
+    output_w: i32,
+    output_h: i32,
+    transform: DisplayTransform,
+) -> Rectangle<i32, Physical> {
+    let (phys_w, phys_h, physical_x, physical_y) = match transform {
+        DisplayTransform::Deg0 => (tex_w, tex_h, logical_x, logical_y),
+        DisplayTransform::Deg270 => (tex_h, tex_w, logical_y, output_h - logical_x - tex_w),
+        DisplayTransform::Deg90 => (tex_h, tex_w, output_w - logical_y - tex_h, logical_x),
+    };
+    Rectangle::from_loc_and_size((physical_x, physical_y), (phys_w, phys_h))
+}
+
+#[must_use]
+pub fn touch_to_logical(
+    x: f64,
+    y: f64,
+    logical_width: f64,
+    logical_height: f64,
+    transform: bmc_platform::TouchTransform,
+) -> (f64, f64) {
+    match transform {
+        bmc_platform::TouchTransform::Deg0 => (x, y),
+        bmc_platform::TouchTransform::Deg90 => (y, logical_width - x),
+        bmc_platform::TouchTransform::Deg270 => (logical_height - y, x),
+    }
+}
 
 pub struct SceneRenderer {
     egl: EglContext,
@@ -40,6 +83,8 @@ pub struct SceneRenderer {
     /// Served to capture clients between renders (avoids re-rendering
     /// just to observe the same frame).
     capture_cache: CaptureCache,
+    scanout_transform: DisplayTransform,
+    seam_overlap_px: i32,
     #[cfg(feature = "profiling")]
     bind_w: ii_stopwatch::StopWatch,
     #[cfg(feature = "profiling")]
@@ -73,7 +118,12 @@ impl CaptureCache {
 }
 
 impl SceneRenderer {
-    pub fn new(egl: EglContext, output: DrmOutput) -> Self {
+    pub fn new(
+        egl: EglContext,
+        output: DrmOutput,
+        scanout_transform: DisplayTransform,
+        seam_overlap_px: i32,
+    ) -> Self {
         let (width, height) = (output.width(), output.height());
         let (logical_w, logical_h) = output.logical_size();
         tracing::info!(
@@ -89,6 +139,8 @@ impl SceneRenderer {
             buffers: BufferPool::new(width, height),
             texture_cache: HashMap::new(),
             capture_cache: CaptureCache::empty(),
+            scanout_transform,
+            seam_overlap_px,
             #[cfg(feature = "profiling")]
             bind_w: ii_stopwatch::StopWatch::default(),
             #[cfg(feature = "profiling")]
@@ -200,9 +252,9 @@ impl SceneRenderer {
             #[expect(clippy::cast_possible_wrap)]
             let logical_width = self.output.logical_size().0 as i32;
             let neighbor_offset = if dx <= 0 {
-                dx + logical_width - SCENE_SEAM_OVERLAP
+                dx + logical_width - self.seam_overlap_px
             } else {
-                dx - logical_width + SCENE_SEAM_OVERLAP
+                dx - logical_width + self.seam_overlap_px
             };
             if let Some(neighbor) = widgets.drag_neighbor_scene() {
                 collect_scene_widgets(neighbor, buffers, neighbor_offset, &mut to_render);
@@ -248,23 +300,19 @@ impl SceneRenderer {
             #[expect(clippy::cast_possible_wrap)]
             let logical_y = placement.position.y as i32;
 
-            // Physical buffer: 480x1280 (WxH) - portrait orientation
-            // Logical space: 1280x480 (WxH) - landscape after rotation
-            // Widget texture is logical (e.g., 638x480)
-            // After Transform::_270, dst size is (tex_h, tex_w)
-            let phys_w = tex_size.h; // 480 (logical height -> physical width)
-            let phys_h = tex_size.w; // 638 (logical width -> physical height)
-
-            // Coordinate mapping for 90° CW rotation (Transform::_270):
-            // - Physical Y=0 corresponds to RIGHT side of landscape display
-            // - Physical Y=max corresponds to LEFT side of landscape display
-            // So we invert: logical_x=0 (left) -> high physical_y, logical_x=max (right) -> low physical_y
             #[expect(clippy::cast_possible_wrap)]
-            let output_height = self.output.height() as i32;
-            let physical_x = logical_y;
-            let physical_y = output_height - logical_x - phys_h;
-
-            let dst = Rectangle::from_loc_and_size((physical_x, physical_y), (phys_w, phys_h));
+            let output_w = self.output.width() as i32;
+            #[expect(clippy::cast_possible_wrap)]
+            let output_h = self.output.height() as i32;
+            let dst = place_widget(
+                logical_x,
+                logical_y,
+                tex_size.w,
+                tex_size.h,
+                output_w,
+                output_h,
+                self.scanout_transform,
+            );
 
             if let OutputDamage::Widgets(dirty_widgets) = output_damage
                 && dirty_widgets.contains(&placement.instance_id)
@@ -304,7 +352,7 @@ impl SceneRenderer {
                 *dst,
                 &[damage],
                 &[],
-                Transform::_270,
+                scanout_transform(self.scanout_transform),
                 1.0,
                 None,
                 &[],
@@ -579,7 +627,129 @@ mod tests {
     use super::{
         merge_damage_rects, rectangle_union, texture_damage_rect, uncovered_output_regions,
     };
-    use smithay::utils::{Physical, Rectangle};
+    use crate::compositor::scene_renderer::{place_widget, scanout_transform, touch_to_logical};
+    use bmc_platform::{DisplayTransform, TouchTransform};
+    use smithay::utils::{Physical, Rectangle, Transform};
+
+    #[test]
+    fn scanout_transform_maps_each_profile_degree() {
+        assert_eq!(scanout_transform(DisplayTransform::Deg0), Transform::Normal);
+        assert_eq!(scanout_transform(DisplayTransform::Deg90), Transform::_90);
+        assert_eq!(scanout_transform(DisplayTransform::Deg270), Transform::_270);
+    }
+
+    #[test]
+    fn place_widget_deg0_is_identity() {
+        let dst = place_widget(50, 30, 200, 100, 320, 240, DisplayTransform::Deg0);
+        assert_eq!(
+            dst,
+            Rectangle::<i32, Physical>::from_loc_and_size((50, 30), (200, 100)),
+        );
+        let full = place_widget(0, 0, 320, 240, 320, 240, DisplayTransform::Deg0);
+        assert_eq!(
+            full,
+            Rectangle::<i32, Physical>::from_loc_and_size((0, 0), (320, 240)),
+        );
+    }
+
+    #[test]
+    fn place_widget_deg270_matches_current_bmc100_math() {
+        let dst = place_widget(0, 0, 638, 480, 480, 1280, DisplayTransform::Deg270);
+        assert_eq!(
+            dst,
+            Rectangle::<i32, Physical>::from_loc_and_size((0, 642), (480, 638)),
+        );
+        let full = place_widget(0, 0, 1280, 480, 480, 1280, DisplayTransform::Deg270);
+        assert_eq!(
+            full,
+            Rectangle::<i32, Physical>::from_loc_and_size((0, 0), (480, 1280)),
+        );
+        let right = place_widget(642, 0, 638, 480, 480, 1280, DisplayTransform::Deg270);
+        assert_eq!(
+            right,
+            Rectangle::<i32, Physical>::from_loc_and_size((0, 0), (480, 638)),
+        );
+    }
+
+    #[test]
+    fn place_widget_deg90_mirrors_deg270_on_the_opposite_axis() {
+        let full = place_widget(0, 0, 480, 480, 480, 480, DisplayTransform::Deg90);
+        assert_eq!(
+            full,
+            Rectangle::<i32, Physical>::from_loc_and_size((0, 0), (480, 480)),
+        );
+        let dst = place_widget(40, 20, 200, 100, 480, 480, DisplayTransform::Deg90);
+        assert_eq!(
+            dst,
+            Rectangle::<i32, Physical>::from_loc_and_size((360, 40), (100, 200)),
+        );
+    }
+
+    #[test]
+    fn place_widget_keeps_widget_within_output_bounds() {
+        let cases = [
+            (DisplayTransform::Deg0, 320, 240, 200, 100, 50, 30),
+            (DisplayTransform::Deg270, 480, 1280, 638, 480, 0, 0),
+            (DisplayTransform::Deg90, 480, 480, 200, 100, 40, 20),
+        ];
+        for (transform, output_w, output_h, tex_w, tex_h, logical_x, logical_y) in cases {
+            let dst = place_widget(
+                logical_x, logical_y, tex_w, tex_h, output_w, output_h, transform,
+            );
+            assert!(
+                dst.loc.x >= 0 && dst.loc.x + dst.size.w <= output_w,
+                "{transform:?}: x out of bounds: {dst:?}"
+            );
+            assert!(
+                dst.loc.y >= 0 && dst.loc.y + dst.size.h <= output_h,
+                "{transform:?}: y out of bounds: {dst:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn touch_to_logical_maps_profile_transforms() {
+        assert_eq!(
+            touch_to_logical(10.0, 20.0, 320.0, 240.0, TouchTransform::Deg0),
+            (10.0, 20.0)
+        );
+        assert_eq!(
+            touch_to_logical(10.0, 20.0, 320.0, 240.0, TouchTransform::Deg90),
+            (20.0, 310.0)
+        );
+        assert_eq!(
+            touch_to_logical(10.0, 20.0, 320.0, 240.0, TouchTransform::Deg270),
+            (220.0, 10.0)
+        );
+    }
+
+    #[test]
+    fn touch_to_logical_pins_bmc100_panel_mapping() {
+        // The GT911 reports its axes already in the logical landscape
+        // orientation, so BMC100 maps touch with the identity transform.
+        let w = 1280.0_f64;
+        let h = 480.0_f64;
+        assert_eq!(
+            touch_to_logical(0.0, 0.0, w, h, TouchTransform::Deg0),
+            (0.0, 0.0),
+        );
+        assert_eq!(
+            touch_to_logical(1280.0, 0.0, w, h, TouchTransform::Deg0),
+            (1280.0, 0.0),
+        );
+        assert_eq!(
+            touch_to_logical(1280.0, 480.0, w, h, TouchTransform::Deg0),
+            (1280.0, 480.0),
+        );
+        assert_eq!(
+            touch_to_logical(0.0, 480.0, w, h, TouchTransform::Deg0),
+            (0.0, 480.0),
+        );
+        assert_eq!(
+            touch_to_logical(640.0, 240.0, w, h, TouchTransform::Deg0),
+            (640.0, 240.0),
+        );
+    }
 
     #[test]
     fn overlapping_damage_rectangles_are_merged() {
