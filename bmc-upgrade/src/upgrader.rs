@@ -110,7 +110,7 @@ impl<T: FirmwareIndex> FirmwareUpgrader<T> {
     /// Check if a firmware upgrade is available for the given platform and version.
     pub async fn check_for_upgrade(
         &self,
-        platform: bmc_platform::BmcPlatform,
+        platform: bmc_platform::BosPlatform,
         version: String,
     ) -> Result<Option<UpgradeDetail>, FirmwareDownloadError> {
         self.firmware_resolver
@@ -250,7 +250,7 @@ impl<T: FirmwareIndex> FirmwareUpgrader<T> {
 mod tests {
     use super::*;
     use crate::firmware::{FirmwareDownloadError, FirmwareIndex, UpgradeMetadata};
-    use bmc_platform::BmcPlatform;
+    use bmc_platform::BosPlatform;
     use chrono::NaiveDate;
     use reqwest::Client;
     use std::path::PathBuf;
@@ -265,7 +265,7 @@ mod tests {
         async fn get_available_releases(
             &self,
             _client: &Client,
-            _platform: BmcPlatform,
+            _platform: BosPlatform,
             _version: String,
         ) -> Result<Option<Vec<UpgradeMetadata>>, FirmwareDownloadError> {
             Ok(self.result.clone())
@@ -295,7 +295,7 @@ mod tests {
         );
 
         let result = upgrader
-            .check_for_upgrade(BmcPlatform::BraiinsBmc, "25.04".to_owned())
+            .check_for_upgrade(BosPlatform::BraiinsBmc, "25.04".to_owned())
             .await;
 
         let detail = result
@@ -314,7 +314,7 @@ mod tests {
         );
 
         let result = upgrader
-            .check_for_upgrade(BmcPlatform::BraiinsBmc, "25.06".to_owned())
+            .check_for_upgrade(BosPlatform::BraiinsBmc, "25.06".to_owned())
             .await;
 
         assert!(result.expect("BUG: check failed").is_none());

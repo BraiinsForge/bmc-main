@@ -115,7 +115,7 @@ impl InitPlatform for MockPlatform {
         Ok(())
     }
 
-    fn platform(&self) -> bmc_platform::BmcPlatform {
-        bmc_platform::BmcPlatform::BraiinsBmc
+    fn platform(&self) -> bmc_platform::BosPlatform {
+        bmc_platform::BosPlatform::BraiinsBmc
     }
 }

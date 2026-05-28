@@ -28,12 +28,12 @@ pub enum LoadError {
 }
 
 #[derive(Debug, Clone, Copy, EnumString, Eq, PartialEq, EnumMessage, EnumIter, Hash)]
-pub enum BmcPlatform {
+pub enum BosPlatform {
     #[strum(serialize = "stm32mp157c-ii3-bmc1")]
     BraiinsBmc,
 }
 
-impl Display for BmcPlatform {
+impl Display for BosPlatform {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Write first serialization, if available (should be always true).
         // In an unlikely case of no serialization, report the platform as unknown.
@@ -45,10 +45,10 @@ impl Display for BmcPlatform {
     }
 }
 
-impl From<BmcPlatform> for IndexBmcPlatform {
-    fn from(value: BmcPlatform) -> Self {
+impl From<BosPlatform> for IndexBmcPlatform {
+    fn from(value: BosPlatform) -> Self {
         match value {
-            BmcPlatform::BraiinsBmc => IndexBmcPlatform::Stm32mp157cIi3Bmc1,
+            BosPlatform::BraiinsBmc => IndexBmcPlatform::Stm32mp157cIi3Bmc1,
         }
     }
 }
@@ -77,7 +77,7 @@ impl BosVersion {
 
 #[derive(Debug, Clone)]
 pub struct BmcInfo {
-    pub bmc_platform: BmcPlatform,
+    pub bmc_platform: BosPlatform,
     pub bos_version: BosVersion,
 }
 
@@ -100,7 +100,7 @@ impl BmcInfo {
                 p.as_ref().to_owned()
             });
         Ok(Self {
-            bmc_platform: BmcPlatform::from_str(&Self::read_to_string(
+            bmc_platform: BosPlatform::from_str(&Self::read_to_string(
                 &path_prefix,
                 Self::BOS_PLATFORM_PATH,
             )?)?,
@@ -126,7 +126,7 @@ impl BmcInfo {
     }
 
     #[must_use]
-    pub fn new(bmc_platform: BmcPlatform, bos_version: BosVersion) -> Self {
+    pub fn new(bmc_platform: BosPlatform, bos_version: BosVersion) -> Self {
         Self {
             bmc_platform,
             bos_version,
@@ -147,12 +147,12 @@ mod test {
 
     #[test]
     fn bos_platform_deserialization_test() {
-        let test_data = [(BmcPlatform::BraiinsBmc, "stm32mp157c-ii3-bmc1")];
+        let test_data = [(BosPlatform::BraiinsBmc, "stm32mp157c-ii3-bmc1")];
         #[expect(clippy::expect_fun_call)]
         for (platform, string_platform) in test_data {
             assert_eq!(
                 platform,
-                BmcPlatform::from_str(string_platform).expect(
+                BosPlatform::from_str(string_platform).expect(
                     format!("BUG: Deserialization of value {string_platform:?} failed").as_str()
                 ),
                 "BUG: BOS platform does not match"
