@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package braiins.bmc.web;
+
+import "google/protobuf/empty.proto";
+
+message HardwareCapabilities {
+  bool combined_scenes_supported = 1;
+}
+
+service HardwareService {
+  rpc GetHardwareCapabilities(google.protobuf.Empty) returns (HardwareCapabilities);
+}
