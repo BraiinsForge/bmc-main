@@ -49,6 +49,13 @@ mod ffi {
         // Widget viewport dimensions, packed as `(width << 32) | height`.
         pub(super) fn host_widget_size() -> u64;
 
+        // Widget viewport shape from configure, as a wire u32.
+        pub(super) fn host_widget_viewport_shape() -> u32;
+        // Logical display size, packed `(width << 32) | height`.
+        pub(super) fn host_display_size() -> u64;
+        // Display shape (wire u32) and dpi, packed `(shape << 32) | dpi`.
+        pub(super) fn host_display_shape_dpi() -> u64;
+
         // Date parsing
         fn host_parse_date(str_ptr: *const u8, str_len: u32) -> i64;
 
@@ -357,6 +364,26 @@ pub use ffi::*;
 // Pure types (always available)
 // ============================================================================
 
+// Re-export the shared wire enums so widgets match on the SDK's own path.
+pub use bmc_wasm_protocol::{DisplayShape, ViewportShape};
+
+/// The drawable rectangle assigned to this widget, in logical pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WidgetViewport {
+    pub width: u32,
+    pub height: u32,
+    pub shape: ViewportShape,
+}
+
+/// The logical display this widget's viewport lives on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DisplayInfo {
+    pub width: u32,
+    pub height: u32,
+    pub shape: DisplayShape,
+    pub dpi: u32,
+}
+
 /// Audio playback volume, in 0–100.
 ///
 /// Values are clamped at construction, so the host never sees an
@@ -514,13 +541,80 @@ pub fn widget_size() -> WidgetSize {
     WidgetSize::from_dimensions(width, height)
 }
 
-/// Native-target stub — returns a default `WidgetSize`. Non-wasm consumers
-/// (storybook, tests) get a stable shape without crossing the FFI boundary
-/// that doesn't exist off-target.
+/// Native-target stub. There is no host off-target, so there is no real
+/// geometry to report; fabricating `0x0` would let callers mistake "no host"
+/// for a genuine zero-sized widget. Off-target consumers that need geometry
+/// must construct a [`WidgetSize`] themselves.
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn widget_size() -> WidgetSize {
-    WidgetSize::from_dimensions(0, 0)
+    panic!("BUG: widget_size() called off-target — no host geometry exists; supply it explicitly")
+}
+
+/// The widget's drawable rectangle, fetched from the host on demand.
+/// Same single-register read as [`widget_size`]; call it anywhere.
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn widget_viewport() -> WidgetViewport {
+    let packed = unsafe { ffi::host_widget_size() };
+    let shape_wire = unsafe { ffi::host_widget_viewport_shape() };
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "high 32 bits selected via shift, low via truncation"
+    )]
+    let (width, height) = ((packed >> 32) as u32, packed as u32);
+    WidgetViewport {
+        width,
+        height,
+        shape: ViewportShape::try_from(shape_wire)
+            .expect("BUG: host sent an invalid ViewportShape wire value"),
+    }
+}
+
+/// Native stub. Like [`widget_size`], there is no host off-target to read a
+/// viewport from; callers must supply a [`WidgetViewport`] themselves rather
+/// than receive a fabricated rectangle.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn widget_viewport() -> WidgetViewport {
+    panic!(
+        "BUG: widget_viewport() called off-target — no host geometry exists; supply it explicitly"
+    )
+}
+
+/// The logical display info, fetched from the host on demand.
+/// Cached host-side and immutable for the runtime's life.
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn display_info() -> DisplayInfo {
+    let size = unsafe { ffi::host_display_size() };
+    let shape_dpi = unsafe { ffi::host_display_shape_dpi() };
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "high 32 bits selected via shift, low via truncation"
+    )]
+    let (width, height) = ((size >> 32) as u32, size as u32);
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "high 32 bits selected via shift, low via truncation"
+    )]
+    let (shape_wire, dpi) = ((shape_dpi >> 32) as u32, shape_dpi as u32);
+    DisplayInfo {
+        width,
+        height,
+        shape: DisplayShape::try_from(shape_wire)
+            .expect("BUG: host sent an invalid DisplayShape wire value"),
+        dpi,
+    }
+}
+
+/// Native stub. There is no host off-target, so there is no display to
+/// describe; callers that need display geometry must supply a [`DisplayInfo`]
+/// themselves rather than read a fabricated device size here.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn display_info() -> DisplayInfo {
+    panic!("BUG: display_info() called off-target — no host geometry exists; supply it explicitly")
 }
 
 /// UTC instant. Wire format is the 8-byte LE `i64` of `unix_secs`.
@@ -669,5 +763,26 @@ mod size_variant_tests {
     fn classification_is_deterministic() {
         // Same input, same output across repeated calls.
         assert_eq!(variant_of(200, 200), variant_of(200, 200));
+    }
+}
+
+#[cfg(test)]
+mod geometry_api_tests {
+    use super::{display_info, widget_viewport};
+
+    // Off-target there is no Wayland handshake, so the geometry getters have no
+    // host to read from. They fail loud rather than fabricate a size a caller
+    // could mistake for real geometry.
+
+    #[test]
+    #[should_panic(expected = "no host geometry exists")]
+    fn native_widget_viewport_panics() {
+        let _ = widget_viewport();
+    }
+
+    #[test]
+    #[should_panic(expected = "no host geometry exists")]
+    fn native_display_info_panics() {
+        let _ = display_info();
     }
 }
