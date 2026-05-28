@@ -18,6 +18,7 @@ use crate::widget::{Coordinator, WidgetRegistry};
 use crate::{BmcManager, system_upgrade::SystemUpgradeService};
 use anyhow::Result;
 use axum::{ServiceExt, extract::Request, http::header::CONTENT_TYPE};
+use bmc_platform::HardwareCapabilities;
 use bmc_upgrade::firmware::FirmwareIndex;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -47,6 +48,7 @@ pub(crate) struct WebService<
     system_manager: SystemManager<V>,
     sound_controller: SoundController,
     alarm_controller: AlarmController,
+    hardware_capabilities: HardwareCapabilities,
 }
 
 impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriver>
@@ -66,6 +68,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         system_manager: SystemManager<V>,
         sound_controller: SoundController,
         alarm_controller: AlarmController,
+        hardware_capabilities: HardwareCapabilities,
     ) -> Self {
         Self {
             manager,
@@ -80,6 +83,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             system_manager,
             sound_controller,
             alarm_controller,
+            hardware_capabilities,
         }
     }
 
@@ -97,6 +101,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             self.system_manager,
             self.sound_controller,
             self.alarm_controller,
+            self.hardware_capabilities,
         )
         .build()
         .into_axum_router()
