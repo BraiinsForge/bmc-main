@@ -7,11 +7,10 @@ use bmc_wasm_host::startup::{StartupDecision, prepare_listener};
 use bmc_wasm_thin_protocol::default_socket_path;
 use clap::Parser;
 
-// Device display maximum — the staging FBO is sized to this so any slot's surface fits without
-// reallocation. Match the Braiins Deck's physical resolution; widgets render at smaller sizes
-// and the scratch is reused across them.
-const DECK_DISPLAY_MAX_WIDTH: u32 = 1280;
-const DECK_DISPLAY_MAX_HEIGHT: u32 = 480;
+// Fixed Deck-maximum staging FBO size. This intentionally stays a process-startup
+// constant for now; BMM/BFM viewports fit inside it and render into a sub-region.
+const STAGING_MAX_WIDTH: u32 = 1280;
+const STAGING_MAX_HEIGHT: u32 = 480;
 
 #[derive(Parser, Debug)]
 #[command(about = "bmc-wasm-host - multi-widget WASM daemon")]
@@ -47,7 +46,7 @@ fn main() -> Result<()> {
     tracing::info!(socket = %socket_path.display(), "listening");
 
     let (mut shared, mut renderer) =
-        bmc_wasm_host::host::SharedHost::init(DECK_DISPLAY_MAX_WIDTH, DECK_DISPLAY_MAX_HEIGHT)?;
+        bmc_wasm_host::host::SharedHost::init(STAGING_MAX_WIDTH, STAGING_MAX_HEIGHT)?;
 
     if let Some(lock) = release_lock {
         lock.release()?;
