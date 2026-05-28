@@ -15,6 +15,7 @@ use bmc_openwrt::{button_driver::UEventButtons, manager::Manager, session::Openw
 use bmc_openwrt::{cli::Args, log::build_panic_hook_with_tracing};
 use bmc_platform::backlight::DisplayBacklightDriver;
 use bmc_platform::generic_backlight_driver::GenericBacklightDriver;
+use bmc_platform::{BosPlatform, HardwareProfileSelection};
 use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_time::time::Timezone;
 use tokio::sync::Mutex;
@@ -99,11 +100,21 @@ async fn main() -> Result<()> {
             .inspect_err(|err| error!(?err, "Failed to initialize WiFi Manager"))?,
     );
 
+    let platform_override: Option<BosPlatform> =
+        match args.hardware_profile.parse::<HardwareProfileSelection>() {
+            Ok(selection) => selection.into(),
+            Err(err) => {
+                error!(%err, "invalid --hardware-profile");
+                return Err(err.into());
+            }
+        };
+
     let manager = Manager::new(
         OpenwrtSessionManager,
         current_timezone,
         wifi_manager,
         "Braiins Deck".to_owned(),
+        platform_override,
     )
     .await;
 

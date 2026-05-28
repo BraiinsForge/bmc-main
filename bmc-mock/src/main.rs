@@ -10,8 +10,10 @@ use bmc_mock::led_driver::PlatformLedDriver;
 use bmc_mock::{
     cli, manager::Manager, mock_compositor::MockCompositor, mock_index::MockIndex, mockfs,
 };
+use bmc_platform::{BosPlatform, HardwareProfileSelection};
 use clap::Parser;
 use std::sync::{Arc, Mutex};
+use tracing::error;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -28,6 +30,15 @@ async fn main() -> Result<()> {
 
     let password = Arc::new(Mutex::new(system_password));
 
+    let platform = match config.hardware_profile.parse::<HardwareProfileSelection>() {
+        Ok(HardwareProfileSelection::Platform(platform)) => platform,
+        Ok(HardwareProfileSelection::Auto) => BosPlatform::Bmc1,
+        Err(err) => {
+            error!(%err, "invalid --hardware-profile");
+            return Err(err.into());
+        }
+    };
+
     let manager = Manager::new(
         mockfs,
         MockSessionManager::new(password.clone()),
@@ -36,6 +47,7 @@ async fn main() -> Result<()> {
         config.mac_address.clone(),
         config.ip_address,
         config.address.port(),
+        platform,
     );
 
     let config = config.into();

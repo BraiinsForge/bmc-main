@@ -38,6 +38,7 @@ pub enum Error {
 #[derive(Debug)]
 pub struct Manager {
     mockfs: MockFs,
+    platform: BosPlatform,
     pub session_manager: MockSessionManager,
     timezone_sender: tokio::sync::watch::Sender<Timezone>,
     password: Arc<Mutex<Option<String>>>,
@@ -57,6 +58,7 @@ impl Manager {
     const DUMMY_SUPPORT_FILE_CONTENT: &'static str = "wake up Neo";
 
     #[must_use]
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         mockfs: MockFs,
         session_manager: MockSessionManager,
@@ -65,11 +67,13 @@ impl Manager {
         mac_address: String,
         ip_address: IpAddr,
         port: u16,
+        platform: BosPlatform,
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(Timezone::default());
         let (wifi_event_sender, _) = tokio::sync::broadcast::channel(Self::WIFI_EVENTS_CAPACITY);
         Self {
             mockfs,
+            platform,
             session_manager,
             timezone_sender,
             password,
@@ -94,7 +98,7 @@ impl bmc::BmcManager for Manager {
     }
 
     fn platform(&self) -> BosPlatform {
-        BosPlatform::Bmc1
+        self.platform
     }
 
     async fn upgrade(&self, keep_settings: bool, _upgrade_image_path: &Path) -> anyhow::Result<()> {

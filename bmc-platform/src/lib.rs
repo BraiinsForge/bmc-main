@@ -86,6 +86,42 @@ impl BosPlatform {
     }
 }
 
+/// A parsed `--hardware-profile` value: either a specific product code or
+/// `auto`, which defers to the platform detected at runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HardwareProfileSelection {
+    Auto,
+    Platform(BosPlatform),
+}
+
+impl FromStr for HardwareProfileSelection {
+    type Err = UnknownProfile;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_uppercase().as_str() {
+            "AUTO" => Ok(Self::Auto),
+            "BMC100" => Ok(Self::Platform(BosPlatform::Bmc1)),
+            "BMM100" => Ok(Self::Platform(BosPlatform::Am2)),
+            "BMM101" => Ok(Self::Platform(BosPlatform::Bmm1)),
+            "BFM100" => Ok(Self::Platform(BosPlatform::Bfm1)),
+            _ => Err(UnknownProfile(value.to_owned())),
+        }
+    }
+}
+
+impl From<HardwareProfileSelection> for Option<BosPlatform> {
+    fn from(selection: HardwareProfileSelection) -> Self {
+        match selection {
+            HardwareProfileSelection::Auto => None,
+            HardwareProfileSelection::Platform(platform) => Some(platform),
+        }
+    }
+}
+
+#[derive(Error, Debug)]
+#[error("unknown hardware profile: {0}")]
+pub struct UnknownProfile(String);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayShape {
     Rectangular,
@@ -464,5 +500,36 @@ mod test {
         for platform in [BosPlatform::Am2, BosPlatform::Bmm1, BosPlatform::Bfm1] {
             assert!(IndexBmcPlatform::try_from(platform).is_err());
         }
+    }
+
+    #[test]
+    fn profile_override_maps_codes_and_auto() {
+        assert_eq!(
+            "auto"
+                .parse::<HardwareProfileSelection>()
+                .expect("BUG: \"auto\" is a valid profile override"),
+            HardwareProfileSelection::Auto
+        );
+        assert_eq!(
+            "bmc100"
+                .parse::<HardwareProfileSelection>()
+                .expect("BUG: \"bmc100\" is a valid profile override"),
+            HardwareProfileSelection::Platform(BosPlatform::Bmc1)
+        );
+        assert_eq!(
+            "BFM100"
+                .parse::<HardwareProfileSelection>()
+                .expect("BUG: \"BFM100\" is a valid profile override"),
+            HardwareProfileSelection::Platform(BosPlatform::Bfm1)
+        );
+        assert!("nope".parse::<HardwareProfileSelection>().is_err());
+        assert_eq!(
+            Option::<BosPlatform>::from(HardwareProfileSelection::Auto),
+            None
+        );
+        assert_eq!(
+            Option::<BosPlatform>::from(HardwareProfileSelection::Platform(BosPlatform::Am2)),
+            Some(BosPlatform::Am2)
+        );
     }
 }

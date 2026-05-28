@@ -26,4 +26,9 @@ pub struct Args {
     /// Path to frontend web files (default: build-time BMC_WEB_FRONTEND_DIR or /run/current-profile/www/bmc)
     #[clap(long = "www-path")]
     pub www_path: Option<PathBuf>,
+
+    /// Hardware profile override for development: BMC100|BMM100|BMM101|BFM100.
+    /// Defaults to `auto`, which uses the platform from /etc/bos_platform.
+    #[clap(long = "hardware-profile", default_value = "auto")]
+    pub hardware_profile: String,
 }
