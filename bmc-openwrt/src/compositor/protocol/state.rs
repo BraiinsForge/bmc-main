@@ -13,9 +13,10 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use std::collections::HashMap;
 
 use super::conversions::{
-    date_format_to_protocol, night_mode_to_protocol, number_format_to_protocol,
-    presence_to_protocol, size_type_to_protocol, temperature_unit_to_protocol,
-    time_format_to_protocol, unit_system_to_protocol, weekday_to_protocol,
+    date_format_to_protocol, display_shape_to_protocol, night_mode_to_protocol,
+    number_format_to_protocol, presence_to_protocol, size_type_to_protocol,
+    temperature_unit_to_protocol, time_format_to_protocol, unit_system_to_protocol,
+    weekday_to_protocol,
 };
 use crate::compositor::widget_tracker::LifecycleState;
 
@@ -68,6 +69,39 @@ pub struct DeckWidgetProtocolState {
     /// Connections that arrived before the coordinator called
     /// `set_widget_pid`. Resolved in `set_widget_pid`.
     pending_connections: Vec<PendingConnection>,
+}
+
+/// Abstraction over the Wayland server surface used by `emit_initial_state_into`.
+/// The real implementation delegates to `DeckWidgetSurfaceV1`; the `#[cfg(test)]`
+/// implementation records events in a `Vec` for order/payload assertions.
+trait WidgetSurface {
+    fn configure(&self, size_type: bmc_widget_protocol::server::deck_widget_surface_v1::SizeType, width: u32, height: u32);
+    fn display_info(&self, display_width: u32, display_height: u32, display_shape: bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape, dpi: u32);
+    fn params(&self, params_json: String);
+    fn emit_setting(&self, setting: &SettingUpdate);
+    fn configure_done(&self);
+}
+
+impl WidgetSurface for DeckWidgetSurfaceV1 {
+    fn configure(&self, size_type: bmc_widget_protocol::server::deck_widget_surface_v1::SizeType, width: u32, height: u32) {
+        self.configure(size_type, width, height);
+    }
+
+    fn display_info(&self, display_width: u32, display_height: u32, display_shape: bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape, dpi: u32) {
+        self.display_info(display_width, display_height, display_shape, dpi);
+    }
+
+    fn params(&self, params_json: String) {
+        self.params(params_json);
+    }
+
+    fn emit_setting(&self, setting: &SettingUpdate) {
+        emit_setting(self, setting);
+    }
+
+    fn configure_done(&self) {
+        self.configure_done();
+    }
 }
 
 impl DeckWidgetProtocolState {
@@ -336,10 +370,14 @@ impl DeckWidgetProtocolState {
     }
 
     /// Emit the initial configure batch on the given surface for the
-    /// given instance: `configure` → `params` → setting events →
+    /// given instance: `configure` → `display_info` → `params` → setting events →
     /// `configure_done`. Called by the dispatch handler right after the
     /// surface role is assigned.
     pub fn emit_initial_state(&self, instance_id: &InstanceId, surface: &DeckWidgetSurfaceV1) {
+        self.emit_initial_state_into(instance_id, surface);
+    }
+
+    fn emit_initial_state_into<S: WidgetSurface>(&self, instance_id: &InstanceId, surface: &S) {
         let Some(widget) = self.widgets.get(instance_id) else {
             tracing::error!(
                 "emit_initial_state for {instance_id}: no widget record; dispatch resolved a pid that has no registered widget"
@@ -355,14 +393,39 @@ impl DeckWidgetProtocolState {
             config.height,
         );
 
+        surface.display_info(
+            config.display.width,
+            config.display.height,
+            display_shape_to_protocol(config.display.shape),
+            config.display.dpi,
+        );
+
         let params_json = serde_json::Value::Object(config.params.clone()).to_string();
         surface.params(params_json);
 
         for setting in &self.current_settings {
-            emit_setting(surface, setting);
+            surface.emit_setting(setting);
         }
 
         surface.configure_done();
+    }
+
+    #[cfg(test)]
+    pub(super) fn widget_config(&self, instance_id: &str) -> Option<&WidgetInitialConfig> {
+        self.widgets.get(instance_id).map(|w| &w.config)
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_emit_initial_state_events(
+        &self,
+        instance_id: &str,
+    ) -> Option<RecordedEvents> {
+        if !self.widgets.contains_key(instance_id) {
+            return None;
+        }
+        let sink = RecordingSurface::default();
+        self.emit_initial_state_into(&instance_id.to_owned(), &sink);
+        Some(sink.into_events())
     }
 
     pub fn broadcast_shutdown(&self) {
@@ -472,6 +535,116 @@ fn cap_alarm_name(name: &str) -> String {
 }
 
 #[cfg(test)]
+#[derive(Debug, Clone)]
+enum RecordedEvent {
+    Configure,
+    DisplayInfo {
+        display_width: u32,
+        display_height: u32,
+        display_shape: bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape,
+        dpi: u32,
+    },
+    Params,
+    Setting,
+    ConfigureDone,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct RecordingSurface {
+    events: std::cell::RefCell<Vec<RecordedEvent>>,
+}
+
+#[cfg(test)]
+impl WidgetSurface for RecordingSurface {
+    fn configure(
+        &self,
+        _size_type: bmc_widget_protocol::server::deck_widget_surface_v1::SizeType,
+        _width: u32,
+        _height: u32,
+    ) {
+        self.events.borrow_mut().push(RecordedEvent::Configure);
+    }
+
+    fn display_info(
+        &self,
+        display_width: u32,
+        display_height: u32,
+        display_shape: bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape,
+        dpi: u32,
+    ) {
+        self.events.borrow_mut().push(RecordedEvent::DisplayInfo {
+            display_width,
+            display_height,
+            display_shape,
+            dpi,
+        });
+    }
+
+    fn params(&self, _params_json: String) {
+        self.events.borrow_mut().push(RecordedEvent::Params);
+    }
+
+    fn emit_setting(&self, _setting: &SettingUpdate) {
+        self.events.borrow_mut().push(RecordedEvent::Setting);
+    }
+
+    fn configure_done(&self) {
+        self.events.borrow_mut().push(RecordedEvent::ConfigureDone);
+    }
+}
+
+#[cfg(test)]
+pub(super) struct RecordedEvents(Vec<RecordedEvent>);
+
+#[cfg(test)]
+impl RecordingSurface {
+    fn into_events(self) -> RecordedEvents {
+        RecordedEvents(self.events.into_inner())
+    }
+}
+
+#[cfg(test)]
+impl RecordedEvents {
+    fn names(&self) -> Vec<&'static str> {
+        self.0
+            .iter()
+            .map(|e| match e {
+                RecordedEvent::Configure => "configure",
+                RecordedEvent::DisplayInfo { .. } => "display_info",
+                RecordedEvent::Params => "params",
+                RecordedEvent::Setting => "setting",
+                RecordedEvent::ConfigureDone => "configure_done",
+            })
+            .collect()
+    }
+
+    fn display_info(
+        &self,
+    ) -> Option<(u32, u32, bmc_widget_protocol::DisplayShape, u32)> {
+        self.0.iter().find_map(|e| {
+            if let RecordedEvent::DisplayInfo {
+                display_width,
+                display_height,
+                display_shape,
+                dpi,
+            } = e
+            {
+                use bmc_widget_protocol::server::deck_widget_surface_v1::DisplayShape as P;
+                let domain_shape = match display_shape {
+                    P::Rectangular => bmc_widget_protocol::DisplayShape::Rectangular,
+                    P::Round => bmc_widget_protocol::DisplayShape::Round,
+                    _ => return None,
+                };
+                Some((*display_width, *display_height, domain_shape, *dpi))
+            } else {
+                None
+            }
+        })
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use bmc_widget_protocol::SizeType;
 
@@ -482,6 +655,7 @@ mod tests {
             size: SizeType::Small,
             width: 100,
             height: 100,
+            display: bmc_widget_protocol::DisplayInfo::BMC100,
             params: serde_json::Map::new(),
         }
     }
@@ -603,5 +777,39 @@ mod tests {
             .expect("BUG: truncated output must end with ellipsis");
         assert!(head.chars().all(|c| c == 'a'));
         assert!(capped.len() <= NEXT_ALARM_NAME_MAX_BYTES);
+    }
+
+    #[test]
+    fn register_widget_stores_display_info_from_config() {
+        let mut state = DeckWidgetProtocolState::new();
+        state.register_widget("alpha".to_owned(), make_config());
+        let stored = state
+            .widget_config("alpha")
+            .expect("BUG: widget alpha should be registered");
+        assert_eq!(stored.display, bmc_widget_protocol::DisplayInfo::BMC100);
+    }
+
+    #[test]
+    fn emit_initial_state_sends_display_info_between_configure_and_params() {
+        let mut state = DeckWidgetProtocolState::new();
+        state.register_widget("alpha".to_owned(), make_config());
+
+        let events = state
+            .test_emit_initial_state_events("alpha")
+            .expect("BUG: alpha must be registered");
+
+        assert_eq!(
+            events.names(),
+            ["configure", "display_info", "params", "configure_done",],
+        );
+        assert_eq!(
+            events.display_info(),
+            Some((
+                1_280,
+                480,
+                bmc_widget_protocol::DisplayShape::Rectangular,
+                217
+            )),
+        );
     }
 }

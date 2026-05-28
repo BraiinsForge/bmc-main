@@ -4,8 +4,17 @@
 
 use bmc_widget_protocol::server::deck_widget_surface_v1;
 use bmc_widget_protocol::{
-    DateFormat, NumberFormat, SizeType, TemperatureUnit, TimeSystem, UnitSystem, WeekDay,
+    DateFormat, DisplayShape, NumberFormat, SizeType, TemperatureUnit, TimeSystem, UnitSystem,
+    WeekDay,
 };
+
+pub fn display_shape_to_protocol(s: DisplayShape) -> deck_widget_surface_v1::DisplayShape {
+    use deck_widget_surface_v1::DisplayShape as P;
+    match s {
+        DisplayShape::Rectangular => P::Rectangular,
+        DisplayShape::Round => P::Round,
+    }
+}
 
 pub fn size_type_to_protocol(s: SizeType) -> deck_widget_surface_v1::SizeType {
     use deck_widget_surface_v1::SizeType as P;
