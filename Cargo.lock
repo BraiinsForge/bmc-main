@@ -1581,6 +1581,7 @@ dependencies = [
 name = "bmc-wasm-protocol"
 version = "0.1.0"
 dependencies = [
+ "bmc-widget-protocol",
  "palette",
  "serde",
 ]
@@ -1598,6 +1599,7 @@ dependencies = [
  "bmc-wasm-protocol",
  "bmc-wasm-sdk",
  "bmc-widget-manifest",
+ "bmc-widget-protocol",
  "chrono",
  "chrono-tz",
  "clap",

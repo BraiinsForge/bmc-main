@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bmc-widget-protocol = { workspace = true, optional = true }
 palette.workspace = true
 serde = { workspace = true, optional = true }
 
@@ -14,6 +15,11 @@ default = []
 # path doesn't pick up serde — host callers (testbed, capture)
 # flip this on.
 serde = ["dep:serde"]
+# Adds `From`-trait bridges between this crate's shape enums and
+# `bmc_widget_protocol::{DisplayShape, ViewportShape}` / `DisplayInfo`,
+# so Wayland-side host code can convert without manual matches. Off by
+# default so the wasm SDK build path stays free of Wayland-protocol types.
+widget-protocol = ["dep:bmc-widget-protocol"]
 
 [lints]
 workspace = true
