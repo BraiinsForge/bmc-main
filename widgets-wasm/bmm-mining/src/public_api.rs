@@ -67,6 +67,34 @@ pub(crate) fn parse_hashrate_stats(
     }
 }
 
+pub(crate) fn price_stats_url(currency: Currency) -> String {
+    format!(
+        "https://public-api.braiins.com/v1/price-stats?currency={}",
+        currency_code(currency)
+    )
+}
+
+pub(crate) fn block_url(currency: Currency) -> String {
+    format!(
+        "https://public-api.braiins.com/v2/blocks?limit=1&currency={}",
+        currency_code(currency)
+    )
+}
+
+pub(crate) fn difficulty_url(currency: Currency) -> String {
+    format!(
+        "https://public-api.braiins.com/v1/difficulty-stats?currency={}",
+        currency_code(currency)
+    )
+}
+
+pub(crate) fn hashrate_url(currency: Currency) -> String {
+    format!(
+        "https://public-api.braiins.com/v2/hashrate-stats?currency={}",
+        currency_code(currency)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
