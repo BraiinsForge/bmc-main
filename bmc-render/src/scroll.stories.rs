@@ -40,12 +40,12 @@ fn examples(c: &mut StoryCtx) {
                             [
                                 canvas(
                                     props!(width: 8, height: 8),
-                                    [Draw::Circle {
-                                        cx: 4.0,
-                                        cy: 4.0,
-                                        r: 4.0,
-                                        color: if i % 2 == 0 { GREEN_50 } else { BLUE_50 },
-                                    }],
+                                    [Draw::circle(
+                                        4.0,
+                                        4.0,
+                                        4.0,
+                                        if i % 2 == 0 { GREEN_50 } else { BLUE_50 },
+                                    )],
                                 ),
                                 text(format!("List item {i}"), style!(size: 14, color: GRAY_10)),
                             ],

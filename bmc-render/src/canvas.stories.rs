@@ -14,31 +14,11 @@ fn shapes(c: &mut StoryCtx) {
             props!(width: 300, height: 200),
             [
                 Draw::rect(10.0, 10.0, 80.0, 60.0, VIOLET_60),
-                Draw::Circle {
-                    cx: 180.0,
-                    cy: 50.0,
-                    r: 30.0,
-                    color: RED_50,
-                },
+                Draw::circle(180.0, 50.0, 30.0, RED_50),
                 Draw::rect(10.0, 90.0, 280.0, 4.0, GRAY_60),
-                Draw::Circle {
-                    cx: 50.0,
-                    cy: 150.0,
-                    r: 20.0,
-                    color: GREEN_40,
-                },
-                Draw::Circle {
-                    cx: 110.0,
-                    cy: 150.0,
-                    r: 20.0,
-                    color: YELLOW_30,
-                },
-                Draw::Circle {
-                    cx: 170.0,
-                    cy: 150.0,
-                    r: 20.0,
-                    color: BLUE_50,
-                },
+                Draw::circle(50.0, 150.0, 20.0, GREEN_40),
+                Draw::circle(110.0, 150.0, 20.0, YELLOW_30),
+                Draw::circle(170.0, 150.0, 20.0, BLUE_50),
             ],
         ),
     );
