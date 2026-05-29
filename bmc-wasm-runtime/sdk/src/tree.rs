@@ -429,7 +429,7 @@ pub enum Draw {
         cx: f32,
         cy: f32,
         r: f32,
-        color: Color,
+        fill: Fill,
     },
     /// Center any draw command in canvas
     Centered { inner: Box<Draw> },
@@ -567,8 +567,13 @@ impl Draw {
 
     /// Filled circle at local position within canvas.
     #[must_use]
-    pub fn circle(cx: f32, cy: f32, r: f32, color: Color) -> Self {
-        Self::Circle { cx, cy, r, color }
+    pub fn circle(cx: f32, cy: f32, r: f32, fill: impl Into<Fill>) -> Self {
+        Self::Circle {
+            cx,
+            cy,
+            r,
+            fill: fill.into(),
+        }
     }
 
     /// Center any draw command in canvas.
@@ -1535,12 +1540,12 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
         Draw::Rect { x, y, w, h, fill } => {
             buf.write_draw_rect(*x, *y, *w, *h, fill);
         }
-        Draw::Circle { cx, cy, r, color } => {
+        Draw::Circle { cx, cy, r, fill } => {
             buf.write_u8(DRAW_CIRCLE);
             buf.write_f32(*cx);
             buf.write_f32(*cy);
             buf.write_f32(*r);
-            buf.write_color(*color);
+            buf.write_fill(fill);
         }
         Draw::Svg {
             x,
