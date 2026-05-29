@@ -13,26 +13,14 @@ fn shapes(c: &mut StoryCtx) {
         canvas(
             props!(width: 300, height: 200),
             [
-                Draw::Rect {
-                    x: 10.0,
-                    y: 10.0,
-                    w: 80.0,
-                    h: 60.0,
-                    color: VIOLET_60,
-                },
+                Draw::rect(10.0, 10.0, 80.0, 60.0, VIOLET_60),
                 Draw::Circle {
                     cx: 180.0,
                     cy: 50.0,
                     r: 30.0,
                     color: RED_50,
                 },
-                Draw::Rect {
-                    x: 10.0,
-                    y: 90.0,
-                    w: 280.0,
-                    h: 4.0,
-                    color: GRAY_60,
-                },
+                Draw::rect(10.0, 90.0, 280.0, 4.0, GRAY_60),
                 Draw::Circle {
                     cx: 50.0,
                     cy: 150.0,

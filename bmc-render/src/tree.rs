@@ -118,7 +118,7 @@ pub enum DrawCommand {
         y: f32,
         w: f32,
         h: f32,
-        color: Color,
+        fill: Fill,
     },
     Centered {
         inner: Box<DrawCommand>,
@@ -379,6 +379,11 @@ impl<'a> TreeReader<'a> {
         let v = &self.data[self.pos..self.pos + n];
         self.pos += n;
         Ok(v)
+    }
+
+    fn read_fill(&mut self) -> Result<Fill> {
+        decode_fill(self.data, &mut self.pos)
+            .ok_or_else(|| anyhow::anyhow!("unexpected end of tree data reading fill"))
     }
 
     /// Decode an `Option<SvgId>`. Wire zero lifts to `None`.
@@ -696,8 +701,8 @@ impl<'a> TreeReader<'a> {
                 let y = self.read_f32()?;
                 let w = self.read_f32()?;
                 let h = self.read_f32()?;
-                let color = Color::from_raw(self.read_u32()?);
-                Ok(DrawCommand::Rect { x, y, w, h, color })
+                let fill = self.read_fill()?;
+                Ok(DrawCommand::Rect { x, y, w, h, fill })
             }
             DRAW_CIRCLE => {
                 let cx = self.read_f32()?;
@@ -990,6 +995,33 @@ impl<'a> TreeReader<'a> {
             }
             _ => bail!("unknown draw command: {draw_type}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod fill_decode_tests {
+    use super::*;
+    use bmc_wasm_protocol::Fill;
+
+    #[test]
+    fn rect_round_trips_a_radial_fill() {
+        let mut data = vec![DRAW_RECT];
+        data.extend_from_slice(&1.0_f32.to_le_bytes());
+        data.extend_from_slice(&2.0_f32.to_le_bytes());
+        data.extend_from_slice(&3.0_f32.to_le_bytes());
+        data.extend_from_slice(&4.0_f32.to_le_bytes());
+        let red = Color::from_rgb(0xFF, 0, 0);
+        let blue = Color::from_rgb(0, 0, 0xFF);
+        bmc_wasm_protocol::encode_fill(&mut data, &Fill::radial(red, blue));
+
+        let mut de = TreeReader::new(&data);
+        let cmd = de
+            .read_draw()
+            .expect("BUG: test buffer encodes a valid DRAW_RECT");
+        let DrawCommand::Rect { fill, .. } = cmd else {
+            panic!("expected Rect, got {cmd:?}");
+        };
+        assert_eq!(fill, Fill::radial(red, blue));
     }
 }
 
@@ -2112,12 +2144,12 @@ mod tests {
         bytes.extend_from_slice(&3.0_f32.to_le_bytes());
         bytes.extend_from_slice(&7.5_f32.to_le_bytes());
         bytes.extend_from_slice(&0x1122_3344_u32.to_le_bytes());
-        // Inner: a plain rect — [DRAW_RECT][x][y][w][h][color].
+        // Inner: a plain rect — [DRAW_RECT][x][y][w][h][fill].
         bytes.push(DRAW_RECT);
         for v in [1.0_f32, 1.0, 4.0, 5.0] {
             bytes.extend_from_slice(&v.to_le_bytes());
         }
-        bytes.extend_from_slice(&0xFF00_FF00_u32.to_le_bytes());
+        bmc_wasm_protocol::encode_fill(&mut bytes, &Fill::Solid(Color::from_raw(0xFF00_FF00)));
 
         let draw = TreeReader::new(&bytes)
             .read_draw()
