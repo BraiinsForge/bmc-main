@@ -66,3 +66,92 @@ fn shipping_manifests_include_widgets_wasm() {
         "BUG: widgets-wasm manifests are not included in shipping manifest scan"
     );
 }
+
+fn supports_viewport(
+    manifest: &Manifest,
+    shape: bmc_widget_manifest::DisplayShape,
+    width: u32,
+    height: u32,
+) -> bool {
+    manifest.supported_viewports.iter().any(|viewport| {
+        viewport.viewport_shape == shape
+            && viewport.min_width.is_none_or(|min| width >= min)
+            && viewport.max_width.is_none_or(|max| width <= max)
+            && viewport.min_height.is_none_or(|min| height >= min)
+            && viewport.max_height.is_none_or(|max| height <= max)
+    })
+}
+
+fn load_shipping_manifest(path: &str) -> Manifest {
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("BUG: no parent");
+    let path = workspace.join(path);
+    let s = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("BUG: read {path:?}: {e}"));
+    Manifest::from_str(&s).unwrap_or_else(|e| panic!("BUG: parse {path:?}: {e}"))
+}
+
+#[test]
+fn shipping_manifests_support_bmm_rectangular_fullscreen_viewports() {
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("BUG: no parent");
+    for path in manifest_paths() {
+        let manifest = load_shipping_manifest(
+            path.strip_prefix(workspace)
+                .expect("BUG: manifest path under workspace")
+                .to_str()
+                .expect("BUG: workspace path must be utf-8"),
+        );
+        assert!(
+            supports_viewport(
+                &manifest,
+                bmc_widget_manifest::DisplayShape::Rectangular,
+                320,
+                240
+            ),
+            "BUG: {} must support BMM100 fullscreen viewport",
+            path.display(),
+        );
+        assert!(
+            supports_viewport(
+                &manifest,
+                bmc_widget_manifest::DisplayShape::Rectangular,
+                480,
+                320
+            ),
+            "BUG: {} must support BMM101 fullscreen viewport",
+            path.display(),
+        );
+    }
+}
+
+#[test]
+fn wasm_clock_is_the_only_shipping_manifest_with_round_viewport_support() {
+    let round_manifest_paths: Vec<_> = manifest_paths()
+        .into_iter()
+        .filter(|path| {
+            let s = std::fs::read_to_string(path).expect("BUG: read manifest");
+            let manifest = Manifest::from_str(&s).expect("BUG: parse manifest");
+            manifest
+                .supported_viewports
+                .iter()
+                .any(|v| v.viewport_shape == bmc_widget_manifest::DisplayShape::Round)
+        })
+        .collect();
+
+    assert_eq!(
+        round_manifest_paths
+            .iter()
+            .map(|path| path
+                .strip_prefix(
+                    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .parent()
+                        .expect("BUG: no parent"),
+                )
+                .expect("BUG: manifest path under workspace")
+                .to_owned())
+            .collect::<Vec<_>>(),
+        vec![std::path::PathBuf::from("widgets-wasm/clock/manifest.json")],
+    );
+}
