@@ -44,7 +44,7 @@ use bmc_wasm_sdk::*;
 #[unsafe(no_mangle)]
 pub extern "C" fn render(delta_ms: u32) {
     let sys = system::current();
-    let WidgetSize { width, height, .. } = widget_size();
+    let viewport = widget_viewport();
 
     let timezone = sys.timezone().unwrap_or("UTC");
     let mode = if sys.night_mode().unwrap_or(false) {
@@ -54,8 +54,8 @@ pub extern "C" fn render(delta_ms: u32) {
     };
 
     render_ui(
-        width,
-        height,
+        viewport.width,
+        viewport.height,
         col(props!(padding: 16.0, gap: 8.0), [
             text(timezone, style!(size: 22)),
             text(mode, style!(size: 18)),

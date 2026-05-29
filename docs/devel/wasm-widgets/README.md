@@ -19,3 +19,9 @@ mode. Covers the fixed SDK accessors, update hook, and the testbed's System pane
 How a widget opts into the `wasm-regression` CI gate: the `capture/config.toml` toggle, recording fixtures (with params
 and system snapshots baked into the header), setting baselines, verifying locally, and refreshing baselines after
 intentional visual changes.
+
+### [Display Geometry](display-geometry.md)
+
+How a widget reads its assigned viewport and the active logical display through `widget_viewport()` and
+`display_info()`. Covers rectangular versus round shape signals, platform viewports, testbed platform selection, and the
+temporary compatibility fallback to `widget_size()` / `SizeVariant::{Small, Medium, Large, Full}`.

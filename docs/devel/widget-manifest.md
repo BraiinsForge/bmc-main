@@ -20,7 +20,7 @@ Each widget is distributed as a Nix package containing:
 
 - `manifest.json` — the manifest (this specification's subject).
 - Binary executable — Wayland client that talks the `deck_widget_v1` protocol.
-- Assets — icons and preview images.
+- Assets — optional files referenced by the widget implementation or package.
 
 The main Deck application scans widget directories, reads manifests, and presents available widgets to users. When a
 user creates a widget instance, the application spawns the binary as a Wayland client.
@@ -60,10 +60,7 @@ discover available widgets.
         <binary-name>
       assets/
         icon.png
-        preview-small.png    # if small size supported
-        preview-medium.png   # if medium size supported
-        preview-large.png    # if large size supported
-        preview-full.png     # if full size supported
+        ...
   third-party/
     <widget-name>/
       ...
@@ -77,7 +74,8 @@ Loading a manifest goes through two layers, intentionally separated.
 attributes and enforced by any JSON Schema validator. Examples:
 
 - `name` ≤ 50 characters, `description` ≤ 200 characters — keep the operator UI legible.
-- `sizes` has at least one entry — the compositor cannot render a widget with no declared size.
+- `supported_viewports` has at least one entry — the compositor cannot add a widget when no declared constraint matches
+  the active viewport.
 - `ParamKey` matches `^[A-Za-z][A-Za-z0-9_-]*$` — keys must be stable identifiers safe to translate into Rust field
   names in generated typed accessors.
 - `ParamKind::Integer.step` and `ParamKind::Double.step` are strictly positive — a zero step makes the operator UI's
@@ -99,6 +97,18 @@ attributes and enforced by any JSON Schema validator. Examples:
   params object to the widget on every `init` and `on_params_update`; this rule guarantees there is always a value to
   deliver. The widget never has to handle a missing required key.
 
+Viewport constraints are also validated after parsing:
+
+- `supported_viewports` must not be empty.
+- Min/max width, height, and DPI bounds must be nonzero when present.
+- Min bounds must not exceed max bounds.
+- Duplicate constraints are rejected.
+- A manifest cannot provide both legacy `sizes` and `supported_viewports`.
+
+The parser still accepts legacy `sizes` in old manifests, but only as a compatibility path. Those values are normalized
+to exact BMC100 viewport constraints (`small` -> `317x238`, `medium` -> `638x238`, `large` -> `638x480`, `full` ->
+`1280x480`). New manifests should declare `supported_viewports` directly.
+
 The split lets editor-side tooling catch the structural errors as the operator types (red-squiggle on
 `default_value: 3.14` for a boolean) while leaving the cross-field semantics where the load-time error message can name
 the specific manifest field and reason.
@@ -109,13 +119,15 @@ When the compositor loads a widget instance:
 
 1. `bmc-widget-manifest::Manifest::from_str` parses and validates the manifest; failures are surfaced before the widget
    binary is spawned.
-2. The compositor merges manifest-declared defaults with operator-supplied overrides into a full
+2. The scene-management path checks the selected placement against the manifest's `supported_viewports`. The derived
+   descriptor contains viewport shape, width, height, and DPI; each field must fall inside one of the manifest's
+   inclusive constraints.
+3. The compositor merges manifest-declared defaults with operator-supplied overrides into a full
    `BTreeMap<ParamKey, ParamValue>` — every declared key has a value (the operator's, the manifest's default, or `Null`
    for optional keys without a default).
-3. The widget binary is spawned as a Wayland client.
-4. The compositor sends the full params object as JSON via the `deck_widget_v1.params` event on initial configure.
-   Re-emission on operator-driven changes is tracked in [BDK-405](https://braiins.atlassian.net/browse/BDK-405).
-5. The widget receives the params at startup (and, on a BDK-405-enabled branch, on subsequent operator changes) through
-   whatever language-binding wraps the wayland event. The wasm host runtime exposes them via
-   `bmc_wasm_sdk::params::current()` / `previous()` and the `on_params_update` lifecycle hook — see
-   [BDK-432](https://braiins.atlassian.net/browse/BDK-432).
+4. The widget binary is spawned as a Wayland client.
+5. The compositor sends viewport/display geometry and the full params object as JSON via the `deck_widget_v1` initial
+   configure batch.
+6. Geometry-stable params changes re-emit the complete params object on the existing widget surface. The wasm host
+   runtime exposes params via `bmc_wasm_sdk::params::current()` / `previous()` and the `on_params_update` lifecycle
+   hook.
