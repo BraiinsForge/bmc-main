@@ -1,6 +1,7 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
 mod format;
+mod layout;
 mod manifest_params;
 mod miner_api;
 mod model;
