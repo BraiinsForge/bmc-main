@@ -295,11 +295,15 @@ impl EglCompositor {
                 DrmOutput::new(scanout_node, *display_profile),
                 "Failed to initialize DRM output"
             );
-            let renderer = SceneRenderer::new(
-                egl,
-                output,
-                display_profile.scanout_transform,
-                display_profile.seam_overlap_px,
+            let renderer = try_init!(
+                SceneRenderer::new(
+                    egl,
+                    output,
+                    display_profile.scanout_transform,
+                    display_profile.seam_overlap_px,
+                    display_profile.pixel_format,
+                ),
+                "Failed to initialize scene renderer"
             );
             let (lw, lh) = renderer.logical_size();
             let pw = renderer.output().width();

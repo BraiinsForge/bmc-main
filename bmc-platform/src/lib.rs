@@ -142,6 +142,17 @@ pub enum TouchTransform {
     Deg270,
 }
 
+/// Byte order the compositor must write to the scanout buffer.
+///
+/// `Bgr565` means the produced pixels carry red and blue swapped (`B<<11 | G<<5 | R`).
+/// The DRM scanout buffer is still tagged `Rgb565`, because that is the only 565 format
+/// the ST7365P plane advertises; the swap lives in the pixels, not the fourcc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayPixelFormat {
+    Xrgb8888,
+    Bgr565,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VisibleArea {
     pub x: u32,
@@ -173,6 +184,7 @@ pub struct DisplayProfile {
     pub visible_area: VisibleArea,
     /// Scene-transition overlap compensating for GC400 edge-sampling under rotated scanout.
     pub seam_overlap_px: i32,
+    pub pixel_format: DisplayPixelFormat,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -243,6 +255,7 @@ impl HardwareProfile {
                         height: 1_280,
                     },
                     seam_overlap_px: 4,
+                    pixel_format: DisplayPixelFormat::Xrgb8888,
                 },
                 slot_grid: Some(SlotGrid {
                     columns: 4,
@@ -273,6 +286,7 @@ impl HardwareProfile {
                         height: 240,
                     },
                     seam_overlap_px: 0,
+                    pixel_format: DisplayPixelFormat::Bgr565,
                 },
                 slot_grid: None,
                 led_strip: None,
@@ -296,6 +310,7 @@ impl HardwareProfile {
                         height: 320,
                     },
                     seam_overlap_px: 0,
+                    pixel_format: DisplayPixelFormat::Bgr565,
                 },
                 slot_grid: None,
                 led_strip: None,
@@ -319,6 +334,7 @@ impl HardwareProfile {
                         height: 480,
                     },
                     seam_overlap_px: 0,
+                    pixel_format: DisplayPixelFormat::Xrgb8888,
                 },
                 slot_grid: None,
                 led_strip: None,
@@ -553,6 +569,20 @@ mod test {
                 profile.display.scanout_transform, transform,
                 "{product:?}: scanout transform"
             );
+        }
+    }
+
+    #[test]
+    fn pixel_format_is_bgr565_only_for_bmm() {
+        let cases = [
+            (Product::Bmc100, DisplayPixelFormat::Xrgb8888),
+            (Product::Bmm100, DisplayPixelFormat::Bgr565),
+            (Product::Bmm101, DisplayPixelFormat::Bgr565),
+            (Product::Bfm100, DisplayPixelFormat::Xrgb8888),
+        ];
+        for (product, expected) in cases {
+            let profile = HardwareProfile::for_product(product);
+            assert_eq!(profile.display.pixel_format, expected, "{product:?}");
         }
     }
 

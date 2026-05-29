@@ -6,12 +6,49 @@ use anyhow::{Context, Result};
 use smithay::{
     backend::allocator::{Fourcc, dmabuf::Dmabuf},
     reexports::drm::{
-        buffer::Buffer as DrmBuffer,
+        buffer::{Buffer as DrmBuffer, DrmFourcc},
         control::{Device as ControlDevice, dumbbuffer::DumbBuffer, framebuffer},
     },
 };
 
 use super::drm_output::DrmOutput;
+
+/// Pixel format of a scanout/render buffer allocated by the pool.
+#[derive(Clone, Copy)]
+pub enum ScanoutFormat {
+    Xrgb8888,
+    Rgb565,
+}
+
+impl ScanoutFormat {
+    fn drm_fourcc(self) -> DrmFourcc {
+        match self {
+            Self::Xrgb8888 => DrmFourcc::Xrgb8888,
+            Self::Rgb565 => DrmFourcc::Rgb565,
+        }
+    }
+
+    fn alloc_fourcc(self) -> Fourcc {
+        match self {
+            Self::Xrgb8888 => Fourcc::Xrgb8888,
+            Self::Rgb565 => Fourcc::Rgb565,
+        }
+    }
+
+    fn bpp(self) -> u32 {
+        match self {
+            Self::Xrgb8888 => 32,
+            Self::Rgb565 => 16,
+        }
+    }
+
+    fn depth(self) -> u32 {
+        match self {
+            Self::Xrgb8888 => 24,
+            Self::Rgb565 => 16,
+        }
+    }
+}
 
 pub struct RenderBuffer {
     // Kept alive for framebuffer lifetime
@@ -25,22 +62,29 @@ pub struct BufferPool {
     current_slot: usize,
     width: u32,
     height: u32,
+    format: ScanoutFormat,
 }
 
 impl BufferPool {
-    pub fn new(width: u32, height: u32) -> Self {
+    pub fn new(width: u32, height: u32, format: ScanoutFormat) -> Self {
         Self {
             buffers: [None, None],
             current_slot: 0,
             width,
             height,
+            format,
         }
     }
 
     pub fn back_buffer(&mut self, output: &DrmOutput) -> Result<&mut RenderBuffer> {
         let slot = 1 - self.current_slot;
         if self.buffers[slot].is_none() {
-            self.buffers[slot] = Some(Self::allocate_buffer(output, self.width, self.height)?);
+            self.buffers[slot] = Some(Self::allocate_buffer(
+                output,
+                self.width,
+                self.height,
+                self.format,
+            )?);
         }
         Ok(self.buffers[slot]
             .as_mut()
@@ -51,7 +95,12 @@ impl BufferPool {
         self.current_slot = 1 - self.current_slot;
     }
 
-    fn allocate_buffer(output: &DrmOutput, width: u32, height: u32) -> Result<RenderBuffer> {
+    fn allocate_buffer(
+        output: &DrmOutput,
+        width: u32,
+        height: u32,
+        format: ScanoutFormat,
+    ) -> Result<RenderBuffer> {
         tracing::debug!(
             "Allocating {}x{} dumb buffer on display device",
             width,
@@ -60,11 +109,7 @@ impl BufferPool {
 
         let dumb_buffer = output
             .drm()
-            .create_dumb_buffer(
-                (width, height),
-                smithay::reexports::drm::buffer::DrmFourcc::Xrgb8888,
-                32,
-            )
+            .create_dumb_buffer((width, height), format.drm_fourcc(), format.bpp())
             .context("Failed to create dumb buffer")?;
 
         tracing::debug!(
@@ -86,7 +131,7 @@ impl BufferPool {
 
         let mut builder = Dmabuf::builder(
             size,
-            Fourcc::Xrgb8888,
+            format.alloc_fourcc(),
             modifier,
             smithay::backend::allocator::dmabuf::DmabufFlags::empty(),
         );
@@ -97,7 +142,7 @@ impl BufferPool {
 
         let fb = output
             .drm()
-            .add_framebuffer(&dumb_buffer, 24, 32)
+            .add_framebuffer(&dumb_buffer, format.depth(), format.bpp())
             .context("Failed to create framebuffer")?;
 
         tracing::debug!("Framebuffer created: {:?}", fb);

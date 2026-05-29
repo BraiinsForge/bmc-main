@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use bmc_platform::DisplayTransform;
+use bmc_platform::{DisplayPixelFormat, DisplayTransform};
 use smithay::{
     backend::renderer::{
         Bind, Color32F, Frame as RendererFrame, ImportDma, ImportMemWl, Renderer, Texture,
@@ -20,7 +20,7 @@ use smithay::{
     },
 };
 
-use super::render::{BufferPool, DrmOutput, EglContext};
+use super::render::{BufferPool, DrmOutput, EglContext, ScanoutFormat, ScanoutSwizzler};
 use super::state::OutputDamage;
 use super::widget_tracker::WidgetTracker;
 
@@ -77,6 +77,9 @@ pub struct SceneRenderer {
     egl: EglContext,
     output: DrmOutput,
     buffers: BufferPool,
+    /// Present `XRGB8888` directly (`None`) or run a BGR565 swizzle output pass
+    /// over a separate `RG16` scanout buffer before page-flip (`Some`).
+    swizzler: Option<ScanoutSwizzler>,
     /// Texture cache: maps WlBuffer ObjectId to cached GlesTexture
     texture_cache: HashMap<ObjectId, GlesTexture>,
     /// Cached pixels from the last inline capture readback.
@@ -119,11 +122,12 @@ impl CaptureCache {
 
 impl SceneRenderer {
     pub fn new(
-        egl: EglContext,
+        mut egl: EglContext,
         output: DrmOutput,
         scanout_transform: DisplayTransform,
         seam_overlap_px: i32,
-    ) -> Self {
+        pixel_format: DisplayPixelFormat,
+    ) -> Result<Self> {
         let (width, height) = (output.width(), output.height());
         let (logical_w, logical_h) = output.logical_size();
         tracing::info!(
@@ -133,10 +137,18 @@ impl SceneRenderer {
             logical_w,
             logical_h
         );
-        Self {
+        let swizzler = match pixel_format {
+            DisplayPixelFormat::Xrgb8888 => None,
+            DisplayPixelFormat::Bgr565 => Some(
+                ScanoutSwizzler::new(egl.renderer(), width, height)
+                    .context("Failed to set up BGR565 swizzle output pass")?,
+            ),
+        };
+        Ok(Self {
             egl,
             output,
-            buffers: BufferPool::new(width, height),
+            buffers: BufferPool::new(width, height, ScanoutFormat::Xrgb8888),
+            swizzler,
             texture_cache: HashMap::new(),
             capture_cache: CaptureCache::empty(),
             scanout_transform,
@@ -151,7 +163,7 @@ impl SceneRenderer {
             flip_w: ii_stopwatch::StopWatch::default(),
             #[cfg(feature = "profiling")]
             render_every: ii_stopwatch::Every::new(std::time::Duration::from_secs(5)),
-        }
+        })
     }
 
     /// Invalidate cached textures for the given buffer IDs.
@@ -381,6 +393,10 @@ impl SceneRenderer {
         }
 
         drop(framebuffer);
+        // Clone the rendered buffer for the swizzler before `buffer`'s pool
+        // borrow ends; only the BGR565 path needs it, so skip the clone
+        // otherwise. Paired with the swizzler in the match below.
+        let intermediate = self.swizzler.is_some().then(|| buffer.dmabuf.clone());
         self.egl.finish_rendering()?;
 
         // Fulfill any pending captures from the fresh cache (after dropping
@@ -396,8 +412,18 @@ impl SceneRenderer {
             merge_damage_rects(damage_rects)
         };
 
+        // For BGR565 panels the page-flipped buffer is the swizzler's RG16
+        // scanout, produced from the natural-RGB intermediate. Otherwise the
+        // intermediate is itself the scanout buffer.
+        let scanout_fb = match (self.swizzler.as_mut(), intermediate) {
+            (Some(swizzler), Some(intermediate)) => {
+                swizzler.present(self.egl.renderer(), &self.output, &intermediate)?
+            }
+            _ => fb,
+        };
+
         ii_stopwatch::stopwatch_start!(self.flip_w);
-        self.output.page_flip(fb, &damage_rects)?;
+        self.output.page_flip(scanout_fb, &damage_rects)?;
         ii_stopwatch::stopwatch_stop!(self.flip_w);
 
         self.buffers.swap();
