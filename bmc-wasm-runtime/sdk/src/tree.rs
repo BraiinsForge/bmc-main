@@ -19,11 +19,12 @@ use std::string::String;
 use std::vec::Vec;
 
 use bmc_wasm_protocol::{
-    AnimProperty, BitmapId, Color, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON,
-    DRAW_MESH, DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED,
-    DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Easing, Fill, LoopMode, MeshId,
-    NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION,
-    NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL, NODE_SPACER, SvgId, encode_fill,
+    AnimProperty, ArcAnchor, ArcTextFacing, BitmapId, Color, ColorSpace, DRAW_BITMAP,
+    DRAW_CENTERED, DRAW_CIRCLE, DRAW_CURVED_TEXT, DRAW_ICON, DRAW_MESH, DRAW_MODIFIED,
+    DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, DRAW_SHADOW, DRAW_SPHERE,
+    DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Easing, Fill, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS,
+    NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR,
+    NODE_ROW, NODE_SCROLL, NODE_SPACER, SvgId, encode_fill,
 };
 
 use crate::PropsFieldValue;
@@ -496,6 +497,17 @@ pub enum Draw {
         text: String,
         style: TextStyle,
     },
+    /// Styled text laid out on a circular arc.
+    CurvedText {
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        angle: f32,
+        anchor: ArcAnchor,
+        facing: ArcTextFacing,
+        text: String,
+        style: TextStyle,
+    },
     /// 9-patch bitmap: sliced into 9 quads, corners stay fixed, edges stretch.
     NinePatch {
         x: f32,
@@ -911,6 +923,34 @@ impl Draw {
         Self::Text {
             x,
             y,
+            text: content.into(),
+            style: style.into(),
+        }
+    }
+
+    /// Styled text laid out on a circular arc.
+    ///
+    /// Angles are radians, with `0.0` at 12 o'clock and increasing clockwise.
+    /// `radius` is the circle followed by glyph centers.
+    #[must_use]
+    #[expect(clippy::too_many_arguments)]
+    pub fn curved_text(
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        angle: f32,
+        anchor: ArcAnchor,
+        facing: ArcTextFacing,
+        content: impl Into<String>,
+        style: impl Into<TextStyle>,
+    ) -> Self {
+        Self::CurvedText {
+            cx,
+            cy,
+            radius,
+            angle,
+            anchor,
+            facing,
             text: content.into(),
             style: style.into(),
         }
@@ -1747,6 +1787,30 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_u16(bytes.len() as u16);
             buf.write_bytes(bytes);
         }
+        Draw::CurvedText {
+            cx,
+            cy,
+            radius,
+            angle,
+            anchor,
+            facing,
+            text,
+            style,
+        } => {
+            buf.write_u8(DRAW_CURVED_TEXT);
+            buf.write_f32(*cx);
+            buf.write_f32(*cy);
+            buf.write_f32(*radius);
+            buf.write_f32(*angle);
+            buf.write_u8(u8::from(*anchor));
+            buf.write_u8(u8::from(*facing));
+            buf.write_bytes(&style.to_bytes());
+            let bytes = text.as_bytes();
+            let len = u16::try_from(bytes.len())
+                .expect("BUG: Draw::CurvedText text exceeds u16::MAX bytes");
+            buf.write_u16(len);
+            buf.write_bytes(bytes);
+        }
         Draw::Sphere {
             x,
             y,
@@ -2034,6 +2098,68 @@ mod drop_shadow_tests {
             bytes[17], DRAW_RECT,
             "the wrapped draw must follow the 16-byte shadow header",
         );
+    }
+}
+
+#[cfg(test)]
+mod curved_text_tests {
+    use super::*;
+    use bmc_wasm_protocol::FontWeight;
+
+    #[test]
+    fn curved_text_serializes_geometry_enums_style_and_text() {
+        let style = TextStyle {
+            size: 22,
+            color: Color::from_rgb(1, 2, 3),
+            weight: FontWeight::BOLD,
+            ..TextStyle::default()
+        };
+        let draw = Draw::curved_text(
+            10.0,
+            20.0,
+            30.0,
+            1.25,
+            ArcAnchor::End,
+            ArcTextFacing::Inward,
+            "MINING",
+            style,
+        );
+
+        let mut buf = TreeBuffer::new();
+        serialize_draw(&mut buf, &draw);
+        let bytes = buf.into_bytes();
+
+        assert_eq!(bytes[0], DRAW_CURVED_TEXT);
+        assert_eq!(&bytes[1..5], &10.0_f32.to_le_bytes());
+        assert_eq!(&bytes[5..9], &20.0_f32.to_le_bytes());
+        assert_eq!(&bytes[9..13], &30.0_f32.to_le_bytes());
+        assert_eq!(&bytes[13..17], &1.25_f32.to_le_bytes());
+        assert_eq!(bytes[17], u8::from(ArcAnchor::End));
+        assert_eq!(bytes[18], u8::from(ArcTextFacing::Inward));
+        assert_eq!(&bytes[19..47], &style.to_bytes());
+        assert_eq!(
+            u16::from_le_bytes(bytes[47..49].try_into().expect("BUG: len bytes")),
+            6
+        );
+        assert_eq!(&bytes[49..], b"MINING");
+    }
+
+    #[test]
+    #[should_panic(expected = "BUG: Draw::CurvedText text exceeds u16::MAX bytes")]
+    fn curved_text_panics_when_text_exceeds_wire_length() {
+        let text = "x".repeat(usize::from(u16::MAX) + 1);
+        let draw = Draw::curved_text(
+            0.0,
+            0.0,
+            10.0,
+            0.0,
+            ArcAnchor::Center,
+            ArcTextFacing::Outward,
+            text,
+            TextStyle::default(),
+        );
+        let mut buf = TreeBuffer::new();
+        serialize_draw(&mut buf, &draw);
     }
 }
 
