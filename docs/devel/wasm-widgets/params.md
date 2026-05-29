@@ -83,7 +83,7 @@ use manifest_params::Params;
 #[unsafe(no_mangle)]
 pub extern "C" fn render(delta_ms: u32) {
     let params = Params::current();
-    let WidgetSize { width, height, .. } = widget_size();
+    let viewport = widget_viewport();
 
     let label = if params.show_seconds {
         "seconds enabled"
@@ -91,7 +91,7 @@ pub extern "C" fn render(delta_ms: u32) {
         "seconds disabled"
     };
 
-    render_ui(width, height, text(label, style!(size: 24)));
+    render_ui(viewport.width, viewport.height, text(label, style!(size: 24)));
     request_frame_after(1_000);
 }
 ```

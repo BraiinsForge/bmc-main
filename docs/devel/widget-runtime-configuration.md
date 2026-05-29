@@ -43,14 +43,17 @@ though, showing something is usually preferable to nothing at all, the user will
 On `get_widget_surface` the compositor emits a batch of events terminated by `configure_done`:
 
 ```
-configure(size_type, width, height)
+configure(width, height, viewport_shape)
+display_info(width, height, shape, dpi)
 params(json)
 timezone / night_mode / date_format / time_format /
   number_format / temperature_unit / first_day_of_week
 configure_done
 ```
 
-- `configure` carries the widget's size class and pixel dimensions.
+- `configure` carries the widget viewport's pixel dimensions and viewport shape.
+- `display_info` carries the active logical display's pixel dimensions, display shape, and DPI. DPI is each platform's
+  real display density and is advisory for layout.
 - `params` carries the widget's per-instance params as a JSON-encoded object, exactly as stored in the scene config. The
   compositor passes it through as-is; the widget owns its manifest and is authoritative on what values are valid.
 - Setting events carry the current system-wide values. The compositor keeps these cached so every newly connected widget
@@ -69,8 +72,8 @@ post-`configure_done` `params` event as a separate runtime event (`ParamUpdate`)
 state in place — Slint property setters for the digital-clock, plain Rust state plus a needs-render flag for the
 flip-clock, etc.
 
-Changes that *do* affect size still respawn — the widget only receives `configure(size_type, width, height)` once,
-during the initial batch, so a new size needs a fresh process to size its renderer for.
+Changes that *do* affect viewport size or shape still respawn — the widget only receives `configure(...)` and
+`display_info(...)` once, during the initial batch, so a new geometry needs a fresh process to size its renderer for.
 
 Runtime param pushes are full replacements of the widget params map (not partial patches). Widgets should treat every
 `params(json)` event as a complete snapshot and re-bind state from that snapshot.

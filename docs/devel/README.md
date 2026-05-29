@@ -9,12 +9,19 @@ Components large enough to grow multiple documents get their own subdirectory he
 
 ## Documents
 
+### [Supported Platforms](platforms.md)
+
+How `bmc-openwrt` detects the active hardware platform, how BOS platform strings map to products, and how
+`bmc-platform::HardwareProfile` describes display geometry, slot-grid support, LED strips, and frontend/backend
+capabilities for `BMC100`, `BMM100`, `BMM101`, and `BFM100`.
+
 ### [Widget Runtime Configuration](widget-runtime-configuration.md)
 
 How a widget process receives its geometry, per-instance params, and current system settings over the `deck_widget_v1`
 Wayland protocol. Covers the spawn-environment contract (no BMC-specific env vars), identity resolution via
-`SO_PEERCRED` on the Wayland socket, the configure-batch handshake widgets use to fetch their initial state, and the
-runtime hot-reload path that pushes fresh params on the existing surface for geometry-stable updates.
+`SO_PEERCRED` on the Wayland socket, the configure-batch handshake widgets use to fetch viewport/display geometry and
+initial state, and the runtime hot-reload path that pushes fresh params on the existing surface for geometry-stable
+updates.
 
 ### [Widget Lifecycle](widget-lifecycle.md)
 
@@ -37,14 +44,14 @@ hardware effect-type conversion that lives in `bmc/src/widget/action_handler.rs`
 ### [Widget Manifest Specification](widget-manifest.md)
 
 System-level concerns around widget manifests: on-disk location, compositor discovery, the parsing path from manifest
-into the runtime, and the rationale behind the validation rules. The per-field grammar is intentionally not duplicated
-here — it lives in the Rust types of `bmc-widget-manifest` and is mirrored into the committed `manifest.schema.json`
-artifact (with rustdoc propagated into the schema's `description` fields).
+into the runtime, supported viewport constraints, and the rationale behind the validation rules. The per-field grammar
+is intentionally not duplicated here — it lives in the Rust types of `bmc-widget-manifest` and is mirrored into the
+committed `manifest.schema.json` artifact (with rustdoc propagated into the schema's `description` fields).
 
 ### [WASM Widgets](wasm-widgets/)
 
 How WASM widgets consume host-delivered inputs. Covers per-widget params generated from `manifest.json`, hardcoded
-deck-wide system settings exposed by the SDK, update hooks, examples, and testbed usage.
+deck-wide system settings exposed by the SDK, widget/display geometry, update hooks, examples, and testbed usage.
 
 ### WASM Host
 
