@@ -3,6 +3,7 @@
 //! Shape fill paints: solid colour, linear gradient, and radial gradient.
 
 use crate::colors::Color;
+use crate::wire::{read_color, read_f32};
 
 /// Wire discriminant for a solid-colour paint.
 pub const FILL_SOLID: u8 = 0;
@@ -78,6 +79,52 @@ impl Fill {
     }
 }
 
+/// Append `fill` to `out` in wire format.
+pub fn encode_fill(out: &mut Vec<u8>, fill: &Fill) {
+    match fill {
+        Fill::Solid(c) => {
+            out.push(FILL_SOLID);
+            out.extend_from_slice(&c.to_u32().to_le_bytes());
+        }
+        Fill::Linear { angle, start, end } => {
+            out.push(FILL_LINEAR);
+            out.extend_from_slice(&start.to_u32().to_le_bytes());
+            out.extend_from_slice(&end.to_u32().to_le_bytes());
+            out.extend_from_slice(&angle.to_le_bytes());
+        }
+        Fill::Radial { inner, outer } => {
+            out.push(FILL_RADIAL);
+            out.extend_from_slice(&inner.to_u32().to_le_bytes());
+            out.extend_from_slice(&outer.to_u32().to_le_bytes());
+        }
+    }
+}
+
+/// Read a `Fill` from `data` starting at `*pos`, advancing `*pos` past it.
+///
+/// Returns `None` on an unknown discriminant or truncated input.  On `None`,
+/// `*pos` is left in an unspecified state; the partial parse may have advanced it.
+#[must_use]
+pub fn decode_fill(data: &[u8], pos: &mut usize) -> Option<Fill> {
+    let kind = *data.get(*pos)?;
+    *pos += 1;
+    match kind {
+        FILL_SOLID => Some(Fill::Solid(read_color(data, pos)?)),
+        FILL_LINEAR => {
+            let start = read_color(data, pos)?;
+            let end = read_color(data, pos)?;
+            let angle = read_f32(data, pos)?;
+            Some(Fill::Linear { angle, start, end })
+        }
+        FILL_RADIAL => {
+            let inner = read_color(data, pos)?;
+            let outer = read_color(data, pos)?;
+            Some(Fill::Radial { inner, outer })
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,5 +178,83 @@ mod tests {
         assert_eq!(Fill::Solid(RED).primary_color(), RED);
         assert_eq!(Fill::linear(0.0, RED, BLUE).primary_color(), RED);
         assert_eq!(Fill::radial(RED, BLUE).primary_color(), RED);
+    }
+
+    fn round_trip(fill: Fill) -> Fill {
+        let mut buf = Vec::new();
+        encode_fill(&mut buf, &fill);
+        let mut pos = 0;
+        let decoded =
+            decode_fill(&buf, &mut pos).expect("BUG: encoded fill must decode successfully");
+        assert_eq!(pos, buf.len(), "decode must consume every byte it wrote");
+        decoded
+    }
+
+    #[test]
+    fn solid_round_trips() {
+        assert_eq!(round_trip(Fill::Solid(RED)), Fill::Solid(RED));
+    }
+
+    #[test]
+    fn linear_round_trips() {
+        let f = Fill::linear(45.0, RED, BLUE);
+        assert_eq!(round_trip(f), f);
+    }
+
+    #[test]
+    fn radial_round_trips() {
+        let f = Fill::radial(RED, BLUE);
+        assert_eq!(round_trip(f), f);
+    }
+
+    #[test]
+    fn solid_layout_is_kind_then_colour() {
+        let mut buf = Vec::new();
+        encode_fill(&mut buf, &Fill::Solid(RED));
+        assert_eq!(buf[0], FILL_SOLID);
+        assert_eq!(buf.len(), 5);
+    }
+
+    #[test]
+    fn decode_rejects_truncated_input() {
+        let buf = [FILL_LINEAR, 0x00, 0x00];
+        let mut pos = 0;
+        assert!(decode_fill(&buf, &mut pos).is_none());
+    }
+
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "byte-layout test asserts exact bit pattern"
+    )]
+    fn linear_layout_is_start_end_angle() {
+        let mut buf = Vec::new();
+        encode_fill(&mut buf, &Fill::linear(90.0, RED, BLUE));
+        assert_eq!(buf[0], FILL_LINEAR);
+        assert_eq!(buf.len(), 13);
+        assert_eq!(
+            u32::from_le_bytes(
+                buf[1..5]
+                    .try_into()
+                    .expect("BUG: start colour slice has four bytes"),
+            ),
+            RED.to_u32()
+        );
+        assert_eq!(
+            u32::from_le_bytes(
+                buf[5..9]
+                    .try_into()
+                    .expect("BUG: end colour slice has four bytes"),
+            ),
+            BLUE.to_u32()
+        );
+        assert_eq!(
+            f32::from_le_bytes(
+                buf[9..13]
+                    .try_into()
+                    .expect("BUG: angle slice has four bytes"),
+            ),
+            90.0_f32
+        );
     }
 }
