@@ -982,6 +982,38 @@ fn femtovg_baseline(vertical_align: VerticalAlign) -> femtovg::Baseline {
     }
 }
 
+/// Compute the two linear-gradient endpoints for a bounding box `(x, y, w, h)`
+/// at `angle` degrees (`0` = top→bottom, `90` = left→right, clockwise).
+///
+/// The gradient axis passes through the box centre; `start` sits at the
+/// minimum projection of the corners onto the angle vector and `end` at the
+/// maximum, so the gradient always spans the box (CSS-style).
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired into paint_for_fill in the next change")
+)]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "x/y/w/h/t are conventional bounding-box and projection names"
+)]
+fn linear_endpoints(x: f32, y: f32, w: f32, h: f32, angle: f32) -> ((f32, f32), (f32, f32)) {
+    let rad = angle.to_radians();
+    let (dx, dy) = (rad.sin(), rad.cos());
+    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    let corners = [(x, y), (x + w, y), (x, y + h), (x + w, y + h)];
+    let mut t_min = f32::INFINITY;
+    let mut t_max = f32::NEG_INFINITY;
+    for (px, py) in corners {
+        let t = (px - cx) * dx + (py - cy) * dy;
+        t_min = t_min.min(t);
+        t_max = t_max.max(t);
+    }
+    (
+        (cx + t_min * dx, cy + t_min * dy),
+        (cx + t_max * dx, cy + t_max * dy),
+    )
+}
+
 /// Build a FemtoVG `Path` from a sequence of points.
 ///
 /// - `smooth = false`: straight line segments (`move_to` + `line_to`).
@@ -1196,5 +1228,47 @@ mod tests {
             renderer.sphere_bitmap_id, None,
             "BUG: registry miss must invalidate the cached binding",
         );
+    }
+}
+
+#[cfg(test)]
+mod gradient_geometry_tests {
+    use super::linear_endpoints;
+
+    fn approx(a: (f32, f32), b: (f32, f32)) {
+        assert!(
+            (a.0 - b.0).abs() < 0.01 && (a.1 - b.1).abs() < 0.01,
+            "{a:?} != {b:?}"
+        );
+    }
+
+    #[test]
+    fn zero_degrees_is_top_to_bottom() {
+        let (start, end) = linear_endpoints(0.0, 0.0, 100.0, 100.0, 0.0);
+        approx(start, (50.0, 0.0));
+        approx(end, (50.0, 100.0));
+    }
+
+    #[test]
+    fn ninety_degrees_is_left_to_right() {
+        let (start, end) = linear_endpoints(0.0, 0.0, 100.0, 100.0, 90.0);
+        approx(start, (0.0, 50.0));
+        approx(end, (100.0, 50.0));
+    }
+
+    #[test]
+    fn forty_five_degrees_spans_the_diagonal() {
+        let (start, end) = linear_endpoints(0.0, 0.0, 100.0, 100.0, 45.0);
+        approx(start, (0.0, 0.0));
+        approx(end, (100.0, 100.0));
+    }
+
+    #[test]
+    fn non_square_box_does_not_land_on_corners() {
+        // 200x100 box at 45 deg: endpoints fall off the corners, exercising
+        // the general projection path rather than the square special case.
+        let (start, end) = linear_endpoints(0.0, 0.0, 200.0, 100.0, 45.0);
+        approx(start, (25.0, -25.0));
+        approx(end, (175.0, 125.0));
     }
 }
