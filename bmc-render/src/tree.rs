@@ -203,6 +203,16 @@ pub enum DrawCommand {
         text: String,
         style: TextStyle,
     },
+    CurvedText {
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        angle: f32,
+        anchor: ArcAnchor,
+        facing: ArcTextFacing,
+        text: String,
+        style: TextStyle,
+    },
     NinePatch {
         x: f32,
         y: f32,
@@ -972,6 +982,29 @@ impl<'a> TreeReader<'a> {
                 let len = self.read_u16()?;
                 let text = self.read_string(len)?;
                 Ok(DrawCommand::Text { x, y, text, style })
+            }
+            DRAW_CURVED_TEXT => {
+                let cx = self.read_f32()?;
+                let cy = self.read_f32()?;
+                let radius = self.read_f32()?;
+                let angle = self.read_f32()?;
+                let anchor_raw = self.read_u8()?;
+                let anchor = ArcAnchor::try_from(anchor_raw)?;
+                let facing_raw = self.read_u8()?;
+                let facing = ArcTextFacing::try_from(facing_raw)?;
+                let style = self.read_text_style()?;
+                let len = self.read_u16()?;
+                let text = self.read_string(len)?;
+                Ok(DrawCommand::CurvedText {
+                    cx,
+                    cy,
+                    radius,
+                    angle,
+                    anchor,
+                    facing,
+                    text,
+                    style,
+                })
             }
             DRAW_NINE_PATCH => {
                 let x = self.read_f32()?;
@@ -2217,5 +2250,60 @@ mod tests {
             matches!(*inner, DrawCommand::Rect { .. }),
             "shadow inner should decode as the wrapped rect",
         );
+    }
+
+    #[test]
+    fn curved_text_decodes_geometry_enums_style_and_text() {
+        let style = TextStyle {
+            size: 18,
+            color: Color::from_rgb(9, 8, 7),
+            ..TextStyle::default()
+        };
+        let mut data = vec![DRAW_CURVED_TEXT];
+        for value in [1.0_f32, 2.0, 44.0, std::f32::consts::PI] {
+            data.extend_from_slice(&value.to_le_bytes());
+        }
+        data.push(u8::from(ArcAnchor::Center));
+        data.push(u8::from(ArcTextFacing::Outward));
+        data.extend_from_slice(&style.to_bytes());
+        data.extend_from_slice(&5_u16.to_le_bytes());
+        data.extend_from_slice(b"HELLO");
+
+        let mut de = TreeReader::new(&data);
+        let DrawCommand::CurvedText {
+            cx,
+            cy,
+            radius,
+            angle,
+            anchor,
+            facing,
+            text,
+            style: decoded_style,
+        } = de
+            .read_draw()
+            .expect("BUG: test buffer encodes a valid DRAW_CURVED_TEXT")
+        else {
+            panic!("expected CurvedText");
+        };
+
+        assert_eq!(
+            (
+                cx.to_bits(),
+                cy.to_bits(),
+                radius.to_bits(),
+                angle.to_bits()
+            ),
+            (
+                1.0_f32.to_bits(),
+                2.0_f32.to_bits(),
+                44.0_f32.to_bits(),
+                std::f32::consts::PI.to_bits(),
+            ),
+        );
+        assert_eq!(anchor, ArcAnchor::Center);
+        assert_eq!(facing, ArcTextFacing::Outward);
+        assert_eq!(text, "HELLO");
+        assert_eq!(decoded_style.color, style.color);
+        assert_eq!(decoded_style.size, style.size);
     }
 }
