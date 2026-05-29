@@ -708,10 +708,11 @@ impl Renderer for FemtoVgRenderer {
             })
             .collect();
 
-        for (glyph, (width, placement)) in glyphs
-            .iter()
-            .zip(widths.iter().zip(arc_glyph_layout(&widths, radius, angle, anchor, facing)))
-        {
+        for (glyph, (width, placement)) in glyphs.iter().zip(
+            widths
+                .iter()
+                .zip(arc_glyph_layout(&widths, radius, angle, anchor, facing)),
+        ) {
             let px = cx + radius * placement.theta.sin();
             let py = cy - radius * placement.theta.cos();
             self.canvas.save();
