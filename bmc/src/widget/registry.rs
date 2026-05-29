@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use bmc_widget_manifest::{DisplayShape, Manifest, ManifestError, WidgetViewportConstraint};
+use bmc_widget_manifest::{Manifest, ManifestError, ViewportShape, WidgetViewportConstraint};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -52,7 +52,7 @@ pub enum RegistryError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ViewportDescriptor {
     /// Viewport shape.
-    pub viewport_shape: DisplayShape,
+    pub viewport_shape: ViewportShape,
     /// Width in pixels.
     pub width: u32,
     /// Height in pixels.
@@ -88,7 +88,7 @@ pub fn slot_span_descriptor(columns: u32, rows: u32) -> Option<ViewportDescripto
         _ => return None,
     };
     Some(ViewportDescriptor {
-        viewport_shape: DisplayShape::Rectangular,
+        viewport_shape: ViewportShape::Rectangular,
         width,
         height,
         dpi: 1,
@@ -166,10 +166,10 @@ impl WidgetRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bmc_widget_manifest::{DisplayShape, Manifest, WidgetViewportConstraint};
+    use bmc_widget_manifest::{Manifest, ViewportShape, WidgetViewportConstraint};
 
     fn constraint(
-        shape: DisplayShape,
+        shape: ViewportShape,
         wmin: u32,
         wmax: u32,
         hmin: u32,
@@ -222,7 +222,7 @@ mod tests {
         let widget = make_widget_info(
             "550e8400-e29b-41d4-a716-446655440000",
             "test-widget",
-            vec![constraint(DisplayShape::Rectangular, 317, 317, 238, 238)],
+            vec![constraint(ViewportShape::Rectangular, 317, 317, 238, 238)],
         );
 
         let registry = WidgetRegistry::new(vec![widget]);
@@ -239,12 +239,12 @@ mod tests {
         let widget_a = make_widget_info(
             "550e8400-e29b-41d4-a716-446655440001",
             "widget-a",
-            vec![constraint(DisplayShape::Rectangular, 317, 317, 238, 238)],
+            vec![constraint(ViewportShape::Rectangular, 317, 317, 238, 238)],
         );
         let widget_b = make_widget_info(
             "550e8400-e29b-41d4-a716-446655440002",
             "widget-b",
-            vec![constraint(DisplayShape::Rectangular, 638, 638, 238, 238)],
+            vec![constraint(ViewportShape::Rectangular, 638, 638, 238, 238)],
         );
 
         let registry = WidgetRegistry::new(vec![widget_a, widget_b]);
@@ -256,12 +256,12 @@ mod tests {
         let widget_first = make_widget_info(
             "550e8400-e29b-41d4-a716-446655440000",
             "first-widget",
-            vec![constraint(DisplayShape::Rectangular, 317, 317, 238, 238)],
+            vec![constraint(ViewportShape::Rectangular, 317, 317, 238, 238)],
         );
         let widget_duplicate = make_widget_info(
             "550e8400-e29b-41d4-a716-446655440000",
             "duplicate-widget",
-            vec![constraint(DisplayShape::Rectangular, 638, 638, 480, 480)],
+            vec![constraint(ViewportShape::Rectangular, 638, 638, 480, 480)],
         );
 
         let registry = WidgetRegistry::new(vec![widget_first, widget_duplicate]);
@@ -286,12 +286,12 @@ mod tests {
         let widget_a = make_widget_info(
             "550e8400-e29b-41d4-a716-446655440001",
             "widget-a",
-            vec![constraint(DisplayShape::Rectangular, 317, 317, 238, 238)],
+            vec![constraint(ViewportShape::Rectangular, 317, 317, 238, 238)],
         );
         let widget_b = make_widget_info(
             "550e8400-e29b-41d4-a716-446655440002",
             "widget-b",
-            vec![constraint(DisplayShape::Rectangular, 638, 638, 238, 238)],
+            vec![constraint(ViewportShape::Rectangular, 638, 638, 238, 238)],
         );
 
         let registry = WidgetRegistry::new(vec![widget_a, widget_b]);
@@ -304,9 +304,9 @@ mod tests {
 
     #[test]
     fn descriptor_inside_inclusive_range_matches() {
-        let c = constraint(DisplayShape::Rectangular, 160, 1280, 238, 480);
+        let c = constraint(ViewportShape::Rectangular, 160, 1280, 238, 480);
         let desc = ViewportDescriptor {
-            viewport_shape: DisplayShape::Rectangular,
+            viewport_shape: ViewportShape::Rectangular,
             width: 480,
             height: 480,
             dpi: 1,
@@ -316,9 +316,9 @@ mod tests {
 
     #[test]
     fn descriptor_outside_range_does_not_match() {
-        let c = constraint(DisplayShape::Rectangular, 160, 320, 238, 480);
+        let c = constraint(ViewportShape::Rectangular, 160, 320, 238, 480);
         let desc = ViewportDescriptor {
-            viewport_shape: DisplayShape::Rectangular,
+            viewport_shape: ViewportShape::Rectangular,
             width: 480,
             height: 480,
             dpi: 1,
@@ -328,9 +328,9 @@ mod tests {
 
     #[test]
     fn descriptor_shape_mismatch_does_not_match() {
-        let c = constraint(DisplayShape::Round, 480, 480, 480, 480);
+        let c = constraint(ViewportShape::Round, 480, 480, 480, 480);
         let desc = ViewportDescriptor {
-            viewport_shape: DisplayShape::Rectangular,
+            viewport_shape: ViewportShape::Rectangular,
             width: 480,
             height: 480,
             dpi: 1,
@@ -341,7 +341,7 @@ mod tests {
     #[test]
     fn omitted_constraint_bounds_are_unbounded() {
         let c = WidgetViewportConstraint {
-            viewport_shape: DisplayShape::Rectangular,
+            viewport_shape: ViewportShape::Rectangular,
             min_width: None,
             max_width: None,
             min_height: Some(480),
@@ -350,7 +350,7 @@ mod tests {
             max_dpi: None,
         };
         let desc = ViewportDescriptor {
-            viewport_shape: DisplayShape::Rectangular,
+            viewport_shape: ViewportShape::Rectangular,
             width: 10_000,
             height: 480,
             dpi: 999,
@@ -363,7 +363,7 @@ mod tests {
         assert_eq!(
             slot_span_descriptor(1, 1),
             Some(ViewportDescriptor {
-                viewport_shape: DisplayShape::Rectangular,
+                viewport_shape: ViewportShape::Rectangular,
                 width: 317,
                 height: 238,
                 dpi: 1
@@ -372,7 +372,7 @@ mod tests {
         assert_eq!(
             slot_span_descriptor(2, 1),
             Some(ViewportDescriptor {
-                viewport_shape: DisplayShape::Rectangular,
+                viewport_shape: ViewportShape::Rectangular,
                 width: 638,
                 height: 238,
                 dpi: 1
@@ -381,7 +381,7 @@ mod tests {
         assert_eq!(
             slot_span_descriptor(2, 2),
             Some(ViewportDescriptor {
-                viewport_shape: DisplayShape::Rectangular,
+                viewport_shape: ViewportShape::Rectangular,
                 width: 638,
                 height: 480,
                 dpi: 1
@@ -401,12 +401,12 @@ mod tests {
         let widget = make_widget_info(
             "550e8400-e29b-41d4-a716-446655440000",
             "test-widget",
-            vec![constraint(DisplayShape::Rectangular, 317, 317, 238, 238)],
+            vec![constraint(ViewportShape::Rectangular, 317, 317, 238, 238)],
         );
         let registry = WidgetRegistry::new(vec![widget]);
         let uid = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").expect("BUG: parse uid");
         let desc = ViewportDescriptor {
-            viewport_shape: DisplayShape::Rectangular,
+            viewport_shape: ViewportShape::Rectangular,
             width: 317,
             height: 238,
             dpi: 1,

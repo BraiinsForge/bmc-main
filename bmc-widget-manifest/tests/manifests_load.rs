@@ -69,7 +69,7 @@ fn shipping_manifests_include_widgets_wasm() {
 
 fn supports_viewport(
     manifest: &Manifest,
-    shape: bmc_widget_manifest::DisplayShape,
+    shape: bmc_widget_manifest::ViewportShape,
     width: u32,
     height: u32,
 ) -> bool {
@@ -87,8 +87,9 @@ fn load_shipping_manifest(path: &str) -> Manifest {
         .parent()
         .expect("BUG: no parent");
     let path = workspace.join(path);
-    let s = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("BUG: read {path:?}: {e}"));
-    Manifest::from_str(&s).unwrap_or_else(|e| panic!("BUG: parse {path:?}: {e}"))
+    let s = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("BUG: read {}: {e}", path.display()));
+    Manifest::from_str(&s).unwrap_or_else(|e| panic!("BUG: parse {}: {e}", path.display()))
 }
 
 #[test]
@@ -106,7 +107,7 @@ fn shipping_manifests_support_bmm_rectangular_fullscreen_viewports() {
         assert!(
             supports_viewport(
                 &manifest,
-                bmc_widget_manifest::DisplayShape::Rectangular,
+                bmc_widget_manifest::ViewportShape::Rectangular,
                 320,
                 240
             ),
@@ -116,7 +117,7 @@ fn shipping_manifests_support_bmm_rectangular_fullscreen_viewports() {
         assert!(
             supports_viewport(
                 &manifest,
-                bmc_widget_manifest::DisplayShape::Rectangular,
+                bmc_widget_manifest::ViewportShape::Rectangular,
                 480,
                 320
             ),
@@ -136,7 +137,7 @@ fn wasm_clock_is_the_only_shipping_manifest_with_round_viewport_support() {
             manifest
                 .supported_viewports
                 .iter()
-                .any(|v| v.viewport_shape == bmc_widget_manifest::DisplayShape::Round)
+                .any(|v| v.viewport_shape == bmc_widget_manifest::ViewportShape::Round)
         })
         .collect();
 

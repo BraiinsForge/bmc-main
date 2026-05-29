@@ -92,21 +92,6 @@
         "name"
       ]
     },
-    "DisplayShape": {
-      "description": "Visible display shape a widget viewport constraint targets.",
-      "oneOf": [
-        {
-          "description": "Rectangular display.",
-          "type": "string",
-          "const": "rectangular"
-        },
-        {
-          "description": "Round display.",
-          "type": "string",
-          "const": "round"
-        }
-      ]
-    },
     "DoubleOption": {
       "description": "A single entry in a `ParamKind::Double` `enum_values` list.\nThe `value` is the f64 selected; `label` is the operator-facing string.",
       "type": "object",
@@ -421,6 +406,21 @@
         "label"
       ]
     },
+    "ViewportShape": {
+      "description": "Visible viewport shape a widget viewport constraint targets.",
+      "oneOf": [
+        {
+          "description": "Rectangular viewport.",
+          "type": "string",
+          "const": "rectangular"
+        },
+        {
+          "description": "Round viewport.",
+          "type": "string",
+          "const": "round"
+        }
+      ]
+    },
     "WidgetViewportConstraint": {
       "description": "A viewport family a widget author declares support for. Ranges are\ninclusive on both ends; `None` means unbounded in that direction, while\n`min_* == max_*` pins one exact value.",
       "type": "object",
@@ -481,7 +481,7 @@
         },
         "type": {
           "description": "Viewport shape this constraint targets.",
-          "$ref": "#/$defs/DisplayShape"
+          "$ref": "#/$defs/ViewportShape"
         }
       },
       "required": [
