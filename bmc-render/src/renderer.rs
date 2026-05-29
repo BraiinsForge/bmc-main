@@ -6,7 +6,9 @@
 //! internally if the backend requires it.
 
 use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{ArcAnchor, ArcTextFacing, BitmapId, Fill, MeshId, SvgId};
+use bmc_wasm_protocol::{
+    ArcAnchor, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
+};
 
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::tree::{SpanData, TextStyle};
@@ -29,6 +31,24 @@ pub trait Renderer {
 
     /// Fill a circle with a [`Fill`] paint (solid or gradient).
     fn fill_circle_paint(&mut self, cx: f32, cy: f32, r: f32, fill: &Fill);
+
+    /// Stroke a circular arc with an along-arc paint and optional segmentation.
+    ///
+    /// Angles are radians, `0` at 12 o'clock, increasing clockwise. The gradient
+    /// is parameterised over the full `[start_angle, end_angle]` sweep, so it
+    /// flows continuously across segment gaps.
+    #[expect(clippy::too_many_arguments, reason = "arc geometry is irreducible")]
+    fn stroke_arc(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        start_angle: f32,
+        end_angle: f32,
+        width: f32,
+        fill: &ArcFill,
+        segments: &ArcSegments,
+    );
 
     fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32, border_width: f32, color: Color);
 

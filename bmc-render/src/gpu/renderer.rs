@@ -12,10 +12,12 @@ use std::num::NonZeroU32;
 
 use anyhow::Result;
 use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{ArcAnchor, ArcTextFacing, BitmapId, Fill, MeshId, SvgId};
+use bmc_wasm_protocol::{
+    ArcAnchor, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
+};
 use cosmic_text::fontdb;
 use femtovg::renderer::OpenGl;
-use femtovg::{Canvas, FontId, Paint, Path, RenderTarget};
+use femtovg::{Canvas, FontId, LineCap, Paint, Path, RenderTarget, Solidity};
 use glow::HasContext;
 
 use super::bitmap::BitmapRegistry;
@@ -430,6 +432,62 @@ impl Renderer for FemtoVgRenderer {
         path.circle(cx, cy, r);
         let paint = paint_for_fill(fill, (cx - r, cy - r, 2.0 * r, 2.0 * r), (cx, cy, r));
         self.canvas.fill_path(&path, &paint);
+    }
+
+    fn stroke_arc(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        start_angle: f32,
+        end_angle: f32,
+        width: f32,
+        fill: &ArcFill,
+        segments: &ArcSegments,
+    ) {
+        let spans = arc_spans(segments, start_angle, end_angle);
+        let last_span = spans.len().saturating_sub(1);
+        for (si, &(s0, s1)) in spans.iter().enumerate() {
+            let chunks = chunk_span(s0, s1, ARC_CHUNK_MAX);
+            let last_chunk = chunks.len().saturating_sub(1);
+            for (ci, &(a0, a1)) in chunks.iter().enumerate() {
+                let ea0 = if ci == 0 { a0 } else { a0 - ARC_SEAM_EPS };
+                let ea1 = if ci == last_chunk {
+                    a1
+                } else {
+                    a1 + ARC_SEAM_EPS
+                };
+
+                let fa0 = arc_to_femtovg_angle(ea0);
+                let fa1 = arc_to_femtovg_angle(ea1);
+
+                let mut path = Path::new();
+                path.arc(cx, cy, radius, fa0, fa1, Solidity::Hole);
+
+                let p0 = arc_point(cx, cy, radius, ea0);
+                let p1 = arc_point(cx, cy, radius, ea1);
+                let c0 = arc_color_at(fill, sweep_fraction(ea0, start_angle, end_angle));
+                let c1 = arc_color_at(fill, sweep_fraction(ea1, start_angle, end_angle));
+
+                let mut paint = Paint::linear_gradient(
+                    p0.0,
+                    p0.1,
+                    p1.0,
+                    p1.1,
+                    to_femtovg_color(c0.to_u32()),
+                    to_femtovg_color(c1.to_u32()),
+                );
+                paint.set_line_width(width);
+                paint.set_line_cap(LineCap::Butt);
+                if si == 0 && ci == 0 {
+                    paint.set_line_cap_start(LineCap::Round);
+                }
+                if si == last_span && ci == last_chunk {
+                    paint.set_line_cap_end(LineCap::Round);
+                }
+                self.canvas.stroke_path(&path, &paint);
+            }
+        }
     }
 
     fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32, border_width: f32, color: Color) {
@@ -1098,6 +1156,63 @@ fn paint_for_fill(fill: &Fill, lin_bbox: (f32, f32, f32, f32), radial: (f32, f32
     }
 }
 
+const ARC_CHUNK_MAX: f32 = 0.2;
+const ARC_SEAM_EPS: f32 = 0.002;
+
+fn arc_spans(segments: &ArcSegments, start: f32, end: f32) -> Vec<(f32, f32)> {
+    match segments {
+        ArcSegments::Continuous => vec![(start, end)],
+        ArcSegments::Explicit(spans) => spans.clone(),
+    }
+}
+
+fn chunk_span(a0: f32, a1: f32, max: f32) -> Vec<(f32, f32)> {
+    let span = a1 - a0;
+    let max = max.abs();
+    if span.abs() <= max || max <= f32::EPSILON {
+        return vec![(a0, a1)];
+    }
+    let direction = span.signum();
+    let step = max * direction;
+    let mut chunks = Vec::new();
+    let mut s = a0;
+    while ((a1 - s) * direction) > max {
+        let e = s + step;
+        chunks.push((s, e));
+        s = e;
+    }
+    chunks.push((s, a1));
+    chunks
+}
+
+fn sweep_fraction(theta: f32, start: f32, end: f32) -> f32 {
+    let span = end - start;
+    if span.abs() < f32::EPSILON {
+        0.0
+    } else {
+        ((theta - start) / span).clamp(0.0, 1.0)
+    }
+}
+
+fn arc_color_at(fill: &ArcFill, t: f32) -> Color {
+    match fill {
+        ArcFill::Solid(c) => *c,
+        ArcFill::Gradient { start, end } => start.mix(*end, t),
+    }
+}
+
+fn arc_to_femtovg_angle(angle: f32) -> f32 {
+    angle - std::f32::consts::FRAC_PI_2
+}
+
+fn arc_point(cx: f32, cy: f32, radius: f32, angle: f32) -> (f32, f32) {
+    let femtovg_angle = arc_to_femtovg_angle(angle);
+    (
+        cx + radius * femtovg_angle.cos(),
+        cy + radius * femtovg_angle.sin(),
+    )
+}
+
 /// Compute the two linear-gradient endpoints for a bounding box `(x, y, w, h)`
 /// at `angle` degrees (`0` = top→bottom, `90` = left→right, clockwise).
 ///
@@ -1382,5 +1497,85 @@ mod gradient_geometry_tests {
         let (start, end) = linear_endpoints(0.0, 0.0, 200.0, 100.0, 45.0);
         approx(start, (25.0, -25.0));
         approx(end, (175.0, 125.0));
+    }
+}
+
+#[cfg(test)]
+mod arc_geometry_tests {
+    use super::{arc_color_at, arc_point, arc_spans, chunk_span, sweep_fraction};
+    use bmc_wasm_protocol::{ArcFill, ArcSegments, Color};
+
+    fn approx(a: f32, b: f32) {
+        assert!((a - b).abs() < 1e-4, "{a} != {b}");
+    }
+
+    #[test]
+    fn continuous_resolves_to_full_sweep() {
+        assert_eq!(
+            arc_spans(&ArcSegments::Continuous, 0.2, 1.4),
+            vec![(0.2, 1.4)]
+        );
+    }
+
+    #[test]
+    fn explicit_passes_spans_through() {
+        let spans = vec![(0.0, 0.5), (0.6, 1.0)];
+        assert_eq!(
+            arc_spans(&ArcSegments::Explicit(spans.clone()), 0.0, 1.0),
+            spans
+        );
+    }
+
+    #[test]
+    fn chunking_subdivides_and_lands_on_end() {
+        let chunks = chunk_span(0.0, 1.0, 0.2);
+        assert_eq!(chunks.len(), 5);
+        approx(chunks[0].0, 0.0);
+        approx(
+            chunks
+                .last()
+                .expect("BUG: chunk_span must return at least one chunk")
+                .1,
+            1.0,
+        );
+        for w in chunks.windows(2) {
+            approx(w[0].1, w[1].0);
+        }
+    }
+
+    #[test]
+    fn tiny_span_yields_one_chunk() {
+        assert_eq!(chunk_span(0.0, 0.05, 0.2).len(), 1);
+    }
+
+    #[test]
+    fn sweep_fraction_is_independent_of_gaps() {
+        approx(sweep_fraction(0.0, 0.0, 1.0), 0.0);
+        approx(sweep_fraction(1.0, 0.0, 1.0), 1.0);
+        approx(sweep_fraction(0.5, 0.0, 1.0), 0.5);
+        approx(sweep_fraction(0.75, 0.0, 1.0), 0.75);
+    }
+
+    #[test]
+    fn color_at_hits_endpoints() {
+        let red = Color::from_rgb(0xFF, 0x00, 0x00);
+        let blue = Color::from_rgb(0x00, 0x00, 0xFF);
+        let g = ArcFill::gradient(red, blue);
+        assert_eq!(arc_color_at(&g, 0.0), red);
+        assert_eq!(arc_color_at(&g, 1.0), blue);
+        assert_eq!(arc_color_at(&ArcFill::Solid(red), 0.5), red);
+    }
+
+    #[test]
+    fn arc_point_uses_twelve_oclock_zero() {
+        let center = (10.0, 20.0);
+        let radius = 5.0;
+        let top = arc_point(center.0, center.1, radius, 0.0);
+        approx(top.0, 10.0);
+        approx(top.1, 15.0);
+
+        let right = arc_point(center.0, center.1, radius, std::f32::consts::FRAC_PI_2);
+        approx(right.0, 15.0);
+        approx(right.1, 20.0);
     }
 }
