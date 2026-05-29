@@ -10,7 +10,7 @@
   },
   "binary": "bin/mining-info",
   "settings": [
-    "numberFormat"
+    "localization"
   ],
   "supported_viewports": [
     {
