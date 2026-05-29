@@ -691,6 +691,58 @@ fn render_draw_inner(
                 renderer.restore();
             }
         }
+        DrawCommand::CurvedText {
+            cx: local_cx,
+            cy: local_cy,
+            radius,
+            angle,
+            anchor,
+            facing,
+            text,
+            style,
+        } => {
+            let rx = cx + *local_cx + offset_x;
+            let ry = cy + *local_cy + offset_y;
+            let mut render_style = *style;
+            render_style.size = (style.size as f32 * scale) as u32;
+            let base_color = color_override.unwrap_or(style.color);
+            render_style.color = if alpha < 1.0 {
+                base_color.scale_alpha(alpha)
+            } else {
+                base_color
+            };
+            let scaled_radius = *radius * scale;
+
+            if rotation == 0.0 {
+                renderer.draw_curved_text(
+                    rx,
+                    ry,
+                    scaled_radius,
+                    *angle,
+                    *anchor,
+                    *facing,
+                    text,
+                    &render_style,
+                );
+            } else {
+                let pivot_x = cx + cw / 2.0;
+                let pivot_y = cy + ch / 2.0;
+                renderer.save();
+                renderer.translate(pivot_x, pivot_y);
+                renderer.rotate(rotation);
+                renderer.draw_curved_text(
+                    rx - pivot_x,
+                    ry - pivot_y,
+                    scaled_radius,
+                    *angle,
+                    *anchor,
+                    *facing,
+                    text,
+                    &render_style,
+                );
+                renderer.restore();
+            }
+        }
         DrawCommand::Sphere {
             x,
             y,
@@ -775,9 +827,6 @@ fn render_draw_inner(
                 renderer.draw_mesh(rx - pivot_x, ry - pivot_y, ew, eh, slot, mesh_id, *args);
                 renderer.restore();
             }
-        }
-        DrawCommand::CurvedText { .. } => {
-            // Task 6 wires curved text rendering.
         }
     }
 }
@@ -1009,4 +1058,435 @@ fn interpolate_draw_values(
 /// hypersphere regardless of the angle between `a` and `b`.
 fn slerp_quat(a: Quat, b: Quat, t: f32) -> Quat {
     a.slerp(b, t)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::TransitionStateKey;
+    use crate::tree::SpanData;
+
+    #[derive(Debug)]
+    enum RenderEvent {
+        Save,
+        Restore,
+        Translate(f32, f32),
+        Rotate(f32),
+        CurvedText {
+            cx: f32,
+            cy: f32,
+            radius: f32,
+            angle: f32,
+            anchor: ArcAnchor,
+            facing: ArcTextFacing,
+            text: String,
+            style: TextStyle,
+        },
+    }
+
+    #[derive(Default)]
+    struct RecordingRenderer {
+        events: Vec<RenderEvent>,
+    }
+
+    impl Renderer for RecordingRenderer {
+        fn fill_rect(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _color: Color) {}
+
+        fn fill_rounded_rect(
+            &mut self,
+            _x: f32,
+            _y: f32,
+            _w: f32,
+            _h: f32,
+            _radius: f32,
+            _color: Color,
+        ) {
+        }
+
+        fn fill_circle(&mut self, _cx: f32, _cy: f32, _r: f32, _color: Color) {}
+
+        fn fill_rect_paint(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _fill: &Fill) {}
+
+        fn fill_circle_paint(&mut self, _cx: f32, _cy: f32, _r: f32, _fill: &Fill) {}
+
+        fn stroke_rect(
+            &mut self,
+            _x: f32,
+            _y: f32,
+            _w: f32,
+            _h: f32,
+            _border_width: f32,
+            _color: Color,
+        ) {
+        }
+
+        fn draw_line(
+            &mut self,
+            _x1: f32,
+            _y1: f32,
+            _x2: f32,
+            _y2: f32,
+            _width: f32,
+            _color: Color,
+        ) {
+        }
+
+        fn save(&mut self) {
+            self.events.push(RenderEvent::Save);
+        }
+
+        fn restore(&mut self) {
+            self.events.push(RenderEvent::Restore);
+        }
+
+        fn translate(&mut self, x: f32, y: f32) {
+            self.events.push(RenderEvent::Translate(x, y));
+        }
+
+        fn rotate(&mut self, angle_radians: f32) {
+            self.events.push(RenderEvent::Rotate(angle_radians));
+        }
+
+        fn push_scissor(&mut self, _x: f32, _y: f32, _w: f32, _h: f32) {}
+
+        fn pop_scissor(&mut self) {}
+
+        fn draw_text(&mut self, _text: &str, _x: f32, _y: f32, _size: f32, _color: Color) {}
+
+        fn measure_text(&mut self, _text: &str, _size: f32) -> f32 {
+            0.0
+        }
+
+        fn measure_paragraph(
+            &mut self,
+            _style: &TextStyle,
+            _spans: &[SpanData],
+            _max_width: Option<f32>,
+        ) -> (f32, f32) {
+            (0.0, 0.0)
+        }
+
+        fn draw_paragraph(
+            &mut self,
+            _style: &TextStyle,
+            _spans: &[SpanData],
+            _x: f32,
+            _y: f32,
+            _max_width: f32,
+        ) {
+        }
+
+        fn draw_paragraph_clipped(
+            &mut self,
+            _style: &TextStyle,
+            _spans: &[SpanData],
+            _x: f32,
+            _y: f32,
+            _max_width: f32,
+            _clip_top: f32,
+            _clip_bottom: f32,
+        ) {
+        }
+
+        fn register_svg(&mut self, _tag: &str, _data: &[u8]) -> Option<SvgId> {
+            None
+        }
+
+        fn draw_svg(
+            &mut self,
+            _x: f32,
+            _y: f32,
+            _w: f32,
+            _h: f32,
+            _color: Color,
+            _icon_id: SvgId,
+            _anti_alias: bool,
+            _fills: &[(String, Color)],
+        ) {
+        }
+
+        fn register_bitmap(&mut self, _tag: &str, _data: &[u8]) -> Option<BitmapId> {
+            None
+        }
+
+        fn register_bitmap_nearest(&mut self, _tag: &str, _data: &[u8]) -> Option<BitmapId> {
+            None
+        }
+
+        fn draw_bitmap(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _bitmap_id: BitmapId) {}
+
+        fn draw_nine_patch(
+            &mut self,
+            _x: f32,
+            _y: f32,
+            _w: f32,
+            _h: f32,
+            _bitmap_id: BitmapId,
+            _left: u16,
+            _top: u16,
+            _right: u16,
+            _bottom: u16,
+        ) {
+        }
+
+        fn bitmap_sample(
+            &self,
+            _bitmap_id: BitmapId,
+            _x: u32,
+            _y: u32,
+            _w: u32,
+            _h: u32,
+        ) -> Option<Color> {
+            None
+        }
+
+        fn register_mesh(&mut self, _tag: &str, _data: &[u8]) -> Option<MeshId> {
+            None
+        }
+
+        fn draw_mesh(
+            &mut self,
+            _x: f32,
+            _y: f32,
+            _w: f32,
+            _h: f32,
+            _slot_index: u8,
+            _mesh_id: MeshId,
+            _args: MeshDrawArgs,
+        ) {
+        }
+
+        fn draw_sphere(
+            &mut self,
+            _x: f32,
+            _y: f32,
+            _w: f32,
+            _h: f32,
+            _bitmap_id: BitmapId,
+            _center_lat: f32,
+            _center_lon: f32,
+            _zoom: f32,
+            _light_lat: f32,
+            _light_lon: f32,
+            _atmosphere: bool,
+        ) {
+        }
+
+        fn draw_canvas_text(&mut self, _text: &str, _x: f32, _y: f32, _style: &TextStyle) {}
+
+        fn draw_curved_text(
+            &mut self,
+            cx: f32,
+            cy: f32,
+            radius: f32,
+            angle: f32,
+            anchor: ArcAnchor,
+            facing: ArcTextFacing,
+            text: &str,
+            style: &TextStyle,
+        ) {
+            self.events.push(RenderEvent::CurvedText {
+                cx,
+                cy,
+                radius,
+                angle,
+                anchor,
+                facing,
+                text: text.to_owned(),
+                style: *style,
+            });
+        }
+
+        fn stroke_path(
+            &mut self,
+            _points: &[(f32, f32)],
+            _stroke_width: f32,
+            _color: Color,
+            _closed: bool,
+            _smooth: bool,
+        ) {
+        }
+
+        fn fill_path_paint(&mut self, _points: &[(f32, f32)], _fill: &Fill, _smooth: bool) {}
+
+        fn drop_shadow(
+            &mut self,
+            _cx: f32,
+            _cy: f32,
+            _fbo_w: u32,
+            _fbo_h: u32,
+            _dx: f32,
+            _dy: f32,
+            _blur: f32,
+            _color: Color,
+            inner: &mut dyn FnMut(&mut dyn Renderer),
+        ) {
+            inner(self);
+        }
+
+        fn begin_frame(&mut self, _width: u32, _height: u32, _dpi_scale: f32) {}
+
+        fn flush(&mut self) {}
+
+        fn width(&self) -> f32 {
+            0.0
+        }
+
+        fn height(&self) -> f32 {
+            0.0
+        }
+
+        fn evict_prefix(&mut self, _prefix: &str) -> usize {
+            0
+        }
+    }
+
+    fn animation_context<'a>(
+        animation_states: &'a mut HashMap<u64, AnimationState>,
+        transition_states: &'a mut HashMap<TransitionStateKey, TransitionState>,
+    ) -> AnimationContext<'a> {
+        AnimationContext {
+            animation_states,
+            transition_states,
+            delta_ms: 0,
+            frame_counter: 0,
+            draw_counter: 0,
+            canvas_index: 0,
+            draw_in_canvas: 0,
+            mesh_slot_counter: 0,
+            has_active: false,
+        }
+    }
+
+    #[test]
+    fn curved_text_dispatches_scaled_style_and_color_override() {
+        let mut renderer = RecordingRenderer::default();
+        let mut animation_states = HashMap::new();
+        let mut transition_states = HashMap::new();
+        let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
+        let draw = DrawCommand::CurvedText {
+            cx: 5.0,
+            cy: 6.0,
+            radius: 7.0,
+            angle: 0.25,
+            anchor: ArcAnchor::Center,
+            facing: ArcTextFacing::Inward,
+            text: "hashrate".to_owned(),
+            style: TextStyle {
+                size: 12,
+                color: Color::from_rgb(1, 2, 3),
+                ..Default::default()
+            },
+        };
+
+        render_draw_inner(
+            &mut renderer,
+            &draw,
+            10.0,
+            20.0,
+            100.0,
+            80.0,
+            3.0,
+            4.0,
+            0.0,
+            2.0,
+            0.5,
+            0.0,
+            Some(Color::from_rgba(10, 20, 30, 128)),
+            &mut anim_ctx,
+        );
+
+        let expected_style = TextStyle {
+            size: 24,
+            color: Color::from_rgba(10, 20, 30, 64),
+            ..Default::default()
+        };
+        let [
+            RenderEvent::CurvedText {
+                cx: 18.0,
+                cy: 30.0,
+                radius: 14.0,
+                angle: 0.25,
+                anchor: ArcAnchor::Center,
+                facing: ArcTextFacing::Inward,
+                text,
+                style,
+            },
+        ] = &renderer.events[..]
+        else {
+            panic!("expected one curved text draw event");
+        };
+        assert_eq!(text, "hashrate");
+        assert_eq!(style.size, expected_style.size);
+        assert_eq!(style.color, expected_style.color);
+    }
+
+    #[test]
+    fn curved_text_dispatches_inside_outer_rotation() {
+        let mut renderer = RecordingRenderer::default();
+        let mut animation_states = HashMap::new();
+        let mut transition_states = HashMap::new();
+        let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
+        let draw = DrawCommand::CurvedText {
+            cx: 5.0,
+            cy: 6.0,
+            radius: 7.0,
+            angle: 0.25,
+            anchor: ArcAnchor::Center,
+            facing: ArcTextFacing::Outward,
+            text: "hashrate".to_owned(),
+            style: TextStyle {
+                size: 12,
+                color: Color::from_rgb(1, 2, 3),
+                ..Default::default()
+            },
+        };
+
+        render_draw_inner(
+            &mut renderer,
+            &draw,
+            10.0,
+            20.0,
+            100.0,
+            80.0,
+            3.0,
+            4.0,
+            0.75,
+            2.0,
+            1.0,
+            0.0,
+            None,
+            &mut anim_ctx,
+        );
+
+        let expected_style = TextStyle {
+            size: 24,
+            color: Color::from_rgb(1, 2, 3),
+            ..Default::default()
+        };
+        let [
+            RenderEvent::Save,
+            RenderEvent::Translate(60.0, 60.0),
+            RenderEvent::Rotate(0.75),
+            RenderEvent::CurvedText {
+                cx: -42.0,
+                cy: -30.0,
+                radius: 14.0,
+                angle: 0.25,
+                anchor: ArcAnchor::Center,
+                facing: ArcTextFacing::Outward,
+                text,
+                style,
+            },
+            RenderEvent::Restore,
+        ] = &renderer.events[..]
+        else {
+            panic!("expected rotated curved text draw event");
+        };
+        assert_eq!(text, "hashrate");
+        assert_eq!(style.size, expected_style.size);
+        assert_eq!(style.color, expected_style.color);
+    }
 }
