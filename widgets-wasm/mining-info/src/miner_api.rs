@@ -1,5 +1,7 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
+use bmc_wasm_sdk::ufmt;
+
 use crate::model::{Availability, MinerData, TemperatureRange};
 
 pub(crate) trait JsonLookup {
@@ -128,5 +130,64 @@ mod tests {
             panic!("BUG: fan percent should be available");
         };
         assert!((percent - 72.0).abs() < 1e-9);
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AuthState {
+    token: Option<String>,
+}
+
+impl AuthState {
+    pub(crate) fn token(&self) -> Option<&str> {
+        self.token.as_deref()
+    }
+
+    pub(crate) fn set_token(&mut self, token: String) {
+        self.token = Some(token);
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.token = None;
+    }
+
+    pub(crate) fn auth_header(&self) -> Option<String> {
+        self.token
+            .as_deref()
+            .map(|token| format!("Authorization: Bearer {token}"))
+    }
+}
+
+pub(crate) fn endpoint(base: &str, path: &str) -> String {
+    bmc_wasm_sdk::fmt!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    )
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+
+    #[test]
+    fn joins_base_url_and_path_once() {
+        assert_eq!(
+            endpoint("http://miner/api/v1/", "/miner/stats"),
+            "http://miner/api/v1/miner/stats"
+        );
+    }
+
+    #[test]
+    fn builds_bearer_auth_header() {
+        let mut auth = AuthState::default();
+        assert_eq!(auth.auth_header(), None);
+        auth.set_token("abc".to_owned());
+        assert_eq!(
+            auth.auth_header(),
+            Some("Authorization: Bearer abc".to_owned())
+        );
+        auth.clear();
+        assert_eq!(auth.token(), None);
     }
 }
