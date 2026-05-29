@@ -42,7 +42,9 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::interaction::TouchEvent;
 use bmc_render::renderer::Renderer as _;
-use bmc_wasm_runtime::fixtures::{self, find_widget_root, seed_kv_from_secrets, snapshot_kv_dir};
+use bmc_wasm_runtime::fixtures::{
+    self, find_widget_root, seed_kv_from_widget_root, snapshot_kv_dir,
+};
 use bmc_wasm_runtime::unified_fixture::TimelineEvent;
 use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime};
 
@@ -373,11 +375,20 @@ pub(crate) const PARAM_PANEL_W: u32 = 320;
 struct CliArgs {
     wasm_path: PathBuf,
     manifest_path: Option<PathBuf>,
+    widget_root: Option<PathBuf>,
     perf_report_path: Option<PathBuf>,
     perf_frames: u32,
     record_size: Option<String>,
     platform_catalog_path: Option<PathBuf>,
     platform_id: Option<String>,
+}
+
+impl CliArgs {
+    fn resolved_widget_root(&self) -> Option<PathBuf> {
+        self.widget_root
+            .clone()
+            .or_else(|| find_widget_root(&self.wasm_path))
+    }
 }
 
 fn parse_args() -> Result<CliArgs> {
@@ -388,7 +399,8 @@ fn usage() -> &'static str {
     "WASM Widget Testbed\n\
      Usage: testbed <wasm_file> [--manifest=<path>] [--perf-report=<path>] \
      [--perf-frames=<N>] [--record=<size>] [--platform-catalog=<path>] \
-     [--platform-catalog <path>] [--platform=<id>] [--platform <id>]"
+     [--platform-catalog <path>] [--platform=<id>] [--platform <id>] \
+     [--widget-root=<path>] [--widget-root <path>]"
 }
 
 fn split_option_value<I>(
@@ -421,6 +433,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<CliArgs> {
     let mut perf_frames: u32 = 600;
     let mut record_size = None;
     let mut manifest_path = None;
+    let mut widget_root = None;
     let mut platform_catalog_path = None;
     let mut platform_id = None;
     let mut args = args.peekable();
@@ -431,6 +444,14 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<CliArgs> {
             manifest_path = Some(PathBuf::from(split_option_value(
                 &mut args,
                 "--manifest",
+                "a path",
+            )?));
+        } else if let Some(path) = arg.strip_prefix("--widget-root=") {
+            widget_root = Some(PathBuf::from(path));
+        } else if arg == "--widget-root" {
+            widget_root = Some(PathBuf::from(split_option_value(
+                &mut args,
+                "--widget-root",
                 "a path",
             )?));
         } else if let Some(path) = arg.strip_prefix("--perf-report=") {
@@ -467,6 +488,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<CliArgs> {
     Ok(CliArgs {
         wasm_path,
         manifest_path,
+        widget_root,
         perf_report_path,
         perf_frames,
         record_size,
@@ -582,6 +604,53 @@ mod platforms_startup_tests {
     }
 
     #[test]
+    fn parse_args_accepts_widget_root_forms() {
+        let cli = parse_test_args(&["testbed", "widget.wasm", "--widget-root", "widgets/clock"])
+            .expect("BUG: widget-root split arg must parse");
+        assert_eq!(cli.widget_root, Some(PathBuf::from("widgets/clock")));
+
+        let cli = parse_test_args(&[
+            "testbed",
+            "widget.wasm",
+            "--widget-root=widgets/blockheight",
+        ])
+        .expect("BUG: widget-root equals arg must parse");
+        assert_eq!(cli.widget_root, Some(PathBuf::from("widgets/blockheight")));
+    }
+
+    #[test]
+    fn load_manifest_uses_widget_root_for_foreign_target_wasm() {
+        let runtime_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let widget_root = runtime_dir.join("examples/hello-widget");
+        let wasm_path = Path::new(
+            "/tmp/claude-1001/foreign-target/wasm32-unknown-unknown/release/hello_widget.wasm",
+        );
+
+        let (manifest_path, manifest) = load_manifest(wasm_path, None, Some(widget_root.clone()))
+            .expect("BUG: explicit widget root must resolve manifest");
+
+        assert_eq!(manifest_path, widget_root.join("manifest.json"));
+        assert_eq!(manifest.name, "Hello");
+    }
+
+    #[test]
+    fn resolved_widget_root_uses_cli_root_for_foreign_target_wasm() {
+        let runtime_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let widget_root = runtime_dir.join("examples/hello-widget");
+        let cli = parse_test_args(&[
+            "testbed",
+            "/tmp/claude-1001/foreign-target/wasm32-unknown-unknown/release/hello_widget.wasm",
+            "--widget-root",
+            widget_root
+                .to_str()
+                .expect("BUG: test widget root path must be UTF-8"),
+        ])
+        .expect("BUG: widget-root arg must parse");
+
+        assert_eq!(cli.resolved_widget_root(), Some(widget_root));
+    }
+
+    #[test]
     fn parse_args_rejects_split_value_that_looks_like_flag() {
         let result = parse_test_args(&[
             "testbed",
@@ -662,31 +731,17 @@ mod platforms_startup_tests {
     }
 }
 
-/// Walk up the wasm path looking for `<package>/manifest.json` at each level.
-/// Cargo emits widget binaries with `-` in the package name normalised to `_`.
-fn autodetect_manifest(wasm_path: &Path) -> Option<PathBuf> {
-    let stem = wasm_path.file_stem()?.to_str()?;
-    let package = stem.replace('_', "-");
-    let mut dir = wasm_path.parent()?;
-    while let Some(parent) = dir.parent() {
-        let candidate = parent.join(&package).join("manifest.json");
-        if candidate.exists() {
-            return Some(candidate);
-        }
-        dir = parent;
-    }
-    None
-}
-
 fn load_manifest(
     wasm_path: &Path,
     explicit: Option<PathBuf>,
+    widget_root: Option<PathBuf>,
 ) -> Result<(PathBuf, bmc_widget_manifest::Manifest)> {
     let manifest_path = explicit
-        .or_else(|| autodetect_manifest(wasm_path))
+        .or_else(|| widget_root.map(|root| root.join("manifest.json")))
         .with_context(|| {
             format!(
-                "could not locate manifest.json for {}. Pass --manifest=<path> explicitly.",
+                "could not locate manifest.json for {}. Pass --manifest=<path> or \
+                 --widget-root=<path> explicitly.",
                 wasm_path.display()
             )
         })?;
@@ -773,7 +828,11 @@ fn main() -> Result<()> {
     bmc_render::tree::init_debug_flags();
 
     let cli = parse_args()?;
-    let (manifest_path, manifest) = load_manifest(&cli.wasm_path, cli.manifest_path.clone())?;
+    let (manifest_path, manifest) = load_manifest(
+        &cli.wasm_path,
+        cli.manifest_path.clone(),
+        cli.resolved_widget_root(),
+    )?;
     let params = manifest_default_params(&manifest);
     let (catalog, active_platform_id) = load_catalog_and_platform(&cli)?;
     let selected_platform = catalog
@@ -1141,7 +1200,7 @@ impl TestbedApp {
 
         let recording_state = cli.record_size.as_ref().map(|size_name| {
             let active_tile = record_size_to_idx(size_name);
-            let widget_root = find_widget_root(&cli.wasm_path);
+            let widget_root = cli.resolved_widget_root();
             // Capture's fixture-header parser requires a timezone suffix on the time
             // field (e.g. `2026-05-13T15:48:38+02:00`); a naive datetime is rejected.
             let start_time_iso = chrono::Local::now().to_rfc3339();
@@ -1395,7 +1454,9 @@ impl TestbedApp {
                 let _ = std::fs::remove_dir_all(&kv_path);
                 let _ = std::fs::create_dir_all(&kv_path);
             }
-            seed_kv_from_secrets(&self.cli.wasm_path, &kv_path);
+            if let Some(widget_root) = self.cli.resolved_widget_root() {
+                seed_kv_from_widget_root(&widget_root, &kv_path);
+            }
 
             // Active recording tile gets the fixture-recording config with the unified
             // fetch observer; non-recording tiles use the simpler default config.
