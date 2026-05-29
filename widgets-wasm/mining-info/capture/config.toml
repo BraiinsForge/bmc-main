@@ -1,0 +1,9 @@
+# Capture configuration for visual regression testing.
+
+# Settle for a few frames after the chained fetch stubs fire so the widget
+# has parsed every miner and public response before the first capture.
+settle_delay = 5
+
+[fixtures]
+small = "fixtures/bmm100-mining.jsonl.gz"
+full = "fixtures/bmm101-info-overload.jsonl.gz"
