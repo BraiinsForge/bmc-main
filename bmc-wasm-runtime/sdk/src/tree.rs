@@ -21,9 +21,9 @@ use std::vec::Vec;
 use bmc_wasm_protocol::{
     AnimProperty, BitmapId, Color, ColorSpace, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_ICON,
     DRAW_MESH, DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED,
-    DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Easing, LoopMode, MeshId,
+    DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Easing, Fill, LoopMode, MeshId,
     NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION,
-    NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL, NODE_SPACER, SvgId,
+    NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL, NODE_SPACER, SvgId, encode_fill,
 };
 
 use crate::PropsFieldValue;
@@ -94,6 +94,10 @@ impl TreeBuffer {
 
     fn write_color(&mut self, c: Color) {
         self.data.extend_from_slice(&c.to_u32().to_le_bytes());
+    }
+
+    fn write_fill(&mut self, fill: &Fill) {
+        encode_fill(&mut self.data, fill);
     }
 
     fn write_icon_id(&mut self, id: Option<SvgId>) {
@@ -328,13 +332,13 @@ impl TreeBuffer {
     }
 
     /// Write a rect draw command (local coords)
-    pub fn write_draw_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
+    pub fn write_draw_rect(&mut self, x: f32, y: f32, w: f32, h: f32, fill: &Fill) {
         self.write_u8(DRAW_RECT);
         self.write_f32(x);
         self.write_f32(y);
         self.write_f32(w);
         self.write_f32(h);
-        self.write_color(color);
+        self.write_fill(fill);
     }
 }
 
@@ -418,7 +422,7 @@ pub enum Draw {
         y: f32,
         w: f32,
         h: f32,
-        color: Color,
+        fill: Fill,
     },
     /// Filled circle at absolute local position (cx, cy = center)
     Circle {
@@ -551,8 +555,14 @@ impl Draw {
 
     /// Rectangle at local position within canvas.
     #[must_use]
-    pub fn rect(x: f32, y: f32, w: f32, h: f32, color: Color) -> Self {
-        Self::Rect { x, y, w, h, color }
+    pub fn rect(x: f32, y: f32, w: f32, h: f32, fill: impl Into<Fill>) -> Self {
+        Self::Rect {
+            x,
+            y,
+            w,
+            h,
+            fill: fill.into(),
+        }
     }
 
     /// Filled circle at local position within canvas.
@@ -1522,8 +1532,8 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
 )]
 fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
     match draw {
-        Draw::Rect { x, y, w, h, color } => {
-            buf.write_draw_rect(*x, *y, *w, *h, *color);
+        Draw::Rect { x, y, w, h, fill } => {
+            buf.write_draw_rect(*x, *y, *w, *h, fill);
         }
         Draw::Circle { cx, cy, r, color } => {
             buf.write_u8(DRAW_CIRCLE);
@@ -1972,5 +1982,32 @@ mod drop_shadow_tests {
             bytes[17], DRAW_RECT,
             "the wrapped draw must follow the 16-byte shadow header",
         );
+    }
+}
+
+#[cfg(test)]
+mod fill_wire_tests {
+    use super::*;
+    use bmc_wasm_protocol::{FILL_LINEAR, Fill};
+
+    #[test]
+    fn rect_serializes_linear_fill_after_geometry() {
+        let red = Color::from_rgb(0xFF, 0, 0);
+        let blue = Color::from_rgb(0, 0, 0xFF);
+        let draw = Draw::rect(1.0, 2.0, 3.0, 4.0, Fill::linear(90.0, red, blue));
+        let mut buf = TreeBuffer::new();
+        serialize_draw(&mut buf, &draw);
+        let bytes = buf.into_bytes();
+        // [DRAW_RECT][x:4][y:4][w:4][h:4][fill...]
+        assert_eq!(bytes[0], DRAW_RECT);
+        assert_eq!(
+            bytes[17], FILL_LINEAR,
+            "fill block must follow 16 bytes of geometry"
+        );
+    }
+
+    #[test]
+    fn rect_solid_call_site_still_compiles() {
+        let _ = Draw::rect(0.0, 0.0, 1.0, 1.0, Color::from_rgb(1, 2, 3));
     }
 }

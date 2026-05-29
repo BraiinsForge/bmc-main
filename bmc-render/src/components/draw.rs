@@ -28,6 +28,20 @@ struct MeshOverride {
     args: MeshDrawArgs,
 }
 
+/// Apply the canvas-level `color_override` (forces a solid recolour) and
+/// `alpha` opacity to a shape's `fill`.
+fn effective_fill(fill: &Fill, color_override: Option<Color>, alpha: f32) -> Fill {
+    let base = match color_override {
+        Some(c) => Fill::Solid(c),
+        None => *fill,
+    };
+    if alpha < 1.0 {
+        base.scale_alpha(alpha)
+    } else {
+        base
+    }
+}
+
 pub(crate) fn render_draw_command(
     renderer: &mut dyn Renderer,
     draw: &DrawCommand,
@@ -95,7 +109,7 @@ fn render_draw_inner(
     anim_ctx: &mut AnimationContext<'_>,
 ) {
     match draw {
-        DrawCommand::Rect { x, y, w, h, color } => {
+        DrawCommand::Rect { x, y, w, h, fill } => {
             let ew = *w * scale;
             let eh = *h * scale;
             // Center-anchored scaling: offset by half the size difference
@@ -103,14 +117,9 @@ fn render_draw_inner(
             let sy = *y + offset_y + (*h - eh) / 2.0;
             let rx = cx + sx;
             let ry = cy + sy;
-            let base_color = color_override.unwrap_or(*color);
-            let final_color = if alpha < 1.0 {
-                base_color.scale_alpha(alpha)
-            } else {
-                base_color
-            };
+            let paint = effective_fill(fill, color_override, alpha);
             if rotation == 0.0 {
-                renderer.fill_rect(rx, ry, ew, eh, final_color);
+                renderer.fill_rect_paint(rx, ry, ew, eh, &paint);
             } else {
                 // Rotate around canvas center (like CSS transform-origin: center)
                 let pivot_x = cx + cw / 2.0;
@@ -118,7 +127,7 @@ fn render_draw_inner(
                 renderer.save();
                 renderer.translate(pivot_x, pivot_y);
                 renderer.rotate(rotation);
-                renderer.fill_rect(rx - pivot_x, ry - pivot_y, ew, eh, final_color);
+                renderer.fill_rect_paint(rx - pivot_x, ry - pivot_y, ew, eh, &paint);
                 renderer.restore();
             }
         }
@@ -853,8 +862,15 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             specular: args.lighting.specular,
             ..Default::default()
         },
-        DrawCommand::Rect { x, y, w, h, color }
-        | DrawCommand::Svg {
+        DrawCommand::Rect { x, y, w, h, fill } => PrevDrawValues {
+            x: *x,
+            y: *y,
+            w: *w,
+            h: *h,
+            color: fill.primary_color(),
+            ..Default::default()
+        },
+        DrawCommand::Svg {
             x, y, w, h, color, ..
         } => PrevDrawValues {
             x: *x,
