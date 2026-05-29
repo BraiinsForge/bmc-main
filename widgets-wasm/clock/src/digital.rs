@@ -12,8 +12,8 @@ use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Params;
 use crate::shared::{
-    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, font_weight, local_or_system,
-    push_utc_offset, resolve_tz_for_label, time_font_family,
+    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, f32_from_u32, font_weight,
+    local_or_system, push_utc_offset, resolve_tz_for_label, time_font_family,
 };
 
 // ── Per-size template parameters ───────────────────────────────────────
@@ -114,16 +114,60 @@ fn pick_size(variant: SizeVariant) -> &'static DigitalSizeParams {
     }
 }
 
+impl DigitalSizeParams {
+    /// Shrink the font sizes and paddings by `fit` so an off-canonical viewport
+    /// — e.g. BMM101's 480×320 classified as Large but narrower than Large's
+    /// canonical 638 — scales down instead of overflowing. Visibility flags and
+    /// the reserved header line count are layout structure, not metrics, and
+    /// pass through unchanged.
+    fn scaled(self, fit: f32) -> Self {
+        Self {
+            time_font_size: scale_font(self.time_font_size, fit),
+            header_font_size: scale_font(self.header_font_size, fit),
+            ampm_font_size: scale_font(self.ampm_font_size, fit),
+            top_padding: self.top_padding * fit,
+            bottom_padding: self.bottom_padding * fit,
+            header_gap: self.header_gap * fit,
+            ..self
+        }
+    }
+}
+
+/// Scale a font size by `fit`, never below 1px. `fit` is in `(0, 1]`, so the
+/// product stays within the original `u16`.
+fn scale_font(value: u16, fit: f32) -> u16 {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "fit is in (0, 1], so the scaled size is a small non-negative value"
+    )]
+    let scaled = (f32::from(value) * fit).round() as u16;
+    scaled.max(1)
+}
+
+/// Downscale factor for an actual `(w, h)` viewport against the variant's
+/// canonical dimensions. The binding axis wins (`min`) so neither overflows,
+/// and the factor is clamped to `1.0` so larger-than-canonical viewports keep
+/// the authored sizes rather than inflating them.
+fn fit_factor(variant: SizeVariant, w: u32, h: u32) -> f32 {
+    let w_ratio = f32_from_u32(w) / f32_from_u32(variant.width());
+    let h_ratio = f32_from_u32(h) / f32_from_u32(variant.height());
+    w_ratio.min(h_ratio).min(1.0)
+}
+
 // ── Render ─────────────────────────────────────────────────────────────
 
 pub(crate) fn render(
     now: SystemTime,
     params: &Params,
     variant: SizeVariant,
+    w: u32,
+    h: u32,
     tz: Option<&Tz>,
     palette: &ClockPalette,
 ) -> Node {
-    let size = pick_size(variant);
+    let size = pick_size(variant).scaled(fit_factor(variant, w, h));
+    let size = &size;
     let is_12h = matches!(system::current().time_format(), Some(TimeFormat::Hour12));
 
     let label = resolve_tz_for_label(tz, now.unix_secs);
