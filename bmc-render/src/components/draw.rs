@@ -245,18 +245,13 @@ fn render_draw_inner(
             cx: circle_cx,
             cy: circle_cy,
             r,
-            color,
+            fill,
         } => {
             let er = *r * scale;
             let scx = *circle_cx + offset_x;
             let scy = *circle_cy + offset_y;
-            let base_color = color_override.unwrap_or(*color);
-            let final_color = if alpha < 1.0 {
-                base_color.scale_alpha(alpha)
-            } else {
-                base_color
-            };
-            renderer.fill_circle(cx + scx, cy + scy, er, final_color);
+            let paint = effective_fill(fill, color_override, alpha);
+            renderer.fill_circle_paint(cx + scx, cy + scy, er, &paint);
         }
         DrawCommand::Centered { inner } => {
             let (iw, ih) = get_draw_bounds(inner);
@@ -881,12 +876,12 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             ..Default::default()
         },
         DrawCommand::Circle {
-            cx, cy, r, color, ..
+            cx, cy, r, fill, ..
         } => PrevDrawValues {
             x: *cx,
             y: *cy,
             w: *r,
-            color: *color,
+            color: fill.primary_color(),
             ..Default::default()
         },
         DrawCommand::Orbit {
