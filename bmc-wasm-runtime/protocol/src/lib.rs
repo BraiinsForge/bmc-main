@@ -17,6 +17,7 @@ pub mod tags;
 pub mod text;
 pub mod version;
 pub mod versioned_snapshot;
+pub(crate) mod wire;
 
 pub use animation::*;
 pub use colors::*;
