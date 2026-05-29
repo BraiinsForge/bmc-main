@@ -8,6 +8,20 @@
 //! segment gaps.
 
 use crate::colors::Color;
+use crate::wire::{read_color, read_f32, read_u32};
+
+/// Wire discriminant for a solid-colour arc stroke.
+pub const ARC_FILL_SOLID: u8 = 0;
+/// Wire discriminant for an along-arc gradient stroke.
+pub const ARC_FILL_GRADIENT: u8 = 1;
+/// Wire discriminant for one visible span covering the whole arc sweep.
+pub const ARC_SEGMENTS_CONTINUOUS: u8 = 0;
+/// Wire discriminant for explicit visible arc spans.
+pub const ARC_SEGMENTS_EXPLICIT: u8 = 1;
+/// Wire discriminant for round outer end caps.
+pub const ARC_CAP_ROUND: u8 = 0;
+/// Wire discriminant for flat (butt) outer end caps.
+pub const ARC_CAP_BUTT: u8 = 1;
 
 /// Paint applied along an arc stroke.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -127,9 +141,113 @@ impl ArcSegments {
     }
 }
 
+/// Append `fill` to `out` in wire format.
+pub fn encode_arc_fill(out: &mut Vec<u8>, fill: &ArcFill) {
+    match fill {
+        ArcFill::Solid(c) => {
+            out.push(ARC_FILL_SOLID);
+            out.extend_from_slice(&c.to_u32().to_le_bytes());
+        }
+        ArcFill::Gradient { start, end } => {
+            out.push(ARC_FILL_GRADIENT);
+            out.extend_from_slice(&start.to_u32().to_le_bytes());
+            out.extend_from_slice(&end.to_u32().to_le_bytes());
+        }
+    }
+}
+
+/// Read an `ArcFill` from `data` starting at `*pos`, advancing `*pos` past it.
+///
+/// Returns `None` on an unknown discriminant or truncated input. On `None`,
+/// `*pos` is left in an unspecified state; the partial parse may have advanced it.
+#[must_use]
+pub fn decode_arc_fill(data: &[u8], pos: &mut usize) -> Option<ArcFill> {
+    let kind = *data.get(*pos)?;
+    *pos += 1;
+    match kind {
+        ARC_FILL_SOLID => Some(ArcFill::Solid(read_color(data, pos)?)),
+        ARC_FILL_GRADIENT => {
+            let start = read_color(data, pos)?;
+            let end = read_color(data, pos)?;
+            Some(ArcFill::Gradient { start, end })
+        }
+        _ => None,
+    }
+}
+
+/// Append `segments` to `out` in wire format.
+pub fn encode_arc_segments(out: &mut Vec<u8>, segments: &ArcSegments) {
+    match segments {
+        ArcSegments::Continuous => out.push(ARC_SEGMENTS_CONTINUOUS),
+        ArcSegments::Explicit(spans) => {
+            out.push(ARC_SEGMENTS_EXPLICIT);
+            let count = u32::try_from(spans.len()).expect("BUG: arc segment count exceeds u32");
+            out.extend_from_slice(&count.to_le_bytes());
+            for (start, end) in spans {
+                out.extend_from_slice(&start.to_le_bytes());
+                out.extend_from_slice(&end.to_le_bytes());
+            }
+        }
+    }
+}
+
+/// Read `ArcSegments` from `data` starting at `*pos`, advancing `*pos` past it.
+///
+/// Returns `None` on an unknown discriminant or truncated input. On `None`,
+/// `*pos` is left in an unspecified state; the partial parse may have advanced it.
+#[must_use]
+pub fn decode_arc_segments(data: &[u8], pos: &mut usize) -> Option<ArcSegments> {
+    let kind = *data.get(*pos)?;
+    *pos += 1;
+    match kind {
+        ARC_SEGMENTS_CONTINUOUS => Some(ArcSegments::Continuous),
+        ARC_SEGMENTS_EXPLICIT => {
+            let count = usize::try_from(read_u32(data, pos)?).ok()?;
+            let remaining_segments = data.get(*pos..)?.chunks_exact(8).len();
+            if count > remaining_segments {
+                return None;
+            }
+            let mut spans = Vec::with_capacity(count);
+            for _ in 0..count {
+                let start = read_f32(data, pos)?;
+                let end = read_f32(data, pos)?;
+                spans.push((start, end));
+            }
+            Some(ArcSegments::Explicit(spans))
+        }
+        _ => None,
+    }
+}
+
+/// Append `cap` to `out` in wire format.
+pub fn encode_arc_cap(out: &mut Vec<u8>, cap: ArcCap) {
+    out.push(match cap {
+        ArcCap::Round => ARC_CAP_ROUND,
+        ArcCap::Butt => ARC_CAP_BUTT,
+    });
+}
+
+/// Read an `ArcCap` from `data` starting at `*pos`, advancing `*pos` past it.
+///
+/// Returns `None` on an unknown discriminant or truncated input.
+#[must_use]
+pub fn decode_arc_cap(data: &[u8], pos: &mut usize) -> Option<ArcCap> {
+    let kind = *data.get(*pos)?;
+    *pos += 1;
+    match kind {
+        ARC_CAP_ROUND => Some(ArcCap::Round),
+        ARC_CAP_BUTT => Some(ArcCap::Butt),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::colors::Color;
+
+    const RED: Color = Color::from_rgb(0xFF, 0x00, 0x00);
+    const BLUE: Color = Color::from_rgb(0x00, 0x00, 0xFF);
 
     fn approx(a: f32, b: f32) {
         assert!((a - b).abs() < 1e-4, "{a} != {b}");
@@ -140,6 +258,25 @@ mod tests {
             ArcSegments::Explicit(v) => v,
             ArcSegments::Continuous => panic!("BUG: expected Explicit"),
         }
+    }
+
+    fn round_trip_fill(fill: ArcFill) -> ArcFill {
+        let mut buf = Vec::new();
+        encode_arc_fill(&mut buf, &fill);
+        let mut pos = 0;
+        let decoded = decode_arc_fill(&buf, &mut pos).expect("BUG: encoded arc fill must decode");
+        assert_eq!(pos, buf.len(), "decode must consume every byte it wrote");
+        decoded
+    }
+
+    fn round_trip_segments(segments: &ArcSegments) -> ArcSegments {
+        let mut buf = Vec::new();
+        encode_arc_segments(&mut buf, segments);
+        let mut pos = 0;
+        let decoded =
+            decode_arc_segments(&buf, &mut pos).expect("BUG: encoded arc segments must decode");
+        assert_eq!(pos, buf.len(), "decode must consume every byte it wrote");
+        decoded
     }
 
     #[test]
@@ -166,5 +303,63 @@ mod tests {
         approx(last, interior * 0.5);
         approx(v[3].1, 1.0);
         approx(v[0].0, 0.0);
+    }
+
+    #[test]
+    fn solid_fill_round_trips() {
+        assert_eq!(round_trip_fill(ArcFill::Solid(RED)), ArcFill::Solid(RED));
+    }
+
+    #[test]
+    fn gradient_fill_round_trips() {
+        let fill = ArcFill::gradient(RED, BLUE);
+        assert_eq!(round_trip_fill(fill), fill);
+    }
+
+    #[test]
+    fn continuous_segments_round_trip() {
+        assert_eq!(
+            round_trip_segments(&ArcSegments::Continuous),
+            ArcSegments::Continuous
+        );
+    }
+
+    #[test]
+    fn explicit_segments_round_trip() {
+        let segments = ArcSegments::Explicit(vec![(0.0, 1.0), (1.5, 2.0)]);
+        assert_eq!(round_trip_segments(&segments), segments);
+    }
+
+    #[test]
+    fn decode_segments_rejects_huge_count_without_payload() {
+        let mut buf = Vec::new();
+        buf.push(ARC_SEGMENTS_EXPLICIT);
+        buf.extend_from_slice(&u32::MAX.to_le_bytes());
+
+        let mut pos = 0;
+        assert!(decode_arc_segments(&buf, &mut pos).is_none());
+    }
+
+    #[test]
+    fn decode_fill_rejects_unknown_discriminant() {
+        let mut pos = 0;
+        assert!(decode_arc_fill(&[0xFF], &mut pos).is_none());
+    }
+
+    #[test]
+    fn arc_cap_round_trips() {
+        for cap in [ArcCap::Round, ArcCap::Butt] {
+            let mut buf = Vec::new();
+            encode_arc_cap(&mut buf, cap);
+            let mut pos = 0;
+            assert_eq!(decode_arc_cap(&buf, &mut pos), Some(cap));
+            assert_eq!(pos, buf.len());
+        }
+    }
+
+    #[test]
+    fn decode_cap_rejects_unknown_discriminant() {
+        let mut pos = 0;
+        assert!(decode_arc_cap(&[0xFF], &mut pos).is_none());
     }
 }

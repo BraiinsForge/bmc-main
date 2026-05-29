@@ -133,6 +133,7 @@ pub const DRAW_TEXT: u8 = 0x46;
 pub const DRAW_MESH: u8 = 0x47;
 pub const DRAW_NINE_PATCH: u8 = 0x48;
 pub const DRAW_CURVED_TEXT: u8 = 0x49;
+pub const DRAW_ARC: u8 = 0x4A;
 
 // Draw commands — transforms (0x60–0x7F)
 pub const DRAW_CENTERED: u8 = 0x60;
@@ -147,3 +148,33 @@ pub const DROP_SHADOW_BLUR_MAX: f32 = 16.0;
 
 // Draw commands — modifiers (0x80–0x9F)
 pub const DRAW_MODIFIED: u8 = 0x80;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn draw_opcode_values_are_unique() {
+        let opcodes = [
+            DRAW_RECT,
+            DRAW_CIRCLE,
+            DRAW_ICON,
+            DRAW_BITMAP,
+            DRAW_PATH,
+            DRAW_SPHERE,
+            DRAW_TEXT,
+            DRAW_MESH,
+            DRAW_NINE_PATCH,
+            DRAW_CURVED_TEXT,
+            DRAW_ARC,
+            DRAW_CENTERED,
+            DRAW_ORBIT,
+            DRAW_ROTATED,
+            DRAW_SHADOW,
+            DRAW_MODIFIED,
+        ];
+        let unique = opcodes.iter().copied().collect::<HashSet<_>>();
+        assert_eq!(unique.len(), opcodes.len());
+    }
+}
