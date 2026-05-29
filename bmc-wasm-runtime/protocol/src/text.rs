@@ -2,6 +2,8 @@
 
 //! Text styling types shared between SDK and host.
 
+use core::fmt;
+
 use crate::colors::{Color, GRAY_10, TRANSPARENT};
 use crate::ids::BitmapId;
 
@@ -39,6 +41,86 @@ pub enum VerticalAlign {
     Center = 1,
     Bottom = 2,
     Baseline = 3,
+}
+
+/// Text anchor along an arc.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ArcAnchor {
+    #[default]
+    Start = 0,
+    Center = 1,
+    End = 2,
+}
+
+/// Invalid [`ArcAnchor`] wire discriminant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InvalidArcAnchor(pub u8);
+
+impl fmt::Display for InvalidArcAnchor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid arc anchor wire value {}", self.0)
+    }
+}
+
+impl std::error::Error for InvalidArcAnchor {}
+
+impl From<ArcAnchor> for u8 {
+    fn from(anchor: ArcAnchor) -> Self {
+        anchor as Self
+    }
+}
+
+impl TryFrom<u8> for ArcAnchor {
+    type Error = InvalidArcAnchor;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Start),
+            1 => Ok(Self::Center),
+            2 => Ok(Self::End),
+            _ => Err(InvalidArcAnchor(value)),
+        }
+    }
+}
+
+/// Text facing direction along an arc.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ArcTextFacing {
+    #[default]
+    Outward = 0,
+    Inward = 1,
+}
+
+/// Invalid [`ArcTextFacing`] wire discriminant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InvalidArcTextFacing(pub u8);
+
+impl fmt::Display for InvalidArcTextFacing {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid arc text facing wire value {}", self.0)
+    }
+}
+
+impl std::error::Error for InvalidArcTextFacing {}
+
+impl From<ArcTextFacing> for u8 {
+    fn from(facing: ArcTextFacing) -> Self {
+        facing as Self
+    }
+}
+
+impl TryFrom<u8> for ArcTextFacing {
+    type Error = InvalidArcTextFacing;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Outward),
+            1 => Ok(Self::Inward),
+            _ => Err(InvalidArcTextFacing(value)),
+        }
+    }
 }
 
 /// Cross-axis alignment for row/column containers.
@@ -452,6 +534,34 @@ impl PropsData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arc_anchor_decodes_known_wire_values() {
+        assert_eq!(ArcAnchor::try_from(0), Ok(ArcAnchor::Start));
+        assert_eq!(ArcAnchor::try_from(1), Ok(ArcAnchor::Center));
+        assert_eq!(ArcAnchor::try_from(2), Ok(ArcAnchor::End));
+        assert_eq!(ArcAnchor::try_from(3), Err(InvalidArcAnchor(3)));
+    }
+
+    #[test]
+    fn arc_anchor_encodes_known_wire_values() {
+        assert_eq!(u8::from(ArcAnchor::Start), 0);
+        assert_eq!(u8::from(ArcAnchor::Center), 1);
+        assert_eq!(u8::from(ArcAnchor::End), 2);
+    }
+
+    #[test]
+    fn arc_text_facing_decodes_known_wire_values() {
+        assert_eq!(ArcTextFacing::try_from(0), Ok(ArcTextFacing::Outward));
+        assert_eq!(ArcTextFacing::try_from(1), Ok(ArcTextFacing::Inward));
+        assert_eq!(ArcTextFacing::try_from(2), Err(InvalidArcTextFacing(2)));
+    }
+
+    #[test]
+    fn arc_text_facing_encodes_known_wire_values() {
+        assert_eq!(u8::from(ArcTextFacing::Outward), 0);
+        assert_eq!(u8::from(ArcTextFacing::Inward), 1);
+    }
 
     #[test]
     fn text_style_round_trips_default() {
