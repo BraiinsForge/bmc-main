@@ -42,6 +42,18 @@ fn effective_fill(fill: &Fill, color_override: Option<Color>, alpha: f32) -> Fil
     }
 }
 
+fn effective_arc_fill(fill: &ArcFill, color_override: Option<Color>, alpha: f32) -> ArcFill {
+    let base = match color_override {
+        Some(c) => ArcFill::Solid(c),
+        None => *fill,
+    };
+    if alpha < 1.0 {
+        base.scale_alpha(alpha)
+    } else {
+        base
+    }
+}
+
 /// Resolve the stroke colour for a polyline: `color_override` wins, else the
 /// path's stroke colour, then scaled by `alpha`.
 fn stroke_color(color: Color, color_override: Option<Color>, alpha: f32) -> Color {
@@ -77,6 +89,10 @@ pub(crate) fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
         | DrawCommand::Mesh { w, h, .. }
         | DrawCommand::NinePatch { w, h, .. } => (*w, *h),
         DrawCommand::Circle { r, .. } => (*r * 2.0, *r * 2.0),
+        DrawCommand::Arc { radius, width, .. } => {
+            let d = 2.0 * radius + width;
+            (d, d)
+        }
         DrawCommand::Centered { inner }
         | DrawCommand::Rotated { inner, .. }
         | DrawCommand::Modified { inner, .. }
@@ -263,6 +279,42 @@ fn render_draw_inner(
             let scy = *circle_cy + offset_y;
             let paint = effective_fill(fill, color_override, alpha);
             renderer.fill_circle_paint(cx + scx, cy + scy, er, &paint);
+        }
+        DrawCommand::Arc {
+            cx: arc_cx,
+            cy: arc_cy,
+            radius,
+            start_angle,
+            end_angle,
+            width,
+            fill,
+            segments,
+        } => {
+            let er = *radius * scale;
+            let ew = *width * scale;
+            let scx = cx + *arc_cx + offset_x;
+            let scy = cy + *arc_cy + offset_y;
+            let eff = effective_arc_fill(fill, color_override, alpha);
+            if rotation == 0.0 {
+                renderer.stroke_arc(scx, scy, er, *start_angle, *end_angle, ew, &eff, segments);
+            } else {
+                let pivot_x = cx + cw / 2.0;
+                let pivot_y = cy + ch / 2.0;
+                renderer.save();
+                renderer.translate(pivot_x, pivot_y);
+                renderer.rotate(rotation);
+                renderer.stroke_arc(
+                    scx - pivot_x,
+                    scy - pivot_y,
+                    er,
+                    *start_angle,
+                    *end_angle,
+                    ew,
+                    &eff,
+                    segments,
+                );
+                renderer.restore();
+            }
         }
         DrawCommand::Centered { inner } => {
             let (iw, ih) = get_draw_bounds(inner);
@@ -942,6 +994,19 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             color: fill.primary_color(),
             ..Default::default()
         },
+        DrawCommand::Arc {
+            cx,
+            cy,
+            radius,
+            fill,
+            ..
+        } => PrevDrawValues {
+            x: *cx,
+            y: *cy,
+            w: *radius,
+            color: fill.primary_color(),
+            ..Default::default()
+        },
         DrawCommand::Orbit {
             radius,
             angle,
@@ -1110,6 +1175,19 @@ mod tests {
         fn fill_rect_paint(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _fill: &Fill) {}
 
         fn fill_circle_paint(&mut self, _cx: f32, _cy: f32, _r: f32, _fill: &Fill) {}
+
+        fn stroke_arc(
+            &mut self,
+            _cx: f32,
+            _cy: f32,
+            _radius: f32,
+            _start_angle: f32,
+            _end_angle: f32,
+            _width: f32,
+            _fill: &ArcFill,
+            _segments: &ArcSegments,
+        ) {
+        }
 
         fn stroke_rect(
             &mut self,
