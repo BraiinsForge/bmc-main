@@ -13,4 +13,5 @@ weight, and an automatic refresh against the Braiins public API. Renders at all 
 ### [Clock Widget](clock.md)
 
 A clock widget with an analog (round or rectangular) or digital face, optional date, seconds, and timezone readouts, a
-configurable numeral weight, and a next-alarm indicator. Renders at all four widget sizes and recolours for night mode.
+configurable numeral weight, and a next-alarm indicator. Renders at all four widget sizes on BMC100, scales to fit the
+BMM100, BMM101, and BFM100 panels, and recolours for night mode.
