@@ -377,13 +377,8 @@ pub extern "C" fn render(_delta_ms: u32) {
     let root = match params.view {
         View::Mining => render::mining(size, &miner),
         View::Geek => render::geek(size, &miner, &public),
-        View::Network | View::InfoOverload => center(
-            props!(background: BLACK),
-            [text(
-                "Network and info-overload render in the next task",
-                style!(size: 18, color: WHITE),
-            )],
-        ),
+        View::Network => render::network(size, &public),
+        View::InfoOverload => render::info_overload(size, &miner, &public),
     };
     let _ = render_ui(viewport.width, viewport.height, root);
 }
