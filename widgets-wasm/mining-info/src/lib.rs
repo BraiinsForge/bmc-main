@@ -2,6 +2,7 @@
 
 mod format;
 mod manifest_params;
+mod miner_api;
 mod model;
 
 #[cfg(target_arch = "wasm32")]
