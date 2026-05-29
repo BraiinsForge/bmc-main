@@ -1,7 +1,7 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! Rectangular analog dial — per-size dial SVGs stretched to fill the
-//! widget viewport, with numerals and timezone label overlaid.
+//! Rectangular analog dial — per-resolution dial SVGs stretched to fill
+//! the widget viewport, with numerals and timezone label overlaid.
 
 // ── Drop shadows disabled ──────────────────────────────────────────────
 //
@@ -29,84 +29,93 @@ use crate::shared::{
 
 use super::{hour_angle, local_clock_components, minute_angle, second_angle};
 
-// ── Assets ─────────────────────────────────────────────────────────────
+// ── Dials ──────────────────────────────────────────────────────────────
+//
+// Authored per exact viewport resolution and chosen independently of the
+// size variant. A viewport with no matching dial simply draws no dial.
 
-const DIAL_RECT_FULL: Svg = include_svg!("assets/analog/dial-rect-full.svg");
-const DIAL_RECT_LARGE: Svg = include_svg!("assets/analog/dial-rect-large.svg");
-const DIAL_RECT_MEDIUM: Svg = include_svg!("assets/analog/dial-rect-medium.svg");
-const DIAL_RECT_SMALL: Svg = include_svg!("assets/analog/dial-rect-small.svg");
+const DIAL_317X238: Svg = include_svg!("assets/analog/dial-rect-317x238.svg");
+const DIAL_320X240: Svg = include_svg!("assets/analog/dial-rect-320x240.svg");
+const DIAL_480X320: Svg = include_svg!("assets/analog/dial-rect-480x320.svg");
+const DIAL_638X238: Svg = include_svg!("assets/analog/dial-rect-638x238.svg");
+const DIAL_638X480: Svg = include_svg!("assets/analog/dial-rect-638x480.svg");
+const DIAL_1280X480: Svg = include_svg!("assets/analog/dial-rect-1280x480.svg");
+
+const DIALS_BY_RESOLUTION: &[(u32, u32, &Svg)] = &[
+    (317, 238, &DIAL_317X238),
+    (320, 240, &DIAL_320X240),
+    (480, 320, &DIAL_480X320),
+    (638, 238, &DIAL_638X238),
+    (638, 480, &DIAL_638X480),
+    (1280, 480, &DIAL_1280X480),
+];
+
+fn pick_dial(w: u32, h: u32) -> Option<&'static Svg> {
+    DIALS_BY_RESOLUTION
+        .iter()
+        .find(|&&(rw, rh, _)| rw == w && rh == h)
+        .map(|&(_, _, svg)| svg)
+}
 
 // ── Per-size template parameters ───────────────────────────────────────
 //
-// The per-size variation lives in the dial SVG itself (one per size);
-// the renderer stretches whatever it's handed to the full viewport.
+// Layout metrics (numeral inset fractions, font sizes, hand scale) selected
+// by the closest size variant, independent of the exact dial resolution.
+// Insets are fractions of the viewport axis they sit against, so numerals
+// stay proportionally placed when the actual viewport differs from the
+// matched variant's canonical dimensions — e.g. BMM101's 480×320 under Large.
 
 #[derive(Clone, Copy)]
 pub(crate) struct AnalogRectSizeParams {
-    dial: &'static Svg,
-    hand_scale: f32,
     numerals_font_size: u32,
-    twelve_top_inset: f32,
-    three_right_inset: f32,
-    six_bottom_inset: f32,
-    nine_left_inset: f32,
-    timezone_y: f32,
+    twelve_top_frac: f32,
+    three_right_frac: f32,
+    six_bottom_frac: f32,
+    nine_left_frac: f32,
     timezone_font_size: u32,
     show_date_row: bool,
     show_alarm: bool,
 }
 
 const ANALOG_RECT_FULL: AnalogRectSizeParams = AnalogRectSizeParams {
-    dial: &DIAL_RECT_FULL,
-    hand_scale: 1.0,
     numerals_font_size: 64,
-    twelve_top_inset: 84.0,
-    three_right_inset: 130.0,
-    six_bottom_inset: 84.0,
-    nine_left_inset: 130.0,
-    timezone_y: 265.0,
+    twelve_top_frac: 0.175,
+    three_right_frac: 0.1016,
+    six_bottom_frac: 0.175,
+    nine_left_frac: 0.1016,
     timezone_font_size: 24,
     show_date_row: true,
     show_alarm: true,
 };
 
 const ANALOG_RECT_LARGE: AnalogRectSizeParams = AnalogRectSizeParams {
-    dial: &DIAL_RECT_LARGE,
-    hand_scale: 1.0,
     numerals_font_size: 40,
-    twelve_top_inset: 80.0,
-    three_right_inset: 80.0,
-    six_bottom_inset: 80.0,
-    nine_left_inset: 80.0,
-    timezone_y: 270.0,
+    twelve_top_frac: 0.1667,
+    three_right_frac: 0.1254,
+    six_bottom_frac: 0.1667,
+    nine_left_frac: 0.1254,
     timezone_font_size: 24,
     show_date_row: false,
     show_alarm: false,
 };
 
 const ANALOG_RECT_MEDIUM: AnalogRectSizeParams = AnalogRectSizeParams {
-    dial: &DIAL_RECT_MEDIUM,
-    hand_scale: 0.5,
     numerals_font_size: 24,
-    twelve_top_inset: 40.0,
-    three_right_inset: 60.0,
-    six_bottom_inset: 40.0,
-    nine_left_inset: 60.0,
-    timezone_y: 130.0,
+    twelve_top_frac: 0.1681,
+    three_right_frac: 0.0940,
+    six_bottom_frac: 0.1681,
+    nine_left_frac: 0.0940,
     timezone_font_size: 16,
     show_date_row: false,
     show_alarm: false,
 };
 
 const ANALOG_RECT_SMALL: AnalogRectSizeParams = AnalogRectSizeParams {
-    dial: &DIAL_RECT_SMALL,
-    hand_scale: 0.5,
     numerals_font_size: 24,
-    twelve_top_inset: 30.0,
-    three_right_inset: 40.0,
-    six_bottom_inset: 30.0,
-    nine_left_inset: 40.0,
-    timezone_y: 130.0,
+    twelve_top_frac: 0.1261,
+    three_right_frac: 0.1262,
+    six_bottom_frac: 0.1261,
+    nine_left_frac: 0.1262,
     timezone_font_size: 16,
     show_date_row: false,
     show_alarm: false,
@@ -120,6 +129,25 @@ fn pick_size(variant: SizeVariant) -> &'static AnalogRectSizeParams {
         SizeVariant::Small => &ANALOG_RECT_SMALL,
     }
 }
+
+// Timezone label baseline as a fraction of viewport height, measured from
+// the top. A fraction (rather than a pixel inset) keeps the label in place
+// when the actual viewport differs from the matched size variant's
+// canonical dimensions — e.g. BMM101's 480×320 under Large params.
+const TIMEZONE_Y_FRACTION: f32 = 0.55;
+
+// Date row and alarm row sit to either side of the central dial, anchored at
+// fractions of viewport width. Only ever read for Full (the sole variant with
+// show_date_row / show_alarm), but expressed as fractions for the same reason
+// as the numeral insets.
+const DATE_ROW_X_FRACTION: f32 = 0.68;
+const ALARM_ROW_X_FRACTION: f32 = 0.195;
+
+// Hands scale with viewport height — the limiting axis on a landscape dial —
+// so the hand tips keep the same margin inside the rim on every resolution.
+// 480 px is the reference height at which the hand assets render at native
+// scale; a shorter viewport (e.g. BMM101's 320) shrinks the hands to match.
+const HAND_SCALE_REF_HEIGHT: f32 = 480.0;
 
 // ── Render ─────────────────────────────────────────────────────────────
 
@@ -153,15 +181,17 @@ pub(crate) fn render(
 
     let mut draws: Vec<Draw> = Vec::with_capacity(20);
 
-    // Dial fills the entire widget viewport.
-    // Two recolourable named paths — major ticks (12/3/6/9)
-    // and minor ticks — pick up the active palette.
-    draws.push(
-        Draw::svg(0.0, 0.0, viewport_w, viewport_h, size.dial, TRANSPARENT)
-            .with_anti_alias()
-            .fill("major", palette.tick_large)
-            .fill("minor", palette.tick_small),
-    );
+    // Dial fills the entire widget viewport — drawn only when a dial is
+    // authored for this exact resolution. Two recolourable named paths —
+    // major ticks (12/3/6/9) and minor ticks — pick up the active palette.
+    if let Some(dial) = pick_dial(w, h) {
+        draws.push(
+            Draw::svg(0.0, 0.0, viewport_w, viewport_h, dial, TRANSPARENT)
+                .with_anti_alias()
+                .fill("major", palette.tick_large)
+                .fill("minor", palette.tick_small),
+        );
+    }
 
     // Numerals 12 / 3 / 6 / 9 — all four anchor at the glyph centre
     // (`VerticalAlign::Center`); 12 and 6 offset by half-font-height
@@ -190,24 +220,24 @@ pub(crate) fn render(
     );
     draws.push(Draw::text(
         centre_x,
-        size.twelve_top_inset + numerals_half,
+        viewport_h * size.twelve_top_frac + numerals_half,
         "12",
         numerals_center,
     ));
     draws.push(Draw::text(
-        viewport_w - size.three_right_inset,
+        viewport_w - viewport_w * size.three_right_frac,
         centre_y,
         "3",
         numerals_right,
     ));
     draws.push(Draw::text(
         centre_x,
-        viewport_h - size.six_bottom_inset - numerals_half,
+        viewport_h - viewport_h * size.six_bottom_frac - numerals_half,
         "6",
         numerals_center,
     ));
     draws.push(Draw::text(
-        size.nine_left_inset,
+        viewport_w * size.nine_left_frac,
         centre_y,
         "9",
         numerals_left,
@@ -221,7 +251,7 @@ pub(crate) fn render(
         let fmt = system::current().date_format().unwrap_or_default();
         let date_str = strftime(shifted, date_pattern(fmt, true, false));
         draws.push(Draw::text(
-            870.0,
+            viewport_w * DATE_ROW_X_FRACTION,
             centre_y,
             date_str,
             style!(
@@ -256,7 +286,7 @@ pub(crate) fn render(
         };
         draws.push(Draw::text(
             centre_x,
-            size.timezone_y,
+            viewport_h * TIMEZONE_Y_FRACTION,
             line,
             style!(
                 size: size.timezone_font_size,
@@ -271,7 +301,7 @@ pub(crate) fn render(
     // Alarm row (Full only when an alarm is scheduled).
     if size.show_alarm {
         let _ = alarm_row_draws(
-            AlarmAnchor::LeftX(250.0),
+            AlarmAnchor::LeftX(viewport_w * ALARM_ROW_X_FRACTION),
             centre_y,
             40.0,
             numerals_weight,
@@ -283,16 +313,9 @@ pub(crate) fn render(
     let h_ang = hour_angle(hour12, minute);
     let m_ang = minute_angle(minute);
     let s_ang = params.show_seconds.then(|| second_angle(second));
+    let hand_scale = viewport_h / HAND_SCALE_REF_HEIGHT;
     super::push_hands_and_centre(
-        centre_x,
-        centre_y,
-        size.hand_scale,
-        h_ang,
-        m_ang,
-        s_ang,
-        palette,
-        false,
-        &mut draws,
+        centre_x, centre_y, hand_scale, h_ang, m_ang, s_ang, palette, false, &mut draws,
     );
 
     canvas(props!(width: viewport_w, height: viewport_h), draws)
