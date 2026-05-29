@@ -13,6 +13,7 @@ workspace = true
 resolver = "3"
 members = [
     "blockheight",
+    "bmm-mining",
     "clock",
 ]
 

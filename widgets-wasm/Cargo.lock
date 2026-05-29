@@ -152,6 +152,13 @@ name = "bmc-wasm-widgets"
 version = "0.0.0"
 
 [[package]]
+name = "bmm-mining"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
