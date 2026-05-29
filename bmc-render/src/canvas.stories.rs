@@ -27,8 +27,8 @@ fn shapes(c: &mut StoryCtx) {
         canvas(
             props!(width: 300, height: 150),
             [
-                Draw::Path {
-                    points: vec![
+                path!(
+                    vec![
                         (10.0, 130.0),
                         (60.0, 20.0),
                         (110.0, 130.0),
@@ -36,14 +36,11 @@ fn shapes(c: &mut StoryCtx) {
                         (210.0, 130.0),
                         (260.0, 20.0),
                     ],
-                    color: VIOLET_40,
-                    stroke_width: 2.0,
-                    closed: false,
-                    fill: false,
-                    interpolation: Interpolation::Linear,
-                },
-                Draw::Path {
-                    points: vec![
+                    stroke: 2.0,
+                    color: VIOLET_40
+                ),
+                path!(
+                    vec![
                         (10.0, 130.0),
                         (60.0, 20.0),
                         (110.0, 130.0),
@@ -51,12 +48,10 @@ fn shapes(c: &mut StoryCtx) {
                         (210.0, 130.0),
                         (260.0, 20.0),
                     ],
+                    stroke: 2.0,
                     color: GREEN_40,
-                    stroke_width: 2.0,
-                    closed: false,
-                    fill: false,
-                    interpolation: Interpolation::CatmullRom,
-                },
+                    smooth
+                ),
             ],
         ),
     );

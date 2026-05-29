@@ -212,10 +212,6 @@ pub trait Renderer {
         smooth: bool,
     );
 
-    /// Fill a closed path through the given points.
-    /// If `smooth` is true, use Catmull-Rom spline interpolation.
-    fn fill_path_points(&mut self, points: &[(f32, f32)], color: Color, smooth: bool);
-
     /// Fill a closed polygon through `points` with a [`Fill`] paint.
     /// If `smooth` is true, use Catmull-Rom spline interpolation.
     fn fill_path_paint(&mut self, points: &[(f32, f32)], fill: &Fill, smooth: bool);
