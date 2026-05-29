@@ -297,16 +297,7 @@ pub fn find_widget_root(wasm_path: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Load `secrets.ini` from the widget directory and seed KV store files.
-///
-/// Walks up from the WASM binary looking for `secrets.ini` (max 6 levels).
-/// Parses `KEY=VALUE` lines and writes each as a file in `kv_dir`.
-/// Does not overwrite existing KV files (config/variant overrides take precedence).
-pub fn seed_kv_from_secrets(wasm_path: &Path, kv_dir: &Path) {
-    // Resolve the widget crate root, then look for secrets.ini there.
-    let Some(widget_root) = find_widget_root(wasm_path) else {
-        return;
-    };
+pub fn seed_kv_from_widget_root(widget_root: &Path, kv_dir: &Path) {
     let path = widget_root.join("secrets.ini");
     if !path.exists() {
         return;
@@ -348,4 +339,17 @@ pub fn seed_kv_from_secrets(wasm_path: &Path, kv_dir: &Path) {
     if count > 0 {
         tracing::info!("seeded {count} KV key(s) from {}", path.display());
     }
+}
+
+/// Load `secrets.ini` from the widget directory and seed KV store files.
+///
+/// Walks up from the WASM binary looking for `secrets.ini` (max 6 levels).
+/// Parses `KEY=VALUE` lines and writes each as a file in `kv_dir`.
+/// Does not overwrite existing KV files (config/variant overrides take precedence).
+pub fn seed_kv_from_secrets(wasm_path: &Path, kv_dir: &Path) {
+    // Resolve the widget crate root, then look for secrets.ini there.
+    let Some(widget_root) = find_widget_root(wasm_path) else {
+        return;
+    };
+    seed_kv_from_widget_root(&widget_root, kv_dir);
 }
