@@ -46,7 +46,7 @@ dev WIDGET ARGS="":
     mprocs \
         --names "watch,testbed" \
         "cd '$root' && cargo watch -x 'build -p {{ WIDGET }} --target {{ wasm_target }}'" \
-        "cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- '$wasm_file' {{ ARGS }}"
+        "cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- '$wasm_file' --widget-root '$root/{{ WIDGET }}' {{ ARGS }}"
 
 # Run a release-built widget once in the testbed.
 run WIDGET ARGS="":
@@ -57,7 +57,7 @@ run WIDGET ARGS="":
         | grep -o '"target_directory":"[^"]*"' | cut -d '"' -f 4)
     wasm_file="$target/{{ wasm_target }}/release/$(echo {{ WIDGET }} | tr - _).wasm"
     cargo build --manifest-path "$root/Cargo.toml" -p {{ WIDGET }} --release --target {{ wasm_target }}
-    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" {{ ARGS }}
+    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/{{ WIDGET }}" {{ ARGS }}
 
 # === Profiling / size ===
 
@@ -102,7 +102,7 @@ record WIDGET SIZE="full":
         | grep -o '"target_directory":"[^"]*"' | cut -d '"' -f 4)
     wasm_file="$target/{{ wasm_target }}/release/$(echo {{ WIDGET }} | tr - _).wasm"
     cargo build --manifest-path "$root/Cargo.toml" -p {{ WIDGET }} --release --target {{ wasm_target }}
-    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --record={{ SIZE }}
+    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/{{ WIDGET }}" --record={{ SIZE }}
 
 # === Visual regression ===
 
