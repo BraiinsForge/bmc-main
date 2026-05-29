@@ -1,0 +1,71 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+use crate::prelude::*;
+
+story_meta! { title: "Canvas/Arcs" }
+
+const GREEN: Color = Color::from_rgb(0x34, 0xC0, 0x6A);
+const TEAL: Color = Color::from_rgb(0x1F, 0xB6, 0xC1);
+const YELLOW: Color = Color::from_rgb(0xF5, 0xD9, 0x0A);
+
+#[story(default)]
+fn rings(c: &mut StoryCtx) {
+    let (cx, cy) = (160.0, 160.0);
+    let a0 = 2.35;
+    let a1 = 7.07;
+
+    c.ui.div(
+        (320, 320),
+        canvas(
+            props!(width: 320, height: 320),
+            [
+                Draw::arc(
+                    cx,
+                    cy,
+                    130.0,
+                    a0,
+                    a1,
+                    6.0,
+                    ArcFill::gradient(GREEN, TEAL),
+                    ArcSegments::Continuous,
+                ),
+                Draw::arc(
+                    cx,
+                    cy,
+                    112.0,
+                    a0,
+                    a1,
+                    8.0,
+                    ArcFill::gradient(GREEN, YELLOW),
+                    ArcSegments::short_ends(a0, a1, 24, 0.04, 0.5),
+                ),
+            ],
+        ),
+    );
+}
+
+#[story]
+fn uniform_gauge(c: &mut StoryCtx) {
+    c.ui.header("Uniform segments", "12 equal segments, solid teal");
+
+    let (cx, cy) = (160.0, 160.0);
+    let a0 = 2.35;
+    let a1 = 7.07;
+
+    c.ui.div(
+        (320, 320),
+        canvas(
+            props!(width: 320, height: 320),
+            [Draw::arc(
+                cx,
+                cy,
+                120.0,
+                a0,
+                a1,
+                10.0,
+                TEAL,
+                ArcSegments::uniform(a0, a1, 12, 0.06),
+            )],
+        ),
+    );
+}
