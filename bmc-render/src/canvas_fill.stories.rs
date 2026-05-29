@@ -1,0 +1,98 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+use crate::prelude::*;
+
+story_meta! { title: "Canvas/Fills" }
+
+#[story(default)]
+fn paints_on_shapes(c: &mut StoryCtx) {
+    let top = TEAL_50;
+    let bottom = TEAL_50.with_alpha(0.0);
+    c.ui.div(
+        (320, 220),
+        canvas(
+            props!(width: 320, height: 220),
+            [
+                Draw::rect(10.0, 10.0, 90.0, 60.0, VIOLET_60),
+                Draw::rect(115.0, 10.0, 90.0, 60.0, Fill::linear(0.0, top, bottom)),
+                Draw::rect(220.0, 10.0, 90.0, 60.0, Fill::radial(top, bottom)),
+                Draw::circle(55.0, 130.0, 35.0, RED_50),
+                Draw::circle(160.0, 130.0, 35.0, Fill::linear(90.0, top, bottom)),
+                Draw::circle(265.0, 130.0, 35.0, Fill::radial(top, bottom)),
+            ],
+        ),
+    );
+}
+
+const CHART_W: f32 = 1000.0;
+const CHART_H: f32 = 240.0;
+const CHART_POINTS: usize = 200;
+
+/// Deterministic volatile price walk, mapped to the chart box and trending up
+/// (`rising`) or down. A seeded xorshift keeps the rendered story stable.
+fn price_series(seed: u32, rising: bool) -> Vec<(f32, f32)> {
+    let (start_y, end_y) = if rising {
+        (CHART_H * 0.85, CHART_H * 0.18)
+    } else {
+        (CHART_H * 0.25, CHART_H * 0.82)
+    };
+    let mut state = seed | 1;
+    let mut rand = move || {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        px(state >> 8) / px(1 << 24)
+    };
+    let mut wander = 0.0_f32;
+    let mut points = Vec::with_capacity(CHART_POINTS);
+    for i in 0..CHART_POINTS {
+        let t = px(idx(i)) / px(idx(CHART_POINTS - 1));
+        let trend = start_y + (end_y - start_y) * t;
+        wander = wander * 0.9 + (rand() - 0.5) * CHART_H * 0.12;
+        let noise = (rand() - 0.5) * CHART_H * 0.06;
+        let y = (trend + wander + noise).clamp(CHART_H * 0.05, CHART_H * 0.95);
+        points.push((t * CHART_W, y));
+    }
+    points
+}
+
+fn area_card(c: &mut StoryCtx, color: Color, top_alpha: f32, rising: bool, seed: u32) {
+    let trend = price_series(seed, rising);
+    let mut area = trend.clone();
+    area.push((CHART_W, CHART_H));
+    area.push((0.0, CHART_H));
+    c.ui.div(
+        (1000, 240),
+        canvas(
+            props!(width: 1000, height: 240),
+            [
+                fill!(area, linear: (color.with_alpha(top_alpha), color.with_alpha(0.0)), smooth),
+                path!(trend, stroke: 2.0, color: color, smooth),
+            ],
+        ),
+    );
+}
+
+#[story]
+fn area_chart_up(c: &mut StoryCtx) {
+    c.ui.header("BTC-USD up", "Rising trend, #34C06A area 16% to 0%");
+    area_card(
+        c,
+        Color::from_rgb(0x34, 0xC0, 0x6A),
+        0.16,
+        true,
+        0x1234_5678,
+    );
+}
+
+#[story]
+fn area_chart_down(c: &mut StoryCtx) {
+    c.ui.header("BTC-USD down", "Falling trend, #F95355 area 30% to 0%");
+    area_card(
+        c,
+        Color::from_rgb(0xF9, 0x53, 0x55),
+        0.30,
+        false,
+        0x0BAD_F00D,
+    );
+}
