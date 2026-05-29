@@ -10,7 +10,7 @@
   },
   "binary": "bin/bmm-mining",
   "settings": [
-    "numberFormat"
+    "localization"
   ],
   "supported_viewports": [
     {
