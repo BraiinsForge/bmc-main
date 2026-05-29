@@ -48,10 +48,10 @@ fn placement_viewport_size(
     })
 }
 
-fn manifest_to_protocol_viewport_shape(shape: bmc_widget_manifest::DisplayShape) -> ViewportShape {
+fn manifest_to_protocol_viewport_shape(shape: bmc_widget_manifest::ViewportShape) -> ViewportShape {
     match shape {
-        bmc_widget_manifest::DisplayShape::Rectangular => ViewportShape::Rectangular,
-        bmc_widget_manifest::DisplayShape::Round => ViewportShape::Round,
+        bmc_widget_manifest::ViewportShape::Rectangular => ViewportShape::Rectangular,
+        bmc_widget_manifest::ViewportShape::Round => ViewportShape::Round,
     }
 }
 
@@ -569,7 +569,7 @@ mod tests {
     use super::*;
     use crate::compositor::{DisplayInfo, DisplayShape as CompositorDisplayShape, SlotGrid};
     use crate::widget::ViewportDescriptor;
-    use bmc_widget_manifest::DisplayShape;
+    use bmc_widget_manifest::ViewportShape;
 
     fn bmc100_capabilities() -> HardwareCapabilities {
         HardwareCapabilities {
@@ -589,7 +589,7 @@ mod tests {
     #[test]
     fn placement_viewport_for_fullscreen_is_active_display() {
         let desc = ViewportDescriptor {
-            viewport_shape: DisplayShape::Rectangular,
+            viewport_shape: ViewportShape::Rectangular,
             width: 1280,
             height: 480,
             dpi: 1,
@@ -603,7 +603,7 @@ mod tests {
     #[test]
     fn placement_viewport_for_slot_span_uses_allow_list() {
         let desc = ViewportDescriptor {
-            viewport_shape: DisplayShape::Rectangular,
+            viewport_shape: ViewportShape::Rectangular,
             width: 1280,
             height: 480,
             dpi: 1,
@@ -704,9 +704,7 @@ mod support_tests {
     use crate::compositor::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
     use crate::scene::{Scene, Widget};
     use crate::widget::{ViewportDescriptor, WidgetInfo, WidgetRegistry};
-    use bmc_widget_manifest::{
-        DisplayShape as ManifestDisplayShape, Manifest, WidgetViewportConstraint,
-    };
+    use bmc_widget_manifest::{Manifest, ViewportShape, WidgetViewportConstraint};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use uuid::Uuid;
@@ -747,7 +745,7 @@ mod support_tests {
         }])
     }
 
-    fn fullscreen_scene_with(widget_type_id: Uuid, viewport_shape: ManifestDisplayShape) -> Scene {
+    fn fullscreen_scene_with(widget_type_id: Uuid, viewport_shape: ViewportShape) -> Scene {
         let mut scene = Scene::fullscreen(widget_type_id, BTreeMap::new());
         for widget in scene.widgets.values_mut() {
             widget.viewport_shape = viewport_shape;
@@ -755,7 +753,7 @@ mod support_tests {
         scene
     }
 
-    fn fullscreen_widget(widget_type_id: Uuid, viewport_shape: ManifestDisplayShape) -> Widget {
+    fn fullscreen_widget(widget_type_id: Uuid, viewport_shape: ViewportShape) -> Widget {
         fullscreen_scene_with(widget_type_id, viewport_shape)
             .widgets
             .into_values()
@@ -765,12 +763,12 @@ mod support_tests {
 
     #[test]
     fn fullscreen_descriptor_for_widget_uses_widget_viewport_shape() {
-        let widget = fullscreen_widget(Uuid::new_v4(), ManifestDisplayShape::Round);
+        let widget = fullscreen_widget(Uuid::new_v4(), ViewportShape::Round);
         let bmc = caps(None, 1_280, 480, DisplayShape::Rectangular);
         assert_eq!(
             fullscreen_descriptor_for_widget(&widget, &bmc),
             ViewportDescriptor {
-                viewport_shape: ManifestDisplayShape::Round,
+                viewport_shape: ViewportShape::Round,
                 width: 1_280,
                 height: 480,
                 dpi: 1,
@@ -806,7 +804,7 @@ mod support_tests {
     fn fullscreen_scene_unsupported_when_manifest_rejects_descriptor() {
         let widget_type_id = Uuid::new_v4();
         let constraint = WidgetViewportConstraint {
-            viewport_shape: ManifestDisplayShape::Rectangular,
+            viewport_shape: ViewportShape::Rectangular,
             min_width: Some(1_280),
             max_width: Some(1_280),
             min_height: Some(480),
@@ -815,7 +813,7 @@ mod support_tests {
             max_dpi: None,
         };
         let registry = registry_with_widget(widget_type_id, constraint);
-        let scene = fullscreen_scene_with(widget_type_id, ManifestDisplayShape::Rectangular);
+        let scene = fullscreen_scene_with(widget_type_id, ViewportShape::Rectangular);
         let bmm = caps(None, 320, 240, DisplayShape::Rectangular);
         assert!(!scene_supported_with_registry(&registry, &scene, &bmm));
     }
@@ -824,7 +822,7 @@ mod support_tests {
     fn fullscreen_scene_supported_when_manifest_accepts_descriptor() {
         let widget_type_id = Uuid::new_v4();
         let constraint = WidgetViewportConstraint {
-            viewport_shape: ManifestDisplayShape::Rectangular,
+            viewport_shape: ViewportShape::Rectangular,
             min_width: Some(1_280),
             max_width: Some(1_280),
             min_height: Some(480),
@@ -833,7 +831,7 @@ mod support_tests {
             max_dpi: None,
         };
         let registry = registry_with_widget(widget_type_id, constraint);
-        let scene = fullscreen_scene_with(widget_type_id, ManifestDisplayShape::Rectangular);
+        let scene = fullscreen_scene_with(widget_type_id, ViewportShape::Rectangular);
         let bmc = caps(None, 1_280, 480, DisplayShape::Rectangular);
         assert!(scene_supported_with_registry(&registry, &scene, &bmc));
     }
@@ -842,7 +840,7 @@ mod support_tests {
     fn fullscreen_descriptor_carries_widget_viewport_shape_to_matcher() {
         let widget_type_id = Uuid::new_v4();
         let constraint = WidgetViewportConstraint {
-            viewport_shape: ManifestDisplayShape::Round,
+            viewport_shape: ViewportShape::Round,
             min_width: Some(480),
             max_width: Some(480),
             min_height: Some(480),
@@ -851,7 +849,7 @@ mod support_tests {
             max_dpi: None,
         };
         let registry = registry_with_widget(widget_type_id, constraint);
-        let scene = fullscreen_scene_with(widget_type_id, ManifestDisplayShape::Round);
+        let scene = fullscreen_scene_with(widget_type_id, ViewportShape::Round);
         let bfm = caps(None, 480, 480, DisplayShape::Round);
         assert!(scene_supported_with_registry(&registry, &scene, &bfm));
     }
@@ -866,7 +864,7 @@ mod support_tests {
         let registry = registry_with_widget(
             widget_uid,
             WidgetViewportConstraint {
-                viewport_shape: ManifestDisplayShape::Rectangular,
+                viewport_shape: ViewportShape::Rectangular,
                 min_width: Some(320),
                 max_width: Some(320),
                 min_height: Some(240),
@@ -902,7 +900,7 @@ mod support_tests {
         let registry = registry_with_widget(
             widget_uid,
             WidgetViewportConstraint {
-                viewport_shape: ManifestDisplayShape::Rectangular,
+                viewport_shape: ViewportShape::Rectangular,
                 min_width: Some(320),
                 max_width: Some(320),
                 min_height: Some(240),

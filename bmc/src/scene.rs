@@ -134,13 +134,13 @@ pub struct Widget {
     pub placement: WidgetPlacement,
     pub widget_type_id: Uuid,
     #[serde(default = "default_widget_viewport_shape")]
-    pub viewport_shape: bmc_widget_manifest::DisplayShape,
+    pub viewport_shape: bmc_widget_manifest::ViewportShape,
     #[serde(default)]
     pub params: BTreeMap<ParamKey, ParamValue>,
 }
 
-fn default_widget_viewport_shape() -> bmc_widget_manifest::DisplayShape {
-    bmc_widget_manifest::DisplayShape::Rectangular
+fn default_widget_viewport_shape() -> bmc_widget_manifest::ViewportShape {
+    bmc_widget_manifest::ViewportShape::Rectangular
 }
 
 #[derive(Deserialize)]
@@ -154,7 +154,7 @@ struct RawWidget {
     size: Option<WidgetSize>,
     widget_type_id: Uuid,
     #[serde(default = "default_widget_viewport_shape")]
-    viewport_shape: bmc_widget_manifest::DisplayShape,
+    viewport_shape: bmc_widget_manifest::ViewportShape,
     #[serde(default)]
     params: BTreeMap<ParamKey, ParamValue>,
 }
@@ -193,7 +193,7 @@ impl Widget {
         Self {
             id: WidgetId::generate(),
             widget_type_id,
-            viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
+            viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
             params,
             position,
             placement,
@@ -386,7 +386,7 @@ mod tests {
                 rows: 1,
             }),
             widget_type_id: Uuid::nil(),
-            viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
+            viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
             params: BTreeMap::new(),
         };
         assert!(
@@ -408,7 +408,7 @@ mod tests {
                 rows: 1,
             }),
             widget_type_id: Uuid::nil(),
-            viewport_shape: bmc_widget_manifest::DisplayShape::Rectangular,
+            viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
             params: BTreeMap::new(),
         };
         let b = a.clone_with_new_id();
@@ -602,7 +602,7 @@ mod tests {
         let widget: Widget = serde_json::from_str(json).expect("BUG: parse");
         assert_eq!(
             widget.viewport_shape,
-            bmc_widget_manifest::DisplayShape::Rectangular
+            bmc_widget_manifest::ViewportShape::Rectangular
         );
     }
 }

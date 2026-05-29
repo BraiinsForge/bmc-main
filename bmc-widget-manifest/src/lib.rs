@@ -581,13 +581,13 @@ pub enum SettingKey {
     NightMode,
 }
 
-/// Visible display shape a widget viewport constraint targets.
+/// Visible viewport shape a widget viewport constraint targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-pub enum DisplayShape {
-    /// Rectangular display.
+pub enum ViewportShape {
+    /// Rectangular viewport.
     Rectangular,
-    /// Round display.
+    /// Round viewport.
     Round,
 }
 
@@ -598,7 +598,7 @@ pub enum DisplayShape {
 pub struct WidgetViewportConstraint {
     /// Viewport shape this constraint targets.
     #[serde(rename = "type")]
-    pub viewport_shape: DisplayShape,
+    pub viewport_shape: ViewportShape,
     /// Inclusive minimum width in pixels, or unbounded.
     pub min_width: Option<u32>,
     /// Inclusive maximum width in pixels, or unbounded.
@@ -622,7 +622,7 @@ impl From<SizeType> for WidgetViewportConstraint {
             SizeType::Full => (1280, 480),
         };
         Self {
-            viewport_shape: DisplayShape::Rectangular,
+            viewport_shape: ViewportShape::Rectangular,
             min_width: Some(w),
             max_width: Some(w),
             min_height: Some(h),
@@ -1066,7 +1066,7 @@ mod tests {
         assert_eq!(manifest.supported_viewports.len(), 1);
         assert_eq!(
             manifest.supported_viewports[0].viewport_shape,
-            DisplayShape::Rectangular
+            ViewportShape::Rectangular
         );
         assert!(manifest.author.is_none());
         assert!(manifest.settings.is_empty());
@@ -1659,7 +1659,7 @@ mod tests {
             Manifest::from_str(minimal_viewports_manifest_json()).expect("BUG: should parse");
         assert_eq!(manifest.supported_viewports.len(), 1);
         let vp = &manifest.supported_viewports[0];
-        assert_eq!(vp.viewport_shape, DisplayShape::Rectangular);
+        assert_eq!(vp.viewport_shape, ViewportShape::Rectangular);
         assert_eq!(vp.min_width, Some(317));
         assert_eq!(vp.max_width, Some(317));
         assert_eq!(vp.min_height, Some(238));
@@ -1727,7 +1727,7 @@ mod tests {
             manifest
                 .supported_viewports
                 .iter()
-                .all(|c| c.viewport_shape == DisplayShape::Rectangular
+                .all(|c| c.viewport_shape == ViewportShape::Rectangular
                     && c.min_dpi.is_none()
                     && c.max_dpi.is_none())
         );
