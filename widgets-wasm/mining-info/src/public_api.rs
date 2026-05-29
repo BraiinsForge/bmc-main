@@ -1,5 +1,7 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
+use bmc_wasm_sdk::ufmt;
+
 use crate::miner_api::JsonLookup;
 use crate::model::{Availability, Currency, Money, PublicData};
 
@@ -65,6 +67,34 @@ pub(crate) fn parse_hashrate_stats(
     if let Some(hashvalue_btc) = json.f64("/hash_value") {
         data.hashvalue_sat_th_day = Availability::Available(hashvalue_btc * SAT_IN_BTC);
     }
+}
+
+pub(crate) fn price_stats_url(currency: Currency) -> String {
+    bmc_wasm_sdk::fmt!(
+        "https://public-api.braiins.com/v1/price-stats?currency={}",
+        currency_code(currency)
+    )
+}
+
+pub(crate) fn block_url(currency: Currency) -> String {
+    bmc_wasm_sdk::fmt!(
+        "https://public-api.braiins.com/v2/blocks?limit=1&currency={}",
+        currency_code(currency)
+    )
+}
+
+pub(crate) fn difficulty_url(currency: Currency) -> String {
+    bmc_wasm_sdk::fmt!(
+        "https://public-api.braiins.com/v1/difficulty-stats?currency={}",
+        currency_code(currency)
+    )
+}
+
+pub(crate) fn hashrate_url(currency: Currency) -> String {
+    bmc_wasm_sdk::fmt!(
+        "https://public-api.braiins.com/v2/hashrate-stats?currency={}",
+        currency_code(currency)
+    )
 }
 
 #[cfg(test)]
