@@ -19,12 +19,13 @@ use std::string::String;
 use std::vec::Vec;
 
 use bmc_wasm_protocol::{
-    AnimProperty, ArcAnchor, ArcTextFacing, BitmapId, Color, ColorSpace, DRAW_BITMAP,
-    DRAW_CENTERED, DRAW_CIRCLE, DRAW_CURVED_TEXT, DRAW_ICON, DRAW_MESH, DRAW_MODIFIED,
-    DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, DRAW_SHADOW, DRAW_SPHERE,
-    DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Easing, Fill, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS,
-    NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR,
-    NODE_ROW, NODE_SCROLL, NODE_SPACER, PathPaint, SvgId, encode_fill,
+    AnimProperty, ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Color,
+    ColorSpace, DRAW_ARC, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_CURVED_TEXT, DRAW_ICON,
+    DRAW_MESH, DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED,
+    DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Easing, Fill, LoopMode, MeshId,
+    NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION,
+    NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL, NODE_SPACER, PathPaint, SvgId,
+    encode_arc_cap, encode_arc_fill, encode_arc_segments, encode_fill,
 };
 
 use crate::PropsFieldValue;
@@ -99,6 +100,18 @@ impl TreeBuffer {
 
     fn write_fill(&mut self, fill: &Fill) {
         encode_fill(&mut self.data, fill);
+    }
+
+    fn write_arc_fill(&mut self, fill: &ArcFill) {
+        encode_arc_fill(&mut self.data, fill);
+    }
+
+    fn write_arc_segments(&mut self, segments: &ArcSegments) {
+        encode_arc_segments(&mut self.data, segments);
+    }
+
+    fn write_arc_cap(&mut self, cap: ArcCap) {
+        encode_arc_cap(&mut self.data, cap);
     }
 
     fn write_icon_id(&mut self, id: Option<SvgId>) {
@@ -432,6 +445,18 @@ pub enum Draw {
         r: f32,
         fill: Fill,
     },
+    /// Stroked circular arc at absolute local position.
+    Arc {
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        start_angle: f32,
+        end_angle: f32,
+        width: f32,
+        fill: ArcFill,
+        segments: ArcSegments,
+        cap: ArcCap,
+    },
     /// Center any draw command in canvas
     Centered { inner: Box<Draw> },
     /// Position any draw command at orbit around canvas center
@@ -583,6 +608,33 @@ impl Draw {
             cy,
             r,
             fill: fill.into(),
+        }
+    }
+
+    /// Stroked circular arc at local position within canvas.
+    #[must_use]
+    #[expect(clippy::too_many_arguments, reason = "arc geometry is irreducible")]
+    pub fn arc(
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        start_angle: f32,
+        end_angle: f32,
+        width: f32,
+        fill: impl Into<ArcFill>,
+        segments: ArcSegments,
+        cap: ArcCap,
+    ) -> Self {
+        Self::Arc {
+            cx,
+            cy,
+            radius,
+            start_angle,
+            end_angle,
+            width,
+            fill: fill.into(),
+            segments,
+            cap,
         }
     }
 
@@ -1621,6 +1673,28 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*r);
             buf.write_fill(fill);
         }
+        Draw::Arc {
+            cx,
+            cy,
+            radius,
+            start_angle,
+            end_angle,
+            width,
+            fill,
+            segments,
+            cap,
+        } => {
+            buf.write_u8(DRAW_ARC);
+            buf.write_f32(*cx);
+            buf.write_f32(*cy);
+            buf.write_f32(*radius);
+            buf.write_f32(*start_angle);
+            buf.write_f32(*end_angle);
+            buf.write_f32(*width);
+            buf.write_arc_fill(fill);
+            buf.write_arc_segments(segments);
+            buf.write_arc_cap(*cap);
+        }
         Draw::Svg {
             x,
             y,
@@ -2154,7 +2228,63 @@ mod curved_text_tests {
 #[cfg(test)]
 mod fill_wire_tests {
     use super::*;
-    use bmc_wasm_protocol::{FILL_LINEAR, Fill};
+    use bmc_wasm_protocol::{ArcCap, ArcFill, ArcSegments, FILL_LINEAR, Fill};
+
+    #[test]
+    fn arc_constructor_builds_variant() {
+        let fill = ArcFill::gradient(Color::from_rgb(1, 2, 3), Color::from_rgb(4, 5, 6));
+        let segments = ArcSegments::Explicit(vec![(0.0, 0.25), (0.5, 1.0)]);
+        let draw = Draw::arc(
+            1.0,
+            2.0,
+            3.0,
+            0.25,
+            1.5,
+            4.0,
+            fill,
+            segments.clone(),
+            ArcCap::Butt,
+        );
+        let Draw::Arc {
+            cx,
+            cy,
+            radius,
+            start_angle,
+            end_angle,
+            width,
+            fill: got_fill,
+            segments: got_segments,
+            cap,
+        } = draw
+        else {
+            panic!("BUG: Draw::arc must build Draw::Arc");
+        };
+        assert_eq!(
+            (cx, cy, radius, start_angle, end_angle, width),
+            (1.0, 2.0, 3.0, 0.25, 1.5, 4.0)
+        );
+        assert_eq!(got_fill, fill);
+        assert_eq!(got_segments, segments);
+        assert_eq!(cap, ArcCap::Butt);
+    }
+
+    #[test]
+    fn arc_serializes_with_opcode_first() {
+        let mut buf = TreeBuffer::new();
+        let draw = Draw::arc(
+            1.0,
+            2.0,
+            3.0,
+            0.25,
+            1.5,
+            4.0,
+            Color::from_rgb(1, 2, 3),
+            ArcSegments::Continuous,
+            ArcCap::Round,
+        );
+        serialize_draw(&mut buf, &draw);
+        assert_eq!(buf.data[0], DRAW_ARC);
+    }
 
     #[test]
     fn rect_serializes_linear_fill_after_geometry() {
