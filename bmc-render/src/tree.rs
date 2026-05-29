@@ -132,7 +132,7 @@ pub enum DrawCommand {
         cx: f32,
         cy: f32,
         r: f32,
-        color: Color,
+        fill: Fill,
     },
     Svg {
         x: f32,
@@ -708,8 +708,8 @@ impl<'a> TreeReader<'a> {
                 let cx = self.read_f32()?;
                 let cy = self.read_f32()?;
                 let r = self.read_f32()?;
-                let color = Color::from_raw(self.read_u32()?);
-                Ok(DrawCommand::Circle { cx, cy, r, color })
+                let fill = self.read_fill()?;
+                Ok(DrawCommand::Circle { cx, cy, r, fill })
             }
             DRAW_ICON => {
                 let x = self.read_f32()?;
@@ -1022,6 +1022,27 @@ mod fill_decode_tests {
             panic!("expected Rect, got {cmd:?}");
         };
         assert_eq!(fill, Fill::radial(red, blue));
+    }
+
+    #[test]
+    fn circle_round_trips_a_linear_fill() {
+        let mut data = vec![DRAW_CIRCLE];
+        data.extend_from_slice(&5.0_f32.to_le_bytes());
+        data.extend_from_slice(&6.0_f32.to_le_bytes());
+        data.extend_from_slice(&7.0_f32.to_le_bytes());
+        let a = Color::from_rgb(1, 2, 3);
+        let b = Color::from_rgb(4, 5, 6);
+        bmc_wasm_protocol::encode_fill(&mut data, &Fill::linear(0.0, a, b));
+
+        let mut de = TreeReader::new(&data);
+        let DrawCommand::Circle { cx, cy, r, fill } = de
+            .read_draw()
+            .expect("BUG: test buffer encodes a valid DRAW_CIRCLE")
+        else {
+            panic!("expected Circle");
+        };
+        assert_eq!((cx, cy, r), (5.0, 6.0, 7.0));
+        assert_eq!(fill, Fill::linear(0.0, a, b));
     }
 }
 

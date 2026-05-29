@@ -20,12 +20,7 @@ fn examples(ctx: &mut StoryCtx) -> Node {
                 props!(width: 200, height: 120, background: GRAY_90),
                 [
                     Draw::rect(16.0, 16.0, 80.0, 88.0, VIOLET_60),
-                    Draw::Circle {
-                        cx: 150.0,
-                        cy: 60.0,
-                        r: 40.0,
-                        color: TEAL_50,
-                    },
+                    Draw::circle(150.0, 60.0, 40.0, TEAL_50),
                 ],
             ),
         ],
