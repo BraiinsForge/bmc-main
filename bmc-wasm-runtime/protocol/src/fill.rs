@@ -79,6 +79,30 @@ impl Fill {
     }
 }
 
+/// Paint for a variable-length path: a stroked outline or a filled interior.
+///
+/// A stroke carries a solid colour and a line width; a fill carries a [`Fill`]
+/// paint. Modelling the two modes as a sum type makes the invalid combinations
+/// (a stroke with a gradient, a fill with a line width) unrepresentable.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PathPaint {
+    /// Stroked outline: solid `color`, `width` pixels wide.
+    Stroke { color: Color, width: f32 },
+    /// Filled interior with a [`Fill`] paint.
+    Fill(Fill),
+}
+
+impl PathPaint {
+    /// A single representative colour, mirroring [`Fill::primary_color`].
+    #[must_use]
+    pub const fn primary_color(self) -> Color {
+        match self {
+            PathPaint::Stroke { color, .. } => color,
+            PathPaint::Fill(fill) => fill.primary_color(),
+        }
+    }
+}
+
 /// Append `fill` to `out` in wire format.
 pub fn encode_fill(out: &mut Vec<u8>, fill: &Fill) {
     match fill {

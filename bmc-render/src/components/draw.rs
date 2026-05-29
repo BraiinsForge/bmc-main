@@ -42,6 +42,17 @@ fn effective_fill(fill: &Fill, color_override: Option<Color>, alpha: f32) -> Fil
     }
 }
 
+/// Resolve the stroke colour for a polyline: `color_override` wins, else the
+/// path's stroke colour, then scaled by `alpha`.
+fn stroke_color(color: Color, color_override: Option<Color>, alpha: f32) -> Color {
+    let base = color_override.unwrap_or(color);
+    if alpha < 1.0 {
+        base.scale_alpha(alpha)
+    } else {
+        base
+    }
+}
+
 pub(crate) fn render_draw_command(
     renderer: &mut dyn Renderer,
     draw: &DrawCommand,
@@ -605,61 +616,56 @@ fn render_draw_inner(
         }
         DrawCommand::Path {
             points,
-            color,
-            stroke_width,
+            paint,
             closed,
-            fill,
             smooth,
         } => {
             if points.len() < 2 {
                 return;
             }
-            let base_color = color_override.unwrap_or(*color);
-            let final_color = if alpha < 1.0 {
-                base_color.scale_alpha(alpha)
-            } else {
-                base_color
-            };
-
             // Transform points: apply canvas offset + accumulated offset + scale
             let transformed: Vec<(f32, f32)> = points
                 .iter()
                 .map(|&(px, py)| (cx + (px + offset_x) * scale, cy + (py + offset_y) * scale))
                 .collect();
 
-            if rotation != 0.0 {
+            let pivoted: Vec<(f32, f32)>;
+            let pts = if rotation == 0.0 {
+                &transformed
+            } else {
                 let pivot_x = cx + cw / 2.0;
                 let pivot_y = cy + ch / 2.0;
                 renderer.save();
                 renderer.translate(pivot_x, pivot_y);
                 renderer.rotate(rotation);
-                // Re-transform relative to pivot
-                let pivoted: Vec<(f32, f32)> = transformed
+                pivoted = transformed
                     .iter()
                     .map(|&(px, py)| (px - pivot_x, py - pivot_y))
                     .collect();
-                if *fill {
-                    renderer.fill_path_points(&pivoted, final_color, *smooth);
-                } else {
+                &pivoted
+            };
+
+            match paint {
+                PathPaint::Fill(fill) => {
+                    renderer.fill_path_paint(
+                        pts,
+                        &effective_fill(fill, color_override, alpha),
+                        *smooth,
+                    );
+                }
+                PathPaint::Stroke { color, width } => {
                     renderer.stroke_path(
-                        &pivoted,
-                        *stroke_width * scale,
-                        final_color,
+                        pts,
+                        *width * scale,
+                        stroke_color(*color, color_override, alpha),
                         *closed,
                         *smooth,
                     );
                 }
+            }
+
+            if rotation != 0.0 {
                 renderer.restore();
-            } else if *fill {
-                renderer.fill_path_points(&transformed, final_color, *smooth);
-            } else {
-                renderer.stroke_path(
-                    &transformed,
-                    *stroke_width * scale,
-                    final_color,
-                    *closed,
-                    *smooth,
-                );
             }
         }
         DrawCommand::Text { x, y, text, style } => {
@@ -902,8 +908,8 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
         DrawCommand::Centered { inner }
         | DrawCommand::Modified { inner, .. }
         | DrawCommand::Shadow { inner, .. } => extract_draw_values(inner),
-        DrawCommand::Path { color, .. } => PrevDrawValues {
-            color: *color,
+        DrawCommand::Path { paint, .. } => PrevDrawValues {
+            color: paint.primary_color(),
             ..Default::default()
         },
         DrawCommand::Text { x, y, style, .. } => PrevDrawValues {
