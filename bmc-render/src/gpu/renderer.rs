@@ -12,13 +12,14 @@ use std::num::NonZeroU32;
 
 use anyhow::Result;
 use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{BitmapId, Fill, MeshId, SvgId};
+use bmc_wasm_protocol::{ArcAnchor, ArcTextFacing, BitmapId, Fill, MeshId, SvgId};
 use cosmic_text::fontdb;
 use femtovg::renderer::OpenGl;
 use femtovg::{Canvas, FontId, Paint, Path, RenderTarget};
 use glow::HasContext;
 
 use super::bitmap::BitmapRegistry;
+use super::curved_text::arc_glyph_layout;
 use super::mesh::{MeshDrawArgs, MeshRenderer};
 use super::sphere::SphereRenderer;
 use super::svg::SvgRegistry;
@@ -614,6 +615,52 @@ impl Renderer for FemtoVgRenderer {
                 let sy = y - size * 0.3;
                 self.fill_rect(draw_x, sy, width, thickness, style.color);
             }
+        }
+    }
+
+    fn draw_curved_text(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        angle: f32,
+        anchor: ArcAnchor,
+        facing: ArcTextFacing,
+        text: &str,
+        style: &TextStyle,
+    ) {
+        if radius <= 0.0 || text.is_empty() {
+            return;
+        }
+
+        let font = self.fonts.select(style.family, style.weight);
+        let size = style.size as f32;
+        let mut paint = Paint::color(to_femtovg_color(style.color.to_u32()));
+        paint.set_font(&[font, self.font_fallback]);
+        paint.set_font_size(size);
+        paint.set_text_baseline(femtovg::Baseline::Middle);
+
+        let glyphs: Vec<String> = text.chars().map(|ch| ch.to_string()).collect();
+        let widths: Vec<f32> = glyphs
+            .iter()
+            .map(|glyph| {
+                self.canvas
+                    .measure_text(0.0, 0.0, glyph, &paint)
+                    .map_or(0.0, |metrics| metrics.width())
+            })
+            .collect();
+
+        for (glyph, (width, placement)) in glyphs
+            .iter()
+            .zip(widths.iter().zip(arc_glyph_layout(&widths, radius, angle, anchor, facing)))
+        {
+            let px = cx + radius * placement.theta.sin();
+            let py = cy - radius * placement.theta.cos();
+            self.canvas.save();
+            self.canvas.translate(px, py);
+            self.canvas.rotate(placement.rotation);
+            let _ = self.canvas.fill_text(-width / 2.0, 0.0, glyph, &paint);
+            self.canvas.restore();
         }
     }
 
