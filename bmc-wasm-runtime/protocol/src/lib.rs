@@ -4,6 +4,7 @@
 //! This crate contains constants and types shared between the SDK (WASM) and host.
 
 pub mod animation;
+pub mod arc;
 pub mod colors;
 pub mod display;
 pub mod fill;
@@ -19,6 +20,7 @@ pub mod version;
 pub mod versioned_snapshot;
 
 pub use animation::*;
+pub use arc::*;
 pub use colors::*;
 pub use display::{DisplayShape, ViewportShape};
 pub use fill::*;
