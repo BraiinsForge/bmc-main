@@ -6,6 +6,8 @@ mod manifest_params;
 mod miner_api;
 mod model;
 mod public_api;
+#[cfg(target_arch = "wasm32")]
+mod render;
 
 #[cfg(target_arch = "wasm32")]
 use std::cell::RefCell;
@@ -17,11 +19,13 @@ use std::cell::RefCell;
 )]
 use bmc_wasm_sdk::*;
 #[cfg(target_arch = "wasm32")]
-use manifest_params::{Currency as ParamCurrency, Params};
+use manifest_params::{Currency as ParamCurrency, Params, View};
 #[cfg(target_arch = "wasm32")]
 use miner_api::{AuthState, endpoint};
 #[cfg(target_arch = "wasm32")]
 use model::{Currency, MinerData, PublicData};
+#[cfg(target_arch = "wasm32")]
+use render::RenderSize;
 
 #[cfg(target_arch = "wasm32")]
 const MINER_REFRESH_MS: u32 = 5_000;
@@ -358,4 +362,31 @@ fn on_hashrate_response(response: &FetchResponse) {
         schedule_public_fetch(Some(RETRY_MS));
     }
     request_frame();
+}
+
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn render(_delta_ms: u32) {
+    let viewport = widget_viewport();
+    let params = Params::current();
+    let size = RenderSize {
+        width: viewport.width,
+        height: viewport.height,
+    };
+    let (miner, public) = STATE.with(|state| {
+        let state = state.borrow();
+        (state.miner.clone(), state.public.clone())
+    });
+    let root = match params.view {
+        View::Mining => render::mining(size, &miner),
+        View::Geek => render::geek(size, &miner, &public),
+        View::Network | View::InfoOverload => center(
+            props!(background: BLACK),
+            [text(
+                "Network and info-overload render in the next task",
+                style!(size: 18, color: WHITE),
+            )],
+        ),
+    };
+    let _ = render_ui(viewport.width, viewport.height, root);
 }
