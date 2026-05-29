@@ -42,6 +42,17 @@ fn effective_fill(fill: &Fill, color_override: Option<Color>, alpha: f32) -> Fil
     }
 }
 
+/// Resolve the stroke colour for a polyline: `color_override` wins, else the
+/// path's solid paint, then scaled by `alpha`.
+fn stroke_color(paint: &Fill, color_override: Option<Color>, alpha: f32) -> Color {
+    let base = color_override.unwrap_or_else(|| paint.expect_solid());
+    if alpha < 1.0 {
+        base.scale_alpha(alpha)
+    } else {
+        base
+    }
+}
+
 pub(crate) fn render_draw_command(
     renderer: &mut dyn Renderer,
     draw: &DrawCommand,
@@ -605,7 +616,7 @@ fn render_draw_inner(
         }
         DrawCommand::Path {
             points,
-            color,
+            paint,
             stroke_width,
             closed,
             fill,
@@ -614,13 +625,6 @@ fn render_draw_inner(
             if points.len() < 2 {
                 return;
             }
-            let base_color = color_override.unwrap_or(*color);
-            let final_color = if alpha < 1.0 {
-                base_color.scale_alpha(alpha)
-            } else {
-                base_color
-            };
-
             // Transform points: apply canvas offset + accumulated offset + scale
             let transformed: Vec<(f32, f32)> = points
                 .iter()
@@ -639,24 +643,32 @@ fn render_draw_inner(
                     .map(|&(px, py)| (px - pivot_x, py - pivot_y))
                     .collect();
                 if *fill {
-                    renderer.fill_path_points(&pivoted, final_color, *smooth);
+                    renderer.fill_path_paint(
+                        &pivoted,
+                        &effective_fill(paint, color_override, alpha),
+                        *smooth,
+                    );
                 } else {
                     renderer.stroke_path(
                         &pivoted,
                         *stroke_width * scale,
-                        final_color,
+                        stroke_color(paint, color_override, alpha),
                         *closed,
                         *smooth,
                     );
                 }
                 renderer.restore();
             } else if *fill {
-                renderer.fill_path_points(&transformed, final_color, *smooth);
+                renderer.fill_path_paint(
+                    &transformed,
+                    &effective_fill(paint, color_override, alpha),
+                    *smooth,
+                );
             } else {
                 renderer.stroke_path(
                     &transformed,
                     *stroke_width * scale,
-                    final_color,
+                    stroke_color(paint, color_override, alpha),
                     *closed,
                     *smooth,
                 );
@@ -902,8 +914,8 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
         DrawCommand::Centered { inner }
         | DrawCommand::Modified { inner, .. }
         | DrawCommand::Shadow { inner, .. } => extract_draw_values(inner),
-        DrawCommand::Path { color, .. } => PrevDrawValues {
-            color: *color,
+        DrawCommand::Path { paint, .. } => PrevDrawValues {
+            color: paint.primary_color(),
             ..Default::default()
         },
         DrawCommand::Text { x, y, style, .. } => PrevDrawValues {

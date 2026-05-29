@@ -172,7 +172,7 @@ pub enum DrawCommand {
     },
     Path {
         points: Vec<(f32, f32)>,
-        color: Color,
+        paint: Fill,
         stroke_width: f32,
         closed: bool,
         fill: bool,
@@ -863,11 +863,15 @@ impl<'a> TreeReader<'a> {
                     let y = self.read_f32()?;
                     points.push((x, y));
                 }
-                let color = Color::from_raw(self.read_u32()?);
-                let stroke_width = if fill { 0.0 } else { self.read_f32()? };
+                let (paint, stroke_width) = if fill {
+                    (self.read_fill()?, 0.0)
+                } else {
+                    let color = Color::from_raw(self.read_u32()?);
+                    (Fill::Solid(color), self.read_f32()?)
+                };
                 Ok(DrawCommand::Path {
                     points,
-                    color,
+                    paint,
                     stroke_width,
                     closed,
                     fill,
@@ -1043,6 +1047,30 @@ mod fill_decode_tests {
         };
         assert_eq!((cx, cy, r), (5.0, 6.0, 7.0));
         assert_eq!(fill, Fill::linear(0.0, a, b));
+    }
+
+    #[test]
+    fn path_fill_round_trips_a_linear_fill() {
+        let mut data = vec![DRAW_PATH];
+        data.push(0x04);
+        data.extend_from_slice(&2_u16.to_le_bytes());
+        for (x, y) in [(0.0_f32, 0.0_f32), (10.0, 10.0)] {
+            data.extend_from_slice(&x.to_le_bytes());
+            data.extend_from_slice(&y.to_le_bytes());
+        }
+        let a = Color::from_rgb(1, 2, 3);
+        let b = Color::from_rgb(4, 5, 6);
+        bmc_wasm_protocol::encode_fill(&mut data, &Fill::linear(0.0, a, b));
+
+        let mut de = TreeReader::new(&data);
+        let DrawCommand::Path { paint, fill, .. } = de
+            .read_draw()
+            .expect("BUG: test buffer encodes a valid DRAW_PATH")
+        else {
+            panic!("expected Path");
+        };
+        assert!(fill);
+        assert_eq!(paint, Fill::linear(0.0, a, b));
     }
 }
 

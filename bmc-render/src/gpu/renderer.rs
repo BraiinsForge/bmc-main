@@ -469,15 +469,6 @@ impl Renderer for FemtoVgRenderer {
         self.canvas.stroke_path(&path, &paint);
     }
 
-    fn fill_path_points(&mut self, points: &[(f32, f32)], color: Color, smooth: bool) {
-        if points.len() < 3 {
-            return;
-        }
-        let path = build_femtovg_path(points, true, smooth);
-        self.canvas
-            .fill_path(&path, &Paint::color(to_femtovg_color(color.to_u32())));
-    }
-
     fn fill_path_paint(&mut self, points: &[(f32, f32)], fill: &Fill, smooth: bool) {
         if points.len() < 3 {
             return;

@@ -483,7 +483,7 @@ pub enum Draw {
     /// with optional Catmull-Rom smoothing.
     Path {
         points: Vec<(f32, f32)>,
-        color: Color,
+        paint: Fill,
         stroke_width: f32,
         closed: bool,
         fill: bool,
@@ -930,11 +930,28 @@ impl Draw {
     ) -> Self {
         Self::Path {
             points,
-            color,
+            paint: Fill::Solid(color),
             stroke_width,
             closed,
             fill,
             interpolation,
+        }
+    }
+
+    /// Filled polygon with a [`Fill`] paint. Prefer the [`crate::fill!`] macro.
+    #[must_use]
+    pub fn fill_path(points: Vec<(f32, f32)>, paint: impl Into<Fill>, smooth: bool) -> Self {
+        Self::Path {
+            points,
+            paint: paint.into(),
+            stroke_width: 0.0,
+            closed: true,
+            fill: true,
+            interpolation: if smooth {
+                Interpolation::CatmullRom
+            } else {
+                Interpolation::Linear
+            },
         }
     }
 
@@ -1329,10 +1346,7 @@ macro_rules! sphere {
 /// ```
 ///
 /// # Filled paths (polygons)
-/// ```ignore
-/// path!(points, fill, color: SHADE_BLACK)          // filled polygon, linear
-/// path!(points, fill, color: SHADE_BLACK, smooth)  // filled polygon, smooth
-/// ```
+/// Use the [`crate::fill!`] macro for filled polygons.
 #[macro_export]
 macro_rules! path {
     ($pts:expr, stroke: $w:expr, color: $c:expr) => {
@@ -1354,11 +1368,42 @@ macro_rules! path {
     ($pts:expr, stroke: $w:expr, color: $c:expr, closed, smooth) => {
         $crate::Draw::path($pts, $w, $c, true, false, $crate::Interpolation::CatmullRom)
     };
-    ($pts:expr, fill, color: $c:expr) => {
-        $crate::Draw::path($pts, 0.0, $c, true, true, $crate::Interpolation::Linear)
+}
+
+/// Build a filled polygon ([`Draw::fill_path`]) with a solid colour or gradient.
+///
+/// ```ignore
+/// fill!(pts, color: c)
+/// fill!(pts, color: c, smooth)
+/// fill!(pts, linear: (top, bottom))
+/// fill!(pts, linear: (a, b), angle: 90.0)
+/// fill!(pts, radial: (inner, outer))
+/// ```
+#[macro_export]
+macro_rules! fill {
+    ($pts:expr, color: $c:expr) => {
+        $crate::Draw::fill_path($pts, $c, false)
     };
-    ($pts:expr, fill, color: $c:expr, smooth) => {
-        $crate::Draw::path($pts, 0.0, $c, true, true, $crate::Interpolation::CatmullRom)
+    ($pts:expr, color: $c:expr, smooth) => {
+        $crate::Draw::fill_path($pts, $c, true)
+    };
+    ($pts:expr, linear: ($a:expr, $b:expr)) => {
+        $crate::Draw::fill_path($pts, $crate::Fill::linear(0.0, $a, $b), false)
+    };
+    ($pts:expr, linear: ($a:expr, $b:expr), smooth) => {
+        $crate::Draw::fill_path($pts, $crate::Fill::linear(0.0, $a, $b), true)
+    };
+    ($pts:expr, linear: ($a:expr, $b:expr), angle: $ang:expr) => {
+        $crate::Draw::fill_path($pts, $crate::Fill::linear($ang, $a, $b), false)
+    };
+    ($pts:expr, linear: ($a:expr, $b:expr), angle: $ang:expr, smooth) => {
+        $crate::Draw::fill_path($pts, $crate::Fill::linear($ang, $a, $b), true)
+    };
+    ($pts:expr, radial: ($inner:expr, $outer:expr)) => {
+        $crate::Draw::fill_path($pts, $crate::Fill::radial($inner, $outer), false)
+    };
+    ($pts:expr, radial: ($inner:expr, $outer:expr), smooth) => {
+        $crate::Draw::fill_path($pts, $crate::Fill::radial($inner, $outer), true)
     };
 }
 
@@ -1663,7 +1708,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
         }
         Draw::Path {
             points,
-            color,
+            paint,
             stroke_width,
             closed,
             fill,
@@ -1686,8 +1731,10 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
                 buf.write_f32(x);
                 buf.write_f32(y);
             }
-            buf.write_color(*color);
-            if !fill {
+            if *fill {
+                buf.write_fill(paint);
+            } else {
+                buf.write_color(paint.expect_solid());
                 buf.write_f32(*stroke_width);
             }
         }
@@ -2014,5 +2061,29 @@ mod fill_wire_tests {
     #[test]
     fn rect_solid_call_site_still_compiles() {
         let _ = Draw::rect(0.0, 0.0, 1.0, 1.0, Color::from_rgb(1, 2, 3));
+    }
+
+    #[test]
+    fn fill_macro_builds_a_filled_path() {
+        let pts = vec![(0.0, 0.0), (10.0, 0.0), (5.0, 10.0)];
+        let red = Color::from_rgb(0xFF, 0, 0);
+        let draw = fill!(pts.clone(), linear: (red, red), angle: 90.0);
+        let Draw::Path { fill, paint, .. } = draw else {
+            panic!("fill! must build a Draw::Path");
+        };
+        assert!(fill, "fill! must set the fill flag");
+        assert_eq!(paint, Fill::linear(90.0, red, red));
+    }
+
+    #[test]
+    fn path_macro_stroke_stays_solid() {
+        let pts = vec![(0.0, 0.0), (10.0, 10.0)];
+        let red = Color::from_rgb(0xFF, 0, 0);
+        let draw = path!(pts.clone(), stroke: 2.0, color: red);
+        let Draw::Path { fill, paint, .. } = draw else {
+            panic!("path! must build a Draw::Path");
+        };
+        assert!(!fill);
+        assert_eq!(paint, Fill::Solid(red));
     }
 }
