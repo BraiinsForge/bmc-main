@@ -6,6 +6,7 @@
 pub mod animation;
 pub mod colors;
 pub mod display;
+pub mod fill;
 pub mod ids;
 pub mod mesh;
 pub mod nodes;
@@ -20,6 +21,7 @@ pub mod versioned_snapshot;
 pub use animation::*;
 pub use colors::*;
 pub use display::{DisplayShape, ViewportShape};
+pub use fill::*;
 pub use ids::*;
 pub use mesh::*;
 pub use nodes::*;
