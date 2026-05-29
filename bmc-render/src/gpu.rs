@@ -3,6 +3,7 @@
 //! GPU-accelerated rendering backend (FemtoVG + cosmic-text).
 
 pub mod bitmap;
+mod curved_text;
 pub mod mesh;
 mod renderer;
 mod sphere;
