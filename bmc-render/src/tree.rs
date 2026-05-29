@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::*;
+use bmc_wasm_protocol::{ArcFill, ArcSegments, DRAW_ARC, decode_arc_fill, decode_arc_segments};
 
 use crate::gpu::mesh::{MeshDrawArgs, MeshHighlight, MeshLighting, MeshTransform};
 
@@ -133,6 +134,16 @@ pub enum DrawCommand {
         cy: f32,
         r: f32,
         fill: Fill,
+    },
+    Arc {
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        start_angle: f32,
+        end_angle: f32,
+        width: f32,
+        fill: ArcFill,
+        segments: ArcSegments,
     },
     Svg {
         x: f32,
@@ -392,6 +403,16 @@ impl<'a> TreeReader<'a> {
     fn read_fill(&mut self) -> Result<Fill> {
         decode_fill(self.data, &mut self.pos)
             .ok_or_else(|| anyhow::anyhow!("unexpected end of tree data reading fill"))
+    }
+
+    fn read_arc_fill(&mut self) -> Result<ArcFill> {
+        decode_arc_fill(self.data, &mut self.pos)
+            .ok_or_else(|| anyhow::anyhow!("unexpected end of tree data reading arc fill"))
+    }
+
+    fn read_arc_segments(&mut self) -> Result<ArcSegments> {
+        decode_arc_segments(self.data, &mut self.pos)
+            .ok_or_else(|| anyhow::anyhow!("unexpected end of tree data reading arc segments"))
     }
 
     /// Decode an `Option<SvgId>`. Wire zero lifts to `None`.
@@ -718,6 +739,26 @@ impl<'a> TreeReader<'a> {
                 let r = self.read_f32()?;
                 let fill = self.read_fill()?;
                 Ok(DrawCommand::Circle { cx, cy, r, fill })
+            }
+            DRAW_ARC => {
+                let cx = self.read_f32()?;
+                let cy = self.read_f32()?;
+                let radius = self.read_f32()?;
+                let start_angle = self.read_f32()?;
+                let end_angle = self.read_f32()?;
+                let width = self.read_f32()?;
+                let fill = self.read_arc_fill()?;
+                let segments = self.read_arc_segments()?;
+                Ok(DrawCommand::Arc {
+                    cx,
+                    cy,
+                    radius,
+                    start_angle,
+                    end_angle,
+                    width,
+                    fill,
+                    segments,
+                })
             }
             DRAW_ICON => {
                 let x = self.read_f32()?;
@@ -2250,6 +2291,42 @@ mod tests {
             matches!(*inner, DrawCommand::Rect { .. }),
             "shadow inner should decode as the wrapped rect",
         );
+    }
+
+    #[test]
+    fn read_draw_decodes_arc() {
+        let red = Color::from_rgb(0xFF, 0x00, 0x00);
+        let teal = Color::from_rgb(0x00, 0x80, 0x80);
+        let expected_fill = ArcFill::gradient(red, teal);
+        let expected_segments = ArcSegments::Explicit(vec![(0.0, 0.5), (0.6, 1.5)]);
+
+        let mut data = vec![DRAW_ARC];
+        for value in [1.0_f32, 2.0, 30.0, 0.0, 1.5, 6.0] {
+            data.extend_from_slice(&value.to_le_bytes());
+        }
+        bmc_wasm_protocol::encode_arc_fill(&mut data, &expected_fill);
+        bmc_wasm_protocol::encode_arc_segments(&mut data, &expected_segments);
+
+        let DrawCommand::Arc {
+            cx,
+            cy,
+            radius,
+            start_angle,
+            end_angle,
+            width,
+            fill,
+            segments,
+        } = TreeReader::new(&data)
+            .read_draw()
+            .expect("BUG: test buffer encodes a valid DRAW_ARC")
+        else {
+            panic!("BUG: expected DrawCommand::Arc");
+        };
+
+        assert_eq!((cx, cy, radius), (1.0, 2.0, 30.0));
+        assert_eq!((start_angle, end_angle, width), (0.0, 1.5, 6.0));
+        assert_eq!(fill, expected_fill);
+        assert_eq!(segments, expected_segments);
     }
 
     #[test]
