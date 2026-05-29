@@ -303,7 +303,6 @@ fn date_window(
         1.0,
         palette.date_window,
         true,
-        false,
         Interpolation::CatmullRom,
     ));
     #[expect(
