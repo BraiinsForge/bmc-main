@@ -6,7 +6,7 @@
 //! internally if the backend requires it.
 
 use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{BitmapId, Fill, MeshId, SvgId};
+use bmc_wasm_protocol::{ArcAnchor, ArcTextFacing, BitmapId, Fill, MeshId, SvgId};
 
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::tree::{SpanData, TextStyle};
@@ -197,6 +197,20 @@ pub trait Renderer {
     /// Alignment is handled by the caller via `TextStyle.align`:
     /// Left = text starts at x, Center = centered on x, Right = text ends at x.
     fn draw_canvas_text(&mut self, text: &str, x: f32, y: f32, style: &TextStyle);
+
+    /// Draw styled text with glyph centers placed on a circular arc.
+    #[expect(clippy::too_many_arguments)]
+    fn draw_curved_text(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        angle: f32,
+        anchor: ArcAnchor,
+        facing: ArcTextFacing,
+        text: &str,
+        style: &TextStyle,
+    );
 
     // -- Paths --
 
