@@ -307,7 +307,6 @@ fn date_window(
         1.0,
         palette.date_window,
         true,
-        false,
         Interpolation::CatmullRom,
     ));
     let day_font = scale_font(24, scale);
