@@ -19,13 +19,7 @@ fn examples(ctx: &mut StoryCtx) -> Node {
                 &click_key,
                 props!(width: 200, height: 120, background: GRAY_90),
                 [
-                    Draw::Rect {
-                        x: 16.0,
-                        y: 16.0,
-                        w: 80.0,
-                        h: 88.0,
-                        color: VIOLET_60,
-                    },
+                    Draw::rect(16.0, 16.0, 80.0, 88.0, VIOLET_60),
                     Draw::Circle {
                         cx: 150.0,
                         cy: 60.0,
