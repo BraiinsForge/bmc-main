@@ -4,6 +4,7 @@ mod format;
 mod manifest_params;
 mod miner_api;
 mod model;
+mod public_api;
 
 #[cfg(target_arch = "wasm32")]
 #[expect(
