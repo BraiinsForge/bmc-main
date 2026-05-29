@@ -82,7 +82,7 @@ pub(crate) fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
         | DrawCommand::Modified { inner, .. }
         | DrawCommand::Shadow { inner, .. }
         | DrawCommand::Orbit { inner, .. } => get_draw_bounds(inner),
-        DrawCommand::Text { .. } => (0.0, 0.0),
+        DrawCommand::Text { .. } | DrawCommand::CurvedText { .. } => (0.0, 0.0),
         DrawCommand::Path { points, .. } => {
             if points.is_empty() {
                 (0.0, 0.0)
@@ -782,6 +782,9 @@ fn render_draw_inner(
                 renderer.restore();
             }
         }
+        DrawCommand::CurvedText { .. } => {
+            // Task 6 wires curved text rendering.
+        }
     }
 }
 
@@ -921,6 +924,21 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
         DrawCommand::Text { x, y, style, .. } => PrevDrawValues {
             x: *x,
             y: *y,
+            color: style.color,
+            ..Default::default()
+        },
+        DrawCommand::CurvedText {
+            cx,
+            cy,
+            radius,
+            angle,
+            style,
+            ..
+        } => PrevDrawValues {
+            x: *cx,
+            y: *cy,
+            radius: *radius,
+            angle: *angle,
             color: style.color,
             ..Default::default()
         },
