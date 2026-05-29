@@ -1,7 +1,7 @@
 # Clock Widget
 
-The clock widget displays the current time on the Deck. It offers an analog or digital face, optional date, seconds, and
-timezone readouts, and surfaces the next scheduled alarm.
+The clock widget displays the current time. It offers an analog or digital face, optional date, seconds, and timezone
+readouts, and surfaces the next scheduled alarm. It runs full-screen on every supported platform.
 
 ## User stories
 
@@ -12,6 +12,8 @@ timezone readouts, and surfaces the next scheduled alarm.
 - The clock face style is one of: analog with a round dial, analog with a rectangular dial, or digital.
 - The digital style shows the time as text; the analog styles show rotating hour, minute, and second hands over a dial.
 - Changing the style takes effect without removing the widget or losing its other settings.
+- On a round display the round analog face is always used; the rectangular and digital styles apply only to rectangular
+  displays, where a round dial is not forced. See [Platforms](#platforms).
 
 ### Show or hide the date
 
@@ -63,3 +65,20 @@ timezone readouts, and surfaces the next scheduled alarm.
 - Day / night appearance follows the device-wide night mode signal — the clock recolours itself; it is not a per-widget
   setting. See [Night Mode](night-mode.md).
 - The next alarm and the 12-/24-hour time format come from device system state, not from widget configuration.
+
+## Platforms
+
+The clock is supported on every current platform. The panels differ in resolution and shape, so the widget renders the
+closest BMC100 size variant and scales that layout to fit the actual viewport instead of overflowing it.
+
+| Platform | Display    | Shape       | Renders as                                   |
+| -------- | ---------- | ----------- | -------------------------------------------- |
+| BMC100   | `1280x480` | rectangular | native `small` / `medium` / `large` / `full` |
+| BMM100   | `320x240`  | rectangular | the `small` BMC100 variant, scaled to fit    |
+| BMM101   | `480x320`  | rectangular | the `large` BMC100 variant, scaled to fit    |
+| BFM100   | `480x480`  | round       | the analog round face, scaled to fit         |
+
+- On the rectangular BMM panels the configured face style is honoured; only the layout changes, scaled from the matched
+  BMC100 variant.
+- On the round BFM100 the analog round face is always shown regardless of the configured style — its round dial is the
+  only face that fits a round display without clipping at the corners.
