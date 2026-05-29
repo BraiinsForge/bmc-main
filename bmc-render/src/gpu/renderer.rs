@@ -12,7 +12,7 @@ use std::num::NonZeroU32;
 
 use anyhow::Result;
 use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{BitmapId, MeshId, SvgId};
+use bmc_wasm_protocol::{BitmapId, Fill, MeshId, SvgId};
 use cosmic_text::fontdb;
 use femtovg::renderer::OpenGl;
 use femtovg::{Canvas, FontId, Paint, Path, RenderTarget};
@@ -413,6 +413,24 @@ impl Renderer for FemtoVgRenderer {
             .fill_path(&path, &Paint::color(to_femtovg_color(color.to_u32())));
     }
 
+    fn fill_rect_paint(&mut self, x: f32, y: f32, w: f32, h: f32, fill: &Fill) {
+        let mut path = Path::new();
+        path.rect(x, y, w, h);
+        let paint = paint_for_fill(
+            fill,
+            (x, y, w, h),
+            (x + w / 2.0, y + h / 2.0, (w / 2.0).hypot(h / 2.0)),
+        );
+        self.canvas.fill_path(&path, &paint);
+    }
+
+    fn fill_circle_paint(&mut self, cx: f32, cy: f32, r: f32, fill: &Fill) {
+        let mut path = Path::new();
+        path.circle(cx, cy, r);
+        let paint = paint_for_fill(fill, (cx - r, cy - r, 2.0 * r, 2.0 * r), (cx, cy, r));
+        self.canvas.fill_path(&path, &paint);
+    }
+
     fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32, border_width: f32, color: Color) {
         let mut path = Path::new();
         path.rect(x, y, w, h);
@@ -458,6 +476,30 @@ impl Renderer for FemtoVgRenderer {
         let path = build_femtovg_path(points, true, smooth);
         self.canvas
             .fill_path(&path, &Paint::color(to_femtovg_color(color.to_u32())));
+    }
+
+    fn fill_path_paint(&mut self, points: &[(f32, f32)], fill: &Fill, smooth: bool) {
+        if points.len() < 3 {
+            return;
+        }
+        let path = build_femtovg_path(points, true, smooth);
+        let (min_x, min_y, max_x, max_y) = points.iter().fold(
+            (
+                f32::INFINITY,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NEG_INFINITY,
+            ),
+            |(mnx, mny, mxx, mxy), &(px, py)| (mnx.min(px), mny.min(py), mxx.max(px), mxy.max(py)),
+        );
+        let (w, h) = (max_x - min_x, max_y - min_y);
+        let radius = (w / 2.0).hypot(h / 2.0);
+        let paint = paint_for_fill(
+            fill,
+            (min_x, min_y, w, h),
+            (min_x + w / 2.0, min_y + h / 2.0, radius),
+        );
+        self.canvas.fill_path(&path, &paint);
     }
 
     // -- Transform stack --
@@ -982,16 +1024,44 @@ fn femtovg_baseline(vertical_align: VerticalAlign) -> femtovg::Baseline {
     }
 }
 
+/// Build a femtovg [`Paint`] for `fill`. `lin_bbox` is the bounding box used
+/// for linear endpoint projection; `radial` is `(cx, cy, radius)` for the
+/// radial gradient (a circle passes its own radius, not the bbox diagonal).
+fn paint_for_fill(fill: &Fill, lin_bbox: (f32, f32, f32, f32), radial: (f32, f32, f32)) -> Paint {
+    match fill {
+        Fill::Solid(c) => Paint::color(to_femtovg_color(c.to_u32())),
+        Fill::Linear { angle, start, end } => {
+            let (bx, by, bw, bh) = lin_bbox;
+            let ((sx, sy), (ex, ey)) = linear_endpoints(bx, by, bw, bh, *angle);
+            Paint::linear_gradient(
+                sx,
+                sy,
+                ex,
+                ey,
+                to_femtovg_color(start.to_u32()),
+                to_femtovg_color(end.to_u32()),
+            )
+        }
+        Fill::Radial { inner, outer } => {
+            let (cx, cy, radius) = radial;
+            Paint::radial_gradient(
+                cx,
+                cy,
+                0.0,
+                radius,
+                to_femtovg_color(inner.to_u32()),
+                to_femtovg_color(outer.to_u32()),
+            )
+        }
+    }
+}
+
 /// Compute the two linear-gradient endpoints for a bounding box `(x, y, w, h)`
 /// at `angle` degrees (`0` = top→bottom, `90` = left→right, clockwise).
 ///
 /// The gradient axis passes through the box centre; `start` sits at the
 /// minimum projection of the corners onto the angle vector and `end` at the
 /// maximum, so the gradient always spans the box (CSS-style).
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired into paint_for_fill in the next change")
-)]
 #[expect(
     clippy::many_single_char_names,
     reason = "x/y/w/h/t are conventional bounding-box and projection names"

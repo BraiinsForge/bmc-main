@@ -6,7 +6,7 @@
 //! internally if the backend requires it.
 
 use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{BitmapId, MeshId, SvgId};
+use bmc_wasm_protocol::{BitmapId, Fill, MeshId, SvgId};
 
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::tree::{SpanData, TextStyle};
@@ -23,6 +23,12 @@ pub trait Renderer {
     fn fill_rounded_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: Color);
 
     fn fill_circle(&mut self, cx: f32, cy: f32, r: f32, color: Color);
+
+    /// Fill a rectangle with a [`Fill`] paint (solid or gradient).
+    fn fill_rect_paint(&mut self, x: f32, y: f32, w: f32, h: f32, fill: &Fill);
+
+    /// Fill a circle with a [`Fill`] paint (solid or gradient).
+    fn fill_circle_paint(&mut self, cx: f32, cy: f32, r: f32, fill: &Fill);
 
     fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32, border_width: f32, color: Color);
 
@@ -209,6 +215,10 @@ pub trait Renderer {
     /// Fill a closed path through the given points.
     /// If `smooth` is true, use Catmull-Rom spline interpolation.
     fn fill_path_points(&mut self, points: &[(f32, f32)], color: Color, smooth: bool);
+
+    /// Fill a closed polygon through `points` with a [`Fill`] paint.
+    /// If `smooth` is true, use Catmull-Rom spline interpolation.
+    fn fill_path_paint(&mut self, points: &[(f32, f32)], fill: &Fill, smooth: bool);
 
     // -- Drop shadow --
 
