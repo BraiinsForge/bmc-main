@@ -7,7 +7,7 @@
 
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
-    ArcAnchor, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
+    ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
 };
 
 use crate::gpu::mesh::MeshDrawArgs;
@@ -48,6 +48,7 @@ pub trait Renderer {
         width: f32,
         fill: &ArcFill,
         segments: &ArcSegments,
+        cap: ArcCap,
     );
 
     fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32, border_width: f32, color: Color);

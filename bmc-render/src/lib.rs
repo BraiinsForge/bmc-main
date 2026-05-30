@@ -73,6 +73,12 @@ pub struct PrevDrawValues {
     pub radius: f32,
     /// Rotation angle (for `Rotated` draw commands).
     pub rotation: f32,
+    /// Arc start angle in radians.
+    pub arc_start_angle: f32,
+    /// Arc sweep in radians.
+    pub arc_sweep: f32,
+    /// Arc stroke width.
+    pub arc_width: f32,
     /// Sphere camera center latitude (degrees).
     pub center_lat: f32,
     /// Sphere camera center longitude (degrees).
