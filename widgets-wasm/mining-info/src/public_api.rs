@@ -97,6 +97,29 @@ pub(crate) fn hashrate_url(currency: Currency) -> String {
     )
 }
 
+pub(crate) fn reset_price_stats(data: &mut PublicData) {
+    data.btc_price = Availability::Unavailable;
+    data.btc_change_24h_percent = Availability::Unavailable;
+}
+
+pub(crate) fn reset_block(data: &mut PublicData) {
+    data.block_height = Availability::Unavailable;
+}
+
+pub(crate) fn reset_difficulty_stats(data: &mut PublicData) {
+    data.prev_diff_adjust_percent = Availability::Unavailable;
+    data.est_diff_adjust_percent = Availability::Unavailable;
+    data.epoch_progress_percent = Availability::Unavailable;
+}
+
+pub(crate) fn reset_hashrate_stats(data: &mut PublicData) {
+    data.network_hashrate_ehs = Availability::Unavailable;
+    data.avg_fee_btc = Availability::Unavailable;
+    data.avg_fee_percent = Availability::Unavailable;
+    data.hashprice = Availability::Unavailable;
+    data.hashvalue_sat_th_day = Availability::Unavailable;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,5 +150,48 @@ mod tests {
             panic!("BUG: hashvalue should be available");
         };
         assert!((value - 5.02).abs() < 1e-9);
+    }
+
+    #[test]
+    fn reset_price_stats_clears_stale_currency_values() {
+        let mut data = PublicData {
+            btc_price: Availability::Available(Money {
+                currency: Currency::Usd,
+                value: 104_250.0,
+            }),
+            btc_change_24h_percent: Availability::Available(1.82),
+            block_height: Availability::Available(900_123),
+            ..PublicData::default()
+        };
+        reset_price_stats(&mut data);
+        assert_eq!(data.btc_price, Availability::Unavailable);
+        assert_eq!(data.btc_change_24h_percent, Availability::Unavailable);
+        assert_eq!(data.block_height, Availability::Available(900_123));
+    }
+
+    #[test]
+    fn reset_hashrate_stats_clears_stale_hashprice_currency_values() {
+        let mut data = PublicData {
+            network_hashrate_ehs: Availability::Available(650.5),
+            avg_fee_btc: Availability::Available(0.125),
+            avg_fee_percent: Availability::Available(1.4),
+            hashprice: Availability::Available(Money {
+                currency: Currency::Usd,
+                value: 0.052,
+            }),
+            hashvalue_sat_th_day: Availability::Available(5.02),
+            btc_price: Availability::Available(Money {
+                currency: Currency::Usd,
+                value: 104_250.0,
+            }),
+            ..PublicData::default()
+        };
+        reset_hashrate_stats(&mut data);
+        assert_eq!(data.network_hashrate_ehs, Availability::Unavailable);
+        assert_eq!(data.avg_fee_btc, Availability::Unavailable);
+        assert_eq!(data.avg_fee_percent, Availability::Unavailable);
+        assert_eq!(data.hashprice, Availability::Unavailable);
+        assert_eq!(data.hashvalue_sat_th_day, Availability::Unavailable);
+        assert!(matches!(data.btc_price, Availability::Available(_)));
     }
 }

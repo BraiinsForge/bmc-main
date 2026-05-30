@@ -59,6 +59,40 @@ pub(crate) fn parse_network(json: &impl JsonLookup, data: &mut MinerData) {
     }
 }
 
+// A failed poll (network error or non-2xx) means the endpoint's fields are no
+// longer trustworthy. Each `reset_*` clears exactly the fields its matching
+// `parse_*` produces, so an unreachable miner shows unavailable instead of the
+// last good reading, while a single flaky endpoint never wipes another's data.
+pub(crate) fn reset_details(data: &mut MinerData) {
+    data.uptime_s = Availability::Unavailable;
+}
+
+pub(crate) fn reset_stats(data: &mut MinerData) {
+    data.hashrate_ths = Availability::Unavailable;
+    data.power_w = Availability::Unavailable;
+}
+
+pub(crate) fn reset_hashboards(data: &mut MinerData) {
+    data.temperature = Availability::Unavailable;
+    data.mcr_percent = Availability::Unavailable;
+}
+
+pub(crate) fn reset_cooling(data: &mut MinerData) {
+    data.fan_percent = Availability::Unavailable;
+}
+
+pub(crate) fn reset_network(data: &mut MinerData) {
+    data.ip_address = Availability::Unavailable;
+}
+
+pub(crate) fn reset_all(data: &mut MinerData) {
+    reset_details(data);
+    reset_stats(data);
+    reset_hashboards(data);
+    reset_cooling(data);
+    reset_network(data);
+}
+
 #[cfg(target_arch = "wasm32")]
 impl JsonLookup for bmc_wasm_sdk::json::JsonDoc {
     fn str(&self, path: &str) -> Option<String> {
@@ -118,6 +152,41 @@ mod tests {
         let mut data = MinerData::default();
         parse_details(&json, &mut data);
         assert_eq!(data.uptime_s, Availability::Available(187_020));
+    }
+
+    #[test]
+    fn reset_clears_only_its_own_fields() {
+        let mut data = MinerData {
+            hashrate_ths: Availability::Available(4.0),
+            power_w: Availability::Available(120.0),
+            mcr_percent: Availability::Available(90.0),
+            fan_percent: Availability::Available(72.0),
+            ..MinerData::default()
+        };
+        reset_stats(&mut data);
+        assert_eq!(data.hashrate_ths, Availability::Unavailable);
+        assert_eq!(data.power_w, Availability::Unavailable);
+        // Fields owned by other endpoints are untouched.
+        assert_eq!(data.mcr_percent, Availability::Available(90.0));
+        assert_eq!(data.fan_percent, Availability::Available(72.0));
+    }
+
+    #[test]
+    fn reset_all_clears_stale_miner_values_after_auth_changes() {
+        let mut data = MinerData {
+            hashrate_ths: Availability::Available(4.0),
+            temperature: Availability::Available(TemperatureRange {
+                board_c: 61.0,
+                chip_c: 74.0,
+            }),
+            power_w: Availability::Available(120.0),
+            mcr_percent: Availability::Available(90.0),
+            fan_percent: Availability::Available(72.0),
+            uptime_s: Availability::Available(187_020),
+            ip_address: Availability::Available("192.168.1.42".to_owned()),
+        };
+        reset_all(&mut data);
+        assert_eq!(data, MinerData::default());
     }
 
     #[test]
