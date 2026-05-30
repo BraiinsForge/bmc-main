@@ -11,6 +11,8 @@ use crate::format;
 use crate::layout::{self, Viewport};
 use crate::model::{Availability, MinerData, PublicData};
 
+pub(crate) mod round;
+
 const TITLE: Color = GRAY_50;
 const UNIT: Color = GRAY_50;
 const VALUE: Color = WHITE;
@@ -37,15 +39,16 @@ pub(crate) const STALE_DATA_TEXT: &str = "Stale data";
 const OVERLAY_TEXT_SIZE: u32 = 14;
 const OVERLAY_ICON_PX: f32 = 16.0;
 const OVERLAY_INSET: f32 = 8.0;
+// On the round face a bottom-left banner clips against the circle, so the banner
+// is centered horizontally and lifted this far above the bottom edge to stay
+// inside the lower clear area between the bottom clusters and the ring.
+const OVERLAY_ROUND_BOTTOM: f32 = 56.0;
 
-// A small absolutely-positioned banner pinned to the bottom-left corner. Only the
-// bottom and left insets are set, so it sizes to its content and anchors there,
-// overlapping whatever the view draws underneath.
-fn error_overlay(message: &'static str) -> Node {
+// The banner itself: a warning icon and the message on a panel. It carries no
+// insets so the positioning wrappers below can place it per viewport shape.
+fn overlay_banner(message: &'static str) -> Node {
     row(
         props!(
-            inset_bottom: OVERLAY_INSET,
-            inset_left: OVERLAY_INSET,
             background: GRAY_100,
             padding: 6.0,
             gap: 6.0,
@@ -71,11 +74,40 @@ fn error_overlay(message: &'static str) -> Node {
     )
 }
 
+// Rectangular faces pin the banner to the bottom-left corner. Only the bottom and
+// left insets are set, so it sizes to its content and anchors there, overlapping
+// whatever the view draws underneath.
+fn overlay_rect(message: &'static str) -> Node {
+    row(
+        props!(inset_bottom: OVERLAY_INSET, inset_left: OVERLAY_INSET),
+        [overlay_banner(message)],
+    )
+}
+
+// The round variant stretches full width (left and right insets) and centers the
+// banner with flanking flex spacers, lifted above the bottom edge.
+fn overlay_round(message: &'static str) -> Node {
+    row(
+        props!(
+            inset_bottom: OVERLAY_ROUND_BOTTOM,
+            inset_left: 0.0,
+            inset_right: 0.0
+        ),
+        [spacer(1.0), overlay_banner(message), spacer(1.0)],
+    )
+}
+
 // Overlay an error banner onto a view's root column as an absolute child so it
-// floats over the existing layout without disturbing it.
-pub(crate) fn with_overlay(mut root: Node, message: &'static str) -> Node {
+// floats over the existing layout without disturbing it. The banner is positioned
+// per viewport shape: bottom-left on rectangular faces, centered and lifted on
+// round faces where a corner banner would clip against the circle.
+pub(crate) fn with_overlay(mut root: Node, message: &'static str, shape: ViewportShape) -> Node {
     if let Node::Column(_, children) = &mut root {
-        children.push(error_overlay(message));
+        let overlay = match shape {
+            ViewportShape::Round => overlay_round(message),
+            ViewportShape::Rectangular => overlay_rect(message),
+        };
+        children.push(overlay);
     }
     root
 }
@@ -297,6 +329,35 @@ fn text_block(
     metrics: layout::BlockLayout,
 ) -> Node {
     block(name, value, unit, metrics, VALUE, FontWeight::REGULAR)
+}
+
+// A block with no fixed cell: the col shrinks to its content so the value stays
+// on one line (an unconstrained paragraph measures single-line). The title is
+// left-aligned with the value; the block as a whole is centered between row
+// spacers by the round faces, which group blocks rather than aligning a grid.
+fn centered_block(
+    name: &'static str,
+    value: String,
+    unit: Option<&'static str>,
+    sizes: layout::TextSizes,
+) -> Node {
+    col(
+        props!(),
+        [
+            text(
+                name,
+                style!(size: sizes.title, weight: FontWeight::SEMIBOLD, color: TITLE),
+            ),
+            value_with_unit(
+                value,
+                unit,
+                sizes.value,
+                TextAlign::Left,
+                VALUE,
+                FontWeight::REGULAR,
+            ),
+        ],
+    )
 }
 
 // Mirrors BOSer's `extra_info`: the primary value and its extra value share one
