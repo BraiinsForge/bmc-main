@@ -220,6 +220,7 @@ pub mod notification;
 pub mod number_input;
 pub mod orientation;
 pub mod params;
+pub mod poll;
 pub mod progress_bar;
 #[cfg(target_arch = "wasm32")]
 pub mod slot;
