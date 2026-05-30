@@ -30,6 +30,7 @@ use super::super::memory::{parse_headers, read_bytes, read_optional_bytes, read_
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_fetch_now_import(linker)?;
     register_fetch_after_import(linker)?;
+    register_fetch_cancel_import(linker)?;
     register_websocket_imports(linker)?;
     register_socket_connect_imports(linker)?;
     register_socket_io_imports(linker)?;
@@ -157,6 +158,33 @@ fn register_fetch_after_import(linker: &mut Linker<HostState>) -> Result<()> {
             });
 
             request_id.to_wire()
+        },
+    )?;
+
+    Ok(())
+}
+
+fn register_fetch_cancel_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_fetch_cancel",
+        |mut caller: Caller<'_, HostState>, request_id: u32| -> u32 {
+            let Some(request_id) = FetchRequestId::from_wire(request_id) else {
+                return 0;
+            };
+            let state = caller.data_mut();
+            let before = state.delayed_fetches.len();
+            state
+                .delayed_fetches
+                .retain(|fetch| fetch.request_id != request_id);
+            if state.delayed_fetches.len() == before {
+                // Not in the delayed queue: it is already in flight (a detached
+                // request thread we cannot stop) or unknown. Report no-op so the
+                // guest waits for the response instead of orphaning a slot.
+                return 0;
+            }
+            state.fetch_keys.remove(&request_id);
+            1
         },
     )?;
 
