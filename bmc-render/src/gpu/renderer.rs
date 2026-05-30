@@ -13,7 +13,7 @@ use std::num::NonZeroU32;
 use anyhow::Result;
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
-    ArcAnchor, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
+    ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
 };
 use cosmic_text::fontdb;
 use femtovg::renderer::OpenGl;
@@ -444,7 +444,12 @@ impl Renderer for FemtoVgRenderer {
         width: f32,
         fill: &ArcFill,
         segments: &ArcSegments,
+        cap: ArcCap,
     ) {
+        let outer_cap = match cap {
+            ArcCap::Round => LineCap::Round,
+            ArcCap::Butt => LineCap::Butt,
+        };
         let spans = arc_spans(segments, start_angle, end_angle);
         let last_span = spans.len().saturating_sub(1);
         for (si, &(s0, s1)) in spans.iter().enumerate() {
@@ -480,10 +485,10 @@ impl Renderer for FemtoVgRenderer {
                 paint.set_line_width(width);
                 paint.set_line_cap(LineCap::Butt);
                 if si == 0 && ci == 0 {
-                    paint.set_line_cap_start(LineCap::Round);
+                    paint.set_line_cap_start(outer_cap);
                 }
                 if si == last_span && ci == last_chunk {
-                    paint.set_line_cap_end(LineCap::Round);
+                    paint.set_line_cap_end(outer_cap);
                 }
                 self.canvas.stroke_path(&path, &paint);
             }
@@ -1159,10 +1164,24 @@ fn paint_for_fill(fill: &Fill, lin_bbox: (f32, f32, f32, f32), radial: (f32, f32
 const ARC_CHUNK_MAX: f32 = 0.2;
 const ARC_SEAM_EPS: f32 = 0.002;
 
+// Explicit segments hold absolute angular positions; clipping them to the draw
+// sweep lets the sweep reveal or hide whole/partial segments without moving
+// them, so a sweep transition animates the arc's length in place. The gradient
+// still maps over the draw sweep, so the colour at a revealed angle converges to
+// its resting value as the sweep reaches the requested end.
 fn arc_spans(segments: &ArcSegments, start: f32, end: f32) -> Vec<(f32, f32)> {
     match segments {
         ArcSegments::Continuous => vec![(start, end)],
-        ArcSegments::Explicit(spans) => spans.clone(),
+        ArcSegments::Explicit(spans) => {
+            let (lo, hi) = (start.min(end), start.max(end));
+            spans
+                .iter()
+                .filter_map(|&(s, e)| {
+                    let clipped = (s.max(lo), e.min(hi));
+                    (clipped.0 < clipped.1).then_some(clipped)
+                })
+                .collect()
+        }
     }
 }
 
@@ -1518,12 +1537,29 @@ mod arc_geometry_tests {
     }
 
     #[test]
-    fn explicit_passes_spans_through() {
+    fn explicit_within_sweep_passes_unchanged() {
         let spans = vec![(0.0, 0.5), (0.6, 1.0)];
         assert_eq!(
             arc_spans(&ArcSegments::Explicit(spans.clone()), 0.0, 1.0),
             spans
         );
+    }
+
+    #[test]
+    fn explicit_clips_to_sweep_dropping_and_truncating() {
+        // Sweep ends mid-second-segment: the first survives whole, the second is
+        // truncated at the sweep end, anything past it is dropped.
+        let spans = vec![(0.0, 0.5), (0.6, 1.0), (1.2, 1.5)];
+        assert_eq!(
+            arc_spans(&ArcSegments::Explicit(spans), 0.0, 0.8),
+            vec![(0.0, 0.5), (0.6, 0.8)]
+        );
+    }
+
+    #[test]
+    fn explicit_zero_sweep_clips_to_nothing() {
+        let spans = vec![(0.0, 0.5), (0.6, 1.0)];
+        assert!(arc_spans(&ArcSegments::Explicit(spans), 0.0, 0.0).is_empty());
     }
 
     #[test]
