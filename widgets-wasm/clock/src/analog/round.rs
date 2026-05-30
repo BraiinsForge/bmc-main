@@ -312,7 +312,7 @@ fn date_window(
     let day_font = scale_font(24, scale);
     // `VerticalAlign::Center` keeps the digit visually centred
     // on the ring instead of sitting half a font-size below it.
-    let day_str = format!("{}", local_or_system(now, offset_secs).day);
+    let day_str = bmc_wasm_sdk::fmt!("{}", local_or_system(now, offset_secs).day);
     draws.push(Draw::text(
         cx,
         cy,
