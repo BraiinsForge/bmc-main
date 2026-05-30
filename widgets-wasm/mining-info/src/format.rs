@@ -128,6 +128,17 @@ pub(crate) fn temperature(value: Availability<TemperatureRange>) -> String {
     }
 }
 
+pub(crate) fn chip_temperature(value: Availability<TemperatureRange>) -> String {
+    match value {
+        Availability::Available(value) => {
+            let mut out = String::new();
+            push_fixed_abs(&mut out, value.chip_c, 0);
+            out
+        }
+        Availability::Unavailable => unavailable(),
+    }
+}
+
 pub(crate) fn money(value: Availability<Money>, decimals: u32) -> String {
     match value {
         Availability::Available(Money { currency, value }) => {
@@ -140,6 +151,28 @@ pub(crate) fn money(value: Availability<Money>, decimals: u32) -> String {
             out.push_str(&group(value.abs(), decimals));
             out
         }
+        Availability::Unavailable => unavailable(),
+    }
+}
+
+// Currency symbol on its own, for layouts that render the symbol at a smaller
+// size than the amount (round clusters). `None` when the value is unavailable
+// or carries no symbol, so the caller omits the symbol element entirely.
+pub(crate) fn money_symbol(value: Availability<Money>) -> Option<&'static str> {
+    match value {
+        Availability::Available(Money { currency, .. }) => Some(match currency {
+            Currency::Usd => "$",
+            Currency::Eur => "€",
+        }),
+        Availability::Unavailable => None,
+    }
+}
+
+// The grouped amount without the currency symbol, the companion to
+// `money_symbol`.
+pub(crate) fn money_amount(value: Availability<Money>, decimals: u32) -> String {
+    match value {
+        Availability::Available(Money { value, .. }) => group(value.abs(), decimals),
         Availability::Unavailable => unavailable(),
     }
 }
@@ -199,6 +232,16 @@ mod tests {
     }
 
     #[test]
+    fn formats_chip_temperature_as_single_value() {
+        let range = TemperatureRange {
+            board_c: 61.2,
+            chip_c: 74.4,
+        };
+        assert_eq!(chip_temperature(Availability::Available(range)), "74");
+        assert_eq!(chip_temperature(Availability::Unavailable), "N/A");
+    }
+
+    #[test]
     fn formats_signed_percent_with_explicit_sign() {
         assert_eq!(signed_percent(Availability::Available(1.82), 2), "+1.82");
         assert_eq!(signed_percent(Availability::Available(-0.77), 2), "-0.77");
@@ -226,6 +269,18 @@ mod tests {
             value: 104_250.4,
         };
         assert_eq!(money(Availability::Available(usd), 0), "$ 104250");
+    }
+
+    #[test]
+    fn splits_money_into_symbol_and_amount() {
+        let usd = Money {
+            currency: Currency::Usd,
+            value: 104_250.4,
+        };
+        assert_eq!(money_symbol(Availability::Available(usd)), Some("$"));
+        assert_eq!(money_amount(Availability::Available(usd), 0), "104250");
+        assert_eq!(money_symbol(Availability::Unavailable), None);
+        assert_eq!(money_amount(Availability::Unavailable, 0), "N/A");
     }
 
     #[test]
