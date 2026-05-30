@@ -11,6 +11,8 @@ use crate::format;
 use crate::layout::{self, Viewport};
 use crate::model::{Availability, MinerData, PublicData};
 
+pub(crate) mod round;
+
 const TITLE: Color = GRAY_50;
 const UNIT: Color = GRAY_50;
 const VALUE: Color = WHITE;

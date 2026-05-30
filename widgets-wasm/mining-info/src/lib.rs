@@ -2,6 +2,7 @@
 
 mod chart;
 mod format;
+mod gauge;
 mod layout;
 mod manifest_params;
 mod miner_api;
@@ -495,11 +496,19 @@ pub extern "C" fn render(_delta_ms: u32) {
             state.auth == AuthState::Failed,
         )
     });
-    let mut root = match params.view {
-        View::Mining => render::mining(size, &miner),
-        View::Geek => render::geek(size, &miner, &public),
-        View::Network => render::network(size, &public),
-        View::InfoOverload => render::info_overload(size, &miner, &public),
+    let mut root = match viewport.shape {
+        ViewportShape::Round => match params.view {
+            View::Mining => render::round::mining(size, &miner),
+            View::Geek => render::round::geek(size, &miner, &public),
+            View::InfoOverload => render::round::info_overload(&miner, &public),
+            View::Network => render::network(size, &public),
+        },
+        ViewportShape::Rectangular => match params.view {
+            View::Mining => render::mining(size, &miner),
+            View::Geek => render::geek(size, &miner, &public),
+            View::Network => render::network(size, &public),
+            View::InfoOverload => render::info_overload(size, &miner, &public),
+        },
     };
     if auth_failed && view_needs_miner(params.view) {
         root = render::with_auth_error(root);
