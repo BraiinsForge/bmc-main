@@ -149,10 +149,6 @@ impl AuthState {
         }
     }
 
-    pub(crate) fn clear(&mut self) {
-        *self = Self::NoToken;
-    }
-
     pub(crate) fn auth_header(&self) -> Option<String> {
         self.token()
             .map(|token| bmc_wasm_sdk::fmt!("Authorization: {token}"))
@@ -187,8 +183,7 @@ mod auth_tests {
         assert_eq!(AuthState::LoggingIn.auth_header(), None);
         auth = AuthState::Authenticated("abc".to_owned());
         assert_eq!(auth.auth_header(), Some("Authorization: abc".to_owned()));
-        auth.clear();
-        assert_eq!(auth, AuthState::NoToken);
+        auth = AuthState::NoToken;
         assert_eq!(auth.token(), None);
     }
 }
