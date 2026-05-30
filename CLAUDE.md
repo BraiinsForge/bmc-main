@@ -271,6 +271,9 @@ Proto files are in `bmc-grpc/proto/web/`. Changes to `.proto` files require
 - Do not reinvent the wheel, use libraries when they exist for the task at hand
 - More code needs good justification, prefer well-tested well-known third-party libraries to ad-hoc implementations
 - Unsafe code always needs good justification
+- Use idiomatic Rust. Use taits when possible
+  - Do not use from\_*, to\_* functions, use From and Into
+  - Do not use 0 to encode none, use Option
 
 ### Architecture Principles
 
