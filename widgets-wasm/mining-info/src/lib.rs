@@ -33,6 +33,12 @@ const MINER_REFRESH_MS: u32 = 5_000;
 const PUBLIC_REFRESH_MS: u32 = 60_000;
 #[cfg(target_arch = "wasm32")]
 const RETRY_MS: u32 = 10_000;
+// Settle a burst of rapid parameter changes before refetching: a change schedules
+// the request after this delay rather than firing immediately, and the next
+// change cancels the still-queued timer and restarts it, so dragging a control or
+// typing a URL issues one request when the value settles instead of one per step.
+#[cfg(target_arch = "wasm32")]
+const DEBOUNCE_MS: u32 = 300;
 
 #[cfg(target_arch = "wasm32")]
 type MinerParser = fn(&JsonDoc, &mut MinerData);
@@ -100,15 +106,25 @@ fn public_hashrate(json: &JsonDoc, currency: Currency, data: &mut PublicData) {
     public_api::parse_hashrate_stats(json, currency, data);
 }
 
-// The live request id for each in-flight fetch. A response whose id no longer
-// matches its slot was superseded by a re-kick (params change or re-login) and
-// is ignored, which keeps every loop single-flight across re-kicks.
+// One outstanding request per endpoint loop, kept single-flight. `live` is the
+// request id currently in flight or queued; it routes the response back to its
+// slot. A param change that supersedes a request the host can still cancel
+// removes it outright, while one already in flight cannot be stopped, so
+// `pending` marks it for its callback to discard the stale body and reissue
+// with current params rather than racing a second request into a fetch slot.
+#[cfg(target_arch = "wasm32")]
+#[derive(Default, Clone, Copy)]
+struct Slot {
+    live: Option<FetchRequestId>,
+    pending: bool,
+}
+
 #[cfg(target_arch = "wasm32")]
 #[derive(Default)]
-struct LiveIds {
-    login: Option<FetchRequestId>,
-    miner: [Option<FetchRequestId>; 5],
-    public: [Option<FetchRequestId>; 4],
+struct Loops {
+    login: Slot,
+    miner: [Slot; 5],
+    public: [Slot; 4],
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -117,7 +133,36 @@ struct State {
     miner: MinerData,
     public: PublicData,
     auth: AuthState,
-    live: LiveIds,
+    loops: Loops,
+}
+
+// Supersede a slot's outstanding request and report whether the slot is now free
+// to receive a fresh one. A still-queued request is cancelled (freeing the slot
+// immediately); one already in flight cannot be stopped, so the slot is marked
+// pending and left for its callback to reissue instead of orphaning the slot.
+#[cfg(target_arch = "wasm32")]
+fn supersede(slot: &mut Slot) -> bool {
+    match slot.live {
+        Some(id) if !cancel(id) => {
+            slot.pending = true;
+            false
+        }
+        _ => {
+            slot.live = None;
+            true
+        }
+    }
+}
+
+// Clear a slot whose response just arrived and report whether a param change had
+// marked it pending — in which case the caller discards the now-stale body and
+// reissues with current params instead of treating the response as fresh data.
+#[cfg(target_arch = "wasm32")]
+fn take_pending(slot: &mut Slot) -> bool {
+    slot.live = None;
+    let pending = slot.pending;
+    slot.pending = false;
+    pending
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -137,7 +182,7 @@ fn selected_currency() -> Currency {
 #[unsafe(no_mangle)]
 pub extern "C" fn init() {
     ensure_login();
-    kick_public();
+    kick_public(None);
     request_frame();
 }
 
@@ -152,16 +197,32 @@ pub extern "C" fn on_params_update() {
     let currency_changed = changed.contains(&"currency");
 
     if miner_changed {
+        // The token (if any) was issued for the old URL/password, so discard it
+        // and re-authenticate. Cancel the miner loops without reissuing here;
+        // they restart once login succeeds, so reissuing now would only fetch
+        // unauthenticated and bounce off a 401.
+        let password_empty = Params::current().miner_password.is_empty();
         STATE.with(|state| {
             let mut state = state.borrow_mut();
-            state.auth.clear();
-            state.live.login = None;
-            state.live.miner = Default::default();
+            state.auth = if password_empty {
+                AuthState::NoToken
+            } else {
+                AuthState::LoggingIn
+            };
+            for slot in &mut state.loops.miner {
+                supersede(slot);
+            }
         });
-        ensure_login();
+        if password_empty {
+            STATE.with(|state| {
+                supersede(&mut state.borrow_mut().loops.login);
+            });
+        } else {
+            rekick_login(Some(DEBOUNCE_MS));
+        }
     }
     if currency_changed {
-        kick_public();
+        kick_public(Some(DEBOUNCE_MS));
     }
     request_frame();
 }
@@ -175,9 +236,9 @@ pub extern "C" fn on_system_update() {
     request_frame();
 }
 
-// Authenticate only from `NoToken`; the `LoggingIn` state dedupes a 401 storm
-// from the parallel miner endpoints into a single login. An empty password
-// leaves the miner loops dormant while public data keeps rendering.
+// Begin a login unless one is already under way; the `LoggingIn` state collapses
+// a 401 storm from the parallel miner endpoints into a single login. An empty
+// password leaves the miner loops dormant while public data keeps rendering.
 #[cfg(target_arch = "wasm32")]
 fn ensure_login() {
     if Params::current().miner_password.is_empty() {
@@ -185,21 +246,35 @@ fn ensure_login() {
     }
     let transition = STATE.with(|state| {
         let mut state = state.borrow_mut();
-        if matches!(state.auth, AuthState::NoToken) {
+        if matches!(state.auth, AuthState::LoggingIn) {
+            false
+        } else {
             state.auth = AuthState::LoggingIn;
             true
-        } else {
-            false
         }
     });
     if transition {
-        schedule_login(None);
+        rekick_login(None);
+    }
+}
+
+// Force a fresh login with the current credentials, single-flight: a queued
+// login is replaced immediately, while one already in flight is marked pending
+// so its callback reissues rather than leaving a second login to race it.
+#[cfg(target_arch = "wasm32")]
+fn rekick_login(delay_ms: Option<u32>) {
+    if STATE.with(|state| supersede(&mut state.borrow_mut().loops.login)) {
+        schedule_login(delay_ms);
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 fn schedule_login(delay_ms: Option<u32>) {
     let params = Params::current();
+    if params.miner_password.is_empty() {
+        STATE.with(|state| state.borrow_mut().loops.login.live = None);
+        return;
+    }
     let url = endpoint(&params.miner_url, "/auth/login");
     let body = fmt!(
         r#"{{"username":"root","password":"{}"}}"#,
@@ -219,16 +294,25 @@ fn schedule_login(delay_ms: Option<u32>) {
         }
         return;
     };
-    STATE.with(|state| state.borrow_mut().live.login = Some(id));
+    STATE.with(|state| state.borrow_mut().loops.login.live = Some(id));
 }
 
 #[cfg(target_arch = "wasm32")]
 fn on_login_response(response: &FetchResponse) {
-    let is_live = STATE.with(|state| state.borrow().live.login == Some(response.request_id));
-    if !is_live {
+    let routed = STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        let slot = &mut state.loops.login;
+        (slot.live == Some(response.request_id)).then(|| take_pending(slot))
+    });
+    let Some(pending) = routed else {
+        return;
+    };
+    if pending {
+        // Credentials changed while this login was in flight; its result is for
+        // the old credentials, so discard it and retry with the current ones.
+        rekick_login(None);
         return;
     }
-    STATE.with(|state| state.borrow_mut().live.login = None);
 
     if response.ok()
         && let Some(token) = response.json().str("/token")
@@ -247,14 +331,30 @@ fn on_login_response(response: &FetchResponse) {
 #[cfg(target_arch = "wasm32")]
 fn kick_miner() {
     for idx in 0..MINER_ENDPOINTS.len() {
+        rekick_miner(idx);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn kick_public(delay_ms: Option<u32>) {
+    for idx in 0..PUBLIC_ENDPOINTS.len() {
+        rekick_public(idx, delay_ms);
+    }
+}
+
+// Refresh one miner loop with current params, single-flight: a queued request is
+// replaced now, one already in flight is left pending for its callback to reissue.
+#[cfg(target_arch = "wasm32")]
+fn rekick_miner(idx: usize) {
+    if STATE.with(|state| supersede(&mut state.borrow_mut().loops.miner[idx])) {
         schedule_miner_endpoint(idx, None);
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-fn kick_public() {
-    for idx in 0..PUBLIC_ENDPOINTS.len() {
-        schedule_public_endpoint(idx, None);
+fn rekick_public(idx: usize, delay_ms: Option<u32>) {
+    if STATE.with(|state| supersede(&mut state.borrow_mut().loops.public[idx])) {
+        schedule_public_endpoint(idx, delay_ms);
     }
 }
 
@@ -270,13 +370,13 @@ fn schedule_miner_endpoint(idx: usize, delay_ms: Option<u32>) {
     };
     let Some(id) = queued else {
         log_warn!("mining-info: miner request not queued, retrying");
-        STATE.with(|state| state.borrow_mut().live.miner[idx] = None);
+        STATE.with(|state| state.borrow_mut().loops.miner[idx].live = None);
         if delay_ms != Some(RETRY_MS) {
             schedule_miner_endpoint(idx, Some(RETRY_MS));
         }
         return;
     };
-    STATE.with(|state| state.borrow_mut().live.miner[idx] = Some(id));
+    STATE.with(|state| state.borrow_mut().loops.miner[idx].live = Some(id));
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -288,32 +388,43 @@ fn schedule_public_endpoint(idx: usize, delay_ms: Option<u32>) {
     };
     let Some(id) = queued else {
         log_warn!("mining-info: public request not queued, retrying");
-        STATE.with(|state| state.borrow_mut().live.public[idx] = None);
+        STATE.with(|state| state.borrow_mut().loops.public[idx].live = None);
         if delay_ms != Some(RETRY_MS) {
             schedule_public_endpoint(idx, Some(RETRY_MS));
         }
         return;
     };
-    STATE.with(|state| state.borrow_mut().live.public[idx] = Some(id));
+    STATE.with(|state| state.borrow_mut().loops.public[idx].live = Some(id));
 }
 
 #[cfg(target_arch = "wasm32")]
 fn on_miner_response(response: &FetchResponse) {
-    let idx = STATE.with(|state| {
+    let routed = STATE.with(|state| {
+        let mut state = state.borrow_mut();
         state
-            .borrow()
-            .live
+            .loops
             .miner
-            .iter()
-            .position(|id| *id == Some(response.request_id))
+            .iter_mut()
+            .enumerate()
+            .find(|(_, slot)| slot.live == Some(response.request_id))
+            .map(|(idx, slot)| (idx, take_pending(slot)))
     });
-    let Some(idx) = idx else {
+    let Some((idx, pending)) = routed else {
         return;
     };
-    STATE.with(|state| state.borrow_mut().live.miner[idx] = None);
+    if pending {
+        // A param change superseded this request, so its body is for stale
+        // params. Refresh with current params, but only while authenticated —
+        // otherwise the login flow re-kicks this loop once a token is available.
+        if STATE.with(|state| state.borrow().auth.token().is_some()) {
+            schedule_miner_endpoint(idx, None);
+        }
+        return;
+    }
 
     if response.status == 401 {
-        STATE.with(|state| state.borrow_mut().auth.clear());
+        // A rejected token means re-auth; `ensure_login` collapses the parallel
+        // 401s into a single login by acting only when not already logging in.
         ensure_login();
         return;
     }
@@ -339,18 +450,25 @@ fn on_miner_response(response: &FetchResponse) {
 
 #[cfg(target_arch = "wasm32")]
 fn on_public_response(response: &FetchResponse) {
-    let idx = STATE.with(|state| {
+    let routed = STATE.with(|state| {
+        let mut state = state.borrow_mut();
         state
-            .borrow()
-            .live
+            .loops
             .public
-            .iter()
-            .position(|id| *id == Some(response.request_id))
+            .iter_mut()
+            .enumerate()
+            .find(|(_, slot)| slot.live == Some(response.request_id))
+            .map(|(idx, slot)| (idx, take_pending(slot)))
     });
-    let Some(idx) = idx else {
+    let Some((idx, pending)) = routed else {
         return;
     };
-    STATE.with(|state| state.borrow_mut().live.public[idx] = None);
+    if pending {
+        // Currency changed while this request was in flight; its body is for the
+        // old currency, so discard it and refresh with the current one.
+        schedule_public_endpoint(idx, None);
+        return;
+    }
 
     if response.ok() {
         let currency = selected_currency();
