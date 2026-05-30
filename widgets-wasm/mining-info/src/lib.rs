@@ -1,5 +1,6 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
+mod chart;
 mod format;
 mod layout;
 mod manifest_params;
@@ -106,7 +107,7 @@ struct PublicEndpoint {
 }
 
 #[cfg(target_arch = "wasm32")]
-const PUBLIC_ENDPOINTS: [PublicEndpoint; 4] = [
+const PUBLIC_ENDPOINTS: [PublicEndpoint; 5] = [
     PublicEndpoint {
         url: public_api::price_stats_url,
         parse: public_price,
@@ -134,6 +135,13 @@ const PUBLIC_ENDPOINTS: [PublicEndpoint; 4] = [
         reset: public_api::reset_hashrate_stats,
         views: &[View::Network, View::InfoOverload],
         currency_dependent: true,
+    },
+    PublicEndpoint {
+        url: public_api::price_history_url,
+        parse: public_history,
+        reset: public_api::reset_price_history,
+        views: &[View::InfoOverload],
+        currency_dependent: false,
     },
 ];
 
@@ -182,6 +190,10 @@ fn public_difficulty(json: &JsonDoc, _currency: Currency, data: &mut PublicData)
 #[cfg(target_arch = "wasm32")]
 fn public_hashrate(json: &JsonDoc, currency: Currency, data: &mut PublicData) {
     public_api::parse_hashrate_stats(json, currency, data);
+}
+#[cfg(target_arch = "wasm32")]
+fn public_history(json: &JsonDoc, _currency: Currency, data: &mut PublicData) {
+    public_api::parse_price_history(json, data);
 }
 
 #[cfg(target_arch = "wasm32")]
