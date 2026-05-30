@@ -94,6 +94,7 @@ unsafe extern "C" {
         body_ptr: *const u8,
         body_len: u32,
     ) -> u32;
+    fn host_fetch_cancel(request_id: u32) -> u32;
 }
 
 type Callback = fn(&FetchResponse);
@@ -144,6 +145,22 @@ pub fn fetch_after(
     FetchRequest::get(url)
         .headers_opt(headers)
         .send_after(delay_ms, callback)
+}
+
+/// Cancel a previously scheduled fetch by its [`FetchRequestId`].
+///
+/// Returns `true` only when the request was still queued (a delayed fetch that
+/// had not fired yet) and was removed before running. Returns `false` when it
+/// is already in flight — the host cannot stop an in-flight request, so its
+/// callback will still fire and the caller should wait for it rather than
+/// scheduling a replacement.
+#[must_use]
+pub fn cancel(request_id: FetchRequestId) -> bool {
+    let cancelled = unsafe { host_fetch_cancel(request_id.to_wire()) } != 0;
+    if cancelled {
+        PENDING.with(|p| p.borrow_mut().remove(&request_id));
+    }
+    cancelled
 }
 
 /// Builder for HTTP fetch requests with method, headers, and optional body.
