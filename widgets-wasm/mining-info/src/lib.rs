@@ -2,6 +2,7 @@
 
 mod chart;
 mod format;
+mod gauge;
 mod layout;
 mod manifest_params;
 mod miner_api;
@@ -44,6 +45,8 @@ const DEBOUNCE_MS: u32 = 300;
 #[cfg(target_arch = "wasm32")]
 type MinerParser = fn(&JsonDoc, &mut MinerData);
 #[cfg(target_arch = "wasm32")]
+type MinerReset = fn(&mut MinerData);
+#[cfg(target_arch = "wasm32")]
 type PublicUrl = fn(Currency) -> String;
 #[cfg(target_arch = "wasm32")]
 type PublicParser = fn(&JsonDoc, Currency, &mut PublicData);
@@ -59,6 +62,7 @@ type PublicReset = fn(&mut PublicData);
 struct MinerEndpoint {
     path: &'static str,
     parse: MinerParser,
+    reset: MinerReset,
     views: &'static [View],
 }
 
@@ -67,26 +71,31 @@ const MINER_ENDPOINTS: [MinerEndpoint; 5] = [
     MinerEndpoint {
         path: "/miner/details",
         parse: miner_details,
+        reset: miner_api::reset_details,
         views: &[View::Geek, View::InfoOverload],
     },
     MinerEndpoint {
         path: "/miner/stats",
         parse: miner_stats,
+        reset: miner_api::reset_stats,
         views: &[View::Mining, View::Geek, View::InfoOverload],
     },
     MinerEndpoint {
         path: "/miner/hw/hashboards",
         parse: miner_hashboards,
+        reset: miner_api::reset_hashboards,
         views: &[View::Mining, View::Geek],
     },
     MinerEndpoint {
         path: "/cooling/state",
         parse: miner_cooling,
+        reset: miner_api::reset_cooling,
         views: &[View::Mining],
     },
     MinerEndpoint {
         path: "/network/",
         parse: miner_network,
+        reset: miner_api::reset_network,
         views: &[View::Mining, View::Geek],
     },
 ];
@@ -234,6 +243,10 @@ fn public_index(handle: PollHandle) -> usize {
 thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
     static HANDLES: RefCell<Option<Handles>> = const { RefCell::new(None) };
+    // Seed the gauge transition from empty: the first render draws a single lit
+    // segment so the host always animates the fill in, even when miner data is
+    // already available on the first frame.
+    static FIRST_FRAME: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
 
 // Whether any miner endpoint feeds the current view. The login serves every miner
@@ -469,6 +482,9 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
             MINER_ENDPOINTS[idx].path,
             response.status
         );
+        STATE.with(|state| {
+            (MINER_ENDPOINTS[idx].reset)(&mut state.borrow_mut().miner);
+        });
     }
     request_frame();
 }
@@ -515,14 +531,28 @@ pub extern "C" fn render(_delta_ms: u32) {
             state.auth == AuthState::Failed,
         )
     });
-    let mut root = match params.view {
-        View::Mining => render::mining(size, &miner),
-        View::Geek => render::geek(size, &miner, &public),
-        View::Network => render::network(size, &public),
-        View::InfoOverload => render::info_overload(size, &miner, &public),
+    let first_frame = FIRST_FRAME.replace(false);
+    let mut root = match viewport.shape {
+        ViewportShape::Round => match params.view {
+            View::Mining => render::round::mining(size, &miner, first_frame),
+            View::Geek => render::round::geek(size, &miner, &public, first_frame),
+            View::InfoOverload => render::round::info_overload(&miner, &public),
+            View::Network => render::round::network(&public),
+        },
+        ViewportShape::Rectangular => match params.view {
+            View::Mining => render::mining(size, &miner),
+            View::Geek => render::geek(size, &miner, &public),
+            View::Network => render::network(size, &public),
+            View::InfoOverload => render::info_overload(size, &miner, &public),
+        },
     };
     if auth_failed && view_needs_miner(params.view) {
-        root = render::with_auth_error(root);
+        root = render::with_auth_error(root, viewport.shape);
     }
     let _ = render_ui(viewport.width, viewport.height, root);
+    // The seeded first frame shows one segment; schedule the real value so the
+    // transition animates from it on the next tick.
+    if first_frame {
+        request_frame();
+    }
 }

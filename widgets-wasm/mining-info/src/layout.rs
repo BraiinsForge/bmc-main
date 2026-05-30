@@ -118,6 +118,27 @@ pub(crate) fn network_layout(class: ViewportClass) -> BlockLayout {
     }
 }
 
+// The round Network face: the two-stat rows place each block in a fixed-width
+// column so the columns line up between rows, and the pair is centered as a
+// group; the larger value type suits the sparse rows. The per-column widths live
+// in the round renderer (each column sizes to its own widest content), so both
+// block_width and block_height are inert here (blocks size to their content).
+pub(crate) fn network_round_layout() -> BlockLayout {
+    BlockLayout {
+        padding_horizontal: 16.0,
+        padding_top: 0.0,
+        padding_bottom: 0.0,
+        horizontal_gap: 14.0,
+        vertical_gap: 0.0,
+        block_width: 200.0,
+        block_height: 54.0,
+        text: TextSizes {
+            title: 16,
+            value: 24,
+        },
+    }
+}
+
 pub(crate) fn info_overload_layout() -> BlockLayout {
     BlockLayout {
         padding_horizontal: 16.0,
