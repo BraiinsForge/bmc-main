@@ -30,6 +30,7 @@ pub(crate) struct MinerData {
     pub(crate) hashrate_ths: Availability<f64>,
     pub(crate) temperature: Availability<TemperatureRange>,
     pub(crate) power_w: Availability<f64>,
+    pub(crate) efficiency_j_th: Availability<f64>,
     pub(crate) mcr_percent: Availability<f64>,
     pub(crate) fan_percent: Availability<f64>,
     pub(crate) uptime_s: Availability<u64>,
