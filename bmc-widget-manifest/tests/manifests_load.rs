@@ -128,8 +128,8 @@ fn shipping_manifests_support_bmm_rectangular_fullscreen_viewports() {
 }
 
 #[test]
-fn wasm_clock_is_the_only_shipping_manifest_with_round_viewport_support() {
-    let round_manifest_paths: Vec<_> = manifest_paths()
+fn round_viewport_support_is_limited_to_clock_and_mining_info() {
+    let mut round_manifest_paths: Vec<_> = manifest_paths()
         .into_iter()
         .filter(|path| {
             let s = std::fs::read_to_string(path).expect("BUG: read manifest");
@@ -139,20 +139,23 @@ fn wasm_clock_is_the_only_shipping_manifest_with_round_viewport_support() {
                 .iter()
                 .any(|v| v.viewport_shape == bmc_widget_manifest::ViewportShape::Round)
         })
+        .map(|path| {
+            path.strip_prefix(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .parent()
+                    .expect("BUG: no parent"),
+            )
+            .expect("BUG: manifest path under workspace")
+            .to_owned()
+        })
         .collect();
+    round_manifest_paths.sort();
 
     assert_eq!(
-        round_manifest_paths
-            .iter()
-            .map(|path| path
-                .strip_prefix(
-                    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                        .parent()
-                        .expect("BUG: no parent"),
-                )
-                .expect("BUG: manifest path under workspace")
-                .to_owned())
-            .collect::<Vec<_>>(),
-        vec![std::path::PathBuf::from("widgets-wasm/clock/manifest.json")],
+        round_manifest_paths,
+        vec![
+            std::path::PathBuf::from("widgets-wasm/clock/manifest.json"),
+            std::path::PathBuf::from("widgets-wasm/mining-info/manifest.json"),
+        ],
     );
 }
