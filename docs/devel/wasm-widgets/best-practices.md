@@ -1,0 +1,94 @@
+# WASM Widget Best Practices
+
+Read this before writing or changing a WASM widget. It collects the conventions and the easy-to-miss host behaviors
+every widget under `widgets-wasm/` (and the SDK examples) should follow. Pair it with [Params](params.md),
+[System Settings](system-settings.md), [Display Geometry](display-geometry.md), and
+[Regression Testing](regression-testing.md), which go deeper on individual topics.
+
+## Split pure logic from the wasm boundary
+
+Keep formatting, layout decisions, data models, and payload parsing in ordinary modules that compile and unit-test on
+the host. Gate only the code that touches host imports — `render`, fetch handling, and anything using `render_ui`,
+`widget_viewport`, `fetch`, `log_warn!`, or `format_number!` — behind `#[cfg(target_arch = "wasm32")]`.
+
+This keeps the bulk of the widget testable with `cargo test` while the host-only surface stays thin. When a host helper
+has to feed pure logic (number formatting is the common case), split the function so the pure part — sign, currency
+symbol, unit assembly, "unavailable" handling — stays host-tested and only the magnitude crosses the boundary.
+
+## Format numbers through the host
+
+Do not hand-roll digit grouping or decimal separators. Use the SDK `format_number!` macro so the device `number_format`
+system setting (grouping symbol and decimal mark) is applied; otherwise the same value prints identically in every
+locale and looks unlocalized.
+
+```rust
+use bmc_wasm_sdk::format_number;
+
+let price = format_number!(104_250.0, 0); // "104,250" / "104 250" / "104.250"
+let rate = format_number!(93.42, 2); //      "93.42"   / "93,42"
+```
+
+`format_number!` is a host call and only runs on `wasm32`. Give native/test builds a plain fallback for the magnitude
+and compose sign, symbol, and unit around it in pure code.
+
+## Read system settings and react to changes
+
+Read `system::current()` on the render path. Because values are formatted from raw state on each frame, a setting change
+shows on the next frame. Export `on_system_update` and call `request_frame()` when a change should appear immediately
+instead of waiting for the next data tick. See [System Settings](system-settings.md).
+
+## Lay out with flex, not main-axis alignment
+
+The layout engine has cross-axis alignment (`CrossAlign`) but no main-axis justify (there is no `space-between`).
+Achieve those effects with `flex` and `spacer(...)`:
+
+- Right-align a value in a label/value row: give the label `flex: 1.0` and set the value's `align: TextAlign::Right`.
+  The label grows and pushes the value to the trailing edge.
+- Fill the viewport vertically (the equivalent of Slint `alignment: space-between`): insert `spacer(1.0)` between rows
+  instead of packing them at the top with a fixed gap.
+
+```rust
+row(props!(cross_align: CrossAlign::Center), [
+    text(label, style!(color: TITLE, flex: 1.0)),
+    text(value, style!(weight: FontWeight::BOLD, align: TextAlign::Right)),
+])
+```
+
+## Keep typography stable
+
+Do not scale font sizes by viewport width. Pick layout bands — column count, spacing, which fields are visible — from
+the actual width and height, but hold font sizes fixed. When space runs out, hide secondary fields rather than shrinking
+or overlapping text.
+
+## Model missing data explicitly
+
+Represent each field as available-or-not (an `Availability`/`Option`-style type), never a sentinel like `0` or an empty
+string. Render a clear placeholder (`N/A` for device-local values, `--` for not-yet-loaded public values). Keep
+independent data sources independent: one source failing must not blank fields owned by another.
+
+## Do not panic on expected failures
+
+Network, API, and auth failures are normal operating conditions. Log a warning and keep the last good data; never panic.
+Reserve `expect("BUG: ...")` for genuine internal invariants.
+
+## Build strings with the SDK macro
+
+Use the SDK `fmt!` macro, not `std`'s `format!`/`write!`. The `no-fmt-in-wasm` CI gate rejects the allocating `std`
+formatting macros in widget code.
+
+## Match the source design
+
+When porting an existing screen, take field sets, labels, units, and spacing structure from the reference design — for
+the BMM screens that is the BOSer Slint source, not a browser mockup. Consistency with the shipped product beats local
+taste.
+
+## Verify before committing
+
+Run these from the repository root unless noted:
+
+- `nix develop -c cargo test -p <widget>` (from `widgets-wasm/`) — host unit tests.
+- `nix develop -c cargo clippy -p <widget> --target wasm32-unknown-unknown -- -D warnings` — the lint gate that actually
+  compiles the gated render code.
+- `just validate-wasm-no-fmt` — rejects allocating `fmt` macros.
+- `just wasm::verify <widget>` — the visual-regression gate. Headless rendering and baseline capture need a GPU
+  (`/dev/dri`); without one this only runs in CI.
