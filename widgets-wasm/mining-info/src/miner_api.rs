@@ -134,27 +134,28 @@ mod tests {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct AuthState {
-    token: Option<String>,
+pub(crate) enum AuthState {
+    #[default]
+    NoToken,
+    LoggingIn,
+    Authenticated(String),
 }
 
 impl AuthState {
     pub(crate) fn token(&self) -> Option<&str> {
-        self.token.as_deref()
-    }
-
-    pub(crate) fn set_token(&mut self, token: String) {
-        self.token = Some(token);
+        match self {
+            Self::Authenticated(token) => Some(token),
+            Self::NoToken | Self::LoggingIn => None,
+        }
     }
 
     pub(crate) fn clear(&mut self) {
-        self.token = None;
+        *self = Self::NoToken;
     }
 
     pub(crate) fn auth_header(&self) -> Option<String> {
-        self.token
-            .as_deref()
-            .map(|token| format!("Authorization: Bearer {token}"))
+        self.token()
+            .map(|token| bmc_wasm_sdk::fmt!("Authorization: {token}"))
     }
 }
 
@@ -179,15 +180,15 @@ mod auth_tests {
     }
 
     #[test]
-    fn builds_bearer_auth_header() {
+    fn builds_bos_auth_header() {
         let mut auth = AuthState::default();
+        assert_eq!(auth, AuthState::NoToken);
         assert_eq!(auth.auth_header(), None);
-        auth.set_token("abc".to_owned());
-        assert_eq!(
-            auth.auth_header(),
-            Some("Authorization: Bearer abc".to_owned())
-        );
+        assert_eq!(AuthState::LoggingIn.auth_header(), None);
+        auth = AuthState::Authenticated("abc".to_owned());
+        assert_eq!(auth.auth_header(), Some("Authorization: abc".to_owned()));
         auth.clear();
+        assert_eq!(auth, AuthState::NoToken);
         assert_eq!(auth.token(), None);
     }
 }
