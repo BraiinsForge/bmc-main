@@ -66,6 +66,7 @@ in
           ../bmc-wasm-runtime/sdk/src
           ../bmc-wasm-runtime/protocol/src
           ../bmc-wasm-runtime/examples
+          ../widgets-wasm
         ];
       };
     } ''
