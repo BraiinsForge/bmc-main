@@ -264,6 +264,110 @@ pub(crate) enum ReplyAction {
     Deliver(Handle),
 }
 
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use std::cell::RefCell;
+
+    use crate::net::{self, FetchRequest, FetchResponse};
+
+    use super::{Config, FetchBackend, FetchSpec, Handle, Method, Registry};
+
+    pub type OnReply = fn(Handle, &FetchResponse);
+
+    struct ProdBackend;
+
+    impl FetchBackend for ProdBackend {
+        fn send(
+            &mut self,
+            spec: &FetchSpec,
+            delay_ms: Option<u32>,
+        ) -> Option<bmc_wasm_protocol::FetchRequestId> {
+            let req = match spec.method {
+                Method::Get => FetchRequest::get(&spec.url),
+                Method::Post => FetchRequest::post(&spec.url),
+                Method::Put => FetchRequest::put(&spec.url),
+                Method::Delete => FetchRequest::delete(&spec.url),
+            }
+            .headers_opt(spec.headers.as_deref());
+            let req = match spec.body.as_deref() {
+                Some(body) => req.body(body),
+                None => req,
+            };
+            match delay_ms {
+                Some(ms) => req.send_after(ms, trampoline),
+                None => req.send(trampoline),
+            }
+        }
+
+        fn cancel(&mut self, id: bmc_wasm_protocol::FetchRequestId) -> bool {
+            net::cancel(id)
+        }
+    }
+
+    thread_local! {
+        static REGISTRY: RefCell<Registry> = RefCell::new(Registry::default());
+        static HANDLERS: RefCell<Vec<OnReply>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn trampoline(response: &FetchResponse) {
+        let action = REGISTRY.with(|r| {
+            r.borrow_mut()
+                .begin_reply(response.request_id, &mut ProdBackend)
+        });
+        if let super::ReplyAction::Deliver(handle) = action {
+            let on_reply = HANDLERS.with(|h| h.borrow()[handle.index()]);
+            on_reply(handle, response);
+            REGISTRY.with(|r| {
+                r.borrow_mut()
+                    .reschedule(handle, response.ok(), &mut ProdBackend);
+            });
+        }
+    }
+
+    #[must_use]
+    pub fn register(build: super::Build, on_reply: OnReply, config: Config) -> Handle {
+        let handle = REGISTRY.with(|r| r.borrow_mut().register(build, config));
+        HANDLERS.with(|h| {
+            let mut h = h.borrow_mut();
+            debug_assert_eq!(h.len(), handle.index());
+            h.push(on_reply);
+        });
+        REGISTRY.with(|r| r.borrow_mut().start(handle, &mut ProdBackend));
+        handle
+    }
+
+    impl Handle {
+        pub fn set_enabled(self, enabled: bool) {
+            REGISTRY.with(|r| r.borrow_mut().set_enabled(self, enabled, &mut ProdBackend));
+        }
+
+        pub fn invalidate(self) {
+            REGISTRY.with(|r| r.borrow_mut().invalidate(self, &mut ProdBackend));
+        }
+
+        /// Treat the reply currently being delivered as unusable: the next
+        /// reschedule retries after `retry_ms` instead of the poll interval.
+        /// Call from a reply handler when a 2xx body can't be used.
+        pub fn retry(self) {
+            REGISTRY.with(|r| r.borrow_mut().request_retry(self));
+        }
+
+        /// Like `retry`, but the next attempt waits `delay_ms` instead of
+        /// `retry_ms` — for a reply handler applying its own backoff.
+        pub fn retry_after(self, delay_ms: u32) {
+            REGISTRY.with(|r| r.borrow_mut().request_retry_after(self, delay_ms));
+        }
+
+        #[must_use]
+        pub fn enabled(self) -> bool {
+            REGISTRY.with(|r| r.borrow().enabled(self))
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub use wasm::{OnReply, register};
+
 #[cfg(test)]
 mod tests {
     use super::*;

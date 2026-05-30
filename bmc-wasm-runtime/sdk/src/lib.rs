@@ -264,6 +264,11 @@ pub use net::*;
 pub use number_input::*;
 pub use orientation::Orientation;
 #[cfg(target_arch = "wasm32")]
+pub use poll::{
+    Config as PollConfig, FetchSpec, Handle as PollHandle, Method as FetchMethod,
+    register as register_poll,
+};
+#[cfg(target_arch = "wasm32")]
 pub use slot::*;
 pub use tree::*;
 pub use tz::Tz;
