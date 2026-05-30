@@ -30,6 +30,9 @@ pub(crate) fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) {
     if let Some(power) = json.f64("/power_stats/approximated_consumption/watt") {
         data.power_w = Availability::Available(power);
     }
+    if let Some(efficiency) = json.f64("/power_stats/efficiency/joule_per_terahash") {
+        data.efficiency_j_th = Availability::Available(efficiency);
+    }
 }
 
 pub(crate) fn parse_hashboards(json: &impl JsonLookup, data: &mut MinerData) {
@@ -118,6 +121,24 @@ mod tests {
         let mut data = MinerData::default();
         parse_details(&json, &mut data);
         assert_eq!(data.uptime_s, Availability::Available(187_020));
+    }
+
+    #[test]
+    fn parses_stats_efficiency_when_present() {
+        let mut json = MapJson::default();
+        json.floats
+            .insert("/power_stats/efficiency/joule_per_terahash", 21.5);
+        let mut data = MinerData::default();
+        parse_stats(&json, &mut data);
+        assert_eq!(data.efficiency_j_th, Availability::Available(21.5));
+    }
+
+    #[test]
+    fn leaves_efficiency_unavailable_when_absent() {
+        let json = MapJson::default();
+        let mut data = MinerData::default();
+        parse_stats(&json, &mut data);
+        assert_eq!(data.efficiency_j_th, Availability::Unavailable);
     }
 
     #[test]
