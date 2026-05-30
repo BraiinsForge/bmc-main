@@ -2,7 +2,16 @@
 
 Developer-facing notes for writing WASM widgets.
 
+Start with [Best Practices](best-practices.md) before writing or changing any widget; the other documents go deeper on
+individual topics.
+
 ## Documents
+
+### [Best Practices](best-practices.md)
+
+The conventions and host behaviors every widget should follow: the pure-logic/wasm split, formatting numbers through the
+host so `number_format` applies, layout with flex instead of main-axis alignment, stable typography, explicit handling
+of missing data, and the pre-commit verification checklist. Read this first.
 
 ### [Params](params.md)
 
