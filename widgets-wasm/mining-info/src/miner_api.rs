@@ -139,13 +139,16 @@ pub(crate) enum AuthState {
     NoToken,
     LoggingIn,
     Authenticated(String),
+    // A login attempt completed and was rejected. Distinct from `LoggingIn` so the
+    // render path can surface the failure; the login poll keeps retrying underneath.
+    Failed,
 }
 
 impl AuthState {
     pub(crate) fn token(&self) -> Option<&str> {
         match self {
             Self::Authenticated(token) => Some(token),
-            Self::NoToken | Self::LoggingIn => None,
+            Self::NoToken | Self::LoggingIn | Self::Failed => None,
         }
     }
 
@@ -181,6 +184,7 @@ mod auth_tests {
         assert_eq!(auth, AuthState::NoToken);
         assert_eq!(auth.auth_header(), None);
         assert_eq!(AuthState::LoggingIn.auth_header(), None);
+        assert_eq!(AuthState::Failed.auth_header(), None);
         auth = AuthState::Authenticated("abc".to_owned());
         assert_eq!(auth.auth_header(), Some("Authorization: abc".to_owned()));
         auth = AuthState::NoToken;
