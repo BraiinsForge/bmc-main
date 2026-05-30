@@ -13,8 +13,8 @@ workspace = true
 resolver = "3"
 members = [
     "blockheight",
-    "bmm-mining",
     "clock",
+    "mining-info",
 ]
 
 # Shared lints for all production widget crates

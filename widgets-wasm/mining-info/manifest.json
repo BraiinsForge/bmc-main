@@ -2,13 +2,13 @@
   "$schema": "../../bmc-widget-manifest/manifest.schema.json",
   "uid": "6d0c6a2d-24d0-4384-8f8b-6f4ac2c9675a",
   "version": "0.1.0",
-  "name": "BMM Mining",
-  "description": "Mining and Bitcoin network dashboard for BMM devices",
+  "name": "Mining Info",
+  "description": "Mining and Bitcoin network dashboard for Bitcoin miner devices",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"
   },
-  "binary": "bin/bmm-mining",
+  "binary": "bin/mining-info",
   "settings": [
     "localization"
   ],
@@ -51,13 +51,13 @@
       "description": "Base BOS REST API URL for the miner",
       "type": "string",
       "format": "uri",
-      "default_value": "http://miner/api/v1"
+      "default_value": "http://localhost/api/v1"
     },
     "miner_password": {
       "name": "Miner password",
       "description": "Password for root login. This is stored as normal widget text until secret params exist.",
       "type": "string",
-      "default_value": ""
+      "default_value": "root"
     },
     "currency": {
       "name": "Currency",

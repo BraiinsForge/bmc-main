@@ -87,7 +87,7 @@ pub extern "C" fn on_system_update() {
 #[cfg(target_arch = "wasm32")]
 fn requeue_miner_on_drop(queued: Option<FetchRequestId>) {
     if queued.is_none() {
-        log_warn!("bmm-mining: miner request not queued, retrying");
+        log_warn!("mining-info: miner request not queued, retrying");
         schedule_miner_refresh(Some(RETRY_MS));
     }
 }
@@ -95,7 +95,7 @@ fn requeue_miner_on_drop(queued: Option<FetchRequestId>) {
 #[cfg(target_arch = "wasm32")]
 fn requeue_public_on_drop(queued: Option<FetchRequestId>) {
     if queued.is_none() {
-        log_warn!("bmm-mining: public request not queued, retrying");
+        log_warn!("mining-info: public request not queued, retrying");
         schedule_public_fetch(Some(RETRY_MS));
     }
 }
@@ -153,7 +153,7 @@ fn on_login_response(response: &FetchResponse) {
             return;
         }
     }
-    log_warn!("bmm-mining: login failed with status {}", response.status);
+    log_warn!("mining-info: login failed with status {}", response.status);
     schedule_miner_refresh(Some(RETRY_MS));
     request_frame();
 }
@@ -185,7 +185,7 @@ fn on_details_response(response: &FetchResponse) {
         fetch_miner_endpoint("/miner/stats", on_stats_response, None);
     } else {
         log_warn!(
-            "bmm-mining: miner details failed with status {}",
+            "mining-info: miner details failed with status {}",
             response.status
         );
         schedule_miner_refresh(Some(RETRY_MS));
@@ -208,7 +208,7 @@ fn on_stats_response(response: &FetchResponse) {
         fetch_miner_endpoint("/miner/hw/hashboards", on_hashboards_response, None);
     } else {
         log_warn!(
-            "bmm-mining: miner stats failed with status {}",
+            "mining-info: miner stats failed with status {}",
             response.status
         );
         schedule_miner_refresh(Some(RETRY_MS));
@@ -231,7 +231,7 @@ fn on_hashboards_response(response: &FetchResponse) {
         fetch_miner_endpoint("/cooling/state", on_cooling_response, None);
     } else {
         log_warn!(
-            "bmm-mining: hashboards failed with status {}",
+            "mining-info: hashboards failed with status {}",
             response.status
         );
         schedule_miner_refresh(Some(RETRY_MS));
@@ -253,7 +253,10 @@ fn on_cooling_response(response: &FetchResponse) {
         });
         fetch_miner_endpoint("/network/", on_network_response, None);
     } else {
-        log_warn!("bmm-mining: cooling failed with status {}", response.status);
+        log_warn!(
+            "mining-info: cooling failed with status {}",
+            response.status
+        );
         schedule_miner_refresh(Some(RETRY_MS));
     }
     request_frame();
@@ -274,7 +277,7 @@ fn on_network_response(response: &FetchResponse) {
         schedule_miner_refresh(Some(MINER_REFRESH_MS));
     } else {
         log_warn!(
-            "bmm-mining: network info failed with status {}",
+            "mining-info: network info failed with status {}",
             response.status
         );
         schedule_miner_refresh(Some(RETRY_MS));
@@ -294,7 +297,7 @@ fn on_price_response(response: &FetchResponse) {
         requeue_public_on_drop(fetch(&url, None, on_block_response));
     } else {
         log_warn!(
-            "bmm-mining: price stats failed with status {}",
+            "mining-info: price stats failed with status {}",
             response.status
         );
         schedule_public_fetch(Some(RETRY_MS));
@@ -314,7 +317,7 @@ fn on_block_response(response: &FetchResponse) {
         requeue_public_on_drop(fetch(&url, None, on_difficulty_response));
     } else {
         log_warn!(
-            "bmm-mining: block data failed with status {}",
+            "mining-info: block data failed with status {}",
             response.status
         );
         schedule_public_fetch(Some(RETRY_MS));
@@ -334,7 +337,7 @@ fn on_difficulty_response(response: &FetchResponse) {
         requeue_public_on_drop(fetch(&url, None, on_hashrate_response));
     } else {
         log_warn!(
-            "bmm-mining: difficulty stats failed with status {}",
+            "mining-info: difficulty stats failed with status {}",
             response.status
         );
         schedule_public_fetch(Some(RETRY_MS));
@@ -353,7 +356,7 @@ fn on_hashrate_response(response: &FetchResponse) {
         schedule_public_fetch(Some(PUBLIC_REFRESH_MS));
     } else {
         log_warn!(
-            "bmm-mining: hashrate stats failed with status {}",
+            "mining-info: hashrate stats failed with status {}",
             response.status
         );
         schedule_public_fetch(Some(RETRY_MS));
