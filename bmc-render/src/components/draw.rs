@@ -28,6 +28,17 @@ struct MeshOverride {
     args: MeshDrawArgs,
 }
 
+#[derive(Debug, Clone)]
+struct ArcOverride {
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    start_angle: f32,
+    end_angle: f32,
+    width: f32,
+    segments: ArcSegments,
+}
+
 /// Apply the canvas-level `color_override` (forces a solid recolour) and
 /// `alpha` opacity to a shape's `fill`.
 fn effective_fill(fill: &Fill, color_override: Option<Color>, alpha: f32) -> Fill {
@@ -51,6 +62,35 @@ fn effective_arc_fill(fill: &ArcFill, color_override: Option<Color>, alpha: f32)
         base.scale_alpha(alpha)
     } else {
         base
+    }
+}
+
+fn remap_arc_segments(
+    segments: &ArcSegments,
+    from_start: f32,
+    from_end: f32,
+    to_start: f32,
+    to_end: f32,
+) -> ArcSegments {
+    match segments {
+        ArcSegments::Continuous => ArcSegments::Continuous,
+        ArcSegments::Explicit(spans) => {
+            let from_sweep = from_end - from_start;
+            let to_sweep = to_end - to_start;
+            if from_sweep.abs() < f32::EPSILON {
+                return ArcSegments::Explicit(Vec::new());
+            }
+            ArcSegments::Explicit(
+                spans
+                    .iter()
+                    .map(|&(start, end)| {
+                        let t0 = (start - from_start) / from_sweep;
+                        let t1 = (end - from_start) / from_sweep;
+                        (to_start + t0 * to_sweep, to_start + t1 * to_sweep)
+                    })
+                    .collect(),
+            )
+        }
     }
 }
 
@@ -428,6 +468,7 @@ fn render_draw_inner(
             let mut acc_color: Option<Color> = color_override;
             let mut sphere_override: Option<(f32, f32, f32, f32, f32)> = None;
             let mut mesh_override: Option<MeshOverride> = None;
+            let mut arc_override: Option<ArcOverride> = None;
 
             // Process animations
             for anim_def in animations {
@@ -511,16 +552,33 @@ fn render_draw_inner(
                     let eased_t = apply_easing(trans_def.easing, t);
                     let interp =
                         interpolate_draw_values(&state.from, &state.target, eased_t, *color_space);
-                    // Apply interpolated overrides to accumulated state
-                    acc_offset_x += interp.x - current_values.x;
-                    acc_offset_y += interp.y - current_values.y;
-                    acc_scale *= if current_values.w > 0.0 {
-                        interp.w / current_values.w
+                    if let DrawCommand::Arc { segments, .. } = inner.as_ref() {
+                        arc_override = Some(ArcOverride {
+                            cx: interp.x,
+                            cy: interp.y,
+                            radius: interp.w,
+                            start_angle: interp.arc_start_angle,
+                            end_angle: interp.arc_start_angle + interp.arc_sweep,
+                            width: interp.arc_width,
+                            segments: remap_arc_segments(
+                                segments,
+                                current_values.arc_start_angle,
+                                current_values.arc_start_angle + current_values.arc_sweep,
+                                interp.arc_start_angle,
+                                interp.arc_start_angle + interp.arc_sweep,
+                            ),
+                        });
                     } else {
-                        1.0
-                    };
-                    acc_orbit_angle += interp.angle - current_values.angle;
-                    acc_rotation += interp.rotation - current_values.rotation;
+                        acc_offset_x += interp.x - current_values.x;
+                        acc_offset_y += interp.y - current_values.y;
+                        acc_scale *= if current_values.w > 0.0 {
+                            interp.w / current_values.w
+                        } else {
+                            1.0
+                        };
+                        acc_orbit_angle += interp.angle - current_values.angle;
+                        acc_rotation += interp.rotation - current_values.rotation;
+                    }
                     if interp.color != current_values.color {
                         acc_color = Some(interp.color);
                     }
@@ -630,6 +688,34 @@ fn render_draw_inner(
                     h: *h,
                     mesh_id: *mesh_id,
                     args: mo.args,
+                };
+                render_draw_inner(
+                    renderer,
+                    &overridden,
+                    cx,
+                    cy,
+                    cw,
+                    ch,
+                    acc_offset_x,
+                    acc_offset_y,
+                    acc_rotation,
+                    acc_scale,
+                    acc_alpha,
+                    acc_orbit_angle,
+                    acc_color,
+                    anim_ctx,
+                );
+            } else if let (Some(ao), DrawCommand::Arc { fill, .. }) = (arc_override, inner.as_ref())
+            {
+                let overridden = DrawCommand::Arc {
+                    cx: ao.cx,
+                    cy: ao.cy,
+                    radius: ao.radius,
+                    start_angle: ao.start_angle,
+                    end_angle: ao.end_angle,
+                    width: ao.width,
+                    fill: *fill,
+                    segments: ao.segments,
                 };
                 render_draw_inner(
                     renderer,
@@ -1004,6 +1090,9 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             cx,
             cy,
             radius,
+            start_angle,
+            end_angle,
+            width,
             fill,
             ..
         } => PrevDrawValues {
@@ -1011,6 +1100,9 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             y: *cy,
             w: *radius,
             color: fill.primary_color(),
+            arc_start_angle: *start_angle,
+            arc_sweep: *end_angle - *start_angle,
+            arc_width: *width,
             ..Default::default()
         },
         DrawCommand::Orbit {
@@ -1103,6 +1195,10 @@ fn interpolate_draw_values(
         angle: a.angle + shortest_angle_delta(a.angle, b.angle) * t,
         radius: a.radius + (b.radius - a.radius) * t,
         rotation: a.rotation + shortest_angle_delta(a.rotation, b.rotation) * t,
+        arc_start_angle: a.arc_start_angle
+            + shortest_angle_delta(a.arc_start_angle, b.arc_start_angle) * t,
+        arc_sweep: a.arc_sweep + (b.arc_sweep - a.arc_sweep) * t,
+        arc_width: a.arc_width + (b.arc_width - a.arc_width) * t,
         center_lat: a.center_lat + (b.center_lat - a.center_lat) * t,
         center_lon: a.center_lon + shortest_angle_delta_deg(a.center_lon, b.center_lon) * t,
         zoom: a.zoom + (b.zoom - a.zoom) * t,
@@ -1145,6 +1241,16 @@ mod tests {
         Restore,
         Translate(f32, f32),
         Rotate(f32),
+        Arc {
+            cx: f32,
+            cy: f32,
+            radius: f32,
+            start_angle: f32,
+            end_angle: f32,
+            width: f32,
+            fill: ArcFill,
+            segments: ArcSegments,
+        },
         CurvedText {
             cx: f32,
             cy: f32,
@@ -1184,15 +1290,25 @@ mod tests {
 
         fn stroke_arc(
             &mut self,
-            _cx: f32,
-            _cy: f32,
-            _radius: f32,
-            _start_angle: f32,
-            _end_angle: f32,
-            _width: f32,
-            _fill: &ArcFill,
-            _segments: &ArcSegments,
+            cx: f32,
+            cy: f32,
+            radius: f32,
+            start_angle: f32,
+            end_angle: f32,
+            width: f32,
+            fill: &ArcFill,
+            segments: &ArcSegments,
         ) {
+            self.events.push(RenderEvent::Arc {
+                cx,
+                cy,
+                radius,
+                start_angle,
+                end_angle,
+                width,
+                fill: *fill,
+                segments: segments.clone(),
+            });
         }
 
         fn stroke_rect(
@@ -1442,6 +1558,97 @@ mod tests {
             mesh_slot_counter: 0,
             has_active: false,
         }
+    }
+
+    fn transition_arc(end_angle: f32) -> DrawCommand {
+        DrawCommand::Modified {
+            animations: Vec::new(),
+            transition: Some(crate::tree::HostTransitionDef {
+                id_hash: 42,
+                duration_ms: 1000,
+                easing: Easing::Linear,
+            }),
+            color_space: ColorSpace::default(),
+            inner: Box::new(DrawCommand::Arc {
+                cx: 20.0,
+                cy: 30.0,
+                radius: 40.0,
+                start_angle: 0.0,
+                end_angle,
+                width: 6.0,
+                fill: ArcFill::Solid(Color::from_rgb(1, 2, 3)),
+                segments: ArcSegments::Continuous,
+            }),
+        }
+    }
+
+    #[test]
+    fn arc_transition_interpolates_sweep() {
+        let mut renderer = RecordingRenderer::default();
+        let mut animation_states = HashMap::new();
+        let mut transition_states = HashMap::new();
+        let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
+
+        render_draw_inner(
+            &mut renderer,
+            &transition_arc(1.0),
+            0.0,
+            0.0,
+            100.0,
+            100.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+            0.0,
+            None,
+            &mut anim_ctx,
+        );
+
+        renderer.events.clear();
+        anim_ctx.delta_ms = 500;
+        anim_ctx.frame_counter = 1;
+
+        render_draw_inner(
+            &mut renderer,
+            &transition_arc(3.0),
+            0.0,
+            0.0,
+            100.0,
+            100.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+            0.0,
+            None,
+            &mut anim_ctx,
+        );
+
+        let [
+            RenderEvent::Arc {
+                cx,
+                cy,
+                radius,
+                start_angle: 0.0,
+                end_angle,
+                width,
+                fill,
+                segments,
+            },
+        ] = &renderer.events[..]
+        else {
+            panic!("BUG: expected one arc draw event");
+        };
+        assert_eq!(cx.to_bits(), 20.0_f32.to_bits());
+        assert_eq!(cy.to_bits(), 30.0_f32.to_bits());
+        assert_eq!(radius.to_bits(), 40.0_f32.to_bits());
+        assert_eq!(end_angle.to_bits(), 2.0_f32.to_bits());
+        assert_eq!(width.to_bits(), 6.0_f32.to_bits());
+        assert_eq!(*fill, ArcFill::Solid(Color::from_rgb(1, 2, 3)));
+        assert_eq!(*segments, ArcSegments::Continuous);
     }
 
     #[test]
