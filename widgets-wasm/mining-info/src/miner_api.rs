@@ -30,6 +30,9 @@ pub(crate) fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) {
     if let Some(power) = json.f64("/power_stats/approximated_consumption/watt") {
         data.power_w = Availability::Available(power);
     }
+    if let Some(efficiency) = json.f64("/power_stats/efficiency/joule_per_terahash") {
+        data.efficiency_j_th = Availability::Available(efficiency);
+    }
 }
 
 pub(crate) fn parse_hashboards(json: &impl JsonLookup, data: &mut MinerData) {
@@ -70,6 +73,7 @@ pub(crate) fn reset_details(data: &mut MinerData) {
 pub(crate) fn reset_stats(data: &mut MinerData) {
     data.hashrate_ths = Availability::Unavailable;
     data.power_w = Availability::Unavailable;
+    data.efficiency_j_th = Availability::Unavailable;
 }
 
 pub(crate) fn reset_hashboards(data: &mut MinerData) {
@@ -155,10 +159,29 @@ mod tests {
     }
 
     #[test]
+    fn parses_stats_efficiency_when_present() {
+        let mut json = MapJson::default();
+        json.floats
+            .insert("/power_stats/efficiency/joule_per_terahash", 21.5);
+        let mut data = MinerData::default();
+        parse_stats(&json, &mut data);
+        assert_eq!(data.efficiency_j_th, Availability::Available(21.5));
+    }
+
+    #[test]
+    fn leaves_efficiency_unavailable_when_absent() {
+        let json = MapJson::default();
+        let mut data = MinerData::default();
+        parse_stats(&json, &mut data);
+        assert_eq!(data.efficiency_j_th, Availability::Unavailable);
+    }
+
+    #[test]
     fn reset_clears_only_its_own_fields() {
         let mut data = MinerData {
             hashrate_ths: Availability::Available(4.0),
             power_w: Availability::Available(120.0),
+            efficiency_j_th: Availability::Available(21.5),
             mcr_percent: Availability::Available(90.0),
             fan_percent: Availability::Available(72.0),
             ..MinerData::default()
@@ -166,6 +189,7 @@ mod tests {
         reset_stats(&mut data);
         assert_eq!(data.hashrate_ths, Availability::Unavailable);
         assert_eq!(data.power_w, Availability::Unavailable);
+        assert_eq!(data.efficiency_j_th, Availability::Unavailable);
         // Fields owned by other endpoints are untouched.
         assert_eq!(data.mcr_percent, Availability::Available(90.0));
         assert_eq!(data.fan_percent, Availability::Available(72.0));
@@ -180,6 +204,7 @@ mod tests {
                 chip_c: 74.0,
             }),
             power_w: Availability::Available(120.0),
+            efficiency_j_th: Availability::Available(21.5),
             mcr_percent: Availability::Available(90.0),
             fan_percent: Availability::Available(72.0),
             uptime_s: Availability::Available(187_020),
