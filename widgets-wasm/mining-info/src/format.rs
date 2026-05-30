@@ -106,6 +106,15 @@ pub(crate) fn signed_percent(value: Availability<f64>, decimals: u32) -> String 
     }
 }
 
+pub(crate) fn signed_percent_unit(value: Availability<f64>, decimals: u32) -> String {
+    let Availability::Available(_) = value else {
+        return unavailable();
+    };
+    let mut out = signed_percent(value, decimals);
+    out.push('%');
+    out
+}
+
 pub(crate) fn temperature(value: Availability<TemperatureRange>) -> String {
     match value {
         Availability::Available(value) => {
@@ -193,6 +202,15 @@ mod tests {
     fn formats_signed_percent_with_explicit_sign() {
         assert_eq!(signed_percent(Availability::Available(1.82), 2), "+1.82");
         assert_eq!(signed_percent(Availability::Available(-0.77), 2), "-0.77");
+    }
+
+    #[test]
+    fn signed_percent_unit_omits_percent_when_unavailable() {
+        assert_eq!(
+            signed_percent_unit(Availability::Available(1.82), 2),
+            "+1.82%"
+        );
+        assert_eq!(signed_percent_unit(Availability::Unavailable, 2), "N/A");
     }
 
     #[test]

@@ -97,6 +97,30 @@ pub(crate) fn hashrate_url(currency: Currency) -> String {
     )
 }
 
+// Stop after this many samples even if the endpoint keeps returning points, so a
+// malformed or unexpectedly long response can't grow the series unbounded.
+const MAX_PRICE_HISTORY_POINTS: usize = 512;
+
+// The series renders as a normalized sparkline, so its shape is the same in any
+// fiat: the URL carries no currency and the endpoint is not refetched on a
+// currency change.
+pub(crate) fn price_history_url(_currency: Currency) -> String {
+    "https://public-api.braiins.com/v1/price-history?timeframe=1d".to_owned()
+}
+
+pub(crate) fn parse_price_history(json: &impl JsonLookup, data: &mut PublicData) {
+    let mut points = Vec::new();
+    for index in 0..MAX_PRICE_HISTORY_POINTS {
+        let Some(price) = json.f64(&bmc_wasm_sdk::fmt!("/price/{}/y", index)) else {
+            break;
+        };
+        points.push(price);
+    }
+    if !points.is_empty() {
+        data.btc_price_history = points;
+    }
+}
+
 pub(crate) fn reset_price_stats(data: &mut PublicData) {
     data.btc_price = Availability::Unavailable;
     data.btc_change_24h_percent = Availability::Unavailable;
@@ -118,6 +142,10 @@ pub(crate) fn reset_hashrate_stats(data: &mut PublicData) {
     data.avg_fee_percent = Availability::Unavailable;
     data.hashprice = Availability::Unavailable;
     data.hashvalue_sat_th_day = Availability::Unavailable;
+}
+
+pub(crate) fn reset_price_history(data: &mut PublicData) {
+    data.btc_price_history.clear();
 }
 
 #[cfg(test)]
@@ -150,6 +178,22 @@ mod tests {
             panic!("BUG: hashvalue should be available");
         };
         assert!((value - 5.02).abs() < 1e-9);
+    }
+
+    #[test]
+    fn collects_price_history_in_order_until_first_gap() {
+        let mut json = MapJson::default();
+        json.floats.insert("/price/0/y", 101_000.0);
+        json.floats.insert("/price/1/y", 102_500.0);
+        json.floats.insert("/price/2/y", 100_750.0);
+        // index 3 missing on purpose: the series ends at the first gap
+        json.floats.insert("/price/4/y", 999_999.0);
+        let mut data = PublicData::default();
+        parse_price_history(&json, &mut data);
+        assert_eq!(
+            data.btc_price_history,
+            vec![101_000.0, 102_500.0, 100_750.0]
+        );
     }
 
     #[test]

@@ -55,6 +55,9 @@ pub(crate) struct PublicData {
     pub(crate) block_height: Availability<u64>,
     pub(crate) hashprice: Availability<Money>,
     pub(crate) hashvalue_sat_th_day: Availability<f64>,
+    // Chronological 1d price samples for the header sparkline. Empty until the
+    // price-history endpoint replies; the chart is omitted while empty.
+    pub(crate) btc_price_history: Vec<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
