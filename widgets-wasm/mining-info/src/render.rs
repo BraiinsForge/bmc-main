@@ -21,6 +21,53 @@ pub(crate) struct RenderSize {
     pub(crate) height: u32,
 }
 
+const AUTH_ERROR_TEXT: &str = "Cannot authenticate";
+const AUTH_ERROR_SIZE: u32 = 14;
+const AUTH_ERROR_ICON_PX: f32 = 16.0;
+const AUTH_ERROR_INSET: f32 = 8.0;
+
+// A small absolutely-positioned banner pinned to the bottom-left corner. Only the
+// bottom and left insets are set, so it sizes to its content and anchors there,
+// overlapping whatever the view draws underneath.
+fn auth_error_overlay() -> Node {
+    row(
+        props!(
+            inset_bottom: AUTH_ERROR_INSET,
+            inset_left: AUTH_ERROR_INSET,
+            background: GRAY_100,
+            padding: 6.0,
+            gap: 6.0,
+            cross_align: CrossAlign::Center
+        ),
+        [
+            canvas(
+                props!(width: AUTH_ERROR_ICON_PX, height: AUTH_ERROR_ICON_PX),
+                [Draw::svg_builtin(
+                    0.0,
+                    0.0,
+                    AUTH_ERROR_ICON_PX,
+                    AUTH_ERROR_ICON_PX,
+                    ICON_WARN_FILLED,
+                    RED_50,
+                )],
+            ),
+            text(
+                AUTH_ERROR_TEXT,
+                style!(size: AUTH_ERROR_SIZE, weight: FontWeight::BOLD, color: RED_50),
+            ),
+        ],
+    )
+}
+
+// Overlay the auth-error banner onto a view's root column as an absolute child so
+// it floats over the existing layout without disturbing it.
+pub(crate) fn with_auth_error(mut root: Node) -> Node {
+    if let Node::Column(_, children) = &mut root {
+        children.push(auth_error_overlay());
+    }
+    root
+}
+
 fn viewport(size: RenderSize) -> Viewport {
     Viewport {
         width: size.width,

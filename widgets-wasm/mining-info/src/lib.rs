@@ -33,6 +33,10 @@ const MINER_REFRESH_MS: u32 = 5_000;
 const PUBLIC_REFRESH_MS: u32 = 60_000;
 #[cfg(target_arch = "wasm32")]
 const RETRY_MS: u32 = 10_000;
+// Ceiling for the login backoff: a persistently-wrong login stops retrying more
+// often than this rather than hammering `/auth/login` every `RETRY_MS` forever.
+#[cfg(target_arch = "wasm32")]
+const MAX_LOGIN_RETRY_MS: u32 = 300_000;
 // Settle a burst of rapid parameter changes before refetching: a change schedules
 // the request after this delay rather than firing immediately, and the next
 // change cancels the still-queued timer and restarts it, so dragging a control or
@@ -190,6 +194,19 @@ struct State {
     miner: MinerData,
     public: PublicData,
     auth: AuthState,
+    // Consecutive failed login replies, driving the retry backoff. Reset on a
+    // successful login and on a credential change.
+    login_failures: u32,
+}
+
+// Exponential backoff for repeated login failures: the delay doubles per
+// consecutive failure off `base_ms`, capped at `cap_ms`, so a persistently
+// wrong login (e.g. a 2xx with no token) stops hammering `/auth/login`.
+fn login_retry_delay(failures: u32, base_ms: u32, cap_ms: u32) -> u32 {
+    match 1_u32.checked_shl(failures) {
+        Some(multiplier) => base_ms.saturating_mul(multiplier).min(cap_ms),
+        None => cap_ms,
+    }
 }
 
 // Handles for the registered polls. They are registered in the order login,
@@ -319,6 +336,7 @@ pub extern "C" fn on_params_update() {
                 STATE.with(|state| {
                     let mut state = state.borrow_mut();
                     miner_api::reset_all(&mut state.miner);
+                    state.login_failures = 0;
                     state.auth = if password_empty {
                         AuthState::NoToken
                     } else {
@@ -405,14 +423,20 @@ fn build_public(handle: PollHandle) -> Option<FetchSpec> {
 }
 
 // Store the token and invalidate the miner endpoints so the ones the view needs
-// refetch with it; on failure stay in `LoggingIn` and let the poll's retry loop
-// re-attempt the login.
+// refetch with it, and clear the failure backoff. Any other outcome surfaces the
+// auth-error overlay and re-arms the one-shot login with `retry_after`, backing
+// off exponentially per consecutive failure so a persistently-wrong login (e.g.
+// a 2xx without a token) stops hammering the endpoint instead of wedging.
 #[cfg(target_arch = "wasm32")]
-fn on_login_reply(_handle: PollHandle, response: &FetchResponse) {
+fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
     if response.ok()
         && let Some(token) = response.json().str("/token")
     {
-        STATE.with(|state| state.borrow_mut().auth = AuthState::Authenticated(token));
+        STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            state.auth = AuthState::Authenticated(token);
+            state.login_failures = 0;
+        });
         HANDLES.with(|handles| {
             if let Some(handles) = handles.borrow().as_ref() {
                 for miner in &handles.miner {
@@ -422,11 +446,15 @@ fn on_login_reply(_handle: PollHandle, response: &FetchResponse) {
         });
     } else {
         log_warn!("mining-info: login failed with status {}", response.status);
-        STATE.with(|state| {
+        let delay = STATE.with(|state| {
             let mut state = state.borrow_mut();
             miner_api::reset_all(&mut state.miner);
-            state.auth = AuthState::LoggingIn;
+            state.auth = AuthState::Failed;
+            let delay = login_retry_delay(state.login_failures, RETRY_MS, MAX_LOGIN_RETRY_MS);
+            state.login_failures = state.login_failures.saturating_add(1);
+            delay
         });
+        handle.retry_after(delay);
     }
     request_frame();
 }
@@ -492,15 +520,40 @@ pub extern "C" fn render(_delta_ms: u32) {
         width: viewport.width,
         height: viewport.height,
     };
-    let (miner, public) = STATE.with(|state| {
+    let (miner, public, auth_failed) = STATE.with(|state| {
         let state = state.borrow();
-        (state.miner.clone(), state.public.clone())
+        (
+            state.miner.clone(),
+            state.public.clone(),
+            state.auth == AuthState::Failed,
+        )
     });
-    let root = match params.view {
+    let mut root = match params.view {
         View::Mining => render::mining(size, &miner),
         View::Geek => render::geek(size, &miner, &public),
         View::Network => render::network(size, &public),
         View::InfoOverload => render::info_overload(size, &miner, &public),
     };
+    if auth_failed && view_needs_miner(params.view) {
+        root = render::with_auth_error(root);
+    }
     let _ = render_ui(viewport.width, viewport.height, root);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::login_retry_delay;
+
+    #[test]
+    fn login_retry_delay_doubles_per_failure_then_caps() {
+        let base = 10_000;
+        let cap = 300_000;
+        assert_eq!(login_retry_delay(0, base, cap), 10_000);
+        assert_eq!(login_retry_delay(1, base, cap), 20_000);
+        assert_eq!(login_retry_delay(2, base, cap), 40_000);
+        assert_eq!(login_retry_delay(4, base, cap), 160_000);
+        // 10s << 5 = 320s exceeds the cap, and every larger count stays capped.
+        assert_eq!(login_retry_delay(5, base, cap), cap);
+        assert_eq!(login_retry_delay(99, base, cap), cap);
+    }
 }
