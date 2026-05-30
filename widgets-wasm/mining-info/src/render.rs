@@ -6,6 +6,7 @@
 )]
 use bmc_wasm_sdk::*;
 
+use crate::chart;
 use crate::format;
 use crate::layout::{self, Viewport};
 use crate::model::{Availability, MinerData, PublicData};
@@ -14,6 +15,16 @@ const TITLE: Color = GRAY_50;
 const UNIT: Color = GRAY_50;
 const VALUE: Color = WHITE;
 const BACKGROUND: Color = BLACK;
+
+// Storybook BTC sparkline palette: green when the 1d series ends above where it
+// started, red otherwise. The area gradient fades from a tinted top down to
+// fully transparent; the falling tint is stronger to read on a dark header.
+const CHART_UP: Color = Color::from_rgb(0x34, 0xC0, 0x6A);
+const CHART_DOWN: Color = Color::from_rgb(0xF9, 0x53, 0x55);
+const CHART_UP_TOP_ALPHA: f32 = 0.16;
+const CHART_DOWN_TOP_ALPHA: f32 = 0.30;
+const CHART_STROKE: f32 = 2.0;
+const CHART_INSET: f32 = 2.0;
 
 #[derive(Clone, Copy)]
 pub(crate) struct RenderSize {
@@ -451,49 +462,70 @@ pub(crate) fn network(size: RenderSize, public: &PublicData) -> Node {
     space_between_rows(rows, metrics)
 }
 
-fn info_overload_header(public: &PublicData, metrics: layout::BlockLayout) -> Node {
+// The header sparkline. Returns an empty fixed-width column when the series has
+// too few points to draw, so the price column keeps its grid slot whether or not
+// the history has loaded.
+fn price_chart(history: &[f64], metrics: layout::BlockLayout) -> Node {
+    let width = metrics.block_width;
+    let height = metrics.block_height;
+    let line = chart::series_points(history, width, height, CHART_INSET);
+    if line.len() < 2 {
+        return fixed_width(width);
+    }
+    let (color, top_alpha) = if chart::is_rising(history) {
+        (CHART_UP, CHART_UP_TOP_ALPHA)
+    } else {
+        (CHART_DOWN, CHART_DOWN_TOP_ALPHA)
+    };
+    let mut area = line.clone();
+    area.push((width, height));
+    area.push((0.0, height));
+    canvas(
+        props!(width: width, height: height),
+        [
+            fill!(area, linear: (color.with_alpha(top_alpha), color.with_alpha(0.0)), smooth),
+            path!(line, stroke: CHART_STROKE, color: color, smooth),
+        ],
+    )
+}
+
+fn info_overload_header(
+    public: &PublicData,
+    show_price_graph: bool,
+    metrics: layout::BlockLayout,
+) -> Node {
     let change_color = match public.btc_change_24h_percent {
         Availability::Available(value) if value >= 0.0 => GREEN_50,
         Availability::Available(_) => RED_60,
         Availability::Unavailable => TITLE,
     };
 
-    // Glue the `%` directly onto the value to keep the headline tight and in the
-    // change color, but only when the value is real so an unavailable change reads
-    // as a clean `N/A` rather than `N/A%`.
-    let change = format::signed_percent(public.btc_change_24h_percent, 2);
-    let change = if unit_visible(&change) {
-        bmc_wasm_sdk::fmt!("{change}%")
-    } else {
-        change
-    };
+    let mut blocks = vec![block(
+        "Bitcoin (24h)",
+        format::signed_percent_unit(public.btc_change_24h_percent, 2),
+        None,
+        metrics,
+        change_color,
+        FontWeight::BOLD,
+    )];
+    if show_price_graph {
+        blocks.push(price_chart(&public.btc_price_history, metrics));
+    }
+    blocks.push(text(
+        format::money(public.btc_price, 0),
+        style!(
+            size: BTC_PRICE_SIZE,
+            weight: FontWeight::BOLD,
+            color: WHITE,
+            width: metrics.block_width
+        ),
+    ));
 
     col(
         props!(background: GRAY_100),
         [
             fixed_height(18.0),
-            block_row(
-                vec![
-                    block(
-                        "Bitcoin (24h)",
-                        change,
-                        None,
-                        metrics,
-                        change_color,
-                        FontWeight::BOLD,
-                    ),
-                    text(
-                        format::money(public.btc_price, 0),
-                        style!(
-                            size: BTC_PRICE_SIZE,
-                            weight: FontWeight::BOLD,
-                            color: WHITE,
-                            width: metrics.block_width
-                        ),
-                    ),
-                ],
-                metrics,
-            ),
+            block_row(blocks, metrics),
             fixed_height(18.0),
         ],
     )
@@ -562,7 +594,6 @@ fn info_overload_bottom_row(
     metrics: layout::BlockLayout,
 ) -> Node {
     if fields.show_fee_percent && fields.show_hashvalue {
-        let fee_value = format::approx_fixed(public.avg_fee_percent, 1);
         return block_row(
             vec![
                 text_block(
@@ -571,7 +602,12 @@ fn info_overload_bottom_row(
                     None,
                     metrics,
                 ),
-                text_block("Fees (144 Blocks)", fee_value, Some("%"), metrics),
+                text_block(
+                    "Fees (144 Blocks)",
+                    format::approx_fixed(public.avg_fee_percent, 1),
+                    Some("%"),
+                    metrics,
+                ),
                 text_block(
                     "Hashvalue",
                     format::fixed_strip_zero_fraction(public.hashvalue_sat_th_day, 2),
@@ -609,7 +645,7 @@ pub(crate) fn info_overload(size: RenderSize, miner: &MinerData, public: &Public
     col(
         props!(background: BACKGROUND),
         [
-            info_overload_header(public, metrics),
+            info_overload_header(public, fields.show_price_graph, metrics),
             space_between_rows(rows, metrics),
         ],
     )
