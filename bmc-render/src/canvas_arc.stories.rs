@@ -1,5 +1,7 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
+use std::f32::consts::TAU;
+
 use crate::prelude::*;
 
 story_meta! { title: "Canvas/Arcs" }
@@ -11,8 +13,9 @@ const YELLOW: Color = Color::from_rgb(0xF5, 0xD9, 0x0A);
 #[story(default)]
 fn rings(c: &mut StoryCtx) {
     let (cx, cy) = (160.0, 160.0);
-    let a0 = 2.35;
-    let a1 = 7.07;
+    let a0 = c.slider("Start angle", 2.35, 0.0, TAU).get();
+    let portion = c.slider("Circle portion", 0.75, 0.05, 1.0).get();
+    let a1 = a0 + TAU * portion;
 
     c.ui.div(
         (320, 320),
@@ -29,7 +32,8 @@ fn rings(c: &mut StoryCtx) {
                     ArcFill::gradient(GREEN, TEAL),
                     ArcSegments::Continuous,
                     ArcCap::Round,
-                ),
+                )
+                .transition("outer-ring", 500, Easing::EaseOutCubic),
                 Draw::arc(
                     cx,
                     cy,
@@ -40,7 +44,8 @@ fn rings(c: &mut StoryCtx) {
                     ArcFill::gradient(GREEN, YELLOW),
                     ArcSegments::short_ends(a0, a1, 24, 0.04, 0.5),
                     ArcCap::Round,
-                ),
+                )
+                .transition("inner-segments", 500, Easing::EaseOutCubic),
             ],
         ),
     );
