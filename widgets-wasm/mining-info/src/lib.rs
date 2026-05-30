@@ -425,7 +425,7 @@ fn on_login_reply(_handle: PollHandle, response: &FetchResponse) {
         STATE.with(|state| {
             let mut state = state.borrow_mut();
             miner_api::reset_all(&mut state.miner);
-            state.auth = AuthState::LoggingIn;
+            state.auth = AuthState::Failed;
         });
     }
     request_frame();
@@ -495,15 +495,22 @@ pub extern "C" fn render(_delta_ms: u32) {
         width: viewport.width,
         height: viewport.height,
     };
-    let (miner, public) = STATE.with(|state| {
+    let (miner, public, auth_failed) = STATE.with(|state| {
         let state = state.borrow();
-        (state.miner.clone(), state.public.clone())
+        (
+            state.miner.clone(),
+            state.public.clone(),
+            state.auth == AuthState::Failed,
+        )
     });
-    let root = match params.view {
+    let mut root = match params.view {
         View::Mining => render::mining(size, &miner),
         View::Geek => render::geek(size, &miner, &public),
         View::Network => render::network(size, &public),
         View::InfoOverload => render::info_overload(size, &miner, &public),
     };
+    if auth_failed && view_needs_miner(params.view) {
+        root = render::with_auth_error(root);
+    }
     let _ = render_ui(viewport.width, viewport.height, root);
 }
