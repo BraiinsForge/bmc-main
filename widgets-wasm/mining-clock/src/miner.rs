@@ -8,7 +8,7 @@
     )
 )]
 
-use bmc_wasm_sdk::Color;
+use bmc_wasm_sdk::{Color, ufmt};
 
 pub(crate) trait JsonLookup {
     #[cfg_attr(
@@ -134,13 +134,13 @@ pub(crate) fn power_ramp_color(fraction: f32) -> Color {
         return POWER_RED_ANCHOR;
     }
     if fraction < POWER_GOLD_FRACTION {
-        lerp_color(
+        hsv_lerp_color(
             POWER_GREEN_ANCHOR,
             POWER_GOLD_ANCHOR,
             fraction / POWER_GOLD_FRACTION,
         )
     } else {
-        lerp_color(
+        hsv_lerp_color(
             POWER_GOLD_ANCHOR,
             POWER_RED_ANCHOR,
             (fraction - POWER_GOLD_FRACTION) / (1.0 - POWER_GOLD_FRACTION),
@@ -148,26 +148,70 @@ pub(crate) fn power_ramp_color(fraction: f32) -> Color {
     }
 }
 
-fn lerp_color(from: Color, to: Color, t: f32) -> Color {
-    Color::from_rgb(
-        lerp_channel(from.red(), to.red(), t),
-        lerp_channel(from.green(), to.green(), t),
-        lerp_channel(from.blue(), to.blue(), t),
+fn hsv_lerp_color(from: Color, to: Color, t: f32) -> Color {
+    let from = hsv_from_color(from);
+    let to = hsv_from_color(to);
+    Color::from_hsv(
+        lerp_hue(from.hue, to.hue, t),
+        lerp_f32(from.saturation, to.saturation, t),
+        lerp_f32(from.value, to.value, t),
     )
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "interpolated channel is rounded and clamped into the 0..=255 byte range"
-)]
-fn lerp_channel(from: u8, to: u8, t: f32) -> u8 {
-    let value = f32::from(from) + (f32::from(to) - f32::from(from)) * t;
-    value.round().clamp(0.0, 255.0) as u8
+#[derive(Clone, Copy)]
+struct Hsv {
+    hue: f32,
+    saturation: f32,
+    value: f32,
+}
+
+fn hsv_from_color(color: Color) -> Hsv {
+    let r = f32::from(color.red()) / 255.0;
+    let g = f32::from(color.green()) / 255.0;
+    let b = f32::from(color.blue()) / 255.0;
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+    let hue = if delta == 0.0 {
+        0.0
+    } else if r >= g && r >= b {
+        60.0 * ((g - b) / delta).rem_euclid(6.0)
+    } else if g >= b {
+        60.0 * (((b - r) / delta) + 2.0)
+    } else {
+        60.0 * (((r - g) / delta) + 4.0)
+    };
+    let saturation = if max == 0.0 { 0.0 } else { delta / max };
+    Hsv {
+        hue,
+        saturation,
+        value: max,
+    }
+}
+
+fn lerp_hue(from: f32, to: f32, t: f32) -> f32 {
+    let delta = (to - from + 540.0).rem_euclid(360.0) - 180.0;
+    (from + delta * t).rem_euclid(360.0)
+}
+
+fn lerp_f32(from: f32, to: f32, t: f32) -> f32 {
+    from + (to - from) * t
 }
 
 pub(crate) fn is_stale(age_ms: u32) -> bool {
     age_ms >= STALE_AFTER_MS
+}
+
+// A stale or failed poll means the endpoint's fields are no longer trustworthy.
+// Each `clear_*` clears exactly the fields its matching `parse_*` produces, so a
+// flaky endpoint never wipes another's data.
+pub(crate) fn clear_stats(data: &mut MinerData) {
+    data.hashrate_ths = None;
+    data.power_w = None;
+}
+
+pub(crate) fn clear_hashboards(data: &mut MinerData) {
+    data.nominal_hashrate_ths = None;
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -249,6 +293,24 @@ mod tests {
     }
 
     #[test]
+    fn parses_hashboards_past_missing_nominal_field() {
+        let mut json = MapJson::default();
+        json.floats.insert(
+            "/hashboards/0/stats/nominal_hashrate/gigahash_per_second",
+            100_000.0,
+        );
+        json.floats
+            .insert("/hashboards/1/board_temp/degree_c", 44.0);
+        json.floats.insert(
+            "/hashboards/2/stats/nominal_hashrate/gigahash_per_second",
+            25_000.0,
+        );
+        let mut data = MinerData::default();
+        parse_hashboards(&json, &mut data);
+        assert_eq!(data.nominal_hashrate_ths, Some(125.0));
+    }
+
+    #[test]
     fn hashrate_fraction_requires_positive_nominal_and_clamps() {
         assert_fraction_eq(hashrate_fraction(Some(50.0), None), 0.0);
         assert_fraction_eq(hashrate_fraction(Some(50.0), Some(0.0)), 0.0);
@@ -271,8 +333,98 @@ mod tests {
     }
 
     #[test]
+    fn power_ramp_interpolates_in_hsv_between_anchors() {
+        assert_eq!(power_ramp_color(0.2), Color::from_rgb(0x5E, 0xCC, 0x16));
+    }
+
+    #[test]
     fn staleness_threshold_is_exclusive_below_and_stale_at_threshold() {
         assert!(!is_stale(STALE_AFTER_MS - 1));
         assert!(is_stale(STALE_AFTER_MS));
+    }
+
+    #[test]
+    fn stale_stats_clear_only_live_stats_fields() {
+        let mut data = MinerData {
+            hashrate_ths: Some(50.0),
+            power_w: Some(40.0),
+            nominal_hashrate_ths: Some(100.0),
+        };
+        clear_stats(&mut data);
+        assert_eq!(data.hashrate_ths, None);
+        assert_eq!(data.power_w, None);
+        assert_eq!(data.nominal_hashrate_ths, Some(100.0));
+    }
+
+    #[test]
+    fn stale_hashboards_clear_only_nominal_hashrate() {
+        let mut data = MinerData {
+            hashrate_ths: Some(50.0),
+            power_w: Some(40.0),
+            nominal_hashrate_ths: Some(100.0),
+        };
+        clear_hashboards(&mut data);
+        assert_eq!(data.hashrate_ths, Some(50.0));
+        assert_eq!(data.power_w, Some(40.0));
+        assert_eq!(data.nominal_hashrate_ths, None);
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum AuthState {
+    #[default]
+    NoToken,
+    LoggingIn,
+    Authenticated(String),
+    // A login attempt completed and was rejected. Distinct from `LoggingIn`; the
+    // login poll keeps retrying underneath.
+    Failed,
+}
+
+impl AuthState {
+    pub(crate) fn token(&self) -> Option<&str> {
+        match self {
+            Self::Authenticated(token) => Some(token),
+            Self::NoToken | Self::LoggingIn | Self::Failed => None,
+        }
+    }
+
+    pub(crate) fn auth_header(&self) -> Option<String> {
+        self.token()
+            .map(|token| bmc_wasm_sdk::fmt!("Authorization: {token}"))
+    }
+}
+
+pub(crate) fn endpoint(base: &str, path: &str) -> String {
+    bmc_wasm_sdk::fmt!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    )
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+
+    #[test]
+    fn joins_base_url_and_path_once() {
+        assert_eq!(
+            endpoint("http://miner/api/v1/", "/miner/stats"),
+            "http://miner/api/v1/miner/stats"
+        );
+    }
+
+    #[test]
+    fn builds_bos_auth_header() {
+        let mut auth = AuthState::default();
+        assert_eq!(auth, AuthState::NoToken);
+        assert_eq!(auth.auth_header(), None);
+        assert_eq!(AuthState::LoggingIn.auth_header(), None);
+        assert_eq!(AuthState::Failed.auth_header(), None);
+        auth = AuthState::Authenticated("abc".to_owned());
+        assert_eq!(auth.auth_header(), Some("Authorization: abc".to_owned()));
+        auth = AuthState::NoToken;
+        assert_eq!(auth.token(), None);
     }
 }
