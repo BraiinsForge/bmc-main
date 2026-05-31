@@ -259,13 +259,22 @@ pub extern "C" fn render(delta_ms: u32) {
     let params = Params::current();
     let effective_tz = params.timezone_override.as_deref().map(Tz::from_runtime);
     let palette = clock_palette(system::current().night_mode().unwrap_or(false));
-    let _miner = STATE.with(|state| {
+    let miner = STATE.with(|state| {
         let mut state = state.borrow_mut();
         advance_freshness(&mut state, delta_ms);
         state.miner.clone()
     });
 
-    let root = analog::round::render(now, &params, variant, w, h, effective_tz.as_ref(), &palette);
+    let root = analog::round::render(
+        now,
+        &params,
+        variant,
+        w,
+        h,
+        effective_tz.as_ref(),
+        &palette,
+        &miner,
+    );
 
     let _ = render_ui(w, h, root);
     // Re-render once per second so the displayed time advances.
@@ -286,7 +295,8 @@ pub extern "C" fn on_params_update() {
     if changed.contains(&"miner_url") || changed.contains(&"miner_password") {
         let password_empty = Params::current().miner_password.is_empty();
         STATE.with(|state| {
-            state.borrow_mut().auth = if password_empty {
+            let mut state = state.borrow_mut();
+            state.auth = if password_empty {
                 AuthState::NoToken
             } else {
                 AuthState::LoggingIn
@@ -317,9 +327,8 @@ pub extern "C" fn on_system_update() {
 mod tests {
     use super::*;
 
-    #[test]
-    fn miner_refreshes_before_source_data_becomes_stale() {
+    const _: () = {
         assert!(STATS_REFRESH_MS < miner::STALE_AFTER_MS);
         assert!(HASHBOARDS_REFRESH_MS < miner::STALE_AFTER_MS);
-    }
+    };
 }
