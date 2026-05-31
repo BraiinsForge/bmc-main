@@ -62,6 +62,33 @@ pub(crate) fn parse_network(json: &impl JsonLookup, data: &mut MinerData) {
     }
 }
 
+// A failed poll (network error or non-2xx) means the endpoint's fields are no
+// longer trustworthy. Each `reset_*` clears exactly the fields its matching
+// `parse_*` produces, so an unreachable miner shows unavailable instead of the
+// last good reading, while a single flaky endpoint never wipes another's data.
+pub(crate) fn reset_details(data: &mut MinerData) {
+    data.uptime_s = Availability::Unavailable;
+}
+
+pub(crate) fn reset_stats(data: &mut MinerData) {
+    data.hashrate_ths = Availability::Unavailable;
+    data.power_w = Availability::Unavailable;
+    data.efficiency_j_th = Availability::Unavailable;
+}
+
+pub(crate) fn reset_hashboards(data: &mut MinerData) {
+    data.temperature = Availability::Unavailable;
+    data.mcr_percent = Availability::Unavailable;
+}
+
+pub(crate) fn reset_cooling(data: &mut MinerData) {
+    data.fan_percent = Availability::Unavailable;
+}
+
+pub(crate) fn reset_network(data: &mut MinerData) {
+    data.ip_address = Availability::Unavailable;
+}
+
 #[cfg(target_arch = "wasm32")]
 impl JsonLookup for bmc_wasm_sdk::json::JsonDoc {
     fn str(&self, path: &str) -> Option<String> {
@@ -139,6 +166,25 @@ mod tests {
         let mut data = MinerData::default();
         parse_stats(&json, &mut data);
         assert_eq!(data.efficiency_j_th, Availability::Unavailable);
+    }
+
+    #[test]
+    fn reset_clears_only_its_own_fields() {
+        let mut data = MinerData {
+            hashrate_ths: Availability::Available(4.0),
+            power_w: Availability::Available(120.0),
+            efficiency_j_th: Availability::Available(21.5),
+            mcr_percent: Availability::Available(90.0),
+            fan_percent: Availability::Available(72.0),
+            ..MinerData::default()
+        };
+        reset_stats(&mut data);
+        assert_eq!(data.hashrate_ths, Availability::Unavailable);
+        assert_eq!(data.power_w, Availability::Unavailable);
+        assert_eq!(data.efficiency_j_th, Availability::Unavailable);
+        // Fields owned by other endpoints are untouched.
+        assert_eq!(data.mcr_percent, Availability::Available(90.0));
+        assert_eq!(data.fan_percent, Availability::Available(72.0));
     }
 
     #[test]

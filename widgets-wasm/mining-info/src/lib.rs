@@ -45,6 +45,8 @@ const DEBOUNCE_MS: u32 = 300;
 #[cfg(target_arch = "wasm32")]
 type MinerParser = fn(&JsonDoc, &mut MinerData);
 #[cfg(target_arch = "wasm32")]
+type MinerReset = fn(&mut MinerData);
+#[cfg(target_arch = "wasm32")]
 type PublicUrl = fn(Currency) -> String;
 #[cfg(target_arch = "wasm32")]
 type PublicParser = fn(&JsonDoc, Currency, &mut PublicData);
@@ -58,6 +60,7 @@ type PublicParser = fn(&JsonDoc, Currency, &mut PublicData);
 struct MinerEndpoint {
     path: &'static str,
     parse: MinerParser,
+    reset: MinerReset,
     views: &'static [View],
 }
 
@@ -66,26 +69,31 @@ const MINER_ENDPOINTS: [MinerEndpoint; 5] = [
     MinerEndpoint {
         path: "/miner/details",
         parse: miner_details,
+        reset: miner_api::reset_details,
         views: &[View::Geek, View::InfoOverload],
     },
     MinerEndpoint {
         path: "/miner/stats",
         parse: miner_stats,
+        reset: miner_api::reset_stats,
         views: &[View::Mining, View::Geek, View::InfoOverload],
     },
     MinerEndpoint {
         path: "/miner/hw/hashboards",
         parse: miner_hashboards,
+        reset: miner_api::reset_hashboards,
         views: &[View::Mining, View::Geek],
     },
     MinerEndpoint {
         path: "/cooling/state",
         parse: miner_cooling,
+        reset: miner_api::reset_cooling,
         views: &[View::Mining],
     },
     MinerEndpoint {
         path: "/network/",
         parse: miner_network,
+        reset: miner_api::reset_network,
         views: &[View::Mining, View::Geek],
     },
 ];
@@ -453,6 +461,9 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
             MINER_ENDPOINTS[idx].path,
             response.status
         );
+        STATE.with(|state| {
+            (MINER_ENDPOINTS[idx].reset)(&mut state.borrow_mut().miner);
+        });
     }
     request_frame();
 }
@@ -511,7 +522,7 @@ pub extern "C" fn render(_delta_ms: u32) {
         },
     };
     if auth_failed && view_needs_miner(params.view) {
-        root = render::with_auth_error(root);
+        root = render::with_auth_error(root, viewport.shape);
     }
     let _ = render_ui(viewport.width, viewport.height, root);
 }

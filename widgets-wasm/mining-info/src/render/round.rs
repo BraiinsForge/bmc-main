@@ -12,7 +12,8 @@
 use bmc_wasm_sdk::*;
 
 use super::{
-    BACKGROUND, RenderSize, VALUE, block_row, info_overload_header, text_block, unit_visible,
+    BACKGROUND, RenderSize, VALUE, fixed_height, fixed_width, info_overload_header, text_block,
+    unit_visible,
 };
 use crate::format;
 use crate::gauge::{self, Gauge, GaugeState};
@@ -23,12 +24,12 @@ const NATIVE: f32 = 480.0;
 
 // Ring: Ø460 (10px inset from the 480 bg), tick radial thickness ~15.2 → the
 // arc centerline sits at radius (230 - 15.2/2).
-const RING_RADIUS: f32 = 222.4;
-const RING_WIDTH: f32 = 15.2;
+const RING_RADIUS: f32 = 220.0;
+const RING_WIDTH: f32 = 10.0;
 
 // Center glow disc: ~Ø340 (radius 170) in 480 units, tinted by gauge state and
 // fading to transparent at the edge.
-const GLOW_RADIUS: f32 = 170.0;
+const GLOW_RADIUS: f32 = 150.0;
 
 const INACTIVE_TICK: Color = Color::from_rgb(0x1e, 0x1e, 0x1e);
 const OFF_TICK: Color = Color::from_rgb(0xd9, 0x22, 0x2c);
@@ -48,6 +49,37 @@ const HASHRATE_UNIT_SIZE: u32 = 24;
 const STATUS_SIZE: u32 = 16;
 const CLUSTER_VALUE_SIZE: u32 = 32;
 const CLUSTER_LABEL_SIZE: u32 = 16;
+const CLUSTER_UNIT_SIZE: u32 = 16;
+
+// Gap between the Info Overload center band and the upper/lower value rows;
+// keeps all three bands clustered near the vertical center on the round face.
+const BAND_GAP: f32 = 16.0;
+
+// Rightward nudge for only the left column of the wide three-value bands. The
+// left text otherwise hugs the bezel on the narrower chords above and below
+// center; this clears it while leaving the middle and right columns in place.
+const INFO_LEFT_SHIFT: f32 = 20.0;
+
+// Gap between a cluster value and its unit, and between the value row and the
+// label. Native (480-space) units, scaled at render time.
+const CLUSTER_UNIT_GAP: f32 = 4.0;
+const CLUSTER_VALUE_LABEL_GAP: f32 = 2.0;
+
+// Each cluster occupies a fixed cell centered on its quadrant point. The width
+// matches the inter-cluster spacing so the two cells in a row meet exactly at
+// the x=239 divider; Node layout then centers the value+unit+label group inside
+// the cell, so no text measurement is needed to center the group on its point.
+const CLUSTER_CELL_W: f32 = 168.0;
+const CLUSTER_CELL_H: f32 = 86.0;
+
+// Center hashrate cell: the value and "TH/s" share a row with the label below,
+// centered as a group on the frame center the same way the quadrant clusters
+// center inside a fixed cell. The cell is taller than the value+label group so
+// the surrounding spacers center it rather than collapsing.
+const CENTER_CELL_W: f32 = 300.0;
+const CENTER_CELL_H: f32 = 140.0;
+const CENTER_UNIT_GAP: f32 = 6.0;
+const CENTER_LABEL_GAP: f32 = 5.0;
 
 // Native (480-space) centers of the four quadrant clusters; the frame center is
 // (240, 240). Derived from the Top (86,90,308×65) and Down (86,319,308×65)
@@ -67,6 +99,7 @@ fn px(v: u32) -> f32 {
 
 struct ClusterSpec {
     label: &'static str,
+    prefix: Option<&'static str>,
     value: String,
     unit: Option<&'static str>,
 }
@@ -128,6 +161,7 @@ fn draw_gauge(draws: &mut Vec<Draw>, cx: f32, cy: f32, scale: f32, g: &Gauge) {
         width,
         ArcFill::Solid(INACTIVE_TICK),
         ArcSegments::Explicit(spans.clone()),
+        ArcCap::Butt,
     ));
     if let Some(fill) = ring_fill(g.state) {
         let lit_count = g.lit_count.min(spans.len());
@@ -142,6 +176,7 @@ fn draw_gauge(draws: &mut Vec<Draw>, cx: f32, cy: f32, scale: f32, g: &Gauge) {
                 width,
                 fill,
                 ArcSegments::Explicit(lit),
+                ArcCap::Butt,
             ));
         }
     }
@@ -162,81 +197,112 @@ fn draw_dividers(draws: &mut Vec<Draw>, cx: f32, cy: f32, scale: f32) {
     }
 }
 
-fn draw_center(
-    draws: &mut Vec<Draw>,
+// The center hashrate: the value and "TH/s" share one row with the status label
+// below, centered as a group on the frame center (cx, cy), mirroring the quadrant
+// clusters. Centering the whole group — not just the value — leaves the value a
+// little above dead-center, matching the design.
+fn center_node(
     cx: f32,
     cy: f32,
     scale: f32,
     hashrate: Availability<f64>,
     state: GaugeState,
-) {
-    draws.push(Draw::text(
-        cx,
-        cy - 14.0 * scale,
-        format::fixed(hashrate, 2),
-        style!(
-            size: HASHRATE_SIZE,
-            weight: FontWeight::BOLD,
-            color: VALUE,
-            align: TextAlign::Center,
-            valign: VerticalAlign::Center,
+) -> Node {
+    let cell_w = CENTER_CELL_W * scale;
+    let cell_h = CENTER_CELL_H * scale;
+    let inset_left = cx - cell_w / 2.0;
+    let inset_top = cy - cell_h / 2.0;
+
+    let value_row = row(
+        props!(cross_align: CrossAlign::Center, gap: CENTER_UNIT_GAP * scale),
+        [
+            text(
+                format::fixed(hashrate, 2),
+                style!(size: HASHRATE_SIZE, weight: FontWeight::BOLD, color: VALUE, line_height: 1.0),
+            ),
+            text(
+                "TH/s",
+                style!(size: HASHRATE_UNIT_SIZE, weight: FontWeight::REGULAR, color: VALUE, line_height: 1.0),
+            ),
+        ],
+    );
+
+    col(
+        props!(
+            inset_left: inset_left,
+            inset_top: inset_top,
+            width: cell_w,
+            height: cell_h,
+            cross_align: CrossAlign::Center,
+            gap: CENTER_LABEL_GAP * scale
         ),
-    ));
-    draws.push(Draw::text(
-        cx,
-        cy + 26.0 * scale,
-        "TH/s",
-        style!(
-            size: HASHRATE_UNIT_SIZE,
-            weight: FontWeight::REGULAR,
-            color: VALUE,
-            align: TextAlign::Center,
-            valign: VerticalAlign::Center,
-        ),
-    ));
-    draws.push(Draw::text(
-        cx,
-        cy + 50.0 * scale,
-        "Hashrate",
-        style!(
-            size: STATUS_SIZE,
-            weight: FontWeight::REGULAR,
-            color: status_color(state),
-            align: TextAlign::Center,
-            valign: VerticalAlign::Center,
-        ),
-    ));
+        [
+            spacer(1.0),
+            value_row,
+            text(
+                "Hashrate",
+                style!(size: STATUS_SIZE, weight: FontWeight::REGULAR, color: status_color(state)),
+            ),
+            spacer(1.0),
+        ],
+    )
 }
 
-fn draw_cluster(draws: &mut Vec<Draw>, cx: f32, cy: f32, scale: f32, spec: &ClusterSpec) {
-    let value = match spec.unit {
-        Some(unit) if unit_visible(&spec.value) => bmc_wasm_sdk::fmt!("{}  {unit}", spec.value),
-        _ => spec.value.clone(),
-    };
-    draws.push(Draw::text(
-        cx,
-        cy - 12.0 * scale,
-        value,
-        style!(
-            size: CLUSTER_VALUE_SIZE,
-            weight: FontWeight::SEMIBOLD,
-            color: VALUE,
-            align: TextAlign::Center,
-            valign: VerticalAlign::Center,
-        ),
+// One quadrant cluster, laid out as a Node so the value+unit row and label
+// center as a group (cross_align) inside a fixed cell. The cell is positioned
+// absolutely with its top-left corner derived from the quadrant center and the
+// known cell size, so the group lands centered on the point without measuring
+// any text. Overlaid on the gauge canvas as an absolute child of the root.
+fn cluster_node(center_px: (f32, f32), scale: f32, spec: &ClusterSpec) -> Node {
+    let cell_w = CLUSTER_CELL_W * scale;
+    let cell_h = CLUSTER_CELL_H * scale;
+    let inset_left = center_px.0 - cell_w / 2.0;
+    let inset_top = center_px.1 - cell_h / 2.0;
+
+    // Prefix (currency symbol) and unit render at the smaller unit size and only
+    // when the value is real, so a "N/A"/"--" placeholder stays unadorned.
+    let show_affixes = unit_visible(&spec.value);
+    let mut parts: Vec<Node> = Vec::with_capacity(3);
+    if let Some(prefix) = spec.prefix.filter(|_| show_affixes) {
+        parts.push(text(
+            prefix,
+            style!(size: CLUSTER_UNIT_SIZE, weight: FontWeight::REGULAR, color: VALUE),
+        ));
+    }
+    parts.push(text(
+        spec.value.clone(),
+        style!(size: CLUSTER_VALUE_SIZE, weight: FontWeight::SEMIBOLD, color: VALUE),
     ));
-    draws.push(Draw::text(
-        cx,
-        cy + 16.0 * scale,
-        spec.label,
-        style!(
-            size: CLUSTER_LABEL_SIZE,
-            weight: FontWeight::REGULAR,
-            color: LABEL_GRAY,
-            align: TextAlign::Center,
-            valign: VerticalAlign::Center,
+    if let Some(unit) = spec.unit.filter(|_| show_affixes) {
+        parts.push(text(
+            unit,
+            style!(size: CLUSTER_UNIT_SIZE, weight: FontWeight::REGULAR, color: VALUE),
+        ));
+    }
+    let value_row = row(
+        props!(cross_align: CrossAlign::Center, gap: CLUSTER_UNIT_GAP * scale),
+        parts,
+    );
+
+    col(
+        props!(
+            inset_left: inset_left,
+            inset_top: inset_top,
+            width: cell_w,
+            height: cell_h,
+            cross_align: CrossAlign::Center,
+            gap: CLUSTER_VALUE_LABEL_GAP * scale
         ),
-    ));
+        [
+            spacer(1.0),
+            value_row,
+            text(
+                spec.label,
+                style!(size: CLUSTER_LABEL_SIZE, weight: FontWeight::REGULAR, color: LABEL_GRAY),
+            ),
+            spacer(1.0),
+        ],
+    )
 }
 
 fn native_to_px(cx: f32, cy: f32, scale: f32, native: (f32, f32)) -> (f32, f32) {
@@ -266,21 +332,25 @@ fn gauge_screen(
     draw_glow(&mut draws, cx, cy, scale, g.state);
     draw_gauge(&mut draws, cx, cy, scale, g);
     draw_dividers(&mut draws, cx, cy, scale);
-    draw_center(&mut draws, cx, cy, scale, hashrate, g.state);
+
+    let mut children = vec![
+        canvas(props!(width: w, height: h), draws),
+        center_node(cx, cy, scale, hashrate, g.state),
+    ];
     for (center, spec) in [
         (TL_CENTER, top_left),
         (TR_CENTER, top_right),
         (BL_CENTER, bottom_left),
         (BR_CENTER, bottom_right),
     ] {
-        let (cluster_x, cluster_y) = native_to_px(cx, cy, scale, center);
-        draw_cluster(&mut draws, cluster_x, cluster_y, scale, spec);
+        children.push(cluster_node(
+            native_to_px(cx, cy, scale, center),
+            scale,
+            spec,
+        ));
     }
 
-    col(
-        props!(background: BACKGROUND),
-        [canvas(props!(width: w, height: h), draws)],
-    )
+    col(props!(background: BACKGROUND), children)
 }
 
 pub(crate) fn mining(size: RenderSize, miner: &MinerData) -> Node {
@@ -291,21 +361,25 @@ pub(crate) fn mining(size: RenderSize, miner: &MinerData) -> Node {
         miner.hashrate_ths,
         &ClusterSpec {
             label: "Power Cons.",
+            prefix: None,
             value: format::fixed(miner.power_w, 0),
             unit: Some("W"),
         },
         &ClusterSpec {
             label: "MCR",
+            prefix: None,
             value: format::fixed(miner.mcr_percent, 1),
             unit: Some("%"),
         },
         &ClusterSpec {
             label: "Temperature",
-            value: format::temperature(miner.temperature),
+            prefix: None,
+            value: format::temperature_mean(miner.temperature),
             unit: Some("°C"),
         },
         &ClusterSpec {
             label: "Fan Speed",
+            prefix: None,
             value: format::fixed(miner.fan_percent, 0),
             unit: Some("%"),
         },
@@ -320,83 +394,156 @@ pub(crate) fn geek(size: RenderSize, miner: &MinerData, public: &PublicData) -> 
         miner.hashrate_ths,
         &ClusterSpec {
             label: "Power Cons.",
+            prefix: None,
             value: format::fixed(miner.power_w, 0),
             unit: Some("W"),
         },
         &ClusterSpec {
             label: "Efficiency",
+            prefix: None,
             value: format::fixed(miner.efficiency_j_th, 1),
             unit: Some("J/TH"),
         },
         &ClusterSpec {
             label: "Temperature",
-            value: format::temperature(miner.temperature),
+            prefix: None,
+            value: format::temperature_mean(miner.temperature),
             unit: Some("°C"),
         },
         &ClusterSpec {
             label: "BTC Price",
-            value: format::money(public.btc_price, 0),
+            prefix: format::money_symbol(public.btc_price),
+            value: format::money_amount(public.btc_price, 0),
             unit: None,
         },
+    )
+}
+
+// A horizontally centered row of blocks for the narrow top/bottom edge bands,
+// where the circle's chord only fits one or two blocks. The block group is
+// centered between spacers rather than left-aligned-with-padding like the wide
+// middle bands.
+fn centered_block_row(blocks: Vec<Node>, metrics: layout::BlockLayout) -> Node {
+    row(
+        props!(cross_align: CrossAlign::Center),
+        [
+            spacer(1.0),
+            row(props!(gap: metrics.horizontal_gap), blocks),
+            spacer(1.0),
+        ],
+    )
+}
+
+// A three-column band that keeps the middle column centered on the frame and the
+// right column at its centered position, while nudging only the left column right
+// by `shift` (which narrows the left-to-middle gap by the same amount).
+fn left_shifted_block_row(
+    left: Node,
+    middle: Node,
+    right: Node,
+    metrics: layout::BlockLayout,
+    shift: f32,
+) -> Node {
+    row(
+        props!(cross_align: CrossAlign::Center),
+        [
+            fixed_width(metrics.padding_horizontal + shift),
+            left,
+            fixed_width(metrics.horizontal_gap - shift),
+            middle,
+            fixed_width(metrics.horizontal_gap),
+            right,
+            spacer(1.0),
+        ],
     )
 }
 
 pub(crate) fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
     let metrics = layout::info_overload_layout();
 
-    let upper = block_row(
+    let top_edge = centered_block_row(
         vec![
             text_block(
-                "Hashrate",
-                format::fixed(miner.hashrate_ths, 2),
-                Some("TH/s"),
+                "Est. Diff. Adjust.",
+                format::signed_percent(public.est_diff_adjust_percent, 2),
+                Some("%"),
                 metrics,
             ),
             text_block(
-                "Power Consump.",
-                format::fixed(miner.power_w, 0),
-                Some("W"),
-                metrics,
-            ),
-            text_block(
-                "Block Height",
-                format::public_integer(public.block_height),
-                None,
+                "Prev. Diff. Adjust.",
+                format::signed_percent(public.prev_diff_adjust_percent, 2),
+                Some("%"),
                 metrics,
             ),
         ],
         metrics,
     );
 
-    let fee_value = bmc_wasm_sdk::fmt!("~ {}", format::fixed(public.avg_fee_percent, 1));
-    let lower = block_row(
-        vec![
-            text_block(
-                "Miner Uptime",
-                format::uptime(miner.uptime_s),
-                None,
-                metrics,
-            ),
-            text_block("Fees (144 Blocks)", fee_value, Some("%"), metrics),
-            text_block(
-                "Hashvalue",
-                format::fixed_strip_zero_fraction(public.hashvalue_sat_th_day, 2),
-                Some("SAT/TH/Day"),
-                metrics,
-            ),
-        ],
+    let bottom_edge = centered_block_row(
+        vec![text_block(
+            "Hashvalue",
+            format::fixed_strip_zero_fraction(public.hashvalue_sat_th_day, 2),
+            Some("SAT/TH/Day"),
+            metrics,
+        )],
         metrics,
+    );
+
+    let upper = left_shifted_block_row(
+        text_block(
+            "Hashrate",
+            format::fixed(miner.hashrate_ths, 2),
+            Some("TH/s"),
+            metrics,
+        ),
+        text_block(
+            "Power Consump.",
+            format::fixed(miner.power_w, 0),
+            Some("W"),
+            metrics,
+        ),
+        text_block(
+            "Block Height",
+            format::public_integer(public.block_height),
+            None,
+            metrics,
+        ),
+        metrics,
+        INFO_LEFT_SHIFT,
+    );
+
+    let fee_value = bmc_wasm_sdk::fmt!("~ {}", format::fixed(public.avg_fee_percent, 1));
+    let lower = left_shifted_block_row(
+        text_block(
+            "Miner Uptime",
+            format::uptime(miner.uptime_s),
+            None,
+            metrics,
+        ),
+        text_block("Fees (144 Blocks)", fee_value, Some("%"), metrics),
+        text_block(
+            "Epoch Prog.",
+            format::fixed(public.epoch_progress_percent, 0),
+            Some("%"),
+            metrics,
+        ),
+        metrics,
+        INFO_LEFT_SHIFT,
     );
 
     col(
         props!(background: BACKGROUND),
         [
             spacer(1.0),
+            top_edge,
+            fixed_height(BAND_GAP),
             upper,
-            spacer(1.0),
+            fixed_height(BAND_GAP),
             info_overload_header(public, true, metrics),
-            spacer(1.0),
+            fixed_height(BAND_GAP),
             lower,
+            fixed_height(BAND_GAP),
+            bottom_edge,
             spacer(1.0),
         ],
     )

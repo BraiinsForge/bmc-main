@@ -15,8 +15,8 @@ pub(crate) const OVERCLOCK_MCR: f64 = 130.0;
 pub(crate) const GOOD_MCR: f64 = 85.0;
 
 // Portion of each tick slot left as the inter-tick gap; the rest is the lit
-// segment. A visible separation between ticks, tuned against the GPU capture.
-const TICK_GAP_FRACTION: f32 = 0.18;
+// segment. ~0.04 yields a ~2px gap at the ring radius, matching the design.
+const TICK_GAP_FRACTION: f32 = 0.04;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GaugeState {
