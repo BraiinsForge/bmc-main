@@ -211,9 +211,16 @@ fn run_unified_capture(
     };
     if !fetch_interceptor.is_empty() {
         let fetches = std::sync::Arc::new(fetch_interceptor);
+        let counters = std::sync::Arc::new(std::sync::Mutex::new(HashMap::<String, usize>::new()));
         rt_config.fetch_interceptor = Some(Box::new(move |method, url| {
             let key = format!("{method} {url}");
-            fetches.get(&key).map(|fix| (fix.status, fix.body.clone()))
+            let queue = fetches.get(&key)?;
+            let mut counters = counters.lock().expect("BUG: fetch counter mutex poisoned");
+            let counter = counters.entry(key).or_default();
+            let idx = (*counter).min(queue.len().saturating_sub(1));
+            *counter = counter.saturating_add(1);
+            let fix = &queue[idx];
+            Some((fix.status, fix.body.clone()))
         }));
     }
     rt_config.event_fixtures = network_events;
@@ -712,15 +719,16 @@ struct FetchEntry {
 
 /// Split a unified fixture timeline into fetch interceptors and network events.
 ///
-/// - `Fetch` events → `HashMap<String, FetchEntry>` keyed by `"METHOD URL"`
+/// - `Fetch` events → `HashMap<String, Vec<FetchEntry>>` keyed by `"METHOD URL"`,
+///   preserving fixture order so the interceptor can replay them in sequence
 /// - Network events (SSDP, mDNS, WS, Socket, UDP) → `Vec<FixtureEvent>`
 /// - User actions (Capture, Click, Scroll, Drag) are skipped (handled in the
 ///   main replay loop)
 #[expect(clippy::too_many_lines)]
 fn split_unified_events(
     fixture: &UnifiedFixture,
-) -> (HashMap<String, FetchEntry>, Vec<FixtureEvent>) {
-    let mut fetches = HashMap::new();
+) -> (HashMap<String, Vec<FetchEntry>>, Vec<FixtureEvent>) {
+    let mut fetches: HashMap<String, Vec<FetchEntry>> = HashMap::new();
     let mut network_events = Vec::new();
 
     for te in &fixture.events {
@@ -732,13 +740,10 @@ fn split_unified_events(
                 body,
             } => {
                 let key = format!("{method} {url}");
-                fetches.insert(
-                    key,
-                    FetchEntry {
-                        status: *status,
-                        body: body.to_bytes(),
-                    },
-                );
+                fetches.entry(key).or_default().push(FetchEntry {
+                    status: *status,
+                    body: body.to_bytes(),
+                });
             }
 
             // Convert network events to the runtime's FixtureEvent format
@@ -887,6 +892,24 @@ fn split_unified_events(
     }
 
     (fetches, network_events)
+}
+
+// ── Shape helpers ────────────────────────────────────────────────────
+
+fn viewport_shape_for_size(size_name: &str) -> bmc_wasm_protocol::ViewportShape {
+    if size_name == "round" {
+        bmc_wasm_protocol::ViewportShape::Round
+    } else {
+        bmc_wasm_protocol::ViewportShape::Rectangular
+    }
+}
+
+fn display_shape_for_size(size_name: &str) -> bmc_wasm_protocol::DisplayShape {
+    if size_name == "round" {
+        bmc_wasm_protocol::DisplayShape::Round
+    } else {
+        bmc_wasm_protocol::DisplayShape::Rectangular
+    }
 }
 
 // ── GL helpers ──────────────────────────────────────────────────────
@@ -1117,11 +1140,11 @@ fn setup_gl_and_runtime(
         &wasm_bytes,
         ctx.width,
         ctx.height,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        viewport_shape_for_size(&ctx.size_name),
         bmc_wasm_runtime::RuntimeDisplayInfo {
             width: ctx.width,
             height: ctx.height,
-            shape: bmc_wasm_protocol::DisplayShape::Rectangular,
+            shape: display_shape_for_size(&ctx.size_name),
             dpi: 1,
         },
         rt_config,
@@ -1275,11 +1298,11 @@ fn setup_gl_and_runtime(
         &wasm_bytes,
         ctx.width,
         ctx.height,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
+        viewport_shape_for_size(&ctx.size_name),
         bmc_wasm_runtime::RuntimeDisplayInfo {
             width: ctx.width,
             height: ctx.height,
-            shape: bmc_wasm_protocol::DisplayShape::Rectangular,
+            shape: display_shape_for_size(&ctx.size_name),
             dpi: 1,
         },
         rt_config,
@@ -1367,4 +1390,71 @@ pub fn write_default_capture_config(dir: &Path) -> Result<()> {
         .with_context(|| format!("failed to write {}", path.display()))?;
     eprintln!("Created {}", path.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_size_uses_round_runtime_shape() {
+        assert_eq!(
+            viewport_shape_for_size("round"),
+            bmc_wasm_protocol::ViewportShape::Round
+        );
+        assert_eq!(
+            display_shape_for_size("round"),
+            bmc_wasm_protocol::DisplayShape::Round
+        );
+        assert_eq!(
+            viewport_shape_for_size("custom"),
+            bmc_wasm_protocol::ViewportShape::Rectangular
+        );
+    }
+
+    #[test]
+    fn split_unified_events_preserves_repeated_fetch_order() {
+        use bmc_wasm_runtime::system::SystemSnapshot;
+        use bmc_wasm_runtime::unified_fixture::{
+            FixtureBody, FixtureHeader, TimelineEvent, UnifiedEvent, UnifiedFixture,
+        };
+
+        let fixture = UnifiedFixture {
+            header: FixtureHeader {
+                time: "2026-05-30T12:00:00Z".to_owned(),
+                kv: std::collections::HashMap::new(),
+                initial_params: serde_json::Map::new(),
+                initial_system: SystemSnapshot::default(),
+            },
+            events: vec![
+                TimelineEvent {
+                    at_ms: 0,
+                    event: UnifiedEvent::Fetch {
+                        method: "GET".to_owned(),
+                        url: "http://miner/api/v1/miner/stats".to_owned(),
+                        status: 200,
+                        body: FixtureBody::Text("first".to_owned()),
+                    },
+                },
+                TimelineEvent {
+                    at_ms: 1,
+                    event: UnifiedEvent::Fetch {
+                        method: "GET".to_owned(),
+                        url: "http://miner/api/v1/miner/stats".to_owned(),
+                        status: 200,
+                        body: FixtureBody::Text("second".to_owned()),
+                    },
+                },
+            ],
+        };
+
+        let (fetches, network_events) = split_unified_events(&fixture);
+        assert!(network_events.is_empty());
+        let entries = fetches
+            .get("GET http://miner/api/v1/miner/stats")
+            .expect("BUG: stats fetch should be captured");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].body, b"first");
+        assert_eq!(entries[1].body, b"second");
+    }
 }
