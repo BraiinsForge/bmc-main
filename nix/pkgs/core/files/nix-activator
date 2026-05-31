@@ -22,7 +22,7 @@
 # of such proprietary license or if you have any other questions, please
 # contact us at opensource@braiins.com.
 
-START=62
+START=91
 
 LOG() {
 	logger -t nix-activator "$*"
