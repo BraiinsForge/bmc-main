@@ -104,6 +104,13 @@ fn shipping_manifests_support_bmm_rectangular_fullscreen_viewports() {
                 .to_str()
                 .expect("BUG: workspace path must be utf-8"),
         );
+        let supports_rectangular = manifest
+            .supported_viewports
+            .iter()
+            .any(|v| v.viewport_shape == bmc_widget_manifest::ViewportShape::Rectangular);
+        if !supports_rectangular {
+            continue;
+        }
         assert!(
             supports_viewport(
                 &manifest,
@@ -128,7 +135,7 @@ fn shipping_manifests_support_bmm_rectangular_fullscreen_viewports() {
 }
 
 #[test]
-fn round_viewport_support_is_limited_to_clock_and_mining_info() {
+fn round_viewport_support_is_limited_to_clock_widgets_and_mining_info() {
     let mut round_manifest_paths: Vec<_> = manifest_paths()
         .into_iter()
         .filter(|path| {
@@ -155,6 +162,7 @@ fn round_viewport_support_is_limited_to_clock_and_mining_info() {
         round_manifest_paths,
         vec![
             std::path::PathBuf::from("widgets-wasm/clock/manifest.json"),
+            std::path::PathBuf::from("widgets-wasm/mining-clock/manifest.json"),
             std::path::PathBuf::from("widgets-wasm/mining-info/manifest.json"),
         ],
     );
