@@ -40,10 +40,11 @@ pub const CAPTURE_SIZES: &[(&str, u32, u32)] = &[
     ("large", 638, 480),
     ("medium", 638, 238),
     ("small", 317, 238),
+    ("round", 480, 480),
 ];
 
 /// Valid size names for per-size fixture/interaction blocks.
-pub const VALID_SIZES: &[&str] = &["full", "large", "medium", "small"];
+pub const VALID_SIZES: &[&str] = &["full", "large", "medium", "small", "round"];
 
 /// Look up a size name from pixel dimensions.
 #[must_use]
@@ -484,5 +485,27 @@ mod tests {
         "#;
         let cfg = parse_capture_config(toml).expect("BUG: fixtures-only config should parse");
         assert_eq!(cfg.fixtures.len(), 2);
+    }
+
+    #[test]
+    fn round_size_name_is_recognized_from_480_square() {
+        assert_eq!(size_name_from_dimensions(480, 480), "round");
+        assert_eq!(size_dimensions_str("round").as_deref(), Some("480x480"));
+    }
+
+    #[test]
+    fn config_accepts_round_size_and_fixture() {
+        let toml = r#"
+            sizes = ["round"]
+
+            [fixtures]
+            round = "fixtures/round.jsonl.gz"
+        "#;
+        let cfg = parse_capture_config(toml).expect("BUG: round config should parse");
+        assert_eq!(cfg.sizes, vec!["round"]);
+        assert_eq!(
+            cfg.fixtures["round"],
+            PathBuf::from("fixtures/round.jsonl.gz")
+        );
     }
 }
