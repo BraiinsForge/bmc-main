@@ -1,0 +1,81 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "0f0b7df0-f6d5-4d21-9ddc-7755e5030503",
+  "version": "0.1.0",
+  "name": "Mining Clock",
+  "description": "Analog clock with live miner hashrate and power rings for BFM100",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/mining-clock",
+  "settings": [],
+  "supported_viewports": [
+    {
+      "type": "round",
+      "min_width": 480,
+      "max_width": 480,
+      "min_height": 480,
+      "max_height": 480
+    }
+  ],
+  "params": {
+    "miner_url": {
+      "name": "Miner URL",
+      "description": "Base BOS REST API URL for the miner",
+      "type": "string",
+      "format": "uri",
+      "default_value": "http://localhost/api/v1"
+    },
+    "miner_password": {
+      "name": "Miner password",
+      "description": "Password for root login. This is stored as normal widget text until secret params exist.",
+      "type": "string",
+      "default_value": "root"
+    },
+    "numbers_font_style": {
+      "name": "Numbers font style",
+      "description": "Font weight of clock numerals",
+      "type": "string",
+      "default_value": "semi-bold",
+      "enum_values": [
+        {
+          "value": "regular",
+          "label": "Regular"
+        },
+        {
+          "value": "semi-bold",
+          "label": "Semi-bold"
+        },
+        {
+          "value": "bold",
+          "label": "Bold"
+        }
+      ]
+    },
+    "show_date": {
+      "name": "Show date",
+      "description": "Display the date inside the analog dial",
+      "type": "boolean",
+      "default_value": true
+    },
+    "show_seconds": {
+      "name": "Show seconds",
+      "description": "Display the second hand",
+      "type": "boolean",
+      "default_value": true
+    },
+    "show_timezone": {
+      "name": "Show timezone",
+      "description": "Display the timezone label",
+      "type": "boolean",
+      "default_value": true
+    },
+    "timezone_override": {
+      "name": "Timezone",
+      "description": "Timezone to display the clock in. Defaults to the system timezone.",
+      "type": "timezone",
+      "optional": true
+    }
+  }
+}
