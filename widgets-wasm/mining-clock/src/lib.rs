@@ -10,6 +10,7 @@
 #[cfg(target_arch = "wasm32")]
 mod analog;
 mod manifest_params;
+mod miner;
 #[cfg(target_arch = "wasm32")]
 mod shared;
 
