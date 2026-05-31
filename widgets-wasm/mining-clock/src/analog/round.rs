@@ -46,6 +46,9 @@ const RING_WIDTH: f32 = 8.0;
 const HASHRATE_SWEEP_END: f32 = 330.0_f32.to_radians();
 const POWER_SWEEP_END: f32 = 340.0_f32.to_radians();
 const LABEL_OFFSET: f32 = 5.0_f32.to_radians();
+// Duration of the gauge sweep transition; the host animates each ring's
+// end angle toward its target whenever the lit fraction changes.
+const GAUGE_TRANSITION_MS: u32 = 500;
 const HASHRATE_GREEN: Color = Color::from_rgb(0x34, 0xC0, 0x6A);
 const HASHRATE_DARK: Color = Color::from_rgb(0x19, 0x5E, 0x33);
 const POWER_GREEN: Color = Color::from_rgb(0x13, 0xA4, 0x54);
@@ -118,6 +121,7 @@ pub(crate) fn render(
     tz: Option<&Tz>,
     palette: &ClockPalette,
     miner: &MinerData,
+    seed_gauges: bool,
 ) -> Node {
     let size = pick_size(variant);
     let viewport_w = f32_from_u32(w);
@@ -144,7 +148,7 @@ pub(crate) fn render(
     let (hour12, minute, second) = local_clock_components(&now, offset_secs);
 
     let mut draws: Vec<Draw> = Vec::with_capacity(20);
-    push_gauges_and_labels(&mut draws, centre_x, centre_y, miner);
+    push_gauges_and_labels(&mut draws, centre_x, centre_y, miner, seed_gauges);
 
     // Dial — single 390-native SVG, rendered at the viewport-derived `dial`
     // side and centred. Per-path `.fill()` overrides recolour the named paths
@@ -251,7 +255,13 @@ pub(crate) fn render(
     canvas(props!(width: viewport_w, height: viewport_h), draws)
 }
 
-fn push_gauges_and_labels(draws: &mut Vec<Draw>, centre_x: f32, centre_y: f32, miner: &MinerData) {
+fn push_gauges_and_labels(
+    draws: &mut Vec<Draw>,
+    centre_x: f32,
+    centre_y: f32,
+    miner: &MinerData,
+    seed_gauges: bool,
+) {
     let hashrate_segments = ArcSegments::Continuous;
     let hashrate_fraction =
         miner::hashrate_fraction(miner.hashrate_ths, miner.nominal_hashrate_ths);
@@ -262,10 +272,11 @@ fn push_gauges_and_labels(draws: &mut Vec<Draw>, centre_x: f32, centre_y: f32, m
         centre_y,
         HASHRATE_RADIUS,
         HASHRATE_SWEEP_END,
-        hashrate_fraction,
+        seeded_fraction(hashrate_fraction, seed_gauges),
         ArcFill::gradient(HASHRATE_DARK, HASHRATE_GREEN),
         &hashrate_segments,
         ArcCap::Round,
+        "hashrate-gauge",
     );
 
     let power_segments = ArcSegments::short_ends(0.0, POWER_SWEEP_END, 18, 0.02, 0.5);
@@ -277,10 +288,11 @@ fn push_gauges_and_labels(draws: &mut Vec<Draw>, centre_x: f32, centre_y: f32, m
         centre_y,
         POWER_RADIUS,
         POWER_SWEEP_END,
-        power_fraction,
+        seeded_fraction(power_fraction, seed_gauges),
         ArcFill::gradient(POWER_GREEN, miner::power_ramp_color(power_fraction)),
         &power_segments,
         ArcCap::Round,
+        "power-gauge",
     );
 
     draws.push(Draw::curved_text(
@@ -307,6 +319,14 @@ fn push_gauges_and_labels(draws: &mut Vec<Draw>, centre_x: f32, centre_y: f32, m
 
 fn live_end_angle(sweep_end: f32, fraction: f32) -> f32 {
     (sweep_end * fraction.clamp(0.0, 1.0) + LABEL_OFFSET).rem_euclid(std::f32::consts::TAU)
+}
+
+// On the seed frame the ring draws empty so the host's end-angle transition has a
+// zero baseline to animate the real fill in from, even when miner data is already
+// present on the first frame. Labels and gradients keep their real values so only
+// the sweep grows into place.
+fn seeded_fraction(fraction: f32, seed: bool) -> f32 {
+    if seed { 0.0 } else { fraction }
 }
 
 fn text_anchor_for_angle(angle: f32) -> ArcAnchor {
@@ -340,21 +360,10 @@ fn power_label(value: Option<f64>) -> String {
     }
 }
 
-fn clipped_segments(segments: &ArcSegments, live_end: f32) -> ArcSegments {
-    match segments {
-        ArcSegments::Continuous => ArcSegments::Continuous,
-        ArcSegments::Explicit(spans) => ArcSegments::Explicit(
-            spans
-                .iter()
-                .filter_map(|&(start, end)| {
-                    let clipped_end = end.min(live_end);
-                    (start < clipped_end).then_some((start, clipped_end))
-                })
-                .collect(),
-        ),
-    }
-}
-
+// The ring is always emitted, even at a zero sweep, so the host keeps a stable
+// transition slot for it across data loads and animates the end angle in place.
+// Explicit segments hold absolute positions; the renderer clips them to the
+// (possibly interpolated) end angle, so the full span set is passed through.
 #[expect(
     clippy::too_many_arguments,
     reason = "flat gauge geometry helper keeps render call sites readable"
@@ -369,22 +378,23 @@ fn push_gauge_arc(
     fill: ArcFill,
     segments: &ArcSegments,
     cap: ArcCap,
+    transition_id: &str,
 ) {
     let live_end = sweep_end * fraction.clamp(0.0, 1.0);
-    if live_end <= 0.0 {
-        return;
-    }
-    draws.push(Draw::arc(
-        centre_x,
-        centre_y,
-        radius,
-        0.0,
-        live_end,
-        RING_WIDTH,
-        fill,
-        clipped_segments(segments, live_end),
-        cap,
-    ));
+    draws.push(
+        Draw::arc(
+            centre_x,
+            centre_y,
+            radius,
+            0.0,
+            live_end,
+            RING_WIDTH,
+            fill,
+            segments.clone(),
+            cap,
+        )
+        .transition(transition_id, GAUGE_TRANSITION_MS, Easing::EaseOutCubic),
+    );
 }
 
 // ── Date window ────────────────────────────────────────────────────────
