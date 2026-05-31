@@ -34,7 +34,7 @@ pub(crate) fn ths_from_ghs(value: f64) -> f64 {
     value / 1_000.0
 }
 
-pub(crate) const MAX_POWER_W: f64 = 200.0;
+pub(crate) const MAX_POWER_W: f64 = 70.0;
 pub(crate) const STALE_AFTER_MS: u32 = 15_000;
 
 const POWER_GREEN_ANCHOR: Color = Color::from_rgb(0x13, 0xA4, 0x54);
@@ -260,6 +260,10 @@ pub(crate) mod tests_support {
 mod tests {
     use super::tests_support::MapJson;
     use super::*;
+
+    fn assert_fraction_eq(actual: f32, expected: f32) {
+        assert!((actual - expected).abs() < f32::EPSILON);
+    }
 
     #[test]
     fn parses_stats_hashrate_and_power() {
