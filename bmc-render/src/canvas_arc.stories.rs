@@ -31,6 +31,7 @@ fn rings(c: &mut StoryCtx) {
                     6.0,
                     ArcFill::gradient(GREEN, TEAL),
                     ArcSegments::Continuous,
+                    ArcCap::Round,
                 )
                 .transition("outer-ring", 500, Easing::EaseOutCubic),
                 Draw::arc(
@@ -42,6 +43,7 @@ fn rings(c: &mut StoryCtx) {
                     8.0,
                     ArcFill::gradient(GREEN, YELLOW),
                     ArcSegments::short_ends(a0, a1, 24, 0.04, 0.5),
+                    ArcCap::Round,
                 )
                 .transition("inner-segments", 500, Easing::EaseOutCubic),
             ],
@@ -70,6 +72,7 @@ fn uniform_gauge(c: &mut StoryCtx) {
                 10.0,
                 TEAL,
                 ArcSegments::uniform(a0, a1, 12, 0.06),
+                ArcCap::Round,
             )],
         ),
     );
