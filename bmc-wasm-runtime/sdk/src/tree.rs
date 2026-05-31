@@ -19,13 +19,13 @@ use std::string::String;
 use std::vec::Vec;
 
 use bmc_wasm_protocol::{
-    AnimProperty, ArcAnchor, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Color, ColorSpace,
-    DRAW_ARC, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_CURVED_TEXT, DRAW_ICON, DRAW_MESH,
-    DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED, DRAW_SHADOW,
-    DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Easing, Fill, LoopMode, MeshId, NODE_BUTTON,
-    NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH,
-    NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL, NODE_SPACER, SvgId, encode_arc_fill,
-    encode_arc_segments, encode_fill,
+    AnimProperty, ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Color,
+    ColorSpace, DRAW_ARC, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_CURVED_TEXT, DRAW_ICON,
+    DRAW_MESH, DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED,
+    DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Easing, Fill, LoopMode, MeshId,
+    NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION,
+    NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL, NODE_SPACER, SvgId, encode_arc_cap,
+    encode_arc_fill, encode_arc_segments, encode_fill,
 };
 
 use crate::PropsFieldValue;
@@ -108,6 +108,10 @@ impl TreeBuffer {
 
     fn write_arc_segments(&mut self, segments: &ArcSegments) {
         encode_arc_segments(&mut self.data, segments);
+    }
+
+    fn write_arc_cap(&mut self, cap: ArcCap) {
+        encode_arc_cap(&mut self.data, cap);
     }
 
     fn write_icon_id(&mut self, id: Option<SvgId>) {
@@ -451,6 +455,7 @@ pub enum Draw {
         width: f32,
         fill: ArcFill,
         segments: ArcSegments,
+        cap: ArcCap,
     },
     /// Center any draw command in canvas
     Centered { inner: Box<Draw> },
@@ -620,6 +625,7 @@ impl Draw {
         width: f32,
         fill: impl Into<ArcFill>,
         segments: ArcSegments,
+        cap: ArcCap,
     ) -> Self {
         Self::Arc {
             cx,
@@ -630,6 +636,7 @@ impl Draw {
             width,
             fill: fill.into(),
             segments,
+            cap,
         }
     }
 
@@ -1686,6 +1693,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             width,
             fill,
             segments,
+            cap,
         } => {
             buf.write_u8(DRAW_ARC);
             buf.write_f32(*cx);
@@ -1696,6 +1704,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*width);
             buf.write_arc_fill(fill);
             buf.write_arc_segments(segments);
+            buf.write_arc_cap(*cap);
         }
         Draw::Svg {
             x,
@@ -2231,13 +2240,23 @@ mod curved_text_tests {
 #[cfg(test)]
 mod fill_wire_tests {
     use super::*;
-    use bmc_wasm_protocol::{ArcFill, ArcSegments, FILL_LINEAR, Fill};
+    use bmc_wasm_protocol::{ArcCap, ArcFill, ArcSegments, FILL_LINEAR, Fill};
 
     #[test]
     fn arc_constructor_builds_variant() {
         let fill = ArcFill::gradient(Color::from_rgb(1, 2, 3), Color::from_rgb(4, 5, 6));
         let segments = ArcSegments::Explicit(vec![(0.0, 0.25), (0.5, 1.0)]);
-        let draw = Draw::arc(1.0, 2.0, 3.0, 0.25, 1.5, 4.0, fill, segments.clone());
+        let draw = Draw::arc(
+            1.0,
+            2.0,
+            3.0,
+            0.25,
+            1.5,
+            4.0,
+            fill,
+            segments.clone(),
+            ArcCap::Butt,
+        );
         let Draw::Arc {
             cx,
             cy,
@@ -2247,6 +2266,7 @@ mod fill_wire_tests {
             width,
             fill: got_fill,
             segments: got_segments,
+            cap,
         } = draw
         else {
             panic!("BUG: Draw::arc must build Draw::Arc");
@@ -2257,6 +2277,7 @@ mod fill_wire_tests {
         );
         assert_eq!(got_fill, fill);
         assert_eq!(got_segments, segments);
+        assert_eq!(cap, ArcCap::Butt);
     }
 
     #[test]
@@ -2271,6 +2292,7 @@ mod fill_wire_tests {
             4.0,
             Color::from_rgb(1, 2, 3),
             ArcSegments::Continuous,
+            ArcCap::Round,
         );
         serialize_draw(&mut buf, &draw);
         assert_eq!(buf.data[0], DRAW_ARC);
