@@ -17,6 +17,10 @@ pub const ARC_FILL_GRADIENT: u8 = 1;
 pub const ARC_SEGMENTS_CONTINUOUS: u8 = 0;
 /// Wire discriminant for explicit visible arc spans.
 pub const ARC_SEGMENTS_EXPLICIT: u8 = 1;
+/// Wire discriminant for round outer end caps.
+pub const ARC_CAP_ROUND: u8 = 0;
+/// Wire discriminant for flat (butt) outer end caps.
+pub const ARC_CAP_BUTT: u8 = 1;
 
 /// Paint applied along an arc stroke.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -214,6 +218,28 @@ pub fn decode_arc_segments(data: &[u8], pos: &mut usize) -> Option<ArcSegments> 
     }
 }
 
+/// Append `cap` to `out` in wire format.
+pub fn encode_arc_cap(out: &mut Vec<u8>, cap: ArcCap) {
+    out.push(match cap {
+        ArcCap::Round => ARC_CAP_ROUND,
+        ArcCap::Butt => ARC_CAP_BUTT,
+    });
+}
+
+/// Read an `ArcCap` from `data` starting at `*pos`, advancing `*pos` past it.
+///
+/// Returns `None` on an unknown discriminant or truncated input.
+#[must_use]
+pub fn decode_arc_cap(data: &[u8], pos: &mut usize) -> Option<ArcCap> {
+    let kind = *data.get(*pos)?;
+    *pos += 1;
+    match kind {
+        ARC_CAP_ROUND => Some(ArcCap::Round),
+        ARC_CAP_BUTT => Some(ArcCap::Butt),
+        _ => None,
+    }
+}
+
 fn read_color(data: &[u8], pos: &mut usize) -> Option<Color> {
     Some(Color::from_raw(read_u32(data, pos)?))
 }
@@ -333,5 +359,22 @@ mod tests {
     fn decode_fill_rejects_unknown_discriminant() {
         let mut pos = 0;
         assert!(decode_arc_fill(&[0xFF], &mut pos).is_none());
+    }
+
+    #[test]
+    fn arc_cap_round_trips() {
+        for cap in [ArcCap::Round, ArcCap::Butt] {
+            let mut buf = Vec::new();
+            encode_arc_cap(&mut buf, cap);
+            let mut pos = 0;
+            assert_eq!(decode_arc_cap(&buf, &mut pos), Some(cap));
+            assert_eq!(pos, buf.len());
+        }
+    }
+
+    #[test]
+    fn decode_cap_rejects_unknown_discriminant() {
+        let mut pos = 0;
+        assert!(decode_arc_cap(&[0xFF], &mut pos).is_none());
     }
 }
