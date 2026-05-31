@@ -67,6 +67,10 @@ struct Handles {
 thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
     static HANDLES: RefCell<Option<Handles>> = const { RefCell::new(None) };
+    // Seed the gauge transitions from empty: the first render draws zero-sweep
+    // rings so the host always animates the fill in, even when miner data is
+    // already available on the first frame.
+    static FIRST_FRAME: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -157,6 +161,10 @@ fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
     Some(FetchSpec::get(miner::endpoint(&Params::current().miner_url, path)).headers(header))
 }
 
+// Deliberately requests no frame: the clock paints once per second
+// (`request_frame_after(1000)` in `render`), and refreshed auth state surfaces
+// on the next tick. Forcing a frame here would paint at a sub-second offset and
+// reset the 1s cadence, so the second hand stops advancing in even steps.
 #[cfg(target_arch = "wasm32")]
 fn on_login_reply(_handle: PollHandle, response: &FetchResponse) {
     if response.ok()
@@ -173,9 +181,11 @@ fn on_login_reply(_handle: PollHandle, response: &FetchResponse) {
         log_warn!("mining-clock: login failed with status {}", response.status);
         STATE.with(|state| state.borrow_mut().auth = AuthState::Failed);
     }
-    request_frame();
 }
 
+// Requests no frame for the same reason as `on_login_reply`: fresh stats and
+// constraints land on the next 1s render tick. Painting on every fetch reply
+// would knock the second hand off its even one-second steps.
 #[cfg(target_arch = "wasm32")]
 fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
     if response.status == 401 {
@@ -222,7 +232,6 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
             }
         });
     }
-    request_frame();
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -265,6 +274,7 @@ pub extern "C" fn render(delta_ms: u32) {
         state.miner.clone()
     });
 
+    let first_frame = FIRST_FRAME.replace(false);
     let root = analog::round::render(
         now,
         &params,
@@ -274,16 +284,24 @@ pub extern "C" fn render(delta_ms: u32) {
         effective_tz.as_ref(),
         &palette,
         &miner,
+        first_frame,
     );
 
     let _ = render_ui(w, h, root);
     // Re-render once per second so the displayed time advances.
     request_frame_after(1000);
+    // The seeded first frame shows empty rings; schedule the real values now so
+    // the host transition animates them in on the next tick.
+    if first_frame {
+        request_frame();
+    }
 }
 
 /// Fires after every per-widget params delivery (operator change).
-/// Trigger an immediate re-render so operator changes don't wait for
-/// the next 1s tick.
+/// Re-authenticates on a credential change; the new values surface on the
+/// next 1s render tick, so no frame is requested here. As in the fetch-reply
+/// handlers, forcing a frame would paint off the 1s cadence and make the second
+/// hand skip its even steps.
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn on_params_update() {
@@ -308,19 +326,6 @@ pub extern "C" fn on_params_update() {
             }
         });
     }
-    request_frame();
-}
-
-/// Fires after every deck-wide system snapshot delivery
-/// (timezone, formats, next-alarm, night-mode, …).
-///
-/// Same reason for immediate re-render — night-mode flips
-/// shouldn't sit on screen for up to a second before
-/// the palette swap takes effect.
-#[cfg(target_arch = "wasm32")]
-#[unsafe(no_mangle)]
-pub extern "C" fn on_system_update() {
-    request_frame();
 }
 
 #[cfg(test)]
