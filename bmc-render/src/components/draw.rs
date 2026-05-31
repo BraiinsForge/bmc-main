@@ -329,6 +329,7 @@ fn render_draw_inner(
             width,
             fill,
             segments,
+            cap,
         } => {
             let er = *radius * scale;
             let ew = *width * scale;
@@ -336,7 +337,17 @@ fn render_draw_inner(
             let scy = cy + *arc_cy + offset_y;
             let eff = effective_arc_fill(fill, color_override, alpha);
             if rotation == 0.0 {
-                renderer.stroke_arc(scx, scy, er, *start_angle, *end_angle, ew, &eff, segments);
+                renderer.stroke_arc(
+                    scx,
+                    scy,
+                    er,
+                    *start_angle,
+                    *end_angle,
+                    ew,
+                    &eff,
+                    segments,
+                    *cap,
+                );
             } else {
                 let pivot_x = cx + cw / 2.0;
                 let pivot_y = cy + ch / 2.0;
@@ -352,6 +363,7 @@ fn render_draw_inner(
                     ew,
                     &eff,
                     segments,
+                    *cap,
                 );
                 renderer.restore();
             }
@@ -705,7 +717,8 @@ fn render_draw_inner(
                     acc_color,
                     anim_ctx,
                 );
-            } else if let (Some(ao), DrawCommand::Arc { fill, .. }) = (arc_override, inner.as_ref())
+            } else if let (Some(ao), DrawCommand::Arc { fill, cap, .. }) =
+                (arc_override, inner.as_ref())
             {
                 let overridden = DrawCommand::Arc {
                     cx: ao.cx,
@@ -716,6 +729,7 @@ fn render_draw_inner(
                     width: ao.width,
                     fill: *fill,
                     segments: ao.segments,
+                    cap: *cap,
                 };
                 render_draw_inner(
                     renderer,
@@ -1250,6 +1264,7 @@ mod tests {
             width: f32,
             fill: ArcFill,
             segments: ArcSegments,
+            cap: ArcCap,
         },
         CurvedText {
             cx: f32,
@@ -1298,6 +1313,7 @@ mod tests {
             width: f32,
             fill: &ArcFill,
             segments: &ArcSegments,
+            cap: ArcCap,
         ) {
             self.events.push(RenderEvent::Arc {
                 cx,
@@ -1308,6 +1324,7 @@ mod tests {
                 width,
                 fill: *fill,
                 segments: segments.clone(),
+                cap,
             });
         }
 
@@ -1578,6 +1595,7 @@ mod tests {
                 width: 6.0,
                 fill: ArcFill::Solid(Color::from_rgb(1, 2, 3)),
                 segments: ArcSegments::Continuous,
+                cap: ArcCap::Round,
             }),
         }
     }
@@ -1637,6 +1655,7 @@ mod tests {
                 width,
                 fill,
                 segments,
+                cap,
             },
         ] = &renderer.events[..]
         else {
@@ -1649,6 +1668,7 @@ mod tests {
         assert_eq!(width.to_bits(), 6.0_f32.to_bits());
         assert_eq!(*fill, ArcFill::Solid(Color::from_rgb(1, 2, 3)));
         assert_eq!(*segments, ArcSegments::Continuous);
+        assert_eq!(*cap, ArcCap::Round);
     }
 
     #[test]

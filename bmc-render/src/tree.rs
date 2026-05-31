@@ -13,7 +13,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::*;
-use bmc_wasm_protocol::{ArcFill, ArcSegments, DRAW_ARC, decode_arc_fill, decode_arc_segments};
+use bmc_wasm_protocol::{
+    ArcCap, ArcFill, ArcSegments, DRAW_ARC, decode_arc_cap, decode_arc_fill, decode_arc_segments,
+};
 
 use crate::gpu::mesh::{MeshDrawArgs, MeshHighlight, MeshLighting, MeshTransform};
 
@@ -144,6 +146,7 @@ pub enum DrawCommand {
         width: f32,
         fill: ArcFill,
         segments: ArcSegments,
+        cap: ArcCap,
     },
     Svg {
         x: f32,
@@ -415,6 +418,11 @@ impl<'a> TreeReader<'a> {
     fn read_arc_segments(&mut self) -> Result<ArcSegments> {
         decode_arc_segments(self.data, &mut self.pos)
             .ok_or_else(|| anyhow::anyhow!("unexpected end of tree data reading arc segments"))
+    }
+
+    fn read_arc_cap(&mut self) -> Result<ArcCap> {
+        decode_arc_cap(self.data, &mut self.pos)
+            .ok_or_else(|| anyhow::anyhow!("unexpected end of tree data reading arc cap"))
     }
 
     /// Decode an `Option<SvgId>`. Wire zero lifts to `None`.
@@ -751,6 +759,7 @@ impl<'a> TreeReader<'a> {
                 let width = self.read_f32()?;
                 let fill = self.read_arc_fill()?;
                 let segments = self.read_arc_segments()?;
+                let cap = self.read_arc_cap()?;
                 Ok(DrawCommand::Arc {
                     cx,
                     cy,
@@ -760,6 +769,7 @@ impl<'a> TreeReader<'a> {
                     width,
                     fill,
                     segments,
+                    cap,
                 })
             }
             DRAW_ICON => {
@@ -2308,6 +2318,7 @@ mod tests {
         }
         bmc_wasm_protocol::encode_arc_fill(&mut data, &expected_fill);
         bmc_wasm_protocol::encode_arc_segments(&mut data, &expected_segments);
+        bmc_wasm_protocol::encode_arc_cap(&mut data, ArcCap::Butt);
 
         let DrawCommand::Arc {
             cx,
@@ -2318,6 +2329,7 @@ mod tests {
             width,
             fill,
             segments,
+            cap,
         } = TreeReader::new(&data)
             .read_draw()
             .expect("BUG: test buffer encodes a valid DRAW_ARC")
@@ -2329,6 +2341,7 @@ mod tests {
         assert_eq!((start_angle, end_angle, width), (0.0, 1.5, 6.0));
         assert_eq!(fill, expected_fill);
         assert_eq!(segments, expected_segments);
+        assert_eq!(cap, ArcCap::Butt);
     }
 
     #[test]

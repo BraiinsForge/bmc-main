@@ -13,7 +13,7 @@ use std::num::NonZeroU32;
 use anyhow::Result;
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
-    ArcAnchor, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
+    ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
 };
 use cosmic_text::fontdb;
 use femtovg::renderer::OpenGl;
@@ -444,7 +444,12 @@ impl Renderer for FemtoVgRenderer {
         width: f32,
         fill: &ArcFill,
         segments: &ArcSegments,
+        cap: ArcCap,
     ) {
+        let outer_cap = match cap {
+            ArcCap::Round => LineCap::Round,
+            ArcCap::Butt => LineCap::Butt,
+        };
         let spans = arc_spans(segments, start_angle, end_angle);
         let last_span = spans.len().saturating_sub(1);
         for (si, &(s0, s1)) in spans.iter().enumerate() {
@@ -480,10 +485,10 @@ impl Renderer for FemtoVgRenderer {
                 paint.set_line_width(width);
                 paint.set_line_cap(LineCap::Butt);
                 if si == 0 && ci == 0 {
-                    paint.set_line_cap_start(LineCap::Round);
+                    paint.set_line_cap_start(outer_cap);
                 }
                 if si == last_span && ci == last_chunk {
-                    paint.set_line_cap_end(LineCap::Round);
+                    paint.set_line_cap_end(outer_cap);
                 }
                 self.canvas.stroke_path(&path, &paint);
             }
