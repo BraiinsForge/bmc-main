@@ -14,6 +14,7 @@
 use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Params;
+use crate::miner::{self, MinerData};
 use crate::shared::{
     AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, f32_from_u32, font_weight,
     local_or_system, push_utc_offset, resolve_tz_for_label,
@@ -36,9 +37,19 @@ const DIAL_ROUND: Svg = include_svg!("assets/analog/dial-round.svg");
 
 const NATIVE_DIAL: f32 = 390.0;
 
-// 390 / 480 — reproduces the canonical 390 px dial on a 480 px-tall viewport,
-// so Deck viewports render unchanged.
-const DIAL_FRACTION: f32 = 0.812_5;
+// 364 / 480 — keeps about 10 px between the dial rim and the inner mining ring.
+const DIAL_FRACTION: f32 = 0.758_333_3;
+
+const HASHRATE_RADIUS: f32 = 216.0;
+const POWER_RADIUS: f32 = 196.0;
+const RING_WIDTH: f32 = 8.0;
+const HASHRATE_SWEEP_END: f32 = 330.0_f32.to_radians();
+const POWER_SWEEP_END: f32 = 340.0_f32.to_radians();
+const LABEL_OFFSET: f32 = 5.0_f32.to_radians();
+const HASHRATE_GREEN: Color = Color::from_rgb(0x34, 0xC0, 0x6A);
+const HASHRATE_DARK: Color = Color::from_rgb(0x19, 0x5E, 0x33);
+const POWER_GREEN: Color = Color::from_rgb(0x13, 0xA4, 0x54);
+const LABEL_GRAY: Color = Color::from_rgb(0xA7, 0xA7, 0xA7);
 
 // ── Per-size template parameters ───────────────────────────────────────
 
@@ -94,6 +105,10 @@ fn pick_size(variant: SizeVariant) -> &'static AnalogRoundSizeParams {
 
 // ── Render ─────────────────────────────────────────────────────────────
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "render entry threads the existing clock context plus the miner snapshot"
+)]
 pub(crate) fn render(
     now: SystemTime,
     params: &Params,
@@ -102,6 +117,7 @@ pub(crate) fn render(
     h: u32,
     tz: Option<&Tz>,
     palette: &ClockPalette,
+    miner: &MinerData,
 ) -> Node {
     let size = pick_size(variant);
     let viewport_w = f32_from_u32(w);
@@ -127,7 +143,8 @@ pub(crate) fn render(
     };
     let (hour12, minute, second) = local_clock_components(&now, offset_secs);
 
-    let mut draws: Vec<Draw> = Vec::with_capacity(16);
+    let mut draws: Vec<Draw> = Vec::with_capacity(20);
+    push_gauges_and_labels(&mut draws, centre_x, centre_y, miner);
 
     // Dial — single 390-native SVG, rendered at the viewport-derived `dial`
     // side and centred. Per-path `.fill()` overrides recolour the named paths
@@ -234,6 +251,142 @@ pub(crate) fn render(
     canvas(props!(width: viewport_w, height: viewport_h), draws)
 }
 
+fn push_gauges_and_labels(draws: &mut Vec<Draw>, centre_x: f32, centre_y: f32, miner: &MinerData) {
+    let hashrate_segments = ArcSegments::Continuous;
+    let hashrate_fraction =
+        miner::hashrate_fraction(miner.hashrate_ths, miner.nominal_hashrate_ths);
+    let hashrate_label_angle = live_end_angle(HASHRATE_SWEEP_END, hashrate_fraction);
+    push_gauge_arc(
+        draws,
+        centre_x,
+        centre_y,
+        HASHRATE_RADIUS,
+        HASHRATE_SWEEP_END,
+        hashrate_fraction,
+        ArcFill::gradient(HASHRATE_DARK, HASHRATE_GREEN),
+        &hashrate_segments,
+        ArcCap::Round,
+    );
+
+    let power_segments = ArcSegments::short_ends(0.0, POWER_SWEEP_END, 18, 0.02, 0.5);
+    let power_fraction = miner::power_fraction(miner.power_w);
+    let power_label_angle = live_end_angle(POWER_SWEEP_END, power_fraction);
+    push_gauge_arc(
+        draws,
+        centre_x,
+        centre_y,
+        POWER_RADIUS,
+        POWER_SWEEP_END,
+        power_fraction,
+        ArcFill::gradient(POWER_GREEN, miner::power_ramp_color(power_fraction)),
+        &power_segments,
+        ArcCap::Round,
+    );
+
+    draws.push(Draw::curved_text(
+        centre_x,
+        centre_y,
+        HASHRATE_RADIUS,
+        hashrate_label_angle,
+        text_anchor_for_angle(hashrate_label_angle),
+        text_facing_for_angle(hashrate_label_angle),
+        hashrate_label(miner.hashrate_ths),
+        style!(size: 18, weight: FontWeight::REGULAR, color: LABEL_GRAY),
+    ));
+    draws.push(Draw::curved_text(
+        centre_x,
+        centre_y,
+        POWER_RADIUS,
+        power_label_angle,
+        text_anchor_for_angle(power_label_angle),
+        text_facing_for_angle(power_label_angle),
+        power_label(miner.power_w),
+        style!(size: 16, weight: FontWeight::REGULAR, color: LABEL_GRAY),
+    ));
+}
+
+fn live_end_angle(sweep_end: f32, fraction: f32) -> f32 {
+    (sweep_end * fraction.clamp(0.0, 1.0) + LABEL_OFFSET).rem_euclid(std::f32::consts::TAU)
+}
+
+fn text_anchor_for_angle(angle: f32) -> ArcAnchor {
+    if text_facing_for_angle(angle) == ArcTextFacing::Inward {
+        ArcAnchor::End
+    } else {
+        ArcAnchor::Start
+    }
+}
+
+fn text_facing_for_angle(angle: f32) -> ArcTextFacing {
+    let angle = angle.rem_euclid(std::f32::consts::TAU);
+    if (90.0_f32.to_radians()..=270.0_f32.to_radians()).contains(&angle) {
+        ArcTextFacing::Inward
+    } else {
+        ArcTextFacing::Outward
+    }
+}
+
+fn hashrate_label(value: Option<f64>) -> String {
+    match value {
+        Some(ths) => bmc_wasm_sdk::fmt!("{} TH/s", format_number!(ths, 2)),
+        None => "-- TH/s".to_owned(),
+    }
+}
+
+fn power_label(value: Option<f64>) -> String {
+    match value {
+        Some(watts) => bmc_wasm_sdk::fmt!("{} W", format_number!(watts, 0)),
+        None => "-- W".to_owned(),
+    }
+}
+
+fn clipped_segments(segments: &ArcSegments, live_end: f32) -> ArcSegments {
+    match segments {
+        ArcSegments::Continuous => ArcSegments::Continuous,
+        ArcSegments::Explicit(spans) => ArcSegments::Explicit(
+            spans
+                .iter()
+                .filter_map(|&(start, end)| {
+                    let clipped_end = end.min(live_end);
+                    (start < clipped_end).then_some((start, clipped_end))
+                })
+                .collect(),
+        ),
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "flat gauge geometry helper keeps render call sites readable"
+)]
+fn push_gauge_arc(
+    draws: &mut Vec<Draw>,
+    centre_x: f32,
+    centre_y: f32,
+    radius: f32,
+    sweep_end: f32,
+    fraction: f32,
+    fill: ArcFill,
+    segments: &ArcSegments,
+    cap: ArcCap,
+) {
+    let live_end = sweep_end * fraction.clamp(0.0, 1.0);
+    if live_end <= 0.0 {
+        return;
+    }
+    draws.push(Draw::arc(
+        centre_x,
+        centre_y,
+        radius,
+        0.0,
+        live_end,
+        RING_WIDTH,
+        fill,
+        clipped_segments(segments, live_end),
+        cap,
+    ));
+}
+
 // ── Date window ────────────────────────────────────────────────────────
 
 const FRAC_1_SQRT_2: f32 = std::f32::consts::FRAC_1_SQRT_2;
@@ -303,7 +456,6 @@ fn date_window(
         1.0,
         palette.date_window,
         true,
-        false,
         Interpolation::CatmullRom,
     ));
     #[expect(

@@ -1,0 +1,6 @@
+settle_delay = 40
+timeout = 600
+sizes = ["round"]
+
+[fixtures]
+round = "fixtures/round.jsonl.gz"
