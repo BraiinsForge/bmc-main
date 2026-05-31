@@ -75,7 +75,7 @@ let
           chmod 755 "$target.tmp"
           mv -Tf "$target.tmp" "$target"
       fi
-      ln -sf ../init.d/nix-activator /etc/rc.d/S62nix-activator
+      ln -sf ../init.d/nix-activator /etc/rc.d/S91nix-activator
 
       rm -f /etc/init.d/nix-mounter
       rm -f /etc/rc.d/S*nix-mounter /etc/rc.d/K*nix-mounter
@@ -145,7 +145,7 @@ in
       "/var/log/bmc"
       "/etc/nix/nix.conf"
       "/etc/init.d/nix-activator"
-      "/etc/rc.d/S62nix-activator"
+      "/etc/rc.d/S91nix-activator"
     ];
   };
   version = "0.1.0";
