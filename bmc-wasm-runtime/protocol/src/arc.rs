@@ -30,11 +30,22 @@ pub enum ArcFill {
 /// Visible angular spans of an arc within its `[start_angle, end_angle]` sweep.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ArcSegments {
-    /// One span covering the whole sweep; round caps on both ends.
+    /// One span covering the whole sweep.
     Continuous,
-    /// Ordered visible spans `(a0, a1)`. Round caps appear only on the first
-    /// span's start and the last span's end; interior ends are flat.
+    /// Ordered visible spans `(a0, a1)`; interior span ends are always flat.
     Explicit(Vec<(f32, f32)>),
+}
+
+/// End-cap style for an arc's two outer ends: the start of the first visible
+/// span and the end of the last. Interior ends of `Explicit` spans are always
+/// flat regardless of this choice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ArcCap {
+    /// Rounded outer ends.
+    #[default]
+    Round,
+    /// Flat (butt) outer ends, e.g. a segmented tick gauge.
+    Butt,
 }
 
 impl From<Color> for ArcFill {
