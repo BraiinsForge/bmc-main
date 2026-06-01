@@ -8,7 +8,7 @@
         "width": 1280,
         "height": 480,
         "shape": "rectangular",
-        "dpi": 1
+        "dpi": 217
       },
       "slot_grid": {
         "columns": 4,
@@ -73,7 +73,7 @@
         "width": 320,
         "height": 240,
         "shape": "rectangular",
-        "dpi": 1
+        "dpi": 141
       },
       "slot_grid": null,
       "led_strip": null,
@@ -96,7 +96,7 @@
         "width": 480,
         "height": 320,
         "shape": "rectangular",
-        "dpi": 1
+        "dpi": 165
       },
       "slot_grid": null,
       "led_strip": null,
@@ -119,7 +119,7 @@
         "width": 480,
         "height": 480,
         "shape": "round",
-        "dpi": 1
+        "dpi": 229
       },
       "slot_grid": null,
       "led_strip": null,

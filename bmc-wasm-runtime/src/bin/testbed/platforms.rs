@@ -20,10 +20,6 @@ use std::collections::BTreeSet;
 
 use serde::Deserialize;
 
-/// Explicit fake DPI used by every initial platform until panel active-area
-/// data is available.
-pub(super) const FAKE_DPI: u32 = 1;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DisplayShape {
     Rectangular,
@@ -610,7 +606,7 @@ mod tests {
 
         let deck = cat.platform("BMC100").expect("BUG: BMC100 must exist");
         assert_eq!(deck.label, "Deck");
-        assert_eq!(deck.display.dpi, FAKE_DPI);
+        assert_eq!(deck.display.dpi, 217);
         let slot_grid = deck.slot_grid.expect("BUG: BMC100 must have slot grid");
         assert_eq!((slot_grid.columns, slot_grid.rows), (4, 2));
         let led_strip = deck.led_strip.expect("BUG: BMC100 must have LED strip");
@@ -635,7 +631,7 @@ mod tests {
 
         assert_eq!(
             (display.width, display.height, display.dpi),
-            (480, 480, FAKE_DPI)
+            (480, 480, 229)
         );
         assert_eq!(display.shape, bmc_wasm_protocol::DisplayShape::Round);
     }
@@ -648,7 +644,7 @@ mod tests {
 
         assert_eq!(
             (display.width, display.height, display.dpi),
-            (480, 320, FAKE_DPI)
+            (480, 320, 165)
         );
         assert_eq!(display.shape, bmc_wasm_protocol::DisplayShape::Rectangular);
     }
