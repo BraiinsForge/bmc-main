@@ -52,8 +52,8 @@ configure_done
 ```
 
 - `configure` carries the widget viewport's pixel dimensions and viewport shape.
-- `display_info` carries the active logical display's pixel dimensions, display shape, and DPI. DPI is part of the
-  protocol but is currently an explicit fake value of `1` on every supported platform.
+- `display_info` carries the active logical display's pixel dimensions, display shape, and DPI. DPI is each platform's
+  real display density and is advisory for layout.
 - `params` carries the widget's per-instance params as a JSON-encoded object, exactly as stored in the scene config. The
   compositor passes it through as-is; the widget owns its manifest and is authoritative on what values are valid.
 - Setting events carry the current system-wide values. The compositor keeps these cached so every newly connected widget

@@ -27,7 +27,8 @@ Current platform viewports:
 | `BMM101` | fullscreen | rectangular    | `480x320`     |
 | `BFM100` | fullscreen | round          | `480x480`     |
 
-All current platforms report `dpi = 1`. Treat DPI as advisory.
+Each platform reports its real display density (`BMC100` 217, `BMM100` 141, `BMM101` 165, `BFM100` 229). Treat DPI as
+advisory.
 
 ## SDK APIs
 

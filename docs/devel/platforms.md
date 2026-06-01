@@ -72,8 +72,8 @@ Definitions:
 - Logical display size is the visible area after the scanout transform's axis swap. The compositor, widgets, and display
   capability code use logical dimensions.
 - Scanout transform is the rotation applied when the composed logical buffer is presented to the panel.
-- DPI is part of the model, but every current platform reports `dpi = 1`. Treat it as an advisory placeholder until
-  panel active-area data is available.
+- DPI is part of the model; each platform reports its real display density (`BMC100` 217, `BMM100` 141, `BMM101` 165,
+  `BFM100` 229). Treat it as advisory for layout, not a value widgets must rely on for correctness.
 
 `BMC100` is the only current product whose logical display differs from the advertised mode: it crops the `600x1280`
 mode to a `480x1280` visible area, then the 270 degree scanout transform exposes it to the compositor as `1280x480`.
