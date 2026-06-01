@@ -16,6 +16,12 @@ A clock widget with an analog (round or rectangular) or digital face, optional d
 configurable numeral weight, and a next-alarm indicator. Renders at all four widget sizes on BMC100, scales to fit the
 BMM100, BMM101, and BFM100 panels, and recolours for night mode.
 
+### [Mining Clock Widget](mining-clock.md)
+
+The clock widget reshaped for a miner: a round analog dial wrapped in two live gauge rings — an outer hashrate ring and
+an inner power ring — that reads stats from a BOS miner over its REST API. Keeps the clock's date, timezone, seconds,
+numeral weight, and next-alarm features. Renders full-screen on the round BFM100 panel only.
+
 ### [Mining Info Widget](mining-info.md)
 
 A widget that shows mining and Bitcoin network information across four selectable views — a miner overview, a miner
