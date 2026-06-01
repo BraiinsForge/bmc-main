@@ -165,11 +165,11 @@ inclusive ranges: `min_width <= width <= max_width`, `min_height <= height <= ma
 
 For this slice, `slot_span` is not an arbitrary rectangle. Only the existing `BMC100` spans are valid:
 
-| Slot span | Derived descriptor          |
-| --------- | --------------------------- |
-| `1x1`     | `rectangular 317x238 dpi=1` |
-| `2x1`     | `rectangular 638x238 dpi=1` |
-| `2x2`     | `rectangular 638x480 dpi=1` |
+| Slot span | Derived descriptor            |
+| --------- | ----------------------------- |
+| `1x1`     | `rectangular 317x238 dpi=217` |
+| `2x1`     | `rectangular 638x238 dpi=217` |
+| `2x2`     | `rectangular 638x480 dpi=217` |
 
 Reject other slot spans, including `1x2`, `3x1`, and `4x2`. Future arbitrary-grid support can widen this table later.
 
@@ -183,14 +183,14 @@ startup, cycling, and activation must revalidate the active viewport descriptor 
   and no spawned widgets
 
 For initial `BMC100` compatibility, old manifest `sizes` map to exact rectangular viewport constraints with
-`min_* == max_*` and `min_dpi == max_dpi == 1`:
+`min_* == max_*` on width and height, and an unbounded DPI range so they match the platform's real display density:
 
-| Legacy manifest size | Constraint                                |
-| -------------------- | ----------------------------------------- |
-| `small`              | `rectangular width=317 height=238 dpi=1`  |
-| `medium`             | `rectangular width=638 height=238 dpi=1`  |
-| `large`              | `rectangular width=638 height=480 dpi=1`  |
-| `full`               | `rectangular width=1280 height=480 dpi=1` |
+| Legacy manifest size | Constraint                                  |
+| -------------------- | ------------------------------------------- |
+| `small`              | `rectangular width=317 height=238 dpi=any`  |
+| `medium`             | `rectangular width=638 height=238 dpi=any`  |
+| `large`              | `rectangular width=638 height=480 dpi=any`  |
+| `full`               | `rectangular width=1280 height=480 dpi=any` |
 
 New manifests should use `supported_viewports`. During migration, accepting old `sizes` is allowed only as a
 compatibility parser path that normalizes into exact `supported_viewports` constraints. The generated web data may keep
@@ -397,8 +397,7 @@ Definitions:
   display size, and the same transform rotates the composed buffer at scanout
 - widget viewport: the drawable rectangle assigned to one widget
 - display shape: the visible display shape, currently `rectangular` or `round`
-- DPI: display density for layout decisions; exact values are intentionally deferred until panel active-area data is
-  available
+- DPI: display density for layout decisions; each platform reports its real per-panel density
 
 Initial platform display values:
 
@@ -417,8 +416,8 @@ present that drives the panel. `BMC100` is the only initial platform whose logic
 mode because it crops the advertised width from `600` to `480` to get a visible area of `480x1280`, then the `270 deg`
 axis swap exposes that as logical `1280x480`.
 
-DPI stays in the capability model. Until panel active areas are known, all initial platforms should report `dpi = 1` as
-an explicit fake value. Widgets should treat DPI as advisory during this slice and must not rely on exact DPI for
+DPI stays in the capability model. Each platform reports its real display density (`BMC100` 217, `BMM100` 141, `BMM101`
+165, `BFM100` 229). Widgets should treat DPI as advisory during this slice and must not rely on exact DPI for
 correctness.
 
 ## Compositor Capability Source
@@ -812,7 +811,3 @@ The slice is complete when:
 - `bmc-openwrt` does not attempt to open the APA102 SPI device on `BMM100`
 - `bmc-openwrt` does not attempt to open the APA102 SPI device on `BMM101`
 - `bmc-openwrt` does not attempt to open the APA102 SPI device on `BFM100`
-
-## Defrerred Decisions
-
-- exact DPI values for `BMC100`, `BMM100`, `BMM101`, and `BFM100`
