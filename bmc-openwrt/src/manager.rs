@@ -30,7 +30,6 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     path::Path,
 };
-use tokio::time::Duration;
 use tokio::{fs, process::Command};
 use tracing::{debug, error, info};
 
@@ -67,8 +66,6 @@ impl Manager {
     const UCI_NET_LAN_GATEWAY: &str = "network.wifi_sta.gateway";
     const UCI_NET_LAN_DNS: &str = "network.wifi_sta.dns";
     const WIFI_EVENTS_CAPACITY: usize = 10;
-    const WIFI_INTERFACE_MAX_RETRY: usize = 60;
-    const WIFI_INTERFACE_RETRY_DELAY: Duration = Duration::from_secs(2);
 
     #[must_use]
     pub async fn new(
@@ -261,26 +258,14 @@ impl Manager {
     }
 
     async fn calculate_wifi_ssid(&self) -> anyhow::Result<String> {
-        for _ in 1..=Self::WIFI_INTERFACE_MAX_RETRY {
-            match self.try_calculate_wifi_ssid().await {
-                Ok(wifi_ssid) => return Ok(wifi_ssid),
-                Err(err) => {
-                    info!(
-                        "Wi-Fi phy not initialized yet: {err}, retrying in {} seconds",
-                        Self::WIFI_INTERFACE_RETRY_DELAY.as_secs()
-                    );
-                    tokio::time::sleep(Self::WIFI_INTERFACE_RETRY_DELAY).await;
-                }
-            }
-        }
+        let mac = call_command_to_string(
+            "sh",
+            &["-c", ". /lib/functions/bos-defaults.sh && wifi_mac"],
+        )
+        .await
+        .inspect_err(|err| error!(error = %err, "Failed to read Wi-Fi MAC address"))?;
 
-        Err(anyhow!("Timeout waiting for Wi-Fi interface to appear."))
-    }
-
-    async fn try_calculate_wifi_ssid(&self) -> anyhow::Result<String> {
-        let mac = self.wifi_manager.get_phy_macaddress().await?;
-
-        let mac_id = Self::get_mac_short_id(&mac);
+        let mac_id = Self::get_mac_short_id(mac.trim());
         Ok(self.make_wifi_ssid_for_mac(&mac_id))
     }
 }
