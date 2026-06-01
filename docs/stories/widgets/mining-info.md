@@ -58,6 +58,23 @@ other.
 - On larger displays the grid expands to add the estimated and previous difficulty adjustments, epoch progress, the fee
   share over 144 blocks, and hashvalue (SAT/TH/day).
 
+### See my miner on a round display
+
+> As a user with a round-display Deck, I want the miner overview to fill the circular screen and show miner health at a
+> glance.
+
+- On the round 480×480 display (BFM100), the *Mining*, *Geek*, and *Info Overload* screens use dedicated circular
+  layouts; *Network* keeps the rectangular layout.
+- *Mining* and *Geek* center the current hashrate inside a 28-segment ring and place four stats in the quadrants around
+  it. *Mining*'s quadrants are power consumption, MCR, temperature, and fan speed; *Geek* swaps MCR for efficiency
+  (J/TH) and fan speed for the BTC price.
+- The ring's color and fill reflect the miner's state derived from its MCR: green when running well, amber when
+  underclocked, purple when overclocked, and red with a single lit tick when the miner is not hashing. While the miner
+  is hashing but its MCR is unavailable, the ring stays unlit and the hashrate label reads neutral rather than implying
+  a state.
+- *Info Overload* arranges its fields into three horizontal bands with the Bitcoin price band across the middle; it
+  shows fewer network fields than the rectangular layout.
+
 ### Point the widget at my miner
 
 > As a user, I want to tell the widget where my miner is and how to log in so it can read live stats.
@@ -89,11 +106,15 @@ other.
 
 ## Constraints
 
-- The widget renders on rectangular viewports from 320×240 up to 1280×480. The primary targets are BMM100 (320×240) and
-  BMM101 (480×320); BMC100 rectangular viewports are best-effort.
-- Layout adapts in two bands: a small band (320 wide or 240 tall and below) uses a two-column grid, tighter spacing, and
-  hides secondary fields; a larger band uses a three-column grid, wider spacing, and shows the full field set. Font
-  sizes are fixed across viewports — fields are hidden rather than shrunk.
+- The widget renders on rectangular viewports from 320×240 up to 1280×480 and on the round 480×480 viewport. The primary
+  rectangular targets are BMM100 (320×240) and BMM101 (480×320); BMC100 rectangular viewports are best-effort. The round
+  viewport targets the BFM100.
+- On rectangular viewports, layout adapts in two bands: a small band (320 wide or 240 tall and below) uses a two-column
+  grid, tighter spacing, and hides secondary fields; a larger band uses a three-column grid, wider spacing, and shows
+  the full field set. Font sizes are fixed across viewports — fields are hidden rather than shrunk.
+- The round viewport uses separate circular layouts for *Mining*, *Geek*, and *Info Overload*. *Network* has no round
+  layout yet and falls back to the rectangular layout centered on the circle, so its corners may be clipped by the
+  bezel.
 - *View*, *Miner URL*, *Miner password*, and *Currency* are manifest-driven widget parameters, configurable from the web
   UI.
 - Number formatting follows the device's localization system setting; it is not a per-widget setting.
