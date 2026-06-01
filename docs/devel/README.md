@@ -35,6 +35,12 @@ Frontend-facing API contract for scene and widget management. Covers `SceneManag
 semantics of `UpdateWidget`, preview-stream exclusivity and lifecycle behavior, and server-side validation/precondition
 rules that callers must handle.
 
+### [Hardware gRPC](grpc/hardware-service.md)
+
+Frontend-facing API contract for querying platform hardware capabilities. Covers
+`HardwareService.GetHardwareCapabilities` and how `combined_scenes_supported` (derived from the platform's slot grid)
+gates combined-scene controls and RPCs.
+
 ### [Widget Hardware Actions](widget-hardware-actions.md)
 
 How widget action requests (sound, LED) flow over `deck_widget_v1` to the action handler and on to `SoundController` /

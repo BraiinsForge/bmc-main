@@ -13,8 +13,8 @@ Primary sources:
 
 ## Key RPCs
 
-- Scene CRUD/order/state: `ListScenes`, `GetScene`, `AddFullscreenScene`, `AddCombinedScene`, `UpdateScene`,
-  `MoveScene`, `CloneScene`, `RemoveScene`
+- Scene CRUD/order/state: `GetScenes`, `GetScene`, `AddFullscreenScene`, `AddCombinedScene`, `UpdateScene`, `MoveScene`,
+  `CloneScene`, `RemoveScene`
 - Preview: `PreviewScene` (server stream; scene stays active while stream is open)
 - Widget CRUD: `AddWidget`, `UpdateWidget`, `RemoveWidget`
 - Scene cycling: `GetSceneCycling`, `SetSceneCycling`
@@ -53,7 +53,17 @@ Primary sources:
 ### Manifest and size
 
 - Add/update requires installed widget manifest.
-- Requested size must be supported by the manifest.
+- Requested size must match one of the manifest's `supported_viewports`: the platform's derived `ViewportDescriptor`
+  (built from `HardwareCapabilities`) must fall inside a manifest constraint's width/height/DPI ranges.
+
+### Hardware capability gating
+
+- Combined scenes require a slot grid. When the active platform has no `slot_grid`, `AddCombinedScene` and the
+  combined-scene paths reject with `FailedPrecondition`. The frontend can pre-check this via
+  `HardwareService.GetHardwareCapabilities` (`combined_scenes_supported`); see
+  [`hardware-service.md`](hardware-service.md).
+- On add/update, each widget's `viewport_shape` is stamped from the platform's display shape
+  (`HardwareCapabilities.display.shape`), so round-panel widgets receive a round viewport.
 
 ### Placement and scene invariants
 
