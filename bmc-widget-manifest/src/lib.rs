@@ -627,8 +627,8 @@ impl From<SizeType> for WidgetViewportConstraint {
             max_width: Some(w),
             min_height: Some(h),
             max_height: Some(h),
-            min_dpi: Some(1),
-            max_dpi: Some(1),
+            min_dpi: None,
+            max_dpi: None,
         }
     }
 }
@@ -1728,8 +1728,8 @@ mod tests {
                 .supported_viewports
                 .iter()
                 .all(|c| c.viewport_shape == ViewportShape::Rectangular
-                    && c.min_dpi == Some(1)
-                    && c.max_dpi == Some(1))
+                    && c.min_dpi.is_none()
+                    && c.max_dpi.is_none())
         );
     }
 
