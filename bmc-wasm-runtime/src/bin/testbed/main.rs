@@ -2241,7 +2241,7 @@ mod layout_tests {
             (geometry.display.width, geometry.display.height),
             (480, 480)
         );
-        assert_eq!(geometry.display.dpi, platforms::FAKE_DPI);
+        assert_eq!(geometry.display.dpi, 229);
     }
 
     #[test]
