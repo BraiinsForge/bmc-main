@@ -91,7 +91,7 @@ pub fn slot_span_descriptor(columns: u32, rows: u32) -> Option<ViewportDescripto
         viewport_shape: ViewportShape::Rectangular,
         width,
         height,
-        dpi: 1,
+        dpi: 217,
     })
 }
 
@@ -366,7 +366,7 @@ mod tests {
                 viewport_shape: ViewportShape::Rectangular,
                 width: 317,
                 height: 238,
-                dpi: 1
+                dpi: 217
             })
         );
         assert_eq!(
@@ -375,7 +375,7 @@ mod tests {
                 viewport_shape: ViewportShape::Rectangular,
                 width: 638,
                 height: 238,
-                dpi: 1
+                dpi: 217
             })
         );
         assert_eq!(
@@ -384,7 +384,7 @@ mod tests {
                 viewport_shape: ViewportShape::Rectangular,
                 width: 638,
                 height: 480,
-                dpi: 1
+                dpi: 217
             })
         );
     }
