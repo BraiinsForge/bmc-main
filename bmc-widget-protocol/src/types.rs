@@ -24,8 +24,8 @@ pub enum ViewportShape {
 }
 
 /// Active display geometry and shape delivered to a widget in the initial
-/// configure batch. `dpi` is advisory and currently an explicit fake value
-/// of 1 until panel active-area data is available.
+/// configure batch. `dpi` is the platform's real display density and is
+/// advisory for layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DisplayInfo {
     pub width: u32,
@@ -35,13 +35,12 @@ pub struct DisplayInfo {
 }
 
 impl DisplayInfo {
-    /// BMC100 Deck display: logical `1280x480`, rectangular, fake `dpi=1`.
-    /// Used as the stage-2 default until real per-platform values land.
+    /// BMC100 Deck display: logical `1280x480`, rectangular, `dpi=217`.
     pub const BMC100: Self = Self {
         width: 1_280,
         height: 480,
         shape: DisplayShape::Rectangular,
-        dpi: 1,
+        dpi: 217,
     };
 }
 
@@ -336,7 +335,7 @@ mod tests {
         assert_eq!(display.width, 1_280);
         assert_eq!(display.height, 480);
         assert_eq!(display.shape, DisplayShape::Rectangular);
-        assert_eq!(display.dpi, 1);
+        assert_eq!(display.dpi, 217);
     }
 
     #[test]
