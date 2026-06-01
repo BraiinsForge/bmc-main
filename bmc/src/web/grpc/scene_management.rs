@@ -37,7 +37,7 @@ const BMC100_SLOT_SIZE_DESCRIPTORS: &[(web::WidgetSize, crate::widget::ViewportD
             viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
             width: 317,
             height: 238,
-            dpi: 1,
+            dpi: 217,
         },
     ),
     (
@@ -46,7 +46,7 @@ const BMC100_SLOT_SIZE_DESCRIPTORS: &[(web::WidgetSize, crate::widget::ViewportD
             viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
             width: 638,
             height: 238,
-            dpi: 1,
+            dpi: 217,
         },
     ),
     (
@@ -55,21 +55,17 @@ const BMC100_SLOT_SIZE_DESCRIPTORS: &[(web::WidgetSize, crate::widget::ViewportD
             viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
             width: 638,
             height: 480,
-            dpi: 1,
+            dpi: 217,
         },
     ),
 ];
 
 #[cfg(test)]
-const BMC100_PLATFORM_DESCRIPTOR: PlatformDescriptor = PlatformDescriptor {
-    fullscreen: crate::widget::ViewportDescriptor {
-        viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
-        width: 1280,
-        height: 480,
-        dpi: 1,
-    },
-    slot_sizes: BMC100_SLOT_SIZE_DESCRIPTORS,
-};
+fn bmc100_platform_descriptor() -> PlatformDescriptor {
+    PlatformDescriptor::from(
+        &bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100).capabilities(),
+    )
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("unsupported widget size label")]
@@ -2814,15 +2810,15 @@ mod tests {
 
     #[test]
     fn platform_descriptor_maps_fullscreen_size() {
-        let desc = BMC100_PLATFORM_DESCRIPTOR
+        let desc = bmc100_platform_descriptor()
             .descriptor_for_placement(&scene::WidgetPlacement::Fullscreen)
             .expect("BUG: fullscreen must derive");
-        assert_eq!(desc, BMC100_PLATFORM_DESCRIPTOR.fullscreen);
+        assert_eq!(desc, bmc100_platform_descriptor().fullscreen);
     }
 
     #[test]
     fn platform_descriptor_maps_bmc100_slot_sizes() {
-        let desc = BMC100_PLATFORM_DESCRIPTOR
+        let desc = bmc100_platform_descriptor()
             .descriptor_for_size(web::WidgetSize::Large)
             .expect("BUG: large must derive");
         assert_eq!(desc.width, 638);
@@ -2832,7 +2828,7 @@ mod tests {
     #[test]
     fn platform_descriptor_rejects_unknown_slot_span() {
         assert!(
-            BMC100_PLATFORM_DESCRIPTOR
+            bmc100_platform_descriptor()
                 .descriptor_for_placement(&scene::WidgetPlacement::SlotSpan(scene::SlotSpan {
                     columns: 3,
                     rows: 1
@@ -2849,11 +2845,11 @@ mod tests {
             max_width: Some(638),
             min_height: Some(480),
             max_height: Some(480),
-            min_dpi: Some(1),
-            max_dpi: Some(1),
+            min_dpi: None,
+            max_dpi: None,
         }];
         assert_eq!(
-            supported_sizes_for_constraints(&BMC100_PLATFORM_DESCRIPTOR, &constraints),
+            supported_sizes_for_constraints(&bmc100_platform_descriptor(), &constraints),
             vec![web::WidgetSize::Large]
         );
     }
@@ -2870,7 +2866,7 @@ mod tests {
             max_dpi: Some(2),
         }];
         assert!(
-            !supported_sizes_for_constraints(&BMC100_PLATFORM_DESCRIPTOR, &constraints)
+            !supported_sizes_for_constraints(&bmc100_platform_descriptor(), &constraints)
                 .contains(&web::WidgetSize::Large)
         );
     }
@@ -2883,11 +2879,11 @@ mod tests {
             max_width: Some(1280),
             min_height: Some(480),
             max_height: Some(480),
-            min_dpi: Some(1),
-            max_dpi: Some(1),
+            min_dpi: None,
+            max_dpi: None,
         }];
         assert_eq!(
-            supported_sizes_for_constraints(&BMC100_PLATFORM_DESCRIPTOR, &constraints),
+            supported_sizes_for_constraints(&bmc100_platform_descriptor(), &constraints),
             vec![web::WidgetSize::Full]
         );
     }
