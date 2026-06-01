@@ -128,13 +128,13 @@
         Delivered once on surface creation, after `configure` and before
         `configure_done`. Carries the active display's logical pixel size,
         shape, and DPI so widgets can adapt panel-wide rendering (e.g.
-        corner masking on a round panel). DPI is advisory during this
-        development stage and is currently an explicit fake value of 1.
+        corner masking on a round panel). DPI is the platform's real display
+        density and is advisory during this development stage.
       </description>
       <arg name="width" type="uint" summary="logical display width in pixels"/>
       <arg name="height" type="uint" summary="logical display height in pixels"/>
       <arg name="shape" type="uint" enum="display_shape"/>
-      <arg name="dpi" type="uint" summary="display density; advisory, fake value 1 for now"/>
+      <arg name="dpi" type="uint" summary="display density; advisory"/>
     </event>
 
     <event name="params">
