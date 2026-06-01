@@ -506,8 +506,7 @@ mod platforms_startup_tests {
     }
 
     fn write_test_catalog() -> PathBuf {
-        let temp_dir = PathBuf::from("/tmp/claude-1001");
-        std::fs::create_dir_all(&temp_dir).expect("BUG: test temp directory must be creatable");
+        let temp_dir = std::env::temp_dir();
         let path = temp_dir.join(format!(
             "testbed-platform-catalog-{}.json",
             std::process::id()
@@ -535,8 +534,7 @@ mod platforms_startup_tests {
     }
 
     fn write_invalid_test_catalog() -> PathBuf {
-        let temp_dir = PathBuf::from("/tmp/claude-1001");
-        std::fs::create_dir_all(&temp_dir).expect("BUG: test temp directory must be creatable");
+        let temp_dir = std::env::temp_dir();
         let path = temp_dir.join(format!(
             "testbed-invalid-platform-catalog-{}.json",
             std::process::id()
