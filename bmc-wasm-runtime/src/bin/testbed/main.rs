@@ -731,22 +731,6 @@ mod platforms_startup_tests {
     }
 }
 
-/// Walk up the wasm path looking for `<package>/manifest.json` at each level.
-/// Cargo emits widget binaries with `-` in the package name normalised to `_`.
-fn autodetect_manifest(wasm_path: &Path) -> Option<PathBuf> {
-    let stem = wasm_path.file_stem()?.to_str()?;
-    let package = stem.replace('_', "-");
-    let mut dir = wasm_path.parent()?;
-    while let Some(parent) = dir.parent() {
-        let candidate = parent.join(&package).join("manifest.json");
-        if candidate.exists() {
-            return Some(candidate);
-        }
-        dir = parent;
-    }
-    None
-}
-
 fn load_manifest(
     wasm_path: &Path,
     explicit: Option<PathBuf>,
@@ -754,7 +738,6 @@ fn load_manifest(
 ) -> Result<(PathBuf, bmc_widget_manifest::Manifest)> {
     let manifest_path = explicit
         .or_else(|| widget_root.map(|root| root.join("manifest.json")))
-        .or_else(|| autodetect_manifest(wasm_path))
         .with_context(|| {
             format!(
                 "could not locate manifest.json for {}. Pass --manifest=<path> or \
@@ -848,7 +831,7 @@ fn main() -> Result<()> {
     let (manifest_path, manifest) = load_manifest(
         &cli.wasm_path,
         cli.manifest_path.clone(),
-        cli.widget_root.clone(),
+        cli.resolved_widget_root(),
     )?;
     let params = manifest_default_params(&manifest);
     let (catalog, active_platform_id) = load_catalog_and_platform(&cli)?;
