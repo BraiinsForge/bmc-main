@@ -160,13 +160,12 @@ fn fit_factor(variant: SizeVariant, w: u32, h: u32) -> f32 {
 pub(crate) fn render(
     now: SystemTime,
     params: &Params,
-    variant: SizeVariant,
-    w: u32,
-    h: u32,
+    ws: WidgetSize,
     tz: Option<&Tz>,
     palette: &ClockPalette,
 ) -> Node {
-    let size = pick_size(variant).scaled(fit_factor(variant, w, h));
+    let variant = ws.variant;
+    let size = pick_size(variant).scaled(fit_factor(variant, ws.width, ws.height));
     let size = &size;
     let is_12h = matches!(system::current().time_format(), Some(TimeFormat::Hour12));
 

@@ -48,11 +48,7 @@ fn effective_style(configured: ClockStyle, shape: ViewportShape) -> ClockStyle {
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
-    let WidgetSize {
-        width: w,
-        height: h,
-        variant,
-    } = widget_size();
+    let ws = widget_size();
     let now = SystemTime::now();
     let params = Params::current();
     let effective_tz = params.timezone_override.as_deref().map(Tz::from_runtime);
@@ -62,17 +58,15 @@ pub extern "C" fn render(_delta_ms: u32) {
     let style = effective_style(params.clock_style, viewport.shape);
     let root = match style {
         ClockStyle::AnalogRound => {
-            analog::round::render(now, &params, variant, w, h, effective_tz.as_ref(), &palette)
+            analog::round::render(now, &params, ws, effective_tz.as_ref(), &palette)
         }
         ClockStyle::AnalogRect => {
-            analog::rect::render(now, &params, variant, w, h, effective_tz.as_ref(), &palette)
+            analog::rect::render(now, &params, ws, effective_tz.as_ref(), &palette)
         }
-        ClockStyle::Digital => {
-            digital::render(now, &params, variant, w, h, effective_tz.as_ref(), &palette)
-        }
+        ClockStyle::Digital => digital::render(now, &params, ws, effective_tz.as_ref(), &palette),
     };
 
-    let _ = render_ui(w, h, root);
+    let _ = render_ui(ws.width, ws.height, root);
     // Re-render once per second so the displayed time advances.
     request_frame_after(1000);
 }

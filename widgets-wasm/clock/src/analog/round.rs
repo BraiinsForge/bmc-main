@@ -109,12 +109,13 @@ fn scaled_font(native: u32, scale: f32) -> u32 {
 pub(crate) fn render(
     now: SystemTime,
     params: &Params,
-    variant: SizeVariant,
-    w: u32,
-    h: u32,
+    ws: WidgetSize,
     tz: Option<&Tz>,
     palette: &ClockPalette,
 ) -> Node {
+    let variant = ws.variant;
+    let w = ws.width;
+    let h = ws.height;
     let size = pick_size(variant);
     let viewport_w = f32_from_u32(w);
     let viewport_h = f32_from_u32(h);
