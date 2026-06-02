@@ -51,7 +51,8 @@ pub(crate) struct AnalogRoundSizeParams {
     show_alarm: bool,
     /// Timezone label baseline as a fraction of the dial side, from its top.
     timezone_y_frac: f32,
-    /// Timezone label font size.
+    /// Timezone label font size at the variant's canonical viewport; scaled
+    /// down by `WidgetSize::fit` when the actual viewport is smaller.
     timezone_font_size: u32,
 }
 
@@ -92,18 +93,6 @@ fn pick_size(variant: SizeVariant) -> &'static AnalogRoundSizeParams {
     }
 }
 
-/// Scale a native-dial font size (authored for the 390-px dial) into rendered
-/// widget pixels, tracking `scale = dial / NATIVE_DIAL`.
-fn scaled_font(native: u32, scale: f32) -> u32 {
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "scaled font size is a small positive widget-pixel value"
-    )]
-    let scaled = (f32_from_u32(native) * scale).round() as u32;
-    scaled
-}
-
 // ── Render ─────────────────────────────────────────────────────────────
 
 pub(crate) fn render(
@@ -120,8 +109,9 @@ pub(crate) fn render(
     let viewport_w = f32_from_u32(w);
     let viewport_h = f32_from_u32(h);
     // Dial side as a fraction of the shorter viewport axis, so it always fits
-    // and downscales rather than overflowing. `scale` maps the dial's native
-    // 390 coordinates (hands, internal offsets) into rendered pixels.
+    // and downscales rather than overflowing. `scale` maps the dial's 390
+    // native geometry (hands, date ring) onto the rendered dial. The timezone
+    // label is a per-variant text annotation and scales by `ws.fit()` instead.
     let dial = viewport_w.min(viewport_h) * DIAL_FRACTION;
     let scale = dial / NATIVE_DIAL;
     // Single canvas at the widget viewport size — the SDK's `Draw::rotated`
@@ -168,9 +158,10 @@ pub(crate) fn render(
             }
             TzLabel::Unknown { city, .. } => (city.clone(), "unknown".to_owned(), RED_50),
         };
-        // Scale the font with the dial, like `day_font`, so the label tracks
-        // the rendered dial instead of the native-dial constant.
-        let city_size = scaled_font(size.timezone_font_size, scale);
+        // Per-variant authored size scaled by `fit`, so the label keeps its
+        // legible size at each variant's canonical viewport and only shrinks
+        // when the viewport is smaller — unlike the dial geometry above.
+        let city_size = scale_font(size.timezone_font_size, ws.fit());
         let offset_size = city_size.saturating_mul(85) / 100;
         let line_h = f32_from_u32(city_size) * 1.05;
         let group_centre_y = dial_top_y + dial * size.timezone_y_frac;
@@ -319,7 +310,7 @@ fn date_window(
         false,
         Interpolation::CatmullRom,
     ));
-    let day_font = scaled_font(24, scale);
+    let day_font = scale_font(24, scale);
     // `VerticalAlign::Center` keeps the digit visually centred
     // on the ring instead of sitting half a font-size below it.
     let day_str = format!("{}", local_or_system(now, offset_secs).day);
