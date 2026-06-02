@@ -516,6 +516,42 @@ impl WidgetSize {
             height: h,
         }
     }
+
+    /// Downscale factor of the actual viewport against the matched variant's
+    /// canonical box: `min(width/cw, height/ch)`, clamped to `1.0`.
+    ///
+    /// The binding axis wins (`min`) so neither dimension overflows; the clamp
+    /// keeps a larger-than-canonical viewport at authored sizes instead of
+    /// inflating. This is the scale for *per-variant-layout* widgets (e.g. the
+    /// digital and rectangular clock faces). A widget whose artwork is a single
+    /// asset fit to one axis (e.g. the round clock dial) computes its own
+    /// asset-relative scale and ignores this.
+    #[must_use]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "viewport and canonical dimensions are <= 1280, exact in f32"
+    )]
+    pub fn fit(self) -> f32 {
+        let w_ratio = self.width as f32 / self.variant.width() as f32;
+        let h_ratio = self.height as f32 / self.variant.height() as f32;
+        w_ratio.min(h_ratio).min(1.0)
+    }
+}
+
+/// Scale a native font size by `factor`, rounded to the nearest pixel with a
+/// 1px minimum so a font never vanishes. `factor` is non-negative and normally
+/// `<= 1.0` (e.g. the value from [`WidgetSize::fit`] or a widget's own
+/// asset-relative scale).
+#[must_use]
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "sizes are small; factor is non-negative, so the result is small non-negative"
+)]
+pub fn scale_font(size: u32, factor: f32) -> u32 {
+    let scaled = (size as f32 * factor).round() as u32;
+    scaled.max(1)
 }
 
 /// Widget viewport dimensions, fetched from the host on demand.
@@ -784,5 +820,68 @@ mod geometry_api_tests {
     #[should_panic(expected = "no host geometry exists")]
     fn native_display_info_panics() {
         let _ = display_info();
+    }
+}
+
+#[cfg(test)]
+mod fit_and_scale_tests {
+    use super::{WidgetSize, scale_font};
+
+    fn fit_of(w: u32, h: u32) -> f32 {
+        WidgetSize::from_dimensions(w, h).fit()
+    }
+
+    #[test]
+    fn canonical_viewport_fits_at_one() {
+        assert!((fit_of(1_280, 480) - 1.0).abs() < 1e-4);
+        assert!((fit_of(638, 480) - 1.0).abs() < 1e-4);
+        assert!((fit_of(317, 238) - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn medium_canonical_fits_at_one() {
+        // 638x238 is Medium's canonical box, so fit() = 1.0 — a Medium-authored
+        // font renders at its authored size there, shrinking only below canonical.
+        // (The round dial's geometry scales separately by its own dial ratio;
+        // its per-variant text annotations use fit, like the rectangular face.)
+        assert!((fit_of(638, 238) - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn bmm101_large_downscales_by_binding_axis() {
+        // 480x320 classifies to Large (638x480); min(480/638, 320/480) = 0.6667,
+        // the height (binding) axis wins so neither dimension overflows.
+        assert!((fit_of(480, 320) - 0.666_67).abs() < 1e-3);
+    }
+
+    #[test]
+    fn larger_than_canonical_clamps_to_one() {
+        // 1920x720 classifies to Full (1280x480); ratios 1.5/1.5 clamp to 1.0.
+        assert!((fit_of(1_920, 720) - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn scale_font_at_unit_factor_is_identity() {
+        assert_eq!(scale_font(24, 1.0), 24);
+    }
+
+    #[test]
+    fn scale_font_halves_and_rounds() {
+        assert_eq!(scale_font(24, 0.5), 12);
+        assert_eq!(scale_font(16, 0.5), 8);
+    }
+
+    #[test]
+    fn scale_font_floors_at_one_px() {
+        // Degenerate factors never yield a 0px (invisible) font.
+        assert_eq!(scale_font(16, 0.01), 1);
+    }
+
+    #[test]
+    fn rect_numeral_size_shrinks_on_bmm101() {
+        // Pins the size the rect fix must produce: Large numerals (40px authored)
+        // on BMM101's 480x320 scale to 27px.
+        let fit = WidgetSize::from_dimensions(480, 320).fit();
+        assert_eq!(scale_font(40, fit), 27);
     }
 }
