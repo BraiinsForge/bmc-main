@@ -92,6 +92,18 @@ fn pick_size(variant: SizeVariant) -> &'static AnalogRoundSizeParams {
     }
 }
 
+/// Scale a native-dial font size (authored for the 390-px dial) into rendered
+/// widget pixels, tracking `scale = dial / NATIVE_DIAL`.
+fn scaled_font(native: u32, scale: f32) -> u32 {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "scaled font size is a small positive widget-pixel value"
+    )]
+    let scaled = (f32_from_u32(native) * scale).round() as u32;
+    scaled
+}
+
 // ── Render ─────────────────────────────────────────────────────────────
 
 pub(crate) fn render(
@@ -155,11 +167,11 @@ pub(crate) fn render(
             }
             TzLabel::Unknown { city, .. } => (city.clone(), "unknown".to_owned(), RED_50),
         };
-        let city_size = size.timezone_font_size;
+        // Scale the font with the dial, like `day_font`, so the label tracks
+        // the rendered dial instead of the native-dial constant.
+        let city_size = scaled_font(size.timezone_font_size, scale);
         let offset_size = city_size.saturating_mul(85) / 100;
-        let line_h =
-            f32::from(u16::try_from(city_size).expect("BUG: timezone font size fits in u16"))
-                * 1.05;
+        let line_h = f32_from_u32(city_size) * 1.05;
         let group_centre_y = dial_top_y + dial * size.timezone_y_frac;
         let weight = font_weight(params.numbers_font_style);
         draws.push(Draw::text(
@@ -305,12 +317,7 @@ fn date_window(
         true,
         Interpolation::CatmullRom,
     ));
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "scaled day-font size is a small positive widget-pixel value"
-    )]
-    let day_font = (24.0 * scale) as u32;
+    let day_font = scaled_font(24, scale);
     // `VerticalAlign::Center` keeps the digit visually centred
     // on the ring instead of sitting half a font-size below it.
     let day_str = bmc_wasm_sdk::fmt!("{}", local_or_system(now, offset_secs).day);
