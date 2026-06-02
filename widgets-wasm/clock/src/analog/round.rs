@@ -36,6 +36,10 @@ const DIAL_ROUND: Svg = include_svg!("assets/analog/dial-round.svg");
 
 const NATIVE_DIAL: f32 = 390.0;
 
+// Timezone label authored against the 390 native dial; scaled by the dial like
+// the day-window glyph, so it holds the same proportion at every size.
+const TIMEZONE_FONT_NATIVE: u32 = 24;
+
 // 390 / 480 — reproduces the canonical 390 px dial on a 480 px-tall viewport,
 // so Deck viewports render unchanged.
 const DIAL_FRACTION: f32 = 0.812_5;
@@ -51,36 +55,30 @@ pub(crate) struct AnalogRoundSizeParams {
     show_alarm: bool,
     /// Timezone label baseline as a fraction of the dial side, from its top.
     timezone_y_frac: f32,
-    /// Timezone label font size.
-    timezone_font_size: u32,
 }
 
 const ANALOG_ROUND_FULL: AnalogRoundSizeParams = AnalogRoundSizeParams {
     show_date_window: true,
     show_alarm: true,
     timezone_y_frac: 0.2667,
-    timezone_font_size: 24,
 };
 
 const ANALOG_ROUND_LARGE: AnalogRoundSizeParams = AnalogRoundSizeParams {
     show_date_window: true,
     show_alarm: false,
     timezone_y_frac: 0.2872,
-    timezone_font_size: 24,
 };
 
 const ANALOG_ROUND_MEDIUM: AnalogRoundSizeParams = AnalogRoundSizeParams {
     show_date_window: false,
     show_alarm: false,
     timezone_y_frac: 0.2718,
-    timezone_font_size: 16,
 };
 
 const ANALOG_ROUND_SMALL: AnalogRoundSizeParams = AnalogRoundSizeParams {
     show_date_window: false,
     show_alarm: false,
     timezone_y_frac: 0.2718,
-    timezone_font_size: 16,
 };
 
 fn pick_size(variant: SizeVariant) -> &'static AnalogRoundSizeParams {
@@ -90,18 +88,6 @@ fn pick_size(variant: SizeVariant) -> &'static AnalogRoundSizeParams {
         SizeVariant::Medium => &ANALOG_ROUND_MEDIUM,
         SizeVariant::Small => &ANALOG_ROUND_SMALL,
     }
-}
-
-/// Scale a native-dial font size (authored for the 390-px dial) into rendered
-/// widget pixels, tracking `scale = dial / NATIVE_DIAL`.
-fn scaled_font(native: u32, scale: f32) -> u32 {
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "scaled font size is a small positive widget-pixel value"
-    )]
-    let scaled = (f32_from_u32(native) * scale).round() as u32;
-    scaled
 }
 
 // ── Render ─────────────────────────────────────────────────────────────
@@ -120,8 +106,10 @@ pub(crate) fn render(
     let viewport_w = f32_from_u32(w);
     let viewport_h = f32_from_u32(h);
     // Dial side as a fraction of the shorter viewport axis, so it always fits
-    // and downscales rather than overflowing. `scale` maps the dial's native
-    // 390 coordinates (hands, internal offsets) into rendered pixels.
+    // and downscales rather than overflowing. One circular asset fit to that
+    // axis means every element scales by the rendered dial against its 390
+    // native — not `WidgetSize::fit` (viewport-vs-canonical), which would
+    // oversize the dial text at Medium/Small (see the SDK fit() tests).
     let dial = viewport_w.min(viewport_h) * DIAL_FRACTION;
     let scale = dial / NATIVE_DIAL;
     // Single canvas at the widget viewport size — the SDK's `Draw::rotated`
@@ -170,7 +158,7 @@ pub(crate) fn render(
         };
         // Scale the font with the dial, like `day_font`, so the label tracks
         // the rendered dial instead of the native-dial constant.
-        let city_size = scaled_font(size.timezone_font_size, scale);
+        let city_size = scale_font(TIMEZONE_FONT_NATIVE, scale);
         let offset_size = city_size.saturating_mul(85) / 100;
         let line_h = f32_from_u32(city_size) * 1.05;
         let group_centre_y = dial_top_y + dial * size.timezone_y_frac;
@@ -318,7 +306,7 @@ fn date_window(
         true,
         Interpolation::CatmullRom,
     ));
-    let day_font = scaled_font(24, scale);
+    let day_font = scale_font(24, scale);
     // `VerticalAlign::Center` keeps the digit visually centred
     // on the ring instead of sitting half a font-size below it.
     let day_str = bmc_wasm_sdk::fmt!("{}", local_or_system(now, offset_secs).day);
