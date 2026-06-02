@@ -165,6 +165,7 @@ pub(crate) fn render(
     let variant = ws.variant;
     let w = ws.width;
     let h = ws.height;
+    let fit = ws.fit();
     let size = pick_size(variant);
     let viewport_w = f32_from_u32(w);
     let viewport_h = f32_from_u32(h);
@@ -197,23 +198,24 @@ pub(crate) fn render(
     // Numerals 12 / 3 / 6 / 9 — all four anchor at the glyph centre
     // (`VerticalAlign::Center`); 12 and 6 offset by half-font-height
     // for a symmetric inset against the top/bottom edges.
-    let numerals_half = f32_from_u32(size.numerals_font_size) / 2.0;
+    let numerals_size = scale_font(size.numerals_font_size, fit);
+    let numerals_half = f32_from_u32(numerals_size) / 2.0;
     let numerals_center = style!(
-        size: size.numerals_font_size,
+        size: numerals_size,
         weight: numerals_weight,
         color: palette.tick_large,
         align: TextAlign::Center,
         valign: VerticalAlign::Center,
     );
     let numerals_left = style!(
-        size: size.numerals_font_size,
+        size: numerals_size,
         weight: numerals_weight,
         color: palette.tick_large,
         align: TextAlign::Left,
         valign: VerticalAlign::Center,
     );
     let numerals_right = style!(
-        size: size.numerals_font_size,
+        size: numerals_size,
         weight: numerals_weight,
         color: palette.tick_large,
         align: TextAlign::Right,
@@ -256,7 +258,7 @@ pub(crate) fn render(
             centre_y,
             date_str,
             style!(
-                size: 40,
+                size: scale_font(40, fit),
                 weight: FontWeight::REGULAR,
                 color: palette.text,
                 align: TextAlign::Left,
@@ -290,7 +292,7 @@ pub(crate) fn render(
             viewport_h * TIMEZONE_Y_FRACTION,
             line,
             style!(
-                size: size.timezone_font_size,
+                size: scale_font(size.timezone_font_size, fit),
                 weight: FontWeight::REGULAR,
                 color: tz_color,
                 align: TextAlign::Center,
@@ -304,7 +306,7 @@ pub(crate) fn render(
         let _ = alarm_row_draws(
             AlarmAnchor::LeftX(viewport_w * ALARM_ROW_X_FRACTION),
             centre_y,
-            40.0,
+            (40.0 * fit).round(),
             numerals_weight,
             palette.alarm_bell,
             &mut draws,
