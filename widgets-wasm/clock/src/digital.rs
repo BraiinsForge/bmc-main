@@ -12,8 +12,8 @@ use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Params;
 use crate::shared::{
-    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, f32_from_u32, font_weight,
-    local_or_system, push_utc_offset, resolve_tz_for_label, time_font_family,
+    AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, font_weight, local_or_system,
+    push_utc_offset, resolve_tz_for_label, time_font_family,
 };
 
 // ── Per-size template parameters ───────────────────────────────────────
@@ -145,16 +145,6 @@ fn scale_font(value: u16, fit: f32) -> u16 {
     scaled.max(1)
 }
 
-/// Downscale factor for an actual `(w, h)` viewport against the variant's
-/// canonical dimensions. The binding axis wins (`min`) so neither overflows,
-/// and the factor is clamped to `1.0` so larger-than-canonical viewports keep
-/// the authored sizes rather than inflating them.
-fn fit_factor(variant: SizeVariant, w: u32, h: u32) -> f32 {
-    let w_ratio = f32_from_u32(w) / f32_from_u32(variant.width());
-    let h_ratio = f32_from_u32(h) / f32_from_u32(variant.height());
-    w_ratio.min(h_ratio).min(1.0)
-}
-
 // ── Render ─────────────────────────────────────────────────────────────
 
 pub(crate) fn render(
@@ -165,7 +155,7 @@ pub(crate) fn render(
     palette: &ClockPalette,
 ) -> Node {
     let variant = ws.variant;
-    let size = pick_size(variant).scaled(fit_factor(variant, ws.width, ws.height));
+    let size = pick_size(variant).scaled(ws.fit());
     let size = &size;
     let is_12h = matches!(system::current().time_format(), Some(TimeFormat::Hour12));
 
