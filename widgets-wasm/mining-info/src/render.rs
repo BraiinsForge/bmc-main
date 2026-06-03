@@ -561,19 +561,9 @@ fn info_overload_header(
         Availability::Unavailable => TITLE,
     };
 
-    // Glue the `%` directly onto the value to keep the headline tight and in the
-    // change color, but only when the value is real so an unavailable change reads
-    // as a clean `N/A` rather than `N/A%`.
-    let change = format::signed_percent(public.btc_change_24h_percent, 2);
-    let change = if unit_visible(&change) {
-        bmc_wasm_sdk::fmt!("{change}%")
-    } else {
-        change
-    };
-
     let mut blocks = vec![block(
         "Bitcoin (24h)",
-        change,
+        format::signed_percent_unit(public.btc_change_24h_percent, 2),
         None,
         metrics,
         change_color,
