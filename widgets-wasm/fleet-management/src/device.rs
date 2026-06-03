@@ -24,6 +24,13 @@ pub enum DeviceFamily {
     Bitaxe,
 }
 
+#[cfg_attr(
+    target_arch = "wasm32",
+    expect(
+        dead_code,
+        reason = "part of the device model; consumed by tests and future per-device detail views"
+    )
+)]
 #[must_use]
 pub fn family_label(family: DeviceFamily) -> &'static str {
     match family {
@@ -142,6 +149,13 @@ impl DeviceList {
         self.devices.retain(|d| &d.identity.id != id);
     }
 
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "re-discovery hook; render now iterates all devices via iter()"
+        )
+    )]
     pub fn iter_reachable(&self) -> impl Iterator<Item = &KnownDevice> {
         self.devices.iter().filter(|d| d.reachable)
     }
