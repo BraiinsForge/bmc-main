@@ -115,18 +115,6 @@ pub(crate) fn is_stale(age_ms: u32) -> bool {
     age_ms >= STALE_AFTER_MS
 }
 
-// A stale or failed poll means the endpoint's fields are no longer trustworthy.
-// Each `clear_*` clears exactly the fields its matching `parse_*` produces, so a
-// flaky endpoint never wipes another's data.
-pub(crate) fn clear_stats(data: &mut MinerData) {
-    data.hashrate_ths = None;
-    data.power_w = None;
-}
-
-pub(crate) fn clear_hashboards(data: &mut MinerData) {
-    data.nominal_hashrate_ths = None;
-}
-
 #[cfg(target_arch = "wasm32")]
 impl JsonLookup for bmc_wasm_sdk::json::JsonDoc {
     fn str(&self, path: &str) -> Option<String> {
@@ -248,32 +236,6 @@ mod tests {
     fn staleness_threshold_is_exclusive_below_and_stale_at_threshold() {
         assert!(!is_stale(STALE_AFTER_MS - 1));
         assert!(is_stale(STALE_AFTER_MS));
-    }
-
-    #[test]
-    fn stale_stats_clear_only_live_stats_fields() {
-        let mut data = MinerData {
-            hashrate_ths: Some(50.0),
-            power_w: Some(40.0),
-            nominal_hashrate_ths: Some(100.0),
-        };
-        clear_stats(&mut data);
-        assert_eq!(data.hashrate_ths, None);
-        assert_eq!(data.power_w, None);
-        assert_eq!(data.nominal_hashrate_ths, Some(100.0));
-    }
-
-    #[test]
-    fn stale_hashboards_clear_only_nominal_hashrate() {
-        let mut data = MinerData {
-            hashrate_ths: Some(50.0),
-            power_w: Some(40.0),
-            nominal_hashrate_ths: Some(100.0),
-        };
-        clear_hashboards(&mut data);
-        assert_eq!(data.hashrate_ths, Some(50.0));
-        assert_eq!(data.power_w, Some(40.0));
-        assert_eq!(data.nominal_hashrate_ths, None);
     }
 }
 
