@@ -194,6 +194,10 @@ struct State {
     miner: MinerData,
     public: PublicData,
     auth: AuthState,
+    // Per-endpoint flag set when a public poll's last reply was a failure. The
+    // failed data is kept on screen (last-good) and the render path raises a
+    // "stale data" banner while any relevant endpoint stays in this state.
+    public_stale: [bool; PUBLIC_ENDPOINTS.len()],
     // Consecutive failed login replies, driving the retry backoff. Reset on a
     // successful login and on a credential change.
     login_failures: u32,
@@ -247,6 +251,15 @@ thread_local! {
 #[cfg(target_arch = "wasm32")]
 fn view_needs_miner(view: View) -> bool {
     MINER_ENDPOINTS
+        .iter()
+        .any(|endpoint| endpoint.views.contains(&view))
+}
+
+// Whether the current view renders any public Bitcoin field. Gates the
+// "stale data" banner so it never shows on the miner-only Mining view.
+#[cfg(target_arch = "wasm32")]
+fn view_needs_public(view: View) -> bool {
+    PUBLIC_ENDPOINTS
         .iter()
         .any(|endpoint| endpoint.views.contains(&view))
 }
@@ -489,17 +502,20 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
     request_frame();
 }
 
+// Fold a public response into state. A failed refresh keeps the last good data
+// rather than blanking the fields (matching the miner path); it only flags the
+// endpoint stale so the render path can surface a "stale data" banner. The flag
+// clears on the next success. The "this data is now wrong" case (a currency
+// change) is handled by the deliberate `reset` in `on_params_update`.
 #[cfg(target_arch = "wasm32")]
 fn on_public_reply(handle: PollHandle, response: &FetchResponse) {
     let idx = public_index(handle);
     if response.ok() {
         let currency = selected_currency();
         STATE.with(|state| {
-            (PUBLIC_ENDPOINTS[idx].parse)(
-                &response.json(),
-                currency,
-                &mut state.borrow_mut().public,
-            );
+            let mut state = state.borrow_mut();
+            (PUBLIC_ENDPOINTS[idx].parse)(&response.json(), currency, &mut state.public);
+            state.public_stale[idx] = false;
         });
     } else {
         log_warn!(
@@ -507,6 +523,7 @@ fn on_public_reply(handle: PollHandle, response: &FetchResponse) {
             idx,
             response.status
         );
+        STATE.with(|state| state.borrow_mut().public_stale[idx] = true);
     }
     request_frame();
 }
@@ -520,12 +537,13 @@ pub extern "C" fn render(_delta_ms: u32) {
         width: viewport.width,
         height: viewport.height,
     };
-    let (miner, public, auth_failed) = STATE.with(|state| {
+    let (miner, public, auth_failed, public_stale) = STATE.with(|state| {
         let state = state.borrow();
         (
             state.miner.clone(),
             state.public.clone(),
             state.auth == AuthState::Failed,
+            state.public_stale.iter().any(|&stale| stale),
         )
     });
     let mut root = match params.view {
@@ -534,8 +552,12 @@ pub extern "C" fn render(_delta_ms: u32) {
         View::Network => render::network(size, &public),
         View::InfoOverload => render::info_overload(size, &miner, &public),
     };
+    // The auth-error overlay takes precedence: an unreachable miner is the larger
+    // problem, and both banners share the same corner.
     if auth_failed && view_needs_miner(params.view) {
-        root = render::with_auth_error(root);
+        root = render::with_overlay(root, render::AUTH_ERROR_TEXT);
+    } else if public_stale && view_needs_public(params.view) {
+        root = render::with_overlay(root, render::STALE_DATA_TEXT);
     }
     let _ = render_ui(viewport.width, viewport.height, root);
 }
