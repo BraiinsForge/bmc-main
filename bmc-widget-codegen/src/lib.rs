@@ -201,7 +201,7 @@ pub fn generate(manifest: &Manifest, manifest_relpath: &str) -> Result<String> {
     Ok(format!(
         "// AUTO-GENERATED FROM {manifest_relpath} by `bmc-widget-codegen` v{TOOL_VERSION}.\n\
          // Do not edit by hand. Run `just wasm::gen <widget>` after changing the manifest.\n\n\
-         #![expect(\n    dead_code,\n    reason = \"fields are widget-specific; not every key is used by every render path\"\n)]\n\n\
+         #![allow(\n    dead_code,\n    reason = \"fields are widget-specific; not every key is used by every render path\"\n)]\n\n\
          {pretty}"
     ))
 }

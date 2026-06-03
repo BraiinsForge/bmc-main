@@ -3,7 +3,7 @@
 // AUTO-GENERATED FROM ../manifest.json by `bmc-widget-codegen` v0.1.0.
 // Do not edit by hand. Run `just wasm::gen <widget>` after changing the manifest.
 
-#![expect(
+#![allow(
     dead_code,
     reason = "fields are widget-specific; not every key is used by every render path"
 )]
