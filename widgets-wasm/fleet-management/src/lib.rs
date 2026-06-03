@@ -1,5 +1,11 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
+mod adapter;
+mod device;
+mod discovery;
+mod model;
+mod telemetry;
+
 #[cfg(target_arch = "wasm32")]
 #[expect(
     clippy::wildcard_imports,
