@@ -19,6 +19,8 @@ use crate::shared::{
     AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, f32_from_u32, font_weight,
     local_or_system, push_utc_offset, resolve_tz_for_label,
 };
+use mining::gauge;
+use mining::style::{INACTIVE_TICK, ring_fill};
 
 use super::{hour_angle, local_clock_components, minute_angle, second_angle};
 
@@ -44,14 +46,12 @@ const HASHRATE_RADIUS: f32 = 216.0;
 const POWER_RADIUS: f32 = 196.0;
 const RING_WIDTH: f32 = 8.0;
 const HASHRATE_SWEEP_END: f32 = 330.0_f32.to_radians();
-const POWER_SWEEP_END: f32 = 340.0_f32.to_radians();
-const LABEL_OFFSET: f32 = 5.0_f32.to_radians();
+// Gap between a gauge's leading edge and its curved-text label, so each label
+// reads as attached to the segment or arc it follows.
+const LABEL_OFFSET: f32 = 2.0_f32.to_radians();
 // Duration of the gauge sweep transition; the host animates each ring's
 // end angle toward its target whenever the lit fraction changes.
 const GAUGE_TRANSITION_MS: u32 = 500;
-const HASHRATE_GREEN: Color = Color::from_rgb(0x34, 0xC0, 0x6A);
-const HASHRATE_DARK: Color = Color::from_rgb(0x19, 0x5E, 0x33);
-const POWER_GREEN: Color = Color::from_rgb(0x13, 0xA4, 0x54);
 const LABEL_GRAY: Color = Color::from_rgb(0xA7, 0xA7, 0xA7);
 
 // ── Per-size template parameters ───────────────────────────────────────
@@ -262,36 +262,50 @@ fn push_gauges_and_labels(
     miner: &MinerData,
     seed_gauges: bool,
 ) {
-    let hashrate_segments = ArcSegments::Continuous;
+    let mcr = miner::mcr_percent(miner.hashrate_ths, miner.nominal_hashrate_ths);
+    let g = gauge::gauge(miner.hashrate_ths, mcr);
     let hashrate_fraction =
         miner::hashrate_fraction(miner.hashrate_ths, miner.nominal_hashrate_ths);
-    let hashrate_label_angle = live_end_angle(HASHRATE_SWEEP_END, hashrate_fraction);
+
+    // Lit states color both rings with the state fill and draw only the lit
+    // portion. NotAvailable has no color, so both rings fill fully with the
+    // neutral gray track instead — the one state that shows unlit segments.
+    let (fill, outer_fraction, lit) = match ring_fill(g.state) {
+        Some(fill) => (
+            fill,
+            hashrate_fraction,
+            g.lit_count.min(gauge::TICK_COUNT - 1),
+        ),
+        None => (ArcFill::Solid(INACTIVE_TICK), 1.0, gauge::TICK_COUNT - 1),
+    };
+    let inner_end = gauge::lit_sweep_end(lit);
+
+    let hashrate_label_angle = live_end_angle(HASHRATE_SWEEP_END, outer_fraction);
     push_gauge_arc(
         draws,
         centre_x,
         centre_y,
         HASHRATE_RADIUS,
         HASHRATE_SWEEP_END,
-        seeded_fraction(hashrate_fraction, seed_gauges),
-        ArcFill::gradient(HASHRATE_DARK, HASHRATE_GREEN),
-        &hashrate_segments,
+        seeded_fraction(outer_fraction, seed_gauges),
+        fill,
+        &ArcSegments::Continuous,
         ArcCap::Round,
         "hashrate-gauge",
     );
 
-    let power_segments = ArcSegments::short_ends(0.0, POWER_SWEEP_END, 18, 0.02, 0.5);
-    let power_fraction = miner::power_fraction(miner.power_w);
-    let power_label_angle = live_end_angle(POWER_SWEEP_END, power_fraction);
+    let inner_segments = ArcSegments::Explicit(gauge::TICK_SPANS.to_vec());
+    let power_label_angle = (inner_end + LABEL_OFFSET).rem_euclid(std::f32::consts::TAU);
     push_gauge_arc(
         draws,
         centre_x,
         centre_y,
         POWER_RADIUS,
-        POWER_SWEEP_END,
-        seeded_fraction(power_fraction, seed_gauges),
-        ArcFill::gradient(POWER_GREEN, miner::power_ramp_color(power_fraction)),
-        &power_segments,
-        ArcCap::Round,
+        inner_end,
+        seeded_fraction(1.0, seed_gauges),
+        fill,
+        &inner_segments,
+        ArcCap::Butt,
         "power-gauge",
     );
 
@@ -349,14 +363,14 @@ fn text_facing_for_angle(angle: f32) -> ArcTextFacing {
 fn hashrate_label(value: Option<f64>) -> String {
     match value {
         Some(ths) => bmc_wasm_sdk::fmt!("{} TH/s", format_number!(ths, 2)),
-        None => "-- TH/s".to_owned(),
+        None => "N/A TH/s".to_owned(),
     }
 }
 
 fn power_label(value: Option<f64>) -> String {
     match value {
         Some(watts) => bmc_wasm_sdk::fmt!("{} W", format_number!(watts, 0)),
-        None => "-- W".to_owned(),
+        None => "N/A W".to_owned(),
     }
 }
 
