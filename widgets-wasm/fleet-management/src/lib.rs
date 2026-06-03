@@ -9,6 +9,9 @@ mod session;
 mod telemetry;
 
 #[cfg(target_arch = "wasm32")]
+mod manifest_params;
+
+#[cfg(target_arch = "wasm32")]
 mod render;
 
 #[cfg(target_arch = "wasm32")]
