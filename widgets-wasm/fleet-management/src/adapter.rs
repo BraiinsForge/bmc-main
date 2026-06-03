@@ -1,7 +1,10 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
+use bmc_wasm_sdk::ufmt;
+
 use crate::device::DeviceIdentity;
 use crate::discovery::JsonLookup;
+use crate::telemetry::TelemetryReading;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredDevice {
@@ -14,4 +17,52 @@ pub struct DiscoveredDevice {
 pub trait FamilyAdapter {
     fn browse_service_types(&self) -> &'static [&'static str];
     fn parse_found(&self, json: &dyn JsonLookup) -> Option<DiscoveredDevice>;
+
+    #[expect(dead_code, reason = "wired into the driver in Task 6")]
+    fn api_base_path(&self) -> &'static str;
+    #[expect(dead_code, reason = "wired into the driver in Task 6")]
+    fn telemetry_endpoints(&self) -> &'static [&'static str];
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "wired into the driver in Task 6")
+    )]
+    fn parse_telemetry(
+        &self,
+        endpoint: &str,
+        json: &dyn JsonLookup,
+        reading: &mut TelemetryReading,
+    );
+    fn reset_telemetry(&self, endpoint: &str, reading: &mut TelemetryReading);
+
+    // Authentication — default NONE. Auth families (BOS) override these;
+    // no-auth families (Bitaxe) inherit the defaults and fetch unauthenticated.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "wired into the driver in Task 6")
+    )]
+    fn auth_endpoint(&self) -> Option<&'static str> {
+        None
+    }
+    #[expect(dead_code, reason = "wired into the driver in Task 6")]
+    fn login_body(&self, _password: &str) -> String {
+        String::new()
+    }
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "wired into the driver in Task 6")
+    )]
+    fn parse_login(&self, _json: &dyn JsonLookup) -> Option<String> {
+        None
+    }
+    #[expect(dead_code, reason = "wired into the driver in Task 6")]
+    fn auth_header(&self, token: &str) -> String {
+        bmc_wasm_sdk::fmt!("Authorization: {token}")
+    }
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "wired into the driver in Task 6")
+    )]
+    fn is_auth_error(&self, _status: u32) -> bool {
+        false
+    }
 }

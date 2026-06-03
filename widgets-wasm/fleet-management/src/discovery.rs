@@ -3,7 +3,6 @@
 pub trait JsonLookup {
     fn str(&self, path: &str) -> Option<String>;
     fn i64(&self, path: &str) -> Option<i64>;
-    #[expect(dead_code, reason = "wired into the driver in Task 6")]
     fn f64(&self, path: &str) -> Option<f64>;
 }
 
