@@ -198,10 +198,13 @@ pub fn generate(manifest: &Manifest, manifest_relpath: &str) -> Result<String> {
         syn::parse2(body).context("BUG: emitted token stream is not a valid Rust file")?;
     let pretty = prettyplease::unparse(&file);
 
+    // `allow`, not `expect`, as we cannot know what the widgets
+    // will use or not. It is fine for a widget to not use all functions
+    // from this file, such as not using the previous parameters.
     Ok(format!(
         "// AUTO-GENERATED FROM {manifest_relpath} by `bmc-widget-codegen` v{TOOL_VERSION}.\n\
          // Do not edit by hand. Run `just wasm::gen <widget>` after changing the manifest.\n\n\
-         #![expect(\n    dead_code,\n    reason = \"fields are widget-specific; not every key is used by every render path\"\n)]\n\n\
+         #![allow(\n    dead_code,\n    reason = \"fields are widget-specific; not every key is used by every render path\"\n)]\n\n\
          {pretty}"
     ))
 }
