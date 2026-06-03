@@ -46,6 +46,9 @@ const HASHRATE_RADIUS: f32 = 216.0;
 const POWER_RADIUS: f32 = 196.0;
 const RING_WIDTH: f32 = 8.0;
 const HASHRATE_SWEEP_END: f32 = 330.0_f32.to_radians();
+// Smallest visible outer-ring arc, so a zero or near-zero hashrate still shows a
+// stub rather than nothing at all.
+const OUTER_MIN_SWEEP: f32 = 4.0_f32.to_radians();
 // Gap between a gauge's leading edge and its curved-text label, so each label
 // reads as attached to the segment or arc it follows. The flat inner segments
 // sit tighter to their label than the continuous outer ring.
@@ -282,6 +285,7 @@ fn push_gauges_and_labels(
         ),
         None => (ArcFill::Solid(INACTIVE_TICK), 1.0, gauge::TICK_COUNT, false),
     };
+    let outer_fraction = outer_fraction.max(OUTER_MIN_SWEEP / HASHRATE_SWEEP_END);
     let inner_end = gauge::lit_sweep_end(lit);
 
     let hashrate_label_angle = live_end_angle(HASHRATE_SWEEP_END, outer_fraction);
