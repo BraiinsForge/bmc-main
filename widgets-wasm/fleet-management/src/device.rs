@@ -1,7 +1,7 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
 use crate::model::MinerModel;
-use crate::telemetry::TelemetrySnapshot;
+use crate::telemetry::{TelemetryReading, TelemetrySnapshot};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceFamily {
@@ -145,11 +145,60 @@ impl DeviceList {
     pub fn iter_reachable(&self) -> impl Iterator<Item = &KnownDevice> {
         self.devices.iter().filter(|d| d.reachable)
     }
+
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "wired into the driver in Task 6")
+    )]
+    pub fn iter(&self) -> impl Iterator<Item = &KnownDevice> {
+        self.devices.iter()
+    }
+
+    #[must_use]
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "wired into the driver in Task 6")
+    )]
+    pub fn ids(&self) -> Vec<DeviceId> {
+        self.devices.iter().map(|d| d.identity.id.clone()).collect()
+    }
+
+    /// Stamp the latest telemetry reading and reachability onto a device.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "wired into the driver in Task 6")
+    )]
+    pub fn apply_telemetry(&mut self, id: &DeviceId, reading: TelemetryReading, reachable: bool) {
+        self.seq += 1;
+        let seq = self.seq;
+        if let Some(dev) = self.devices.iter_mut().find(|d| &d.identity.id == id) {
+            dev.telemetry = Some(TelemetrySnapshot {
+                reading,
+                refreshed_seq: seq,
+            });
+            dev.reachable = reachable;
+        }
+    }
+
+    /// Drop every device's telemetry and mark it unreachable (e.g. after a
+    /// credential change). Devices stay listed; their readings go back to
+    /// absent and reachability is recomputed on the next telemetry pass.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "wired into the driver in Task 6")
+    )]
+    pub fn clear_all_telemetry(&mut self) {
+        for dev in &mut self.devices {
+            dev.telemetry = None;
+            dev.reachable = false;
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::telemetry::TelemetryReading;
 
     fn identity(id: &str, host: &str) -> DeviceIdentity {
         DeviceIdentity {
@@ -211,5 +260,58 @@ mod tests {
         assert_eq!(list.len(), 1);
         let dev = list.iter_reachable().next().expect("device present");
         assert!(dev.reachable);
+    }
+
+    #[test]
+    fn apply_telemetry_stamps_reading_and_reachability() {
+        let mut list = DeviceList::new();
+        list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
+        let reading = TelemetryReading {
+            power_w: Some(3_000.0),
+            ..TelemetryReading::default()
+        };
+        list.apply_telemetry(&DeviceId::new("a._http._tcp.local."), reading, true);
+        let dev = list.iter().next().expect("device present");
+        assert!(dev.reachable);
+        let snap = dev.telemetry.as_ref().expect("telemetry present");
+        assert_eq!(snap.reading.power_w, Some(3_000.0));
+    }
+
+    #[test]
+    fn apply_telemetry_can_mark_unreachable() {
+        let mut list = DeviceList::new();
+        list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
+        list.apply_telemetry(
+            &DeviceId::new("a._http._tcp.local."),
+            TelemetryReading::default(),
+            false,
+        );
+        assert!(!list.iter().next().expect("present").reachable);
+    }
+
+    #[test]
+    fn clear_all_telemetry_drops_readings() {
+        let mut list = DeviceList::new();
+        list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
+        list.apply_telemetry(
+            &DeviceId::new("a._http._tcp.local."),
+            TelemetryReading::default(),
+            true,
+        );
+        list.clear_all_telemetry();
+        let dev = list.iter().next().expect("present");
+        assert!(dev.telemetry.is_none());
+        assert!(!dev.reachable);
+    }
+
+    #[test]
+    fn ids_lists_every_device_in_order() {
+        let mut list = DeviceList::new();
+        list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
+        list.upsert(identity("b._http._tcp.local.", "10.0.0.2"));
+        let ids = list.ids();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0].as_str(), "a._http._tcp.local.");
+        assert_eq!(ids[1].as_str(), "b._http._tcp.local.");
     }
 }
