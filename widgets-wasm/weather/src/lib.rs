@@ -4,6 +4,7 @@
 //! Ported from `deckfeeder/assets/widgets/weather/` (a JS/HTML widget).
 
 mod manifest_params;
+pub mod weather_code;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn init() {}
