@@ -491,12 +491,8 @@ pub enum MetricSpeedUnit {
     Ms,
 }
 
-impl MetricSpeedUnit {
-    #[expect(
-        dead_code,
-        reason = "wired through the host import in a follow-up task"
-    )]
-    fn from_wire(tag: u32) -> Self {
+impl From<u32> for MetricSpeedUnit {
+    fn from(tag: u32) -> Self {
         match tag {
             1 => Self::Ms,
             _ => Self::KmH,
@@ -527,6 +523,7 @@ fn register_speed_format_import(linker: &mut Linker<HostState>) -> Result<()> {
         |mut caller: Caller<'_, HostState>,
          value: f64,
          decimals: u32,
+         metric_unit: u32,
          out_ptr: u32,
          out_len: u32|
          -> i32 {
@@ -542,7 +539,7 @@ fn register_speed_format_import(linker: &mut Linker<HostState>) -> Result<()> {
                 unit_system,
                 value,
                 decimals,
-                MetricSpeedUnit::KmH,
+                MetricSpeedUnit::from(metric_unit),
             );
             write_to_wasm(&mut caller, &formatted, out_ptr, out_len)
         },

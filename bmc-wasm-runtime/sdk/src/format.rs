@@ -11,7 +11,13 @@
 
 unsafe extern "C" {
     fn host_format_number(value: f64, decimals: u32, out_ptr: *mut u8, out_len: u32) -> i32;
-    fn host_format_speed(value: f64, decimals: u32, out_ptr: *mut u8, out_len: u32) -> i32;
+    fn host_format_speed(
+        value: f64,
+        decimals: u32,
+        metric_unit: u32,
+        out_ptr: *mut u8,
+        out_len: u32,
+    ) -> i32;
     fn host_format_temperature(value: f64, decimals: u32, out_ptr: *mut u8, out_len: u32) -> i32;
     fn host_format_date(
         timestamp: i64,
@@ -51,9 +57,17 @@ pub fn _host_format_number(value: f64, decimals: u32) -> String {
 /// Format a speed using host-side preferences. Called by [`format_speed!`].
 #[doc(hidden)]
 #[must_use]
-pub fn _host_format_speed(value: f64, decimals: u32) -> String {
+pub fn _host_format_speed(value: f64, decimals: u32, metric_unit: u32) -> String {
     let mut buf = [0_u8; 64];
-    let len = unsafe { host_format_speed(value, decimals, buf.as_mut_ptr(), buf.len() as u32) };
+    let len = unsafe {
+        host_format_speed(
+            value,
+            decimals,
+            metric_unit,
+            buf.as_mut_ptr(),
+            buf.len() as u32,
+        )
+    };
     read_host_buf(&buf, len)
 }
 
@@ -260,16 +274,21 @@ macro_rules! format_number {
 
 /// Format a speed value with user-preferred units and number formatting.
 ///
-/// Input is always km/h; the host converts to mph if imperial.
+/// Input is always km/h; the host converts to mph if imperial (both arms).
+/// Use the `ms` arm to request m/s when the system is metric.
 ///
 /// # Example
 /// ```ignore
-/// let s = format_speed!(27_565.0, 0); // "27 565 km/h" or "17 126 mph"
+/// let s = format_speed!(27_565.0, 0);       // "27 565 km/h" or "17 126 mph"
+/// let s = format_speed!(12.6, 1, ms);       // "3,5 m/s" or "7,8 mph"
 /// ```
 #[macro_export]
 macro_rules! format_speed {
     ($value:expr, $decimals:expr) => {
-        $crate::format::_host_format_speed($value as f64, $decimals)
+        $crate::format::_host_format_speed($value as f64, $decimals, 0)
+    };
+    ($value:expr, $decimals:expr, ms) => {
+        $crate::format::_host_format_speed($value as f64, $decimals, 1)
     };
 }
 
