@@ -194,9 +194,11 @@ struct State {
     miner: MinerData,
     public: PublicData,
     auth: AuthState,
-    // Per-endpoint flag set when a public poll's last reply was a failure. The
-    // failed data is kept on screen (last-good) and the render path raises a
-    // "stale data" banner while any relevant endpoint stays in this state.
+    // Per-endpoint flags set when a poll's last reply was a failure. The failed
+    // data is kept on screen (last-good) and the render path raises a "stale
+    // data" banner while any endpoint feeding the current view stays in this
+    // state.
+    miner_stale: [bool; MINER_ENDPOINTS.len()],
     public_stale: [bool; PUBLIC_ENDPOINTS.len()],
     // Consecutive failed login replies, driving the retry backoff. Reset on a
     // successful login and on a credential change.
@@ -349,6 +351,7 @@ pub extern "C" fn on_params_update() {
                 STATE.with(|state| {
                     let mut state = state.borrow_mut();
                     miner_api::reset_all(&mut state.miner);
+                    state.miner_stale = [false; MINER_ENDPOINTS.len()];
                     state.login_failures = 0;
                     state.auth = if password_empty {
                         AuthState::NoToken
@@ -462,6 +465,7 @@ fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
         let delay = STATE.with(|state| {
             let mut state = state.borrow_mut();
             miner_api::reset_all(&mut state.miner);
+            state.miner_stale = [false; MINER_ENDPOINTS.len()];
             state.auth = AuthState::Failed;
             let delay = login_retry_delay(state.login_failures, RETRY_MS, MAX_LOGIN_RETRY_MS);
             state.login_failures = state.login_failures.saturating_add(1);
@@ -475,7 +479,9 @@ fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
 // Fold a miner response into state. A 401 means the token was rejected: drop it
 // and invalidate the login handle so a single re-auth covers every endpoint that
 // hit the same wall, then let this poll go dormant (its builder yields `None`
-// without a token) until the fresh login reinvalidates it.
+// without a token) until the fresh login reinvalidates it. Any other failure
+// keeps the last good data and flags the endpoint stale so the render path can
+// surface a "stale data" banner; the flag clears on the next success.
 #[cfg(target_arch = "wasm32")]
 fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
     if response.status == 401 {
@@ -490,7 +496,9 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
     let idx = miner_index(handle);
     if response.ok() {
         STATE.with(|state| {
-            (MINER_ENDPOINTS[idx].parse)(&response.json(), &mut state.borrow_mut().miner);
+            let mut state = state.borrow_mut();
+            (MINER_ENDPOINTS[idx].parse)(&response.json(), &mut state.miner);
+            state.miner_stale[idx] = false;
         });
     } else {
         log_warn!(
@@ -498,6 +506,7 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
             MINER_ENDPOINTS[idx].path,
             response.status
         );
+        STATE.with(|state| state.borrow_mut().miner_stale[idx] = true);
     }
     request_frame();
 }
@@ -537,12 +546,13 @@ pub extern "C" fn render(_delta_ms: u32) {
         width: viewport.width,
         height: viewport.height,
     };
-    let (miner, public, auth_failed, public_stale) = STATE.with(|state| {
+    let (miner, public, auth_failed, miner_stale, public_stale) = STATE.with(|state| {
         let state = state.borrow();
         (
             state.miner.clone(),
             state.public.clone(),
             state.auth == AuthState::Failed,
+            state.miner_stale.iter().any(|&stale| stale),
             state.public_stale.iter().any(|&stale| stale),
         )
     });
@@ -553,10 +563,13 @@ pub extern "C" fn render(_delta_ms: u32) {
         View::InfoOverload => render::info_overload(size, &miner, &public),
     };
     // The auth-error overlay takes precedence: an unreachable miner is the larger
-    // problem, and both banners share the same corner.
+    // problem, and both banners share the same corner. Either source going stale
+    // raises one shared "stale data" banner.
+    let stale = (miner_stale && view_needs_miner(params.view))
+        || (public_stale && view_needs_public(params.view));
     if auth_failed && view_needs_miner(params.view) {
         root = render::with_overlay(root, render::AUTH_ERROR_TEXT);
-    } else if public_stale && view_needs_public(params.view) {
+    } else if stale {
         root = render::with_overlay(root, render::STALE_DATA_TEXT);
     }
     let _ = render_ui(viewport.width, viewport.height, root);
