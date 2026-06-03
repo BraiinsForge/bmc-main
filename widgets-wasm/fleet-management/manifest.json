@@ -20,5 +20,13 @@
       "min_height": 480,
       "max_height": 480
     }
-  ]
+  ],
+  "params": {
+    "miner_password": {
+      "name": "Miner password",
+      "description": "Shared root password used to log into every BOS miner on the network",
+      "type": "string",
+      "default_value": "root"
+    }
+  }
 }
