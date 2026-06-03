@@ -270,15 +270,17 @@ fn push_gauges_and_labels(
         miner::hashrate_fraction(miner.hashrate_ths, miner.nominal_hashrate_ths);
 
     // Lit states color both rings with the state fill and draw only the lit
-    // portion. NotAvailable has no color, so both rings fill fully with the
-    // neutral gray track instead — the one state that shows unlit segments.
-    let (fill, outer_fraction, lit) = match ring_fill(g.state) {
+    // portion, capping the inner ring one slot short of full. NotAvailable has
+    // no color: both rings fill with the neutral gray track — the inner ring as
+    // a complete circle — and the inner power label is suppressed.
+    let (fill, outer_fraction, lit, show_power_label) = match ring_fill(g.state) {
         Some(fill) => (
             fill,
             hashrate_fraction,
             g.lit_count.min(gauge::TICK_COUNT - 1),
+            true,
         ),
-        None => (ArcFill::Solid(INACTIVE_TICK), 1.0, gauge::TICK_COUNT - 1),
+        None => (ArcFill::Solid(INACTIVE_TICK), 1.0, gauge::TICK_COUNT, false),
     };
     let inner_end = gauge::lit_sweep_end(lit);
 
@@ -321,16 +323,18 @@ fn push_gauges_and_labels(
         hashrate_label(miner.hashrate_ths),
         style!(size: 18, weight: FontWeight::REGULAR, color: LABEL_GRAY),
     ));
-    draws.push(Draw::curved_text(
-        centre_x,
-        centre_y,
-        POWER_RADIUS,
-        power_label_angle,
-        text_anchor_for_angle(power_label_angle),
-        text_facing_for_angle(power_label_angle),
-        power_label(miner.power_w),
-        style!(size: 16, weight: FontWeight::REGULAR, color: LABEL_GRAY),
-    ));
+    if show_power_label {
+        draws.push(Draw::curved_text(
+            centre_x,
+            centre_y,
+            POWER_RADIUS,
+            power_label_angle,
+            text_anchor_for_angle(power_label_angle),
+            text_facing_for_angle(power_label_angle),
+            power_label(miner.power_w),
+            style!(size: 16, weight: FontWeight::REGULAR, color: LABEL_GRAY),
+        ));
+    }
 }
 
 fn live_end_angle(sweep_end: f32, fraction: f32) -> f32 {
