@@ -47,8 +47,10 @@ const POWER_RADIUS: f32 = 196.0;
 const RING_WIDTH: f32 = 8.0;
 const HASHRATE_SWEEP_END: f32 = 330.0_f32.to_radians();
 // Gap between a gauge's leading edge and its curved-text label, so each label
-// reads as attached to the segment or arc it follows.
-const LABEL_OFFSET: f32 = 2.0_f32.to_radians();
+// reads as attached to the segment or arc it follows. The flat inner segments
+// sit tighter to their label than the continuous outer ring.
+const HASHRATE_LABEL_OFFSET: f32 = 4.0_f32.to_radians();
+const POWER_LABEL_OFFSET: f32 = 1.0_f32.to_radians();
 // Duration of the gauge sweep transition; the host animates each ring's
 // end angle toward its target whenever the lit fraction changes.
 const GAUGE_TRANSITION_MS: u32 = 500;
@@ -295,7 +297,7 @@ fn push_gauges_and_labels(
     );
 
     let inner_segments = ArcSegments::Explicit(gauge::TICK_SPANS.to_vec());
-    let power_label_angle = (inner_end + LABEL_OFFSET).rem_euclid(std::f32::consts::TAU);
+    let power_label_angle = (inner_end + POWER_LABEL_OFFSET).rem_euclid(std::f32::consts::TAU);
     push_gauge_arc(
         draws,
         centre_x,
@@ -332,7 +334,7 @@ fn push_gauges_and_labels(
 }
 
 fn live_end_angle(sweep_end: f32, fraction: f32) -> f32 {
-    (sweep_end * fraction.clamp(0.0, 1.0) + LABEL_OFFSET).rem_euclid(std::f32::consts::TAU)
+    (sweep_end * fraction.clamp(0.0, 1.0) + HASHRATE_LABEL_OFFSET).rem_euclid(std::f32::consts::TAU)
 }
 
 // On the seed frame the ring draws empty so the host's end-angle transition has a
