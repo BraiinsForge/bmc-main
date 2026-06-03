@@ -107,47 +107,91 @@ struct ClusterSpec {
     unit: Option<&'static str>,
 }
 
-fn ring_fill(state: GaugeState) -> Option<ArcFill> {
-    match state {
-        GaugeState::Off => Some(ArcFill::Solid(OFF_TICK)),
-        GaugeState::UnknownScale => None,
-        GaugeState::Underclocked => Some(ArcFill::gradient(AMBER_DARK, AMBER_BRIGHT)),
-        GaugeState::Good => Some(ArcFill::gradient(GREEN_DARK, GREEN_BRIGHT)),
-        GaugeState::Overclocked => Some(ArcFill::Solid(PURPLE)),
-    }
+// The center glow disc: an accent tint matching the status label color, faded
+// over `alpha` at the center to transparent at the edge.
+#[derive(Clone, Copy)]
+struct Glow {
+    accent: Color,
+    alpha: f32,
 }
 
-fn status_color(state: GaugeState) -> Color {
-    match state {
-        GaugeState::Off => OFF_LABEL,
-        GaugeState::UnknownScale => VALUE,
-        GaugeState::Underclocked => AMBER_LABEL,
-        GaugeState::Good => GREEN_LABEL,
-        GaugeState::Overclocked => PURPLE,
-    }
+// The per-state visual treatment of the gauge: the lit ring fill, the
+// `Hashrate` status-label color, and the center glow. `ring_fill` is absent for
+// `NotAvailable` (no lit ticks); its glow is a neutral white wash.
+#[derive(Clone, Copy)]
+struct StateStyle {
+    ring_fill: Option<ArcFill>,
+    status_color: Color,
+    glow: Option<Glow>,
 }
 
-// Accent tint and center opacity for the glow disc, or None when there is no
-// glow (unknown scale). The accent matches the status label color.
-fn glow_spec(state: GaugeState) -> Option<(Color, f32)> {
+const NOT_AVAILABLE_STYLE: StateStyle = StateStyle {
+    ring_fill: None,
+    status_color: LABEL_GRAY,
+    glow: Some(Glow {
+        accent: WHITE,
+        alpha: 0.14,
+    }),
+};
+
+const OFF_STYLE: StateStyle = StateStyle {
+    ring_fill: Some(ArcFill::Solid(OFF_TICK)),
+    status_color: OFF_LABEL,
+    glow: Some(Glow {
+        accent: OFF_LABEL,
+        alpha: 0.40,
+    }),
+};
+
+const UNDERCLOCKED_STYLE: StateStyle = StateStyle {
+    ring_fill: Some(ArcFill::gradient(AMBER_DARK, AMBER_BRIGHT)),
+    status_color: AMBER_LABEL,
+    glow: Some(Glow {
+        accent: AMBER_LABEL,
+        alpha: 0.30,
+    }),
+};
+
+const GOOD_STYLE: StateStyle = StateStyle {
+    ring_fill: Some(ArcFill::gradient(GREEN_DARK, GREEN_BRIGHT)),
+    status_color: GREEN_LABEL,
+    glow: Some(Glow {
+        accent: GREEN_LABEL,
+        alpha: 0.30,
+    }),
+};
+
+const OVERCLOCKED_STYLE: StateStyle = StateStyle {
+    ring_fill: Some(ArcFill::Solid(PURPLE)),
+    status_color: PURPLE,
+    glow: Some(Glow {
+        accent: PURPLE,
+        alpha: 0.30,
+    }),
+};
+
+const fn style(state: GaugeState) -> StateStyle {
     match state {
-        GaugeState::Off => Some((OFF_LABEL, 0.40)),
-        GaugeState::UnknownScale => None,
-        GaugeState::Underclocked => Some((AMBER_LABEL, 0.30)),
-        GaugeState::Good => Some((GREEN_LABEL, 0.30)),
-        GaugeState::Overclocked => Some((PURPLE, 0.30)),
+        GaugeState::NotAvailable => NOT_AVAILABLE_STYLE,
+        GaugeState::Off => OFF_STYLE,
+        GaugeState::Underclocked => UNDERCLOCKED_STYLE,
+        GaugeState::Good => GOOD_STYLE,
+        GaugeState::Overclocked => OVERCLOCKED_STYLE,
     }
 }
 
 fn draw_glow(draws: &mut Vec<Draw>, cx: f32, cy: f32, scale: f32, state: GaugeState) {
-    let Some((accent, alpha)) = glow_spec(state) else {
+    let Some(glow) = style(state).glow else {
         return;
     };
     draws.push(Draw::circle(
         cx,
         cy,
         GLOW_RADIUS * scale,
-        Fill::radial(accent.with_alpha(alpha), accent.with_alpha(0.0)),
+        Fill::radial(
+            glow.accent.with_alpha(glow.alpha),
+            glow.accent.with_alpha(0.0),
+        ),
     ));
 }
 
@@ -177,7 +221,9 @@ fn draw_gauge(draws: &mut Vec<Draw>, cx: f32, cy: f32, scale: f32, g: &Gauge) {
     //
     // The no-scale state has no lit ticks, so its fill is never visible; the
     // neutral ring color is a placeholder to keep the draw.
-    let fill = ring_fill(g.state).unwrap_or(ArcFill::Solid(INACTIVE_TICK));
+    let fill = style(g.state)
+        .ring_fill
+        .unwrap_or(ArcFill::Solid(INACTIVE_TICK));
     draws.push(
         Draw::arc(
             cx,
@@ -253,7 +299,7 @@ fn center_node(
             value_row,
             text(
                 "Hashrate",
-                style!(size: STATUS_SIZE, weight: FontWeight::REGULAR, color: status_color(state)),
+                style!(size: STATUS_SIZE, weight: FontWeight::REGULAR, color: style(state).status_color),
             ),
             spacer(1.0),
         ],
