@@ -3,7 +3,7 @@
 //! Data-, persistence-, and formatting-focused guest imports.
 
 use anyhow::{Result, bail};
-use bmc_wasm_protocol::system::{TemperatureUnit, UnitSystem};
+use bmc_wasm_protocol::system::{NumberFormat, TemperatureUnit, UnitSystem};
 use bmc_wasm_protocol::{JsonId, XmlId};
 use chrono::{DateTime, Utc};
 use wasmi::{Caller, Extern, Linker};
@@ -485,6 +485,41 @@ fn register_number_format_import(linker: &mut Linker<HostState>) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MetricSpeedUnit {
+    KmH,
+    Ms,
+}
+
+impl MetricSpeedUnit {
+    #[expect(
+        dead_code,
+        reason = "wired through the host import in a follow-up task"
+    )]
+    fn from_wire(tag: u32) -> Self {
+        match tag {
+            1 => Self::Ms,
+            _ => Self::KmH,
+        }
+    }
+}
+
+fn format_speed_with_prefs(
+    number_format: NumberFormat,
+    unit_system: UnitSystem,
+    value_kmh: f64,
+    decimals: u32,
+    metric_unit: MetricSpeedUnit,
+) -> String {
+    let (converted, suffix) = match (unit_system, metric_unit) {
+        (UnitSystem::Imperial, _) => (value_kmh * 0.621_371_192, " mph"),
+        (UnitSystem::Metric, MetricSpeedUnit::KmH) => (value_kmh, " km/h"),
+        (UnitSystem::Metric, MetricSpeedUnit::Ms) => (value_kmh / 3.6, " m/s"),
+    };
+    let num = format_number_with_prefs(number_format, converted, decimals);
+    format!("{num}{suffix}")
+}
+
 fn register_speed_format_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
@@ -502,17 +537,68 @@ fn register_speed_format_import(linker: &mut Linker<HostState>) -> Result<()> {
                 let s = caller.data().system.snapshot();
                 (s.settings.number_format, s.settings.unit_system)
             };
-            let (converted, suffix) = match unit_system {
-                UnitSystem::Metric => (value, " km/h"),
-                UnitSystem::Imperial => (value * 0.621_371_192, " mph"),
-            };
-            let num = format_number_with_prefs(number_format, converted, decimals);
-            let formatted = format!("{num}{suffix}");
+            let formatted = format_speed_with_prefs(
+                number_format,
+                unit_system,
+                value,
+                decimals,
+                MetricSpeedUnit::KmH,
+            );
             write_to_wasm(&mut caller, &formatted, out_ptr, out_len)
         },
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod speed_format_tests {
+    use super::*;
+
+    #[test]
+    fn metric_kmh_keeps_value_and_suffix() {
+        let s = format_speed_with_prefs(
+            NumberFormat::SpaceGroupCommaDecimal,
+            UnitSystem::Metric,
+            12.6,
+            1,
+            MetricSpeedUnit::KmH,
+        );
+        assert_eq!(s, "12,6 km/h");
+    }
+
+    #[test]
+    fn metric_ms_divides_by_3_6_and_labels_ms() {
+        // 12.6 km/h -> 3.5 m/s
+        let s = format_speed_with_prefs(
+            NumberFormat::SpaceGroupCommaDecimal,
+            UnitSystem::Metric,
+            12.6,
+            1,
+            MetricSpeedUnit::Ms,
+        );
+        assert_eq!(s, "3,5 m/s");
+    }
+
+    #[test]
+    fn imperial_is_mph_regardless_of_metric_unit() {
+        let kmh = format_speed_with_prefs(
+            NumberFormat::SpaceGroupCommaDecimal,
+            UnitSystem::Imperial,
+            100.0,
+            0,
+            MetricSpeedUnit::KmH,
+        );
+        let ms = format_speed_with_prefs(
+            NumberFormat::SpaceGroupCommaDecimal,
+            UnitSystem::Imperial,
+            100.0,
+            0,
+            MetricSpeedUnit::Ms,
+        );
+        assert_eq!(kmh, "62 mph");
+        assert_eq!(ms, "62 mph");
+    }
 }
 
 fn register_temperature_format_import(linker: &mut Linker<HostState>) -> Result<()> {
