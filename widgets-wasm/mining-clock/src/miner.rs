@@ -8,7 +8,7 @@
     )
 )]
 
-use bmc_wasm_sdk::{Color, ufmt};
+use bmc_wasm_sdk::ufmt;
 
 pub(crate) trait JsonLookup {
     #[cfg_attr(
@@ -34,12 +34,7 @@ pub(crate) fn ths_from_ghs(value: f64) -> f64 {
     value / 1_000.0
 }
 
-pub(crate) const MAX_POWER_W: f64 = 70.0;
 pub(crate) const STALE_AFTER_MS: u32 = 15_000;
-
-const POWER_GREEN_ANCHOR: Color = Color::from_rgb(0x13, 0xA4, 0x54);
-const POWER_GOLD_ANCHOR: Color = Color::from_rgb(0xF4, 0xC0, 0x1A);
-const POWER_RED_ANCHOR: Color = Color::from_rgb(0xE5, 0x34, 0x2A);
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct MinerData {
@@ -92,8 +87,6 @@ fn hashboard_present(json: &impl JsonLookup, idx: usize) -> bool {
     })
 }
 
-const POWER_GOLD_FRACTION: f32 = 0.4;
-
 #[expect(
     clippy::cast_possible_truncation,
     reason = "gauge fraction is a clamped 0..1 ratio that loses no meaningful precision in f32"
@@ -107,95 +100,15 @@ pub(crate) fn hashrate_fraction(hashrate: Option<f64>, nominal: Option<f64>) -> 
     }
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "gauge fraction is a clamped 0..1 ratio that loses no meaningful precision in f32"
-)]
-pub(crate) fn power_fraction(power: Option<f64>) -> f32 {
-    match power {
-        Some(power) => (power / MAX_POWER_W).clamp(0.0, 1.0) as f32,
-        None => 0.0,
+// Mining current ratio: real hashrate as a percent of nominal. Matches
+// mining-info's `real / nominal * 100`, the input to the shared gauge state.
+// Unavailable when either input is missing or nominal is non-positive.
+#[must_use]
+pub(crate) fn mcr_percent(hashrate: Option<f64>, nominal: Option<f64>) -> Option<f64> {
+    match (hashrate, nominal) {
+        (Some(hashrate), Some(nominal)) if nominal > 0.0 => Some(hashrate / nominal * 100.0),
+        _ => None,
     }
-}
-
-#[expect(
-    clippy::float_cmp,
-    reason = "anchor fractions must return their design colors bit-exactly before any interpolation"
-)]
-pub(crate) fn power_ramp_color(fraction: f32) -> Color {
-    let fraction = fraction.clamp(0.0, 1.0);
-    if fraction == 0.0 {
-        return POWER_GREEN_ANCHOR;
-    }
-    if fraction == POWER_GOLD_FRACTION {
-        return POWER_GOLD_ANCHOR;
-    }
-    if fraction == 1.0 {
-        return POWER_RED_ANCHOR;
-    }
-    if fraction < POWER_GOLD_FRACTION {
-        hsv_lerp_color(
-            POWER_GREEN_ANCHOR,
-            POWER_GOLD_ANCHOR,
-            fraction / POWER_GOLD_FRACTION,
-        )
-    } else {
-        hsv_lerp_color(
-            POWER_GOLD_ANCHOR,
-            POWER_RED_ANCHOR,
-            (fraction - POWER_GOLD_FRACTION) / (1.0 - POWER_GOLD_FRACTION),
-        )
-    }
-}
-
-fn hsv_lerp_color(from: Color, to: Color, t: f32) -> Color {
-    let from = hsv_from_color(from);
-    let to = hsv_from_color(to);
-    Color::from_hsv(
-        lerp_hue(from.hue, to.hue, t),
-        lerp_f32(from.saturation, to.saturation, t),
-        lerp_f32(from.value, to.value, t),
-    )
-}
-
-#[derive(Clone, Copy)]
-struct Hsv {
-    hue: f32,
-    saturation: f32,
-    value: f32,
-}
-
-fn hsv_from_color(color: Color) -> Hsv {
-    let r = f32::from(color.red()) / 255.0;
-    let g = f32::from(color.green()) / 255.0;
-    let b = f32::from(color.blue()) / 255.0;
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let delta = max - min;
-    let hue = if delta == 0.0 {
-        0.0
-    } else if r >= g && r >= b {
-        60.0 * ((g - b) / delta).rem_euclid(6.0)
-    } else if g >= b {
-        60.0 * (((b - r) / delta) + 2.0)
-    } else {
-        60.0 * (((r - g) / delta) + 4.0)
-    };
-    let saturation = if max == 0.0 { 0.0 } else { delta / max };
-    Hsv {
-        hue,
-        saturation,
-        value: max,
-    }
-}
-
-fn lerp_hue(from: f32, to: f32, t: f32) -> f32 {
-    let delta = (to - from + 540.0).rem_euclid(360.0) - 180.0;
-    (from + delta * t).rem_euclid(360.0)
-}
-
-fn lerp_f32(from: f32, to: f32, t: f32) -> f32 {
-    from + (to - from) * t
 }
 
 pub(crate) fn is_stale(age_ms: u32) -> bool {
@@ -323,22 +236,12 @@ mod tests {
     }
 
     #[test]
-    fn power_fraction_is_proportional_to_full_scale_and_clamps() {
-        assert_fraction_eq(power_fraction(Some(MAX_POWER_W / 2.0)), 0.5);
-        assert_fraction_eq(power_fraction(Some(MAX_POWER_W * 1.25)), 1.0);
-        assert_fraction_eq(power_fraction(None), 0.0);
-    }
-
-    #[test]
-    fn power_ramp_hits_design_anchors() {
-        assert_eq!(power_ramp_color(0.0), POWER_GREEN_ANCHOR);
-        assert_eq!(power_ramp_color(0.4), POWER_GOLD_ANCHOR);
-        assert_eq!(power_ramp_color(1.0), POWER_RED_ANCHOR);
-    }
-
-    #[test]
-    fn power_ramp_interpolates_in_hsv_between_anchors() {
-        assert_eq!(power_ramp_color(0.2), Color::from_rgb(0x5E, 0xCC, 0x16));
+    fn mcr_percent_is_real_over_nominal_times_100() {
+        let mcr = mcr_percent(Some(130.0), Some(100.0)).expect("BUG: both inputs available");
+        assert!((mcr - 130.0).abs() < 1e-9, "got {mcr}");
+        assert_eq!(mcr_percent(Some(50.0), None), None);
+        assert_eq!(mcr_percent(Some(50.0), Some(0.0)), None);
+        assert_eq!(mcr_percent(None, Some(100.0)), None);
     }
 
     #[test]
