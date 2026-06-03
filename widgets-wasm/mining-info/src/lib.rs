@@ -593,9 +593,11 @@ pub extern "C" fn render(_delta_ms: u32) {
     let stale = (miner_stale && view_needs_miner(params.view))
         || (public_stale && view_needs_public(params.view));
     if auth_failed && view_needs_miner(params.view) {
-        root = render::with_overlay(root, render::AUTH_ERROR_TEXT, viewport.shape);
+        root =
+            mining::overlay::with_overlay(root, mining::overlay::AUTH_ERROR_TEXT, viewport.shape);
     } else if stale {
-        root = render::with_overlay(root, render::STALE_DATA_TEXT, viewport.shape);
+        root =
+            mining::overlay::with_overlay(root, mining::overlay::STALE_DATA_TEXT, viewport.shape);
     }
     let _ = render_ui(viewport.width, viewport.height, root);
     // The seeded first frame shows one segment; schedule the real value so the
