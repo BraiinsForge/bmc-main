@@ -8,6 +8,11 @@ use crate::weather_code::IconId;
 )]
 use bmc_wasm_sdk::*;
 
+pub const TEMP_HIGH: Svg = include_svg!("assets/temp-high.svg");
+pub const TEMP_LOW: Svg = include_svg!("assets/temp-low.svg");
+pub const SUNRISE: Svg = include_svg!("assets/time-sunrise.svg");
+pub const SUNSET: Svg = include_svg!("assets/time-sunset.svg");
+
 const CLEAR_DAY: Svg = include_svg!("assets/clear-day.svg");
 const CLEAR_NIGHT: Svg = include_svg!("assets/clear-night.svg");
 const PARTLY_CLOUDY_DAY: Svg = include_svg!("assets/partly-cloudy-day.svg");

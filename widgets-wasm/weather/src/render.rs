@@ -3,6 +3,7 @@
 pub mod bar;
 pub mod common;
 pub mod icons;
+pub mod large;
 pub mod medium;
 pub mod small;
 
@@ -17,6 +18,7 @@ use crate::{manifest_params::Params, model::Weather};
 #[must_use]
 pub fn current_view(weather: &Weather, params: &Params, size: WidgetSize) -> Node {
     match size.variant {
+        SizeVariant::Large => large::large(weather, params, size),
         SizeVariant::Medium => medium::medium(weather, params, size),
         _ => small::small(weather, params, size),
     }

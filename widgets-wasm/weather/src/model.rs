@@ -58,6 +58,30 @@ pub enum WeatherParseError {
 }
 
 #[must_use]
+pub fn offset_seconds(rfc3339: &str) -> i64 {
+    let bytes = rfc3339.as_bytes();
+    if bytes.last() == Some(&b'Z') {
+        return 0;
+    }
+    if rfc3339.len() < 6 {
+        return 0;
+    }
+    let tail = &rfc3339[rfc3339.len() - 6..];
+    let tb = tail.as_bytes();
+    let sign: i64 = match tb[0] {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return 0,
+    };
+    if tb[3] != b':' {
+        return 0;
+    }
+    let hh: i64 = tail[1..3].parse().unwrap_or(0);
+    let mm: i64 = tail[4..6].parse().unwrap_or(0);
+    sign * (hh * 3600 + mm * 60)
+}
+
+#[must_use]
 pub fn current_is_day(hourly: Option<&Hourly>, current_time_rfc3339: &str) -> bool {
     let Some(hourly) = hourly else { return true };
     let pick = hourly
@@ -234,6 +258,19 @@ fn parse_daily(doc: &JsonDoc) -> Option<Daily> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn offset_seconds_parses_numeric_offsets() {
+        assert_eq!(offset_seconds("2026-06-03T00:00:00+02:00"), 7200);
+        assert_eq!(offset_seconds("2026-06-03T00:00:00-05:30"), -19800);
+        assert_eq!(offset_seconds("2026-03-04T04:19:23+00:00"), 0);
+    }
+
+    #[test]
+    fn offset_seconds_defaults_to_zero() {
+        assert_eq!(offset_seconds("2026-03-04T04:19:23Z"), 0);
+        assert_eq!(offset_seconds("garbage"), 0);
+    }
 
     fn hour(time: &str, is_day: bool) -> HourEntry {
         HourEntry {
