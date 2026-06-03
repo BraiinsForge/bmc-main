@@ -6,10 +6,13 @@ use crate::telemetry::TelemetrySnapshot;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceFamily {
     Bos,
+    #[cfg_attr(target_arch = "wasm32", expect(dead_code, reason = "part of the generic device model; constructed once uBOS and Bitaxe adapters land"))]
     Ubos,
+    #[cfg_attr(target_arch = "wasm32", expect(dead_code, reason = "part of the generic device model; constructed once uBOS and Bitaxe adapters land"))]
     Bitaxe,
 }
 
+#[cfg_attr(target_arch = "wasm32", expect(dead_code, reason = "used in the device list render in the next task"))]
 #[must_use]
 pub fn family_label(family: DeviceFamily) -> &'static str {
     match family {
@@ -28,6 +31,7 @@ impl DeviceId {
         Self(value.into())
     }
 
+    #[cfg_attr(target_arch = "wasm32", expect(dead_code, reason = "exposed for logging and diagnostics; not yet consumed on-device"))]
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -64,6 +68,7 @@ impl DeviceList {
         Self::default()
     }
 
+    #[cfg_attr(target_arch = "wasm32", expect(dead_code, reason = "used in the device list render in the next task"))]
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.devices.is_empty()
@@ -100,6 +105,7 @@ impl DeviceList {
     }
 
     /// Bump the discovery sequence of a device still being announced.
+    #[cfg_attr(target_arch = "wasm32", expect(dead_code, reason = "re-discovery hook; the discovery handler currently upserts instead"))]
     pub fn mark_seen(&mut self, id: &DeviceId) {
         self.seq += 1;
         let seq = self.seq;
@@ -114,6 +120,7 @@ impl DeviceList {
         self.devices.retain(|d| &d.identity.id != id);
     }
 
+    #[cfg_attr(target_arch = "wasm32", expect(dead_code, reason = "used in the device list render in the next task"))]
     pub fn iter_reachable(&self) -> impl Iterator<Item = &KnownDevice> {
         self.devices.iter().filter(|d| d.reachable)
     }

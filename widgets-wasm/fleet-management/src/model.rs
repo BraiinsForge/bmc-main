@@ -10,6 +10,13 @@ pub struct MinerModel {
 }
 
 impl MinerModel {
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "part of the generic model; populated once family adapters report model metadata"
+        )
+    )]
     #[must_use]
     pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
