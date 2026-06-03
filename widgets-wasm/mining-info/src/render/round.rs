@@ -16,9 +16,10 @@ use super::{
     text_block, unit_visible,
 };
 use crate::format;
-use crate::gauge::{self, Gauge, GaugeState};
 use crate::layout;
 use crate::model::{Availability, MinerData, PublicData};
+use mining::gauge::{self, Gauge, GaugeState};
+use mining::style::{AMBER_LABEL, GREEN_LABEL, INACTIVE_TICK, OFF_LABEL, PURPLE, ring_fill};
 
 const NATIVE: f32 = 480.0;
 
@@ -34,16 +35,6 @@ const GLOW_RADIUS: f32 = 150.0;
 // Duration of the lit-gauge sweep transition when the fill changes.
 const GAUGE_TRANSITION_MS: u32 = 500;
 
-const INACTIVE_TICK: Color = Color::from_rgb(0x1e, 0x1e, 0x1e);
-const OFF_TICK: Color = Color::from_rgb(0xd9, 0x22, 0x2c);
-const OFF_LABEL: Color = Color::from_rgb(0xf9, 0x53, 0x55);
-const AMBER_DARK: Color = Color::from_rgb(0xcf, 0x79, 0x0e);
-const AMBER_BRIGHT: Color = Color::from_rgb(0xfe, 0xba, 0x53);
-const AMBER_LABEL: Color = Color::from_rgb(0xfe, 0xba, 0x53);
-const GREEN_DARK: Color = Color::from_rgb(0x19, 0x5e, 0x33);
-const GREEN_BRIGHT: Color = Color::from_rgb(0x5a, 0xdf, 0x88);
-const GREEN_LABEL: Color = Color::from_rgb(0x34, 0xc0, 0x6a);
-const PURPLE: Color = Color::from_rgb(0x8b, 0x7c, 0xff);
 const LABEL_GRAY: Color = Color::from_rgb(0x8d, 0x8d, 0x8d);
 const DIVIDER: Color = Color::from_rgba(0xff, 0xff, 0xff, 0x1a);
 
@@ -115,18 +106,16 @@ struct Glow {
     alpha: f32,
 }
 
-// The per-state visual treatment of the gauge: the lit ring fill, the
-// `Hashrate` status-label color, and the center glow. `ring_fill` is absent for
-// `NotAvailable` (no lit ticks); its glow is a neutral white wash.
+// The per-state render treatment of the gauge label and glow: the `Hashrate`
+// status-label color and the center glow. The lit ring fill comes from the
+// shared `mining::style::ring_fill`. `NotAvailable` has a neutral white glow.
 #[derive(Clone, Copy)]
 struct StateStyle {
-    ring_fill: Option<ArcFill>,
     status_color: Color,
     glow: Option<Glow>,
 }
 
 const NOT_AVAILABLE_STYLE: StateStyle = StateStyle {
-    ring_fill: None,
     status_color: LABEL_GRAY,
     glow: Some(Glow {
         accent: WHITE,
@@ -135,7 +124,6 @@ const NOT_AVAILABLE_STYLE: StateStyle = StateStyle {
 };
 
 const OFF_STYLE: StateStyle = StateStyle {
-    ring_fill: Some(ArcFill::Solid(OFF_TICK)),
     status_color: OFF_LABEL,
     glow: Some(Glow {
         accent: OFF_LABEL,
@@ -144,7 +132,6 @@ const OFF_STYLE: StateStyle = StateStyle {
 };
 
 const UNDERCLOCKED_STYLE: StateStyle = StateStyle {
-    ring_fill: Some(ArcFill::gradient(AMBER_DARK, AMBER_BRIGHT)),
     status_color: AMBER_LABEL,
     glow: Some(Glow {
         accent: AMBER_LABEL,
@@ -153,7 +140,6 @@ const UNDERCLOCKED_STYLE: StateStyle = StateStyle {
 };
 
 const GOOD_STYLE: StateStyle = StateStyle {
-    ring_fill: Some(ArcFill::gradient(GREEN_DARK, GREEN_BRIGHT)),
     status_color: GREEN_LABEL,
     glow: Some(Glow {
         accent: GREEN_LABEL,
@@ -162,7 +148,6 @@ const GOOD_STYLE: StateStyle = StateStyle {
 };
 
 const OVERCLOCKED_STYLE: StateStyle = StateStyle {
-    ring_fill: Some(ArcFill::Solid(PURPLE)),
     status_color: PURPLE,
     glow: Some(Glow {
         accent: PURPLE,
@@ -221,9 +206,7 @@ fn draw_gauge(draws: &mut Vec<Draw>, cx: f32, cy: f32, scale: f32, g: &Gauge) {
     //
     // The no-scale state has no lit ticks, so its fill is never visible; the
     // neutral ring color is a placeholder to keep the draw.
-    let fill = style(g.state)
-        .ring_fill
-        .unwrap_or(ArcFill::Solid(INACTIVE_TICK));
+    let fill = ring_fill(g.state).unwrap_or(ArcFill::Solid(INACTIVE_TICK));
     draws.push(
         Draw::arc(
             cx,
@@ -415,7 +398,10 @@ fn gauge_screen(
 // pinned to a single tick so the host transition has an empty-ish baseline to
 // animate the real fill in from, regardless of whether data is already loaded.
 fn seeded_gauge(miner: &MinerData, seed_gauge: bool) -> Gauge {
-    let mut g = gauge::gauge(miner.hashrate_ths, miner.mcr_percent);
+    let mut g = gauge::gauge(
+        miner.hashrate_ths.as_option().copied(),
+        miner.mcr_percent.as_option().copied(),
+    );
     if seed_gauge {
         g.lit_count = g.lit_count.min(1);
     }

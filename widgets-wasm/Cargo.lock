@@ -615,6 +615,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mining"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+]
+
+[[package]]
 name = "mining-clock"
 version = "0.1.0"
 dependencies = [
@@ -626,6 +633,7 @@ name = "mining-info"
 version = "0.1.0"
 dependencies = [
  "bmc-wasm-sdk",
+ "mining",
 ]
 
 [[package]]
