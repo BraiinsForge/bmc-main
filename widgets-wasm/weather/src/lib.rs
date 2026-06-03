@@ -4,6 +4,7 @@
 //! Ported from `deckfeeder/assets/widgets/weather/` (a JS/HTML widget).
 
 mod manifest_params;
+pub mod model;
 pub mod weather_code;
 pub mod wind;
 
