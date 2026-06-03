@@ -5,6 +5,7 @@ mod device;
 mod discovery;
 mod families;
 mod model;
+mod session;
 mod telemetry;
 
 #[cfg(target_arch = "wasm32")]
