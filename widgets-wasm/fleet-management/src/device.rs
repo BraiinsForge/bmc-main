@@ -146,28 +146,16 @@ impl DeviceList {
         self.devices.iter().filter(|d| d.reachable)
     }
 
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(dead_code, reason = "wired into the driver in Task 6")
-    )]
     pub fn iter(&self) -> impl Iterator<Item = &KnownDevice> {
         self.devices.iter()
     }
 
     #[must_use]
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(dead_code, reason = "wired into the driver in Task 6")
-    )]
     pub fn ids(&self) -> Vec<DeviceId> {
         self.devices.iter().map(|d| d.identity.id.clone()).collect()
     }
 
     /// Stamp the latest telemetry reading and reachability onto a device.
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(dead_code, reason = "wired into the driver in Task 6")
-    )]
     pub fn apply_telemetry(&mut self, id: &DeviceId, reading: TelemetryReading, reachable: bool) {
         self.seq += 1;
         let seq = self.seq;
@@ -183,10 +171,6 @@ impl DeviceList {
     /// Drop every device's telemetry and mark it unreachable (e.g. after a
     /// credential change). Devices stay listed; their readings go back to
     /// absent and reachability is recomputed on the next telemetry pass.
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(dead_code, reason = "wired into the driver in Task 6")
-    )]
     pub fn clear_all_telemetry(&mut self) {
         for dev in &mut self.devices {
             dev.telemetry = None;
