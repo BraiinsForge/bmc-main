@@ -7,4 +7,5 @@
 //! fill. Both `mining-info` and `mining-clock` build their gauges from here.
 
 pub mod gauge;
+pub mod overlay;
 pub mod style;
