@@ -38,6 +38,7 @@ let
 in
 wasmWidgetPackages // {
   core = import ./pkgs/core { inherit bmc armv7Pkgs deps; };
+  bos-avahi = import ./pkgs/bos-avahi { inherit bmc armv7Pkgs; };
   bmc-nix-cli = {
     pkg = profile.buildCrate crates.bmc-nix-cli { };
     version = "0.1.0";
