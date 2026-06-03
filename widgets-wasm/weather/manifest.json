@@ -1,0 +1,49 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "2379712a-e573-46db-8e9c-94f6ed75d92c",
+  "version": "0.1.0",
+  "name": "Weather",
+  "description": "Current conditions and forecast for a chosen location",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/weather",
+  "settings": [
+    "localization",
+    "timezone"
+  ],
+  "supported_viewports": [
+    {
+      "type": "rectangular",
+      "min_width": 317,
+      "max_width": 1280,
+      "min_height": 238,
+      "max_height": 480
+    }
+  ],
+  "params": {
+    "location": {
+      "name": "Location",
+      "description": "City name for the weather forecast",
+      "type": "string",
+      "default_value": "Prague"
+    },
+    "time_zone": {
+      "name": "Time zone",
+      "description": "Show times in the location's time zone or the system time zone",
+      "type": "string",
+      "default_value": "location",
+      "enum_values": [
+        {
+          "value": "location",
+          "label": "Location local"
+        },
+        {
+          "value": "system",
+          "label": "System"
+        }
+      ]
+    }
+  }
+}

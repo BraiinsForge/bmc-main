@@ -19,6 +19,7 @@ members = [
     "lib/units",
     "mining-clock",
     "mining-info",
+    "weather",
 ]
 
 # Shared lints for all production widget crates
