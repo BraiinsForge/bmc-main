@@ -54,6 +54,8 @@ struct State {
     auth: AuthState,
     stats_age_ms: Option<u32>,
     hashboards_age_ms: Option<u32>,
+    stats_stale: bool,
+    hashboards_stale: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -199,10 +201,12 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
                 MinerSource::Stats => {
                     miner::parse_stats(&response.json(), &mut state.miner);
                     state.stats_age_ms = Some(0);
+                    state.stats_stale = false;
                 }
                 MinerSource::Hashboards => {
                     miner::parse_hashboards(&response.json(), &mut state.miner);
                     state.hashboards_age_ms = Some(0);
+                    state.hashboards_stale = false;
                 }
             }
         });
@@ -211,16 +215,18 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
             "mining-clock: miner endpoint failed with status {}",
             response.status
         );
+        // Keep the last good data and flag the source stale so the render path
+        // can surface a "stale data" banner; the flag clears on the next success.
         STATE.with(|state| {
             let mut state = state.borrow_mut();
             match source {
                 MinerSource::Stats => {
-                    miner::clear_stats(&mut state.miner);
                     state.stats_age_ms = None;
+                    state.stats_stale = true;
                 }
                 MinerSource::Hashboards => {
-                    miner::clear_hashboards(&mut state.miner);
                     state.hashboards_age_ms = None;
+                    state.hashboards_stale = true;
                 }
             }
         });
@@ -232,8 +238,8 @@ fn advance_freshness(state: &mut State, delta_ms: u32) {
     if let Some(age) = state.stats_age_ms {
         let age = age.saturating_add(delta_ms);
         if miner::is_stale(age) {
-            miner::clear_stats(&mut state.miner);
             state.stats_age_ms = None;
+            state.stats_stale = true;
         } else {
             state.stats_age_ms = Some(age);
         }
@@ -241,11 +247,28 @@ fn advance_freshness(state: &mut State, delta_ms: u32) {
     if let Some(age) = state.hashboards_age_ms {
         let age = age.saturating_add(delta_ms);
         if miner::is_stale(age) {
-            miner::clear_hashboards(&mut state.miner);
             state.hashboards_age_ms = None;
+            state.hashboards_stale = true;
         } else {
             state.hashboards_age_ms = Some(age);
         }
+    }
+}
+
+// The auth-error banner takes precedence over stale data, matching mining-info.
+// Stale data only surfaces once some data has loaded, so a never-connected miner
+// reads as N/A on the gauge rather than raising a stale banner.
+#[cfg(target_arch = "wasm32")]
+fn overlay_message(auth_failed: bool, stale: bool, miner: &MinerData) -> Option<&'static str> {
+    let has_data = miner.hashrate_ths.is_some()
+        || miner.power_w.is_some()
+        || miner.nominal_hashrate_ths.is_some();
+    if auth_failed {
+        Some(mining::overlay::AUTH_ERROR_TEXT)
+    } else if stale && has_data {
+        Some(mining::overlay::STALE_DATA_TEXT)
+    } else {
+        None
     }
 }
 
@@ -261,11 +284,16 @@ pub extern "C" fn render(delta_ms: u32) {
     let params = Params::current();
     let effective_tz = params.timezone_override.as_deref().map(Tz::from_runtime);
     let palette = clock_palette(system::current().night_mode().unwrap_or(false));
-    let miner = STATE.with(|state| {
+    let (miner, auth_failed, stale) = STATE.with(|state| {
         let mut state = state.borrow_mut();
         advance_freshness(&mut state, delta_ms);
-        state.miner.clone()
+        (
+            state.miner.clone(),
+            matches!(state.auth, AuthState::Failed),
+            state.stats_stale || state.hashboards_stale,
+        )
     });
+    let overlay = overlay_message(auth_failed, stale, &miner);
 
     let first_frame = FIRST_FRAME.replace(false);
     let root = analog::round::render(
@@ -278,6 +306,7 @@ pub extern "C" fn render(delta_ms: u32) {
         &palette,
         &miner,
         first_frame,
+        overlay,
     );
 
     let _ = render_ui(w, h, root);
