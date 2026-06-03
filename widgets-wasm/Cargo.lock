@@ -626,6 +626,7 @@ name = "mining-clock"
 version = "0.1.0"
 dependencies = [
  "bmc-wasm-sdk",
+ "mining",
 ]
 
 [[package]]
