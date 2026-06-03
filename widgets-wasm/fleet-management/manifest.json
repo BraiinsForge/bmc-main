@@ -1,0 +1,24 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "e9e21b59-698b-46ea-ba9d-c04d3d63cbb9",
+  "version": "0.1.0",
+  "name": "Fleet Management",
+  "description": "At-a-glance view of Bitcoin miners on the local network",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/fleet-management",
+  "settings": [
+    "localization"
+  ],
+  "supported_viewports": [
+    {
+      "type": "rectangular",
+      "min_width": 638,
+      "max_width": 1280,
+      "min_height": 480,
+      "max_height": 480
+    }
+  ]
+}
