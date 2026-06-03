@@ -27,10 +27,18 @@ pub fn temperature(value_c: f64) -> String {
     format_temperature!(value_c, 0)
 }
 
+/// Degree-only temperature ("26°") for the dense hourly and daily strips,
+/// where the scale letter would crowd the layout.
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn temperature_bare(value_c: f64) -> String {
+    format_temperature!(value_c, 0, bare)
+}
+
 #[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn wind_speed_ms(value_kmh: f64) -> String {
-    format_speed!(value_kmh, 0, ms)
+    format_speed!(value_kmh, 1, ms)
 }
 
 #[cfg(target_arch = "wasm32")]

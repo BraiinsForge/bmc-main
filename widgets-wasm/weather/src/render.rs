@@ -2,6 +2,7 @@
 
 pub mod bar;
 pub mod common;
+pub mod full;
 pub mod icons;
 pub mod large;
 pub mod medium;
@@ -18,9 +19,10 @@ use crate::{manifest_params::Params, model::Weather};
 #[must_use]
 pub fn current_view(weather: &Weather, params: &Params, size: WidgetSize) -> Node {
     match size.variant {
+        SizeVariant::Full => full::full(weather, params, size),
         SizeVariant::Large => large::large(weather, params, size),
         SizeVariant::Medium => medium::medium(weather, params, size),
-        _ => small::small(weather, params, size),
+        SizeVariant::Small => small::small(weather, params, size),
     }
 }
 
@@ -30,9 +32,11 @@ pub fn message_view(message: &str, _size: WidgetSize) -> Node {
         props!(background: BLACK),
         [center(
             props!(flex: 1.0),
-            [text(
+            [common::txt(
                 message.to_string(),
-                style!(size: 32, weight: FontWeight::REGULAR, color: GRAY_60),
+                32,
+                FontWeight::REGULAR,
+                GRAY_30,
             )],
         )],
     )

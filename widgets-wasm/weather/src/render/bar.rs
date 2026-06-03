@@ -1,6 +1,7 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
 use crate::model::ForecastRange;
+use crate::render::common::TEXT_PRIMARY;
 
 #[expect(
     clippy::wildcard_imports,
@@ -8,6 +9,13 @@ use crate::model::ForecastRange;
 )]
 use bmc_wasm_sdk::*;
 
+const TRACK_H: f32 = 6.0;
+const DOT_OUTER_R: f32 = 8.0;
+const DOT_INNER_R: f32 = 4.0;
+
+/// A min→max temperature slider: a faint full-width track, a brighter
+/// segment spanning the day's range, and (for today) a ringed dot marking
+/// the current temperature. Mirrors the deckfeeder `.temp-slider`.
 #[must_use]
 pub fn forecast_bar(
     width: f32,
@@ -17,18 +25,23 @@ pub fn forecast_bar(
     max_c: f64,
     today_marker: Option<f64>,
 ) -> Node {
-    let y = height / 2.0;
+    let cy = height / 2.0;
+    let track_y = cy - TRACK_H / 2.0;
     #[expect(
         clippy::cast_possible_truncation,
         reason = "f64 fraction (0..=1) safely narrows to f32 canvas coordinate"
     )]
     let x_of = |c: f64| (range.fraction(c) as f32) * width;
+    let lo = x_of(min_c);
+    let hi = x_of(max_c);
     let mut draws = vec![
-        path!(vec![(0.0, y), (width, y)], stroke: 2.0, color: GRAY_30),
-        path!(vec![(x_of(min_c), y), (x_of(max_c), y)], stroke: 4.0, color: WHITE),
+        Draw::rect(0.0, track_y, width, TRACK_H, TEXT_PRIMARY.with_alpha(0.2)),
+        Draw::rect(lo, track_y, hi - lo, TRACK_H, TEXT_PRIMARY.with_alpha(0.5)),
     ];
     if let Some(cur) = today_marker {
-        draws.push(Draw::circle(x_of(cur), y, 4.0, WHITE));
+        let cx = x_of(cur);
+        draws.push(Draw::circle(cx, cy, DOT_OUTER_R, BLACK));
+        draws.push(Draw::circle(cx, cy, DOT_INNER_R, TEXT_PRIMARY));
     }
     canvas(props!(width: width, height: height), draws)
 }
