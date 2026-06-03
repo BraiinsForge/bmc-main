@@ -33,6 +33,53 @@ pub fn wind_speed_ms(value_kmh: f64) -> String {
     format_speed!(value_kmh, 0, ms)
 }
 
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn select_tz(mode: crate::manifest_params::TimeZone, location_tz: &str) -> Option<Tz> {
+    use crate::manifest_params::TimeZone;
+    match mode {
+        TimeZone::Location => Some(Tz::from_runtime(location_tz)),
+        TimeZone::System => None,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn hour_label(rfc3339: &str, tz: Option<Tz>) -> String {
+    let Some(unix_secs) = parse_date(rfc3339) else {
+        return NOT_AVAILABLE.to_string();
+    };
+    format_time(
+        SystemTime { unix_secs },
+        FormatTimeOpts {
+            timezone: tz,
+            ..FormatTimeOpts::default()
+        },
+    )
+}
+
+/// Hour-only label ("20", "8PM") for the dense hourly strip, whose entries
+/// always fall on the hour. Delegates to the SDK so the 12-hour form carries a
+/// meridiem. Sunrise and sunset keep their minutes via [`hour_label`].
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn forecast_hour_label(rfc3339: &str, tz: Option<&Tz>) -> String {
+    let Some(unix_secs) = parse_date(rfc3339) else {
+        return NOT_AVAILABLE.to_string();
+    };
+    format::format_hour(SystemTime { unix_secs }, tz)
+}
+
+/// The AM/PM marker for a sunrise/sunset time, or `None` in 24-hour mode.
+/// Rendered as a separate element beside [`hour_label`] so a 12-hour reading
+/// is unambiguous.
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn clock_meridiem(rfc3339: &str, tz: Option<&Tz>) -> Option<String> {
+    let unix_secs = parse_date(rfc3339)?;
+    format::meridiem(SystemTime { unix_secs }, tz)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
