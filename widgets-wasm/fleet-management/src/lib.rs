@@ -8,6 +8,9 @@ mod model;
 mod telemetry;
 
 #[cfg(target_arch = "wasm32")]
+mod render;
+
+#[cfg(target_arch = "wasm32")]
 #[expect(
     clippy::wildcard_imports,
     reason = "widget render code uses many SDK exports and macros in one file"
@@ -62,18 +65,6 @@ pub extern "C" fn init() {
 #[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
     let WidgetSize { width, height, .. } = widget_size();
-    let count = DEVICES.with(|d| d.borrow().len());
-    let label = if count == 0 {
-        "Searching for miners\u{2026}".to_owned()
-    } else {
-        fmt!("{count} miners")
-    };
-    let root = col(
-        props!(background: BLACK),
-        [center(
-            props!(flex: 1.0),
-            [text(label, style!(size: 28, color: WHITE))],
-        )],
-    );
+    let root = DEVICES.with(|d| render::view(&d.borrow(), width, height));
     let _ = render_ui(width, height, root);
 }
