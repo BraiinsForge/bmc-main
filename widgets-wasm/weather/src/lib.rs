@@ -3,6 +3,7 @@
 //! Weather widget — current conditions and forecast, four sizes.
 //! Ported from `deckfeeder/assets/widgets/weather/` (a JS/HTML widget).
 
+pub mod display;
 mod manifest_params;
 pub mod model;
 pub mod url;
