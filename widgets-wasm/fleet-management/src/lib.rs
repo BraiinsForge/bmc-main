@@ -33,7 +33,7 @@ use families::bos::BosAdapter;
 
 #[cfg(target_arch = "wasm32")]
 thread_local! {
-    static DEVICES: RefCell<DeviceList> = RefCell::new(DeviceList::new());
+    pub(crate) static DEVICES: RefCell<DeviceList> = RefCell::new(DeviceList::new());
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -41,7 +41,9 @@ fn on_bos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     match event {
         mdns::MdnsEvent::Found(json) => ingest(&BosAdapter, json),
         mdns::MdnsEvent::Removed(name) => {
-            DEVICES.with(|d| d.borrow_mut().remove(&DeviceId::new(*name)));
+            let id = DeviceId::new(*name);
+            session::remove_token(&id);
+            DEVICES.with(|d| d.borrow_mut().remove(&id));
             request_frame();
         }
     }
@@ -52,6 +54,7 @@ fn ingest(adapter: &dyn FamilyAdapter, json: &str) {
     let doc = JsonDoc::parse(json.as_bytes());
     if let Some(found) = adapter.parse_found(&doc) {
         DEVICES.with(|d| d.borrow_mut().upsert(found.identity));
+        session::ensure_running();
         request_frame();
     }
 }
@@ -67,8 +70,24 @@ pub extern "C" fn init() {
 
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
-pub extern "C" fn render(_delta_ms: u32) {
+pub extern "C" fn render(delta_ms: u32) {
+    session::on_frame(delta_ms);
     let WidgetSize { width, height, .. } = widget_size();
     let root = DEVICES.with(|d| render::view(&d.borrow(), width, height));
     let _ = render_ui(width, height, root);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn on_params_update() {
+    let changed = manifest_params::Params::previous().is_none_or(|prev| {
+        manifest_params::Params::current()
+            .changed_keys(&prev)
+            .contains(&"miner_password")
+    });
+    if changed {
+        session::clear_tokens();
+        DEVICES.with(|d| d.borrow_mut().clear_all_telemetry());
+        request_frame();
+    }
 }
