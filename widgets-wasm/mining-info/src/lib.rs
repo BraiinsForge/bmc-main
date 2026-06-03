@@ -2,7 +2,6 @@
 
 mod chart;
 mod format;
-mod gauge;
 mod layout;
 mod manifest_params;
 mod miner_api;

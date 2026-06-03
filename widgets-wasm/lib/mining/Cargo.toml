@@ -1,0 +1,11 @@
+[package]
+name = "mining"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bmc-wasm-sdk = { path = "../../../bmc-wasm-runtime/sdk" }
+
+[lints]
+workspace = true

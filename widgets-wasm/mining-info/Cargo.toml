@@ -8,6 +8,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
+mining = { path = "../lib/mining" }
 
 [lints]
 workspace = true

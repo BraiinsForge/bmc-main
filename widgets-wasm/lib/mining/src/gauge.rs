@@ -1,18 +1,16 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! Gauge math for the round Mining/Geek screens: state classification, the
-//! lit-tick count, and the 28 absolute tick spans. Holds no renderer/SDK type
-//! so it unit-tests on the host; the round renderer maps `GaugeState` to colors
-//! and wraps the spans in `ArcSegments` at the draw site.
+//! Gauge math: state classification, the lit-tick count, and the 28 absolute
+//! tick spans. Holds no renderer/SDK type so it unit-tests on the host; callers
+//! map `GaugeState` to colors (see `style`) and wrap the spans in `ArcSegments`
+//! at the draw site.
 
-use crate::model::Availability;
-
-pub(crate) const TICK_COUNT: usize = 28;
+pub const TICK_COUNT: usize = 28;
 
 // MCR band edges in percent, inclusive at the lower edge. 130 is the
 // product-chosen overclock edge; 85 matches bos-main's underperforming_mcr.
-pub(crate) const OVERCLOCK_MCR: f64 = 130.0;
-pub(crate) const GOOD_MCR: f64 = 85.0;
+pub const OVERCLOCK_MCR: f64 = 130.0;
+pub const GOOD_MCR: f64 = 85.0;
 
 // Hashrate (TH/s) at or below this reads as OFF rather than a live miner: a
 // stopped miner reports ~0, and tiny residual values are not meaningful hashing.
@@ -23,7 +21,7 @@ const OFF_MAX_THS: f64 = 0.01;
 const TICK_GAP_FRACTION: f32 = 0.04;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GaugeState {
+pub enum GaugeState {
     NotAvailable,
     Off,
     Underclocked,
@@ -31,17 +29,18 @@ pub(crate) enum GaugeState {
     Overclocked,
 }
 
-pub(crate) struct Gauge {
-    pub(crate) state: GaugeState,
-    pub(crate) lit_count: usize,
+pub struct Gauge {
+    pub state: GaugeState,
+    pub lit_count: usize,
 }
 
 // `Off` is reserved for a miner that is effectively not hashing: a reported
 // hashrate at or below `OFF_MAX_THS`. Any input with no usable telemetry —
 // hashrate unavailable, or hashing while `mcr_percent` is unavailable — is
 // `NotAvailable`, which renders neutral with no lit ticks.
-pub(crate) fn gauge(hashrate_ths: Availability<f64>, mcr_percent: Availability<f64>) -> Gauge {
-    let Availability::Available(hashrate) = hashrate_ths else {
+#[must_use]
+pub fn gauge(hashrate_ths: Option<f64>, mcr_percent: Option<f64>) -> Gauge {
+    let Some(hashrate) = hashrate_ths else {
         return Gauge {
             state: GaugeState::NotAvailable,
             lit_count: 0,
@@ -53,7 +52,7 @@ pub(crate) fn gauge(hashrate_ths: Availability<f64>, mcr_percent: Availability<f
             lit_count: 1,
         };
     }
-    let Availability::Available(mcr) = mcr_percent else {
+    let Some(mcr) = mcr_percent else {
         return Gauge {
             state: GaugeState::NotAvailable,
             lit_count: 0,
@@ -87,11 +86,12 @@ fn lit_count_from_mcr(mcr: f64) -> usize {
 // `lit_count` ticks: the slot boundary just past the last lit tick. Encoding
 // the fill as the arc sweep lets a host transition interpolate it on change;
 // the lit prefix spans all fall within `[0, this]`.
+#[must_use]
 #[expect(
     clippy::cast_precision_loss,
     reason = "tick index/count are small UI geometry counts"
 )]
-pub(crate) fn lit_sweep_end(lit_count: usize) -> f32 {
+pub fn lit_sweep_end(lit_count: usize) -> f32 {
     let slot = std::f32::consts::TAU / TICK_COUNT as f32;
     lit_count.min(TICK_COUNT) as f32 * slot
 }
@@ -103,7 +103,7 @@ pub(crate) fn lit_sweep_end(lit_count: usize) -> f32 {
     clippy::cast_precision_loss,
     reason = "tick index/count are small UI geometry counts"
 )]
-pub(crate) const TICK_SPANS: [(f32, f32); TICK_COUNT] = {
+pub const TICK_SPANS: [(f32, f32); TICK_COUNT] = {
     let slot = std::f32::consts::TAU / TICK_COUNT as f32;
     let seg = slot * (1.0 - TICK_GAP_FRACTION);
     let mut spans = [(0.0, 0.0); TICK_COUNT];
@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn not_available_when_hashrate_unavailable_regardless_of_mcr() {
-        let g = gauge(Availability::Unavailable, Availability::Available(100.0));
+        let g = gauge(None, Some(100.0));
         assert_eq!(g.state, GaugeState::NotAvailable);
         assert_eq!(g.lit_count, 0);
     }
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn off_when_hashrate_at_or_below_off_threshold() {
         for hr in [0.0, 0.005, 0.01] {
-            let g = gauge(Availability::Available(hr), Availability::Available(100.0));
+            let g = gauge(Some(hr), Some(100.0));
             assert_eq!(
                 g.state,
                 GaugeState::Off,
@@ -142,48 +142,42 @@ mod tests {
 
     #[test]
     fn hashing_just_above_off_threshold_classifies_by_mcr() {
-        let g = gauge(Availability::Available(0.02), Availability::Available(66.0));
+        let g = gauge(Some(0.02), Some(66.0));
         assert_eq!(g.state, GaugeState::Underclocked);
     }
 
     #[test]
     fn not_available_when_hashing_but_mcr_unavailable() {
-        let g = gauge(Availability::Available(4.0), Availability::Unavailable);
+        let g = gauge(Some(4.0), None);
         assert_eq!(g.state, GaugeState::NotAvailable);
         assert_eq!(g.lit_count, 0);
     }
 
     #[test]
     fn underclocked_below_good_edge() {
-        let g = gauge(Availability::Available(3.0), Availability::Available(66.0));
+        let g = gauge(Some(3.0), Some(66.0));
         assert_eq!(g.state, GaugeState::Underclocked);
     }
 
     #[test]
     fn good_is_inclusive_at_85_and_excludes_130() {
-        assert_eq!(
-            gauge(Availability::Available(4.0), Availability::Available(85.0)).state,
-            GaugeState::Good
-        );
-        assert_eq!(
-            gauge(Availability::Available(4.0), Availability::Available(129.9)).state,
-            GaugeState::Good
-        );
+        assert_eq!(gauge(Some(4.0), Some(85.0)).state, GaugeState::Good);
+        assert_eq!(gauge(Some(4.0), Some(129.9)).state, GaugeState::Good);
     }
 
     #[test]
     fn overclocked_at_and_above_130_fills_all_ticks() {
-        let edge = gauge(Availability::Available(6.0), Availability::Available(130.0));
+        let edge = gauge(Some(6.0), Some(130.0));
         assert_eq!(edge.state, GaugeState::Overclocked);
         assert_eq!(edge.lit_count, TICK_COUNT);
-        let above = gauge(Availability::Available(6.0), Availability::Available(200.0));
+        let above = gauge(Some(6.0), Some(200.0));
         assert_eq!(above.lit_count, TICK_COUNT);
     }
 
     #[test]
     fn lit_count_tracks_mcr_fraction() {
         // 65/130 = 0.5 → 14 of 28.
-        let g = gauge(Availability::Available(3.0), Availability::Available(65.0));
+        let g = gauge(Some(3.0), Some(65.0));
         assert_eq!(g.lit_count, 14);
     }
 
