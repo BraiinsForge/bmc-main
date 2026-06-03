@@ -1,7 +1,9 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
 pub mod bar;
+pub mod common;
 pub mod icons;
+pub mod medium;
 pub mod small;
 
 #[expect(
@@ -14,7 +16,10 @@ use crate::{manifest_params::Params, model::Weather};
 
 #[must_use]
 pub fn current_view(weather: &Weather, params: &Params, size: WidgetSize) -> Node {
-    small::small(weather, params, size)
+    match size.variant {
+        SizeVariant::Medium => medium::medium(weather, params, size),
+        _ => small::small(weather, params, size),
+    }
 }
 
 #[must_use]
