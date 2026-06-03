@@ -133,9 +133,9 @@ live in the polling layer or a later `mark_unreachable` operation.
 
 Use the WASM SDK mDNS support:
 
-- browse for `_http._tcp` initially
-- treat `_bos._sub._http._tcp` as the BOS subtype when available in the
-  resolved service data
+- browse `_bos._sub._http._tcp` directly for BOS miners
+- add separate uBOS and Bitaxe/AxeOS browse service types later when their
+  advertisements are defined
 - keep discovery parsing generic enough for uBOS and Bitaxe service names or
   TXT records to be added later
 
