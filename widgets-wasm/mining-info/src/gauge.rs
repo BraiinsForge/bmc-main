@@ -14,14 +14,18 @@ pub(crate) const TICK_COUNT: usize = 28;
 pub(crate) const OVERCLOCK_MCR: f64 = 130.0;
 pub(crate) const GOOD_MCR: f64 = 85.0;
 
+// Hashrate (TH/s) at or below this reads as OFF rather than a live miner: a
+// stopped miner reports ~0, and tiny residual values are not meaningful hashing.
+const OFF_MAX_THS: f64 = 0.01;
+
 // Portion of each tick slot left as the inter-tick gap; the rest is the lit
 // segment. ~0.04 yields a ~2px gap at the ring radius, matching the design.
 const TICK_GAP_FRACTION: f32 = 0.04;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GaugeState {
+    NotAvailable,
     Off,
-    UnknownScale,
     Underclocked,
     Good,
     Overclocked,
@@ -32,13 +36,18 @@ pub(crate) struct Gauge {
     pub(crate) lit_count: usize,
 }
 
-// OFF is decided solely by actual hashing so missing scale data never reads as
-// OFF: a stopped miner reports exactly 0.0, so no epsilon is used. When hashing
-// but `mcr_percent` is unavailable the scale is unknown — no lit ticks, neutral
-// label — distinct from OFF.
+// `Off` is reserved for a miner that is effectively not hashing: a reported
+// hashrate at or below `OFF_MAX_THS`. Any input with no usable telemetry —
+// hashrate unavailable, or hashing while `mcr_percent` is unavailable — is
+// `NotAvailable`, which renders neutral with no lit ticks.
 pub(crate) fn gauge(hashrate_ths: Availability<f64>, mcr_percent: Availability<f64>) -> Gauge {
-    let hashing = matches!(hashrate_ths, Availability::Available(hr) if hr > 0.0);
-    if !hashing {
+    let Availability::Available(hashrate) = hashrate_ths else {
+        return Gauge {
+            state: GaugeState::NotAvailable,
+            lit_count: 0,
+        };
+    };
+    if hashrate <= OFF_MAX_THS {
         return Gauge {
             state: GaugeState::Off,
             lit_count: 1,
@@ -46,7 +55,7 @@ pub(crate) fn gauge(hashrate_ths: Availability<f64>, mcr_percent: Availability<f
     }
     let Availability::Available(mcr) = mcr_percent else {
         return Gauge {
-            state: GaugeState::UnknownScale,
+            state: GaugeState::NotAvailable,
             lit_count: 0,
         };
     };
@@ -112,22 +121,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn off_when_hashrate_unavailable_regardless_of_mcr() {
+    fn not_available_when_hashrate_unavailable_regardless_of_mcr() {
         let g = gauge(Availability::Unavailable, Availability::Available(100.0));
-        assert_eq!(g.state, GaugeState::Off);
-        assert_eq!(g.lit_count, 1);
+        assert_eq!(g.state, GaugeState::NotAvailable);
+        assert_eq!(g.lit_count, 0);
     }
 
     #[test]
-    fn off_when_hashrate_is_zero() {
-        let g = gauge(Availability::Available(0.0), Availability::Available(100.0));
-        assert_eq!(g.state, GaugeState::Off);
+    fn off_when_hashrate_at_or_below_off_threshold() {
+        for hr in [0.0, 0.005, 0.01] {
+            let g = gauge(Availability::Available(hr), Availability::Available(100.0));
+            assert_eq!(
+                g.state,
+                GaugeState::Off,
+                "hashrate {hr} TH/s should read Off"
+            );
+            assert_eq!(g.lit_count, 1);
+        }
     }
 
     #[test]
-    fn unknown_scale_when_hashing_but_mcr_unavailable() {
+    fn hashing_just_above_off_threshold_classifies_by_mcr() {
+        let g = gauge(Availability::Available(0.02), Availability::Available(66.0));
+        assert_eq!(g.state, GaugeState::Underclocked);
+    }
+
+    #[test]
+    fn not_available_when_hashing_but_mcr_unavailable() {
         let g = gauge(Availability::Available(4.0), Availability::Unavailable);
-        assert_eq!(g.state, GaugeState::UnknownScale);
+        assert_eq!(g.state, GaugeState::NotAvailable);
         assert_eq!(g.lit_count, 0);
     }
 
