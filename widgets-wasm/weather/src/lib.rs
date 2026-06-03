@@ -41,7 +41,7 @@ mod tests {
 
 #[cfg(target_arch = "wasm32")]
 mod wasm_glue {
-    use super::{manifest_params, model, url};
+    use super::{display, manifest_params, model, render, url};
     use std::cell::{Cell, RefCell};
 
     #[expect(
@@ -55,10 +55,6 @@ mod wasm_glue {
     const DEBOUNCE_MS: u32 = 300;
     const NEXUS_BASE: &str = "https://nexus.braiinsforge.com/api/v1/data/weather/";
 
-    #[expect(
-        dead_code,
-        reason = "render stub; variants are read once render is implemented"
-    )]
     enum State {
         Loading,
         Loaded(model::Weather),
@@ -149,5 +145,14 @@ mod wasm_glue {
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn render(_delta_ms: u32) {}
+    pub extern "C" fn render(_delta_ms: u32) {
+        let size = widget_size();
+        let params = manifest_params::Params::current();
+        let node = STATE.with(|s| match &*s.borrow() {
+            State::Loaded(weather) => render::current_view(weather, &params, size),
+            State::BadLocation => render::message_view("Location not found", size),
+            State::Loading | State::Error => render::message_view(display::NOT_AVAILABLE, size),
+        });
+        let _ = render_ui(size.width, size.height, node);
+    }
 }

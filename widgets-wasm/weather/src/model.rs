@@ -13,6 +13,7 @@ pub struct Current {
     pub weather_code: i64,
     pub wind_speed_kmh: Option<f64>,
     pub wind_dir_deg: Option<f64>,
+    pub is_day: bool,
 }
 
 pub struct HourEntry {
@@ -54,6 +55,17 @@ pub struct Weather {
 pub enum WeatherParseError {
     InvalidDocument,
     MissingRequiredField(&'static str),
+}
+
+#[must_use]
+pub fn current_is_day(hourly: Option<&Hourly>, current_time_rfc3339: &str) -> bool {
+    let Some(hourly) = hourly else { return true };
+    let pick = hourly
+        .entries
+        .iter()
+        .find(|e| e.time_rfc3339.as_str() >= current_time_rfc3339)
+        .or_else(|| hourly.entries.first());
+    pick.is_none_or(|e| e.is_day)
 }
 
 pub struct ForecastRange {
@@ -114,8 +126,8 @@ impl TryFrom<&JsonDoc> for Weather {
             timezone,
         };
 
-        let current = parse_current(doc);
         let hourly = parse_hourly(doc);
+        let current = parse_current(doc, hourly.as_ref());
         let daily = parse_daily(doc);
 
         Ok(Weather {
@@ -128,14 +140,16 @@ impl TryFrom<&JsonDoc> for Weather {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn parse_current(doc: &JsonDoc) -> Option<Current> {
+fn parse_current(doc: &JsonDoc, hourly: Option<&Hourly>) -> Option<Current> {
     let temperature_c = doc.f64("/data/current/temperature")?;
     let weather_code = doc.i64("/data/current/weather_code")?;
+    let current_time = doc.str("/data/current/time").unwrap_or_default();
     Some(Current {
         temperature_c,
         weather_code,
         wind_speed_kmh: doc.f64("/data/current/wind_speed"),
         wind_dir_deg: doc.f64("/data/current/wind_direction_degrees"),
+        is_day: current_is_day(hourly, &current_time),
     })
 }
 
@@ -220,6 +234,32 @@ fn parse_daily(doc: &JsonDoc) -> Option<Daily> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hour(time: &str, is_day: bool) -> HourEntry {
+        HourEntry {
+            time_rfc3339: time.to_string(),
+            temperature_c: 10.0,
+            weather_code: 1,
+            is_day,
+        }
+    }
+
+    #[test]
+    fn current_is_day_picks_first_hour_at_or_after_now() {
+        let h = Hourly {
+            entries: vec![
+                hour("2026-06-03T18:00:00+02:00", true),
+                hour("2026-06-03T21:00:00+02:00", false),
+            ],
+        };
+        assert!(!current_is_day(Some(&h), "2026-06-03T19:30:00+02:00"));
+        assert!(current_is_day(Some(&h), "2026-06-03T17:00:00+02:00"));
+    }
+
+    #[test]
+    fn current_is_day_defaults_true_without_hourly() {
+        assert!(current_is_day(None, "2026-06-03T19:30:00+02:00"));
+    }
 
     fn day(min_c: f64, max_c: f64) -> DayForecast {
         DayForecast {
