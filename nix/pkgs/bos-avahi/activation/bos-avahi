@@ -1,0 +1,56 @@
+#!/bin/sh
+set -eu
+
+root="${BOS_AVAHI_ROOT:-/}"
+
+root_path() {
+    case "$root" in
+        /)
+            printf '%s\n' "$1"
+            ;;
+        *)
+            printf '%s%s\n' "$root" "$1"
+            ;;
+    esac
+}
+
+etc_dir="$(root_path /etc)"
+group_file="$etc_dir/group"
+passwd_file="$etc_dir/passwd"
+platform_file="$etc_dir/bos_platform"
+services_dir="$etc_dir/avahi/services"
+bos_service="$services_dir/bos.service"
+
+mkdir -p "$etc_dir" "$services_dir"
+touch "$group_file" "$passwd_file"
+
+if ! grep -q '^avahi:' "$group_file"; then
+    printf 'avahi:x:100:\n' >> "$group_file"
+fi
+
+if ! grep -q '^avahi:' "$passwd_file"; then
+    printf 'avahi:x:100:100:avahi:/var/run/avahi-daemon:/bin/false\n' >> "$passwd_file"
+fi
+
+platform="$(cat "$platform_file" 2>/dev/null || true)"
+
+case "$platform" in
+    *bmm1* | *bfm1*)
+        cat > "$bos_service.tmp" <<'SERVICE'
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+  <name replace-wildcards="yes">%h</name>
+  <service>
+    <type>_http._tcp</type>
+    <subtype>_bos._sub._http._tcp</subtype>
+    <port>80</port>
+  </service>
+</service-group>
+SERVICE
+        mv "$bos_service.tmp" "$bos_service"
+        ;;
+    *)
+        rm -f "$bos_service" "$bos_service.tmp"
+        ;;
+esac
