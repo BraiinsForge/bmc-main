@@ -115,7 +115,8 @@ fn pick_size(variant: SizeVariant) -> &'static AnalogRoundSizeParams {
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "render entry threads the existing clock context plus the miner snapshot"
+    clippy::too_many_lines,
+    reason = "render entry threads the clock context, miner snapshot, and overlay in one pass"
 )]
 pub(crate) fn render(
     now: SystemTime,
@@ -127,6 +128,7 @@ pub(crate) fn render(
     palette: &ClockPalette,
     miner: &MinerData,
     seed_gauges: bool,
+    overlay: Option<&'static str>,
 ) -> Node {
     let size = pick_size(variant);
     let viewport_w = f32_from_u32(w);
@@ -257,7 +259,26 @@ pub(crate) fn render(
         centre_x, centre_y, scale, h_ang, m_ang, s_ang, palette, true, &mut draws,
     );
 
-    canvas(props!(width: viewport_w, height: viewport_h), draws)
+    let dial = canvas(props!(width: viewport_w, height: viewport_h), draws);
+    apply_overlay(dial, viewport_w, viewport_h, overlay)
+}
+
+// The dial is a single canvas; the overlay banner needs a Column root to attach
+// to, so wrap the canvas only when a banner is shown. The clock is always round.
+fn apply_overlay(
+    dial: Node,
+    viewport_w: f32,
+    viewport_h: f32,
+    overlay: Option<&'static str>,
+) -> Node {
+    match overlay {
+        Some(message) => mining::overlay::with_overlay(
+            col(props!(width: viewport_w, height: viewport_h), [dial]),
+            message,
+            ViewportShape::Round,
+        ),
+        None => dial,
+    }
 }
 
 fn push_gauges_and_labels(
