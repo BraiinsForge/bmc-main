@@ -3,6 +3,8 @@
 pub trait JsonLookup {
     fn str(&self, path: &str) -> Option<String>;
     fn i64(&self, path: &str) -> Option<i64>;
+    #[expect(dead_code, reason = "wired into the driver in Task 6")]
+    fn f64(&self, path: &str) -> Option<f64>;
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -13,6 +15,10 @@ impl JsonLookup for bmc_wasm_sdk::json::JsonDoc {
 
     fn i64(&self, path: &str) -> Option<i64> {
         self.i64(path)
+    }
+
+    fn f64(&self, path: &str) -> Option<f64> {
+        self.f64(path)
     }
 }
 
@@ -39,6 +45,7 @@ pub(crate) mod tests_support {
     pub(crate) struct MapJson {
         pub(crate) strings: BTreeMap<&'static str, &'static str>,
         pub(crate) ints: BTreeMap<&'static str, i64>,
+        pub(crate) floats: BTreeMap<&'static str, f64>,
     }
 
     impl JsonLookup for MapJson {
@@ -48,6 +55,10 @@ pub(crate) mod tests_support {
 
         fn i64(&self, path: &str) -> Option<i64> {
             self.ints.get(path).copied()
+        }
+
+        fn f64(&self, path: &str) -> Option<f64> {
+            self.floats.get(path).copied()
         }
     }
 }
