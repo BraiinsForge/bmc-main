@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="none" viewBox="0 0 32 32">
+    <rect width="3" height="3" x="18.754" y="22" fill="#e0e0e0" rx="1.5" transform="rotate(35.741 18.754 22)"/>
+    <rect width="2" height="4" x="26.336" y="20" fill="#4559ff" rx="1" transform="rotate(35.741 26.336 20)"/>
+    <rect width="2" height="4" x="23.336" y="24" fill="#4559ff" rx="1" transform="rotate(35.741 23.336 24)"/>
+    <rect width="3" height="3" x="15.754" y="26" fill="#e0e0e0" rx="1.5" transform="rotate(35.741 15.754 26)"/>
+    <rect width="2" height="4" x="15.336" y="19" fill="#4559ff" rx="1" transform="rotate(35.741 15.336 19)"/>
+    <rect width="2" height="4" x="12.336" y="23" fill="#4559ff" rx="1" transform="rotate(35.741 12.336 23)"/>
+    <rect width="3" height="3" x="7.754" y="21" fill="#e0e0e0" rx="1.5" transform="rotate(35.741 7.754 21)"/>
+    <rect width="3" height="3" x="4.754" y="25" fill="#e0e0e0" rx="1.5" transform="rotate(35.741 4.754 25)"/>
+    <path fill="#e0e0e0" d="M19.474 2a9.57 9.57 0 0 0-5.016 1.42 9.5 9.5 0 0 0-3.518 3.834 9.4 9.4 0 0 0-1.007 4.217.88.88 0 0 1-.804.893.87.87 0 0 1-.929-.864c0-1.208.195-2.408.579-3.554a.43.43 0 0 0-.285-.554.44.44 0 0 0-.23-.005 6.95 6.95 0 0 0-3.789 2.45A6.9 6.9 0 0 0 3 14.09C3 17.89 6.223 21 10.042 21h9.425a9.57 9.57 0 0 0 6.87-2.92 9.5 9.5 0 0 0 2.656-6.956C28.796 6.053 24.566 2 19.473 2"/>
+</svg>
