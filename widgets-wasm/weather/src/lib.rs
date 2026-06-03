@@ -5,6 +5,7 @@
 
 mod manifest_params;
 pub mod weather_code;
+pub mod wind;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn init() {}
