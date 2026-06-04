@@ -1161,7 +1161,7 @@ fn paint_for_fill(fill: &Fill, lin_bbox: (f32, f32, f32, f32), radial: (f32, f32
     }
 }
 
-const ARC_CHUNK_MAX: f32 = 0.2;
+const ARC_CHUNK_MAX: f32 = 0.4;
 const ARC_SEAM_EPS: f32 = 0.002;
 
 // Explicit segments hold absolute angular positions; clipping them to the draw
@@ -1521,7 +1521,7 @@ mod gradient_geometry_tests {
 
 #[cfg(test)]
 mod arc_geometry_tests {
-    use super::{arc_color_at, arc_point, arc_spans, chunk_span, sweep_fraction};
+    use super::{ARC_CHUNK_MAX, arc_color_at, arc_point, arc_spans, chunk_span, sweep_fraction};
     use bmc_wasm_protocol::{ArcFill, ArcSegments, Color};
 
     fn approx(a: f32, b: f32) {
@@ -1582,6 +1582,14 @@ mod arc_geometry_tests {
     #[test]
     fn tiny_span_yields_one_chunk() {
         assert_eq!(chunk_span(0.0, 0.05, 0.2).len(), 1);
+    }
+
+    #[test]
+    fn mining_clock_tick_span_fits_in_one_arc_chunk() {
+        let mining_tick_slot = std::f32::consts::TAU / 28.0;
+        let mining_tick_span = mining_tick_slot * 0.96;
+
+        assert_eq!(chunk_span(0.0, mining_tick_span, ARC_CHUNK_MAX).len(), 1);
     }
 
     #[test]
