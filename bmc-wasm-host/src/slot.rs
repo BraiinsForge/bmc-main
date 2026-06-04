@@ -346,10 +346,11 @@ impl WidgetSlot {
     }
 
     /// Spec § 7 / BDK-437 § States table: Entering renders **once** in response to a
-    /// dirty surface (lifecycle / params / touch), no animation, no frame callbacks;
-    /// Visible / Leaving run the full animation loop. Gate animation-driven renders
-    /// on `frame_callback_enabled` so an Entering slot whose runtime returns
-    /// `wants_next_frame() == true` does NOT spin a continuous render loop.
+    /// dirty surface (lifecycle / params / touch), no animation, no frame callbacks.
+    /// Visible widgets run the full animation loop; Leaving widgets keep their render
+    /// target for scene transitions but no longer drive runtime animation frames. Gate
+    /// animation-driven renders on `frame_callback_enabled` so inactive slots whose
+    /// runtime returns `wants_next_frame() == true` do NOT spin a continuous render loop.
     #[must_use]
     pub fn needs_render(&self, now: Instant) -> bool {
         let gate = if !self.is_renderable() {

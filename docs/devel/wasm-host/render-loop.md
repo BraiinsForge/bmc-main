@@ -49,21 +49,22 @@ The compositor sends `deck_widget_surface_v1.lifecycle` events. The host maps th
 | `Prepared` | No                | No              | No                        | Immediate neighbour.                                            |
 | `Entering` | Yes               | Yes, when dirty | No                        | Drag target entering the screen.                                |
 | `Visible`  | Yes               | Yes             | Yes                       | Active on-screen widget.                                        |
-| `Leaving`  | Yes               | Yes             | Yes                       | Current widget leaving during a drag.                           |
+| `Leaving`  | Yes               | Yes, when dirty | No                        | Current widget leaving during a drag.                           |
 
 The key host predicates are:
 
 - `has_render_target(state)` is true for `Entering`, `Visible`, and `Leaving`;
 - `should_render(state)` currently matches `has_render_target(state)`;
-- `frame_callback_enabled(state)` is true only for `Visible` and `Leaving`.
+- `frame_callback_enabled(state)` is true only for `Visible`.
 
 This split is deliberate. `Prepared` currently lets the compositor mark immediate neighbours without making the host
 allocate or render yet; a future host can use the same protocol state to pre-warm buffers. `Entering` may need a fresh
 buffer, but it does not run the host-requested guest animation loop just because the runtime asks for the next frame.
-The compositor can still animate the scene drag by repainting and moving the widget's last submitted buffer, and
-Wayland/touch/lifecycle events can still dirty an `Entering` surface and cause another host render. The compositor only
-completes frame callbacks that the client requested on a commit; the current host does not request those callbacks when
-submitting an `Entering` buffer.
+`Leaving` keeps its render target so the compositor can still animate the scene drag by repainting and moving the
+widget's last submitted buffer, but it no longer drives runtime animation frames while leaving. Wayland/touch/lifecycle
+events can still dirty an `Entering` or `Leaving` surface and cause another host render. The compositor only completes
+frame callbacks that the client requested on a commit; the current host does not request those callbacks when submitting
+an `Entering` or `Leaving` buffer.
 
 ## Lifecycle Application
 
@@ -99,16 +100,16 @@ That requires all of these conditions:
 1. The slot lifecycle is renderable: `Entering`, `Visible`, or `Leaving`.
 2. The slot is not blocked on render-target allocation retry.
 3. Either the Wayland surface is dirty or a runtime frame deadline is due.
-4. Runtime frame deadlines count only when the host-requested frame loop is enabled, which means `Visible` or `Leaving`.
+4. Runtime frame deadlines count only when the host-requested frame loop is enabled, which means `Visible`.
 5. The per-slot minimum inter-frame interval has elapsed.
 
 The minimum inter-frame interval is 8 ms. It caps a widget that continuously asks for immediate frames at roughly 120
 fps.
 
 Dirty surface renders come from lifecycle changes, param updates, touch input, and other host-side events that call
-`mark_needs_render()`. Those dirty renders can happen in `Entering`. Runtime animation renders come from
+`mark_needs_render()`. Those dirty renders can happen in `Entering` or `Leaving`. Runtime animation renders come from
 `WasmWidgetRuntime::wants_next_frame()` and `next_frame_delay()` after a previous render, and are honored only in
-`Visible` or `Leaving`.
+`Visible`.
 
 ## Rendering A Frame
 
@@ -142,15 +143,15 @@ The timeout can be shortened by:
 
 - lifecycle allocation retry deadlines;
 - dirty renderable surfaces;
-- due runtime frame deadlines for `Visible` or `Leaving` slots;
-- future runtime frame delays for `Visible` or `Leaving` slots;
+- due runtime frame deadlines for `Visible` slots;
+- future runtime frame delays for `Visible` slots;
 - the 8 ms minimum inter-frame remainder;
 - pending runtime I/O;
 - the host's 100 ms post-disconnect grace period.
 
 If a renderable slot is dirty or has an immediate runtime frame due and the inter-frame floor has elapsed, the timeout
-is `0`, so the host loops without sleeping. For `Entering`, only the dirty-surface path contributes; runtime frame
-deadlines are ignored until the slot becomes `Visible` or `Leaving`.
+is `0`, so the host loops without sleeping. For `Entering` and `Leaving`, only the dirty-surface path contributes;
+runtime frame deadlines are ignored until the slot becomes `Visible`.
 
 Current implementation detail: pending runtime I/O contributes a 100 ms timeout if any slot reports
 `runtime.has_pending_io()`. This is not lifecycle-gated today, so a dormant slot with pending background work can still

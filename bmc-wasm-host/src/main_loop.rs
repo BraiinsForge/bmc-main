@@ -121,8 +121,8 @@ pub fn compute_poll_timeout_from_inputs(
         }
 
         // Animation-driven wakeups only contribute when the lifecycle state actually
-        // honors frame callbacks (Visible | Leaving). Entering renders once on a dirty
-        // surface and then sleeps; advertising its `next_frame_delay` here would wake
+        // honors frame callbacks (Visible). Entering renders once on a dirty surface,
+        // and Leaving keeps a render target for scene transitions; neither should wake
         // the host for ticks that `needs_render` is going to discard.
         let animation_active = slot.frame_callback_enabled && slot.animation_wants_immediate;
         if slot.surface_needs_render || animation_active {

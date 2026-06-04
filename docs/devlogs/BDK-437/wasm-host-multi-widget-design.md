@@ -528,7 +528,7 @@ Added to `bmc-widget-protocol/protocol/deck-widget-v1.xml`:
   already-rendered buffer to the compositor.
 - **entering** — on-screen transition in progress; re-render once.
 - **visible** — active on-screen; full render loop with animation and frame callbacks.
-- **leaving** — on-screen transition out; continue rendering until the transition completes.
+- **leaving** — on-screen transition out; keep the last rendered buffer available without ticking runtime animations.
 
 | State    | wasmi Store | Async I/O | Render target | Render loop    | Frame cb |
 | -------- | ----------- | --------- | ------------- | -------------- | -------- |
@@ -536,11 +536,11 @@ Added to `bmc-widget-protocol/protocol/deck-widget-v1.xml`:
 | prepared | warm        | delivered | allocated     | render once    | —        |
 | entering | warm        | delivered | allocated     | re-render once | —        |
 | visible  | warm        | delivered | allocated     | full loop      | yes      |
-| leaving  | warm        | delivered | allocated     | full loop      | yes      |
+| leaving  | warm        | delivered | allocated     | dirty only     | —        |
 
 The render-target set is `{Prepared, Entering, Visible, Leaving}`. `Prepared` is pre-rendered but keeps animation and
-frame callbacks paused; only `{Visible, Leaving}` participate in the continuous animation loop. `Dormant` is the sole
-buffer-free state.
+frame callbacks paused; only `Visible` participates in the continuous animation loop. `Dormant` is the sole buffer-free
+state.
 
 ### Transitions
 

@@ -20,7 +20,7 @@ The compositor sends this as a `deck_widget_surface_v1.lifecycle(state)` event. 
 widgets do not request lifecycle changes directly.
 
 The primary consumer today is the WASM host. It uses lifecycle state to hold render targets only while widgets are
-`Entering`, `Visible`, or `Leaving`, and to decide which widgets may animate. Native widgets may also consume the event
+`Entering`, `Visible`, or `Leaving`, and to animate only the `Visible` widget. Native widgets may also consume the event
 through `WidgetEvent::Lifecycle`, but widgets that do not care about lifecycle can ignore it.
 
 ## Protocol States

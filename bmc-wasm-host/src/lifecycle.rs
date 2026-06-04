@@ -50,7 +50,7 @@ pub fn should_render(s: LifecycleState) -> bool {
 
 #[must_use]
 pub fn frame_callback_enabled(s: LifecycleState) -> bool {
-    matches!(s, LifecycleState::Visible | LifecycleState::Leaving)
+    matches!(s, LifecycleState::Visible)
 }
 
 #[derive(Debug)]
