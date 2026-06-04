@@ -181,8 +181,12 @@ Host unit tests cover the pure surface:
 - `parse_found` parses an AxeOS `Found` fixture, stamps `DeviceFamily::Bitaxe`, and rejects missing host or port
 - `parse_found` reads `/txt/family`, `/txt/board`, `/txt/asic`, and `/txt/asic_count` into a model hint
 - malformed or absent TXT omits only the model hint; discovery still succeeds when name, host, and port are valid
+- a pure ingest helper or `DeviceList` test proves the discovery model hint is applied to `KnownDevice.model` immediately
+  after `upsert`; this guards the current `ingest` path, which otherwise could keep calling only
+  `upsert(found.identity)` and silently drop the hint
 - `parse_telemetry("/info", ...)` maps `hashRate` GH/s to TH/s, `power` to W, `temp` to C, and `uptimeSeconds` to
   seconds
+- negative `/uptimeSeconds` is ignored and leaves `uptime_s` as `None`
 - stale-clearing verifies a second `/info` response missing owned fields clears previous values
 - `reset_telemetry("/info", ...)` clears only the endpoint-owned fields and leaves `nominal_hashrate_ths` untouched
 - `parse_model` prefers `deviceModel` when present, falls back to `boardVersion`, sets `ASICModel` as chip type, and
