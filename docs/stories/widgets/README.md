@@ -34,3 +34,9 @@ numeral weight, and next-alarm features. Renders full-screen on the round BFM100
 A widget that shows mining and Bitcoin network information across four selectable views — a miner overview, a miner
 detail screen, a Bitcoin network screen, and a dense combined dashboard. Reads live miner stats over the BOS REST API
 and Bitcoin price and network data from the Braiins public API, with responsive field degradation on smaller displays.
+
+### [Weather Widget](weather.md)
+
+A widget that shows current weather and forecast data for a chosen location, with hourly and daily forecast layouts
+across the shared rectangular widget sizes. Reads weather data from the Braiins Forge Nexus API, follows device
+localization and timezone settings, and lets users choose whether forecast times use the location or device timezone.
