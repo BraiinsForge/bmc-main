@@ -44,10 +44,6 @@ pub trait FamilyAdapter {
     /// A proactive credential header attached to every request, preferred over
     /// any cached token. Default none; families with reactive token auth (BOS)
     /// leave it none, families with static credentials (uBOS) override it.
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(dead_code, reason = "wired into the driver by the uBOS adapter")
-    )]
     fn credential_header(&self) -> Option<String> {
         None
     }
