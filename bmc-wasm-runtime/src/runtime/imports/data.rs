@@ -598,6 +598,28 @@ mod speed_format_tests {
     }
 }
 
+fn format_temperature_with_prefs(
+    number_format: NumberFormat,
+    temperature_unit: TemperatureUnit,
+    value_c: f64,
+    decimals: u32,
+    show_unit: bool,
+) -> String {
+    let (converted, scale) = match temperature_unit {
+        TemperatureUnit::Celsius => (value_c, "C"),
+        TemperatureUnit::Fahrenheit => (value_c * 9.0 / 5.0 + 32.0, "F"),
+    };
+    let num = format_number_with_prefs(number_format, converted, decimals);
+    // Degree-only mode (`show_unit == false`) drops the scale letter and the
+    // leading space, matching deckfeeder's `format.temperature(t, 'C', false)`
+    // used for the dense hourly and daily strips ("26°").
+    if show_unit {
+        format!("{num} \u{00b0}{scale}")
+    } else {
+        format!("{num}\u{00b0}")
+    }
+}
+
 fn register_temperature_format_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
@@ -605,6 +627,7 @@ fn register_temperature_format_import(linker: &mut Linker<HostState>) -> Result<
         |mut caller: Caller<'_, HostState>,
          value: f64,
          decimals: u32,
+         show_unit: u32,
          out_ptr: u32,
          out_len: u32|
          -> i32 {
@@ -612,17 +635,67 @@ fn register_temperature_format_import(linker: &mut Linker<HostState>) -> Result<
                 let s = caller.data().system.snapshot();
                 (s.settings.number_format, s.settings.temperature_unit)
             };
-            let (converted, suffix) = match temperature_unit {
-                TemperatureUnit::Celsius => (value, " \u{00b0}C"),
-                TemperatureUnit::Fahrenheit => (value * 9.0 / 5.0 + 32.0, " \u{00b0}F"),
-            };
-            let num = format_number_with_prefs(number_format, converted, decimals);
-            let formatted = format!("{num}{suffix}");
+            let formatted = format_temperature_with_prefs(
+                number_format,
+                temperature_unit,
+                value,
+                decimals,
+                show_unit != 0,
+            );
             write_to_wasm(&mut caller, &formatted, out_ptr, out_len)
         },
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod temperature_format_tests {
+    use super::*;
+
+    #[test]
+    fn celsius_with_unit_keeps_scale_letter_and_space() {
+        let s = format_temperature_with_prefs(
+            NumberFormat::SpaceGroupCommaDecimal,
+            TemperatureUnit::Celsius,
+            20.5,
+            1,
+            true,
+        );
+        assert_eq!(s, "20,5 \u{00b0}C");
+    }
+
+    #[test]
+    fn fahrenheit_converts_and_labels() {
+        let s = format_temperature_with_prefs(
+            NumberFormat::SpaceGroupCommaDecimal,
+            TemperatureUnit::Fahrenheit,
+            20.0,
+            0,
+            true,
+        );
+        assert_eq!(s, "68 \u{00b0}F");
+    }
+
+    #[test]
+    fn degree_only_drops_scale_letter_and_space() {
+        let celsius = format_temperature_with_prefs(
+            NumberFormat::SpaceGroupCommaDecimal,
+            TemperatureUnit::Celsius,
+            20.0,
+            0,
+            false,
+        );
+        let fahrenheit = format_temperature_with_prefs(
+            NumberFormat::SpaceGroupCommaDecimal,
+            TemperatureUnit::Fahrenheit,
+            20.0,
+            0,
+            false,
+        );
+        assert_eq!(celsius, "20\u{00b0}");
+        assert_eq!(fahrenheit, "68\u{00b0}");
+    }
 }
 
 fn register_rrule_import(linker: &mut Linker<HostState>) -> Result<()> {
