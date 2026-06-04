@@ -501,6 +501,7 @@ impl WidgetSlot {
                 "BUG: EglRenderTargetFactory allocated all WidgetSlot render targets in Task 8",
             );
 
+            let gpu_render_lock = shared.acquire_gpu_render_lock("host_widget_render")?;
             egl_target.buffers.ensure_current(&shared.egl)?;
             let _staging_fbo = shared
                 .scratch
@@ -542,6 +543,7 @@ impl WidgetSlot {
             // flight, not completed, before export_and_swap.
             shared.flush_gl();
             HostRenderProfiling::log_phase(&self.wasm_basename, "gl_flush", phase_start);
+            drop(gpu_render_lock);
 
             let phase_start = HostRenderProfiling::start_phase();
             let (dmabuf, slot_idx) = egl_target.buffers.export_and_swap()?;

@@ -25,6 +25,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 wayland-client = { workspace = true }
 
+bmc-gpu-render-lock = { workspace = true }
 bmc-render = { path = "../bmc-render" }
 bmc-wasm-protocol = { workspace = true }
 bmc-wasm-runtime = { workspace = true }

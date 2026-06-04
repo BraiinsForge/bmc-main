@@ -8,6 +8,7 @@ members = [
     "bmc-audio",
     "bmc-button",
     "bmc-gpio",
+    "bmc-gpu-render-lock",
     "bmc-grpc",
     "bmc-ipc",
     "bmc-kobject",
@@ -143,6 +144,7 @@ bmc = { path = "bmc" }
 bmc-audio = { path = "bmc-audio" }
 bmc-button = { path = "bmc-button" }
 bmc-gpio = { path = "bmc-gpio" }
+bmc-gpu-render-lock = { path = "bmc-gpu-render-lock" }
 bmc-grpc = { path = "bmc-grpc", default-features = false }
 bmc-ipc = { path = "bmc-ipc" }
 bmc-kobject = { path = "bmc-kobject" }

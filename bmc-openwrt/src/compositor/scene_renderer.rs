@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
+use bmc_gpu_render_lock::GpuRenderLock;
 use bmc_platform::{DisplayPixelFormat, DisplayTransform};
 use smithay::{
     backend::renderer::{
@@ -86,6 +87,7 @@ pub struct SceneRenderer {
     /// Served to capture clients between renders (avoids re-rendering
     /// just to observe the same frame).
     capture_cache: CaptureCache,
+    gpu_render_lock: GpuRenderLock,
     scanout_transform: DisplayTransform,
     seam_overlap_px: i32,
     #[cfg(feature = "profiling")]
@@ -151,6 +153,7 @@ impl SceneRenderer {
             swizzler,
             texture_cache: HashMap::new(),
             capture_cache: CaptureCache::empty(),
+            gpu_render_lock: GpuRenderLock::from_env()?,
             scanout_transform,
             seam_overlap_px,
             #[cfg(feature = "profiling")]
@@ -250,6 +253,11 @@ impl SceneRenderer {
             "BUG: render_scene entered with flip pending; caller must gate on is_flip_pending"
         );
 
+        let _gpu_render_lock = self.gpu_render_lock.lock("compositor_render_scene")?;
+        // This lock serializes completed GPU jobs across the compositor and
+        // WASM host contexts. Hold it until all GL work submitted from this
+        // path has finished, so a handoff cannot leave overlapping in-flight
+        // jobs on etnaviv.
         self.import_textures(buffers, dirty);
 
         // Collect render items: (buffer_id, placement, x_offset)
@@ -397,7 +405,6 @@ impl SceneRenderer {
         // borrow ends; only the BGR565 path needs it, so skip the clone
         // otherwise. Paired with the swizzler in the match below.
         let intermediate = self.swizzler.is_some().then(|| buffer.dmabuf.clone());
-        self.egl.finish_rendering()?;
 
         // Fulfill any pending captures from the fresh cache (after dropping
         // the framebuffer borrow so self is available).
@@ -421,6 +428,7 @@ impl SceneRenderer {
             }
             _ => fb,
         };
+        self.egl.wait_for_rendering_completion()?;
 
         ii_stopwatch::stopwatch_start!(self.flip_w);
         self.output.page_flip(scanout_fb, &damage_rects)?;

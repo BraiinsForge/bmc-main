@@ -3,22 +3,27 @@
 //! EGL/OpenGL ES context and rendering.
 
 use anyhow::{Context, Result};
+use bmc_gpu_render_lock::{
+    GlSyncEntryPoints, GpuCompletionWaitStrategy, detect_gpu_completion_wait_strategy,
+};
 use smithay::{
     backend::{
         drm::DrmDeviceFd,
-        egl::{EGLContext, EGLDisplay},
-        renderer::gles::GlesRenderer,
+        egl::{EGLContext, EGLDisplay, fence::EGLFence},
+        renderer::gles::{GlesRenderer, ffi},
     },
     reexports::gbm::Device as GbmDevice,
 };
-use std::{fs::OpenOptions, os::unix::io::OwnedFd, path::Path};
+use std::{ffi::CStr, fs::OpenOptions, os::unix::io::OwnedFd, path::Path};
+
+const FENCE_WAIT_TIMEOUT_NS: u64 = 1_000_000;
 
 pub struct EglContext {
     // Kept alive for EGL display lifetime
     _gpu_gbm: GbmDevice<DrmDeviceFd>,
-    // Kept alive for renderer lifetime
-    _egl_display: EGLDisplay,
+    egl_display: EGLDisplay,
     renderer: GlesRenderer,
+    gl_sync_support: GpuCompletionWaitStrategy,
 }
 
 impl EglContext {
@@ -39,15 +44,17 @@ impl EglContext {
 
         let egl_context = EGLContext::new(&egl_display).context("Failed to create EGL context")?;
 
-        let renderer =
+        let mut renderer =
             unsafe { GlesRenderer::new(egl_context) }.context("Failed to create GLES renderer")?;
+        let gl_sync_support = detect_gl_sync_support(&mut renderer, &egl_display)?;
 
         tracing::info!("EGL context initialized");
 
         Ok(Self {
             _gpu_gbm: gpu_gbm,
-            _egl_display: egl_display,
+            egl_display,
             renderer,
+            gl_sync_support,
         })
     }
 
@@ -55,10 +62,107 @@ impl EglContext {
         &mut self.renderer
     }
 
-    pub fn finish_rendering(&mut self) -> Result<()> {
-        unsafe {
-            self.renderer.with_context(|gl| gl.Flush())?;
+    pub fn wait_for_rendering_completion(&mut self) -> Result<()> {
+        match self.gl_sync_support {
+            GpuCompletionWaitStrategy::GlFenceSync => self.wait_for_gl_fence()?,
+            GpuCompletionWaitStrategy::EglFenceSync => self.wait_for_egl_fence()?,
+            GpuCompletionWaitStrategy::Finish => self.finish_rendering()?,
         }
         Ok(())
+    }
+
+    fn finish_rendering(&mut self) -> Result<()> {
+        unsafe {
+            self.renderer.with_context(|gl| {
+                gl.Finish();
+            })?;
+        }
+        Ok(())
+    }
+
+    fn wait_for_egl_fence(&mut self) -> Result<()> {
+        let wait_result = self.renderer.with_context(|_| {
+            let fence =
+                EGLFence::create(&self.egl_display).context("Failed to create EGL fence")?;
+            let completed = fence
+                .client_wait(None, true)
+                .context("Failed to wait for EGL fence")?;
+            anyhow::ensure!(completed, "EGL fence wait returned before completion");
+            Ok(())
+        })?;
+        if let Err(e) = wait_result {
+            tracing::warn!(?e, "EGL fence wait failed; falling back to glFinish");
+            self.finish_rendering()?;
+        }
+        Ok(())
+    }
+
+    fn wait_for_gl_fence(&mut self) -> Result<()> {
+        unsafe {
+            self.renderer.with_context(|gl| {
+                let fence = gl.FenceSync(ffi::SYNC_GPU_COMMANDS_COMPLETE, 0);
+                if fence.is_null() {
+                    tracing::warn!("GL fence creation returned null; falling back to glFinish");
+                    gl.Finish();
+                    return;
+                }
+
+                gl.Flush();
+                loop {
+                    match gl.ClientWaitSync(fence, 0, FENCE_WAIT_TIMEOUT_NS) {
+                        ffi::ALREADY_SIGNALED | ffi::CONDITION_SATISFIED => break,
+                        ffi::TIMEOUT_EXPIRED => continue,
+                        ffi::WAIT_FAILED => {
+                            tracing::warn!("GL fence wait failed; falling back to glFinish");
+                            gl.Finish();
+                            break;
+                        }
+                        status => {
+                            tracing::warn!(status, "GL fence wait returned unexpected status");
+                            gl.Finish();
+                            break;
+                        }
+                    }
+                }
+                gl.DeleteSync(fence);
+            })?;
+        }
+        Ok(())
+    }
+}
+
+fn detect_gl_sync_support(
+    renderer: &mut GlesRenderer,
+    egl_display: &EGLDisplay,
+) -> Result<GpuCompletionWaitStrategy> {
+    let (version, gl_extensions) = unsafe {
+        renderer.with_context(|gl| {
+            let version = gl.GetString(ffi::VERSION);
+            let extensions = gl.GetString(ffi::EXTENSIONS);
+            (
+                gl_string(version).unwrap_or_else(|| "<unavailable>".to_owned()),
+                gl_string(extensions).unwrap_or_default(),
+            )
+        })?
+    };
+    Ok(detect_gpu_completion_wait_strategy(
+        &version,
+        &gl_extensions,
+        egl_display.extensions(),
+        GlSyncEntryPoints::load_with(|name| unsafe {
+            smithay::backend::egl::get_proc_address(name)
+        }),
+    ))
+}
+
+fn gl_string(value: *const ffi::types::GLubyte) -> Option<String> {
+    if value.is_null() {
+        None
+    } else {
+        Some(
+            unsafe { CStr::from_ptr(value.cast()) }
+                .to_string_lossy()
+                .into_owned(),
+        )
     }
 }

@@ -13,6 +13,7 @@ axum-extra.workspace = true
 bmc.workspace = true
 bmc-button.workspace = true
 bmc-gpio.workspace = true
+bmc-gpu-render-lock.workspace = true
 bmc-kobject.workspace = true
 bmc-led = { workspace = true, features = ["apa102_spi"] }
 bmc-platform = { workspace = true, features = ["backlight", "linux-input"] }

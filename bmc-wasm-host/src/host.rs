@@ -1,5 +1,6 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
+use bmc_gpu_render_lock::{GpuRenderLock, GpuRenderLockGuard};
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_widget::egl::{EglContext, SharedRenderScratch};
 use glow::HasContext;
@@ -17,6 +18,7 @@ pub struct SharedHost {
     pub egl: EglContext,
     pub scratch: SharedRenderScratch,
     pub font_cache: FontCache,
+    gpu_render_lock: GpuRenderLock,
 }
 
 #[derive(Debug, Default)]
@@ -31,6 +33,7 @@ impl SharedHost {
         );
         let egl = EglContext::new()?;
         let scratch = SharedRenderScratch::new(&egl, display_max_w, display_max_h)?;
+        let gpu_render_lock = GpuRenderLock::from_env()?;
         let renderer = unsafe {
             FemtoVgRenderer::new(
                 |sym: &str| EglContext::get_proc_address(sym),
@@ -46,6 +49,7 @@ impl SharedHost {
                 egl,
                 scratch,
                 font_cache: FontCache,
+                gpu_render_lock,
             },
             renderer,
         ))
@@ -63,6 +67,13 @@ impl SharedHost {
         unsafe {
             self.egl.gl().flush();
         }
+    }
+
+    pub(crate) fn acquire_gpu_render_lock(
+        &self,
+        scope: &'static str,
+    ) -> anyhow::Result<GpuRenderLockGuard> {
+        self.gpu_render_lock.lock(scope)
     }
 
     /// Whether the EGL context has been reported lost (e.g., GPU reset).

@@ -1042,6 +1042,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-gpu-render-lock"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rustix 0.38.44",
+ "tracing",
+]
+
+[[package]]
 name = "bmc-grpc"
 version = "0.1.0"
 dependencies = [
@@ -1224,6 +1233,7 @@ dependencies = [
  "bmc",
  "bmc-button",
  "bmc-gpio",
+ "bmc-gpu-render-lock",
  "bmc-kobject",
  "bmc-led",
  "bmc-platform",
@@ -1553,6 +1563,7 @@ name = "bmc-wasm-host"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bmc-gpu-render-lock",
  "bmc-render",
  "bmc-wasm-protocol",
  "bmc-wasm-runtime",
