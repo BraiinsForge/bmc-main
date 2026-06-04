@@ -51,6 +51,7 @@ mod driver {
     use crate::device::DeviceId;
     use crate::families::bos::BosAdapter;
     use crate::manifest_params::Params;
+    use crate::model::ModelAccumulator;
     use crate::telemetry::TelemetryReading;
 
     const PASS_INTERVAL_MS: u32 = 30_000;
@@ -59,6 +60,7 @@ mod driver {
         cursor: Option<PassCursor>,
         endpoint_idx: usize,
         reading: TelemetryReading,
+        model: ModelAccumulator,
         endpoint_oks: Vec<bool>,
         // One re-auth attempt per device per pass guards against a 401 -> login
         // -> 401 loop when the shared password is wrong.
@@ -78,6 +80,12 @@ mod driver {
                     power_w: None,
                     uptime_s: None,
                     temperature_c: None,
+                },
+                model: ModelAccumulator {
+                    id: None,
+                    name: None,
+                    chip_type: None,
+                    chip_count: None,
                 },
                 endpoint_oks: Vec::new(),
                 reauthed: false,
@@ -177,6 +185,7 @@ mod driver {
             d.endpoint_oks.clear();
             d.reauthed = false;
             d.reading = Driver::idle().reading;
+            d.model = ModelAccumulator::default();
         });
         fetch_endpoint();
     }
@@ -231,7 +240,12 @@ mod driver {
 
         if response.ok() {
             let doc = response.json();
-            DRIVER.with(|d| BosAdapter.parse_telemetry(ep, &doc, &mut d.borrow_mut().reading));
+            DRIVER.with(|d| {
+                let mut d = d.borrow_mut();
+                let d = &mut *d;
+                BosAdapter.parse_telemetry(ep, &doc, &mut d.reading);
+                BosAdapter.parse_model(ep, &doc, &mut d.model);
+            });
             record_endpoint(true);
         } else {
             DRIVER.with(|d| BosAdapter.reset_telemetry(ep, &mut d.borrow_mut().reading));
@@ -303,11 +317,17 @@ mod driver {
                 .and_then(|c| c.current().cloned())
         });
         if let Some(id) = id {
-            let (reading, reachable) = DRIVER.with(|d| {
+            let (reading, reachable, model) = DRIVER.with(|d| {
                 let d = d.borrow();
-                (d.reading, pass_reachable(&d.endpoint_oks))
+                (d.reading, pass_reachable(&d.endpoint_oks), d.model.clone())
             });
-            crate::DEVICES.with(|devs| devs.borrow_mut().apply_telemetry(&id, reading, reachable));
+            crate::DEVICES.with(|devs| {
+                let mut devs = devs.borrow_mut();
+                devs.apply_telemetry(&id, reading, reachable);
+                if let Some(model) = model.into_model() {
+                    devs.apply_model(&id, model);
+                }
+            });
             request_frame();
         }
         advance_device();
