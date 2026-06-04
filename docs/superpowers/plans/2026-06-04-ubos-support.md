@@ -14,7 +14,8 @@
 
 - The widget crate is `widgets-wasm/fleet-management`, a member of the **separate** `widgets-wasm` cargo workspace (not the top-level workspace). All commands below use that crate's manifest explicitly.
 - The crate is `crate-type = ["cdylib"]`. On the **wasm** target, unused `pub` items ARE flagged as dead code (`-D warnings`). Consequence: a new adapter or trait method is "unused" on wasm until the driver wires it in. Tasks 1 and 2 therefore verify on the **host** only; the first wasm-target check happens in Task 3, once the driver references the new code. This is expected — do not try to make wasm clippy pass at Tasks 1–2.
-- `JsonLookup` (in `discovery.rs`) is the parse-time abstraction: `str(path) -> Option<String>`, `i64(path) -> Option<i64>`, `f64(path) -> Option<f64>`. The host coerces integer JSON to `f64`, so `f64()` reads uBOS's integer fields. Tests use the `MapJson` mock (`discovery::tests_support::MapJson`) with separate `strings` / `ints` / `floats` maps.
+- `JsonLookup` (in `discovery.rs`) is the parse-time abstraction: `str(path) -> Option<String>`, `i64(path) -> Option<i64>`, `f64(path) -> Option<f64>`. Per the `JsonLookup::f64` contract, integer JSON values are readable through `f64()` (the on-device `JsonDoc` impl coerces them), so uBOS's integer fields parse via `f64()`. Tests use the `MapJson` mock (`discovery::tests_support::MapJson`) with separate `strings` / `ints` / `floats` maps.
+- **Model machinery shape (as landed):** `MinerModel.id` and `MinerModel.name` are required `String`; `ModelAccumulator::into_model()` returns `Some` only when **both** `id` and `name` are set, else `None`. uBOS exposes no platform identifier, so its `parse_model` sets the product name as **both** `id` and `name` — otherwise the model would never materialize on `KnownDevice.model`. This stays within "only the uBOS adapter changes"; the shared machinery is untouched.
 - The reset-then-populate telemetry contract: `parse_telemetry` first calls `reset_telemetry` for its endpoint (clearing exactly that endpoint's owned fields), then sets whatever the payload contains — so a vanished field goes `Some -> None`.
 - `base64("root:root")` = `cm9vdDpyb290`.
 
@@ -205,9 +206,13 @@ impl FamilyAdapter for UbosAdapter {
     }
 
     fn parse_model(&self, endpoint: &str, json: &dyn JsonLookup, model: &mut ModelAccumulator) {
+        // uBOS exposes no platform identifier, so the product name doubles as
+        // the grouping id; setting both lets `ModelAccumulator::into_model`
+        // yield a model, which requires id and name.
         if endpoint == EP_INFO
             && let Some(name) = json.str("/name").filter(|s| !s.is_empty())
         {
+            model.id = Some(name.clone());
             model.name = Some(name);
         }
     }
@@ -307,15 +312,35 @@ mod tests {
     }
 
     #[test]
-    fn parse_model_sets_name_only() {
+    fn parse_model_keys_model_by_name_so_it_materializes() {
         let mut j = MapJson::default();
         j.strings.insert("/name", "BMM Adapter W5500");
         let mut acc = ModelAccumulator::default();
         UbosAdapter.parse_model("/info", &j, &mut acc);
+        assert_eq!(acc.id.as_deref(), Some("BMM Adapter W5500"));
         assert_eq!(acc.name.as_deref(), Some("BMM Adapter W5500"));
-        assert_eq!(acc.id, None);
         assert_eq!(acc.chip_type, None);
         assert_eq!(acc.chip_count, None);
+
+        let model = acc
+            .into_model()
+            .expect("uBOS model materializes from the name alone");
+        assert_eq!(model.id, "BMM Adapter W5500");
+        assert_eq!(model.name, "BMM Adapter W5500");
+        assert_eq!(model.chip_type, None);
+        assert_eq!(model.chip_count, None);
+        assert_eq!(model.nominal_hashrate_ths, None);
+    }
+
+    #[test]
+    fn parse_model_ignores_empty_name() {
+        let mut j = MapJson::default();
+        j.strings.insert("/name", "");
+        let mut acc = ModelAccumulator::default();
+        UbosAdapter.parse_model("/info", &j, &mut acc);
+        assert_eq!(acc.id, None);
+        assert_eq!(acc.name, None);
+        assert_eq!(acc.into_model(), None);
     }
 }
 ```
@@ -323,7 +348,7 @@ mod tests {
 - [ ] **Step 3: Run the uBOS tests**
 
 Run: `nix develop -c cargo test --manifest-path widgets-wasm/fleet-management/Cargo.toml families::ubos`
-Expected: PASS — 8 tests (`browses_the_full_ubos_service_type`, `parses_a_ubos_device_and_stamps_family`, `rejects_event_missing_port`, `parses_info_into_all_four_readings`, `parse_clears_owned_field_that_vanished_from_response`, `reset_clears_the_endpoints_fields`, `credential_header_is_basic_root_root`, `parse_model_sets_name_only`).
+Expected: PASS — 9 tests (`browses_the_full_ubos_service_type`, `parses_a_ubos_device_and_stamps_family`, `rejects_event_missing_port`, `parses_info_into_all_four_readings`, `parse_clears_owned_field_that_vanished_from_response`, `reset_clears_the_endpoints_fields`, `credential_header_is_basic_root_root`, `parse_model_keys_model_by_name_so_it_materializes`, `parse_model_ignores_empty_name`). The `..._materializes` test calls `into_model()`, so it fails if `parse_model` sets only `name` — the regression this fixes.
 
 - [ ] **Step 4: Host clippy**
 
@@ -661,7 +686,7 @@ with:
 - [ ] **Step 12: Run host tests**
 
 Run: `nix develop -c cargo test --manifest-path widgets-wasm/fleet-management/Cargo.toml`
-Expected: PASS — 49 tests, including `adapter_for_maps_known_families_and_rejects_bitaxe`.
+Expected: PASS — 51 tests (40 baseline + 1 BOS credential test + 9 uBOS + 1 `adapter_for`), including `adapter_for_maps_known_families_and_rejects_bitaxe`.
 
 - [ ] **Step 13: Host clippy**
 
@@ -784,7 +809,7 @@ From `bmc-wasm-runtime/`, run: `just dev fleet-management`
 Verify in the testbed UI:
 - the uBOS miner appears in the device list alongside any BOS miners
 - its row shows hashrate ≈ `1.07 TH/s` for the sample reading (H/s ÷ 1e12), power in W (mW ÷ 1000), temperature in °C, and a sensible uptime
-- the model name from `/api/info` `name` appears in the model column
+- the model name from `/api/info` `name` appears in the model column (it lands on `KnownDevice.model` because uBOS's `parse_model` sets the name as both the id and the name, satisfying `into_model()`)
 - with wrong credentials (if testable), the uBOS row reads `N/A` and the device is not counted as reachable
 
 - [ ] **Step 3: Record the result**
@@ -795,7 +820,7 @@ Note the testbed outcome in the BDK-506 task notes. No commit — this task is v
 
 ## Self-review notes
 
-- **Spec coverage:** discovery (Tasks 2, 4) · `/api/info` telemetry with H/s→TH/s and mW→W (Task 2) · proactive credential header coexisting with token auth (Tasks 1, 3) · family-generic dispatch incl. no-adapter handling (Task 3) · uBOS `parse_model` name capture (Task 2) · reset-then-populate stale clearing (Task 2 tests) · host unit tests for every pure surface (Tasks 1–3) · testbed verification (Task 5). Rendering and `manifest.json` are unchanged by design.
-- **Prerequisite:** the BOS-miner-model machinery (`parse_model`, `ModelAccumulator`, `apply_model`, the model column) is already present in the tree, so no part of this plan reimplements it — Task 2 only adds uBOS's `parse_model` override and Task 3 routes it through the per-device adapter.
+- **Spec coverage:** discovery (Tasks 2, 4) · `/api/info` telemetry with H/s→TH/s and mW→W (Task 2) · proactive credential header coexisting with token auth (Tasks 1, 3) · family-generic dispatch incl. no-adapter handling (Task 3) · uBOS `parse_model` name capture that actually lands on the device (Task 2, verified via `into_model()`) · reset-then-populate stale clearing (Task 2 tests) · host unit tests for every pure surface (Tasks 1–3) · testbed verification (Task 5). Rendering and `manifest.json` are unchanged by design.
+- **Prerequisite (actual shape):** the BOS-miner-model machinery (`parse_model`, `ModelAccumulator`, `apply_model`, the model column) is already present in the tree. As landed, `MinerModel.id`/`name` are required `String` and `into_model()` needs both — NOT the `Option<String>` shape the earlier design draft floated. This plan adapts to the real shape: uBOS supplies the name as both id and name so its model materializes. No part of this plan reimplements the machinery — Task 2 adds only uBOS's `parse_model` override and Task 3 routes it through the per-device adapter.
 - **All code in this plan was compiled and verified** (host: 49 tests + clippy clean; wasm: clippy `-D warnings` clean) before the plan was written, then reverted. Hashrate is asserted with an epsilon to avoid `f32` bit-equality fragility.
 - **Type consistency:** `adapter_for(DeviceFamily) -> Option<&'static dyn FamilyAdapter>`, `current_endpoint() -> Option<(DeviceId, DeviceFamily, String, u16)>`, and `credential_header(&self) -> Option<String>` are used identically everywhere they appear.
