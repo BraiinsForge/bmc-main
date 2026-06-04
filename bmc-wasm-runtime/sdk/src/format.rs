@@ -18,7 +18,13 @@ unsafe extern "C" {
         out_ptr: *mut u8,
         out_len: u32,
     ) -> i32;
-    fn host_format_temperature(value: f64, decimals: u32, out_ptr: *mut u8, out_len: u32) -> i32;
+    fn host_format_temperature(
+        value: f64,
+        decimals: u32,
+        show_unit: u32,
+        out_ptr: *mut u8,
+        out_len: u32,
+    ) -> i32;
     fn host_format_date(
         timestamp: i64,
         fmt_ptr: *const u8,
@@ -74,10 +80,17 @@ pub fn _host_format_speed(value: f64, decimals: u32, metric_unit: u32) -> String
 /// Format a temperature using host-side preferences. Called by [`format_temperature!`].
 #[doc(hidden)]
 #[must_use]
-pub fn _host_format_temperature(value: f64, decimals: u32) -> String {
+pub fn _host_format_temperature(value: f64, decimals: u32, show_unit: u32) -> String {
     let mut buf = [0_u8; 64];
-    let len =
-        unsafe { host_format_temperature(value, decimals, buf.as_mut_ptr(), buf.len() as u32) };
+    let len = unsafe {
+        host_format_temperature(
+            value,
+            decimals,
+            show_unit,
+            buf.as_mut_ptr(),
+            buf.len() as u32,
+        )
+    };
     read_host_buf(&buf, len)
 }
 
@@ -214,6 +227,35 @@ pub fn format_date(now: crate::host::SystemTime, opts: FormatDateOpts) -> String
     )
 }
 
+/// Hour-only label for dense strips: `"20"` in 24-hour mode, `"8PM"` in
+/// 12-hour mode. The meridiem is baked in so a bare hour is never ambiguous
+/// between morning and evening. `tz` overrides the render timezone like
+/// [`FormatTimeOpts::timezone`]; `None` uses the system timezone.
+///
+/// # Example
+/// ```ignore
+/// let s = format_hour(now, None); // "20" or "8PM"
+/// ```
+#[must_use]
+pub fn format_hour(now: crate::host::SystemTime, tz: Option<&Tz>) -> String {
+    let pattern = match system::current().time_format().unwrap_or_default() {
+        TimeFormat::Hour24 => "%H",
+        TimeFormat::Hour12 => "%-I%p",
+    };
+    strftime(local_unix_secs_or_system(&now, tz), pattern)
+}
+
+/// The AM/PM marker for `now` under the user's settings, or `None` in 24-hour
+/// mode. [`format_time`] deliberately omits it; render this beside the time as
+/// a separate element when a 12-hour reading would otherwise be ambiguous.
+#[must_use]
+pub fn meridiem(now: crate::host::SystemTime, tz: Option<&Tz>) -> Option<String> {
+    match system::current().time_format().unwrap_or_default() {
+        TimeFormat::Hour24 => None,
+        TimeFormat::Hour12 => Some(strftime(local_unix_secs_or_system(&now, tz), "%p")),
+    }
+}
+
 /// `local_unix_secs` with a fallback chain: requested tz → system tz → raw UTC.
 /// Used by the string-returning format helpers and by widgets that need to
 /// shift `now.unix_secs` into wall-clock seconds before handing to
@@ -294,16 +336,22 @@ macro_rules! format_speed {
 
 /// Format a temperature with user-preferred units and number formatting.
 ///
-/// Input is always °C; the host converts to °F if preferred.
+/// Input is always °C; the host converts to °F if preferred. Use the `bare`
+/// arm for the degree-only form ("26°", no scale letter) used in dense
+/// hourly/daily strips.
 ///
 /// # Example
 /// ```ignore
-/// let s = format_temperature!(20.5, 1); // "20,5 °C" or "68,9 °F"
+/// let s = format_temperature!(20.5, 1);       // "20,5 °C" or "68,9 °F"
+/// let s = format_temperature!(20.0, 0, bare); // "20°" or "68°"
 /// ```
 #[macro_export]
 macro_rules! format_temperature {
     ($value:expr, $decimals:expr) => {
-        $crate::format::_host_format_temperature($value as f64, $decimals)
+        $crate::format::_host_format_temperature($value as f64, $decimals, 1)
+    };
+    ($value:expr, $decimals:expr, bare) => {
+        $crate::format::_host_format_temperature($value as f64, $decimals, 0)
     };
 }
 
