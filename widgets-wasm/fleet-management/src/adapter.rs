@@ -41,6 +41,17 @@ pub trait FamilyAdapter {
     /// that do not report a model are unaffected.
     fn parse_model(&self, _endpoint: &str, _json: &dyn JsonLookup, _model: &mut ModelAccumulator) {}
 
+    /// A proactive credential header attached to every request, preferred over
+    /// any cached token. Default none; families with reactive token auth (BOS)
+    /// leave it none, families with static credentials (uBOS) override it.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "wired into the driver by the uBOS adapter")
+    )]
+    fn credential_header(&self) -> Option<String> {
+        None
+    }
+
     // Authentication — default NONE. Auth families (BOS) override these;
     // no-auth families (Bitaxe) inherit the defaults and fetch unauthenticated.
     fn auth_endpoint(&self) -> Option<&'static str> {

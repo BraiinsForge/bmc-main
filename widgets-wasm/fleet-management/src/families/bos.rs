@@ -340,6 +340,11 @@ mod tests {
     }
 
     #[test]
+    fn bos_has_no_proactive_credential_header() {
+        assert_eq!(BosAdapter.credential_header(), None);
+    }
+
+    #[test]
     fn platform_slug_maps_every_known_platform() {
         assert_eq!(platform_slug(1), Some("am1-s9"));
         assert_eq!(platform_slug(2), Some("am2-s17"));
