@@ -32,8 +32,8 @@ uBOS advertises itself as the full mDNS service type `_ubos._tcp` and exposes a 
 Fields are shown with their real API names; `power_out_mw` is power in milliwatts.
 
 A prerequisite change (`2026-06-04-bos-miner-model-design.md`) adds the generic model-capture machinery — the
-`parse_model` trait method, `ModelAccumulator`, `DeviceList::apply_model`, the driver accumulation, and the model column.
-It will be in place by the time this slice is implemented, so this slice builds on it directly, including uBOS's
+`parse_model` trait method, `ModelAccumulator`, `DeviceList::apply_model`, the driver accumulation, and the model
+column. It will be in place by the time this slice is implemented, so this slice builds on it directly, including uBOS's
 `parse_model` override.
 
 **Merge order:** the BOS-miner-model change lands first; this slice rebases on top and adds the `parse_model` override
@@ -64,17 +64,17 @@ against the in-place machinery.
 The driver in `session.rs` currently calls `BosAdapter.method()` directly for the API base path, telemetry endpoints,
 login, and auth-error checks. It becomes family-generic:
 
-- a free function `adapter_for(family: DeviceFamily) -> Option<&'static dyn FamilyAdapter>` maps a family to its adapter:
-  `Some` for `Bos`/`Ubos` (a constant-promoted `&BosAdapter` / `&UbosAdapter`) and `None` for `Bitaxe`, which has no
-  adapter yet. The match is exhaustive with no wildcard arm, and the enum carries no unenforced "never constructed"
-  invariant — an unsupported family is represented, not assumed-away.
+- a free function `adapter_for(family: DeviceFamily) -> Option<&'static dyn FamilyAdapter>` maps a family to its
+  adapter: `Some` for `Bos`/`Ubos` (a constant-promoted `&BosAdapter` / `&UbosAdapter`) and `None` for `Bitaxe`, which
+  has no adapter yet. The match is exhaustive with no wildcard arm, and the enum carries no unenforced "never
+  constructed" invariant — an unsupported family is represented, not assumed-away.
 - when `adapter_for` returns `None` for a device (a family with no adapter), the driver logs once, then marks the device
   unreachable with cleared telemetry — `apply_telemetry(id, TelemetryReading::default(), false)`, the same outcome as a
-  pass where every endpoint failed — and advances the cursor. This step is required, not cosmetic:
-  `DeviceList::upsert` marks a freshly discovered device `reachable = true`, so merely skipping it would leave it falsely
-  reachable and counted by the later reachable-only aggregation. No `Bitaxe` browse is registered today, so this path is
-  not exercised; it degrades to an unreachable, `N/A` device rather than panicking if a future family is discovered
-  before its adapter lands.
+  pass where every endpoint failed — and advances the cursor. This step is required, not cosmetic: `DeviceList::upsert`
+  marks a freshly discovered device `reachable = true`, so merely skipping it would leave it falsely reachable and
+  counted by the later reachable-only aggregation. No `Bitaxe` browse is registered today, so this path is not
+  exercised; it degrades to an unreachable, `N/A` device rather than panicking if a future family is discovered before
+  its adapter lands.
 - `current_endpoint()` additionally returns the device's `family`; each per-device cycle resolves `adapter_for(family)`
   once and uses the adapter for `api_base_path`, `telemetry_endpoints`, `parse_telemetry`, `reset_telemetry`, and the
   auth methods.
@@ -108,7 +108,8 @@ uBOS credentials are hardcoded to `root:root` this slice, so `credential_header(
 `"Authorization: Basic cm9vdDpyb290".to_owned()` (`base64("root:root")`) with a comment recording the plaintext, so no
 base64 encoder is needed now. The owned return type is what keeps a future configurable password feasible without
 changing the trait: that change swaps the hardcoded constant for a header computed from the param. It is not literally
-one line — it also needs a base64 of `root:<pw>` — but it is localized to `UbosAdapter` and the trait shape is unchanged.
+one line — it also needs a base64 of `root:<pw>` — but it is localized to `UbosAdapter` and the trait shape is
+unchanged.
 
 uBOS overrides none of the existing auth methods: `auth_endpoint()` stays `None` and `is_auth_error()` stays `false`.
 Wrong credentials therefore yield a 401, no re-auth, the endpoint's fields reset to `N/A`, and the device becomes
@@ -149,17 +150,22 @@ fields. uBOS reports integers, which the host's `as_f64()` coerces, so the exist
 
 ## Model Capture
 
-The model-capture machinery is provided by the concurrent BOS-miner-model change
-(`2026-06-04-bos-miner-model-design.md`), not this slice: the `FamilyAdapter::parse_model(endpoint, json, &mut
-ModelAccumulator)` method (default no-op), the all-`Option` `ModelAccumulator` builder, the driver's per-pass
-accumulation and `apply_model` at `finalize_device`, the `MinerModel.id`/`name` change to `Option<String>`, and the
-interim model column in `render.rs`. This slice depends on that change and adds only uBOS's `parse_model` override.
+The model-capture machinery is provided by the BOS-miner-model change
+(`2026-06-04-bos-miner-model-design.md`), not this slice: the
+`FamilyAdapter::parse_model(endpoint, json, &mut ModelAccumulator)` method (default no-op), the all-`Option`
+`ModelAccumulator` builder, the driver's per-pass accumulation and `apply_model` at `finalize_device`, and the interim
+model column in `render.rs`. As landed, `MinerModel.id` and `name` are required `String`, and
+`ModelAccumulator::into_model()` yields a model only when **both** id and name are set (device-level absence is carried
+by `KnownDevice.model: Option<MinerModel>`). This slice depends on that machinery unchanged and adds only uBOS's
+`parse_model` override.
 
-uBOS exposes the model as the `/api/info` `name` field (`"BMM Adapter W5500"` in the sample). `UbosAdapter::parse_model`
-for the `/info` endpoint sets the accumulator's model name from `/name`, leaving `id`, `chip_type`, `chip_count`, and
-`nominal_hashrate_ths` untouched — uBOS does not expose them. The name comes from the same `/api/info` response as
-telemetry, so it is obtained whenever the device is reachable; unlike BOS there is no separate auth-gated endpoint
-guarding it.
+uBOS exposes the model as the `/api/info` `name` field (`"BMM Adapter W5500"` in the sample) and carries no platform
+identifier. `UbosAdapter::parse_model` for the `/info` endpoint therefore sets that name as **both** the accumulator's
+`id` and `name`, leaving `chip_type`, `chip_count`, and `nominal_hashrate_ths` untouched (uBOS does not expose them).
+Setting both is required: with `id` left `None`, `into_model()` would return `None` and the model would never land on
+the device. Using the name as the id also makes it the grouping key — uBOS miners of the same model group together. The
+name comes from the same `/api/info` response as telemetry, so it is obtained whenever the device is reachable; unlike
+BOS there is no separate auth-gated endpoint guarding it.
 
 The driver re-parses the model every pass (machinery behavior); uBOS's responses are identical between passes, so this
 just keeps the value correct after a relabel. Once both changes land, uBOS devices show their model name in the column
@@ -199,8 +205,9 @@ Host unit tests for the pure surface:
 - stale-clearing: a populated reading whose payload omits an owned field drives that field `Some -> None`, and
   `reset_telemetry` clears exactly the endpoint's owned fields
 - `credential_header` returns the Basic header for uBOS and `None` for BOS
-- `UbosAdapter::parse_model` for `/info` sets the model name from `/name` into a `ModelAccumulator`, leaving the other
-  fields untouched
+- `UbosAdapter::parse_model` for `/info` sets the `/name` value as both `id` and `name` in a `ModelAccumulator`, leaving
+  the other fields untouched, and the accumulator's `into_model()` then yields a model (the test exercises `into_model`,
+  so it fails if only `name` is set); an empty `/name` sets neither and yields no model
 - `adapter_for` returns `Some` matching adapter for `Bos`/`Ubos` and `None` for `Bitaxe`
 
 The fetch wiring, the SRV-port assumption, the mixed BOS+uBOS round-robin, and live readings are verified in the testbed
@@ -214,8 +221,8 @@ The fetch wiring, the SRV-port assumption, the mixed BOS+uBOS round-robin, and l
 - The telemetry driver dispatches to each device's family adapter rather than assuming BOS; BOS behavior is unchanged.
 - A proactive credential header is a family-owned, optional adapter capability that coexists with the reactive token
   scheme through one auth-agnostic driver.
-- uBOS's `parse_model` sets the model name from `/api/info`, so it lands on `KnownDevice.model` through the shared
-  model-capture machinery from the concurrent BOS-miner-model change.
+- uBOS's `parse_model` sets the `/api/info` name as both id and name, so the model lands on `KnownDevice.model` through
+  the shared model-capture machinery (whose `into_model()` requires both fields).
 - A failed or vanished uBOS endpoint clears only its own fields to `N/A`; wrong credentials leave the device
   `reachable = false`.
 - Parsing, field mapping, the credential header, and adapter dispatch are covered by host unit tests; no family-specific
