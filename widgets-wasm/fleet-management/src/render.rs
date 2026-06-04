@@ -7,7 +7,15 @@
 use bmc_wasm_sdk::*;
 
 use crate::device::DeviceList;
+use crate::model::MinerModel;
 use crate::telemetry::TelemetryReading;
+
+fn model_cell(model: Option<&MinerModel>) -> String {
+    match model.map(|m| m.name.clone()) {
+        Some(name) => name,
+        None => "N/A".to_owned(),
+    }
+}
 
 fn hashrate_cell(reading: Option<&TelemetryReading>) -> String {
     match reading.and_then(|r| r.current_hashrate_ths) {
@@ -64,12 +72,17 @@ pub fn view(devices: &DeviceList, _width: u32, _height: u32) -> Node {
 
     for dev in devices.iter() {
         let reading = dev.telemetry.as_ref().map(|s| &s.reading);
+        let model = dev.model.as_ref();
         children.push(row(
             props!(gap: 12.0, cross_align: CrossAlign::Center),
             [
                 text(
                     dev.identity.name.clone(),
                     style!(size: 20, color: WHITE, flex: 1.0),
+                ),
+                text(
+                    model_cell(model),
+                    style!(size: 20, color: GRAY_40),
                 ),
                 text(
                     hashrate_cell(reading),
