@@ -20,6 +20,7 @@ use smithay::{
     },
 };
 
+use super::gpu_render_lock::GpuRenderLock;
 use super::render::{BufferPool, DrmOutput, EglContext, ScanoutFormat, ScanoutSwizzler};
 use super::state::OutputDamage;
 use super::widget_tracker::WidgetTracker;
@@ -86,6 +87,7 @@ pub struct SceneRenderer {
     /// Served to capture clients between renders (avoids re-rendering
     /// just to observe the same frame).
     capture_cache: CaptureCache,
+    gpu_render_lock: GpuRenderLock,
     scanout_transform: DisplayTransform,
     seam_overlap_px: i32,
     #[cfg(feature = "profiling")]
@@ -151,6 +153,7 @@ impl SceneRenderer {
             swizzler,
             texture_cache: HashMap::new(),
             capture_cache: CaptureCache::empty(),
+            gpu_render_lock: GpuRenderLock::from_env()?,
             scanout_transform,
             seam_overlap_px,
             #[cfg(feature = "profiling")]
@@ -250,6 +253,7 @@ impl SceneRenderer {
             "BUG: render_scene entered with flip pending; caller must gate on is_flip_pending"
         );
 
+        let _gpu_render_lock = self.gpu_render_lock.lock("compositor_render_scene")?;
         self.import_textures(buffers, dirty);
 
         // Collect render items: (buffer_id, placement, x_offset)

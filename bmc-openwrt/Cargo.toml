@@ -40,6 +40,7 @@ pw_hash.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smithay.workspace = true
+rustix.workspace = true
 sysfs_gpio = { workspace = true, features = ["async-tokio"] }
 thiserror.workspace = true
 time.workspace = true

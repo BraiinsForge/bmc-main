@@ -1248,6 +1248,7 @@ dependencies = [
  "merge-streams",
  "netlink-sys",
  "pw_hash",
+ "rustix 0.38.44",
  "serde",
  "serde_json",
  "smithay",

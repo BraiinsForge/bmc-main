@@ -5,6 +5,7 @@
 mod commands;
 mod device_access;
 mod egl_compositor;
+mod gpu_render_lock;
 mod lifecycle_emitter;
 mod protocol;
 mod render;

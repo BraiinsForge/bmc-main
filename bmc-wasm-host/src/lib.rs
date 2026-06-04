@@ -3,6 +3,7 @@
 //! `bmc-wasm-host` library surface, re-exported for integration tests.
 
 pub(crate) mod control;
+pub(crate) mod gpu_render_lock;
 pub mod host;
 pub mod lifecycle;
 pub mod logging;
