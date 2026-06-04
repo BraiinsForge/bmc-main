@@ -182,12 +182,22 @@ impl DeviceList {
         }
     }
 
+    /// Stamp the most recently fetched model onto a device by id. Model and
+    /// telemetry are updated independently; if a fetch fails the caller omits
+    /// the call and the previous model is retained.
+    pub fn apply_model(&mut self, id: &DeviceId, model: MinerModel) {
+        if let Some(dev) = self.devices.iter_mut().find(|d| &d.identity.id == id) {
+            dev.model = Some(model);
+        }
+    }
+
     /// Drop every device's telemetry and mark it unreachable (e.g. after a
-    /// credential change). Devices stay listed; their readings go back to
-    /// absent and reachability is recomputed on the next telemetry pass.
+    /// credential change). Devices stay listed; their readings and model go
+    /// back to absent and reachability is recomputed on the next telemetry pass.
     pub fn clear_all_telemetry(&mut self) {
         for dev in &mut self.devices {
             dev.telemetry = None;
+            dev.model = None;
             dev.reachable = false;
         }
     }
@@ -311,5 +321,38 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert_eq!(ids[0].as_str(), "a._http._tcp.local.");
         assert_eq!(ids[1].as_str(), "b._http._tcp.local.");
+    }
+
+    fn model(name: &str) -> MinerModel {
+        MinerModel {
+            id: "stm32mp157c-ii2-bmm1".to_owned(),
+            name: name.to_owned(),
+            chip_type: None,
+            chip_count: None,
+            nominal_hashrate_ths: None,
+        }
+    }
+
+    #[test]
+    fn apply_model_stamps_model_onto_device() {
+        let mut list = DeviceList::new();
+        list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
+        list.apply_model(&DeviceId::new("a._http._tcp.local."), model("BMM 101"));
+        let dev = list.iter().next().expect("device present");
+        assert_eq!(
+            dev.model.as_ref().map(|m| m.name.as_str()),
+            Some("BMM 101")
+        );
+    }
+
+    #[test]
+    fn clear_all_telemetry_also_clears_model() {
+        let mut list = DeviceList::new();
+        list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
+        list.apply_model(&DeviceId::new("a._http._tcp.local."), model("BMM 101"));
+        list.clear_all_telemetry();
+        let dev = list.iter().next().expect("present");
+        assert!(dev.model.is_none());
+        assert!(!dev.reachable);
     }
 }
