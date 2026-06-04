@@ -30,6 +30,8 @@ use adapter::FamilyAdapter;
 use device::{DeviceId, DeviceList};
 #[cfg(target_arch = "wasm32")]
 use families::bos::BosAdapter;
+#[cfg(target_arch = "wasm32")]
+use families::ubos::UbosAdapter;
 
 #[cfg(target_arch = "wasm32")]
 thread_local! {
@@ -40,6 +42,19 @@ thread_local! {
 fn on_bos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     match event {
         mdns::MdnsEvent::Found(json) => ingest(&BosAdapter, json),
+        mdns::MdnsEvent::Removed(name) => {
+            let id = DeviceId::new(*name);
+            session::remove_token(&id);
+            DEVICES.with(|d| d.borrow_mut().remove(&id));
+            request_frame();
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn on_ubos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
+    match event {
+        mdns::MdnsEvent::Found(json) => ingest(&UbosAdapter, json),
         mdns::MdnsEvent::Removed(name) => {
             let id = DeviceId::new(*name);
             session::remove_token(&id);
@@ -64,6 +79,9 @@ fn ingest(adapter: &dyn FamilyAdapter, json: &str) {
 pub extern "C" fn init() {
     if mdns::mdns_browse(BosAdapter.browse_service_types(), on_bos_event).is_none() {
         log_warn!("fleet: BOS mDNS browse rejected by host runtime limits");
+    }
+    if mdns::mdns_browse(UbosAdapter.browse_service_types(), on_ubos_event).is_none() {
+        log_warn!("fleet: uBOS mDNS browse rejected by host runtime limits");
     }
     request_frame();
 }
