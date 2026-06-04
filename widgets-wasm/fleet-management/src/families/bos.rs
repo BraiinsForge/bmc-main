@@ -13,6 +13,24 @@ const EP_DETAILS: &str = "/miner/details";
 
 pub const BOS_TELEMETRY_ENDPOINTS: &[&str] = &[EP_STATS, EP_HASHBOARDS, EP_DETAILS];
 
+/// Map the BOS `Platform` enum integer (as serialized over REST) to its
+/// stable slug. Mirrors `proto::Platform` in `ii-bos-plus-proto`; an
+/// `Unspecified`/`0` or unrecognized value has no slug.
+#[must_use]
+fn platform_slug(platform: i64) -> Option<&'static str> {
+    match platform {
+        1 => Some("am1-s9"),
+        2 => Some("am2-s17"),
+        3 => Some("am3-bbb"),
+        4 => Some("am3-aml"),
+        5 => Some("stm32mp157c-ii1-am2"),
+        6 => Some("cvitek-bm1-am2"),
+        7 => Some("zynq-bm3-am2"),
+        8 => Some("stm32mp157c-ii2-bmm1"),
+        _ => None,
+    }
+}
+
 #[expect(
     clippy::cast_possible_truncation,
     reason = "TH/s fits in f32 for realistic hashrates"
@@ -275,5 +293,23 @@ mod tests {
     #[test]
     fn bos_advertises_a_login_endpoint() {
         assert_eq!(BosAdapter.auth_endpoint(), Some("/auth/login"));
+    }
+
+    #[test]
+    fn platform_slug_maps_every_known_platform() {
+        assert_eq!(platform_slug(1), Some("am1-s9"));
+        assert_eq!(platform_slug(2), Some("am2-s17"));
+        assert_eq!(platform_slug(3), Some("am3-bbb"));
+        assert_eq!(platform_slug(4), Some("am3-aml"));
+        assert_eq!(platform_slug(5), Some("stm32mp157c-ii1-am2"));
+        assert_eq!(platform_slug(6), Some("cvitek-bm1-am2"));
+        assert_eq!(platform_slug(7), Some("zynq-bm3-am2"));
+        assert_eq!(platform_slug(8), Some("stm32mp157c-ii2-bmm1"));
+    }
+
+    #[test]
+    fn platform_slug_rejects_unspecified_and_unknown() {
+        assert_eq!(platform_slug(0), None);
+        assert_eq!(platform_slug(99), None);
     }
 }
