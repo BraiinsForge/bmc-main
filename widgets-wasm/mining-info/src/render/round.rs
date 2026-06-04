@@ -18,6 +18,7 @@ use super::{
 use crate::format;
 use crate::layout;
 use crate::model::{Availability, MinerData, PublicData};
+use crate::units::{Quantity, TeraHashPerSecond};
 use mining::gauge::{self, Gauge, GaugeState};
 use mining::style::{AMBER_LABEL, GREEN_LABEL, INACTIVE_TICK, OFF_LABEL, PURPLE, ring_fill};
 
@@ -94,8 +95,7 @@ fn px(v: u32) -> f32 {
 struct ClusterSpec {
     label: &'static str,
     prefix: Option<&'static str>,
-    value: String,
-    unit: Option<&'static str>,
+    value: format::Rendered,
 }
 
 // The center glow disc: an accent tint matching the status label color, faded
@@ -246,7 +246,7 @@ fn center_node(
     cx: f32,
     cy: f32,
     scale: f32,
-    hashrate: Availability<f64>,
+    hashrate: Availability<TeraHashPerSecond>,
     state: GaugeState,
 ) -> Node {
     let cell_w = CENTER_CELL_W * scale;
@@ -258,11 +258,11 @@ fn center_node(
         props!(cross_align: CrossAlign::Center, gap: CENTER_UNIT_GAP * scale),
         [
             text(
-                format::fixed(hashrate, 2),
+                format::fixed(hashrate, 2).value,
                 style!(size: HASHRATE_SIZE, weight: FontWeight::BOLD, color: VALUE, line_height: 1.0),
             ),
             text(
-                "TH/s",
+                TeraHashPerSecond::UNIT,
                 style!(size: HASHRATE_UNIT_SIZE, weight: FontWeight::REGULAR, color: VALUE, line_height: 1.0),
             ),
         ],
@@ -302,7 +302,7 @@ fn cluster_node(center_px: (f32, f32), scale: f32, spec: &ClusterSpec) -> Node {
 
     // Prefix (currency symbol) and unit render at the smaller unit size and only
     // when the value is real, so a "N/A"/"--" placeholder stays unadorned.
-    let show_affixes = unit_visible(&spec.value);
+    let show_affixes = unit_visible(&spec.value.value);
     let mut parts: Vec<Node> = Vec::with_capacity(3);
     if let Some(prefix) = spec.prefix.filter(|_| show_affixes) {
         parts.push(text(
@@ -311,10 +311,10 @@ fn cluster_node(center_px: (f32, f32), scale: f32, spec: &ClusterSpec) -> Node {
         ));
     }
     parts.push(text(
-        spec.value.clone(),
+        spec.value.value.clone(),
         style!(size: CLUSTER_VALUE_SIZE, weight: FontWeight::SEMIBOLD, color: VALUE),
     ));
-    if let Some(unit) = spec.unit.filter(|_| show_affixes) {
+    if let Some(unit) = spec.value.unit.filter(|_| show_affixes) {
         parts.push(text(
             unit,
             style!(size: CLUSTER_UNIT_SIZE, weight: FontWeight::REGULAR, color: VALUE),
@@ -356,7 +356,7 @@ fn native_to_px(cx: f32, cy: f32, scale: f32, native: (f32, f32)) -> (f32, f32) 
 fn gauge_screen(
     size: RenderSize,
     g: &Gauge,
-    hashrate: Availability<f64>,
+    hashrate: Availability<TeraHashPerSecond>,
     top_left: &ClusterSpec,
     top_right: &ClusterSpec,
     bottom_left: &ClusterSpec,
@@ -399,8 +399,8 @@ fn gauge_screen(
 // animate the real fill in from, regardless of whether data is already loaded.
 fn seeded_gauge(miner: &MinerData, seed_gauge: bool) -> Gauge {
     let mut g = gauge::gauge(
-        miner.hashrate_ths.as_option().copied(),
-        miner.mcr_percent.as_option().copied(),
+        miner.hashrate_ths.as_option().map(|h| h.raw()),
+        miner.mcr_percent.as_option().map(|m| m.raw()),
     );
     if seed_gauge {
         g.lit_count = g.lit_count.min(1);
@@ -418,25 +418,21 @@ pub(crate) fn mining(size: RenderSize, miner: &MinerData, seed_gauge: bool) -> N
             label: "Power Cons.",
             prefix: None,
             value: format::fixed(miner.power_w, 0),
-            unit: Some("W"),
         },
         &ClusterSpec {
             label: "MCR",
             prefix: None,
             value: format::fixed(miner.mcr_percent, 1),
-            unit: Some("%"),
         },
         &ClusterSpec {
             label: "Temperature",
             prefix: None,
             value: format::chip_temperature(miner.temperature),
-            unit: Some("°C"),
         },
         &ClusterSpec {
             label: "Fan Speed",
             prefix: None,
             value: format::fixed(miner.fan_percent, 0),
-            unit: Some("%"),
         },
     )
 }
@@ -456,25 +452,21 @@ pub(crate) fn geek(
             label: "Power Cons.",
             prefix: None,
             value: format::fixed(miner.power_w, 0),
-            unit: Some("W"),
         },
         &ClusterSpec {
             label: "Efficiency",
             prefix: None,
             value: format::fixed(miner.efficiency_j_th, 1),
-            unit: Some("J/TH"),
         },
         &ClusterSpec {
             label: "Temperature",
             prefix: None,
             value: format::chip_temperature(miner.temperature),
-            unit: Some("°C"),
         },
         &ClusterSpec {
             label: "BTC Price",
             prefix: format::money_symbol(public.btc_price),
-            value: format::money_amount(public.btc_price, 0),
-            unit: None,
+            value: format::money_amount(public.btc_price, 0).into(),
         },
     )
 }
@@ -546,13 +538,11 @@ pub(crate) fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
             text_block(
                 "Est. Diff. Adjust.",
                 format::signed_percent(public.est_diff_adjust_percent, 2),
-                Some("%"),
                 metrics,
             ),
             text_block(
                 "Prev. Diff. Adjust.",
                 format::signed_percent(public.prev_diff_adjust_percent, 2),
-                Some("%"),
                 metrics,
             ),
         ],
@@ -563,29 +553,17 @@ pub(crate) fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
         vec![text_block(
             "Hashvalue",
             format::fixed_strip_zero_fraction(public.hashvalue_sat_th_day, 2),
-            Some("SAT/TH/Day"),
             metrics,
         )],
         metrics,
     );
 
     let upper = left_shifted_block_row(
-        text_block(
-            "Hashrate",
-            format::fixed(miner.hashrate_ths, 2),
-            Some("TH/s"),
-            metrics,
-        ),
-        text_block(
-            "Power Consump.",
-            format::fixed(miner.power_w, 0),
-            Some("W"),
-            metrics,
-        ),
+        text_block("Hashrate", format::fixed(miner.hashrate_ths, 2), metrics),
+        text_block("Power Consump.", format::fixed(miner.power_w, 0), metrics),
         text_block(
             "Block Height",
             format::public_integer(public.block_height),
-            None,
             metrics,
         ),
         metrics,
@@ -593,22 +571,15 @@ pub(crate) fn info_overload(miner: &MinerData, public: &PublicData) -> Node {
     );
 
     let lower = left_shifted_block_row(
-        text_block(
-            "Miner Uptime",
-            format::uptime(miner.uptime_s),
-            None,
-            metrics,
-        ),
+        text_block("Miner Uptime", format::uptime(miner.uptime_s), metrics),
         text_block(
             "Fees (144 Blocks)",
             format::approx_fixed(public.avg_fee_percent, 1),
-            Some("%"),
             metrics,
         ),
         text_block(
             "Epoch Prog.",
             format::fixed(public.epoch_progress_percent, 0),
-            Some("%"),
             metrics,
         ),
         metrics,
@@ -660,13 +631,12 @@ const NETWORK_COL_RIGHT_WIDTH: f32 = 140.0;
 // the surrounding row counts.
 pub(crate) fn network(public: &PublicData) -> Node {
     let metrics = layout::network_round_layout();
-    let fee_value = bmc_wasm_sdk::fmt!("~ {}", format::fixed(public.avg_fee_percent, 1));
+    let fee_value = format::approx_fixed(public.avg_fee_percent, 1);
 
     let top = centered_block_row(
         vec![centered_block(
             "Network HR",
             format::fixed(public.network_hashrate_ehs, 2),
-            Some("EH/s"),
             metrics.text,
         )],
         metrics,
@@ -676,13 +646,11 @@ pub(crate) fn network(public: &PublicData) -> Node {
         centered_block(
             "Diff. Adjust.",
             format::signed_percent(public.prev_diff_adjust_percent, 2),
-            Some("%"),
             metrics.text,
         ),
         centered_block(
             "Est. Diff. Adjust.",
             format::signed_percent(public.est_diff_adjust_percent, 2),
-            Some("%"),
             metrics.text,
         ),
         metrics,
@@ -692,24 +660,21 @@ pub(crate) fn network(public: &PublicData) -> Node {
         centered_block(
             "Block Height",
             format::public_integer(public.block_height),
-            None,
             metrics.text,
         ),
         centered_block(
             "Epoch Prog.",
             format::fixed(public.epoch_progress_percent, 0),
-            Some("%"),
             metrics.text,
         ),
         metrics,
     );
 
     let lower = two_column_row(
-        centered_block("Fees (144 Blocks)", fee_value, Some("%"), metrics.text),
+        centered_block("Fees (144 Blocks)", fee_value, metrics.text),
         centered_block(
             "BTC Price",
             format::money(public.btc_price, 0),
-            None,
             metrics.text,
         ),
         metrics,
@@ -718,8 +683,7 @@ pub(crate) fn network(public: &PublicData) -> Node {
     let bottom = centered_block_row(
         vec![centered_block(
             "Hashprice",
-            format::money(public.hashprice, 3),
-            Some("TH/Day"),
+            format::money(public.hashprice, 3).with_unit("TH/Day"),
             metrics.text,
         )],
         metrics,

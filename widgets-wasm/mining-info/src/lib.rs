@@ -9,6 +9,7 @@ mod model;
 mod public_api;
 #[cfg(target_arch = "wasm32")]
 mod render;
+mod units;
 
 #[cfg(target_arch = "wasm32")]
 use std::cell::RefCell;

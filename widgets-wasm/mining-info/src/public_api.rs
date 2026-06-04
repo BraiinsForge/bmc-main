@@ -4,6 +4,7 @@ use bmc_wasm_sdk::ufmt;
 
 use crate::miner_api::JsonLookup;
 use crate::model::{Availability, Currency, Money, PublicData};
+use crate::units::{Btc, ExaHashPerSecond, Percent, SatPerTeraHashDay};
 
 const SAT_IN_BTC: f64 = 100_000_000.0;
 
@@ -22,7 +23,7 @@ pub(crate) fn parse_price_stats(json: &impl JsonLookup, currency: Currency, data
         });
     }
     if let Some(change) = json.f64("/percent_change_24h") {
-        data.btc_change_24h_percent = Availability::Available(change);
+        data.btc_change_24h_percent = Availability::Available(Percent(change));
     }
 }
 
@@ -34,13 +35,13 @@ pub(crate) fn parse_block(json: &impl JsonLookup, data: &mut PublicData) {
 
 pub(crate) fn parse_difficulty_stats(json: &impl JsonLookup, data: &mut PublicData) {
     if let Some(prev) = json.f64("/previous_adjustment") {
-        data.prev_diff_adjust_percent = Availability::Available(prev * 100.0);
+        data.prev_diff_adjust_percent = Availability::Available(Percent(prev * 100.0));
     }
     if let Some(est) = json.f64("/estimated_adjustment") {
-        data.est_diff_adjust_percent = Availability::Available(est * 100.0);
+        data.est_diff_adjust_percent = Availability::Available(Percent(est * 100.0));
     }
     if let Some(epoch) = json.f64("/block_epoch") {
-        data.epoch_progress_percent = Availability::Available(epoch / 2016.0 * 100.0);
+        data.epoch_progress_percent = Availability::Available(Percent(epoch / 2016.0 * 100.0));
     }
 }
 
@@ -50,13 +51,13 @@ pub(crate) fn parse_hashrate_stats(
     data: &mut PublicData,
 ) {
     if let Some(hashrate) = json.f64("/current_hashrate") {
-        data.network_hashrate_ehs = Availability::Available(hashrate);
+        data.network_hashrate_ehs = Availability::Available(ExaHashPerSecond(hashrate));
     }
     if let Some(avg_fee) = json.f64("/avg_fees_per_block") {
-        data.avg_fee_btc = Availability::Available(avg_fee);
+        data.avg_fee_btc = Availability::Available(Btc(avg_fee));
     }
     if let Some(fee_percent) = json.f64("/fees_percent") {
-        data.avg_fee_percent = Availability::Available(fee_percent);
+        data.avg_fee_percent = Availability::Available(Percent(fee_percent));
     }
     if let Some(hashprice) = json.f64("/hash_price_currency") {
         data.hashprice = Availability::Available(Money {
@@ -65,7 +66,8 @@ pub(crate) fn parse_hashrate_stats(
         });
     }
     if let Some(hashvalue_btc) = json.f64("/hash_value") {
-        data.hashvalue_sat_th_day = Availability::Available(hashvalue_btc * SAT_IN_BTC);
+        data.hashvalue_sat_th_day =
+            Availability::Available(SatPerTeraHashDay(hashvalue_btc * SAT_IN_BTC));
     }
 }
 
@@ -152,6 +154,7 @@ pub(crate) fn reset_price_history(data: &mut PublicData) {
 mod tests {
     use super::*;
     use crate::miner_api::tests_support::MapJson;
+    use crate::units::Quantity;
 
     #[test]
     fn maps_currency_to_api_code() {
@@ -177,7 +180,7 @@ mod tests {
         let Availability::Available(value) = data.hashvalue_sat_th_day else {
             panic!("BUG: hashvalue should be available");
         };
-        assert!((value - 5.02).abs() < 1e-9);
+        assert!((value.raw() - 5.02).abs() < 1e-9);
     }
 
     #[test]
@@ -203,7 +206,7 @@ mod tests {
                 currency: Currency::Usd,
                 value: 104_250.0,
             }),
-            btc_change_24h_percent: Availability::Available(1.82),
+            btc_change_24h_percent: Availability::Available(Percent(1.82)),
             block_height: Availability::Available(900_123),
             ..PublicData::default()
         };
@@ -216,14 +219,14 @@ mod tests {
     #[test]
     fn reset_hashrate_stats_clears_stale_hashprice_currency_values() {
         let mut data = PublicData {
-            network_hashrate_ehs: Availability::Available(650.5),
-            avg_fee_btc: Availability::Available(0.125),
-            avg_fee_percent: Availability::Available(1.4),
+            network_hashrate_ehs: Availability::Available(ExaHashPerSecond(650.5)),
+            avg_fee_btc: Availability::Available(Btc(0.125)),
+            avg_fee_percent: Availability::Available(Percent(1.4)),
             hashprice: Availability::Available(Money {
                 currency: Currency::Usd,
                 value: 0.052,
             }),
-            hashvalue_sat_th_day: Availability::Available(5.02),
+            hashvalue_sat_th_day: Availability::Available(SatPerTeraHashDay(5.02)),
             btc_price: Availability::Available(Money {
                 currency: Currency::Usd,
                 value: 104_250.0,

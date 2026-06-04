@@ -3,6 +3,7 @@
 use bmc_wasm_sdk::ufmt;
 
 use crate::model::{Availability, MinerData, TemperatureRange};
+use crate::units::{DegreeCelsius, JoulePerTeraHash, Percent, Seconds, TeraHashPerSecond, Watt};
 
 pub(crate) trait JsonLookup {
     fn str(&self, path: &str) -> Option<String>;
@@ -19,19 +20,19 @@ pub(crate) fn parse_details(json: &impl JsonLookup, data: &mut MinerData) {
         .i64("/bosminer_uptime_s")
         .and_then(|v| u64::try_from(v).ok())
     {
-        data.uptime_s = Availability::Available(uptime);
+        data.uptime_s = Availability::Available(Seconds(uptime));
     }
 }
 
 pub(crate) fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) {
     if let Some(ghs) = json.f64("/miner_stats/real_hashrate/last_1m/gigahash_per_second") {
-        data.hashrate_ths = Availability::Available(ths_from_ghs(ghs));
+        data.hashrate_ths = Availability::Available(TeraHashPerSecond(ths_from_ghs(ghs)));
     }
     if let Some(power) = json.f64("/power_stats/approximated_consumption/watt") {
-        data.power_w = Availability::Available(power);
+        data.power_w = Availability::Available(Watt(power));
     }
     if let Some(efficiency) = json.f64("/power_stats/efficiency/joule_per_terahash") {
-        data.efficiency_j_th = Availability::Available(efficiency);
+        data.efficiency_j_th = Availability::Available(JoulePerTeraHash(efficiency));
     }
 }
 
@@ -39,20 +40,23 @@ pub(crate) fn parse_hashboards(json: &impl JsonLookup, data: &mut MinerData) {
     let board = json.f64("/hashboards/0/board_temp/degree_c");
     let chip = json.f64("/hashboards/0/highest_chip_temp/temperature/degree_c");
     if let (Some(board_c), Some(chip_c)) = (board, chip) {
-        data.temperature = Availability::Available(TemperatureRange { board_c, chip_c });
+        data.temperature = Availability::Available(TemperatureRange {
+            board: DegreeCelsius(board_c),
+            chip: DegreeCelsius(chip_c),
+        });
     }
     let nominal = json.f64("/hashboards/0/stats/nominal_hashrate/gigahash_per_second");
     let real = json.f64("/hashboards/0/stats/real_hashrate/last_1m/gigahash_per_second");
     if let (Some(real), Some(nominal)) = (real, nominal)
         && nominal > 0.0
     {
-        data.mcr_percent = Availability::Available(real / nominal * 100.0);
+        data.mcr_percent = Availability::Available(Percent(real / nominal * 100.0));
     }
 }
 
 pub(crate) fn parse_cooling(json: &impl JsonLookup, data: &mut MinerData) {
     if let Some(ratio) = json.f64("/fans/0/target_speed_ratio") {
-        data.fan_percent = Availability::Available(ratio * 100.0);
+        data.fan_percent = Availability::Available(Percent(ratio * 100.0));
     }
 }
 
@@ -143,6 +147,7 @@ pub(crate) mod tests_support {
 mod tests {
     use super::tests_support::MapJson;
     use super::*;
+    use crate::units::Quantity;
 
     #[test]
     fn converts_hashrate_from_ghs_to_ths() {
@@ -155,7 +160,7 @@ mod tests {
         json.ints.insert("/bosminer_uptime_s", 187_020);
         let mut data = MinerData::default();
         parse_details(&json, &mut data);
-        assert_eq!(data.uptime_s, Availability::Available(187_020));
+        assert_eq!(data.uptime_s, Availability::Available(Seconds(187_020)));
     }
 
     #[test]
@@ -165,7 +170,10 @@ mod tests {
             .insert("/power_stats/efficiency/joule_per_terahash", 21.5);
         let mut data = MinerData::default();
         parse_stats(&json, &mut data);
-        assert_eq!(data.efficiency_j_th, Availability::Available(21.5));
+        assert_eq!(
+            data.efficiency_j_th,
+            Availability::Available(JoulePerTeraHash(21.5))
+        );
     }
 
     #[test]
@@ -179,11 +187,11 @@ mod tests {
     #[test]
     fn reset_clears_only_its_own_fields() {
         let mut data = MinerData {
-            hashrate_ths: Availability::Available(4.0),
-            power_w: Availability::Available(120.0),
-            efficiency_j_th: Availability::Available(21.5),
-            mcr_percent: Availability::Available(90.0),
-            fan_percent: Availability::Available(72.0),
+            hashrate_ths: Availability::Available(TeraHashPerSecond(4.0)),
+            power_w: Availability::Available(Watt(120.0)),
+            efficiency_j_th: Availability::Available(JoulePerTeraHash(21.5)),
+            mcr_percent: Availability::Available(Percent(90.0)),
+            fan_percent: Availability::Available(Percent(72.0)),
             ..MinerData::default()
         };
         reset_stats(&mut data);
@@ -191,23 +199,23 @@ mod tests {
         assert_eq!(data.power_w, Availability::Unavailable);
         assert_eq!(data.efficiency_j_th, Availability::Unavailable);
         // Fields owned by other endpoints are untouched.
-        assert_eq!(data.mcr_percent, Availability::Available(90.0));
-        assert_eq!(data.fan_percent, Availability::Available(72.0));
+        assert_eq!(data.mcr_percent, Availability::Available(Percent(90.0)));
+        assert_eq!(data.fan_percent, Availability::Available(Percent(72.0)));
     }
 
     #[test]
     fn reset_all_clears_stale_miner_values_after_auth_changes() {
         let mut data = MinerData {
-            hashrate_ths: Availability::Available(4.0),
+            hashrate_ths: Availability::Available(TeraHashPerSecond(4.0)),
             temperature: Availability::Available(TemperatureRange {
-                board_c: 61.0,
-                chip_c: 74.0,
+                board: DegreeCelsius(61.0),
+                chip: DegreeCelsius(74.0),
             }),
-            power_w: Availability::Available(120.0),
-            efficiency_j_th: Availability::Available(21.5),
-            mcr_percent: Availability::Available(90.0),
-            fan_percent: Availability::Available(72.0),
-            uptime_s: Availability::Available(187_020),
+            power_w: Availability::Available(Watt(120.0)),
+            efficiency_j_th: Availability::Available(JoulePerTeraHash(21.5)),
+            mcr_percent: Availability::Available(Percent(90.0)),
+            fan_percent: Availability::Available(Percent(72.0)),
+            uptime_s: Availability::Available(Seconds(187_020)),
             ip_address: Availability::Available("192.168.1.42".to_owned()),
         };
         reset_all(&mut data);
@@ -223,7 +231,7 @@ mod tests {
         let Availability::Available(percent) = data.fan_percent else {
             panic!("BUG: fan percent should be available");
         };
-        assert!((percent - 72.0).abs() < 1e-9);
+        assert!((percent.raw() - 72.0).abs() < 1e-9);
     }
 }
 

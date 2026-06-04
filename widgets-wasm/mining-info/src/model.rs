@@ -1,5 +1,10 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
+use crate::units::{
+    Btc, DegreeCelsius, ExaHashPerSecond, JoulePerTeraHash, Percent, SatPerTeraHashDay, Seconds,
+    TeraHashPerSecond, Watt,
+};
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Availability<T> {
     Available(T),
@@ -27,35 +32,35 @@ impl<T> Availability<T> {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct MinerData {
-    pub(crate) hashrate_ths: Availability<f64>,
+    pub(crate) hashrate_ths: Availability<TeraHashPerSecond>,
     pub(crate) temperature: Availability<TemperatureRange>,
-    pub(crate) power_w: Availability<f64>,
-    pub(crate) efficiency_j_th: Availability<f64>,
-    pub(crate) mcr_percent: Availability<f64>,
-    pub(crate) fan_percent: Availability<f64>,
-    pub(crate) uptime_s: Availability<u64>,
+    pub(crate) power_w: Availability<Watt>,
+    pub(crate) efficiency_j_th: Availability<JoulePerTeraHash>,
+    pub(crate) mcr_percent: Availability<Percent>,
+    pub(crate) fan_percent: Availability<Percent>,
+    pub(crate) uptime_s: Availability<Seconds>,
     pub(crate) ip_address: Availability<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct TemperatureRange {
-    pub(crate) board_c: f64,
-    pub(crate) chip_c: f64,
+    pub(crate) board: DegreeCelsius,
+    pub(crate) chip: DegreeCelsius,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct PublicData {
     pub(crate) btc_price: Availability<Money>,
-    pub(crate) btc_change_24h_percent: Availability<f64>,
-    pub(crate) network_hashrate_ehs: Availability<f64>,
-    pub(crate) prev_diff_adjust_percent: Availability<f64>,
-    pub(crate) est_diff_adjust_percent: Availability<f64>,
-    pub(crate) epoch_progress_percent: Availability<f64>,
-    pub(crate) avg_fee_btc: Availability<f64>,
-    pub(crate) avg_fee_percent: Availability<f64>,
+    pub(crate) btc_change_24h_percent: Availability<Percent>,
+    pub(crate) network_hashrate_ehs: Availability<ExaHashPerSecond>,
+    pub(crate) prev_diff_adjust_percent: Availability<Percent>,
+    pub(crate) est_diff_adjust_percent: Availability<Percent>,
+    pub(crate) epoch_progress_percent: Availability<Percent>,
+    pub(crate) avg_fee_btc: Availability<Btc>,
+    pub(crate) avg_fee_percent: Availability<Percent>,
     pub(crate) block_height: Availability<u64>,
     pub(crate) hashprice: Availability<Money>,
-    pub(crate) hashvalue_sat_th_day: Availability<f64>,
+    pub(crate) hashvalue_sat_th_day: Availability<SatPerTeraHashDay>,
     // Chronological 1d price samples for the header sparkline. Empty until the
     // price-history endpoint replies; the chart is omitted while empty.
     pub(crate) btc_price_history: Vec<f64>,

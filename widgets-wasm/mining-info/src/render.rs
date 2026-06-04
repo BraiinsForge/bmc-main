@@ -10,6 +10,7 @@ use crate::chart;
 use crate::format;
 use crate::layout::{self, Viewport};
 use crate::model::{Availability, MinerData, PublicData};
+use crate::units::Quantity;
 
 pub(crate) mod round;
 
@@ -65,16 +66,15 @@ fn unit_visible(value: &str) -> bool {
 }
 
 fn value_with_unit(
-    value: String,
-    unit: Option<&'static str>,
+    value: format::Rendered,
     size: u32,
     align: TextAlign,
     value_color: Color,
     weight: FontWeight,
 ) -> Node {
-    let show_unit = unit_visible(&value);
-    let mut spans = vec![span(value, style!(color: value_color))];
-    if let Some(unit) = unit
+    let show_unit = unit_visible(&value.value);
+    let mut spans = vec![span(value.value, style!(color: value_color))];
+    if let Some(unit) = value.unit
         && show_unit
     {
         spans.push(span(bmc_wasm_sdk::fmt!("  {unit}"), style!(color: UNIT)));
@@ -85,12 +85,7 @@ fn value_with_unit(
     )
 }
 
-fn text_line(
-    name: &'static str,
-    value: String,
-    unit: Option<&'static str>,
-    sizes: layout::TextSizes,
-) -> Node {
+fn text_line(name: &'static str, value: format::Rendered, sizes: layout::TextSizes) -> Node {
     row(
         props!(cross_align: CrossAlign::Center),
         [
@@ -100,7 +95,6 @@ fn text_line(
             ),
             value_with_unit(
                 value,
-                unit,
                 sizes.value,
                 TextAlign::Right,
                 VALUE,
@@ -140,36 +134,20 @@ pub(crate) fn mining(size: RenderSize, miner: &MinerData) -> Node {
             text_line(
                 "Current Hashrate",
                 format::fixed(miner.hashrate_ths, 2),
-                Some("TH/s"),
                 sizes,
             ),
-            text_line(
-                "Temperature",
-                format::temperature(miner.temperature),
-                Some("°C"),
-                sizes,
-            ),
-            text_line(
-                "Power Consumption",
-                format::fixed(miner.power_w, 0),
-                Some("W"),
-                sizes,
-            ),
-            text_line("MCR", format::fixed(miner.mcr_percent, 1), Some("%"), sizes),
-            text_line(
-                "Fan Speed",
-                format::fixed(miner.fan_percent, 0),
-                Some("%"),
-                sizes,
-            ),
+            text_line("Temperature", format::temperature(miner.temperature), sizes),
+            text_line("Power Consumption", format::fixed(miner.power_w, 0), sizes),
+            text_line("MCR", format::fixed(miner.mcr_percent, 1), sizes),
+            text_line("Fan Speed", format::fixed(miner.fan_percent, 0), sizes),
             text_line(
                 "IP Address",
                 miner
                     .ip_address
                     .as_option()
                     .cloned()
-                    .unwrap_or_else(format::unavailable),
-                None,
+                    .unwrap_or_else(format::unavailable)
+                    .into(),
                 sizes,
             ),
         ],
@@ -184,33 +162,22 @@ pub(crate) fn geek(size: RenderSize, miner: &MinerData, public: &PublicData) -> 
             text_line(
                 "Current Hashrate",
                 format::fixed(miner.hashrate_ths, 2),
-                Some("TH/s"),
                 sizes,
             ),
-            text_line(
-                "Temperature",
-                format::temperature(miner.temperature),
-                Some("°C"),
-                sizes,
-            ),
-            text_line(
-                "Power Consumption",
-                format::fixed(miner.power_w, 0),
-                Some("W"),
-                sizes,
-            ),
-            text_line("Miner Uptime", format::uptime(miner.uptime_s), None, sizes),
+            text_line("Temperature", format::temperature(miner.temperature), sizes),
+            text_line("Power Consumption", format::fixed(miner.power_w, 0), sizes),
+            text_line("Miner Uptime", format::uptime(miner.uptime_s), sizes),
             text_line(
                 "IP Address",
                 miner
                     .ip_address
                     .as_option()
                     .cloned()
-                    .unwrap_or_else(format::unavailable),
-                None,
+                    .unwrap_or_else(format::unavailable)
+                    .into(),
                 sizes,
             ),
-            text_line("BTC Price", format::money(public.btc_price, 0), None, sizes),
+            text_line("BTC Price", format::money(public.btc_price, 0), sizes),
         ],
     )
 }
@@ -219,8 +186,7 @@ const BTC_PRICE_SIZE: u32 = 28;
 
 fn block(
     name: &'static str,
-    value: String,
-    unit: Option<&'static str>,
+    value: format::Rendered,
     metrics: layout::BlockLayout,
     value_color: Color,
     value_weight: FontWeight,
@@ -234,7 +200,6 @@ fn block(
             ),
             value_with_unit(
                 value,
-                unit,
                 metrics.text.value,
                 TextAlign::Left,
                 value_color,
@@ -244,25 +209,15 @@ fn block(
     )
 }
 
-fn text_block(
-    name: &'static str,
-    value: String,
-    unit: Option<&'static str>,
-    metrics: layout::BlockLayout,
-) -> Node {
-    block(name, value, unit, metrics, VALUE, FontWeight::REGULAR)
+fn text_block(name: &'static str, value: format::Rendered, metrics: layout::BlockLayout) -> Node {
+    block(name, value, metrics, VALUE, FontWeight::REGULAR)
 }
 
 // A block with no fixed cell: the col shrinks to its content so the value stays
 // on one line (an unconstrained paragraph measures single-line). The title is
 // left-aligned with the value; the block as a whole is centered between row
 // spacers by the round faces, which group blocks rather than aligning a grid.
-fn centered_block(
-    name: &'static str,
-    value: String,
-    unit: Option<&'static str>,
-    sizes: layout::TextSizes,
-) -> Node {
+fn centered_block(name: &'static str, value: format::Rendered, sizes: layout::TextSizes) -> Node {
     col(
         props!(),
         [
@@ -272,7 +227,6 @@ fn centered_block(
             ),
             value_with_unit(
                 value,
-                unit,
                 sizes.value,
                 TextAlign::Left,
                 VALUE,
@@ -286,24 +240,22 @@ fn centered_block(
 // row separated by " | " (see boser-assets text_block.slint).
 fn text_block_with_extra(
     name: &'static str,
-    value: String,
-    unit: Option<&'static str>,
-    extra_value: String,
-    extra_unit: Option<&'static str>,
+    value: format::Rendered,
+    extra_value: format::Rendered,
     metrics: layout::BlockLayout,
 ) -> Node {
-    let show_unit = unit_visible(&value);
-    let show_extra_unit = unit_visible(&extra_value);
-    let mut spans = vec![span(value, style!(color: VALUE))];
-    if let Some(unit) = unit
+    let show_unit = unit_visible(&value.value);
+    let show_extra_unit = unit_visible(&extra_value.value);
+    let mut spans = vec![span(value.value, style!(color: VALUE))];
+    if let Some(unit) = value.unit
         && show_unit
     {
         spans.push(span(bmc_wasm_sdk::fmt!("  {unit}"), style!(color: UNIT)));
     }
     spans.push(span(" | ", style!(color: UNIT)));
     spans.push(span(" ", style!(color: VALUE)));
-    spans.push(span(extra_value, style!(color: VALUE)));
-    if let Some(extra_unit) = extra_unit
+    spans.push(span(extra_value.value, style!(color: VALUE)));
+    if let Some(extra_unit) = extra_value.unit
         && show_extra_unit
     {
         spans.push(span(
@@ -364,13 +316,11 @@ pub(crate) fn network(size: RenderSize, public: &PublicData) -> Node {
             text_block(
                 "Network HR",
                 format::fixed(public.network_hashrate_ehs, 2),
-                Some("EH/s"),
                 metrics,
             ),
             text_block(
                 "Diff. Adjustment",
                 format::signed_percent(public.prev_diff_adjust_percent, 2),
-                Some("%"),
                 metrics,
             ),
         ],
@@ -382,13 +332,11 @@ pub(crate) fn network(size: RenderSize, public: &PublicData) -> Node {
                 text_block(
                     "Est. Diff. Adjustment",
                     format::signed_percent(public.est_diff_adjust_percent, 2),
-                    Some("%"),
                     metrics,
                 ),
                 text_block(
                     "Epoch Progress",
                     format::fixed(public.epoch_progress_percent, 0),
-                    Some("%"),
                     metrics,
                 ),
             ],
@@ -399,16 +347,13 @@ pub(crate) fn network(size: RenderSize, public: &PublicData) -> Node {
         text_block_with_extra(
             "Fees (144 Blocks)",
             format::approx_fixed(public.avg_fee_btc, 3),
-            Some("BTC"),
             format::fixed(public.avg_fee_percent, 1),
-            Some("%"),
             metrics,
         )
     } else {
         text_block(
             "Fees (144 Blocks)",
             format::approx_fixed(public.avg_fee_btc, 3),
-            Some("BTC"),
             metrics,
         )
     };
@@ -418,7 +363,6 @@ pub(crate) fn network(size: RenderSize, public: &PublicData) -> Node {
             text_block(
                 "Block Height",
                 format::public_integer(public.block_height),
-                None,
                 metrics,
             ),
         ],
@@ -428,16 +372,10 @@ pub(crate) fn network(size: RenderSize, public: &PublicData) -> Node {
         vec![
             text_block(
                 "Hashprice",
-                format::money(public.hashprice, 3),
-                Some("TH/Day"),
+                format::money(public.hashprice, 3).with_unit("TH/Day"),
                 metrics,
             ),
-            text_block(
-                "BTC Price",
-                format::money(public.btc_price, 0),
-                None,
-                metrics,
-            ),
+            text_block("BTC Price", format::money(public.btc_price, 0), metrics),
         ],
         metrics,
     ));
@@ -478,15 +416,14 @@ fn info_overload_header(
     metrics: layout::BlockLayout,
 ) -> Node {
     let change_color = match public.btc_change_24h_percent {
-        Availability::Available(value) if value >= 0.0 => GREEN_50,
+        Availability::Available(value) if value.raw() >= 0.0 => GREEN_50,
         Availability::Available(_) => RED_60,
         Availability::Unavailable => TITLE,
     };
 
     let mut blocks = vec![block(
         "Bitcoin (24h)",
-        format::signed_percent_unit(public.btc_change_24h_percent, 2),
-        None,
+        format::signed_percent_unit(public.btc_change_24h_percent, 2).into(),
         metrics,
         change_color,
         FontWeight::BOLD,
@@ -495,7 +432,7 @@ fn info_overload_header(
         blocks.push(price_chart(&public.btc_price_history, metrics));
     }
     blocks.push(text(
-        format::money(public.btc_price, 0),
+        format::money(public.btc_price, 0).value,
         style!(
             size: BTC_PRICE_SIZE,
             weight: FontWeight::BOLD,
@@ -521,22 +458,11 @@ fn info_overload_primary_row(
 ) -> Node {
     block_row(
         vec![
-            text_block(
-                "Hashrate",
-                format::fixed(miner.hashrate_ths, 2),
-                Some("TH/s"),
-                metrics,
-            ),
-            text_block(
-                "Power Consump.",
-                format::fixed(miner.power_w, 0),
-                Some("W"),
-                metrics,
-            ),
+            text_block("Hashrate", format::fixed(miner.hashrate_ths, 2), metrics),
+            text_block("Power Consump.", format::fixed(miner.power_w, 0), metrics),
             text_block(
                 "Block Height",
                 format::public_integer(public.block_height),
-                None,
                 metrics,
             ),
         ],
@@ -550,19 +476,16 @@ fn info_overload_difficulty_row(public: &PublicData, metrics: layout::BlockLayou
             text_block(
                 "Est. Diff. Adjust.",
                 format::signed_percent(public.est_diff_adjust_percent, 2),
-                Some("%"),
                 metrics,
             ),
             text_block(
                 "Prev. Diff. Adjust.",
                 format::signed_percent(public.prev_diff_adjust_percent, 2),
-                Some("%"),
                 metrics,
             ),
             text_block(
                 "Epoch Progress",
                 format::fixed(public.epoch_progress_percent, 0),
-                Some("%"),
                 metrics,
             ),
         ],
@@ -579,22 +502,15 @@ fn info_overload_bottom_row(
     if fields.show_fee_percent && fields.show_hashvalue {
         return block_row(
             vec![
-                text_block(
-                    "Miner Uptime",
-                    format::uptime(miner.uptime_s),
-                    None,
-                    metrics,
-                ),
+                text_block("Miner Uptime", format::uptime(miner.uptime_s), metrics),
                 text_block(
                     "Fees (144 Blocks)",
                     format::approx_fixed(public.avg_fee_percent, 1),
-                    Some("%"),
                     metrics,
                 ),
                 text_block(
                     "Hashvalue",
                     format::fixed_strip_zero_fraction(public.hashvalue_sat_th_day, 2),
-                    Some("SAT/TH/Day"),
                     metrics,
                 ),
             ],
@@ -603,12 +519,7 @@ fn info_overload_bottom_row(
     }
     block_row(
         vec![
-            text_block(
-                "Miner Uptime",
-                format::uptime(miner.uptime_s),
-                None,
-                metrics,
-            ),
+            text_block("Miner Uptime", format::uptime(miner.uptime_s), metrics),
             fixed_width(metrics.block_width),
             fixed_width(metrics.block_width),
         ],

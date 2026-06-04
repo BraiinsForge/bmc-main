@@ -1,11 +1,30 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
 use crate::model::{Availability, Currency, Money, TemperatureRange};
+use crate::units::{DegreeCelsius, Quantity, Seconds};
 
 pub(crate) const NOT_AVAILABLE: &str = "N/A";
 
 pub(crate) fn unavailable() -> String {
     NOT_AVAILABLE.to_owned()
+}
+
+pub(crate) struct Rendered {
+    pub(crate) value: String,
+    pub(crate) unit: Option<&'static str>,
+}
+
+impl From<String> for Rendered {
+    fn from(value: String) -> Self {
+        Self { value, unit: None }
+    }
+}
+
+impl Rendered {
+    pub(crate) fn with_unit(mut self, unit: &'static str) -> Self {
+        self.unit = Some(unit);
+        self
+    }
 }
 
 fn push_int(out: &mut String, value: u64) {
@@ -57,89 +76,109 @@ fn group(magnitude: f64, decimals: u32) -> String {
     out
 }
 
-pub(crate) fn fixed(value: Availability<f64>, decimals: u32) -> String {
+pub(crate) fn fixed<Q: Quantity>(value: Availability<Q>, decimals: u32) -> Rendered {
     match value {
         Availability::Available(value) => {
+            let value = value.raw();
             let mut out = String::new();
             if value < 0.0 {
                 out.push('-');
             }
             out.push_str(&group(value.abs(), decimals));
-            out
+            Rendered {
+                value: out,
+                unit: Some(Q::UNIT),
+            }
         }
-        Availability::Unavailable => unavailable(),
+        Availability::Unavailable => unavailable().into(),
     }
 }
 
-pub(crate) fn fixed_strip_zero_fraction(value: Availability<f64>, decimals: u32) -> String {
+pub(crate) fn fixed_strip_zero_fraction<Q: Quantity>(
+    value: Availability<Q>,
+    decimals: u32,
+) -> Rendered {
     let mut out = fixed(value, decimals);
-    if decimals == 0 || out == NOT_AVAILABLE {
+    if decimals == 0 || out.value == NOT_AVAILABLE {
         return out;
     }
-    if out.ends_with(&"0".repeat(decimals as usize)) {
-        out.truncate(out.len() - decimals as usize);
-        out.pop();
+    if out.value.ends_with(&"0".repeat(decimals as usize)) {
+        out.value.truncate(out.value.len() - decimals as usize);
+        out.value.pop();
     }
     out
 }
 
-pub(crate) fn approx_fixed(value: Availability<f64>, decimals: u32) -> String {
+pub(crate) fn approx_fixed<Q: Quantity>(value: Availability<Q>, decimals: u32) -> Rendered {
     match value {
         Availability::Available(_) => {
             let mut out = String::from("~ ");
-            out.push_str(&fixed(value, decimals));
-            out
+            out.push_str(&fixed(value, decimals).value);
+            Rendered {
+                value: out,
+                unit: Some(Q::UNIT),
+            }
         }
-        Availability::Unavailable => unavailable(),
+        Availability::Unavailable => unavailable().into(),
     }
 }
 
-pub(crate) fn signed_percent(value: Availability<f64>, decimals: u32) -> String {
+pub(crate) fn signed_percent<Q: Quantity>(value: Availability<Q>, decimals: u32) -> Rendered {
     match value {
         Availability::Available(value) => {
+            let value = value.raw();
             let mut out = String::new();
             out.push(if value >= 0.0 { '+' } else { '-' });
             out.push_str(&group(value.abs(), decimals));
-            out
+            Rendered {
+                value: out,
+                unit: Some(Q::UNIT),
+            }
         }
-        Availability::Unavailable => unavailable(),
+        Availability::Unavailable => unavailable().into(),
     }
 }
 
-pub(crate) fn signed_percent_unit(value: Availability<f64>, decimals: u32) -> String {
+pub(crate) fn signed_percent_unit<Q: Quantity>(value: Availability<Q>, decimals: u32) -> String {
     let Availability::Available(_) = value else {
         return unavailable();
     };
-    let mut out = signed_percent(value, decimals);
+    let mut out = signed_percent(value, decimals).value;
     out.push('%');
     out
 }
 
-pub(crate) fn temperature(value: Availability<TemperatureRange>) -> String {
+pub(crate) fn temperature(value: Availability<TemperatureRange>) -> Rendered {
     match value {
         Availability::Available(value) => {
             let mut out = String::new();
-            push_fixed_abs(&mut out, value.board_c, 0);
+            push_fixed_abs(&mut out, value.board.raw(), 0);
             out.push('-');
-            push_fixed_abs(&mut out, value.chip_c, 0);
-            out
+            push_fixed_abs(&mut out, value.chip.raw(), 0);
+            Rendered {
+                value: out,
+                unit: Some(DegreeCelsius::UNIT),
+            }
         }
-        Availability::Unavailable => unavailable(),
+        Availability::Unavailable => unavailable().into(),
     }
 }
 
-pub(crate) fn chip_temperature(value: Availability<TemperatureRange>) -> String {
+pub(crate) fn chip_temperature(value: Availability<TemperatureRange>) -> Rendered {
     match value {
         Availability::Available(value) => {
             let mut out = String::new();
-            push_fixed_abs(&mut out, value.chip_c, 0);
-            out
+            push_fixed_abs(&mut out, value.chip.raw(), 0);
+            Rendered {
+                value: out,
+                unit: Some(DegreeCelsius::UNIT),
+            }
         }
-        Availability::Unavailable => unavailable(),
+        Availability::Unavailable => unavailable().into(),
     }
 }
 
-pub(crate) fn money(value: Availability<Money>, decimals: u32) -> String {
+pub(crate) fn money(value: Availability<Money>, decimals: u32) -> Rendered {
     match value {
         Availability::Available(Money { currency, value }) => {
             let symbol = match currency {
@@ -149,9 +188,9 @@ pub(crate) fn money(value: Availability<Money>, decimals: u32) -> String {
             let mut out = String::from(symbol);
             out.push(' ');
             out.push_str(&group(value.abs(), decimals));
-            out
+            out.into()
         }
-        Availability::Unavailable => unavailable(),
+        Availability::Unavailable => unavailable().into(),
     }
 }
 
@@ -177,7 +216,7 @@ pub(crate) fn money_amount(value: Availability<Money>, decimals: u32) -> String 
     }
 }
 
-pub(crate) fn public_integer(value: Availability<u64>) -> String {
+pub(crate) fn public_integer(value: Availability<u64>) -> Rendered {
     match value {
         Availability::Available(value) => {
             #[expect(
@@ -185,16 +224,17 @@ pub(crate) fn public_integer(value: Availability<u64>) -> String {
                 reason = "block height stays well within f64's exact integer range"
             )]
             let magnitude = value as f64;
-            group(magnitude, 0)
+            group(magnitude, 0).into()
         }
-        Availability::Unavailable => unavailable(),
+        Availability::Unavailable => unavailable().into(),
     }
 }
 
-pub(crate) fn uptime(value: Availability<u64>) -> String {
+pub(crate) fn uptime(value: Availability<Seconds>) -> Rendered {
     let Availability::Available(total) = value else {
-        return unavailable();
+        return unavailable().into();
     };
+    let total = total.raw();
     let days = total / 86_400;
     let hours = (total % 86_400) / 3_600;
     let minutes = (total % 3_600) / 60;
@@ -215,51 +255,64 @@ pub(crate) fn uptime(value: Availability<u64>) -> String {
         push_int(&mut out, minutes);
         out.push('m');
     }
-    out
+    out.into()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::units::{DegreeCelsius, Percent, Watt};
 
     #[test]
     fn formats_temperature_range_like_boser() {
         let range = TemperatureRange {
-            board_c: 61.2,
-            chip_c: 74.4,
+            board: DegreeCelsius(61.2),
+            chip: DegreeCelsius(74.4),
         };
-        assert_eq!(temperature(Availability::Available(range)), "61-74");
+        assert_eq!(temperature(Availability::Available(range)).value, "61-74");
     }
 
     #[test]
     fn formats_chip_temperature_as_single_value() {
         let range = TemperatureRange {
-            board_c: 61.2,
-            chip_c: 74.4,
+            board: DegreeCelsius(61.2),
+            chip: DegreeCelsius(74.4),
         };
-        assert_eq!(chip_temperature(Availability::Available(range)), "74");
-        assert_eq!(chip_temperature(Availability::Unavailable), "N/A");
+        assert_eq!(chip_temperature(Availability::Available(range)).value, "74");
+        assert_eq!(chip_temperature(Availability::Unavailable).value, "N/A");
     }
 
     #[test]
     fn formats_signed_percent_with_explicit_sign() {
-        assert_eq!(signed_percent(Availability::Available(1.82), 2), "+1.82");
-        assert_eq!(signed_percent(Availability::Available(-0.77), 2), "-0.77");
+        assert_eq!(
+            signed_percent(Availability::Available(Percent(1.82)), 2).value,
+            "+1.82"
+        );
+        assert_eq!(
+            signed_percent(Availability::Available(Percent(-0.77)), 2).value,
+            "-0.77"
+        );
     }
 
     #[test]
     fn signed_percent_unit_omits_percent_when_unavailable() {
         assert_eq!(
-            signed_percent_unit(Availability::Available(1.82), 2),
+            signed_percent_unit(Availability::Available(Percent(1.82)), 2),
             "+1.82%"
         );
-        assert_eq!(signed_percent_unit(Availability::Unavailable, 2), "N/A");
+        assert_eq!(
+            signed_percent_unit(Availability::<Percent>::Unavailable, 2),
+            "N/A"
+        );
     }
 
     #[test]
     fn formats_uptime_compactly() {
-        assert_eq!(uptime(Availability::Available(187_020)), "2d 3h 57m");
-        assert_eq!(uptime(Availability::Unavailable), "N/A");
+        assert_eq!(
+            uptime(Availability::Available(Seconds(187_020))).value,
+            "2d 3h 57m"
+        );
+        assert_eq!(uptime(Availability::Unavailable).value, "N/A");
     }
 
     #[test]
@@ -268,7 +321,7 @@ mod tests {
             currency: Currency::Usd,
             value: 104_250.4,
         };
-        assert_eq!(money(Availability::Available(usd), 0), "$ 104250");
+        assert_eq!(money(Availability::Available(usd), 0).value, "$ 104250");
     }
 
     #[test]
@@ -286,28 +339,60 @@ mod tests {
     #[test]
     fn strips_zero_fraction_from_fixed_value() {
         assert_eq!(
-            fixed_strip_zero_fraction(Availability::Available(50.0), 2),
+            fixed_strip_zero_fraction(Availability::Available(Percent(50.0)), 2).value,
             "50"
         );
         assert_eq!(
-            fixed_strip_zero_fraction(Availability::Available(50.25), 2),
+            fixed_strip_zero_fraction(Availability::Available(Percent(50.25)), 2).value,
             "50.25"
         );
         assert_eq!(
-            fixed_strip_zero_fraction(Availability::Unavailable, 2),
+            fixed_strip_zero_fraction(Availability::<Percent>::Unavailable, 2).value,
             "N/A"
         );
     }
 
     #[test]
     fn formats_approximate_fixed_value_like_boser() {
-        assert_eq!(approx_fixed(Availability::Available(0.1234), 3), "~ 0.123");
-        assert_eq!(approx_fixed(Availability::Unavailable, 3), "N/A");
+        assert_eq!(
+            approx_fixed(Availability::Available(Percent(0.1234)), 3).value,
+            "~ 0.123"
+        );
+        assert_eq!(
+            approx_fixed(Availability::<Percent>::Unavailable, 3).value,
+            "N/A"
+        );
     }
 
     #[test]
     fn unavailable_public_integer_reads_not_available() {
-        assert_eq!(public_integer(Availability::Available(870_123)), "870123");
-        assert_eq!(public_integer(Availability::Unavailable), "N/A");
+        assert_eq!(
+            public_integer(Availability::Available(870_123)).value,
+            "870123"
+        );
+        assert_eq!(public_integer(Availability::Unavailable).value, "N/A");
+    }
+
+    #[test]
+    fn fixed_sources_unit_from_the_quantity_type() {
+        let rendered = fixed(Availability::Available(Watt(120.0)), 0);
+        assert_eq!(rendered.value, "120");
+        assert_eq!(rendered.unit, Some("W"));
+    }
+
+    #[test]
+    fn unavailable_quantity_has_no_unit() {
+        let rendered = fixed(Availability::<Watt>::Unavailable, 0);
+        assert_eq!(rendered.value, "N/A");
+        assert_eq!(rendered.unit, None);
+    }
+
+    #[test]
+    fn temperature_range_unit_is_celsius() {
+        let range = TemperatureRange {
+            board: DegreeCelsius(61.0),
+            chip: DegreeCelsius(74.0),
+        };
+        assert_eq!(temperature(Availability::Available(range)).unit, Some("°C"));
     }
 }
