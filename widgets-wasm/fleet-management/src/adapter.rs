@@ -4,6 +4,7 @@ use bmc_wasm_sdk::ufmt;
 
 use crate::device::DeviceIdentity;
 use crate::discovery::JsonLookup;
+use crate::model::ModelAccumulator;
 use crate::telemetry::TelemetryReading;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +36,10 @@ pub trait FamilyAdapter {
         reading: &mut TelemetryReading,
     );
     fn reset_telemetry(&self, endpoint: &str, reading: &mut TelemetryReading);
+
+    /// Fill model fields from one telemetry response. Default no-op so families
+    /// that do not report a model are unaffected.
+    fn parse_model(&self, _endpoint: &str, _json: &dyn JsonLookup, _model: &mut ModelAccumulator) {}
 
     // Authentication — default NONE. Auth families (BOS) override these;
     // no-auth families (Bitaxe) inherit the defaults and fetch unauthenticated.

@@ -5,6 +5,7 @@ use bmc_wasm_sdk::ufmt;
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
 use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};
 use crate::discovery::{JsonLookup, extract_endpoint};
+use crate::model::ModelAccumulator;
 use crate::telemetry::TelemetryReading;
 
 const EP_STATS: &str = "/miner/stats";
@@ -151,6 +152,49 @@ impl FamilyAdapter for BosAdapter {
             }
             EP_HASHBOARDS => reading.temperature_c = None,
             EP_DETAILS => reading.uptime_s = None,
+            _ => {}
+        }
+    }
+
+    fn parse_model(&self, endpoint: &str, json: &dyn JsonLookup, model: &mut ModelAccumulator) {
+        match endpoint {
+            EP_DETAILS => {
+                if let Some(slug) = json.i64("/platform").and_then(platform_slug) {
+                    model.id = Some(slug.to_owned());
+                }
+                if let Some(name) = json
+                    .str("/miner_identity/miner_model")
+                    .filter(|s| !s.is_empty())
+                {
+                    model.name = Some(name);
+                }
+            }
+            EP_HASHBOARDS => {
+                let mut total: Option<u32> = None;
+                let mut i = 0usize;
+                loop {
+                    let type_path = bmc_wasm_sdk::fmt!("/hashboards/{}/chip_type", i);
+                    let count_path = bmc_wasm_sdk::fmt!("/hashboards/{}/chips_count", i);
+                    let chip_type = json.str(&type_path).filter(|s| !s.is_empty());
+                    let chips = json.i64(&count_path).and_then(|v| u32::try_from(v).ok());
+                    // Stop at the first absent board. This assumes a populated
+                    // board never reports both an absent chip type and count;
+                    // BOS serializes both for every present hashboard.
+                    if chip_type.is_none() && chips.is_none() {
+                        break;
+                    }
+                    if model.chip_type.is_none() {
+                        model.chip_type = chip_type;
+                    }
+                    if let Some(chips) = chips {
+                        total = Some(total.unwrap_or(0).saturating_add(chips));
+                    }
+                    i += 1;
+                }
+                if total.is_some() {
+                    model.chip_count = total;
+                }
+            }
             _ => {}
         }
     }
@@ -311,5 +355,39 @@ mod tests {
     fn platform_slug_rejects_unspecified_and_unknown() {
         assert_eq!(platform_slug(0), None);
         assert_eq!(platform_slug(99), None);
+    }
+
+    #[test]
+    fn parses_details_into_id_and_name() {
+        let mut j = MapJson::default();
+        j.ints.insert("/platform", 8);
+        j.strings.insert("/miner_identity/miner_model", "BMM 101");
+        let mut acc = ModelAccumulator::default();
+        BosAdapter.parse_model("/miner/details", &j, &mut acc);
+        assert_eq!(acc.id.as_deref(), Some("stm32mp157c-ii2-bmm1"));
+        assert_eq!(acc.name.as_deref(), Some("BMM 101"));
+    }
+
+    #[test]
+    fn details_without_miner_model_leaves_name_none() {
+        let mut j = MapJson::default();
+        j.ints.insert("/platform", 2);
+        let mut acc = ModelAccumulator::default();
+        BosAdapter.parse_model("/miner/details", &j, &mut acc);
+        assert_eq!(acc.id.as_deref(), Some("am2-s17"));
+        assert_eq!(acc.name, None);
+    }
+
+    #[test]
+    fn parses_hashboards_into_chip_type_and_summed_count() {
+        let mut j = MapJson::default();
+        j.strings.insert("/hashboards/0/chip_type", "BM1370");
+        j.ints.insert("/hashboards/0/chips_count", 76);
+        j.strings.insert("/hashboards/1/chip_type", "BM1368");
+        j.ints.insert("/hashboards/1/chips_count", 70);
+        let mut acc = ModelAccumulator::default();
+        BosAdapter.parse_model("/miner/hw/hashboards", &j, &mut acc);
+        assert_eq!(acc.chip_type.as_deref(), Some("BM1370"));
+        assert_eq!(acc.chip_count, Some(146));
     }
 }
