@@ -1,6 +1,21 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-use crate::device::DeviceId;
+use crate::adapter::FamilyAdapter;
+use crate::device::{DeviceFamily, DeviceId};
+use crate::families::bos::BosAdapter;
+use crate::families::ubos::UbosAdapter;
+
+/// Map a device family to its adapter. `None` for a family with no adapter yet
+/// (Bitaxe); the driver then marks such a device unreachable rather than
+/// assuming the family is never discovered.
+#[must_use]
+pub fn adapter_for(family: DeviceFamily) -> Option<&'static dyn FamilyAdapter> {
+    match family {
+        DeviceFamily::Bos => Some(&BosAdapter),
+        DeviceFamily::Ubos => Some(&UbosAdapter),
+        DeviceFamily::Bitaxe => None,
+    }
+}
 
 /// A one-pass cursor over a snapshot of device ids. Snapshotting at pass start
 /// means devices added or removed mid-pass are only seen on the next pass.
@@ -46,10 +61,9 @@ mod driver {
     use bmc_wasm_sdk::ufmt;
     use bmc_wasm_sdk::{FetchRequest, fmt, log_warn, request_frame, request_frame_after};
 
-    use super::{PassCursor, pass_reachable};
+    use super::{PassCursor, adapter_for, pass_reachable};
     use crate::adapter::FamilyAdapter;
-    use crate::device::DeviceId;
-    use crate::families::bos::BosAdapter;
+    use crate::device::{DeviceFamily, DeviceId};
     use crate::manifest_params::Params;
     use crate::model::ModelAccumulator;
     use crate::telemetry::TelemetryReading;
@@ -100,17 +114,22 @@ mod driver {
         static TOKENS: RefCell<HashMap<DeviceId, String>> = RefCell::new(HashMap::new());
     }
 
-    fn base_url(host: &str, port: u16) -> String {
-        fmt!("http://{}:{}{}", host, port, BosAdapter.api_base_path())
+    fn base_url(adapter: &dyn FamilyAdapter, host: &str, port: u16) -> String {
+        fmt!("http://{}:{}{}", host, port, adapter.api_base_path())
     }
 
-    /// Look up the host/port for the cursor's current device.
-    fn current_endpoint() -> Option<(DeviceId, String, u16)> {
+    /// Look up the family, host, and port for the cursor's current device.
+    fn current_endpoint() -> Option<(DeviceId, DeviceFamily, String, u16)> {
         let id = DRIVER.with(|d| d.borrow().cursor.as_ref()?.current().cloned())?;
         crate::DEVICES.with(|devs| {
             let devs = devs.borrow();
             let dev = devs.iter().find(|d| d.identity.id == id)?;
-            Some((id.clone(), dev.identity.host.clone(), dev.identity.port))
+            Some((
+                id.clone(),
+                dev.identity.family,
+                dev.identity.host.clone(),
+                dev.identity.port,
+            ))
         })
     }
 
@@ -179,6 +198,21 @@ mod driver {
             request_frame_after(remaining.max(1));
             return;
         }
+        // A device whose family has no adapter yet cannot be polled. `upsert`
+        // left it reachable, so mark it unreachable with cleared telemetry and
+        // move on, rather than assuming the family is never discovered.
+        if let Some((id, family, _, _)) = current_endpoint()
+            && adapter_for(family).is_none()
+        {
+            log_warn!("fleet: no adapter for discovered device family; marking unreachable");
+            crate::DEVICES.with(|devs| {
+                devs.borrow_mut()
+                    .apply_telemetry(&id, TelemetryReading::default(), false);
+            });
+            request_frame();
+            advance_device();
+            return;
+        }
         DRIVER.with(|d| {
             let mut d = d.borrow_mut();
             d.endpoint_idx = 0;
@@ -190,22 +224,28 @@ mod driver {
         fetch_endpoint();
     }
 
-    /// GET the current endpoint, attaching the auth header only if a token is
-    /// already cached. No-auth families simply never have one cached.
+    /// GET the current endpoint via its family adapter, attaching the adapter's
+    /// proactive credential header if any, else a cached token if present.
     fn fetch_endpoint() {
-        let endpoints = BosAdapter.telemetry_endpoints();
+        let Some((id, family, host, port)) = current_endpoint() else {
+            advance_device();
+            return;
+        };
+        let Some(adapter) = adapter_for(family) else {
+            advance_device();
+            return;
+        };
+        let endpoints = adapter.telemetry_endpoints();
         let idx = DRIVER.with(|d| d.borrow().endpoint_idx);
         if idx >= endpoints.len() {
             finalize_device();
             return;
         }
-        let Some((id, host, port)) = current_endpoint() else {
-            advance_device();
-            return;
-        };
-        let url = fmt!("{}{}", base_url(&host, port), endpoints[idx]);
+        let url = fmt!("{}{}", base_url(adapter, &host, port), endpoints[idx]);
         let token = TOKENS.with(|t| t.borrow().get(&id).cloned());
-        let header = token.map(|t| BosAdapter.auth_header(&t));
+        let header = adapter
+            .credential_header()
+            .or_else(|| token.map(|t| adapter.auth_header(&t)));
         if FetchRequest::get(&url)
             .headers_opt(header.as_deref())
             .send(on_endpoint)
@@ -219,21 +259,27 @@ mod driver {
     /// React to a telemetry reply: re-authenticate on an adapter-reported auth
     /// error (once per device per pass), else fold or reset the endpoint.
     fn on_endpoint(response: &bmc_wasm_sdk::FetchResponse) {
-        let endpoints = BosAdapter.telemetry_endpoints();
+        let Some((id, family, _, _)) = current_endpoint() else {
+            advance_device();
+            return;
+        };
+        let Some(adapter) = adapter_for(family) else {
+            advance_device();
+            return;
+        };
+        let endpoints = adapter.telemetry_endpoints();
         let idx = DRIVER.with(|d| d.borrow().endpoint_idx);
         let Some(ep) = endpoints.get(idx) else {
             advance_device();
             return;
         };
 
-        let can_reauth = BosAdapter.auth_endpoint().is_some()
-            && BosAdapter.is_auth_error(response.status)
+        let can_reauth = adapter.auth_endpoint().is_some()
+            && adapter.is_auth_error(response.status)
             && !DRIVER.with(|d| d.borrow().reauthed);
         if can_reauth {
             DRIVER.with(|d| d.borrow_mut().reauthed = true);
-            if let Some((id, _, _)) = current_endpoint() {
-                TOKENS.with(|t| t.borrow_mut().remove(&id));
-            }
+            TOKENS.with(|t| t.borrow_mut().remove(&id));
             login_then_retry();
             return;
         }
@@ -243,12 +289,12 @@ mod driver {
             DRIVER.with(|d| {
                 let mut d = d.borrow_mut();
                 let d = &mut *d;
-                BosAdapter.parse_telemetry(ep, &doc, &mut d.reading);
-                BosAdapter.parse_model(ep, &doc, &mut d.model);
+                adapter.parse_telemetry(ep, &doc, &mut d.reading);
+                adapter.parse_model(ep, &doc, &mut d.model);
             });
             record_endpoint(true);
         } else {
-            DRIVER.with(|d| BosAdapter.reset_telemetry(ep, &mut d.borrow_mut().reading));
+            DRIVER.with(|d| adapter.reset_telemetry(ep, &mut d.borrow_mut().reading));
             record_endpoint(false);
         }
     }
@@ -256,17 +302,21 @@ mod driver {
     /// Log in with the shared password, then retry the SAME endpoint with the
     /// fresh token. A failed login leaves the endpoint as N/A and advances.
     fn login_then_retry() {
-        let Some((_, host, port)) = current_endpoint() else {
+        let Some((_, family, host, port)) = current_endpoint() else {
             advance_device();
             return;
         };
-        let Some(auth_path) = BosAdapter.auth_endpoint() else {
+        let Some(adapter) = adapter_for(family) else {
+            advance_device();
+            return;
+        };
+        let Some(auth_path) = adapter.auth_endpoint() else {
             record_endpoint(false);
             return;
         };
         let password = Params::current().miner_password;
-        let url = fmt!("{}{}", base_url(&host, port), auth_path);
-        let body = BosAdapter.login_body(&password);
+        let url = fmt!("{}{}", base_url(adapter, &host, port), auth_path);
+        let body = adapter.login_body(&password);
         if FetchRequest::post(&url)
             .headers("Content-Type: application/json")
             .body(body.as_bytes())
@@ -279,21 +329,29 @@ mod driver {
     }
 
     fn on_login(response: &bmc_wasm_sdk::FetchResponse) {
+        let Some((id, family, _, _)) = current_endpoint() else {
+            advance_device();
+            return;
+        };
+        let Some(adapter) = adapter_for(family) else {
+            advance_device();
+            return;
+        };
         let token = if response.ok() {
-            BosAdapter.parse_login(&response.json())
+            adapter.parse_login(&response.json())
         } else {
             None
         };
-        if let (Some((id, _, _)), Some(token)) = (current_endpoint(), token) {
+        if let Some(token) = token {
             TOKENS.with(|t| t.borrow_mut().insert(id, token));
             // Retry the same endpoint (endpoint_idx unchanged) with the token.
             fetch_endpoint();
         } else {
             // Login failed: this endpoint is N/A; move on.
-            let endpoints = BosAdapter.telemetry_endpoints();
+            let endpoints = adapter.telemetry_endpoints();
             let idx = DRIVER.with(|d| d.borrow().endpoint_idx);
             if let Some(ep) = endpoints.get(idx) {
-                DRIVER.with(|d| BosAdapter.reset_telemetry(ep, &mut d.borrow_mut().reading));
+                DRIVER.with(|d| adapter.reset_telemetry(ep, &mut d.borrow_mut().reading));
             }
             record_endpoint(false);
         }
@@ -405,5 +463,18 @@ mod tests {
         assert!(!pass_reachable(&[]));
         assert!(!pass_reachable(&[false, false]));
         assert!(pass_reachable(&[false, true, false]));
+    }
+
+    #[test]
+    fn adapter_for_maps_known_families_and_rejects_bitaxe() {
+        assert_eq!(
+            adapter_for(DeviceFamily::Bos).map(FamilyAdapter::browse_service_types),
+            Some(crate::families::bos::BOS_SERVICE_TYPES)
+        );
+        assert_eq!(
+            adapter_for(DeviceFamily::Ubos).map(FamilyAdapter::browse_service_types),
+            Some(crate::families::ubos::UBOS_SERVICE_TYPES)
+        );
+        assert!(adapter_for(DeviceFamily::Bitaxe).is_none());
     }
 }
