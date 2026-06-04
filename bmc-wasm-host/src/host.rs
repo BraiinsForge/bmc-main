@@ -1,9 +1,14 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-use bmc_gpu_render_lock::{GpuRenderLock, GpuRenderLockGuard};
+use bmc_gpu_render_lock::{
+    GlSyncEntryPoints, GpuCompletionWaitStrategy, GpuRenderLock, GpuRenderLockGuard,
+    detect_gpu_completion_wait_strategy,
+};
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_widget::egl::{EglContext, SharedRenderScratch};
 use glow::HasContext;
+
+const FENCE_WAIT_TIMEOUT_NS: i32 = 1_000_000;
 
 /// State shared across all widget slots within a host.
 ///
@@ -19,6 +24,7 @@ pub struct SharedHost {
     pub scratch: SharedRenderScratch,
     pub font_cache: FontCache,
     gpu_render_lock: GpuRenderLock,
+    gl_sync_support: GpuCompletionWaitStrategy,
 }
 
 #[derive(Debug, Default)]
@@ -32,6 +38,7 @@ impl SharedHost {
             "initializing shared wasm host renderer"
         );
         let egl = EglContext::new()?;
+        let gl_sync_support = Self::detect_gl_sync_support(&egl);
         let scratch = SharedRenderScratch::new(&egl, display_max_w, display_max_h)?;
         let gpu_render_lock = GpuRenderLock::from_env()?;
         let renderer = unsafe {
@@ -50,6 +57,7 @@ impl SharedHost {
                 scratch,
                 font_cache: FontCache,
                 gpu_render_lock,
+                gl_sync_support,
             },
             renderer,
         ))
@@ -60,12 +68,79 @@ impl SharedHost {
         self.scratch.blit_to(&self.egl, dest_fbo, w, h);
     }
 
-    /// Submit pending GL commands to the driver without blocking.
-    pub fn flush_gl(&self) {
+    /// Submit pending GL commands and wait for GPU completion before handing
+    /// exported buffers to the compositor.
+    pub fn flush_and_wait_gl(&self) {
+        match self.gl_sync_support {
+            GpuCompletionWaitStrategy::GlFenceSync => self.wait_for_gl_fence(),
+            GpuCompletionWaitStrategy::EglFenceSync => self.wait_for_egl_fence(),
+            GpuCompletionWaitStrategy::Finish => unsafe {
+                self.egl.gl().finish();
+            },
+        }
+    }
+
+    fn detect_gl_sync_support(egl: &EglContext) -> GpuCompletionWaitStrategy {
         // SAFETY: `EglContext::new` calls `make_current`; the context remains
         // current on this thread for the lifetime of `SharedHost`.
+        let version = unsafe { egl.gl().get_parameter_string(glow::VERSION) };
+        let gl_extensions = unsafe { egl.gl().get_parameter_string(glow::EXTENSIONS) };
+        detect_gpu_completion_wait_strategy(
+            &version,
+            &gl_extensions,
+            egl.egl_extensions(),
+            GlSyncEntryPoints::load_with(EglContext::get_proc_address),
+        )
+    }
+
+    fn wait_for_egl_fence(&self) {
+        if let Err(e) = self.egl.wait_for_egl_fence() {
+            tracing::warn!(?e, "EGL fence wait failed; falling back to glFinish");
+            unsafe {
+                self.egl.gl().finish();
+            }
+        }
+    }
+
+    fn wait_for_gl_fence(&self) {
+        // SAFETY: `EglContext::new` calls `make_current`; the context remains
+        // current on this thread for the lifetime of `SharedHost`.
+        let gl = self.egl.gl();
+        let fence = match unsafe { gl.fence_sync(glow::SYNC_GPU_COMMANDS_COMPLETE, 0) } {
+            Ok(fence) => fence,
+            Err(e) => {
+                tracing::warn!(?e, "GL fence creation failed; falling back to glFinish");
+                unsafe {
+                    gl.finish();
+                }
+                return;
+            }
+        };
         unsafe {
-            self.egl.gl().flush();
+            gl.flush();
+        }
+        loop {
+            match unsafe { gl.client_wait_sync(fence, 0, FENCE_WAIT_TIMEOUT_NS) } {
+                glow::ALREADY_SIGNALED | glow::CONDITION_SATISFIED => break,
+                glow::TIMEOUT_EXPIRED => continue,
+                glow::WAIT_FAILED => {
+                    tracing::warn!("GL fence wait failed; falling back to glFinish");
+                    unsafe {
+                        gl.finish();
+                    }
+                    break;
+                }
+                status => {
+                    tracing::warn!(status, "GL fence wait returned unexpected status");
+                    unsafe {
+                        gl.finish();
+                    }
+                    break;
+                }
+            }
+        }
+        unsafe {
+            gl.delete_sync(fence);
         }
     }
 

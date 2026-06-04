@@ -538,11 +538,11 @@ impl WidgetSlot {
             HostRenderProfiling::log_phase(&self.wasm_basename, "staging_blit", phase_start);
 
             let phase_start = HostRenderProfiling::start_phase();
-            // Implicit dmabuf sync is provided downstream by the compositor /
-            // Wayland producer-consumer path; we only need the GL commands in
-            // flight, not completed, before export_and_swap.
-            shared.flush_gl();
-            HostRenderProfiling::log_phase(&self.wasm_basename, "gl_flush", phase_start);
+            // Hold the cross-process GPU render lock until the host GL work is
+            // complete. This keeps host and compositor handoffs on the same
+            // no-overlapping-in-flight-jobs invariant.
+            shared.flush_and_wait_gl();
+            HostRenderProfiling::log_phase(&self.wasm_basename, "gl_wait", phase_start);
             drop(gpu_render_lock);
 
             let phase_start = HostRenderProfiling::start_phase();

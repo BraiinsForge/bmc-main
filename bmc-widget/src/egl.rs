@@ -19,7 +19,7 @@ use glow::HasContext;
 use smithay::{
     backend::{
         drm::DrmDeviceFd,
-        egl::{EGLContext, EGLDisplay},
+        egl::{EGLContext, EGLDisplay, fence::EGLFence},
     },
     reexports::gbm::{AsRaw, BufferObject, BufferObjectFlags, Device as GbmDevice},
 };
@@ -90,7 +90,6 @@ pub struct EglContext {
     /// Raw EGL display handle for extension calls.
     egl_display_raw: *mut c_void,
     /// EGL display (smithay wrapper, kept for lifetime).
-    #[expect(dead_code, reason = "kept alive for context lifetime")]
     egl_display: EGLDisplay,
     /// EGL context (kept alive for GL operations).
     #[expect(dead_code, reason = "kept alive for GL operations")]
@@ -185,6 +184,22 @@ impl EglContext {
     #[must_use]
     pub fn gl(&self) -> &glow::Context {
         &self.gl
+    }
+
+    /// Return the EGL extension list reported by the display.
+    #[must_use]
+    pub fn egl_extensions(&self) -> &[String] {
+        self.egl_display.extensions()
+    }
+
+    /// Submit pending GL commands and wait for completion with an EGL fence.
+    pub fn wait_for_egl_fence(&self) -> Result<()> {
+        let fence = EGLFence::create(&self.egl_display).context("Failed to create EGL fence")?;
+        let completed = fence
+            .client_wait(None, true)
+            .context("Failed to wait for EGL fence")?;
+        anyhow::ensure!(completed, "EGL fence wait returned before completion");
+        Ok(())
     }
 
     /// Allocate an export buffer (GBM BO + EGLImage + GL texture + FBO).
