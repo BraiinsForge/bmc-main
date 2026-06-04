@@ -6,8 +6,20 @@
 )]
 use bmc_wasm_sdk::*;
 
-use crate::device::DeviceList;
+use crate::device::{DeviceFamily, DeviceList, family_id};
+use crate::model::MinerModel;
 use crate::telemetry::TelemetryReading;
+
+fn family_cell(family: DeviceFamily) -> String {
+    fmt!("({})", family_id(family))
+}
+
+fn model_cell(model: Option<&MinerModel>) -> String {
+    match model {
+        Some(m) => fmt!("{} ({})", m.name, m.id),
+        None => "N/A".to_owned(),
+    }
+}
 
 fn hashrate_cell(reading: Option<&TelemetryReading>) -> String {
     match reading.and_then(|r| r.current_hashrate_ths) {
@@ -64,6 +76,7 @@ pub fn view(devices: &DeviceList, _width: u32, _height: u32) -> Node {
 
     for dev in devices.iter() {
         let reading = dev.telemetry.as_ref().map(|s| &s.reading);
+        let model = dev.model.as_ref();
         children.push(row(
             props!(gap: 12.0, cross_align: CrossAlign::Center),
             [
@@ -71,6 +84,11 @@ pub fn view(devices: &DeviceList, _width: u32, _height: u32) -> Node {
                     dev.identity.name.clone(),
                     style!(size: 20, color: WHITE, flex: 1.0),
                 ),
+                text(
+                    family_cell(dev.identity.family),
+                    style!(size: 20, color: GRAY_40),
+                ),
+                text(model_cell(model), style!(size: 20, color: GRAY_40)),
                 text(
                     hashrate_cell(reading),
                     style!(size: 20, color: GRAY_40, align: TextAlign::Right),
