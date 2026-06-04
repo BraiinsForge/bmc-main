@@ -6,13 +6,6 @@ use crate::telemetry::{TelemetryReading, TelemetrySnapshot};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceFamily {
     Bos,
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(
-            dead_code,
-            reason = "part of the generic device model; constructed once uBOS and Bitaxe adapters land"
-        )
-    )]
     Ubos,
     #[cfg_attr(
         target_arch = "wasm32",
