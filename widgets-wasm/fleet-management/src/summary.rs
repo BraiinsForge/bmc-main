@@ -1,9 +1,11 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
+use std::collections::BTreeMap;
+
 use units::availability::Availability;
 use units::units::{DegreeCelsius, JoulePerTeraHash, TeraHashPerSecond, Watt};
 
-use crate::device::KnownDevice;
+use crate::device::{DeviceList, KnownDevice};
 use crate::telemetry::TelemetryReading;
 
 const OK_HASHRATE_FLOOR_THS: f32 = 0.1;
@@ -125,6 +127,44 @@ fn availability<Q>(present: bool, value: impl FnOnce() -> Q) -> Availability<Q> 
     } else {
         Availability::Unavailable
     }
+}
+
+const UNKNOWN_GROUP: &str = "Unknown";
+const TOTAL_LABEL: &str = "Total";
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FleetSummary {
+    pub total: GroupSummary,
+    pub groups: Vec<GroupSummary>,
+}
+
+#[must_use]
+pub fn summarize(devices: &DeviceList) -> FleetSummary {
+    let reachable: Vec<&KnownDevice> = devices.iter().filter(|d| d.reachable).collect();
+
+    let mut partitions: BTreeMap<String, Vec<&KnownDevice>> = BTreeMap::new();
+    for dev in &reachable {
+        let key = dev
+            .model
+            .as_ref()
+            .map_or_else(|| UNKNOWN_GROUP.to_owned(), |m| m.name.clone());
+        partitions.entry(key).or_default().push(dev);
+    }
+
+    let mut groups: Vec<GroupSummary> = partitions
+        .into_iter()
+        .map(|(label, devs)| fold_group(label, &devs))
+        .collect();
+    groups.sort_by(|a, b| {
+        let a_unknown = a.label == UNKNOWN_GROUP;
+        let b_unknown = b.label == UNKNOWN_GROUP;
+        a_unknown
+            .cmp(&b_unknown)
+            .then_with(|| a.label.cmp(&b.label))
+    });
+
+    let total = fold_group(TOTAL_LABEL.to_owned(), &reachable);
+    FleetSummary { total, groups }
 }
 
 #[cfg(test)]
@@ -262,5 +302,126 @@ mod tests {
         assert_eq!(group.min_temperature, Availability::Unavailable);
         assert_eq!(group.online_count, 1);
         assert_eq!(group.ok_count, 0);
+    }
+
+    use crate::device::DeviceList;
+
+    fn list(entries: &[(&str, Option<&str>, Option<TelemetryReading>, bool)]) -> DeviceList {
+        let mut list = DeviceList::new();
+        for (i, (name, group, reading, reachable)) in entries.iter().enumerate() {
+            let mut id_str = String::from("dev-");
+            units::format::push_int(&mut id_str, i as u64);
+            let id = DeviceId::new(id_str);
+            let identity = DeviceIdentity {
+                id: id.clone(),
+                family: DeviceFamily::Bos,
+                name: (*name).to_owned(),
+                host: "10.0.0.1".to_owned(),
+                port: 80,
+            };
+            list.upsert(identity);
+            if let Some(group) = group {
+                list.apply_model(
+                    &id,
+                    crate::model::MinerModel {
+                        id: "id".to_owned(),
+                        name: (*group).to_owned(),
+                        chip_type: None,
+                        chip_count: None,
+                        nominal_hashrate_ths: None,
+                    },
+                );
+            }
+            // apply_telemetry sets reachability; a reachable device with no
+            // reading stays as upserted (reachable, telemetry None).
+            if let Some(reading) = reading {
+                list.apply_telemetry(&id, *reading, *reachable);
+            }
+        }
+        list
+    }
+
+    #[test]
+    fn groups_split_by_model_name_with_unknown_last() {
+        let l = list(&[
+            ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
+            (
+                "b",
+                Some("Bitaxe Gamma 601"),
+                Some(full(1.0, 17.0, 55.0)),
+                true,
+            ),
+            ("c", None, Some(full(0.5, 10.0, 45.0)), true),
+            ("d", Some("BMM 101"), Some(full(1.0, 33.0, 62.0)), true),
+        ]);
+        let summary = summarize(&l);
+        let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
+        assert_eq!(labels, ["BMM 101", "Bitaxe Gamma 601", "Unknown"]);
+        assert_eq!(summary.groups[0].online_count, 2);
+    }
+
+    #[test]
+    fn unreachable_devices_contribute_to_nothing() {
+        let l = list(&[
+            ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
+            ("b", Some("BMM 101"), Some(full(9.0, 90.0, 80.0)), false),
+        ]);
+        let summary = summarize(&l);
+        assert_eq!(summary.groups.len(), 1);
+        assert_eq!(summary.groups[0].online_count, 1);
+        assert_eq!(raw(&summary.total.hashrate), Some(1.0));
+    }
+
+    #[test]
+    fn total_additive_fields_equal_the_group_sums() {
+        let l = list(&[
+            ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
+            (
+                "b",
+                Some("Bitaxe Gamma 601"),
+                Some(full(2.0, 20.0, 40.0)),
+                true,
+            ),
+        ]);
+        let summary = summarize(&l);
+        assert_eq!(raw(&summary.total.hashrate), Some(3.0));
+        assert_eq!(raw(&summary.total.power), Some(50.0));
+        assert_eq!(summary.total.online_count, 2);
+        assert_eq!(summary.total.ok_count, 2);
+    }
+
+    #[test]
+    fn total_temperature_is_global_min_max_and_mean() {
+        // Group A: temps 40, 60 (mean 50). Group B: temp 90.
+        // total min=40, max=90, mean=(40+60+90)/3=63.33 — NOT the mean of the
+        // group means ((50+90)/2=70).
+        let l = list(&[
+            ("a", Some("A"), Some(full(1.0, 30.0, 40.0)), true),
+            ("a2", Some("A"), Some(full(1.0, 30.0, 60.0)), true),
+            ("b", Some("B"), Some(full(1.0, 30.0, 90.0)), true),
+        ]);
+        let summary = summarize(&l);
+        assert_eq!(raw(&summary.total.min_temperature), Some(40.0));
+        assert_eq!(raw(&summary.total.max_temperature), Some(90.0));
+        let avg = raw(&summary.total.avg_temperature).expect("avg available");
+        assert!((avg - (40.0 + 60.0 + 90.0) / 3.0).abs() < 1e-6, "got {avg}");
+        assert!(
+            (avg - 70.0).abs() > 1.0,
+            "must not be the mean of group means"
+        );
+    }
+
+    #[test]
+    fn total_efficiency_is_recomputed_globally_not_averaged() {
+        // Group A: 1 TH/s @ 30 W (30 J/TH). Group B: 3 TH/s @ 30 W (10 J/TH).
+        // Global Σpower/Σhashrate = 60/4 = 15 J/TH — NOT the mean of the group
+        // efficiencies ((30+10)/2 = 20).
+        let l = list(&[
+            ("a", Some("A"), Some(full(1.0, 30.0, 50.0)), true),
+            ("b", Some("B"), Some(full(3.0, 30.0, 50.0)), true),
+        ]);
+        let summary = summarize(&l);
+        let eff = raw(&summary.total.efficiency).expect("efficiency available");
+        assert!((eff - 15.0).abs() < 1e-6, "got {eff}");
     }
 }
