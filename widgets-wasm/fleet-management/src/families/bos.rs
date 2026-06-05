@@ -61,6 +61,7 @@ impl FamilyAdapter for BosAdapter {
                 host,
                 port,
             },
+            model_hint: None,
         })
     }
 

@@ -120,6 +120,21 @@ impl DeviceList {
         }
     }
 
+    /// Insert or update a discovered device and apply an optional discovery
+    /// model hint. A missing hint leaves any existing model intact, so later
+    /// rediscovery does not erase a model learned from telemetry.
+    pub fn upsert_with_model_hint(
+        &mut self,
+        identity: DeviceIdentity,
+        model_hint: Option<MinerModel>,
+    ) {
+        let id = identity.id.clone();
+        self.upsert(identity);
+        if let Some(model) = model_hint {
+            self.apply_model(&id, model);
+        }
+    }
+
     /// Bump the discovery sequence of a device still being announced.
     #[cfg_attr(
         target_arch = "wasm32",
@@ -332,9 +347,42 @@ mod tests {
         list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
         list.apply_model(&DeviceId::new("a._http._tcp.local."), model("BMM 101"));
         let dev = list.iter().next().expect("device present");
+        assert_eq!(dev.model.as_ref().map(|m| m.name.as_str()), Some("BMM 101"));
+    }
+
+    #[test]
+    fn upsert_with_model_hint_stamps_model_onto_new_device() {
+        let mut list = DeviceList::new();
+        list.upsert_with_model_hint(
+            identity("axe._http._tcp.local.", "10.0.0.8"),
+            Some(model("Bitaxe Gamma 602")),
+        );
+        let dev = list
+            .iter()
+            .next()
+            .expect("BUG: upsert_with_model_hint must insert a new device");
         assert_eq!(
             dev.model.as_ref().map(|m| m.name.as_str()),
-            Some("BMM 101")
+            Some("Bitaxe Gamma 602")
+        );
+    }
+
+    #[test]
+    fn upsert_with_no_model_hint_preserves_existing_model() {
+        let mut list = DeviceList::new();
+        list.upsert_with_model_hint(
+            identity("axe._http._tcp.local.", "10.0.0.8"),
+            Some(model("Bitaxe Gamma 602")),
+        );
+        list.upsert_with_model_hint(identity("axe._http._tcp.local.", "10.0.0.9"), None);
+        let dev = list
+            .iter()
+            .next()
+            .expect("BUG: upsert_with_model_hint must preserve the device");
+        assert_eq!(dev.identity.host, "10.0.0.9");
+        assert_eq!(
+            dev.model.as_ref().map(|m| m.name.as_str()),
+            Some("Bitaxe Gamma 602")
         );
     }
 

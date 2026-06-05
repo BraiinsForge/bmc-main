@@ -31,6 +31,7 @@ impl FamilyAdapter for UbosAdapter {
                 host,
                 port,
             },
+            model_hint: None,
         })
     }
 
