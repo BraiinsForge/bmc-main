@@ -42,6 +42,9 @@ const DIVIDER: Color = Color::from_rgba(0xff, 0xff, 0xff, 0x1a);
 const HASHRATE_SIZE: u32 = 64;
 const HASHRATE_UNIT_SIZE: u32 = 24;
 const STATUS_SIZE: u32 = 16;
+// The "1 min" caption reads as a sub-note under "Hashrate", a step below the
+// other gray labels.
+const CAPTION_SIZE: u32 = 14;
 const CLUSTER_VALUE_SIZE: u32 = 32;
 const CLUSTER_LABEL_SIZE: u32 = 16;
 const CLUSTER_UNIT_SIZE: u32 = 16;
@@ -289,6 +292,33 @@ fn center_node(
     )
 }
 
+// The "1 min" caption under the center "Hashrate" label, marking the readout as
+// the 1-minute average (the gauge itself tracks the 5-minute average). Placed as
+// an absolute sibling rather than a third row in `center_node` so the value and
+// "Hashrate" group keeps its exact centered position. The value+label group is
+// centered on `cy`, so its bottom edge sits half the group height below center;
+// the caption sits at that edge, snug under the label (the label and caption
+// line-height padding supply the visible gap), derived from the same constants
+// the group uses so the two stay aligned across scales.
+fn center_caption(cx: f32, cy: f32, scale: f32) -> Node {
+    let cell_w = CENTER_CELL_W * scale;
+    let group_half =
+        f32::midpoint(px(HASHRATE_SIZE), px(STATUS_SIZE)) + CENTER_LABEL_GAP * scale / 2.0;
+    let top = cy + group_half - 2.0 * scale;
+    col(
+        props!(
+            inset_left: cx - cell_w / 2.0,
+            inset_top: top,
+            width: cell_w,
+            cross_align: CrossAlign::Center
+        ),
+        [text(
+            "1 min",
+            style!(size: CAPTION_SIZE, weight: FontWeight::REGULAR, color: LABEL_GRAY),
+        )],
+    )
+}
+
 // One quadrant cluster, laid out as a Node so the value+unit row and label
 // center as a group (cross_align) inside a fixed cell. The cell is positioned
 // absolutely with its top-left corner derived from the quadrant center and the
@@ -377,6 +407,7 @@ fn gauge_screen(
     let mut children = vec![
         canvas(props!(width: w, height: h), draws),
         center_node(cx, cy, scale, hashrate, g.state),
+        center_caption(cx, cy, scale),
     ];
     for (center, spec) in [
         (TL_CENTER, top_left),
