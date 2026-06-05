@@ -18,9 +18,9 @@ use super::{
 use crate::format;
 use crate::layout;
 use crate::model::{Availability, MinerData, PublicData};
-use crate::units::{Quantity, TeraHashPerSecond};
 use mining::gauge::{self, Gauge, GaugeState};
 use mining::style::{AMBER_LABEL, GREEN_LABEL, INACTIVE_TICK, OFF_LABEL, PURPLE, ring_fill};
+use units::units::{Quantity, TeraHashPerSecond};
 
 const NATIVE: f32 = 480.0;
 

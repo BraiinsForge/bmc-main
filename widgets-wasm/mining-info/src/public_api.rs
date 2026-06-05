@@ -4,7 +4,7 @@ use bmc_wasm_sdk::ufmt;
 
 use crate::miner_api::JsonLookup;
 use crate::model::{Availability, Currency, Money, PublicData};
-use crate::units::{Btc, ExaHashPerSecond, Percent, SatPerTeraHashDay};
+use units::units::{Btc, ExaHashPerSecond, Percent, SatPerTeraHashDay};
 
 const SAT_IN_BTC: f64 = 100_000_000.0;
 
@@ -154,7 +154,7 @@ pub(crate) fn reset_price_history(data: &mut PublicData) {
 mod tests {
     use super::*;
     use crate::miner_api::tests_support::MapJson;
-    use crate::units::Quantity;
+    use units::units::Quantity;
 
     #[test]
     fn maps_currency_to_api_code() {
