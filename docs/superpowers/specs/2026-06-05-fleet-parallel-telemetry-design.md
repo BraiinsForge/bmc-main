@@ -16,7 +16,7 @@ This slice parallelizes the telemetry loop along two axes: the three families ru
 
 - A disconnected device stalls only its own family's cursor; the other two families keep refreshing on their own cadence.
 - A disconnected device costs at most one fetch timeout per pass, not one-per-endpoint, because its endpoints fire together.
-- No regression in correctness: each device still gets the same reading, model, and reachability it gets today.
+- No regression in the steady state: a device with a valid (or no) token gets the same reading, model, and reachability it gets today. The cold-token path for auth families changes deliberately (see Architecture → Per-device flow): the initial unauthenticated 401 round-trips are removed in favor of logging in first. The end-state telemetry is unchanged; only the request sequence differs.
 
 ## Non-Goals
 
@@ -33,7 +33,7 @@ The single global `Driver` becomes three independent `FamilyDriver` instances, o
 - `family: DeviceFamily`
 - `cursor: Option<PassCursor>` over **its own** family's devices
 - pacing: `elapsed_ms`, `waiting_next_pass`
-- the current device's accumulator: `reading`, `model`, per-endpoint outcomes, and the `reauthed` flag
+- the current device's accumulator: `reading`, `model`, per-endpoint outcomes, the `reauthed` flag, the outstanding `pending` count, and the device `generation` (see Response routing)
 
 `DeviceList` gains `ids_for_family(family) -> Vec<DeviceId>`, filtering on `identity.family`. Each driver's `start_pass` snapshots through it instead of the global `ids()`. `PassCursor` is unchanged.
 
@@ -47,19 +47,29 @@ The module-level entry points fan out across the three drivers:
 
 ### Response routing
 
-The SDK fetch callback is a bare `fn(&FetchResponse)` with no captured state, so parallel responses are correlated through the request id. `FetchResponse` carries `request_id`, and `FetchRequest::send` returns the same `FetchRequestId`.
+Every fetch callback — telemetry **and** login — is a bare `fn(&FetchResponse)` with no captured state, so all responses are correlated through the request id. `FetchResponse` carries `request_id`, and `FetchRequest::send` returns the same `FetchRequestId`.
 
-A single global routing map records every in-flight telemetry fetch:
+A single global routing map records every in-flight fetch, login or telemetry:
 
 ```rust
+enum FetchKind {
+    Login,
+    Telemetry { endpoint_idx: usize },
+}
 struct InFlight {
     family: DeviceFamily,
-    endpoint_idx: usize,
+    device: DeviceId,
+    generation: u64,
+    kind: FetchKind,
 }
 static ROUTES: RefCell<HashMap<FetchRequestId, InFlight>>;
 ```
 
-When a driver fires an endpoint it inserts the returned id into `ROUTES`. The one shared telemetry callback reads `response.request_id`, removes the entry to recover `(family, endpoint_idx)`, dispatches into that `FamilyDriver`, and decrements its `pending` counter. WASM is single-threaded and the host delivers fetch responses one at a time, so the `RefCell` folds are race-free.
+When a driver fires a fetch it inserts the returned id into `ROUTES`. The one shared callback reads `response.request_id`, removes the entry, and dispatches by `kind` into the named `FamilyDriver`: a `Login` response runs the login handler (store token → fire the burst, or fail the device); a `Telemetry` response folds into the accumulator and decrements `pending`.
+
+`device` plus `generation` guard against stale responses. Each family stamps a monotonically increasing `generation` onto its current device when that device begins; every fetch it issues for that device carries the stamp. A response whose `(device, generation)` no longer matches the family's current device is **abandoned**: it does not touch the accumulator and does not decrement the current `pending` (which belongs to a different generation). This is what makes mid-pass removal safe — see Per-device flow.
+
+WASM is single-threaded and the host delivers fetch responses one at a time, so the `RefCell` folds are race-free.
 
 ### Per-device flow
 
@@ -69,13 +79,19 @@ For the family driver's current device:
 2. **Phase 1 — parallel burst.** Fire all telemetry endpoints concurrently, each with the credential header or cached token attached, registering each id in `ROUTES`. Set `pending` to the endpoint count.
 3. **Barrier.** Each response folds into the accumulator (parsed on success, reset on failure) and decrements `pending`. When `pending` reaches 0, evaluate Phase 2.
 4. **Phase 2 — one re-auth round (optional, auth families).** If any endpoint failed with an auth error and the device has not re-authed this pass, set `reauthed`, drop the token, issue one login, and on success re-fire **only** the auth-failed endpoints (a second gathered burst with its own barrier). A failed login leaves those endpoints N/A.
-5. **Finalize.** `apply_telemetry` with `pass_reachable` over the gathered per-endpoint outcomes, `apply_model` if a model was parsed, then advance the cursor to the next device, or re-arm the family's 30 s timer when the cursor is done.
+5. **Finalize.** `apply_telemetry` with `pass_reachable` over the gathered per-endpoint outcomes, `apply_model` if a model was parsed, then advance the cursor to the next device, or end the pass when the cursor is done (handing back to the scheduler, below).
 
 The `reauthed` flag preserves today's guarantee of at most one login per device per pass, eliminating any 401 → login → 401 loop. Re-auth is a discrete second round at the barrier, never interleaved per callback.
 
+**Barrier completion and mid-pass removal.** The `pending == 0` barrier is only ever reached by current-generation responses; stale-generation responses are dropped by the router without decrementing it (see Response routing). A device removed mid-burst would therefore leave `pending` above zero forever — a stalled cursor. To prevent this, removal is an explicit abandon: when discovery removes a device (`remove_token` already fires on `MdnsEvent::Removed`), if that device is a family's current device, the driver bumps the family's `generation`, resets `pending` to 0, discards the partial accumulator, and advances the cursor. The orphaned in-flight responses then carry the old generation and are dropped harmlessly when they arrive. A response that simply finds no current device (cursor already past it) is likewise dropped. The cursor never waits on a response that can no longer arrive.
+
 ### Pacing
 
-Each `FamilyDriver` keeps its own pacing clock at the existing `PASS_INTERVAL_MS = 30_000`. When a family's pass completes, that driver alone re-arms `request_frame_after` for the remainder of its 30 s window. A slow BOS pass cannot stretch the uBOS or Bitaxe cadence. The host wakes on the earliest pending timer, so multiple drivers arming independently is fine.
+Each `FamilyDriver` keeps its own pacing clock at the existing `PASS_INTERVAL_MS = 30_000`: a family's next pass is due 30 s after its previous pass completed, independent of the other families.
+
+The drivers must **not** each call `request_frame_after` directly. `host_request_frame_after` writes a single `widget_delay_ms` slot on the host — last caller wins, not the minimum (`bmc-wasm-runtime/src/runtime/imports/render.rs`). Three drivers arming independently would clobber each other, and a family that armed early could be starved by a later family's longer delay — defeating the independent-cadence goal.
+
+Instead, a single module-level scheduler owns every `request_frame_after` call. After each `on_frame` tick (and after `ensure_running`), it asks all three drivers for their next-wake — the remaining ms until each family's pass is due, or 0 for a family with an active pass that still needs prompt frames — takes the minimum, and issues exactly one `request_frame_after(min)`. Because there is a single writer recomputing the minimum every frame, last-write-wins is correct. Individual drivers may still call `request_frame()` (immediate) to re-render on a telemetry update; that drives rendering, not pass scheduling. A slow BOS pass cannot stretch the uBOS or Bitaxe cadence, because each family's next-wake is computed from its own completion time.
 
 ### Concurrency budget
 
@@ -86,22 +102,22 @@ Devices are serial within a family, so at most one device per family is in fligh
 - **Unresponsive device:** each of its endpoints times out at the host's 10 s global limit, but concurrently, so the family cursor stalls ~10 s once (not per endpoint) before advancing. The device is stamped unreachable and remains in the list for mDNS to remove.
 - **`send` rejected by host limits:** treated as an immediate endpoint failure (matching today), folded as N/A; the device can still be reachable via its other endpoints.
 - **Login failure (Phase 0 or Phase 2):** the affected endpoints are N/A for the pass; `pass_reachable` then reports the device unreachable if no endpoint succeeded.
-- **Device removed mid-pass:** routing entries whose device has since been removed resolve to no current device for that family and are dropped without folding, exactly as the cursor snapshot already tolerates.
+- **Device removed mid-pass:** removal explicitly abandons the in-flight device (bump `generation`, reset `pending`, advance the cursor), so the barrier never waits on responses that can no longer complete it; the orphaned responses are dropped by the router when they arrive. See Architecture → Per-device flow → Barrier completion and mid-pass removal.
 
 ## Testing
 
 - **Pure, host-unit-testable:**
   - `DeviceList::ids_for_family` filters to the requested family (add to `device.rs`).
   - The Phase-2 decision is factored into a pure function — given the gathered per-endpoint outcomes and the `reauthed` flag, it returns finalize vs. re-auth-and-refire(set-of-endpoints) — and tested directly, the way `pass_reachable` already is. This keeps the branching out of the wasm-only callback and under test, and locks in the one-login-per-pass guarantee.
-- **Call-path (runtime integration):** the host `fetch_interceptor` (`bmc-wasm-runtime/src/host_api.rs`) scripts canned responses so a test drives the real driver end to end and asserts:
-  - a cold BOS device performs login before its three-endpoint burst;
-  - an expired token triggers exactly one re-auth round, re-firing only the auth-failed endpoints;
-  - a dead BOS device stalls the BOS cursor while uBOS and Bitaxe passes still complete.
+- **Call-path (runtime integration):** the `fetch_interceptor` returns its response immediately, so it can verify request *sequencing* but cannot model a fetch that occupies the 10 s timeout. The stall-isolation case needs virtual time, which the `UnifiedFixture` timeline provides: `Fetch` events carry an `at_ms` virtual timestamp (`bmc-wasm-runtime/src/unified_fixture.rs`), and the runtime advances a monotonic clock. The cases:
+  - **Sequencing (interceptor or fixture):** a cold BOS device performs login before its three-endpoint burst; an expired token triggers exactly one re-auth round, re-firing only the auth-failed endpoints.
+  - **Stall isolation (fixture, virtual time):** schedule the BOS endpoints' responses with `status: 0` (the host's network-error/timeout result) at `at_ms` ≈ 10 000, and the uBOS/Bitaxe responses at `at_ms` ≈ 50; a `capture` event placed between those times shows uBOS and Bitaxe populated and refreshed while the BOS device is still outstanding — proving the BOS stall does not block the other families. This needs no real sleeps.
 
-  The existing fleet test harness shape is confirmed before the plan and matched rather than re-invented.
+  The existing fleet fixture shape is confirmed before the plan and matched rather than re-invented.
 
 ## Files Touched
 
-- `widgets-wasm/fleet-management/src/session.rs` — fan-out entry points (`on_frame`, `ensure_running`), shared `TOKENS`, routing map, shared telemetry callback.
+- `widgets-wasm/fleet-management/src/session.rs` — fan-out entry points (`on_frame`, `ensure_running`), the module-level frame scheduler, shared `TOKENS`, the routing map, and the shared login+telemetry callback. `remove_token` gains the mid-pass abandon (bump `generation`, reset `pending`, advance) when it removes a family's current device.
 - `widgets-wasm/fleet-management/src/session/driver.rs` — new file: the `FamilyDriver` state machine (extracted from the current `mod driver`, then reworked for phases and the parallel burst).
 - `widgets-wasm/fleet-management/src/device.rs` — `ids_for_family`.
+- `widgets-wasm/fleet-management/src/adapter.rs` — the `credential_header` doc comment describing BOS as "reactive token auth" is updated to reflect login-first, with reactive re-auth kept only as the expired-token fallback. No trait-surface change.
