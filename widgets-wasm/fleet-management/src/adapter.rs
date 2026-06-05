@@ -4,12 +4,13 @@ use bmc_wasm_sdk::ufmt;
 
 use crate::device::DeviceIdentity;
 use crate::discovery::JsonLookup;
-use crate::model::ModelAccumulator;
+use crate::model::{MinerModel, ModelAccumulator};
 use crate::telemetry::TelemetryReading;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DiscoveredDevice {
     pub identity: DeviceIdentity,
+    pub model_hint: Option<MinerModel>,
 }
 
 /// A device family's discovery behavior: which mDNS service types to browse,

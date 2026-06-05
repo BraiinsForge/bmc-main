@@ -68,7 +68,9 @@ fn on_ubos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
 fn ingest(adapter: &dyn FamilyAdapter, json: &str) {
     let doc = JsonDoc::parse(json.as_bytes());
     if let Some(found) = adapter.parse_found(&doc) {
-        DEVICES.with(|d| d.borrow_mut().upsert(found.identity));
+        let identity = found.identity;
+        let model_hint = found.model_hint;
+        DEVICES.with(|d| d.borrow_mut().upsert_with_model_hint(identity, model_hint));
         session::ensure_running();
         request_frame();
     }
