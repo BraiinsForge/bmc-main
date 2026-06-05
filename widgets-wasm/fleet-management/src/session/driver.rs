@@ -5,13 +5,12 @@ use std::collections::HashMap;
 
 use bmc_wasm_sdk::ufmt;
 use bmc_wasm_sdk::{
-    FetchRequest, FetchRequestId, fmt, format_number, log_info, log_warn, request_frame,
-    request_frame_after,
+    FetchRequest, FetchRequestId, cancel, fmt, format_number, log_info, log_warn, request_frame,
 };
 
 use super::{
-    EndpointOutcome, FamilyWake, PassCursor, ReauthDecision, adapter_for, next_wake,
-    pass_reachable, reauth_decision,
+    DiscoveryAction, EndpointOutcome, PassCursor, Phase, ReauthDecision, RemovalAction,
+    adapter_for, on_discovery, on_removal, pass_reachable, reauth_decision,
 };
 use crate::adapter::FamilyAdapter;
 use crate::device::{DeviceFamily, DeviceId, family_label};
@@ -36,8 +35,10 @@ struct InFlight {
 
 struct FamilyDriver {
     cursor: Option<PassCursor>,
-    elapsed_ms: u32,
-    waiting_next_pass: bool,
+    /// Opening fetches of the next pass, scheduled via `send_after` and not yet
+    /// delivered. Non-empty marks the `Waiting` phase; the ids let a discovery
+    /// or removal cancel the kick to react before the interval elapses.
+    pending_kick: Vec<FetchRequestId>,
     generation: u64,
     pending: usize,
     reading: TelemetryReading,
@@ -50,8 +51,7 @@ impl FamilyDriver {
     fn idle() -> Self {
         Self {
             cursor: None,
-            elapsed_ms: 0,
-            waiting_next_pass: false,
+            pending_kick: Vec::new(),
             generation: 0,
             pending: 0,
             reading: TelemetryReading::default(),
@@ -65,13 +65,13 @@ impl FamilyDriver {
         self.cursor.as_ref()?.current().cloned()
     }
 
-    fn wake(&self) -> FamilyWake {
-        if self.cursor.is_some() {
-            FamilyWake::Active
-        } else if self.waiting_next_pass {
-            FamilyWake::Waiting(PASS_INTERVAL_MS.saturating_sub(self.elapsed_ms))
+    fn phase(&self) -> Phase {
+        if !self.pending_kick.is_empty() {
+            Phase::Waiting
+        } else if self.cursor.is_some() {
+            Phase::Active
         } else {
-            FamilyWake::Idle
+            Phase::Idle
         }
     }
 }
@@ -111,33 +111,45 @@ fn resolve_identity(id: &DeviceId) -> Option<(DeviceFamily, String, u16)> {
     })
 }
 
-/// Discovery found a device; start a pass for any idle family. A family with no
-/// devices stays idle (see `start_pass`), so this never parks an empty family.
-pub fn ensure_running() {
-    for family in FAMILIES {
-        let should_start = with_driver(family, |d| d.cursor.is_none() && !d.waiting_next_pass);
-        if should_start {
-            start_pass(family);
-        }
+/// Send `req` now, or after `delay_ms` when deferring a pass's opening fetch.
+fn send(req: FetchRequest<'_>, delay_ms: u32) -> Option<FetchRequestId> {
+    if delay_ms == 0 {
+        req.send(on_fetch)
+    } else {
+        req.send_after(delay_ms, on_fetch)
     }
-    reschedule();
 }
 
-/// Accumulate frame time per family and start each family's next pass when due.
-pub fn on_frame(delta_ms: u32) {
-    for family in FAMILIES {
-        let due = with_driver(family, |d| {
-            if !d.waiting_next_pass {
-                return false;
-            }
-            d.elapsed_ms = d.elapsed_ms.saturating_add(delta_ms);
-            d.elapsed_ms >= PASS_INTERVAL_MS
-        });
-        if due {
-            start_pass(family);
+/// Cancel every still-queued opening fetch for `family`, returning whether the
+/// whole kick was caught before firing. A single `false` means one fetch is
+/// already in flight and will drive the pass, so the caller must not start a
+/// competing one. Clears the parked kick state and routes either way.
+fn cancel_kick(family: DeviceFamily) -> bool {
+    let ids = with_driver(family, |d| std::mem::take(&mut d.pending_kick));
+    let mut all_caught = true;
+    for id in ids {
+        if cancel(id) {
+            ROUTES.with(|r| r.borrow_mut().remove(&id));
+        } else {
+            all_caught = false;
         }
     }
-    reschedule();
+    all_caught
+}
+
+/// Discovery found a device for `family`. An idle family starts a pass now; a
+/// device that arrives while a kick is parked cancels the kick and restarts so
+/// it is polled immediately instead of after the interval.
+pub fn ensure_running(family: DeviceFamily) {
+    let phase = with_driver(family, |d| d.phase());
+    let kick_cancelled = match phase {
+        Phase::Waiting => Some(cancel_kick(family)),
+        Phase::Idle | Phase::Active => None,
+    };
+    match on_discovery(phase, kick_cancelled) {
+        DiscoveryAction::StartNow => start_pass(family, 0),
+        DiscoveryAction::LetRun | DiscoveryAction::Ignore => {}
+    }
 }
 
 /// Clear all cached tokens (e.g. after a password change).
@@ -145,50 +157,53 @@ pub fn clear_tokens() {
     TOKENS.with(|t| t.borrow_mut().clear());
 }
 
-/// Drop one device's cached session state and, if it is a family's current
-/// device, abandon the in-flight pass for it so the cursor never stalls.
+/// Drop one device's cached session state and react to its departure: abandon
+/// the in-flight pass if it is the current device, or cancel and re-defer the
+/// next pass if its opening kick is parked.
 pub fn remove_token(id: &DeviceId) {
     TOKENS.with(|t| t.borrow_mut().remove(id));
     for family in FAMILIES {
-        let is_current = with_driver(family, |d| d.current_device().as_ref() == Some(id));
-        if is_current {
-            abandon_current(family);
+        let phase = with_driver(family, |d| d.phase());
+        let is_focus = with_driver(family, |d| d.current_device().as_ref() == Some(id));
+        let kick_cancelled = if phase == Phase::Waiting && is_focus {
+            Some(cancel_kick(family))
+        } else {
+            None
+        };
+        match on_removal(phase, is_focus, kick_cancelled) {
+            RemovalAction::Abandon => abandon_current(family),
+            RemovalAction::Redefer => start_pass(family, PASS_INTERVAL_MS),
+            RemovalAction::LetRun | RemovalAction::Ignore => {}
         }
     }
-    reschedule();
 }
 
-/// Snapshot this family's devices and begin a pass. An empty snapshot leaves the
-/// driver fully idle — it must not park as `waiting_next_pass`, or a device
-/// discovered seconds later would not be polled until the 30s timer.
-fn start_pass(family: DeviceFamily) {
+/// Snapshot this family's devices and begin a pass. `opening_delay_ms` defers
+/// only the first device's opening fetch — the inter-pass timer — while 0
+/// starts immediately. An empty snapshot leaves the driver idle.
+fn start_pass(family: DeviceFamily, opening_delay_ms: u32) {
     let ids = crate::DEVICES.with(|d| d.borrow().ids_for_family(family));
-    if ids.is_empty() {
-        with_driver(family, |d| {
-            d.cursor = None;
-            d.waiting_next_pass = false;
-            d.elapsed_ms = 0;
-        });
-        return;
-    }
+    let empty = ids.is_empty();
     with_driver(family, |d| {
-        d.elapsed_ms = 0;
-        d.waiting_next_pass = false;
-        d.cursor = Some(PassCursor::new(ids));
+        d.pending_kick.clear();
+        d.cursor = if empty {
+            None
+        } else {
+            Some(PassCursor::new(ids))
+        };
     });
-    begin_device(family);
+    if !empty {
+        begin_device(family, opening_delay_ms);
+    }
 }
 
-fn begin_device(family: DeviceFamily) {
+fn begin_device(family: DeviceFamily, delay_ms: u32) {
     let done = with_driver(family, |d| {
         d.cursor.as_ref().is_none_or(PassCursor::is_done)
     });
     if done {
-        with_driver(family, |d| {
-            d.cursor = None;
-            d.waiting_next_pass = true;
-            d.elapsed_ms = 0;
-        });
+        // Pass finished: arm the next one as a delayed opening fetch.
+        start_pass(family, PASS_INTERVAL_MS);
         return;
     }
     let Some(id) = with_driver(family, |d| d.current_device()) else {
@@ -221,19 +236,22 @@ fn begin_device(family: DeviceFamily) {
     let needs_login =
         adapter.auth_endpoint().is_some() && TOKENS.with(|t| !t.borrow().contains_key(&id));
     if needs_login {
-        issue_login(family, &id, &host, port, adapter);
+        issue_login(family, &id, &host, port, adapter, delay_ms);
     } else {
-        fire_pending(family, &id, &host, port, adapter);
+        fire_pending(family, &id, &host, port, adapter, delay_ms);
     }
 }
 
-/// Fire every still-pending (`None`) endpoint of the current device in parallel.
+/// Fire every still-pending (`None`) endpoint of the current device. With
+/// `delay_ms == 0` they go out immediately; otherwise they are the deferred
+/// opening of a pass and their ids are parked as the kick.
 fn fire_pending(
     family: DeviceFamily,
     id: &DeviceId,
     host: &str,
     port: u16,
     adapter: &dyn FamilyAdapter,
+    delay_ms: u32,
 ) {
     let endpoints = adapter.telemetry_endpoints();
     let token = TOKENS.with(|t| t.borrow().get(id).cloned());
@@ -252,9 +270,10 @@ fn fire_pending(
     let mut sent = 0_usize;
     for idx in pending_idxs {
         let url = fmt!("{}{}", base_url(adapter, host, port), endpoints[idx]);
-        let req_id = FetchRequest::get(&url)
-            .headers_opt(header.as_deref())
-            .send(on_fetch);
+        let req_id = send(
+            FetchRequest::get(&url).headers_opt(header.as_deref()),
+            delay_ms,
+        );
         if let Some(req_id) = req_id {
             ROUTES.with(|r| {
                 r.borrow_mut().insert(
@@ -267,6 +286,9 @@ fn fire_pending(
                     },
                 );
             });
+            if delay_ms > 0 {
+                with_driver(family, |d| d.pending_kick.push(req_id));
+            }
             sent += 1;
         } else {
             log_warn!("fleet: telemetry send rejected for {}", host);
@@ -285,6 +307,7 @@ fn issue_login(
     host: &str,
     port: u16,
     adapter: &dyn FamilyAdapter,
+    delay_ms: u32,
 ) {
     let Some(auth_path) = adapter.auth_endpoint() else {
         finalize_failed(family, id);
@@ -294,10 +317,10 @@ fn issue_login(
     let url = fmt!("{}{}", base_url(adapter, host, port), auth_path);
     let body = adapter.login_body(&password);
     let generation = with_driver(family, |d| d.generation);
-    let req_id = FetchRequest::post(&url)
+    let req = FetchRequest::post(&url)
         .headers("Content-Type: application/json")
-        .body(body.as_bytes())
-        .send(on_fetch);
+        .body(body.as_bytes());
+    let req_id = send(req, delay_ms);
     if let Some(req_id) = req_id {
         ROUTES.with(|r| {
             r.borrow_mut().insert(
@@ -310,6 +333,9 @@ fn issue_login(
                 },
             );
         });
+        if delay_ms > 0 {
+            with_driver(family, |d| d.pending_kick.push(req_id));
+        }
     } else {
         log_warn!("fleet: login send rejected for {}", host);
         finalize_failed(family, id);
@@ -328,13 +354,14 @@ fn on_fetch(response: &bmc_wasm_sdk::FetchResponse) {
     if route.generation != current_generation || current_device.as_ref() != Some(&route.device) {
         return;
     }
+    // The opening fetch arrived: the pass is now active, not waiting.
+    with_driver(route.family, |d| d.pending_kick.clear());
     match route.kind {
         FetchKind::Login => on_login(route.family, &route.device, response),
         FetchKind::Telemetry { endpoint_idx } => {
             on_telemetry(route.family, endpoint_idx, response);
         }
     }
-    reschedule();
 }
 
 fn on_login(family: DeviceFamily, id: &DeviceId, response: &bmc_wasm_sdk::FetchResponse) {
@@ -353,7 +380,7 @@ fn on_login(family: DeviceFamily, id: &DeviceId, response: &bmc_wasm_sdk::FetchR
     };
     if let Some(token) = token {
         TOKENS.with(|t| t.borrow_mut().insert(id.clone(), token));
-        fire_pending(family, id, &host, port, adapter);
+        fire_pending(family, id, &host, port, adapter, 0);
     } else {
         with_driver(family, |d| {
             for outcome in &mut d.outcomes {
@@ -438,7 +465,7 @@ fn barrier(family: DeviceFamily) {
                 advance_device(family);
                 return;
             };
-            issue_login(family, &id, &host, port, adapter);
+            issue_login(family, &id, &host, port, adapter, 0);
         }
         ReauthDecision::Finalize => finalize_device(family, &id),
     }
@@ -540,7 +567,7 @@ fn abandon_current(family: DeviceFamily) {
             cursor.advance();
         }
     });
-    begin_device(family);
+    begin_device(family, 0);
 }
 
 fn advance_device(family: DeviceFamily) {
@@ -549,15 +576,5 @@ fn advance_device(family: DeviceFamily) {
             cursor.advance();
         }
     });
-    begin_device(family);
-}
-
-fn reschedule() {
-    let wakes = DRIVERS.with(|d| {
-        let d = d.borrow();
-        [d[0].wake(), d[1].wake(), d[2].wake()]
-    });
-    if let Some(delay_ms) = next_wake(&wakes) {
-        request_frame_after(delay_ms);
-    }
+    begin_device(family, 0);
 }

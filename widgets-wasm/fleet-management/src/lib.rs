@@ -115,7 +115,7 @@ fn ingest(adapter: &dyn FamilyAdapter, json: &str) {
                 model
             );
         }
-        session::ensure_running();
+        session::ensure_running(family);
         request_frame();
     }
 }
@@ -137,8 +137,7 @@ pub extern "C" fn init() {
 
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
-pub extern "C" fn render(delta_ms: u32) {
-    session::on_frame(delta_ms);
+pub extern "C" fn render(_delta_ms: u32) {
     let WidgetSize {
         width,
         height,
