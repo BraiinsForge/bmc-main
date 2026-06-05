@@ -401,8 +401,11 @@ pub fn ensure_running() {
 pub fn on_frame(delta_ms: u32) {
     for family in FAMILIES {
         let due = with_driver(family, |d| {
+            if !d.waiting_next_pass {
+                return false;
+            }
             d.elapsed_ms = d.elapsed_ms.saturating_add(delta_ms);
-            d.waiting_next_pass && d.elapsed_ms >= PASS_INTERVAL_MS
+            d.elapsed_ms >= PASS_INTERVAL_MS
         });
         if due {
             start_pass(family);
@@ -456,6 +459,7 @@ fn begin_device(family: DeviceFamily) {
         with_driver(family, |d| {
             d.cursor = None;
             d.waiting_next_pass = true;
+            d.elapsed_ms = 0;
         });
         return;
     }
