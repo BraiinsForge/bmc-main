@@ -86,13 +86,13 @@ impl FamilyAdapter for BitaxeAdapter {
     ) {
         self.reset_telemetry(endpoint, reading);
         if endpoint == EP_INFO {
-            if let Some(ghs) = json.f64("/hashRate") {
+            if let Some(ghs) = json.f64("/hashRate").filter(|v| *v >= 0.0) {
                 reading.current_hashrate_ths = Some((ghs / 1_000.0) as f32);
             }
-            if let Some(watts) = json.f64("/power") {
+            if let Some(watts) = json.f64("/power").filter(|v| *v >= 0.0) {
                 reading.power_w = Some(watts as f32);
             }
-            if let Some(c) = json.f64("/temp") {
+            if let Some(c) = json.f64("/temp").filter(|v| *v >= 0.0) {
                 reading.temperature_c = Some(c as f32);
             }
             if let Some(uptime) = json
@@ -245,6 +245,20 @@ mod tests {
         let mut r = TelemetryReading::default();
         BitaxeAdapter.parse_telemetry("/info", &j, &mut r);
         assert_eq!(r.uptime_s, None);
+    }
+
+    #[test]
+    fn negative_sensor_readings_are_ignored() {
+        let mut j = info_json();
+        j.floats.insert("/hashRate", -1.0);
+        j.floats.insert("/power", -1.0);
+        j.floats.insert("/temp", -1.0);
+        let mut r = TelemetryReading::default();
+        BitaxeAdapter.parse_telemetry("/info", &j, &mut r);
+        assert_eq!(r.current_hashrate_ths, None);
+        assert_eq!(r.power_w, None);
+        assert_eq!(r.temperature_c, None);
+        assert_eq!(r.uptime_s, Some(382));
     }
 
     #[test]
