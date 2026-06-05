@@ -35,6 +35,7 @@ pub(crate) fn ths_from_ghs(value: f64) -> f64 {
 }
 
 pub(crate) const STALE_AFTER_MS: u32 = 15_000;
+const POWER_FULL_SCALE_W: f64 = 100.0;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct MinerData {
@@ -97,6 +98,18 @@ pub(crate) fn hashrate_fraction(hashrate: Option<f64>, nominal: Option<f64>) -> 
             (hashrate / nominal).clamp(0.0, 1.0) as f32
         }
         _ => 0.0,
+    }
+}
+
+#[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "power gauge fraction is a clamped 0..1 ratio that loses no meaningful precision in f32"
+)]
+pub(crate) fn power_fraction(power_w: Option<f64>) -> f32 {
+    match power_w {
+        Some(power_w) => (power_w / POWER_FULL_SCALE_W).clamp(0.0, 1.0) as f32,
+        None => 0.0,
     }
 }
 
@@ -221,6 +234,15 @@ mod tests {
         assert_fraction_eq(hashrate_fraction(Some(50.0), Some(0.0)), 0.0);
         assert_fraction_eq(hashrate_fraction(Some(50.0), Some(100.0)), 0.5);
         assert_fraction_eq(hashrate_fraction(Some(125.0), Some(100.0)), 1.0);
+    }
+
+    #[test]
+    fn power_fraction_reaches_full_scale_at_100_watts() {
+        assert_fraction_eq(power_fraction(None), 0.0);
+        assert_fraction_eq(power_fraction(Some(-1.0)), 0.0);
+        assert_fraction_eq(power_fraction(Some(50.0)), 0.5);
+        assert_fraction_eq(power_fraction(Some(100.0)), 1.0);
+        assert_fraction_eq(power_fraction(Some(125.0)), 1.0);
     }
 
     #[test]

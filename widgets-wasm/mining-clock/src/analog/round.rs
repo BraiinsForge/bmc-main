@@ -293,21 +293,15 @@ fn push_gauges_and_labels(
     let hashrate_fraction =
         miner::hashrate_fraction(miner.hashrate_ths, miner.nominal_hashrate_ths);
 
-    // Lit states color both rings with the state fill and draw only the lit
-    // portion, capping the inner ring one slot short of full. NotAvailable has
-    // no color: both rings fill with the neutral gray track — the inner ring as
-    // a complete circle — and the inner power label is suppressed.
-    let (fill, outer_fraction, lit, show_power_label) = match ring_fill(g.state) {
-        Some(fill) => (
-            fill,
-            hashrate_fraction,
-            g.lit_count.min(gauge::TICK_COUNT - 1),
-            true,
-        ),
-        None => (ArcFill::Solid(INACTIVE_TICK), 1.0, gauge::TICK_COUNT, false),
+    // Lit states color both rings with the state fill. NotAvailable has no color:
+    // both rings fill with the neutral gray track and the inner power label is
+    // suppressed.
+    let (fill, outer_fraction, show_power_label) = match ring_fill(g.state) {
+        Some(fill) => (fill, hashrate_fraction, true),
+        None => (ArcFill::Solid(INACTIVE_TICK), 1.0, false),
     };
     let outer_fraction = outer_fraction.max(OUTER_MIN_SWEEP / HASHRATE_SWEEP_END);
-    let inner_end = gauge::lit_sweep_end(lit);
+    let inner_end = std::f32::consts::TAU * miner::power_fraction(miner.power_w);
 
     let hashrate_label_angle = live_end_angle(HASHRATE_SWEEP_END, outer_fraction);
     push_gauge_arc(
