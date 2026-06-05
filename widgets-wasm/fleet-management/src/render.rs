@@ -80,10 +80,7 @@ pub fn view(devices: &DeviceList, _width: u32, _height: u32) -> Node {
                     dev.identity.name.clone(),
                     style!(size: 20, color: WHITE, flex: 1.0),
                 ),
-                text(
-                    model_cell(model),
-                    style!(size: 20, color: GRAY_40),
-                ),
+                text(model_cell(model), style!(size: 20, color: GRAY_40)),
                 text(
                     hashrate_cell(reading),
                     style!(size: 20, color: GRAY_40, align: TextAlign::Right),
