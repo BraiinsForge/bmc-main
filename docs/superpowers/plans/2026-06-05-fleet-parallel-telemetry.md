@@ -4,48 +4,107 @@
 
 **Goal:** Replace the single serial telemetry driver in the fleet-management widget with three independent per-family drivers that fire each device's endpoints in parallel, so one disconnected device can no longer stall the whole load loop.
 
-**Architecture:** Three `FamilyDriver` instances (BOS / uBOS / Bitaxe), each walking only its own family's devices serially but firing that device's telemetry endpoints concurrently. Parallel responses route back by `request_id` through a global map; a `generation` stamp makes mid-pass removal safe. BOS auth is login-first with one optional re-auth round. A single module-level scheduler owns frame timing so the families pace independently. The branching logic (reachability, re-auth decision, scheduler next-wake) is factored into pure module-level functions that compile and test on the host; the fetch-issuing state machine is wasm-only.
+**Architecture:** Three `FamilyDriver` instances (BOS / uBOS / Bitaxe), each walking only its own family's devices serially but firing that device's telemetry endpoints concurrently. Parallel responses route back by `request_id` through a global map; a `(device, generation)` stamp makes mid-pass removal safe. BOS auth is login-first with one optional re-auth round. A single module-level scheduler owns frame timing so the families pace independently. The branching logic (reachability, re-auth decision, scheduler next-wake) is factored into pure module-level functions that compile and test on the host; the fetch-issuing state machine is wasm-only.
 
-**Tech Stack:** Rust, `wasm32-unknown-unknown`, `bmc-wasm-sdk` (`FetchRequest`, `request_frame_after`), the fleet-management widget crate.
+**Tech Stack:** Rust, `wasm32-unknown-unknown`, `bmc-wasm-sdk` (`FetchRequest`, `FetchRequestId`, `request_frame_after`), the fleet-management widget crate.
 
 **Spec:** `docs/superpowers/specs/2026-06-05-fleet-parallel-telemetry-design.md`
 
 ---
 
-## File Structure
+## Commit structure and why it is only three commits
 
-- `widgets-wasm/fleet-management/src/device.rs` — add `DeviceList::ids_for_family`. Host-compiled, host-tested.
-- `widgets-wasm/fleet-management/src/session.rs` — keep the host-compiled pure helpers (`PassCursor`, `adapter_for`); add `EndpointOutcome`, refactor `pass_reachable`, add `reauth_decision`/`ReauthDecision`, add `FamilyWake`/`next_wake`. Declare `mod driver;` and re-export its public entry points.
-- `widgets-wasm/fleet-management/src/session/driver.rs` — **new file.** The wasm-only `FamilyDriver` state machine: per-family drivers, the routing map, the shared fetch callback, the per-device Phase 0/1/2 flow, the scheduler wiring, and the removal-abandon path. Moved out of the current `mod driver` block in `session.rs`, then reworked.
-- `widgets-wasm/fleet-management/src/adapter.rs` — update the now-stale `credential_header` doc comment.
+The widget is a **cdylib** (`crate-type = ["cdylib"]`) and `session`/`device` are **private** modules. In a cdylib, rustc's `dead_code` lint behaves like a binary's: any `pub` item not reachable from a `#[no_mangle]` export is flagged. The wasm gate runs `-D warnings`, so a helper introduced in one commit but only consumed by the driver in a later commit is **dead-code on the wasm build in between** and fails the gate.
 
-`lib.rs` is **not** modified: it already calls `session::on_frame`, `session::ensure_running`, `session::remove_token`, and `session::clear_tokens` at the right points.
+That makes a "TDD each helper in its own commit" structure impossible to keep green: the helpers (`EndpointOutcome`, `reauth_decision`, `next_wake`, `ids_for_family`) are consumed only by the rewritten driver. They must land in the **same commit** as that driver. So the feature is three commits, each green on both gates:
 
-### Two build configs both exercise the pure helpers
+1. **Extract** `mod driver` into `session/driver.rs` — mechanical, no logic change, both gates green.
+2. **Rewrite** — `ids_for_family` + the pure helpers + their host tests + the driver rewrite, as one atomic commit. TDD happens *inside* this commit (write the pure-function tests, watch them fail on host, implement, then write the driver), but the commit boundary is the whole change because that is the smallest unit that compiles on wasm.
+3. **Doc** — update the stale adapter comment.
 
-The commit gate runs exactly two builds, and the new pure functions are used in both — so no `dead_code` guards are needed:
-- `cargo test -p fleet-management` (host + `#[cfg(test)]`): pure functions used by their unit tests.
-- `cargo clippy -p fleet-management --target wasm32-unknown-unknown`: pure functions used by the wasm-only driver.
+### Verify before every commit (all three)
 
-There is no host-without-test build in the gate, which is why `pass_reachable` is not flagged today and the new helpers will not be either.
+Run all of these, **serially** (never `cargo clippy` and `cargo test` in parallel — shared `target/` produces phantom errors):
 
-### Verify commands (used throughout)
+- `nix develop -c cargo clippy -p fleet-management --target wasm32-unknown-unknown -- -D warnings` — the wasm lint gate; this is the one that actually compiles the gated driver.
+- `nix develop -c cargo test -p fleet-management` — host unit tests.
+- `nix fmt` — formatting.
 
-- Host tests: `nix develop -c cargo test -p fleet-management`
-- Wasm lint gate (compiles the gated driver): `nix develop -c cargo clippy -p fleet-management --target wasm32-unknown-unknown -- -D warnings`
-
-Run both before each commit that touches the widget. Per the repo rules, never run cargo clippy and cargo test in parallel (shared `target/`).
+> **Shell commands:** shown plain (`nix`, `cargo`, `git`). The Claude Code RTK hook rewrites them to `rtk …` transparently at execution time, so prefixing them here would double-wrap. Do not hand-edit `rtk` into these commands.
 
 ---
 
-## Task 1: `DeviceList::ids_for_family`
+## Task 1: Extract `mod driver` into `session/driver.rs` (mechanical)
+
+A pure move so the rewrite in Task 2 happens in a focused file. No behavior change; both gates stay green because the driver logic is untouched.
 
 **Files:**
-- Modify: `widgets-wasm/fleet-management/src/device.rs` (add method near `ids`, ~line 169; add test in the existing `#[cfg(test)] mod tests`)
+- Create: `widgets-wasm/fleet-management/src/session/driver.rs`
+- Modify: `widgets-wasm/fleet-management/src/session.rs`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Move the module body to the new file**
 
-Add to the `tests` module in `device.rs`:
+Cut the entire current `#[cfg(target_arch = "wasm32")] mod driver { ... }` block body (everything **between** the `mod driver {` line and its matching closing `}`) out of `session.rs` and paste it into a new file `widgets-wasm/fleet-management/src/session/driver.rs`. Do **not** include the `mod driver {` wrapper or its closing brace in the new file. Prepend the standard copyright header line that every source file in this tree carries:
+
+```rust
+// Copyright (C) 2026  Braiins Systems s.r.o.
+```
+
+- [ ] **Step 2: Replace the inline module with a file declaration**
+
+In `session.rs`, where the `mod driver { ... }` block was, leave exactly:
+
+```rust
+#[cfg(target_arch = "wasm32")]
+mod driver;
+```
+
+Keep the existing re-export line unchanged:
+
+```rust
+#[cfg(target_arch = "wasm32")]
+pub use driver::{clear_tokens, ensure_running, on_frame, remove_token};
+```
+
+The moved file's existing `use super::{PassCursor, adapter_for, pass_reachable};` line stays valid (it now refers to `session.rs`). Leave it as-is for this task — Task 2 rewrites these imports.
+
+- [ ] **Step 3: Verify both gates (serially)**
+
+```
+nix develop -c cargo clippy -p fleet-management --target wasm32-unknown-unknown -- -D warnings
+nix develop -c cargo test -p fleet-management
+nix fmt
+```
+Expected: clippy PASS (no new errors — in particular no "file not found for module `driver`" and no unresolved `super::` imports), host tests PASS, fmt clean. This is behavior-preserving, so it must be fully green.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add widgets-wasm/fleet-management/src/session.rs widgets-wasm/fleet-management/src/session/driver.rs
+git commit -F - <<'EOF'
+fleet-management: Extract telemetry driver into its own module #BDK-506
+
+- move the wasm-only driver block from session.rs to session/driver.rs
+- declare it via `mod driver;` in the 2018 module style
+EOF
+```
+
+---
+
+## Task 2: Rewrite the driver for per-family parallel telemetry
+
+The core change, committed atomically (see the commit-structure note). Order the work as TDD for the pure logic, then the wasm driver, then the full gate.
+
+**Files:**
+- Modify: `widgets-wasm/fleet-management/src/device.rs` (add `ids_for_family` + test)
+- Modify: `widgets-wasm/fleet-management/src/session.rs` (add pure types/functions, refactor `pass_reachable`, update/add tests)
+- Replace contents: `widgets-wasm/fleet-management/src/session/driver.rs`
+
+### Part A — pure logic, host-tested (TDD)
+
+- [ ] **Step 1: Write the failing host tests**
+
+In `device.rs`, add to the existing `#[cfg(test)] mod tests` (ensure `use super::DeviceFamily;` is in scope):
 
 ```rust
 #[test]
@@ -59,65 +118,12 @@ fn ids_for_family_filters_to_one_family() {
     let bos_ids = list.ids_for_family(DeviceFamily::Bos);
     assert_eq!(bos_ids.len(), 1);
     assert_eq!(bos_ids[0].as_str(), "bos._http._tcp.local.");
-
     assert_eq!(list.ids_for_family(DeviceFamily::Ubos).len(), 1);
     assert!(list.ids_for_family(DeviceFamily::Bitaxe).is_empty());
 }
 ```
 
-If the existing `identity(..)` test helper does not let you set the family, set it on the returned struct as shown (`ubos.family = DeviceFamily::Ubos;`). Confirm `DeviceFamily` is imported in the test module; add `use super::DeviceFamily;` if needed.
-
-- [ ] **Step 2: Run the test to verify it fails**
-
-Run: `nix develop -c cargo test -p fleet-management ids_for_family_filters_to_one_family`
-Expected: FAIL — `no method named ids_for_family`.
-
-- [ ] **Step 3: Implement the method**
-
-Add to `impl DeviceList` directly after `ids`:
-
-```rust
-#[must_use]
-pub fn ids_for_family(&self, family: DeviceFamily) -> Vec<DeviceId> {
-    self.devices
-        .iter()
-        .filter(|d| d.identity.family == family)
-        .map(|d| d.identity.id.clone())
-        .collect()
-}
-```
-
-If `DeviceFamily` does not already derive `PartialEq`, add it to its `derive(..)` (it is a fieldless enum; `#[derive(Clone, Copy, PartialEq, Eq, Debug)]` is the expected shape — match the existing derives and add `PartialEq, Eq` if absent).
-
-- [ ] **Step 4: Run the test to verify it passes**
-
-Run: `nix develop -c cargo test -p fleet-management ids_for_family_filters_to_one_family`
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add widgets-wasm/fleet-management/src/device.rs
-git commit -F - <<'EOF'
-fleet-management: Add per-family device id snapshot #BDK-506
-
-- add DeviceList::ids_for_family for the per-family drivers
-- filter the device list by identity.family
-EOF
-```
-
----
-
-## Task 2: `EndpointOutcome`, `pass_reachable` refactor, `reauth_decision`
-
-This replaces the boolean per-endpoint result with a three-state outcome so the re-auth decision is expressible, and adds the pure decision function the driver's barrier will call.
-
-**Files:**
-- Modify: `widgets-wasm/fleet-management/src/session.rs` (add types/functions at module level near `pass_reachable`, ~line 51; update the existing `reachable_only_when_an_endpoint_succeeded` test)
-
-- [ ] **Step 1: Write the failing tests**
-
-In `session.rs`, replace the existing `reachable_only_when_an_endpoint_succeeded` test and add the re-auth tests:
+In `session.rs`, replace the existing `reachable_only_when_an_endpoint_succeeded` test and add the new ones:
 
 ```rust
 #[test]
@@ -131,10 +137,7 @@ fn reachable_only_when_an_endpoint_succeeded() {
 #[test]
 fn reauth_decision_finalizes_when_no_auth_failure() {
     use EndpointOutcome::{Failed, Ok};
-    assert_eq!(
-        reauth_decision(&[Ok, Failed], false),
-        ReauthDecision::Finalize
-    );
+    assert_eq!(reauth_decision(&[Ok, Failed], false), ReauthDecision::Finalize);
 }
 
 #[test]
@@ -142,30 +145,56 @@ fn reauth_decision_refires_only_auth_failed_endpoints() {
     use EndpointOutcome::{AuthFailed, Ok};
     assert_eq!(
         reauth_decision(&[Ok, AuthFailed, AuthFailed], false),
-        ReauthDecision::Reauth {
-            endpoints: vec![1, 2]
-        }
+        ReauthDecision::Reauth { endpoints: vec![1, 2] }
     );
 }
 
 #[test]
 fn reauth_decision_finalizes_once_already_reauthed() {
     use EndpointOutcome::AuthFailed;
-    assert_eq!(
-        reauth_decision(&[AuthFailed], true),
-        ReauthDecision::Finalize
-    );
+    assert_eq!(reauth_decision(&[AuthFailed], true), ReauthDecision::Finalize);
+}
+
+#[test]
+fn next_wake_is_min_of_waiting_families() {
+    use FamilyWake::{Active, Idle, Waiting};
+    assert_eq!(next_wake(&[Waiting(30_000), Active, Waiting(12_000)]), Some(12_000));
+    assert_eq!(next_wake(&[Idle, Waiting(5_000), Idle]), Some(5_000));
+}
+
+#[test]
+fn next_wake_arms_nothing_when_no_family_is_waiting() {
+    use FamilyWake::{Active, Idle};
+    assert_eq!(next_wake(&[Active, Active, Idle]), None);
+    assert_eq!(next_wake(&[]), None);
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [ ] **Step 2: Run host tests to verify they fail**
 
-Run: `nix develop -c cargo test -p fleet-management reauth_decision`
-Expected: FAIL — `cannot find type EndpointOutcome` / `reauth_decision` not found.
+Run: `nix develop -c cargo test -p fleet-management`
+Expected: FAIL to compile — `cannot find type EndpointOutcome` / `ReauthDecision` / `FamilyWake`, `no method named ids_for_family`.
 
-- [ ] **Step 3: Add the types and functions; update `pass_reachable`**
+- [ ] **Step 3: Implement `ids_for_family`**
 
-In `session.rs`, replace the existing `pass_reachable` definition (the `#[must_use] pub fn pass_reachable(endpoint_oks: &[bool]) -> bool { ... }`) with the outcome-based version, and add the new items just above it:
+In `device.rs`, add to `impl DeviceList` directly after `ids`:
+
+```rust
+#[must_use]
+pub fn ids_for_family(&self, family: DeviceFamily) -> Vec<DeviceId> {
+    self.devices
+        .iter()
+        .filter(|d| d.identity.family == family)
+        .map(|d| d.identity.id.clone())
+        .collect()
+}
+```
+
+If `DeviceFamily` does not already derive `PartialEq`/`Eq`, add them to its `#[derive(...)]` (it is a fieldless enum; the expected shape is `#[derive(Clone, Copy, PartialEq, Eq, Debug)]`).
+
+- [ ] **Step 4: Implement the pure session helpers; refactor `pass_reachable`**
+
+In `session.rs`, replace the existing `pass_reachable(endpoint_oks: &[bool])` definition (and its old doc comment) with the items below, added at module level next to the other pure helpers:
 
 ```rust
 /// The result of fetching one telemetry endpoint in a pass.
@@ -209,70 +238,7 @@ pub fn reauth_decision(outcomes: &[EndpointOutcome], reauthed: bool) -> ReauthDe
 pub fn pass_reachable(outcomes: &[EndpointOutcome]) -> bool {
     outcomes.iter().any(|o| *o == EndpointOutcome::Ok)
 }
-```
 
-Delete the old doc comment block that described `pass_reachable` in terms of `endpoint_oks` booleans (it is replaced by the comment above).
-
-- [ ] **Step 4: Run the tests to verify they pass**
-
-Run: `nix develop -c cargo test -p fleet-management reauth_decision pass_reachable reachable_only`
-Expected: PASS for all. (The wasm driver still references the old `endpoint_oks: Vec<bool>`; that whole module is rewritten in Task 5, so do **not** run the wasm clippy gate yet — it will fail to compile until Task 5. This task is committed on host-test green only.)
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add widgets-wasm/fleet-management/src/session.rs
-git commit -F - <<'EOF'
-fleet-management: Add endpoint outcome and re-auth decision #BDK-506
-
-- replace the boolean endpoint result with a three-state outcome
-- add reauth_decision returning finalize or refire-auth-failed
-- base pass_reachable on the new outcome type
-EOF
-```
-
----
-
-## Task 3: `FamilyWake` and `next_wake` scheduler function
-
-The pure function that encodes per-family pacing isolation: only between-pass (`Waiting`) families contribute a timer; mid-pass (`Active`) and `Idle` families contribute nothing, so a slow family cannot displace another's wake.
-
-**Files:**
-- Modify: `widgets-wasm/fleet-management/src/session.rs` (add at module level; add tests)
-
-- [ ] **Step 1: Write the failing tests**
-
-Add to the `tests` module in `session.rs`:
-
-```rust
-#[test]
-fn next_wake_is_min_of_waiting_families() {
-    use FamilyWake::{Active, Idle, Waiting};
-    assert_eq!(
-        next_wake(&[Waiting(30_000), Active, Waiting(12_000)]),
-        Some(12_000)
-    );
-    assert_eq!(next_wake(&[Idle, Waiting(5_000), Idle]), Some(5_000));
-}
-
-#[test]
-fn next_wake_arms_nothing_when_no_family_is_waiting() {
-    use FamilyWake::{Active, Idle};
-    assert_eq!(next_wake(&[Active, Active, Idle]), None);
-    assert_eq!(next_wake(&[]), None);
-}
-```
-
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Run: `nix develop -c cargo test -p fleet-management next_wake`
-Expected: FAIL — `cannot find type FamilyWake` / `next_wake` not found.
-
-- [ ] **Step 3: Implement the type and function**
-
-Add to `session.rs` at module level (near the other pure helpers):
-
-```rust
 /// A family driver's contribution to frame scheduling.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FamilyWake {
@@ -300,87 +266,14 @@ pub fn next_wake(wakes: &[FamilyWake]) -> Option<u32> {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [ ] **Step 5: Run host tests to verify the pure logic passes**
 
-Run: `nix develop -c cargo test -p fleet-management next_wake`
-Expected: PASS. (Wasm clippy still blocked until Task 5 — host-test green only.)
+Run: `nix develop -c cargo test -p fleet-management`
+Expected: PASS for the new tests and the pre-existing `PassCursor`/`adapter_for` tests. (The wasm build is still broken here — the old driver references the removed `pass_reachable(&[bool])` shape — which is why this is one commit: the driver is rewritten next, before committing.)
 
-- [ ] **Step 5: Commit**
+### Part B — the wasm driver
 
-```bash
-git add widgets-wasm/fleet-management/src/session.rs
-git commit -F - <<'EOF'
-fleet-management: Add per-family frame scheduler function #BDK-506
-
-- add FamilyWake describing each driver's scheduling contribution
-- add next_wake returning the soonest pending pass across families
-- exclude active and idle families so a slow family is isolated
-EOF
-```
-
----
-
-## Task 4: Extract `mod driver` into `session/driver.rs` (mechanical)
-
-A pure move so the rewrite in Task 5 happens in a focused file. No behavior change.
-
-**Files:**
-- Create: `widgets-wasm/fleet-management/src/session/driver.rs`
-- Modify: `widgets-wasm/fleet-management/src/session.rs`
-
-- [ ] **Step 1: Move the module body to the new file**
-
-Cut the entire current `#[cfg(target_arch = "wasm32")] mod driver { ... }` block body (everything **between** the `mod driver {` line and its closing `}`) out of `session.rs` and paste it into a new file `widgets-wasm/fleet-management/src/session/driver.rs`. Do not include the `mod driver {` wrapper or its closing brace in the new file.
-
-- [ ] **Step 2: Replace the inline module with a file declaration**
-
-In `session.rs`, where the `mod driver { ... }` block was, leave:
-
-```rust
-#[cfg(target_arch = "wasm32")]
-mod driver;
-```
-
-Keep the existing re-export line unchanged:
-
-```rust
-#[cfg(target_arch = "wasm32")]
-pub use driver::{clear_tokens, ensure_running, on_frame, remove_token};
-```
-
-In the moved `driver.rs`, the existing `use super::{PassCursor, adapter_for, pass_reachable};` line stays valid (it now refers to `session.rs`). Leave it as-is for this task — Task 5 updates the imports.
-
-- [ ] **Step 3: Verify it still compiles unchanged**
-
-Run: `nix develop -c cargo clippy -p fleet-management --target wasm32-unknown-unknown -- -D warnings`
-Expected: the **same** result as before Task 2 — i.e. it now fails only on the `pass_reachable(&[bool])` signature mismatch introduced in Task 2 (the driver still passes `Vec<bool>`). That mismatch is expected and is resolved in Task 5. Confirm there are no *new* errors about the module move itself (no "file not found for module driver", no unresolved `super::` imports).
-
-Because the wasm build cannot be green until Task 5, this task is a structural checkpoint. Commit it so the rewrite starts from a clean move.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add widgets-wasm/fleet-management/src/session.rs widgets-wasm/fleet-management/src/session/driver.rs
-git commit -F - <<'EOF'
-fleet-management: Extract telemetry driver into its own module #BDK-506
-
-- move the wasm-only driver block from session.rs to session/driver.rs
-- declare it via `mod driver;` in the 2018 module style
-EOF
-```
-
----
-
-## Task 5: Rewrite the driver for per-family parallel telemetry
-
-The core change. The new `driver.rs` replaces the single global state machine with three `FamilyDriver`s, a routing map, the shared fetch callback, the Phase 0/1/2 per-device flow, the scheduler wiring, and the removal-abandon path.
-
-This is a wasm-only module with no host unit tests, so it cannot be driven by TDD. Verification is: the wasm clippy gate compiles and lints clean, the host tests (Tasks 1–3) stay green, and the visual-regression smoke (`just wasm::verify fleet-management`, CI/GPU only) is unchanged. Implement the whole file, then verify, then commit once (it compiles as a unit).
-
-**Files:**
-- Replace contents: `widgets-wasm/fleet-management/src/session/driver.rs`
-
-- [ ] **Step 1: Replace `driver.rs` with the new implementation**
+- [ ] **Step 6: Replace `driver.rs` with the new implementation**
 
 Write `widgets-wasm/fleet-management/src/session/driver.rs` with exactly this content:
 
@@ -390,8 +283,9 @@ Write `widgets-wasm/fleet-management/src/session/driver.rs` with exactly this co
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use bmc_wasm_protocol::FetchRequestId;
-use bmc_wasm_sdk::{FetchRequest, fmt, log_warn, request_frame, request_frame_after};
+use bmc_wasm_sdk::{
+    FetchRequest, FetchRequestId, fmt, log_warn, request_frame, request_frame_after,
+};
 
 use super::{
     EndpointOutcome, FamilyWake, PassCursor, ReauthDecision, adapter_for, next_wake,
@@ -438,19 +332,8 @@ impl FamilyDriver {
             waiting_next_pass: false,
             generation: 0,
             pending: 0,
-            reading: TelemetryReading {
-                current_hashrate_ths: None,
-                nominal_hashrate_ths: None,
-                power_w: None,
-                uptime_s: None,
-                temperature_c: None,
-            },
-            model: ModelAccumulator {
-                id: None,
-                name: None,
-                chip_type: None,
-                chip_count: None,
-            },
+            reading: TelemetryReading::default(),
+            model: ModelAccumulator::default(),
             outcomes: Vec::new(),
             reauthed: false,
         }
@@ -502,7 +385,8 @@ fn resolve_identity(id: &DeviceId) -> Option<(DeviceFamily, String, u16)> {
     })
 }
 
-/// Discovery found a device; start a pass for any idle family that has devices.
+/// Discovery found a device; start a pass for any idle family. A family with no
+/// devices stays idle (see `start_pass`), so this never parks an empty family.
 pub fn ensure_running() {
     for family in FAMILIES {
         let should_start = with_driver(family, |d| d.cursor.is_none() && !d.waiting_next_pass);
@@ -545,16 +429,23 @@ pub fn remove_token(id: &DeviceId) {
     reschedule();
 }
 
+/// Snapshot this family's devices and begin a pass. An empty snapshot leaves the
+/// driver fully idle — it must not park as `waiting_next_pass`, or a device
+/// discovered seconds later would not be polled until the 30s timer.
 fn start_pass(family: DeviceFamily) {
     let ids = crate::DEVICES.with(|d| d.borrow().ids_for_family(family));
+    if ids.is_empty() {
+        with_driver(family, |d| {
+            d.cursor = None;
+            d.waiting_next_pass = false;
+            d.elapsed_ms = 0;
+        });
+        return;
+    }
     with_driver(family, |d| {
         d.elapsed_ms = 0;
         d.waiting_next_pass = false;
-        d.cursor = if ids.is_empty() {
-            None
-        } else {
-            Some(PassCursor::new(ids))
-        };
+        d.cursor = Some(PassCursor::new(ids));
     });
     begin_device(family);
 }
@@ -683,12 +574,7 @@ fn issue_login(
             ROUTES.with(|r| {
                 r.borrow_mut().insert(
                     req_id,
-                    InFlight {
-                        family,
-                        device: id.clone(),
-                        generation,
-                        kind: FetchKind::Login,
-                    },
+                    InFlight { family, device: id.clone(), generation, kind: FetchKind::Login },
                 );
             });
         }
@@ -700,13 +586,15 @@ fn issue_login(
 }
 
 /// Shared callback for every login and telemetry fetch. Routes by request id;
-/// drops responses whose device generation no longer matches (abandoned).
+/// drops responses whose `(device, generation)` no longer matches the family's
+/// current device (the pass was abandoned or has moved on).
 fn on_fetch(response: &bmc_wasm_sdk::FetchResponse) {
     let Some(route) = ROUTES.with(|r| r.borrow_mut().remove(&response.request_id)) else {
         return;
     };
-    let current_generation = with_driver(route.family, |d| d.generation);
-    if route.generation != current_generation {
+    let (current_generation, current_device) =
+        with_driver(route.family, |d| (d.generation, d.current_device()));
+    if route.generation != current_generation || current_device.as_ref() != Some(&route.device) {
         return;
     }
     match route.kind {
@@ -715,6 +603,7 @@ fn on_fetch(response: &bmc_wasm_sdk::FetchResponse) {
             on_telemetry(route.family, endpoint_idx, response);
         }
     }
+    reschedule();
 }
 
 fn on_login(family: DeviceFamily, id: &DeviceId, response: &bmc_wasm_sdk::FetchResponse) {
@@ -750,11 +639,7 @@ fn on_login(family: DeviceFamily, id: &DeviceId, response: &bmc_wasm_sdk::FetchR
     }
 }
 
-fn on_telemetry(
-    family: DeviceFamily,
-    endpoint_idx: usize,
-    response: &bmc_wasm_sdk::FetchResponse,
-) {
+fn on_telemetry(family: DeviceFamily, endpoint_idx: usize, response: &bmc_wasm_sdk::FetchResponse) {
     let Some(id) = with_driver(family, |d| d.current_device()) else {
         return;
     };
@@ -899,49 +784,44 @@ fn reschedule() {
 }
 ```
 
-- [ ] **Step 2: Run the wasm clippy gate**
+- [ ] **Step 7: Verify both gates (serially) and format**
 
-Run: `nix develop -c cargo clippy -p fleet-management --target wasm32-unknown-unknown -- -D warnings`
-Expected: PASS, no warnings. Resolve any issues before moving on. Likely things to check:
-- `ModelAccumulator` and `TelemetryReading` field names in `idle()` must match their definitions exactly (copy from `model.rs` / `telemetry.rs` if they differ).
-- `Params::current().miner_password` access matches `manifest_params.rs`.
-- If `FetchRequestId` is not re-exported from `bmc_wasm_protocol` at that path, find its actual path (it is the type of `FetchResponse::request_id`).
+```
+nix develop -c cargo clippy -p fleet-management --target wasm32-unknown-unknown -- -D warnings
+nix develop -c cargo test -p fleet-management
+nix fmt
+```
+Expected: clippy PASS (no warnings), host tests PASS, fmt clean. Things to check if clippy complains:
+- `TelemetryReading::default()` and `ModelAccumulator::default()` must exist. The current code already calls both (`session.rs` uses `TelemetryReading::default()` and `ModelAccumulator::default()`), so they do — but if a `derive(Default)` is missing on either, add it rather than hand-writing a literal.
+- `Params::current().miner_password` field access matches `manifest_params.rs`.
+- No `clippy::wildcard_enum_match_arm` hits — the `match` arms over `DeviceFamily` and `FamilyWake` are exhaustive and explicit (no `_`).
 
-- [ ] **Step 3: Run the host tests**
-
-Run: `nix develop -c cargo test -p fleet-management`
-Expected: PASS — all Task 1–3 tests plus the pre-existing `PassCursor`/`adapter_for` tests. (Run this **after** the clippy gate, not in parallel.)
-
-- [ ] **Step 4: Format**
-
-Run: `nix fmt`
-Expected: clean (no diff, or only formats the new file).
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add widgets-wasm/fleet-management/src/session.rs widgets-wasm/fleet-management/src/session/driver.rs
+git add widgets-wasm/fleet-management/src/device.rs widgets-wasm/fleet-management/src/session.rs widgets-wasm/fleet-management/src/session/driver.rs
 git commit -F - <<'EOF'
 fleet-management: Load telemetry per family in parallel #BDK-506
 
 - split the driver into three independent per-family drivers
 - fire each device's endpoints concurrently, routed by request id
-- guard responses with a per-device generation for safe removal
+- guard responses with a (device, generation) stamp for safe removal
 - log in before the burst for auth families, re-auth once on 401
 - schedule frames from the soonest pending pass across families
+- leave a family with no devices idle so late discovery polls at once
 EOF
 ```
 
 ---
 
-## Task 6: Update the stale adapter doc comment
+## Task 3: Update the stale adapter doc comment
 
 **Files:**
 - Modify: `widgets-wasm/fleet-management/src/adapter.rs` (the `credential_header` doc comment, ~lines 45-50)
 
 - [ ] **Step 1: Update the comment**
 
-Replace the `credential_header` doc comment that currently says BOS uses "reactive token auth" with text describing login-first:
+Replace the `credential_header` doc comment that says BOS uses "reactive token auth" with:
 
 ```rust
     /// A proactive credential header attached to every request, preferred over
@@ -954,11 +834,14 @@ Replace the `credential_header` doc comment that currently says BOS uses "reacti
     }
 ```
 
-- [ ] **Step 2: Verify the gates still pass**
+- [ ] **Step 2: Verify both gates (serially) and format**
 
-Run: `nix develop -c cargo clippy -p fleet-management --target wasm32-unknown-unknown -- -D warnings`
-Then: `nix develop -c cargo test -p fleet-management`
-Expected: both PASS (comment-only change).
+```
+nix develop -c cargo clippy -p fleet-management --target wasm32-unknown-unknown -- -D warnings
+nix develop -c cargo test -p fleet-management
+nix fmt
+```
+Expected: both PASS, fmt clean (comment-only change).
 
 - [ ] **Step 3: Commit**
 
@@ -974,10 +857,22 @@ EOF
 
 ---
 
+## Testing scope
+
+**Delivered by this plan (host unit tests, Task 2 Part A):**
+- `ids_for_family` filters by family.
+- `reauth_decision` — finalize vs. re-fire only the auth-failed endpoints, and the one-re-auth-per-pass guard.
+- `pass_reachable` over `EndpointOutcome`.
+- `next_wake` — the per-family isolation property: only `Waiting` families contribute a timer; `Active`/`Idle` contribute nothing, so a slow mid-pass family cannot stretch another's cadence. This is the deterministic proof of the isolation goal.
+
+**Deliberately not in this plan (call-path / runtime integration):** a recording-`fetch_interceptor` test asserting "login precedes the burst" and "exactly one re-auth round" would need a runtime integration harness that loads the **built** fleet-management widget (today's `bmc-wasm-runtime/tests/*` use WAT probes, not real widgets) and drives mDNS + frames. That harness work is unverified and out of scope here, matching the spec's stance that the wall-clock stall test also needs new infrastructure. If you want call-path coverage, it should be scoped as its own task after confirming the runtime can load the widget with an interceptor — say so and I will investigate the harness and write it concretely.
+
+---
+
 ## Final verification
 
-- [ ] Run the full widget gate one more time, serially:
+- [ ] Run the full widget gate once more, serially:
   - `nix develop -c cargo clippy -p fleet-management --target wasm32-unknown-unknown -- -D warnings`
   - `nix develop -c cargo test -p fleet-management`
   - `nix fmt`
-- [ ] Confirm `git log --oneline` shows the six focused commits and the working tree is clean for the files this plan owns.
+- [ ] Confirm `git log --oneline` shows the three focused commits (extract, rewrite, doc) and the working tree is clean for the files this plan owns.
