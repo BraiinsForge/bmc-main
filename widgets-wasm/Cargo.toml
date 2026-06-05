@@ -16,6 +16,7 @@ members = [
     "clock",
     "fleet-management",
     "lib/mining",
+    "lib/units",
     "mining-clock",
     "mining-info",
 ]
