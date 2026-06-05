@@ -139,8 +139,12 @@ pub extern "C" fn init() {
 #[unsafe(no_mangle)]
 pub extern "C" fn render(delta_ms: u32) {
     session::on_frame(delta_ms);
-    let WidgetSize { width, height, .. } = widget_size();
-    let root = DEVICES.with(|d| render::view(&d.borrow(), width, height));
+    let WidgetSize {
+        width,
+        height,
+        variant,
+    } = widget_size();
+    let root = DEVICES.with(|d| render::view(&d.borrow(), variant));
     let _ = render_ui(width, height, root);
 }
 

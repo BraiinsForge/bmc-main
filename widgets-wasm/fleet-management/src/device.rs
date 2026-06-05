@@ -21,6 +21,13 @@ pub fn family_label(family: DeviceFamily) -> &'static str {
 
 /// Stable, lowercase slug for the family, distinct from the display label.
 #[must_use]
+#[cfg_attr(
+    target_arch = "wasm32",
+    expect(
+        dead_code,
+        reason = "used in host tests only; not reachable on the wasm target"
+    )
+)]
 pub fn family_id(family: DeviceFamily) -> &'static str {
     match family {
         DeviceFamily::Bos => "bos",
@@ -80,6 +87,13 @@ impl DeviceList {
     }
 
     #[must_use]
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "used in host tests only; not reachable on the wasm target"
+        )
+    )]
     pub fn len(&self) -> usize {
         self.devices.len()
     }
