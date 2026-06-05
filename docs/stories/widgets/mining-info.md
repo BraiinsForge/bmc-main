@@ -69,10 +69,14 @@ other.
   it. *Mining*'s quadrants are power consumption, MCR, temperature, and fan speed; *Geek* swaps MCR for efficiency
   (J/TH) and fan speed for the BTC price. In these compact clusters temperature reads as the chip temperature alone, not
   the board-to-chip range shown on the rectangular screens.
-- The ring's color and fill reflect the miner's state derived from its MCR: green when running well, amber when
-  underclocked, purple when overclocked, and red with a single lit tick when the miner is not hashing. While the miner
-  is hashing but its MCR is unavailable, the ring stays unlit and the hashrate label reads neutral rather than implying
-  a state.
+- The ring's fill reflects the miner's hashrate against its configured tuner targets. The sweep is anchored to three
+  points — the minimum target a quarter of the way around the ring, the default at three-quarters, and the maximum at
+  the full ring — interpolating linearly between, so a miner at its default target fills about three-quarters of it.
+- The ring's colour shows how the hashrate compares to the **default** target: green when within a small tolerance of it
+  (currently ±3%, *normal*), purple when at least that far above (*overclocked*), amber when at least that far below
+  (*underclocked*), and red with a single lit tick when the miner is not hashing. When the hashrate or its target is
+  unavailable the ring stays gray and unlit and the hashrate label reads neutral rather than implying a state. (The MCR
+  shown in the *Mining* quadrant is a separate readout and does not drive the ring.)
 - *Info Overload* arranges its fields into five horizontal bands with the Bitcoin price band across the middle; it drops
   only the network hashrate and hashprice relative to the large rectangular layout.
 
@@ -125,4 +129,7 @@ other.
 - Miner-local data (hashrate, temperature, power, MCR, fan, uptime, IP) comes from the miner's BOS REST API and
   refreshes about every five seconds; Bitcoin price and network data come from `public-api.braiins.com` and refresh
   about every sixty seconds. The two sources are independent and retry on failure.
+- The tuner constraints that scale the round gauge are read from `/configuration/constraints`. They are fetched only on
+  the round *Mining* and *Geek* screens (the only ones with a ring), and only once per login, since they change only
+  when the miner is re-tuned.
 - The small BTC price graph from the BOSer *info_overload* screen is not included.

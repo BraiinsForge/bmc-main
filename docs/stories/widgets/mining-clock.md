@@ -22,12 +22,14 @@ and reads live stats from a BOS miner over its REST API. It runs full-screen on 
 
 > As a user, I want the widget to show how hard my miner is working without leaving the clock face.
 
-- The outer ring is the hashrate gauge. It fills clockwise as the miner's current hashrate approaches its nominal
-  (rated) hashrate, and carries a curved `TH/s` label that rides the end of the lit arc.
-- The lit fraction is current hashrate over nominal hashrate, clamped so the ring never overfills past full.
-- The ring is a green gradient that deepens from dark to bright along the sweep.
-- Nominal hashrate is summed across the miner's hashboards. When it is unavailable the ring reads empty even if a
-  current hashrate is known — there is no scale to fill against — but the `TH/s` label still shows the live value.
+- The outer ring is the hashrate gauge. It fills clockwise against the miner's configured tuner targets and carries a
+  curved `TH/s` label that rides the end of the lit arc.
+- The sweep is anchored to three configured points: the minimum target sits a quarter of the way around the ring, the
+  default target three-quarters, and the maximum at the full ring, with the fill interpolating linearly between them. A
+  miner running at its default target therefore fills about three-quarters of the ring.
+- The ring's colour reflects the miner's state — see [Read the miner's state](#read-the-miners-state).
+- The targets come from the miner's tuner constraints. When they are unavailable the ring reads empty even if a current
+  hashrate is known — there is no scale to fill against — but the `TH/s` label still shows the live value.
 
 ### See power consumption at a glance
 
@@ -35,8 +37,28 @@ and reads live stats from a BOS miner over its REST API. It runs full-screen on 
 
 - The inner ring is the power gauge. It fills clockwise with the miner's approximated power consumption and carries a
   curved `W` label at the end of the lit arc.
-- The ring fills proportionally toward a fixed full-scale power rather than a miner-reported maximum.
-- Its colour ramps with load: green at low draw, through gold around the middle of the scale, to red at full scale.
+- Like the hashrate ring, its sweep is anchored to the configured power targets: the minimum at a quarter of the ring,
+  the default at three-quarters, and the maximum at the full ring, interpolating linearly between.
+- It shares the hashrate ring's single colour rather than carrying a load ramp of its own, so the two rings always read
+  as one instrument. When the power targets are unavailable the inner ring reads empty while the outer ring still fills.
+
+### Read the miner's state
+
+> As a user, I want the gauge colour to tell me whether my miner is running where I expect, so I can spot over- or
+> under-performance at a glance.
+
+- Both rings are coloured by one state, derived from the miner's hashrate relative to its **default** hashrate target:
+  - **Normal** (green) — the hashrate is within a small tolerance of the default target (currently ±3%); the miner is
+    running where it was configured.
+  - **Overclocked** (purple) — the hashrate is at least the tolerance above the default target.
+  - **Underclocked** (amber) — the hashrate is at least the tolerance below the default target.
+  - **Not hashing** (red, a single lit tick) — the miner reports essentially no hashrate.
+  - **No state** (gray, unlit) — the hashrate or its target is unavailable, so no state can be derived; the labels read
+    neutral rather than implying one.
+- The normal and underclocked states render as a gradient that deepens from dark to bright along the sweep; overclocked
+  is solid purple and not-hashing is solid red.
+- The power ring is positioned by the power target but never carries its own colour — it always takes this same state
+  colour, even though its fill length is driven by power rather than hashrate.
 
 ### Watch the rings animate in
 
@@ -84,7 +106,8 @@ and reads live stats from a BOS miner over its REST API. It runs full-screen on 
 - The *Miner password* parameter is the password for the miner's `root` login; it defaults to `root`. The login username
   is always `root`.
 - The widget logs in, caches the session token, and re-authenticates on its own when the token expires; hashrate and
-  power refresh roughly every five seconds and the nominal-hashrate scale roughly every ten.
+  power refresh roughly every five seconds, while the tuner constraints that scale the rings are fetched once per login
+  (they change only when the miner is re-tuned) and re-fetched when the widget re-authenticates.
 - When the password is empty or the login fails, the gauges read empty and the rings keep their stable transition slots.
 
 ### Trust what the numbers say
@@ -103,8 +126,9 @@ and reads live stats from a BOS miner over its REST API. It runs full-screen on 
   alarm row only at the full size.
 - *Miner URL*, *Miner password*, *Numbers font style*, *Show date*, *Show seconds*, *Show timezone*, and the timezone
   override are manifest-driven widget parameters, configurable from the web UI.
-- The hashrate ring scales against the miner's nominal hashrate (summed across hashboards); the power ring scales
-  against a fixed full-scale value, because the miner does not report a power maximum.
+- Both rings scale against the miner's tuner constraints — the configured min / default / max for hashrate and for power
+  — with the minimum at a quarter of the ring, the default at three-quarters, and the maximum at the full ring. When a
+  target is unavailable, its ring reads empty rather than guessing a scale.
 - Day / night appearance follows the device-wide night mode signal — the clock recolours itself; it is not a per-widget
   setting. See [Night Mode](night-mode.md).
 - The next alarm and the 12-/24-hour time format come from device system state, not from widget configuration.
@@ -112,7 +136,7 @@ and reads live stats from a BOS miner over its REST API. It runs full-screen on 
 - The *Miner password* is stored and shown as ordinary widget text because the manifest system has no secret-parameter
   type yet. This is a known limitation, shared with the [Mining Info Widget](mining-info.md).
 - Miner-local data comes from the miner's BOS REST API; the widget reads `/miner/stats` for live hashrate and power and
-  `/miner/hw/hashboards` for the nominal-hashrate scale, authenticating via `/auth/login`.
+  `/configuration/constraints` for the gauge target scales, authenticating via `/auth/login`.
 
 ## Platforms
 

@@ -293,8 +293,8 @@ fn center_node(
 }
 
 // The "1 min" caption under the center "Hashrate" label, marking the readout as
-// the 1-minute average (the gauge itself tracks the 5-minute average). Placed as
-// an absolute sibling rather than a third row in `center_node` so the value and
+// the 1-minute hashrate average. Placed as an absolute sibling rather than a
+// third row in `center_node` so the value and
 // "Hashrate" group keeps its exact centered position. The value+label group is
 // centered on `cy`, so its bottom edge sits half the group height below center;
 // the caption sits at that edge, snug under the label (the label and caption
