@@ -5,6 +5,7 @@ mod device;
 mod discovery;
 mod families;
 mod filter;
+mod layout;
 mod model;
 mod session;
 mod summary;
@@ -169,7 +170,16 @@ pub extern "C" fn render(_delta_ms: u32) {
         ubos_enabled: params.ubos_enabled,
         axeos_enabled: params.axeos_enabled,
     };
-    let root = DEVICES.with(|d| render::view(&d.borrow(), variant, &params.fleet_name, &filters));
+    let root = DEVICES.with(|d| {
+        render::view(
+            &d.borrow(),
+            width,
+            height,
+            variant,
+            &params.fleet_name,
+            &filters,
+        )
+    });
     let _ = render_ui(width, height, root);
 }
 

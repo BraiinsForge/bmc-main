@@ -12,6 +12,7 @@ use units::units::{DegreeCelsius, Quantity};
 
 use crate::device::DeviceList;
 use crate::filter::Filters;
+use crate::layout::{Layout, choose};
 use crate::summary::{FleetSummary, GroupSummary, summarize};
 
 const OK_ICON: Svg = include_svg!("assets/ok.svg");
@@ -34,6 +35,11 @@ const HERO_FONT_LARGE: u32 = 40;
 // 64px title beside the hero hashrate and counts, so it uses a smaller one.
 const TITLE_FONT_FULL: u32 = 64;
 const TITLE_FONT_LARGE: u32 = 32;
+
+// The summary-only layout's fixed fonts (small viewports such as the BMM101).
+const SUMMARY_TITLE_FONT: u32 = 32;
+const SUMMARY_LABEL_FONT: u32 = 20;
+const SUMMARY_VALUE_FONT: u32 = 28;
 
 // A dark, subtle hairline matching the weather widget's `BORDER` (GRAY_70).
 const SEPARATOR_COLOR: Color = GRAY_70;
@@ -308,23 +314,65 @@ fn breakdown_row(group: &GroupSummary, variant: SizeVariant) -> Node {
     row(props!(gap: ROW_GAP, cross_align: CrossAlign::Center), cells)
 }
 
-#[must_use]
-pub fn view(devices: &DeviceList, variant: SizeVariant, title: &str, filters: &Filters) -> Node {
-    if devices.is_empty() {
-        return col(
-            props!(background: BLACK),
-            [center(
-                props!(flex: 1.0),
-                [text(
-                    "Searching for miners\u{2026}",
-                    style!(size: 28, color: WHITE),
-                )],
-            )],
-        );
-    }
+// A value text node in the summary layout.
+fn summary_value(value: String) -> Node {
+    text(value, style!(size: SUMMARY_VALUE_FONT, color: VALUE_COLOR))
+}
 
-    let summary: FleetSummary = summarize(devices, filters);
+// A centered title header. Flanking spacers center it horizontally — the engine
+// has no main-axis justify.
+fn summary_title(title: &str) -> Node {
+    row(
+        props!(cross_align: CrossAlign::Center),
+        [
+            spacer(1.0),
+            text(
+                title,
+                style!(size: SUMMARY_TITLE_FONT, weight: FontWeight::SEMIBOLD, color: VALUE_COLOR),
+            ),
+            spacer(1.0),
+        ],
+    )
+}
 
+// A label-left / value-right metric row; the spacer pushes the value to the
+// right edge.
+fn metric_row(label: &str, value: Node) -> Node {
+    row(
+        props!(cross_align: CrossAlign::Center),
+        [
+            text(label, style!(size: SUMMARY_LABEL_FONT, color: LABEL_COLOR)),
+            spacer(1.0),
+            value,
+        ],
+    )
+}
+
+// The summary-only screen for viewports too small for the breakdown table: a
+// centered title above the fleet totals, rows spread to fill the height.
+fn summary_view(total: &GroupSummary, title: &str) -> Node {
+    col(
+        props!(background: BLACK, padding: 24.0),
+        [
+            summary_title(title),
+            spacer(1.0),
+            metric_row("Hashrate", summary_value(hashrate_str(total.hashrate))),
+            spacer(1.0),
+            metric_row(
+                "Mining / Online",
+                counts(total.ok_count, total.online_count, SUMMARY_VALUE_FONT),
+            ),
+            spacer(1.0),
+            metric_row("Power", summary_value(whole_str(total.power))),
+            spacer(1.0),
+            metric_row("Efficiency", summary_value(tenth_str(total.efficiency))),
+            spacer(1.0),
+        ],
+    )
+}
+
+// The overview row plus the per-model breakdown table.
+fn table_view(summary: &FleetSummary, variant: SizeVariant, title: &str) -> Node {
     let mut children: Vec<Node> = vec![overview(&summary.total, variant, title), separator()];
     if matches!(variant, SizeVariant::Full) {
         children.push(text(
@@ -341,4 +389,34 @@ pub fn view(devices: &DeviceList, variant: SizeVariant, title: &str, filters: &F
         props!(background: BLACK, padding: 24.0, gap: 12.0),
         children,
     )
+}
+
+#[must_use]
+pub fn view(
+    devices: &DeviceList,
+    width: u32,
+    height: u32,
+    variant: SizeVariant,
+    title: &str,
+    filters: &Filters,
+) -> Node {
+    if devices.is_empty() {
+        return col(
+            props!(background: BLACK),
+            [center(
+                props!(flex: 1.0),
+                [text(
+                    "Searching for miners\u{2026}",
+                    style!(size: 28, color: WHITE),
+                )],
+            )],
+        );
+    }
+
+    let summary: FleetSummary = summarize(devices, filters);
+
+    match choose(width, height) {
+        Layout::Summary => summary_view(&summary.total, title),
+        Layout::Table => table_view(&summary, variant, title),
+    }
 }
