@@ -156,7 +156,7 @@ pub struct FleetSummary {
 pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> FleetSummary {
     let reachable: Vec<&KnownDevice> = devices
         .iter()
-        .filter(|d| d.reachable && filters.is_visible(d.model.as_ref()))
+        .filter(|d| d.reachable && filters.is_visible(d.identity.family, d.model.as_ref()))
         .collect();
 
     let mut partitions: BTreeMap<String, Vec<&KnownDevice>> = BTreeMap::new();
@@ -516,8 +516,8 @@ mod tests {
             ("b", Some("NerdQAxe++"), Some(full(4.0, 70.0, 55.0)), true),
         ]);
         let filters = Filters {
-            whitelist: Vec::new(),
             blacklist: vec!["nerdqaxe".to_owned()],
+            ..Default::default()
         };
         let summary = summarize(&l, &filters);
         let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
@@ -534,11 +534,63 @@ mod tests {
         ]);
         let filters = Filters {
             whitelist: vec!["bmm101".to_owned()],
-            blacklist: Vec::new(),
+            ..Default::default()
         };
         let summary = summarize(&l, &filters);
         let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
         assert_eq!(labels, ["BMM 101"], "only the whitelisted model survives");
         assert_eq!(raw(&summary.total.hashrate), Some(1.0));
+    }
+
+    fn family_list(specs: &[(&str, DeviceFamily, &str, TelemetryReading)]) -> DeviceList {
+        let mut l = DeviceList::new();
+        for (i, (name, family, model_name, reading)) in specs.iter().enumerate() {
+            let mut id_str = String::from("dev-");
+            units::format::push_int(&mut id_str, i as u64);
+            let id = DeviceId::new(id_str);
+            l.upsert(DeviceIdentity {
+                id: id.clone(),
+                family: *family,
+                name: (*name).to_owned(),
+                host: "10.0.0.1".to_owned(),
+                port: 80,
+            });
+            l.apply_model(
+                &id,
+                crate::model::MinerModel {
+                    id: "id".to_owned(),
+                    name: (*model_name).to_owned(),
+                    chip_type: None,
+                    chip_count: None,
+                    nominal_hashrate_ths: None,
+                },
+            );
+            l.apply_telemetry(&id, *reading, true);
+        }
+        l
+    }
+
+    #[test]
+    fn disabled_family_drops_its_groups_and_total_contribution() {
+        // A fleet spanning BOS and Bitaxe; disabling Bitaxe must erase its
+        // group from the breakdown and remove its hashrate/power from the total.
+        let l = family_list(&[
+            ("a", DeviceFamily::Bos, "BMM 101", full(1.0, 30.0, 60.0)),
+            (
+                "b",
+                DeviceFamily::Bitaxe,
+                "NerdQAxe++",
+                full(4.0, 70.0, 55.0),
+            ),
+        ]);
+        let filters = Filters {
+            axeos_enabled: false,
+            ..Default::default()
+        };
+        let summary = summarize(&l, &filters);
+        let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
+        assert_eq!(labels, ["BMM 101"], "the disabled family's group is gone");
+        assert_eq!(raw(&summary.total.hashrate), Some(1.0));
+        assert_eq!(raw(&summary.total.power), Some(30.0));
     }
 }

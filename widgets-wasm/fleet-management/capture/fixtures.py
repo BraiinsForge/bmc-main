@@ -164,6 +164,9 @@ def lines():
             'ubos_password': 'root',
             'model_whitelist': '[]',
             'model_blacklist': '[]',
+            'bos_enabled': True,
+            'ubos_enabled': True,
+            'axeos_enabled': True,
         },
     }
     # The loader requires at_ms to be monotonically non-decreasing. Fetch stubs

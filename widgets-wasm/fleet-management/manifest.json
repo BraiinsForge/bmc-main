@@ -57,6 +57,24 @@
       "description": "JSON array of model-name fragments to hide",
       "type": "string",
       "default_value": "[]"
+    },
+    "bos_enabled": {
+      "name": "Show BOS miners",
+      "description": "Include BOS miners in the fleet view and keep polling them",
+      "type": "boolean",
+      "default_value": true
+    },
+    "ubos_enabled": {
+      "name": "Show uBOS miners",
+      "description": "Include uBOS devices in the fleet view and keep polling them",
+      "type": "boolean",
+      "default_value": true
+    },
+    "axeos_enabled": {
+      "name": "Show AxeOS miners",
+      "description": "Include AxeOS miners in the fleet view and keep polling them",
+      "type": "boolean",
+      "default_value": true
     }
   }
 }
