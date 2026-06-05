@@ -2,18 +2,21 @@
 
 use crate::adapter::FamilyAdapter;
 use crate::device::{DeviceFamily, DeviceId};
+use crate::families::bitaxe::BitaxeAdapter;
 use crate::families::bos::BosAdapter;
 use crate::families::ubos::UbosAdapter;
 
-/// Map a device family to its adapter. `None` for a family with no adapter yet
-/// (Bitaxe); the driver then marks such a device unreachable rather than
-/// assuming the family is never discovered.
+/// Map a device family to its adapter.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "keep the existing driver contract while unsupported-family handling remains in place"
+)]
 #[must_use]
 pub fn adapter_for(family: DeviceFamily) -> Option<&'static dyn FamilyAdapter> {
     match family {
         DeviceFamily::Bos => Some(&BosAdapter),
         DeviceFamily::Ubos => Some(&UbosAdapter),
-        DeviceFamily::Bitaxe => None,
+        DeviceFamily::Bitaxe => Some(&BitaxeAdapter),
     }
 }
 
@@ -466,7 +469,7 @@ mod tests {
     }
 
     #[test]
-    fn adapter_for_maps_known_families_and_rejects_bitaxe() {
+    fn adapter_for_maps_every_supported_family() {
         assert_eq!(
             adapter_for(DeviceFamily::Bos).map(FamilyAdapter::browse_service_types),
             Some(crate::families::bos::BOS_SERVICE_TYPES)
@@ -475,6 +478,9 @@ mod tests {
             adapter_for(DeviceFamily::Ubos).map(FamilyAdapter::browse_service_types),
             Some(crate::families::ubos::UBOS_SERVICE_TYPES)
         );
-        assert!(adapter_for(DeviceFamily::Bitaxe).is_none());
+        assert_eq!(
+            adapter_for(DeviceFamily::Bitaxe).map(FamilyAdapter::browse_service_types),
+            Some(crate::families::bitaxe::BITAXE_SERVICE_TYPES)
+        );
     }
 }

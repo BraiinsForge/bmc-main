@@ -29,6 +29,8 @@ use adapter::FamilyAdapter;
 #[cfg(target_arch = "wasm32")]
 use device::{DeviceId, DeviceList};
 #[cfg(target_arch = "wasm32")]
+use families::bitaxe::BitaxeAdapter;
+#[cfg(target_arch = "wasm32")]
 use families::bos::BosAdapter;
 #[cfg(target_arch = "wasm32")]
 use families::ubos::UbosAdapter;
@@ -65,6 +67,19 @@ fn on_ubos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
 }
 
 #[cfg(target_arch = "wasm32")]
+fn on_bitaxe_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
+    match event {
+        mdns::MdnsEvent::Found(json) => ingest(&BitaxeAdapter, json),
+        mdns::MdnsEvent::Removed(name) => {
+            let id = DeviceId::new(*name);
+            session::remove_token(&id);
+            DEVICES.with(|d| d.borrow_mut().remove(&id));
+            request_frame();
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
 fn ingest(adapter: &dyn FamilyAdapter, json: &str) {
     let doc = JsonDoc::parse(json.as_bytes());
     if let Some(found) = adapter.parse_found(&doc) {
@@ -84,6 +99,9 @@ pub extern "C" fn init() {
     }
     if mdns::mdns_browse(UbosAdapter.browse_service_types(), on_ubos_event).is_none() {
         log_warn!("fleet: uBOS mDNS browse rejected by host runtime limits");
+    }
+    if mdns::mdns_browse(BitaxeAdapter.browse_service_types(), on_bitaxe_event).is_none() {
+        log_warn!("fleet: AxeOS mDNS browse rejected by host runtime limits");
     }
     request_frame();
 }
