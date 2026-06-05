@@ -9,6 +9,7 @@
 )]
 
 use bmc_wasm_sdk::ufmt;
+use mining::gauge::TargetRange;
 
 pub(crate) trait JsonLookup {
     #[cfg_attr(
@@ -42,6 +43,16 @@ pub(crate) struct MinerData {
     pub(crate) hashrate_ths: Option<f64>,
     pub(crate) power_w: Option<f64>,
     pub(crate) nominal_hashrate_ths: Option<f64>,
+    pub(crate) constraints: Constraints,
+}
+
+// Tuner min/default/max targets that anchor the two gauge rings: `hashrate`
+// drives the outer ring and the shared state, `power` the inner ring. Each is
+// `Some` only when the endpoint reports all three of its leaves.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Constraints {
+    pub(crate) hashrate: Option<TargetRange>,
+    pub(crate) power: Option<TargetRange>,
 }
 
 pub(crate) fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) {
@@ -85,6 +96,26 @@ fn hashboard_present(json: &impl JsonLookup, idx: usize) -> bool {
     .any(|path| {
         json.f64(&bmc_wasm_sdk::fmt!("/hashboards/{idx}/{path}"))
             .is_some()
+    })
+}
+
+pub(crate) fn parse_constraints(json: &impl JsonLookup, data: &mut MinerData) {
+    data.constraints.hashrate = target_range(
+        json,
+        "/tuner_constraints/hashrate_target",
+        "terahash_per_second",
+    );
+    data.constraints.power = target_range(json, "/tuner_constraints/power_target", "watt");
+}
+
+// Read a `{min,default,max}/<leaf>` target block, present only when all three
+// edges are reported.
+fn target_range(json: &impl JsonLookup, base: &str, leaf: &str) -> Option<TargetRange> {
+    let edge = |name: &str| json.f64(&bmc_wasm_sdk::fmt!("{base}/{name}/{leaf}"));
+    Some(TargetRange {
+        min: edge("min")?,
+        default: edge("default")?,
+        max: edge("max")?,
     })
 }
 
@@ -226,6 +257,62 @@ mod tests {
         let mut data = MinerData::default();
         parse_hashboards(&json, &mut data);
         assert_eq!(data.nominal_hashrate_ths, Some(125.0));
+    }
+
+    fn full_constraints_json() -> MapJson {
+        let mut json = MapJson::default();
+        json.floats.insert(
+            "/tuner_constraints/hashrate_target/min/terahash_per_second",
+            50.0,
+        );
+        json.floats.insert(
+            "/tuner_constraints/hashrate_target/default/terahash_per_second",
+            100.0,
+        );
+        json.floats.insert(
+            "/tuner_constraints/hashrate_target/max/terahash_per_second",
+            120.0,
+        );
+        json.floats
+            .insert("/tuner_constraints/power_target/min/watt", 1_000.0);
+        json.floats
+            .insert("/tuner_constraints/power_target/default/watt", 3_000.0);
+        json.floats
+            .insert("/tuner_constraints/power_target/max/watt", 3_500.0);
+        json
+    }
+
+    #[test]
+    fn parses_tuner_constraints_for_hashrate_and_power() {
+        let mut data = MinerData::default();
+        parse_constraints(&full_constraints_json(), &mut data);
+        assert_eq!(
+            data.constraints.hashrate,
+            Some(TargetRange {
+                min: 50.0,
+                default: 100.0,
+                max: 120.0
+            })
+        );
+        assert_eq!(
+            data.constraints.power,
+            Some(TargetRange {
+                min: 1_000.0,
+                default: 3_000.0,
+                max: 3_500.0
+            })
+        );
+    }
+
+    #[test]
+    fn constraint_target_is_absent_when_a_leaf_is_missing() {
+        let mut json = full_constraints_json();
+        json.floats
+            .remove("/tuner_constraints/power_target/max/watt");
+        let mut data = MinerData::default();
+        parse_constraints(&json, &mut data);
+        assert!(data.constraints.hashrate.is_some());
+        assert_eq!(data.constraints.power, None);
     }
 
     #[test]

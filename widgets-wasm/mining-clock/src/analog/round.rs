@@ -14,7 +14,7 @@
 use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Params;
-use crate::miner::{self, MinerData};
+use crate::miner::MinerData;
 use crate::shared::{
     AlarmAnchor, ClockPalette, TzLabel, alarm_row_draws, f32_from_u32, font_weight,
     local_or_system, push_utc_offset, resolve_tz_for_label,
@@ -288,20 +288,31 @@ fn push_gauges_and_labels(
     miner: &MinerData,
     seed_gauges: bool,
 ) {
-    let mcr = miner::mcr_percent(miner.hashrate_ths, miner.nominal_hashrate_ths);
-    let g = gauge::gauge(miner.hashrate_ths, mcr);
-    let hashrate_fraction =
-        miner::hashrate_fraction(miner.hashrate_ths, miner.nominal_hashrate_ths);
+    // The gauge state and outer ring are driven by the 1-minute hashrate average
+    // against the hashrate target; the dial label below shows the same value. The
+    // inner ring is positioned by the power target independently, but shares the
+    // single hashrate-derived color.
+    let state = gauge::gauge_state(miner.hashrate_ths, miner.constraints.hashrate.as_ref());
+    let hashrate_fraction = miner
+        .hashrate_ths
+        .zip(miner.constraints.hashrate)
+        .map_or(0.0, |(hashrate, range)| {
+            gauge::target_fraction(hashrate, &range)
+        });
 
     // Lit states color both rings with the state fill. NotAvailable has no color:
     // both rings fill with the neutral gray track and the inner power label is
     // suppressed.
-    let (fill, outer_fraction, show_power_label) = match ring_fill(g.state) {
+    let (fill, outer_fraction, show_power_label) = match ring_fill(state) {
         Some(fill) => (fill, hashrate_fraction, true),
         None => (ArcFill::Solid(INACTIVE_TICK), 1.0, false),
     };
     let outer_fraction = outer_fraction.max(OUTER_MIN_SWEEP / HASHRATE_SWEEP_END);
-    let inner_end = std::f32::consts::TAU * miner::power_fraction(miner.power_w);
+    let inner_fraction = miner
+        .power_w
+        .zip(miner.constraints.power)
+        .map_or(0.0, |(power, range)| gauge::target_fraction(power, &range));
+    let inner_end = std::f32::consts::TAU * inner_fraction;
 
     let hashrate_label_angle = live_end_angle(HASHRATE_SWEEP_END, outer_fraction);
     push_gauge_arc(

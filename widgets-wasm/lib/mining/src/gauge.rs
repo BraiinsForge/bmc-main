@@ -4,13 +4,23 @@
 //! tick spans. Holds no renderer/SDK type so it unit-tests on the host; callers
 //! map `GaugeState` to colors (see `style`) and wrap the spans in `ArcSegments`
 //! at the draw site.
+//!
+//! The gauge sweep is anchored to the miner's tuner constraints: the configured
+//! `min` sits a quarter of the way around, `default` three-quarters, `max` at
+//! the full sweep, with linear interpolation between. State is hashrate-only —
+//! within ±`GOOD_BAND_PERCENT` of the default target reads `Good`, beyond it
+//! `Over`/`Underclocked`.
 
 pub const TICK_COUNT: usize = 28;
 
-// MCR band edges in percent, inclusive at the lower edge. 130 is the
-// product-chosen overclock edge; 85 matches bos-main's underperforming_mcr.
-pub const OVERCLOCK_MCR: f64 = 130.0;
-pub const GOOD_MCR: f64 = 85.0;
+// Half-width of the "Good" band around the default hashrate target, in percent:
+// within ±N% of default reads Good, beyond it Over/Underclocked. Product-tunable.
+pub const GOOD_BAND_PERCENT: f64 = 3.0;
+
+// Gauge sweep fractions for the three tuner-target anchors.
+const MIN_ANCHOR: f32 = 0.25;
+const DEFAULT_ANCHOR: f32 = 0.75;
+const MAX_ANCHOR: f32 = 1.0;
 
 // Hashrate (TH/s) at or below this reads as OFF rather than a live miner: a
 // stopped miner reports ~0, and tiny residual values are not meaningful hashing.
@@ -34,40 +44,69 @@ pub struct Gauge {
     pub lit_count: usize,
 }
 
-// `Off` is reserved for a miner that is effectively not hashing: a reported
-// hashrate at or below `OFF_MAX_THS`. Any input with no usable telemetry —
-// hashrate unavailable, or hashing while `mcr_percent` is unavailable — is
-// `NotAvailable`, which renders neutral with no lit ticks.
+// A tuner constraint's min / default / max for one quantity (hashrate in TH/s
+// or power in W). The gauge anchors its sweep to these three points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TargetRange {
+    pub min: f64,
+    pub default: f64,
+    pub max: f64,
+}
+
+// Sweep fraction (0..1) for `value` against the target anchors, piecewise-linear
+// through `0 -> 0`, `min -> 1/4`, `default -> 3/4`, `max -> 4/4`. A value at or
+// below zero maps to 0, at or above max to the full sweep.
 #[must_use]
-pub fn gauge(hashrate_ths: Option<f64>, mcr_percent: Option<f64>) -> Gauge {
+pub fn target_fraction(value: f64, range: &TargetRange) -> f32 {
+    let fraction = if value <= 0.0 {
+        0.0
+    } else if value <= range.min {
+        lerp_segment(value, 0.0, range.min, 0.0, MIN_ANCHOR)
+    } else if value <= range.default {
+        lerp_segment(value, range.min, range.default, MIN_ANCHOR, DEFAULT_ANCHOR)
+    } else if value <= range.max {
+        lerp_segment(value, range.default, range.max, DEFAULT_ANCHOR, MAX_ANCHOR)
+    } else {
+        MAX_ANCHOR
+    };
+    fraction.clamp(0.0, MAX_ANCHOR)
+}
+
+// Linear map of `value` in `[lo, hi]` onto `[lo_anchor, hi_anchor]`. A zero-width
+// or inverted segment (`hi <= lo`, e.g. a degenerate `min == default`) snaps to
+// the upper anchor rather than dividing by zero.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "the interpolation parameter is a clamped 0..1 ratio that loses no meaningful precision in f32"
+)]
+fn lerp_segment(value: f64, lo: f64, hi: f64, lo_anchor: f32, hi_anchor: f32) -> f32 {
+    if hi <= lo {
+        return hi_anchor;
+    }
+    let t = ((value - lo) / (hi - lo)).clamp(0.0, 1.0) as f32;
+    lo_anchor + t * (hi_anchor - lo_anchor)
+}
+
+// Classify the gauge state from the hashrate against its tuner target. `Off`
+// (a stopped miner) takes precedence over a missing target; either input absent
+// otherwise reads `NotAvailable`.
+#[must_use]
+pub fn gauge_state(hashrate_ths: Option<f64>, hashrate_target: Option<&TargetRange>) -> GaugeState {
     let Some(hashrate) = hashrate_ths else {
-        return Gauge {
-            state: GaugeState::NotAvailable,
-            lit_count: 0,
-        };
+        return GaugeState::NotAvailable;
     };
     if hashrate <= OFF_MAX_THS {
-        return Gauge {
-            state: GaugeState::Off,
-            lit_count: 1,
-        };
+        return GaugeState::Off;
     }
-    let Some(mcr) = mcr_percent else {
-        return Gauge {
-            state: GaugeState::NotAvailable,
-            lit_count: 0,
-        };
+    let Some(target) = hashrate_target else {
+        return GaugeState::NotAvailable;
     };
-    let state = if mcr >= OVERCLOCK_MCR {
+    if hashrate >= target.default * (1.0 + GOOD_BAND_PERCENT / 100.0) {
         GaugeState::Overclocked
-    } else if mcr >= GOOD_MCR {
-        GaugeState::Good
-    } else {
+    } else if hashrate <= target.default * (1.0 - GOOD_BAND_PERCENT / 100.0) {
         GaugeState::Underclocked
-    };
-    Gauge {
-        state,
-        lit_count: lit_count_from_mcr(mcr),
+    } else {
+        GaugeState::Good
     }
 }
 
@@ -77,9 +116,26 @@ pub fn gauge(hashrate_ths: Option<f64>, mcr_percent: Option<f64>) -> Gauge {
     clippy::cast_sign_loss,
     reason = "lit-tick count is a small clamped non-negative value"
 )]
-fn lit_count_from_mcr(mcr: f64) -> usize {
-    let fill = (mcr / OVERCLOCK_MCR).clamp(0.0, 1.0);
-    (fill * TICK_COUNT as f64).round() as usize
+fn lit_count_from_fraction(fraction: f32) -> usize {
+    (fraction.clamp(0.0, 1.0) * TICK_COUNT as f32).round() as usize
+}
+
+// Convenience for the single-ring face: the hashrate state and its lit-tick
+// count in one call. `Off` lights a single tick, `NotAvailable` none.
+#[must_use]
+pub fn gauge(hashrate_ths: Option<f64>, hashrate_target: Option<&TargetRange>) -> Gauge {
+    let state = gauge_state(hashrate_ths, hashrate_target);
+    let lit_count = match state {
+        GaugeState::NotAvailable => 0,
+        GaugeState::Off => 1,
+        GaugeState::Underclocked | GaugeState::Good | GaugeState::Overclocked => {
+            let fraction = hashrate_ths
+                .zip(hashrate_target)
+                .map_or(0.0, |(hashrate, range)| target_fraction(hashrate, range));
+            lit_count_from_fraction(fraction)
+        }
+    };
+    Gauge { state, lit_count }
 }
 
 // Sweep end angle (radians, clockwise from 12 o'clock) of the lit overlay for
@@ -120,65 +176,132 @@ pub const TICK_SPANS: [(f32, f32); TICK_COUNT] = {
 mod tests {
     use super::*;
 
+    fn assert_frac(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    const RANGE: TargetRange = TargetRange {
+        min: 10.0,
+        default: 30.0,
+        max: 40.0,
+    };
+
     #[test]
-    fn not_available_when_hashrate_unavailable_regardless_of_mcr() {
-        let g = gauge(None, Some(100.0));
-        assert_eq!(g.state, GaugeState::NotAvailable);
-        assert_eq!(g.lit_count, 0);
+    fn target_fraction_lands_on_each_anchor() {
+        assert_frac(target_fraction(0.0, &RANGE), 0.0);
+        assert_frac(target_fraction(10.0, &RANGE), MIN_ANCHOR);
+        assert_frac(target_fraction(30.0, &RANGE), DEFAULT_ANCHOR);
+        assert_frac(target_fraction(40.0, &RANGE), MAX_ANCHOR);
     }
 
     #[test]
-    fn off_when_hashrate_at_or_below_off_threshold() {
-        for hr in [0.0, 0.005, 0.01] {
-            let g = gauge(Some(hr), Some(100.0));
-            assert_eq!(
-                g.state,
-                GaugeState::Off,
-                "hashrate {hr} TH/s should read Off"
-            );
-            assert_eq!(g.lit_count, 1);
+    fn target_fraction_interpolates_linearly_between_anchors() {
+        // Halfway 0->min, min->default, default->max respectively.
+        assert_frac(target_fraction(5.0, &RANGE), 0.125);
+        assert_frac(target_fraction(20.0, &RANGE), 0.5);
+        assert_frac(target_fraction(35.0, &RANGE), 0.875);
+    }
+
+    #[test]
+    fn target_fraction_clamps_below_zero_and_above_max() {
+        assert_frac(target_fraction(-5.0, &RANGE), 0.0);
+        assert_frac(target_fraction(100.0, &RANGE), MAX_ANCHOR);
+    }
+
+    #[test]
+    fn target_fraction_never_produces_nan_on_degenerate_ranges() {
+        let degenerate = [
+            TargetRange {
+                min: 30.0,
+                default: 30.0,
+                max: 40.0,
+            },
+            TargetRange {
+                min: 10.0,
+                default: 30.0,
+                max: 30.0,
+            },
+            TargetRange {
+                min: 30.0,
+                default: 20.0,
+                max: 10.0,
+            },
+        ];
+        for range in degenerate {
+            for value in [-1.0, 0.0, 15.0, 25.0, 35.0, 50.0] {
+                let f = target_fraction(value, &range);
+                assert!(f.is_finite(), "non-finite for {range:?} @ {value}");
+                assert!(
+                    (0.0..=1.0).contains(&f),
+                    "out of range {f} for {range:?} @ {value}"
+                );
+            }
         }
     }
 
     #[test]
-    fn hashing_just_above_off_threshold_classifies_by_mcr() {
-        let g = gauge(Some(0.02), Some(66.0));
-        assert_eq!(g.state, GaugeState::Underclocked);
+    fn state_not_available_when_hashrate_missing() {
+        assert_eq!(gauge_state(None, Some(&RANGE)), GaugeState::NotAvailable);
     }
 
     #[test]
-    fn not_available_when_hashing_but_mcr_unavailable() {
-        let g = gauge(Some(4.0), None);
-        assert_eq!(g.state, GaugeState::NotAvailable);
-        assert_eq!(g.lit_count, 0);
+    fn state_not_available_when_hashing_but_target_missing() {
+        assert_eq!(gauge_state(Some(30.0), None), GaugeState::NotAvailable);
     }
 
     #[test]
-    fn underclocked_below_good_edge() {
-        let g = gauge(Some(3.0), Some(66.0));
-        assert_eq!(g.state, GaugeState::Underclocked);
+    fn state_off_takes_precedence_over_missing_target() {
+        for hr in [0.0, 0.005, 0.01] {
+            assert_eq!(gauge_state(Some(hr), None), GaugeState::Off, "@ {hr}");
+        }
     }
 
     #[test]
-    fn good_is_inclusive_at_85_and_excludes_130() {
-        assert_eq!(gauge(Some(4.0), Some(85.0)).state, GaugeState::Good);
-        assert_eq!(gauge(Some(4.0), Some(129.9)).state, GaugeState::Good);
+    fn state_good_within_band_over_and_under_outside() {
+        let target = TargetRange {
+            min: 50.0,
+            default: 100.0,
+            max: 120.0,
+        };
+        let over_edge = 100.0 * (1.0 + GOOD_BAND_PERCENT / 100.0);
+        let under_edge = 100.0 * (1.0 - GOOD_BAND_PERCENT / 100.0);
+        // Just inside the band on both sides is Good.
+        assert_eq!(gauge_state(Some(100.0), Some(&target)), GaugeState::Good);
+        assert_eq!(
+            gauge_state(Some(over_edge - 0.1), Some(&target)),
+            GaugeState::Good
+        );
+        assert_eq!(
+            gauge_state(Some(under_edge + 0.1), Some(&target)),
+            GaugeState::Good
+        );
+        // At and beyond the edges flips to Over/Underclocked.
+        assert_eq!(
+            gauge_state(Some(over_edge), Some(&target)),
+            GaugeState::Overclocked
+        );
+        assert_eq!(
+            gauge_state(Some(under_edge), Some(&target)),
+            GaugeState::Underclocked
+        );
     }
 
     #[test]
-    fn overclocked_at_and_above_130_fills_all_ticks() {
-        let edge = gauge(Some(6.0), Some(130.0));
-        assert_eq!(edge.state, GaugeState::Overclocked);
-        assert_eq!(edge.lit_count, TICK_COUNT);
-        let above = gauge(Some(6.0), Some(200.0));
-        assert_eq!(above.lit_count, TICK_COUNT);
+    fn gauge_lit_count_tracks_target_fraction() {
+        // default sits at 3/4 -> round(0.75 * 28) = 21; min at 1/4 -> 7; max -> 28.
+        assert_eq!(gauge(Some(10.0), Some(&RANGE)).lit_count, 7);
+        assert_eq!(gauge(Some(30.0), Some(&RANGE)).lit_count, 21);
+        assert_eq!(gauge(Some(40.0), Some(&RANGE)).lit_count, 28);
     }
 
     #[test]
-    fn lit_count_tracks_mcr_fraction() {
-        // 65/130 = 0.5 → 14 of 28.
-        let g = gauge(Some(3.0), Some(65.0));
-        assert_eq!(g.lit_count, 14);
+    fn gauge_lit_count_for_off_and_not_available() {
+        assert_eq!(gauge(Some(0.0), Some(&RANGE)).lit_count, 1);
+        assert_eq!(gauge(Some(30.0), None).lit_count, 0);
+        assert_eq!(gauge(None, Some(&RANGE)).lit_count, 0);
     }
 
     #[test]
@@ -210,16 +333,6 @@ mod tests {
         for window in spans.windows(2) {
             assert!(window[0].0 < window[0].1, "span start precedes its end");
             assert!(window[0].1 <= window[1].0, "spans do not overlap");
-        }
-    }
-
-    #[test]
-    fn lit_spans_are_a_prefix_of_the_shared_list() {
-        let spans = TICK_SPANS;
-        let lit_count = 14;
-        let lit = &spans[..lit_count];
-        for (i, span) in lit.iter().enumerate() {
-            assert_eq!(*span, spans[i], "lit sweep reuses the absolute spans");
         }
     }
 }

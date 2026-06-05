@@ -45,6 +45,7 @@ const DEBOUNCE_MS: u32 = 300;
 enum MinerSource {
     Stats,
     Hashboards,
+    Constraints,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -63,6 +64,7 @@ struct Handles {
     login: PollHandle,
     stats: PollHandle,
     hashboards: PollHandle,
+    constraints: PollHandle,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -108,11 +110,24 @@ pub extern "C" fn init() {
             enabled: true,
         },
     );
+    // Tuner constraints anchor both gauge rings. Fetched once per login
+    // (constraints change only on a re-tune): one-shot, invalidated on login.
+    let constraints = register_poll(
+        build_miner,
+        on_miner_reply,
+        PollConfig {
+            interval_ms: None,
+            retry_ms: RETRY_MS,
+            debounce_ms: DEBOUNCE_MS,
+            enabled: true,
+        },
+    );
     HANDLES.with(|handles| {
         *handles.borrow_mut() = Some(Handles {
             login,
             stats,
             hashboards,
+            constraints,
         });
     });
     request_frame();
@@ -129,6 +144,8 @@ fn miner_source(handle: PollHandle) -> MinerSource {
             MinerSource::Stats
         } else if handle == handles.hashboards {
             MinerSource::Hashboards
+        } else if handle == handles.constraints {
+            MinerSource::Constraints
         } else {
             panic!("BUG: mining-clock unknown miner poll handle");
         }
@@ -159,6 +176,7 @@ fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
     let path = match miner_source(handle) {
         MinerSource::Stats => "/miner/stats",
         MinerSource::Hashboards => "/miner/hw/hashboards",
+        MinerSource::Constraints => "/configuration/constraints",
     };
     Some(FetchSpec::get(miner::endpoint(&Params::current().miner_url, path)).headers(header))
 }
@@ -177,6 +195,7 @@ fn on_login_reply(_handle: PollHandle, response: &FetchResponse) {
             if let Some(handles) = handles.borrow().as_ref() {
                 handles.stats.invalidate();
                 handles.hashboards.invalidate();
+                handles.constraints.invalidate();
             }
         });
     } else {
@@ -215,6 +234,11 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
                     state.hashboards_age_ms = Some(0);
                     state.hashboards_stale = false;
                 }
+                // Constraints are slow-changing config: parse on success, but
+                // keep the last good values on failure without a stale banner.
+                MinerSource::Constraints => {
+                    miner::parse_constraints(&response.json(), &mut state.miner);
+                }
             }
         });
     } else {
@@ -235,6 +259,9 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
                     state.hashboards_age_ms = None;
                     state.hashboards_stale = true;
                 }
+                // Keep the last good constraints; a re-tune is rare and a failed
+                // refresh should not blank the gauge scale or raise a banner.
+                MinerSource::Constraints => {}
             }
         });
     }

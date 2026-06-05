@@ -4,6 +4,7 @@ use bmc_wasm_sdk::ufmt;
 
 use crate::model::{Availability, MinerData, TemperatureRange};
 use crate::units::{DegreeCelsius, JoulePerTeraHash, Percent, Seconds, TeraHashPerSecond, Watt};
+use mining::gauge::TargetRange;
 
 pub(crate) trait JsonLookup {
     fn str(&self, path: &str) -> Option<String>;
@@ -66,6 +67,26 @@ pub(crate) fn parse_network(json: &impl JsonLookup, data: &mut MinerData) {
     }
 }
 
+pub(crate) fn parse_constraints(json: &impl JsonLookup, data: &mut MinerData) {
+    data.constraints.hashrate = target_range(
+        json,
+        "/tuner_constraints/hashrate_target",
+        "terahash_per_second",
+    );
+    data.constraints.power = target_range(json, "/tuner_constraints/power_target", "watt");
+}
+
+// Read a `{min,default,max}/<leaf>` target block, present only when all three
+// edges are reported.
+fn target_range(json: &impl JsonLookup, base: &str, leaf: &str) -> Option<TargetRange> {
+    let edge = |name: &str| json.f64(&bmc_wasm_sdk::fmt!("{base}/{name}/{leaf}"));
+    Some(TargetRange {
+        min: edge("min")?,
+        default: edge("default")?,
+        max: edge("max")?,
+    })
+}
+
 // A failed poll (network error or non-2xx) means the endpoint's fields are no
 // longer trustworthy. Each `reset_*` clears exactly the fields its matching
 // `parse_*` produces, so an unreachable miner shows unavailable instead of the
@@ -93,12 +114,17 @@ pub(crate) fn reset_network(data: &mut MinerData) {
     data.ip_address = Availability::Unavailable;
 }
 
+pub(crate) fn reset_constraints(data: &mut MinerData) {
+    data.constraints = crate::model::Constraints::default();
+}
+
 pub(crate) fn reset_all(data: &mut MinerData) {
     reset_details(data);
     reset_stats(data);
     reset_hashboards(data);
     reset_cooling(data);
     reset_network(data);
+    reset_constraints(data);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -217,9 +243,74 @@ mod tests {
             fan_percent: Availability::Available(Percent(72.0)),
             uptime_s: Availability::Available(Seconds(187_020)),
             ip_address: Availability::Available("192.168.1.42".to_owned()),
+            constraints: crate::model::Constraints {
+                hashrate: Some(TargetRange {
+                    min: 50.0,
+                    default: 100.0,
+                    max: 120.0,
+                }),
+                power: None,
+            },
         };
         reset_all(&mut data);
         assert_eq!(data, MinerData::default());
+    }
+
+    fn full_constraints_json() -> MapJson {
+        let mut json = MapJson::default();
+        json.floats.insert(
+            "/tuner_constraints/hashrate_target/min/terahash_per_second",
+            50.0,
+        );
+        json.floats.insert(
+            "/tuner_constraints/hashrate_target/default/terahash_per_second",
+            100.0,
+        );
+        json.floats.insert(
+            "/tuner_constraints/hashrate_target/max/terahash_per_second",
+            120.0,
+        );
+        json.floats
+            .insert("/tuner_constraints/power_target/min/watt", 1_000.0);
+        json.floats
+            .insert("/tuner_constraints/power_target/default/watt", 3_000.0);
+        json.floats
+            .insert("/tuner_constraints/power_target/max/watt", 3_500.0);
+        json
+    }
+
+    #[test]
+    fn parses_tuner_constraints_for_hashrate_and_power() {
+        let mut data = MinerData::default();
+        parse_constraints(&full_constraints_json(), &mut data);
+        assert_eq!(
+            data.constraints.hashrate,
+            Some(TargetRange {
+                min: 50.0,
+                default: 100.0,
+                max: 120.0
+            })
+        );
+        assert_eq!(
+            data.constraints.power,
+            Some(TargetRange {
+                min: 1_000.0,
+                default: 3_000.0,
+                max: 3_500.0
+            })
+        );
+    }
+
+    #[test]
+    fn constraint_target_is_absent_when_a_leaf_is_missing() {
+        let mut json = full_constraints_json();
+        // Drop one power leaf: power becomes None, hashrate stays whole.
+        json.floats
+            .remove("/tuner_constraints/power_target/max/watt");
+        let mut data = MinerData::default();
+        parse_constraints(&json, &mut data);
+        assert!(data.constraints.hashrate.is_some());
+        assert_eq!(data.constraints.power, None);
     }
 
     #[test]

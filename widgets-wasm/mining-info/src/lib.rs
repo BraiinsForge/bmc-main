@@ -59,40 +59,65 @@ type PublicReset = fn(&mut PublicData);
 // its response into `MinerData`. They are mutually independent once a token
 // exists, so each runs its own refresh loop rather than chaining. `views` lists
 // the views whose render path reads a field this endpoint produces; an endpoint
-// is only fetched while one of those views is selected.
+// is only fetched while one of those views is selected. `interval_ms` is the
+// refresh cadence (`None` = one-shot, refetched only when the login invalidates
+// it). `round_only` restricts the endpoint to round viewports (the rectangular
+// faces never read it).
 #[cfg(target_arch = "wasm32")]
 struct MinerEndpoint {
     path: &'static str,
     parse: MinerParser,
     views: &'static [View],
+    interval_ms: Option<u32>,
+    round_only: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
-const MINER_ENDPOINTS: [MinerEndpoint; 5] = [
+const MINER_ENDPOINTS: [MinerEndpoint; 6] = [
     MinerEndpoint {
         path: "/miner/details",
         parse: miner_details,
         views: &[View::Geek, View::InfoOverload],
+        interval_ms: Some(MINER_REFRESH_MS),
+        round_only: false,
     },
     MinerEndpoint {
         path: "/miner/stats",
         parse: miner_stats,
         views: &[View::Mining, View::Geek, View::InfoOverload],
+        interval_ms: Some(MINER_REFRESH_MS),
+        round_only: false,
     },
     MinerEndpoint {
         path: "/miner/hw/hashboards",
         parse: miner_hashboards,
         views: &[View::Mining, View::Geek],
+        interval_ms: Some(MINER_REFRESH_MS),
+        round_only: false,
     },
     MinerEndpoint {
         path: "/cooling/state",
         parse: miner_cooling,
         views: &[View::Mining],
+        interval_ms: Some(MINER_REFRESH_MS),
+        round_only: false,
     },
     MinerEndpoint {
         path: "/network/",
         parse: miner_network,
         views: &[View::Mining, View::Geek],
+        interval_ms: Some(MINER_REFRESH_MS),
+        round_only: false,
+    },
+    // The tuner constraints anchor the round gauge sweep. Fetched once per login
+    // (constraints change only on a re-tune), and only on the round Mining/Geek
+    // faces — the single round gauge is their only consumer.
+    MinerEndpoint {
+        path: "/configuration/constraints",
+        parse: miner_constraints,
+        views: &[View::Mining, View::Geek],
+        interval_ms: None,
+        round_only: true,
     },
 ];
 
@@ -150,9 +175,22 @@ const PUBLIC_ENDPOINTS: [PublicEndpoint; 5] = [
     },
 ];
 
+// An endpoint is fetched when the current view reads one of its fields and, for
+// round-only endpoints, when the viewport is round.
+#[cfg(any(target_arch = "wasm32", test))]
+fn endpoint_enabled(
+    views: &[manifest_params::View],
+    round_only: bool,
+    view: manifest_params::View,
+    shape: bmc_wasm_sdk::ViewportShape,
+) -> bool {
+    views.contains(&view) && (!round_only || shape == bmc_wasm_sdk::ViewportShape::Round)
+}
+
 #[cfg(target_arch = "wasm32")]
-fn miner_endpoint_needed(idx: usize, view: View) -> bool {
-    MINER_ENDPOINTS[idx].views.contains(&view)
+fn miner_endpoint_needed(idx: usize, view: View, shape: ViewportShape) -> bool {
+    let endpoint = &MINER_ENDPOINTS[idx];
+    endpoint_enabled(endpoint.views, endpoint.round_only, view, shape)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -179,6 +217,10 @@ fn miner_cooling(json: &JsonDoc, data: &mut MinerData) {
 #[cfg(target_arch = "wasm32")]
 fn miner_network(json: &JsonDoc, data: &mut MinerData) {
     miner_api::parse_network(json, data);
+}
+#[cfg(target_arch = "wasm32")]
+fn miner_constraints(json: &JsonDoc, data: &mut MinerData) {
+    miner_api::parse_constraints(json, data);
 }
 #[cfg(target_arch = "wasm32")]
 fn public_price(json: &JsonDoc, currency: Currency, data: &mut PublicData) {
@@ -295,6 +337,7 @@ fn selected_currency() -> Currency {
 #[unsafe(no_mangle)]
 pub extern "C" fn init() {
     let view = Params::current().view;
+    let shape = widget_viewport().shape;
     let login = register_poll(
         build_login,
         on_login_reply,
@@ -310,10 +353,10 @@ pub extern "C" fn init() {
             build_miner,
             on_miner_reply,
             PollConfig {
-                interval_ms: Some(MINER_REFRESH_MS),
+                interval_ms: MINER_ENDPOINTS[idx].interval_ms,
                 retry_ms: RETRY_MS,
                 debounce_ms: DEBOUNCE_MS,
-                enabled: miner_endpoint_needed(idx, view),
+                enabled: miner_endpoint_needed(idx, view, shape),
             },
         )
     });
@@ -355,6 +398,7 @@ pub extern "C" fn on_params_update() {
     let miner_creds_changed = changed.contains(&"miner_url") || changed.contains(&"miner_password");
     let currency_changed = changed.contains(&"currency");
     let view = Params::current().view;
+    let shape = widget_viewport().shape;
 
     HANDLES.with(|handles| {
         let handles = handles.borrow();
@@ -379,7 +423,7 @@ pub extern "C" fn on_params_update() {
                 handles.login.invalidate();
             }
             for (idx, miner) in handles.miner.iter().enumerate() {
-                miner.set_enabled(miner_endpoint_needed(idx, view));
+                miner.set_enabled(miner_endpoint_needed(idx, view, shape));
             }
         } else {
             STATE.with(|state| state.borrow_mut().auth = AuthState::NoToken);
@@ -610,7 +654,70 @@ pub extern "C" fn render(_delta_ms: u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::login_retry_delay;
+    use super::{endpoint_enabled, login_retry_delay};
+    use crate::manifest_params::View;
+    use bmc_wasm_sdk::ViewportShape;
+
+    #[test]
+    fn round_only_endpoint_gated_to_round_mining_and_geek() {
+        let views = &[View::Mining, View::Geek];
+        // Round viewport on a listed view: enabled.
+        assert!(endpoint_enabled(
+            views,
+            true,
+            View::Mining,
+            ViewportShape::Round
+        ));
+        assert!(endpoint_enabled(
+            views,
+            true,
+            View::Geek,
+            ViewportShape::Round
+        ));
+        // Round viewport but a view that does not read it: disabled.
+        assert!(!endpoint_enabled(
+            views,
+            true,
+            View::Network,
+            ViewportShape::Round
+        ));
+        assert!(!endpoint_enabled(
+            views,
+            true,
+            View::InfoOverload,
+            ViewportShape::Round
+        ));
+        // Listed view but a rectangular viewport: disabled.
+        assert!(!endpoint_enabled(
+            views,
+            true,
+            View::Mining,
+            ViewportShape::Rectangular
+        ));
+    }
+
+    #[test]
+    fn non_round_only_endpoint_ignores_viewport_shape() {
+        let views = &[View::Mining, View::Geek];
+        assert!(endpoint_enabled(
+            views,
+            false,
+            View::Mining,
+            ViewportShape::Rectangular
+        ));
+        assert!(endpoint_enabled(
+            views,
+            false,
+            View::Geek,
+            ViewportShape::Round
+        ));
+        assert!(!endpoint_enabled(
+            views,
+            false,
+            View::Network,
+            ViewportShape::Rectangular
+        ));
+    }
 
     #[test]
     fn login_retry_delay_doubles_per_failure_then_caps() {

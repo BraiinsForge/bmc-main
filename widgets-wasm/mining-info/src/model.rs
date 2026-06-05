@@ -4,6 +4,7 @@ use crate::units::{
     Btc, DegreeCelsius, ExaHashPerSecond, JoulePerTeraHash, Percent, SatPerTeraHashDay, Seconds,
     TeraHashPerSecond, Watt,
 };
+use mining::gauge::TargetRange;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Availability<T> {
@@ -40,6 +41,16 @@ pub(crate) struct MinerData {
     pub(crate) fan_percent: Availability<Percent>,
     pub(crate) uptime_s: Availability<Seconds>,
     pub(crate) ip_address: Availability<String>,
+    pub(crate) constraints: Constraints,
+}
+
+// Tuner min/default/max targets that anchor the gauge sweep. Each is `Some` only
+// when the endpoint reports all three of its leaves. mining-info renders a single
+// hashrate ring, so `power` is parsed for parser parity but unused here.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Constraints {
+    pub(crate) hashrate: Option<TargetRange>,
+    pub(crate) power: Option<TargetRange>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

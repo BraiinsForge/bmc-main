@@ -431,7 +431,7 @@ fn gauge_screen(
 fn seeded_gauge(miner: &MinerData, seed_gauge: bool) -> Gauge {
     let mut g = gauge::gauge(
         miner.hashrate_ths.as_option().map(|h| h.raw()),
-        miner.mcr_percent.as_option().map(|m| m.raw()),
+        miner.constraints.hashrate.as_ref(),
     );
     if seed_gauge {
         g.lit_count = g.lit_count.min(1);
