@@ -86,16 +86,20 @@ pub(super) fn txt(content: impl Into<String>, size: u32, weight: FontWeight, col
 /// node sizes to its content, so the box has to come from a container.
 /// `align_right` hugs the value to the slider (low temp); otherwise it is
 /// left-aligned (high temp).
-fn temp_box(value: String, align_right: bool) -> Node {
-    const TEMP_W: f32 = 80.0;
-    let label = txt(value, 32, FontWeight::SEMIBOLD, TEXT_PRIMARY);
+fn temp_box(value: String, align_right: bool, style: ForecastRowStyle) -> Node {
+    let label = txt(
+        value,
+        style.temperature_size,
+        FontWeight::SEMIBOLD,
+        TEXT_PRIMARY,
+    );
     let children = if align_right {
         vec![spacer(1.0), label]
     } else {
         vec![label, spacer(1.0)]
     };
     row(
-        props!(width: TEMP_W, cross_align: CrossAlign::Center),
+        props!(width: style.temperature_cell_width, cross_align: CrossAlign::Center),
         children,
     )
 }
@@ -117,8 +121,10 @@ pub(super) fn spread(cells: Vec<Node>) -> Vec<Node> {
 
 #[derive(Clone, Copy)]
 pub struct HourStyle {
+    pub label_size: u32,
     pub icon: f32,
     pub gap: f32,
+    pub temperature_size: u32,
     pub temp_weight: FontWeight,
 }
 
@@ -130,14 +136,14 @@ pub fn hour_cell(entry: &crate::model::HourEntry, tz: Option<&Tz>, style: HourSt
         [
             txt(
                 display::forecast_hour_label(&entry.time_rfc3339, tz),
-                24,
+                style.label_size,
                 FontWeight::REGULAR,
                 TEXT_SECONDARY,
             ),
             weather_icon(icon_id, style.icon),
             txt(
                 display::temperature_bare(entry.temperature_c),
-                32,
+                style.temperature_size,
                 style.temp_weight,
                 TEXT_PRIMARY,
             ),
@@ -153,6 +159,7 @@ pub(super) fn time_with_meridiem(
     rfc3339: &str,
     tz: Option<&Tz>,
     time_size: u32,
+    meridiem_size: u32,
     weight: FontWeight,
 ) -> Node {
     let mut children = vec![txt(
@@ -162,13 +169,33 @@ pub(super) fn time_with_meridiem(
         TEXT_PRIMARY,
     )];
     if let Some(m) = display::clock_meridiem(rfc3339, tz) {
-        children.push(txt(m, 20, FontWeight::REGULAR, TEXT_SECONDARY));
+        children.push(txt(m, meridiem_size, FontWeight::REGULAR, TEXT_SECONDARY));
     }
     row(props!(cross_align: CrossAlign::Center, gap: 4.0), children)
 }
 
-const BAR_W: f32 = 140.0;
-const BAR_H: f32 = 16.0;
+#[derive(Clone, Copy)]
+pub struct ForecastRowStyle {
+    pub row_gap: f32,
+    pub label_size: u32,
+    pub icon_size: f32,
+    pub temperature_size: u32,
+    pub temperature_cell_width: f32,
+    pub bar_width: f32,
+    pub bar_height: f32,
+}
+
+impl ForecastRowStyle {
+    pub const LARGE: Self = Self {
+        row_gap: 12.0,
+        label_size: 24,
+        icon_size: 40.0,
+        temperature_size: 32,
+        temperature_cell_width: 80.0,
+        bar_width: 140.0,
+        bar_height: 16.0,
+    };
+}
 
 #[must_use]
 pub fn forecast_row(
@@ -176,6 +203,7 @@ pub fn forecast_row(
     is_today: bool,
     range: &crate::model::ForecastRange,
     today_marker: Option<f64>,
+    style: ForecastRowStyle,
 ) -> Node {
     let label = if is_today {
         "Today".to_string()
@@ -188,14 +216,21 @@ pub fn forecast_row(
     // `.day-label { justify-content: space-between }`). The icon + temps +
     // bar form a fixed-width group, so the icons also line up in one column.
     row(
-        props!(cross_align: CrossAlign::Center, gap: 12.0),
+        props!(cross_align: CrossAlign::Center, gap: style.row_gap),
         [
-            txt(label, 24, FontWeight::SEMIBOLD, TEXT_PRIMARY),
+            txt(label, style.label_size, FontWeight::SEMIBOLD, TEXT_PRIMARY),
             spacer(1.0),
-            weather_icon(icon, 40.0),
-            temp_box(display::temperature_bare(day.min_c), true),
-            bar::forecast_bar(BAR_W, BAR_H, range, day.min_c, day.max_c, today_marker),
-            temp_box(display::temperature_bare(day.max_c), false),
+            weather_icon(icon, style.icon_size),
+            temp_box(display::temperature_bare(day.min_c), true, style),
+            bar::forecast_bar(
+                style.bar_width,
+                style.bar_height,
+                range,
+                day.min_c,
+                day.max_c,
+                today_marker,
+            ),
+            temp_box(display::temperature_bare(day.max_c), false, style),
         ],
     )
 }

@@ -1,6 +1,6 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 #[expect(clippy::wildcard_imports, reason = "widget code uses many SDK exports")]
 use bmc_wasm_sdk::*;
 
@@ -27,6 +27,13 @@ pub fn temperature(value_c: f64) -> String {
     format_temperature!(value_c, 0)
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[must_use]
+pub fn temperature(value_c: f64) -> String {
+    let value = value_c.round() as i64;
+    bmc_wasm_sdk::fmt!("{value} °C")
+}
+
 /// Degree-only temperature ("26°") for the dense hourly and daily strips,
 /// where the scale letter would crowd the layout.
 #[cfg(target_arch = "wasm32")]
@@ -35,10 +42,26 @@ pub fn temperature_bare(value_c: f64) -> String {
     format_temperature!(value_c, 0, bare)
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[must_use]
+pub fn temperature_bare(value_c: f64) -> String {
+    let value = value_c.round() as i64;
+    bmc_wasm_sdk::fmt!("{value}°")
+}
+
 #[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn wind_speed_ms(value_kmh: f64) -> String {
     format_speed!(value_kmh, 1, ms)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[must_use]
+pub fn wind_speed_ms(value_kmh: f64) -> String {
+    let tenths = ((value_kmh / 3.6) * 10.0).round() as i64;
+    let whole = tenths / 10;
+    let fraction = tenths.abs() % 10;
+    bmc_wasm_sdk::fmt!("{whole}.{fraction} m/s")
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -49,6 +72,12 @@ pub fn select_tz(mode: crate::manifest_params::TimeZone, location_tz: &str) -> O
         TimeZone::Location => Some(Tz::from_runtime(location_tz)),
         TimeZone::System => None,
     }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[must_use]
+pub fn select_tz(_mode: crate::manifest_params::TimeZone, _location_tz: &str) -> Option<Tz> {
+    None
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -66,6 +95,14 @@ pub fn hour_label(rfc3339: &str, tz: Option<Tz>) -> String {
     )
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[must_use]
+pub fn hour_label(rfc3339: &str, _tz: Option<Tz>) -> String {
+    rfc3339
+        .get(11..16)
+        .map_or_else(|| NOT_AVAILABLE.to_string(), ToString::to_string)
+}
+
 /// Hour-only label ("20", "8PM") for the dense hourly strip, whose entries
 /// always fall on the hour. Delegates to the SDK so the 12-hour form carries a
 /// meridiem. Sunrise and sunset keep their minutes via [`hour_label`].
@@ -78,6 +115,14 @@ pub fn forecast_hour_label(rfc3339: &str, tz: Option<&Tz>) -> String {
     format::format_hour(SystemTime { unix_secs }, tz)
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[must_use]
+pub fn forecast_hour_label(rfc3339: &str, _tz: Option<&Tz>) -> String {
+    rfc3339
+        .get(11..13)
+        .map_or_else(|| NOT_AVAILABLE.to_string(), ToString::to_string)
+}
+
 /// The AM/PM marker for a sunrise/sunset time, or `None` in 24-hour mode.
 /// Rendered as a separate element beside [`hour_label`] so a 12-hour reading
 /// is unambiguous.
@@ -86,6 +131,12 @@ pub fn forecast_hour_label(rfc3339: &str, tz: Option<&Tz>) -> String {
 pub fn clock_meridiem(rfc3339: &str, tz: Option<&Tz>) -> Option<String> {
     let unix_secs = parse_date(rfc3339)?;
     format::meridiem(SystemTime { unix_secs }, tz)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[must_use]
+pub fn clock_meridiem(_rfc3339: &str, _tz: Option<&Tz>) -> Option<String> {
+    None
 }
 
 #[cfg(test)]

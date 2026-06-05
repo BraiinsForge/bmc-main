@@ -6,7 +6,7 @@
 pub mod display;
 mod manifest_params;
 pub mod model;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 pub mod render;
 pub mod url;
 pub mod weather_code;

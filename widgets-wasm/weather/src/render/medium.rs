@@ -13,8 +13,10 @@ use crate::{
 use bmc_wasm_sdk::*;
 
 const HOUR_STYLE: HourStyle = HourStyle {
+    label_size: 24,
     icon: 52.0,
     gap: 6.0,
+    temperature_size: 32,
     temp_weight: FontWeight::REGULAR,
 };
 

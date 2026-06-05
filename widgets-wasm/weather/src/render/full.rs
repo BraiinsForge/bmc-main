@@ -16,8 +16,10 @@ use crate::{
 use bmc_wasm_sdk::*;
 
 const HOUR_STYLE: HourStyle = HourStyle {
+    label_size: 24,
     icon: 40.0,
     gap: 8.0,
+    temperature_size: 32,
     temp_weight: FontWeight::REGULAR,
 };
 
@@ -26,7 +28,7 @@ fn sun_item(svg: &'static Svg, rfc3339: &str, tz: Option<&Tz>) -> Node {
         props!(cross_align: CrossAlign::Center, gap: 8.0),
         [
             common::glyph(svg, 28.0, TEXT_SECONDARY),
-            common::time_with_meridiem(rfc3339, tz, 32, FontWeight::REGULAR),
+            common::time_with_meridiem(rfc3339, tz, 32, 20, FontWeight::REGULAR),
         ],
     )
 }
@@ -166,7 +168,13 @@ pub fn full(
                 } else {
                     None
                 };
-                common::forecast_row(day, is_today, &range, marker)
+                common::forecast_row(
+                    day,
+                    is_today,
+                    &range,
+                    marker,
+                    common::ForecastRowStyle::LARGE,
+                )
             })
             .collect();
         let right = rows.split_off(rows.len().min(4));
