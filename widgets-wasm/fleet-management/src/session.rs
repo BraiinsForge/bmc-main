@@ -124,11 +124,13 @@ pub use driver::{clear_tokens, ensure_running, on_frame, remove_token};
 
 #[cfg(test)]
 mod tests {
+    use bmc_wasm_sdk::ufmt;
+
     use super::*;
 
     fn ids(n: usize) -> Vec<DeviceId> {
         (0..n)
-            .map(|i| DeviceId::new(format!("d{i}._http._tcp.local.")))
+            .map(|i| DeviceId::new(bmc_wasm_sdk::fmt!("d{i}._http._tcp.local.")))
             .collect()
     }
 
