@@ -157,7 +157,12 @@ bitaxe('10.0.0.40', 'axe-unknown._http._tcp.local.', 1500.0, 22.0, 50.0, {})
 def lines():
     yield {
         'time': '2026-06-05T12:00:00+00:00',
-        'initial_params': {'miner_password': 'root'},
+        'initial_params': {
+            'fleet_name': 'My Fleet',
+            'bos_password': 'root',
+            'ubos_username': 'root',
+            'ubos_password': 'root',
+        },
     }
     # The loader requires at_ms to be monotonically non-decreasing. Fetch stubs
     # only seed the interceptor (their at_ms is never matched), so everything

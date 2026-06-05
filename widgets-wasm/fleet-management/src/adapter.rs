@@ -43,11 +43,9 @@ pub trait FamilyAdapter {
     fn parse_model(&self, _endpoint: &str, _json: &dyn JsonLookup, _model: &mut ModelAccumulator) {}
 
     /// A proactive credential header attached to every request, preferred over
-    /// any cached token. Default none. Families with static credentials (uBOS)
-    /// override it; families with fetched-token auth (BOS) leave it none and the
-    /// driver logs in before the telemetry burst, re-authenticating once if a
-    /// cached token has expired.
-    fn credential_header(&self) -> Option<String> {
+    /// any cached token. The driver passes the operator-configured uBOS
+    /// credentials; families that ignore them return none. Default none.
+    fn credential_header(&self, _username: &str, _password: &str) -> Option<String> {
         None
     }
 

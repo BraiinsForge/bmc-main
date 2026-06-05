@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn bos_has_no_proactive_credential_header() {
-        assert_eq!(BosAdapter.credential_header(), None);
+        assert_eq!(BosAdapter.credential_header("root", "root"), None);
     }
 
     #[test]

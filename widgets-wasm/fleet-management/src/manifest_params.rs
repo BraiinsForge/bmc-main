@@ -3,18 +3,29 @@
 // AUTO-GENERATED FROM ../manifest.json by `bmc-widget-codegen` v0.1.0.
 // Do not edit by hand. Run `just wasm::gen <widget>` after changing the manifest.
 
+#![allow(
+    dead_code,
+    reason = "fields are widget-specific; not every key is used by every render path"
+)]
+
 use bmc_wasm_sdk::params as snapshot;
 use bmc_wasm_sdk::params::typed::ParamRead;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Params {
-    pub miner_password: String,
+    pub bos_password: String,
+    pub fleet_name: String,
+    pub ubos_password: String,
+    pub ubos_username: String,
 }
 impl Params {
     /// Materialise a typed snapshot from a dynamic [`snapshot::Params`].
     #[must_use]
     pub fn from_snapshot(snap: &snapshot::Params) -> Self {
         Self {
-            miner_password: <String as ParamRead>::read_required(snap, "miner_password"),
+            bos_password: <String as ParamRead>::read_required(snap, "bos_password"),
+            fleet_name: <String as ParamRead>::read_required(snap, "fleet_name"),
+            ubos_password: <String as ParamRead>::read_required(snap, "ubos_password"),
+            ubos_username: <String as ParamRead>::read_required(snap, "ubos_username"),
         }
     }
     /// Latest typed snapshot delivered for this widget instance.
@@ -60,8 +71,17 @@ impl Params {
     #[must_use]
     pub fn changed_keys(&self, other: &Self) -> Vec<&'static str> {
         let mut out = Vec::new();
-        if self.miner_password != other.miner_password {
-            out.push("miner_password");
+        if self.bos_password != other.bos_password {
+            out.push("bos_password");
+        }
+        if self.fleet_name != other.fleet_name {
+            out.push("fleet_name");
+        }
+        if self.ubos_password != other.ubos_password {
+            out.push("ubos_password");
+        }
+        if self.ubos_username != other.ubos_username {
+            out.push("ubos_username");
         }
         out
     }

@@ -7,6 +7,7 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
 units = { path = "../lib/units" }
 

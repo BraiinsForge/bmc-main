@@ -143,21 +143,23 @@ pub extern "C" fn render(_delta_ms: u32) {
         height,
         variant,
     } = widget_size();
-    let root = DEVICES.with(|d| render::view(&d.borrow(), variant));
+    let title = manifest_params::Params::current().fleet_name;
+    let root = DEVICES.with(|d| render::view(&d.borrow(), variant, &title));
     let _ = render_ui(width, height, root);
 }
 
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn on_params_update() {
-    let changed = manifest_params::Params::previous().is_none_or(|prev| {
+    let creds_changed = manifest_params::Params::previous().is_none_or(|prev| {
         manifest_params::Params::current()
             .changed_keys(&prev)
-            .contains(&"miner_password")
+            .iter()
+            .any(|k| matches!(*k, "bos_password" | "ubos_username" | "ubos_password"))
     });
-    if changed {
+    if creds_changed {
         session::clear_tokens();
         DEVICES.with(|d| d.borrow_mut().clear_all_telemetry());
-        request_frame();
     }
+    request_frame();
 }

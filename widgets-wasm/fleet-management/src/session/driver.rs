@@ -254,9 +254,10 @@ fn fire_pending(
     delay_ms: u32,
 ) {
     let endpoints = adapter.telemetry_endpoints();
+    let params = Params::current();
     let token = TOKENS.with(|t| t.borrow().get(id).cloned());
     let header = adapter
-        .credential_header()
+        .credential_header(&params.ubos_username, &params.ubos_password)
         .or_else(|| token.map(|t| adapter.auth_header(&t)));
     let generation = with_driver(family, |d| d.generation);
     let pending_idxs: Vec<usize> = with_driver(family, |d| {
@@ -313,7 +314,7 @@ fn issue_login(
         finalize_failed(family, id);
         return;
     };
-    let password = Params::current().miner_password;
+    let password = Params::current().bos_password;
     let url = fmt!("{}{}", base_url(adapter, host, port), auth_path);
     let body = adapter.login_body(&password);
     let generation = with_driver(family, |d| d.generation);

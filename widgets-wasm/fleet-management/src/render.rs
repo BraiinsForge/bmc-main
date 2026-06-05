@@ -171,7 +171,7 @@ fn ok_count_f64(count: usize) -> f64 {
 // The headline hashrate and ok/online counts always lead; Power and Efficiency
 // follow only in the wide Full band — four summary columns plus the hero value
 // do not fit the 638px Large band without wrapping.
-fn overview(total: &GroupSummary, variant: SizeVariant) -> Node {
+fn overview(total: &GroupSummary, variant: SizeVariant, title: &str) -> Node {
     let full = matches!(variant, SizeVariant::Full);
     let hero_font = if full {
         HERO_FONT_FULL
@@ -208,7 +208,7 @@ fn overview(total: &GroupSummary, variant: SizeVariant) -> Node {
         TITLE_FONT_LARGE
     };
     cells.push(text(
-        "My Fleet",
+        title,
         style!(size: title_font, weight: FontWeight::SEMIBOLD, color: VALUE_COLOR),
     ));
     row(props!(gap: 32.0, cross_align: CrossAlign::Start), cells)
@@ -308,7 +308,7 @@ fn breakdown_row(group: &GroupSummary, variant: SizeVariant) -> Node {
 }
 
 #[must_use]
-pub fn view(devices: &DeviceList, variant: SizeVariant) -> Node {
+pub fn view(devices: &DeviceList, variant: SizeVariant, title: &str) -> Node {
     if devices.is_empty() {
         return col(
             props!(background: BLACK),
@@ -325,7 +325,7 @@ pub fn view(devices: &DeviceList, variant: SizeVariant) -> Node {
     let summary: FleetSummary = summarize(devices);
 
     let mut children: Vec<Node> = vec![
-        overview(&summary.total, variant),
+        overview(&summary.total, variant, title),
         separator(),
         text(
             "Grouped by model",
