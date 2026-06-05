@@ -1,0 +1,5 @@
+settle_delay = 60
+
+[fixtures]
+full = "fixtures/full.jsonl.gz"
+large = "fixtures/large.jsonl.gz"
