@@ -136,8 +136,11 @@ pub struct FleetSummary {
 }
 
 #[must_use]
-pub fn summarize(devices: &DeviceList) -> FleetSummary {
-    let reachable: Vec<&KnownDevice> = devices.iter().filter(|d| d.reachable).collect();
+pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> FleetSummary {
+    let reachable: Vec<&KnownDevice> = devices
+        .iter()
+        .filter(|d| d.reachable && filters.is_visible(d.model.as_ref()))
+        .collect();
 
     let mut partitions: BTreeMap<String, Vec<&KnownDevice>> = BTreeMap::new();
     for dev in &reachable {
@@ -169,6 +172,7 @@ mod tests {
     use super::*;
 
     use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, KnownDevice};
+    use crate::filter::Filters;
     use crate::telemetry::TelemetrySnapshot;
     use units::units::Quantity;
 
@@ -370,7 +374,7 @@ mod tests {
             ("c", None, Some(full(0.5, 10.0, 45.0)), true),
             ("d", Some("BMM 101"), Some(full(1.0, 33.0, 62.0)), true),
         ]);
-        let summary = summarize(&l);
+        let summary = summarize(&l, &Filters::default());
         let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
         assert_eq!(labels, ["BMM 101", "Bitaxe Gamma 601", "Unknown"]);
         assert_eq!(summary.groups[0].online_count, 2);
@@ -382,7 +386,7 @@ mod tests {
             ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
             ("b", Some("BMM 101"), Some(full(9.0, 90.0, 80.0)), false),
         ]);
-        let summary = summarize(&l);
+        let summary = summarize(&l, &Filters::default());
         assert_eq!(summary.groups.len(), 1);
         assert_eq!(summary.groups[0].online_count, 1);
         assert_eq!(raw(&summary.total.hashrate), Some(1.0));
@@ -399,7 +403,7 @@ mod tests {
                 true,
             ),
         ]);
-        let summary = summarize(&l);
+        let summary = summarize(&l, &Filters::default());
         assert_eq!(raw(&summary.total.hashrate), Some(3.0));
         assert_eq!(raw(&summary.total.power), Some(50.0));
         assert_eq!(summary.total.online_count, 2);
@@ -416,7 +420,7 @@ mod tests {
             ("a2", Some("A"), Some(full(1.0, 30.0, 60.0)), true),
             ("b", Some("B"), Some(full(1.0, 30.0, 90.0)), true),
         ]);
-        let summary = summarize(&l);
+        let summary = summarize(&l, &Filters::default());
         assert_eq!(raw(&summary.total.min_temperature), Some(40.0));
         assert_eq!(raw(&summary.total.max_temperature), Some(90.0));
         let avg = raw(&summary.total.avg_temperature).expect("avg available");
@@ -436,8 +440,43 @@ mod tests {
             ("a", Some("A"), Some(full(1.0, 30.0, 50.0)), true),
             ("b", Some("B"), Some(full(3.0, 30.0, 50.0)), true),
         ]);
-        let summary = summarize(&l);
+        let summary = summarize(&l, &Filters::default());
         let eff = raw(&summary.total.efficiency).expect("efficiency available");
         assert!((eff - 15.0).abs() < 1e-6, "got {eff}");
+    }
+
+    #[test]
+    fn blacklist_drops_a_model_group_and_excludes_it_from_totals() {
+        // Two models present; blacklisting one must remove its breakdown group
+        // and leave the total reflecting only the surviving model.
+        let l = list(&[
+            ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
+            ("b", Some("NerdQAxe++"), Some(full(4.0, 70.0, 55.0)), true),
+        ]);
+        let filters = Filters {
+            whitelist: Vec::new(),
+            blacklist: vec!["nerdqaxe".to_owned()],
+        };
+        let summary = summarize(&l, &filters);
+        let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
+        assert_eq!(labels, ["BMM 101"], "the blacklisted group is gone");
+        assert_eq!(raw(&summary.total.hashrate), Some(1.0));
+        assert_eq!(raw(&summary.total.power), Some(30.0));
+    }
+
+    #[test]
+    fn whitelist_keeps_only_matching_model_groups() {
+        let l = list(&[
+            ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
+            ("b", Some("NerdQAxe++"), Some(full(4.0, 70.0, 55.0)), true),
+        ]);
+        let filters = Filters {
+            whitelist: vec!["bmm101".to_owned()],
+            blacklist: Vec::new(),
+        };
+        let summary = summarize(&l, &filters);
+        let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
+        assert_eq!(labels, ["BMM 101"], "only the whitelisted model survives");
+        assert_eq!(raw(&summary.total.hashrate), Some(1.0));
     }
 }
