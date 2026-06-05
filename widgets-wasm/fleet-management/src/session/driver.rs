@@ -4,9 +4,14 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use bmc_wasm_sdk::ufmt;
-use bmc_wasm_sdk::{FetchRequest, fmt, log_warn, request_frame, request_frame_after};
+use bmc_wasm_sdk::{
+    FetchRequest, FetchRequestId, fmt, log_warn, request_frame, request_frame_after,
+};
 
-use super::{PassCursor, adapter_for, pass_reachable};
+use super::{
+    EndpointOutcome, FamilyWake, PassCursor, ReauthDecision, adapter_for, next_wake,
+    pass_reachable, reauth_decision,
+};
 use crate::adapter::FamilyAdapter;
 use crate::device::{DeviceFamily, DeviceId};
 use crate::manifest_params::Params;
@@ -14,63 +19,90 @@ use crate::model::ModelAccumulator;
 use crate::telemetry::TelemetryReading;
 
 const PASS_INTERVAL_MS: u32 = 30_000;
+const FAMILIES: [DeviceFamily; 3] = [DeviceFamily::Bos, DeviceFamily::Ubos, DeviceFamily::Bitaxe];
 
-struct Driver {
-    cursor: Option<PassCursor>,
-    endpoint_idx: usize,
-    reading: TelemetryReading,
-    model: ModelAccumulator,
-    endpoint_oks: Vec<bool>,
-    // One re-auth attempt per device per pass guards against a 401 -> login
-    // -> 401 loop when the shared password is wrong.
-    reauthed: bool,
-    elapsed_ms: u32,
-    waiting_next_pass: bool,
+enum FetchKind {
+    Login,
+    Telemetry { endpoint_idx: usize },
 }
 
-impl Driver {
-    const fn idle() -> Self {
+struct InFlight {
+    family: DeviceFamily,
+    device: DeviceId,
+    generation: u64,
+    kind: FetchKind,
+}
+
+struct FamilyDriver {
+    cursor: Option<PassCursor>,
+    elapsed_ms: u32,
+    waiting_next_pass: bool,
+    generation: u64,
+    pending: usize,
+    reading: TelemetryReading,
+    model: ModelAccumulator,
+    outcomes: Vec<Option<EndpointOutcome>>,
+    reauthed: bool,
+}
+
+impl FamilyDriver {
+    fn idle() -> Self {
         Self {
             cursor: None,
-            endpoint_idx: 0,
-            reading: TelemetryReading {
-                current_hashrate_ths: None,
-                nominal_hashrate_ths: None,
-                power_w: None,
-                uptime_s: None,
-                temperature_c: None,
-            },
-            model: ModelAccumulator {
-                id: None,
-                name: None,
-                chip_type: None,
-                chip_count: None,
-            },
-            endpoint_oks: Vec::new(),
-            reauthed: false,
             elapsed_ms: 0,
             waiting_next_pass: false,
+            generation: 0,
+            pending: 0,
+            reading: TelemetryReading::default(),
+            model: ModelAccumulator::default(),
+            outcomes: Vec::new(),
+            reauthed: false,
+        }
+    }
+
+    fn current_device(&self) -> Option<DeviceId> {
+        self.cursor.as_ref()?.current().cloned()
+    }
+
+    fn wake(&self) -> FamilyWake {
+        if self.cursor.is_some() {
+            FamilyWake::Active
+        } else if self.waiting_next_pass {
+            FamilyWake::Waiting(PASS_INTERVAL_MS.saturating_sub(self.elapsed_ms))
+        } else {
+            FamilyWake::Idle
         }
     }
 }
 
 thread_local! {
-    static DRIVER: RefCell<Driver> = const { RefCell::new(Driver::idle()) };
+    static DRIVERS: RefCell<[FamilyDriver; 3]> =
+        RefCell::new([FamilyDriver::idle(), FamilyDriver::idle(), FamilyDriver::idle()]);
     static TOKENS: RefCell<HashMap<DeviceId, String>> = RefCell::new(HashMap::new());
+    static ROUTES: RefCell<HashMap<FetchRequestId, InFlight>> = RefCell::new(HashMap::new());
+}
+
+const fn family_index(family: DeviceFamily) -> usize {
+    match family {
+        DeviceFamily::Bos => 0,
+        DeviceFamily::Ubos => 1,
+        DeviceFamily::Bitaxe => 2,
+    }
+}
+
+fn with_driver<R>(family: DeviceFamily, f: impl FnOnce(&mut FamilyDriver) -> R) -> R {
+    DRIVERS.with(|d| f(&mut d.borrow_mut()[family_index(family)]))
 }
 
 fn base_url(adapter: &dyn FamilyAdapter, host: &str, port: u16) -> String {
     fmt!("http://{}:{}{}", host, port, adapter.api_base_path())
 }
 
-/// Look up the family, host, and port for the cursor's current device.
-fn current_endpoint() -> Option<(DeviceId, DeviceFamily, String, u16)> {
-    let id = DRIVER.with(|d| d.borrow().cursor.as_ref()?.current().cloned())?;
+fn resolve_identity(id: &DeviceId) -> Option<(DeviceFamily, String, u16)> {
     crate::DEVICES.with(|devs| {
         let devs = devs.borrow();
-        let dev = devs.iter().find(|d| d.identity.id == id)?;
+        let dev = devs.iter().find(|d| &d.identity.id == id)?;
         Some((
-            id.clone(),
             dev.identity.family,
             dev.identity.host.clone(),
             dev.identity.port,
@@ -78,27 +110,33 @@ fn current_endpoint() -> Option<(DeviceId, DeviceFamily, String, u16)> {
     })
 }
 
-/// Discovery found a device; start a pass if the driver is idle.
+/// Discovery found a device; start a pass for any idle family. A family with no
+/// devices stays idle (see `start_pass`), so this never parks an empty family.
 pub fn ensure_running() {
-    let should_start = DRIVER.with(|d| {
-        let d = d.borrow();
-        d.cursor.is_none() && !d.waiting_next_pass
-    });
-    if should_start {
-        start_pass();
+    for family in FAMILIES {
+        let should_start = with_driver(family, |d| d.cursor.is_none() && !d.waiting_next_pass);
+        if should_start {
+            start_pass(family);
+        }
     }
+    reschedule();
 }
 
-/// Accumulate frame time and start the next pass once the interval elapses.
+/// Accumulate frame time per family and start each family's next pass when due.
 pub fn on_frame(delta_ms: u32) {
-    let start = DRIVER.with(|d| {
-        let mut d = d.borrow_mut();
-        d.elapsed_ms = d.elapsed_ms.saturating_add(delta_ms);
-        d.waiting_next_pass && d.elapsed_ms >= PASS_INTERVAL_MS
-    });
-    if start {
-        start_pass();
+    for family in FAMILIES {
+        let due = with_driver(family, |d| {
+            if !d.waiting_next_pass {
+                return false;
+            }
+            d.elapsed_ms = d.elapsed_ms.saturating_add(delta_ms);
+            d.elapsed_ms >= PASS_INTERVAL_MS
+        });
+        if due {
+            start_pass(family);
+        }
     }
+    reschedule();
 }
 
 /// Clear all cached tokens (e.g. after a password change).
@@ -106,180 +144,205 @@ pub fn clear_tokens() {
     TOKENS.with(|t| t.borrow_mut().clear());
 }
 
-/// Drop one device's cached session state when discovery removes it.
+/// Drop one device's cached session state and, if it is a family's current
+/// device, abandon the in-flight pass for it so the cursor never stalls.
 pub fn remove_token(id: &DeviceId) {
     TOKENS.with(|t| t.borrow_mut().remove(id));
-}
-
-fn start_pass() {
-    let ids = crate::DEVICES.with(|d| d.borrow().ids());
-    DRIVER.with(|d| {
-        let mut d = d.borrow_mut();
-        d.elapsed_ms = 0;
-        d.waiting_next_pass = false;
-        if ids.is_empty() {
-            d.cursor = None;
-        } else {
-            d.cursor = Some(PassCursor::new(ids));
+    for family in FAMILIES {
+        let is_current = with_driver(family, |d| d.current_device().as_ref() == Some(id));
+        if is_current {
+            abandon_current(family);
         }
-    });
-    // Wake near the 30s mark to pace the next pass even while idle.
-    request_frame_after(PASS_INTERVAL_MS);
-    begin_device();
+    }
+    reschedule();
 }
 
-fn begin_device() {
-    let done = DRIVER.with(|d| d.borrow().cursor.as_ref().is_none_or(PassCursor::is_done));
-    if done {
-        // Re-arm the wake explicitly: request_frame() calls during the pass
-        // may have superseded the pass-start timer, so guarantee a frame at
-        // the remaining time to the 30s mark rather than relying on it.
-        let remaining = DRIVER.with(|d| {
-            let mut d = d.borrow_mut();
+/// Snapshot this family's devices and begin a pass. An empty snapshot leaves the
+/// driver fully idle — it must not park as `waiting_next_pass`, or a device
+/// discovered seconds later would not be polled until the 30s timer.
+fn start_pass(family: DeviceFamily) {
+    let ids = crate::DEVICES.with(|d| d.borrow().ids_for_family(family));
+    if ids.is_empty() {
+        with_driver(family, |d| {
             d.cursor = None;
-            d.waiting_next_pass = true;
-            PASS_INTERVAL_MS.saturating_sub(d.elapsed_ms)
+            d.waiting_next_pass = false;
+            d.elapsed_ms = 0;
         });
-        request_frame_after(remaining.max(1));
         return;
     }
-    // A device whose family has no adapter yet cannot be polled. `upsert`
-    // left it reachable, so mark it unreachable with cleared telemetry and
-    // move on, rather than assuming the family is never discovered.
-    if let Some((id, family, _, _)) = current_endpoint()
-        && adapter_for(family).is_none()
-    {
+    with_driver(family, |d| {
+        d.elapsed_ms = 0;
+        d.waiting_next_pass = false;
+        d.cursor = Some(PassCursor::new(ids));
+    });
+    begin_device(family);
+}
+
+fn begin_device(family: DeviceFamily) {
+    let done = with_driver(family, |d| {
+        d.cursor.as_ref().is_none_or(PassCursor::is_done)
+    });
+    if done {
+        with_driver(family, |d| {
+            d.cursor = None;
+            d.waiting_next_pass = true;
+            d.elapsed_ms = 0;
+        });
+        return;
+    }
+    let Some(id) = with_driver(family, |d| d.current_device()) else {
+        advance_device(family);
+        return;
+    };
+    let Some((dev_family, host, port)) = resolve_identity(&id) else {
+        advance_device(family);
+        return;
+    };
+    let Some(adapter) = adapter_for(dev_family) else {
         log_warn!("fleet: no adapter for discovered device family; marking unreachable");
         crate::DEVICES.with(|devs| {
             devs.borrow_mut()
                 .apply_telemetry(&id, TelemetryReading::default(), false);
         });
         request_frame();
-        advance_device();
+        advance_device(family);
         return;
-    }
-    DRIVER.with(|d| {
-        let mut d = d.borrow_mut();
-        d.endpoint_idx = 0;
-        d.endpoint_oks.clear();
-        d.reauthed = false;
-        d.reading = Driver::idle().reading;
+    };
+    let endpoint_count = adapter.telemetry_endpoints().len();
+    with_driver(family, |d| {
+        d.generation = d.generation.wrapping_add(1);
+        d.pending = 0;
+        d.reading = TelemetryReading::default();
         d.model = ModelAccumulator::default();
+        d.outcomes = vec![None; endpoint_count];
+        d.reauthed = false;
     });
-    fetch_endpoint();
+    let needs_login =
+        adapter.auth_endpoint().is_some() && TOKENS.with(|t| !t.borrow().contains_key(&id));
+    if needs_login {
+        issue_login(family, &id, &host, port, adapter);
+    } else {
+        fire_pending(family, &id, &host, port, adapter);
+    }
 }
 
-/// GET the current endpoint via its family adapter, attaching the adapter's
-/// proactive credential header if any, else a cached token if present.
-fn fetch_endpoint() {
-    let Some((id, family, host, port)) = current_endpoint() else {
-        advance_device();
-        return;
-    };
-    let Some(adapter) = adapter_for(family) else {
-        advance_device();
-        return;
-    };
+/// Fire every still-pending (`None`) endpoint of the current device in parallel.
+fn fire_pending(
+    family: DeviceFamily,
+    id: &DeviceId,
+    host: &str,
+    port: u16,
+    adapter: &dyn FamilyAdapter,
+) {
     let endpoints = adapter.telemetry_endpoints();
-    let idx = DRIVER.with(|d| d.borrow().endpoint_idx);
-    if idx >= endpoints.len() {
-        finalize_device();
-        return;
-    }
-    let url = fmt!("{}{}", base_url(adapter, &host, port), endpoints[idx]);
-    let token = TOKENS.with(|t| t.borrow().get(&id).cloned());
+    let token = TOKENS.with(|t| t.borrow().get(id).cloned());
     let header = adapter
         .credential_header()
         .or_else(|| token.map(|t| adapter.auth_header(&t)));
-    if FetchRequest::get(&url)
-        .headers_opt(header.as_deref())
-        .send(on_endpoint)
-        .is_none()
-    {
-        log_warn!("fleet: telemetry send rejected for {}", host);
-        record_endpoint(false);
+    let generation = with_driver(family, |d| d.generation);
+    let pending_idxs: Vec<usize> = with_driver(family, |d| {
+        d.outcomes
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| o.is_none())
+            .map(|(i, _)| i)
+            .collect()
+    });
+    let mut sent = 0_usize;
+    for idx in pending_idxs {
+        let url = fmt!("{}{}", base_url(adapter, host, port), endpoints[idx]);
+        let req_id = FetchRequest::get(&url)
+            .headers_opt(header.as_deref())
+            .send(on_fetch);
+        if let Some(req_id) = req_id {
+            ROUTES.with(|r| {
+                r.borrow_mut().insert(
+                    req_id,
+                    InFlight {
+                        family,
+                        device: id.clone(),
+                        generation,
+                        kind: FetchKind::Telemetry { endpoint_idx: idx },
+                    },
+                );
+            });
+            sent += 1;
+        } else {
+            log_warn!("fleet: telemetry send rejected for {}", host);
+            with_driver(family, |d| d.outcomes[idx] = Some(EndpointOutcome::Failed));
+        }
+    }
+    with_driver(family, |d| d.pending = sent);
+    if sent == 0 {
+        barrier(family);
     }
 }
 
-/// React to a telemetry reply: re-authenticate on an adapter-reported auth
-/// error (once per device per pass), else fold or reset the endpoint.
-fn on_endpoint(response: &bmc_wasm_sdk::FetchResponse) {
-    let Some((id, family, _, _)) = current_endpoint() else {
-        advance_device();
-        return;
-    };
-    let Some(adapter) = adapter_for(family) else {
-        advance_device();
-        return;
-    };
-    let endpoints = adapter.telemetry_endpoints();
-    let idx = DRIVER.with(|d| d.borrow().endpoint_idx);
-    let Some(ep) = endpoints.get(idx) else {
-        advance_device();
-        return;
-    };
-
-    let can_reauth = adapter.auth_endpoint().is_some()
-        && adapter.is_auth_error(response.status)
-        && !DRIVER.with(|d| d.borrow().reauthed);
-    if can_reauth {
-        DRIVER.with(|d| d.borrow_mut().reauthed = true);
-        TOKENS.with(|t| t.borrow_mut().remove(&id));
-        login_then_retry();
-        return;
-    }
-
-    if response.ok() {
-        let doc = response.json();
-        DRIVER.with(|d| {
-            let mut d = d.borrow_mut();
-            let d = &mut *d;
-            adapter.parse_telemetry(ep, &doc, &mut d.reading);
-            adapter.parse_model(ep, &doc, &mut d.model);
-        });
-        record_endpoint(true);
-    } else {
-        DRIVER.with(|d| adapter.reset_telemetry(ep, &mut d.borrow_mut().reading));
-        record_endpoint(false);
-    }
-}
-
-/// Log in with the shared password, then retry the SAME endpoint with the
-/// fresh token. A failed login leaves the endpoint as N/A and advances.
-fn login_then_retry() {
-    let Some((_, family, host, port)) = current_endpoint() else {
-        advance_device();
-        return;
-    };
-    let Some(adapter) = adapter_for(family) else {
-        advance_device();
-        return;
-    };
+fn issue_login(
+    family: DeviceFamily,
+    id: &DeviceId,
+    host: &str,
+    port: u16,
+    adapter: &dyn FamilyAdapter,
+) {
     let Some(auth_path) = adapter.auth_endpoint() else {
-        record_endpoint(false);
+        finalize_failed(family, id);
         return;
     };
     let password = Params::current().miner_password;
-    let url = fmt!("{}{}", base_url(adapter, &host, port), auth_path);
+    let url = fmt!("{}{}", base_url(adapter, host, port), auth_path);
     let body = adapter.login_body(&password);
-    if FetchRequest::post(&url)
+    let generation = with_driver(family, |d| d.generation);
+    let req_id = FetchRequest::post(&url)
         .headers("Content-Type: application/json")
         .body(body.as_bytes())
-        .send(on_login)
-        .is_none()
-    {
+        .send(on_fetch);
+    if let Some(req_id) = req_id {
+        ROUTES.with(|r| {
+            r.borrow_mut().insert(
+                req_id,
+                InFlight {
+                    family,
+                    device: id.clone(),
+                    generation,
+                    kind: FetchKind::Login,
+                },
+            );
+        });
+    } else {
         log_warn!("fleet: login send rejected for {}", host);
-        record_endpoint(false);
+        finalize_failed(family, id);
     }
 }
 
-fn on_login(response: &bmc_wasm_sdk::FetchResponse) {
-    let Some((id, family, _, _)) = current_endpoint() else {
-        advance_device();
+/// Shared callback for every login and telemetry fetch. Routes by request id;
+/// drops responses whose `(device, generation)` no longer matches the family's
+/// current device (the pass was abandoned or has moved on).
+fn on_fetch(response: &bmc_wasm_sdk::FetchResponse) {
+    let Some(route) = ROUTES.with(|r| r.borrow_mut().remove(&response.request_id)) else {
         return;
     };
-    let Some(adapter) = adapter_for(family) else {
-        advance_device();
+    let (current_generation, current_device) =
+        with_driver(route.family, |d| (d.generation, d.current_device()));
+    if route.generation != current_generation || current_device.as_ref() != Some(&route.device) {
+        return;
+    }
+    match route.kind {
+        FetchKind::Login => on_login(route.family, &route.device, response),
+        FetchKind::Telemetry { endpoint_idx } => {
+            on_telemetry(route.family, endpoint_idx, response);
+        }
+    }
+    reschedule();
+}
+
+fn on_login(family: DeviceFamily, id: &DeviceId, response: &bmc_wasm_sdk::FetchResponse) {
+    let Some((dev_family, host, port)) = resolve_identity(id) else {
+        advance_device(family);
+        return;
+    };
+    let Some(adapter) = adapter_for(dev_family) else {
+        advance_device(family);
         return;
     };
     let token = if response.ok() {
@@ -288,59 +351,161 @@ fn on_login(response: &bmc_wasm_sdk::FetchResponse) {
         None
     };
     if let Some(token) = token {
-        TOKENS.with(|t| t.borrow_mut().insert(id, token));
-        // Retry the same endpoint (endpoint_idx unchanged) with the token.
-        fetch_endpoint();
+        TOKENS.with(|t| t.borrow_mut().insert(id.clone(), token));
+        fire_pending(family, id, &host, port, adapter);
     } else {
-        // Login failed: this endpoint is N/A; move on.
-        let endpoints = adapter.telemetry_endpoints();
-        let idx = DRIVER.with(|d| d.borrow().endpoint_idx);
-        if let Some(ep) = endpoints.get(idx) {
-            DRIVER.with(|d| adapter.reset_telemetry(ep, &mut d.borrow_mut().reading));
-        }
-        record_endpoint(false);
-    }
-}
-
-/// Record the current endpoint's outcome and move to the next one.
-fn record_endpoint(ok: bool) {
-    DRIVER.with(|d| {
-        let mut d = d.borrow_mut();
-        d.endpoint_oks.push(ok);
-        d.endpoint_idx += 1;
-    });
-    fetch_endpoint();
-}
-
-fn finalize_device() {
-    let id = DRIVER.with(|d| {
-        d.borrow()
-            .cursor
-            .as_ref()
-            .and_then(|c| c.current().cloned())
-    });
-    if let Some(id) = id {
-        let (reading, reachable, model) = DRIVER.with(|d| {
-            let d = d.borrow();
-            (d.reading, pass_reachable(&d.endpoint_oks), d.model.clone())
-        });
-        crate::DEVICES.with(|devs| {
-            let mut devs = devs.borrow_mut();
-            devs.apply_telemetry(&id, reading, reachable);
-            if let Some(model) = model.into_model() {
-                devs.apply_model(&id, model);
+        with_driver(family, |d| {
+            for outcome in &mut d.outcomes {
+                if outcome.is_none() {
+                    *outcome = Some(EndpointOutcome::Failed);
+                }
             }
+            d.pending = 0;
         });
-        request_frame();
+        finalize_device(family, id);
     }
-    advance_device();
 }
 
-fn advance_device() {
-    DRIVER.with(|d| {
-        if let Some(cursor) = d.borrow_mut().cursor.as_mut() {
+fn on_telemetry(family: DeviceFamily, endpoint_idx: usize, response: &bmc_wasm_sdk::FetchResponse) {
+    let Some(id) = with_driver(family, |d| d.current_device()) else {
+        return;
+    };
+    let Some((dev_family, _, _)) = resolve_identity(&id) else {
+        return;
+    };
+    let Some(adapter) = adapter_for(dev_family) else {
+        return;
+    };
+    let endpoints = adapter.telemetry_endpoints();
+    let Some(ep) = endpoints.get(endpoint_idx) else {
+        return;
+    };
+
+    let outcome = if adapter.auth_endpoint().is_some() && adapter.is_auth_error(response.status) {
+        EndpointOutcome::AuthFailed
+    } else if response.ok() {
+        let doc = response.json();
+        with_driver(family, |d| {
+            let d = &mut *d;
+            adapter.parse_telemetry(ep, &doc, &mut d.reading);
+            adapter.parse_model(ep, &doc, &mut d.model);
+        });
+        EndpointOutcome::Ok
+    } else {
+        with_driver(family, |d| adapter.reset_telemetry(ep, &mut d.reading));
+        EndpointOutcome::Failed
+    };
+
+    let done = with_driver(family, |d| {
+        d.outcomes[endpoint_idx] = Some(outcome);
+        d.pending = d.pending.saturating_sub(1);
+        d.pending == 0
+    });
+    if done {
+        barrier(family);
+    }
+}
+
+/// All endpoints reported: re-authenticate once if any auth-failed, else finalize.
+fn barrier(family: DeviceFamily) {
+    let Some(id) = with_driver(family, |d| d.current_device()) else {
+        advance_device(family);
+        return;
+    };
+    let (outcomes, reauthed) = with_driver(family, |d| {
+        let outcomes: Vec<EndpointOutcome> = d
+            .outcomes
+            .iter()
+            .map(|o| o.unwrap_or(EndpointOutcome::Failed))
+            .collect();
+        (outcomes, d.reauthed)
+    });
+    match reauth_decision(&outcomes, reauthed) {
+        ReauthDecision::Reauth { endpoints } => {
+            with_driver(family, |d| {
+                d.reauthed = true;
+                for idx in &endpoints {
+                    d.outcomes[*idx] = None;
+                }
+            });
+            TOKENS.with(|t| t.borrow_mut().remove(&id));
+            let Some((dev_family, host, port)) = resolve_identity(&id) else {
+                advance_device(family);
+                return;
+            };
+            let Some(adapter) = adapter_for(dev_family) else {
+                advance_device(family);
+                return;
+            };
+            issue_login(family, &id, &host, port, adapter);
+        }
+        ReauthDecision::Finalize => finalize_device(family, &id),
+    }
+}
+
+fn finalize_device(family: DeviceFamily, id: &DeviceId) {
+    let (reading, reachable, model) = with_driver(family, |d| {
+        let outcomes: Vec<EndpointOutcome> = d
+            .outcomes
+            .iter()
+            .map(|o| o.unwrap_or(EndpointOutcome::Failed))
+            .collect();
+        (d.reading, pass_reachable(&outcomes), d.model.clone())
+    });
+    crate::DEVICES.with(|devs| {
+        let mut devs = devs.borrow_mut();
+        devs.apply_telemetry(id, reading, reachable);
+        if let Some(model) = model.into_model() {
+            devs.apply_model(id, model);
+        }
+    });
+    request_frame();
+    advance_device(family);
+}
+
+/// Mark every endpoint failed and finalize (used when login cannot be sent).
+fn finalize_failed(family: DeviceFamily, id: &DeviceId) {
+    with_driver(family, |d| {
+        for outcome in &mut d.outcomes {
+            *outcome = Some(EndpointOutcome::Failed);
+        }
+        d.pending = 0;
+    });
+    finalize_device(family, id);
+}
+
+/// Abandon the in-flight device (removed mid-pass): bump the generation so its
+/// outstanding responses are dropped, then advance the cursor.
+fn abandon_current(family: DeviceFamily) {
+    with_driver(family, |d| {
+        d.generation = d.generation.wrapping_add(1);
+        d.pending = 0;
+        d.outcomes.clear();
+        d.reading = TelemetryReading::default();
+        d.model = ModelAccumulator::default();
+        d.reauthed = false;
+        if let Some(cursor) = d.cursor.as_mut() {
             cursor.advance();
         }
     });
-    begin_device();
+    begin_device(family);
+}
+
+fn advance_device(family: DeviceFamily) {
+    with_driver(family, |d| {
+        if let Some(cursor) = d.cursor.as_mut() {
+            cursor.advance();
+        }
+    });
+    begin_device(family);
+}
+
+fn reschedule() {
+    let wakes = DRIVERS.with(|d| {
+        let d = d.borrow();
+        [d[0].wake(), d[1].wake(), d[2].wake()]
+    });
+    if let Some(delay_ms) = next_wake(&wakes) {
+        request_frame_after(delay_ms);
+    }
 }

@@ -165,9 +165,25 @@ impl DeviceList {
         self.devices.iter()
     }
 
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "whole-list snapshot; the driver now snapshots per family via ids_for_family"
+        )
+    )]
     #[must_use]
     pub fn ids(&self) -> Vec<DeviceId> {
         self.devices.iter().map(|d| d.identity.id.clone()).collect()
+    }
+
+    #[must_use]
+    pub fn ids_for_family(&self, family: DeviceFamily) -> Vec<DeviceId> {
+        self.devices
+            .iter()
+            .filter(|d| d.identity.family == family)
+            .map(|d| d.identity.id.clone())
+            .collect()
     }
 
     /// Stamp the latest telemetry reading and reachability onto a device.
@@ -311,6 +327,21 @@ mod tests {
         let dev = list.iter().next().expect("present");
         assert!(dev.telemetry.is_none());
         assert!(!dev.reachable);
+    }
+
+    #[test]
+    fn ids_for_family_filters_to_one_family() {
+        let mut list = DeviceList::new();
+        list.upsert(identity("bos._http._tcp.local.", "10.0.0.1"));
+        let mut ubos = identity("ubos._ubos._tcp.local.", "10.0.0.2");
+        ubos.family = DeviceFamily::Ubos;
+        list.upsert(ubos);
+
+        let bos_ids = list.ids_for_family(DeviceFamily::Bos);
+        assert_eq!(bos_ids.len(), 1);
+        assert_eq!(bos_ids[0].as_str(), "bos._http._tcp.local.");
+        assert_eq!(list.ids_for_family(DeviceFamily::Ubos).len(), 1);
+        assert!(list.ids_for_family(DeviceFamily::Bitaxe).is_empty());
     }
 
     #[test]
