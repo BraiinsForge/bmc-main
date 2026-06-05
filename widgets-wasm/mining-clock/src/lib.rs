@@ -33,8 +33,6 @@ use shared::clock_palette;
 
 #[cfg(any(target_arch = "wasm32", test))]
 const STATS_REFRESH_MS: u32 = 5_000;
-#[cfg(any(target_arch = "wasm32", test))]
-const HASHBOARDS_REFRESH_MS: u32 = 10_000;
 #[cfg(target_arch = "wasm32")]
 const RETRY_MS: u32 = 10_000;
 #[cfg(target_arch = "wasm32")]
@@ -44,7 +42,6 @@ const DEBOUNCE_MS: u32 = 300;
 #[derive(Clone, Copy)]
 enum MinerSource {
     Stats,
-    Hashboards,
     Constraints,
 }
 
@@ -54,16 +51,13 @@ struct State {
     miner: MinerData,
     auth: AuthState,
     stats_age_ms: Option<u32>,
-    hashboards_age_ms: Option<u32>,
     stats_stale: bool,
-    hashboards_stale: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
 struct Handles {
     login: PollHandle,
     stats: PollHandle,
-    hashboards: PollHandle,
     constraints: PollHandle,
 }
 
@@ -100,16 +94,6 @@ pub extern "C" fn init() {
             enabled: true,
         },
     );
-    let hashboards = register_poll(
-        build_miner,
-        on_miner_reply,
-        PollConfig {
-            interval_ms: Some(HASHBOARDS_REFRESH_MS),
-            retry_ms: RETRY_MS,
-            debounce_ms: DEBOUNCE_MS,
-            enabled: true,
-        },
-    );
     // Tuner constraints anchor both gauge rings. Fetched once per login
     // (constraints change only on a re-tune): one-shot, invalidated on login.
     let constraints = register_poll(
@@ -126,7 +110,6 @@ pub extern "C" fn init() {
         *handles.borrow_mut() = Some(Handles {
             login,
             stats,
-            hashboards,
             constraints,
         });
     });
@@ -142,8 +125,6 @@ fn miner_source(handle: PollHandle) -> MinerSource {
             .expect("BUG: mining-clock poll handle used before init");
         if handle == handles.stats {
             MinerSource::Stats
-        } else if handle == handles.hashboards {
-            MinerSource::Hashboards
         } else if handle == handles.constraints {
             MinerSource::Constraints
         } else {
@@ -175,7 +156,6 @@ fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
     let header = STATE.with(|state| state.borrow().auth.auth_header())?;
     let path = match miner_source(handle) {
         MinerSource::Stats => "/miner/stats",
-        MinerSource::Hashboards => "/miner/hw/hashboards",
         MinerSource::Constraints => "/configuration/constraints",
     };
     Some(FetchSpec::get(miner::endpoint(&Params::current().miner_url, path)).headers(header))
@@ -194,7 +174,6 @@ fn on_login_reply(_handle: PollHandle, response: &FetchResponse) {
         HANDLES.with(|handles| {
             if let Some(handles) = handles.borrow().as_ref() {
                 handles.stats.invalidate();
-                handles.hashboards.invalidate();
                 handles.constraints.invalidate();
             }
         });
@@ -229,11 +208,6 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
                     state.stats_age_ms = Some(0);
                     state.stats_stale = false;
                 }
-                MinerSource::Hashboards => {
-                    miner::parse_hashboards(&response.json(), &mut state.miner);
-                    state.hashboards_age_ms = Some(0);
-                    state.hashboards_stale = false;
-                }
                 // Constraints are slow-changing config: parse on success, but
                 // keep the last good values on failure without a stale banner.
                 MinerSource::Constraints => {
@@ -255,10 +229,6 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
                     state.stats_age_ms = None;
                     state.stats_stale = true;
                 }
-                MinerSource::Hashboards => {
-                    state.hashboards_age_ms = None;
-                    state.hashboards_stale = true;
-                }
                 // Keep the last good constraints; a re-tune is rare and a failed
                 // refresh should not blank the gauge scale or raise a banner.
                 MinerSource::Constraints => {}
@@ -278,15 +248,6 @@ fn advance_freshness(state: &mut State, delta_ms: u32) {
             state.stats_age_ms = Some(age);
         }
     }
-    if let Some(age) = state.hashboards_age_ms {
-        let age = age.saturating_add(delta_ms);
-        if miner::is_stale(age) {
-            state.hashboards_age_ms = None;
-            state.hashboards_stale = true;
-        } else {
-            state.hashboards_age_ms = Some(age);
-        }
-    }
 }
 
 // The auth-error banner takes precedence over stale data, matching mining-info.
@@ -294,9 +255,7 @@ fn advance_freshness(state: &mut State, delta_ms: u32) {
 // reads as N/A on the gauge rather than raising a stale banner.
 #[cfg(target_arch = "wasm32")]
 fn overlay_message(auth_failed: bool, stale: bool, miner: &MinerData) -> Option<&'static str> {
-    let has_data = miner.hashrate_ths.is_some()
-        || miner.power_w.is_some()
-        || miner.nominal_hashrate_ths.is_some();
+    let has_data = miner.hashrate_ths.is_some() || miner.power_w.is_some();
     if auth_failed {
         Some(mining::overlay::AUTH_ERROR_TEXT)
     } else if stale && has_data {
@@ -324,7 +283,7 @@ pub extern "C" fn render(delta_ms: u32) {
         (
             state.miner.clone(),
             matches!(state.auth, AuthState::Failed),
-            state.stats_stale || state.hashboards_stale,
+            state.stats_stale,
         )
     });
     let overlay = overlay_message(auth_failed, stale, &miner);
@@ -390,6 +349,5 @@ mod tests {
 
     const _: () = {
         assert!(STATS_REFRESH_MS < miner::STALE_AFTER_MS);
-        assert!(HASHBOARDS_REFRESH_MS < miner::STALE_AFTER_MS);
     };
 }
