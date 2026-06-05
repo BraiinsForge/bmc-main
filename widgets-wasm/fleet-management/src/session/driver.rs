@@ -5,7 +5,8 @@ use std::collections::HashMap;
 
 use bmc_wasm_sdk::ufmt;
 use bmc_wasm_sdk::{
-    FetchRequest, FetchRequestId, fmt, log_warn, request_frame, request_frame_after,
+    FetchRequest, FetchRequestId, fmt, format_number, log_info, log_warn, request_frame,
+    request_frame_after,
 };
 
 use super::{
@@ -13,9 +14,9 @@ use super::{
     pass_reachable, reauth_decision,
 };
 use crate::adapter::FamilyAdapter;
-use crate::device::{DeviceFamily, DeviceId};
+use crate::device::{DeviceFamily, DeviceId, family_label};
 use crate::manifest_params::Params;
-use crate::model::ModelAccumulator;
+use crate::model::{MinerModel, ModelAccumulator};
 use crate::telemetry::TelemetryReading;
 
 const PASS_INTERVAL_MS: u32 = 30_000;
@@ -452,15 +453,66 @@ fn finalize_device(family: DeviceFamily, id: &DeviceId) {
             .collect();
         (d.reading, pass_reachable(&outcomes), d.model.clone())
     });
+    let model = model.into_model();
     crate::DEVICES.with(|devs| {
         let mut devs = devs.borrow_mut();
         devs.apply_telemetry(id, reading, reachable);
-        if let Some(model) = model.into_model() {
+        if let Some(model) = model.clone() {
             devs.apply_model(id, model);
         }
     });
+    log_fetch(family, id, reachable, &reading, model.as_ref());
     request_frame();
     advance_device(family);
+}
+
+/// Report what a finished pass learned about a device: its family, model, and
+/// the freshly fetched telemetry — or that the device is unreachable.
+fn log_fetch(
+    family: DeviceFamily,
+    id: &DeviceId,
+    reachable: bool,
+    reading: &TelemetryReading,
+    model: Option<&MinerModel>,
+) {
+    if !reachable {
+        log_info!(
+            "fleet: {} {} unreachable",
+            family_label(family),
+            id.as_str()
+        );
+        return;
+    }
+    let model = model.map_or_else(|| "unknown model".to_owned(), |m| m.name.clone());
+    log_info!(
+        "fleet: {} {} ({}) {}",
+        family_label(family),
+        id.as_str(),
+        model,
+        telemetry_summary(reading),
+    );
+}
+
+/// Compact, comma-separated rendering of the present telemetry fields, using
+/// the same magnitudes the on-screen cells show.
+fn telemetry_summary(reading: &TelemetryReading) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(v) = reading.current_hashrate_ths {
+        parts.push(fmt!("{} TH/s", format_number!(f64::from(v), 2)));
+    }
+    if let Some(v) = reading.power_w {
+        parts.push(fmt!("{} W", format_number!(f64::from(v), 0)));
+    }
+    if let Some(v) = reading.temperature_c {
+        parts.push(fmt!("{} °C", format_number!(f64::from(v), 1)));
+    }
+    if let Some(v) = reading.uptime_s {
+        parts.push(fmt!("{} s uptime", v));
+    }
+    if parts.is_empty() {
+        return "no telemetry".to_owned();
+    }
+    parts.join(", ")
 }
 
 /// Mark every endpoint failed and finalize (used when login cannot be sent).

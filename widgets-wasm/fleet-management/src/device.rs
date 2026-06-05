@@ -10,19 +10,22 @@ pub enum DeviceFamily {
     Bitaxe,
 }
 
-#[cfg_attr(
-    target_arch = "wasm32",
-    expect(
-        dead_code,
-        reason = "part of the device model; consumed by tests and future per-device detail views"
-    )
-)]
 #[must_use]
 pub fn family_label(family: DeviceFamily) -> &'static str {
     match family {
         DeviceFamily::Bos => "BOS",
         DeviceFamily::Ubos => "uBOS",
         DeviceFamily::Bitaxe => "Bitaxe",
+    }
+}
+
+/// Stable, lowercase slug for the family, distinct from the display label.
+#[must_use]
+pub fn family_id(family: DeviceFamily) -> &'static str {
+    match family {
+        DeviceFamily::Bos => "bos",
+        DeviceFamily::Ubos => "ubos",
+        DeviceFamily::Bitaxe => "bitaxe",
     }
 }
 
@@ -35,13 +38,6 @@ impl DeviceId {
         Self(value.into())
     }
 
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(
-            dead_code,
-            reason = "exposed for logging and diagnostics; not yet consumed on-device"
-        )
-    )]
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -90,8 +86,10 @@ impl DeviceList {
 
     /// Insert a newly discovered device, or update the identity of an existing
     /// one with the same id. Either way the device is marked reachable and
-    /// stamped with a fresh discovery sequence.
-    pub fn upsert(&mut self, identity: DeviceIdentity) {
+    /// stamped with a fresh discovery sequence. Returns `true` when the device
+    /// was newly inserted, so callers can log first-discovery without firing on
+    /// every mDNS re-announcement.
+    pub fn upsert(&mut self, identity: DeviceIdentity) -> bool {
         self.seq += 1;
         let seq = self.seq;
         if let Some(existing) = self
@@ -102,6 +100,7 @@ impl DeviceList {
             existing.identity = identity;
             existing.last_seen_seq = seq;
             existing.reachable = true;
+            false
         } else {
             self.devices.push(KnownDevice {
                 identity,
@@ -110,22 +109,25 @@ impl DeviceList {
                 last_seen_seq: seq,
                 reachable: true,
             });
+            true
         }
     }
 
     /// Insert or update a discovered device and apply an optional discovery
     /// model hint. A missing hint leaves any existing model intact, so later
-    /// rediscovery does not erase a model learned from telemetry.
+    /// rediscovery does not erase a model learned from telemetry. Returns
+    /// `true` when the device was newly inserted.
     pub fn upsert_with_model_hint(
         &mut self,
         identity: DeviceIdentity,
         model_hint: Option<MinerModel>,
-    ) {
+    ) -> bool {
         let id = identity.id.clone();
-        self.upsert(identity);
+        let is_new = self.upsert(identity);
         if let Some(model) = model_hint {
             self.apply_model(&id, model);
         }
+        is_new
     }
 
     /// Bump the discovery sequence of a device still being announced.
@@ -239,7 +241,8 @@ mod tests {
     fn upsert_inserts_a_new_device() {
         let mut list = DeviceList::new();
         assert!(list.is_empty());
-        list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
+        let is_new = list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
+        assert!(is_new, "first sighting of a device must report as new");
         assert_eq!(list.len(), 1);
         assert!(!list.is_empty());
     }
@@ -247,8 +250,12 @@ mod tests {
     #[test]
     fn upsert_updates_existing_device_with_same_id() {
         let mut list = DeviceList::new();
-        list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
-        list.upsert(identity("a._http._tcp.local.", "10.0.0.9"));
+        assert!(list.upsert(identity("a._http._tcp.local.", "10.0.0.1")));
+        let is_new = list.upsert(identity("a._http._tcp.local.", "10.0.0.9"));
+        assert!(
+            !is_new,
+            "re-announcement of a known device must not report as new"
+        );
         assert_eq!(list.len(), 1);
         let dev = list.iter_reachable().next().expect("device present");
         assert_eq!(dev.identity.host, "10.0.0.9");
@@ -267,6 +274,13 @@ mod tests {
         assert_eq!(family_label(DeviceFamily::Bos), "BOS");
         assert_eq!(family_label(DeviceFamily::Ubos), "uBOS");
         assert_eq!(family_label(DeviceFamily::Bitaxe), "Bitaxe");
+    }
+
+    #[test]
+    fn family_id_is_a_lowercase_slug_per_family() {
+        assert_eq!(family_id(DeviceFamily::Bos), "bos");
+        assert_eq!(family_id(DeviceFamily::Ubos), "ubos");
+        assert_eq!(family_id(DeviceFamily::Bitaxe), "bitaxe");
     }
 
     #[test]
@@ -377,10 +391,11 @@ mod tests {
     #[test]
     fn upsert_with_model_hint_stamps_model_onto_new_device() {
         let mut list = DeviceList::new();
-        list.upsert_with_model_hint(
+        let is_new = list.upsert_with_model_hint(
             identity("axe._http._tcp.local.", "10.0.0.8"),
             Some(model("Bitaxe Gamma 602")),
         );
+        assert!(is_new, "first sighting must report as new");
         let dev = list
             .iter()
             .next()
@@ -398,7 +413,9 @@ mod tests {
             identity("axe._http._tcp.local.", "10.0.0.8"),
             Some(model("Bitaxe Gamma 602")),
         );
-        list.upsert_with_model_hint(identity("axe._http._tcp.local.", "10.0.0.9"), None);
+        let is_new =
+            list.upsert_with_model_hint(identity("axe._http._tcp.local.", "10.0.0.9"), None);
+        assert!(!is_new, "re-announcement must not report as new");
         let dev = list
             .iter()
             .next()

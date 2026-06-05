@@ -27,7 +27,7 @@ use std::cell::RefCell;
 #[cfg(target_arch = "wasm32")]
 use adapter::FamilyAdapter;
 #[cfg(target_arch = "wasm32")]
-use device::{DeviceId, DeviceList};
+use device::{DeviceId, DeviceList, family_label};
 #[cfg(target_arch = "wasm32")]
 use families::bitaxe::BitaxeAdapter;
 #[cfg(target_arch = "wasm32")]
@@ -44,12 +44,7 @@ thread_local! {
 fn on_bos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     match event {
         mdns::MdnsEvent::Found(json) => ingest(&BosAdapter, json),
-        mdns::MdnsEvent::Removed(name) => {
-            let id = DeviceId::new(*name);
-            session::remove_token(&id);
-            DEVICES.with(|d| d.borrow_mut().remove(&id));
-            request_frame();
-        }
+        mdns::MdnsEvent::Removed(name) => on_removed(name),
     }
 }
 
@@ -57,12 +52,7 @@ fn on_bos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
 fn on_ubos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     match event {
         mdns::MdnsEvent::Found(json) => ingest(&UbosAdapter, json),
-        mdns::MdnsEvent::Removed(name) => {
-            let id = DeviceId::new(*name);
-            session::remove_token(&id);
-            DEVICES.with(|d| d.borrow_mut().remove(&id));
-            request_frame();
-        }
+        mdns::MdnsEvent::Removed(name) => on_removed(name),
     }
 }
 
@@ -70,13 +60,38 @@ fn on_ubos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
 fn on_bitaxe_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     match event {
         mdns::MdnsEvent::Found(json) => ingest(&BitaxeAdapter, json),
-        mdns::MdnsEvent::Removed(name) => {
-            let id = DeviceId::new(*name);
-            session::remove_token(&id);
-            DEVICES.with(|d| d.borrow_mut().remove(&id));
-            request_frame();
-        }
+        mdns::MdnsEvent::Removed(name) => on_removed(name),
     }
+}
+
+/// Drop a device discovery reported as gone, logging its family and model
+/// before it leaves the list.
+#[cfg(target_arch = "wasm32")]
+fn on_removed(name: &str) {
+    let id = DeviceId::new(name);
+    let info = DEVICES.with(|d| {
+        d.borrow()
+            .iter()
+            .find(|dev| dev.identity.id == id)
+            .map(|dev| {
+                (
+                    dev.identity.family,
+                    dev.model.as_ref().map(|m| m.name.clone()),
+                )
+            })
+    });
+    if let Some((family, model)) = info {
+        let model = model.unwrap_or_else(|| "unknown model".to_owned());
+        log_info!(
+            "fleet: removed {} {} ({})",
+            family_label(family),
+            name,
+            model
+        );
+    }
+    session::remove_token(&id);
+    DEVICES.with(|d| d.borrow_mut().remove(&id));
+    request_frame();
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -85,7 +100,20 @@ fn ingest(adapter: &dyn FamilyAdapter, json: &str) {
     if let Some(found) = adapter.parse_found(&doc) {
         let identity = found.identity;
         let model_hint = found.model_hint;
-        DEVICES.with(|d| d.borrow_mut().upsert_with_model_hint(identity, model_hint));
+        let family = identity.family;
+        let name = identity.name.clone();
+        let model = model_hint
+            .as_ref()
+            .map_or_else(|| "model pending".to_owned(), |m| m.name.clone());
+        let is_new = DEVICES.with(|d| d.borrow_mut().upsert_with_model_hint(identity, model_hint));
+        if is_new {
+            log_info!(
+                "fleet: discovered {} {} ({})",
+                family_label(family),
+                name,
+                model
+            );
+        }
         session::ensure_running();
         request_frame();
     }
