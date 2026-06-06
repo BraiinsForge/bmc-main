@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use units::availability::Availability;
 use units::units::{DegreeCelsius, JoulePerTeraHash, TeraHashPerSecond, Watt};
 
-use crate::device::{DeviceList, KnownDevice};
+use crate::device::{DeviceFamily, DeviceList, KnownDevice};
 use crate::telemetry::TelemetryReading;
 
 const OK_HASHRATE_FLOOR_THS: f32 = 0.1;
@@ -20,6 +20,7 @@ pub fn is_ok(reading: &TelemetryReading) -> bool {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GroupSummary {
     pub label: String,
+    pub family: Option<DeviceFamily>,
     pub hashrate: Availability<TeraHashPerSecond>,
     pub power: Availability<Watt>,
     pub efficiency: Availability<JoulePerTeraHash>,
@@ -31,6 +32,13 @@ pub struct GroupSummary {
 }
 
 fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
+    // A model group shares one family; the catch-all "Unknown" group may mix
+    // families, so it carries none and is pinned last when ordering.
+    let family = if label == UNKNOWN_GROUP {
+        None
+    } else {
+        devices.first().map(|d| d.identity.family)
+    };
     let online_count = devices.len();
     let mut ok_count = 0;
 
@@ -107,6 +115,7 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
 
     GroupSummary {
         label,
+        family,
         hashrate,
         power,
         efficiency,
@@ -129,6 +138,14 @@ fn availability<Q>(present: bool, value: impl FnOnce() -> Q) -> Availability<Q> 
 const UNKNOWN_GROUP: &str = "Unknown";
 const TOTAL_LABEL: &str = "Total";
 
+fn family_rank(family: DeviceFamily) -> u8 {
+    match family {
+        DeviceFamily::Ubos => 0,
+        DeviceFamily::Bos => 1,
+        DeviceFamily::Bitaxe => 2,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FleetSummary {
     pub total: GroupSummary,
@@ -142,25 +159,36 @@ pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> Flee
         .filter(|d| d.reachable && filters.is_visible(d.model.as_ref()))
         .collect();
 
-    let mut partitions: BTreeMap<String, Vec<&KnownDevice>> = BTreeMap::new();
+    // Key on family as well as model name so two families that happen to share
+    // a display name (e.g. a "BMM"-class device running both BOS and uBOS) stay
+    // separate groups instead of silently merging. Model-less devices share the
+    // single family-agnostic "Unknown" catch-all.
+    let mut partitions: BTreeMap<(Option<usize>, String), Vec<&KnownDevice>> = BTreeMap::new();
     for dev in &reachable {
-        let key = dev
-            .model
-            .as_ref()
-            .map_or_else(|| UNKNOWN_GROUP.to_owned(), |m| m.name.clone());
+        let key = dev.model.as_ref().map_or_else(
+            || (None, UNKNOWN_GROUP.to_owned()),
+            |m| (Some(dev.identity.family.index()), m.name.clone()),
+        );
         partitions.entry(key).or_default().push(dev);
     }
 
     let mut groups: Vec<GroupSummary> = partitions
         .into_iter()
-        .map(|(label, devs)| fold_group(label, &devs))
+        .map(|((_, label), devs)| fold_group(label, &devs))
         .collect();
+    // Order by family (uBOS, BOS, Bitaxe), alphabetically by model name within
+    // a family, with the family-less "Unknown" group pinned last.
     groups.sort_by(|a, b| {
-        let a_unknown = a.label == UNKNOWN_GROUP;
-        let b_unknown = b.label == UNKNOWN_GROUP;
-        a_unknown
-            .cmp(&b_unknown)
-            .then_with(|| a.label.cmp(&b.label))
+        (
+            a.label == UNKNOWN_GROUP,
+            a.family.map(family_rank),
+            a.label.as_str(),
+        )
+            .cmp(&(
+                b.label == UNKNOWN_GROUP,
+                b.family.map(family_rank),
+                b.label.as_str(),
+            ))
     });
 
     let total = fold_group(TOTAL_LABEL.to_owned(), &reachable);
@@ -378,6 +406,92 @@ mod tests {
         let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
         assert_eq!(labels, ["BMM 101", "Bitaxe Gamma 601", "Unknown"]);
         assert_eq!(summary.groups[0].online_count, 2);
+    }
+
+    #[test]
+    fn groups_order_by_family_ubos_then_bos_then_bitaxe() {
+        // Alphabetically the labels are BMM, Bitaxe, UMM; ordering by family
+        // must override that to uBOS, then BOS, then Bitaxe.
+        let specs = [
+            ("a", DeviceFamily::Bitaxe, "Bitaxe Gamma 601"),
+            ("b", DeviceFamily::Bos, "BMM 101"),
+            ("c", DeviceFamily::Ubos, "UMM 200"),
+        ];
+        let mut l = DeviceList::new();
+        for (i, (name, family, model_name)) in specs.iter().enumerate() {
+            let mut id_str = String::from("dev-");
+            units::format::push_int(&mut id_str, i as u64);
+            let id = DeviceId::new(id_str);
+            l.upsert(DeviceIdentity {
+                id: id.clone(),
+                family: *family,
+                name: (*name).to_owned(),
+                host: "10.0.0.1".to_owned(),
+                port: 80,
+            });
+            l.apply_model(
+                &id,
+                crate::model::MinerModel {
+                    id: "id".to_owned(),
+                    name: (*model_name).to_owned(),
+                    chip_type: None,
+                    chip_count: None,
+                    nominal_hashrate_ths: None,
+                },
+            );
+            l.apply_telemetry(&id, full(1.0, 30.0, 60.0), true);
+        }
+        let summary = summarize(&l, &Filters::default());
+        let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
+        assert_eq!(labels, ["UMM 200", "BMM 101", "Bitaxe Gamma 601"]);
+    }
+
+    #[test]
+    fn same_model_name_under_two_families_does_not_merge() {
+        // A display name shared across families must yield one group per family,
+        // each carrying its own family, not a single silently-merged group.
+        let specs = [
+            ("a", DeviceFamily::Bos, "BMM 101"),
+            ("b", DeviceFamily::Ubos, "BMM 101"),
+        ];
+        let mut l = DeviceList::new();
+        for (i, (name, family, model_name)) in specs.iter().enumerate() {
+            let mut id_str = String::from("dev-");
+            units::format::push_int(&mut id_str, i as u64);
+            let id = DeviceId::new(id_str);
+            l.upsert(DeviceIdentity {
+                id: id.clone(),
+                family: *family,
+                name: (*name).to_owned(),
+                host: "10.0.0.1".to_owned(),
+                port: 80,
+                source: DeviceSource::Discovered,
+            });
+            l.apply_model(
+                &id,
+                crate::model::MinerModel {
+                    id: "id".to_owned(),
+                    name: (*model_name).to_owned(),
+                    chip_type: None,
+                    chip_count: None,
+                    nominal_hashrate_ths: None,
+                },
+            );
+            l.apply_telemetry(&id, full(1.0, 30.0, 60.0), true);
+        }
+        let summary = summarize(&l, &Filters::default());
+        assert_eq!(summary.groups.len(), 2, "must not merge across families");
+        assert!(summary.groups.iter().all(|g| g.label == "BMM 101"));
+        assert_eq!(
+            summary.groups.iter().filter_map(|g| g.family).count(),
+            2,
+            "each group carries its own family"
+        );
+        assert_eq!(
+            summary.groups[0].family,
+            Some(DeviceFamily::Ubos),
+            "uBOS ranks before BOS"
+        );
     }
 
     #[test]
