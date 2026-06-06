@@ -195,7 +195,7 @@ pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> Flee
 mod tests {
     use super::*;
 
-    use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, KnownDevice};
+    use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceSource, KnownDevice};
     use crate::filter::Filters;
     use crate::telemetry::TelemetrySnapshot;
     use units::units::Quantity;
@@ -208,6 +208,7 @@ mod tests {
                 name: "d".to_owned(),
                 host: "10.0.0.1".to_owned(),
                 port: 80,
+                source: DeviceSource::Discovered,
             },
             model: model.map(|name| crate::model::MinerModel {
                 id: "id".to_owned(),
@@ -362,6 +363,7 @@ mod tests {
                 name: (*name).to_owned(),
                 host: "10.0.0.1".to_owned(),
                 port: 80,
+                source: DeviceSource::Discovered,
             };
             list.upsert(identity);
             if let Some(group) = group {
@@ -424,6 +426,7 @@ mod tests {
                 name: (*name).to_owned(),
                 host: "10.0.0.1".to_owned(),
                 port: 80,
+                source: DeviceSource::Discovered,
             });
             l.apply_model(
                 &id,
@@ -554,6 +557,7 @@ mod tests {
                 name: (*name).to_owned(),
                 host: "10.0.0.1".to_owned(),
                 port: 80,
+                source: DeviceSource::Discovered,
             });
             l.apply_model(
                 &id,
