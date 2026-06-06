@@ -16,6 +16,13 @@ A clock widget with an analog (round or rectangular) or digital face, optional d
 configurable numeral weight, and a next-alarm indicator. Renders at all four widget sizes on BMC100, scales to fit the
 BMM100, BMM101, and BFM100 panels, and recolours for night mode.
 
+### [Fleet Management Widget](fleet-management.md)
+
+An at-a-glance view of every Bitcoin miner on the local network. Discovers BOS, uBOS, and AxeOS (Bitaxe / NerdQAxe++)
+miners over mDNS, polls each for live telemetry, and rolls them up into a fleet total plus a per-model breakdown, with
+per-family credentials, manual-host fallback, and model/family filtering. Falls back to a summary-only screen on smaller
+viewports.
+
 ### [Mining Clock Widget](mining-clock.md)
 
 The clock widget reshaped for a miner: a round analog dial wrapped in two live gauge rings — an outer hashrate ring and
