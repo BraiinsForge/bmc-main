@@ -4,6 +4,7 @@ mod adapter;
 mod device;
 mod discovery;
 mod families;
+mod filter;
 mod model;
 mod session;
 mod summary;
@@ -138,6 +139,23 @@ pub extern "C" fn init() {
     request_frame();
 }
 
+/// Parse a JSON-array-of-strings operator param into model-name fragments.
+/// An invalid or non-array value yields an empty list (no filtering).
+#[cfg(target_arch = "wasm32")]
+fn parse_model_list(raw: &str) -> Vec<String> {
+    let doc = JsonDoc::parse(raw.as_bytes());
+    if !doc.is_valid() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while let Some(entry) = doc.str(&fmt!("/{i}")) {
+        out.push(entry);
+        i += 1;
+    }
+    out
+}
+
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
@@ -146,8 +164,12 @@ pub extern "C" fn render(_delta_ms: u32) {
         height,
         variant,
     } = widget_size();
-    let title = manifest_params::Params::current().fleet_name;
-    let root = DEVICES.with(|d| render::view(&d.borrow(), variant, &title));
+    let params = manifest_params::Params::current();
+    let filters = filter::Filters {
+        whitelist: parse_model_list(&params.model_whitelist),
+        blacklist: parse_model_list(&params.model_blacklist),
+    };
+    let root = DEVICES.with(|d| render::view(&d.borrow(), variant, &params.fleet_name, &filters));
     let _ = render_ui(width, height, root);
 }
 
