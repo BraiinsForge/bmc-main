@@ -71,6 +71,10 @@ impl FamilyAdapter for BosAdapter {
         })
     }
 
+    fn default_port(&self) -> u16 {
+        80
+    }
+
     fn api_base_path(&self) -> &'static str {
         "/api/v1"
     }
@@ -356,6 +360,11 @@ mod tests {
     #[test]
     fn bos_has_no_proactive_credential_header() {
         assert_eq!(BosAdapter.credential_header("root", "root"), None);
+    }
+
+    #[test]
+    fn default_port_is_80() {
+        assert_eq!(BosAdapter.default_port(), 80);
     }
 
     #[test]

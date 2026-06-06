@@ -67,6 +67,10 @@ impl FamilyAdapter for BitaxeAdapter {
         })
     }
 
+    fn default_port(&self) -> u16 {
+        80
+    }
+
     fn api_base_path(&self) -> &'static str {
         "/api/system"
     }
@@ -163,6 +167,11 @@ mod tests {
             BitaxeAdapter.browse_service_types(),
             &["_axeos._sub._http._tcp"]
         );
+    }
+
+    #[test]
+    fn default_port_is_80() {
+        assert_eq!(BitaxeAdapter.default_port(), 80);
     }
 
     #[test]
