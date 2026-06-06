@@ -95,6 +95,15 @@ fn with_driver<R>(family: DeviceFamily, f: impl FnOnce(&mut FamilyDriver) -> R) 
     DRIVERS.with(|d| f(&mut d.borrow_mut()[family_index(family)]))
 }
 
+fn family_enabled(family: DeviceFamily) -> bool {
+    let params = Params::current();
+    match family {
+        DeviceFamily::Bos => params.bos_enabled,
+        DeviceFamily::Ubos => params.ubos_enabled,
+        DeviceFamily::Bitaxe => params.axeos_enabled,
+    }
+}
+
 fn base_url(adapter: &dyn FamilyAdapter, host: &str, port: u16) -> String {
     fmt!("http://{}:{}{}", host, port, adapter.api_base_path())
 }
@@ -192,6 +201,13 @@ pub fn remove_token(id: &DeviceId) {
 /// only the first device's opening fetch — the inter-pass timer — while 0
 /// starts immediately. An empty snapshot leaves the driver idle.
 fn start_pass(family: DeviceFamily, opening_delay_ms: u32) {
+    if !family_enabled(family) {
+        with_driver(family, |d| {
+            d.pending_kick.clear();
+            d.cursor = None;
+        });
+        return;
+    }
     let ids = crate::DEVICES.with(|d| d.borrow().ids_for_family(family));
     let empty = ids.is_empty();
     with_driver(family, |d| {

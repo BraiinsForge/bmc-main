@@ -1,5 +1,6 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
+use crate::device::DeviceFamily;
 use crate::model::MinerModel;
 
 #[must_use]
@@ -20,15 +21,41 @@ pub fn matches_any(model: &MinerModel, entries: &[String]) -> bool {
     })
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Filters {
     pub whitelist: Vec<String>,
     pub blacklist: Vec<String>,
+    pub bos_enabled: bool,
+    pub ubos_enabled: bool,
+    pub axeos_enabled: bool,
+}
+
+impl Default for Filters {
+    fn default() -> Self {
+        Self {
+            whitelist: Vec::new(),
+            blacklist: Vec::new(),
+            bos_enabled: true,
+            ubos_enabled: true,
+            axeos_enabled: true,
+        }
+    }
 }
 
 impl Filters {
+    fn family_enabled(&self, family: DeviceFamily) -> bool {
+        match family {
+            DeviceFamily::Bos => self.bos_enabled,
+            DeviceFamily::Ubos => self.ubos_enabled,
+            DeviceFamily::Bitaxe => self.axeos_enabled,
+        }
+    }
+
     #[must_use]
-    pub fn is_visible(&self, model: Option<&MinerModel>) -> bool {
+    pub fn is_visible(&self, family: DeviceFamily, model: Option<&MinerModel>) -> bool {
+        if !self.family_enabled(family) {
+            return false;
+        }
         let Some(model) = model else {
             return true;
         };
@@ -90,13 +117,13 @@ mod tests {
     fn whitelist_non_empty_restricts_to_matching_models() {
         let f = Filters {
             whitelist: vec!["bmm101".to_owned()],
-            blacklist: Vec::new(),
+            ..Default::default()
         };
         let bmm = model("id", "Braiins Mini Miner BMM 101");
         let axe = model("id", "NerdQAxe++");
-        assert!(f.is_visible(Some(&bmm)));
+        assert!(f.is_visible(DeviceFamily::Bos, Some(&bmm)));
         assert!(
-            !f.is_visible(Some(&axe)),
+            !f.is_visible(DeviceFamily::Bos, Some(&axe)),
             "a non-whitelisted model is hidden"
         );
     }
@@ -104,20 +131,20 @@ mod tests {
     #[test]
     fn blacklist_hides_matching_models() {
         let f = Filters {
-            whitelist: Vec::new(),
             blacklist: vec!["nerdqaxe".to_owned()],
+            ..Default::default()
         };
         let bmm = model("id", "Braiins Mini Miner BMM 101");
         let axe = model("id", "NerdQAxe++");
-        assert!(f.is_visible(Some(&bmm)));
-        assert!(!f.is_visible(Some(&axe)));
+        assert!(f.is_visible(DeviceFamily::Bos, Some(&bmm)));
+        assert!(!f.is_visible(DeviceFamily::Bitaxe, Some(&axe)));
     }
 
     #[test]
     fn both_empty_shows_everything() {
         let f = Filters::default();
         let bmm = model("id", "Braiins Mini Miner BMM 101");
-        assert!(f.is_visible(Some(&bmm)));
+        assert!(f.is_visible(DeviceFamily::Bos, Some(&bmm)));
     }
 
     #[test]
@@ -125,9 +152,10 @@ mod tests {
         let f = Filters {
             whitelist: vec!["bmm101".to_owned()],
             blacklist: vec!["bmm101".to_owned()],
+            ..Default::default()
         };
         assert!(
-            f.is_visible(None),
+            f.is_visible(DeviceFamily::Bos, None),
             "a device whose model is unknown cannot be filtered out"
         );
     }
@@ -137,11 +165,65 @@ mod tests {
         let f = Filters {
             whitelist: vec!["bmm".to_owned()],
             blacklist: vec!["bmm101".to_owned()],
+            ..Default::default()
         };
         let bmm = model("id", "Braiins Mini Miner BMM 101");
         assert!(
-            !f.is_visible(Some(&bmm)),
+            !f.is_visible(DeviceFamily::Bos, Some(&bmm)),
             "a whitelisted but also blacklisted model is hidden"
+        );
+    }
+
+    #[test]
+    fn default_enables_every_family() {
+        let f = Filters::default();
+        let bmm = model("id", "Braiins Mini Miner BMM 101");
+        assert!(f.is_visible(DeviceFamily::Bos, Some(&bmm)));
+        assert!(f.is_visible(DeviceFamily::Ubos, Some(&bmm)));
+        assert!(f.is_visible(DeviceFamily::Bitaxe, Some(&bmm)));
+        assert!(
+            f.is_visible(DeviceFamily::Bos, None),
+            "an unknown-model device of an enabled family is visible"
+        );
+    }
+
+    #[test]
+    fn disabled_family_hides_its_devices_regardless_of_model_lists() {
+        // A disabled family hides its devices even when the model would pass
+        // the whitelist and dodge the blacklist.
+        let f = Filters {
+            whitelist: vec!["bmm101".to_owned()],
+            bos_enabled: false,
+            ..Default::default()
+        };
+        let bmm = model("id", "Braiins Mini Miner BMM 101");
+        assert!(
+            !f.is_visible(DeviceFamily::Bos, Some(&bmm)),
+            "a disabled family hides a whitelisted model"
+        );
+        assert!(
+            !f.is_visible(DeviceFamily::Bos, None),
+            "a disabled family hides even unknown-model devices"
+        );
+        assert!(
+            f.is_visible(DeviceFamily::Bitaxe, Some(&bmm)),
+            "another enabled family is unaffected"
+        );
+    }
+
+    #[test]
+    fn enabled_family_still_respects_whitelist_and_blacklist() {
+        let f = Filters {
+            whitelist: vec!["bmm101".to_owned()],
+            blacklist: vec!["nerdqaxe".to_owned()],
+            ..Default::default()
+        };
+        let bmm = model("id", "Braiins Mini Miner BMM 101");
+        let axe = model("id", "NerdQAxe++");
+        assert!(f.is_visible(DeviceFamily::Bos, Some(&bmm)));
+        assert!(
+            !f.is_visible(DeviceFamily::Bos, Some(&axe)),
+            "a non-whitelisted model stays hidden inside an enabled family"
         );
     }
 }
