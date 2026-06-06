@@ -400,6 +400,7 @@ impl EglCompositor {
             touch_transform: display_profile.touch_transform,
             should_exit: false,
             redraw_state: RedrawState::Idle,
+            pending_lifecycle_emission: false,
             loop_handle: loop_handle.clone(),
             retry_libinput: None,
             touch_retry_pending: false,
@@ -606,6 +607,12 @@ impl EglCompositor {
             process_protocol_events(&mut app_state);
             app_state.refresh_redraw_state();
 
+            // Whether the committed scene's frame was handled this iteration —
+            // rendered on the GPU, or damage-processed in headless mode. Gates
+            // the deferred lifecycle flush below so transitions go out only
+            // after the frame is handled.
+            let mut frame_handled = false;
+
             if let Some(renderer) = &mut app_state.scene_renderer {
                 // Invalidate texture cache for destroyed buffers — do this
                 // unconditionally so GPU resources are freed promptly even
@@ -679,6 +686,7 @@ impl EglCompositor {
                     // by a single code path regardless of whether a render
                     // just happened. Here we only advance the redraw state.
                     if rendered {
+                        frame_handled = true;
                         app_state.compositor.clear_output_damage();
                         app_state.redraw_state = RedrawState::on_frame_submitted();
                     } else {
@@ -721,6 +729,16 @@ impl EglCompositor {
                 app_state.compositor.pending_capture_frames.clear();
                 app_state.compositor.clear_output_damage();
                 app_state.redraw_state = RedrawState::Idle;
+                // No GPU handoff to wait for; the damage clear is the headless
+                // equivalent of handling the committed scene's frame.
+                frame_handled = true;
+            }
+
+            // Flush lifecycle transitions armed by a scene change — but only
+            // after a render this iteration, so the host starts re-rendering
+            // once the compositor's frame for the committed scene is done.
+            if frame_handled {
+                emit_pending_lifecycle(&mut app_state);
             }
 
             let _ = app_state.display.flush_clients();
@@ -800,6 +818,12 @@ struct AppState {
     touch_transform: TouchTransform,
     should_exit: bool,
     redraw_state: RedrawState,
+    /// Set by `after_scene_change` when a scene mutation needs its lifecycle
+    /// transitions sent to widgets. The emission is deferred until the
+    /// compositor has rendered one frame of the committed scene, so the host
+    /// only starts re-rendering after the compositor's GPU work for that frame
+    /// is done — avoiding a host/compositor render overlap across the handoff.
+    pending_lifecycle_emission: bool,
     /// Calloop handle, used to (re-)arm the touch-discovery retry timer
     /// from `schedule_touch_discovery_retry`.
     loop_handle: LoopHandle<'static, AppState>,
@@ -1049,7 +1073,7 @@ impl AppState {
                 )]
                 let dx = info.dx as i32;
                 self.compositor.widgets.update_drag(dx);
-                after_scene_change(self);
+                after_drag_scene_update(self);
             }
         } else {
             let touch_handle = self.compositor.touch_handle.clone();
@@ -1215,12 +1239,12 @@ impl LifecycleSink for AppStateLifecycleSink<'_> {
 /// acquire batch second (flush). The flushes preserve the host's pool
 /// ordering invariant on scene swaps and are scoped to only the clients
 /// that actually received an event.
-fn emit_lifecycle_transitions(state: &mut AppState) {
+fn emit_lifecycle_transitions(state: &mut AppState) -> Emission {
     let next = state.compositor.widgets.lifecycle_states();
     let emission = state.compositor.lifecycle.step(&next);
 
     if emission.is_empty() {
-        return;
+        return emission;
     }
 
     let mut sink = AppStateLifecycleSink {
@@ -1228,6 +1252,7 @@ fn emit_lifecycle_transitions(state: &mut AppState) {
         display: &mut state.display,
     };
     emit_lifecycle_batches(&emission, &mut sink);
+    emission
 }
 
 #[must_use]
@@ -1294,10 +1319,47 @@ fn clamp_initial_lifecycle(state: LifecycleState) -> LifecycleState {
     }
 }
 
-/// Common tail of every scene mutation: invalidate the cached output and
-/// fan out the resulting lifecycle transitions to widgets.
+/// Common tail of every scene mutation: invalidate the cached output and arm
+/// the deferred lifecycle emission.
+///
+/// The lifecycle transitions are not sent here. Damaging the output queues a
+/// compositor render of the committed scene; the transitions (and the dormant
+/// buffer release) are flushed by [`emit_pending_lifecycle`] only after that
+/// render finishes, so the host starts re-rendering after the compositor's GPU
+/// work for the frame is done rather than racing it across the handoff.
 fn after_scene_change(state: &mut AppState) {
     state.compositor.mark_full_output_damage();
+    state.pending_lifecycle_emission = true;
+}
+
+/// Drag-in-progress variant of [`after_scene_change`]: damage the output and
+/// emit the lifecycle transitions immediately rather than deferring them.
+///
+/// A drag moves the active widget to `Leaving` and the drag-direction
+/// neighbour to `Entering`; neither is a transition into `Dormant`, so the
+/// emission carries no buffer release and the after-render ordering that
+/// [`after_scene_change`] exists to enforce is not engaged. Emitting straight
+/// away lets a `Visible` widget learn it is `Leaving` before the first drag
+/// frame, so its animation loop stops driving renders that would otherwise
+/// contend with the drag for the GPU render lock.
+fn after_drag_scene_update(state: &mut AppState) {
+    state.compositor.mark_full_output_damage();
+    let emission = emit_lifecycle_transitions(state);
+    debug_assert!(
+        emission.releases.is_empty(),
+        "drag-in-progress lifecycle emission must not release buffers; \
+         buffer releases are deferred until after render via after_scene_change",
+    );
+}
+
+/// Flush the lifecycle transitions armed by [`after_scene_change`], once the
+/// compositor has rendered a frame of the committed scene. No-op unless an
+/// emission is pending.
+fn emit_pending_lifecycle(state: &mut AppState) {
+    if !state.pending_lifecycle_emission {
+        return;
+    }
+    state.pending_lifecycle_emission = false;
     emit_lifecycle_transitions(state);
     release_dormant_widget_buffers(state);
 }
@@ -1759,6 +1821,7 @@ mod tests {
             touch_transform: bmc_platform::TouchTransform::Deg0,
             should_exit: false,
             redraw_state: RedrawState::Idle,
+            pending_lifecycle_emission: false,
             loop_handle: event_loop.handle(),
             retry_libinput: None,
             touch_retry_pending: false,
