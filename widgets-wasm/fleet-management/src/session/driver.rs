@@ -2,6 +2,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use bmc_wasm_sdk::ufmt;
 use bmc_wasm_sdk::{
@@ -13,13 +14,12 @@ use super::{
     adapter_for, on_discovery, on_removal, pass_reachable, reauth_decision,
 };
 use crate::adapter::FamilyAdapter;
-use crate::device::{DeviceFamily, DeviceId, family_label};
+use crate::device::{DeviceFamily, DeviceId, FamilyMap, family_label};
 use crate::manifest_params::Params;
 use crate::model::{MinerModel, ModelAccumulator};
 use crate::telemetry::TelemetryReading;
 
 const PASS_INTERVAL_MS: u32 = 30_000;
-const FAMILIES: [DeviceFamily; 3] = [DeviceFamily::Bos, DeviceFamily::Ubos, DeviceFamily::Bitaxe];
 
 enum FetchKind {
     Login,
@@ -77,26 +77,32 @@ impl FamilyDriver {
 }
 
 thread_local! {
-    static DRIVERS: RefCell<[FamilyDriver; 3]> =
-        RefCell::new([FamilyDriver::idle(), FamilyDriver::idle(), FamilyDriver::idle()]);
+    static DRIVERS: RefCell<FamilyMap<FamilyDriver>> =
+        RefCell::new(FamilyMap::from_fn(|_| FamilyDriver::idle()));
     static TOKENS: RefCell<HashMap<DeviceId, String>> = RefCell::new(HashMap::new());
     static ROUTES: RefCell<HashMap<FetchRequestId, InFlight>> = RefCell::new(HashMap::new());
+    static PARAMS: RefCell<Rc<Params>> = RefCell::new(Rc::new(Params::current()));
 }
 
-const fn family_index(family: DeviceFamily) -> usize {
-    match family {
-        DeviceFamily::Bos => 0,
-        DeviceFamily::Ubos => 1,
-        DeviceFamily::Bitaxe => 2,
-    }
+/// The operator params last seen by the driver. Cached as an `Rc` so the hot
+/// fetch paths clone a pointer instead of every param String; refreshed only
+/// when `on_params_update` fires.
+fn params() -> Rc<Params> {
+    PARAMS.with(|p| Rc::clone(&p.borrow()))
+}
+
+/// Re-read the param snapshot into the driver cache. Called from
+/// `on_params_update`.
+pub fn refresh_params() {
+    PARAMS.with(|p| *p.borrow_mut() = Rc::new(Params::current()));
 }
 
 fn with_driver<R>(family: DeviceFamily, f: impl FnOnce(&mut FamilyDriver) -> R) -> R {
-    DRIVERS.with(|d| f(&mut d.borrow_mut()[family_index(family)]))
+    DRIVERS.with(|d| f(&mut d.borrow_mut()[family]))
 }
 
-fn family_enabled(family: DeviceFamily) -> bool {
-    let params = Params::current();
+pub fn family_enabled(family: DeviceFamily) -> bool {
+    let params = params();
     match family {
         DeviceFamily::Bos => params.bos_enabled,
         DeviceFamily::Ubos => params.ubos_enabled,
@@ -138,7 +144,21 @@ fn cancel_kick(family: DeviceFamily) -> bool {
     let mut all_caught = true;
     for id in ids {
         if cancel(id) {
-            ROUTES.with(|r| r.borrow_mut().remove(&id));
+            // Caught before firing: drop its route. A cancelled request's
+            // callback never runs, so a telemetry kick that counted it in
+            // `pending` must be decremented here — otherwise a surviving
+            // in-flight sibling can never bring `pending` to zero and the
+            // barrier (and the whole family) stalls.
+            let route = ROUTES.with(|r| r.borrow_mut().remove(&id));
+            if matches!(
+                route,
+                Some(InFlight {
+                    kind: FetchKind::Telemetry { .. },
+                    ..
+                })
+            ) {
+                with_driver(family, |d| d.pending = d.pending.saturating_sub(1));
+            }
         } else {
             all_caught = false;
         }
@@ -166,12 +186,30 @@ pub fn clear_tokens() {
     TOKENS.with(|t| t.borrow_mut().clear());
 }
 
+/// Stop polling a family, e.g. when the operator disables it. Cancels any
+/// queued opening fetch, bumps the generation so responses still in flight are
+/// dropped, and clears the cursor so no further devices are polled. mDNS
+/// discovery keeps running and the devices stay listed; re-enabling the family
+/// starts a fresh pass via `ensure_running`.
+pub fn stop(family: DeviceFamily) {
+    cancel_kick(family);
+    with_driver(family, |d| {
+        d.generation = d.generation.wrapping_add(1);
+        d.pending = 0;
+        d.cursor = None;
+        d.outcomes.clear();
+        d.reading = TelemetryReading::default();
+        d.model = ModelAccumulator::default();
+        d.reauthed = false;
+    });
+}
+
 /// Drop one device's cached session state and react to its departure: abandon
 /// the in-flight pass if it is the current device, or cancel and re-defer the
 /// next pass if its opening kick is parked.
 pub fn remove_token(id: &DeviceId) {
     TOKENS.with(|t| t.borrow_mut().remove(id));
-    for family in FAMILIES {
+    for family in DeviceFamily::ALL {
         let phase = with_driver(family, |d| d.phase());
         let is_focus = with_driver(family, |d| d.current_device().as_ref() == Some(id));
         let kick_cancelled = if phase == Phase::Waiting && is_focus {
@@ -270,7 +308,7 @@ fn fire_pending(
     delay_ms: u32,
 ) {
     let endpoints = adapter.telemetry_endpoints();
-    let params = Params::current();
+    let params = params();
     let token = TOKENS.with(|t| t.borrow().get(id).cloned());
     let header = adapter
         .credential_header(&params.ubos_username, &params.ubos_password)
@@ -330,9 +368,9 @@ fn issue_login(
         finalize_failed(family, id);
         return;
     };
-    let password = Params::current().bos_password;
+    let params = params();
     let url = fmt!("{}{}", base_url(adapter, host, port), auth_path);
-    let body = adapter.login_body(&password);
+    let body = adapter.login_body(&params.bos_password);
     let generation = with_driver(family, |d| d.generation);
     let req = FetchRequest::post(&url)
         .headers("Content-Type: application/json")

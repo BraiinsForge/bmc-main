@@ -56,7 +56,7 @@ impl FamilyAdapter for BitaxeAdapter {
         let (name, host, port) = extract_endpoint(json)?;
         Some(DiscoveredDevice {
             identity: DeviceIdentity {
-                id: DeviceId::new(name.clone()),
+                id: DeviceId::for_family(DeviceFamily::Bitaxe, &name),
                 family: DeviceFamily::Bitaxe,
                 name,
                 host,
@@ -86,6 +86,10 @@ impl FamilyAdapter for BitaxeAdapter {
     ) {
         self.reset_telemetry(endpoint, reading);
         if endpoint == EP_INFO {
+            // AxeOS reports -1 for a sensor it has not yet read, notably right
+            // after boot ("not yet known"). Drop negatives so the sentinel does
+            // not pollute the fleet totals. This quirk is specific to Bitaxe;
+            // BOS and uBOS report no such sentinel and need no guard.
             if let Some(ghs) = json.f64("/hashRate").filter(|v| *v >= 0.0) {
                 reading.current_hashrate_ths = Some((ghs / 1_000.0) as f32);
             }
@@ -167,7 +171,7 @@ mod tests {
             .expect("BUG: valid AxeOS discovery fixture must parse");
         assert_eq!(
             found.identity.id.as_str(),
-            "Bitaxe Gamma 602 (A1B2)._http._tcp.local."
+            "bitaxe/Bitaxe Gamma 602 (A1B2)._http._tcp.local."
         );
         assert_eq!(found.identity.host, "192.168.1.42");
         assert_eq!(found.identity.port, 80);

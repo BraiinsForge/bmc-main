@@ -3,11 +3,60 @@
 use crate::model::MinerModel;
 use crate::telemetry::{TelemetryReading, TelemetrySnapshot};
 
+use core::ops::{Index, IndexMut};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceFamily {
     Bos,
     Ubos,
     Bitaxe,
+}
+
+impl DeviceFamily {
+    /// Every family, in storage order. The single source of truth that
+    /// [`FamilyMap`] is sized and indexed against.
+    pub const ALL: [DeviceFamily; 3] =
+        [DeviceFamily::Bos, DeviceFamily::Ubos, DeviceFamily::Bitaxe];
+
+    /// Number of families; the length of every [`FamilyMap`].
+    pub const COUNT: usize = Self::ALL.len();
+
+    /// Position of this family in [`ALL`](Self::ALL); the index into a
+    /// [`FamilyMap`].
+    #[must_use]
+    pub fn index(self) -> usize {
+        match self {
+            DeviceFamily::Bos => 0,
+            DeviceFamily::Ubos => 1,
+            DeviceFamily::Bitaxe => 2,
+        }
+    }
+}
+
+/// A total map from every [`DeviceFamily`] to a `T`, indexed by
+/// [`DeviceFamily::index`]. The backing array's length is tied to
+/// [`DeviceFamily::COUNT`], so adding a family is a compile error until every
+/// map is widened — unlike a bare `[T; 3]` paired with a hand-written index,
+/// where a mismatch silently corrupts state at runtime.
+pub struct FamilyMap<T>([T; DeviceFamily::COUNT]);
+
+impl<T> FamilyMap<T> {
+    pub fn from_fn(mut f: impl FnMut(DeviceFamily) -> T) -> Self {
+        Self(core::array::from_fn(|i| f(DeviceFamily::ALL[i])))
+    }
+}
+
+impl<T> Index<DeviceFamily> for FamilyMap<T> {
+    type Output = T;
+    fn index(&self, family: DeviceFamily) -> &T {
+        &self.0[family.index()]
+    }
+}
+
+impl<T> IndexMut<DeviceFamily> for FamilyMap<T> {
+    fn index_mut(&mut self, family: DeviceFamily) -> &mut T {
+        &mut self.0[family.index()]
+    }
 }
 
 #[must_use]
@@ -21,13 +70,6 @@ pub fn family_label(family: DeviceFamily) -> &'static str {
 
 /// Stable, lowercase slug for the family, distinct from the display label.
 #[must_use]
-#[cfg_attr(
-    target_arch = "wasm32",
-    expect(
-        dead_code,
-        reason = "used in host tests only; not reachable on the wasm target"
-    )
-)]
 pub fn family_id(family: DeviceFamily) -> &'static str {
     match family {
         DeviceFamily::Bos => "bos",
@@ -41,8 +83,29 @@ pub struct DeviceId(String);
 
 impl DeviceId {
     #[must_use]
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "used in host tests only; wasm builds ids via for_family"
+        )
+    )]
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
+    }
+
+    /// Build an id namespaced by family. The mDNS instance name alone is not
+    /// unique across families: BOS and Bitaxe both advertise subtypes of the
+    /// same `_http._tcp` base type, so their resolved names can collide.
+    /// Prefixing the family slug keeps the two apart.
+    #[must_use]
+    pub fn for_family(family: DeviceFamily, name: &str) -> Self {
+        let slug = family_id(family);
+        let mut value = String::with_capacity(slug.len() + 1 + name.len());
+        value.push_str(slug);
+        value.push('/');
+        value.push_str(name);
+        Self(value)
     }
 
     #[must_use]
@@ -82,8 +145,30 @@ impl DeviceList {
     }
 
     #[must_use]
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "used in host tests only; the render path keys on summary groups"
+        )
+    )]
     pub fn is_empty(&self) -> bool {
         self.devices.is_empty()
+    }
+
+    /// A monotonic counter bumped on every mutation (discovery, telemetry,
+    /// removal). A derived view cached against this value is recomputed only
+    /// when the fleet actually changed, never per render frame.
+    #[must_use]
+    #[cfg_attr(
+        all(not(target_arch = "wasm32"), not(test)),
+        expect(
+            dead_code,
+            reason = "render-side cache key; used by the wasm render path and host tests"
+        )
+    )]
+    pub fn seq(&self) -> u64 {
+        self.seq
     }
 
     #[must_use]
@@ -99,10 +184,11 @@ impl DeviceList {
     }
 
     /// Insert a newly discovered device, or update the identity of an existing
-    /// one with the same id. Either way the device is marked reachable and
-    /// stamped with a fresh discovery sequence. Returns `true` when the device
-    /// was newly inserted, so callers can log first-discovery without firing on
-    /// every mDNS re-announcement.
+    /// one with the same id, stamping it with a fresh discovery sequence.
+    /// Reachability is left untouched: it is set only by telemetry polling, so
+    /// a device is never counted online from an mDNS sighting alone. Returns
+    /// `true` when the device was newly inserted, so callers can log
+    /// first-discovery without firing on every mDNS re-announcement.
     pub fn upsert(&mut self, identity: DeviceIdentity) -> bool {
         self.seq += 1;
         let seq = self.seq;
@@ -113,7 +199,6 @@ impl DeviceList {
         {
             existing.identity = identity;
             existing.last_seen_seq = seq;
-            existing.reachable = true;
             false
         } else {
             self.devices.push(KnownDevice {
@@ -121,7 +206,7 @@ impl DeviceList {
                 model: None,
                 telemetry: None,
                 last_seen_seq: seq,
-                reachable: true,
+                reachable: false,
             });
             true
         }
@@ -145,6 +230,7 @@ impl DeviceList {
     }
 
     /// Bump the discovery sequence of a device still being announced.
+    /// Reachability is left to telemetry polling.
     #[cfg_attr(
         target_arch = "wasm32",
         expect(
@@ -157,24 +243,13 @@ impl DeviceList {
         let seq = self.seq;
         if let Some(existing) = self.devices.iter_mut().find(|d| &d.identity.id == id) {
             existing.last_seen_seq = seq;
-            existing.reachable = true;
         }
     }
 
     /// Remove a device that discovery reported as gone.
     pub fn remove(&mut self, id: &DeviceId) {
+        self.seq += 1;
         self.devices.retain(|d| &d.identity.id != id);
-    }
-
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(
-            dead_code,
-            reason = "re-discovery hook; render now iterates all devices via iter()"
-        )
-    )]
-    pub fn iter_reachable(&self) -> impl Iterator<Item = &KnownDevice> {
-        self.devices.iter().filter(|d| d.reachable)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &KnownDevice> {
@@ -219,6 +294,7 @@ impl DeviceList {
     /// telemetry are updated independently; if a fetch fails the caller omits
     /// the call and the previous model is retained.
     pub fn apply_model(&mut self, id: &DeviceId, model: MinerModel) {
+        self.seq += 1;
         if let Some(dev) = self.devices.iter_mut().find(|d| &d.identity.id == id) {
             dev.model = Some(model);
         }
@@ -228,6 +304,7 @@ impl DeviceList {
     /// credential change). Devices stay listed; their readings and model go
     /// back to absent and reachability is recomputed on the next telemetry pass.
     pub fn clear_all_telemetry(&mut self) {
+        self.seq += 1;
         for dev in &mut self.devices {
             dev.telemetry = None;
             dev.model = None;
@@ -271,8 +348,31 @@ mod tests {
             "re-announcement of a known device must not report as new"
         );
         assert_eq!(list.len(), 1);
-        let dev = list.iter_reachable().next().expect("device present");
+        let dev = list.iter().next().expect("BUG: device present");
         assert_eq!(dev.identity.host, "10.0.0.9");
+    }
+
+    #[test]
+    fn upsert_does_not_mark_a_device_reachable() {
+        let mut list = DeviceList::new();
+        list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
+        let dev = list.iter().next().expect("BUG: device present");
+        assert!(
+            !dev.reachable,
+            "a freshly discovered device is not online until polled"
+        );
+    }
+
+    #[test]
+    fn for_family_namespaces_the_id_by_family() {
+        let bos = DeviceId::for_family(DeviceFamily::Bos, "x._http._tcp.local.");
+        let axe = DeviceId::for_family(DeviceFamily::Bitaxe, "x._http._tcp.local.");
+        assert_eq!(bos.as_str(), "bos/x._http._tcp.local.");
+        assert_eq!(axe.as_str(), "bitaxe/x._http._tcp.local.");
+        assert_ne!(
+            bos, axe,
+            "same instance name in two families must not collide"
+        );
     }
 
     #[test]
@@ -284,10 +384,53 @@ mod tests {
     }
 
     #[test]
+    fn every_mutation_advances_seq() {
+        // The render cache keys on seq; a mutation that left it unchanged would
+        // strand a stale view (e.g. a removed miner lingering in the summary).
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a._http._tcp.local.");
+
+        let before = list.seq();
+        list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
+        assert!(list.seq() > before, "upsert must advance seq");
+
+        let before = list.seq();
+        list.apply_telemetry(&id, TelemetryReading::default(), true);
+        assert!(list.seq() > before, "apply_telemetry must advance seq");
+
+        let before = list.seq();
+        list.clear_all_telemetry();
+        assert!(list.seq() > before, "clear_all_telemetry must advance seq");
+
+        let before = list.seq();
+        list.remove(&id);
+        assert!(list.seq() > before, "remove must advance seq");
+    }
+
+    #[test]
     fn family_label_covers_all_families() {
         assert_eq!(family_label(DeviceFamily::Bos), "BOS");
         assert_eq!(family_label(DeviceFamily::Ubos), "uBOS");
         assert_eq!(family_label(DeviceFamily::Bitaxe), "Bitaxe");
+    }
+
+    #[test]
+    fn family_all_is_consistent_with_index() {
+        assert_eq!(DeviceFamily::COUNT, DeviceFamily::ALL.len());
+        for (i, family) in DeviceFamily::ALL.iter().enumerate() {
+            assert_eq!(family.index(), i, "ALL order must match index()");
+        }
+    }
+
+    #[test]
+    fn family_map_round_trips_each_family() {
+        let mut map: FamilyMap<usize> = FamilyMap::from_fn(DeviceFamily::index);
+        for family in DeviceFamily::ALL {
+            assert_eq!(map[family], family.index());
+        }
+        map[DeviceFamily::Ubos] = 99;
+        assert_eq!(map[DeviceFamily::Ubos], 99);
+        assert_eq!(map[DeviceFamily::Bos], DeviceFamily::Bos.index());
     }
 
     #[test]
@@ -306,13 +449,21 @@ mod tests {
     }
 
     #[test]
-    fn mark_seen_keeps_an_existing_device_reachable() {
+    fn mark_seen_leaves_reachability_to_polling() {
         let mut list = DeviceList::new();
         list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
+        list.apply_telemetry(
+            &DeviceId::new("a._http._tcp.local."),
+            TelemetryReading::default(),
+            true,
+        );
         list.mark_seen(&DeviceId::new("a._http._tcp.local."));
         assert_eq!(list.len(), 1);
-        let dev = list.iter_reachable().next().expect("device present");
-        assert!(dev.reachable);
+        let dev = list.iter().next().expect("BUG: device present");
+        assert!(
+            dev.reachable,
+            "mark_seen must not disturb a poll-set reachability"
+        );
     }
 
     #[test]

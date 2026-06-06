@@ -28,7 +28,7 @@ impl FamilyAdapter for UbosAdapter {
         let (name, host, port) = extract_endpoint(json)?;
         Some(DiscoveredDevice {
             identity: DeviceIdentity {
-                id: DeviceId::new(name.clone()),
+                id: DeviceId::for_family(DeviceFamily::Ubos, &name),
                 family: DeviceFamily::Ubos,
                 name,
                 host,
@@ -126,7 +126,7 @@ mod tests {
         let found = UbosAdapter
             .parse_found(&ubos_found())
             .expect("BUG: device parsed");
-        assert_eq!(found.identity.id.as_str(), "bmm-01._ubos._tcp.local.");
+        assert_eq!(found.identity.id.as_str(), "ubos/bmm-01._ubos._tcp.local.");
         assert_eq!(found.identity.host, "192.168.89.109");
         assert_eq!(found.identity.port, 8080);
         assert_eq!(found.identity.family, DeviceFamily::Ubos);
