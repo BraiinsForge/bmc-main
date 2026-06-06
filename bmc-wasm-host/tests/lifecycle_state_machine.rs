@@ -121,6 +121,7 @@ impl RenderTargetFactory for MockFactory {
 fn ctx_no_target<'a>(
     factory: &'a Rc<dyn RenderTargetFactory>,
     target: &'a mut Option<RenderTarget>,
+    retired_targets: &'a mut Vec<RenderTarget>,
     egl: &'a StubEgl,
     surface: &'a mut StubSurface,
 ) -> SlotApplyCtx<'a> {
@@ -129,7 +130,7 @@ fn ctx_no_target<'a>(
         egl,
         surface,
         render_target: target,
-        retired_render_targets: None,
+        retired_render_targets: retired_targets,
         width: 128,
         height: 128,
     }
@@ -147,7 +148,7 @@ fn ctx_with_retired_targets<'a>(
         egl,
         surface,
         render_target: target,
-        retired_render_targets: Some(retired_targets),
+        retired_render_targets: retired_targets,
         width: 128,
         height: 128,
     }
@@ -161,13 +162,14 @@ fn dormant_to_target_owning_state_panics_if_target_already_exists() {
     mock.fail(1);
 
     let mut target = Some(RenderTarget::new_stub(128, 128));
+    let mut retired = Vec::new();
     let egl = StubEgl;
     let mut surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(LifecycleState::Entering);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
         Instant::now(),
     );
 }
@@ -179,20 +181,21 @@ fn target_owning_to_dormant_panics_if_target_is_missing() {
     let factory: Rc<dyn RenderTargetFactory> = mock.clone();
 
     let mut target: Option<RenderTarget> = None;
+    let mut retired = Vec::new();
     let egl = StubEgl;
     let mut surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(LifecycleState::Entering);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
         Instant::now(),
     );
     target = None;
 
     sm.on_event(LifecycleState::Dormant);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
         Instant::now(),
     );
 }
@@ -204,6 +207,7 @@ fn dormant_to_prepared_with_failing_factory_marks_blocked_and_retries() {
     mock.fail(1);
 
     let mut target: Option<RenderTarget> = None;
+    let mut retired = Vec::new();
     let egl = StubEgl;
     let mut surface = StubSurface;
 
@@ -211,7 +215,7 @@ fn dormant_to_prepared_with_failing_factory_marks_blocked_and_retries() {
     sm.on_event(LifecycleState::Prepared);
     let t0 = Instant::now();
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
         t0,
     );
 
@@ -232,6 +236,7 @@ fn dormant_to_entering_with_failing_factory_marks_blocked_and_retries() {
     mock.fail(1);
 
     let mut target: Option<RenderTarget> = None;
+    let mut retired = Vec::new();
     let egl = StubEgl;
     let mut surface = StubSurface;
 
@@ -239,7 +244,7 @@ fn dormant_to_entering_with_failing_factory_marks_blocked_and_retries() {
     sm.on_event(LifecycleState::Entering);
     let t0 = Instant::now();
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
         t0,
     );
 
@@ -259,6 +264,7 @@ fn second_failure_resets_retry_timer() {
     mock.fail(2);
 
     let mut target: Option<RenderTarget> = None;
+    let mut retired = Vec::new();
     let egl = StubEgl;
     let mut surface = StubSurface;
 
@@ -266,7 +272,7 @@ fn second_failure_resets_retry_timer() {
     sm.on_event(LifecycleState::Entering);
     let t0 = Instant::now();
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
         t0,
     );
     let first_retry = sm
@@ -275,7 +281,7 @@ fn second_failure_resets_retry_timer() {
 
     let t1 = t0 + Duration::from_secs(1) + Duration::from_millis(10);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
         t1,
     );
     let second_retry = sm
@@ -297,6 +303,7 @@ fn apply_within_retry_window_does_not_call_factory() {
     mock.fail(10);
 
     let mut target: Option<RenderTarget> = None;
+    let mut retired = Vec::new();
     let egl = StubEgl;
     let mut surface = StubSurface;
 
@@ -304,7 +311,7 @@ fn apply_within_retry_window_does_not_call_factory() {
     sm.on_event(LifecycleState::Entering);
     let t0 = Instant::now();
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
         t0,
     );
     assert_eq!(mock.alloc_calls.get(), 1);
@@ -313,7 +320,7 @@ fn apply_within_retry_window_does_not_call_factory() {
     // these must touch the factory.
     for step_ms in [1, 5, 50, 100, 200, 400, 600, 800, 900, 999] {
         sm.apply(
-            &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+            &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
             t0 + Duration::from_millis(step_ms),
         );
         assert_eq!(
@@ -325,7 +332,7 @@ fn apply_within_retry_window_does_not_call_factory() {
 
     // Once the timer has elapsed, the next apply IS allowed to retry.
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
         t0 + Duration::from_millis(1_001),
     );
     assert_eq!(mock.alloc_calls.get(), 2);
@@ -338,20 +345,21 @@ fn entering_to_dormant_while_blocked_clears_blocked_and_does_not_call_destroy() 
     mock.fail(99);
 
     let mut target: Option<RenderTarget> = None;
+    let mut retired = Vec::new();
     let egl = StubEgl;
     let mut surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(LifecycleState::Entering);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
         Instant::now(),
     );
     assert!(sm.blocked());
 
     sm.on_event(LifecycleState::Dormant);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
         Instant::now(),
     );
 
@@ -367,6 +375,7 @@ fn target_owning_to_dormant_retires_target_when_cleanup_is_pending_release() {
     let factory: Rc<dyn RenderTargetFactory> = mock.clone();
 
     let mut target: Option<RenderTarget> = None;
+    let mut retired = Vec::new();
     let mut retired_targets = Vec::new();
     let egl = StubEgl;
     let mut surface = StubSurface;
@@ -374,7 +383,7 @@ fn target_owning_to_dormant_retires_target_when_cleanup_is_pending_release() {
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(LifecycleState::Entering);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
         Instant::now(),
     );
 
@@ -412,13 +421,14 @@ fn all_transitions_from_dormant_to_target_owning_states_invoke_allocate() {
         mock.fail(1);
 
         let mut target: Option<RenderTarget> = None;
+        let mut retired = Vec::new();
         let egl = StubEgl;
         let mut surface = StubSurface;
 
         let mut sm = LifecycleStateMachine::new();
         sm.on_event(target_state);
         sm.apply(
-            &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+            &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
             Instant::now(),
         );
 
@@ -448,13 +458,14 @@ fn dormant_self_transition_is_no_op() {
     let mock: Rc<MockFactory> = Rc::new(MockFactory::new());
     let factory: Rc<dyn RenderTargetFactory> = mock.clone();
     let mut target: Option<RenderTarget> = None;
+    let mut retired = Vec::new();
     let egl = StubEgl;
     let mut surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(LifecycleState::Dormant);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
         Instant::now(),
     );
 
@@ -478,13 +489,14 @@ fn prepared_state_compacts_render_target_after_allocation() {
     let factory: Rc<dyn RenderTargetFactory> = mock.clone();
 
     let mut target: Option<RenderTarget> = None;
+    let mut retired = Vec::new();
     let egl = StubEgl;
     let mut surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(LifecycleState::Prepared);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
         Instant::now(),
     );
 
@@ -498,13 +510,14 @@ fn target_owning_lifecycle_transitions_do_not_request_fresh_surface_render() {
     let mock: Rc<MockFactory> = Rc::new(MockFactory::new());
     let factory: Rc<dyn RenderTargetFactory> = mock.clone();
     let mut target: Option<RenderTarget> = None;
+    let mut retired = Vec::new();
     let egl = StubEgl;
     let mut surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(LifecycleState::Entering);
     sm.apply(
-        &mut ctx_no_target(&factory, &mut target, &egl, &mut surface),
+        &mut ctx_no_target(&factory, &mut target, &mut retired, &egl, &mut surface),
         Instant::now(),
     );
 

@@ -70,7 +70,7 @@ pub struct SlotApplyCtx<'a> {
     pub egl: &'a dyn LifecycleEgl,
     pub surface: &'a mut dyn LifecycleSurface,
     pub render_target: &'a mut Option<RenderTarget>,
-    pub retired_render_targets: Option<&'a mut Vec<RenderTarget>>,
+    pub retired_render_targets: &'a mut Vec<RenderTarget>,
     pub width: u32,
     pub height: u32,
 }
@@ -207,10 +207,7 @@ impl LifecycleStateMachine {
             {
                 RenderTargetCleanup::Complete => {}
                 RenderTargetCleanup::PendingRelease => {
-                    ctx.retired_render_targets
-                        .as_deref_mut()
-                        .expect("BUG: pending render-target cleanup requires retired storage")
-                        .push(target);
+                    ctx.retired_render_targets.push(target);
                 }
             }
             self.current = self.target;
@@ -226,6 +223,13 @@ impl LifecycleStateMachine {
             self.retry_at = None;
         }
 
+        // Sole compaction trigger. `apply` runs every main-loop iteration after
+        // `dispatch_wayland_events` has marked released slots, so this catches
+        // both moments a `Prepared` slot can shed a buffer: right after the
+        // allocation above, and the iteration after a release frees the spare.
+        // The placement after release-marking is load-bearing — if `apply` ever
+        // gains a no-transition early return, release-driven compaction must be
+        // re-armed explicitly.
         if self.current == LifecycleState::Prepared
             && let Some(target) = ctx.render_target.as_mut()
         {

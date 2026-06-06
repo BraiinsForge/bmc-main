@@ -10,7 +10,7 @@ use anyhow::Result;
 use glow::HasContext;
 
 pub use bmc_widget::egl::DmaBufInfo;
-use bmc_widget::egl::{Depth, DoubleBufferedEglState};
+use bmc_widget::egl::{Depth, DoubleBufferedEglState, SlotReleaseState};
 
 /// EGL state for the flip-clock's direct-FBO rendering pipeline.
 ///
@@ -19,7 +19,7 @@ use bmc_widget::egl::{Depth, DoubleBufferedEglState};
 /// bind the back buffer's FBO, render, `glFinish()`, export DMA-BUF, swap.
 pub struct EglState {
     egl: DoubleBufferedEglState,
-    release_state: ExportSlotReleaseState,
+    release_state: SlotReleaseState,
 }
 
 impl EglState {
@@ -27,7 +27,7 @@ impl EglState {
     pub fn new(width: u32, height: u32) -> Result<Self> {
         Ok(Self {
             egl: DoubleBufferedEglState::new(width, height, Depth::Enabled)?,
-            release_state: ExportSlotReleaseState::new(),
+            release_state: SlotReleaseState::new(),
         })
     }
 
@@ -43,9 +43,10 @@ impl EglState {
     }
 
     pub fn destroy_released_buffers(&mut self) -> Vec<usize> {
-        let slots = self
+        let slots: Vec<usize> = self
             .release_state
-            .destroyable_slots(self.egl.allocated_slots());
+            .destroyable_slots(self.egl.allocated_slots())
+            .collect();
         for slot in &slots {
             self.egl.destroy_slot(*slot);
         }
@@ -91,77 +92,5 @@ impl EglState {
     /// Get the glow OpenGL ES context.
     pub fn gl(&self) -> &glow::Context {
         self.egl.gl()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ExportSlotReleaseState {
-    available: [bool; 2],
-}
-
-impl ExportSlotReleaseState {
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            available: [true, true],
-        }
-    }
-
-    #[must_use]
-    pub fn is_available(self, slot: usize) -> bool {
-        self.available.get(slot).copied().unwrap_or(false)
-    }
-
-    pub fn mark_presented(&mut self, slot: usize) {
-        if let Some(available) = self.available.get_mut(slot) {
-            *available = false;
-        }
-    }
-
-    pub fn mark_released(&mut self, slot: usize) {
-        if let Some(available) = self.available.get_mut(slot) {
-            *available = true;
-        }
-    }
-
-    #[must_use]
-    pub fn destroyable_slots(self, allocated_slots: [bool; 2]) -> Vec<usize> {
-        allocated_slots
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, allocated)| {
-                if *allocated && self.is_available(slot) {
-                    Some(slot)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-}
-
-impl Default for ExportSlotReleaseState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ExportSlotReleaseState;
-
-    #[test]
-    fn release_state_blocks_presented_slot_until_release() {
-        let mut state = ExportSlotReleaseState::new();
-
-        assert!(state.is_available(0));
-
-        state.mark_presented(0);
-        assert!(!state.is_available(0));
-        assert_eq!(state.destroyable_slots([true, true]), vec![1]);
-
-        state.mark_released(0);
-        assert!(state.is_available(0));
-        assert_eq!(state.destroyable_slots([true, true]), vec![0, 1]);
     }
 }
