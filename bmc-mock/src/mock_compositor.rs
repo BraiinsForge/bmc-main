@@ -6,7 +6,7 @@
 
 use bmc::compositor::{
     Compositor, CompositorError, CompositorEvent, HardwareCapabilities, InstanceId, Position,
-    SceneLayout, SettingUpdate, Size, WidgetAction, WidgetInitialConfig,
+    SceneCycling, SceneLayout, SettingUpdate, Size, WidgetAction, WidgetInitialConfig,
 };
 use bmc_platform::{HardwareProfile, Product};
 use tokio::sync::mpsc;
@@ -127,6 +127,16 @@ impl Compositor for MockCompositor {
             "MockCompositor: set scene cycling with {} scenes",
             scenes.len()
         );
+        Ok(())
+    }
+
+    fn set_scene_cycling_config(&self, config: SceneCycling) -> Result<(), CompositorError> {
+        tracing::info!("MockCompositor: set scene cycling config {:?}", config);
+        Ok(())
+    }
+
+    fn reset_scene_cycle(&self) -> Result<(), CompositorError> {
+        tracing::info!("MockCompositor: reset scene cycle");
         Ok(())
     }
 

@@ -8,6 +8,7 @@
 use thiserror::Error;
 use tokio::sync::mpsc;
 
+pub use crate::data::SceneCycling;
 pub use bmc_platform::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
 pub use bmc_widget_protocol::{ActionPayload, SettingUpdate, WidgetInitialConfig};
 
@@ -133,6 +134,12 @@ pub trait Compositor: Send + Sync {
 
     /// Set all scene layouts for drag-based cycling between scenes.
     fn set_scene_cycling(&self, scenes: Vec<SceneLayout>) -> Result<(), CompositorError>;
+
+    /// Set scene cycling behavior configuration.
+    fn set_scene_cycling_config(&self, config: SceneCycling) -> Result<(), CompositorError>;
+
+    /// Reset cycling back to the first scene.
+    fn reset_scene_cycle(&self) -> Result<(), CompositorError>;
 
     /// Switch active scene by index in the current cycling list.
     fn set_active_scene_index(&self, index: usize) -> Result<(), CompositorError>;

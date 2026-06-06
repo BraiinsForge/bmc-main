@@ -1394,6 +1394,12 @@ fn handle_clear_pid_command(state: &mut AppState, instance_id: &InstanceId, expe
     }
 }
 
+fn handle_reset_scene_cycle_command(state: &mut AppState) {
+    tracing::debug!("resetting scene cycle");
+    state.compositor.widgets.set_active_scene_index(0);
+    after_scene_change(state);
+}
+
 fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
     match cmd {
         CompositorCommand::RegisterWidget {
@@ -1460,6 +1466,10 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             state.compositor.widgets.set_scene_cycling(scenes);
             after_scene_change(state);
         }
+        CompositorCommand::SetSceneCyclingConfig { config } => {
+            tracing::debug!(?config, "updating scene cycling config");
+        }
+        CompositorCommand::ResetSceneCycle => handle_reset_scene_cycle_command(state),
         CompositorCommand::SetActiveSceneIndex { index } => {
             tracing::info!("Setting active scene index to {}", index);
             state.compositor.widgets.set_active_scene_index(index);
@@ -1705,6 +1715,21 @@ impl Compositor for EglCompositor {
     fn set_scene_cycling(&self, scenes: Vec<SceneLayout>) -> Result<(), CompositorError> {
         self.command_tx
             .send(CompositorCommand::SetSceneCycling { scenes })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn set_scene_cycling_config(
+        &self,
+        config: bmc::compositor::SceneCycling,
+    ) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::SetSceneCyclingConfig { config })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn reset_scene_cycle(&self) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::ResetSceneCycle)
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 
