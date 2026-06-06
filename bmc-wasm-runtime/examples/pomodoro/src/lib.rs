@@ -234,6 +234,13 @@ pub extern "C" fn init() {
     load_persisted_state();
 }
 
+/// Re-render in response to touch — the host no longer renders on touch by
+/// itself, so an interactive widget must ask for the frame here.
+#[unsafe(no_mangle)]
+pub extern "C" fn on_touch() {
+    request_frame();
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn render(delta_ms: u32) {
     let size = widget_size();

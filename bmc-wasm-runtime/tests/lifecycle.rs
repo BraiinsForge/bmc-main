@@ -268,6 +268,35 @@ fn misbehaving_submit_tree_wat() -> &'static str {
     "#
 }
 
+/// Probe widget for the touch channel. Exports `on_touch`, which bumps a
+/// counter and calls `host_request_frame` — the canonical "re-render in
+/// response to touch" response. The counter getter lets the test assert the
+/// hook fired exactly once.
+fn touch_probe_widget_wat() -> &'static str {
+    r#"
+    (module
+      (import "env" "host_request_frame" (func $host_request_frame))
+
+      (memory (export "memory") 1)
+
+      (global $touch_count (mut i32) (i32.const 0))
+
+      (func (export "__bmc_sdk_version") (result i64)
+        i64.const 65536)
+
+      (func (export "render") (param i32))
+
+      (func (export "on_touch")
+        global.get $touch_count
+        i32.const 1
+        i32.add
+        global.set $touch_count
+        call $host_request_frame)
+
+      (func (export "touch_count") (result i32) global.get $touch_count))
+    "#
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 fn key(s: &str) -> ParamKey {
@@ -623,5 +652,66 @@ fn widget_without_hook_is_silently_fine() {
         !hook_ran,
         "absent `on_params_update` export must be silently fine — return value `false` \
          signals 'no hook', not a trap"
+    );
+}
+
+// ── Touch channel tests ─────────────────────────────────────────────
+
+#[test]
+fn deliver_touch_fires_on_touch_hook_and_requests_frame() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+
+    let (mut runtime, _renderer) = build_runtime(touch_probe_widget_wat(), &gl, BTreeMap::new());
+
+    assert!(
+        runtime.exports_on_touch(),
+        "touch probe widget exports on_touch"
+    );
+    assert!(
+        !runtime.wants_next_frame(),
+        "no frame should be pending before any touch is delivered"
+    );
+
+    let hook_ran = runtime.deliver_touch();
+    assert!(hook_ran, "deliver_touch must invoke the on_touch hook");
+    assert_eq!(runtime.call_export_i32("touch_count"), Some(1));
+    assert!(
+        runtime.wants_next_frame(),
+        "request_frame() called from on_touch must leave the runtime wanting a frame — \
+         this is the mechanism that re-renders an otherwise-idle widget on touch"
+    );
+}
+
+#[test]
+fn widget_without_on_touch_drops_touch_without_requesting_a_frame() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+
+    // A widget that exports no `on_touch` is non-interactive.
+    let wat = r#"
+        (module
+          (memory (export "memory") 1)
+          (func (export "__bmc_sdk_version") (result i64) i64.const 65536)
+          (func (export "render") (param i32)))
+    "#;
+    let (mut runtime, _renderer) = build_runtime(wat, &gl, BTreeMap::new());
+
+    assert!(
+        !runtime.exports_on_touch(),
+        "widget without the export must report exports_on_touch() == false so the host \
+         drops its touch events instead of queuing them for a render that never comes"
+    );
+
+    let hook_ran = runtime.deliver_touch();
+    assert!(
+        !hook_ran,
+        "absent on_touch export — deliver_touch returns false, not a trap"
+    );
+    assert!(
+        !runtime.wants_next_frame(),
+        "no on_touch hook means no request_frame, so no frame is scheduled"
     );
 }

@@ -282,6 +282,11 @@ pub struct WasmWidgetRuntime {
     /// risking a stale read on the params channel (which doesn't rotate
     /// on a system-only delivery).
     on_system_update_func: Option<wasmi::TypedFunc<(), ()>>,
+    /// Optional guest export fired once per Wayland drain that delivered touch
+    /// activity. A widget that wants to respond to touch must export this and
+    /// call `request_frame()` from it — the host no longer force-renders on
+    /// touch, so without the hook the widget's touch is dropped.
+    on_touch_func: Option<wasmi::TypedFunc<(), ()>>,
     sdk_version: (u16, u16, u16),
     /// Instruction budget reset before each WASM frame execution.
     pub(super) fuel_per_frame: u64,
@@ -420,6 +425,7 @@ impl WasmWidgetRuntime {
         let on_system_update_func = instance
             .get_typed_func::<(), ()>(&store, "on_system_update")
             .ok();
+        let on_touch_func = instance.get_typed_func::<(), ()>(&store, "on_touch").ok();
         tracing::info!(
             guest_id = %guest_id,
             width,
@@ -427,6 +433,7 @@ impl WasmWidgetRuntime {
             has_unload = unload_func.is_some(),
             has_on_params_update = on_params_update_func.is_some(),
             has_on_system_update = on_system_update_func.is_some(),
+            has_on_touch = on_touch_func.is_some(),
             "runtime instantiated"
         );
 
@@ -446,6 +453,7 @@ impl WasmWidgetRuntime {
             unload_func,
             on_params_update_func,
             on_system_update_func,
+            on_touch_func,
             sdk_version,
             fuel_per_frame,
             fuel_strikes: 0,
@@ -828,6 +836,31 @@ impl WasmWidgetRuntime {
             "on_system_update",
             Lifecycle::SystemUpdate,
         )
+    }
+
+    /// Whether the widget exported `on_touch`.
+    ///
+    /// The host uses this to gate touch delivery: a widget without the hook is
+    /// non-interactive, so its touch events are dropped rather than queued for a
+    /// render that will never be requested.
+    #[must_use]
+    pub fn exports_on_touch(&self) -> bool {
+        self.on_touch_func.is_some()
+    }
+
+    /// Notify the widget that touch activity occurred this drain.
+    ///
+    /// Unlike [`Self::deliver_params_update`] / [`Self::deliver_system_update`]
+    /// there is no snapshot to stage — the touch events themselves are queued
+    /// separately via [`Self::push_touch_event`] and consumed at the next
+    /// `render`. This hook is purely the "a touch happened, decide whether to
+    /// re-render" notification; the widget responds by calling `request_frame()`
+    /// under [`Lifecycle::Touch`].
+    ///
+    /// Returns whether the guest's hook actually ran (`false` = no hook or a
+    /// trap), matching the other deliver methods.
+    pub fn deliver_touch(&mut self) -> bool {
+        self.fire_update_hook(self.on_touch_func, "on_touch", Lifecycle::Touch)
     }
 
     /// Common tail of `deliver_params_update` / `deliver_system_update`:

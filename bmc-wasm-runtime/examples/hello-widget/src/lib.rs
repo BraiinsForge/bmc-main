@@ -891,6 +891,14 @@ fn handle_clicks(result: &bmc_wasm_sdk::TreeRenderResult) {
 // Entry points
 // ---------------------------------------------------------------------------
 
+/// Re-render in response to touch — the host no longer renders on touch by
+/// itself, so an interactive widget must ask for the frame here.
+#[unsafe(no_mangle)]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn on_touch() {
+    request_frame();
+}
+
 #[unsafe(no_mangle)]
 #[cfg(target_arch = "wasm32")]
 pub extern "C" fn render(_delta_ms: u32) {

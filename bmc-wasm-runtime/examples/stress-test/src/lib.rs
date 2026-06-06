@@ -6,7 +6,7 @@
 
 use bmc_wasm_sdk::{
     FontWeight, GRAY_10, GRAY_50, GRAY_70, Node, ORANGE_50, RED_50, WidgetSize, button, col, props,
-    render_ui, row, spacer, style, text, widget_size,
+    render_ui, request_frame, row, spacer, style, text, widget_size,
 };
 use std::cell::Cell;
 
@@ -16,6 +16,13 @@ thread_local! {
 }
 
 const MODE_NAMES: [&str; 3] = ["Normal", "CPU Burn", "Draw Spam"];
+
+/// Re-render in response to touch — the host no longer renders on touch by
+/// itself, so an interactive widget must ask for the frame here.
+#[unsafe(no_mangle)]
+pub extern "C" fn on_touch() {
+    request_frame();
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {

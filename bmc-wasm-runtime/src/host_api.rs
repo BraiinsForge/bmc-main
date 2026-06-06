@@ -163,6 +163,11 @@ pub(crate) enum Lifecycle {
     /// `on_system_update` is on the stack. Same import surface as [`Self::ParamsUpdate`],
     /// but a separate phase so traps and logs name the right hook.
     SystemUpdate,
+    /// `on_touch` is on the stack. Fired once per Wayland drain that delivered
+    /// touch activity. `request_frame` is legal (and is how the widget asks to
+    /// re-render in response); submitting a tree and touch readback are not —
+    /// the queued touch is consumed at the next render, not here.
+    Touch,
     /// `unload` is on the stack. Synchronous cleanup only; frame requests no-op.
     Unload,
 }

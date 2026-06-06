@@ -964,15 +964,22 @@ fn dispatch_touch_events(
     runtime: &mut WasmWidgetRuntime,
     recording: Option<&mut RecordingState>,
 ) {
+    // Mirror the device host: a widget that doesn't export `on_touch` is
+    // non-interactive, so it never receives touch events.
+    if !runtime.exports_on_touch() {
+        return;
+    }
     // Carry the recording reborrow through each branch by hand instead of `as_deref_mut`
     // (which clippy rejects since the `Option`'s inner type is already a `&mut`).
     let mut rec = recording;
+    let mut touched = false;
     if response.clicked()
         && let Some(pos) = response.interact_pointer_pos()
     {
         let (x, y) = (pos.x - rect.min.x, pos.y - rect.min.y);
         runtime.push_touch_event(TouchEvent::Down { x, y });
         runtime.push_touch_event(TouchEvent::Up);
+        touched = true;
         if let Some(r) = rec.as_mut() {
             // A quick click never triggers `drag_started` — synthesise + immediately classify
             // a zero-distance gesture so it's recorded as a click on the hit element.
@@ -990,6 +997,7 @@ fn dispatch_touch_events(
     {
         let (x, y) = (pos.x - rect.min.x, pos.y - rect.min.y);
         runtime.push_touch_event(TouchEvent::Down { x, y });
+        touched = true;
         if let Some(r) = rec.as_mut() {
             let start_element = runtime.hit_test(x, y);
             r.gesture = Some(GestureTracker {
@@ -1003,6 +1011,7 @@ fn dispatch_touch_events(
     {
         let (x, y) = (pos.x - rect.min.x, pos.y - rect.min.y);
         runtime.push_touch_event(TouchEvent::Move { x, y });
+        touched = true;
         if let Some(r) = rec.as_mut()
             && let Some(g) = r.gesture.as_mut()
         {
@@ -1011,11 +1020,18 @@ fn dispatch_touch_events(
     }
     if response.drag_stopped() {
         runtime.push_touch_event(TouchEvent::Up);
+        touched = true;
         if let Some(r) = rec.as_mut()
             && let Some(gesture) = r.gesture.take()
         {
             classify_and_record_gesture(r, &gesture);
         }
+    }
+    if touched {
+        // Fire `on_touch` once for the gesture, mirroring the host's per-drain
+        // delivery. Renders are unconditional here, so this is purely to exercise
+        // the hook (and any side effects) the way the device does.
+        runtime.deliver_touch();
     }
 }
 
