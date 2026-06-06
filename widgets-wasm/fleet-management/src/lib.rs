@@ -29,7 +29,7 @@ use std::cell::RefCell;
 #[cfg(target_arch = "wasm32")]
 use adapter::FamilyAdapter;
 #[cfg(target_arch = "wasm32")]
-use device::{DeviceId, DeviceList, family_label};
+use device::{DeviceFamily, DeviceId, DeviceList, family_label};
 #[cfg(target_arch = "wasm32")]
 use families::bitaxe::BitaxeAdapter;
 #[cfg(target_arch = "wasm32")]
@@ -165,6 +165,9 @@ pub extern "C" fn render(_delta_ms: u32) {
     let filters = filter::Filters {
         whitelist: parse_model_list(&params.model_whitelist),
         blacklist: parse_model_list(&params.model_blacklist),
+        bos_enabled: params.bos_enabled,
+        ubos_enabled: params.ubos_enabled,
+        axeos_enabled: params.axeos_enabled,
     };
     let root = DEVICES.with(|d| render::view(&d.borrow(), variant, &params.fleet_name, &filters));
     let _ = render_ui(width, height, root);
@@ -173,15 +176,26 @@ pub extern "C" fn render(_delta_ms: u32) {
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn on_params_update() {
-    let creds_changed = manifest_params::Params::previous().is_none_or(|prev| {
-        manifest_params::Params::current()
-            .changed_keys(&prev)
-            .iter()
+    let current = manifest_params::Params::current();
+    let changed = manifest_params::Params::previous().map(|prev| current.changed_keys(&prev));
+    let creds_changed = changed.as_ref().is_none_or(|keys| {
+        keys.iter()
             .any(|k| matches!(*k, "bos_password" | "ubos_username" | "ubos_password"))
     });
     if creds_changed {
         session::clear_tokens();
         DEVICES.with(|d| d.borrow_mut().clear_all_telemetry());
+    }
+    if let Some(keys) = changed {
+        for (key, family, enabled) in [
+            ("bos_enabled", DeviceFamily::Bos, current.bos_enabled),
+            ("ubos_enabled", DeviceFamily::Ubos, current.ubos_enabled),
+            ("axeos_enabled", DeviceFamily::Bitaxe, current.axeos_enabled),
+        ] {
+            if enabled && keys.contains(&key) {
+                session::ensure_running(family);
+            }
+        }
     }
     request_frame();
 }

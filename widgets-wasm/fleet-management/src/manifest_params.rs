@@ -12,10 +12,13 @@ use bmc_wasm_sdk::params as snapshot;
 use bmc_wasm_sdk::params::typed::ParamRead;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Params {
+    pub axeos_enabled: bool,
+    pub bos_enabled: bool,
     pub bos_password: String,
     pub fleet_name: String,
     pub model_blacklist: String,
     pub model_whitelist: String,
+    pub ubos_enabled: bool,
     pub ubos_password: String,
     pub ubos_username: String,
 }
@@ -24,10 +27,13 @@ impl Params {
     #[must_use]
     pub fn from_snapshot(snap: &snapshot::Params) -> Self {
         Self {
+            axeos_enabled: <bool as ParamRead>::read_required(snap, "axeos_enabled"),
+            bos_enabled: <bool as ParamRead>::read_required(snap, "bos_enabled"),
             bos_password: <String as ParamRead>::read_required(snap, "bos_password"),
             fleet_name: <String as ParamRead>::read_required(snap, "fleet_name"),
             model_blacklist: <String as ParamRead>::read_required(snap, "model_blacklist"),
             model_whitelist: <String as ParamRead>::read_required(snap, "model_whitelist"),
+            ubos_enabled: <bool as ParamRead>::read_required(snap, "ubos_enabled"),
             ubos_password: <String as ParamRead>::read_required(snap, "ubos_password"),
             ubos_username: <String as ParamRead>::read_required(snap, "ubos_username"),
         }
@@ -75,6 +81,12 @@ impl Params {
     #[must_use]
     pub fn changed_keys(&self, other: &Self) -> Vec<&'static str> {
         let mut out = Vec::new();
+        if self.axeos_enabled != other.axeos_enabled {
+            out.push("axeos_enabled");
+        }
+        if self.bos_enabled != other.bos_enabled {
+            out.push("bos_enabled");
+        }
         if self.bos_password != other.bos_password {
             out.push("bos_password");
         }
@@ -86,6 +98,9 @@ impl Params {
         }
         if self.model_whitelist != other.model_whitelist {
             out.push("model_whitelist");
+        }
+        if self.ubos_enabled != other.ubos_enabled {
+            out.push("ubos_enabled");
         }
         if self.ubos_password != other.ubos_password {
             out.push("ubos_password");
