@@ -31,6 +31,13 @@ thread_local! {
     static TAP_TIMES: Cell<[u64; TAP_HISTORY]> = const { Cell::new([0; TAP_HISTORY]) };
 }
 
+/// Re-render in response to touch — the host no longer renders on touch by
+/// itself, so an interactive widget must ask for the frame here.
+#[unsafe(no_mangle)]
+pub extern "C" fn on_touch() {
+    request_frame();
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn render(delta_ms: u32) {
     let size = widget_size();

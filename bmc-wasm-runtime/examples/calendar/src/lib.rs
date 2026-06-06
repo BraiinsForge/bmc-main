@@ -206,6 +206,13 @@ fn toggle_theme() {
     request_frame();
 }
 
+/// Re-render in response to touch — the host no longer renders on touch by
+/// itself, so an interactive widget must ask for the frame here.
+#[unsafe(no_mangle)]
+pub extern "C" fn on_touch() {
+    request_frame();
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
     let size = widget_size();

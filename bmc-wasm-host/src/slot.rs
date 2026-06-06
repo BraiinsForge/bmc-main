@@ -244,6 +244,13 @@ impl WidgetSlot {
         // to the latest event — never merged.
         let mut system_dirty = false;
         let mut latest_params: Option<serde_json::Map<String, Value>> = None;
+        // Touch is coalesced like Setting/ParamUpdate: every event is queued for
+        // the next render during the drain, and `on_touch` fires once afterwards.
+        // A widget without an `on_touch` export is non-interactive — the host no
+        // longer force-renders on touch, so its events would queue for a render
+        // that is never requested. Drop them at the source.
+        let mut touch_dirty = false;
+        let accepts_touch = self.runtime.exports_on_touch();
         for event in <DeckWidgetSurfaceClient as WidgetSurface>::drain_events(&mut self.surface) {
             match event {
                 WidgetEvent::Setting(setting) => {
@@ -251,12 +258,39 @@ impl WidgetSlot {
                     system_dirty = true;
                 }
                 WidgetEvent::ParamUpdate(params) => latest_params = Some(params),
-                event @ (WidgetEvent::Lifecycle(_)
-                | WidgetEvent::Shutdown
-                | WidgetEvent::TouchDown { .. }
-                | WidgetEvent::TouchMotion { .. }
-                | WidgetEvent::TouchUp { .. }
-                | WidgetEvent::TouchCancel) => self.on_wayland_event(&event),
+                WidgetEvent::TouchDown { x, y, .. } => {
+                    if accepts_touch {
+                        let (x, y) = wayland_touch_xy(x, y);
+                        self.runtime
+                            .push_touch_event(bmc_render::interaction::TouchEvent::Down { x, y });
+                        touch_dirty = true;
+                    }
+                }
+                WidgetEvent::TouchMotion { x, y, .. } => {
+                    if accepts_touch {
+                        let (x, y) = wayland_touch_xy(x, y);
+                        self.runtime
+                            .push_touch_event(bmc_render::interaction::TouchEvent::Move { x, y });
+                        touch_dirty = true;
+                    }
+                }
+                WidgetEvent::TouchUp { .. } => {
+                    if accepts_touch {
+                        self.runtime
+                            .push_touch_event(bmc_render::interaction::TouchEvent::Up);
+                        touch_dirty = true;
+                    }
+                }
+                WidgetEvent::TouchCancel => {
+                    if accepts_touch {
+                        self.runtime
+                            .push_touch_event(bmc_render::interaction::TouchEvent::Cancel);
+                        touch_dirty = true;
+                    }
+                }
+                event @ (WidgetEvent::Lifecycle(_) | WidgetEvent::Shutdown) => {
+                    self.on_wayland_event(&event);
+                }
             }
         }
         if system_dirty {
@@ -280,6 +314,12 @@ impl WidgetSlot {
             );
             self.runtime.deliver_params_update(table);
             self.surface.mark_needs_render();
+        }
+        if touch_dirty {
+            // No `mark_needs_render` here: the widget decides whether to re-render
+            // by calling `request_frame()` from `on_touch`, which the main loop's
+            // `refresh_next_runtime_frame_after_delivery` picks up.
+            self.runtime.deliver_touch();
         }
         let released_buffers = self.surface.drain_released_buffers();
         if let Some(egl_target) = self
@@ -687,12 +727,6 @@ impl WidgetSlot {
                     "lifecycle event received"
                 );
             }
-            WidgetEvent::Setting(_) | WidgetEvent::ParamUpdate(_) => {
-                // The drain loop in `dispatch_wayland_events` filters
-                // Setting and ParamUpdate events into their coalescing
-                // paths and never dispatches them here.
-                unreachable!("Setting/ParamUpdate handled in dispatch_wayland_events drain");
-            }
             WidgetEvent::Shutdown => {
                 tracing::info!(
                     peer_pid = self.peer_pid,
@@ -700,38 +734,18 @@ impl WidgetSlot {
                     "shutdown event received"
                 );
             }
-            WidgetEvent::TouchDown { x, y, .. } => {
-                #[expect(
-                    clippy::cast_possible_truncation,
-                    reason = "touch coordinates from Wayland are pixel positions; f64→f32 precision loss is acceptable"
-                )]
-                self.push_touch(bmc_render::interaction::TouchEvent::Down {
-                    x: *x as f32,
-                    y: *y as f32,
-                });
-            }
-            WidgetEvent::TouchMotion { x, y, .. } => {
-                #[expect(
-                    clippy::cast_possible_truncation,
-                    reason = "touch coordinates from Wayland are pixel positions; f64→f32 precision loss is acceptable"
-                )]
-                self.push_touch(bmc_render::interaction::TouchEvent::Move {
-                    x: *x as f32,
-                    y: *y as f32,
-                });
-            }
-            WidgetEvent::TouchUp { .. } => {
-                self.push_touch(bmc_render::interaction::TouchEvent::Up);
-            }
-            WidgetEvent::TouchCancel => {
-                self.push_touch(bmc_render::interaction::TouchEvent::Cancel);
+            WidgetEvent::Setting(_)
+            | WidgetEvent::ParamUpdate(_)
+            | WidgetEvent::TouchDown { .. }
+            | WidgetEvent::TouchMotion { .. }
+            | WidgetEvent::TouchUp { .. }
+            | WidgetEvent::TouchCancel => {
+                // The drain loop in `dispatch_wayland_events` filters Setting,
+                // ParamUpdate, and touch events into their coalescing paths and
+                // never dispatches them here.
+                unreachable!("Setting/ParamUpdate/touch handled in dispatch_wayland_events drain");
             }
         }
-    }
-
-    fn push_touch(&mut self, event: bmc_render::interaction::TouchEvent) {
-        self.runtime.push_touch_event(event);
-        self.surface.mark_needs_render();
     }
 }
 
@@ -744,6 +758,17 @@ impl WidgetSlot {
 ///
 /// The wasm runtime intentionally does not depend on the bmc-shared crates,
 /// so the translation lives here.
+/// Narrow Wayland touch pixel coordinates to the `f32` the render interaction
+/// layer uses. The values are screen-pixel positions, so the precision loss is
+/// inconsequential.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "touch coordinates from Wayland are pixel positions; f64→f32 precision loss is acceptable"
+)]
+fn wayland_touch_xy(x: f64, y: f64) -> (f32, f32) {
+    (x as f32, y as f32)
+}
+
 fn apply_setting_update(snap: &mut SystemSnapshot, update: &SettingUpdate) {
     match update {
         SettingUpdate::Timezone(tz) => snap.settings.timezone.clone_from(tz),

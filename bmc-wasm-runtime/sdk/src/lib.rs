@@ -132,6 +132,28 @@
 //! react to mid-life changes rather than just re-reading
 //! [`system::current`] on every `render`.
 //!
+//! ### `on_touch`
+//!
+//! ```rust,ignore
+//! #[unsafe(no_mangle)]
+//! pub extern "C" fn on_touch() {
+//!     request_frame();
+//! }
+//! ```
+//!
+//! Optional — fires once per host input drain in which the widget's surface
+//! received any touch activity (down / move / up / cancel), coalesced like the
+//! update hooks. It carries no arguments: it is the notification that a touch
+//! happened, not the touch itself. The touch is consumed at the next `render`
+//! through the usual readback (`Touch::click` / `Touch::drag`, button clicks,
+//! scroll offsets) — `on_touch`'s job is only to decide whether that render
+//! should happen, by calling `request_frame` (or `request_frame_after`).
+//!
+//! A widget that consumes touch **must** export this hook. The host does not
+//! render on touch by itself; without `on_touch` (and a frame request from it)
+//! a touch produces no render, so buttons, sliders, and scroll views stay
+//! inert. A purely passive widget that ignores touch simply omits it.
+//!
 //! ### `unload`
 //!
 //! ```rust,ignore
@@ -156,17 +178,18 @@
 //!   (`None` for touch reads, no-op for frame requests). Used when reading defensively
 //!   is reasonable and the widget composes naturally with the sentinel.
 //!
-//! `on_params_update` and `on_system_update` share the same import-legality
-//! row — both run with state-mutation legal, tree-submission illegal.
+//! `on_params_update`, `on_system_update`, and `on_touch` share the same
+//! import-legality row — all three run with state-mutation legal and
+//! tree-submission illegal.
 //!
-//! | Import                                              | `init` | `render` | `on_*_update`* | `unload` |
-//! |-----------------------------------------------------|:------:|:--------:|:--------------:|:--------:|
-//! | `render_ui` / `host_submit_tree`                    | trap   | ✓        | trap           | trap     |
-//! | `Touch::click` / `Touch::drag` (touch readback)     | None¹  | ✓        | None¹          | None¹    |
-//! | `request_frame` / `request_frame_after`             | ✓      | ✓        | ✓              | no-op²   |
-//! | All other imports (params, KV, fetch, log, …)       | ✓      | ✓        | ✓              | ✓        |
+//! | Import                                              | `init` | `render` | `on_*`* | `unload` |
+//! |-----------------------------------------------------|:------:|:--------:|:-------:|:--------:|
+//! | `render_ui` / `host_submit_tree`                    | trap   | ✓        | trap    | trap     |
+//! | `Touch::click` / `Touch::drag` (touch readback)     | None¹  | ✓        | None¹   | None¹    |
+//! | `request_frame` / `request_frame_after`             | ✓      | ✓        | ✓       | no-op²   |
+//! | All other imports (params, KV, fetch, log, …)       | ✓      | ✓        | ✓       | ✓        |
 //!
-//! \* Same gating for both `on_params_update` and `on_system_update`.
+//! \* Same gating for `on_params_update`, `on_system_update`, and `on_touch`.
 //!
 //! ¹ Returns the touch-not-present sentinel after a one-time warn.
 //!   Defensive reads compose naturally — the widget gets `None`

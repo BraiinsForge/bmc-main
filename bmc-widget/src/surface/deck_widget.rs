@@ -1088,21 +1088,17 @@ impl Dispatch<wl_touch::WlTouch, ()> for DeckWidgetSurfaceState {
                 state
                     .pending_events
                     .push(DeckWidgetEvent::TouchDown { id, x, y });
-                state.needs_render = true;
             }
             wl_touch::Event::Motion { id, x, y, .. } => {
                 state
                     .pending_events
                     .push(DeckWidgetEvent::TouchMotion { id, x, y });
-                state.needs_render = true;
             }
             wl_touch::Event::Up { id, .. } => {
                 state.pending_events.push(DeckWidgetEvent::TouchUp { id });
-                state.needs_render = true;
             }
             wl_touch::Event::Cancel => {
                 state.pending_events.push(DeckWidgetEvent::TouchCancel);
-                state.needs_render = true;
             }
             wl_touch::Event::Frame => {
                 tracing::trace!("wl_touch::Frame");
