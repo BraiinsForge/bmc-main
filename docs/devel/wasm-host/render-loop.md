@@ -43,53 +43,68 @@ main_loop::run and passed into per-slot work as `renderer_ptr` on each loop pass
 The compositor sends `deck_widget_surface_v1.lifecycle` events. The host maps those protocol values to
 `bmc-wasm-host::lifecycle::LifecycleState`:
 
-| State      | Has render target | May render      | Host-requested frame loop | Meaning                                                         |
-| ---------- | ----------------- | --------------- | ------------------------- | --------------------------------------------------------------- |
-| `Dormant`  | No                | No              | No                        | Off-screen. Keeps runtime state but owns no GPU export buffers. |
-| `Prepared` | No                | No              | No                        | Immediate neighbour.                                            |
-| `Entering` | Yes               | Yes, when dirty | No                        | Drag target entering the screen.                                |
-| `Visible`  | Yes               | Yes             | Yes                       | Active on-screen widget.                                        |
-| `Leaving`  | Yes               | Yes, when dirty | No                        | Current widget leaving during a drag.                           |
+| State      | Has render target | May render      | Host-requested frame loop | Meaning                                                            |
+| ---------- | ----------------- | --------------- | ------------------------- | ------------------------------------------------------------------ |
+| `Dormant`  | No                | No              | No                        | Off-screen. Keeps runtime state but owns no GPU export buffers.    |
+| `Prepared` | Yes               | Yes, when dirty | No                        | Immediate neighbour. Pre-renders one frame, then holds one buffer. |
+| `Entering` | Yes               | Yes, when dirty | No                        | Drag target entering the screen.                                   |
+| `Visible`  | Yes               | Yes             | Yes                       | Active on-screen widget.                                           |
+| `Leaving`  | Yes               | Yes, when dirty | No                        | Current widget leaving during a drag.                              |
 
 The key host predicates are:
 
-- `has_render_target(state)` is true for `Entering`, `Visible`, and `Leaving`;
-- `should_render(state)` currently matches `has_render_target(state)`;
+- `has_render_target(state)` is true for `Prepared`, `Entering`, `Visible`, and `Leaving`;
+- `should_render(state)` matches `has_render_target(state)`;
 - `frame_callback_enabled(state)` is true only for `Visible`.
 
-This split is deliberate. `Prepared` currently lets the compositor mark immediate neighbours without making the host
-allocate or render yet; a future host can use the same protocol state to pre-warm buffers. `Entering` may need a fresh
-buffer, but it does not run the host-requested guest animation loop just because the runtime asks for the next frame.
-`Leaving` keeps its render target so the compositor can still animate the scene drag by repainting and moving the
-widget's last submitted buffer, but it no longer drives runtime animation frames while leaving. Wayland/touch/lifecycle
-events can still dirty an `Entering` or `Leaving` surface and cause another host render. The compositor only completes
-frame callbacks that the client requested on a commit; the current host does not request those callbacks when submitting
-an `Entering` or `Leaving` buffer.
+This split is deliberate. `Prepared` is the pre-render state: the compositor marks immediate neighbours `Prepared` so
+the host allocates a render target and renders a single frame ahead of a possible drag, making the later transition into
+`Entering` instant. The pre-render is triggered on entry into `Prepared` (the dirty surface raised by the lifecycle
+event); the transition from `Prepared` to `Entering` does not itself trigger a new render, and `Prepared` runs no guest
+animation loop. Like `Entering`, a still-`Prepared` slot re-renders if its surface is dirtied again — a param or
+system-settings update — so the pre-render is a single frame only in the common, no-update case. `Entering` may render
+again when its surface is dirtied, but it does not run the host-requested guest animation loop just because the runtime
+asks for the next frame. `Leaving` keeps its render target so the compositor can still animate the scene drag by
+repainting and moving the widget's last submitted buffer, but it no longer drives runtime animation frames while
+leaving. Wayland/touch/lifecycle events can still dirty an `Entering` or `Leaving` surface and cause another host
+render. The compositor only completes frame callbacks that the client requested on a commit; the current host does not
+request those callbacks when submitting a `Prepared`, `Entering`, or `Leaving` buffer.
 
 ## Lifecycle Application
 
 Each slot starts as `Dormant` with `render_target = None`.
 
-When a lifecycle event arrives, the slot updates its target state. If the new target has a render target and differs
-from the previous target, the slot marks its Wayland surface dirty so the host will render after applying the
-transition.
+When a lifecycle event arrives, the slot updates its target state. If the new target acquires a render target the
+previous target did not have (entering the render-set from `Dormant`) and the state actually changes, the slot marks its
+Wayland surface dirty so the host renders after applying the transition. This is what produces the single `Prepared`
+pre-render; transitions that stay inside the render-set (for example `Prepared` to `Entering`) do not mark the surface
+dirty on their own.
 
 `LifecycleStateMachine::apply` is responsible for target ownership:
 
-- moving from `Dormant` to a target-owning state allocates a `RenderTarget`;
-- moving from a target-owning state to a buffer-free state (`Dormant` or `Prepared`) destroys the `RenderTarget`;
-- transitions between target-owning states keep the existing target;
+- moving from `Dormant` into the render-set (`Prepared`, `Entering`, `Visible`, `Leaving`) allocates a `RenderTarget`;
+- moving from a render-set state back to `Dormant` releases the `RenderTarget`;
+- transitions between render-set states keep the existing target;
 - allocation failures set the slot as blocked and retry after 1 second;
-- a later transition back to a buffer-free state clears a blocked allocation.
+- a later transition back to `Dormant` clears a blocked allocation.
 
 The production render target is an `EglRenderTarget`:
 
 - a per-slot `DoubleBufferState`;
-- two exported DMA-BUF buffers;
-- two pre-created `wl_buffer` proxies for the slot's Wayland surface.
+- up to two exported DMA-BUF buffers;
+- up to two pre-created `wl_buffer` proxies for the slot's Wayland surface.
 
-Destroying the target destroys both export buffers and both `wl_buffer`s. This releases the per-slot CMA-backed render
-memory while the widget is dormant.
+A freshly allocated target double-buffers (two export buffers). While the slot is `Prepared`,
+`LifecycleStateMachine::apply` calls `compact_for_prepared` every loop iteration; it releases the spare, not-in-flight
+buffer as soon as one exists — right after the `Dormant` to `Prepared` allocation, before the slot's first prepared
+render, or the iteration after a compositor release frees the spare. A steady-state `Prepared` slot therefore holds a
+single buffer; the second buffer is reallocated only if the slot renders again (a param update, or once `Visible`).
+
+Buffer destruction is deferred until the compositor releases the buffer. `apply` never frees a buffer the compositor may
+still be reading: `destroy_released_slots` frees only slots the compositor has already released (tracked by
+`bmc_widget::egl::SlotReleaseState`), and any still-held slots are parked in `retired_render_targets` and reclaimed
+later once the release arrives. Releasing the target this way returns the per-slot CMA-backed render memory once the
+widget no longer needs it.
 
 ## Render Eligibility
 
@@ -97,7 +112,7 @@ The host renders a slot only when `WidgetSlot::needs_render(now)` returns true.
 
 That requires all of these conditions:
 
-1. The slot lifecycle is renderable: `Entering`, `Visible`, or `Leaving`.
+1. The slot lifecycle is renderable: `Prepared`, `Entering`, `Visible`, or `Leaving`.
 2. The slot is not blocked on render-target allocation retry.
 3. Either the Wayland surface is dirty or a runtime frame deadline is due.
 4. Runtime frame deadlines count only when the host-requested frame loop is enabled, which means `Visible`.
@@ -107,9 +122,9 @@ The minimum inter-frame interval is 8 ms. It caps a widget that continuously ask
 fps.
 
 Dirty surface renders come from lifecycle changes, param updates, touch input, and other host-side events that call
-`mark_needs_render()`. Those dirty renders can happen in `Entering` or `Leaving`. Runtime animation renders come from
-`WasmWidgetRuntime::wants_next_frame()` and `next_frame_delay()` after a previous render, and are honored only in
-`Visible`.
+`mark_needs_render()`. Those dirty renders can happen in `Prepared`, `Entering`, or `Leaving`. Runtime animation renders
+come from `WasmWidgetRuntime::wants_next_frame()` and `next_frame_delay()` after a previous render, and are honored only
+in `Visible`.
 
 ## Rendering A Frame
 
@@ -150,8 +165,8 @@ The timeout can be shortened by:
 - the host's 100 ms post-disconnect grace period.
 
 If a renderable slot is dirty or has an immediate runtime frame due and the inter-frame floor has elapsed, the timeout
-is `0`, so the host loops without sleeping. For `Entering` and `Leaving`, only the dirty-surface path contributes;
-runtime frame deadlines are ignored until the slot becomes `Visible`.
+is `0`, so the host loops without sleeping. For `Prepared`, `Entering`, and `Leaving`, only the dirty-surface path
+contributes; runtime frame deadlines are ignored until the slot becomes `Visible`.
 
 Current implementation detail: pending runtime I/O contributes a 100 ms timeout if any slot reports
 `runtime.has_pending_io()`. This is not lifecycle-gated today, so a dormant slot with pending background work can still
@@ -184,8 +199,8 @@ Lifecycle transitions are emitted in release/acquire batches:
 4. Flush affected clients.
 
 This ordering lets hosts release render targets on `Dormant` before other slots allocate new ones. The current WASM host
-has per-slot render targets rather than a cross-widget pool, and it treats `Prepared` as buffer-free, but the ordering
-still preserves the protocol's intended memory-pressure behavior.
+has per-slot render targets rather than a cross-widget pool; `Prepared` now owns a single pre-rendered buffer, so the
+release-before-acquire ordering still bounds peak buffer memory across a transition.
 
 On first connection, the compositor sends an initial lifecycle event after the configure batch. If the current tracker
 state would be `Entering`, the compositor clamps the initial event to `Prepared`. If it would be `Leaving`, it clamps to
