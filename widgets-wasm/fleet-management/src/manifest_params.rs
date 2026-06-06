@@ -14,6 +14,8 @@ use bmc_wasm_sdk::params::typed::ParamRead;
 pub struct Params {
     pub bos_password: String,
     pub fleet_name: String,
+    pub model_blacklist: String,
+    pub model_whitelist: String,
     pub ubos_password: String,
     pub ubos_username: String,
 }
@@ -24,6 +26,8 @@ impl Params {
         Self {
             bos_password: <String as ParamRead>::read_required(snap, "bos_password"),
             fleet_name: <String as ParamRead>::read_required(snap, "fleet_name"),
+            model_blacklist: <String as ParamRead>::read_required(snap, "model_blacklist"),
+            model_whitelist: <String as ParamRead>::read_required(snap, "model_whitelist"),
             ubos_password: <String as ParamRead>::read_required(snap, "ubos_password"),
             ubos_username: <String as ParamRead>::read_required(snap, "ubos_username"),
         }
@@ -76,6 +80,12 @@ impl Params {
         }
         if self.fleet_name != other.fleet_name {
             out.push("fleet_name");
+        }
+        if self.model_blacklist != other.model_blacklist {
+            out.push("model_blacklist");
+        }
+        if self.model_whitelist != other.model_whitelist {
+            out.push("model_whitelist");
         }
         if self.ubos_password != other.ubos_password {
             out.push("ubos_password");

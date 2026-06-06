@@ -11,6 +11,7 @@ use units::format::{Rendered, fixed};
 use units::units::{DegreeCelsius, Quantity};
 
 use crate::device::DeviceList;
+use crate::filter::Filters;
 use crate::summary::{FleetSummary, GroupSummary, summarize};
 
 const OK_ICON: Svg = include_svg!("assets/ok.svg");
@@ -308,7 +309,7 @@ fn breakdown_row(group: &GroupSummary, variant: SizeVariant) -> Node {
 }
 
 #[must_use]
-pub fn view(devices: &DeviceList, variant: SizeVariant, title: &str) -> Node {
+pub fn view(devices: &DeviceList, variant: SizeVariant, title: &str, filters: &Filters) -> Node {
     if devices.is_empty() {
         return col(
             props!(background: BLACK),
@@ -322,7 +323,7 @@ pub fn view(devices: &DeviceList, variant: SizeVariant, title: &str) -> Node {
         );
     }
 
-    let summary: FleetSummary = summarize(devices);
+    let summary: FleetSummary = summarize(devices, filters);
 
     let mut children: Vec<Node> = vec![
         overview(&summary.total, variant, title),

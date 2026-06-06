@@ -45,6 +45,18 @@
       "description": "Password used for HTTP Basic auth against every uBOS device on the network",
       "type": "string",
       "default_value": "root"
+    },
+    "model_whitelist": {
+      "name": "Shown models",
+      "description": "JSON array of model-name fragments to show; empty shows all (e.g. [\"bmm101\"])",
+      "type": "string",
+      "default_value": "[]"
+    },
+    "model_blacklist": {
+      "name": "Hidden models",
+      "description": "JSON array of model-name fragments to hide",
+      "type": "string",
+      "default_value": "[]"
     }
   }
 }
