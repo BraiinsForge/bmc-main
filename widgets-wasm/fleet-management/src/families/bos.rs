@@ -3,7 +3,7 @@
 use bmc_wasm_sdk::ufmt;
 
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
-use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};
+use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceSource};
 use crate::discovery::{JsonLookup, extract_endpoint};
 use crate::model::ModelAccumulator;
 use crate::telemetry::TelemetryReading;
@@ -65,6 +65,7 @@ impl FamilyAdapter for BosAdapter {
                 name,
                 host,
                 port,
+                source: DeviceSource::Discovered,
             },
             model_hint: None,
         })

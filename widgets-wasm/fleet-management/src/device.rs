@@ -114,6 +114,13 @@ impl DeviceId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceSource {
+    Discovered,
+    #[expect(dead_code, reason = "constructed when manual host entry is wired")]
+    Manual,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceIdentity {
     pub id: DeviceId,
@@ -121,6 +128,7 @@ pub struct DeviceIdentity {
     pub name: String,
     pub host: String,
     pub port: u16,
+    pub source: DeviceSource,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -325,6 +333,7 @@ mod tests {
             name: id.to_owned(),
             host: host.to_owned(),
             port: 80,
+            source: DeviceSource::Discovered,
         }
     }
 
