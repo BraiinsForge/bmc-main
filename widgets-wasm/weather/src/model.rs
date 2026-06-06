@@ -2,6 +2,8 @@
 
 #[cfg(target_arch = "wasm32")]
 use bmc_wasm_sdk::JsonDoc;
+use units::availability::Availability;
+use units::units::{Degree, DegreeCelsius, KilometerPerHour, Quantity};
 
 pub struct Location {
     pub display_name: String,
@@ -9,16 +11,16 @@ pub struct Location {
 }
 
 pub struct Current {
-    pub temperature_c: f64,
+    pub temperature: DegreeCelsius,
     pub weather_code: i64,
-    pub wind_speed_kmh: Option<f64>,
-    pub wind_dir_deg: Option<f64>,
+    pub wind_speed: Availability<KilometerPerHour>,
+    pub wind_direction: Availability<Degree>,
     pub is_day: bool,
 }
 
 pub struct HourEntry {
     pub time_rfc3339: String,
-    pub temperature_c: f64,
+    pub temperature: DegreeCelsius,
     pub weather_code: i64,
     pub is_day: bool,
 }
@@ -48,8 +50,8 @@ pub fn hourly_start_index(entries: &[HourEntry], current_time_rfc3339: &str) -> 
 pub struct DayForecast {
     pub time_rfc3339: String,
     pub weather_code: i64,
-    pub min_c: f64,
-    pub max_c: f64,
+    pub min: DegreeCelsius,
+    pub max: DegreeCelsius,
     pub sunrise: String,
     pub sunset: String,
 }
@@ -190,8 +192,8 @@ pub fn current_is_day(hourly: Option<&Hourly>, current_time_rfc3339: &str) -> bo
 }
 
 pub struct ForecastRange {
-    pub min_c: f64,
-    pub max_c: f64,
+    pub min: DegreeCelsius,
+    pub max: DegreeCelsius,
 }
 
 impl ForecastRange {
@@ -199,30 +201,33 @@ impl ForecastRange {
     pub fn of(days: &[DayForecast]) -> ForecastRange {
         let Some(first) = days.first() else {
             return ForecastRange {
-                min_c: 0.0,
-                max_c: 0.0,
+                min: DegreeCelsius(0.0),
+                max: DegreeCelsius(0.0),
             };
         };
-        let mut min_c = first.min_c;
-        let mut max_c = first.max_c;
+        let mut min = first.min.raw();
+        let mut max = first.max.raw();
         for day in days.iter().skip(1) {
-            if day.min_c < min_c {
-                min_c = day.min_c;
+            if day.min.raw() < min {
+                min = day.min.raw();
             }
-            if day.max_c > max_c {
-                max_c = day.max_c;
+            if day.max.raw() > max {
+                max = day.max.raw();
             }
         }
-        ForecastRange { min_c, max_c }
+        ForecastRange {
+            min: DegreeCelsius(min),
+            max: DegreeCelsius(max),
+        }
     }
 
     #[must_use]
-    pub fn fraction(&self, value_c: f64) -> f64 {
-        let span = self.max_c - self.min_c;
+    pub fn fraction(&self, value: DegreeCelsius) -> f64 {
+        let span = self.max.raw() - self.min.raw();
         if span <= 0.0 {
             return 0.0;
         }
-        ((value_c - self.min_c) / span).clamp(0.0, 1.0)
+        ((value.raw() - self.min.raw()) / span).clamp(0.0, 1.0)
     }
 }
 
@@ -266,13 +271,19 @@ impl TryFrom<&JsonDoc> for Weather {
 
 #[cfg(target_arch = "wasm32")]
 fn parse_current(doc: &JsonDoc, hourly: Option<&Hourly>, current_time: &str) -> Option<Current> {
-    let temperature_c = doc.f64("/data/current/temperature")?;
+    let temperature = DegreeCelsius(doc.f64("/data/current/temperature")?);
     let weather_code = doc.i64("/data/current/weather_code")?;
     Some(Current {
-        temperature_c,
+        temperature,
         weather_code,
-        wind_speed_kmh: doc.f64("/data/current/wind_speed"),
-        wind_dir_deg: doc.f64("/data/current/wind_direction_degrees"),
+        wind_speed: doc
+            .f64("/data/current/wind_speed")
+            .map(KilometerPerHour)
+            .into(),
+        wind_direction: doc
+            .f64("/data/current/wind_direction_degrees")
+            .map(Degree)
+            .into(),
         is_day: current_is_day(hourly, current_time),
     })
 }
@@ -300,7 +311,7 @@ fn parse_hourly(doc: &JsonDoc) -> Option<Hourly> {
         };
         entries.push(HourEntry {
             time_rfc3339,
-            temperature_c,
+            temperature: DegreeCelsius(temperature_c),
             weather_code,
             is_day,
         });
@@ -341,8 +352,8 @@ fn parse_daily(doc: &JsonDoc) -> Option<Daily> {
         days.push(DayForecast {
             time_rfc3339,
             weather_code,
-            min_c,
-            max_c,
+            min: DegreeCelsius(min_c),
+            max: DegreeCelsius(max_c),
             sunrise,
             sunset,
         });
@@ -414,7 +425,7 @@ mod tests {
     fn hour(time: &str, is_day: bool) -> HourEntry {
         HourEntry {
             time_rfc3339: time.to_string(),
-            temperature_c: 10.0,
+            temperature: DegreeCelsius(10.0),
             weather_code: 1,
             is_day,
         }
@@ -472,8 +483,8 @@ mod tests {
         DayForecast {
             time_rfc3339: "2026-06-03T00:00:00+02:00".to_string(),
             weather_code: 3,
-            min_c,
-            max_c,
+            min: DegreeCelsius(min_c),
+            max: DegreeCelsius(max_c),
             sunrise: "2026-06-03T04:56:21+02:00".to_string(),
             sunset: "2026-06-03T21:04:41+02:00".to_string(),
         }
@@ -490,19 +501,19 @@ mod tests {
     fn forecast_range_spans_min_and_max_across_days() {
         let days = vec![day(16.2, 21.0), day(10.9, 25.8)];
         let range = ForecastRange::of(&days);
-        assert!((range.min_c - 10.9).abs() < 1e-9);
-        assert!((range.max_c - 25.8).abs() < 1e-9);
+        assert!((range.min.raw() - 10.9).abs() < 1e-9);
+        assert!((range.max.raw() - 25.8).abs() < 1e-9);
     }
 
     #[test]
     fn day_fraction_positions_a_value_within_the_global_range() {
         let range = ForecastRange {
-            min_c: 10.0,
-            max_c: 30.0,
+            min: DegreeCelsius(10.0),
+            max: DegreeCelsius(30.0),
         };
-        assert!((range.fraction(20.0) - 0.5).abs() < 1e-9);
-        assert!((range.fraction(10.0) - 0.0).abs() < 1e-9);
-        assert!((range.fraction(30.0) - 1.0).abs() < 1e-9);
+        assert!((range.fraction(DegreeCelsius(20.0)) - 0.5).abs() < 1e-9);
+        assert!((range.fraction(DegreeCelsius(10.0)) - 0.0).abs() < 1e-9);
+        assert!((range.fraction(DegreeCelsius(30.0)) - 1.0).abs() < 1e-9);
     }
 
     #[test]

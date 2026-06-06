@@ -3,6 +3,7 @@
 #[cfg(any(target_arch = "wasm32", test))]
 #[expect(clippy::wildcard_imports, reason = "widget code uses many SDK exports")]
 use bmc_wasm_sdk::*;
+use units::units::{DegreeCelsius, KilometerPerHour};
 
 pub const NOT_AVAILABLE: &str = "--";
 
@@ -17,51 +18,28 @@ pub fn wind_line(direction: &str, speed: &str) -> String {
 }
 
 #[must_use]
-pub fn temperature_or_placeholder(value_c: Option<f64>, fmt: impl Fn(f64) -> String) -> String {
-    value_c.map_or_else(|| NOT_AVAILABLE.to_string(), fmt)
+pub fn temperature_or_placeholder(
+    value: Option<DegreeCelsius>,
+    fmt: impl Fn(DegreeCelsius) -> String,
+) -> String {
+    value.map_or_else(|| NOT_AVAILABLE.to_string(), fmt)
 }
 
-#[cfg(target_arch = "wasm32")]
 #[must_use]
-pub fn temperature(value_c: f64) -> String {
-    format_temperature!(value_c, 0)
-}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-#[must_use]
-pub fn temperature(value_c: f64) -> String {
-    let value = value_c.round() as i64;
-    bmc_wasm_sdk::fmt!("{value} °C")
+pub fn temperature(value: DegreeCelsius) -> String {
+    units::format::temperature(value, 0)
 }
 
 /// Degree-only temperature ("26°") for the dense hourly and daily strips,
 /// where the scale letter would crowd the layout.
-#[cfg(target_arch = "wasm32")]
 #[must_use]
-pub fn temperature_bare(value_c: f64) -> String {
-    format_temperature!(value_c, 0, bare)
+pub fn temperature_bare(value: DegreeCelsius) -> String {
+    units::format::temperature_bare(value, 0)
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
 #[must_use]
-pub fn temperature_bare(value_c: f64) -> String {
-    let value = value_c.round() as i64;
-    bmc_wasm_sdk::fmt!("{value}°")
-}
-
-#[cfg(target_arch = "wasm32")]
-#[must_use]
-pub fn wind_speed_ms(value_kmh: f64) -> String {
-    format_speed!(value_kmh, 1, ms)
-}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-#[must_use]
-pub fn wind_speed_ms(value_kmh: f64) -> String {
-    let tenths = ((value_kmh / 3.6) * 10.0).round() as i64;
-    let whole = tenths / 10;
-    let fraction = tenths.abs() % 10;
-    bmc_wasm_sdk::fmt!("{whole}.{fraction} m/s")
+pub fn wind_speed(value: KilometerPerHour) -> String {
+    units::format::speed(value, 1)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -156,7 +134,7 @@ mod tests {
     #[test]
     fn value_present_runs_the_formatter() {
         assert_eq!(
-            temperature_or_placeholder(Some(20.0), |_| "20".to_string()),
+            temperature_or_placeholder(Some(DegreeCelsius(20.0)), |_| "20".to_string()),
             "20"
         );
     }

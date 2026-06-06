@@ -28,7 +28,7 @@ pub fn small(
         ));
     }
     stack.push(common::txt(
-        display::temperature_or_placeholder(current.map(|c| c.temperature_c), display::temperature),
+        display::temperature_or_placeholder(current.map(|c| c.temperature), display::temperature),
         48,
         FontWeight::BOLD,
         TEXT_PRIMARY,

@@ -29,7 +29,7 @@ fn current_left(current: Option<&crate::model::Current>) -> Node {
         ));
     }
     stack.push(common::txt(
-        display::temperature_or_placeholder(current.map(|c| c.temperature_c), display::temperature),
+        display::temperature_or_placeholder(current.map(|c| c.temperature), display::temperature),
         64,
         FontWeight::BOLD,
         TEXT_PRIMARY,

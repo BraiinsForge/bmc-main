@@ -2,6 +2,7 @@
 
 use crate::model::ForecastRange;
 use crate::render::common::TEXT_PRIMARY;
+use units::units::DegreeCelsius;
 
 #[expect(
     clippy::wildcard_imports,
@@ -21,9 +22,9 @@ pub fn forecast_bar(
     width: f32,
     height: f32,
     range: &ForecastRange,
-    min_c: f64,
-    max_c: f64,
-    today_marker: Option<f64>,
+    min: DegreeCelsius,
+    max: DegreeCelsius,
+    today_marker: Option<DegreeCelsius>,
 ) -> Node {
     let cy = height / 2.0;
     let track_y = cy - TRACK_H / 2.0;
@@ -31,9 +32,9 @@ pub fn forecast_bar(
         clippy::cast_possible_truncation,
         reason = "f64 fraction (0..=1) safely narrows to f32 canvas coordinate"
     )]
-    let x_of = |c: f64| (range.fraction(c) as f32) * width;
-    let lo = x_of(min_c);
-    let hi = x_of(max_c);
+    let x_of = |c: DegreeCelsius| (range.fraction(c) as f32) * width;
+    let lo = x_of(min);
+    let hi = x_of(max);
     let mut draws = vec![
         Draw::rect(0.0, track_y, width, TRACK_H, TEXT_PRIMARY.with_alpha(0.2)),
         Draw::rect(lo, track_y, hi - lo, TRACK_H, TEXT_PRIMARY.with_alpha(0.5)),

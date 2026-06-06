@@ -38,7 +38,7 @@ fn current_block(weather: &crate::model::Weather) -> Node {
     let temp_and_icon = {
         let mut row_children: Vec<Node> = vec![common::txt(
             display::temperature_or_placeholder(
-                current.map(|c| c.temperature_c),
+                current.map(|c| c.temperature),
                 display::temperature,
             ),
             96,
@@ -86,9 +86,9 @@ fn weather_info(weather: &crate::model::Weather, tz: Option<&Tz>) -> Node {
     let wind = weather
         .current
         .as_ref()
-        .and_then(|c| match (c.wind_speed_kmh, c.wind_dir_deg) {
-            (Some(speed), Some(dir)) => Some(text(
-                display::wind_line(wind::cardinal(dir), &display::wind_speed_ms(speed)),
+        .and_then(|c| match (c.wind_speed.as_option(), c.wind_direction.as_option()) {
+            (Some(&speed), Some(&dir)) => Some(text(
+                display::wind_line(wind::cardinal(dir), &display::wind_speed(speed)),
                 style!(size: 24, weight: FontWeight::REGULAR, color: TEXT_SECONDARY, flex: 1.0, line_height: 1.0),
             )),
             _ => None,
@@ -164,7 +164,7 @@ pub fn full(
             .map(|(i, day)| {
                 let is_today = i == daily.today_index;
                 let marker = if is_today {
-                    weather.current.as_ref().map(|c| c.temperature_c)
+                    weather.current.as_ref().map(|c| c.temperature)
                 } else {
                     None
                 };

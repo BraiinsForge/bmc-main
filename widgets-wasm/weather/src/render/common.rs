@@ -5,6 +5,7 @@ use crate::{
     render::{bar, icons},
     weather_code,
 };
+use units::units::DegreeCelsius;
 
 #[expect(
     clippy::wildcard_imports,
@@ -142,7 +143,7 @@ pub fn hour_cell(entry: &crate::model::HourEntry, tz: Option<&Tz>, style: HourSt
             ),
             weather_icon(icon_id, style.icon),
             txt(
-                display::temperature_bare(entry.temperature_c),
+                display::temperature_bare(entry.temperature),
                 style.temperature_size,
                 style.temp_weight,
                 TEXT_PRIMARY,
@@ -202,7 +203,7 @@ pub fn forecast_row(
     day: &crate::model::DayForecast,
     is_today: bool,
     range: &crate::model::ForecastRange,
-    today_marker: Option<f64>,
+    today_marker: Option<DegreeCelsius>,
     style: ForecastRowStyle,
 ) -> Node {
     let label = if is_today {
@@ -221,16 +222,16 @@ pub fn forecast_row(
             txt(label, style.label_size, FontWeight::SEMIBOLD, TEXT_PRIMARY),
             spacer(1.0),
             weather_icon(icon, style.icon_size),
-            temp_box(display::temperature_bare(day.min_c), true, style),
+            temp_box(display::temperature_bare(day.min), true, style),
             bar::forecast_bar(
                 style.bar_width,
                 style.bar_height,
                 range,
-                day.min_c,
-                day.max_c,
+                day.min,
+                day.max,
                 today_marker,
             ),
-            temp_box(display::temperature_bare(day.max_c), false, style),
+            temp_box(display::temperature_bare(day.max), false, style),
         ],
     )
 }

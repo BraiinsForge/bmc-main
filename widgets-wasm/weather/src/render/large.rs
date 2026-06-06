@@ -155,7 +155,7 @@ fn location_row(weather: &crate::model::Weather, size: WidgetSize, metrics: Larg
 
 fn current_temperature(current: Option<&crate::model::Current>, metrics: LargeMetrics) -> Node {
     common::txt(
-        display::temperature_or_placeholder(current.map(|c| c.temperature_c), display::temperature),
+        display::temperature_or_placeholder(current.map(|c| c.temperature), display::temperature),
         metrics.temperature_font_size,
         FontWeight::BOLD,
         TEXT_PRIMARY,
@@ -220,11 +220,11 @@ fn stats_panel(weather: &crate::model::Weather, tz: Option<&Tz>, metrics: LargeM
     let today = daily.days.get(daily.today_index);
     let low = today.map_or_else(
         || display::NOT_AVAILABLE.to_string(),
-        |d| display::temperature(d.min_c),
+        |d| display::temperature(d.min),
     );
     let high = today.map_or_else(
         || display::NOT_AVAILABLE.to_string(),
-        |d| display::temperature(d.max_c),
+        |d| display::temperature(d.max),
     );
     col(
         props!(gap: metrics.stats_panel_gap),
@@ -322,7 +322,7 @@ pub fn large(
             .map(|(i, day)| {
                 let is_today = i == daily.today_index;
                 let marker = if is_today {
-                    weather.current.as_ref().map(|c| c.temperature_c)
+                    weather.current.as_ref().map(|c| c.temperature)
                 } else {
                     None
                 };
@@ -361,6 +361,7 @@ mod tests {
         model::{Current, Daily, DayForecast, Location, Weather},
     };
     use bmc_wasm_sdk::{Node, SvgId, TextOverflow, WidgetSize, assets::init_icon_registrar};
+    use units::{availability::Availability, units::DegreeCelsius};
 
     #[test]
     fn bmm101_large_metrics_scale_by_fit() {
@@ -507,10 +508,10 @@ mod tests {
                 timezone: "Europe/Prague".to_string(),
             },
             current: Some(Current {
-                temperature_c: 24.0,
+                temperature: DegreeCelsius(24.0),
                 weather_code: 1,
-                wind_speed_kmh: None,
-                wind_dir_deg: None,
+                wind_speed: Availability::Unavailable,
+                wind_direction: Availability::Unavailable,
                 is_day: true,
             }),
             hourly: None,
@@ -522,16 +523,16 @@ mod tests {
                     DayForecast {
                         time_rfc3339: "2026-06-05T12:00:00+02:00".to_string(),
                         weather_code: 1,
-                        min_c: 16.0,
-                        max_c: 27.0,
+                        min: DegreeCelsius(16.0),
+                        max: DegreeCelsius(27.0),
                         sunrise: "2026-06-05T05:02:00+02:00".to_string(),
                         sunset: "2026-06-05T21:04:00+02:00".to_string(),
                     },
                     DayForecast {
                         time_rfc3339: "2026-06-06T12:00:00+02:00".to_string(),
                         weather_code: 0,
-                        min_c: 17.0,
-                        max_c: 29.0,
+                        min: DegreeCelsius(17.0),
+                        max: DegreeCelsius(29.0),
                         sunrise: "2026-06-06T05:01:00+02:00".to_string(),
                         sunset: "2026-06-06T21:05:00+02:00".to_string(),
                     },
