@@ -3,6 +3,7 @@
 use std::any::Any;
 
 use crate::lifecycle::{LifecycleEgl, LifecycleSurface};
+use bmc_widget::egl::SlotReleaseState;
 use bmc_widget::surface::ReleasedBuffer;
 
 #[derive(Debug, thiserror::Error)]
@@ -27,7 +28,7 @@ pub struct RenderTarget {
 pub struct EglRenderTarget {
     pub buffers: bmc_widget::egl::DoubleBufferState,
     pub wl_buffers: [Option<wayland_client::protocol::wl_buffer::WlBuffer>; 2],
-    release_state: RenderSlotReleaseState,
+    release_state: SlotReleaseState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,85 +37,33 @@ pub enum RenderTargetCleanup {
     PendingRelease,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RenderSlotReleaseState {
-    available: [bool; 2],
-}
-
-impl RenderSlotReleaseState {
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            available: [true, true],
-        }
+/// Pick the single spare slot a `Prepared` slot can drop, or `None` when it is
+/// already down to one buffer.
+///
+/// A `Prepared` slot pre-renders one frame and then needs only the buffer the
+/// compositor is displaying; the other allocated slot is the spare. The
+/// fallback intentionally keeps the in-flight (currently displayed) pre-render
+/// and drops the still-available slot — never more than one.
+#[must_use]
+fn prepared_compaction_slot(
+    release: SlotReleaseState,
+    allocated_slots: [bool; 2],
+    current_slot: usize,
+) -> Option<usize> {
+    if allocated_slots
+        .iter()
+        .filter(|allocated| **allocated)
+        .count()
+        <= 1
+    {
+        return None;
     }
-
-    #[must_use]
-    pub fn is_available(&self, slot: usize) -> bool {
-        self.available.get(slot).copied().unwrap_or(false)
-    }
-
-    pub fn mark_presented(&mut self, slot: usize) {
-        if let Some(available) = self.available.get_mut(slot) {
-            *available = false;
-        }
-    }
-
-    pub fn mark_released(&mut self, slot: usize) {
-        if let Some(available) = self.available.get_mut(slot) {
-            *available = true;
-        }
-    }
-
-    #[must_use]
-    pub fn destroyable_slots(&self, allocated_slots: [bool; 2]) -> Vec<usize> {
-        allocated_slots
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, allocated)| {
-                if *allocated && self.is_available(slot) {
-                    Some(slot)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    #[must_use]
-    pub fn prepared_compaction_slots(
-        &self,
-        allocated_slots: [bool; 2],
-        current_slot: usize,
-    ) -> Vec<usize> {
-        let allocated_count = allocated_slots
-            .iter()
-            .filter(|allocated| **allocated)
-            .count();
-        if allocated_count <= 1 {
-            return Vec::new();
-        }
-
-        let Some(slot) = (0..allocated_slots.len())
-            .find(|slot| {
-                allocated_slots[*slot] && self.is_available(*slot) && *slot != current_slot
-            })
-            .or_else(|| {
-                (0..allocated_slots.len())
-                    .find(|slot| allocated_slots[*slot] && self.is_available(*slot))
-            })
-        else {
-            return Vec::new();
-        };
-
-        vec![slot]
-    }
-}
-
-impl Default for RenderSlotReleaseState {
-    fn default() -> Self {
-        Self::new()
-    }
+    (0..allocated_slots.len())
+        .find(|&slot| allocated_slots[slot] && release.is_available(slot) && slot != current_slot)
+        .or_else(|| {
+            (0..allocated_slots.len())
+                .find(|&slot| allocated_slots[slot] && release.is_available(slot))
+        })
 }
 
 impl EglRenderTarget {
@@ -169,15 +118,17 @@ impl EglRenderTarget {
         surface: &mut dyn LifecycleSurface,
     ) {
         let egl = egl.as_egl_context();
-        let slots = self
-            .release_state
-            .prepared_compaction_slots(self.buffers.allocated_slots(), self.buffers.current_slot());
-        for slot in slots {
-            if self.buffers.destroy_slot(egl, slot)
-                && let Some(buffer) = self.wl_buffers[slot].take()
-            {
-                surface.destroy_minted_wl_buffer(buffer);
-            }
+        let Some(slot) = prepared_compaction_slot(
+            self.release_state,
+            self.buffers.allocated_slots(),
+            self.buffers.current_slot(),
+        ) else {
+            return;
+        };
+        if self.buffers.destroy_slot(egl, slot)
+            && let Some(buffer) = self.wl_buffers[slot].take()
+        {
+            surface.destroy_minted_wl_buffer(buffer);
         }
     }
 
@@ -223,7 +174,7 @@ impl RenderTarget {
             inner: Box::new(EglRenderTarget {
                 buffers,
                 wl_buffers: [Some(wl_buffer_a), Some(wl_buffer_b)],
-                release_state: RenderSlotReleaseState::new(),
+                release_state: SlotReleaseState::new(),
             }),
             width,
             height,
@@ -418,5 +369,34 @@ impl RenderTargetFactory for EglRenderTargetFactory {
             return RenderTargetCleanup::Complete;
         };
         target.destroy_released_slots(egl, surface)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prepared_compaction_slot;
+    use bmc_widget::egl::SlotReleaseState;
+
+    #[test]
+    fn prepared_compaction_drops_available_spare_slot_before_first_render() {
+        let state = SlotReleaseState::new();
+
+        assert_eq!(prepared_compaction_slot(state, [true, true], 0), Some(1));
+    }
+
+    #[test]
+    fn prepared_compaction_drops_available_back_slot_after_submit() {
+        let mut state = SlotReleaseState::new();
+        state.mark_presented(0);
+
+        assert_eq!(prepared_compaction_slot(state, [true, true], 1), Some(1));
+    }
+
+    #[test]
+    fn prepared_compaction_keeps_the_only_allocated_slot() {
+        let mut state = SlotReleaseState::new();
+        state.mark_presented(0);
+
+        assert_eq!(prepared_compaction_slot(state, [true, false], 1), None);
     }
 }

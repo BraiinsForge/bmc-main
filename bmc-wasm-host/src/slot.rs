@@ -489,7 +489,7 @@ impl WidgetSlot {
             egl: &shared.egl,
             surface: &mut self.surface,
             render_target: &mut self.render_target,
-            retired_render_targets: Some(&mut self.retired_render_targets),
+            retired_render_targets: &mut self.retired_render_targets,
             width: w,
             height: h,
         };
@@ -506,17 +506,6 @@ impl WidgetSlot {
                 "slot lifecycle applied"
             );
         }
-    }
-
-    fn compact_prepared_render_target(&mut self, shared: &SharedHost) {
-        if self.lifecycle.current() != LifecycleState::Prepared {
-            return;
-        }
-        let Some(target) = self.render_target.as_mut() else {
-            return;
-        };
-        self.factory
-            .compact_for_prepared(target, &shared.egl, &mut self.surface);
     }
 
     pub fn render(
@@ -601,7 +590,6 @@ impl WidgetSlot {
             frame_start,
             HostRenderFrameContext::new(target_width, target_height, wants_immediate, status),
         );
-        self.compact_prepared_render_target(shared);
         self.schedule_next_runtime_frame(frame_start_instant);
         self.frame_count += 1;
         if self.frame_count <= 3 || self.frame_count.is_multiple_of(120) {

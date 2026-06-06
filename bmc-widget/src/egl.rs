@@ -721,6 +721,57 @@ impl WidgetExportBuffer {
     }
 }
 
+/// Compositor-release bookkeeping for the two export slots.
+///
+/// A slot submitted to the compositor is pinned until the compositor sends
+/// `wl_buffer.release`; only an unpinned slot may be destroyed. Tracks one
+/// availability bit per slot, paired with the slot's allocation state held by
+/// [`DoubleBufferState`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlotReleaseState {
+    available: [bool; 2],
+}
+
+impl SlotReleaseState {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            available: [true, true],
+        }
+    }
+
+    #[must_use]
+    pub fn is_available(&self, slot: usize) -> bool {
+        self.available.get(slot).copied().unwrap_or(false)
+    }
+
+    pub fn mark_presented(&mut self, slot: usize) {
+        if let Some(available) = self.available.get_mut(slot) {
+            *available = false;
+        }
+    }
+
+    pub fn mark_released(&mut self, slot: usize) {
+        if let Some(available) = self.available.get_mut(slot) {
+            *available = true;
+        }
+    }
+
+    pub fn destroyable_slots(
+        &self,
+        allocated_slots: [bool; 2],
+    ) -> impl Iterator<Item = usize> + '_ {
+        (0..allocated_slots.len())
+            .filter(move |&slot| allocated_slots[slot] && self.is_available(slot))
+    }
+}
+
+impl Default for SlotReleaseState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Double-buffered DMA-BUF export state.
 ///
 /// Manages two lazily-allocated [`ExportBuffer`]s with ping-pong swap.
@@ -1290,9 +1341,41 @@ fn load_egl_proc<T>(name: &str) -> Result<T> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Depth, DoubleBufferState, EglContext, SharedRenderScratch, WidgetExportBuffer,
-        shared_scratch_uv_scale,
+        Depth, DoubleBufferState, EglContext, SharedRenderScratch, SlotReleaseState,
+        WidgetExportBuffer, shared_scratch_uv_scale,
     };
+
+    #[test]
+    fn release_state_blocks_presented_slot_until_release() {
+        let mut state = SlotReleaseState::new();
+
+        assert!(state.is_available(0));
+
+        state.mark_presented(0);
+        assert!(!state.is_available(0));
+        assert_eq!(
+            state.destroyable_slots([true, true]).collect::<Vec<_>>(),
+            vec![1]
+        );
+
+        state.mark_released(0);
+        assert!(state.is_available(0));
+        assert_eq!(
+            state.destroyable_slots([true, true]).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn release_state_ignores_stale_out_of_range_slot_ids() {
+        let mut state = SlotReleaseState::new();
+
+        state.mark_presented(2);
+        state.mark_presented(1);
+
+        assert!(state.is_available(0));
+        assert!(!state.is_available(1));
+    }
 
     #[test]
     fn shared_scratch_uv_scale_samples_only_active_slot_region() {

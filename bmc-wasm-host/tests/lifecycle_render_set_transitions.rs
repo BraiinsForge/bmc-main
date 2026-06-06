@@ -86,6 +86,7 @@ impl RenderTargetFactory for CountingFactory {
 fn ctx<'a>(
     factory: &'a Rc<dyn RenderTargetFactory>,
     target: &'a mut Option<RenderTarget>,
+    retired_targets: &'a mut Vec<RenderTarget>,
     egl: &'a StubEgl,
     surface: &'a mut StubSurface,
 ) -> SlotApplyCtx<'a> {
@@ -94,7 +95,7 @@ fn ctx<'a>(
         egl,
         surface,
         render_target: target,
-        retired_render_targets: None,
+        retired_render_targets: retired_targets,
         width: 128,
         height: 128,
     }
@@ -111,13 +112,14 @@ fn seeded_target_owning_state(
     let mock: Rc<CountingFactory> = Rc::new(CountingFactory::new());
     let factory: Rc<dyn RenderTargetFactory> = mock.clone();
     let mut target = None;
+    let mut retired = Vec::new();
     let egl = StubEgl;
     let mut surface = StubSurface;
 
     let mut sm = LifecycleStateMachine::new();
     sm.on_event(source);
     sm.apply(
-        &mut ctx(&factory, &mut target, &egl, &mut surface),
+        &mut ctx(&factory, &mut target, &mut retired, &egl, &mut surface),
         Instant::now(),
     );
 
@@ -141,12 +143,13 @@ fn target_owning_self_and_intra_set_transitions_do_not_churn_target() {
     for source in target_owning_set {
         for target_state in target_owning_set {
             let (mut sm, mut target, mock, factory) = seeded_target_owning_state(source);
+            let mut retired = Vec::new();
             let egl = StubEgl;
             let mut surface = StubSurface;
 
             sm.on_event(target_state);
             sm.apply(
-                &mut ctx(&factory, &mut target, &egl, &mut surface),
+                &mut ctx(&factory, &mut target, &mut retired, &egl, &mut surface),
                 Instant::now(),
             );
 
@@ -165,12 +168,13 @@ fn target_owning_to_dormant_transitions_destroy_exactly_once() {
 
     for source in target_owning_set {
         let (mut sm, mut target, mock, factory) = seeded_target_owning_state(source);
+        let mut retired = Vec::new();
         let egl = StubEgl;
         let mut surface = StubSurface;
 
         sm.on_event(Dormant);
         sm.apply(
-            &mut ctx(&factory, &mut target, &egl, &mut surface),
+            &mut ctx(&factory, &mut target, &mut retired, &egl, &mut surface),
             Instant::now(),
         );
 
