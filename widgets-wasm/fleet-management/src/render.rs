@@ -325,15 +325,14 @@ pub fn view(devices: &DeviceList, variant: SizeVariant, title: &str, filters: &F
 
     let summary: FleetSummary = summarize(devices, filters);
 
-    let mut children: Vec<Node> = vec![
-        overview(&summary.total, variant, title),
-        separator(),
-        text(
+    let mut children: Vec<Node> = vec![overview(&summary.total, variant, title), separator()];
+    if matches!(variant, SizeVariant::Full) {
+        children.push(text(
             "Grouped by model",
             style!(size: ROW_FONT, color: LABEL_COLOR),
-        ),
-        header_row(variant),
-    ];
+        ));
+    }
+    children.push(header_row(variant));
     for group in &summary.groups {
         children.push(breakdown_row(group, variant));
     }
