@@ -108,6 +108,22 @@ impl DeviceId {
         Self(value)
     }
 
+    /// Build an id for an operator-entered manual host. The `manual/` infix
+    /// keeps manual ids structurally disjoint from `for_family` ids built from
+    /// an mDNS instance name, so discovery removal can never address a manual
+    /// row. The full entry (including any `:port`) is preserved, so `host` and
+    /// `host:port` are distinct devices.
+    #[must_use]
+    pub fn for_manual(family: DeviceFamily, entry: &str) -> Self {
+        let slug = family_id(family);
+        let infix = "/manual/";
+        let mut value = String::with_capacity(slug.len() + infix.len() + entry.len());
+        value.push_str(slug);
+        value.push_str(infix);
+        value.push_str(entry);
+        Self(value)
+    }
+
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -117,7 +133,6 @@ impl DeviceId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceSource {
     Discovered,
-    #[expect(dead_code, reason = "constructed when manual host entry is wired")]
     Manual,
 }
 
@@ -285,6 +300,18 @@ impl DeviceList {
             .collect()
     }
 
+    /// Ids of devices in `family` that were added manually (not discovered).
+    /// The reconcile uses this so it only ever adds or removes manual rows,
+    /// leaving mDNS-discovered devices untouched.
+    #[must_use]
+    pub fn manual_ids_for_family(&self, family: DeviceFamily) -> Vec<DeviceId> {
+        self.devices
+            .iter()
+            .filter(|d| d.identity.family == family && d.identity.source == DeviceSource::Manual)
+            .map(|d| d.identity.id.clone())
+            .collect()
+    }
+
     /// Stamp the latest telemetry reading and reachability onto a device.
     pub fn apply_telemetry(&mut self, id: &DeviceId, reading: TelemetryReading, reachable: bool) {
         self.seq += 1;
@@ -382,6 +409,27 @@ mod tests {
             bos, axe,
             "same instance name in two families must not collide"
         );
+    }
+
+    #[test]
+    fn for_manual_namespaces_under_manual_segment() {
+        let id = DeviceId::for_manual(DeviceFamily::Bos, "10.0.0.5");
+        assert_eq!(id.as_str(), "bos/manual/10.0.0.5");
+        let discovered = DeviceId::for_family(DeviceFamily::Bos, "10.0.0.5");
+        assert_ne!(id, discovered, "manual and discovered ids must not collide");
+    }
+
+    #[test]
+    fn manual_ids_for_family_returns_only_manual_rows() {
+        let mut list = DeviceList::new();
+        list.upsert(identity("disc._http._tcp.local.", "10.0.0.1"));
+        let mut man = identity("10.0.0.5", "10.0.0.5");
+        man.id = DeviceId::for_manual(DeviceFamily::Bos, "10.0.0.5");
+        man.source = DeviceSource::Manual;
+        list.upsert(man);
+        let manual = list.manual_ids_for_family(DeviceFamily::Bos);
+        assert_eq!(manual.len(), 1);
+        assert_eq!(manual[0].as_str(), "bos/manual/10.0.0.5");
     }
 
     #[test]

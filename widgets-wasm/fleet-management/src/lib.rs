@@ -6,6 +6,7 @@ mod discovery;
 mod families;
 mod filter;
 mod layout;
+mod manual;
 mod model;
 mod session;
 mod summary;
@@ -30,7 +31,7 @@ use std::cell::RefCell;
 #[cfg(target_arch = "wasm32")]
 use adapter::FamilyAdapter;
 #[cfg(target_arch = "wasm32")]
-use device::{DeviceFamily, DeviceId, DeviceList, family_label};
+use device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceList, family_label};
 #[cfg(target_arch = "wasm32")]
 use families::bitaxe::BitaxeAdapter;
 #[cfg(target_arch = "wasm32")]
@@ -139,6 +140,7 @@ fn ingest(adapter: &dyn FamilyAdapter, json: &str) {
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn init() {
+    reconcile_manual_hosts();
     if mdns::mdns_browse(BosAdapter.browse_service_types(), on_bos_event).is_none() {
         log_warn!("fleet: BOS mDNS browse rejected by host runtime limits");
     }
@@ -149,6 +151,71 @@ pub extern "C" fn init() {
         log_warn!("fleet: AxeOS mDNS browse rejected by host runtime limits");
     }
     request_frame();
+}
+
+/// The manual-host param string for a family.
+#[cfg(target_arch = "wasm32")]
+fn manual_hosts_param(family: DeviceFamily) -> String {
+    let params = manifest_params::Params::current();
+    match family {
+        DeviceFamily::Bos => params.bos_hosts,
+        DeviceFamily::Ubos => params.ubos_hosts,
+        DeviceFamily::Bitaxe => params.axeos_hosts,
+    }
+}
+
+/// Parse a manual-host param into raw entries. Returns `None` (leave the
+/// family's manual set unchanged) for invalid JSON, or for any valid shape
+/// that yields no entries except the literal empty array `[]` (which clears).
+/// This makes the destructive clear require explicit intent and protects the
+/// fleet from a typo.
+#[cfg(target_arch = "wasm32")]
+fn parse_host_list(raw: &str) -> Option<Vec<String>> {
+    let doc = JsonDoc::parse(raw.as_bytes());
+    if !doc.is_valid() {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while let Some(entry) = doc.str(&fmt!("/{i}")) {
+        out.push(entry);
+        i += 1;
+    }
+    if out.is_empty() && raw.trim() != "[]" {
+        return None;
+    }
+    Some(out)
+}
+
+/// Reconcile every family's manual hosts from the current params into `DEVICES`,
+/// then drop tokens for removed devices and (re)start polling where devices
+/// were added. Callable both at `init` and from `on_params_update`.
+#[cfg(target_arch = "wasm32")]
+fn reconcile_manual_hosts() {
+    for family in DeviceFamily::ALL {
+        let raw = manual_hosts_param(family);
+        let Some(entries) = parse_host_list(&raw) else {
+            log_warn!(
+                "fleet: {} manual hosts param is not a valid host array; leaving manual hosts unchanged",
+                family_label(family)
+            );
+            continue;
+        };
+        let adapter = session::adapter_for(family).expect("BUG: every DeviceFamily has an adapter");
+        let default_port = adapter.default_port();
+        let desired: Vec<DeviceIdentity> = entries
+            .iter()
+            .filter_map(|entry| manual::manual_identity(family, default_port, entry))
+            .collect();
+        let outcome =
+            DEVICES.with(|d| manual::reconcile_manual_into(&mut d.borrow_mut(), family, desired));
+        for id in &outcome.removed_ids {
+            session::remove_token(id);
+        }
+        if outcome.added_any {
+            session::ensure_running(family);
+        }
+    }
 }
 
 /// Parse a JSON-array-of-strings operator param into model-name fragments.
@@ -249,7 +316,7 @@ pub extern "C" fn on_params_update() {
             }
         }
     }
-    if let Some(keys) = changed {
+    if let Some(keys) = changed.as_ref() {
         for family in DeviceFamily::ALL {
             if !keys.contains(&filter::family_enabled_key(family)) {
                 continue;
@@ -262,6 +329,12 @@ pub extern "C" fn on_params_update() {
                 session::stop(family);
             }
         }
+    }
+    if changed.as_ref().is_none_or(|keys| {
+        keys.iter()
+            .any(|k| matches!(*k, "bos_hosts" | "ubos_hosts" | "axeos_hosts"))
+    }) {
+        reconcile_manual_hosts();
     }
     request_frame();
 }

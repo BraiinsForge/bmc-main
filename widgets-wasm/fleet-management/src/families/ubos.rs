@@ -39,6 +39,10 @@ impl FamilyAdapter for UbosAdapter {
         })
     }
 
+    fn default_port(&self) -> u16 {
+        8080
+    }
+
     fn api_base_path(&self) -> &'static str {
         "/api"
     }
@@ -138,6 +142,11 @@ mod tests {
         let mut json = ubos_found();
         json.ints.remove("/port");
         assert_eq!(UbosAdapter.parse_found(&json), None);
+    }
+
+    #[test]
+    fn default_port_is_8080() {
+        assert_eq!(UbosAdapter.default_port(), 8080);
     }
 
     fn info_json() -> MapJson {
