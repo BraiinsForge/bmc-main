@@ -19,9 +19,10 @@ Lifecycle state tells a widget how close it is to the currently displayed scene:
 The compositor sends this as a `deck_widget_surface_v1.lifecycle(state)` event. The event is compositor-to-widget only;
 widgets do not request lifecycle changes directly.
 
-The primary consumer today is the WASM host. It uses lifecycle state to hold render targets only while widgets are
-`Entering`, `Visible`, or `Leaving`, and to animate only the `Visible` widget. Native widgets may also consume the event
-through `WidgetEvent::Lifecycle`, but widgets that do not care about lifecycle can ignore it.
+The primary consumer today is the WASM host. It uses lifecycle state to hold render targets while widgets are
+`Prepared`, `Entering`, `Visible`, or `Leaving` (pre-rendering a single frame in `Prepared`), and to animate only the
+`Visible` widget. Native widgets may also consume the event through `WidgetEvent::Lifecycle`, but widgets that do not
+care about lifecycle can ignore it.
 
 ## Protocol States
 
@@ -89,8 +90,21 @@ Second, after scene state changes:
 - `SetActiveSceneIndex`;
 - scene drag start, drag motion, drag release, or drag cancel.
 
-Those paths call `after_scene_change`, which marks compositor output damage and emits lifecycle transitions derived from
-the new `WidgetTracker` state.
+Those paths — except drag motion, see below — call `after_scene_change`, which marks compositor output damage and arms a
+pending lifecycle emission. The transitions are not sent inline. The compositor loop flushes them — and releases dormant
+widgets' buffers — only after it has rendered one frame of the committed scene (`emit_pending_lifecycle`). Deferring the
+emission this way keeps a widget host from starting to re-render until the compositor's GPU work for the committed frame
+is done, so the host and compositor do not submit to the shared, serialized GPU across the handoff at once. The derived
+`WidgetTracker` state is read at emission time, so multiple scene changes before a render coalesce to the latest state.
+In headless mode the damage-processing pass stands in for the render and arms the same flush. The initial connect-time
+emission above is not deferred.
+
+Drag motion is the exception: `update_drag` calls `after_drag_scene_update`, which emits the transitions inline instead
+of arming the deferred flush. Emitting immediately lets a `Visible` widget learn it is `Leaving` before the first drag
+frame, so its animation loop stops driving renders that would contend with the drag for the GPU render lock. The inline
+path is safe only while the emission carries no transition into `Dormant` — a buffer release must never bypass the
+after-render ordering. A drag only moves widgets between render-set states, so no release can ride on it;
+`after_drag_scene_update` asserts this no-release invariant.
 
 ## Initial Lifecycle
 
@@ -132,8 +146,8 @@ before other widgets acquire resources for `Prepared`, `Entering`, or `Visible`.
 
 Transitions that do not enter `Dormant` go in the acquire batch. For example, `Visible -> Prepared` and
 `Prepared -> Visible` keep the same broad protocol resource class, so they do not need release ordering. The current
-WASM host is more conservative: it does not allocate or render in `Prepared`, but the compositor still emits `Prepared`
-so clients can pre-warm immediate neighbours if they support that policy.
+WASM host allocates a render target in `Prepared` and pre-renders a single frame, so the immediate neighbour is ready
+before a drag; see [`wasm-host/render-loop.md`](wasm-host/render-loop.md).
 
 The emitter sorts entries inside each batch for deterministic behavior, but widget clients should not depend on
 inter-widget ordering inside a batch. The externally relevant guarantee is release batch before acquire batch, with a
