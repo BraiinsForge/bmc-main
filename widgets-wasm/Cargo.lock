@@ -635,6 +635,7 @@ version = "0.1.0"
 dependencies = [
  "bmc-wasm-sdk",
  "mining",
+ "units",
 ]
 
 [[package]]
