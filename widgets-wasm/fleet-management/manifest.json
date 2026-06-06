@@ -73,6 +73,24 @@
       "description": "Include AxeOS miners in the fleet view and keep polling them",
       "type": "boolean",
       "default_value": true
+    },
+    "bos_hosts": {
+      "name": "BOS hosts",
+      "description": "JSON array of extra BOS hosts to poll, beyond mDNS discovery; each entry is host or host:port (e.g. [\"10.0.0.5\", \"miner.local:8080\"]). IPv6 literals must use bracket notation with an explicit port (e.g. [fe80::1]:80). A host also found via mDNS appears twice.",
+      "type": "string",
+      "default_value": "[]"
+    },
+    "ubos_hosts": {
+      "name": "uBOS hosts",
+      "description": "JSON array of extra uBOS hosts to poll, beyond mDNS discovery; each entry is host or host:port. IPv6 literals must use bracket notation with an explicit port (e.g. [fe80::1]:80). A host also found via mDNS appears twice.",
+      "type": "string",
+      "default_value": "[]"
+    },
+    "axeos_hosts": {
+      "name": "AxeOS hosts",
+      "description": "JSON array of extra AxeOS hosts to poll, beyond mDNS discovery; each entry is host or host:port. IPv6 literals must use bracket notation with an explicit port (e.g. [fe80::1]:80). A host also found via mDNS appears twice.",
+      "type": "string",
+      "default_value": "[]"
     }
   }
 }
