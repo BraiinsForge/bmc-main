@@ -332,6 +332,7 @@ mod tests {
     use bmc::scene::SceneId;
 
     use super::{LifecycleState, SceneCommitConfig, WidgetTracker};
+    use crate::compositor::lifecycle_emitter::LifecycleEmitter;
 
     /// Build a tracker with three distinct scenes on a 1000-px-wide panel
     /// and the default commit thresholds (`distance_fraction = 0.30`,
@@ -633,6 +634,47 @@ mod tests {
             states.get("c"),
             Some(&LifecycleState::Prepared),
             "the opposite neighbour stays prepared"
+        );
+    }
+
+    #[test]
+    fn drag_start_emission_releases_no_buffers() {
+        // The compositor emits the drag-start transitions immediately
+        // instead of deferring them until after a render, and that is only
+        // safe because the emission frees no buffer: a drag moves the active
+        // widget to Leaving and a neighbour to Entering, never to Dormant. A
+        // release here would reach the host before the compositor's render
+        // and break the buffer-release ordering the deferral protects.
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![
+            scene_with_widget("a"),
+            scene_with_widget("b"),
+            scene_with_widget("c"),
+        ]);
+
+        let mut emitter = LifecycleEmitter::new();
+        emitter.step(&t.lifecycle_states());
+
+        t.start_drag();
+        t.update_drag(-100);
+        let emission = emitter.step(&t.lifecycle_states());
+
+        assert!(
+            emission.releases.is_empty(),
+            "drag start released buffers: {:?}",
+            emission.releases
+        );
+        assert!(
+            emission
+                .acquires
+                .contains(&(String::from("a"), LifecycleState::Leaving)),
+            "active widget should transition to Leaving"
+        );
+        assert!(
+            emission
+                .acquires
+                .contains(&(String::from("b"), LifecycleState::Entering)),
+            "drag-direction neighbour should transition to Entering"
         );
     }
 
