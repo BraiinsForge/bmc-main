@@ -15,6 +15,7 @@ members = [
     "blockheight",
     "clock",
     "lib/mining",
+    "lib/units",
     "mining-clock",
     "mining-info",
 ]
