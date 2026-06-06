@@ -27,6 +27,8 @@ quantity!(JoulePerTeraHash, "J/TH");
 quantity!(Percent, "%");
 quantity!(Btc, "BTC");
 quantity!(SatPerTeraHashDay, "SAT/TH/Day");
+quantity!(KilometerPerHour, "km/h");
+quantity!(Degree, "°");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Seconds(pub u64);

@@ -1,7 +1,7 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
 use crate::availability::Availability;
-use crate::units::Quantity;
+use crate::units::{DegreeCelsius, KilometerPerHour, Quantity};
 
 pub const NOT_AVAILABLE: &str = "N/A";
 
@@ -80,6 +80,65 @@ pub fn group(magnitude: f64, decimals: u32) -> String {
     out
 }
 
+// Temperature and speed carry device-setting conversions the host owns:
+// °C→°F and the km/h input→m/s|mph per the user's unit preferences, on top of
+// `number_format`. The host path is wasm-only; the non-wasm fallback emits the
+// metric form so the surrounding composition stays unit-testable.
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn temperature(value: DegreeCelsius, decimals: u32) -> String {
+    bmc_wasm_sdk::format_temperature!(value.raw(), decimals)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn temperature(value: DegreeCelsius, decimals: u32) -> String {
+    let mut out = String::new();
+    push_signed_fixed(&mut out, value.raw(), decimals);
+    out.push_str(" °C");
+    out
+}
+
+/// Degree-only temperature ("26°", no scale letter) for the dense forecast
+/// strips, where the unit would crowd the layout.
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn temperature_bare(value: DegreeCelsius, decimals: u32) -> String {
+    bmc_wasm_sdk::format_temperature!(value.raw(), decimals, bare)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn temperature_bare(value: DegreeCelsius, decimals: u32) -> String {
+    let mut out = String::new();
+    push_signed_fixed(&mut out, value.raw(), decimals);
+    out.push('°');
+    out
+}
+
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn speed(value: KilometerPerHour, decimals: u32) -> String {
+    bmc_wasm_sdk::format_speed!(value.raw(), decimals, ms)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn speed(value: KilometerPerHour, decimals: u32) -> String {
+    let mut out = String::new();
+    push_signed_fixed(&mut out, value.raw() / 3.6, decimals);
+    out.push_str(" m/s");
+    out
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn push_signed_fixed(out: &mut String, value: f64, decimals: u32) {
+    if value < 0.0 {
+        out.push('-');
+    }
+    push_fixed_abs(out, value, decimals);
+}
+
 #[must_use]
 pub fn fixed<Q: Quantity>(value: Availability<Q>, decimals: u32) -> Rendered {
     match value {
@@ -116,6 +175,22 @@ pub fn fixed_strip_zero_fraction<Q: Quantity>(value: Availability<Q>, decimals: 
 mod tests {
     use super::*;
     use crate::units::{Percent, Watt};
+
+    #[test]
+    fn temperature_appends_the_celsius_scale() {
+        assert_eq!(temperature(DegreeCelsius(20.0), 0), "20 °C");
+        assert_eq!(temperature(DegreeCelsius(-3.4), 0), "-3 °C");
+    }
+
+    #[test]
+    fn temperature_bare_drops_the_scale_letter() {
+        assert_eq!(temperature_bare(DegreeCelsius(26.0), 0), "26°");
+    }
+
+    #[test]
+    fn speed_converts_kilometers_per_hour_to_meters_per_second() {
+        assert_eq!(speed(KilometerPerHour(12.6), 1), "3.5 m/s");
+    }
 
     #[test]
     fn fixed_sources_unit_from_the_quantity_type() {

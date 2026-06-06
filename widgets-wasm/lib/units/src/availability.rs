@@ -25,6 +25,15 @@ impl<T> Availability<T> {
     }
 }
 
+impl<T> From<Option<T>> for Availability<T> {
+    fn from(value: Option<T>) -> Self {
+        match value {
+            Some(value) => Self::Available(value),
+            None => Self::Unavailable,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -39,5 +48,11 @@ mod tests {
     fn default_is_unavailable() {
         let value = Availability::<u32>::default();
         assert_eq!(value, Availability::Unavailable);
+    }
+
+    #[test]
+    fn option_converts_to_availability() {
+        assert_eq!(Availability::from(Some(7_u32)), Availability::Available(7));
+        assert_eq!(Availability::from(None::<u32>), Availability::Unavailable);
     }
 }
