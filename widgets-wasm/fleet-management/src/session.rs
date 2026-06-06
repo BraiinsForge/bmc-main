@@ -186,7 +186,9 @@ pub fn on_removal(
 mod driver;
 
 #[cfg(target_arch = "wasm32")]
-pub use driver::{clear_tokens, ensure_running, on_discovered, remove_token};
+pub use driver::{
+    clear_tokens, ensure_running, family_enabled, on_discovered, refresh_params, remove_token, stop,
+};
 
 #[cfg(test)]
 mod tests {

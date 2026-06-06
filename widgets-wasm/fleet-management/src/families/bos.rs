@@ -12,6 +12,11 @@ const EP_STATS: &str = "/miner/stats";
 const EP_HASHBOARDS: &str = "/miner/hw/hashboards";
 const EP_DETAILS: &str = "/miner/details";
 
+/// Upper bound on hashboard indices to scan. The JSON lookup exposes no array
+/// length, so the loops probe a fixed range and skip gaps rather than stopping
+/// at the first absent board (a failed or disabled board leaves a hole).
+const MAX_HASHBOARDS: usize = 16;
+
 pub const BOS_TELEMETRY_ENDPOINTS: &[&str] = &[EP_STATS, EP_HASHBOARDS, EP_DETAILS];
 
 /// Map the BOS `Platform` enum integer (as serialized over REST) to its
@@ -55,7 +60,7 @@ impl FamilyAdapter for BosAdapter {
         let (name, host, port) = extract_endpoint(json)?;
         Some(DiscoveredDevice {
             identity: DeviceIdentity {
-                id: DeviceId::new(name.clone()),
+                id: DeviceId::for_family(DeviceFamily::Bos, &name),
                 family: DeviceFamily::Bos,
                 name,
                 host,
@@ -116,19 +121,14 @@ impl FamilyAdapter for BosAdapter {
             }
             EP_HASHBOARDS => {
                 let mut max: Option<f32> = None;
-                let mut i = 0usize;
-                loop {
+                for i in 0..MAX_HASHBOARDS {
                     let path = bmc_wasm_sdk::fmt!(
                         "/hashboards/{}/highest_chip_temp/temperature/degree_c",
                         i
                     );
-                    match json.f64(&path) {
-                        Some(c) => {
-                            let c = c as f32;
-                            max = Some(max.map_or(c, |m| m.max(c)));
-                            i += 1;
-                        }
-                        None => break,
+                    if let Some(c) = json.f64(&path) {
+                        let c = c as f32;
+                        max = Some(max.map_or(c, |m| m.max(c)));
                     }
                 }
                 reading.temperature_c = max;
@@ -172,17 +172,16 @@ impl FamilyAdapter for BosAdapter {
             }
             EP_HASHBOARDS => {
                 let mut total: Option<u32> = None;
-                let mut i = 0usize;
-                loop {
+                for i in 0..MAX_HASHBOARDS {
                     let type_path = bmc_wasm_sdk::fmt!("/hashboards/{}/chip_type", i);
                     let count_path = bmc_wasm_sdk::fmt!("/hashboards/{}/chips_count", i);
                     let chip_type = json.str(&type_path).filter(|s| !s.is_empty());
                     let chips = json.i64(&count_path).and_then(|v| u32::try_from(v).ok());
-                    // Stop at the first absent board. This assumes a populated
-                    // board never reports both an absent chip type and count;
-                    // BOS serializes both for every present hashboard.
+                    // A failed or disabled board may be null or omitted; skip
+                    // the gap and keep scanning so present boards past it still
+                    // count, instead of stopping at the first absence.
                     if chip_type.is_none() && chips.is_none() {
-                        break;
+                        continue;
                     }
                     if model.chip_type.is_none() {
                         model.chip_type = chip_type;
@@ -190,7 +189,6 @@ impl FamilyAdapter for BosAdapter {
                     if let Some(chips) = chips {
                         total = Some(total.unwrap_or(0).saturating_add(chips));
                     }
-                    i += 1;
                 }
                 if total.is_some() {
                     model.chip_count = total;
@@ -227,7 +225,7 @@ mod tests {
         let found = BosAdapter
             .parse_found(&bos_shaped())
             .expect("BUG: device parsed");
-        assert_eq!(found.identity.id.as_str(), "miner-a._http._tcp.local.");
+        assert_eq!(found.identity.id.as_str(), "bos/miner-a._http._tcp.local.");
         assert_eq!(found.identity.host, "10.0.0.5");
         assert_eq!(found.identity.port, 80);
     }
@@ -276,6 +274,20 @@ mod tests {
         let mut r = TelemetryReading::default();
         BosAdapter.parse_telemetry("/miner/hw/hashboards", &j, &mut r);
         assert_eq!(r.temperature_c, Some(67.5));
+    }
+
+    #[test]
+    fn hashboard_temperature_scans_past_a_missing_board() {
+        // Board 0 failed (absent); boards 1 and 2 report. The max temp must
+        // come from the present boards, not stop at the gap on board 0.
+        let mut j = MapJson::default();
+        j.floats
+            .insert("/hashboards/1/highest_chip_temp/temperature/degree_c", 61.0);
+        j.floats
+            .insert("/hashboards/2/highest_chip_temp/temperature/degree_c", 70.0);
+        let mut r = TelemetryReading::default();
+        BosAdapter.parse_telemetry("/miner/hw/hashboards", &j, &mut r);
+        assert_eq!(r.temperature_c, Some(70.0));
     }
 
     #[test]
@@ -391,6 +403,21 @@ mod tests {
         j.ints.insert("/hashboards/0/chips_count", 76);
         j.strings.insert("/hashboards/1/chip_type", "BM1368");
         j.ints.insert("/hashboards/1/chips_count", 70);
+        let mut acc = ModelAccumulator::default();
+        BosAdapter.parse_model("/miner/hw/hashboards", &j, &mut acc);
+        assert_eq!(acc.chip_type.as_deref(), Some("BM1370"));
+        assert_eq!(acc.chip_count, Some(146));
+    }
+
+    #[test]
+    fn chip_count_sums_boards_past_a_missing_one() {
+        // Board 0 omitted (failed/disabled), boards 1 and 2 present. The total
+        // must include both present boards rather than stopping at the gap.
+        let mut j = MapJson::default();
+        j.strings.insert("/hashboards/1/chip_type", "BM1370");
+        j.ints.insert("/hashboards/1/chips_count", 76);
+        j.strings.insert("/hashboards/2/chip_type", "BM1370");
+        j.ints.insert("/hashboards/2/chips_count", 70);
         let mut acc = ModelAccumulator::default();
         BosAdapter.parse_model("/miner/hw/hashboards", &j, &mut acc);
         assert_eq!(acc.chip_type.as_deref(), Some("BM1370"));

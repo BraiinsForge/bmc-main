@@ -5,6 +5,7 @@ mod device;
 mod discovery;
 mod families;
 mod filter;
+mod layout;
 mod model;
 mod session;
 mod summary;
@@ -40,13 +41,26 @@ use families::ubos::UbosAdapter;
 #[cfg(target_arch = "wasm32")]
 thread_local! {
     pub(crate) static DEVICES: RefCell<DeviceList> = RefCell::new(DeviceList::new());
+    static DERIVED: RefCell<Option<DerivedView>> = const { RefCell::new(None) };
+}
+
+/// The render-ready fleet summary, cached so the filter → group → fold → sort
+/// pipeline and the model-list parsing run only when the fleet or the params
+/// actually change — not on every render frame (renders fire per discovery and
+/// per telemetry event, hundreds per pass on a large fleet).
+#[cfg(target_arch = "wasm32")]
+struct DerivedView {
+    devices_seq: u64,
+    params_version: u64,
+    summary: summary::FleetSummary,
+    fleet_name: String,
 }
 
 #[cfg(target_arch = "wasm32")]
 fn on_bos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     match event {
         mdns::MdnsEvent::Found(json) => ingest(&BosAdapter, json),
-        mdns::MdnsEvent::Removed(name) => on_removed(name),
+        mdns::MdnsEvent::Removed(name) => on_removed(DeviceFamily::Bos, name),
     }
 }
 
@@ -54,7 +68,7 @@ fn on_bos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
 fn on_ubos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     match event {
         mdns::MdnsEvent::Found(json) => ingest(&UbosAdapter, json),
-        mdns::MdnsEvent::Removed(name) => on_removed(name),
+        mdns::MdnsEvent::Removed(name) => on_removed(DeviceFamily::Ubos, name),
     }
 }
 
@@ -62,15 +76,16 @@ fn on_ubos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
 fn on_bitaxe_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     match event {
         mdns::MdnsEvent::Found(json) => ingest(&BitaxeAdapter, json),
-        mdns::MdnsEvent::Removed(name) => on_removed(name),
+        mdns::MdnsEvent::Removed(name) => on_removed(DeviceFamily::Bitaxe, name),
     }
 }
 
 /// Drop a device discovery reported as gone, logging its family and model
-/// before it leaves the list.
+/// before it leaves the list. The family namespaces the id, matching how the
+/// device was inserted.
 #[cfg(target_arch = "wasm32")]
-fn on_removed(name: &str) {
-    let id = DeviceId::new(name);
+fn on_removed(family: DeviceFamily, name: &str) {
+    let id = DeviceId::for_family(family, name);
     let info = DEVICES.with(|d| {
         d.borrow()
             .iter()
@@ -156,6 +171,17 @@ fn parse_model_list(raw: &str) -> Vec<String> {
     out
 }
 
+/// Parse a model-list param and normalize every fragment for matching. Done
+/// once per filter build so `matches_any` compares against pre-normalized
+/// fragments instead of re-normalizing per device.
+#[cfg(target_arch = "wasm32")]
+fn parse_normalized_model_list(raw: &str) -> Vec<String> {
+    parse_model_list(raw)
+        .iter()
+        .map(|entry| filter::normalize(entry))
+        .collect()
+}
+
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
@@ -164,22 +190,49 @@ pub extern "C" fn render(_delta_ms: u32) {
         height,
         variant,
     } = widget_size();
-    let params = manifest_params::Params::current();
-    let filters = filter::Filters {
-        whitelist: parse_model_list(&params.model_whitelist),
-        blacklist: parse_model_list(&params.model_blacklist),
-        bos_enabled: params.bos_enabled,
-        ubos_enabled: params.ubos_enabled,
-        axeos_enabled: params.axeos_enabled,
-    };
-    let root = DEVICES.with(|d| render::view(&d.borrow(), variant, &params.fleet_name, &filters));
-    let _ = render_ui(width, height, root);
+    let seq = DEVICES.with(|d| d.borrow().seq());
+    let params_version = bmc_wasm_sdk::params::version();
+    DERIVED.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        let stale = cell
+            .as_ref()
+            .is_none_or(|d| d.devices_seq != seq || d.params_version != params_version);
+        if stale {
+            let params = manifest_params::Params::current();
+            // Normalize the model-list fragments once here, not per device in
+            // `matches_any` — `summarize` runs per telemetry event.
+            let filters = filter::Filters {
+                whitelist: parse_normalized_model_list(&params.model_whitelist),
+                blacklist: parse_normalized_model_list(&params.model_blacklist),
+                bos_enabled: params.bos_enabled,
+                ubos_enabled: params.ubos_enabled,
+                axeos_enabled: params.axeos_enabled,
+            };
+            let summary = DEVICES.with(|d| summary::summarize(&d.borrow(), &filters));
+            *cell = Some(DerivedView {
+                devices_seq: seq,
+                params_version,
+                summary,
+                fleet_name: params.fleet_name,
+            });
+        }
+        let derived = cell.as_ref().expect("BUG: derived view populated above");
+        let root = render::view(
+            &derived.summary,
+            width,
+            height,
+            variant,
+            &derived.fleet_name,
+        );
+        let _ = render_ui(width, height, root);
+    });
 }
 
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn on_params_update() {
     let current = manifest_params::Params::current();
+    session::refresh_params();
     let changed = manifest_params::Params::previous().map(|prev| current.changed_keys(&prev));
     let creds_changed = changed.as_ref().is_none_or(|keys| {
         keys.iter()
@@ -188,15 +241,28 @@ pub extern "C" fn on_params_update() {
     if creds_changed {
         session::clear_tokens();
         DEVICES.with(|d| d.borrow_mut().clear_all_telemetry());
+        // Drop fetches already issued with the old credentials — `stop` bumps
+        // the generation so their responses are ignored rather than applied
+        // after the UI was cleared — then re-poll enabled families with the
+        // new credentials.
+        for family in DeviceFamily::ALL {
+            session::stop(family);
+            if session::family_enabled(family) {
+                session::ensure_running(family);
+            }
+        }
     }
     if let Some(keys) = changed {
-        for (key, family, enabled) in [
-            ("bos_enabled", DeviceFamily::Bos, current.bos_enabled),
-            ("ubos_enabled", DeviceFamily::Ubos, current.ubos_enabled),
-            ("axeos_enabled", DeviceFamily::Bitaxe, current.axeos_enabled),
-        ] {
-            if enabled && keys.contains(&key) {
+        for family in DeviceFamily::ALL {
+            if !keys.contains(&filter::family_enabled_key(family)) {
+                continue;
+            }
+            // Enabling resumes polling; disabling stops it mid-pass while mDNS
+            // discovery keeps the devices listed.
+            if session::family_enabled(family) {
                 session::ensure_running(family);
+            } else {
+                session::stop(family);
             }
         }
     }

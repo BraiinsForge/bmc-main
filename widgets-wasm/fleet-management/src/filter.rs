@@ -11,16 +11,34 @@ pub fn normalize(s: &str) -> String {
         .collect()
 }
 
+/// True if any `entries` fragment is a substring of the model's normalized name
+/// or id. `entries` must already be normalized — they are normalized once when
+/// [`Filters`] is built, not per call, because `summarize` (hence this) runs
+/// per telemetry event on a fleet that can be hundreds of devices.
 #[must_use]
 pub fn matches_any(model: &MinerModel, entries: &[String]) -> bool {
     let name = normalize(&model.name);
     let id = normalize(&model.id);
-    entries.iter().any(|entry| {
-        let entry = normalize(entry);
-        name.contains(&entry) || id.contains(&entry)
-    })
+    entries
+        .iter()
+        .any(|entry| name.contains(entry.as_str()) || id.contains(entry.as_str()))
 }
 
+/// The manifest param key carrying a family's enable/disable toggle. The one
+/// place the family↔key mapping lives, shared by the render filter and the
+/// driver's enable/disable handling.
+#[must_use]
+pub fn family_enabled_key(family: DeviceFamily) -> &'static str {
+    match family {
+        DeviceFamily::Bos => "bos_enabled",
+        DeviceFamily::Ubos => "ubos_enabled",
+        DeviceFamily::Bitaxe => "axeos_enabled",
+    }
+}
+
+/// `whitelist`/`blacklist` hold model-name fragments already run through
+/// [`normalize`]; build them with [`normalize`] once (see the render filter
+/// build) so `matches_any` need not re-normalize per device.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Filters {
     pub whitelist: Vec<String>,
@@ -78,6 +96,13 @@ mod tests {
             chip_count: None,
             nominal_hashrate_ths: None,
         }
+    }
+
+    #[test]
+    fn family_enabled_key_maps_each_family_to_its_manifest_param() {
+        assert_eq!(family_enabled_key(DeviceFamily::Bos), "bos_enabled");
+        assert_eq!(family_enabled_key(DeviceFamily::Ubos), "ubos_enabled");
+        assert_eq!(family_enabled_key(DeviceFamily::Bitaxe), "axeos_enabled");
     }
 
     #[test]
