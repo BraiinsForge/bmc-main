@@ -1,6 +1,8 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use bmc::compositor::{CompositorEvent, InstanceId, Position, SceneLayout, Size, WidgetAction};
+use bmc::compositor::{
+    CompositorEvent, InstanceId, Position, SceneCycling, SceneLayout, Size, WidgetAction,
+};
 use bmc_widget_protocol::{SettingUpdate, WidgetInitialConfig};
 
 #[derive(Debug)]
@@ -33,6 +35,10 @@ pub enum CompositorCommand {
     SetSceneCycling {
         scenes: Vec<SceneLayout>,
     },
+    SetSceneCyclingConfig {
+        config: SceneCycling,
+    },
+    ResetSceneCycle,
     SetActiveSceneIndex {
         index: usize,
     },
