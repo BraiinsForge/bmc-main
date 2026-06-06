@@ -3,8 +3,8 @@
 use bmc_wasm_sdk::ufmt;
 
 use crate::model::{Availability, MinerData, TemperatureRange};
-use crate::units::{DegreeCelsius, JoulePerTeraHash, Percent, Seconds, TeraHashPerSecond, Watt};
 use mining::gauge::TargetRange;
+use units::units::{DegreeCelsius, JoulePerTeraHash, Percent, Seconds, TeraHashPerSecond, Watt};
 
 pub(crate) trait JsonLookup {
     fn str(&self, path: &str) -> Option<String>;
@@ -173,7 +173,7 @@ pub(crate) mod tests_support {
 mod tests {
     use super::tests_support::MapJson;
     use super::*;
-    use crate::units::Quantity;
+    use units::units::Quantity;
 
     #[test]
     fn converts_hashrate_from_ghs_to_ths() {

@@ -1,35 +1,12 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-use crate::units::{
+use mining::gauge::TargetRange;
+use units::units::{
     Btc, DegreeCelsius, ExaHashPerSecond, JoulePerTeraHash, Percent, SatPerTeraHashDay, Seconds,
     TeraHashPerSecond, Watt,
 };
-use mining::gauge::TargetRange;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Availability<T> {
-    Available(T),
-    Unavailable,
-}
-
-#[expect(
-    clippy::derivable_impls,
-    reason = "deriving Default would add a T: Default bound; this impl stays unbounded so containers holding non-Default payloads can still derive Default"
-)]
-impl<T> Default for Availability<T> {
-    fn default() -> Self {
-        Self::Unavailable
-    }
-}
-
-impl<T> Availability<T> {
-    pub(crate) fn as_option(&self) -> Option<&T> {
-        match self {
-            Self::Available(value) => Some(value),
-            Self::Unavailable => None,
-        }
-    }
-}
+pub(crate) use units::availability::Availability;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct MinerData {
@@ -98,11 +75,5 @@ mod tests {
         let data = MinerData::default();
         assert_eq!(data.hashrate_ths, Availability::Unavailable);
         assert_eq!(data.temperature, Availability::Unavailable);
-    }
-
-    #[test]
-    fn available_values_can_be_borrowed_as_options() {
-        let value = Availability::Available(42_u32);
-        assert_eq!(value.as_option(), Some(&42));
     }
 }

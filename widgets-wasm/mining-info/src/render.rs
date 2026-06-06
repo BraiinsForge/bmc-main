@@ -10,7 +10,7 @@ use crate::chart;
 use crate::format;
 use crate::layout::{self, Viewport};
 use crate::model::{Availability, MinerData, PublicData};
-use crate::units::Quantity;
+use units::units::Quantity;
 
 pub(crate) mod round;
 
