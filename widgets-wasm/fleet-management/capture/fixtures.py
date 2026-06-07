@@ -172,6 +172,9 @@ def lines():
             'bos_enabled': True,
             'ubos_enabled': True,
             'axeos_enabled': True,
+            'bos_hosts': '[]',
+            'ubos_hosts': '[]',
+            'axeos_hosts': '[]',
         },
     }
     # The loader requires at_ms to be monotonically non-decreasing. Fetch stubs
