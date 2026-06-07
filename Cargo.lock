@@ -5528,6 +5528,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "layer-shell-test-client"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "wayland-client 0.31.14",
+ "wayland-protocols-wlr",
+]
+
+[[package]]
 name = "lazy-bytes-cast"
 version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
