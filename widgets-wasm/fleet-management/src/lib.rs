@@ -31,7 +31,7 @@ use std::cell::RefCell;
 #[cfg(target_arch = "wasm32")]
 use adapter::FamilyAdapter;
 #[cfg(target_arch = "wasm32")]
-use device::{DeviceFamily, DeviceId, DeviceList, family_label};
+use device::{DeviceFamily, DeviceId, DeviceList, credential_keys, family_label};
 #[cfg(target_arch = "wasm32")]
 use families::bitaxe::BitaxeAdapter;
 #[cfg(target_arch = "wasm32")]
@@ -313,22 +313,27 @@ pub extern "C" fn on_params_update() {
     let current = manifest_params::Params::current();
     session::refresh_params();
     let changed = manifest_params::Params::previous().map(|prev| current.changed_keys(&prev));
-    let creds_changed = changed.as_ref().is_none_or(|keys| {
-        keys.iter()
-            .any(|k| matches!(*k, "bos_password" | "ubos_username" | "ubos_password"))
-    });
-    if creds_changed {
-        session::clear_tokens();
-        DEVICES.with(|d| d.borrow_mut().clear_all_telemetry());
+    // Reset only the family whose credentials actually changed: a BOS-password
+    // edit must not blank uBOS/AxeOS. A credential-less family (empty
+    // `credential_keys`) is never reset, and an unknown change (`changed` is
+    // `None`, i.e. the first update) refreshes every family that has credentials.
+    for family in DeviceFamily::ALL {
+        let creds = credential_keys(family);
+        let creds_changed = !creds.is_empty()
+            && changed
+                .as_ref()
+                .is_none_or(|keys| creds.iter().any(|k| keys.contains(k)));
+        if !creds_changed {
+            continue;
+        }
+        session::clear_tokens_for(family);
+        DEVICES.with(|d| d.borrow_mut().clear_telemetry_for(family));
         // Drop fetches already issued with the old credentials — `stop` bumps
         // the generation so their responses are ignored rather than applied
-        // after the UI was cleared — then re-poll enabled families with the
-        // new credentials.
-        for family in DeviceFamily::ALL {
-            session::stop(family);
-            if session::family_enabled(family) {
-                session::ensure_running(family);
-            }
+        // after the UI was cleared — then re-poll the family if it is enabled.
+        session::stop(family);
+        if session::family_enabled(family) {
+            session::ensure_running(family);
         }
     }
     if let Some(keys) = changed.as_ref() {

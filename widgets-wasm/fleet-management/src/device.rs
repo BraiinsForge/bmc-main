@@ -78,6 +78,19 @@ pub fn family_id(family: DeviceFamily) -> &'static str {
     }
 }
 
+/// The manifest credential param keys for a family, empty for credential-less
+/// families (Bitaxe/AxeOS). The one place the family↔credential-key mapping
+/// lives, used to scope a token/telemetry reset to the family whose credentials
+/// actually changed.
+#[must_use]
+pub fn credential_keys(family: DeviceFamily) -> &'static [&'static str] {
+    match family {
+        DeviceFamily::Bos => &["bos_password"],
+        DeviceFamily::Ubos => &["ubos_username", "ubos_password"],
+        DeviceFamily::Bitaxe => &[],
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DeviceId(String);
 
@@ -335,12 +348,18 @@ impl DeviceList {
         }
     }
 
-    /// Drop every device's telemetry and mark it unreachable (e.g. after a
-    /// credential change). Devices stay listed; their readings and model go
-    /// back to absent and reachability is recomputed on the next telemetry pass.
-    pub fn clear_all_telemetry(&mut self) {
+    /// Drop one family's telemetry and mark its devices unreachable (e.g. after
+    /// that family's credentials changed). Other families are left untouched, so
+    /// a credential edit does not blank a family whose credentials did not move.
+    /// Devices stay listed; readings/model go back to absent and reachability is
+    /// recomputed on the next telemetry pass.
+    pub fn clear_telemetry_for(&mut self, family: DeviceFamily) {
         self.seq += 1;
-        for dev in &mut self.devices {
+        for dev in self
+            .devices
+            .iter_mut()
+            .filter(|d| d.identity.family == family)
+        {
             dev.telemetry = None;
             dev.model = None;
             dev.reachable = false;
@@ -456,8 +475,8 @@ mod tests {
         assert!(list.seq() > before, "apply_telemetry must advance seq");
 
         let before = list.seq();
-        list.clear_all_telemetry();
-        assert!(list.seq() > before, "clear_all_telemetry must advance seq");
+        list.clear_telemetry_for(DeviceFamily::Bos);
+        assert!(list.seq() > before, "clear_telemetry_for must advance seq");
 
         let before = list.seq();
         list.remove(&id);
@@ -551,7 +570,20 @@ mod tests {
     }
 
     #[test]
-    fn clear_all_telemetry_drops_readings() {
+    fn credential_keys_cover_each_family() {
+        assert_eq!(credential_keys(DeviceFamily::Bos), ["bos_password"]);
+        assert_eq!(
+            credential_keys(DeviceFamily::Ubos),
+            ["ubos_username", "ubos_password"]
+        );
+        assert!(
+            credential_keys(DeviceFamily::Bitaxe).is_empty(),
+            "AxeOS has no credentials and must never be reset by a credential edit"
+        );
+    }
+
+    #[test]
+    fn clear_telemetry_for_drops_readings() {
         let mut list = DeviceList::new();
         list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
         list.apply_telemetry(
@@ -559,10 +591,47 @@ mod tests {
             TelemetryReading::default(),
             true,
         );
-        list.clear_all_telemetry();
+        list.clear_telemetry_for(DeviceFamily::Bos);
         let dev = list.iter().next().expect("BUG: present");
         assert!(dev.telemetry.is_none());
         assert!(!dev.reachable);
+    }
+
+    #[test]
+    fn clear_telemetry_for_leaves_other_families_intact() {
+        let mut list = DeviceList::new();
+        list.upsert(identity("bos._http._tcp.local.", "10.0.0.1"));
+        let axe = DeviceIdentity {
+            family: DeviceFamily::Bitaxe,
+            ..identity("axe._http._tcp.local.", "10.0.0.2")
+        };
+        let axe_id = axe.id.clone();
+        list.upsert(axe);
+        list.apply_telemetry(
+            &DeviceId::new("bos._http._tcp.local."),
+            TelemetryReading::default(),
+            true,
+        );
+        list.apply_telemetry(&axe_id, TelemetryReading::default(), true);
+
+        list.clear_telemetry_for(DeviceFamily::Bos);
+
+        let bos = list
+            .iter()
+            .find(|d| d.identity.family == DeviceFamily::Bos)
+            .expect("BUG: present");
+        let axe = list
+            .iter()
+            .find(|d| d.identity.family == DeviceFamily::Bitaxe)
+            .expect("BUG: present");
+        assert!(
+            bos.telemetry.is_none() && !bos.reachable,
+            "BOS telemetry cleared"
+        );
+        assert!(
+            axe.telemetry.is_some() && axe.reachable,
+            "a credential-less family must keep its telemetry when BOS credentials change"
+        );
     }
 
     #[test]
@@ -650,11 +719,11 @@ mod tests {
     }
 
     #[test]
-    fn clear_all_telemetry_also_clears_model() {
+    fn clear_telemetry_for_also_clears_model() {
         let mut list = DeviceList::new();
         list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
         list.apply_model(&DeviceId::new("a._http._tcp.local."), model("BMM 101"));
-        list.clear_all_telemetry();
+        list.clear_telemetry_for(DeviceFamily::Bos);
         let dev = list.iter().next().expect("BUG: present");
         assert!(dev.model.is_none());
         assert!(!dev.reachable);
