@@ -632,6 +632,7 @@ mod tests {
     fn scene_with_widget(id: &str) -> SceneLayout {
         SceneLayout {
             scene_id: None,
+            cycle_duration: None,
             widgets: vec![WidgetPlacement {
                 instance_id: id.to_owned(),
                 position: Position { x: 0, y: 0 },
@@ -842,6 +843,7 @@ mod tests {
     fn scene_with_id(id: SceneId) -> SceneLayout {
         SceneLayout {
             scene_id: Some(id),
+            cycle_duration: None,
             widgets: vec![],
         }
     }

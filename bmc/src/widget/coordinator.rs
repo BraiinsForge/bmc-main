@@ -527,6 +527,7 @@ impl Coordinator {
 
         SceneLayout {
             scene_id: Some(scene.id),
+            cycle_duration: scene.cycle_duration,
             widgets,
         }
     }
