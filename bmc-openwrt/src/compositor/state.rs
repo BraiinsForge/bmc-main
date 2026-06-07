@@ -29,7 +29,7 @@ use smithay::{
             wl_shm, wl_surface::WlSurface,
         },
     },
-    utils::{Logical, Point, Serial, Size},
+    utils::{Logical, Point, Rectangle, Serial, Size},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -661,6 +661,26 @@ impl CompositorState {
         let client_id = self.deck_widget_state.send_lifecycle(instance_id, state)?;
         self.lifecycle.record_initial(instance_id, state);
         Some(client_id)
+    }
+
+    /// Mapped layer surfaces as (buffer, logical destination rect) in paint
+    /// order (bottom first). Destination carries both location and size.
+    #[must_use]
+    pub fn layer_render_items(&self) -> Vec<(WlBuffer, Rectangle<i32, Logical>)> {
+        use crate::compositor::layer_surface::{layer_rank, paint_order};
+        let mapped: Vec<&crate::compositor::layer_surface::LayerEntry> = self
+            .layer_surfaces
+            .iter()
+            .filter(|e| e.is_mapped())
+            .collect();
+        let ranks: Vec<u8> = mapped.iter().map(|e| layer_rank(e.layer)).collect();
+        paint_order(&ranks)
+            .into_iter()
+            .filter_map(|i| {
+                let e = mapped[i];
+                Some((e.buffer.clone()?, e.last_geometry?))
+            })
+            .collect()
     }
 
     /// Handle a commit for a tracked layer surface. Returns `true` if `surface`

@@ -13,7 +13,7 @@ use smithay::{
         gles::{GlesRenderer, GlesTexture, ffi},
     },
     reexports::wayland_server::{Resource, backend::ObjectId, protocol::wl_buffer::WlBuffer},
-    utils::{Buffer as BufferCoord, Physical, Rectangle, Size, Transform},
+    utils::{Buffer as BufferCoord, Logical, Physical, Rectangle, Size, Transform},
     wayland::{
         dmabuf::get_dmabuf,
         image_copy_capture::{self, CaptureFailureReason},
@@ -246,6 +246,7 @@ impl SceneRenderer {
         widgets: &WidgetTracker,
         transition_offset: Option<i32>,
         buffers: &[(WlBuffer, bmc::compositor::InstanceId)],
+        layers: &[(WlBuffer, Rectangle<i32, Logical>)],
         dirty: &[ObjectId],
         capture_frames: Vec<image_copy_capture::Frame>,
         capture_active: bool,
@@ -264,6 +265,37 @@ impl SceneRenderer {
         // path has finished, so a handoff cannot leave overlapping in-flight
         // jobs on etnaviv.
         self.import_textures(buffers, dirty);
+
+        for (buffer, _) in layers {
+            let buffer_id = buffer.id();
+            if let Ok(dmabuf) = get_dmabuf(buffer) {
+                if dirty.contains(&buffer_id) {
+                    match self.egl.renderer().import_dmabuf(dmabuf, None) {
+                        Ok(texture) => {
+                            self.texture_cache.insert(buffer_id, texture);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "import_dmabuf failed for layer buffer {:?}: {e}",
+                                buffer_id
+                            );
+                        }
+                    }
+                }
+            } else {
+                match self.egl.renderer().import_shm_buffer(buffer, None, &[]) {
+                    Ok(texture) => {
+                        self.texture_cache.insert(buffer_id, texture);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "import_shm_buffer failed for layer buffer {:?}: {e}",
+                            buffer_id
+                        );
+                    }
+                }
+            }
+        }
 
         // Collect render items: (buffer_id, placement, x_offset)
         let mut to_render = Vec::new();
@@ -369,6 +401,42 @@ impl SceneRenderer {
                 &[],
             ) {
                 tracing::warn!("Failed to render widget {}: {:?}", instance_id, e);
+            }
+        }
+
+        #[expect(clippy::cast_possible_wrap, reason = "output dims are within i32")]
+        let (output_w, output_h) = (self.output.width() as i32, self.output.height() as i32);
+        for (buffer, geo) in layers {
+            let Some(texture) = self.texture_cache.get(&buffer.id()) else {
+                continue;
+            };
+            let tex_size = texture.size();
+            let dst = place_widget(
+                geo.loc.x,
+                geo.loc.y,
+                geo.size.w,
+                geo.size.h,
+                output_w,
+                output_h,
+                self.scanout_transform,
+            );
+            let src: Rectangle<f64, BufferCoord> = Rectangle::from_loc_and_size(
+                (0.0, 0.0),
+                (f64::from(tex_size.w), f64::from(tex_size.h)),
+            );
+            let damage = texture_damage_rect(dst);
+            if let Err(e) = frame.render_texture_from_to(
+                texture,
+                src,
+                dst,
+                &[damage],
+                &[],
+                scanout_transform(self.scanout_transform),
+                1.0,
+                None,
+                &[],
+            ) {
+                tracing::warn!("Failed to render layer surface: {:?}", e);
             }
         }
         ii_stopwatch::stopwatch_stop!(self.compose_w);
