@@ -107,8 +107,11 @@ fn on_removed(family: DeviceFamily, name: &str) {
             model
         );
     }
-    session::remove_token(&id);
+    // Remove from the device list before reacting, so a driver re-snapshot
+    // triggered by the removal (a `Redefer`) cannot re-arm a kick to the gone
+    // device. This matches the manual-reconcile order (`reconcile_manual_hosts`).
     DEVICES.with(|d| d.borrow_mut().remove(&id));
+    session::remove_token(&id);
     request_frame();
 }
 

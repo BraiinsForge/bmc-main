@@ -460,17 +460,26 @@ fn on_login(family: DeviceFamily, id: &DeviceId, response: &bmc_wasm_sdk::FetchR
 }
 
 fn on_telemetry(family: DeviceFamily, endpoint_idx: usize, response: &bmc_wasm_sdk::FetchResponse) {
+    // Every exit here must either complete the barrier (decrement `pending` and
+    // fire on zero) or advance the device — otherwise a telemetry response for a
+    // device that vanished mid-pass would strand `pending` and leave the family
+    // stuck `Active` forever. Mirror `on_login`: abandon the device on any
+    // resolution failure.
     let Some(id) = with_driver(family, |d| d.current_device()) else {
+        advance_device(family);
         return;
     };
     let Some((dev_family, _, _)) = resolve_identity(&id) else {
+        advance_device(family);
         return;
     };
     let Some(adapter) = adapter_for(dev_family) else {
+        advance_device(family);
         return;
     };
     let endpoints = adapter.telemetry_endpoints();
     let Some(ep) = endpoints.get(endpoint_idx) else {
+        advance_device(family);
         return;
     };
 
