@@ -49,6 +49,11 @@ Lifecycle state is derived by `WidgetTracker::lifecycle_states()` from:
 - the current drag offset, if a scene drag is active;
 - the `visible` flag on widgets inside each scene layout.
 
+Automatic scene cycling adds a pre-transition phase before slide motion. During that phase the compositor emits
+lifecycle changes first: outgoing widgets become `Leaving`, incoming widgets become `Entering`, and frame callbacks are
+held until the transition reaches a stable state or is cancelled. Neighbour preparation changes for the post-transition
+scene are emitted only after the transition commits.
+
 The derivation is pure scene state. It does not inspect GL state, Wayland buffers, widget runtime state, or whether a
 widget has already rendered.
 
@@ -87,7 +92,6 @@ Second, after scene state changes:
 
 - `SetActiveScene`;
 - `SetSceneCycling`;
-- `SetActiveSceneIndex`;
 - scene drag start, drag motion, drag release, or drag cancel.
 
 Those paths — except drag motion, see below — call `after_scene_change`, which marks compositor output damage and arms a
@@ -107,6 +111,14 @@ after-render ordering. A drag only moves widgets between render-set states, so n
 `after_drag_scene_update` asserts this no-release invariant. If a deferred emission armed by a prior scene change has
 not flushed yet, it may carry `Dormant` transitions, so the drag update leaves it armed instead of emitting inline; the
 deferred flush reads the tracker at emission time and coalesces the drag's transitions.
+
+Automatic scene cycling adds a third path. At the start of the pre-transition phase (`BeginPreTransition`), the
+compositor emits lifecycle inline through `emit_lifecycle_transitions`, exactly like drag motion and for the same
+render-lock reason: outgoing widgets must learn they are `Leaving` and incoming widgets `Entering` before slide motion
+starts. This emission carries no transition into `Dormant` — neighbour preparation for the post-transition scene is
+withheld until the slide commits — and a `debug_assert!` enforces that no-release invariant. When the slide commits
+(`FinishTransition`), that deferred neighbour update flows through `after_scene_change` like any other committed scene
+change.
 
 ## Initial Lifecycle
 
