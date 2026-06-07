@@ -497,6 +497,25 @@ impl Coordinator {
         }
     }
 
+    /// Pin the compositor to a single scene for the duration of a preview.
+    ///
+    /// A preview holds one scene on screen while the user edits it, so the
+    /// compositor must show only that scene. Collapsing the cycling list to a
+    /// single entry disables both manual drag and automatic cycling through
+    /// the usual `scene_count < 2` gate, so a preview can never be swiped or
+    /// cycled away. The full cycling list is restored when the preview ends.
+    pub fn pin_preview_scene(&self, scene: &Scene) {
+        if !self.scene_supported(scene) {
+            warn!(scene_id = %scene.id, "refusing to preview unsupported scene");
+            return;
+        }
+
+        let layout = self.scene_to_layout(scene);
+        if let Err(e) = self.compositor.set_scene_cycling(vec![layout]) {
+            warn!(scene_id = %scene.id, error = %e, "failed to pin preview scene");
+        }
+    }
+
     fn scene_supported(&self, scene: &Scene) -> bool {
         scene_supported_with_registry(&self.widget_registry, scene, &self.hardware_capabilities)
     }
