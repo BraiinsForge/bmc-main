@@ -2,7 +2,6 @@
 
 //! Automatic scene cycling state machine.
 
-use super::widget_tracker::SceneTransitionTarget;
 use std::time::{Duration, Instant};
 
 pub(crate) const PRE_TRANSITION_DURATION: Duration = Duration::from_millis(100);
@@ -17,11 +16,7 @@ pub(crate) struct SceneCyclingRuntimeConfig {
 
 impl Default for SceneCyclingRuntimeConfig {
     fn default() -> Self {
-        let config = bmc::compositor::SceneCycling::default();
-        Self {
-            enabled: config.automatic_cycling_enabled,
-            default_duration: config.automatic_cycling_default_duration,
-        }
+        Self::from(bmc::compositor::SceneCycling::default())
     }
 }
 
@@ -36,20 +31,10 @@ impl From<bmc::compositor::SceneCycling> for SceneCyclingRuntimeConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AutomaticCyclingPhase {
-    PausedDisabled {
-        started_at: Instant,
-    },
-    WaitingForTimer {
-        started_at: Instant,
-    },
-    PreTransition {
-        started_at: Instant,
-        target: SceneTransitionTarget,
-    },
-    Transition {
-        started_at: Instant,
-        target: SceneTransitionTarget,
-    },
+    PausedDisabled { started_at: Instant },
+    WaitingForTimer { started_at: Instant },
+    PreTransition { started_at: Instant },
+    Transition { started_at: Instant },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,26 +112,16 @@ impl AutomaticCycling {
         }
     }
 
-    pub(crate) fn enter_pre_transition(&mut self, now: Instant, target: SceneTransitionTarget) {
-        self.phase = AutomaticCyclingPhase::PreTransition {
-            started_at: now,
-            target,
-        };
+    pub(crate) fn enter_pre_transition(&mut self, now: Instant) {
+        self.phase = AutomaticCyclingPhase::PreTransition { started_at: now };
     }
 
-    pub(crate) fn enter_transition(&mut self, now: Instant, target: SceneTransitionTarget) {
-        self.phase = AutomaticCyclingPhase::Transition {
-            started_at: now,
-            target,
-        };
+    pub(crate) fn enter_transition(&mut self, now: Instant) {
+        self.phase = AutomaticCyclingPhase::Transition { started_at: now };
     }
 
     pub(crate) fn transition_offset(&self, logical_width: u32, now: Instant) -> Option<i32> {
-        let AutomaticCyclingPhase::Transition {
-            started_at,
-            target: _target,
-        } = self.phase
-        else {
+        let AutomaticCyclingPhase::Transition { started_at } = self.phase else {
             return None;
         };
         let elapsed = now.saturating_duration_since(started_at);
@@ -215,7 +190,6 @@ fn remaining_delay(now: Instant, started_at: Instant, duration: Duration) -> Dur
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compositor::widget_tracker::SceneTransitionTarget;
     use std::time::{Duration, Instant};
 
     fn cycling_config(enabled: bool) -> SceneCyclingRuntimeConfig {
@@ -291,13 +265,7 @@ mod tests {
     fn automatic_cycling_pre_transition_waits_before_slide() {
         let now = Instant::now();
         let mut state = AutomaticCycling::new(now, cycling_config(true));
-        state.enter_pre_transition(
-            now,
-            SceneTransitionTarget {
-                from_index: 0,
-                to_index: 1,
-            },
-        );
+        state.enter_pre_transition(now);
 
         assert_eq!(
             state.on_timer(now + PRE_TRANSITION_DURATION, Duration::from_secs(30)),
@@ -309,13 +277,7 @@ mod tests {
     fn automatic_cycling_transition_finishes_after_duration() {
         let now = Instant::now();
         let mut state = AutomaticCycling::new(now, cycling_config(true));
-        state.enter_transition(
-            now,
-            SceneTransitionTarget {
-                from_index: 0,
-                to_index: 1,
-            },
-        );
+        state.enter_transition(now);
 
         assert_eq!(
             state.on_timer(now + AUTOMATIC_TRANSITION_DURATION, Duration::from_secs(30)),
@@ -327,13 +289,7 @@ mod tests {
     fn automatic_cycling_transition_offset_follows_elapsed_progress() {
         let now = Instant::now();
         let mut state = AutomaticCycling::new(now, cycling_config(true));
-        state.enter_transition(
-            now,
-            SceneTransitionTarget {
-                from_index: 0,
-                to_index: 1,
-            },
-        );
+        state.enter_transition(now);
 
         assert_eq!(state.transition_offset(1000, now), Some(0));
         assert_eq!(
@@ -350,13 +306,7 @@ mod tests {
     fn disabling_during_pre_transition_waits_until_next_wait_period() {
         let now = Instant::now();
         let mut state = AutomaticCycling::new(now, cycling_config(true));
-        state.enter_pre_transition(
-            now,
-            SceneTransitionTarget {
-                from_index: 0,
-                to_index: 1,
-            },
-        );
+        state.enter_pre_transition(now);
 
         state.set_config(cycling_config(false));
         state.reevaluate(now, true, 2, false);
@@ -370,13 +320,7 @@ mod tests {
             AutomaticCyclingAction::BeginTransition,
         );
 
-        state.enter_transition(
-            now + PRE_TRANSITION_DURATION,
-            SceneTransitionTarget {
-                from_index: 0,
-                to_index: 1,
-            },
-        );
+        state.enter_transition(now + PRE_TRANSITION_DURATION);
         assert_eq!(
             state.on_timer(
                 now + PRE_TRANSITION_DURATION + AUTOMATIC_TRANSITION_DURATION,
@@ -400,13 +344,7 @@ mod tests {
     fn disabling_during_transition_waits_until_next_wait_period() {
         let now = Instant::now();
         let mut state = AutomaticCycling::new(now, cycling_config(true));
-        state.enter_transition(
-            now,
-            SceneTransitionTarget {
-                from_index: 0,
-                to_index: 1,
-            },
-        );
+        state.enter_transition(now);
 
         state.set_config(cycling_config(false));
         state.reevaluate(now, true, 2, false);

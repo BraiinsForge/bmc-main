@@ -174,6 +174,11 @@ impl WidgetTracker {
         &self.scenes[self.current_index]
     }
 
+    #[must_use]
+    pub fn scene_at(&self, index: usize) -> Option<&SceneLayout> {
+        self.scenes.get(index)
+    }
+
     /// Get the neighbor scene in the given direction (+1 = next, -1 = prev).
     #[must_use]
     pub fn neighbor_scene(&self, direction: i32) -> Option<&SceneLayout> {

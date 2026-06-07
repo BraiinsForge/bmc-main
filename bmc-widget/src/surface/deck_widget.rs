@@ -66,6 +66,8 @@ pub enum DeckWidgetEvent {
     TouchCancel,
     /// Compositor published a new lifecycle state for this widget.
     Lifecycle(bmc_widget_protocol::LifecycleState),
+    /// Automatic scene cycling will transition this widget on-screen soon.
+    TransitionIncoming,
 }
 
 impl From<DeckWidgetEvent> for WidgetEvent {
@@ -79,6 +81,7 @@ impl From<DeckWidgetEvent> for WidgetEvent {
             DeckWidgetEvent::TouchUp { id } => Self::TouchUp { id },
             DeckWidgetEvent::TouchCancel => Self::TouchCancel,
             DeckWidgetEvent::Lifecycle(s) => Self::Lifecycle(s),
+            DeckWidgetEvent::TransitionIncoming => Self::TransitionIncoming,
         }
     }
 }
@@ -980,6 +983,11 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
                     state.pending_events.push(DeckWidgetEvent::Lifecycle(s));
                 }
             }
+            deck_widget_surface_v1::Event::TransitionIncoming => {
+                state
+                    .pending_events
+                    .push(DeckWidgetEvent::TransitionIncoming);
+            }
             _ => {}
         }
     }
@@ -1268,6 +1276,12 @@ mod tests {
     fn deck_widget_event_shutdown_still_translates_to_widget_event_shutdown() {
         let translated: WidgetEvent = DeckWidgetEvent::Shutdown.into();
         assert!(matches!(translated, WidgetEvent::Shutdown));
+    }
+
+    #[test]
+    fn deck_widget_event_transition_incoming_translates_to_widget_event_transition_incoming() {
+        let translated: WidgetEvent = DeckWidgetEvent::TransitionIncoming.into();
+        assert!(matches!(translated, WidgetEvent::TransitionIncoming));
     }
 
     #[test]

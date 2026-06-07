@@ -477,6 +477,24 @@ impl DeckWidgetProtocolState {
         surface.lifecycle(state);
         surface.client().map(|c| c.id())
     }
+
+    /// Emit a `transition_incoming` event on the widget's surface.
+    ///
+    /// Returns the [`ClientId`] of the receiving widget so callers can
+    /// flush only affected clients. `None` when the widget has not
+    /// registered yet or its Wayland surface has not been attached.
+    pub fn send_transition_incoming(&self, instance_id: &InstanceId) -> Option<ClientId> {
+        let Some(widget) = self.widgets.get(instance_id) else {
+            tracing::trace!("send_transition_incoming: no widget record for {instance_id}");
+            return None;
+        };
+        let Some(surface) = widget.protocol_surface.as_ref() else {
+            tracing::debug!("send_transition_incoming: {instance_id} has no surface yet");
+            return None;
+        };
+        surface.transition_incoming();
+        surface.client().map(|c| c.id())
+    }
 }
 
 impl Default for DeckWidgetProtocolState {
