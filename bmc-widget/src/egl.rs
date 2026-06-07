@@ -1247,6 +1247,16 @@ impl SharedRenderScratch {
         self.staging.fbo_id()
     }
 
+    #[must_use]
+    pub fn max_size(&self) -> (u32, u32) {
+        (self.staging.width, self.staging.height)
+    }
+
+    #[must_use]
+    pub fn supports_size(&self, w: u32, h: u32) -> bool {
+        w <= self.staging.width && h <= self.staging.height
+    }
+
     /// Bind the staging FBO, set viewport to `(w, h)`, and clear color +
     /// stencil. Returns the raw GL framebuffer name for femtovg's
     /// `set_screen_target`.
