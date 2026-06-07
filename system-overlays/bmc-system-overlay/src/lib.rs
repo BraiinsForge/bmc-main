@@ -3,16 +3,20 @@
 //! Framework for privileged system overlays rendered as wlr-layer-shell clients.
 
 mod gpu;
+mod hosted;
 mod overlay;
 mod standalone;
 mod surface;
 mod tree;
+mod validation;
 
 pub use gpu::{OverlayRenderTarget, wait_for_gpu};
+pub use hosted::HostedOverlay;
 pub use overlay::{InputRegion, LayerConfig, SystemOverlay, TickOutcome, TouchEvent};
 pub use standalone::run_standalone;
 pub use surface::LayerSurfaceClient;
 pub use tree::TreeUi;
+pub use validation::ValidationOverlay;
 
 // Re-export the layer-shell client enums so overlays can build a LayerConfig
 // without importing the protocol crate directly.
