@@ -49,6 +49,11 @@ Lifecycle state is derived by `WidgetTracker::lifecycle_states()` from:
 - the current drag offset, if a scene drag is active;
 - the `visible` flag on widgets inside each scene layout.
 
+Automatic scene cycling adds a pre-transition phase before slide motion. During that phase the compositor emits
+lifecycle changes first: outgoing widgets become `Leaving`, incoming widgets become `Entering`, and frame callbacks are
+held until the transition reaches a stable state or is cancelled. Neighbour preparation changes for the post-transition
+scene are emitted only after the transition commits.
+
 The derivation is pure scene state. It does not inspect GL state, Wayland buffers, widget runtime state, or whether a
 widget has already rendered.
 
