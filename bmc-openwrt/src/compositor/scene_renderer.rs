@@ -262,23 +262,15 @@ impl SceneRenderer {
 
         // Collect render items: (buffer_id, placement, x_offset)
         let mut to_render = Vec::new();
-        let drag_offset = widgets.drag_offset().unwrap_or(0);
 
-        // Active scene at drag offset (0 when not dragging)
-        collect_scene_widgets(widgets.active_scene(), buffers, drag_offset, &mut to_render);
-
-        // Neighbor scene during drag
-        if let Some(dx) = widgets.drag_offset() {
-            #[expect(clippy::cast_possible_wrap)]
+        let transition_offset = widgets.automatic_transition_active().then(|| {
+            #[expect(clippy::cast_possible_wrap, reason = "logical width fits in i32")]
             let logical_width = self.output.logical_size().0 as i32;
-            let neighbor_offset = if dx <= 0 {
-                dx + logical_width - self.seam_overlap_px
-            } else {
-                dx - logical_width + self.seam_overlap_px
-            };
-            if let Some(neighbor) = widgets.drag_neighbor_scene() {
-                collect_scene_widgets(neighbor, buffers, neighbor_offset, &mut to_render);
-            }
+            -logical_width
+        });
+
+        for rendered in widgets.rendered_scenes(transition_offset, self.seam_overlap_px) {
+            collect_scene_widgets(rendered.scene, buffers, rendered.x_offset, &mut to_render);
         }
 
         let buffer = self.buffers.back_buffer(&self.output)?;
