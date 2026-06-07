@@ -28,19 +28,19 @@
     },
     "bos_password": {
       "name": "BOS password",
-      "description": "Root password used to log into every BOS miner on the network",
+      "description": "Root password used to log into every BOS miner on the network. Stored as plain text and sent unencrypted over the local network (the miner APIs are HTTP-only).",
       "type": "string",
       "default_value": "root"
     },
     "ubos_username": {
       "name": "uBOS username",
-      "description": "User name used for HTTP Basic auth against every uBOS device on the network",
+      "description": "User name used for HTTP Basic auth against every uBOS device on the network. Stored as plain text and sent unencrypted over the local network (the device APIs are HTTP-only).",
       "type": "string",
       "default_value": "root"
     },
     "ubos_password": {
       "name": "uBOS password",
-      "description": "Password used for HTTP Basic auth against every uBOS device on the network",
+      "description": "Password used for HTTP Basic auth against every uBOS device on the network. Stored as plain text and sent unencrypted over the local network (the device APIs are HTTP-only).",
       "type": "string",
       "default_value": "root"
     },
