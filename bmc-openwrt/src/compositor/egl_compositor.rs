@@ -861,7 +861,11 @@ struct AppState {
 
 impl AppState {
     fn active_scene_cycle_duration(&self) -> Duration {
-        self.automatic_cycling.default_duration()
+        self.compositor
+            .widgets
+            .active_scene()
+            .cycle_duration
+            .unwrap_or(self.automatic_cycling.default_duration())
     }
 
     fn reevaluate_automatic_cycling(&mut self, now: Instant) {
@@ -1551,6 +1555,17 @@ fn handle_reset_scene_cycle_command(state: &mut AppState) {
     state.reset_automatic_waiting(Instant::now());
 }
 
+fn handle_set_scene_cycling_config_command(
+    state: &mut AppState,
+    config: bmc::compositor::SceneCycling,
+) {
+    tracing::debug!(?config, "updating scene cycling config");
+    state
+        .automatic_cycling
+        .set_config(SceneCyclingRuntimeConfig::from(config));
+    state.reevaluate_automatic_cycling(Instant::now());
+}
+
 fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
     match cmd {
         CompositorCommand::RegisterWidget {
@@ -1620,7 +1635,7 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             state.reset_automatic_waiting(Instant::now());
         }
         CompositorCommand::SetSceneCyclingConfig { config } => {
-            tracing::debug!(?config, "updating scene cycling config");
+            handle_set_scene_cycling_config_command(state, config);
         }
         CompositorCommand::ResetSceneCycle => handle_reset_scene_cycle_command(state),
         CompositorCommand::SetActiveSceneIndex { index } => {
@@ -1962,7 +1977,7 @@ mod tests {
         SceneCyclingRuntimeConfig,
     };
     use crate::compositor::widget_tracker::SceneTransitionTarget;
-    use bmc::compositor::{InstanceId, Position, SceneLayout, Size, WidgetPlacement};
+    use bmc::compositor::{InstanceId, Position, SceneCycling, SceneLayout, Size, WidgetPlacement};
     use bmc_widget_protocol::{ViewportShape, WidgetInitialConfig};
     use smithay::reexports::{
         calloop::EventLoop,
@@ -2044,6 +2059,7 @@ mod tests {
     fn test_scene(instance_id: &str) -> SceneLayout {
         SceneLayout {
             scene_id: None,
+            cycle_duration: None,
             widgets: vec![WidgetPlacement {
                 instance_id: instance_id.to_owned(),
                 position: Position { x: 0, y: 0 },
@@ -2053,6 +2069,13 @@ mod tests {
                 },
                 visible: true,
             }],
+        }
+    }
+
+    fn test_scene_with_cycle_duration(instance_id: &str, duration: Duration) -> SceneLayout {
+        SceneLayout {
+            cycle_duration: Some(duration),
+            ..test_scene(instance_id)
         }
     }
 
@@ -2191,6 +2214,36 @@ mod tests {
             state.automatic_cycling.phase(),
             AutomaticCyclingPhase::PausedDisabled { .. }
         ));
+    }
+
+    #[test]
+    fn set_scene_cycling_config_command_updates_automatic_duration() {
+        let mut state = make_app_state();
+        let duration = Duration::from_secs(7);
+
+        handle_command(
+            &mut state,
+            CompositorCommand::SetSceneCyclingConfig {
+                config: SceneCycling {
+                    automatic_cycling_default_duration: duration,
+                    ..SceneCycling::default()
+                },
+            },
+        );
+
+        assert_eq!(state.active_scene_cycle_duration(), duration);
+    }
+
+    #[test]
+    fn active_scene_cycle_duration_prefers_scene_duration() {
+        let mut state = make_app_state();
+        let duration = Duration::from_secs(5);
+        state.compositor.widgets.set_scene_cycling(vec![
+            test_scene_with_cycle_duration("a", duration),
+            test_scene("b"),
+        ]);
+
+        assert_eq!(state.active_scene_cycle_duration(), duration);
     }
 
     /// Records `send`/`release_buffers`/`flush` calls in order. `send`

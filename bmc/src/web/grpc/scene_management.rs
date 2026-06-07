@@ -1326,16 +1326,26 @@ impl GrpcSceneManagementService for SceneManagementService {
             ));
         }
 
-        let mut config = self.config_handle.write().await;
-        config.set_scene_cycling(SceneCycling {
+        let config_to_apply = SceneCycling {
             automatic_cycling_enabled: cycling.automatic_cycling_enabled,
             automatic_cycling_default_duration: std::time::Duration::from_secs(u64::from(
                 cycling.automatic_cycling_default_duration_sec,
             )),
             transition: parse_scene_cycling_transition(cycling.transition)?,
-        });
+        };
 
+        let mut config = self.config_handle.write().await;
+        config.set_scene_cycling(config_to_apply.clone());
         Self::save_config(&mut config).await?;
+        drop(config);
+
+        if let Err(err) = self
+            .coordinator
+            .compositor()
+            .set_scene_cycling_config(config_to_apply)
+        {
+            tracing::warn!(error = %err, "failed to apply scene cycling config");
+        }
 
         Ok(Response::new(()))
     }
@@ -1541,6 +1551,127 @@ impl GrpcSceneManagementService for SceneManagementService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct RecordingCompositor {
+        scene_cycling_configs: std::sync::Mutex<Vec<SceneCycling>>,
+    }
+
+    impl crate::compositor::Compositor for RecordingCompositor {
+        fn start(&self) -> Result<String, crate::compositor::CompositorError> {
+            Ok("test-display".to_owned())
+        }
+
+        fn wayland_display(&self) -> Option<String> {
+            Some("test-display".to_owned())
+        }
+
+        fn hardware_capabilities(&self) -> HardwareCapabilities {
+            bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100).capabilities()
+        }
+
+        fn register_widget(
+            &self,
+            _instance_id: crate::compositor::InstanceId,
+            _position: crate::compositor::Position,
+            _size: crate::compositor::Size,
+            _initial_config: bmc_widget_protocol::WidgetInitialConfig,
+        ) -> Result<(), crate::compositor::CompositorError> {
+            Ok(())
+        }
+
+        fn set_widget_pid(
+            &self,
+            _instance_id: &crate::compositor::InstanceId,
+            _pid: u32,
+        ) -> Result<(), crate::compositor::CompositorError> {
+            Ok(())
+        }
+
+        fn unregister_widget(
+            &self,
+            _instance_id: &crate::compositor::InstanceId,
+        ) -> Result<(), crate::compositor::CompositorError> {
+            Ok(())
+        }
+
+        fn clear_pid(
+            &self,
+            _instance_id: &crate::compositor::InstanceId,
+            _pid: u32,
+        ) -> Result<(), crate::compositor::CompositorError> {
+            Ok(())
+        }
+
+        fn set_active_scene(
+            &self,
+            _layout: crate::compositor::SceneLayout,
+        ) -> Result<(), crate::compositor::CompositorError> {
+            Ok(())
+        }
+
+        fn set_scene_cycling(
+            &self,
+            _scenes: Vec<crate::compositor::SceneLayout>,
+        ) -> Result<(), crate::compositor::CompositorError> {
+            Ok(())
+        }
+
+        fn set_scene_cycling_config(
+            &self,
+            config: SceneCycling,
+        ) -> Result<(), crate::compositor::CompositorError> {
+            self.scene_cycling_configs
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned")
+                .push(config);
+            Ok(())
+        }
+
+        fn reset_scene_cycle(&self) -> Result<(), crate::compositor::CompositorError> {
+            Ok(())
+        }
+
+        fn set_active_scene_index(
+            &self,
+            _index: usize,
+        ) -> Result<(), crate::compositor::CompositorError> {
+            Ok(())
+        }
+
+        fn broadcast_setting(
+            &self,
+            _setting: bmc_widget_protocol::SettingUpdate,
+        ) -> Result<(), crate::compositor::CompositorError> {
+            Ok(())
+        }
+
+        fn update_widget_params(
+            &self,
+            _instance_id: &crate::compositor::InstanceId,
+            _params: serde_json::Map<String, serde_json::Value>,
+        ) -> Result<(), crate::compositor::CompositorError> {
+            Ok(())
+        }
+
+        fn action_receiver(
+            &self,
+        ) -> tokio::sync::mpsc::UnboundedReceiver<crate::compositor::WidgetAction> {
+            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            rx
+        }
+
+        fn event_receiver(
+            &self,
+        ) -> tokio::sync::mpsc::UnboundedReceiver<crate::compositor::CompositorEvent> {
+            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            rx
+        }
+
+        fn shutdown(&self) -> Result<(), crate::compositor::CompositorError> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn reject_remove_widget_in_fullscreen_passes_for_combined() {
@@ -2465,6 +2596,66 @@ mod tests {
                 .expect("BUG: Fade must parse"),
             SceneCyclingTransition::Fade,
         );
+    }
+
+    #[tokio::test]
+    async fn set_scene_cycling_persists_and_applies_compositor_config() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
+        let config_path = tmp.path().join("bmc-config.json");
+        let config_handle = Arc::new(RwLock::new(
+            ConfigHandle::init(config_path, 50, 50, 50, 50).await,
+        ));
+        let widget_manager = crate::widget::WidgetManager::init(Vec::new()).await;
+        let widget_registry = widget_manager.registry();
+        let compositor = Arc::new(RecordingCompositor::default());
+        let compositor_for_coordinator: Arc<dyn crate::compositor::Compositor> = compositor.clone();
+        let capabilities = bmc100_caps(None);
+        let coordinator = Arc::new(Coordinator::new(
+            widget_manager,
+            compositor_for_coordinator,
+            Arc::clone(&widget_registry),
+            capabilities,
+        ));
+        let service = SceneManagementService::new(
+            widget_registry,
+            Arc::clone(&config_handle),
+            coordinator,
+            capabilities,
+        );
+
+        let request = web::SetSceneCyclingRequest {
+            scene_cycling: Some(web::SceneCycling {
+                automatic_cycling_enabled: false,
+                automatic_cycling_default_duration_sec: 12,
+                transition: web::SceneCyclingTransition::Slide.into(),
+            }),
+        };
+
+        service
+            .set_scene_cycling(Request::new(request))
+            .await
+            .expect("BUG: valid scene cycling request must be accepted");
+
+        let persisted = config_handle.read().await.scene_cycling();
+        assert!(!persisted.automatic_cycling_enabled);
+        assert_eq!(
+            persisted.automatic_cycling_default_duration,
+            Duration::from_secs(12),
+        );
+        assert_eq!(persisted.transition, SceneCyclingTransition::Slide);
+
+        let applied = compositor
+            .scene_cycling_configs
+            .lock()
+            .expect("BUG: recording compositor lock must not be poisoned");
+        assert_eq!(applied.len(), 1);
+        let applied = applied.first().expect("BUG: length asserted above");
+        assert!(!applied.automatic_cycling_enabled);
+        assert_eq!(
+            applied.automatic_cycling_default_duration,
+            Duration::from_secs(12),
+        );
+        assert_eq!(applied.transition, SceneCyclingTransition::Slide);
     }
 
     #[test]
