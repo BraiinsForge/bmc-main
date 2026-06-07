@@ -19,15 +19,19 @@
 #
 # The same fleet drives every declared size: `full`/`large` render the table,
 # while `medium`/`small` fall back to the summary-only layout (viewports below
-# the table's 638x480 box). The body is size-independent — the capture binary
-# sets the viewport — so one timeline serves all four fixtures.
+# the table's 638x480 box). `large`/`medium`/`small` share one static layout
+# timeline (the capture binary sets the viewport); `full` additionally replays
+# a device-lifecycle timeline (mid-flight removal, non-response) with several
+# captures — see the lifecycle section below.
 #
 # Browse ids are deterministic from `init()` registration order:
 # 1 = BOS, 2 = uBOS, 3 = Bitaxe. A family snapshots its device list when its
 # first device is discovered, so a family's later devices are only polled on
 # the next 30s pass; the capture is therefore taken after the second pass
 # (at_ms 31000) so every device has telemetry. The fetch interceptor replays
-# the last response for repeat polls, so one stub per URL suffices.
+# the last response for repeat polls, so one stub per URL suffices for the
+# layout sizes; `full` instead supplies a NerdQAxe++ stub per pass so survivor
+# telemetry changes between captures.
 #
 # Regenerate with:  python3 capture/fixtures.py   (run from the widget dir)
 # Then refresh baselines on a GPU host:  just wasm::update-baselines fleet-management
@@ -159,8 +163,8 @@ for i in range(10):
 bitaxe('10.0.0.40', 'axe-unknown._http._tcp.local.', 1500.0, 22.0, 50.0, {})
 
 
-def lines():
-    yield {
+def header():
+    return {
         'time': '2026-06-05T12:00:00+00:00',
         'initial_params': {
             'fleet_name': 'My Fleet',
@@ -177,25 +181,143 @@ def lines():
             'axeos_hosts': '[]',
         },
     }
+
+
+def seed_events(stubs):
     # The loader requires at_ms to be monotonically non-decreasing. Fetch stubs
-    # only seed the interceptor (their at_ms is never matched), so everything
-    # sits at at_ms 0 ahead of the single capture.
-    for event in fetches:
+    # only seed the interceptor (their at_ms is never matched), so they and the
+    # discovery events all sit at at_ms 0 ahead of the timed capture/removal.
+    for event in stubs:
         yield {'at_ms': 0, **event}
     for event in discovery:
         yield {'at_ms': 0, **event}
+
+
+def layout_lines():
+    yield header()
+    yield from seed_events(fetches)
     yield {'at_ms': CAPTURE_AT_MS, 'type': 'capture'}
+
+
+# ── Lifecycle timeline (the `full` fixture) ──────────────────────────
+#
+# `full` replays device-lifecycle edge cases the layout sizes do not. The only
+# capture assertion is a baseline pixel diff, so a stall is visible only if
+# surviving devices' telemetry CHANGES across passes: a healthy fleet renders
+# the new values, a stalled one renders the frozen old ones.
+#
+# Bitaxe is the no-auth family whose opening kick is a telemetry fetch — the
+# path stranded by a mid-pass removal. The NerdQAxe++ units report a value set
+# per pass (pass 2 = current values, so frame_0000 still matches the layout
+# baseline). Five captures walk one device through its whole lifecycle:
+#   frame_0000  initial fleet (all 11 Bitaxe present, pass-2 values)
+#   frame_0001  after `nerdqaxe-0` is removed mid-flight (survivors keep rising)
+#   frame_0002  after `nerdqaxe-1` goes non-responsive (HTTP 500)
+#   frame_0003  after `nerdqaxe-0` is re-discovered and polled afresh
+#   frame_0004  after `nerdqaxe-1` recovers (HTTP 200 again)
+
+NERDQAXE_HOSTS = [f'10.0.0.{30 + i}' for i in range(10)]
+NERDQAXE_MODEL = {'deviceModel': 'NerdQAxe++', 'ASICModel': 'BM1370', 'asicCount': 4}
+
+
+def bitaxe_stub(host, hashrate_ghs, power, temp, status=200):
+    body = {
+        'hashRate': hashrate_ghs,
+        'power': power,
+        'temp': temp,
+        'uptimeSeconds': 50_000,
+    }
+    body.update(NERDQAXE_MODEL)
+    return {
+        'type': 'fetch',
+        'method': 'GET',
+        'url': f'http://{host}:80/api/system/info',
+        'status': status,
+        'body': {'json': body},
+    }
+
+
+def nerdqaxe_sequence(host):
+    # One stub per poll; the host advances a per-URL counter on each fetch and
+    # clamps at the last stub. Pass-2 values equal the layout fixture's so
+    # frame_0000 stays byte-identical to the layout baseline; later passes raise
+    # the survivors to 5.5 TH/s so a stall would render the frozen old values.
+    pass2 = bitaxe_stub(host, 4400.0, 70.0, 55.0)
+    pass3 = bitaxe_stub(host, 5000.0, 75.0, 56.0)
+    steady = bitaxe_stub(host, 5500.0, 80.0, 57.0)
+    down = bitaxe_stub(host, 0.0, 0.0, 0.0, status=500)
+    if host == '10.0.0.30':
+        # Heads the cursor, so it is polled on pass 1 (snapshot-of-one) and
+        # again on pass 2 — hence the duplicated pass-2 stub. Removed before
+        # pass 3, then re-discovered and polled afresh on the reappear pass
+        # (frame_0003), where it rejoins the fleet at the steady value.
+        return [pass2, pass2, steady]
+    if host == '10.0.0.31':
+        # Non-responsive (HTTP 500) from pass 4 on; the rest of the fleet must
+        # keep updating around it. Still down at frame_0003, then recovers (200)
+        # on the next pass for frame_0004.
+        return [pass2, pass3, down, down, steady]
+    return [pass2, pass3, steady]
+
+
+def is_nerdqaxe(stub):
+    return any(stub['url'].startswith(f'http://{h}:80/') for h in NERDQAXE_HOSTS)
+
+
+# Reuse the BOS/uBOS/unknown-Bitaxe stubs verbatim; swap the ten NerdQAxe++
+# single stubs for their per-pass sequences.
+lifecycle_fetches = [s for s in fetches if not is_nerdqaxe(s)]
+for nerdqaxe_host in NERDQAXE_HOSTS:
+    lifecycle_fetches.extend(nerdqaxe_sequence(nerdqaxe_host))
+
+
+def lifecycle_lines():
+    yield header()
+    yield from seed_events(lifecycle_fetches)
+    yield {'at_ms': CAPTURE_AT_MS, 'type': 'capture'}  # frame_0000: initial fleet
+    yield {
+        'at_ms': 40_000,
+        'type': 'mdns_removed',
+        'browse_id': BROWSE_BITAXE,
+        'data': 'nerdqaxe-0._http._tcp.local.',
+    }
+    yield {'at_ms': 75_000, 'type': 'capture'}  # frame_0001: pass after the removal
+    yield {'at_ms': 105_000, 'type': 'capture'}  # frame_0002: pass after non-response
+    yield {
+        'at_ms': 110_000,
+        'type': 'mdns_found',
+        'browse_id': BROWSE_BITAXE,
+        'data': json.dumps(
+            {
+                'service_type': '_http._tcp.local.',
+                'name': 'nerdqaxe-0._http._tcp.local.',
+                'host': '10.0.0.30',
+                'port': 80,
+                'txt': {},
+            }
+        ),
+    }
+    yield {'at_ms': 135_000, 'type': 'capture'}  # frame_0003: nerdqaxe-0 re-discovered
+    yield {'at_ms': 165_000, 'type': 'capture'}  # frame_0004: nerdqaxe-1 recovered
 
 
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    body = ''.join(json.dumps(line) + '\n' for line in lines()).encode('utf-8')
-    # mtime=0 keeps the gzip byte-stable across regenerations.
-    sizes = ('full', 'large', 'medium', 'small')
-    for size in sizes:
+    # `full` carries the lifecycle timeline; the smaller sizes keep the static
+    # layout timeline. mtime=0 keeps the gzip byte-stable across regenerations.
+    bodies = {
+        'full': lifecycle_lines,
+        'large': layout_lines,
+        'medium': layout_lines,
+        'small': layout_lines,
+    }
+    for size, build in bodies.items():
+        body = ''.join(json.dumps(line) + '\n' for line in build()).encode('utf-8')
         with gzip.GzipFile(OUT_DIR / f'{size}.jsonl.gz', 'wb', mtime=0) as fh:
             fh.write(body)
-    print('wrote ' + ', '.join(f'{size}.jsonl.gz' for size in sizes) + f' in {OUT_DIR}')
+    print(
+        'wrote ' + ', '.join(f'{size}.jsonl.gz' for size in bodies) + f' in {OUT_DIR}'
+    )
 
 
 if __name__ == '__main__':
