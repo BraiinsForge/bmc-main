@@ -8,3 +8,11 @@ pub mod surface;
 pub mod wayland;
 
 pub use wayland::{WaylandError, WidgetEventHandler, WidgetProtocolClient};
+
+pub use poll::poll_dispatch;
+
+#[cfg(feature = "gpu")]
+pub use surface::common::{
+    BufferSlotMap, ReleasedBuffer, ReleasedBufferSet, create_buffer_from_dmabuf,
+    drain_released_buffer_slots, drain_released_buffers, submit_buffer_to_surface,
+};
