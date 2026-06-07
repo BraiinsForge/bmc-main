@@ -269,6 +269,7 @@ impl RenderLoopState {
                 }
                 WidgetEvent::Setting(_)
                 | WidgetEvent::Shutdown
+                | WidgetEvent::TransitionIncoming
                 | WidgetEvent::TouchDown { .. }
                 | WidgetEvent::TouchMotion { .. }
                 | WidgetEvent::TouchUp { .. }

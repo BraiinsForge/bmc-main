@@ -384,6 +384,12 @@ impl CompositorState {
         next
     }
 
+    pub fn latest_widget_generation(&self, instance_id: &InstanceId) -> Option<NonZeroU64> {
+        self.widget_frame_clocks
+            .get(instance_id)
+            .and_then(|state| state.latest_generation)
+    }
+
     fn queue_frame_callbacks(
         &mut self,
         callbacks: &mut Vec<WlCallback>,

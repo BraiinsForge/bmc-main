@@ -232,7 +232,7 @@
         emission immediately after the configure_done batch is always one
         of the idle states: 'dormant', 'prepared', or 'visible'. The
         transitional states 'entering' and 'leaving' only appear during
-        an active scene-cycle drag, never as a first event.
+        an active scene transition, never as a first event.
 
         Within a scene change the compositor emits a release batch
         (transitions into 'dormant') and flushes it, then emits the
@@ -258,6 +258,17 @@
       <description summary="request graceful shutdown">
         Sent when the widget should shut down gracefully.
         Widget should clean up and exit.
+      </description>
+    </event>
+
+    <event name="transition_incoming">
+      <description summary="automatic scene transition will show this widget soon">
+        Emitted during automatic scene cycling pre-transition for widgets
+        in the incoming scene. This is a one-shot warm-up instruction:
+        hosts should render one fresh frame if the widget is currently
+        renderable, but must not enable animation frame callbacks for
+        non-visible lifecycle states. Manual scene drags do not emit this
+        event; they are represented only by lifecycle changes.
       </description>
     </event>
 

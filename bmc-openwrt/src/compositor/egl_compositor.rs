@@ -15,7 +15,7 @@ use super::{
     scene_renderer::SceneRenderer,
     state::{ClientState, CompositorState, release_widget_buffers},
     touch_gesture::{GestureState, TouchGesture},
-    widget_tracker::LifecycleState,
+    widget_tracker::{LifecycleState, SceneTransitionTarget},
 };
 use bmc::compositor::{
     Compositor, CompositorError, CompositorEvent, InstanceId, Position, SceneLayout, Size,
@@ -45,7 +45,8 @@ use smithay::reexports::{
 };
 use smithay::utils::{Logical, Point};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
+    num::NonZeroU64,
     os::fd::AsFd,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock, Mutex},
@@ -80,6 +81,8 @@ const HEADLESS_REFRESH_MHZ: i32 = 60_000;
 /// In headless mode the same timer also synthesises vblank-like state
 /// transitions, since there is no DRM device to emit real ones.
 const FRAME_CALLBACK_TICK: Duration = Duration::from_millis(16);
+const TRANSITION_WARM_UP_RETRY: Duration = Duration::from_millis(16);
+const TRANSITION_WARM_UP_TIMEOUT: Duration = Duration::from_millis(300);
 
 /// Backoff ladder for post-startup touch-discovery retries.
 ///
@@ -415,6 +418,7 @@ impl EglCompositor {
                 Instant::now(),
                 SceneCyclingRuntimeConfig::default(),
             ),
+            pending_transition_warm_up: None,
             scene_cycling_timer_generation: 0,
         };
         app_state.reevaluate_automatic_cycling(Instant::now());
@@ -843,6 +847,7 @@ struct AppState {
     /// is done — avoiding a host/compositor render overlap across the handoff.
     pending_lifecycle_emission: bool,
     automatic_cycling: AutomaticCycling,
+    pending_transition_warm_up: Option<TransitionWarmUp>,
     scene_cycling_timer_generation: u64,
     /// Calloop handle, used to (re-)arm the touch-discovery retry timer
     /// from `schedule_touch_discovery_retry`.
@@ -909,6 +914,7 @@ impl AppState {
         }
 
         self.compositor.widgets.cancel_automatic_transition();
+        self.pending_transition_warm_up = None;
         self.compositor.mark_full_output_damage();
         let next = self.compositor.widgets.lifecycle_states();
         let mut lifecycle = self.compositor.lifecycle.clone();
@@ -921,15 +927,31 @@ impl AppState {
     }
 
     fn schedule_scene_cycling_timer(&mut self, now: Instant) {
-        self.scene_cycling_timer_generation = self.scene_cycling_timer_generation.saturating_add(1);
-        let generation = self.scene_cycling_timer_generation;
-        let Some(delay) = self
+        let delay = self
             .automatic_cycling
-            .next_delay(now, self.active_scene_cycle_duration())
-        else {
+            .next_delay(now, self.active_scene_cycle_duration());
+        self.rearm_scene_cycling_timer(delay);
+    }
+
+    /// Invalidate any pending scene-cycling timer (by bumping the
+    /// generation) and, when `delay` is `Some`, arm a fresh one. A `None`
+    /// delay leaves cycling idle — the generation bump alone drops the old
+    /// timer so a paused machine stops firing.
+    fn rearm_scene_cycling_timer(&mut self, delay: Option<Duration>) {
+        debug_assert_eq!(
+            self.compositor.widgets.automatic_transition_active(),
+            matches!(
+                self.automatic_cycling.phase(),
+                AutomaticCyclingPhase::PreTransition { .. }
+                    | AutomaticCyclingPhase::Transition { .. }
+            ),
+            "BUG: tracker transition and cycling phase disagree"
+        );
+        self.scene_cycling_timer_generation = self.scene_cycling_timer_generation.saturating_add(1);
+        let Some(delay) = delay else {
             return;
         };
-
+        let generation = self.scene_cycling_timer_generation;
         let timer = Timer::from_duration(delay);
         let result = self.loop_handle.insert_source(timer, move |_, (), state| {
             if state.scene_cycling_timer_generation != generation {
@@ -959,27 +981,41 @@ impl AppState {
             }
             AutomaticCyclingAction::BeginPreTransition => {
                 if let Some(target) = self.compositor.widgets.begin_automatic_transition_to_next() {
-                    self.automatic_cycling.enter_pre_transition(now, target);
+                    self.automatic_cycling.enter_pre_transition(now);
                     let emission = emit_lifecycle_transitions(self);
                     debug_assert!(
                         emission.releases.is_empty(),
                         "automatic pre-transition must not release dormant buffers before slide"
                     );
+                    self.pending_transition_warm_up =
+                        emit_transition_incoming_for_target(self, target, now);
                     self.schedule_scene_cycling_timer(now);
                 } else {
                     self.reset_automatic_waiting(now);
                 }
             }
             AutomaticCyclingAction::BeginTransition => {
-                if let AutomaticCyclingPhase::PreTransition { target, .. } =
-                    self.automatic_cycling.phase()
-                {
-                    self.automatic_cycling.enter_transition(now, target);
+                if matches!(
+                    self.automatic_cycling.phase(),
+                    AutomaticCyclingPhase::PreTransition { .. }
+                ) {
+                    if !transition_warm_up_ready(
+                        self.pending_transition_warm_up.as_ref(),
+                        now,
+                        |instance_id| self.compositor.latest_widget_generation(instance_id),
+                    ) {
+                        tracing::debug!("scene cycling transition waiting for warm-up render");
+                        self.rearm_scene_cycling_timer(Some(TRANSITION_WARM_UP_RETRY));
+                        return;
+                    }
+                    self.pending_transition_warm_up = None;
+                    self.automatic_cycling.enter_transition(now);
                     self.compositor.mark_full_output_damage();
                     self.schedule_scene_cycling_timer(now);
                 }
             }
             AutomaticCyclingAction::FinishTransition => {
+                self.pending_transition_warm_up = None;
                 self.compositor.widgets.finish_automatic_transition();
                 after_scene_change(self);
                 self.reset_automatic_waiting(now);
@@ -1373,6 +1409,7 @@ trait LifecycleSink {
     type ClientId: Clone + PartialEq;
     fn send(&mut self, instance_id: &InstanceId, state: LifecycleState) -> Option<Self::ClientId>;
     fn release_buffers(&mut self, instance_id: &InstanceId) -> Vec<Self::ClientId>;
+    fn send_transition_incoming(&mut self, instance_id: &InstanceId) -> Option<Self::ClientId>;
     fn flush(&mut self, client_id: &Self::ClientId);
 }
 
@@ -1390,6 +1427,9 @@ impl LifecycleSink for AppStateLifecycleSink<'_> {
     }
     fn release_buffers(&mut self, instance_id: &InstanceId) -> Vec<Self::ClientId> {
         release_widget_buffers(self.widget_buffers, self.invalidated_buffers, instance_id)
+    }
+    fn send_transition_incoming(&mut self, instance_id: &InstanceId) -> Option<Self::ClientId> {
+        self.deck_widget_state.send_transition_incoming(instance_id)
     }
     fn flush(&mut self, client_id: &Self::ClientId) {
         if let Err(e) = self.display.backend().flush(Some(client_id.clone())) {
@@ -1463,6 +1503,100 @@ fn send_lifecycle_batch<S: LifecycleSink>(
 
 fn flush_lifecycle_clients<S: LifecycleSink>(sink: &mut S, clients: &[S::ClientId]) {
     for client_id in clients {
+        sink.flush(client_id);
+    }
+}
+
+fn transition_incoming_widget_ids(scene: &SceneLayout) -> Vec<InstanceId> {
+    scene
+        .widgets
+        .iter()
+        .filter(|widget| widget.visible)
+        .map(|widget| widget.instance_id.clone())
+        .collect()
+}
+
+#[derive(Debug, Clone)]
+struct TransitionWarmUp {
+    started_at: Instant,
+    widgets: HashMap<InstanceId, Option<NonZeroU64>>,
+}
+
+/// Whether the slide may start: every incoming widget has committed a
+/// fresh frame since `transition_incoming` was sent.
+///
+/// Readiness requires the generation to *strictly* advance — a widget that
+/// honours the render request commits within a frame, so this resolves in
+/// ~16 ms. The `TRANSITION_WARM_UP_TIMEOUT` ceiling is the deliberate
+/// escape hatch for the pathological case (a crashed/respawning widget, or
+/// one that ignores the request and never produces a new generation): it
+/// keeps a single misbehaving widget from stalling scene cycling forever,
+/// at the cost of sliding it in with a stale frame.
+fn transition_warm_up_ready(
+    warm_up: Option<&TransitionWarmUp>,
+    now: Instant,
+    latest_generation: impl Fn(&InstanceId) -> Option<NonZeroU64>,
+) -> bool {
+    let Some(warm_up) = warm_up else {
+        return true;
+    };
+    if now.saturating_duration_since(warm_up.started_at) >= TRANSITION_WARM_UP_TIMEOUT {
+        return true;
+    }
+    warm_up.widgets.iter().all(|(instance_id, before)| {
+        latest_generation(instance_id).is_some_and(|current| Some(current) > *before)
+    })
+}
+
+fn emit_transition_incoming_for_target(
+    state: &mut AppState,
+    target: SceneTransitionTarget,
+    now: Instant,
+) -> Option<TransitionWarmUp> {
+    let instance_ids = state
+        .compositor
+        .widgets
+        .scene_at(target.to_index)
+        .map(transition_incoming_widget_ids)
+        .unwrap_or_default();
+    if instance_ids.is_empty() {
+        return None;
+    }
+
+    let widgets = instance_ids
+        .iter()
+        .map(|instance_id| {
+            (
+                instance_id.clone(),
+                state.compositor.latest_widget_generation(instance_id),
+            )
+        })
+        .collect();
+
+    let mut sink = AppStateLifecycleSink {
+        deck_widget_state: &mut state.compositor.deck_widget_state,
+        display: &mut state.display,
+        widget_buffers: &mut state.compositor.widget_buffers,
+        invalidated_buffers: &mut state.compositor.invalidated_buffers,
+    };
+    emit_transition_incoming_batch(&instance_ids, &mut sink);
+    Some(TransitionWarmUp {
+        started_at: now,
+        widgets,
+    })
+}
+
+fn emit_transition_incoming_batch<S: LifecycleSink>(instance_ids: &[InstanceId], sink: &mut S) {
+    let mut clients: Vec<S::ClientId> = Vec::new();
+    for instance_id in instance_ids {
+        tracing::debug!("transition_incoming: {instance_id}");
+        if let Some(client_id) = sink.send_transition_incoming(instance_id)
+            && !clients.contains(&client_id)
+        {
+            clients.push(client_id);
+        }
+    }
+    for client_id in &clients {
         sink.flush(client_id);
     }
 }
@@ -1956,16 +2090,16 @@ impl Compositor for EglCompositor {
 mod tests {
     use super::{
         AppState, CompositorState, Emission, GestureState, LibinputInputBackend, LifecycleSink,
-        LifecycleState, RedrawState, TouchSlot, clamp_initial_lifecycle, dispatch_timeout,
-        emit_lifecycle_batches, emit_lifecycle_transitions, handle_clear_pid_command,
-        handle_command,
+        LifecycleState, RedrawState, TRANSITION_WARM_UP_TIMEOUT, TouchSlot, TransitionWarmUp,
+        clamp_initial_lifecycle, dispatch_timeout, emit_lifecycle_batches,
+        emit_lifecycle_transitions, emit_transition_incoming_batch, handle_clear_pid_command,
+        handle_command, transition_incoming_widget_ids, transition_warm_up_ready,
     };
     use crate::compositor::CompositorCommand;
     use crate::compositor::scene_cycling::{
         AUTOMATIC_TRANSITION_DURATION, AutomaticCycling, AutomaticCyclingPhase,
         SceneCyclingRuntimeConfig,
     };
-    use crate::compositor::widget_tracker::SceneTransitionTarget;
     use bmc::compositor::{InstanceId, Position, SceneCycling, SceneLayout, Size, WidgetPlacement};
     use bmc_widget_protocol::{ViewportShape, WidgetInitialConfig};
     use smithay::reexports::{
@@ -2036,8 +2170,13 @@ mod tests {
                 Instant::now(),
                 SceneCyclingRuntimeConfig::default(),
             ),
+            pending_transition_warm_up: None,
             scene_cycling_timer_generation: 0,
         }
+    }
+
+    fn gen_nz(n: u64) -> std::num::NonZeroU64 {
+        std::num::NonZeroU64::new(n).expect("BUG: test generation must be non-zero")
     }
 
     fn lifecycle_map(
@@ -2252,15 +2391,18 @@ mod tests {
     #[test]
     fn automatic_transition_timer_tick_marks_output_damage() {
         let mut state = make_app_state();
+        state
+            .compositor
+            .widgets
+            .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
         state.compositor.clear_output_damage();
         let now = Instant::now();
-        state.automatic_cycling.enter_transition(
-            now,
-            SceneTransitionTarget {
-                from_index: 0,
-                to_index: 1,
-            },
-        );
+        state
+            .compositor
+            .widgets
+            .begin_automatic_transition_to_next()
+            .expect("BUG: two scenes should have an automatic transition target");
+        state.automatic_cycling.enter_transition(now);
 
         state.on_scene_cycling_timer(now + Duration::from_millis(16));
 
@@ -2275,12 +2417,12 @@ mod tests {
             .widgets
             .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
         let now = Instant::now();
-        let target = state
+        state
             .compositor
             .widgets
             .begin_automatic_transition_to_next()
             .expect("BUG: two scenes should have an automatic transition target");
-        state.automatic_cycling.enter_transition(now, target);
+        state.automatic_cycling.enter_transition(now);
         state.compositor.clear_output_damage();
 
         state.on_scene_cycling_timer(now + AUTOMATIC_TRANSITION_DURATION);
@@ -2296,14 +2438,12 @@ mod tests {
             .compositor
             .widgets
             .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
-        let target = state
+        state
             .compositor
             .widgets
             .begin_automatic_transition_to_next()
             .expect("BUG: two scenes should have an automatic transition target");
-        state
-            .automatic_cycling
-            .enter_pre_transition(Instant::now(), target);
+        state.automatic_cycling.enter_pre_transition(Instant::now());
         let _ = emit_lifecycle_transitions(&mut state);
         state.compositor.clear_output_damage();
 
@@ -2330,14 +2470,12 @@ mod tests {
             test_scene("c"),
             test_scene("d"),
         ]);
-        let target = state
+        state
             .compositor
             .widgets
             .begin_automatic_transition_to_next()
             .expect("BUG: four scenes should have an automatic transition target");
-        state
-            .automatic_cycling
-            .enter_pre_transition(Instant::now(), target);
+        state.automatic_cycling.enter_pre_transition(Instant::now());
         let _ = emit_lifecycle_transitions(&mut state);
         state.compositor.clear_output_damage();
 
@@ -2363,14 +2501,12 @@ mod tests {
             .compositor
             .widgets
             .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
-        let target = state
+        state
             .compositor
             .widgets
             .begin_automatic_transition_to_next()
             .expect("BUG: two scenes should have an automatic transition target");
-        state
-            .automatic_cycling
-            .enter_pre_transition(Instant::now(), target);
+        state.automatic_cycling.enter_pre_transition(Instant::now());
 
         handle_command(
             &mut state,
@@ -2393,14 +2529,12 @@ mod tests {
             .compositor
             .widgets
             .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
-        let target = state
+        state
             .compositor
             .widgets
             .begin_automatic_transition_to_next()
             .expect("BUG: two scenes should have an automatic transition target");
-        state
-            .automatic_cycling
-            .enter_pre_transition(Instant::now(), target);
+        state.automatic_cycling.enter_pre_transition(Instant::now());
 
         handle_command(
             &mut state,
@@ -2459,6 +2593,7 @@ mod tests {
     enum RecordedEvent {
         Send(InstanceId, LifecycleState),
         ReleaseBuffers(InstanceId),
+        TransitionIncoming(InstanceId),
         Flush(String),
     }
 
@@ -2477,6 +2612,11 @@ mod tests {
             self.events
                 .push(RecordedEvent::ReleaseBuffers(instance_id.clone()));
             vec![format!("client-{instance_id}")]
+        }
+        fn send_transition_incoming(&mut self, instance_id: &InstanceId) -> Option<Self::ClientId> {
+            self.events
+                .push(RecordedEvent::TransitionIncoming(instance_id.clone()));
+            Some(format!("client-{instance_id}"))
         }
         fn flush(&mut self, client_id: &Self::ClientId) {
             self.events.push(RecordedEvent::Flush(client_id.clone()));
@@ -2542,6 +2682,93 @@ mod tests {
     }
 
     #[test]
+    fn transition_incoming_batch_sends_then_flushes_affected_clients() {
+        let mut sink = RecordingSink::default();
+        emit_transition_incoming_batch(&[String::from("a"), String::from("b")], &mut sink);
+
+        assert_eq!(
+            sink.events,
+            vec![
+                RecordedEvent::TransitionIncoming(String::from("a")),
+                RecordedEvent::TransitionIncoming(String::from("b")),
+                RecordedEvent::Flush(String::from("client-a")),
+                RecordedEvent::Flush(String::from("client-b")),
+            ],
+        );
+    }
+
+    #[test]
+    fn transition_incoming_widget_ids_include_only_visible_widgets() {
+        let scene = SceneLayout {
+            scene_id: None,
+            cycle_duration: None,
+            widgets: vec![
+                WidgetPlacement {
+                    instance_id: String::from("visible"),
+                    position: Position { x: 0, y: 0 },
+                    size: Size {
+                        width: 480,
+                        height: 1280,
+                    },
+                    visible: true,
+                },
+                WidgetPlacement {
+                    instance_id: String::from("hidden"),
+                    position: Position { x: 0, y: 0 },
+                    size: Size {
+                        width: 480,
+                        height: 1280,
+                    },
+                    visible: false,
+                },
+            ],
+        };
+
+        assert_eq!(
+            transition_incoming_widget_ids(&scene),
+            vec![String::from("visible")]
+        );
+    }
+
+    #[test]
+    fn transition_warm_up_waits_for_target_widget_commit() {
+        let started_at = Instant::now();
+        let warm_up = TransitionWarmUp {
+            started_at,
+            widgets: HashMap::from([(String::from("incoming"), Some(gen_nz(7)))]),
+        };
+
+        assert!(!transition_warm_up_ready(
+            Some(&warm_up),
+            started_at + Duration::from_millis(100),
+            |id| {
+                assert_eq!(id, "incoming");
+                Some(gen_nz(7))
+            },
+        ));
+        assert!(transition_warm_up_ready(
+            Some(&warm_up),
+            started_at + Duration::from_millis(100),
+            |_| Some(gen_nz(8)),
+        ));
+    }
+
+    #[test]
+    fn transition_warm_up_timeout_prevents_stalled_cycle() {
+        let started_at = Instant::now();
+        let warm_up = TransitionWarmUp {
+            started_at,
+            widgets: HashMap::from([(String::from("incoming"), Some(gen_nz(7)))]),
+        };
+
+        assert!(transition_warm_up_ready(
+            Some(&warm_up),
+            started_at + TRANSITION_WARM_UP_TIMEOUT,
+            |_| Some(gen_nz(7)),
+        ));
+    }
+
+    #[test]
     fn same_client_across_release_and_acquire_is_flushed_in_each_batch() {
         // A widget that releases (Visible -> Dormant) and a different
         // widget that acquires (Dormant -> Visible) on the same client
@@ -2565,6 +2792,14 @@ mod tests {
                 self.events
                     .push(RecordedEvent::ReleaseBuffers(instance_id.clone()));
                 vec![String::from("shared-client")]
+            }
+            fn send_transition_incoming(
+                &mut self,
+                instance_id: &InstanceId,
+            ) -> Option<Self::ClientId> {
+                self.events
+                    .push(RecordedEvent::TransitionIncoming(instance_id.clone()));
+                Some(String::from("shared-client"))
             }
             fn flush(&mut self, client_id: &Self::ClientId) {
                 self.events.push(RecordedEvent::Flush(client_id.clone()));
@@ -2626,6 +2861,14 @@ mod tests {
                 self.events
                     .push(RecordedEvent::ReleaseBuffers(instance_id.clone()));
                 vec![String::from("buffer-client")]
+            }
+            fn send_transition_incoming(
+                &mut self,
+                instance_id: &InstanceId,
+            ) -> Option<Self::ClientId> {
+                self.events
+                    .push(RecordedEvent::TransitionIncoming(instance_id.clone()));
+                None
             }
             fn flush(&mut self, client_id: &Self::ClientId) {
                 self.events.push(RecordedEvent::Flush(client_id.clone()));

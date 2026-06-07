@@ -52,7 +52,8 @@ Lifecycle state is derived by `WidgetTracker::lifecycle_states()` from:
 Automatic scene cycling adds a pre-transition phase before slide motion. During that phase the compositor emits
 lifecycle changes first: outgoing widgets become `Leaving`, incoming widgets become `Entering`, and frame callbacks are
 held until the transition reaches a stable state or is cancelled. Neighbour preparation changes for the post-transition
-scene are emitted only after the transition commits.
+scene are emitted only after the transition commits. The incoming widgets also receive `transition_incoming`, a one-shot
+render warm-up event that is not emitted for manual drags.
 
 The derivation is pure scene state. It does not inspect GL state, Wayland buffers, widget runtime state, or whether a
 widget has already rendered.
@@ -163,6 +164,17 @@ before a drag; see [`wasm-host/render-loop.md`](wasm-host/render-loop.md).
 The emitter sorts entries inside each batch for deterministic behavior, but widget clients should not depend on
 inter-widget ordering inside a batch. The externally relevant guarantee is release batch before acquire batch, with a
 flush boundary between them.
+
+## Transition Warm-Up
+
+Automatic scene cycling sends `transition_incoming` to visible widgets in the incoming scene during the pre-transition
+phase, after the lifecycle acquire batch has made those widgets `Entering`. The event tells hosts to render one fresh
+frame before slide motion starts. The compositor waits for that fresh commit before starting slide motion, bounded by a
+short timeout so a stalled widget cannot stop scene cycling. The event does not enable frame callbacks and does not
+change lifecycle state.
+
+Manual drags do not send `transition_incoming`. Dragging still uses lifecycle `Entering`/`Leaving`, but hosts must not
+start animation or warm-up renders merely because a user is dragging through a scene.
 
 ## Valid Transitions
 
