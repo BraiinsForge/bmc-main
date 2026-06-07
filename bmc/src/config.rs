@@ -210,7 +210,20 @@ impl Config {
     }
 
     fn validate(&self) -> Result<()> {
-        self.validate_scenes()
+        self.validate_scenes()?;
+        self.validate_scene_cycling()
+    }
+
+    fn validate_scene_cycling(&self) -> Result<()> {
+        let duration = self.scene_cycling().automatic_cycling_default_duration;
+        if duration < Scene::MIN_CYCLE_DURATION {
+            bail!(
+                "Automatic scene cycling default duration {duration:?} is shorter than the \
+                 minimum {:?}",
+                Scene::MIN_CYCLE_DURATION
+            );
+        }
+        Ok(())
     }
 
     fn validate_scenes(&self) -> Result<()> {
@@ -705,6 +718,32 @@ fn params_map(entries: &[(&str, ParamValue)]) -> Result<BTreeMap<ParamKey, Param
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bmc100_platform_default_constructs_without_panic() {
+        let _ = Config::platform_default(bmc_platform::Product::Bmc100);
+    }
+
+    #[test]
+    fn validate_accepts_default_scene_cycling() {
+        let config = Config::platform_default(bmc_platform::Product::Bmc100);
+        config
+            .validate()
+            .expect("BUG: default scene cycling must validate");
+    }
+
+    #[test]
+    fn validate_rejects_too_short_automatic_cycling_default_duration() {
+        let mut config = Config::platform_default(bmc_platform::Product::Bmc100);
+        config.set_scene_cycling(SceneCycling {
+            automatic_cycling_default_duration: std::time::Duration::ZERO,
+            ..SceneCycling::default()
+        });
+        assert!(
+            config.validate().is_err(),
+            "a sub-minimum global cycle duration must be rejected on load"
+        );
+    }
 
     /// Tempfile-backed `ConfigHandle` for notification tests.
     async fn fresh_handle() -> (tempfile::TempDir, ConfigHandle) {

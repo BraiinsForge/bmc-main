@@ -1041,17 +1041,19 @@ impl GrpcSceneManagementService for SceneManagementService {
                 .get_mut(&scene_id_key)
                 .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
 
-            if req.cycle_duration_sec == Some(0) {
-                return Err(Status::invalid_argument(
-                    "cycle_duration_sec must be >= 1 when set",
-                ));
+            let cycle_duration = req
+                .cycle_duration_sec
+                .map(|s| Duration::from_secs(u64::from(s)));
+            if cycle_duration.is_some_and(|duration| duration < scene::Scene::MIN_CYCLE_DURATION) {
+                return Err(Status::invalid_argument(format!(
+                    "cycle_duration is shorter than the minimum {:?}",
+                    scene::Scene::MIN_CYCLE_DURATION,
+                )));
             }
 
             was_enabled = scene.enabled;
             scene.enabled = req.enabled;
-            scene.cycle_duration = req
-                .cycle_duration_sec
-                .map(|s| std::time::Duration::from_secs(u64::from(s)));
+            scene.cycle_duration = cycle_duration;
 
             Self::save_config(&mut config).await?;
         }
@@ -1325,17 +1327,18 @@ impl GrpcSceneManagementService for SceneManagementService {
             .scene_cycling
             .ok_or_else(|| Status::invalid_argument("scene_cycling is required"))?;
 
-        if cycling.automatic_cycling_default_duration_sec == 0 {
-            return Err(Status::invalid_argument(
-                "automatic_cycling_default_duration_sec must be >= 1",
-            ));
+        let default_duration =
+            Duration::from_secs(u64::from(cycling.automatic_cycling_default_duration_sec));
+        if default_duration < scene::Scene::MIN_CYCLE_DURATION {
+            return Err(Status::invalid_argument(format!(
+                "automatic_cycling_default_duration is shorter than the minimum {:?}",
+                scene::Scene::MIN_CYCLE_DURATION,
+            )));
         }
 
         let config_to_apply = SceneCycling {
             automatic_cycling_enabled: cycling.automatic_cycling_enabled,
-            automatic_cycling_default_duration: std::time::Duration::from_secs(u64::from(
-                cycling.automatic_cycling_default_duration_sec,
-            )),
+            automatic_cycling_default_duration: default_duration,
             transition: parse_scene_cycling_transition(cycling.transition)?,
         };
 
@@ -2606,7 +2609,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
         let config_path = tmp.path().join("bmc-config.json");
         let config_handle = Arc::new(RwLock::new(
-            ConfigHandle::init(config_path, 50, 50, 50, 50).await,
+            ConfigHandle::init(config_path, 50, 50, 50, 50, bmc_platform::Product::Bmc100).await,
         ));
         let widget_manager = crate::widget::WidgetManager::init(Vec::new(), false).await;
         let widget_registry = widget_manager.registry();
@@ -2662,6 +2665,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn set_scene_cycling_rejects_duration_below_minimum() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
+        let config_path = tmp.path().join("bmc-config.json");
+        let config_handle = Arc::new(RwLock::new(
+            ConfigHandle::init(config_path, 50, 50, 50, 50, bmc_platform::Product::Bmc100).await,
+        ));
+        let widget_manager = crate::widget::WidgetManager::init(Vec::new(), false).await;
+        let widget_registry = widget_manager.registry();
+        let compositor = Arc::new(RecordingCompositor::default());
+        let compositor_for_coordinator: Arc<dyn crate::compositor::Compositor> = compositor.clone();
+        let capabilities = bmc100_caps(None);
+        let coordinator = Arc::new(Coordinator::new(
+            widget_manager,
+            compositor_for_coordinator,
+            Arc::clone(&widget_registry),
+            capabilities,
+        ));
+        let service = SceneManagementService::new(
+            widget_registry,
+            Arc::clone(&config_handle),
+            coordinator,
+            capabilities,
+        );
+
+        let below_minimum =
+            u32::try_from((scene::Scene::MIN_CYCLE_DURATION.as_secs()).saturating_sub(1))
+                .expect("BUG: minimum cycle duration fits in u32");
+        let status = service
+            .set_scene_cycling(Request::new(web::SetSceneCyclingRequest {
+                scene_cycling: Some(web::SceneCycling {
+                    automatic_cycling_enabled: true,
+                    automatic_cycling_default_duration_sec: below_minimum,
+                    transition: web::SceneCyclingTransition::Slide.into(),
+                }),
+            }))
+            .await
+            .expect_err("BUG: sub-minimum duration must be rejected");
+        assert_eq!(status.code(), Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn update_scene_rejects_cycle_duration_below_minimum() {
+        let widget_type_id = uuid::Uuid::new_v4();
+        let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
+        let config_path = tmp.path().join("bmc-config.json");
+        let config_handle = Arc::new(RwLock::new(
+            ConfigHandle::init(config_path, 50, 50, 50, 50, bmc_platform::Product::Bmc100).await,
+        ));
+        let scene = scene::Scene::fullscreen(widget_type_id, BTreeMap::new());
+        let scene_id = scene.id;
+        {
+            let mut config = config_handle.write().await;
+            config.scenes.clear();
+            config.scenes.insert(scene.id, scene);
+        }
+
+        let widget_manager = crate::widget::WidgetManager::init(Vec::new(), false).await;
+        let widget_registry = widget_manager.registry();
+        let compositor = Arc::new(RecordingCompositor::default());
+        let compositor_for_coordinator: Arc<dyn crate::compositor::Compositor> = compositor.clone();
+        let capabilities = bmc100_caps(None);
+        let coordinator = Arc::new(Coordinator::new(
+            widget_manager,
+            compositor_for_coordinator,
+            Arc::clone(&widget_registry),
+            capabilities,
+        ));
+        let service = SceneManagementService::new(
+            widget_registry,
+            Arc::clone(&config_handle),
+            coordinator,
+            capabilities,
+        );
+
+        let below_minimum =
+            u32::try_from((scene::Scene::MIN_CYCLE_DURATION.as_secs()).saturating_sub(1))
+                .expect("BUG: minimum cycle duration fits in u32");
+        let status = service
+            .update_scene(Request::new(web::UpdateSceneRequest {
+                id: scene_id.to_string(),
+                enabled: true,
+                cycle_duration_sec: Some(below_minimum),
+            }))
+            .await
+            .expect_err("BUG: sub-minimum cycle duration must be rejected");
+        assert_eq!(status.code(), Code::InvalidArgument);
+    }
+
+    #[tokio::test]
     async fn refresh_compositor_scenes_pins_single_scene_during_preview() {
         let widget_type_id = uuid::Uuid::new_v4();
         let manifest = bmc_widget_manifest::Manifest {
@@ -2692,7 +2784,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
         let config_path = tmp.path().join("bmc-config.json");
         let config_handle = Arc::new(RwLock::new(
-            ConfigHandle::init(config_path, 50, 50, 50, 50).await,
+            ConfigHandle::init(config_path, 50, 50, 50, 50, bmc_platform::Product::Bmc100).await,
         ));
 
         // Two enabled, supported scenes — without a preview both must cycle.
