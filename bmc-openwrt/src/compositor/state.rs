@@ -433,10 +433,53 @@ impl CompositorState {
             }));
     }
 
-    /// Hit-test a point against visible widgets in the active scene.
-    /// Returns the render surface and its origin in logical coords if a widget is under the point.
+    /// Hit-test a point against mapped layer surfaces (topmost painted first,
+    /// honoring the input region) and then visible widgets in the active scene.
+    /// Returns the surface and its origin in logical coords if one is hit.
     #[must_use]
     pub fn touch_focus_at(&self, x: f64, y: f64) -> Option<(WlSurface, Point<f64, Logical>)> {
+        use crate::compositor::layer_surface::{layer_rank, paint_order};
+
+        // Layer pass: topmost painted surface that is mapped, contains the
+        // point, and accepts input at that point.
+        let mapped: Vec<&crate::compositor::layer_surface::LayerEntry> = self
+            .layer_surfaces
+            .iter()
+            .filter(|e| e.is_mapped())
+            .collect();
+        let ranks: Vec<u8> = mapped.iter().map(|e| layer_rank(e.layer)).collect();
+        for &i in paint_order(&ranks).iter().rev() {
+            let entry = mapped[i];
+            let Some(g) = entry.last_geometry else {
+                continue;
+            };
+            let gx = f64::from(g.loc.x);
+            let gy = f64::from(g.loc.y);
+            let gw = f64::from(g.size.w);
+            let gh = f64::from(g.size.h);
+            if !(x >= gx && x < gx + gw && y >= gy && y < gy + gh) {
+                continue;
+            }
+            let surface = entry.surface.wl_surface();
+            if !surface.is_alive() {
+                continue;
+            }
+            // Honor the surface input region: None means whole surface accepts
+            // input; an explicit region must contain the surface-local point.
+            let local = Point::<f64, Logical>::from((x - gx, y - gy));
+            let accepts = with_states(surface, |states| {
+                let mut guard = states.cached_state.get::<SurfaceAttributes>();
+                match &guard.current().input_region {
+                    None => true,
+                    Some(region) => region.contains(local.to_i32_round()),
+                }
+            });
+            if accepts {
+                return Some((surface.clone(), Point::from((gx, gy))));
+            }
+            // Region rejects: continue to the next layer surface, then widgets if none match.
+        }
+
         let scene = self.widgets.active_scene();
 
         for widget in &scene.widgets {
@@ -689,6 +732,23 @@ impl CompositorState {
                 Some((e.buffer.clone()?, e.last_geometry?))
             })
             .collect()
+    }
+
+    /// True when a mapped overlay-layer surface covers the whole output. While
+    /// such an overlay is up, scene-drag is suppressed and scene-swipe
+    /// neighbors are demoted from `Prepared` to `Dormant`.
+    #[must_use]
+    pub fn fullscreen_overlay_active(&self) -> bool {
+        use crate::compositor::layer_surface::is_fullscreen_overlay;
+        let output = Size::from((
+            i32::try_from(self.width).expect("BUG: logical display width fits i32"),
+            i32::try_from(self.height).expect("BUG: logical display height fits i32"),
+        ));
+        self.layer_surfaces.iter().any(|e| {
+            e.is_mapped()
+                && e.last_geometry
+                    .is_some_and(|g| is_fullscreen_overlay(e.layer, g, output))
+        })
     }
 
     /// Handle a commit for a tracked layer surface. Returns `true` if `surface`
