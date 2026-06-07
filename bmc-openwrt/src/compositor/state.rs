@@ -9,6 +9,7 @@ use super::protocol::{
     DeckWidgetHandler, DeckWidgetProtocolState, WidgetManagerUserData, WidgetSurfaceUserData,
 };
 use super::widget_tracker::{LifecycleState, WidgetTracker};
+use crate::compositor::layer_surface::{LayerEntry, replace_buffer};
 use bmc::compositor::InstanceId;
 use bmc_widget_protocol::server::{
     deck_widget_manager_v1::DeckWidgetManagerV1, deck_widget_surface_v1::DeckWidgetSurfaceV1,
@@ -16,8 +17,8 @@ use bmc_widget_protocol::server::{
 use smithay::{
     backend::allocator::{Buffer, Format, Fourcc, Modifier, dmabuf::Dmabuf},
     delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_image_capture_source,
-    delegate_image_copy_capture, delegate_output, delegate_output_capture_source, delegate_seat,
-    delegate_shm, delegate_xdg_shell,
+    delegate_image_copy_capture, delegate_layer_shell, delegate_output,
+    delegate_output_capture_source, delegate_seat, delegate_shm, delegate_xdg_shell,
     input::{Seat, SeatHandler, SeatState, pointer::CursorImageStatus, touch::TouchHandle},
     output::{Mode as OutputMode, Output, PhysicalProperties, Subpixel},
     reexports::wayland_server::{
@@ -49,8 +50,9 @@ use smithay::{
             SelectionHandler,
             data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler},
         },
-        shell::xdg::{
-            PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
+        shell::{
+            wlr_layer::{Layer, LayerSurface, WlrLayerShellHandler, WlrLayerShellState},
+            xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState},
         },
         shm::{ShmHandler, ShmState},
     },
@@ -134,6 +136,9 @@ pub struct CompositorState {
     pub dmabuf_state: DmabufState,
     _dmabuf_global: DmabufGlobal,
     pub xdg_shell_state: XdgShellState,
+    pub layer_shell_state: WlrLayerShellState,
+    /// Tracked wlr-layer-shell surfaces, drawn above the scene.
+    pub layer_surfaces: Vec<crate::compositor::layer_surface::LayerEntry>,
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
     pub deck_widget_state: DeckWidgetProtocolState,
@@ -302,6 +307,7 @@ impl CompositorState {
         let dmabuf_global = dmabuf_state.create_global::<Self>(&display_handle, dmabuf_formats);
 
         let xdg_shell_state = XdgShellState::new::<Self>(&display_handle);
+        let layer_shell_state = WlrLayerShellState::new::<Self>(&display_handle);
         let mut seat_state = SeatState::new();
         let data_device_state = DataDeviceState::new::<Self>(&display_handle);
 
@@ -341,6 +347,8 @@ impl CompositorState {
             dmabuf_state,
             _dmabuf_global: dmabuf_global,
             xdg_shell_state,
+            layer_shell_state,
+            layer_surfaces: Vec::new(),
             seat_state,
             data_device_state,
             deck_widget_state,
@@ -881,6 +889,43 @@ impl XdgShellHandler for CompositorState {
     fn reposition_request(&mut self, _: PopupSurface, _: PositionerState, _: u32) {}
 }
 
+impl WlrLayerShellHandler for CompositorState {
+    fn shell_state(&mut self) -> &mut WlrLayerShellState {
+        &mut self.layer_shell_state
+    }
+
+    fn new_layer_surface(
+        &mut self,
+        surface: LayerSurface,
+        _output: Option<smithay::reexports::wayland_server::protocol::wl_output::WlOutput>,
+        layer: Layer,
+        _namespace: String,
+    ) {
+        self.layer_surfaces.push(LayerEntry::new(surface, layer));
+        self.mark_full_output_damage();
+    }
+
+    fn layer_destroyed(&mut self, surface: LayerSurface) {
+        if let Some(pos) = self
+            .layer_surfaces
+            .iter()
+            .position(|e| e.surface.wl_surface() == surface.wl_surface())
+        {
+            let mut entry = self.layer_surfaces.remove(pos);
+            let (old_buf, old_id) = replace_buffer(&mut entry.buffer, &mut entry.buffer_id, None);
+            if let Some(buf) = old_buf {
+                buf.release();
+            }
+            if let Some(id) = old_id {
+                self.invalidated_buffers.push(id);
+            }
+            self.mark_full_output_damage();
+        } else {
+            tracing::warn!("layer_destroyed for untracked surface");
+        }
+    }
+}
+
 // ---- Image capture protocol handlers ----
 
 impl OutputHandler for CompositorState {
@@ -999,6 +1044,7 @@ delegate_shm!(self::CompositorState);
 delegate_dmabuf!(self::CompositorState);
 delegate_seat!(self::CompositorState);
 delegate_xdg_shell!(self::CompositorState);
+delegate_layer_shell!(self::CompositorState);
 delegate_data_device!(self::CompositorState);
 delegate_output!(self::CompositorState);
 delegate_image_capture_source!(self::CompositorState);
