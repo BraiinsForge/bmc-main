@@ -89,6 +89,30 @@ pub fn paint_order(ranks: &[u8]) -> Vec<usize> {
     idx
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayerCommitEffects {
+    pub geometry_changed: bool,
+    pub layer_changed: bool,
+    pub needs_damage: bool,
+}
+
+#[must_use]
+pub fn layer_commit_effects(
+    mapped: bool,
+    old_layer: Layer,
+    old_geometry: Option<Rectangle<i32, Logical>>,
+    new_layer: Layer,
+    new_geometry: Rectangle<i32, Logical>,
+) -> LayerCommitEffects {
+    let geometry_changed = mapped && old_geometry != Some(new_geometry);
+    let layer_changed = mapped && old_layer != new_layer;
+    LayerCommitEffects {
+        geometry_changed,
+        layer_changed,
+        needs_damage: geometry_changed || layer_changed,
+    }
+}
+
 /// Swap a tracked buffer for a new one (or `None` to clear), returning the
 /// previous buffer and its id so the caller can release the buffer and
 /// invalidate the texture. Pure: the real types are filled in by the caller.
@@ -218,5 +242,56 @@ mod tests {
         let mut id: Option<u32> = None;
         let (old_buf, old_id) = replace_buffer(&mut buf, &mut id, None);
         assert_eq!((old_buf, old_id), (None, None));
+    }
+
+    #[test]
+    fn mapped_layer_commit_effects_damage_geometry_change_without_buffer_change() {
+        let old = Rectangle::from_loc_and_size((0, 0), (100, 100));
+        let new = Rectangle::from_loc_and_size((10, 20), (100, 100));
+
+        let effects = layer_commit_effects(true, Layer::Top, Some(old), Layer::Top, new);
+
+        assert_eq!(
+            effects,
+            LayerCommitEffects {
+                geometry_changed: true,
+                layer_changed: false,
+                needs_damage: true,
+            },
+        );
+    }
+
+    #[test]
+    fn mapped_layer_commit_effects_damage_layer_change_without_buffer_change() {
+        let geometry = Rectangle::from_loc_and_size((0, 0), (100, 100));
+
+        let effects =
+            layer_commit_effects(true, Layer::Top, Some(geometry), Layer::Overlay, geometry);
+
+        assert_eq!(
+            effects,
+            LayerCommitEffects {
+                geometry_changed: false,
+                layer_changed: true,
+                needs_damage: true,
+            },
+        );
+    }
+
+    #[test]
+    fn unmapped_layer_commit_effects_do_not_damage_metadata_changes() {
+        let old = Rectangle::from_loc_and_size((0, 0), (100, 100));
+        let new = Rectangle::from_loc_and_size((10, 20), (100, 100));
+
+        let effects = layer_commit_effects(false, Layer::Top, Some(old), Layer::Overlay, new);
+
+        assert_eq!(
+            effects,
+            LayerCommitEffects {
+                geometry_changed: false,
+                layer_changed: false,
+                needs_damage: false,
+            },
+        );
     }
 }
