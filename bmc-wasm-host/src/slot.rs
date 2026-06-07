@@ -1143,7 +1143,7 @@ impl HostRenderProfiling {
     clippy::cast_possible_wrap,
     reason = "GL viewport dimensions fit in i32"
 )]
-fn normalize_gl_state(egl: &bmc_widget::egl::EglContext, w: u32, h: u32) {
+pub(crate) fn normalize_gl_state(egl: &bmc_widget::egl::EglContext, w: u32, h: u32) {
     use glow::HasContext;
     let gl = egl.gl();
     unsafe {

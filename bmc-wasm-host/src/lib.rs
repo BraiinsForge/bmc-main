@@ -7,6 +7,7 @@ pub mod host;
 pub mod lifecycle;
 pub mod logging;
 pub mod main_loop;
+pub mod overlays;
 pub mod render_target;
 pub mod slot;
 pub mod startup;
