@@ -51,7 +51,10 @@ use smithay::{
             data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler},
         },
         shell::{
-            wlr_layer::{Layer, LayerSurface, WlrLayerShellHandler, WlrLayerShellState},
+            wlr_layer::{
+                Layer, LayerSurface, LayerSurfaceCachedState, WlrLayerShellHandler,
+                WlrLayerShellState,
+            },
             xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState},
         },
         shm::{ShmHandler, ShmState},
@@ -153,6 +156,7 @@ pub struct CompositorState {
     pub physical_height: u32,
     pub widget_buffers: Vec<(WlBuffer, InstanceId)>,
     pub pending_frame_callbacks: Vec<PendingFrameCallback>,
+    pub pending_layer_frame_callbacks: Vec<WlCallback>,
 
     /// Widget registration and connection tracking.
     pub widgets: WidgetTracker,
@@ -361,6 +365,7 @@ impl CompositorState {
             physical_height,
             widget_buffers: Vec::new(),
             pending_frame_callbacks: Vec::new(),
+            pending_layer_frame_callbacks: Vec::new(),
             widgets: WidgetTracker::with_screen_width(width),
             lifecycle: LifecycleEmitter::new(),
             widget_frame_clocks: std::collections::HashMap::new(),
@@ -596,6 +601,12 @@ impl CompositorState {
         self.pending_frame_callbacks = deferred;
     }
 
+    pub fn send_layer_frame_callbacks(&mut self, time: u32) {
+        for callback in self.pending_layer_frame_callbacks.drain(..) {
+            callback.done(time);
+        }
+    }
+
     pub fn drop_widget_callback_state(
         &mut self,
         instance_id: &InstanceId,
@@ -659,6 +670,124 @@ impl CompositorState {
         self.lifecycle.record_initial(instance_id, state);
         Some(client_id)
     }
+
+    /// Handle a commit for a tracked layer surface. Returns `true` if `surface`
+    /// is a layer surface (and was handled), `false` otherwise.
+    fn commit_layer_surface(&mut self, surface: &WlSurface) -> bool {
+        use crate::compositor::layer_surface::{
+            LayerPlacement, layer_commit_effects, layer_geometry, replace_buffer,
+        };
+
+        let Some(idx) = self
+            .layer_surfaces
+            .iter()
+            .position(|e| e.surface.wl_surface() == surface)
+        else {
+            return false;
+        };
+
+        let layer_surface = self.layer_surfaces[idx].surface.clone();
+        let needs_configure = layer_surface.has_pending_changes();
+
+        // Read placement AND layer from the committed cached state, so a client
+        // that changes its layer or anchor is reflected.
+        let (placement, layer) = layer_surface.with_cached_state(|s: &LayerSurfaceCachedState| {
+            (
+                LayerPlacement {
+                    size: s.size,
+                    anchor: s.anchor,
+                    margin: s.margin,
+                },
+                s.layer,
+            )
+        });
+        let output_w = i32::try_from(self.width).expect("BUG: logical display width fits i32");
+        let output_h = i32::try_from(self.height).expect("BUG: logical display height fits i32");
+        let geometry = layer_geometry(&placement, Size::from((output_w, output_h)));
+        let old_layer = self.layer_surfaces[idx].layer;
+        let old_geometry = self.layer_surfaces[idx].last_geometry;
+        let effects = layer_commit_effects(
+            self.layer_surfaces[idx].is_mapped(),
+            old_layer,
+            old_geometry,
+            layer,
+            geometry,
+        );
+        self.layer_surfaces[idx].layer = layer;
+        if effects.geometry_changed {
+            self.layer_surfaces[idx].last_geometry = Some(geometry);
+        }
+
+        if needs_configure {
+            layer_surface.with_pending_state(|state| {
+                state.size = Some(geometry.size);
+            });
+            layer_surface.send_configure();
+        }
+
+        // Buffer handling. Collect bookkeeping into locals to avoid borrowing
+        // self inside the with_states closure.
+        let mut release: Option<WlBuffer> = None;
+        let mut invalidate: Option<ObjectId> = None;
+        let mut dirty: Option<ObjectId> = None;
+        let mut had_buffer_change = false;
+        let mut had_damage = false;
+        let mut drained_callbacks: Vec<WlCallback> = Vec::new();
+
+        with_states(surface, |states| {
+            let mut guard = states.cached_state.get::<SurfaceAttributes>();
+            let attributes = guard.current();
+
+            had_damage = !attributes.damage.is_empty();
+            drained_callbacks.append(&mut attributes.frame_callbacks);
+
+            if let Some(assignment) = attributes.buffer.take() {
+                had_buffer_change = true;
+                let entry = &mut self.layer_surfaces[idx];
+                match assignment {
+                    BufferAssignment::NewBuffer(buffer) => {
+                        let new_id = buffer.id();
+                        let (old_buf, old_id) = replace_buffer(
+                            &mut entry.buffer,
+                            &mut entry.buffer_id,
+                            Some((buffer, new_id.clone())),
+                        );
+                        release = old_buf;
+                        invalidate = old_id;
+                        dirty = Some(new_id);
+                        entry.last_geometry = Some(geometry);
+                    }
+                    BufferAssignment::Removed => {
+                        let (old_buf, old_id) =
+                            replace_buffer(&mut entry.buffer, &mut entry.buffer_id, None);
+                        release = old_buf;
+                        invalidate = old_id;
+                        // last_geometry stays so the renderer repaints the vacated region.
+                    }
+                }
+            }
+            attributes.damage.clear();
+        });
+
+        let had_callbacks = !drained_callbacks.is_empty();
+        self.pending_layer_frame_callbacks
+            .append(&mut drained_callbacks);
+
+        if let Some(buf) = release {
+            buf.release();
+        }
+        if let Some(id) = invalidate {
+            self.invalidated_buffers.push(id);
+        }
+        if let Some(id) = dirty {
+            self.dirty_buffers.push(id);
+        }
+        if had_buffer_change || effects.needs_damage || had_damage || had_callbacks {
+            self.mark_full_output_damage();
+        }
+
+        true
+    }
 }
 
 impl DeckWidgetHandler for CompositorState {
@@ -687,6 +816,10 @@ impl CompositorHandler for CompositorState {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
+        if self.commit_layer_surface(surface) {
+            return;
+        }
+
         tracing::trace!("Surface committed: {:?}", surface.id());
         let surface_pid = self.surface_client_pid(surface);
 
@@ -831,6 +964,23 @@ impl BufferHandler for CompositorState {
                 buffer_id,
                 instance_id
             );
+        }
+
+        // Clear a matching layer entry buffer so the renderer does not try to
+        // draw a dead texture.
+        let cleared_layer = self
+            .layer_surfaces
+            .iter_mut()
+            .find(|e| e.buffer_id.as_ref() == Some(&buffer_id))
+            .map(|entry| {
+                entry.buffer = None;
+                entry.buffer_id = None;
+            })
+            .is_some();
+        if cleared_layer {
+            self.dirty_buffers.retain(|id| id != &buffer_id);
+            self.mark_full_output_damage();
+            tracing::debug!("Dropped destroyed buffer {:?} for layer surface", buffer_id);
         }
     }
 }

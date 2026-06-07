@@ -546,6 +546,7 @@ impl EglCompositor {
             state
                 .compositor
                 .send_frame_callbacks_for_presented_widgets(time);
+            state.compositor.send_layer_frame_callbacks(time);
 
             TimeoutAction::ToDuration(FRAME_CALLBACK_TICK)
         }) {
