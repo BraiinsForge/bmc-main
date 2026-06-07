@@ -3,8 +3,10 @@
 //! Framework for privileged system overlays rendered as wlr-layer-shell clients.
 
 mod overlay;
+mod surface;
 
 pub use overlay::{InputRegion, LayerConfig, SystemOverlay, TickOutcome, TouchEvent};
+pub use surface::LayerSurfaceClient;
 
 // Re-export the layer-shell client enums so overlays can build a LayerConfig
 // without importing the protocol crate directly.

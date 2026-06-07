@@ -7,12 +7,14 @@
 //! submission via `zwp_linux_dmabuf_v1`. Widgets only need to implement their
 //! render loop on top.
 
-mod common;
+pub(crate) mod common;
 mod deck_widget;
 mod xdg;
 
 pub use common::{
-    LifecycleState, PollOutcome, ReleasedBuffer, SettingUpdate, WidgetEvent, WidgetSurface,
+    BufferSlotMap, LifecycleState, PollOutcome, ReleasedBuffer, ReleasedBufferSet, SettingUpdate,
+    WidgetEvent, WidgetSurface, create_buffer_from_dmabuf, drain_released_buffer_slots,
+    drain_released_buffers, poll_dispatch, submit_buffer_to_surface,
 };
 pub use deck_widget::{
     DeckWidgetEvent, DeckWidgetSurfaceClient, DeckWidgetSurfaceState, InitialState,
