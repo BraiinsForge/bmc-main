@@ -1486,6 +1486,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-system-overlay"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bmc-gpu-render-lock",
+ "bmc-render",
+ "bmc-widget",
+ "glow 0.16.0",
+ "libc",
+ "taffy",
+ "tracing",
+ "wayland-backend",
+ "wayland-client 0.31.14",
+ "wayland-protocols 0.32.12",
+ "wayland-protocols-wlr",
+]
+
+[[package]]
 name = "bmc-upgrade"
 version = "0.1.0"
 dependencies = [
