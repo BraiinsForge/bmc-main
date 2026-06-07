@@ -107,6 +107,30 @@ impl OverlayRenderTarget {
         self.buffers.export_and_swap()
     }
 
+    #[must_use]
+    pub fn size(&self) -> (u32, u32) {
+        (self.buffers.width(), self.buffers.height())
+    }
+
+    pub fn resize(
+        &mut self,
+        egl: &EglContext,
+        client: &mut crate::surface::LayerSurfaceClient,
+        w: u32,
+        h: u32,
+    ) {
+        if self.size() == (w, h) {
+            return;
+        }
+        for wl_buffer in &mut self.wl_buffers {
+            if let Some(buffer) = wl_buffer.take() {
+                client.destroy_minted_wl_buffer(buffer);
+            }
+        }
+        self.release = SlotReleaseState::new();
+        self.buffers.resize(egl, w, h);
+    }
+
     /// True when the next export slot's buffer has been released by the
     /// compositor (or has never been submitted).
     #[must_use]
