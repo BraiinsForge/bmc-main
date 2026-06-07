@@ -40,6 +40,9 @@ pub struct SceneLayout {
     /// it against its cycling list to update entries in place instead of
     /// rebuilding. `None` for tests / default values.
     pub scene_id: Option<crate::scene::SceneId>,
+    /// Per-scene automatic cycling duration override. `None` uses the
+    /// global scene-cycling default.
+    pub cycle_duration: Option<std::time::Duration>,
     pub widgets: Vec<WidgetPlacement>,
 }
 

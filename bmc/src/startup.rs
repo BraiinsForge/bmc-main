@@ -223,6 +223,13 @@ where
             let timezone = manager.timezone();
             let night_mode_active = *system_manager.subscribe_night_mode().borrow();
             let next_alarm = alarm_controller.subscribe_next_alarm().borrow().clone();
+            let scene_cycling = config_guard.scene_cycling();
+            if let Err(err) = widget_coordinator
+                .compositor()
+                .set_scene_cycling_config(scene_cycling)
+            {
+                tracing::warn!(error = %err, "failed to configure scene cycling");
+            }
             widget_coordinator
                 .spawn_initial_widgets(
                     &config_guard.scenes,
