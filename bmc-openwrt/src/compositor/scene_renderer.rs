@@ -13,7 +13,7 @@ use smithay::{
         gles::{GlesRenderer, GlesTexture, ffi},
     },
     reexports::wayland_server::{Resource, backend::ObjectId, protocol::wl_buffer::WlBuffer},
-    utils::{Buffer as BufferCoord, Physical, Rectangle, Size, Transform},
+    utils::{Buffer as BufferCoord, Logical, Physical, Rectangle, Size, Transform},
     wayland::{
         dmabuf::get_dmabuf,
         image_copy_capture::{self, CaptureFailureReason},
@@ -34,6 +34,17 @@ pub fn scanout_transform(profile: DisplayTransform) -> Transform {
         DisplayTransform::Deg90 => Transform::_90,
         DisplayTransform::Deg270 => Transform::_270,
     }
+}
+
+/// Controls when an SHM buffer's texture is reimported relative to the dirty set.
+#[derive(Clone, Copy)]
+enum ShmImport {
+    /// Always reimport — widgets repaint into the same `WlBuffer` without destroying it,
+    /// so a new commit does not produce a new buffer ID.
+    Always,
+    /// Only reimport when the buffer ID appears in the dirty set — layer surfaces replace
+    /// their buffer on each commit, so the dirty check is sufficient.
+    WhenDirty,
 }
 
 /// Map a widget's logical placement to its physical destination rectangle on the rotated panel.
@@ -191,9 +202,60 @@ impl SceneRenderer {
         self.output.logical_size()
     }
 
+    /// Import a single buffer's texture into the cache.
+    ///
+    /// DMA-BUF is always dirty-gated: a new EGLImage is created only when the buffer ID
+    /// appears in `dirty`. SHM behaviour is controlled by `shm_import`:
+    /// - `ShmImport::Always` — reimport on every call (widget path: clients repaint into
+    ///   the same `WlBuffer` without destroying it, so the buffer ID never changes).
+    /// - `ShmImport::WhenDirty` — reimport only when the buffer ID is in `dirty`
+    ///   (layer path: each commit replaces the buffer, so the dirty set is sufficient).
+    fn import_buffer_texture(
+        &mut self,
+        buffer: &WlBuffer,
+        dirty: &[ObjectId],
+        shm_import: ShmImport,
+        label: &str,
+    ) {
+        let buffer_id = buffer.id();
+        if let Ok(dmabuf) = get_dmabuf(buffer) {
+            if dirty.contains(&buffer_id) {
+                match self.egl.renderer().import_dmabuf(dmabuf, None) {
+                    Ok(texture) => {
+                        self.texture_cache.insert(buffer_id, texture);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "import_dmabuf failed for {label} buffer {:?}: {e}",
+                            buffer_id
+                        );
+                    }
+                }
+            }
+        } else {
+            let do_import = match shm_import {
+                ShmImport::Always => true,
+                ShmImport::WhenDirty => dirty.contains(&buffer_id),
+            };
+            if do_import {
+                match self.egl.renderer().import_shm_buffer(buffer, None, &[]) {
+                    Ok(texture) => {
+                        self.texture_cache.insert(buffer_id, texture);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "import_shm_buffer failed for {label} buffer {:?}: {e}",
+                            buffer_id
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// Import widget textures that were newly committed since the last render.
     ///
-    /// Only reimports buffers whose ObjectId appears in `dirty_buffers`
+    /// Only reimports DMA-BUF buffers whose ObjectId appears in `dirty_buffers`
     /// (populated by the commit handler). Unchanged buffers keep their
     /// cached texture. This avoids redundant EGLImage creation on virgl
     /// which can produce subtly different host-side copies and cause flicker.
@@ -205,31 +267,8 @@ impl SceneRenderer {
         buffers: &[(WlBuffer, bmc::compositor::InstanceId)],
         dirty: &[ObjectId],
     ) {
-        let renderer = self.egl.renderer();
         for (client_buffer, _instance_id) in buffers {
-            let buffer_id = client_buffer.id();
-            if let Ok(dmabuf) = get_dmabuf(client_buffer) {
-                // DMA-BUF: only reimport if newly committed (dirty)
-                if dirty.contains(&buffer_id) {
-                    match renderer.import_dmabuf(dmabuf, None) {
-                        Ok(texture) => {
-                            self.texture_cache.insert(buffer_id, texture);
-                        }
-                        Err(e) => {
-                            tracing::warn!("import_dmabuf failed for buffer {:?}: {e}", buffer_id);
-                        }
-                    }
-                }
-            } else {
-                match renderer.import_shm_buffer(client_buffer, None, &[]) {
-                    Ok(texture) => {
-                        self.texture_cache.insert(buffer_id, texture);
-                    }
-                    Err(e) => {
-                        tracing::warn!("import_shm_buffer failed for buffer {:?}: {e}", buffer_id);
-                    }
-                }
-            }
+            self.import_buffer_texture(client_buffer, dirty, ShmImport::Always, "widget");
         }
     }
 
@@ -246,6 +285,7 @@ impl SceneRenderer {
         widgets: &WidgetTracker,
         transition_offset: Option<i32>,
         buffers: &[(WlBuffer, bmc::compositor::InstanceId)],
+        layers: &[(WlBuffer, Rectangle<i32, Logical>)],
         dirty: &[ObjectId],
         capture_frames: Vec<image_copy_capture::Frame>,
         capture_active: bool,
@@ -264,6 +304,10 @@ impl SceneRenderer {
         // path has finished, so a handoff cannot leave overlapping in-flight
         // jobs on etnaviv.
         self.import_textures(buffers, dirty);
+
+        for (buffer, _) in layers {
+            self.import_buffer_texture(buffer, dirty, ShmImport::WhenDirty, "layer");
+        }
 
         // Collect render items: (buffer_id, placement, x_offset)
         let mut to_render = Vec::new();
@@ -369,6 +413,42 @@ impl SceneRenderer {
                 &[],
             ) {
                 tracing::warn!("Failed to render widget {}: {:?}", instance_id, e);
+            }
+        }
+
+        #[expect(clippy::cast_possible_wrap, reason = "output dims are within i32")]
+        let (output_w, output_h) = (self.output.width() as i32, self.output.height() as i32);
+        for (buffer, geo) in layers {
+            let Some(texture) = self.texture_cache.get(&buffer.id()) else {
+                continue;
+            };
+            let tex_size = texture.size();
+            let dst = place_widget(
+                geo.loc.x,
+                geo.loc.y,
+                geo.size.w,
+                geo.size.h,
+                output_w,
+                output_h,
+                self.scanout_transform,
+            );
+            let src: Rectangle<f64, BufferCoord> = Rectangle::from_loc_and_size(
+                (0.0, 0.0),
+                (f64::from(tex_size.w), f64::from(tex_size.h)),
+            );
+            let damage = texture_damage_rect(dst);
+            if let Err(e) = frame.render_texture_from_to(
+                texture,
+                src,
+                dst,
+                &[damage],
+                &[],
+                scanout_transform(self.scanout_transform),
+                1.0,
+                None,
+                &[],
+            ) {
+                tracing::warn!("Failed to render layer surface: {:?}", e);
             }
         }
         ii_stopwatch::stopwatch_stop!(self.compose_w);
