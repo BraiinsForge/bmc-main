@@ -209,7 +209,20 @@ impl Config {
     }
 
     fn validate(&self) -> Result<()> {
-        self.validate_scenes()
+        self.validate_scenes()?;
+        self.validate_scene_cycling()
+    }
+
+    fn validate_scene_cycling(&self) -> Result<()> {
+        let duration = self.scene_cycling().automatic_cycling_default_duration;
+        if duration < Scene::MIN_CYCLE_DURATION {
+            bail!(
+                "Automatic scene cycling default duration {duration:?} is shorter than the \
+                 minimum {:?}",
+                Scene::MIN_CYCLE_DURATION
+            );
+        }
+        Ok(())
     }
 
     fn validate_scenes(&self) -> Result<()> {
@@ -738,6 +751,27 @@ mod tests {
     #[test]
     fn config_default_constructs_without_panic() {
         let _ = Config::default();
+    }
+
+    #[test]
+    fn validate_accepts_default_scene_cycling() {
+        let config = Config::default();
+        config
+            .validate()
+            .expect("BUG: default scene cycling must validate");
+    }
+
+    #[test]
+    fn validate_rejects_too_short_automatic_cycling_default_duration() {
+        let mut config = Config::default();
+        config.set_scene_cycling(SceneCycling {
+            automatic_cycling_default_duration: std::time::Duration::ZERO,
+            ..SceneCycling::default()
+        });
+        assert!(
+            config.validate().is_err(),
+            "a sub-minimum global cycle duration must be rejected on load"
+        );
     }
 
     /// Tempfile-backed `ConfigHandle` for notification tests.
