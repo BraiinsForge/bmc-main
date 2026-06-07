@@ -296,7 +296,9 @@ impl WidgetSlot {
                         .push_touch_event(bmc_render::interaction::TouchEvent::Cancel);
                     touch_dirty = true;
                 }
-                event @ (WidgetEvent::Lifecycle(_) | WidgetEvent::Shutdown) => {
+                event @ (WidgetEvent::Lifecycle(_)
+                | WidgetEvent::TransitionIncoming
+                | WidgetEvent::Shutdown) => {
                     self.on_wayland_event(&event);
                 }
             }
@@ -748,6 +750,20 @@ impl WidgetSlot {
                     ?target,
                     request_render = effect.request_render,
                     "lifecycle event received"
+                );
+            }
+            WidgetEvent::TransitionIncoming => {
+                let current = self.lifecycle.current();
+                let request_render = should_render(current);
+                if request_render {
+                    self.surface.mark_needs_render();
+                }
+                tracing::info!(
+                    peer_pid = self.peer_pid,
+                    wasm = %self.wasm_basename,
+                    ?current,
+                    request_render,
+                    "transition incoming event received"
                 );
             }
             WidgetEvent::Shutdown => {

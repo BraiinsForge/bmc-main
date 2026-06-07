@@ -8,6 +8,7 @@
 //! The protocol handles:
 //! - Widget registration with instance ID
 //! - Settings updates (timezone, localization, night mode)
+//! - Automatic scene transition warm-up
 //! - Graceful shutdown signaling
 //! - Action requests (sound, LED control)
 
