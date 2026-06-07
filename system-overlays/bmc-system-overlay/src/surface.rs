@@ -53,6 +53,8 @@ struct State {
     /// compositor frame callbacks; redraw pacing is the framework's
     /// tick/next_wake job, so no wl_surface.frame is ever requested.
     needs_render: bool,
+    /// Latest post-connect compositor-suggested size, when it changed.
+    pending_size_change: Option<(u32, u32)>,
 
     buffer_slots: BufferSlotMap,
     released_buffers: ReleasedBufferSet,
@@ -73,6 +75,7 @@ impl Default for State {
             configured_size: (0, 0),
             pending_touch: Vec::new(),
             needs_render: false,
+            pending_size_change: None,
             buffer_slots: BufferSlotMap::new(),
             released_buffers: ReleasedBufferSet::new(),
         }
@@ -180,6 +183,7 @@ impl LayerSurfaceClient {
             state.configured_size.1,
             config.namespace,
         );
+        state.pending_size_change = None;
 
         Ok(Self { conn, queue, state })
     }
@@ -228,6 +232,10 @@ impl LayerSurfaceClient {
         std::mem::take(&mut self.state.needs_render)
     }
 
+    pub fn take_configured_size_change(&mut self) -> Option<(u32, u32)> {
+        self.state.pending_size_change.take()
+    }
+
     pub fn drain_touch(&mut self) -> Vec<crate::overlay::TouchEvent> {
         std::mem::take(&mut self.state.pending_touch)
     }
@@ -252,6 +260,14 @@ impl LayerSurfaceClient {
         self.conn
             .flush()
             .map_err(|e| anyhow::anyhow!("wl flush: {e}"))
+    }
+
+    pub fn destroy_minted_wl_buffer(&mut self, buffer: wl_buffer::WlBuffer) {
+        let id = buffer.id();
+        self.state.buffer_slots.remove(&id);
+        self.state.released_buffers.remove(&id);
+        buffer.destroy();
+        drop(buffer);
     }
 
     #[expect(
@@ -335,7 +351,11 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for State {
                 height,
             } => {
                 layer_surface.ack_configure(serial);
-                state.configured_size = (width, height);
+                let size = (width, height);
+                if state.configured && state.configured_size != size {
+                    state.pending_size_change = Some(size);
+                }
+                state.configured_size = size;
                 state.configured = true;
                 state.needs_render = true;
             }

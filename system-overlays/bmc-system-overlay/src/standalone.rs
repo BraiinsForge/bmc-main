@@ -10,7 +10,7 @@ use bmc_render::renderer::Renderer as _;
 use bmc_widget::egl::{EglContext, SharedRenderScratch};
 
 use crate::gpu::{OverlayRenderTarget, wait_for_gpu};
-use crate::overlay::{LayerConfig, SystemOverlay};
+use crate::overlay::{LayerConfig, SystemOverlay, resolved_configured_size};
 use crate::surface::LayerSurfaceClient;
 
 const MIN_INTER_FRAME: Duration = Duration::from_millis(8);
@@ -21,27 +21,23 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
 
     // Connect and configure the layer surface; learn the real size.
     let mut client = LayerSurfaceClient::connect(&config)?;
-    let (w, h) = client.size();
-    let (w, h) = (
-        if w == 0 { config.size.0.max(1) } else { w },
-        if h == 0 { config.size.1.max(1) } else { h },
-    );
+    let mut size = resolved_configured_size(config.size, client.size());
 
     // GPU stack (owned in standalone mode).
     let egl = EglContext::new()?;
-    let scratch = SharedRenderScratch::new(&egl, w, h)?;
+    let mut scratch = SharedRenderScratch::new(&egl, size.0, size.1)?;
     let gpu_lock = GpuRenderLock::from_env()?;
     // SAFETY: EglContext::new makes the GL context current on this thread; the standalone process renders single-threaded.
     let mut renderer = unsafe {
         FemtoVgRenderer::new(
             EglContext::get_proc_address,
-            w,
-            h,
+            size.0,
+            size.1,
             scratch.staging_fbo_id(),
             0,
         )?
     };
-    let mut target = OverlayRenderTarget::new(&egl, w, h)?;
+    let mut target = OverlayRenderTarget::new(&egl, size.0, size.1)?;
 
     overlay.init();
     let mut last_render: Option<Instant> = None;
@@ -58,6 +54,21 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
         }
         for released in client.drain_released_buffers() {
             target.mark_released_buffer(&released);
+        }
+        if let Some(configured_size) = client.take_configured_size_change() {
+            let new_size = resolved_configured_size(config.size, configured_size);
+            if new_size != size {
+                resize_standalone_rendering(
+                    &egl,
+                    &mut scratch,
+                    &mut renderer,
+                    &mut target,
+                    &mut client,
+                    new_size,
+                )?;
+                size = new_size;
+            }
+            pending_render = true;
         }
 
         let now = Instant::now();
@@ -82,7 +93,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
                 &mut renderer,
                 &mut *overlay,
                 &mut client,
-                (w, h),
+                size,
             )?;
             pending_render = false;
             last_render = Some(now);
@@ -102,7 +113,36 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
     }
     // Not called on the ? error paths above: the process exits shortly after and the Wayland connection close releases the wl_buffers.
     // DoubleBufferState does not free on Drop; release GL/EGL/GBM explicitly.
+    drop(renderer);
     target.destroy(&egl);
+    scratch.destroy(&egl);
+    Ok(())
+}
+
+fn resize_standalone_rendering(
+    egl: &EglContext,
+    scratch: &mut SharedRenderScratch,
+    renderer: &mut FemtoVgRenderer,
+    target: &mut OverlayRenderTarget,
+    client: &mut LayerSurfaceClient,
+    size: (u32, u32),
+) -> anyhow::Result<()> {
+    let new_scratch = SharedRenderScratch::new(egl, size.0, size.1)?;
+    // SAFETY: `egl` is current on this single-threaded standalone render loop,
+    // and `new_scratch` owns the FBO id passed as the renderer's screen target.
+    let new_renderer = unsafe {
+        FemtoVgRenderer::new(
+            EglContext::get_proc_address,
+            size.0,
+            size.1,
+            new_scratch.staging_fbo_id(),
+            0,
+        )?
+    };
+    let old_scratch = std::mem::replace(scratch, new_scratch);
+    *renderer = new_renderer;
+    old_scratch.destroy(egl);
+    target.resize(egl, client, size.0, size.1);
     Ok(())
 }
 
