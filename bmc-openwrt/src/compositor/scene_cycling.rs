@@ -84,10 +84,6 @@ impl AutomaticCycling {
         self.config.default_duration
     }
 
-    #[expect(
-        dead_code,
-        reason = "Task 5 applies scene cycling config through the compositor command"
-    )]
     pub(crate) fn set_config(&mut self, config: SceneCyclingRuntimeConfig) {
         if !config.enabled
             && matches!(
