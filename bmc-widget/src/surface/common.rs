@@ -226,6 +226,8 @@ pub enum WidgetEvent {
     TouchCancel,
     /// Compositor published a new lifecycle state for this widget.
     Lifecycle(bmc_widget_protocol::LifecycleState),
+    /// Automatic scene cycling will transition this widget on-screen soon.
+    TransitionIncoming,
 }
 
 /// Common interface for widget surface clients.

@@ -83,6 +83,10 @@ pub trait WidgetEventHandler {
     /// this widget. Default no-op so existing handlers that do not bind
     /// lifecycle compile unchanged.
     fn on_lifecycle(&mut self, _state: bmc_widget_protocol::LifecycleState) {}
+
+    /// Called when automatic scene cycling will transition this widget
+    /// on-screen soon. Default no-op so existing handlers compile unchanged.
+    fn on_transition_incoming(&mut self) {}
 }
 
 /// Client for the `deck_widget_v1` Wayland protocol.
@@ -123,6 +127,7 @@ enum WidgetEvent {
     ParamUpdate(serde_json::Map<String, serde_json::Value>),
     Shutdown,
     Lifecycle(bmc_widget_protocol::LifecycleState),
+    TransitionIncoming,
 }
 
 impl WidgetProtocolClient {
@@ -381,6 +386,7 @@ fn dispatch_event<H: WidgetEventHandler>(handler: &mut H, event: WidgetEvent) {
         WidgetEvent::ParamUpdate(params) => handler.on_param_update(params),
         WidgetEvent::Shutdown => handler.on_shutdown(),
         WidgetEvent::Lifecycle(s) => handler.on_lifecycle(s),
+        WidgetEvent::TransitionIncoming => handler.on_transition_incoming(),
     }
 }
 
@@ -681,6 +687,9 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
                 if let Some(s) = from_protocol::lifecycle_state(value) {
                     state.pending_events.push(WidgetEvent::Lifecycle(s));
                 }
+            }
+            Event::TransitionIncoming => {
+                state.pending_events.push(WidgetEvent::TransitionIncoming);
             }
             Event::DisplayInfo {
                 width,
