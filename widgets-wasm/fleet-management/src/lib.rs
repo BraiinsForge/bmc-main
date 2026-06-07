@@ -182,24 +182,25 @@ fn parse_string_array(raw: &str) -> Option<Vec<String>> {
     Some(out)
 }
 
+/// True if `raw` is an empty JSON array, tolerating whitespace inside and
+/// around the brackets (`[]`, `[ ]`, `[\n]`). This is the only spelling that
+/// clears a family's manual hosts.
+#[cfg(target_arch = "wasm32")]
+fn is_empty_array(raw: &str) -> bool {
+    raw.trim()
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .is_some_and(|inner| inner.trim().is_empty())
+}
+
 /// Parse a manual-host param into raw entries. Returns `None` (leave the
 /// family's manual set unchanged) for invalid JSON, or for any valid shape
-/// that yields no entries except the literal empty array `[]` (which clears).
-/// This makes the destructive clear require explicit intent and protects the
-/// fleet from a typo.
+/// that yields no entries except an empty array (which clears). This makes the
+/// destructive clear require explicit intent and protects the fleet from a typo.
 #[cfg(target_arch = "wasm32")]
 fn parse_host_list(raw: &str) -> Option<Vec<String>> {
-    let doc = JsonDoc::parse(raw.as_bytes());
-    if !doc.is_valid() {
-        return None;
-    }
-    let mut out = Vec::new();
-    let mut i = 0usize;
-    while let Some(entry) = doc.str(&fmt!("/{i}")) {
-        out.push(entry);
-        i += 1;
-    }
-    if out.is_empty() && raw.trim() != "[]" {
+    let out = parse_string_array(raw)?;
+    if out.is_empty() && !is_empty_array(raw) {
         return None;
     }
     Some(out)

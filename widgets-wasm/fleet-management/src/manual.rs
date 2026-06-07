@@ -23,6 +23,12 @@ pub(crate) fn manual_identity(
     if host.is_empty() {
         return None;
     }
+    // A colon left in `host` is an ambiguous bare IPv6 literal: `fe80::1` would
+    // mis-split into host `fe80:` / port `1` and resolve to a wrong endpoint.
+    // Require bracket notation (`[fe80::1]:80`) rather than accepting that.
+    if host.contains(':') && !host.starts_with('[') {
+        return None;
+    }
     Some(DeviceIdentity {
         id: DeviceId::for_manual(family, trimmed),
         family,
@@ -114,9 +120,18 @@ mod tests {
             "host:abc",
             "host:",
             ":8080",
+            "fe80::1",
         ] {
             assert!(bos_manual(bad).is_none(), "must reject {bad:?}");
         }
+    }
+
+    #[test]
+    fn accepts_bracketed_ipv6_with_port() {
+        let id = bos_manual("[fe80::1]:8080")
+            .expect("BUG: a bracketed IPv6 literal with a port must be accepted");
+        assert_eq!(id.host, "[fe80::1]");
+        assert_eq!(id.port, 8080);
     }
 
     #[test]
