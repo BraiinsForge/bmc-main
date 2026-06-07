@@ -39,9 +39,6 @@ pub enum CompositorCommand {
         config: SceneCycling,
     },
     ResetSceneCycle,
-    SetActiveSceneIndex {
-        index: usize,
-    },
     BroadcastSetting {
         setting: SettingUpdate,
     },
