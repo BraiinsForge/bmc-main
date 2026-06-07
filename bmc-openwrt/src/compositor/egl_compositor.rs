@@ -420,6 +420,7 @@ impl EglCompositor {
             ),
             pending_transition_warm_up: None,
             scene_cycling_timer_generation: 0,
+            last_fullscreen_overlay_active: false,
         };
         app_state.reevaluate_automatic_cycling(Instant::now());
 
@@ -622,6 +623,20 @@ impl EglCompositor {
             }
 
             process_protocol_events(&mut app_state);
+
+            // A layer-shell map/unmap is processed during the previous
+            // iteration's dispatch, not on a scene command, so lifecycle does
+            // not re-emit on its own. Detect the fullscreen-overlay predicate
+            // flipping and re-emit so scene-swipe neighbors are demoted to
+            // `Dormant` when an overlay maps and restored to `Prepared` when it
+            // unmaps.
+            let overlay_active = app_state.compositor.fullscreen_overlay_active();
+            if overlay_active != app_state.last_fullscreen_overlay_active {
+                app_state.last_fullscreen_overlay_active = overlay_active;
+                emit_lifecycle_transitions(&mut app_state);
+                release_dormant_widget_buffers(&mut app_state);
+            }
+
             app_state.refresh_redraw_state();
 
             // Whether the committed scene's frame was handled this iteration —
@@ -864,6 +879,13 @@ struct AppState {
     /// stacking duplicate timers if multiple `DeviceRemoved` events fire
     /// in quick succession.
     touch_retry_pending: bool,
+    /// Last observed value of [`CompositorState::fullscreen_overlay_active`].
+    /// A layer map/unmap happens during Wayland dispatch, not on a scene
+    /// command, so lifecycle would not re-emit on its own. Comparing against
+    /// this each loop iteration lets us re-emit when the predicate flips,
+    /// demoting scene-swipe neighbors to `Dormant` when a fullscreen overlay
+    /// maps and restoring them to `Prepared` when it unmaps.
+    last_fullscreen_overlay_active: bool,
 }
 
 impl AppState {
@@ -918,7 +940,11 @@ impl AppState {
         self.compositor.widgets.cancel_automatic_transition();
         self.pending_transition_warm_up = None;
         self.compositor.mark_full_output_damage();
-        let next = self.compositor.widgets.lifecycle_states();
+        let mut next = self.compositor.widgets.lifecycle_states();
+        if self.compositor.fullscreen_overlay_active() {
+            // Must mirror emit_lifecycle_transitions' suppression so the release-peek matches what will actually be emitted.
+            crate::compositor::layer_surface::suppress_prepared(&mut next);
+        }
         let mut lifecycle = self.compositor.lifecycle.clone();
         let emission = lifecycle.step(&next);
         if emission.releases.is_empty() {
@@ -1239,7 +1265,11 @@ impl AppState {
 
         let drag_activated = self.gesture.on_motion(location, time);
 
-        if drag_activated && !self.scene_drag_active && self.compositor.widgets.can_drag() {
+        if drag_activated
+            && !self.scene_drag_active
+            && self.compositor.widgets.can_drag()
+            && !self.compositor.fullscreen_overlay_active()
+        {
             // Mid-touch transition: arbitrate to scene drag and cancel the
             // wl_touch sequence the widget is currently seeing. Skipped when
             // the layout has only one scene — there is nothing to swipe to,
@@ -1448,7 +1478,10 @@ impl LifecycleSink for AppStateLifecycleSink<'_> {
 /// scene swaps and are scoped to only the clients that actually received
 /// an event.
 fn emit_lifecycle_transitions(state: &mut AppState) -> Emission {
-    let next = state.compositor.widgets.lifecycle_states();
+    let mut next = state.compositor.widgets.lifecycle_states();
+    if state.compositor.fullscreen_overlay_active() {
+        crate::compositor::layer_surface::suppress_prepared(&mut next);
+    }
     let emission = state.compositor.lifecycle.step(&next);
 
     if emission.is_empty() {
@@ -1463,6 +1496,40 @@ fn emit_lifecycle_transitions(state: &mut AppState) -> Emission {
     };
     emit_lifecycle_batches(&emission, &mut sink);
     emission
+}
+
+#[must_use]
+fn dormant_widget_ids(
+    lifecycle_states: &HashMap<InstanceId, LifecycleState>,
+) -> HashSet<InstanceId> {
+    lifecycle_states
+        .iter()
+        .filter(|(_, state)| **state == LifecycleState::Dormant)
+        .map(|(instance_id, _)| instance_id.clone())
+        .collect()
+}
+
+fn release_dormant_widget_buffers(state: &mut AppState) {
+    let mut lifecycle_states = state.compositor.widgets.lifecycle_states();
+    if state.compositor.fullscreen_overlay_active() {
+        crate::compositor::layer_surface::suppress_prepared(&mut lifecycle_states);
+    }
+    let dormant_ids = dormant_widget_ids(&lifecycle_states);
+    let mut sink = AppStateLifecycleSink {
+        deck_widget_state: &mut state.compositor.deck_widget_state,
+        display: &mut state.display,
+        widget_buffers: &mut state.compositor.widget_buffers,
+        invalidated_buffers: &mut state.compositor.invalidated_buffers,
+    };
+    let mut clients = Vec::new();
+    for instance_id in dormant_ids {
+        for client_id in sink.release_buffers(&instance_id) {
+            if !clients.contains(&client_id) {
+                clients.push(client_id);
+            }
+        }
+    }
+    flush_lifecycle_clients(&mut sink, &clients);
 }
 
 /// Pure ordering logic, split from [`emit_lifecycle_transitions`] so
@@ -1802,7 +1869,10 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
 fn process_protocol_events(state: &mut AppState) {
     let connected = state.compositor.deck_widget_state.drain_connected();
     if !connected.is_empty() {
-        let lifecycle_states = state.compositor.widgets.lifecycle_states();
+        let mut lifecycle_states = state.compositor.widgets.lifecycle_states();
+        if state.compositor.fullscreen_overlay_active() {
+            crate::compositor::layer_surface::suppress_prepared(&mut lifecycle_states);
+        }
         let mut connect_clients: Vec<ClientId> = Vec::new();
 
         for instance_id in connected {
@@ -2174,6 +2244,7 @@ mod tests {
             ),
             pending_transition_warm_up: None,
             scene_cycling_timer_generation: 0,
+            last_fullscreen_overlay_active: false,
         }
     }
 
