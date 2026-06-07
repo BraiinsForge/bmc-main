@@ -144,9 +144,6 @@ pub trait Compositor: Send + Sync {
     /// Reset cycling back to the first scene.
     fn reset_scene_cycle(&self) -> Result<(), CompositorError>;
 
-    /// Switch active scene by index in the current cycling list.
-    fn set_active_scene_index(&self, index: usize) -> Result<(), CompositorError>;
-
     /// Broadcast a setting update to all connected widgets.
     fn broadcast_setting(&self, setting: SettingUpdate) -> Result<(), CompositorError>;
 

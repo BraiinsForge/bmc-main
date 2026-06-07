@@ -1550,7 +1550,7 @@ fn handle_clear_pid_command(state: &mut AppState, instance_id: &InstanceId, expe
 
 fn handle_reset_scene_cycle_command(state: &mut AppState) {
     tracing::debug!("resetting scene cycle");
-    state.compositor.widgets.set_active_scene_index(0);
+    state.compositor.widgets.reset_to_first_scene();
     after_scene_change(state);
     state.reset_automatic_waiting(Instant::now());
 }
@@ -1638,12 +1638,6 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             handle_set_scene_cycling_config_command(state, config);
         }
         CompositorCommand::ResetSceneCycle => handle_reset_scene_cycle_command(state),
-        CompositorCommand::SetActiveSceneIndex { index } => {
-            tracing::info!("Setting active scene index to {}", index);
-            state.compositor.widgets.set_active_scene_index(index);
-            after_scene_change(state);
-            state.reset_automatic_waiting(Instant::now());
-        }
         CompositorCommand::BroadcastSetting { setting } => {
             tracing::debug!("Broadcasting setting: {:?}", setting);
             state
@@ -1899,12 +1893,6 @@ impl Compositor for EglCompositor {
     fn reset_scene_cycle(&self) -> Result<(), CompositorError> {
         self.command_tx
             .send(CompositorCommand::ResetSceneCycle)
-            .map_err(|e| CompositorError::SendError(e.to_string()))
-    }
-
-    fn set_active_scene_index(&self, index: usize) -> Result<(), CompositorError> {
-        self.command_tx
-            .send(CompositorCommand::SetActiveSceneIndex { index })
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 
@@ -2213,6 +2201,36 @@ mod tests {
         assert!(matches!(
             state.automatic_cycling.phase(),
             AutomaticCyclingPhase::PausedDisabled { .. }
+        ));
+    }
+
+    #[test]
+    fn set_scene_cycling_resets_stale_automatic_transition_phase() {
+        let mut state = make_app_state();
+        state
+            .compositor
+            .widgets
+            .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
+        let target = state
+            .compositor
+            .widgets
+            .begin_automatic_transition_to_next()
+            .expect("BUG: two scenes should have an automatic transition target");
+        state
+            .automatic_cycling
+            .enter_pre_transition(Instant::now(), target);
+
+        handle_command(
+            &mut state,
+            CompositorCommand::SetSceneCycling {
+                scenes: vec![test_scene("a"), test_scene("b")],
+            },
+        );
+
+        assert!(!state.compositor.widgets.automatic_transition_active());
+        assert!(matches!(
+            state.automatic_cycling.phase(),
+            AutomaticCyclingPhase::WaitingForTimer { .. }
         ));
     }
 
