@@ -50,6 +50,7 @@ members = [
     "bmc-widget-protocol",
     "system-overlays/bmc-system-overlay",
     "system-overlays/layer-shell-test-client",
+    "system-overlays/validation-overlay",
     "widgets/*",
 ]
 
@@ -164,6 +165,7 @@ bmc-shared-slint = { path = "bmc-shared/slint" }
 bmc-shared-time = { path = "bmc-shared/time" }
 bmc-shared-utils = { path = "bmc-shared/utils" }
 bmc-support = { path = "bmc-support" }
+bmc-system-overlay = { path = "system-overlays/bmc-system-overlay" }
 bmc-upgrade = { path = "bmc-upgrade" }
 bmc-virt-ipc = { path = "bmc-virt/ipc" }
 bmc-virt-leds = { path = "bmc-virt/leds" }
