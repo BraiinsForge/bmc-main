@@ -128,15 +128,22 @@ pub enum RemovalAction {
     Ignore,
 }
 
-/// Decide the response to a discovery. `kick_cancelled` is the result of
-/// cancelling the pending kick — `Some(true)` when the queued fetch was
-/// removed before firing, `Some(false)` when it was already in flight, and
-/// `None` when the phase had no kick to cancel.
+/// Decide the response to a discovery. `is_new` is whether the event added a
+/// device not previously listed. `kick_cancelled` is the result of cancelling
+/// the pending kick — `Some(true)` when the queued fetch was removed before
+/// firing, `Some(false)` when it was already in flight, and `None` when the
+/// phase had no kick to cancel.
+///
+/// While `Waiting`, only a genuinely new device collapses the inter-pass gap;
+/// mDNS re-announcements of an already-known device (cache refresh, periodic
+/// re-announce, our own browse) leave the parked kick alone so the poll cadence
+/// holds instead of restarting back-to-back.
 #[must_use]
-pub fn on_discovery(phase: Phase, kick_cancelled: Option<bool>) -> DiscoveryAction {
+pub fn on_discovery(phase: Phase, is_new: bool, kick_cancelled: Option<bool>) -> DiscoveryAction {
     match phase {
         Phase::Idle => DiscoveryAction::StartNow,
         Phase::Active => DiscoveryAction::Ignore,
+        Phase::Waiting if !is_new => DiscoveryAction::LetRun,
         Phase::Waiting => match kick_cancelled {
             Some(true) => DiscoveryAction::StartNow,
             Some(false) | None => DiscoveryAction::LetRun,
@@ -180,7 +187,7 @@ mod driver;
 
 #[cfg(target_arch = "wasm32")]
 pub use driver::{
-    clear_tokens, ensure_running, family_enabled, refresh_params, remove_token, stop,
+    clear_tokens, ensure_running, family_enabled, on_discovered, refresh_params, remove_token, stop,
 };
 
 #[cfg(test)]
@@ -278,18 +285,24 @@ mod tests {
 
     #[test]
     fn discovery_starts_a_pass_only_from_idle() {
-        assert_eq!(on_discovery(Phase::Idle, None), DiscoveryAction::StartNow);
+        assert_eq!(
+            on_discovery(Phase::Idle, true, None),
+            DiscoveryAction::StartNow
+        );
     }
 
     #[test]
     fn discovery_is_ignored_while_a_pass_is_active() {
-        assert_eq!(on_discovery(Phase::Active, None), DiscoveryAction::Ignore);
+        assert_eq!(
+            on_discovery(Phase::Active, true, None),
+            DiscoveryAction::Ignore
+        );
     }
 
     #[test]
     fn discovery_restarts_when_the_pending_kick_is_cancelled() {
         assert_eq!(
-            on_discovery(Phase::Waiting, Some(true)),
+            on_discovery(Phase::Waiting, true, Some(true)),
             DiscoveryAction::StartNow
         );
     }
@@ -297,7 +310,18 @@ mod tests {
     #[test]
     fn discovery_lets_an_in_flight_kick_run() {
         assert_eq!(
-            on_discovery(Phase::Waiting, Some(false)),
+            on_discovery(Phase::Waiting, true, Some(false)),
+            DiscoveryAction::LetRun
+        );
+    }
+
+    #[test]
+    fn reannouncement_while_waiting_does_not_collapse_the_interval() {
+        // A re-announced (already-known) device must not restart the pass: the
+        // parked kick stays, so the 30 s cadence holds. `kick_cancelled` is
+        // `None` because the driver does not even cancel the kick in this case.
+        assert_eq!(
+            on_discovery(Phase::Waiting, false, None),
             DiscoveryAction::LetRun
         );
     }

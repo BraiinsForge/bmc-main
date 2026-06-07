@@ -166,19 +166,29 @@ fn cancel_kick(family: DeviceFamily) -> bool {
     all_caught
 }
 
-/// Discovery found a device for `family`. An idle family starts a pass now; a
-/// device that arrives while a kick is parked cancels the kick and restarts so
-/// it is polled immediately instead of after the interval.
-pub fn ensure_running(family: DeviceFamily) {
+/// React to a discovery for `family`; `is_new` is whether it added a device not
+/// already listed. An idle family starts a pass now. A genuinely new device that
+/// arrives while a kick is parked cancels the kick and restarts so it is polled
+/// immediately instead of after the interval; a re-announcement of an
+/// already-known device leaves the parked kick alone so the poll cadence holds
+/// instead of collapsing into a back-to-back pass.
+pub fn on_discovered(family: DeviceFamily, is_new: bool) {
     let phase = with_driver(family, |d| d.phase());
     let kick_cancelled = match phase {
-        Phase::Waiting => Some(cancel_kick(family)),
-        Phase::Idle | Phase::Active => None,
+        Phase::Waiting if is_new => Some(cancel_kick(family)),
+        Phase::Idle | Phase::Waiting | Phase::Active => None,
     };
-    match on_discovery(phase, kick_cancelled) {
+    match on_discovery(phase, is_new, kick_cancelled) {
         DiscoveryAction::StartNow => start_pass(family, 0),
         DiscoveryAction::LetRun | DiscoveryAction::Ignore => {}
     }
+}
+
+/// Ensure a pass is running for `family` after a resume (the family was
+/// re-enabled or credentials changed) or after manual hosts were added — start
+/// promptly, as for a newly discovered device.
+pub fn ensure_running(family: DeviceFamily) {
+    on_discovered(family, true);
 }
 
 /// Clear all cached tokens (e.g. after a password change).

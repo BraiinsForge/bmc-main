@@ -132,7 +132,7 @@ fn ingest(adapter: &dyn FamilyAdapter, json: &str) {
                 model
             );
         }
-        session::ensure_running(family);
+        session::on_discovered(family, is_new);
         request_frame();
     }
 }
