@@ -10516,6 +10516,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "validation-overlay"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bmc-render",
+ "bmc-system-overlay",
+]
+
+[[package]]
 name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
