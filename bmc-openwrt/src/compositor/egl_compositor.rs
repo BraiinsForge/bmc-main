@@ -9,6 +9,9 @@ use super::{
     lifecycle_emitter::Emission,
     protocol::{DeckWidgetHandler, DeckWidgetProtocolState},
     render::{DrmOutput, EglContext},
+    scene_cycling::{
+        AutomaticCycling, AutomaticCyclingAction, AutomaticCyclingPhase, SceneCyclingRuntimeConfig,
+    },
     scene_renderer::SceneRenderer,
     state::{ClientState, CompositorState, release_widget_buffers},
     touch_gesture::{GestureState, TouchGesture},
@@ -408,7 +411,13 @@ impl EglCompositor {
             loop_handle: loop_handle.clone(),
             retry_libinput: None,
             touch_retry_pending: false,
+            automatic_cycling: AutomaticCycling::new(
+                Instant::now(),
+                SceneCyclingRuntimeConfig::default(),
+            ),
+            scene_cycling_timer_generation: 0,
         };
+        app_state.reevaluate_automatic_cycling(Instant::now());
 
         // Add listening socket fd for new Wayland client connections
         match app_state.listening_socket.as_fd().try_clone_to_owned() {
@@ -659,9 +668,14 @@ impl EglCompositor {
                         .collect();
                     let capture_active = !app_state.compositor.capture_sessions.is_empty();
                     let output_damage = app_state.compositor.current_output_damage();
+                    let logical_width = renderer.logical_size().0;
+                    let transition_offset = app_state
+                        .automatic_cycling
+                        .transition_offset(logical_width, Instant::now());
                     let (rendered, unconsumed_captures, capture_failed) = renderer
                         .render_scene(
                             &app_state.compositor.widgets,
+                            transition_offset,
                             &app_state.compositor.widget_buffers,
                             &dirty,
                             capture_frames,
@@ -828,6 +842,8 @@ struct AppState {
     /// only starts re-rendering after the compositor's GPU work for that frame
     /// is done — avoiding a host/compositor render overlap across the handoff.
     pending_lifecycle_emission: bool,
+    automatic_cycling: AutomaticCycling,
+    scene_cycling_timer_generation: u64,
     /// Calloop handle, used to (re-)arm the touch-discovery retry timer
     /// from `schedule_touch_discovery_retry`.
     loop_handle: LoopHandle<'static, AppState>,
@@ -844,6 +860,129 @@ struct AppState {
 }
 
 impl AppState {
+    fn active_scene_cycle_duration(&self) -> Duration {
+        self.automatic_cycling.default_duration()
+    }
+
+    fn reevaluate_automatic_cycling(&mut self, now: Instant) {
+        let touch_active = !self.active_touch_slots.is_empty();
+        if touch_active {
+            self.cancel_automatic_transition_for_interruption();
+        }
+        self.automatic_cycling.reevaluate(
+            now,
+            self.compositor.widgets.can_drag(),
+            self.compositor.widgets.scene_count(),
+            touch_active,
+        );
+        self.schedule_scene_cycling_timer(now);
+    }
+
+    fn reset_automatic_waiting(&mut self, now: Instant) {
+        self.cancel_automatic_transition_for_interruption();
+        self.automatic_cycling.reset_waiting(
+            now,
+            self.compositor.widgets.scene_count(),
+            !self.active_touch_slots.is_empty(),
+        );
+        self.schedule_scene_cycling_timer(now);
+    }
+
+    fn pause_automatic_cycling_for_touch(&mut self, now: Instant) {
+        self.cancel_automatic_transition_for_interruption();
+        self.automatic_cycling.reevaluate(
+            now,
+            self.compositor.widgets.can_drag(),
+            self.compositor.widgets.scene_count(),
+            true,
+        );
+        self.schedule_scene_cycling_timer(now);
+    }
+
+    fn cancel_automatic_transition_for_interruption(&mut self) {
+        if !self.compositor.widgets.automatic_transition_active() {
+            return;
+        }
+
+        self.compositor.widgets.cancel_automatic_transition();
+        self.compositor.mark_full_output_damage();
+        let next = self.compositor.widgets.lifecycle_states();
+        let mut lifecycle = self.compositor.lifecycle.clone();
+        let emission = lifecycle.step(&next);
+        if emission.releases.is_empty() {
+            emit_lifecycle_transitions(self);
+        } else {
+            self.pending_lifecycle_emission = true;
+        }
+    }
+
+    fn schedule_scene_cycling_timer(&mut self, now: Instant) {
+        self.scene_cycling_timer_generation = self.scene_cycling_timer_generation.saturating_add(1);
+        let generation = self.scene_cycling_timer_generation;
+        let Some(delay) = self
+            .automatic_cycling
+            .next_delay(now, self.active_scene_cycle_duration())
+        else {
+            return;
+        };
+
+        let timer = Timer::from_duration(delay);
+        let result = self.loop_handle.insert_source(timer, move |_, (), state| {
+            if state.scene_cycling_timer_generation != generation {
+                return TimeoutAction::Drop;
+            }
+            state.on_scene_cycling_timer(Instant::now());
+            TimeoutAction::Drop
+        });
+        if let Err(e) = result {
+            tracing::error!("failed to schedule scene cycling timer: {e}");
+        }
+    }
+
+    fn on_scene_cycling_timer(&mut self, now: Instant) {
+        let action = self
+            .automatic_cycling
+            .on_timer(now, self.active_scene_cycle_duration());
+        match action {
+            AutomaticCyclingAction::None => {
+                if matches!(
+                    self.automatic_cycling.phase(),
+                    AutomaticCyclingPhase::Transition { .. }
+                ) {
+                    self.compositor.mark_full_output_damage();
+                }
+                self.schedule_scene_cycling_timer(now);
+            }
+            AutomaticCyclingAction::BeginPreTransition => {
+                if let Some(target) = self.compositor.widgets.begin_automatic_transition_to_next() {
+                    self.automatic_cycling.enter_pre_transition(now, target);
+                    let emission = emit_lifecycle_transitions(self);
+                    debug_assert!(
+                        emission.releases.is_empty(),
+                        "automatic pre-transition must not release dormant buffers before slide"
+                    );
+                    self.schedule_scene_cycling_timer(now);
+                } else {
+                    self.reset_automatic_waiting(now);
+                }
+            }
+            AutomaticCyclingAction::BeginTransition => {
+                if let AutomaticCyclingPhase::PreTransition { target, .. } =
+                    self.automatic_cycling.phase()
+                {
+                    self.automatic_cycling.enter_transition(now, target);
+                    self.compositor.mark_full_output_damage();
+                    self.schedule_scene_cycling_timer(now);
+                }
+            }
+            AutomaticCyclingAction::FinishTransition => {
+                self.compositor.widgets.finish_automatic_transition();
+                after_scene_change(self);
+                self.reset_automatic_waiting(now);
+            }
+        }
+    }
+
     /// Schedule (or skip) a touch-discovery retry ladder.
     ///
     /// Idempotent: returns early when discovery is disabled (`with_input_node`
@@ -990,6 +1129,9 @@ impl AppState {
 
         let sequence_was_idle = self.active_touch_slots.is_empty();
         self.active_touch_slots.insert(slot);
+        if sequence_was_idle {
+            self.pause_automatic_cycling_for_touch(Instant::now());
+        }
 
         // Single-touch policy: only the first contact in an otherwise
         // idle sequence is forwarded to wl_touch or drives the gesture
@@ -1102,11 +1244,15 @@ impl AppState {
         let time = event.time_msec();
         let slot = event.slot();
         self.active_touch_slots.remove(&slot);
+        let touch_sequence_finished = self.active_touch_slots.is_empty();
 
         // Single-touch policy: only the primary slot produced any
         // wl_touch or gesture state on down/motion, so only the
         // primary needs finalization here. See `on_touch_down`.
         if self.gesture_slot != Some(slot) {
+            if touch_sequence_finished {
+                self.reset_automatic_waiting(Instant::now());
+            }
             return;
         }
 
@@ -1153,6 +1299,9 @@ impl AppState {
                 tracing::debug!("Tap detected");
             }
         }
+        if touch_sequence_finished {
+            self.reset_automatic_waiting(Instant::now());
+        }
     }
 
     fn on_touch_cancel(&mut self) {
@@ -1169,6 +1318,7 @@ impl AppState {
             touch_handle.cancel(&mut self.compositor);
             self.touch_frame_dirty = true;
         }
+        self.reset_automatic_waiting(Instant::now());
     }
 
     fn on_touch_frame(&mut self) {
@@ -1398,6 +1548,7 @@ fn handle_reset_scene_cycle_command(state: &mut AppState) {
     tracing::debug!("resetting scene cycle");
     state.compositor.widgets.set_active_scene_index(0);
     after_scene_change(state);
+    state.reset_automatic_waiting(Instant::now());
 }
 
 fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
@@ -1460,11 +1611,13 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             }
             state.compositor.widgets.set_active_scene(layout);
             after_scene_change(state);
+            state.reset_automatic_waiting(Instant::now());
         }
         CompositorCommand::SetSceneCycling { scenes } => {
             tracing::info!("Setting scene cycling with {} scenes", scenes.len());
             state.compositor.widgets.set_scene_cycling(scenes);
             after_scene_change(state);
+            state.reset_automatic_waiting(Instant::now());
         }
         CompositorCommand::SetSceneCyclingConfig { config } => {
             tracing::debug!(?config, "updating scene cycling config");
@@ -1474,6 +1627,7 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             tracing::info!("Setting active scene index to {}", index);
             state.compositor.widgets.set_active_scene_index(index);
             after_scene_change(state);
+            state.reset_automatic_waiting(Instant::now());
         }
         CompositorCommand::BroadcastSetting { setting } => {
             tracing::debug!("Broadcasting setting: {:?}", setting);
@@ -1800,9 +1954,15 @@ mod tests {
     use super::{
         AppState, CompositorState, Emission, GestureState, LifecycleSink, LifecycleState,
         RedrawState, clamp_initial_lifecycle, dispatch_timeout, emit_lifecycle_batches,
-        handle_clear_pid_command,
+        emit_lifecycle_transitions, handle_clear_pid_command, handle_command,
     };
-    use bmc::compositor::InstanceId;
+    use crate::compositor::CompositorCommand;
+    use crate::compositor::scene_cycling::{
+        AUTOMATIC_TRANSITION_DURATION, AutomaticCycling, AutomaticCyclingPhase,
+        SceneCyclingRuntimeConfig,
+    };
+    use crate::compositor::widget_tracker::SceneTransitionTarget;
+    use bmc::compositor::{InstanceId, Position, SceneLayout, Size, WidgetPlacement};
     use bmc_widget_protocol::{ViewportShape, WidgetInitialConfig};
     use smithay::reexports::{
         calloop::EventLoop,
@@ -1811,7 +1971,7 @@ mod tests {
     use std::{
         collections::{HashMap, HashSet},
         path::PathBuf,
-        time::{Duration, SystemTime, UNIX_EPOCH},
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
     use tokio::sync::mpsc;
 
@@ -1867,6 +2027,11 @@ mod tests {
             loop_handle: event_loop.handle(),
             retry_libinput: None,
             touch_retry_pending: false,
+            automatic_cycling: AutomaticCycling::new(
+                Instant::now(),
+                SceneCyclingRuntimeConfig::default(),
+            ),
+            scene_cycling_timer_generation: 0,
         }
     }
 
@@ -1874,6 +2039,158 @@ mod tests {
         pairs: &[(InstanceId, LifecycleState)],
     ) -> HashMap<InstanceId, LifecycleState> {
         pairs.iter().cloned().collect()
+    }
+
+    fn test_scene(instance_id: &str) -> SceneLayout {
+        SceneLayout {
+            scene_id: None,
+            widgets: vec![WidgetPlacement {
+                instance_id: instance_id.to_owned(),
+                position: Position { x: 0, y: 0 },
+                size: Size {
+                    width: 480,
+                    height: 1280,
+                },
+                visible: true,
+            }],
+        }
+    }
+
+    #[test]
+    fn automatic_transition_timer_tick_marks_output_damage() {
+        let mut state = make_app_state();
+        state.compositor.clear_output_damage();
+        let now = Instant::now();
+        state.automatic_cycling.enter_transition(
+            now,
+            SceneTransitionTarget {
+                from_index: 0,
+                to_index: 1,
+            },
+        );
+
+        state.on_scene_cycling_timer(now + Duration::from_millis(16));
+
+        assert!(state.compositor.needs_redraw());
+    }
+
+    #[test]
+    fn automatic_transition_finish_defers_lifecycle_until_rendered_frame() {
+        let mut state = make_app_state();
+        state
+            .compositor
+            .widgets
+            .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
+        let now = Instant::now();
+        let target = state
+            .compositor
+            .widgets
+            .begin_automatic_transition_to_next()
+            .expect("BUG: two scenes should have an automatic transition target");
+        state.automatic_cycling.enter_transition(now, target);
+        state.compositor.clear_output_damage();
+
+        state.on_scene_cycling_timer(now + AUTOMATIC_TRANSITION_DURATION);
+
+        assert!(state.pending_lifecycle_emission);
+        assert!(state.compositor.needs_redraw());
+    }
+
+    #[test]
+    fn cancelling_automatic_transition_restores_lifecycle_and_damages_output() {
+        let mut state = make_app_state();
+        state
+            .compositor
+            .widgets
+            .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
+        let target = state
+            .compositor
+            .widgets
+            .begin_automatic_transition_to_next()
+            .expect("BUG: two scenes should have an automatic transition target");
+        state
+            .automatic_cycling
+            .enter_pre_transition(Instant::now(), target);
+        let _ = emit_lifecycle_transitions(&mut state);
+        state.compositor.clear_output_damage();
+
+        state.pause_automatic_cycling_for_touch(Instant::now());
+
+        assert!(!state.compositor.widgets.automatic_transition_active());
+        assert!(state.compositor.needs_redraw());
+        let emission = state
+            .compositor
+            .lifecycle
+            .step(&state.compositor.widgets.lifecycle_states());
+        assert!(
+            emission.is_empty(),
+            "cancellation should emit restored lifecycle before returning"
+        );
+    }
+
+    #[test]
+    fn cancelling_automatic_transition_with_four_scenes_restores_lifecycle_inline() {
+        let mut state = make_app_state();
+        state.compositor.widgets.set_scene_cycling(vec![
+            test_scene("a"),
+            test_scene("b"),
+            test_scene("c"),
+            test_scene("d"),
+        ]);
+        let target = state
+            .compositor
+            .widgets
+            .begin_automatic_transition_to_next()
+            .expect("BUG: four scenes should have an automatic transition target");
+        state
+            .automatic_cycling
+            .enter_pre_transition(Instant::now(), target);
+        let _ = emit_lifecycle_transitions(&mut state);
+        state.compositor.clear_output_damage();
+
+        state.pause_automatic_cycling_for_touch(Instant::now());
+
+        assert!(!state.compositor.widgets.automatic_transition_active());
+        assert!(state.compositor.needs_redraw());
+        assert!(!state.pending_lifecycle_emission);
+        let emission = state
+            .compositor
+            .lifecycle
+            .step(&state.compositor.widgets.lifecycle_states());
+        assert!(
+            emission.is_empty(),
+            "cancellation should emit restored lifecycle before returning"
+        );
+    }
+
+    #[test]
+    fn set_active_scene_resets_stale_automatic_transition_phase() {
+        let mut state = make_app_state();
+        state
+            .compositor
+            .widgets
+            .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
+        let target = state
+            .compositor
+            .widgets
+            .begin_automatic_transition_to_next()
+            .expect("BUG: two scenes should have an automatic transition target");
+        state
+            .automatic_cycling
+            .enter_pre_transition(Instant::now(), target);
+
+        handle_command(
+            &mut state,
+            CompositorCommand::SetActiveScene {
+                layout: test_scene("preview"),
+            },
+        );
+
+        assert!(!state.compositor.widgets.automatic_transition_active());
+        assert!(matches!(
+            state.automatic_cycling.phase(),
+            AutomaticCyclingPhase::PausedDisabled { .. }
+        ));
     }
 
     /// Records `send`/`release_buffers`/`flush` calls in order. `send`

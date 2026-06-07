@@ -31,7 +31,7 @@ impl Emission {
 
 /// Keeps the last-emitted lifecycle state per widget and produces the
 /// next emission as a release-then-acquire pair.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct LifecycleEmitter {
     last: HashMap<InstanceId, LifecycleState>,
 }
