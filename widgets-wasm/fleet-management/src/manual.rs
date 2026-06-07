@@ -39,6 +39,31 @@ pub(crate) fn manual_identity(
     })
 }
 
+/// Resolve operator-entered host `entries` into the desired manual identities
+/// for a family. Returns `None` when entries were supplied but none parsed into
+/// a usable identity — the caller should then leave the existing manual set
+/// unchanged (mirroring the invalid-JSON guard) rather than clear it on a typo
+/// like `["10.0.0.5:abc"]`. An empty `entries` slice returns `Some(empty)`: the
+/// explicit clear.
+pub(crate) fn desired_identities(
+    family: DeviceFamily,
+    default_port: u16,
+    entries: &[String],
+) -> Option<Vec<DeviceIdentity>> {
+    if entries.is_empty() {
+        return Some(Vec::new());
+    }
+    let desired: Vec<DeviceIdentity> = entries
+        .iter()
+        .filter_map(|entry| manual_identity(family, default_port, entry))
+        .collect();
+    if desired.is_empty() {
+        None
+    } else {
+        Some(desired)
+    }
+}
+
 /// Outcome of reconciling one family's manual set: the ids dropped (so their
 /// cached session tokens can be cleared) and whether any device was added (so
 /// polling can be (re)started).
@@ -163,6 +188,33 @@ mod tests {
             port: 80,
             source: DeviceSource::Discovered,
         }
+    }
+
+    fn bos_desired(entries: &[&str]) -> Option<Vec<DeviceIdentity>> {
+        let owned: Vec<String> = entries.iter().map(|e| (*e).to_owned()).collect();
+        desired_identities(DeviceFamily::Bos, 80, &owned)
+    }
+
+    #[test]
+    fn desired_identities_empty_is_explicit_clear() {
+        let out = bos_desired(&[]).expect("BUG: an empty list is the explicit clear, not a keep");
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn desired_identities_all_invalid_keeps_previous() {
+        assert!(
+            bos_desired(&["10.0.0.5:abc", ""]).is_none(),
+            "entries that all fail to parse must keep the previous set, not clear it"
+        );
+    }
+
+    #[test]
+    fn desired_identities_mixed_drops_only_the_invalid() {
+        let out = bos_desired(&["10.0.0.5:abc", "10.0.0.6"])
+            .expect("BUG: a list with at least one valid entry must reconcile");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id.as_str(), "bos/manual/10.0.0.6");
     }
 
     #[test]

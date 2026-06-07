@@ -31,7 +31,7 @@ use std::cell::RefCell;
 #[cfg(target_arch = "wasm32")]
 use adapter::FamilyAdapter;
 #[cfg(target_arch = "wasm32")]
-use device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceList, family_label};
+use device::{DeviceFamily, DeviceId, DeviceList, family_label};
 #[cfg(target_arch = "wasm32")]
 use families::bitaxe::BitaxeAdapter;
 #[cfg(target_arch = "wasm32")]
@@ -222,10 +222,13 @@ fn reconcile_manual_hosts() {
         };
         let adapter = session::adapter_for(family).expect("BUG: every DeviceFamily has an adapter");
         let default_port = adapter.default_port();
-        let desired: Vec<DeviceIdentity> = entries
-            .iter()
-            .filter_map(|entry| manual::manual_identity(family, default_port, entry))
-            .collect();
+        let Some(desired) = manual::desired_identities(family, default_port, &entries) else {
+            log_warn!(
+                "fleet: {} manual hosts param has entries but none are valid; leaving manual hosts unchanged",
+                family_label(family)
+            );
+            continue;
+        };
         let outcome =
             DEVICES.with(|d| manual::reconcile_manual_into(&mut d.borrow_mut(), family, desired));
         for id in &outcome.removed_ids {
