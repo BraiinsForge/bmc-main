@@ -1955,9 +1955,10 @@ impl Compositor for EglCompositor {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppState, CompositorState, Emission, GestureState, LifecycleSink, LifecycleState,
-        RedrawState, clamp_initial_lifecycle, dispatch_timeout, emit_lifecycle_batches,
-        emit_lifecycle_transitions, handle_clear_pid_command, handle_command,
+        AppState, CompositorState, Emission, GestureState, LibinputInputBackend, LifecycleSink,
+        LifecycleState, RedrawState, TouchSlot, clamp_initial_lifecycle, dispatch_timeout,
+        emit_lifecycle_batches, emit_lifecycle_transitions, handle_clear_pid_command,
+        handle_command,
     };
     use crate::compositor::CompositorCommand;
     use crate::compositor::scene_cycling::{
@@ -1969,6 +1970,7 @@ mod tests {
     use bmc_widget_protocol::{ViewportShape, WidgetInitialConfig};
     use smithay::reexports::{
         calloop::EventLoop,
+        input as libinput,
         wayland_server::{Display, ListeningSocket},
     };
     use std::{
@@ -2065,6 +2067,186 @@ mod tests {
             cycle_duration: Some(duration),
             ..test_scene(instance_id)
         }
+    }
+
+    fn cycling_config(enabled: bool) -> SceneCyclingRuntimeConfig {
+        SceneCyclingRuntimeConfig {
+            enabled,
+            default_duration: Duration::from_secs(30),
+        }
+    }
+
+    struct FakeTouchEvent {
+        slot: TouchSlot,
+        time: u64,
+        x: f64,
+        y: f64,
+    }
+
+    impl FakeTouchEvent {
+        fn new(slot: u32, time_msec: u32) -> Self {
+            Self {
+                slot: TouchSlot::from(Some(slot)),
+                time: u64::from(time_msec) * 1000,
+                x: 1.0,
+                y: 1.0,
+            }
+        }
+    }
+
+    impl smithay::backend::input::Event<LibinputInputBackend> for FakeTouchEvent {
+        fn time(&self) -> u64 {
+            self.time
+        }
+
+        fn device(&self) -> libinput::Device {
+            panic!("BUG: touch pause tests must not inspect the libinput device")
+        }
+    }
+
+    impl smithay::backend::input::TouchEvent<LibinputInputBackend> for FakeTouchEvent {
+        fn slot(&self) -> TouchSlot {
+            self.slot
+        }
+    }
+
+    impl smithay::backend::input::AbsolutePositionEvent<LibinputInputBackend> for FakeTouchEvent {
+        fn x(&self) -> f64 {
+            self.x
+        }
+
+        fn y(&self) -> f64 {
+            self.y
+        }
+
+        fn x_transformed(&self, _width: i32) -> f64 {
+            self.x
+        }
+
+        fn y_transformed(&self, _height: i32) -> f64 {
+            self.y
+        }
+    }
+
+    #[test]
+    fn touch_down_pauses_automatic_cycling() {
+        let now = Instant::now();
+        let mut state = make_app_state();
+        state.automatic_cycling.set_config(cycling_config(true));
+        state
+            .compositor
+            .widgets
+            .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
+        state.reset_automatic_waiting(now);
+
+        state.on_touch_down(&FakeTouchEvent::new(0, 1));
+
+        assert!(matches!(
+            state.automatic_cycling.phase(),
+            AutomaticCyclingPhase::PausedDisabled { .. }
+        ));
+    }
+
+    #[test]
+    fn touch_release_resets_waiting_deadline() {
+        let mut state = make_app_state();
+        state.automatic_cycling.set_config(cycling_config(true));
+        state
+            .compositor
+            .widgets
+            .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
+
+        state.on_touch_down(&FakeTouchEvent::new(0, 1));
+        state.on_touch_up(&FakeTouchEvent::new(0, 2));
+
+        let AutomaticCyclingPhase::WaitingForTimer { started_at } = state.automatic_cycling.phase()
+        else {
+            panic!("BUG: final touch release should reset automatic cycling to waiting");
+        };
+        assert_eq!(
+            state
+                .automatic_cycling
+                .next_delay(started_at, Duration::from_secs(30)),
+            Some(Duration::from_secs(30)),
+        );
+    }
+
+    #[test]
+    fn touch_release_keeps_cycling_paused_until_secondary_slot_releases() {
+        let now = Instant::now();
+        let mut state = make_app_state();
+        state.automatic_cycling.set_config(cycling_config(true));
+        state
+            .compositor
+            .widgets
+            .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
+        state.reset_automatic_waiting(now);
+
+        state.on_touch_down(&FakeTouchEvent::new(0, 1));
+        state.on_touch_down(&FakeTouchEvent::new(1, 2));
+        state.on_touch_up(&FakeTouchEvent::new(0, 3));
+
+        assert!(matches!(
+            state.automatic_cycling.phase(),
+            AutomaticCyclingPhase::PausedDisabled { .. }
+        ));
+
+        state.on_touch_up(&FakeTouchEvent::new(1, 4));
+
+        assert!(matches!(
+            state.automatic_cycling.phase(),
+            AutomaticCyclingPhase::WaitingForTimer { .. }
+        ));
+    }
+
+    #[test]
+    fn touch_cancel_clears_slots_and_resets_waiting_deadline() {
+        let now = Instant::now();
+        let mut state = make_app_state();
+        state.automatic_cycling.set_config(cycling_config(true));
+        state
+            .compositor
+            .widgets
+            .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
+        state.active_touch_slots.insert(TouchSlot::from(Some(1)));
+        state.automatic_cycling.reset_waiting(now, 2, true);
+
+        state.on_touch_cancel();
+
+        assert!(state.active_touch_slots.is_empty());
+        let AutomaticCyclingPhase::WaitingForTimer { started_at } = state.automatic_cycling.phase()
+        else {
+            panic!("BUG: touch cancel should reset automatic cycling to waiting");
+        };
+        assert_eq!(
+            state
+                .automatic_cycling
+                .next_delay(started_at, Duration::from_secs(30)),
+            Some(Duration::from_secs(30)),
+        );
+    }
+
+    #[test]
+    fn touch_pause_cancels_tracker_transition() {
+        let now = Instant::now();
+        let mut state = make_app_state();
+        state.automatic_cycling.set_config(cycling_config(true));
+        state
+            .compositor
+            .widgets
+            .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
+        state
+            .compositor
+            .widgets
+            .begin_automatic_transition_to_next();
+
+        state.pause_automatic_cycling_for_touch(now);
+
+        assert!(!state.compositor.widgets.automatic_transition_active());
+        assert!(matches!(
+            state.automatic_cycling.phase(),
+            AutomaticCyclingPhase::PausedDisabled { .. }
+        ));
     }
 
     #[test]
