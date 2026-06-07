@@ -29,6 +29,12 @@ pub fn render_hosted_overlay(
     now: Instant,
 ) -> anyhow::Result<()> {
     let size = overlay.size();
+    anyhow::ensure!(
+        shared.scratch.supports_size(size.0, size.1),
+        "host scratch FBO {:?} cannot render resized overlay {:?}",
+        shared.scratch.max_size(),
+        size,
+    );
     let (dmabuf, slot) = {
         // Lock lifetime matches WidgetSlot::render: held across render+blit+
         // fence-wait, then dropped BEFORE export_and_swap. Bind it and `drop` it

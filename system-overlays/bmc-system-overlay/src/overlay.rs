@@ -64,6 +64,25 @@ impl LayerConfig {
     }
 }
 
+#[must_use]
+pub(crate) fn resolved_configured_size(
+    config_size: (u32, u32),
+    configured_size: (u32, u32),
+) -> (u32, u32) {
+    (
+        if configured_size.0 == 0 {
+            config_size.0.max(1)
+        } else {
+            configured_size.0
+        },
+        if configured_size.1 == 0 {
+            config_size.1.max(1)
+        } else {
+            configured_size.1
+        },
+    )
+}
+
 /// Result of an overlay's per-pass background work.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TickOutcome {
@@ -108,5 +127,12 @@ mod tests {
         assert!(c.anchor.contains(Anchor::Right));
         assert_eq!(c.size, (0, 0));
         assert_eq!(c.input, InputRegion::Full);
+    }
+
+    #[test]
+    fn resolved_configured_size_falls_back_when_compositor_reports_zero_axis() {
+        assert_eq!(resolved_configured_size((420, 180), (0, 180)), (420, 180));
+        assert_eq!(resolved_configured_size((420, 180), (420, 0)), (420, 180));
+        assert_eq!(resolved_configured_size((0, 0), (0, 0)), (1, 1));
     }
 }
