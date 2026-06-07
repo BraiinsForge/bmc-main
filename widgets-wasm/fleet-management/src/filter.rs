@@ -11,6 +11,19 @@ pub fn normalize(s: &str) -> String {
         .collect()
 }
 
+/// Normalize a list of operator-supplied fragments, dropping any that are blank
+/// after normalization. A blank fragment is a substring of every name, so it
+/// would make a whitelist match everything (benign) but a blacklist hide the
+/// whole fleet — a stray comma in `["bmm101", ""]` must not blank the view.
+#[must_use]
+pub fn normalized_fragments<'a>(entries: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    entries
+        .into_iter()
+        .map(normalize)
+        .filter(|f| !f.is_empty())
+        .collect()
+}
+
 /// True if any `entries` fragment is a substring of the model's normalized name
 /// or id. `entries` must already be normalized — they are normalized once when
 /// [`Filters`] is built, not per call, because `summarize` (hence this) runs
@@ -112,6 +125,27 @@ mod tests {
             "braiinsminiminerbmm101"
         );
         assert_eq!(normalize("  NerdQAxe++ \t"), "nerdqaxe++");
+    }
+
+    #[test]
+    fn normalized_fragments_drops_blank_entries() {
+        // A stray empty entry (e.g. a trailing comma in `["bmm101", ""]`) must
+        // not survive, or it would hide every device through the blacklist.
+        let fragments = normalized_fragments(["bmm101", "", "  ", "NerdQAxe"]);
+        assert_eq!(fragments, vec!["bmm101".to_owned(), "nerdqaxe".to_owned()]);
+    }
+
+    #[test]
+    fn blacklist_with_only_a_blank_fragment_hides_nothing() {
+        let f = Filters {
+            blacklist: normalized_fragments(["bmm101", ""]),
+            ..Default::default()
+        };
+        let axe = model("id", "NerdQAxe++");
+        assert!(
+            f.is_visible(DeviceFamily::Bitaxe, Some(&axe)),
+            "a blank blacklist fragment must not hide unrelated models"
+        );
     }
 
     #[test]

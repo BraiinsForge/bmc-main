@@ -164,6 +164,24 @@ fn manual_hosts_param(family: DeviceFamily) -> String {
     }
 }
 
+/// Parse a JSON array of strings into its entries, or `None` if `raw` is not
+/// valid JSON. A valid non-array (or array whose elements are not strings)
+/// yields an empty `Vec`. Shared by the manual-host and model-list parsers.
+#[cfg(target_arch = "wasm32")]
+fn parse_string_array(raw: &str) -> Option<Vec<String>> {
+    let doc = JsonDoc::parse(raw.as_bytes());
+    if !doc.is_valid() {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while let Some(entry) = doc.str(&fmt!("/{i}")) {
+        out.push(entry);
+        i += 1;
+    }
+    Some(out)
+}
+
 /// Parse a manual-host param into raw entries. Returns `None` (leave the
 /// family's manual set unchanged) for invalid JSON, or for any valid shape
 /// that yields no entries except the literal empty array `[]` (which clears).
@@ -222,17 +240,10 @@ fn reconcile_manual_hosts() {
 /// An invalid or non-array value yields an empty list (no filtering).
 #[cfg(target_arch = "wasm32")]
 fn parse_model_list(raw: &str) -> Vec<String> {
-    let doc = JsonDoc::parse(raw.as_bytes());
-    if !doc.is_valid() {
-        return Vec::new();
-    }
-    let mut out = Vec::new();
-    let mut i = 0usize;
-    while let Some(entry) = doc.str(&fmt!("/{i}")) {
-        out.push(entry);
-        i += 1;
-    }
-    out
+    parse_string_array(raw).unwrap_or_else(|| {
+        log_warn!("fleet: model-list param is not valid JSON; model filtering disabled");
+        Vec::new()
+    })
 }
 
 /// Parse a model-list param and normalize every fragment for matching. Done
@@ -240,10 +251,7 @@ fn parse_model_list(raw: &str) -> Vec<String> {
 /// fragments instead of re-normalizing per device.
 #[cfg(target_arch = "wasm32")]
 fn parse_normalized_model_list(raw: &str) -> Vec<String> {
-    parse_model_list(raw)
-        .iter()
-        .map(|entry| filter::normalize(entry))
-        .collect()
+    filter::normalized_fragments(parse_model_list(raw).iter().map(String::as_str))
 }
 
 #[cfg(target_arch = "wasm32")]
