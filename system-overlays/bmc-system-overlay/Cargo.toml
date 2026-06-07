@@ -1,0 +1,23 @@
+[package]
+name = "bmc-system-overlay"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins Systems s.r.o."]
+description = "Framework for privileged wlr-layer-shell system overlays"
+
+[dependencies]
+anyhow.workspace = true
+bmc-gpu-render-lock.workspace = true
+bmc-render.workspace = true
+bmc-widget = { workspace = true, features = ["gpu"] }
+glow.workspace = true
+libc.workspace = true
+taffy.workspace = true
+tracing.workspace = true
+wayland-backend.workspace = true
+wayland-client.workspace = true
+wayland-protocols.workspace = true
+wayland-protocols-wlr = { workspace = true, features = ["client"] }
+
+[lints]
+workspace = true
