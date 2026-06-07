@@ -2,6 +2,10 @@
 
 //! Framework for privileged system overlays rendered as wlr-layer-shell clients.
 
+mod overlay;
+
+pub use overlay::{InputRegion, LayerConfig, SystemOverlay, TickOutcome, TouchEvent};
+
 // Re-export the layer-shell client enums so overlays can build a LayerConfig
 // without importing the protocol crate directly.
 pub use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
