@@ -48,6 +48,7 @@ members = [
     "bmc-widget-codegen",
     "bmc-widget-manifest",
     "bmc-widget-protocol",
+    "system-overlays/bmc-system-overlay",
     "system-overlays/layer-shell-test-client",
     "widgets/*",
 ]
@@ -154,6 +155,7 @@ bmc-led = { path = "bmc-led", default-features = false }
 bmc-nix = { path = "bmc-nix" }
 bmc-nix-init = { path = "bmc-nix-init" }
 bmc-platform = { path = "bmc-platform" }
+bmc-render = { path = "bmc-render" }
 bmc-scheduler = { path = "bmc-scheduler" }
 bmc-shared-esp32 = { path = "bmc-shared/esp32" }
 bmc-shared-ii-dns = { package = "ii-dns", path = "bmc-shared/ii-dns" }
