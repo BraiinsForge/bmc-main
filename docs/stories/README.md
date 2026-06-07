@@ -16,6 +16,12 @@ events resolve deterministically, and a master toggle lets the user silence them
 The support archive automatically censors credentials (Braiins Pool API keys, Wi-Fi passwords) before bundling
 diagnostic files, so users can safely share archives with support without exposing secrets.
 
+### [Scenes & Widgets](scenes-and-widgets.md)
+
+Scenes are user-configured display pages containing fullscreen or combined widget layouts. Users can enable, disable,
+reorder, swipe between, and automatically cycle through scenes while keeping widget settings scoped to each widget
+instance.
+
 ### [Combined Scene](combined-scene.md)
 
 A combined scene lets the user compose multiple compatible widgets on a single display. Widgets share a common sizing
@@ -60,8 +66,8 @@ speaker.
 
 ### Display & Scenes
 
-*Partially documented.* See [Night Mode](night-mode.md) for scheduled quiet-hours behavior. Remaining display stories
-include fullscreen scene behavior and scene management with configurable cycle durations.
+*Partially documented.* See [Night Mode](night-mode.md) for scheduled quiet-hours behavior and
+[Scenes & Widgets](scenes-and-widgets.md) for scene management and cycling behavior.
 
 ### Network Management
 
