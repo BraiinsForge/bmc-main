@@ -4,11 +4,13 @@
 
 mod gpu;
 mod overlay;
+mod standalone;
 mod surface;
 mod tree;
 
 pub use gpu::{OverlayRenderTarget, wait_for_gpu};
 pub use overlay::{InputRegion, LayerConfig, SystemOverlay, TickOutcome, TouchEvent};
+pub use standalone::run_standalone;
 pub use surface::LayerSurfaceClient;
 pub use tree::TreeUi;
 
