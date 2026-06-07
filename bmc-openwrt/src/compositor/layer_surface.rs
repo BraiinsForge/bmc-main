@@ -1,9 +1,14 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
+use std::collections::HashMap;
+
 use smithay::reexports::wayland_server::backend::ObjectId;
 use smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer;
 use smithay::utils::{Logical, Rectangle, Size};
 use smithay::wayland::shell::wlr_layer::{Anchor, Layer, LayerSurface, Margins};
+
+use super::widget_tracker::LifecycleState;
+use bmc::compositor::InstanceId;
 
 /// Resolved client layer-surface state needed to place it.
 pub struct LayerPlacement {
@@ -84,6 +89,29 @@ pub fn paint_order(ranks: &[u8]) -> Vec<usize> {
     let mut idx: Vec<usize> = (0..ranks.len()).collect();
     idx.sort_by_key(|&i| ranks[i]); // stable: preserves registration order within a rank
     idx
+}
+
+/// True if a mapped overlay-layer surface at `geo` covers the whole output.
+#[must_use]
+pub fn is_fullscreen_overlay(
+    layer: Layer,
+    geo: Rectangle<i32, Logical>,
+    output: Size<i32, Logical>,
+) -> bool {
+    layer == Layer::Overlay
+        && geo.loc.x <= 0
+        && geo.loc.y <= 0
+        && geo.size.w >= output.w
+        && geo.size.h >= output.h
+}
+
+/// Demote every `Prepared` entry to `Dormant`.
+pub fn suppress_prepared(states: &mut HashMap<InstanceId, LifecycleState>) {
+    for state in states.values_mut() {
+        if *state == LifecycleState::Prepared {
+            *state = LifecycleState::Dormant;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -241,6 +269,48 @@ mod tests {
         let mut id: Option<u32> = None;
         let (old_buf, old_id) = replace_buffer(&mut buf, &mut id, None);
         assert_eq!((old_buf, old_id), (None, None));
+    }
+
+    #[test]
+    fn fullscreen_overlay_true_for_full_cover_overlay() {
+        let output = Size::from((1280, 480));
+        let geo = Rectangle::from_loc_and_size((0, 0), (1280, 480));
+        assert!(is_fullscreen_overlay(Layer::Overlay, geo, output));
+    }
+
+    #[test]
+    fn fullscreen_overlay_false_for_corner_surface() {
+        let output = Size::from((1280, 480));
+        let geo = Rectangle::from_loc_and_size((1160, 440), (120, 40));
+        assert!(!is_fullscreen_overlay(Layer::Overlay, geo, output));
+    }
+
+    #[test]
+    fn fullscreen_overlay_false_for_top_layer() {
+        let output = Size::from((1280, 480));
+        let geo = Rectangle::from_loc_and_size((0, 0), (1280, 480));
+        assert!(!is_fullscreen_overlay(Layer::Top, geo, output));
+    }
+
+    #[test]
+    fn suppress_prepared_demotes_only_prepared() {
+        let mut states: HashMap<InstanceId, LifecycleState> = [
+            ("a".to_owned(), LifecycleState::Prepared),
+            ("b".to_owned(), LifecycleState::Visible),
+            ("c".to_owned(), LifecycleState::Entering),
+            ("d".to_owned(), LifecycleState::Leaving),
+            ("e".to_owned(), LifecycleState::Dormant),
+        ]
+        .into_iter()
+        .collect();
+
+        suppress_prepared(&mut states);
+
+        assert_eq!(states["a"], LifecycleState::Dormant);
+        assert_eq!(states["b"], LifecycleState::Visible);
+        assert_eq!(states["c"], LifecycleState::Entering);
+        assert_eq!(states["d"], LifecycleState::Leaving);
+        assert_eq!(states["e"], LifecycleState::Dormant);
     }
 
     #[test]
