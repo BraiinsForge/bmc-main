@@ -34,7 +34,7 @@ pub struct WidgetPlacement {
     pub visible: bool,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SceneLayout {
     /// Identifies which scene this layout came from; the compositor matches
     /// it against its cycling list to update entries in place instead of
