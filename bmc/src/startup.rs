@@ -194,8 +194,8 @@ where
             loop {
                 match screen_woken_rx.recv().await {
                     Ok(()) => {
-                        if let Err(err) = compositor_for_wake.set_active_scene_index(0) {
-                            tracing::warn!(error = %err, "Failed to set first scene on wake");
+                        if let Err(err) = compositor_for_wake.reset_scene_cycle() {
+                            tracing::warn!(error = %err, "Failed to reset scene cycle on wake");
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {

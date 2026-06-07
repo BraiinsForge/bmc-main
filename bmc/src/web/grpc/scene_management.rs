@@ -377,8 +377,8 @@ pub(crate) struct SceneManagementService {
     coordinator: Arc<Coordinator>,
     capabilities: HardwareCapabilities,
     /// Scene currently held open by a `preview_scene` stream. While set,
-    /// that scene overrides the first-enabled pick in `restore_active_scene`
-    /// so edits made during a preview stay focused on it.
+    /// that scene overrides normal compositor scene refreshes so edits made
+    /// during a preview stay focused on it.
     ///
     /// **Lock order:** always acquire this mutex *before* `config_handle`.
     /// `PreviewGuard::drop` and every method on this service follows that
@@ -403,17 +403,22 @@ impl SceneManagementService {
         }
     }
 
-    /// Refresh the compositor's cycling list from current config; if a
-    /// preview is active, also push that scene as the destructive active.
-    async fn restore_active_scene(&self) {
+    /// Refresh the compositor's scene state from current config. With no
+    /// preview held this pushes the full cycling list; while a preview is
+    /// active it instead pins that single scene so cycling and drag stay off.
+    async fn refresh_compositor_scenes(&self) {
         let preview_id = *self.preview_scene_id.lock().await;
         let config = self.config_handle.read().await;
-        self.coordinator.refresh_scene_cycling(&config.scenes);
         if let Some(preview_id) = preview_id
             && let Some(scene) = config.scenes.get(&preview_id)
         {
-            self.coordinator.set_active_scene(scene);
+            // A held preview pins exactly one scene so automatic cycling and
+            // manual drag cannot move off the scene being edited. Other edits
+            // are picked up by the full refresh when the preview ends.
+            self.coordinator.pin_preview_scene(scene);
+            return;
         }
+        self.coordinator.refresh_scene_cycling(&config.scenes);
     }
 
     /// Save config, returning a gRPC-friendly error on failure.
@@ -628,7 +633,7 @@ enum UpdateWidgetAction {
     /// Nothing to do — either the widget is not running (scene not
     /// showing, so the new config will be picked up on next spawn) or
     /// it is running but only position changed (picked up by
-    /// `restore_active_scene`).
+    /// `refresh_compositor_scenes`).
     Nothing,
 }
 
@@ -991,7 +996,7 @@ impl GrpcSceneManagementService for SceneManagementService {
                 self.coordinator.spawn_scene_widgets(scene).await;
             }
         }
-        self.restore_active_scene().await;
+        self.refresh_compositor_scenes().await;
 
         Ok(Response::new(scene_id))
     }
@@ -1014,7 +1019,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             Self::save_config(&mut config).await?;
         }
 
-        self.restore_active_scene().await;
+        self.refresh_compositor_scenes().await;
 
         Ok(Response::new(scene_id))
     }
@@ -1063,7 +1068,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             }
         }
 
-        self.restore_active_scene().await;
+        self.refresh_compositor_scenes().await;
 
         Ok(Response::new(()))
     }
@@ -1096,7 +1101,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         Self::save_config(&mut config).await?;
         drop(config);
 
-        self.restore_active_scene().await;
+        self.refresh_compositor_scenes().await;
 
         Ok(Response::new(()))
     }
@@ -1139,7 +1144,7 @@ impl GrpcSceneManagementService for SceneManagementService {
                 self.coordinator.spawn_scene_widgets(scene).await;
             }
         }
-        self.restore_active_scene().await;
+        self.refresh_compositor_scenes().await;
 
         Ok(Response::new(cloned_id))
     }
@@ -1168,7 +1173,7 @@ impl GrpcSceneManagementService for SceneManagementService {
 
         // Stop all widgets from the removed scene
         self.coordinator.stop_scene_widgets(&removed_scene).await;
-        self.restore_active_scene().await;
+        self.refresh_compositor_scenes().await;
 
         Ok(Response::new(()))
     }
@@ -1202,7 +1207,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             if disabled {
                 self.coordinator.spawn_scene_widgets(scene).await;
             }
-            self.coordinator.set_active_scene(scene);
+            self.coordinator.pin_preview_scene(scene);
             disabled
         };
 
@@ -1285,7 +1290,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         }
 
         self.coordinator.stop_widget(&instance_id).await;
-        self.restore_active_scene().await;
+        self.refresh_compositor_scenes().await;
 
         Ok(Response::new(()))
     }
@@ -1418,7 +1423,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         if let Some(widget) = widget_to_spawn {
             self.coordinator.spawn_widget(&scene_id_key, &widget).await;
         }
-        self.restore_active_scene().await;
+        self.refresh_compositor_scenes().await;
 
         Ok(Response::new(widget_id))
     }
@@ -1517,7 +1522,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             let placement_changed = previous_placement != updated_widget.placement;
 
             // Position-only changes get picked up by
-            // `restore_active_scene` below, so we only respawn when
+            // `refresh_compositor_scenes` below, so we only respawn when
             // the widget's surface size actually changed. Params are
             // pushed only when they actually differ — a pure position
             // move doesn't disturb the running widget's state.
@@ -1542,7 +1547,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             self.coordinator.stop_widget(&instance_id).await;
             self.coordinator.spawn_widget(&scene_id_key, &widget).await;
         }
-        self.restore_active_scene().await;
+        self.refresh_compositor_scenes().await;
 
         Ok(Response::new(()))
     }
@@ -1555,6 +1560,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingCompositor {
         scene_cycling_configs: std::sync::Mutex<Vec<SceneCycling>>,
+        scene_cycling_lists: std::sync::Mutex<Vec<Vec<crate::compositor::SceneLayout>>>,
     }
 
     impl crate::compositor::Compositor for RecordingCompositor {
@@ -1612,8 +1618,12 @@ mod tests {
 
         fn set_scene_cycling(
             &self,
-            _scenes: Vec<crate::compositor::SceneLayout>,
+            scenes: Vec<crate::compositor::SceneLayout>,
         ) -> Result<(), crate::compositor::CompositorError> {
+            self.scene_cycling_lists
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned")
+                .push(scenes);
             Ok(())
         }
 
@@ -1629,13 +1639,6 @@ mod tests {
         }
 
         fn reset_scene_cycle(&self) -> Result<(), crate::compositor::CompositorError> {
-            Ok(())
-        }
-
-        fn set_active_scene_index(
-            &self,
-            _index: usize,
-        ) -> Result<(), crate::compositor::CompositorError> {
             Ok(())
         }
 
@@ -2656,6 +2659,94 @@ mod tests {
             Duration::from_secs(12),
         );
         assert_eq!(applied.transition, SceneCyclingTransition::Slide);
+    }
+
+    #[tokio::test]
+    async fn refresh_compositor_scenes_pins_single_scene_during_preview() {
+        let widget_type_id = uuid::Uuid::new_v4();
+        let manifest = bmc_widget_manifest::Manifest {
+            uid: widget_type_id,
+            version: semver::Version::new(1, 0, 0),
+            name: "test-widget".to_owned(),
+            description: "Test widget".to_owned(),
+            author: None,
+            binary: std::path::PathBuf::from("bin/widget"),
+            settings: vec![],
+            supported_viewports: vec![bmc_widget_manifest::WidgetViewportConstraint {
+                viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
+                min_width: Some(1_280),
+                max_width: Some(1_280),
+                min_height: Some(480),
+                max_height: Some(480),
+                min_dpi: None,
+                max_dpi: None,
+            }],
+            params: indexmap::IndexMap::new(),
+        };
+        let widget_registry = Arc::new(WidgetRegistry::new(vec![crate::widget::WidgetInfo {
+            manifest,
+            widget_dir: std::path::PathBuf::from("/test/widgets/test-widget"),
+            binary_path: std::path::PathBuf::from("/test/widgets/test-widget/bin/widget"),
+        }]));
+
+        let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
+        let config_path = tmp.path().join("bmc-config.json");
+        let config_handle = Arc::new(RwLock::new(
+            ConfigHandle::init(config_path, 50, 50, 50, 50).await,
+        ));
+
+        // Two enabled, supported scenes — without a preview both must cycle.
+        let scene_a = scene::Scene::fullscreen(widget_type_id, BTreeMap::new());
+        let scene_b = scene::Scene::fullscreen(widget_type_id, BTreeMap::new());
+        let preview_id = scene_a.id;
+        {
+            let mut config = config_handle.write().await;
+            config.scenes.clear();
+            config.scenes.insert(scene_a.id, scene_a);
+            config.scenes.insert(scene_b.id, scene_b);
+        }
+
+        let widget_manager = crate::widget::WidgetManager::init(Vec::new(), false).await;
+        let compositor = Arc::new(RecordingCompositor::default());
+        let compositor_for_coordinator: Arc<dyn crate::compositor::Compositor> = compositor.clone();
+        let capabilities = bmc100_caps(None);
+        let coordinator = Arc::new(Coordinator::new(
+            widget_manager,
+            compositor_for_coordinator,
+            Arc::clone(&widget_registry),
+            capabilities,
+        ));
+        let service = SceneManagementService::new(
+            widget_registry,
+            Arc::clone(&config_handle),
+            coordinator,
+            capabilities,
+        );
+
+        service.refresh_compositor_scenes().await;
+        {
+            let lists = compositor
+                .scene_cycling_lists
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned");
+            let last = lists.last().expect("BUG: refresh must push a cycling list");
+            assert_eq!(last.len(), 2, "without a preview both scenes must cycle");
+        }
+
+        *service.preview_scene_id.lock().await = Some(preview_id);
+        service.refresh_compositor_scenes().await;
+        {
+            let lists = compositor
+                .scene_cycling_lists
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned");
+            let last = lists.last().expect("BUG: preview must push a cycling list");
+            assert_eq!(
+                last.len(),
+                1,
+                "a held preview must pin exactly one scene so cycling cannot move off it",
+            );
+        }
     }
 
     #[test]

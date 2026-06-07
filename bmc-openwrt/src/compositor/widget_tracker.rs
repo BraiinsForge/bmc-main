@@ -151,12 +151,22 @@ impl WidgetTracker {
     }
 
     /// Show scene at `index` if it exists.
+    #[cfg(test)]
     pub fn set_active_scene_index(&mut self, index: usize) {
         self.automatic_transition = None;
         if index < self.scenes.len() {
             self.current_index = index;
             self.drag_offset = None;
         }
+    }
+
+    pub fn reset_to_first_scene(&mut self) {
+        if self.scenes.is_empty() {
+            return;
+        }
+        self.current_index = 0;
+        self.drag_offset = None;
+        self.automatic_transition = None;
     }
 
     #[must_use]
@@ -285,11 +295,8 @@ impl WidgetTracker {
         Some(self.current_index)
     }
 
+    #[cfg(test)]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by scene reset tests and diagnostics")
-    )]
     pub fn current_index(&self) -> usize {
         self.current_index
     }
@@ -463,17 +470,7 @@ impl WidgetTracker {
     }
 
     fn neighbor_index(&self, direction: i32) -> Option<usize> {
-        let len = self.scenes.len();
-        if len <= 1 {
-            return None;
-        }
-        Some(if direction > 0 {
-            (self.current_index + 1) % len
-        } else if self.current_index == 0 {
-            len - 1
-        } else {
-            self.current_index - 1
-        })
+        self.neighbor_index_from(self.current_index, direction)
     }
 
     fn advance(&mut self, direction: i32) {
@@ -896,6 +893,27 @@ mod tests {
             Some(id_a),
             "should fall back to index 0 when active scene is removed"
         );
+    }
+
+    #[test]
+    fn reset_to_first_scene_clears_transition_and_drag() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![
+            scene_with_widget("a"),
+            scene_with_widget("b"),
+            scene_with_widget("c"),
+        ]);
+        t.set_active_scene_index(2);
+        t.begin_automatic_transition_to_next();
+
+        t.reset_to_first_scene();
+
+        assert_eq!(
+            t.lifecycle_states().get("a"),
+            Some(&LifecycleState::Visible)
+        );
+        assert!(!t.automatic_transition_active());
+        assert!(t.drag_offset().is_none());
     }
 
     #[test]
