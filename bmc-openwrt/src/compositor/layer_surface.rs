@@ -1,8 +1,5 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-// items wired up in subsequent tasks (layer-shell global, commit handling, compositor)
-#![expect(dead_code)]
-
 use smithay::reexports::wayland_server::backend::ObjectId;
 use smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer;
 use smithay::utils::{Logical, Rectangle, Size};
@@ -141,6 +138,8 @@ pub struct LayerEntry {
     /// no buffer object) can still evict the matching texture-cache entry.
     pub buffer_id: Option<ObjectId>,
     /// Last computed logical geometry, used to damage the vacated region on hide.
+    /// Invariant: set whenever `buffer` is set; both are updated together in the
+    /// NewBuffer commit path.
     pub last_geometry: Option<Rectangle<i32, Logical>>,
 }
 
