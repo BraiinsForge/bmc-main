@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
 
+use bmc_system_overlay::HostedOverlay;
+
 use crate::control::{ListenSocket, accept_and_load};
 use crate::host::SharedHost;
 use crate::slot::WidgetSlot;
@@ -45,8 +47,8 @@ impl HostLifetime {
     }
 
     #[must_use]
-    pub fn should_continue(&self, slots_len: usize, now: Instant) -> bool {
-        if slots_len > 0 {
+    pub fn should_continue(&self, slots_len: usize, overlays_active: bool, now: Instant) -> bool {
+        if slots_len > 0 || overlays_active {
             return true;
         }
         if !self.ever_had_slot {
@@ -194,6 +196,59 @@ pub fn classify_poll_errno(err: &std::io::Error) -> PollDecision {
     }
 }
 
+#[must_use]
+fn compact_error_message(message: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for ch in message.chars().take(max_chars) {
+        out.push(ch);
+    }
+    out
+}
+
+#[must_use]
+fn overlay_dispatch_error_kind(error: &anyhow::Error) -> String {
+    for cause in error.chain() {
+        if let Some(dispatch) = cause.downcast_ref::<wayland_client::DispatchError>() {
+            return match dispatch {
+                wayland_client::DispatchError::BadMessage {
+                    sender_id,
+                    interface,
+                    opcode,
+                } => format!("badmsg {interface}@{sender_id} op={opcode}"),
+                wayland_client::DispatchError::Backend(backend) => {
+                    overlay_wayland_error_kind(backend)
+                }
+            };
+        }
+        if let Some(backend) = cause.downcast_ref::<wayland_client::backend::WaylandError>() {
+            return overlay_wayland_error_kind(backend);
+        }
+        if cause
+            .downcast_ref::<wayland_client::backend::InvalidId>()
+            .is_some()
+        {
+            return "invalid-id".to_owned();
+        }
+    }
+    format!("other {}", compact_error_message(&error.to_string(), 35))
+}
+
+#[must_use]
+fn overlay_wayland_error_kind(error: &wayland_client::backend::WaylandError) -> String {
+    match error {
+        wayland_client::backend::WaylandError::Io(err) => {
+            format!("io {:?} os={:?}", err.kind(), err.raw_os_error())
+        }
+        wayland_client::backend::WaylandError::Protocol(protocol) => {
+            let message = compact_error_message(&protocol.message, 24);
+            format!(
+                "proto {}@{} code={} msg={}",
+                protocol.object_interface, protocol.object_id, protocol.code, message
+            )
+        }
+    }
+}
+
 pub type SlotId = u64;
 
 #[expect(missing_debug_implementations)]
@@ -280,6 +335,7 @@ fn run_loop(
     renderer: &mut FemtoVgRenderer,
     listener: &ListenSocket,
     slots: &mut SlotTable,
+    overlays: &mut Vec<HostedOverlay>,
 ) -> Result<(), FatalError> {
     listener
         .set_nonblocking()
@@ -291,10 +347,24 @@ fn run_loop(
 
     let mut lifetime = HostLifetime::new();
 
-    while lifetime.should_continue(slots.len(), Instant::now()) {
-        let timeout_ms = compute_poll_timeout(slots, &lifetime, Instant::now());
+    while lifetime.should_continue(
+        slots.len(),
+        overlays.iter().any(HostedOverlay::running),
+        Instant::now(),
+    ) {
+        let poll_now = Instant::now();
+        let slot_ms = compute_poll_timeout(slots, &lifetime, poll_now);
+        let mut wake = u64::try_from(slot_ms).ok().map(Duration::from_millis);
+        for overlay in overlays.iter() {
+            if let Some(d) = overlay.poll_timeout(poll_now) {
+                wake = Some(wake.map_or(d, |w| w.min(d)));
+            }
+        }
+        // -1 = poll(2) block-forever sentinel; reached only when neither slots nor overlays want a wake.
+        let timeout_ms = wake.map_or(-1, |d| i32::try_from(d.as_millis()).unwrap_or(i32::MAX));
 
-        let mut pollfds: Vec<libc::pollfd> = Vec::with_capacity(1 + 2 * slots.len());
+        let mut pollfds: Vec<libc::pollfd> =
+            Vec::with_capacity(1 + 2 * slots.len() + overlays.len());
         pollfds.push(libc::pollfd {
             fd: listener.as_listener().as_raw_fd(),
             events: libc::POLLIN,
@@ -308,6 +378,13 @@ fn run_loop(
             });
             pollfds.push(libc::pollfd {
                 fd: slot.control_socket.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            });
+        }
+        for overlay in overlays.iter() {
+            pollfds.push(libc::pollfd {
+                fd: overlay.connection_fd(),
                 events: libc::POLLIN,
                 revents: 0,
             });
@@ -374,6 +451,16 @@ fn run_loop(
             }
         }
 
+        for overlay in overlays.iter_mut() {
+            if let Err(e) = overlay.dispatch(&shared.egl) {
+                // A persistent dispatch error that never delivers Closed would
+                // otherwise log every pass. Treat it as terminal; the cleanup
+                // loop below drops + cleans it up.
+                tracing::error!("ovl-dsp {}", overlay_dispatch_error_kind(&e));
+                overlay.mark_failed();
+            }
+        }
+
         let now = Instant::now();
         for (id, slot) in slots.iter_mut() {
             if to_teardown.contains(id) {
@@ -414,6 +501,35 @@ fn run_loop(
             }
         }
 
+        for overlay in overlays.iter_mut() {
+            overlay.tick(now);
+            if overlay.needs_render(now)
+                && let Err(e) =
+                    crate::overlays::render_hosted_overlay(overlay, renderer_ptr, shared, now)
+            {
+                // Mirror the slot render-error path: a lost EGL context is
+                // fatal and must propagate, not be swallowed until the next
+                // widget render notices it.
+                if shared.is_context_lost() {
+                    return Err(FatalError::EglContextLost);
+                }
+                tracing::error!("overlay render error, dropping overlay: {e}");
+                overlay.mark_failed();
+            }
+        }
+        // Drop overlays whose client closed or that hit a terminal error,
+        // shutting down each first so its GPU resources are freed. A plain
+        // `retain` would Drop them without `shutdown(egl)` and leak.
+        let mut idx = 0;
+        while idx < overlays.len() {
+            if !overlays[idx].running() || overlays[idx].is_failed() {
+                overlays[idx].shutdown(&shared.egl);
+                overlays.remove(idx);
+            } else {
+                idx += 1;
+            }
+        }
+
         if !to_teardown.is_empty() {
             for id in to_teardown {
                 if let Some(slot) = slots.remove(&id) {
@@ -435,12 +551,12 @@ pub fn run_with_slots(
     listener: &ListenSocket,
     slots: &mut SlotTable,
 ) -> Result<(), FatalError> {
-    drain_if_err(
-        run_loop(shared, renderer, listener, slots),
-        slots,
-        shared,
-        renderer,
-    )
+    let mut overlays = crate::overlays::build_overlays(&shared.egl);
+    let result = run_loop(shared, renderer, listener, slots, &mut overlays);
+    for overlay in &mut overlays {
+        overlay.shutdown(&shared.egl);
+    }
+    drain_if_err(result, slots, shared, renderer)
 }
 
 pub fn run(
@@ -450,4 +566,55 @@ pub fn run(
 ) -> Result<(), FatalError> {
     let mut slots = SlotTable::new();
     run_with_slots(shared, renderer, listener, &mut slots)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compact_error_message, overlay_dispatch_error_kind};
+
+    #[test]
+    fn compact_error_message_caps_long_protocol_text() {
+        assert_eq!(compact_error_message("abcdef", 3), "abc");
+    }
+
+    #[test]
+    fn overlay_dispatch_error_kind_keeps_protocol_details_short() {
+        let protocol = wayland_client::backend::protocol::ProtocolError {
+            code: 7,
+            object_id: 42,
+            object_interface: "wl_buffer".to_owned(),
+            message: "message that is deliberately too long for device logs".to_owned(),
+        };
+        let error = anyhow::Error::new(wayland_client::backend::WaylandError::Protocol(protocol))
+            .context("poll_dispatch");
+
+        assert_eq!(
+            overlay_dispatch_error_kind(&error),
+            "proto wl_buffer@42 code=7 msg=message that is delibera"
+        );
+    }
+
+    #[test]
+    fn overlay_dispatch_error_kind_reports_io_class() {
+        let error = anyhow::Error::new(wayland_client::backend::WaylandError::Io(
+            std::io::Error::from_raw_os_error(libc::EPIPE),
+        ));
+
+        assert_eq!(
+            overlay_dispatch_error_kind(&error),
+            "io BrokenPipe os=Some(32)"
+        );
+    }
+
+    #[test]
+    fn overlay_dispatch_error_kind_keeps_unknown_context_short() {
+        let error = anyhow::anyhow!(
+            "resize failed because the reusable overlay target could not allocate the requested buffer"
+        );
+
+        assert_eq!(
+            overlay_dispatch_error_kind(&error),
+            "other resize failed because the reusable "
+        );
+    }
 }

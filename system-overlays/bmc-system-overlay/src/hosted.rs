@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use bmc_widget::egl::{DmaBufInfo, EglContext};
 
 use crate::gpu::OverlayRenderTarget;
-use crate::overlay::SystemOverlay;
+use crate::overlay::{SystemOverlay, resolved_configured_size};
 use crate::surface::LayerSurfaceClient;
 
 const MIN_INTER_FRAME: Duration = Duration::from_millis(8);
@@ -19,6 +19,7 @@ pub struct HostedOverlay {
     overlay: Box<dyn SystemOverlay>,
     client: LayerSurfaceClient,
     target: OverlayRenderTarget,
+    config_size: (u32, u32),
     size: (u32, u32),
     last_render: Option<Instant>,
     next_wake: Option<Instant>,
@@ -34,22 +35,21 @@ impl HostedOverlay {
     /// from the host's EGL context.
     pub fn connect(mut overlay: Box<dyn SystemOverlay>, egl: &EglContext) -> anyhow::Result<Self> {
         let config = overlay.layer_config();
-        let client = LayerSurfaceClient::connect(&config)?;
-        let (cw, ch) = client.size();
-        let size = (
-            if cw == 0 { config.size.0.max(1) } else { cw },
-            if ch == 0 { config.size.1.max(1) } else { ch },
-        );
+        let config_size = config.size;
+        let mut client = LayerSurfaceClient::connect(&config)?;
+        let size = resolved_configured_size(config_size, client.size());
         let target = OverlayRenderTarget::new(egl, size.0, size.1)?;
+        let wants_render = client.take_needs_render();
         overlay.init();
         Ok(Self {
             overlay,
             client,
             target,
+            config_size,
             size,
             last_render: None,
             next_wake: None,
-            wants_render: false,
+            wants_render,
             failed: false,
         })
     }
@@ -65,18 +65,26 @@ impl HostedOverlay {
     }
 
     /// Drain Wayland events, deliver touch, and pick up surface-dirty.
-    pub fn dispatch(&mut self) -> anyhow::Result<()> {
+    pub fn dispatch(&mut self, egl: &EglContext) -> anyhow::Result<()> {
         // Non-blocking: the host already polled the fd. poll_dispatch(0) runs the
         // correct prepare_read -> poll(0) -> read -> dispatch sequence.
         self.client.poll_dispatch(0)?;
         for ev in self.client.drain_touch() {
             self.overlay.on_touch(ev);
         }
-        if self.client.take_needs_render() {
-            self.wants_render = true;
-        }
         for released in self.client.drain_released_buffers() {
             self.target.mark_released_buffer(&released);
+        }
+        if let Some(configured_size) = self.client.take_configured_size_change() {
+            let size = resolved_configured_size(self.config_size, configured_size);
+            if self.size != size {
+                self.target.resize(egl, &mut self.client, size.0, size.1);
+                self.size = size;
+            }
+            self.wants_render = true;
+        }
+        if self.client.take_needs_render() {
+            self.wants_render = true;
         }
         Ok(())
     }
