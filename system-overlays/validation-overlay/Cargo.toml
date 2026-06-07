@@ -1,0 +1,14 @@
+[package]
+name = "validation-overlay"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins Systems s.r.o."]
+description = "Throwaway overlay validating the system-overlay framework"
+
+[dependencies]
+anyhow.workspace = true
+bmc-render.workspace = true
+bmc-system-overlay.workspace = true
+
+[lints]
+workspace = true
