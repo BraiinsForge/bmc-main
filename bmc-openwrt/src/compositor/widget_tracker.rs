@@ -39,6 +39,23 @@ impl Default for SceneCommitConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SceneTransitionTarget {
+    pub from_index: usize,
+    pub to_index: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AutomaticTransition {
+    target: SceneTransitionTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedScene<'a> {
+    pub scene: &'a SceneLayout,
+    pub x_offset: i32,
+}
+
 #[derive(Debug)]
 pub struct WidgetTracker {
     /// All scene layouts available for cycling.
@@ -47,6 +64,8 @@ pub struct WidgetTracker {
     current_index: usize,
     /// Current drag offset in logical pixels (negative = dragging left).
     drag_offset: Option<i32>,
+    /// Automatic scene transition target while timer-driven cycling runs.
+    automatic_transition: Option<AutomaticTransition>,
     /// Logical screen width for commit threshold calculation.
     screen_width: u32,
     /// Commit thresholds for `end_drag`.
@@ -59,6 +78,7 @@ impl Default for WidgetTracker {
             scenes: vec![SceneLayout::default()],
             current_index: 0,
             drag_offset: None,
+            automatic_transition: None,
             screen_width: 0,
             commit: SceneCommitConfig::default(),
         }
@@ -95,6 +115,7 @@ impl WidgetTracker {
     /// in the (still-empty) list will then reset to a single-scene
     /// list with that layout.
     pub fn set_scene_cycling(&mut self, scenes: Vec<SceneLayout>) {
+        self.automatic_transition = None;
         let active_id = self.scenes.get(self.current_index).and_then(|s| s.scene_id);
 
         if scenes.is_empty() {
@@ -115,6 +136,7 @@ impl WidgetTracker {
     /// and move `current_index` to it; otherwise reset to a single-scene
     /// list with this layout.
     pub fn set_active_scene(&mut self, layout: SceneLayout) {
+        self.automatic_transition = None;
         let idx = layout
             .scene_id
             .and_then(|id| self.scenes.iter().position(|s| s.scene_id == Some(id)));
@@ -130,6 +152,7 @@ impl WidgetTracker {
 
     /// Show scene at `index` if it exists.
     pub fn set_active_scene_index(&mut self, index: usize) {
+        self.automatic_transition = None;
         if index < self.scenes.len() {
             self.current_index = index;
             self.drag_offset = None;
@@ -165,6 +188,12 @@ impl WidgetTracker {
     #[must_use]
     pub fn presented_widget_ids(&self) -> HashSet<InstanceId> {
         let mut ids = HashSet::new();
+        if let Some(transition) = self.automatic_transition {
+            collect_visible_widget_ids(&self.scenes[transition.target.from_index], &mut ids);
+            collect_visible_widget_ids(&self.scenes[transition.target.to_index], &mut ids);
+            return ids;
+        }
+
         collect_visible_widget_ids(self.active_scene(), &mut ids);
         if self.drag_offset.is_some()
             && let Some(neighbor) = self.drag_neighbor_scene()
@@ -177,6 +206,7 @@ impl WidgetTracker {
     /// Begin a drag gesture. Only activates if there are multiple scenes.
     pub fn start_drag(&mut self) {
         if self.can_drag() {
+            self.automatic_transition = None;
             self.drag_offset = Some(0);
         }
     }
@@ -221,6 +251,118 @@ impl WidgetTracker {
         self.drag_offset
     }
 
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by automatic scene cycling integration")
+    )]
+    pub fn automatic_transition_active(&self) -> bool {
+        self.automatic_transition.is_some()
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by automatic scene cycling integration")
+    )]
+    pub fn begin_automatic_transition_to_next(&mut self) -> Option<SceneTransitionTarget> {
+        if self.drag_offset.is_some() {
+            return None;
+        }
+        let to_index = self.neighbor_index(1)?;
+        let target = SceneTransitionTarget {
+            from_index: self.current_index,
+            to_index,
+        };
+        self.automatic_transition = Some(AutomaticTransition { target });
+        Some(target)
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by automatic scene cycling integration")
+    )]
+    pub fn cancel_automatic_transition(&mut self) {
+        self.automatic_transition = None;
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by automatic scene cycling integration")
+    )]
+    pub fn finish_automatic_transition(&mut self) -> Option<usize> {
+        let transition = self.automatic_transition.take()?;
+        self.current_index = transition.target.to_index;
+        self.drag_offset = None;
+        Some(self.current_index)
+    }
+
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by scene reset tests and diagnostics")
+    )]
+    pub fn current_index(&self) -> usize {
+        self.current_index
+    }
+
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by automatic scene cycling integration")
+    )]
+    pub fn scene_count(&self) -> usize {
+        self.scenes.len()
+    }
+
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by automatic scene rendering integration")
+    )]
+    pub fn rendered_scenes(
+        &self,
+        transition_offset: Option<i32>,
+        seam_overlap_px: i32,
+    ) -> Vec<RenderedScene<'_>> {
+        if let Some(transition) = self.automatic_transition {
+            let outgoing_offset = transition_offset.unwrap_or(0);
+            let incoming_offset = outgoing_offset
+                + i32::try_from(self.screen_width).unwrap_or(i32::MAX)
+                - seam_overlap_px;
+            return vec![
+                RenderedScene {
+                    scene: &self.scenes[transition.target.from_index],
+                    x_offset: outgoing_offset,
+                },
+                RenderedScene {
+                    scene: &self.scenes[transition.target.to_index],
+                    x_offset: incoming_offset,
+                },
+            ];
+        }
+
+        let drag_offset = self.drag_offset.unwrap_or(0);
+        let mut rendered = vec![RenderedScene {
+            scene: self.active_scene(),
+            x_offset: drag_offset,
+        }];
+        if let Some(dx) = self.drag_offset {
+            let logical_width = i32::try_from(self.screen_width).unwrap_or(i32::MAX);
+            let neighbor_offset = if dx <= 0 {
+                dx + logical_width - seam_overlap_px
+            } else {
+                dx - logical_width + seam_overlap_px
+            };
+            if let Some(neighbor) = self.drag_neighbor_scene() {
+                rendered.push(RenderedScene {
+                    scene: neighbor,
+                    x_offset: neighbor_offset,
+                });
+            }
+        }
+        rendered
+    }
+
     /// Derive the lifecycle state of every widget reachable from the
     /// scene-cycling list.
     ///
@@ -232,9 +374,11 @@ impl WidgetTracker {
     ///   neighbouring widget is simply marked `Prepared` once.
     /// - During a drag, the widget in the drag-direction neighbour scene
     ///   is promoted from `Prepared` to `Entering`.
+    /// - During an automatic transition, the outgoing scene is `Leaving`,
+    ///   the incoming scene is `Entering`, and the scenes just outside the
+    ///   transition window are `Prepared`.
     ///
-    /// Pure function of `(scenes, current_index, drag_offset)` — no GL,
-    /// no Wayland.
+    /// Pure function of tracker scene state — no GL, no Wayland.
     #[must_use]
     pub fn lifecycle_states(&self) -> std::collections::HashMap<InstanceId, LifecycleState> {
         let mut out: std::collections::HashMap<InstanceId, LifecycleState> =
@@ -246,6 +390,11 @@ impl WidgetTracker {
                     out.insert(widget.instance_id.clone(), LifecycleState::Dormant);
                 }
             }
+        }
+
+        if let Some(transition) = self.automatic_transition {
+            self.apply_transition_lifecycle(transition.target, &mut out);
+            return out;
         }
 
         // A drag with offset 0 has ambiguous direction (the user has
@@ -285,6 +434,58 @@ impl WidgetTracker {
         }
 
         out
+    }
+
+    fn apply_transition_lifecycle(
+        &self,
+        target: SceneTransitionTarget,
+        out: &mut std::collections::HashMap<InstanceId, LifecycleState>,
+    ) {
+        let mut prepared = HashSet::new();
+        for index in [
+            self.neighbor_index_from(target.from_index, -1),
+            self.neighbor_index_from(target.to_index, 1),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if index != target.from_index && index != target.to_index {
+                prepared.insert(index);
+            }
+        }
+
+        for index in prepared {
+            for widget in &self.scenes[index].widgets {
+                if widget.visible {
+                    out.insert(widget.instance_id.clone(), LifecycleState::Prepared);
+                }
+            }
+        }
+
+        for widget in &self.scenes[target.from_index].widgets {
+            if widget.visible {
+                out.insert(widget.instance_id.clone(), LifecycleState::Leaving);
+            }
+        }
+        for widget in &self.scenes[target.to_index].widgets {
+            if widget.visible {
+                out.insert(widget.instance_id.clone(), LifecycleState::Entering);
+            }
+        }
+    }
+
+    fn neighbor_index_from(&self, index: usize, direction: i32) -> Option<usize> {
+        let len = self.scenes.len();
+        if len <= 1 || index >= len {
+            return None;
+        }
+        Some(if direction > 0 {
+            (index + 1) % len
+        } else if index == 0 {
+            len - 1
+        } else {
+            index - 1
+        })
     }
 
     fn neighbor_index(&self, direction: i32) -> Option<usize> {
@@ -331,7 +532,7 @@ mod tests {
     use bmc::compositor::{Position, SceneLayout, Size, WidgetPlacement};
     use bmc::scene::SceneId;
 
-    use super::{LifecycleState, SceneCommitConfig, WidgetTracker};
+    use super::{LifecycleState, SceneCommitConfig, SceneTransitionTarget, WidgetTracker};
     use crate::compositor::lifecycle_emitter::LifecycleEmitter;
 
     /// Build a tracker with three distinct scenes on a 1000-px-wide panel
@@ -496,6 +697,152 @@ mod tests {
             t.presented_widget_ids(),
             std::collections::HashSet::from([String::from("active"), String::from("next")])
         );
+    }
+
+    #[test]
+    fn automatic_transition_selects_next_scene_with_wraparound() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![
+            scene_with_widget("a"),
+            scene_with_widget("b"),
+            scene_with_widget("c"),
+        ]);
+        t.set_active_scene_index(2);
+
+        let target = t.begin_automatic_transition_to_next();
+
+        assert_eq!(
+            target,
+            Some(SceneTransitionTarget {
+                from_index: 2,
+                to_index: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn lifecycle_automatic_transition_marks_outgoing_leaving_and_incoming_entering() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![
+            scene_with_widget("a"),
+            scene_with_widget("b"),
+            scene_with_widget("c"),
+            scene_with_widget("d"),
+            scene_with_widget("e"),
+        ]);
+        t.set_active_scene_index(1);
+        t.begin_automatic_transition_to_next();
+
+        let states = t.lifecycle_states();
+
+        assert_eq!(states.get("b"), Some(&LifecycleState::Leaving));
+        assert_eq!(states.get("c"), Some(&LifecycleState::Entering));
+        assert_eq!(states.get("a"), Some(&LifecycleState::Prepared));
+        assert_eq!(states.get("d"), Some(&LifecycleState::Prepared));
+        assert_eq!(states.get("e"), Some(&LifecycleState::Dormant));
+    }
+
+    #[test]
+    fn lifecycle_automatic_transition_in_two_scene_cycle_has_no_prepared_scene() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![scene_with_widget("a"), scene_with_widget("b")]);
+        t.begin_automatic_transition_to_next();
+
+        let states = t.lifecycle_states();
+
+        assert_eq!(states.get("a"), Some(&LifecycleState::Leaving));
+        assert_eq!(states.get("b"), Some(&LifecycleState::Entering));
+        assert_eq!(
+            states
+                .values()
+                .filter(|&&s| s == LifecycleState::Prepared)
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn lifecycle_automatic_transition_in_three_scene_cycle_prepares_opposite_scene() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![
+            scene_with_widget("a"),
+            scene_with_widget("b"),
+            scene_with_widget("c"),
+        ]);
+        t.begin_automatic_transition_to_next();
+
+        let states = t.lifecycle_states();
+
+        assert_eq!(states.get("a"), Some(&LifecycleState::Leaving));
+        assert_eq!(states.get("b"), Some(&LifecycleState::Entering));
+        assert_eq!(states.get("c"), Some(&LifecycleState::Prepared));
+    }
+
+    #[test]
+    fn presented_widget_ids_include_outgoing_and_incoming_during_automatic_transition() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![scene_with_widget("a"), scene_with_widget("b")]);
+        t.begin_automatic_transition_to_next();
+
+        assert_eq!(
+            t.presented_widget_ids(),
+            std::collections::HashSet::from([String::from("a"), String::from("b")])
+        );
+    }
+
+    #[test]
+    fn manual_drag_cancels_automatic_transition() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![scene_with_widget("a"), scene_with_widget("b")]);
+        t.begin_automatic_transition_to_next();
+
+        t.start_drag();
+
+        assert!(!t.automatic_transition_active());
+        assert!(t.drag_offset().is_some());
+    }
+
+    #[test]
+    fn finish_automatic_transition_commits_target_scene() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![scene_with_widget("a"), scene_with_widget("b")]);
+        t.begin_automatic_transition_to_next();
+
+        assert_eq!(t.finish_automatic_transition(), Some(1));
+        assert_eq!(
+            t.lifecycle_states().get("b"),
+            Some(&LifecycleState::Visible)
+        );
+        assert!(!t.automatic_transition_active());
+    }
+
+    #[test]
+    fn rendered_scenes_include_offsets_during_automatic_transition() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![scene_with_widget("a"), scene_with_widget("b")]);
+        t.begin_automatic_transition_to_next();
+
+        let rendered = t.rendered_scenes(Some(-120), 3);
+
+        assert_eq!(rendered.len(), 2);
+        assert_eq!(rendered[0].scene.widgets[0].instance_id, "a");
+        assert_eq!(rendered[0].x_offset, -120);
+        assert_eq!(rendered[1].scene.widgets[0].instance_id, "b");
+        assert_eq!(rendered[1].x_offset, 877);
+    }
+
+    #[test]
+    fn cancel_automatic_transition_keeps_current_scene() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![scene_with_widget("a"), scene_with_widget("b")]);
+        t.begin_automatic_transition_to_next();
+
+        t.cancel_automatic_transition();
+
+        assert!(!t.automatic_transition_active());
+        assert_eq!(t.current_index(), 0);
+        assert_eq!(t.scene_count(), 2);
+        assert_eq!(t.rendered_scenes(None, 3).len(), 1);
     }
 
     fn scene_with_id(id: SceneId) -> SceneLayout {
