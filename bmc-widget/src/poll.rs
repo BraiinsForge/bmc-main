@@ -43,7 +43,7 @@ pub enum PollOutcome {
 ///
 /// This follows the `prepare_read -> poll -> read | cancel -> dispatch_pending`
 /// pattern required by `wayland-client`.
-pub(crate) fn poll_dispatch<S: 'static>(
+pub fn poll_dispatch<S: 'static>(
     conn: &Connection,
     queue: &mut EventQueue<S>,
     state: &mut S,
