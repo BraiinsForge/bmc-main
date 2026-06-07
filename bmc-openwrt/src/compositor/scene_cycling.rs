@@ -1,0 +1,433 @@
+// Copyright (C) 2025  Braiins Systems s.r.o.
+
+//! Automatic scene cycling state machine.
+
+use super::widget_tracker::SceneTransitionTarget;
+use std::time::{Duration, Instant};
+
+pub(crate) const PRE_TRANSITION_DURATION: Duration = Duration::from_millis(100);
+pub(crate) const AUTOMATIC_TRANSITION_DURATION: Duration = Duration::from_millis(300);
+const AUTOMATIC_TRANSITION_TICK: Duration = Duration::from_millis(16);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SceneCyclingRuntimeConfig {
+    pub(crate) enabled: bool,
+    pub(crate) default_duration: Duration,
+}
+
+impl Default for SceneCyclingRuntimeConfig {
+    fn default() -> Self {
+        let config = bmc::compositor::SceneCycling::default();
+        Self {
+            enabled: config.automatic_cycling_enabled,
+            default_duration: config.automatic_cycling_default_duration,
+        }
+    }
+}
+
+impl From<bmc::compositor::SceneCycling> for SceneCyclingRuntimeConfig {
+    fn from(config: bmc::compositor::SceneCycling) -> Self {
+        Self {
+            enabled: config.automatic_cycling_enabled,
+            default_duration: config.automatic_cycling_default_duration,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AutomaticCyclingPhase {
+    PausedDisabled {
+        started_at: Instant,
+    },
+    WaitingForTimer {
+        started_at: Instant,
+    },
+    PreTransition {
+        started_at: Instant,
+        target: SceneTransitionTarget,
+    },
+    Transition {
+        started_at: Instant,
+        target: SceneTransitionTarget,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AutomaticCyclingAction {
+    None,
+    BeginPreTransition,
+    BeginTransition,
+    FinishTransition,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AutomaticCycling {
+    config: SceneCyclingRuntimeConfig,
+    pending_config: Option<SceneCyclingRuntimeConfig>,
+    phase: AutomaticCyclingPhase,
+}
+
+impl AutomaticCycling {
+    pub(crate) fn new(started_at: Instant, config: SceneCyclingRuntimeConfig) -> Self {
+        Self {
+            config,
+            pending_config: None,
+            phase: AutomaticCyclingPhase::PausedDisabled { started_at },
+        }
+    }
+
+    pub(crate) fn phase(&self) -> AutomaticCyclingPhase {
+        self.phase
+    }
+
+    pub(crate) fn default_duration(&self) -> Duration {
+        self.config.default_duration
+    }
+
+    #[expect(
+        dead_code,
+        reason = "Task 5 applies scene cycling config through the compositor command"
+    )]
+    pub(crate) fn set_config(&mut self, config: SceneCyclingRuntimeConfig) {
+        if !config.enabled
+            && matches!(
+                self.phase,
+                AutomaticCyclingPhase::PreTransition { .. }
+                    | AutomaticCyclingPhase::Transition { .. }
+            )
+        {
+            self.pending_config = Some(config);
+            return;
+        }
+        self.pending_config = None;
+        self.config = config;
+    }
+
+    pub(crate) fn reevaluate(
+        &mut self,
+        now: Instant,
+        has_cycleable_scenes: bool,
+        scene_count: usize,
+        touch_active: bool,
+    ) {
+        if !self.config.enabled || !has_cycleable_scenes || scene_count < 2 || touch_active {
+            self.phase = AutomaticCyclingPhase::PausedDisabled { started_at: now };
+            return;
+        }
+
+        if matches!(self.phase, AutomaticCyclingPhase::PausedDisabled { .. }) {
+            self.phase = AutomaticCyclingPhase::WaitingForTimer { started_at: now };
+        }
+    }
+
+    pub(crate) fn reset_waiting(&mut self, now: Instant, scene_count: usize, touch_active: bool) {
+        if let Some(config) = self.pending_config.take() {
+            self.config = config;
+        }
+        if self.config.enabled && scene_count >= 2 && !touch_active {
+            self.phase = AutomaticCyclingPhase::WaitingForTimer { started_at: now };
+        } else {
+            self.phase = AutomaticCyclingPhase::PausedDisabled { started_at: now };
+        }
+    }
+
+    pub(crate) fn enter_pre_transition(&mut self, now: Instant, target: SceneTransitionTarget) {
+        self.phase = AutomaticCyclingPhase::PreTransition {
+            started_at: now,
+            target,
+        };
+    }
+
+    pub(crate) fn enter_transition(&mut self, now: Instant, target: SceneTransitionTarget) {
+        self.phase = AutomaticCyclingPhase::Transition {
+            started_at: now,
+            target,
+        };
+    }
+
+    pub(crate) fn transition_offset(&self, logical_width: u32, now: Instant) -> Option<i32> {
+        let AutomaticCyclingPhase::Transition {
+            started_at,
+            target: _target,
+        } = self.phase
+        else {
+            return None;
+        };
+        let elapsed = now.saturating_duration_since(started_at);
+        let progress =
+            (elapsed.as_secs_f32() / AUTOMATIC_TRANSITION_DURATION.as_secs_f32()).min(1.0);
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "transition pixel offset is panel-sized"
+        )]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "transition pixel offset is panel-sized"
+        )]
+        Some(-((logical_width as f32) * progress).round() as i32)
+    }
+
+    pub(crate) fn next_delay(&self, now: Instant, active_duration: Duration) -> Option<Duration> {
+        match self.phase {
+            AutomaticCyclingPhase::PausedDisabled { .. } => None,
+            AutomaticCyclingPhase::WaitingForTimer { started_at } => {
+                Some(remaining_delay(now, started_at, active_duration))
+            }
+            AutomaticCyclingPhase::PreTransition { started_at, .. } => {
+                Some(remaining_delay(now, started_at, PRE_TRANSITION_DURATION))
+            }
+            AutomaticCyclingPhase::Transition { .. } => Some(AUTOMATIC_TRANSITION_TICK),
+        }
+    }
+
+    pub(crate) fn on_timer(
+        &mut self,
+        now: Instant,
+        active_duration: Duration,
+    ) -> AutomaticCyclingAction {
+        match self.phase {
+            AutomaticCyclingPhase::PausedDisabled { .. } => AutomaticCyclingAction::None,
+            AutomaticCyclingPhase::WaitingForTimer { started_at } => {
+                if now.saturating_duration_since(started_at) >= active_duration {
+                    AutomaticCyclingAction::BeginPreTransition
+                } else {
+                    AutomaticCyclingAction::None
+                }
+            }
+            AutomaticCyclingPhase::PreTransition { started_at, .. } => {
+                if now.saturating_duration_since(started_at) >= PRE_TRANSITION_DURATION {
+                    AutomaticCyclingAction::BeginTransition
+                } else {
+                    AutomaticCyclingAction::None
+                }
+            }
+            AutomaticCyclingPhase::Transition { started_at, .. } => {
+                if now.saturating_duration_since(started_at) >= AUTOMATIC_TRANSITION_DURATION {
+                    AutomaticCyclingAction::FinishTransition
+                } else {
+                    AutomaticCyclingAction::None
+                }
+            }
+        }
+    }
+}
+
+fn remaining_delay(now: Instant, started_at: Instant, duration: Duration) -> Duration {
+    duration.saturating_sub(now.saturating_duration_since(started_at))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compositor::widget_tracker::SceneTransitionTarget;
+    use std::time::{Duration, Instant};
+
+    fn cycling_config(enabled: bool) -> SceneCyclingRuntimeConfig {
+        SceneCyclingRuntimeConfig {
+            enabled,
+            default_duration: Duration::from_secs(30),
+        }
+    }
+
+    #[test]
+    fn automatic_cycling_disabled_enters_paused_disabled() {
+        let now = Instant::now();
+        let mut state = AutomaticCycling::new(now, cycling_config(false));
+
+        state.reevaluate(now, true, 2, false);
+
+        assert!(matches!(
+            state.phase(),
+            AutomaticCyclingPhase::PausedDisabled { .. }
+        ));
+    }
+
+    #[test]
+    fn automatic_cycling_enabled_waits_for_timer_with_two_scenes() {
+        let now = Instant::now();
+        let mut state = AutomaticCycling::new(now, cycling_config(true));
+
+        state.reevaluate(now, true, 2, false);
+
+        assert!(matches!(
+            state.phase(),
+            AutomaticCyclingPhase::WaitingForTimer { .. }
+        ));
+        assert_eq!(
+            state.next_delay(now, Duration::from_secs(30)),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            state.next_delay(now + Duration::from_secs(10), Duration::from_secs(30)),
+            Some(Duration::from_secs(20)),
+        );
+    }
+
+    #[test]
+    fn disabling_during_waiting_pauses_immediately() {
+        let now = Instant::now();
+        let mut state = AutomaticCycling::new(now, cycling_config(true));
+        state.reevaluate(now, true, 2, false);
+
+        state.set_config(cycling_config(false));
+        state.reevaluate(now, true, 2, false);
+
+        assert!(matches!(
+            state.phase(),
+            AutomaticCyclingPhase::PausedDisabled { .. }
+        ));
+        assert_eq!(state.next_delay(now, Duration::from_secs(30)), None);
+    }
+
+    #[test]
+    fn automatic_cycling_advances_from_waiting_to_pre_transition() {
+        let now = Instant::now();
+        let mut state = AutomaticCycling::new(now, cycling_config(true));
+
+        state.reevaluate(now, true, 2, false);
+
+        let action = state.on_timer(now + Duration::from_secs(30), Duration::from_secs(30));
+
+        assert_eq!(action, AutomaticCyclingAction::BeginPreTransition);
+    }
+
+    #[test]
+    fn automatic_cycling_pre_transition_waits_before_slide() {
+        let now = Instant::now();
+        let mut state = AutomaticCycling::new(now, cycling_config(true));
+        state.enter_pre_transition(
+            now,
+            SceneTransitionTarget {
+                from_index: 0,
+                to_index: 1,
+            },
+        );
+
+        assert_eq!(
+            state.on_timer(now + PRE_TRANSITION_DURATION, Duration::from_secs(30)),
+            AutomaticCyclingAction::BeginTransition
+        );
+    }
+
+    #[test]
+    fn automatic_cycling_transition_finishes_after_duration() {
+        let now = Instant::now();
+        let mut state = AutomaticCycling::new(now, cycling_config(true));
+        state.enter_transition(
+            now,
+            SceneTransitionTarget {
+                from_index: 0,
+                to_index: 1,
+            },
+        );
+
+        assert_eq!(
+            state.on_timer(now + AUTOMATIC_TRANSITION_DURATION, Duration::from_secs(30)),
+            AutomaticCyclingAction::FinishTransition
+        );
+    }
+
+    #[test]
+    fn automatic_cycling_transition_offset_follows_elapsed_progress() {
+        let now = Instant::now();
+        let mut state = AutomaticCycling::new(now, cycling_config(true));
+        state.enter_transition(
+            now,
+            SceneTransitionTarget {
+                from_index: 0,
+                to_index: 1,
+            },
+        );
+
+        assert_eq!(state.transition_offset(1000, now), Some(0));
+        assert_eq!(
+            state.transition_offset(1000, now + Duration::from_millis(150)),
+            Some(-500),
+        );
+        assert_eq!(
+            state.transition_offset(1000, now + Duration::from_millis(600)),
+            Some(-1000),
+        );
+    }
+
+    #[test]
+    fn disabling_during_pre_transition_waits_until_next_wait_period() {
+        let now = Instant::now();
+        let mut state = AutomaticCycling::new(now, cycling_config(true));
+        state.enter_pre_transition(
+            now,
+            SceneTransitionTarget {
+                from_index: 0,
+                to_index: 1,
+            },
+        );
+
+        state.set_config(cycling_config(false));
+        state.reevaluate(now, true, 2, false);
+
+        assert!(matches!(
+            state.phase(),
+            AutomaticCyclingPhase::PreTransition { .. }
+        ));
+        assert_eq!(
+            state.on_timer(now + PRE_TRANSITION_DURATION, Duration::from_secs(30)),
+            AutomaticCyclingAction::BeginTransition,
+        );
+
+        state.enter_transition(
+            now + PRE_TRANSITION_DURATION,
+            SceneTransitionTarget {
+                from_index: 0,
+                to_index: 1,
+            },
+        );
+        assert_eq!(
+            state.on_timer(
+                now + PRE_TRANSITION_DURATION + AUTOMATIC_TRANSITION_DURATION,
+                Duration::from_secs(30)
+            ),
+            AutomaticCyclingAction::FinishTransition,
+        );
+
+        state.reset_waiting(
+            now + PRE_TRANSITION_DURATION + AUTOMATIC_TRANSITION_DURATION,
+            2,
+            false,
+        );
+        assert!(matches!(
+            state.phase(),
+            AutomaticCyclingPhase::PausedDisabled { .. }
+        ));
+    }
+
+    #[test]
+    fn disabling_during_transition_waits_until_next_wait_period() {
+        let now = Instant::now();
+        let mut state = AutomaticCycling::new(now, cycling_config(true));
+        state.enter_transition(
+            now,
+            SceneTransitionTarget {
+                from_index: 0,
+                to_index: 1,
+            },
+        );
+
+        state.set_config(cycling_config(false));
+        state.reevaluate(now, true, 2, false);
+
+        assert!(matches!(
+            state.phase(),
+            AutomaticCyclingPhase::Transition { .. }
+        ));
+        assert_eq!(
+            state.on_timer(now + AUTOMATIC_TRANSITION_DURATION, Duration::from_secs(30)),
+            AutomaticCyclingAction::FinishTransition,
+        );
+
+        state.reset_waiting(now + AUTOMATIC_TRANSITION_DURATION, 2, false);
+        assert!(matches!(
+            state.phase(),
+            AutomaticCyclingPhase::PausedDisabled { .. }
+        ));
+    }
+}

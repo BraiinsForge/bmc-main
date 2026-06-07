@@ -8,6 +8,7 @@ mod egl_compositor;
 mod lifecycle_emitter;
 mod protocol;
 mod render;
+mod scene_cycling;
 mod scene_renderer;
 mod state;
 mod touch_gesture;
