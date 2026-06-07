@@ -26,13 +26,13 @@ pub use bmc_widget_protocol::{LifecycleState, SettingUpdate};
 /// The non-gated [`crate::poll`] module is the single owner of this logic
 /// (also used by `crate::wayland::WidgetProtocolClient::wait_for_configure`).
 pub use crate::poll::PollOutcome;
-pub(crate) use crate::poll::poll_dispatch;
+pub use crate::poll::poll_dispatch;
 
 /// Mapping from `wl_buffer` object id to reusable buffer slot.
-pub(crate) type BufferSlotMap = HashMap<ObjectId, usize>;
+pub type BufferSlotMap = HashMap<ObjectId, usize>;
 
 /// Set of tracked `wl_buffer` object ids released by the compositor.
-pub(crate) type ReleasedBufferSet = HashSet<ObjectId>;
+pub type ReleasedBufferSet = HashSet<ObjectId>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleasedBuffer {
@@ -147,7 +147,7 @@ pub(crate) fn unregister_wl_buffer_slot(
     clippy::mutable_key_type,
     reason = "ObjectId has interior mutability but is safe to use as a HashMap key"
 )]
-pub(crate) fn drain_released_buffer_slots(
+pub fn drain_released_buffer_slots(
     buffer_slots: &BufferSlotMap,
     released_buffers: &mut ReleasedBufferSet,
 ) -> Vec<usize> {
@@ -162,7 +162,7 @@ pub(crate) fn drain_released_buffer_slots(
     clippy::mutable_key_type,
     reason = "ObjectId has interior mutability but is safe to use as a HashMap key"
 )]
-pub(crate) fn drain_released_buffers(
+pub fn drain_released_buffers(
     buffer_slots: &BufferSlotMap,
     released_buffers: &mut ReleasedBufferSet,
 ) -> Vec<ReleasedBuffer> {
@@ -179,7 +179,7 @@ pub(crate) fn drain_released_buffers(
 ///
 /// Shared implementation for buffer submission on both surface client types.
 #[expect(clippy::cast_possible_wrap, reason = "surface dimensions fit in i32")]
-pub(crate) fn submit_buffer_to_surface<S>(
+pub fn submit_buffer_to_surface<S>(
     surface: &wl_surface::WlSurface,
     qh: &QueueHandle<S>,
     buffer: &wl_buffer::WlBuffer,
@@ -288,7 +288,7 @@ pub trait WidgetSurface {
 /// Create a `wl_buffer` from DMA-BUF info using the `linux-dmabuf` protocol.
 #[must_use]
 #[expect(clippy::cast_possible_wrap, reason = "buffer dimensions fit in i32")]
-pub(crate) fn create_buffer_from_dmabuf<S>(
+pub fn create_buffer_from_dmabuf<S>(
     linux_dmabuf: &zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1,
     info: &DmaBufInfo,
     qh: &QueueHandle<S>,
