@@ -191,9 +191,17 @@ pub fn ensure_running(family: DeviceFamily) {
     on_discovered(family, true);
 }
 
-/// Clear all cached tokens (e.g. after a password change).
-pub fn clear_tokens() {
-    TOKENS.with(|t| t.borrow_mut().clear());
+/// Drop cached session tokens for one family's devices (e.g. after that
+/// family's credentials changed), forcing a fresh login on the next pass.
+/// Other families' tokens are left intact.
+pub fn clear_tokens_for(family: DeviceFamily) {
+    let ids = crate::DEVICES.with(|d| d.borrow().ids_for_family(family));
+    TOKENS.with(|t| {
+        let mut tokens = t.borrow_mut();
+        for id in &ids {
+            tokens.remove(id);
+        }
+    });
 }
 
 /// Stop polling a family, e.g. when the operator disables it. Cancels any

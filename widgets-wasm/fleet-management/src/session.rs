@@ -187,7 +187,8 @@ mod driver;
 
 #[cfg(target_arch = "wasm32")]
 pub use driver::{
-    clear_tokens, ensure_running, family_enabled, on_discovered, refresh_params, remove_token, stop,
+    clear_tokens_for, ensure_running, family_enabled, on_discovered, refresh_params, remove_token,
+    stop,
 };
 
 #[cfg(test)]
