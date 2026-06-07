@@ -1583,6 +1583,7 @@ dependencies = [
  "anyhow",
  "bmc-gpu-render-lock",
  "bmc-render",
+ "bmc-system-overlay",
  "bmc-wasm-protocol",
  "bmc-wasm-runtime",
  "bmc-wasm-thin-protocol",
