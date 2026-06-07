@@ -237,9 +237,14 @@ impl SceneRenderer {
         clippy::too_many_lines,
         reason = "render hot-path with stopwatch instrumentation; splitting hurts readability"
     )]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "render hot-path inputs are owned by compositor state and renderer-local grouping would obscure call sites"
+    )]
     pub fn render_scene(
         &mut self,
         widgets: &WidgetTracker,
+        transition_offset: Option<i32>,
         buffers: &[(WlBuffer, bmc::compositor::InstanceId)],
         dirty: &[ObjectId],
         capture_frames: Vec<image_copy_capture::Frame>,
@@ -262,12 +267,6 @@ impl SceneRenderer {
 
         // Collect render items: (buffer_id, placement, x_offset)
         let mut to_render = Vec::new();
-
-        let transition_offset = widgets.automatic_transition_active().then(|| {
-            #[expect(clippy::cast_possible_wrap, reason = "logical width fits in i32")]
-            let logical_width = self.output.logical_size().0 as i32;
-            -logical_width
-        });
 
         for rendered in widgets.rendered_scenes(transition_offset, self.seam_overlap_px) {
             collect_scene_widgets(rendered.scene, buffers, rendered.x_offset, &mut to_render);

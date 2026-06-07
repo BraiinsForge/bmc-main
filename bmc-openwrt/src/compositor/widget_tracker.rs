@@ -261,10 +261,6 @@ impl WidgetTracker {
         self.drag_offset().is_some() || self.automatic_transition_active()
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by automatic scene cycling integration")
-    )]
     pub fn begin_automatic_transition_to_next(&mut self) -> Option<SceneTransitionTarget> {
         if self.drag_offset.is_some() {
             return None;
@@ -278,18 +274,10 @@ impl WidgetTracker {
         Some(target)
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by automatic scene cycling integration")
-    )]
     pub fn cancel_automatic_transition(&mut self) {
         self.automatic_transition = None;
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by automatic scene cycling integration")
-    )]
     pub fn finish_automatic_transition(&mut self) -> Option<usize> {
         let transition = self.automatic_transition.take()?;
         self.current_index = transition.target.to_index;
@@ -307,10 +295,6 @@ impl WidgetTracker {
     }
 
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by automatic scene cycling integration")
-    )]
     pub fn scene_count(&self) -> usize {
         self.scenes.len()
     }
@@ -372,8 +356,9 @@ impl WidgetTracker {
     /// - During a drag, the widget in the drag-direction neighbour scene
     ///   is promoted from `Prepared` to `Entering`.
     /// - During an automatic transition, the outgoing scene is `Leaving`,
-    ///   the incoming scene is `Entering`, and the scenes just outside the
-    ///   transition window are `Prepared`.
+    ///   the incoming scene is `Entering`, and the outgoing scene's idle
+    ///   neighbours remain `Prepared`; post-transition neighbour changes
+    ///   are emitted only after the transition commits.
     ///
     /// Pure function of tracker scene state — no GL, no Wayland.
     #[must_use]
@@ -438,23 +423,15 @@ impl WidgetTracker {
         target: SceneTransitionTarget,
         out: &mut std::collections::HashMap<InstanceId, LifecycleState>,
     ) {
-        let mut prepared = HashSet::new();
-        for index in [
-            self.neighbor_index_from(target.from_index, -1),
-            self.neighbor_index_from(target.to_index, 1),
-        ]
-        .into_iter()
-        .flatten()
+        for index in [-1_i32, 1]
+            .into_iter()
+            .filter_map(|direction| self.neighbor_index_from(target.from_index, direction))
         {
             if index != target.from_index && index != target.to_index {
-                prepared.insert(index);
-            }
-        }
-
-        for index in prepared {
-            for widget in &self.scenes[index].widgets {
-                if widget.visible {
-                    out.insert(widget.instance_id.clone(), LifecycleState::Prepared);
+                for widget in &self.scenes[index].widgets {
+                    if widget.visible {
+                        out.insert(widget.instance_id.clone(), LifecycleState::Prepared);
+                    }
                 }
             }
         }
@@ -755,7 +732,7 @@ mod tests {
         assert_eq!(states.get("b"), Some(&LifecycleState::Leaving));
         assert_eq!(states.get("c"), Some(&LifecycleState::Entering));
         assert_eq!(states.get("a"), Some(&LifecycleState::Prepared));
-        assert_eq!(states.get("d"), Some(&LifecycleState::Prepared));
+        assert_eq!(states.get("d"), Some(&LifecycleState::Dormant));
         assert_eq!(states.get("e"), Some(&LifecycleState::Dormant));
     }
 
@@ -1039,6 +1016,71 @@ mod tests {
                 .acquires
                 .contains(&(String::from("b"), LifecycleState::Entering)),
             "drag-direction neighbour should transition to Entering"
+        );
+    }
+
+    #[test]
+    fn automatic_pre_transition_emits_only_outgoing_and_incoming_changes() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![
+            scene_with_widget("a"),
+            scene_with_widget("b"),
+            scene_with_widget("c"),
+            scene_with_widget("d"),
+        ]);
+        t.set_active_scene_index(1);
+
+        let mut emitter = LifecycleEmitter::new();
+        emitter.step(&t.lifecycle_states());
+
+        t.begin_automatic_transition_to_next();
+        let emission = emitter.step(&t.lifecycle_states());
+
+        assert!(
+            emission.releases.is_empty(),
+            "pre-transition must not send releases: {:?}",
+            emission.releases
+        );
+        assert_eq!(
+            emission.acquires,
+            vec![
+                (String::from("b"), LifecycleState::Leaving),
+                (String::from("c"), LifecycleState::Entering),
+            ],
+        );
+    }
+
+    #[test]
+    fn automatic_finish_emits_final_scene_and_neighbour_updates() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![
+            scene_with_widget("a"),
+            scene_with_widget("b"),
+            scene_with_widget("c"),
+            scene_with_widget("d"),
+        ]);
+        t.set_active_scene_index(1);
+
+        let mut emitter = LifecycleEmitter::new();
+        emitter.step(&t.lifecycle_states());
+
+        t.begin_automatic_transition_to_next();
+        emitter.step(&t.lifecycle_states());
+
+        t.finish_automatic_transition();
+        let emission = emitter.step(&t.lifecycle_states());
+
+        assert_eq!(
+            emission.releases,
+            vec![(String::from("a"), LifecycleState::Dormant)],
+        );
+        assert_eq!(
+            emission.acquires,
+            vec![
+                (String::from("b"), LifecycleState::Prepared),
+                (String::from("c"), LifecycleState::Visible),
+                (String::from("d"), LifecycleState::Prepared),
+            ],
         );
     }
 
