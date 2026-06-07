@@ -698,11 +698,13 @@ impl EglCompositor {
                     let transition_offset = app_state
                         .automatic_cycling
                         .transition_offset(logical_width, Instant::now());
+                    let layer_items = app_state.compositor.layer_render_items();
                     let (rendered, unconsumed_captures, capture_failed) = renderer
                         .render_scene(
                             &app_state.compositor.widgets,
                             transition_offset,
                             &app_state.compositor.widget_buffers,
+                            &layer_items,
                             &dirty,
                             capture_frames,
                             capture_active,
