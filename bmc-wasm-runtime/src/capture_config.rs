@@ -41,10 +41,11 @@ pub const CAPTURE_SIZES: &[(&str, u32, u32)] = &[
     ("medium", 638, 238),
     ("small", 317, 238),
     ("round", 480, 480),
+    ("bmm101", 480, 320),
 ];
 
 /// Valid size names for per-size fixture/interaction blocks.
-pub const VALID_SIZES: &[&str] = &["full", "large", "medium", "small", "round"];
+pub const VALID_SIZES: &[&str] = &["full", "large", "medium", "small", "round", "bmm101"];
 
 /// Look up a size name from pixel dimensions.
 #[must_use]
@@ -491,6 +492,12 @@ mod tests {
     fn round_size_name_is_recognized_from_480_square() {
         assert_eq!(size_name_from_dimensions(480, 480), "round");
         assert_eq!(size_dimensions_str("round").as_deref(), Some("480x480"));
+    }
+
+    #[test]
+    fn bmm101_size_name_is_recognized_from_480x320() {
+        assert_eq!(size_name_from_dimensions(480, 320), "bmm101");
+        assert_eq!(size_dimensions_str("bmm101").as_deref(), Some("480x320"));
     }
 
     #[test]
