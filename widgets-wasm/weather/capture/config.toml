@@ -1,0 +1,12 @@
+# Capture configuration for visual regression testing.
+
+# Settle for a few frames after the fetch stub fires so the widget leaves the
+# Loading state and parses the forecast before the first capture.
+settle_delay = 5
+
+[fixtures]
+small = "fixtures/small.jsonl.gz"
+medium = "fixtures/medium.jsonl.gz"
+large = "fixtures/large.jsonl.gz"
+full = "fixtures/full.jsonl.gz"
+bmm101 = "fixtures/bmm101.jsonl.gz"
