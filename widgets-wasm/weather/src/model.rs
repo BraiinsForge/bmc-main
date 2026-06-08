@@ -52,8 +52,6 @@ pub struct DayForecast {
     pub weather_code: i64,
     pub min: DegreeCelsius,
     pub max: DegreeCelsius,
-    pub sunrise: String,
-    pub sunset: String,
 }
 
 pub struct Daily {
@@ -337,11 +335,7 @@ fn parse_daily(doc: &JsonDoc) -> Option<Daily> {
         let weather_code = doc.i64(&bmc_wasm_sdk::fmt!("/data/daily/weather_code/{}", i));
         let min_c = doc.f64(&bmc_wasm_sdk::fmt!("/data/daily/temperature_min/{}", i));
         let max_c = doc.f64(&bmc_wasm_sdk::fmt!("/data/daily/temperature_max/{}", i));
-        let sunrise = doc.str(&bmc_wasm_sdk::fmt!("/data/daily/sunrise/{}", i));
-        let sunset = doc.str(&bmc_wasm_sdk::fmt!("/data/daily/sunset/{}", i));
-        let (Some(weather_code), Some(min_c), Some(max_c), Some(sunrise), Some(sunset)) =
-            (weather_code, min_c, max_c, sunrise, sunset)
-        else {
+        let (Some(weather_code), Some(min_c), Some(max_c)) = (weather_code, min_c, max_c) else {
             bmc_wasm_sdk::log_warn!(
                 "weather: daily entry {} incomplete, truncating forecast at {} days",
                 i,
@@ -354,8 +348,6 @@ fn parse_daily(doc: &JsonDoc) -> Option<Daily> {
             weather_code,
             min: DegreeCelsius(min_c),
             max: DegreeCelsius(max_c),
-            sunrise,
-            sunset,
         });
     }
     if days.is_empty() {
@@ -485,8 +477,6 @@ mod tests {
             weather_code: 3,
             min: DegreeCelsius(min_c),
             max: DegreeCelsius(max_c),
-            sunrise: "2026-06-03T04:56:21+02:00".to_string(),
-            sunset: "2026-06-03T21:04:41+02:00".to_string(),
         }
     }
 
