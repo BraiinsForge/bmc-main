@@ -155,14 +155,13 @@ pub fn full(
     );
 
     let forecast = if let Some(daily) = &weather.daily {
-        let n = daily.days.len().min(8);
-        let window = &daily.days[..n];
+        let window = daily.forecast_window(8);
         let range = crate::model::ForecastRange::of(window);
         let mut rows: Vec<Node> = window
             .iter()
             .enumerate()
             .map(|(i, day)| {
-                let is_today = i == daily.today_index;
+                let is_today = i == 0;
                 let marker = if is_today {
                     weather.current.as_ref().map(|c| c.temperature)
                 } else {

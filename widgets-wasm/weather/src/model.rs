@@ -61,6 +61,16 @@ pub struct Daily {
     pub today_sunset: String,
 }
 
+impl Daily {
+    /// The forecast slice starting at today, capped at `max` days, so the
+    /// shown rows always begin at today regardless of leading past entries.
+    #[must_use]
+    pub fn forecast_window(&self, max: usize) -> &[DayForecast] {
+        let from = &self.days[self.today_index..];
+        &from[..from.len().min(max)]
+    }
+}
+
 pub struct Weather {
     pub location: Location,
     pub current: Option<Current>,
@@ -504,6 +514,23 @@ mod tests {
         assert!((range.fraction(DegreeCelsius(20.0)) - 0.5).abs() < 1e-9);
         assert!((range.fraction(DegreeCelsius(10.0)) - 0.0).abs() < 1e-9);
         assert!((range.fraction(DegreeCelsius(30.0)) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn forecast_window_starts_at_today_and_caps_length() {
+        let daily = Daily {
+            days: vec![day(1.0, 2.0), day(3.0, 4.0), day(5.0, 6.0)],
+            today_index: 1,
+            today_sunrise: String::new(),
+            today_sunset: String::new(),
+        };
+        // The window begins at today (index 1), never the leading past day,
+        // so the Today label and current-temperature marker land on row 0.
+        let window = daily.forecast_window(4);
+        assert_eq!(window.len(), 2);
+        assert!((window[0].min.raw() - 3.0).abs() < 1e-9);
+        // A cap shorter than the remaining days truncates from today forward.
+        assert_eq!(daily.forecast_window(1).len(), 1);
     }
 
     #[test]

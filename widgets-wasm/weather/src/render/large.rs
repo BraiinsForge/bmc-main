@@ -313,14 +313,13 @@ pub fn large(
     );
 
     let forecast = if let Some(daily) = &weather.daily {
-        let n = daily.days.len().min(4);
-        let window = &daily.days[..n];
+        let window = daily.forecast_window(4);
         let range = crate::model::ForecastRange::of(window);
         let rows: Vec<Node> = window
             .iter()
             .enumerate()
             .map(|(i, day)| {
-                let is_today = i == daily.today_index;
+                let is_today = i == 0;
                 let marker = if is_today {
                     weather.current.as_ref().map(|c| c.temperature)
                 } else {
