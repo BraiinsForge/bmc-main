@@ -6,6 +6,9 @@ use bmc_wasm_sdk::*;
 use units::units::{DegreeCelsius, KilometerPerHour};
 
 pub const NOT_AVAILABLE: &str = "--";
+pub const ENTER_LOCATION: &str = "Enter location";
+pub const LOADING: &str = "Loading…";
+pub const CANNOT_LOAD: &str = "Cannot load data";
 
 #[must_use]
 pub fn wind_line(direction: &str, speed: &str) -> String {
