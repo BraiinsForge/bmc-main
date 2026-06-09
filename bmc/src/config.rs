@@ -23,7 +23,8 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::sync::broadcast;
 use tracing::warn;
-use uuid::Uuid;
+
+mod defaults;
 
 const CHANNEL_CAPACITY: usize = 8;
 
@@ -307,43 +308,12 @@ impl Config {
     }
 }
 
-impl Default for Config {
-    // TODO: Refine default scenes after all widgets are migrated to multi-process system.
-    // The original default included: clock fullscreen, ticker_btc fullscreen, and a combined
-    // scene with analog clock, block height, and ticker_btc widgets.
-    fn default() -> Self {
-        // Digital clock widget type ID from widgets/digital-clock/manifest.json
-        let digital_clock_type_id =
-            Uuid::parse_str("550e8400-e29b-41d4-a716-446655440001").expect("BUG: invalid UUID");
-
-        let digital_clock_scene = Scene::fullscreen(
-            digital_clock_type_id,
-            params_map(&[
-                ("showSeconds", ParamValue::Boolean(true)),
-                ("showTimezone", ParamValue::Boolean(true)),
-                ("fontStyle", ParamValue::String("medium".into())),
-            ])
-            .expect("BUG: invalid built-in ParamKey in digital-clock defaults"),
-        );
-
-        // Flip clock widget type ID from widgets/flip-clock/manifest.json
-        let flip_clock_type_id =
-            Uuid::parse_str("550e8400-e29b-41d4-a716-446655440002").expect("BUG: invalid UUID");
-
-        let flip_clock_scene = Scene::fullscreen(
-            flip_clock_type_id,
-            params_map(&[("mode", ParamValue::String("extruded".into()))])
-                .expect("BUG: invalid built-in ParamKey in flip-clock defaults"),
-        );
-
-        let scenes = indexmap! {
-            digital_clock_scene.id => digital_clock_scene,
-            flip_clock_scene.id => flip_clock_scene,
-        };
-
+impl Config {
+    #[must_use]
+    pub fn platform_default(product: bmc_platform::Product) -> Self {
         Self {
-            scenes,
-            scene_cycling: None,
+            scenes: defaults::scenes_for(product),
+            scene_cycling: Some(SceneCycling::default()),
             localization: None,
             data_collection: None,
             brightness_pct: None,
@@ -394,6 +364,7 @@ impl ConfigHandle {
         default_night_mode_brightness_pct: u8,
         default_sound_volume_pct: u8,
         default_night_mode_sound_volume_pct: u8,
+        product: bmc_platform::Product,
     ) -> Self {
         let config = match Config::load(&path).await {
             Ok(config) => config,
@@ -412,7 +383,7 @@ impl ConfigHandle {
                     }
                 }
 
-                let mut default_config = Config::default();
+                let mut default_config = Config::platform_default(product);
 
                 if let Err(err) = default_config.save(&path).await {
                     warn!(?err, "Failed to save default config");
@@ -735,16 +706,11 @@ fn params_map(entries: &[(&str, ParamValue)]) -> Result<BTreeMap<ParamKey, Param
 mod tests {
     use super::*;
 
-    #[test]
-    fn config_default_constructs_without_panic() {
-        let _ = Config::default();
-    }
-
     /// Tempfile-backed `ConfigHandle` for notification tests.
     async fn fresh_handle() -> (tempfile::TempDir, ConfigHandle) {
         let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
         let path = tmp.path().join("bmc-config.json");
-        let handle = ConfigHandle::init(path, 50, 50, 50, 50).await;
+        let handle = ConfigHandle::init(path, 50, 50, 50, 50, bmc_platform::Product::Bmc100).await;
         (tmp, handle)
     }
 

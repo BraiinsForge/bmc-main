@@ -92,6 +92,7 @@ where
             config.default_night_mode_brightness_pct,
             config.default_volume_pct,
             config.default_night_mode_volume_pct,
+            manager.platform().product(),
         )
         .await;
 

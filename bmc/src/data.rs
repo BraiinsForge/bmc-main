@@ -23,7 +23,7 @@ impl Default for SceneCycling {
         Self {
             automatic_cycling_enabled: true,
             automatic_cycling_default_duration: Duration::from_secs(30),
-            transition: SceneCyclingTransition::Fade,
+            transition: SceneCyclingTransition::Slide,
         }
     }
 }
@@ -149,7 +149,7 @@ mod tests {
             config.automatic_cycling_default_duration,
             Duration::from_secs(30)
         );
-        assert_eq!(config.transition, SceneCyclingTransition::Fade);
+        assert_eq!(config.transition, SceneCyclingTransition::Slide);
     }
 
     #[test]
