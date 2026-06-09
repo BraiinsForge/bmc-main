@@ -15,7 +15,7 @@ pub const TICK_COUNT: usize = 28;
 
 // Half-width of the "Good" band around the default hashrate target, in percent:
 // within ±N% of default reads Good, beyond it Over/Underclocked. Product-tunable.
-pub const GOOD_BAND_PERCENT: f64 = 3.0;
+pub const GOOD_BAND_PERCENT: f64 = 5.0;
 
 // Gauge sweep fractions for the three tuner-target anchors.
 const MIN_ANCHOR: f32 = 0.25;
