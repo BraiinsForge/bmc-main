@@ -16,6 +16,7 @@ members = [
     "clock",
     "fleet-management",
     "lib/mining",
+    "lib/prices",
     "lib/units",
     "mining-clock",
     "mining-info",
