@@ -6,11 +6,7 @@ use crate::model::{Availability, MinerData, TemperatureRange};
 use mining::gauge::TargetRange;
 use units::units::{DegreeCelsius, JoulePerTeraHash, Percent, Seconds, TeraHashPerSecond, Watt};
 
-pub(crate) trait JsonLookup {
-    fn str(&self, path: &str) -> Option<String>;
-    fn i64(&self, path: &str) -> Option<i64>;
-    fn f64(&self, path: &str) -> Option<f64>;
-}
+pub(crate) use mining::hashboards::JsonLookup;
 
 pub(crate) fn ths_from_ghs(value: f64) -> f64 {
     value / 1_000.0
@@ -52,6 +48,13 @@ pub(crate) fn parse_hashboards(json: &impl JsonLookup, data: &mut MinerData) {
         && nominal > 0.0
     {
         data.mcr_percent = Availability::Available(Percent(real / nominal * 100.0));
+    }
+    let summary = mining::hashboards::sum_chips(json);
+    if let Some(model) = summary.model {
+        data.chip_type = Availability::Available(model);
+    }
+    if let Some(count) = summary.count {
+        data.chip_count = Availability::Available(count);
     }
 }
 
@@ -104,6 +107,8 @@ pub(crate) fn reset_stats(data: &mut MinerData) {
 pub(crate) fn reset_hashboards(data: &mut MinerData) {
     data.temperature = Availability::Unavailable;
     data.mcr_percent = Availability::Unavailable;
+    data.chip_type = Availability::Unavailable;
+    data.chip_count = Availability::Unavailable;
 }
 
 pub(crate) fn reset_cooling(data: &mut MinerData) {
@@ -125,21 +130,6 @@ pub(crate) fn reset_all(data: &mut MinerData) {
     reset_cooling(data);
     reset_network(data);
     reset_constraints(data);
-}
-
-#[cfg(target_arch = "wasm32")]
-impl JsonLookup for bmc_wasm_sdk::json::JsonDoc {
-    fn str(&self, path: &str) -> Option<String> {
-        self.str(path)
-    }
-
-    fn i64(&self, path: &str) -> Option<i64> {
-        self.i64(path)
-    }
-
-    fn f64(&self, path: &str) -> Option<f64> {
-        self.f64(path)
-    }
 }
 
 #[cfg(test)]
@@ -211,6 +201,39 @@ mod tests {
     }
 
     #[test]
+    fn parses_chip_model_and_count_for_single_board() {
+        let mut json = MapJson::default();
+        json.strings.insert("/hashboards/0/chip_type", "BM1370");
+        json.ints.insert("/hashboards/0/chips_count", 108);
+        let mut data = MinerData::default();
+        parse_hashboards(&json, &mut data);
+        assert_eq!(data.chip_type, Availability::Available("BM1370".into()));
+        assert_eq!(data.chip_count, Availability::Available(108));
+    }
+
+    #[test]
+    fn sums_chip_count_across_hashboards() {
+        let mut json = MapJson::default();
+        json.strings.insert("/hashboards/0/chip_type", "BM1370");
+        json.ints.insert("/hashboards/0/chips_count", 108);
+        json.ints.insert("/hashboards/1/chips_count", 108);
+        json.ints.insert("/hashboards/2/chips_count", 108);
+        let mut data = MinerData::default();
+        parse_hashboards(&json, &mut data);
+        assert_eq!(data.chip_type, Availability::Available("BM1370".into()));
+        assert_eq!(data.chip_count, Availability::Available(324));
+    }
+
+    #[test]
+    fn leaves_chips_unavailable_when_absent() {
+        let json = MapJson::default();
+        let mut data = MinerData::default();
+        parse_hashboards(&json, &mut data);
+        assert_eq!(data.chip_type, Availability::Unavailable);
+        assert_eq!(data.chip_count, Availability::Unavailable);
+    }
+
+    #[test]
     fn reset_clears_only_its_own_fields() {
         let mut data = MinerData {
             hashrate_ths: Availability::Available(TeraHashPerSecond(4.0)),
@@ -243,6 +266,8 @@ mod tests {
             fan_percent: Availability::Available(Percent(72.0)),
             uptime_s: Availability::Available(Seconds(187_020)),
             ip_address: Availability::Available("192.168.1.42".to_owned()),
+            chip_type: Availability::Available("BM1370".into()),
+            chip_count: Availability::Available(146),
             constraints: crate::model::Constraints {
                 hashrate: Some(TargetRange {
                     min: 50.0,

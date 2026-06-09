@@ -49,6 +49,20 @@ const CLUSTER_VALUE_SIZE: u32 = 32;
 const CLUSTER_LABEL_SIZE: u32 = 16;
 const CLUSTER_UNIT_SIZE: u32 = 16;
 
+const CHIP_ICON: Svg = include_svg!("assets/chip.svg");
+
+// Top-center "<icon> <chip model> x<count>" header. Native y sits below the rim
+// and clear of the top quadrant clusters at native y=122. Icon and text are
+// fixed-size (typography is not scaled); the gap and placement scale.
+const CHIP_HEADER_NATIVE_Y: f32 = 58.0;
+const CHIP_ICON_SIZE: f32 = 22.0;
+const CHIP_TEXT_SIZE: u32 = 18;
+// Text line-height for the header, set explicitly so the cell-centering math
+// below can use the same value the glyphs are laid out with.
+const CHIP_LINE_HEIGHT: f32 = 1.4;
+const CHIP_GAP: f32 = 6.0;
+const CHIP_CELL_W: f32 = 260.0;
+
 // Gap between the Info Overload center band and the upper/lower value rows;
 // keeps all three bands clustered near the vertical center on the round face.
 const BAND_GAP: f32 = 16.0;
@@ -331,6 +345,57 @@ fn center_caption(cx: f32, cy: f32, scale: f32) -> Node {
     )
 }
 
+// Top-center chip header: "<icon> <model> x<count>", centered on the frame's
+// horizontal center and inset below the rim. The icon is drawn into a small
+// fixed-size canvas so it flows in the flex row and the whole group centers
+// together. The model reads in the value tone, the count in the label gray.
+fn chip_header(cx: f32, cy: f32, scale: f32, model: &str, count: usize) -> Node {
+    let icon = canvas(
+        props!(width: CHIP_ICON_SIZE, height: CHIP_ICON_SIZE),
+        vec![
+            Draw::svg(
+                0.0,
+                0.0,
+                CHIP_ICON_SIZE,
+                CHIP_ICON_SIZE,
+                &CHIP_ICON,
+                LABEL_GRAY,
+            )
+            .with_anti_alias(),
+        ],
+    );
+    let label = row(
+        props!(cross_align: CrossAlign::Center, gap: CHIP_GAP * scale),
+        [
+            icon,
+            text(
+                model,
+                style!(size: CHIP_TEXT_SIZE, weight: FontWeight::SEMIBOLD, color: VALUE, line_height: CHIP_LINE_HEIGHT),
+            ),
+            text(
+                fmt!("x{count}"),
+                style!(size: CHIP_TEXT_SIZE, weight: FontWeight::REGULAR, color: LABEL_GRAY, line_height: CHIP_LINE_HEIGHT),
+            ),
+        ],
+    );
+    let cell_w = CHIP_CELL_W * scale;
+    let (center_x, center_y) = native_to_px(cx, cy, scale, (NATIVE / 2.0, CHIP_HEADER_NATIVE_Y));
+    // The flex row is as tall as its tallest child. The text line box
+    // (CHIP_TEXT_SIZE * CHIP_LINE_HEIGHT) is taller than the icon, so it sets the
+    // row height; centering the cell on that — not on the icon — lands the header
+    // on CHIP_HEADER_NATIVE_Y without disturbing the icon/text alignment.
+    let row_height = (px(CHIP_TEXT_SIZE) * CHIP_LINE_HEIGHT).max(CHIP_ICON_SIZE);
+    col(
+        props!(
+            inset_left: center_x - cell_w / 2.0,
+            inset_top: center_y - row_height / 2.0,
+            width: cell_w,
+            cross_align: CrossAlign::Center
+        ),
+        [label],
+    )
+}
+
 // One quadrant cluster, laid out as a Node so the value+unit row and label
 // center as a group (cross_align) inside a fixed cell. The cell is positioned
 // absolutely with its top-left corner derived from the quadrant center and the
@@ -399,10 +464,8 @@ fn gauge_screen(
     size: RenderSize,
     g: &Gauge,
     hashrate: Availability<TeraHashPerSecond>,
-    top_left: &ClusterSpec,
-    top_right: &ClusterSpec,
-    bottom_left: &ClusterSpec,
-    bottom_right: &ClusterSpec,
+    chip: Option<(&str, usize)>,
+    clusters: &[ClusterSpec; 4],
 ) -> Node {
     let w = px(size.width);
     let h = px(size.height);
@@ -421,12 +484,11 @@ fn gauge_screen(
         center_node(cx, cy, scale, hashrate, g.state),
         center_caption(cx, cy, scale),
     ];
-    for (center, spec) in [
-        (TL_CENTER, top_left),
-        (TR_CENTER, top_right),
-        (BL_CENTER, bottom_left),
-        (BR_CENTER, bottom_right),
-    ] {
+    if let Some((model, count)) = chip {
+        children.push(chip_header(cx, cy, scale, model, count));
+    }
+    let centers = [TL_CENTER, TR_CENTER, BL_CENTER, BR_CENTER];
+    for (center, spec) in centers.into_iter().zip(clusters.iter()) {
         children.push(cluster_node(
             native_to_px(cx, cy, scale, center),
             scale,
@@ -451,32 +513,42 @@ fn seeded_gauge(miner: &MinerData, seed_gauge: bool) -> Gauge {
     g
 }
 
+// The chip model + count header, present only when both are known.
+fn chip_header_data(miner: &MinerData) -> Option<(&str, usize)> {
+    let model = miner.chip_type.as_option()?;
+    let count = *miner.chip_count.as_option()?;
+    Some((model.as_str(), count))
+}
+
 pub(crate) fn mining(size: RenderSize, miner: &MinerData, seed_gauge: bool) -> Node {
     let g = seeded_gauge(miner, seed_gauge);
     gauge_screen(
         size,
         &g,
         miner.hashrate_ths,
-        &ClusterSpec {
-            label: "Power Cons.",
-            prefix: None,
-            value: format::fixed(miner.power_w, 0),
-        },
-        &ClusterSpec {
-            label: "MCR",
-            prefix: None,
-            value: format::fixed(miner.mcr_percent, 1),
-        },
-        &ClusterSpec {
-            label: "Temperature",
-            prefix: None,
-            value: format::chip_temperature(miner.temperature),
-        },
-        &ClusterSpec {
-            label: "Fan Speed",
-            prefix: None,
-            value: format::fixed(miner.fan_percent, 0),
-        },
+        chip_header_data(miner),
+        &[
+            ClusterSpec {
+                label: "Power Cons.",
+                prefix: None,
+                value: format::fixed(miner.power_w, 0),
+            },
+            ClusterSpec {
+                label: "MCR",
+                prefix: None,
+                value: format::fixed(miner.mcr_percent, 1),
+            },
+            ClusterSpec {
+                label: "Temperature",
+                prefix: None,
+                value: format::chip_temperature(miner.temperature),
+            },
+            ClusterSpec {
+                label: "Fan Speed",
+                prefix: None,
+                value: format::fixed(miner.fan_percent, 0),
+            },
+        ],
     )
 }
 
@@ -491,26 +563,29 @@ pub(crate) fn geek(
         size,
         &g,
         miner.hashrate_ths,
-        &ClusterSpec {
-            label: "Power Cons.",
-            prefix: None,
-            value: format::fixed(miner.power_w, 0),
-        },
-        &ClusterSpec {
-            label: "Efficiency",
-            prefix: None,
-            value: format::fixed(miner.efficiency_j_th, 1),
-        },
-        &ClusterSpec {
-            label: "Temperature",
-            prefix: None,
-            value: format::chip_temperature(miner.temperature),
-        },
-        &ClusterSpec {
-            label: "BTC Price",
-            prefix: format::money_symbol(public.btc_price),
-            value: format::money_amount(public.btc_price, 0).into(),
-        },
+        chip_header_data(miner),
+        &[
+            ClusterSpec {
+                label: "Power Cons.",
+                prefix: None,
+                value: format::fixed(miner.power_w, 0),
+            },
+            ClusterSpec {
+                label: "Efficiency",
+                prefix: None,
+                value: format::fixed(miner.efficiency_j_th, 1),
+            },
+            ClusterSpec {
+                label: "Temperature",
+                prefix: None,
+                value: format::chip_temperature(miner.temperature),
+            },
+            ClusterSpec {
+                label: "BTC Price",
+                prefix: format::money_symbol(public.btc_price),
+                value: format::money_amount(public.btc_price, 0).into(),
+            },
+        ],
     )
 }
 

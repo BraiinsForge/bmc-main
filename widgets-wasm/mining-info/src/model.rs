@@ -18,6 +18,8 @@ pub(crate) struct MinerData {
     pub(crate) fan_percent: Availability<Percent>,
     pub(crate) uptime_s: Availability<Seconds>,
     pub(crate) ip_address: Availability<String>,
+    pub(crate) chip_type: Availability<String>,
+    pub(crate) chip_count: Availability<usize>,
     pub(crate) constraints: Constraints,
 }
 
