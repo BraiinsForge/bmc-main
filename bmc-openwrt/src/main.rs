@@ -17,22 +17,23 @@ use bmc_openwrt::{button_driver::UEventButtons, manager::Manager, session::Openw
 use bmc_openwrt::{cli::Args, log::build_panic_hook_with_tracing};
 use bmc_platform::backlight::DisplayBacklightDriver;
 use bmc_platform::generic_backlight_driver::GenericBacklightDriver;
-use bmc_platform::{BosPlatform, HardwareProfileSelection};
+use bmc_platform::{BmcInfo, BosPlatform, HardwareProfile, HardwareProfileSelection};
 use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_time::time::Timezone;
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
-/// Realtek WiFi adapter vendor ID
-const WIFI_VENDOR_ID: &str = "0bda";
-
-/// Shared USB device path (exists on both hubbed and hubless boards)
-const SHARED_USB_DEVICE: &str = "/sys/devices/platform/soc/5800d000.usbh-ehci/usb3/3-1/";
-
-/// WiFi interface paths for each board type
-const WIFI_PATH_HUBLESS: &str = "/sys/devices/platform/soc/5800d000.usbh-ehci/usb3/3-1/3-1:1.0/";
-const WIFI_PATH_HUBBED: &str =
-    "/sys/devices/platform/soc/5800d000.usbh-ehci/usb3/3-1/3-1.1/3-1.1:1.0/";
+/// Pick the first WiFi syspath candidate that exists, falling back to the
+/// primary candidate when none is present yet (the radio may enumerate shortly
+/// after boot; `OpenwrtWifiManager` resolves the path lazily).
+fn select_wifi_syspath(candidates: &[PathBuf]) -> PathBuf {
+    candidates
+        .iter()
+        .find(|path| path.exists())
+        .or(candidates.first())
+        .cloned()
+        .unwrap_or_default()
+}
 
 fn led_driver_for_profile(
     profile: &bmc_platform::HardwareProfile,
@@ -80,35 +81,6 @@ async fn main() -> Result<()> {
         .and_then(|timezone| Timezone::from_str(&timezone).ok())
         .unwrap_or_default();
 
-    // BMC_WIFI_SYSPATH overrides auto-detection (used for x86 QEMU emulation with mac80211_hwsim).
-    // Otherwise detect board type by checking vendor ID at the shared USB path:
-    // - Hubless: 3-1 is the WiFi (vendor 0bda)
-    // - Hubbed: 3-1 is the USB hub, WiFi is at 3-1.1
-    let wifi_path: String = if let Ok(path) = std::env::var("BMC_WIFI_SYSPATH") {
-        info!("Using WiFi device path from BMC_WIFI_SYSPATH: {}", path);
-        path
-    } else {
-        let vendor = std::fs::read_to_string(format!("{SHARED_USB_DEVICE}idVendor"))
-            .map(|v| v.trim().to_owned())
-            .unwrap_or_default();
-
-        info!("Detecting WiFi: {}idVendor = {}", SHARED_USB_DEVICE, vendor);
-
-        if vendor == WIFI_VENDOR_ID {
-            info!("Hubless board detected, WiFi at {}", WIFI_PATH_HUBLESS);
-            WIFI_PATH_HUBLESS.to_owned()
-        } else {
-            info!("Hubbed board detected, WiFi at {}", WIFI_PATH_HUBBED);
-            WIFI_PATH_HUBBED.to_owned()
-        }
-    };
-
-    info!("Using WiFi device path: {}", wifi_path);
-    let wifi_manager = Arc::new(
-        OpenwrtWifiManager::new(&wifi_path)
-            .inspect_err(|err| error!(?err, "Failed to initialize WiFi Manager"))?,
-    );
-
     let platform_override: Option<BosPlatform> =
         match args.hardware_profile.parse::<HardwareProfileSelection>() {
             Ok(selection) => selection.into(),
@@ -117,6 +89,36 @@ async fn main() -> Result<()> {
                 return Err(err.into());
             }
         };
+
+    // BMC_WIFI_SYSPATH overrides the platform path (x86 QEMU with mac80211_hwsim).
+    // Otherwise take the platform's candidate list and pick the first path that
+    // exists, which selects between BMC100's hubbed and hubless revisions.
+    let wifi_path: String = if let Ok(path) = std::env::var("BMC_WIFI_SYSPATH") {
+        info!("Using WiFi device path from BMC_WIFI_SYSPATH: {path}");
+        path
+    } else {
+        let platform = match platform_override {
+            Some(platform) => platform,
+            None => BmcInfo::load()
+                .map(|info| info.bmc_platform)
+                .inspect_err(|err| {
+                    error!(
+                        ?err,
+                        "cannot resolve platform for WiFi path; pass --hardware-profile"
+                    );
+                })?,
+        };
+        let candidates = HardwareProfile::for_product(platform.product()).paths.wifi;
+        select_wifi_syspath(&candidates)
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    info!("Using WiFi device path: {wifi_path}");
+    let wifi_manager = Arc::new(
+        OpenwrtWifiManager::new(&wifi_path)
+            .inspect_err(|err| error!(?err, "Failed to initialize WiFi Manager"))?,
+    );
 
     let manager = Manager::new(
         OpenwrtSessionManager,
