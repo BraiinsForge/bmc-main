@@ -1027,6 +1027,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ticker-list"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+ "prices",
+ "units",
+]
+
+[[package]]
 name = "ticker-single-sparkline"
 version = "0.1.0"
 dependencies = [

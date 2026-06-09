@@ -20,6 +20,7 @@ members = [
     "lib/units",
     "mining-clock",
     "mining-info",
+    "ticker-list",
     "ticker-single-sparkline",
     "weather",
 ]
