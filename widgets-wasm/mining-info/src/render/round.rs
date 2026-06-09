@@ -79,6 +79,12 @@ const CENTER_CELL_H: f32 = 140.0;
 const CENTER_UNIT_GAP: f32 = 6.0;
 const CENTER_LABEL_GAP: f32 = 5.0;
 
+// Fixed pixel width reserved for the trailing "TH/s" unit, mirrored by an empty
+// slot of equal width on the left of the value so the value alone lands on the
+// frame center. Sized to clear "TH/s" at `HASHRATE_UNIT_SIZE`; not scaled, since
+// typography is fixed.
+const CENTER_UNIT_SLOT_W: f32 = 60.0;
+
 // Native (480-space) centers of the four quadrant clusters; the frame center is
 // (240, 240). Derived from the Top (86,90,308×65) and Down (86,319,308×65)
 // frames split at the x=239 divider.
@@ -241,10 +247,13 @@ fn draw_dividers(draws: &mut Vec<Draw>, cx: f32, cy: f32, scale: f32) {
     }
 }
 
-// The center hashrate: the value and "TH/s" share one row with the status label
-// below, centered as a group on the frame center (cx, cy), mirroring the quadrant
-// clusters. Centering the whole group — not just the value — leaves the value a
-// little above dead-center, matching the design.
+// The center hashrate: the value (e.g. "1.00") sits on the frame center (cx, cy)
+// with "TH/s" trailing to its right, and the status label below. The value alone
+// is horizontally centered — not the value+unit group — by reserving a fixed unit
+// slot on the right and mirroring it with an empty slot of equal width on the
+// left, the symmetric-row trick the digital clock uses for the time + AM/PM
+// (clock digital.rs `time_row`). Vertically the value+label group is centered as
+// a unit, leaving the value a little above dead-center, matching the design.
 fn center_node(
     cx: f32,
     cy: f32,
@@ -257,18 +266,21 @@ fn center_node(
     let inset_left = cx - cell_w / 2.0;
     let inset_top = cy - cell_h / 2.0;
 
+    let value = text(
+        format::fixed(hashrate, 2).value,
+        style!(size: HASHRATE_SIZE, weight: FontWeight::BOLD, color: VALUE, line_height: 1.0),
+    );
+    let unit_slot = col(
+        props!(width: CENTER_UNIT_SLOT_W, cross_align: CrossAlign::Start),
+        [text(
+            TeraHashPerSecond::UNIT,
+            style!(size: HASHRATE_UNIT_SIZE, weight: FontWeight::REGULAR, color: VALUE, line_height: 1.0),
+        )],
+    );
+    let left_reserve = col(props!(width: CENTER_UNIT_SLOT_W), Vec::<Node>::new());
     let value_row = row(
         props!(cross_align: CrossAlign::Center, gap: CENTER_UNIT_GAP * scale),
-        [
-            text(
-                format::fixed(hashrate, 2).value,
-                style!(size: HASHRATE_SIZE, weight: FontWeight::BOLD, color: VALUE, line_height: 1.0),
-            ),
-            text(
-                TeraHashPerSecond::UNIT,
-                style!(size: HASHRATE_UNIT_SIZE, weight: FontWeight::REGULAR, color: VALUE, line_height: 1.0),
-            ),
-        ],
+        [left_reserve, value, unit_slot],
     );
 
     col(
