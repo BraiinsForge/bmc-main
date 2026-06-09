@@ -1,0 +1,48 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "69ed377c-701b-4cdb-b4b6-0308cfe56b64",
+  "version": "0.1.0",
+  "name": "Ticker - Single Sparkline",
+  "description": "Visualize stock, asset, and crypto prices on a single sparkline chart",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/ticker-single-sparkline",
+  "settings": [
+    "localization"
+  ],
+  "supported_viewports": [
+    {
+      "type": "rectangular",
+      "min_width": 317,
+      "max_width": 1280,
+      "min_height": 238,
+      "max_height": 480
+    }
+  ],
+  "params": {
+    "pair": {
+      "name": "Symbol",
+      "description": "Financial symbol, stock ticker, or cryptocurrency pair to display",
+      "type": "string",
+      "default_value": "BTC-USD"
+    },
+    "period": {
+      "name": "Time Period",
+      "description": "Time period for the chart and the price change",
+      "type": "string",
+      "default_value": "7d",
+      "enum_values": [
+        {
+          "value": "7d",
+          "label": "7 Days"
+        },
+        {
+          "value": "30d",
+          "label": "30 Days"
+        }
+      ]
+    }
+  }
+}
