@@ -16,13 +16,17 @@ let
   bosVersion = "2026-03-27-0-a11e594b-26.02.1";
   profilePath = "/nix/var/nix/gcroots/profiles/bmc";
 
+  # Ship every widget package (manifest-derived WASM widgets plus the
+  # native flip-clock) alongside the core runtime.
+  widgetNames =
+    lib.attrNames (lib.filterAttrs (_: p: (p.category or "") == "widget") packages);
+
   initPackageNames = [
     "core"
     "bmc-nix-cli"
     "nix"
-    "digital-clock"
-    "flip-clock"
-  ];
+    "bos-avahi"
+  ] ++ widgetNames;
 
   # Select init packages and convert to the list format mkIndex/mkTarball expect
   initPackages = map
