@@ -7,3 +7,4 @@ settle_delay = 5
 [fixtures]
 small = "fixtures/bmm100-mining.jsonl.gz"
 full = "fixtures/bmm101-info-overload.jsonl.gz"
+round = "fixtures/round.jsonl.gz"
