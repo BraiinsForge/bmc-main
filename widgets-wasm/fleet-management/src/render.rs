@@ -32,13 +32,13 @@ use crate::layout::{Layout, choose};
 use crate::summary::{FleetSummary, GroupSummary};
 
 const OK_ICON: Svg = include_svg!("assets/ok.svg");
+const NOT_OK_ICON: Svg = include_svg!("assets/not-ok.svg");
 const ICON_PX: f32 = 22.0;
-const DOT_PX: f32 = 12.0;
 
 const LABEL_COLOR: Color = GRAY_60;
 const VALUE_COLOR: Color = WHITE;
 const OK_COLOR: Color = GREEN_50;
-const ONLINE_COLOR: Color = GRAY_60;
+const NOT_OK_COLOR: Color = RED_60;
 
 const LABEL_FONT: u32 = 18;
 const VALUE_FONT: u32 = 28;
@@ -69,8 +69,8 @@ const ROW_GAP: f32 = 16.0;
 // roughly constant slack, so left-aligned values land at evenly spaced
 // positions for typical data (a much shorter value leaves more trailing space).
 const COL_HASHRATE: f32 = 140.0;
-const COL_MODEL_FULL: f32 = 330.0;
-const COL_MODEL_LARGE: f32 = 250.0;
+const COL_MODEL_FULL: f32 = 380.0;
+const COL_MODEL_LARGE: f32 = 290.0;
 const COL_POWER: f32 = 85.0;
 const COL_EFF: f32 = 125.0;
 const COL_TEMP: f32 = 160.0;
@@ -131,16 +131,13 @@ fn metric(label: &str, value: String, value_font: u32, value_weight: FontWeight)
     )
 }
 
-// The OK/Online cluster as an overview column.
-fn ok_online(total: &GroupSummary) -> Node {
+// The status cluster as an overview column.
+fn status(total: &GroupSummary) -> Node {
     col(
         props!(gap: 4.0),
         [
-            text(
-                "Mining / Online",
-                style!(size: LABEL_FONT, color: LABEL_COLOR),
-            ),
-            counts(total.ok_count, total.online_count, VALUE_FONT),
+            text("Status", style!(size: LABEL_FONT, color: LABEL_COLOR)),
+            counts(total.ok_count, not_ok_count(total), VALUE_FONT),
         ],
     )
 }
@@ -153,34 +150,41 @@ fn separator() -> Node {
     )
 }
 
-// `<ok-icon> N / <dot> M`, shared by the overview cluster and each row.
-fn counts(ok: usize, online: usize, font: u32) -> Node {
+// Not-okay devices: every known device in the group that is not mining
+// (reachable-but-idle, errored, or unreachable).
+fn not_ok_count(group: &GroupSummary) -> usize {
+    group.total_count - group.ok_count
+}
+
+// A status icon beside its count, the building block of the status cluster.
+fn status_pair(icon: &Svg, color: Color, count: usize, font: u32) -> Node {
     row(
         props!(gap: 6.0, cross_align: CrossAlign::Center),
         [
             canvas(
                 props!(width: ICON_PX, height: ICON_PX),
-                vec![Draw::svg(0.0, 0.0, ICON_PX, ICON_PX, &OK_ICON, OK_COLOR)],
+                vec![Draw::svg(0.0, 0.0, ICON_PX, ICON_PX, icon, color)],
             ),
             text(
-                fmt!("{} ", format_number!(ok_count_f64(ok), 0)),
-                style!(size: font, color: VALUE_COLOR),
-            ),
-            canvas(
-                props!(width: ICON_PX, height: ICON_PX),
-                vec![Draw::circle(
-                    ICON_PX / 2.0,
-                    ICON_PX / 2.0,
-                    DOT_PX / 2.0,
-                    ONLINE_COLOR,
-                )],
-            ),
-            text(
-                format_number!(ok_count_f64(online), 0),
+                format_number!(ok_count_f64(count), 0),
                 style!(size: font, color: VALUE_COLOR),
             ),
         ],
     )
+}
+
+// The okay/not-okay status counts: a green check with the mining count and a
+// red `!` with the not-okay count. Each pair appears only when its count is
+// above zero; every group has at least one device, so at least one is shown.
+fn counts(ok: usize, not_ok: usize, font: u32) -> Node {
+    let mut pairs: Vec<Node> = Vec::new();
+    if ok > 0 {
+        pairs.push(status_pair(&OK_ICON, OK_COLOR, ok, font));
+    }
+    if not_ok > 0 {
+        pairs.push(status_pair(&NOT_OK_ICON, NOT_OK_COLOR, not_ok, font));
+    }
+    row(props!(gap: 16.0, cross_align: CrossAlign::Center), pairs)
 }
 
 #[expect(
@@ -208,7 +212,7 @@ fn overview(total: &GroupSummary, variant: SizeVariant, title: &str) -> Node {
             hero_font,
             FontWeight::BOLD,
         ),
-        ok_online(total),
+        status(total),
     ];
     if full {
         cells.push(metric(
@@ -253,12 +257,12 @@ fn text_cell(width: f32, value: String, color: Color, align: TextAlign) -> Node 
 fn counts_cell(width: f32, group: &GroupSummary) -> Node {
     col(
         props!(width: width),
-        [counts(group.ok_count, group.online_count, ROW_FONT)],
+        [counts(group.ok_count, not_ok_count(group), ROW_FONT)],
     )
 }
 
 // The breakdown column-label row, using the same widths as the data rows. The
-// labels render at LABEL_FONT — smaller than the "Grouped by model" heading.
+// labels render at LABEL_FONT, matching the overview cluster labels.
 fn header_cell(width: f32, label: &str) -> Node {
     col(
         props!(width: width),
@@ -282,7 +286,7 @@ fn header_row(variant: SizeVariant) -> Node {
         cells.push(header_cell(COL_EFF, "Efficiency"));
         cells.push(header_cell(COL_TEMP, "Temp"));
     }
-    cells.push(header_cell(COL_COUNTS, "Mining / Online"));
+    cells.push(header_cell(COL_COUNTS, "Status"));
     row(props!(gap: ROW_GAP, cross_align: CrossAlign::Center), cells)
 }
 
@@ -375,8 +379,8 @@ fn summary_view(total: &GroupSummary, title: &str) -> Node {
             metric_row("Hashrate", summary_value(hashrate_str(total.hashrate))),
             spacer(1.0),
             metric_row(
-                "Mining / Online",
-                counts(total.ok_count, total.online_count, SUMMARY_VALUE_FONT),
+                "Status",
+                counts(total.ok_count, not_ok_count(total), SUMMARY_VALUE_FONT),
             ),
             spacer(1.0),
             metric_row("Power", summary_value(whole_str(total.power))),
@@ -390,12 +394,6 @@ fn summary_view(total: &GroupSummary, title: &str) -> Node {
 // The overview row plus the per-model breakdown table.
 fn table_view(summary: &FleetSummary, variant: SizeVariant, title: &str) -> Node {
     let mut children: Vec<Node> = vec![overview(&summary.total, variant, title), separator()];
-    if matches!(variant, SizeVariant::Full) {
-        children.push(text(
-            "Grouped by model",
-            style!(size: ROW_FONT, color: LABEL_COLOR),
-        ));
-    }
     children.push(header_row(variant));
     for group in &summary.groups {
         children.push(breakdown_row(group, variant));

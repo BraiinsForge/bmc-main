@@ -45,7 +45,7 @@ pub struct GroupSummary {
     pub min_temperature: Availability<DegreeCelsius>,
     pub avg_temperature: Availability<DegreeCelsius>,
     pub max_temperature: Availability<DegreeCelsius>,
-    pub online_count: usize,
+    pub total_count: usize,
     pub ok_count: usize,
 }
 
@@ -57,7 +57,7 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
     } else {
         devices.first().map(|d| d.identity.family)
     };
-    let online_count = devices.len();
+    let total_count = devices.len();
     let mut ok_count = 0;
 
     let mut hashrate_sum = 0.0_f64;
@@ -78,6 +78,17 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
     let mut temp_max = f64::MIN;
 
     for dev in devices {
+        // An unreachable device folds as a zero producer: hashrate 0, power 0,
+        // temperature absent. It is present in the sums (so the group reads
+        // 0.00 TH/s / 0 W rather than N/A) but never mining, and it drops out
+        // of the temperature range. Efficiency is left untouched: a 0/0 device
+        // is a no-op on Σpower / Σhashrate. Keyed on reachability, not on the
+        // reading, so a reachable idle miner (0 TH/s, real power) keeps it.
+        if !dev.reachable {
+            hashrate_any = true;
+            power_any = true;
+            continue;
+        }
         let Some(reading) = dev.telemetry.as_ref().map(|s| &s.reading) else {
             continue;
         };
@@ -140,7 +151,7 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
         min_temperature,
         avg_temperature,
         max_temperature,
-        online_count,
+        total_count,
         ok_count,
     }
 }
@@ -172,9 +183,13 @@ pub struct FleetSummary {
 
 #[must_use]
 pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> FleetSummary {
-    let reachable: Vec<&KnownDevice> = devices
+    // Every known device is shown — avahi-discovered or manual — regardless of
+    // reachability. An unreachable device is folded as a zero producer (see
+    // `fold_group`) so it counts toward the group total without inflating its
+    // metrics. Only the operator's model/family filters can hide a device.
+    let visible: Vec<&KnownDevice> = devices
         .iter()
-        .filter(|d| d.reachable && filters.is_visible(d.identity.family, d.model.as_ref()))
+        .filter(|d| filters.is_visible(d.identity.family, d.model.as_ref()))
         .collect();
 
     // Key on family as well as model name so two families that happen to share
@@ -182,7 +197,7 @@ pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> Flee
     // separate groups instead of silently merging. Model-less devices share the
     // single family-agnostic "Unknown" catch-all.
     let mut partitions: BTreeMap<(Option<usize>, String), Vec<&KnownDevice>> = BTreeMap::new();
-    for dev in &reachable {
+    for dev in &visible {
         let key = dev.model.as_ref().map_or_else(
             || (None, UNKNOWN_GROUP.to_owned()),
             |m| (Some(dev.identity.family.index()), m.name.clone()),
@@ -209,7 +224,7 @@ pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> Flee
             ))
     });
 
-    let total = fold_group(TOTAL_LABEL.to_owned(), &reachable);
+    let total = fold_group(TOTAL_LABEL.to_owned(), &visible);
     FleetSummary { total, groups }
 }
 
@@ -283,7 +298,7 @@ mod tests {
         let group = fold_group("M".to_owned(), &[&a, &b]);
         assert_eq!(raw(&group.hashrate), Some(3.0));
         assert_eq!(raw(&group.power), Some(50.0));
-        assert_eq!(group.online_count, 2);
+        assert_eq!(group.total_count, 2);
         assert_eq!(group.ok_count, 2);
     }
 
@@ -367,7 +382,7 @@ mod tests {
         assert_eq!(group.power, Availability::Unavailable);
         assert_eq!(group.efficiency, Availability::Unavailable);
         assert_eq!(group.min_temperature, Availability::Unavailable);
-        assert_eq!(group.online_count, 1);
+        assert_eq!(group.total_count, 1);
         assert_eq!(group.ok_count, 0);
     }
 
@@ -425,7 +440,7 @@ mod tests {
         let summary = summarize(&l, &Filters::default());
         let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
         assert_eq!(labels, ["BMM 101", "Bitaxe Gamma 601", "Unknown"]);
-        assert_eq!(summary.groups[0].online_count, 2);
+        assert_eq!(summary.groups[0].total_count, 2);
     }
 
     #[test]
@@ -516,15 +531,60 @@ mod tests {
     }
 
     #[test]
-    fn unreachable_devices_contribute_to_nothing() {
+    fn unreachable_device_counts_in_total_as_a_zero_producer() {
+        // The unreachable device still carries a (stale) full reading, but it
+        // must fold as hashrate 0 / power 0 / temp None: it counts toward the
+        // group total, is not mining, and adds nothing to hashrate or power.
         let l = list(&[
             ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
             ("b", Some("BMM 101"), Some(full(9.0, 90.0, 80.0)), false),
         ]);
         let summary = summarize(&l, &Filters::default());
         assert_eq!(summary.groups.len(), 1);
-        assert_eq!(summary.groups[0].online_count, 1);
-        assert_eq!(raw(&summary.total.hashrate), Some(1.0));
+        let g = &summary.groups[0];
+        assert_eq!(g.total_count, 2, "both devices are known and counted");
+        assert_eq!(g.ok_count, 1, "only the reachable miner is mining");
+        assert_eq!(raw(&g.hashrate), Some(1.0), "unreachable adds 0 hashrate");
+        assert_eq!(raw(&g.power), Some(30.0), "unreachable adds 0 power");
+        assert_eq!(
+            raw(&g.max_temperature),
+            Some(60.0),
+            "unreachable temp omitted"
+        );
+    }
+
+    #[test]
+    fn group_of_only_unreachable_devices_reads_zero_not_unavailable() {
+        // An all-down group shows 0.00 TH/s / 0 W (present zeros, so the red
+        // status count is meaningful) and an unavailable temperature.
+        let l = list(&[
+            ("a", Some("BMM 101"), Some(full(9.0, 90.0, 80.0)), false),
+            ("b", Some("BMM 101"), Some(full(8.0, 80.0, 70.0)), false),
+        ]);
+        let summary = summarize(&l, &Filters::default());
+        let g = &summary.groups[0];
+        assert_eq!(g.total_count, 2);
+        assert_eq!(g.ok_count, 0, "all not mining");
+        assert_eq!(raw(&g.hashrate), Some(0.0), "present zero, not N/A");
+        assert_eq!(raw(&g.power), Some(0.0), "present zero, not N/A");
+        assert_eq!(g.max_temperature, Availability::Unavailable);
+    }
+
+    #[test]
+    fn reachable_idle_miner_keeps_its_power_and_is_not_ok() {
+        // A reachable but idle miner (0 TH/s, real power) must keep its real
+        // power: the zeroing keys on `reachable`, never on a zero/absent reading.
+        let l = list(&[("a", Some("BMM 101"), Some(full(0.0, 8.0, 40.0)), true)]);
+        let summary = summarize(&l, &Filters::default());
+        let g = &summary.groups[0];
+        assert_eq!(g.total_count, 1);
+        assert_eq!(g.ok_count, 0, "0 TH/s is below the mining floor");
+        assert_eq!(
+            raw(&g.power),
+            Some(8.0),
+            "reachable idle power is preserved"
+        );
+        assert_eq!(raw(&g.max_temperature), Some(40.0));
     }
 
     #[test]
@@ -541,7 +601,7 @@ mod tests {
         let summary = summarize(&l, &Filters::default());
         assert_eq!(raw(&summary.total.hashrate), Some(3.0));
         assert_eq!(raw(&summary.total.power), Some(50.0));
-        assert_eq!(summary.total.online_count, 2);
+        assert_eq!(summary.total.total_count, 2);
         assert_eq!(summary.total.ok_count, 2);
     }
 
