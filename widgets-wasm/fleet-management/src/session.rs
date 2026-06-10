@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn reannouncement_while_waiting_does_not_collapse_the_interval() {
         // A re-announced (already-known) device must not restart the pass: the
-        // parked kick stays, so the 30 s cadence holds. `kick_cancelled` is
+        // parked kick stays, so the 15 s cadence holds. `kick_cancelled` is
         // `None` because the driver does not even cancel the kick in this case.
         assert_eq!(
             on_discovery(Phase::Waiting, false, None),

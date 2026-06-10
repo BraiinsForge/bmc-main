@@ -38,7 +38,7 @@ use crate::manifest_params::Params;
 use crate::model::{MinerModel, ModelAccumulator};
 use crate::telemetry::TelemetryReading;
 
-const PASS_INTERVAL_MS: u32 = 30_000;
+const PASS_INTERVAL_MS: u32 = 15_000;
 // Fleet devices live on the local network, so an unreachable one should fail
 // fast instead of holding the SDK-default 10s timeout for a whole pass.
 const DEVICE_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
