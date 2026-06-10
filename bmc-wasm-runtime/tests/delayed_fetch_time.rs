@@ -20,7 +20,7 @@ fn delayed_fetch_wat() -> &'static str {
     (module
       (import "env" "host_fetch_after"
         (func $host_fetch_after
-          (param i32 i32 i32 i32 i32 i32 i32 i32 i32)
+          (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)
           (result i32)))
 
       (memory (export "memory") 1)
@@ -37,15 +37,16 @@ fn delayed_fetch_wat() -> &'static str {
       (func (export "init")
         (drop
           (call $host_fetch_after
-            (i32.const 10) ;; delay_ms
-            (i32.const 0)  ;; method_ptr
-            (i32.const 3)  ;; method_len
-            (i32.const 3)  ;; url_ptr
-            (i32.const 28) ;; url_len
-            (i32.const 0)  ;; headers_ptr
-            (i32.const 0)  ;; headers_len
-            (i32.const 0)  ;; body_ptr
-            (i32.const 0)))) ;; body_len
+            (i32.const 10)    ;; delay_ms
+            (i32.const 10000) ;; timeout_ms
+            (i32.const 0)     ;; method_ptr
+            (i32.const 3)     ;; method_len
+            (i32.const 3)     ;; url_ptr
+            (i32.const 28)    ;; url_len
+            (i32.const 0)     ;; headers_ptr
+            (i32.const 0)     ;; headers_len
+            (i32.const 0)     ;; body_ptr
+            (i32.const 0))))  ;; body_len
 
       (func (export "__on_fetch_response")
         (param $request_id i32)

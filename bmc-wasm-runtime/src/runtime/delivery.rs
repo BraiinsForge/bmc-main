@@ -9,6 +9,7 @@ use bmc_wasm_protocol::{
     UdpBroadcastId, WebsocketId,
 };
 use std::ptr::NonNull;
+use std::time::Duration;
 
 use bmc_render::renderer::Renderer;
 
@@ -28,6 +29,7 @@ type DelayedFetchRequest = (
     String,
     Vec<(String, String)>,
     Option<Vec<u8>>,
+    Duration,
     FetchRequestId,
 );
 
@@ -863,6 +865,7 @@ impl WasmWidgetRuntime {
                     df.url.clone(),
                     df.headers.clone(),
                     df.body.clone(),
+                    df.timeout,
                     df.request_id,
                 ));
                 false
@@ -871,7 +874,7 @@ impl WasmWidgetRuntime {
             }
         });
 
-        for (method, url, headers, body, request_id) in ready {
+        for (method, url, headers, body, timeout, request_id) in ready {
             tracing::info!(request_id = request_id.to_wire(), %method, %url, "firing HTTP fetch");
             state
                 .fetch_keys
@@ -895,7 +898,7 @@ impl WasmWidgetRuntime {
             let agent = state.fetch_agent.clone();
             std::thread::spawn(move || {
                 let (status, resp_body) =
-                    do_fetch(&agent, &method, &url, &headers, body.as_deref());
+                    do_fetch(&agent, &method, &url, &headers, body.as_deref(), timeout);
                 tracing::info!(
                     request_id = request_id.to_wire(),
                     status,

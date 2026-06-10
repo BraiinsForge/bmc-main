@@ -28,10 +28,17 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::time::Duration;
 
 use bmc_wasm_protocol::FetchRequestId;
 
 use crate::json::JsonDoc;
+
+/// Default per-call cap on every fetch operation (DNS, connect, send, recv),
+/// applied to any [`FetchRequest`] that does not set its own [`timeout`].
+///
+/// [`timeout`]: FetchRequest::timeout
+pub const DEFAULT_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Response from an HTTP fetch request.
 #[derive(Debug)]
@@ -74,6 +81,7 @@ impl FetchResponse {
 // Host function imports
 unsafe extern "C" {
     fn host_fetch(
+        timeout_ms: u32,
         method_ptr: *const u8,
         method_len: u32,
         url_ptr: *const u8,
@@ -85,6 +93,7 @@ unsafe extern "C" {
     ) -> u32;
     fn host_fetch_after(
         delay_ms: u32,
+        timeout_ms: u32,
         method_ptr: *const u8,
         method_len: u32,
         url_ptr: *const u8,
@@ -170,6 +179,7 @@ pub struct FetchRequest<'a> {
     url: &'a str,
     headers: Option<&'a str>,
     body: Option<&'a [u8]>,
+    timeout: Duration,
 }
 
 impl<'a> FetchRequest<'a> {
@@ -181,6 +191,7 @@ impl<'a> FetchRequest<'a> {
             url,
             headers: None,
             body: None,
+            timeout: DEFAULT_FETCH_TIMEOUT,
         }
     }
 
@@ -192,6 +203,7 @@ impl<'a> FetchRequest<'a> {
             url,
             headers: None,
             body: None,
+            timeout: DEFAULT_FETCH_TIMEOUT,
         }
     }
 
@@ -203,6 +215,7 @@ impl<'a> FetchRequest<'a> {
             url,
             headers: None,
             body: None,
+            timeout: DEFAULT_FETCH_TIMEOUT,
         }
     }
 
@@ -214,6 +227,7 @@ impl<'a> FetchRequest<'a> {
             url,
             headers: None,
             body: None,
+            timeout: DEFAULT_FETCH_TIMEOUT,
         }
     }
 
@@ -238,6 +252,14 @@ impl<'a> FetchRequest<'a> {
         self
     }
 
+    /// Override the per-call timeout (DNS, connect, send, recv). Defaults to
+    /// [`DEFAULT_FETCH_TIMEOUT`] when unset.
+    #[must_use]
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
     /// Send the request immediately. Returns `None` if the host rejects the
     /// request before it is queued, for example because the runtime hit its
     /// resource limit.
@@ -249,6 +271,7 @@ impl<'a> FetchRequest<'a> {
         let (b_ptr, b_len) = optional_bytes_raw(self.body);
         let request_id = FetchRequestId::from_wire(unsafe {
             host_fetch(
+                timeout_ms(self.timeout),
                 m_ptr,
                 m_len,
                 self.url.as_ptr(),
@@ -275,6 +298,7 @@ impl<'a> FetchRequest<'a> {
         let request_id = FetchRequestId::from_wire(unsafe {
             host_fetch_after(
                 delay_ms,
+                timeout_ms(self.timeout),
                 m_ptr,
                 m_len,
                 self.url.as_ptr(),
@@ -288,6 +312,10 @@ impl<'a> FetchRequest<'a> {
         PENDING.with(|p| p.borrow_mut().insert(request_id, cb_idx));
         Some(request_id)
     }
+}
+
+fn timeout_ms(timeout: Duration) -> u32 {
+    u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX)
 }
 
 fn optional_raw(s: Option<&str>) -> (*const u8, u32) {

@@ -2,6 +2,7 @@
 
 #[cfg(any(target_arch = "wasm32", test))]
 use std::collections::HashMap;
+use std::time::Duration;
 
 use bmc_wasm_protocol::FetchRequestId;
 
@@ -19,6 +20,9 @@ pub struct FetchSpec {
     pub url: String,
     pub headers: Option<String>,
     pub body: Option<Vec<u8>>,
+    /// Per-call timeout; `None` defers to the SDK-wide default applied by
+    /// `FetchRequest`.
+    pub timeout: Option<Duration>,
 }
 
 impl FetchSpec {
@@ -48,6 +52,7 @@ impl FetchSpec {
             url: url.into(),
             headers: None,
             body: None,
+            timeout: None,
         }
     }
 
@@ -60,6 +65,14 @@ impl FetchSpec {
     #[must_use]
     pub fn body(mut self, body: impl Into<Vec<u8>>) -> Self {
         self.body = Some(body.into());
+        self
+    }
+
+    /// Override the per-call timeout (DNS, connect, send, recv). Defaults to
+    /// the SDK-wide `DEFAULT_FETCH_TIMEOUT` when unset.
+    #[must_use]
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
         self
     }
 }
@@ -289,6 +302,10 @@ mod wasm {
                 Method::Delete => FetchRequest::delete(&spec.url),
             }
             .headers_opt(spec.headers.as_deref());
+            let req = match spec.timeout {
+                Some(timeout) => req.timeout(timeout),
+                None => req,
+            };
             let req = match spec.body.as_deref() {
                 Some(body) => req.body(body),
                 None => req,
@@ -444,6 +461,15 @@ mod tests {
         debounce_ms: 300,
         enabled: true,
     };
+
+    // Poll fetches must inherit the SDK-wide default unless the builder opts
+    // into a different per-call timeout, e.g. a short one for LAN devices.
+    #[test]
+    fn spec_timeout_defaults_to_sdk_default_until_overridden() {
+        assert_eq!(FetchSpec::get("http://x/data").timeout, None);
+        let spec = FetchSpec::get("http://x/data").timeout(Duration::from_millis(100));
+        assert_eq!(spec.timeout, Some(Duration::from_millis(100)));
+    }
 
     #[test]
     fn start_sends_immediately_when_enabled() {

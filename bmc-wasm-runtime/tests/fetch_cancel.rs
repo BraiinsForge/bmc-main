@@ -18,7 +18,7 @@ fn fetch_cancel_wat() -> &'static str {
     (module
       (import "env" "host_fetch_after"
         (func $host_fetch_after
-          (param i32 i32 i32 i32 i32 i32 i32 i32 i32)
+          (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)
           (result i32)))
       (import "env" "host_fetch_cancel"
         (func $host_fetch_cancel (param i32) (result i32)))
@@ -38,14 +38,15 @@ fn fetch_cancel_wat() -> &'static str {
       (func (export "init")
         (global.set $req_id
           (call $host_fetch_after
-            (i32.const 10) ;; delay_ms
-            (i32.const 0)  ;; method_ptr
-            (i32.const 3)  ;; method_len
-            (i32.const 3)  ;; url_ptr
-            (i32.const 28) ;; url_len
-            (i32.const 0)  ;; headers_ptr
-            (i32.const 0)  ;; headers_len
-            (i32.const 0)  ;; body_ptr
+            (i32.const 10)    ;; delay_ms
+            (i32.const 10000) ;; timeout_ms
+            (i32.const 0)     ;; method_ptr
+            (i32.const 3)     ;; method_len
+            (i32.const 3)     ;; url_ptr
+            (i32.const 28)    ;; url_len
+            (i32.const 0)     ;; headers_ptr
+            (i32.const 0)     ;; headers_len
+            (i32.const 0)     ;; body_ptr
             (i32.const 0)))) ;; body_len
 
       (func (export "cancel_it") (result i32)

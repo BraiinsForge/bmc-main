@@ -49,6 +49,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
         "env",
         "host_fetch",
         |mut caller: Caller<'_, HostState>,
+         timeout_ms: u32,
          method_ptr: u32,
          method_len: u32,
          url_ptr: u32,
@@ -66,6 +67,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
             };
             let headers = parse_headers(&caller, headers_ptr, headers_len);
             let body = read_optional_bytes(&caller, body_ptr, body_len);
+            let timeout = Duration::from_millis(u64::from(timeout_ms));
 
             let state = caller.data_mut();
             if state.fetch_slots_used() >= state.resource_limits.max_fetches {
@@ -98,7 +100,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
             let agent = state.fetch_agent.clone();
             std::thread::spawn(move || {
                 let (status, resp_body) =
-                    do_fetch(&agent, &method, &url, &headers, body.as_deref());
+                    do_fetch(&agent, &method, &url, &headers, body.as_deref(), timeout);
                 let _ = tx.send(CompletedFetch {
                     request_id,
                     status,
@@ -119,6 +121,7 @@ fn register_fetch_after_import(linker: &mut Linker<HostState>) -> Result<()> {
         "host_fetch_after",
         |mut caller: Caller<'_, HostState>,
          delay_ms: u32,
+         timeout_ms: u32,
          method_ptr: u32,
          method_len: u32,
          url_ptr: u32,
@@ -136,6 +139,7 @@ fn register_fetch_after_import(linker: &mut Linker<HostState>) -> Result<()> {
             };
             let headers = parse_headers(&caller, headers_ptr, headers_len);
             let body = read_optional_bytes(&caller, body_ptr, body_len);
+            let timeout = Duration::from_millis(u64::from(timeout_ms));
 
             let state = caller.data_mut();
             if state.fetch_slots_used() >= state.resource_limits.max_fetches {
@@ -154,6 +158,7 @@ fn register_fetch_after_import(linker: &mut Linker<HostState>) -> Result<()> {
                 url,
                 headers,
                 body,
+                timeout,
                 request_id,
             });
 

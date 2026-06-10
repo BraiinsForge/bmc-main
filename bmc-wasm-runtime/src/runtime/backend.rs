@@ -1132,6 +1132,7 @@ impl WasmWidgetRuntime {
             url: String::new(),
             headers: Vec::new(),
             body: None,
+            timeout: std::time::Duration::from_secs(10),
             request_id: bmc_wasm_protocol::FetchRequestId::alloc(&mut state.next_request_id),
         });
         std::thread::spawn(move || {

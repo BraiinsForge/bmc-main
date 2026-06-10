@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use std::sync::mpsc;
+use std::time::Duration;
 
 use serde_json::Value;
 use taffy::prelude::*;
@@ -61,6 +62,7 @@ pub struct DelayedFetch {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
+    pub timeout: Duration,
     pub request_id: FetchRequestId,
 }
 
@@ -633,8 +635,8 @@ pub(crate) struct HostState {
     /// Maps `request_id` → fixture key (e.g. "GET https://...") for the observer.
     pub fetch_keys: HashMap<FetchRequestId, String>,
 
-    /// Shared `ureq::Agent` with a 10s global timeout, cloned into every
-    /// background fetch thread. Also provides connection-pool reuse.
+    /// Shared `ureq::Agent` cloned into every background fetch thread for
+    /// connection-pool reuse. The timeout is set per request by `do_fetch`.
     pub fetch_agent: ureq::Agent,
 
     /// Whether to record network events for fixture generation.

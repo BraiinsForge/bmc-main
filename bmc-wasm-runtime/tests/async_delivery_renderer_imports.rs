@@ -56,7 +56,7 @@ fn fetch_callback_registers_bitmap_wat() -> String {
         (module
           (import "env" "host_fetch"
             (func $host_fetch
-              (param i32 i32 i32 i32 i32 i32 i32 i32)
+              (param i32 i32 i32 i32 i32 i32 i32 i32 i32)
               (result i32)))
           (import "env" "host_register_bitmap"
             (func $host_register_bitmap
@@ -71,6 +71,7 @@ fn fetch_callback_registers_bitmap_wat() -> String {
           (func (export "init")
             (drop
               (call $host_fetch
+                (i32.const 10000)
                 (i32.const {method_ptr})
                 (i32.const {method_len})
                 (i32.const {url_ptr})
