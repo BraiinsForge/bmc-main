@@ -17,7 +17,6 @@ use bmc_wasm_sdk::{SizeVariant, scale_font};
 #[derive(Clone, Copy)]
 pub struct SizeBand {
     pub price_font: u32,
-    pub chart_height: f32,
     /// Symbol / period / change-badge font.
     pub header_font: u32,
     pub icon_diameter: f32,
@@ -33,7 +32,6 @@ pub struct SizeBand {
 
 const FULL: SizeBand = SizeBand {
     price_font: 154,
-    chart_height: 229.0,
     header_font: 24,
     icon_diameter: 24.0,
     glyph_font: 14,
@@ -47,7 +45,6 @@ const FULL: SizeBand = SizeBand {
 
 const LARGE: SizeBand = SizeBand {
     price_font: 51,
-    chart_height: 180.0,
     header_font: 20,
     icon_diameter: 20.0,
     ..FULL
@@ -55,7 +52,6 @@ const LARGE: SizeBand = SizeBand {
 
 const MEDIUM: SizeBand = SizeBand {
     price_font: 40,
-    chart_height: 120.0,
     header_font: 16,
     icon_diameter: 16.0,
     top_padding: 12.0,
@@ -65,7 +61,6 @@ const MEDIUM: SizeBand = SizeBand {
 
 const SMALL: SizeBand = SizeBand {
     price_font: 24,
-    chart_height: 80.0,
     header_font: 14,
     icon_diameter: 14.0,
     badge_padding: 4.0,
@@ -84,7 +79,6 @@ impl SizeBand {
     pub fn scaled(self, fit: f32) -> Self {
         Self {
             price_font: scale_font(self.price_font, fit),
-            chart_height: self.chart_height * fit,
             header_font: scale_font(self.header_font, fit),
             icon_diameter: self.icon_diameter * fit,
             glyph_font: scale_font(self.glyph_font, fit),
@@ -123,7 +117,6 @@ mod tests {
     #[test]
     fn fit_scales_geometry_and_fonts_but_not_visibility() {
         let scaled = band_for(SizeVariant::Full).scaled(0.5);
-        assert!((scaled.chart_height - 114.5).abs() < 1e-3);
         assert_eq!(scaled.price_font, 77);
         assert_eq!(scaled.header_font, 12);
         assert!(scaled.show_period);
@@ -134,6 +127,5 @@ mod tests {
         let band = band_for(SizeVariant::Medium);
         let scaled = band.scaled(1.0);
         assert_eq!(scaled.price_font, band.price_font);
-        assert!((scaled.chart_height - band.chart_height).abs() < 1e-6);
     }
 }

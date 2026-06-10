@@ -21,6 +21,9 @@ const TREND_DOWN: Color = Color::from_rgb(0xfa, 0x4d, 0x56);
 const BADGE_BG_ALPHA: f32 = 0.15;
 const CHART_STROKE: f32 = 2.0;
 const CHART_INSET: f32 = 2.0;
+/// The sparkline band fills the bottom fraction of the tile, the price number
+/// floating over it — matching the legacy bitcoin ticker's `0.6 × height` graph.
+const CHART_HEIGHT_FRACTION: f32 = 0.6;
 const CLOSED_ALPHA: f32 = 0.4;
 
 #[expect(
@@ -120,9 +123,10 @@ pub fn series_view(series: &Series, symbol: &str, period_label: &str, ws: Widget
 
     // ── chart + price canvas ────────────────────────────────────────────
     let mut draws = Vec::new();
-    let raw_line = chart::series_points(&series.closes, w, band.chart_height, CHART_INSET);
+    let chart_height = (h * CHART_HEIGHT_FRACTION).min(canvas_h);
+    let raw_line = chart::series_points(&series.closes, w, chart_height, CHART_INSET);
     if raw_line.len() >= 2 {
-        let y0 = canvas_h - band.chart_height;
+        let y0 = canvas_h - chart_height;
         let line: Vec<(f32, f32)> = raw_line.iter().map(|&(x, y)| (x, y + y0)).collect();
         let mut area = line.clone();
         area.push((w, canvas_h));
