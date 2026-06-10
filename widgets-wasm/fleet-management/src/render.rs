@@ -72,7 +72,7 @@ const COL_HASHRATE: f32 = 140.0;
 const COL_MODEL_FULL: f32 = 380.0;
 const COL_MODEL_LARGE: f32 = 290.0;
 const COL_POWER: f32 = 85.0;
-const COL_EFF: f32 = 125.0;
+const COL_EFF: f32 = 170.0;
 const COL_TEMP: f32 = 160.0;
 const COL_COUNTS: f32 = 148.0;
 
@@ -400,7 +400,7 @@ fn table_view(summary: &FleetSummary, variant: SizeVariant, title: &str) -> Node
     }
 
     col(
-        props!(background: BLACK, padding: 24.0, gap: 12.0),
+        props!(background: BLACK, padding: 24.0, gap: 10.8),
         children,
     )
 }
