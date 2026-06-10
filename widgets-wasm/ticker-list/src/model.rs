@@ -39,7 +39,7 @@ impl TickerRow {
     pub fn from_candles(
         symbol: &str,
         candles: &Candles,
-        candle: Candle,
+        liveness: Candle,
         now_secs: i64,
     ) -> Option<TickerRow> {
         let first = candles.bars.first()?.close;
@@ -50,7 +50,7 @@ impl TickerRow {
         } else {
             (current - first) / first * 100.0
         };
-        let market_open = candle::market_open(&candles.bars, candle, now_secs);
+        let market_open = candle::market_open(&candles.bars, liveness, now_secs);
         Some(TickerRow {
             symbol: symbol.to_owned(),
             price: current,

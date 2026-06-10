@@ -247,7 +247,7 @@ mod wasm_glue {
         let parsed = if class == FetchClass::Ok {
             let now = SystemTime::now().unix_secs;
             candle::parse_candles(&response.json()).and_then(|c| {
-                model::TickerRow::from_candles(&symbol, &c, period_of().candle(), now)
+                model::TickerRow::from_candles(&symbol, &c, period_of().liveness(), now)
             })
         } else {
             if class == FetchClass::Transient {

@@ -43,6 +43,18 @@ impl Period {
             Period::D30 => Candle::H4,
         }
     }
+
+    /// Candle width for the market-open recency heuristic, kept separate from
+    /// [`candle`](Self::candle) so the staleness window follows the market's
+    /// natural update cadence rather than the chart's sample density.
+    #[must_use]
+    pub fn liveness(self) -> Candle {
+        match self {
+            Period::D1 => Candle::M15,
+            Period::D7 => Candle::H1,
+            Period::D30 => Candle::D1,
+        }
+    }
 }
 
 /// A candle size with its known bucket width in seconds.
@@ -103,6 +115,17 @@ mod tests {
         assert_eq!(Period::D1.candle(), Candle::M15);
         assert_eq!(Period::D7.candle(), Candle::H1);
         assert_eq!(Period::D30.candle(), Candle::H4);
+    }
+
+    #[test]
+    fn liveness_window_stays_coarse_for_the_month_view() {
+        // The recency bucket is independent of the chart candle: the 30-day
+        // view draws 4h candles but keeps a day-wide staleness window, so an
+        // overnight-closed market is not mistaken for a dead feed.
+        assert_eq!(Period::D1.liveness(), Candle::M15);
+        assert_eq!(Period::D7.liveness(), Candle::H1);
+        assert_eq!(Period::D30.liveness(), Candle::D1);
+        assert_ne!(Period::D30.liveness(), Period::D30.candle());
     }
 
     #[test]

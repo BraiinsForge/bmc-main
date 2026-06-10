@@ -18,11 +18,12 @@ pub struct Series {
 
 impl Series {
     /// Build from parsed candles. `change_pct` is the first-to-last close
-    /// move; `market_open` is the recency heuristic against `now_secs`.
-    /// Returns `None` if there are no candles or the first close is
-    /// non-positive (which would make `change_pct` non-finite).
+    /// move; `market_open` is the recency heuristic against `now_secs`, using
+    /// `liveness` as the staleness bucket (the period's update cadence, not the
+    /// chart candle). Returns `None` if there are no candles or the first close
+    /// is non-positive (which would make `change_pct` non-finite).
     #[must_use]
-    pub fn from_candles(candles: &Candles, candle: Candle, now_secs: i64) -> Option<Series> {
+    pub fn from_candles(candles: &Candles, liveness: Candle, now_secs: i64) -> Option<Series> {
         let first = candles.bars.first()?.close;
         if first <= 0.0 {
             return None;
@@ -30,7 +31,7 @@ impl Series {
         let closes: Vec<f64> = candles.bars.iter().map(|b| b.close).collect();
         let current = *closes.last()?;
         let change_pct = (current - first) / first * 100.0;
-        let market_open = candle::market_open(&candles.bars, candle, now_secs);
+        let market_open = candle::market_open(&candles.bars, liveness, now_secs);
         Some(Series {
             closes,
             current,

@@ -162,12 +162,12 @@ mod wasm_glue {
 
     fn on_reply(handle: PollHandle, response: &FetchResponse) {
         let params = manifest_params::Params::current();
-        let candle_size = period_of(&params).candle();
+        let liveness = period_of(&params).liveness();
         let class = fetch::classify(response.status);
         let parsed = if class == FetchClass::Ok {
             let now = SystemTime::now().unix_secs;
             candle::parse_candles(&response.json())
-                .and_then(|c| model::Series::from_candles(&c, candle_size, now))
+                .and_then(|c| model::Series::from_candles(&c, liveness, now))
         } else {
             if class == FetchClass::Transient {
                 log_warn!(
