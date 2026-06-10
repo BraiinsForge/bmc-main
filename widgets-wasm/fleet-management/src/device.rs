@@ -177,6 +177,12 @@ pub struct DeviceIdentity {
     pub source: DeviceSource,
 }
 
+/// Consecutive failed poll passes a device must miss before it is reported
+/// unreachable (red). Below this many, the last good reading is kept and a
+/// previously-reachable device stays reachable, so a single missed pass on a
+/// flaky network does not blank the device.
+const UNREACHABLE_AFTER_FAILED_PASSES: usize = 3;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct KnownDevice {
     pub identity: DeviceIdentity,
@@ -184,6 +190,10 @@ pub struct KnownDevice {
     pub telemetry: Option<TelemetrySnapshot>,
     pub last_seen_seq: u64,
     pub reachable: bool,
+    /// Poll passes that have failed in a row since the last success. Reset to 0
+    /// by any reachable pass; once it reaches [`UNREACHABLE_AFTER_FAILED_PASSES`]
+    /// the device flips to unreachable.
+    pub consecutive_failures: usize,
 }
 
 #[derive(Debug, Default)]
@@ -261,6 +271,7 @@ impl DeviceList {
                 telemetry: None,
                 last_seen_seq: seq,
                 reachable: false,
+                consecutive_failures: 0,
             });
             true
         }
@@ -356,6 +367,30 @@ impl DeviceList {
         }
     }
 
+    /// Record the result of a completed poll pass. A reachable pass stores the
+    /// fresh reading, marks the device reachable, and clears its failure streak.
+    /// A failed pass increments the streak but keeps the last good reading and
+    /// reachability until [`UNREACHABLE_AFTER_FAILED_PASSES`] passes have failed
+    /// in a row, only then flipping the device to unreachable (red). A device
+    /// never yet reached stays unreachable throughout, since it has no values to
+    /// keep.
+    pub fn record_pass(&mut self, id: &DeviceId, reading: TelemetryReading, pass_reachable: bool) {
+        if pass_reachable {
+            self.apply_telemetry(id, reading, true);
+            if let Some(dev) = self.devices.iter_mut().find(|d| &d.identity.id == id) {
+                dev.consecutive_failures = 0;
+            }
+            return;
+        }
+        self.seq += 1;
+        if let Some(dev) = self.devices.iter_mut().find(|d| &d.identity.id == id) {
+            dev.consecutive_failures = dev.consecutive_failures.saturating_add(1);
+            if dev.consecutive_failures >= UNREACHABLE_AFTER_FAILED_PASSES {
+                dev.reachable = false;
+            }
+        }
+    }
+
     /// Stamp the most recently fetched model onto a device by id. Model and
     /// telemetry are updated independently; if a fetch fails the caller omits
     /// the call and the previous model is retained.
@@ -381,6 +416,7 @@ impl DeviceList {
             dev.telemetry = None;
             dev.model = None;
             dev.reachable = false;
+            dev.consecutive_failures = 0;
         }
     }
 }
@@ -733,6 +769,140 @@ mod tests {
         assert_eq!(
             dev.model.as_ref().map(|m| m.name.as_str()),
             Some("Bitaxe Gamma 602")
+        );
+    }
+
+    fn good_reading() -> TelemetryReading {
+        TelemetryReading {
+            current_hashrate_ths: Some(5.0),
+            power_w: Some(3_000.0),
+            ..TelemetryReading::default()
+        }
+    }
+
+    #[test]
+    fn record_pass_keeps_last_values_through_two_failures() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a");
+        list.upsert(identity("a", "10.0.0.1"));
+        list.record_pass(&id, good_reading(), true);
+        // Two consecutive failures, below the threshold of three.
+        list.record_pass(&id, TelemetryReading::default(), false);
+        list.record_pass(&id, TelemetryReading::default(), false);
+        let dev = list.iter().next().expect("BUG: present");
+        assert!(dev.reachable, "below threshold the device stays reachable");
+        let snap = dev.telemetry.as_ref().expect("BUG: last reading kept");
+        assert_eq!(
+            snap.reading.power_w,
+            Some(3_000.0),
+            "the last good values are kept, not blanked"
+        );
+    }
+
+    #[test]
+    fn record_pass_marks_unreachable_on_third_consecutive_failure() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a");
+        list.upsert(identity("a", "10.0.0.1"));
+        list.record_pass(&id, good_reading(), true);
+        list.record_pass(&id, TelemetryReading::default(), false);
+        list.record_pass(&id, TelemetryReading::default(), false);
+        assert!(
+            list.iter().next().expect("BUG: present").reachable,
+            "still reachable after two failures"
+        );
+        list.record_pass(&id, TelemetryReading::default(), false);
+        assert!(
+            !list.iter().next().expect("BUG: present").reachable,
+            "the third consecutive failure turns the device red"
+        );
+    }
+
+    #[test]
+    fn record_pass_success_resets_the_failure_streak() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a");
+        list.upsert(identity("a", "10.0.0.1"));
+        list.record_pass(&id, good_reading(), true);
+        list.record_pass(&id, TelemetryReading::default(), false);
+        list.record_pass(&id, TelemetryReading::default(), false);
+        list.record_pass(&id, good_reading(), true);
+        // The streak reset means two further failures are again below threshold.
+        list.record_pass(&id, TelemetryReading::default(), false);
+        list.record_pass(&id, TelemetryReading::default(), false);
+        assert!(
+            list.iter().next().expect("BUG: present").reachable,
+            "a successful pass resets the streak, so two more failures stay reachable"
+        );
+    }
+
+    #[test]
+    fn record_pass_success_after_red_restores_reachable_with_new_reading() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a");
+        list.upsert(identity("a", "10.0.0.1"));
+        list.record_pass(&id, good_reading(), true);
+        for _ in 0..3 {
+            list.record_pass(&id, TelemetryReading::default(), false);
+        }
+        assert!(
+            !list.iter().next().expect("BUG: present").reachable,
+            "red after three failures"
+        );
+        let fresh = TelemetryReading {
+            power_w: Some(1_234.0),
+            ..TelemetryReading::default()
+        };
+        list.record_pass(&id, fresh, true);
+        let dev = list.iter().next().expect("BUG: present");
+        assert!(dev.reachable, "a success restores reachability");
+        assert_eq!(
+            dev.telemetry
+                .as_ref()
+                .expect("BUG: reading")
+                .reading
+                .power_w,
+            Some(1_234.0),
+            "the fresh reading replaces the old one"
+        );
+    }
+
+    #[test]
+    fn record_pass_never_reached_device_stays_not_reachable_below_threshold() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a");
+        // Upsert leaves a device reachable=false with no telemetry.
+        list.upsert(identity("a", "10.0.0.1"));
+        list.record_pass(&id, TelemetryReading::default(), false);
+        list.record_pass(&id, TelemetryReading::default(), false);
+        let dev = list.iter().next().expect("BUG: present");
+        assert!(
+            !dev.reachable,
+            "a device never reached must not be shown green during the grace period"
+        );
+        assert!(dev.telemetry.is_none(), "there are no values to keep");
+    }
+
+    #[test]
+    fn clear_telemetry_for_resets_the_failure_streak() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a");
+        list.upsert(identity("a", "10.0.0.1"));
+        list.record_pass(&id, good_reading(), true);
+        list.record_pass(&id, TelemetryReading::default(), false);
+        list.record_pass(&id, TelemetryReading::default(), false);
+        list.clear_telemetry_for(DeviceFamily::Bos);
+        // After a credential-driven clear the streak starts fresh: two failures
+        // are again below threshold rather than tipping straight to red.
+        list.record_pass(&id, TelemetryReading::default(), false);
+        list.record_pass(&id, TelemetryReading::default(), false);
+        assert_eq!(
+            list.iter()
+                .next()
+                .expect("BUG: present")
+                .consecutive_failures,
+            2,
+            "the clear reset the streak before these two failures"
         );
     }
 

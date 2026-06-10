@@ -260,6 +260,7 @@ mod tests {
             }),
             last_seen_seq: 1,
             reachable: true,
+            consecutive_failures: 0,
         }
     }
 

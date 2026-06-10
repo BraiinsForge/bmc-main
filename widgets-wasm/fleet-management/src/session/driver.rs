@@ -312,7 +312,7 @@ fn begin_device(family: DeviceFamily, delay_ms: u32) {
         log_warn!("fleet: no adapter for discovered device family; marking unreachable");
         crate::DEVICES.with(|devs| {
             devs.borrow_mut()
-                .apply_telemetry(&id, TelemetryReading::default(), false);
+                .record_pass(&id, TelemetryReading::default(), false);
         });
         request_frame();
         advance_device(family);
@@ -602,7 +602,7 @@ fn finalize_device(family: DeviceFamily, id: &DeviceId) {
     let model = model.into_model();
     crate::DEVICES.with(|devs| {
         let mut devs = devs.borrow_mut();
-        devs.apply_telemetry(id, reading, reachable);
+        devs.record_pass(id, reading, reachable);
         if let Some(model) = model.clone() {
             devs.apply_model(id, model);
         }
