@@ -70,11 +70,16 @@ const ROW_GAP: f32 = 16.0;
 // positions for typical data (a much shorter value leaves more trailing space).
 const COL_HASHRATE: f32 = 140.0;
 const COL_MODEL_FULL: f32 = 380.0;
-const COL_MODEL_LARGE: f32 = 290.0;
+const COL_MODEL_LARGE: f32 = 330.0;
 const COL_POWER: f32 = 85.0;
 const COL_EFF: f32 = 170.0;
 const COL_TEMP: f32 = 160.0;
 const COL_COUNTS: f32 = 148.0;
+// The Large band fits only three columns into 638px, so the model and status
+// columns share a tight budget. The status content is left-packed with a narrow
+// tail, so the model borrows that slack here to hold longer model names without
+// wrapping; the wide Full band keeps the roomier `COL_COUNTS`.
+const COL_COUNTS_LARGE: f32 = 108.0;
 
 fn value_string(rendered: Rendered) -> String {
     match rendered.unit {
@@ -277,6 +282,7 @@ fn header_row(variant: SizeVariant) -> Node {
     } else {
         COL_MODEL_LARGE
     };
+    let counts_w = if full { COL_COUNTS } else { COL_COUNTS_LARGE };
     let mut cells = vec![
         header_cell(COL_HASHRATE, "Hashrate"),
         header_cell(model_w, "Model"),
@@ -286,7 +292,7 @@ fn header_row(variant: SizeVariant) -> Node {
         cells.push(header_cell(COL_EFF, "Efficiency"));
         cells.push(header_cell(COL_TEMP, "Temp"));
     }
-    cells.push(header_cell(COL_COUNTS, "Status"));
+    cells.push(header_cell(counts_w, "Status"));
     row(props!(gap: ROW_GAP, cross_align: CrossAlign::Center), cells)
 }
 
@@ -300,6 +306,7 @@ fn breakdown_row(group: &GroupSummary, variant: SizeVariant) -> Node {
     } else {
         COL_MODEL_LARGE
     };
+    let counts_w = if full { COL_COUNTS } else { COL_COUNTS_LARGE };
 
     let mut cells = vec![
         text_cell(
@@ -330,7 +337,7 @@ fn breakdown_row(group: &GroupSummary, variant: SizeVariant) -> Node {
             TextAlign::Left,
         ));
     }
-    cells.push(counts_cell(COL_COUNTS, group));
+    cells.push(counts_cell(counts_w, group));
     row(props!(gap: ROW_GAP, cross_align: CrossAlign::Center), cells)
 }
 
@@ -399,10 +406,7 @@ fn table_view(summary: &FleetSummary, variant: SizeVariant, title: &str) -> Node
         children.push(breakdown_row(group, variant));
     }
 
-    col(
-        props!(background: BLACK, padding: 24.0, gap: 10.8),
-        children,
-    )
+    col(props!(background: BLACK, padding: 24.0, gap: 5.8), children)
 }
 
 #[must_use]
