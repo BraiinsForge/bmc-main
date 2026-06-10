@@ -78,8 +78,8 @@ fn sparkline_node(series: &[f64], trend: Color, closed: bool, band: &Band) -> No
         canvas(
             props!(width: w, height: h),
             [
-                fill!(area, linear: (color.with_alpha(alpha), color.with_alpha(0.0)), smooth),
-                path!(line, stroke: CHART_STROKE, color: color.with_alpha(alpha), smooth),
+                fill!(area, linear: (color.with_alpha(alpha), color.with_alpha(0.0))),
+                path!(line, stroke: CHART_STROKE, color: color.with_alpha(alpha)),
             ],
         )
     };

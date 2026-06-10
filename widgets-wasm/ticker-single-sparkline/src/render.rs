@@ -127,8 +127,8 @@ pub fn series_view(series: &Series, symbol: &str, period_label: &str, ws: Widget
         let mut area = line.clone();
         area.push((w, canvas_h));
         area.push((0.0, canvas_h));
-        draws.push(fill!(area, linear: (trend.with_alpha(alpha), trend.with_alpha(0.0)), smooth));
-        draws.push(path!(line, stroke: CHART_STROKE, color: trend.with_alpha(alpha), smooth));
+        draws.push(fill!(area, linear: (trend.with_alpha(alpha), trend.with_alpha(0.0))));
+        draws.push(path!(line, stroke: CHART_STROKE, color: trend.with_alpha(alpha)));
     }
     let price = format_number!(series.current, fraction_digits(series.current));
     draws.push(Draw::text(
