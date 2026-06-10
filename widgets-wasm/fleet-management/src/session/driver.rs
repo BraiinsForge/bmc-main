@@ -362,6 +362,12 @@ fn fire_pending(
             .map(|(i, _)| i)
             .collect()
     });
+    log_info!(
+        "fleet: {} {} fetching telemetry at {}",
+        family_label(family),
+        id.as_str(),
+        base_url(adapter, host, port),
+    );
     let mut sent = 0_usize;
     for idx in pending_idxs {
         let url = fmt!("{}{}", base_url(adapter, host, port), endpoints[idx]);
@@ -412,6 +418,12 @@ fn issue_login(
     };
     let params = params();
     let url = fmt!("{}{}", base_url(adapter, host, port), auth_path);
+    log_info!(
+        "fleet: {} {} logging in at {}",
+        family_label(family),
+        id.as_str(),
+        url,
+    );
     let body = adapter.login_body(&params.bos_password);
     let generation = with_driver(family, |d| d.generation);
     let req = FetchRequest::post(&url)
