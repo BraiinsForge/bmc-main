@@ -82,7 +82,7 @@ mod tests {
         assert_eq!(resource_path("BTC-USD", Period::D7), "prices/7d/1h/BTC/USD");
         assert_eq!(
             resource_path("BTC-USD", Period::D30),
-            "prices/1mo/1d/BTC/USD"
+            "prices/1mo/4h/BTC/USD"
         );
         assert_eq!(resource_path("AAPL", Period::D1), "prices/1d/15m/AAPL");
     }

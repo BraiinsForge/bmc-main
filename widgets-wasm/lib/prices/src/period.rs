@@ -40,7 +40,7 @@ impl Period {
         match self {
             Period::D1 => Candle::M15,
             Period::D7 => Candle::H1,
-            Period::D30 => Candle::D1,
+            Period::D30 => Candle::H4,
         }
     }
 }
@@ -51,6 +51,7 @@ pub enum Candle {
     M1,
     M15,
     H1,
+    H4,
     D1,
 }
 
@@ -62,6 +63,7 @@ impl Candle {
             Candle::M1 => "1m",
             Candle::M15 => "15m",
             Candle::H1 => "1h",
+            Candle::H4 => "4h",
             Candle::D1 => "1d",
         }
     }
@@ -73,6 +75,7 @@ impl Candle {
             Candle::M1 => 60,
             Candle::M15 => 900,
             Candle::H1 => 3_600,
+            Candle::H4 => 14_400,
             Candle::D1 => 86_400,
         }
     }
@@ -99,7 +102,7 @@ mod tests {
         assert_eq!(Period::D30.window(), "1mo");
         assert_eq!(Period::D1.candle(), Candle::M15);
         assert_eq!(Period::D7.candle(), Candle::H1);
-        assert_eq!(Period::D30.candle(), Candle::D1);
+        assert_eq!(Period::D30.candle(), Candle::H4);
     }
 
     #[test]
@@ -107,9 +110,11 @@ mod tests {
         assert_eq!(Candle::M1.width_secs(), 60);
         assert_eq!(Candle::M15.width_secs(), 900);
         assert_eq!(Candle::H1.width_secs(), 3_600);
+        assert_eq!(Candle::H4.width_secs(), 14_400);
         assert_eq!(Candle::D1.width_secs(), 86_400);
         assert_eq!(Candle::M15.token(), "15m");
         assert_eq!(Candle::H1.token(), "1h");
+        assert_eq!(Candle::H4.token(), "4h");
         assert_eq!(Candle::D1.token(), "1d");
         assert_eq!(Candle::M1.token(), "1m");
     }
