@@ -109,7 +109,7 @@ mod wasm_glue {
     const PRICE_INTERVAL_MS: u32 = 300_000;
     const RETRY_MS: u32 = 10_000;
     const DEBOUNCE_MS: u32 = 300;
-    const NEXUS_BASE: &str = "https://nexus.braiinsforge.com/api/v1/data/";
+    const NEXUS_BASE: &str = "https://nexus.bit4u.cz/api/v1/data/";
 
     thread_local! {
         static SYMBOLS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
