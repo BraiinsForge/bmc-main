@@ -2,8 +2,8 @@
 
 //! Selectable period and the Nexus window/candle tokens it maps to.
 
-/// A selectable chart period. The sparkline exposes only `D7`/`D30`; `D1`
-/// exists because `ticker-list` uses it. Variant names avoid leading digits.
+/// A selectable chart period offered by both ticker widgets. Variant names
+/// avoid leading digits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Period {
     D1,

@@ -12,17 +12,19 @@ use bmc_wasm_sdk::params as snapshot;
 use bmc_wasm_sdk::params::typed::ParamRead;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Period {
+    _1d,
     _7d,
     _30d,
 }
 impl Period {
     /// Every variant, in manifest-declaration order. Useful when a widget
     /// wants to render a "pick one" UI or audit the enum exhaustively.
-    pub const ALL: &'static [Self] = &[Self::_7d, Self::_30d];
+    pub const ALL: &'static [Self] = &[Self::_1d, Self::_7d, Self::_30d];
     /// Manifest wire value for this variant.
     #[must_use]
     pub fn as_manifest_value(self) -> &'static str {
         match self {
+            Self::_1d => "1d",
             Self::_7d => "7d",
             Self::_30d => "30d",
         }
@@ -31,6 +33,7 @@ impl Period {
     #[must_use]
     pub fn as_manifest_label(self) -> &'static str {
         match self {
+            Self::_1d => "1 Day",
             Self::_7d => "7 Days",
             Self::_30d => "30 Days",
         }
@@ -38,6 +41,7 @@ impl Period {
     #[must_use]
     pub fn from_manifest_value(s: &str) -> Option<Self> {
         match s {
+            "1d" => Some(Self::_1d),
             "7d" => Some(Self::_7d),
             "30d" => Some(Self::_30d),
             _ => None,
