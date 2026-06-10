@@ -600,14 +600,15 @@ fn finalize_device(family: DeviceFamily, id: &DeviceId) {
         (d.reading, pass_reachable(&outcomes), d.model.clone())
     });
     let model = model.into_model();
-    crate::DEVICES.with(|devs| {
+    let failures = crate::DEVICES.with(|devs| {
         let mut devs = devs.borrow_mut();
-        devs.record_pass(id, reading, reachable);
+        let failures = devs.record_pass(id, reading, reachable);
         if let Some(model) = model.clone() {
             devs.apply_model(id, model);
         }
+        failures
     });
-    log_fetch(family, id, reachable, &reading, model.as_ref());
+    log_fetch(family, id, reachable, failures, &reading, model.as_ref());
     request_frame();
     advance_device(family);
 }
@@ -618,14 +619,16 @@ fn log_fetch(
     family: DeviceFamily,
     id: &DeviceId,
     reachable: bool,
+    failures: usize,
     reading: &TelemetryReading,
     model: Option<&MinerModel>,
 ) {
     if !reachable {
         log_info!(
-            "fleet: {} {} unreachable",
+            "fleet: {} {} unreachable ({} in a row)",
             family_label(family),
-            id.as_str()
+            id.as_str(),
+            failures,
         );
         return;
     }

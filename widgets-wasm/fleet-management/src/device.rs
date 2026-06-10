@@ -373,21 +373,31 @@ impl DeviceList {
     /// reachability until [`UNREACHABLE_AFTER_FAILED_PASSES`] passes have failed
     /// in a row, only then flipping the device to unreachable (red). A device
     /// never yet reached stays unreachable throughout, since it has no values to
-    /// keep.
-    pub fn record_pass(&mut self, id: &DeviceId, reading: TelemetryReading, pass_reachable: bool) {
+    /// keep. Returns the resulting consecutive-failure streak (0 after a
+    /// reachable pass), so the caller can log how long a device has been missing.
+    pub fn record_pass(
+        &mut self,
+        id: &DeviceId,
+        reading: TelemetryReading,
+        pass_reachable: bool,
+    ) -> usize {
         if pass_reachable {
             self.apply_telemetry(id, reading, true);
             if let Some(dev) = self.devices.iter_mut().find(|d| &d.identity.id == id) {
                 dev.consecutive_failures = 0;
             }
-            return;
+            return 0;
         }
         self.seq += 1;
-        if let Some(dev) = self.devices.iter_mut().find(|d| &d.identity.id == id) {
-            dev.consecutive_failures = dev.consecutive_failures.saturating_add(1);
-            if dev.consecutive_failures >= UNREACHABLE_AFTER_FAILED_PASSES {
-                dev.reachable = false;
+        match self.devices.iter_mut().find(|d| &d.identity.id == id) {
+            Some(dev) => {
+                dev.consecutive_failures = dev.consecutive_failures.saturating_add(1);
+                if dev.consecutive_failures >= UNREACHABLE_AFTER_FAILED_PASSES {
+                    dev.reachable = false;
+                }
+                dev.consecutive_failures
             }
+            None => 0,
         }
     }
 
@@ -778,6 +788,22 @@ mod tests {
             power_w: Some(3_000.0),
             ..TelemetryReading::default()
         }
+    }
+
+    #[test]
+    fn record_pass_returns_the_consecutive_failure_count() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a");
+        list.upsert(identity("a", "10.0.0.1"));
+        assert_eq!(list.record_pass(&id, good_reading(), true), 0);
+        assert_eq!(list.record_pass(&id, TelemetryReading::default(), false), 1);
+        assert_eq!(list.record_pass(&id, TelemetryReading::default(), false), 2);
+        assert_eq!(list.record_pass(&id, TelemetryReading::default(), false), 3);
+        assert_eq!(
+            list.record_pass(&id, good_reading(), true),
+            0,
+            "a successful pass resets the count to zero"
+        );
     }
 
     #[test]
