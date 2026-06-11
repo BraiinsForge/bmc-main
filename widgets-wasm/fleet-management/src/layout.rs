@@ -39,6 +39,19 @@ pub fn choose(width: u32, height: u32) -> Layout {
     }
 }
 
+/// Truncate to `max_chars` characters, ending in `…` when cut. The render
+/// engine has no text ellipsis, so overlong labels must be cut in code to
+/// keep table rows from wrapping.
+#[must_use]
+pub fn truncate_label(label: &str, max_chars: usize) -> String {
+    if label.chars().count() <= max_chars {
+        return label.to_owned();
+    }
+    let mut out: String = label.chars().take(max_chars.saturating_sub(1)).collect();
+    out.push('\u{2026}');
+    out
+}
+
 const TABLE_MIN_WIDTH: u32 = 638;
 const TABLE_MIN_HEIGHT: u32 = 480;
 
@@ -62,5 +75,18 @@ mod tests {
     fn narrow_or_short_viewports_get_the_summary() {
         assert_eq!(choose(638, 238), Layout::Summary, "short 2x1 strip");
         assert_eq!(choose(480, 480), Layout::Summary, "narrow round BFM");
+    }
+
+    #[test]
+    fn short_labels_pass_through_untruncated() {
+        assert_eq!(truncate_label("BMM 101", 12), "BMM 101");
+        assert_eq!(truncate_label("Twelve chars", 12), "Twelve chars");
+    }
+
+    #[test]
+    fn long_labels_cut_to_the_budget_with_an_ellipsis() {
+        let cut = truncate_label("Bitaxe Gamma 601", 12);
+        assert_eq!(cut, "Bitaxe Gamm\u{2026}");
+        assert_eq!(cut.chars().count(), 12);
     }
 }

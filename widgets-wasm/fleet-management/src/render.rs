@@ -29,10 +29,13 @@ use units::format::{Rendered, fixed};
 use units::units::{DegreeCelsius, Quantity};
 
 use crate::layout::{Layout, choose};
+use crate::paging;
 use crate::summary::{FleetSummary, GroupSummary};
 
 const OK_ICON: Svg = include_svg!("assets/ok.svg");
 const NOT_OK_ICON: Svg = include_svg!("assets/not-ok.svg");
+const CHEVRON_LEFT: Svg = include_svg!("assets/chevron-left.svg");
+const CHEVRON_RIGHT: Svg = include_svg!("assets/chevron-right.svg");
 const ICON_PX: f32 = 22.0;
 
 const LABEL_COLOR: Color = GRAY_60;
@@ -68,18 +71,26 @@ const ROW_GAP: f32 = 16.0;
 // sit over their values. Each is its column's widest expected content plus a
 // roughly constant slack, so left-aligned values land at evenly spaced
 // positions for typical data (a much shorter value leaves more trailing space).
+// The widths also budget for the right-aligned pager cluster on the header row
+// and the trailing details column; the Large model column relies on code-side
+// truncation.
 const COL_HASHRATE: f32 = 140.0;
-const COL_MODEL_FULL: f32 = 380.0;
-const COL_MODEL_LARGE: f32 = 330.0;
+const COL_MODEL_FULL: f32 = 300.0;
+const COL_MODEL_LARGE: f32 = 165.0;
 const COL_POWER: f32 = 85.0;
-const COL_EFF: f32 = 170.0;
-const COL_TEMP: f32 = 160.0;
-const COL_COUNTS: f32 = 148.0;
+const COL_EFF: f32 = 150.0;
+const COL_TEMP: f32 = 140.0;
+const COL_COUNTS: f32 = 128.0;
 // The Large band fits only three columns into 638px, so the model and status
 // columns share a tight budget. The status content is left-packed with a narrow
 // tail, so the model borrows that slack here to hold longer model names without
 // wrapping; the wide Full band keeps the roomier `COL_COUNTS`.
-const COL_COUNTS_LARGE: f32 = 108.0;
+const COL_COUNTS_LARGE: f32 = 80.0;
+
+// Character budgets for the model column; longer names are cut with an
+// ellipsis so rows never wrap (the engine cannot ellipsize).
+const MODEL_CHARS_FULL: usize = 22;
+const MODEL_CHARS_LARGE: usize = 12;
 
 fn value_string(rendered: Rendered) -> String {
     match rendered.unit {
@@ -275,39 +286,89 @@ fn header_cell(width: f32, label: &str) -> Node {
     )
 }
 
-fn header_row(variant: SizeVariant) -> Node {
-    let full = matches!(variant, SizeVariant::Full);
-    let model_w = if full {
-        COL_MODEL_FULL
+// The per-view column widths the header and data rows share.
+struct TableColumns {
+    label_w: f32,
+    label_chars: usize,
+    counts_w: f32,
+}
+
+fn fleet_columns(variant: SizeVariant) -> TableColumns {
+    if matches!(variant, SizeVariant::Full) {
+        TableColumns {
+            label_w: COL_MODEL_FULL,
+            label_chars: MODEL_CHARS_FULL,
+            counts_w: COL_COUNTS,
+        }
     } else {
-        COL_MODEL_LARGE
-    };
-    let counts_w = if full { COL_COUNTS } else { COL_COUNTS_LARGE };
+        TableColumns {
+            label_w: COL_MODEL_LARGE,
+            label_chars: MODEL_CHARS_LARGE,
+            counts_w: COL_COUNTS_LARGE,
+        }
+    }
+}
+
+struct Pager {
+    page: usize,
+    count: usize,
+}
+
+// Chevron pager flanking the page indicator, right-aligned on the header
+// row. The buttons disable (not vanish) at the bounds so the cluster never
+// reflows under a mid-pagination finger.
+fn pager_cluster(pager: &Pager) -> Node {
+    row(
+        props!(gap: 8.0, cross_align: CrossAlign::Center),
+        [
+            button!(
+                "page_prev",
+                "",
+                style: Ghost,
+                size: Small,
+                icon: ensure_registered(&CHEVRON_LEFT),
+                disabled: pager.page == 0
+            ),
+            text(
+                fmt!("{}/{}", pager.page + 1, pager.count),
+                style!(size: LABEL_FONT, color: LABEL_COLOR),
+            ),
+            button!(
+                "page_next",
+                "",
+                style: Ghost,
+                size: Small,
+                icon: ensure_registered(&CHEVRON_RIGHT),
+                disabled: pager.page + 1 >= pager.count
+            ),
+        ],
+    )
+}
+
+fn header_row(variant: SizeVariant, cols: &TableColumns, label: &str, pager: &Pager) -> Node {
+    let full = matches!(variant, SizeVariant::Full);
     let mut cells = vec![
         header_cell(COL_HASHRATE, "Hashrate"),
-        header_cell(model_w, "Model"),
+        header_cell(cols.label_w, label),
     ];
     if full {
         cells.push(header_cell(COL_POWER, "Power"));
         cells.push(header_cell(COL_EFF, "Efficiency"));
         cells.push(header_cell(COL_TEMP, "Temp"));
     }
-    cells.push(header_cell(counts_w, "Status"));
+    cells.push(header_cell(cols.counts_w, "Status"));
+    if pager.count > 1 {
+        cells.push(spacer(1.0));
+        cells.push(pager_cluster(pager));
+    }
     row(props!(gap: ROW_GAP, cross_align: CrossAlign::Center), cells)
 }
 
 // Full shows the whole table; the narrower Large band keeps only the headline
 // hashrate, the model, and the ok/online counts — the long model names cannot
 // share a 638px row with the numeric columns without wrapping.
-fn breakdown_row(group: &GroupSummary, variant: SizeVariant) -> Node {
+fn breakdown_row(group: &GroupSummary, variant: SizeVariant, cols: &TableColumns) -> Node {
     let full = matches!(variant, SizeVariant::Full);
-    let model_w = if full {
-        COL_MODEL_FULL
-    } else {
-        COL_MODEL_LARGE
-    };
-    let counts_w = if full { COL_COUNTS } else { COL_COUNTS_LARGE };
-
     let mut cells = vec![
         text_cell(
             COL_HASHRATE,
@@ -315,7 +376,12 @@ fn breakdown_row(group: &GroupSummary, variant: SizeVariant) -> Node {
             VALUE_COLOR,
             TextAlign::Left,
         ),
-        text_cell(model_w, group.label.clone(), VALUE_COLOR, TextAlign::Left),
+        text_cell(
+            cols.label_w,
+            crate::layout::truncate_label(&group.label, cols.label_chars),
+            VALUE_COLOR,
+            TextAlign::Left,
+        ),
     ];
     if full {
         cells.push(text_cell(
@@ -337,7 +403,7 @@ fn breakdown_row(group: &GroupSummary, variant: SizeVariant) -> Node {
             TextAlign::Left,
         ));
     }
-    cells.push(counts_cell(counts_w, group));
+    cells.push(counts_cell(cols.counts_w, group));
     row(props!(gap: ROW_GAP, cross_align: CrossAlign::Center), cells)
 }
 
@@ -398,12 +464,29 @@ fn summary_view(total: &GroupSummary, title: &str) -> Node {
     )
 }
 
-// The overview row plus the per-model breakdown table.
-fn table_view(summary: &FleetSummary, variant: SizeVariant, title: &str) -> Node {
+// The overview row plus one page of the per-model breakdown table.
+fn table_view(
+    summary: &FleetSummary,
+    fleet_page: usize,
+    height: u32,
+    variant: SizeVariant,
+    title: &str,
+) -> Node {
+    let cols = fleet_columns(variant);
+    let per_page = paging::rows_per_page_fleet(height, variant);
+    let count = paging::page_count(summary.groups.len(), per_page);
+    let page = paging::effective_page(fleet_page, count);
+    let pager = Pager { page, count };
+    let bounds = paging::page_bounds(summary.groups.len(), per_page, page);
+
     let mut children: Vec<Node> = vec![overview(&summary.total, variant, title), separator()];
-    children.push(header_row(variant));
-    for group in &summary.groups {
-        children.push(breakdown_row(group, variant));
+    children.push(header_row(variant, &cols, "Model", &pager));
+    for group in summary
+        .groups
+        .get(bounds)
+        .expect("BUG: effective page bounds are in range")
+    {
+        children.push(breakdown_row(group, variant, &cols));
     }
 
     col(props!(background: BLACK, padding: 24.0, gap: 5.8), children)
@@ -412,6 +495,7 @@ fn table_view(summary: &FleetSummary, variant: SizeVariant, title: &str) -> Node
 #[must_use]
 pub fn view(
     summary: &FleetSummary,
+    fleet_page: usize,
     width: u32,
     height: u32,
     variant: SizeVariant,
@@ -434,6 +518,6 @@ pub fn view(
 
     match choose(width, height) {
         Layout::Summary => summary_view(&summary.total, title),
-        Layout::Table => table_view(summary, variant, title),
+        Layout::Table => table_view(summary, fleet_page, height, variant, title),
     }
 }

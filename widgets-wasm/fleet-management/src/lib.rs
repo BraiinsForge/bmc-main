@@ -26,9 +26,11 @@ mod filter;
 mod layout;
 mod manual;
 mod model;
+mod paging;
 mod session;
 mod summary;
 mod telemetry;
+mod view;
 
 #[cfg(target_arch = "wasm32")]
 mod manifest_params;
@@ -61,6 +63,7 @@ use families::ubos::UbosAdapter;
 thread_local! {
     pub(crate) static DEVICES: RefCell<DeviceList> = RefCell::new(DeviceList::new());
     static DERIVED: RefCell<Option<DerivedView>> = const { RefCell::new(None) };
+    static VIEW: RefCell<view::ViewState> = const { RefCell::new(view::ViewState::new()) };
 }
 
 /// The render-ready fleet summary, cached so the filter → group → fold → sort
@@ -316,13 +319,34 @@ pub extern "C" fn render(_delta_ms: u32) {
         let derived = cell.as_ref().expect("BUG: derived view populated above");
         let root = render::view(
             &derived.summary,
+            VIEW.with(|v| v.borrow().fleet_page),
             width,
             height,
             variant,
             &derived.fleet_name,
         );
-        let _ = render_ui(width, height, root);
+        let result = render_ui(width, height, root);
+        let per_page = paging::rows_per_page_fleet(height, variant);
+        let count = paging::page_count(derived.summary.groups.len(), per_page);
+        let mut changed = false;
+        for id in result.clicks.keys() {
+            if let Some(action) = view::parse_click(id) {
+                changed |= VIEW.with(|v| view::apply(&mut v.borrow_mut(), action, count));
+            }
+        }
+        if changed {
+            request_frame();
+        }
     });
+}
+
+/// Touch activity notification: request a frame so the tap is consumed by
+/// the next render's click readback. Without this export the host never
+/// renders on touch and every button stays inert.
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn on_touch() {
+    request_frame();
 }
 
 #[cfg(target_arch = "wasm32")]
