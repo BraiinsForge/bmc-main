@@ -26,6 +26,7 @@ mod filter;
 mod layout;
 mod manual;
 mod model;
+mod naming;
 mod paging;
 mod session;
 mod summary;
@@ -69,13 +70,26 @@ thread_local! {
 /// The render-ready fleet summary, cached so the filter → group → fold → sort
 /// pipeline and the model-list parsing run only when the fleet or the params
 /// actually change — not on every render frame (renders fire per discovery and
-/// per telemetry event, hundreds per pass on a large fleet).
+/// per telemetry event, hundreds per pass on a large fleet). The detail rows
+/// are cached per selection and cleared on any seq/params rebuild.
 #[cfg(target_arch = "wasm32")]
 struct DerivedView {
     devices_seq: u64,
     params_version: u64,
     summary: summary::FleetSummary,
+    filters: filter::Filters,
     fleet_name: String,
+    detail: Option<DetailCache>,
+}
+
+/// Folded device rows for the drilled-into group, keyed by its partition
+/// key. Cleared whenever the summary rebuilds so the rows always derive
+/// from the same device snapshot.
+#[cfg(target_arch = "wasm32")]
+struct DetailCache {
+    family: Option<DeviceFamily>,
+    label: String,
+    rows: Vec<summary::GroupSummary>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -282,6 +296,20 @@ fn parse_normalized_model_list(raw: &str) -> Vec<String> {
     filter::normalized_fragments(parse_model_list(raw).iter().map(String::as_str))
 }
 
+/// Fold the per-device rows for the drilled-into group, under the same
+/// filters the cached summary was built with.
+#[cfg(target_arch = "wasm32")]
+fn rebuild_detail_rows(
+    filters: &filter::Filters,
+    sel: &view::DetailSelection,
+) -> Vec<summary::GroupSummary> {
+    DEVICES.with(|d| {
+        summary::detail_rows(&d.borrow(), filters, sel.family, &sel.label, |dev| {
+            naming::display_name(&dev.identity.name).to_owned()
+        })
+    })
+}
+
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
@@ -313,30 +341,75 @@ pub extern "C" fn render(_delta_ms: u32) {
                 devices_seq: seq,
                 params_version,
                 summary,
+                filters,
                 fleet_name: params.fleet_name,
+                detail: None,
             });
         }
-        let derived = cell.as_ref().expect("BUG: derived view populated above");
-        let root = render::view(
-            &derived.summary,
-            VIEW.with(|v| v.borrow().fleet_page),
-            width,
-            height,
-            variant,
-            &derived.fleet_name,
-        );
-        let result = render_ui(width, height, root);
-        let per_page = paging::rows_per_page_fleet(height, variant);
-        let count = paging::page_count(derived.summary.groups.len(), per_page);
-        let mut changed = false;
-        for id in result.clicks.keys() {
-            if let Some(action) = view::parse_click(id) {
-                changed |= VIEW.with(|v| view::apply(&mut v.borrow_mut(), action, count));
+        let derived = cell.as_mut().expect("BUG: derived view populated above");
+        VIEW.with(|view_state| {
+            let mut nav = view_state.borrow_mut();
+            let selected = nav
+                .detail
+                .as_ref()
+                .and_then(|sel| view::selected_index(&derived.summary.groups, sel));
+            // A selection whose group vanished (filtered out, devices gone)
+            // falls back to the fleet table.
+            if nav.detail.is_some() && selected.is_none() {
+                nav.detail = None;
+                derived.detail = None;
             }
-        }
-        if changed {
-            request_frame();
-        }
+            if let Some(sel) = nav.detail.as_ref() {
+                let fresh = derived
+                    .detail
+                    .as_ref()
+                    .is_some_and(|c| c.family == sel.family && c.label == sel.label);
+                if !fresh {
+                    let rows = rebuild_detail_rows(&derived.filters, sel);
+                    derived.detail = Some(DetailCache {
+                        family: sel.family,
+                        label: sel.label.clone(),
+                        rows,
+                    });
+                }
+            }
+            let detail = if let (Some(sel), Some(idx)) = (nav.detail.as_ref(), selected) {
+                Some(render::DetailData {
+                    group: derived
+                        .summary
+                        .groups
+                        .get(idx)
+                        .expect("BUG: index found in this group list"),
+                    rows: &derived
+                        .detail
+                        .as_ref()
+                        .expect("BUG: detail cache rebuilt above")
+                        .rows,
+                    page: sel.page,
+                })
+            } else {
+                None
+            };
+            let frame = render::view(
+                &derived.summary,
+                detail,
+                nav.fleet_page,
+                width,
+                height,
+                variant,
+                &derived.fleet_name,
+            );
+            let result = render_ui(width, height, frame.root);
+            let mut changed = false;
+            for id in result.clicks.keys() {
+                if let Some(action) = view::parse_click(id) {
+                    changed |= view::apply(&mut nav, action, frame.page_count);
+                }
+            }
+            if changed {
+                request_frame();
+            }
+        });
     });
 }
 

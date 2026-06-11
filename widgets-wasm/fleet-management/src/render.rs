@@ -28,9 +28,10 @@ use units::availability::Availability;
 use units::format::{Rendered, fixed};
 use units::units::{DegreeCelsius, Quantity};
 
-use crate::layout::{Layout, choose};
+use crate::layout::{Layout, choose, truncate_label};
 use crate::paging;
 use crate::summary::{FleetSummary, GroupSummary};
+use crate::view::details_click_id;
 
 const OK_ICON: Svg = include_svg!("assets/ok.svg");
 const NOT_OK_ICON: Svg = include_svg!("assets/not-ok.svg");
@@ -86,6 +87,13 @@ const COL_COUNTS: f32 = 128.0;
 // tail, so the model borrows that slack here to hold longer model names without
 // wrapping; the wide Full band keeps the roomier `COL_COUNTS`.
 const COL_COUNTS_LARGE: f32 = 80.0;
+
+// The detail view's Name column in the Large band: no details column frees
+// width that the model column lacks in the fleet table.
+const COL_NAME_LARGE: f32 = 260.0;
+const COL_DETAILS: f32 = 32.0;
+const NAME_CHARS_FULL: usize = 22;
+const NAME_CHARS_LARGE: usize = 19;
 
 // Character budgets for the model column; longer names are cut with an
 // ellipsis so rows never wrap (the engine cannot ellipsize).
@@ -214,7 +222,7 @@ fn ok_count_f64(count: usize) -> f64 {
 // The headline hashrate and ok/online counts always lead; Power and Efficiency
 // follow only in the wide Full band — four summary columns plus the hero value
 // do not fit the 638px Large band without wrapping.
-fn overview(total: &GroupSummary, variant: SizeVariant, title: &str) -> Node {
+fn overview(total: &GroupSummary, variant: SizeVariant, title: &str, back: bool) -> Node {
     let full = matches!(variant, SizeVariant::Full);
     let hero_font = if full {
         HERO_FONT_FULL
@@ -254,6 +262,15 @@ fn overview(total: &GroupSummary, variant: SizeVariant, title: &str) -> Node {
         title,
         style!(size: title_font, weight: FontWeight::SEMIBOLD, color: VALUE_COLOR),
     ));
+    if back {
+        cells.push(button!(
+            "back",
+            "Back",
+            style: Ghost,
+            size: Small,
+            icon: ensure_registered(&CHEVRON_LEFT)
+        ));
+    }
     row(props!(gap: 32.0, cross_align: CrossAlign::Start), cells)
 }
 
@@ -304,6 +321,22 @@ fn fleet_columns(variant: SizeVariant) -> TableColumns {
         TableColumns {
             label_w: COL_MODEL_LARGE,
             label_chars: MODEL_CHARS_LARGE,
+            counts_w: COL_COUNTS_LARGE,
+        }
+    }
+}
+
+fn detail_columns(variant: SizeVariant) -> TableColumns {
+    if matches!(variant, SizeVariant::Full) {
+        TableColumns {
+            label_w: COL_MODEL_FULL,
+            label_chars: NAME_CHARS_FULL,
+            counts_w: COL_COUNTS,
+        }
+    } else {
+        TableColumns {
+            label_w: COL_NAME_LARGE,
+            label_chars: NAME_CHARS_LARGE,
             counts_w: COL_COUNTS_LARGE,
         }
     }
@@ -378,7 +411,7 @@ fn breakdown_row(group: &GroupSummary, variant: SizeVariant, cols: &TableColumns
         ),
         text_cell(
             cols.label_w,
-            crate::layout::truncate_label(&group.label, cols.label_chars),
+            truncate_label(&group.label, cols.label_chars),
             VALUE_COLOR,
             TextAlign::Left,
         ),
@@ -404,6 +437,16 @@ fn breakdown_row(group: &GroupSummary, variant: SizeVariant, cols: &TableColumns
         ));
     }
     cells.push(counts_cell(cols.counts_w, group));
+    cells.push(col(
+        props!(width: COL_DETAILS),
+        [button!(
+            details_click_id(group.family, &group.label),
+            "",
+            style: Ghost,
+            size: Small,
+            icon: ensure_registered(&CHEVRON_RIGHT)
+        )],
+    ));
     row(props!(gap: ROW_GAP, cross_align: CrossAlign::Center), cells)
 }
 
@@ -464,6 +507,108 @@ fn summary_view(total: &GroupSummary, title: &str) -> Node {
     )
 }
 
+// A single ok/not-ok icon: a one-device row has no counts to show.
+fn status_icon_cell(width: f32, ok: bool) -> Node {
+    let (icon, color) = if ok {
+        (&OK_ICON, OK_COLOR)
+    } else {
+        (&NOT_OK_ICON, NOT_OK_COLOR)
+    };
+    col(
+        props!(width: width),
+        [canvas(
+            props!(width: ICON_PX, height: ICON_PX),
+            vec![Draw::svg(0.0, 0.0, ICON_PX, ICON_PX, icon, color)],
+        )],
+    )
+}
+
+// One device of the drilled-into model: the model columns with the device
+// name in the model slot, a single temperature value, and a single status
+// icon.
+fn device_row(device: &GroupSummary, variant: SizeVariant, cols: &TableColumns) -> Node {
+    let full = matches!(variant, SizeVariant::Full);
+    let mut cells = vec![
+        text_cell(
+            COL_HASHRATE,
+            hashrate_str(device.hashrate),
+            VALUE_COLOR,
+            TextAlign::Left,
+        ),
+        text_cell(
+            cols.label_w,
+            truncate_label(&device.label, cols.label_chars),
+            VALUE_COLOR,
+            TextAlign::Left,
+        ),
+    ];
+    if full {
+        cells.push(text_cell(
+            COL_POWER,
+            whole_str(device.power),
+            VALUE_COLOR,
+            TextAlign::Left,
+        ));
+        cells.push(text_cell(
+            COL_EFF,
+            tenth_str(device.efficiency),
+            VALUE_COLOR,
+            TextAlign::Left,
+        ));
+        cells.push(text_cell(
+            COL_TEMP,
+            whole_str(device.avg_temperature),
+            VALUE_COLOR,
+            TextAlign::Left,
+        ));
+    }
+    cells.push(status_icon_cell(cols.counts_w, device.ok_count > 0));
+    row(props!(gap: ROW_GAP, cross_align: CrossAlign::Center), cells)
+}
+
+/// The drilled-into model the renderer shows instead of the fleet table.
+pub struct DetailData<'a> {
+    pub group: &'a GroupSummary,
+    pub rows: &'a [GroupSummary],
+    pub page: usize,
+}
+
+/// The built frame plus the page count of whatever table it shows, so the
+/// click handler clamps against the exact view that was rendered.
+pub struct Frame {
+    pub root: Node,
+    pub page_count: usize,
+}
+
+// The model's own totals in the overview (title = model name, with Back),
+// then one page of device rows.
+fn detail_view(detail: &DetailData<'_>, height: u32, variant: SizeVariant) -> Frame {
+    let cols = detail_columns(variant);
+    let per_page = paging::rows_per_page_detail(height, variant);
+    let count = paging::page_count(detail.rows.len(), per_page);
+    let page = paging::effective_page(detail.page, count);
+    let pager = Pager { page, count };
+    let bounds = paging::page_bounds(detail.rows.len(), per_page, page);
+
+    let mut children: Vec<Node> = vec![
+        overview(detail.group, variant, &detail.group.label, true),
+        separator(),
+        header_row(variant, &cols, "Name", &pager),
+    ];
+    for device in detail
+        .rows
+        .get(bounds)
+        .expect("BUG: effective page bounds are in range")
+    {
+        children.push(device_row(device, variant, &cols));
+    }
+
+    Frame {
+        root: col(props!(background: BLACK, padding: 24.0, gap: 5.8), children),
+        page_count: count,
+    }
+}
+
 // The overview row plus one page of the per-model breakdown table.
 fn table_view(
     summary: &FleetSummary,
@@ -471,7 +616,7 @@ fn table_view(
     height: u32,
     variant: SizeVariant,
     title: &str,
-) -> Node {
+) -> Frame {
     let cols = fleet_columns(variant);
     let per_page = paging::rows_per_page_fleet(height, variant);
     let count = paging::page_count(summary.groups.len(), per_page);
@@ -479,7 +624,8 @@ fn table_view(
     let pager = Pager { page, count };
     let bounds = paging::page_bounds(summary.groups.len(), per_page, page);
 
-    let mut children: Vec<Node> = vec![overview(&summary.total, variant, title), separator()];
+    let mut children: Vec<Node> =
+        vec![overview(&summary.total, variant, title, false), separator()];
     children.push(header_row(variant, &cols, "Model", &pager));
     for group in summary
         .groups
@@ -489,35 +635,48 @@ fn table_view(
         children.push(breakdown_row(group, variant, &cols));
     }
 
-    col(props!(background: BLACK, padding: 24.0, gap: 5.8), children)
+    Frame {
+        root: col(props!(background: BLACK, padding: 24.0, gap: 5.8), children),
+        page_count: count,
+    }
 }
 
 #[must_use]
 pub fn view(
     summary: &FleetSummary,
+    detail: Option<DetailData<'_>>,
     fleet_page: usize,
     width: u32,
     height: u32,
     variant: SizeVariant,
     title: &str,
-) -> Node {
+) -> Frame {
     // No visible groups means nothing to show yet: no devices, none polled
     // successfully, or all filtered out by model lists / disabled families.
     if summary.groups.is_empty() {
-        return col(
-            props!(background: BLACK),
-            [center(
-                props!(flex: 1.0),
-                [text(
-                    "Searching for miners\u{2026}",
-                    style!(size: 28, color: WHITE),
+        return Frame {
+            root: col(
+                props!(background: BLACK),
+                [center(
+                    props!(flex: 1.0),
+                    [text(
+                        "Searching for miners\u{2026}",
+                        style!(size: 28, color: WHITE),
+                    )],
                 )],
-            )],
-        );
+            ),
+            page_count: 1,
+        };
     }
 
     match choose(width, height) {
-        Layout::Summary => summary_view(&summary.total, title),
-        Layout::Table => table_view(summary, fleet_page, height, variant, title),
+        Layout::Summary => Frame {
+            root: summary_view(&summary.total, title),
+            page_count: 1,
+        },
+        Layout::Table => match detail {
+            Some(detail) => detail_view(&detail, height, variant),
+            None => table_view(summary, fleet_page, height, variant, title),
+        },
     }
 }

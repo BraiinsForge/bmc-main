@@ -181,6 +181,15 @@ pub struct FleetSummary {
     pub groups: Vec<GroupSummary>,
 }
 
+/// The grouping key `summarize` partitions on: family index plus model name,
+/// with model-less devices in the family-agnostic catch-all.
+fn partition_key(dev: &KnownDevice) -> (Option<usize>, String) {
+    dev.model.as_ref().map_or_else(
+        || (None, UNKNOWN_GROUP.to_owned()),
+        |m| (Some(dev.identity.family.index()), m.name.clone()),
+    )
+}
+
 #[must_use]
 pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> FleetSummary {
     // Every known device is shown — avahi-discovered or manual — regardless of
@@ -198,11 +207,7 @@ pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> Flee
     // single family-agnostic "Unknown" catch-all.
     let mut partitions: BTreeMap<(Option<usize>, String), Vec<&KnownDevice>> = BTreeMap::new();
     for dev in &visible {
-        let key = dev.model.as_ref().map_or_else(
-            || (None, UNKNOWN_GROUP.to_owned()),
-            |m| (Some(dev.identity.family.index()), m.name.clone()),
-        );
-        partitions.entry(key).or_default().push(dev);
+        partitions.entry(partition_key(dev)).or_default().push(dev);
     }
 
     let mut groups: Vec<GroupSummary> = partitions
@@ -226,6 +231,42 @@ pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> Flee
 
     let total = fold_group(TOTAL_LABEL.to_owned(), &visible);
     FleetSummary { total, groups }
+}
+
+/// Per-device rows for the drilled-into model group: each matching device
+/// folded as a single-device group labeled by its resolved display name,
+/// sorted by that name (ASCII-case-insensitive, keeping Unicode case tables
+/// out of the wasm binary). Rows apply the same operator filters as the
+/// summary, so a partition spanning families (the Unknown catch-all) cannot
+/// resurrect hidden devices.
+#[must_use]
+pub fn detail_rows(
+    devices: &DeviceList,
+    filters: &crate::filter::Filters,
+    family: Option<DeviceFamily>,
+    label: &str,
+    resolve: impl Fn(&KnownDevice) -> String,
+) -> Vec<GroupSummary> {
+    let family_index = family.map(DeviceFamily::index);
+    let mut rows: Vec<GroupSummary> = devices
+        .iter()
+        .filter(|dev| {
+            let (fam, lab) = partition_key(dev);
+            fam == family_index
+                && lab == label
+                && filters.is_visible(dev.identity.family, dev.model.as_ref())
+        })
+        // fold_group's "Unknown"-label family sentinel may misfire on a
+        // device display-named "Unknown"; detail rows never read `family`.
+        .map(|dev| fold_group(resolve(dev), &[dev]))
+        .collect();
+    rows.sort_by(|a, b| {
+        a.label
+            .to_ascii_lowercase()
+            .cmp(&b.label.to_ascii_lowercase())
+            .then_with(|| a.label.cmp(&b.label))
+    });
+    rows
 }
 
 #[cfg(test)]
@@ -727,5 +768,129 @@ mod tests {
         assert_eq!(labels, ["BMM 101"], "the disabled family's group is gone");
         assert_eq!(raw(&summary.total.hashrate), Some(1.0));
         assert_eq!(raw(&summary.total.power), Some(30.0));
+    }
+
+    #[test]
+    fn detail_rows_fold_each_device_separately() {
+        let l = list(&[
+            ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
+            ("b", Some("BMM 101"), Some(full(2.0, 20.0, 50.0)), true),
+            ("c", Some("Other"), Some(full(9.0, 90.0, 70.0)), true),
+        ]);
+        let rows = detail_rows(
+            &l,
+            &Filters::default(),
+            Some(DeviceFamily::Bos),
+            "BMM 101",
+            |d| d.identity.name.clone(),
+        );
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].label, "a");
+        assert_eq!(raw(&rows[0].hashrate), Some(1.0));
+        assert_eq!(rows[0].total_count, 1);
+        assert_eq!(rows[0].ok_count, 1);
+        assert_eq!(raw(&rows[1].hashrate), Some(2.0));
+    }
+
+    #[test]
+    fn detail_rows_sort_by_display_name_case_insensitively() {
+        let l = list(&[
+            ("x", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
+            ("y", Some("BMM 101"), Some(full(2.0, 20.0, 50.0)), true),
+        ]);
+        let rows = detail_rows(
+            &l,
+            &Filters::default(),
+            Some(DeviceFamily::Bos),
+            "BMM 101",
+            |d| {
+                if d.identity.name == "x" {
+                    "bravo".to_owned()
+                } else {
+                    "Alpha".to_owned()
+                }
+            },
+        );
+        let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, ["Alpha", "bravo"]);
+    }
+
+    #[test]
+    fn detail_rows_for_the_unknown_group_take_modelless_devices() {
+        let l = list(&[
+            ("a", None, Some(full(1.0, 30.0, 60.0)), true),
+            ("b", Some("BMM 101"), Some(full(2.0, 20.0, 50.0)), true),
+        ]);
+        let rows = detail_rows(&l, &Filters::default(), None, "Unknown", |d| {
+            d.identity.name.clone()
+        });
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "a");
+    }
+
+    #[test]
+    fn detail_rows_require_the_family_to_match() {
+        let l = family_list(&[
+            ("a", DeviceFamily::Bos, "BMM 101", full(1.0, 30.0, 60.0)),
+            ("b", DeviceFamily::Ubos, "BMM 101", full(2.0, 20.0, 50.0)),
+        ]);
+        let rows = detail_rows(
+            &l,
+            &Filters::default(),
+            Some(DeviceFamily::Bos),
+            "BMM 101",
+            |d| d.identity.name.clone(),
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "a");
+    }
+
+    #[test]
+    fn detail_rows_hide_a_disabled_familys_modelless_devices() {
+        // The Unknown partition spans families; disabling BOS must hide its
+        // model-less device from the drill-in even though the uBOS one keeps
+        // the group alive in the summary.
+        let mut l = DeviceList::new();
+        for (i, (name, family)) in [("a", DeviceFamily::Bos), ("b", DeviceFamily::Ubos)]
+            .iter()
+            .enumerate()
+        {
+            let mut id_str = String::from("dev-");
+            units::format::push_int(&mut id_str, i as u64);
+            let id = DeviceId::new(id_str);
+            l.upsert(DeviceIdentity {
+                id: id.clone(),
+                family: *family,
+                name: (*name).to_owned(),
+                host: "10.0.0.1".to_owned(),
+                port: 80,
+                source: DeviceSource::Discovered,
+            });
+            l.apply_telemetry(&id, full(1.0, 30.0, 60.0), true);
+        }
+        let filters = Filters {
+            bos_enabled: false,
+            ..Default::default()
+        };
+        let rows = detail_rows(&l, &filters, None, "Unknown", |d| d.identity.name.clone());
+        let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, ["b"], "the disabled family's device must not leak");
+    }
+
+    #[test]
+    fn detail_row_of_an_unreachable_device_reads_zero() {
+        let l = list(&[("a", Some("BMM 101"), Some(full(9.0, 90.0, 80.0)), false)]);
+        let rows = detail_rows(
+            &l,
+            &Filters::default(),
+            Some(DeviceFamily::Bos),
+            "BMM 101",
+            |d| d.identity.name.clone(),
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(raw(&rows[0].hashrate), Some(0.0));
+        assert_eq!(raw(&rows[0].power), Some(0.0));
+        assert_eq!(rows[0].ok_count, 0);
+        assert_eq!(rows[0].max_temperature, Availability::Unavailable);
     }
 }

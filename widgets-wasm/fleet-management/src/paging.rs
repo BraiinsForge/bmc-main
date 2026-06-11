@@ -13,11 +13,20 @@ const OVERHEAD_LARGE: u32 = 164;
 // so the step is button height, not text height.
 const FLEET_ROW_STEP: u32 = 38;
 
+// Device rows are text-height; no button in the row.
+const DETAIL_ROW_STEP: u32 = 35;
+
 /// Model rows that fit one page of the breakdown table; at least 1 so a
 /// pathological viewport still shows something.
 #[must_use]
 pub fn rows_per_page_fleet(height: u32, variant: SizeVariant) -> usize {
     rows_for(height, overhead(variant), FLEET_ROW_STEP)
+}
+
+/// Device rows that fit one page of the detail table.
+#[must_use]
+pub fn rows_per_page_detail(height: u32, variant: SizeVariant) -> usize {
+    rows_for(height, overhead(variant), DETAIL_ROW_STEP)
 }
 
 fn overhead(variant: SizeVariant) -> u32 {
@@ -92,5 +101,12 @@ mod tests {
         assert_eq!(page_bounds(10, 4, 0), 0..4);
         assert_eq!(page_bounds(10, 4, 1), 4..8);
         assert_eq!(page_bounds(10, 4, 2), 8..10);
+        assert_eq!(page_bounds(10, 4, 9), 10..10);
+    }
+
+    #[test]
+    fn detail_rows_fit_the_canonical_boxes() {
+        assert_eq!(rows_per_page_detail(480, SizeVariant::Full), 8);
+        assert_eq!(rows_per_page_detail(480, SizeVariant::Large), 9);
     }
 }
