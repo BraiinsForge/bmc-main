@@ -4,14 +4,14 @@ use bmc_wasm_sdk::SizeVariant;
 
 // Vertical space above the table rows: 24px padding top and bottom, the
 // overview cluster (taller in Full: 64px title / 48px hero), the separator,
-// the 32px header row (its pager buttons set the height), and the column
+// the 48px header row (its pager buttons set the height), and the column
 // gaps between them.
-const OVERHEAD_FULL: u32 = 180;
-const OVERHEAD_LARGE: u32 = 164;
+const OVERHEAD_FULL: u32 = 196;
+const OVERHEAD_LARGE: u32 = 180;
 
-// One model row plus the column gap; the row holds a 32px details button,
+// One model row plus the column gap; the row holds a 48px details button,
 // so the step is button height, not text height.
-const FLEET_ROW_STEP: u32 = 38;
+const FLEET_ROW_STEP: u32 = 54;
 
 // Device rows are text-height; no button in the row. The 24px row text
 // renders ~33px tall, plus the 5.8px column gap.
@@ -72,8 +72,8 @@ mod tests {
 
     #[test]
     fn fleet_rows_fit_the_canonical_boxes() {
-        assert_eq!(rows_per_page_fleet(480, SizeVariant::Full), 7);
-        assert_eq!(rows_per_page_fleet(480, SizeVariant::Large), 8);
+        assert_eq!(rows_per_page_fleet(480, SizeVariant::Full), 5);
+        assert_eq!(rows_per_page_fleet(480, SizeVariant::Large), 5);
     }
 
     #[test]
@@ -108,6 +108,6 @@ mod tests {
     #[test]
     fn detail_rows_fit_the_canonical_boxes() {
         assert_eq!(rows_per_page_detail(480, SizeVariant::Full), 7);
-        assert_eq!(rows_per_page_detail(480, SizeVariant::Large), 8);
+        assert_eq!(rows_per_page_detail(480, SizeVariant::Large), 7);
     }
 }

@@ -80,8 +80,9 @@ const ROW_GAP: f32 = 16.0;
 // roughly constant slack, so left-aligned values land at evenly spaced
 // positions for typical data (a much shorter value leaves more trailing space).
 // The widths also budget for the right-aligned pager cluster on the header row
-// and the trailing details column; the Large model column relies on code-side
-// truncation.
+// (48 + 8 + ~28 + 8 + 48 ≈ 140 px plus its 16 px column gap); the trailing
+// details button flexes across each data row's remainder. The Large model
+// column relies on code-side truncation.
 const COL_HASHRATE: f32 = 140.0;
 const COL_MODEL_FULL: f32 = 300.0;
 const COL_MODEL_LARGE: f32 = 165.0;
@@ -92,15 +93,16 @@ const COL_COUNTS: f32 = 128.0;
 // The Large band fits only three columns into 638px, so the model and status
 // columns share a tight budget. The status content is left-packed with a narrow
 // tail, so the model borrows that slack here to hold longer model names without
-// wrapping; the wide Full band keeps the roomier `COL_COUNTS`.
-const COL_COUNTS_LARGE: f32 = 80.0;
+// wrapping; the wide Full band keeps the roomier `COL_COUNTS`. The header
+// row packs 140 + 165 + 72 columns, the gaps, and the ~140 px pager cluster
+// into ~565 of the 590 px content box.
+const COL_COUNTS_LARGE: f32 = 72.0;
 
 // The detail view's Name column in the Large band: no details column frees
 // width the fleet table's model column lacks, but the header row must still
-// hold the pager cluster (~124 px) — 140 + 180 + 80 + 124 + 4 gaps = 588 of
+// hold the pager cluster (~140 px) — 140 + 164 + 72 + 140 + 4 gaps = 580 of
 // the 590 px content box.
-const COL_NAME_LARGE: f32 = 180.0;
-const COL_DETAILS: f32 = 32.0;
+const COL_NAME_LARGE: f32 = 164.0;
 const NAME_CHARS_FULL: usize = 22;
 const NAME_CHARS_LARGE: usize = 14;
 
@@ -279,7 +281,7 @@ fn overview(total: &GroupSummary, variant: SizeVariant, title: &str, back: bool)
             "back",
             "Back",
             style: Ghost,
-            size: Small,
+            size: Normal,
             icon: ensure_registered(&CHEVRON_LEFT)
         ));
     }
@@ -370,7 +372,7 @@ fn pager_cluster(pager: &Pager) -> Node {
                 "page_prev",
                 "",
                 style: Ghost,
-                size: Small,
+                size: Normal,
                 icon: ensure_registered(&CHEVRON_LEFT),
                 disabled: pager.page == 0
             ),
@@ -382,7 +384,7 @@ fn pager_cluster(pager: &Pager) -> Node {
                 "page_next",
                 "",
                 style: Ghost,
-                size: Small,
+                size: Normal,
                 icon: ensure_registered(&CHEVRON_RIGHT),
                 disabled: pager.page + 1 >= pager.count
             ),
@@ -450,13 +452,14 @@ fn breakdown_row(group: &GroupSummary, variant: SizeVariant, cols: &TableColumns
     }
     cells.push(counts_cell(cols.counts_w, group));
     cells.push(col(
-        props!(width: COL_DETAILS),
+        props!(flex: 1.0),
         [button!(
             details_click_id(group.family, &group.label),
             "",
             style: Ghost,
-            size: Small,
-            icon: ensure_registered(&CHEVRON_RIGHT)
+            size: Normal,
+            icon: ensure_registered(&CHEVRON_RIGHT),
+            fill: true
         )],
     ));
     row(props!(gap: ROW_GAP, cross_align: CrossAlign::Center), cells)
