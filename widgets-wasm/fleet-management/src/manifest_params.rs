@@ -15,6 +15,7 @@ pub struct Params {
     pub bos_enabled: bool,
     pub bos_hosts: String,
     pub bos_password: String,
+    pub device_names: String,
     pub fleet_name: String,
     pub model_blacklist: String,
     pub model_whitelist: String,
@@ -33,6 +34,7 @@ impl Params {
             bos_enabled: <bool as ParamRead>::read_required(snap, "bos_enabled"),
             bos_hosts: <String as ParamRead>::read_required(snap, "bos_hosts"),
             bos_password: <String as ParamRead>::read_required(snap, "bos_password"),
+            device_names: <String as ParamRead>::read_required(snap, "device_names"),
             fleet_name: <String as ParamRead>::read_required(snap, "fleet_name"),
             model_blacklist: <String as ParamRead>::read_required(snap, "model_blacklist"),
             model_whitelist: <String as ParamRead>::read_required(snap, "model_whitelist"),
@@ -99,6 +101,9 @@ impl Params {
         }
         if self.bos_password != other.bos_password {
             out.push("bos_password");
+        }
+        if self.device_names != other.device_names {
+            out.push("device_names");
         }
         if self.fleet_name != other.fleet_name {
             out.push("fleet_name");

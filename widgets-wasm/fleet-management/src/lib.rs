@@ -47,7 +47,7 @@ mod render;
 use bmc_wasm_sdk::*;
 
 #[cfg(target_arch = "wasm32")]
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 #[cfg(target_arch = "wasm32")]
 use adapter::FamilyAdapter;
@@ -65,6 +65,19 @@ thread_local! {
     pub(crate) static DEVICES: RefCell<DeviceList> = RefCell::new(DeviceList::new());
     static DERIVED: RefCell<Option<DerivedView>> = const { RefCell::new(None) };
     static VIEW: RefCell<view::ViewState> = const { RefCell::new(view::ViewState::new()) };
+    static NAMES_WARNED: Cell<Option<u64>> = const { Cell::new(None) };
+}
+
+/// Warn about an unparseable `device_names` once per params version — the
+/// detail rows rebuild per device event and must not spam the log.
+#[cfg(target_arch = "wasm32")]
+fn warn_invalid_device_names(params_version: u64) {
+    NAMES_WARNED.with(|warned| {
+        if warned.get() != Some(params_version) {
+            log_warn!("fleet: device_names param is not valid JSON; showing device names unmapped");
+            warned.set(Some(params_version));
+        }
+    });
 }
 
 /// The render-ready fleet summary, cached so the filter → group → fold → sort
@@ -303,9 +316,15 @@ fn rebuild_detail_rows(
     filters: &filter::Filters,
     sel: &view::DetailSelection,
 ) -> Vec<summary::GroupSummary> {
+    let params = manifest_params::Params::current();
+    let doc = JsonDoc::parse(params.device_names.as_bytes());
+    if !doc.is_valid() {
+        warn_invalid_device_names(bmc_wasm_sdk::params::version());
+    }
+    let lookup = |key: &str| doc.str(&fmt!("/{}", naming::escape_pointer(key)));
     DEVICES.with(|d| {
         summary::detail_rows(&d.borrow(), filters, sel.family, &sel.label, |dev| {
-            naming::display_name(&dev.identity.name).to_owned()
+            naming::resolve(&dev.identity.name, &dev.identity.host, lookup)
         })
     })
 }

@@ -28,6 +28,12 @@
       "type": "string",
       "default_value": "My Fleet"
     },
+    "device_names": {
+      "name": "Device names",
+      "description": "JSON object mapping a device name or host to a friendly name shown in the per-model device list. Keys are the device's mDNS name before the first \"._\" (e.g. \"miner-a\", \"Bitaxe Gamma 602 (A1B2)\") or the host/IP as entered in manual hosts (a port suffix is not part of the key). Example: {\"miner-a\": \"Rack 3 left\", \"10.0.0.5\": \"Test bench\"}",
+      "type": "string",
+      "default_value": "{}"
+    },
     "bos_password": {
       "name": "BOS password",
       "description": "Root password used to log into every BOS miner on the network. Stored as plain text and sent unencrypted over the local network (the miner APIs are HTTP-only).",
