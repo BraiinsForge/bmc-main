@@ -27,6 +27,7 @@ const CHART_STROKE: f32 = 2.0;
 const CHART_INSET: f32 = 2.0;
 const CLOSED_ALPHA: f32 = 0.4;
 const ERROR_ROW_ALPHA: f32 = 0.6;
+const CLOSED_MARKER_SCALE: f32 = 0.4;
 
 fn fixed_width(width: f32) -> Node {
     col(props!(width: width), Vec::<Node>::new())
@@ -47,6 +48,21 @@ fn empty_row() -> Node {
     )
 }
 
+/// The gray stop-marker square shown when the market is closed. A filled rect
+/// node, not a text glyph — the embedded fonts have no Geometric Shapes
+/// coverage, so U+25A0 would render as a missing-glyph box.
+fn closed_marker(band: &Band) -> Node {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "scaled font sizes are small, exact in f32"
+    )]
+    let side = scale_font(band.symbol_font, CLOSED_MARKER_SCALE) as f32;
+    col(
+        props!(width: side, height: side, background: SECONDARY),
+        Vec::<Node>::new(),
+    )
+}
+
 /// `symbol` line, with a gray stop-marker after it when the market is closed.
 fn symbol_line(symbol: &str, color: Color, band: &Band, closed: bool) -> Node {
     let mut children = vec![text(
@@ -55,10 +71,7 @@ fn symbol_line(symbol: &str, color: Color, band: &Band, closed: bool) -> Node {
     )];
     if closed {
         children.push(fixed_width(band.row_gap));
-        children.push(text(
-            "\u{25a0}",
-            style!(size: scale_font(band.symbol_font, 0.75), color: SECONDARY),
-        ));
+        children.push(closed_marker(band));
     }
     row(props!(cross_align: CrossAlign::Center), children)
 }
