@@ -13,8 +13,9 @@ const OVERHEAD_LARGE: u32 = 164;
 // so the step is button height, not text height.
 const FLEET_ROW_STEP: u32 = 38;
 
-// Device rows are text-height; no button in the row.
-const DETAIL_ROW_STEP: u32 = 35;
+// Device rows are text-height; no button in the row. The 24px row text
+// renders ~33px tall, plus the 5.8px column gap.
+const DETAIL_ROW_STEP: u32 = 39;
 
 /// Model rows that fit one page of the breakdown table; at least 1 so a
 /// pathological viewport still shows something.
@@ -106,7 +107,7 @@ mod tests {
 
     #[test]
     fn detail_rows_fit_the_canonical_boxes() {
-        assert_eq!(rows_per_page_detail(480, SizeVariant::Full), 8);
-        assert_eq!(rows_per_page_detail(480, SizeVariant::Large), 9);
+        assert_eq!(rows_per_page_detail(480, SizeVariant::Full), 7);
+        assert_eq!(rows_per_page_detail(480, SizeVariant::Large), 8);
     }
 }

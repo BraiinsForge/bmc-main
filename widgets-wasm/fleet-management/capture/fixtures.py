@@ -37,10 +37,11 @@
 #
 # The same fleet drives every declared size: `full`/`large` render the table,
 # while `medium`/`small` fall back to the summary-only layout (viewports below
-# the table's 638x480 box). `large`/`medium`/`small` share one static layout
-# timeline (the capture binary sets the viewport); `full` additionally replays
-# a device-lifecycle timeline (mid-flight removal, non-response) with several
-# captures — see the lifecycle section below.
+# the table's 638x480 box). `medium`/`small` share one static layout timeline
+# (the capture binary sets the viewport); `large` appends the detail/pager
+# click scenario to it, and `full` replays a device-lifecycle timeline
+# (mid-flight removal, non-response) before the same scenario — see the
+# lifecycle and detail sections below.
 #
 # Browse ids are deterministic from `init()` registration order:
 # 1 = BOS, 2 = uBOS, 3 = Bitaxe. A family snapshots its device list when its
@@ -197,6 +198,11 @@ def header():
             'bos_hosts': '[]',
             'ubos_hosts': '[]',
             'axeos_hosts': '[]',
+            # One mapping keyed by mDNS display name, one by resolved IP, so
+            # the detail captures exercise both lookup paths of `naming.rs`.
+            'device_names': json.dumps(
+                {'nerdqaxe-3': 'Garage rack', '10.0.0.34': 'Office shelf'}
+            ),
         },
     }
 
@@ -211,10 +217,34 @@ def seed_events(stubs):
         yield {'at_ms': 0, **event}
 
 
+def click(at_ms, element):
+    return {'at_ms': at_ms, 'type': 'click', 'element': element}
+
+
 def layout_lines():
     yield header()
     yield from seed_events(fetches)
     yield {'at_ms': CAPTURE_AT_MS, 'type': 'capture'}
+
+
+# ── Detail / pager scenario (the `large` fixture) ────────────────────
+#
+# The fleet table's four model groups fit one page in every band, so the
+# pager only exists in the NerdQAxe++ detail view: ten device rows against
+# 7 (full) / 8 (large) rows per page. Drill into that group and flip to
+# page 2 so the captures cover the detail table, the Back button, the
+# friendly-name mappings and both pager states. Details click IDs carry
+# the family index and the untruncated group label (see
+# `view::details_click_id`).
+DETAILS_NERDQAXE = 'details:2:NerdQAxe++'
+
+
+def detail_lines():
+    yield from layout_lines()  # frame_0000: fleet table
+    yield click(35_000, DETAILS_NERDQAXE)
+    yield {'at_ms': 36_000, 'type': 'capture'}  # frame_0001: detail page 1/2
+    yield click(37_000, 'page_next')
+    yield {'at_ms': 38_000, 'type': 'capture'}  # frame_0002: detail page 2/2
 
 
 # ── Lifecycle timeline (the `full` fixture) ──────────────────────────
@@ -317,6 +347,16 @@ def lifecycle_lines():
     }
     yield {'at_ms': 135_000, 'type': 'capture'}  # frame_0003: nerdqaxe-0 re-discovered
     yield {'at_ms': 165_000, 'type': 'capture'}  # frame_0004: nerdqaxe-1 recovered
+    # Detail / pager scenario on the settled fleet: first the single-row
+    # detail of the table's first group (uBOS sorts first), then the
+    # paginated NerdQAxe++ detail and its second page.
+    yield click(170_000, 'details:1:BMM Adapter W5500')
+    yield {'at_ms': 171_000, 'type': 'capture'}  # frame_0005: single-row detail
+    yield click(172_000, 'back')
+    yield click(173_000, DETAILS_NERDQAXE)
+    yield {'at_ms': 174_000, 'type': 'capture'}  # frame_0006: detail page 1/2
+    yield click(175_000, 'page_next')
+    yield {'at_ms': 176_000, 'type': 'capture'}  # frame_0007: detail page 2/2
 
 
 def main():
@@ -325,7 +365,7 @@ def main():
     # layout timeline. mtime=0 keeps the gzip byte-stable across regenerations.
     bodies = {
         'full': lifecycle_lines,
-        'large': layout_lines,
+        'large': detail_lines,
         'medium': layout_lines,
         'small': layout_lines,
     }

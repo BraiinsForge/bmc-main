@@ -55,6 +55,13 @@ const HERO_FONT_LARGE: u32 = 40;
 // 64px title beside the hero hashrate and counts, so it uses a smaller one.
 const TITLE_FONT_FULL: u32 = 64;
 const TITLE_FONT_LARGE: u32 = 32;
+// The detail view's title is a model name, not the operator's short fleet
+// name, and shares its row with the Back button; a 64px title cannot fit a
+// typical model name in the Full band, so the detail title steps down and
+// long names truncate to the band's character budget.
+const DETAIL_TITLE_FONT_FULL: u32 = 48;
+const DETAIL_TITLE_CHARS_FULL: usize = 18;
+const DETAIL_TITLE_CHARS_LARGE: usize = 12;
 
 // The summary-only layout's fixed fonts (small viewports such as the BMM101).
 const SUMMARY_TITLE_FONT: u32 = 32;
@@ -89,11 +96,13 @@ const COL_COUNTS: f32 = 128.0;
 const COL_COUNTS_LARGE: f32 = 80.0;
 
 // The detail view's Name column in the Large band: no details column frees
-// width that the model column lacks in the fleet table.
-const COL_NAME_LARGE: f32 = 260.0;
+// width the fleet table's model column lacks, but the header row must still
+// hold the pager cluster (~124 px) — 140 + 180 + 80 + 124 + 4 gaps = 588 of
+// the 590 px content box.
+const COL_NAME_LARGE: f32 = 180.0;
 const COL_DETAILS: f32 = 32.0;
 const NAME_CHARS_FULL: usize = 22;
-const NAME_CHARS_LARGE: usize = 19;
+const NAME_CHARS_LARGE: usize = 14;
 
 // Character budgets for the model column; longer names are cut with an
 // ellipsis so rows never wrap (the engine cannot ellipsize).
@@ -229,15 +238,18 @@ fn overview(total: &GroupSummary, variant: SizeVariant, title: &str, back: bool)
     } else {
         HERO_FONT_LARGE
     };
-    let mut cells = vec![
-        metric(
-            "Total Hashrate",
-            hashrate_str(total.hashrate),
-            hero_font,
-            FontWeight::BOLD,
-        ),
-        status(total),
-    ];
+    let mut cells = vec![metric(
+        "Total Hashrate",
+        hashrate_str(total.hashrate),
+        hero_font,
+        FontWeight::BOLD,
+    )];
+    // The Large band's 590px content box cannot hold the hero, the counts,
+    // the title and the Back button on one row; the detail view drops the
+    // counts there (every device row below carries its own status icon).
+    if full || !back {
+        cells.push(status(total));
+    }
     if full {
         cells.push(metric(
             "Power",
@@ -253,10 +265,10 @@ fn overview(total: &GroupSummary, variant: SizeVariant, title: &str, back: bool)
         ));
     }
     cells.push(spacer(1.0));
-    let title_font = if full {
-        TITLE_FONT_FULL
-    } else {
-        TITLE_FONT_LARGE
+    let title_font = match (full, back) {
+        (true, false) => TITLE_FONT_FULL,
+        (true, true) => DETAIL_TITLE_FONT_FULL,
+        (false, _) => TITLE_FONT_LARGE,
     };
     cells.push(text(
         title,
@@ -590,8 +602,14 @@ fn detail_view(detail: &DetailData<'_>, height: u32, variant: SizeVariant) -> Fr
     let pager = Pager { page, count };
     let bounds = paging::page_bounds(detail.rows.len(), per_page, page);
 
+    let title_chars = if matches!(variant, SizeVariant::Full) {
+        DETAIL_TITLE_CHARS_FULL
+    } else {
+        DETAIL_TITLE_CHARS_LARGE
+    };
+    let title = truncate_label(&detail.group.label, title_chars);
     let mut children: Vec<Node> = vec![
-        overview(detail.group, variant, &detail.group.label, true),
+        overview(detail.group, variant, &title, true),
         separator(),
         header_row(variant, &cols, "Name", &pager),
     ];
