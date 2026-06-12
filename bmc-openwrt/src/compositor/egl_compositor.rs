@@ -10,7 +10,7 @@ use super::{
     protocol::{DeckWidgetHandler, DeckWidgetProtocolState},
     render::{DrmOutput, EglContext},
     scene_renderer::SceneRenderer,
-    state::{ClientState, CompositorState},
+    state::{ClientState, CompositorState, release_widget_buffers},
     touch_gesture::{GestureState, TouchGesture},
     widget_tracker::LifecycleState,
 };
@@ -34,11 +34,15 @@ use smithay::reexports::{
     },
     drm::control::{Device as DrmControlDevice, Event as DrmEvent},
     input as libinput,
-    wayland_server::{Display, ListeningSocket, backend::ClientId},
+    wayland_server::{
+        Display, ListeningSocket,
+        backend::{ClientId, ObjectId},
+        protocol::wl_buffer::WlBuffer,
+    },
 };
 use smithay::utils::{Logical, Point};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     os::fd::AsFd,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock, Mutex},
@@ -1206,25 +1210,32 @@ fn register_touch_devices(ctx: &mut libinput::Libinput, nodes: &[PathBuf]) -> us
     added
 }
 
-/// Wayland-side of lifecycle emission. Abstracts `send_lifecycle` +
-/// per-client `flush` so [`emit_lifecycle_batches`] is testable
-/// without an `AppState` — production wires it through
-/// [`AppStateLifecycleSink`], tests through an in-memory recorder.
+/// Wayland-side of lifecycle emission. Abstracts `send_lifecycle`,
+/// `wl_buffer.release`, and per-client `flush` so
+/// [`emit_lifecycle_batches`] is testable without an `AppState` —
+/// production wires it through [`AppStateLifecycleSink`], tests through
+/// an in-memory recorder.
 trait LifecycleSink {
     type ClientId: Clone + PartialEq;
     fn send(&mut self, instance_id: &InstanceId, state: LifecycleState) -> Option<Self::ClientId>;
+    fn release_buffers(&mut self, instance_id: &InstanceId) -> Vec<Self::ClientId>;
     fn flush(&mut self, client_id: &Self::ClientId);
 }
 
 struct AppStateLifecycleSink<'a> {
     deck_widget_state: &'a mut DeckWidgetProtocolState,
     display: &'a mut Display<CompositorState>,
+    widget_buffers: &'a mut Vec<(WlBuffer, InstanceId)>,
+    invalidated_buffers: &'a mut Vec<ObjectId>,
 }
 
 impl LifecycleSink for AppStateLifecycleSink<'_> {
     type ClientId = ClientId;
     fn send(&mut self, instance_id: &InstanceId, state: LifecycleState) -> Option<Self::ClientId> {
         self.deck_widget_state.send_lifecycle(instance_id, state)
+    }
+    fn release_buffers(&mut self, instance_id: &InstanceId) -> Vec<Self::ClientId> {
+        release_widget_buffers(self.widget_buffers, self.invalidated_buffers, instance_id)
     }
     fn flush(&mut self, client_id: &Self::ClientId) {
         if let Err(e) = self.display.backend().flush(Some(client_id.clone())) {
@@ -1235,10 +1246,11 @@ impl LifecycleSink for AppStateLifecycleSink<'_> {
 
 /// Re-derive the lifecycle state of every widget from `WidgetTracker`,
 /// step the `LifecycleEmitter`, and emit the resulting batches on each
-/// widget's surface in the required order: release batch first (flush),
-/// acquire batch second (flush). The flushes preserve the host's pool
-/// ordering invariant on scene swaps and are scoped to only the clients
-/// that actually received an event.
+/// widget's surface in the required order: release batch and the released
+/// widgets' `wl_buffer.release` first (flush), acquire batch second
+/// (flush). The flushes preserve the host's pool ordering invariant on
+/// scene swaps and are scoped to only the clients that actually received
+/// an event.
 fn emit_lifecycle_transitions(state: &mut AppState) -> Emission {
     let next = state.compositor.widgets.lifecycle_states();
     let emission = state.compositor.lifecycle.step(&next);
@@ -1250,34 +1262,29 @@ fn emit_lifecycle_transitions(state: &mut AppState) -> Emission {
     let mut sink = AppStateLifecycleSink {
         deck_widget_state: &mut state.compositor.deck_widget_state,
         display: &mut state.display,
+        widget_buffers: &mut state.compositor.widget_buffers,
+        invalidated_buffers: &mut state.compositor.invalidated_buffers,
     };
     emit_lifecycle_batches(&emission, &mut sink);
     emission
 }
 
-#[must_use]
-fn dormant_widget_ids(
-    lifecycle_states: &HashMap<InstanceId, LifecycleState>,
-) -> HashSet<InstanceId> {
-    lifecycle_states
-        .iter()
-        .filter(|(_, state)| **state == LifecycleState::Dormant)
-        .map(|(instance_id, _)| instance_id.clone())
-        .collect()
-}
-
-fn release_dormant_widget_buffers(state: &mut AppState) {
-    let lifecycle_states = state.compositor.widgets.lifecycle_states();
-    let dormant_ids = dormant_widget_ids(&lifecycle_states);
-    state.compositor.release_widget_buffers_for(&dormant_ids);
-}
-
 /// Pure ordering logic, split from [`emit_lifecycle_transitions`] so
-/// tests can drive it with an in-memory sink. Sends the release batch,
-/// flushes, then sends the acquire batch, flushes — the flush boundary
-/// between batches is the contract the protocol XML documents.
+/// tests can drive it with an in-memory sink. Sends the release batch
+/// and the released widgets' `wl_buffer.release`, flushes, then sends
+/// the acquire batch, flushes. The flush boundary between batches is
+/// the contract the protocol XML documents: a host must see the buffer
+/// release before any acquire lifecycle, so an acquiring slot cannot
+/// allocate while a dormant slot's buffer is still held.
 fn emit_lifecycle_batches<S: LifecycleSink>(emission: &Emission, sink: &mut S) {
-    let release_clients = send_lifecycle_batch(sink, &emission.releases, "release");
+    let mut release_clients = send_lifecycle_batch(sink, &emission.releases, "release");
+    for (instance_id, _) in &emission.releases {
+        for client_id in sink.release_buffers(instance_id) {
+            if !release_clients.contains(&client_id) {
+                release_clients.push(client_id);
+            }
+        }
+    }
     flush_lifecycle_clients(sink, &release_clients);
     let acquire_clients = send_lifecycle_batch(sink, &emission.acquires, "acquire");
     flush_lifecycle_clients(sink, &acquire_clients);
@@ -1361,7 +1368,6 @@ fn emit_pending_lifecycle(state: &mut AppState) {
     }
     state.pending_lifecycle_emission = false;
     emit_lifecycle_transitions(state);
-    release_dormant_widget_buffers(state);
 }
 
 fn handle_clear_pid_command(state: &mut AppState, instance_id: &InstanceId, expected_pid: u32) {
@@ -1513,6 +1519,8 @@ fn process_protocol_events(state: &mut AppState) {
         let mut sink = AppStateLifecycleSink {
             deck_widget_state: &mut state.compositor.deck_widget_state,
             display: &mut state.display,
+            widget_buffers: &mut state.compositor.widget_buffers,
+            invalidated_buffers: &mut state.compositor.invalidated_buffers,
         };
         flush_lifecycle_clients(&mut sink, &connect_clients);
     }
@@ -1757,8 +1765,8 @@ impl Compositor for EglCompositor {
 mod tests {
     use super::{
         AppState, CompositorState, Emission, GestureState, LifecycleSink, LifecycleState,
-        RedrawState, clamp_initial_lifecycle, dispatch_timeout, dormant_widget_ids,
-        emit_lifecycle_batches, handle_clear_pid_command,
+        RedrawState, clamp_initial_lifecycle, dispatch_timeout, emit_lifecycle_batches,
+        handle_clear_pid_command,
     };
     use bmc::compositor::InstanceId;
     use bmc_widget_protocol::{ViewportShape, WidgetInitialConfig};
@@ -1834,10 +1842,10 @@ mod tests {
         pairs.iter().cloned().collect()
     }
 
-    /// Records `send`/`flush` calls in order. `send` returns a synthetic
-    /// per-instance `ClientId` so the test can verify that the flush
-    /// boundary between batches refers to the same clients that received
-    /// the preceding batch.
+    /// Records `send`/`release_buffers`/`flush` calls in order. `send`
+    /// and `release_buffers` return a synthetic per-instance `ClientId`
+    /// so the test can verify that the flush boundary between batches
+    /// refers to the same clients that received the preceding batch.
     #[derive(Default)]
     struct RecordingSink {
         events: Vec<RecordedEvent>,
@@ -1846,6 +1854,7 @@ mod tests {
     #[derive(Debug, PartialEq, Eq)]
     enum RecordedEvent {
         Send(InstanceId, LifecycleState),
+        ReleaseBuffers(InstanceId),
         Flush(String),
     }
 
@@ -1859,6 +1868,11 @@ mod tests {
             self.events
                 .push(RecordedEvent::Send(instance_id.clone(), state));
             Some(format!("client-{instance_id}"))
+        }
+        fn release_buffers(&mut self, instance_id: &InstanceId) -> Vec<Self::ClientId> {
+            self.events
+                .push(RecordedEvent::ReleaseBuffers(instance_id.clone()));
+            vec![format!("client-{instance_id}")]
         }
         fn flush(&mut self, client_id: &Self::ClientId) {
             self.events.push(RecordedEvent::Flush(client_id.clone()));
@@ -1886,6 +1900,8 @@ mod tests {
             vec![
                 RecordedEvent::Send(String::from("a"), LifecycleState::Dormant),
                 RecordedEvent::Send(String::from("b"), LifecycleState::Dormant),
+                RecordedEvent::ReleaseBuffers(String::from("a")),
+                RecordedEvent::ReleaseBuffers(String::from("b")),
                 RecordedEvent::Flush(String::from("client-a")),
                 RecordedEvent::Flush(String::from("client-b")),
                 RecordedEvent::Send(String::from("c"), LifecycleState::Visible),
@@ -1893,7 +1909,9 @@ mod tests {
                 RecordedEvent::Flush(String::from("client-c")),
                 RecordedEvent::Flush(String::from("client-d")),
             ],
-            "release sends must precede release flushes, which must precede acquire sends",
+            "release sends and buffer releases must precede release flushes, \
+             which must precede acquire sends — a host must observe \
+             wl_buffer.release before any acquire lifecycle",
         );
     }
 
@@ -1939,6 +1957,11 @@ mod tests {
                     .push(RecordedEvent::Send(instance_id.clone(), state));
                 Some(String::from("shared-client"))
             }
+            fn release_buffers(&mut self, instance_id: &InstanceId) -> Vec<Self::ClientId> {
+                self.events
+                    .push(RecordedEvent::ReleaseBuffers(instance_id.clone()));
+                vec![String::from("shared-client")]
+            }
             fn flush(&mut self, client_id: &Self::ClientId) {
                 self.events.push(RecordedEvent::Flush(client_id.clone()));
             }
@@ -1975,16 +1998,52 @@ mod tests {
     }
 
     #[test]
-    fn dormant_widget_ids_excludes_prepared_neighbors() {
-        let states = lifecycle_map(&[
-            (String::from("visible"), LifecycleState::Visible),
-            (String::from("prepared"), LifecycleState::Prepared),
-            (String::from("dormant"), LifecycleState::Dormant),
-        ]);
+    fn buffer_release_for_unreachable_widget_is_flushed_before_acquires() {
+        // A widget removed from the scene-cycling list has no surface to
+        // send lifecycle to (`send` returns None), but the compositor may
+        // still hold its buffers. The wl_buffer.release client must be
+        // flushed before any acquire send, or the acquiring slot can
+        // allocate while the dormant slot's buffer is still held.
+        struct NoSendSink {
+            events: Vec<RecordedEvent>,
+        }
+        impl LifecycleSink for NoSendSink {
+            type ClientId = String;
+            fn send(
+                &mut self,
+                instance_id: &InstanceId,
+                state: LifecycleState,
+            ) -> Option<Self::ClientId> {
+                self.events
+                    .push(RecordedEvent::Send(instance_id.clone(), state));
+                None
+            }
+            fn release_buffers(&mut self, instance_id: &InstanceId) -> Vec<Self::ClientId> {
+                self.events
+                    .push(RecordedEvent::ReleaseBuffers(instance_id.clone()));
+                vec![String::from("buffer-client")]
+            }
+            fn flush(&mut self, client_id: &Self::ClientId) {
+                self.events.push(RecordedEvent::Flush(client_id.clone()));
+            }
+        }
+
+        let emission = Emission {
+            releases: vec![(String::from("a"), LifecycleState::Dormant)],
+            acquires: vec![(String::from("b"), LifecycleState::Visible)],
+        };
+
+        let mut sink = NoSendSink { events: Vec::new() };
+        emit_lifecycle_batches(&emission, &mut sink);
 
         assert_eq!(
-            dormant_widget_ids(&states),
-            HashSet::from([String::from("dormant")]),
+            sink.events,
+            vec![
+                RecordedEvent::Send(String::from("a"), LifecycleState::Dormant),
+                RecordedEvent::ReleaseBuffers(String::from("a")),
+                RecordedEvent::Flush(String::from("buffer-client")),
+                RecordedEvent::Send(String::from("b"), LifecycleState::Visible),
+            ],
         );
     }
 

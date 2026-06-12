@@ -2,7 +2,7 @@
 
 //! Compositor state management combining Smithay handlers with deck_widget_v1 protocol.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use super::lifecycle_emitter::LifecycleEmitter;
 use super::protocol::{
@@ -79,6 +79,35 @@ use std::time::{Duration, Instant};
 ///   every other vblank on the 63 Hz panel, so submissions land on a
 ///   page-flip boundary instead of drifting across frames.
 const FRAME_CALLBACK_MIN_INTERVAL: Duration = Duration::from_millis(32);
+
+/// Send `wl_buffer.release` for every buffer the compositor still holds for
+/// `instance_id` and queue its textures for eviction. Returns the clients
+/// that received a release so the caller can flush them. A free function
+/// over the buffer fields rather than a `CompositorState` method because
+/// lifecycle emission calls it while `deck_widget_state` is mutably
+/// borrowed from the same struct.
+pub fn release_widget_buffers(
+    widget_buffers: &mut Vec<(WlBuffer, InstanceId)>,
+    invalidated_buffers: &mut Vec<ObjectId>,
+    instance_id: &InstanceId,
+) -> Vec<ClientId> {
+    let removed: Vec<_> = widget_buffers
+        .extract_if(.., |(_, id)| id == instance_id)
+        .collect();
+
+    let mut clients = Vec::new();
+    for (buffer, _) in removed {
+        tracing::debug!("Releasing off-screen buffer for dormant widget {instance_id}");
+        invalidated_buffers.push(buffer.id());
+        buffer.release();
+        if let Some(client_id) = buffer.client().map(|client| client.id())
+            && !clients.contains(&client_id)
+        {
+            clients.push(client_id);
+        }
+    }
+    clients
+}
 
 fn remove_destroyed_widget_buffers<T>(
     widget_buffers: &mut Vec<(T, InstanceId)>,
@@ -432,19 +461,6 @@ impl CompositorState {
 
         for (buffer, _) in removed {
             self.invalidated_buffers.push(buffer.id());
-        }
-    }
-
-    pub fn release_widget_buffers_for(&mut self, instance_ids: &HashSet<InstanceId>) {
-        let removed: Vec<_> = self
-            .widget_buffers
-            .extract_if(.., |(_, id)| instance_ids.contains(id))
-            .collect();
-
-        for (buffer, instance_id) in removed {
-            tracing::debug!("Releasing off-screen buffer for dormant widget {instance_id}");
-            self.invalidated_buffers.push(buffer.id());
-            buffer.release();
         }
     }
 
