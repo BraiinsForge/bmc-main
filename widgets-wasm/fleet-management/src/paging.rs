@@ -9,12 +9,13 @@ use bmc_wasm_sdk::SizeVariant;
 const OVERHEAD_FULL: u32 = 196;
 const OVERHEAD_LARGE: u32 = 180;
 
-// One model row plus the column gap; the row holds a 56px details button,
-// so the step is button height, not text height.
-const FLEET_ROW_STEP: u32 = 62;
+// One model row plus the column gap: the row is a 41px touchable canvas
+// (the whole row is the Details tap target), so the step is canvas height
+// plus the 5.8px column gap.
+const FLEET_ROW_STEP: u32 = 47;
 
-// Device rows are text-height; no button in the row. The 26px row text
-// renders ~35px tall, plus the 5.8px column gap.
+// Device rows are text-height: the 26px row text renders ~35px tall, plus
+// the 5.8px column gap.
 const DETAIL_ROW_STEP: u32 = 41;
 
 /// Model rows that fit one page of the breakdown table; at least 1 so a
@@ -72,8 +73,8 @@ mod tests {
 
     #[test]
     fn fleet_rows_fit_the_canonical_boxes() {
-        assert_eq!(rows_per_page_fleet(480, SizeVariant::Full), 4);
-        assert_eq!(rows_per_page_fleet(480, SizeVariant::Large), 4);
+        assert_eq!(rows_per_page_fleet(480, SizeVariant::Full), 6);
+        assert_eq!(rows_per_page_fleet(480, SizeVariant::Large), 6);
     }
 
     #[test]

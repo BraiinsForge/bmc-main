@@ -74,6 +74,17 @@ const SEPARATOR_PX: f32 = 1.0;
 
 // Uniform gap between every breakdown column.
 const ROW_GAP: f32 = 12.0;
+// Each breakdown row is one touchable canvas — the whole row is its group's
+// Details tap target. 41px is the tallest row that still fits six rows in
+// the 480px-tall bands.
+const FLEET_ROW_H: f32 = 41.0;
+// One drawn status pair's x budget (22px icon, gap, count text); a second
+// pair starts at this offset within the counts column.
+const COUNT_SLOT_W: f32 = 70.0;
+const PAIR_GAP: f32 = 6.0;
+// The table screens' content padding; row canvases span the viewport minus
+// this inset on both sides.
+const PADDING: f32 = 24.0;
 
 // Fixed breakdown column widths, shared by the header and data rows so labels
 // sit over their values. Each is its column's widest expected content plus a
@@ -81,7 +92,7 @@ const ROW_GAP: f32 = 12.0;
 // positions for typical data (a much shorter value leaves more trailing space).
 // The widths also budget for the right-aligned pager cluster on the header row
 // (48 + 8 + ~28 + 8 + 48 ≈ 140 px plus its 12 px column gap); each data row
-// right-aligns a labeled Details button (~105 px) into the same remainder.
+// right-aligns its Details tap affordance into the same remainder.
 // The model column is the widest the header budget allows so full model names
 // such as "Braiins Mini Miner BMM 101" show untruncated in the Full band; the
 // Large model column relies on code-side truncation.
@@ -302,11 +313,68 @@ fn text_cell(width: f32, value: String, color: Color, align: TextAlign) -> Node 
     )
 }
 
-fn counts_cell(width: f32, group: &GroupSummary) -> Node {
-    col(
-        props!(width: width),
-        [counts(group.ok_count, not_ok_count(group), ROW_FONT)],
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "viewport widths stay within f32's exact integer range"
+)]
+fn content_width(width: u32) -> f32 {
+    width as f32 - 2.0 * PADDING
+}
+
+// A breakdown cell drawn into the row canvas, vertically centered; `x` is
+// the cell's column offset.
+fn cell_text(x: f32, value: String) -> Draw {
+    Draw::text(
+        x,
+        FLEET_ROW_H / 2.0,
+        value,
+        style!(size: ROW_FONT, color: VALUE_COLOR, valign: VerticalAlign::Center),
     )
+}
+
+fn row_icon(x: f32, icon: &Svg, color: Color) -> Draw {
+    Draw::svg(
+        x,
+        (FLEET_ROW_H - ICON_PX) / 2.0,
+        ICON_PX,
+        ICON_PX,
+        icon,
+        color,
+    )
+}
+
+fn draw_status_pair(draws: &mut Vec<Draw>, x: f32, icon: &Svg, color: Color, count: usize) {
+    draws.push(row_icon(x, icon, color));
+    draws.push(cell_text(
+        x + ICON_PX + PAIR_GAP,
+        format_number!(ok_count_f64(count), 0),
+    ));
+}
+
+// The drawn twin of `counts`: pairs pack left into fixed slots, each shown
+// only when its count is above zero.
+fn draw_counts(draws: &mut Vec<Draw>, x: f32, group: &GroupSummary) {
+    let mut slot = x;
+    if group.ok_count > 0 {
+        draw_status_pair(draws, slot, &OK_ICON, OK_COLOR, group.ok_count);
+        slot += COUNT_SLOT_W;
+    }
+    let not_ok = not_ok_count(group);
+    if not_ok > 0 {
+        draw_status_pair(draws, slot, &NOT_OK_ICON, NOT_OK_COLOR, not_ok);
+    }
+}
+
+// The row's tap affordance, right-aligned into the slack the columns leave
+// free at the row's end.
+fn draw_details_affordance(draws: &mut Vec<Draw>, content_w: f32) {
+    draws.push(row_icon(content_w - ICON_PX, &CHEVRON_RIGHT, LABEL_COLOR));
+    draws.push(Draw::text(
+        content_w - ICON_PX - PAIR_GAP,
+        FLEET_ROW_H / 2.0,
+        "Details",
+        style!(size: LABEL_FONT, color: LABEL_COLOR, align: TextAlign::Right, valign: VerticalAlign::Center),
+    ));
 }
 
 // The breakdown column-label row, using the same widths as the data rows. The
@@ -412,54 +480,38 @@ fn header_row(variant: SizeVariant, cols: &TableColumns, label: &str, pager: &Pa
     row(props!(gap: ROW_GAP, cross_align: CrossAlign::Center), cells)
 }
 
-// Full shows the whole table; the narrower Large band keeps only the headline
-// hashrate, the model, and the ok/online counts — the long model names cannot
-// share a 638px row with the numeric columns without wrapping.
-fn breakdown_row(group: &GroupSummary, variant: SizeVariant, cols: &TableColumns) -> Node {
+// One tappable model row: the whole canvas is the group's Details target.
+// Cells draw at the same column offsets the flex header row uses, so labels
+// stay over their values. Full draws the numeric columns; the narrower
+// Large band keeps only the headline hashrate, the model, and the counts.
+fn breakdown_row(
+    group: &GroupSummary,
+    variant: SizeVariant,
+    cols: &TableColumns,
+    content_w: f32,
+) -> Node {
     let full = matches!(variant, SizeVariant::Full);
-    let mut cells = vec![
-        text_cell(
-            COL_HASHRATE,
-            hashrate_str(group.hashrate),
-            VALUE_COLOR,
-            TextAlign::Left,
-        ),
-        text_cell(
-            cols.label_w,
-            truncate_label(&group.label, cols.label_chars),
-            VALUE_COLOR,
-            TextAlign::Left,
-        ),
-    ];
+    let mut draws = Vec::new();
+    let mut x = 0.0;
+    draws.push(cell_text(x, hashrate_str(group.hashrate)));
+    x += COL_HASHRATE + ROW_GAP;
+    draws.push(cell_text(x, truncate_label(&group.label, cols.label_chars)));
+    x += cols.label_w + ROW_GAP;
     if full {
-        cells.push(text_cell(
-            COL_POWER,
-            whole_str(group.power),
-            VALUE_COLOR,
-            TextAlign::Left,
-        ));
-        cells.push(text_cell(
-            COL_EFF,
-            tenth_str(group.efficiency),
-            VALUE_COLOR,
-            TextAlign::Left,
-        ));
-        cells.push(text_cell(
-            COL_TEMP,
-            temp_range_str(group),
-            VALUE_COLOR,
-            TextAlign::Left,
-        ));
+        draws.push(cell_text(x, whole_str(group.power)));
+        x += COL_POWER + ROW_GAP;
+        draws.push(cell_text(x, tenth_str(group.efficiency)));
+        x += COL_EFF + ROW_GAP;
+        draws.push(cell_text(x, temp_range_str(group)));
+        x += COL_TEMP + ROW_GAP;
     }
-    cells.push(counts_cell(cols.counts_w, group));
-    cells.push(spacer(1.0));
-    cells.push(button!(
-        details_click_id(group.family, &group.label),
-        "Details",
-        style: Tertiary,
-        size: Large
-    ));
-    row(props!(gap: ROW_GAP, cross_align: CrossAlign::Center), cells)
+    draw_counts(&mut draws, x, group);
+    draw_details_affordance(&mut draws, content_w);
+    touchable(
+        &details_click_id(group.family, &group.label),
+        props!(width: content_w, height: FLEET_ROW_H),
+        draws,
+    )
 }
 
 // A value text node in the summary layout.
@@ -631,11 +683,13 @@ fn detail_view(detail: &DetailData<'_>, height: u32, variant: SizeVariant) -> Fr
 fn table_view(
     summary: &FleetSummary,
     fleet_page: usize,
+    width: u32,
     height: u32,
     variant: SizeVariant,
     title: &str,
 ) -> Frame {
     let cols = fleet_columns(variant);
+    let content_w = content_width(width);
     let per_page = paging::rows_per_page_fleet(height, variant);
     let count = paging::page_count(summary.groups.len(), per_page);
     let page = paging::effective_page(fleet_page, count);
@@ -650,11 +704,14 @@ fn table_view(
         .get(bounds)
         .expect("BUG: effective page bounds are in range")
     {
-        children.push(breakdown_row(group, variant, &cols));
+        children.push(breakdown_row(group, variant, &cols, content_w));
     }
 
     Frame {
-        root: col(props!(background: BLACK, padding: 24.0, gap: 5.8), children),
+        root: col(
+            props!(background: BLACK, padding: PADDING, gap: 5.8),
+            children,
+        ),
         page_count: count,
     }
 }
@@ -694,7 +751,7 @@ pub fn view(
         },
         Layout::Table => match detail {
             Some(detail) => detail_view(&detail, height, variant),
-            None => table_view(summary, fleet_page, height, variant, title),
+            None => table_view(summary, fleet_page, width, height, variant, title),
         },
     }
 }
