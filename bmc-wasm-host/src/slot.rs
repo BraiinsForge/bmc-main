@@ -137,6 +137,9 @@ pub struct WidgetSlot {
     pub wasm_basename: String,
     pub control_socket: UnixStream,
     pub next_frame_due_at: Option<Instant>,
+    /// One-time diagnostic latch: set after logging that touch events were
+    /// dropped because the widget does not export `on_touch`.
+    pub touch_drop_logged: bool,
 }
 
 impl WidgetSlot {
@@ -228,6 +231,7 @@ impl WidgetSlot {
                 .unwrap_or_default(),
             control_socket,
             next_frame_due_at: None,
+            touch_drop_logged: false,
         })
     }
 
@@ -250,8 +254,20 @@ impl WidgetSlot {
         // longer force-renders on touch, so its events would queue for a render
         // that is never requested. Drop them at the source.
         let mut touch_dirty = false;
+        let mut touch_dropped = false;
         let accepts_touch = self.runtime.exports_on_touch();
         for event in <DeckWidgetSurfaceClient as WidgetSurface>::drain_events(&mut self.surface) {
+            let is_touch = matches!(
+                event,
+                WidgetEvent::TouchDown { .. }
+                    | WidgetEvent::TouchMotion { .. }
+                    | WidgetEvent::TouchUp { .. }
+                    | WidgetEvent::TouchCancel
+            );
+            if is_touch && !accepts_touch {
+                touch_dropped = true;
+                continue;
+            }
             match event {
                 WidgetEvent::Setting(setting) => {
                     apply_setting_update(&mut self.pending_system, &setting);
@@ -259,34 +275,26 @@ impl WidgetSlot {
                 }
                 WidgetEvent::ParamUpdate(params) => latest_params = Some(params),
                 WidgetEvent::TouchDown { x, y, .. } => {
-                    if accepts_touch {
-                        let (x, y) = wayland_touch_xy(x, y);
-                        self.runtime
-                            .push_touch_event(bmc_render::interaction::TouchEvent::Down { x, y });
-                        touch_dirty = true;
-                    }
+                    let (x, y) = wayland_touch_xy(x, y);
+                    self.runtime
+                        .push_touch_event(bmc_render::interaction::TouchEvent::Down { x, y });
+                    touch_dirty = true;
                 }
                 WidgetEvent::TouchMotion { x, y, .. } => {
-                    if accepts_touch {
-                        let (x, y) = wayland_touch_xy(x, y);
-                        self.runtime
-                            .push_touch_event(bmc_render::interaction::TouchEvent::Move { x, y });
-                        touch_dirty = true;
-                    }
+                    let (x, y) = wayland_touch_xy(x, y);
+                    self.runtime
+                        .push_touch_event(bmc_render::interaction::TouchEvent::Move { x, y });
+                    touch_dirty = true;
                 }
                 WidgetEvent::TouchUp { .. } => {
-                    if accepts_touch {
-                        self.runtime
-                            .push_touch_event(bmc_render::interaction::TouchEvent::Up);
-                        touch_dirty = true;
-                    }
+                    self.runtime
+                        .push_touch_event(bmc_render::interaction::TouchEvent::Up);
+                    touch_dirty = true;
                 }
                 WidgetEvent::TouchCancel => {
-                    if accepts_touch {
-                        self.runtime
-                            .push_touch_event(bmc_render::interaction::TouchEvent::Cancel);
-                        touch_dirty = true;
-                    }
+                    self.runtime
+                        .push_touch_event(bmc_render::interaction::TouchEvent::Cancel);
+                    touch_dirty = true;
                 }
                 event @ (WidgetEvent::Lifecycle(_) | WidgetEvent::Shutdown) => {
                     self.on_wayland_event(&event);
@@ -321,6 +329,9 @@ impl WidgetSlot {
             // `refresh_next_runtime_frame_after_delivery` picks up.
             self.runtime.deliver_touch();
         }
+        if touch_dropped {
+            self.log_dropped_touch_once();
+        }
         let released_buffers = self.surface.drain_released_buffers();
         if let Some(egl_target) = self
             .render_target
@@ -340,6 +351,18 @@ impl WidgetSlot {
             }
         }
         Ok(())
+    }
+
+    fn log_dropped_touch_once(&mut self) {
+        if self.touch_drop_logged {
+            return;
+        }
+        self.touch_drop_logged = true;
+        tracing::debug!(
+            peer_pid = self.peer_pid,
+            wasm = %self.wasm_basename,
+            "dropping touch events: widget does not export on_touch"
+        );
     }
 
     pub fn reclaim_retired_render_targets(&mut self, shared: &SharedHost) {
