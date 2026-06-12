@@ -250,11 +250,16 @@ mod wasm_glue {
             None
         };
         let has_data =
-            STATES.with(|s| matches!(s.borrow().get(row), Some(model::RowState::Resolved(_))));
+            STATES.with(|s| matches!(s.borrow().get(row), Some(model::RowState::Resolved { .. })));
         match row_transition(class, parsed.is_some(), has_data) {
             RowTransition::Store => {
                 let row_data = parsed.expect("BUG: Store implies a parsed row");
-                STATES.with(|s| s.borrow_mut()[row] = model::RowState::Resolved(row_data));
+                STATES.with(|s| {
+                    s.borrow_mut()[row] = model::RowState::Resolved {
+                        data: row_data,
+                        stale: false,
+                    };
+                });
                 // Lazily fetch the company name once the row first resolves and
                 // we don't already have it — staggering names behind prices.
                 let need_name = NAMES.with(|n| n.borrow().get(row).is_none_or(Option::is_none));
@@ -274,6 +279,15 @@ mod wasm_glue {
                 STATES.with(|s| s.borrow_mut()[row] = model::RowState::Failed);
             }
             RowTransition::Keep => {
+                // Keep is only reached on a failed refresh over held data —
+                // mark the row stale so the render says so.
+                STATES.with(|s| {
+                    if let Some(model::RowState::Resolved { stale, .. }) =
+                        s.borrow_mut().get_mut(row)
+                    {
+                        *stale = true;
+                    }
+                });
                 if class == FetchClass::Ok {
                     handle.retry();
                 }

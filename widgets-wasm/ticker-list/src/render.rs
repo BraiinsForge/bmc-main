@@ -136,16 +136,21 @@ fn right_col(price_str: String, change_str: String, trend: Color, band: &Band) -
     )
 }
 
-fn resolved_row(row_data: &TickerRow, name: Option<&str>, band: &Band) -> Node {
+fn resolved_row(row_data: &TickerRow, name: Option<&str>, stale: bool, band: &Band) -> Node {
     let trend = if row_data.is_positive() {
         TREND_UP
     } else {
         TREND_DOWN
     };
     let closed = row_data.is_closed_marked();
-    let company = name
-        .map(|n| truncate_name(n, band.company_chars))
-        .unwrap_or_default();
+    // A failed refresh takes over the company line: the held series is still
+    // worth showing, but the row must say it is no longer current.
+    let company = if stale {
+        "Stale data".to_owned()
+    } else {
+        name.map(|n| truncate_name(n, band.company_chars))
+            .unwrap_or_default()
+    };
     let left = col(
         props!(flex: 1.0, cross_align: CrossAlign::Start, gap: band.row_gap),
         [
@@ -168,16 +173,9 @@ fn resolved_row(row_data: &TickerRow, name: Option<&str>, band: &Band) -> Node {
 }
 
 /// A placeholder row: symbol (error-colored for not-found, gray otherwise) +
-/// a short status, a placeholder where the price goes (`N/A` for failures,
-/// `--` while loading), the whole row dimmed to 0.6 (deckfeeder
+/// a short status, price `N/A`, the whole row dimmed to 0.6 (deckfeeder
 /// `.ticker-item.error { opacity: 0.6 }`, reproduced as per-element alpha).
-fn placeholder_row(
-    symbol: &str,
-    status: &str,
-    price: &str,
-    symbol_color: Color,
-    band: &Band,
-) -> Node {
+fn placeholder_row(symbol: &str, status: &str, symbol_color: Color, band: &Band) -> Node {
     let sym = symbol_color.with_alpha(ERROR_ROW_ALPHA);
     let muted = SECONDARY.with_alpha(ERROR_ROW_ALPHA);
     let left = col(
@@ -190,7 +188,7 @@ fn placeholder_row(
     let right = col(
         props!(cross_align: CrossAlign::End),
         [text(
-            price,
+            "N/A",
             style!(size: band.price_font, weight: FontWeight::BOLD, color: muted, align: TextAlign::Right),
         )],
     );
@@ -216,12 +214,15 @@ fn slot(
         return empty_row();
     };
     match &states[index] {
-        RowState::Resolved(row_data) => {
-            resolved_row(row_data, names.get(index).and_then(Option::as_deref), band)
-        }
-        RowState::InputError => placeholder_row(symbol, "Not found", "N/A", ERROR, band),
-        RowState::Failed => placeholder_row(symbol, "Unavailable", "N/A", SECONDARY, band),
-        RowState::Loading => placeholder_row(symbol, "Loading\u{2026}", "--", SECONDARY, band),
+        RowState::Resolved { data, stale } => resolved_row(
+            data,
+            names.get(index).and_then(Option::as_deref),
+            *stale,
+            band,
+        ),
+        RowState::InputError => placeholder_row(symbol, "Not found", ERROR, band),
+        RowState::Failed => placeholder_row(symbol, "Unavailable", SECONDARY, band),
+        RowState::Loading => placeholder_row(symbol, "Loading\u{2026}", SECONDARY, band),
     }
 }
 

@@ -12,8 +12,9 @@ use prices::period::Candle;
 pub enum RowState {
     /// No price reply yet.
     Loading,
-    /// Price series parsed.
-    Resolved(TickerRow),
+    /// Price series parsed. `stale` is set when a later refresh fails, so the
+    /// held series is still drawn but the row says it is no longer current.
+    Resolved { data: TickerRow, stale: bool },
     /// 404/400 — symbol not found / invalid; the row's poll is disabled.
     InputError,
     /// Any failed reply (including 503) with nothing ever loaded for this
