@@ -2,6 +2,7 @@
 
 //! Widget system for discovering, spawning, and managing widget processes.
 
+mod capture;
 mod coordinator;
 mod discovery;
 mod manager;

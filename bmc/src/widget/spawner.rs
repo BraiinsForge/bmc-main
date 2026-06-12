@@ -14,12 +14,14 @@ pub enum SpawnError {
 }
 
 #[derive(Debug)]
-pub struct WaylandSpawner;
+pub struct WaylandSpawner {
+    capture_output: bool,
+}
 
 impl WaylandSpawner {
     #[must_use]
-    pub fn new() -> Self {
-        Self
+    pub fn new(capture_output: bool) -> Self {
+        Self { capture_output }
     }
 
     pub fn spawn(
@@ -33,9 +35,14 @@ impl WaylandSpawner {
         cmd.env("WAYLAND_DISPLAY", &env.wayland_display)
             .env("XDG_RUNTIME_DIR", xdg_runtime_dir);
 
+        let (stdout, stderr) = if self.capture_output {
+            (Stdio::piped(), Stdio::piped())
+        } else {
+            (Stdio::inherit(), Stdio::inherit())
+        };
         cmd.stdin(Stdio::null())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
+            .stdout(stdout)
+            .stderr(stderr)
             .kill_on_drop(true);
 
         let child = cmd.spawn().map_err(SpawnError::SpawnProcess)?;
@@ -47,11 +54,5 @@ impl WaylandSpawner {
         );
 
         Ok(child)
-    }
-}
-
-impl Default for WaylandSpawner {
-    fn default() -> Self {
-        Self
     }
 }

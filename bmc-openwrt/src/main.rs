@@ -58,6 +58,7 @@ async fn main() -> Result<()> {
         widgets_paths: args
             .widgets_paths
             .unwrap_or_else(|| vec![PathBuf::from("/run/current-profile/lib/bmc-widgets")]),
+        capture_widget_output: args.log_to_file,
         ..Configuration::default()
     };
 

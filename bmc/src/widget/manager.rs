@@ -29,7 +29,7 @@ pub struct WidgetManager {
 }
 
 impl WidgetManager {
-    pub async fn init(widgets_paths: Vec<PathBuf>) -> Self {
+    pub async fn init(widgets_paths: Vec<PathBuf>, capture_widget_output: bool) -> Self {
         info!("initializing widget manager");
         for path in &widgets_paths {
             info!(path = %path.display(), "scanning widget directory");
@@ -50,7 +50,7 @@ impl WidgetManager {
             );
         }
 
-        let spawner = WaylandSpawner::new();
+        let spawner = WaylandSpawner::new(capture_widget_output);
 
         Self {
             registry,
@@ -92,10 +92,30 @@ impl WidgetManager {
         let xdg_runtime_dir =
             std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| DEFAULT_XDG_RUNTIME_DIR.to_owned());
 
-        let child = self.spawner.spawn(widget, &env, &xdg_runtime_dir)?;
+        let mut child = self.spawner.spawn(widget, &env, &xdg_runtime_dir)?;
         let pid = child.id().ok_or_else(|| {
             SpawnError::SpawnProcess(Error::other("spawned child has no pid (already exited?)"))
         })?;
+
+        let short_instance_id = env
+            .instance_id
+            .get(..8)
+            .unwrap_or(&env.instance_id)
+            .to_owned();
+        if let Some(stdout) = child.stdout.take() {
+            let name = widget.manifest.name.clone();
+            let instance = short_instance_id.clone();
+            tokio::spawn(async move {
+                super::capture::forward_widget_output(stdout, &name, &instance, pid).await;
+            });
+        }
+        if let Some(stderr) = child.stderr.take() {
+            let name = widget.manifest.name.clone();
+            let instance = short_instance_id;
+            tokio::spawn(async move {
+                super::capture::forward_widget_output(stderr, &name, &instance, pid).await;
+            });
+        }
 
         self.children
             .write()

@@ -7,18 +7,24 @@ use tracing::error;
 
 const BMC_LOG_PATH: &str = "/var/log/bmc/bmc.log";
 
-/// Initialize tracing via [`bmc_log`]: a rotated log file with
-/// `log_to_file`, stderr otherwise.
+const WIDGETS_LOG_PATH: &str = "/var/log/bmc/widgets.log";
+
+/// Initialize tracing via [`bmc_log`]: rotated log files with
+/// `log_to_file` (bmc's own events plus captured widget output),
+/// stderr otherwise.
 ///
 /// # Panics
 ///
-/// Panics when `log_to_file` is set but the log file cannot be opened:
+/// Panics when `log_to_file` is set but the log files cannot be opened:
 /// silently falling back to stderr would stream unbounded logs into
 /// syslog via procd, which file logging exists to avoid.
 pub fn init(log_to_file: bool) {
     if log_to_file {
-        bmc_log::init_file(Path::new(BMC_LOG_PATH))
-            .expect("BUG: --log-to-file given but the log file cannot be opened");
+        bmc_log::init_file_with_widget_capture(
+            Path::new(BMC_LOG_PATH),
+            Path::new(WIDGETS_LOG_PATH),
+        )
+        .expect("BUG: --log-to-file given but the log files cannot be opened");
     } else {
         bmc_log::init_console();
     }

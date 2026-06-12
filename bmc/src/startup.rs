@@ -178,7 +178,8 @@ where
             }
         });
 
-        let widget_manager = WidgetManager::init(config.widgets_paths.clone()).await;
+        let widget_manager =
+            WidgetManager::init(config.widgets_paths.clone(), config.capture_widget_output).await;
         let widget_registry = widget_manager.registry();
         let widget_coordinator = Arc::new(Coordinator::new(
             widget_manager,
@@ -301,6 +302,7 @@ pub struct Configuration {
     pub sounds_dir: PathBuf,
     pub crontab_path: Option<PathBuf>,
     pub widgets_paths: Vec<PathBuf>,
+    pub capture_widget_output: bool,
 }
 
 impl Configuration {
@@ -328,6 +330,7 @@ impl Default for Configuration {
             sounds_dir: PathBuf::from(Self::SOUNDS_DIR),
             crontab_path: Some(Self::CRONTAB_PATH.into()),
             widgets_paths: vec![],
+            capture_widget_output: false,
         }
     }
 }
