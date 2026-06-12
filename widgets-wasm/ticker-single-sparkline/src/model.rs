@@ -49,7 +49,7 @@ impl Series {
 // Price/percent formatting is shared with ticker-list, so it lives in
 // `lib/prices::format`. Re-exported here so the render path's call sites stay
 // unchanged.
-pub use prices::format::{change_text, fraction_digits};
+pub use prices::format::{MIN_PRICE, PricePrecision, change_text, price_precision};
 
 /// The currency icon: a glyph and a representative solid disc color. `None` for
 /// `^`-prefixed indices (which deckfeeder renders without an icon).

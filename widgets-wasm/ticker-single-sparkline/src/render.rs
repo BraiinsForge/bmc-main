@@ -10,7 +10,9 @@
 use bmc_wasm_sdk::*;
 
 use crate::display::{SizeBand, band_for};
-use crate::model::{IconStyle, Series, change_text, fraction_digits, icon_for};
+use crate::model::{
+    IconStyle, MIN_PRICE, PricePrecision, Series, change_text, icon_for, price_precision,
+};
 use prices::chart;
 
 const BACKGROUND: Color = BLACK;
@@ -145,7 +147,14 @@ pub fn series_view(series: &Series, symbol: &str, period_label: &str, ws: Widget
         ));
         draws.push(path!(line, stroke: CHART_STROKE, color: trend.with_alpha(alpha)));
     }
-    let price = format_number!(series.current, fraction_digits(series.current));
+    let price = match price_precision(symbol, series.current) {
+        PricePrecision::Fraction(digits) => format_number!(series.current, digits),
+        PricePrecision::BelowMin => {
+            let mut out = String::from("<");
+            out.push_str(&format_number!(MIN_PRICE, 6));
+            out
+        }
+    };
     draws.push(Draw::text(
         w / 2.0,
         h / 2.0 - header_h,
