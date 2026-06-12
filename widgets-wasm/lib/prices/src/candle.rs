@@ -40,8 +40,13 @@ pub trait JsonLookup {
     fn f64(&self, path: &str) -> Option<f64>;
 }
 
-/// Cap on parsed candles, guarding a malformed/oversized response.
+/// Cap on parsed candles, guarding a malformed/oversized response. When a
+/// response carries more, the newest bars are kept.
 pub const MAX_CANDLES: usize = 512;
+
+/// Hard bound on parse-loop iterations, guarding unbounded work on a
+/// malformed response.
+const PARSE_GUARD: usize = 4096;
 
 /// Parse the Nexus envelope `{ data: { instrument, candle_size, candles: [{ t,
 /// o, h, l, c, v? }] }, ttl_secs }` into ascending [`Candles`]. `t` is divided
@@ -58,7 +63,7 @@ pub fn parse_candles(json: &impl JsonLookup) -> Option<Candles> {
 
     let mut bars = Vec::new();
     let mut path = String::new();
-    for i in 0..MAX_CANDLES {
+    for i in 0..PARSE_GUARD {
         candle_path(&mut path, i, "t");
         let Some(t_ms) = json.i64(&path) else {
             // End of the contiguous candle array.
@@ -86,6 +91,10 @@ pub fn parse_candles(json: &impl JsonLookup) -> Option<Candles> {
             close,
             volume,
         });
+    }
+
+    if bars.len() > MAX_CANDLES {
+        bars.drain(..bars.len() - MAX_CANDLES);
     }
 
     if bars.is_empty() {
@@ -264,13 +273,24 @@ mod tests {
     }
 
     #[test]
-    fn caps_at_max_candles() {
+    fn cap_keeps_the_newest_candles() {
+        // An oversized response must drop the oldest bars, not the live
+        // tail: the chart and the current price come from the series end.
         let mut json = MapJson::default();
         for i in 0..(MAX_CANDLES + 50) {
             json.bar(i, i as i64 * 1_000, 1.0);
         }
         let candles = parse_candles(&json).expect("capped bars");
         assert_eq!(candles.bars.len(), MAX_CANDLES);
+        assert_eq!(candles.bars[0].t_secs, 50);
+        assert_eq!(
+            candles
+                .bars
+                .last()
+                .expect("BUG: just asserted non-empty")
+                .t_secs,
+            i64::try_from(MAX_CANDLES + 50 - 1).expect("BUG: small constant")
+        );
     }
 
     #[test]
