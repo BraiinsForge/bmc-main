@@ -81,7 +81,7 @@ mod tests {
     fn resource_path_for_a_crypto_pair() {
         assert_eq!(resource_path("BTC-USD", Period::D7), "prices/7d/1h/BTC/USD");
         assert_eq!(
-            resource_path("BTC-USD", Period::D30),
+            resource_path("BTC-USD", Period::Mo1),
             "prices/1mo/4h/BTC/USD"
         );
         assert_eq!(resource_path("AAPL", Period::D1), "prices/1d/15m/AAPL");
