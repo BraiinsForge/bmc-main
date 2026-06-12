@@ -62,6 +62,12 @@ no-fmt-in-wasm:
   script:
     - nix build -L .#checks.x86_64-linux.no-fmt-in-wasm
 
+clippy-wasm-widgets:
+  stage: lint
+  needs: []
+  script:
+    - nix build -L .#checks.x86_64-linux.clippy-wasm-widgets
+
 "docs: wasm":
   stage: lint
   needs: []
@@ -151,6 +157,12 @@ frontend-test:
   needs: []
   script:
     - nix build .#checks.x86_64-linux.test
+
+test-wasm-widgets:
+  stage: check
+  needs: []
+  script:
+    - nix build -L .#checks.x86_64-linux.test-wasm-widgets
 
 bmc-virt-harness-check:
   stage: check

@@ -72,6 +72,18 @@ in
     package = "bmc-wasm-sdk";
   };
 
+  # Clippy over the widgets-wasm workspace at the wasm32 target — enforces
+  # the lint gate from docs/devel/wasm-widgets/best-practices.md.
+  # Lib/bin targets only (no --all-targets): widget test code is host-only
+  # by design and cannot compile for wasm32. crane bakes the clippy flags
+  # into buildPhase at eval time, so strip the flag from the script itself.
+  clippy-wasm-widgets = profiles.wasm-widgets-debug.clippy.overrideAttrs (old: {
+    buildPhase = builtins.replaceStrings [ " --all-targets" ] [ "" ] old.buildPhase;
+  });
+
+  # Widget unit tests, compiled and run on the host target.
+  test-wasm-widgets = profiles.wasm-widgets-host.nextest;
+
   # Aggregate check — depends on every per-widget regression derivation
   # so nix's scheduler runs them in parallel. The per-widget derivations
   # are internal and not exposed individually under flake.checks.

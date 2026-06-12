@@ -118,6 +118,13 @@ in
   wasm-examples-debug = mkWasmDebug workspaces.wasmExamples;
   wasm-widgets-release = mkWasmRelease workspaces.wasmWidgets;
   wasm-widgets-debug = mkWasmDebug workspaces.wasmWidgets;
+  # Host-target profile for the widgets-wasm workspace — widget unit
+  # tests run on the host, not under a wasm runtime.
+  wasm-widgets-host = workspaces.wasmWidgets.mkBuildProfile {
+    minimalDeps = false;
+    rustProfile = "dev";
+    inherit pkgs;
+  };
   # glibc profiles for bmc-virt (x86_64, dynamically linked)
   x86_64-release = mkX86 { minimalDeps = true; rustProfile = "release"; };
   x86_64-debug = mkX86 { minimalDeps = false; rustProfile = "dev"; };
