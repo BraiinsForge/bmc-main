@@ -21,6 +21,11 @@ const TREND_DOWN: Color = Color::from_rgb(0xfa, 0x4d, 0x56);
 const BADGE_BG_ALPHA: f32 = 0.15;
 const CHART_STROKE: f32 = 2.0;
 const CHART_INSET: f32 = 2.0;
+/// The fill under the sparkline is a faint wash of the trend color, fading
+/// from 15% at the line's peak to a 2% tint at the bottom edge — matching the
+/// reference design previews.
+const CHART_FILL_TOP_ALPHA: f32 = 0.15;
+const CHART_FILL_BOTTOM_ALPHA: f32 = 0.02;
 /// The sparkline band fills the bottom fraction of the tile, the price number
 /// floating over it — matching the legacy bitcoin ticker's `0.6 × height` graph.
 const CHART_HEIGHT_FRACTION: f32 = 0.6;
@@ -131,7 +136,13 @@ pub fn series_view(series: &Series, symbol: &str, period_label: &str, ws: Widget
         let mut area = line.clone();
         area.push((w, canvas_h));
         area.push((0.0, canvas_h));
-        draws.push(fill!(area, linear: (trend.with_alpha(alpha), trend.with_alpha(0.0))));
+        draws.push(fill!(
+            area,
+            linear: (
+                trend.with_alpha(CHART_FILL_TOP_ALPHA * alpha),
+                trend.with_alpha(CHART_FILL_BOTTOM_ALPHA * alpha)
+            )
+        ));
         draws.push(path!(line, stroke: CHART_STROKE, color: trend.with_alpha(alpha)));
     }
     let price = format_number!(series.current, fraction_digits(series.current));
