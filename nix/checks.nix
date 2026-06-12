@@ -12,13 +12,6 @@ let
   #   - that widget's source dir only (per-widget src cache key)
   #   - that widget's docker-spider-narrowed wasm (per-widget wasm rebuild)
   #   - the capture wrapper for env + binary
-  #
-  # Captures land in the build sandbox CWD at ./captures. On regression
-  # `wasm-capture verify` exits non-zero and kills the derivation (set -e
-  # is implicit in nix builders); $out is destroyed, but the CI runner
-  # has `keep-failed = true` so the sandbox survives at
-  # /tmp/nix-build-wasm-regression-<name>.drv-* for CI to scrape (see
-  # .gitlab-ci.yml).
   mkWidgetCheck = name: entry: pkgs.runCommand "wasm-regression-${name}"
     {
       nativeBuildInputs = [ capture.package ];

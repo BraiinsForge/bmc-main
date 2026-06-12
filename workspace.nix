@@ -422,6 +422,8 @@ let
   specialPackages = {
     workspace-deps = bmc.profiles.fast.deps;
     inherit (bmc.profiles.ci) build clippy test nextest;
+    workspace-deps-armv7 = bmc.profiles.armv7-glibc-release.deps;
+    nextest-armv7 = bmc.profiles.armv7-glibc-release.nextest;
   } // (
     # bmc-openwrt + bmc-virt helper packages for x86_64 and aarch64.
     # bmc-openwrt needs autopatchelf for compositor runtime deps (dlopen'd).

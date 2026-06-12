@@ -139,12 +139,11 @@ development.
 nix build --keep-failed -L .#checks.x86_64-linux.wasm-regression-blockheight
 ```
 
-What CI runs. On regression the build sandbox is preserved at `/tmp/nix-build-wasm-regression-blockheight.drv-*/` with
-the full `captures/` directory (HTML report, A/B images, diff overlays). Open `captures/report.html` in a browser to
-inspect what changed.
+What CI runs for a single widget. On regression, inspect the build log summary. Use the direct `just wasm::verify` loop
+above when you need the generated capture files for inspection.
 
-The aggregate `nix build .#checks.x86_64-linux.wasm-regression` runs every opted-in widget in parallel; use it before
-pushing if you've touched shared rendering code.
+The aggregate `nix build -L --keep-going .#checks.x86_64-linux.wasm-regression` matches CI and runs every opted-in
+widget in parallel; use it before pushing if you've touched shared rendering code.
 
 ## Updating After An Intentional Visual Change
 

@@ -7,9 +7,13 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     nixlib.url = "git+ssh://git@gitlab.ii.zone/nix/lib";
+    ci-tools.url = "git+ssh://git@gitlab.ii.zone/nix/ci-tools.git";
+    ci-tools.inputs.nixpkgs.follows = "nixpkgs";
+    ci-tools.inputs.flake-utils.follows = "flake-utils";
+    ci-tools.inputs.nixlib.follows = "nixlib";
   };
 
-  outputs = { self, nixpkgs, flake-utils, nixlib, ... }:
+  outputs = { self, nixpkgs, flake-utils, nixlib, ci-tools, ... }:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ] (localSystem:
       let
         pkgs = import nixpkgs {
@@ -141,7 +145,7 @@
             # Harness has its own formatter config (bmc-virt/harness/pyproject.toml)
             "bmc-virt/harness/**/*.py"
             # yamlfmt canonicalises folded scalars to a single line (collapsing
-            # the readable multi-line `>-` form used for WORKSPACE_LINTS_IGNORE_PATHS).
+            # the readable multi-line `>-` form used for `workspace_lints_ignore`).
             # Skip entirely; CI YAML is stable enough to hand-format.
             ".gitlab-ci.yml"
           ];
@@ -150,11 +154,16 @@
         legacyPackages = workspace.legacyPackages // {
           inherit pkgs;
           inherit (workspace.bmc) armv7-nixpkgs;
+          ci-tools = ci-tools.packages.${localSystem};
         };
 
-        checks = self.packages.${localSystem} // workspace.checks // checks // {
-          content = content-checks;
-        };
+        checks =
+          # The armv7 cross outputs are CI-only: keep them out of
+          # `nix flake check` (full armv7 workspace build + qemu test run).
+          builtins.removeAttrs self.packages.${localSystem} [ "workspace-deps-armv7" "nextest-armv7" ]
+          // workspace.checks // checks // {
+            content = content-checks;
+          };
 
         bmc = workspace.bmc;
 
@@ -162,6 +171,16 @@
           wasm-capture = capture.package;
           wasm-examples = capture.wasmExamples;
           wasm-widgets = capture.wasmWidgetsBundle;
+          verify-shared-crates = pkgs.writeShellApplication {
+            name = "verify-shared-crates";
+            runtimeInputs = with pkgs; [ coreutils git getopt jq ];
+            text = ''exec ${./scripts/verify_crates.sh} "$@"'';
+          };
+          check-binary-lfs = pkgs.writeShellApplication {
+            name = "check-binary-lfs";
+            runtimeInputs = with pkgs; [ file gawk git ];
+            text = ''exec ${./scripts/check-binary-lfs.sh} "$@"'';
+          };
         };
 
         apps.fmt-svg = {

@@ -18,8 +18,7 @@ internals: capture pipeline, nix wrapper, capture binary, fixture format, replay
 The `wasm-regression` job in `.gitlab-ci.yml` runs on every MR pipeline and blocks on failure. Manual trigger is
 available on other pipelines (advisory).
 
-On failure, the full `captures/` directory (HTML report + diff images) is published as a browsable artifact with 7-day
-TTL.
+On failure, inspect the CI log for the regression summary.
 
 ### Nix package
 

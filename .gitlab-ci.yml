@@ -1,114 +1,160 @@
 # Copyright (C) 2025  Braiins Systems s.r.o.
 
+include:
+  - project: "nix/ci-tools"
+    ref: &ci-tools-rev d74f0f33c361490b7ecb6d5e4f200de4d481ae34 # update using this command: `nix run .#ci-tools.update`
+    file: "ci.yml"
+    inputs:
+      rev: *ci-tools-rev
+      # Paths excluded from the host workspace's clippy/fmt sweep:
+      # vendored upstream forks (linted upstream) and separate cargo
+      # workspaces (wasm widgets — different target, own lint configs).
+      workspace_lints_ignore: >-
+        ./bmc-shared/ii-net
+        ./bmc-shared/ii-net-drv
+        ./bmc-shared/ii-dns
+        ./bmc-wasm-runtime/examples
+        ./widgets-wasm
+      # shellcheck: redundant with content-checks (braiinschk shell=true).
+      # unused-deps: cargo-machete needs per-crate triage first.
+      disabled_jobs: ["shellcheck", "unused-deps"]
+
 stages:
-  - essentials
+  - lint
   - dependencies
   - check
   - regression
   - apps
 
 ##################################
-######## Essentials Stage ########
+########## Lint Stage ############
 ##################################
-variables:
-  CI_TOOLS_REV: c75e453c0e3fd5fe167a9437b86e48b54c2aa81c # This is not accessible inside "include"
-  # Paths excluded from the host workspace's clippy/fmt sweep:
-  # vendored upstream forks (linted upstream) and separate cargo
-  # workspaces (wasm widgets — different target, own lint configs).
-  WORKSPACE_LINTS_IGNORE_PATHS: >-
-    ./bmc-shared/ii-net
-    ./bmc-shared/ii-net-drv
-    ./bmc-shared/ii-dns
-    ./bmc-wasm-runtime/examples
-    ./widgets-wasm
 
-include:
-  - project: "nix/ci-tools"
-    ref: c75e453c0e3fd5fe167a9437b86e48b54c2aa81c
-    file:
-      - ".essentials.yml"
-      - ".dependencies.yml"
-      - ".check.yml"
+# Override the included fmt job's script: the upstream check-fmt tool
+# runs git with a sealed PATH that lacks git-lfs, which breaks
+# `git diff` in this LFS-enabled repo.
+fmt:
+  script:
+    - nix fmt --no-write-lock-file -- --no-cache --verbose
+    - nix shell .#pkgs.git .#pkgs.git-lfs --command git diff --exit-code --color
 
 verify-shared-crates:
-  extends: .nix
-  stage: essentials
-  script:
-    - nix-shell -p jq getopt --run "./scripts/verify_crates.sh --summary"
-
-###################################
-######## Frontend Checks ##########
-###################################
-
-frontend-lint:
-  extends: .nix
-  stage: check
+  stage: lint
   needs: []
   script:
-    - nix build .#checks.x86_64-linux.lint
+    - nix run .#verify-shared-crates -- --summary
 
-frontend-test:
-  extends: .nix
-  stage: check
+##################################
+###### Dependencies Stage ########
+##################################
+
+workspace-deps:
+  stage: dependencies
   needs: []
   script:
-    - nix build .#checks.x86_64-linux.test
+    - nix build .#workspace-deps --no-link
+
+workspace-deps-armv7:
+  stage: dependencies
+  needs: []
+  script:
+    - nix build .#workspace-deps-armv7 --no-link
 
 ###################################
 ########## Cargo Checks ###########
 ###################################
 
+build:
+  stage: check
+  needs:
+    - workspace-deps
+  script:
+    - nix build .#build --no-link
+
+clippy:
+  stage: check
+  needs:
+    - workspace-deps
+  script:
+    - nix build .#clippy --no-link
+
+test:
+  stage: check
+  needs:
+    - workspace-deps
+  script:
+    - nix build .#nextest --no-link
+
+test-armv7:
+  stage: check
+  needs:
+    - workspace-deps-armv7
+  # Full-workspace tests under qemu-arm are unproven (EGL/compositor
+  # tests have no software GL stack in this profile yet).
+  allow_failure: true
+  script:
+    - nix build .#nextest-armv7 --no-link
+
 cargo-deny:
-  extends: .nix
   stage: check
   needs: []
   script:
     - nix build -L .#checks.x86_64-linux.cargo-deny
 
 cargo-deny-wasm:
-  extends: .nix
   stage: check
   needs: []
   script:
     - nix build -L .#checks.x86_64-linux.cargo-deny-wasm
 
 no-fmt-in-wasm:
-  extends: .nix
   stage: check
   needs: []
   script:
     - nix build -L .#checks.x86_64-linux.no-fmt-in-wasm
 
 "docs: wasm":
-  extends: .nix
   stage: check
   needs: []
   script:
     - nix build -L .#checks.x86_64-linux.docs-wasm
 
 content-checks:
-  extends: .nix
   stage: check
   needs: []
   script:
     - nix build -L .#checks.x86_64-linux.content
 
 binary-lfs-check:
-  extends: .nix
   stage: check
   needs: []
   variables:
     # `git merge-base` needs to see master; default GitLab depth (50) is shallow.
     GIT_DEPTH: 0
   script:
-    - nix-shell -p git --run "scripts/check-binary-lfs.sh"
+    - nix run .#check-binary-lfs
+
+###################################
+######## Frontend Checks ##########
+###################################
+
+frontend-lint:
+  stage: check
+  needs: []
+  script:
+    - nix build .#checks.x86_64-linux.lint
+
+frontend-test:
+  stage: check
+  needs: []
+  script:
+    - nix build .#checks.x86_64-linux.test
 
 ###################################
 ########## Python Checks ##########
 ###################################
 
 python-lint:
-  extends: .nix
   stage: check
   needs: []
   script:
@@ -119,8 +165,8 @@ python-lint:
 ###################################
 
 bmc-virt-harness-check:
-  extends: .nix
   stage: check
+  needs: []
   script:
     - cd bmc-virt/harness && nix develop --command just validate
 
@@ -129,38 +175,18 @@ bmc-virt-harness-check:
 ######################################
 
 wasm-regression:
-  extends: .nix
   stage: regression
   needs: []
+  tags: [nix]
   script:
-    # Builders write captures to ./captures; on regression the derivation
-    # fails and the sandbox at /tmp/nix-build-wasm-regression-<widget>.drv-N
-    # is preserved by --keep-failed (belt + suspenders with the runner's
-    # `keep-failed = true`). --keep-going builds every widget so the
-    # artifact bundle covers all regressions, not just the first.
-    - nix build --keep-failed -L --keep-going .#checks.x86_64-linux.wasm-regression || rc=$?
-    - |
-      mkdir -p captures
-      for d in /tmp/nix-build-wasm-regression-*.drv-*; do
-        [ -d "$d/captures" ] || continue
-        base=$(basename "$d")
-        name=${base#nix-build-wasm-regression-}
-        name=${name%.drv-*}
-        cp -r "$d/captures" "captures/$name"
-      done
-      exit "${rc:-0}"
-  artifacts:
-    when: on_failure
-    paths:
-      - captures/**/*
-    expire_in: 7 days
+    - nix build -L --keep-going .#checks.x86_64-linux.wasm-regression
 
 ############################
 ######## Apps Stage ########
 ############################
 
 .app:
-  extends: [.nix, .artifacts]
+  extends: .artifacts
   stage: apps
   needs: []
   when: manual

@@ -2,7 +2,6 @@ mod manifest 'bmc-widget-manifest/justfile'
 mod virt 'bmc-virt/justfile'
 mod wasm 'bmc-wasm-runtime/justfile'
 
-CI_TOOLS_REV := "c75e453c0e3fd5fe167a9437b86e48b54c2aa81c"
 NIX_SYSTEM := "$(nix eval --impure --raw --expr builtins.currentSystem)"
 
 # Auto-enter the dev shell for recipes that link against system libs
@@ -49,11 +48,6 @@ clippy:
 # Run nextest for a single crate with mem-box caps (auto-enters nix shell).
 test crate:
     {{ NIX_DEV }} scripts/mem-box.sh cargo nextest run -p {{ crate }}
-
-# Pedantic rust diff vs master — stricter than clippy (mem-box caps memory).
-rust-pedantic:
-    scripts/mem-box.sh nix run "git+ssh://git@gitlab.ii.zone/nix/ci-tools?rev={{ CI_TOOLS_REV }}#check-rust-diff" \
-      "$(git merge-base origin/master HEAD)" HEAD
 
 # Compress images under the given paths (default: cwd).
 fmt-images *PATHS:
