@@ -348,8 +348,8 @@ verify_crate() {
 
 # Main verification logic
 main() {
-    [[ ! $(which jq) ]] && echo "jq is missing!" && exit 1
-    [[ ! $(which getopt) ]] && echo "getopt is missing!" && exit 1
+    command -v jq >/dev/null || { echo "jq is missing!" && exit 1; }
+    command -v getopt >/dev/null || { echo "getopt is missing!" && exit 1; }
 
     parse_args "$@"
 
