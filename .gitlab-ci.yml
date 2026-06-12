@@ -176,7 +176,8 @@ bmc-virt-harness-check:
 
 wasm-regression:
   stage: regression
-  needs: []
+  needs:
+    - workspace-deps
   tags: [nix]
   script:
     - nix build -L --keep-going .#checks.x86_64-linux.wasm-regression
