@@ -25,6 +25,11 @@ const BORDER: Color = Color::from_rgb(0x52, 0x52, 0x52);
 const BADGE_BG_ALPHA: f32 = 0.15;
 const CHART_STROKE: f32 = 2.0;
 const CHART_INSET: f32 = 2.0;
+/// The fill under the sparkline is a faint wash of the trend color, fading
+/// from 15% at the line's peak to a 2% tint at the bottom edge — matching the
+/// reference design previews.
+const CHART_FILL_TOP_ALPHA: f32 = 0.15;
+const CHART_FILL_BOTTOM_ALPHA: f32 = 0.02;
 const CLOSED_ALPHA: f32 = 0.4;
 const ERROR_ROW_ALPHA: f32 = 0.6;
 const CLOSED_MARKER_SCALE: f32 = 0.4;
@@ -91,7 +96,13 @@ fn sparkline_node(series: &[f64], trend: Color, closed: bool, band: &Band) -> No
         canvas(
             props!(width: w, height: h),
             [
-                fill!(area, linear: (color.with_alpha(alpha), color.with_alpha(0.0))),
+                fill!(
+                    area,
+                    linear: (
+                        color.with_alpha(CHART_FILL_TOP_ALPHA * alpha),
+                        color.with_alpha(CHART_FILL_BOTTOM_ALPHA * alpha)
+                    )
+                ),
                 path!(line, stroke: CHART_STROKE, color: color.with_alpha(alpha)),
             ],
         )
