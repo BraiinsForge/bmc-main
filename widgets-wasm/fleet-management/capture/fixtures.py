@@ -231,7 +231,7 @@ def layout_lines():
 #
 # The fleet table's four model groups fit one page in every band, so the
 # pager only exists in the NerdQAxe++ detail view: ten device rows against
-# 7 (full) / 8 (large) rows per page. Drill into that group and flip to
+# 6 (full) / 7 (large) rows per page. Drill into that group and flip to
 # page 2 so the captures cover the detail table, the Back button, the
 # friendly-name mappings and both pager states. Details click IDs carry
 # the family index and the untruncated group label (see

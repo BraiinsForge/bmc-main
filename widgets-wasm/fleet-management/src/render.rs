@@ -46,7 +46,7 @@ const NOT_OK_COLOR: Color = RED_60;
 
 const LABEL_FONT: u32 = 18;
 const VALUE_FONT: u32 = 28;
-const ROW_FONT: u32 = 24;
+const ROW_FONT: u32 = 26;
 // The hero hashrate is smaller in the narrow Large band so a large fleet total
 // still fits beside the counts and title without wrapping.
 const HERO_FONT_FULL: u32 = 48;
@@ -80,36 +80,35 @@ const ROW_GAP: f32 = 16.0;
 // roughly constant slack, so left-aligned values land at evenly spaced
 // positions for typical data (a much shorter value leaves more trailing space).
 // The widths also budget for the right-aligned pager cluster on the header row
-// (48 + 8 + ~28 + 8 + 48 ≈ 140 px plus its 16 px column gap); the trailing
-// details button flexes across each data row's remainder. The Large model
-// column relies on code-side truncation.
-const COL_HASHRATE: f32 = 140.0;
-const COL_MODEL_FULL: f32 = 300.0;
-const COL_MODEL_LARGE: f32 = 165.0;
-const COL_POWER: f32 = 85.0;
-const COL_EFF: f32 = 150.0;
-const COL_TEMP: f32 = 140.0;
-const COL_COUNTS: f32 = 128.0;
+// (48 + 8 + ~28 + 8 + 48 ≈ 140 px plus its 16 px column gap); each data row
+// right-aligns a labeled Details button (~105 px) into the same remainder.
+// The Large model column relies on code-side truncation.
+const COL_HASHRATE: f32 = 150.0;
+const COL_MODEL_FULL: f32 = 280.0;
+const COL_MODEL_LARGE: f32 = 160.0;
+const COL_POWER: f32 = 90.0;
+const COL_EFF: f32 = 155.0;
+const COL_TEMP: f32 = 155.0;
+const COL_COUNTS: f32 = 136.0;
 // The Large band fits only three columns into 638px, so the model and status
 // columns share a tight budget. The status content is left-packed with a narrow
 // tail, so the model borrows that slack here to hold longer model names without
 // wrapping; the wide Full band keeps the roomier `COL_COUNTS`. The header
-// row packs 140 + 165 + 72 columns, the gaps, and the ~140 px pager cluster
-// into ~565 of the 590 px content box.
-const COL_COUNTS_LARGE: f32 = 72.0;
+// row packs 150 + 160 + 70 columns, four gaps (the spacer doubles the
+// trailing one), and the ~140 px pager cluster into ~585 of the 590 px
+// content box.
+const COL_COUNTS_LARGE: f32 = 70.0;
 
-// The detail view's Name column in the Large band: no details column frees
-// width the fleet table's model column lacks, but the header row must still
-// hold the pager cluster (~140 px) — 140 + 164 + 72 + 140 + 4 gaps = 580 of
-// the 590 px content box.
-const COL_NAME_LARGE: f32 = 164.0;
-const NAME_CHARS_FULL: usize = 22;
-const NAME_CHARS_LARGE: usize = 14;
+// The detail view's Name column in the Large band shares the fleet table's
+// header budget.
+const COL_NAME_LARGE: f32 = 160.0;
+const NAME_CHARS_FULL: usize = 18;
+const NAME_CHARS_LARGE: usize = 10;
 
 // Character budgets for the model column; longer names are cut with an
 // ellipsis so rows never wrap (the engine cannot ellipsize).
-const MODEL_CHARS_FULL: usize = 22;
-const MODEL_CHARS_LARGE: usize = 12;
+const MODEL_CHARS_FULL: usize = 18;
+const MODEL_CHARS_LARGE: usize = 10;
 
 fn value_string(rendered: Rendered) -> String {
     match rendered.unit {
@@ -451,16 +450,12 @@ fn breakdown_row(group: &GroupSummary, variant: SizeVariant, cols: &TableColumns
         ));
     }
     cells.push(counts_cell(cols.counts_w, group));
-    cells.push(col(
-        props!(flex: 1.0),
-        [button!(
-            details_click_id(group.family, &group.label),
-            "",
-            style: Ghost,
-            size: Normal,
-            icon: ensure_registered(&CHEVRON_RIGHT),
-            fill: true
-        )],
+    cells.push(spacer(1.0));
+    cells.push(button!(
+        details_click_id(group.family, &group.label),
+        "Details",
+        style: Tertiary,
+        size: Large
     ));
     row(props!(gap: ROW_GAP, cross_align: CrossAlign::Center), cells)
 }
