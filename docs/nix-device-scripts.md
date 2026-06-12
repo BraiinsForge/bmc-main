@@ -55,7 +55,7 @@ IPv4 address, it is used as the device IP; otherwise the script uses `DEVICE_IP`
 ```sh
 # To deploy our Deck packages
 ./scripts/nix-deploy.sh '.#deck-packages.core' 192.168.1.2
-./scripts/nix-deploy.sh '.#deck-packages.digital-clock' 192.168.1.2
+./scripts/nix-deploy.sh '.#deck-packages.flip-clock' 192.168.1.2
 ./scripts/nix-deploy.sh '.#deck-packages.core' '.#deck-packages.pomodoro' 192.168.1.2
 # To deploy packages from nixpkgs
 ./scripts/nix-deploy.sh '.#armv7-nixpkgs.strace' 192.168.1.2
@@ -97,7 +97,7 @@ The device must already have the packages deployed via `nix-deploy.sh` (so the t
 ./scripts/nix-cargo-deploy.sh compositor 192.168.1.2
 
 # Deploy a native widget by name (built for armv7-unknown-linux-gnueabihf)
-./scripts/nix-cargo-deploy.sh widget digital-clock 192.168.1.2
+./scripts/nix-cargo-deploy.sh widget flip-clock 192.168.1.2
 DEVICE_IP=192.168.1.2 ./scripts/nix-cargo-deploy.sh widget flip-clock
 ```
 

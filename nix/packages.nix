@@ -55,21 +55,6 @@ wasmWidgetPackages // {
     upgrade_strategy = "reboot";
     install_strategy = null;
   };
-  digital-clock = {
-    pkg = mkWidgetPackage {
-      name = "digital-clock";
-      crate = crates.widget-digital-clock;
-      inherit profile;
-      runtimeDeps = widgetRuntimeDeps.slint;
-
-      features = [ "standalone" ];
-    };
-    version = "1.0.0";
-    category = "widget";
-    description = "Digital clock widget";
-    upgrade_strategy = null;
-    install_strategy = null;
-  };
   flip-clock = {
     pkg = mkWidgetPackage {
       name = "flip-clock";

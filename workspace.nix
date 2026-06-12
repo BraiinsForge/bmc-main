@@ -321,11 +321,6 @@ let
   deps = {
     frontend = frontend.build;
     widgetRuntimeDeps = {
-      # Slint-based widgets: winit backend dlopen's wayland + xkbcommon.
-      slint = pkgs: with pkgs; [
-        wayland
-        libxkbcommon
-      ];
       # Native GPU widgets: smithay/EGL dlopen's the full GL stack.
       # libgbm is part of mesa's lib/ output, no separate entry needed.
       native = pkgs: with pkgs; [
@@ -347,11 +342,6 @@ let
 
   # All widget definitions for building
   widgets = {
-    digital-clock = {
-      crate = bmc.crates.widget-digital-clock;
-      features = [ "standalone" ];
-      runtimeDepsKind = "slint";
-    };
     flip-clock = {
       crate = bmc.crates.widget-flip-clock;
       features = [ "standalone" ];

@@ -71,10 +71,6 @@ wasmWidgetCrates // {
     path = "./bmc-virt/relay";
     packageName = "bmc-virt-relay";
   };
-  widget-digital-clock = defineCrate {
-    path = "./widgets/digital-clock";
-    packageName = "bmc-widget-digital-clock";
-  };
   widget-flip-clock = defineCrate {
     path = "./widgets/flip-clock";
     packageName = "bmc-widget-flip-clock";

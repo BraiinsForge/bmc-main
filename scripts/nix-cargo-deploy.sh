@@ -7,11 +7,11 @@
 #
 # Commands:
 #   compositor [device-ip]        - deploy bmc-openwrt binary
-#   widget <name> [device-ip]     - deploy a widget by name (e.g. digital-clock)
+#   widget <name> [device-ip]     - deploy a widget by name (e.g. flip-clock)
 #
 # Examples:
 #   ./scripts/nix-cargo-deploy.sh compositor 192.168.1.2
-#   ./scripts/nix-cargo-deploy.sh widget digital-clock 192.168.1.2
+#   ./scripts/nix-cargo-deploy.sh widget flip-clock 192.168.1.2
 #   DEVICE_IP=192.168.1.2 ./scripts/nix-cargo-deploy.sh widget flip-clock
 #
 # Prerequisites:

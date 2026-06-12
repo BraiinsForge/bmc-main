@@ -1370,18 +1370,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bmc-shared-slint"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bmc-shared-time",
- "chrono",
- "serde",
- "slint",
- "slint-build",
-]
-
-[[package]]
 name = "bmc-shared-time"
 version = "0.1.0"
 dependencies = [
@@ -1745,26 +1733,6 @@ dependencies = [
  "quote",
  "syn 2.0.100",
  "tempfile",
-]
-
-[[package]]
-name = "bmc-widget-digital-clock"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bmc-shared-slint",
- "bmc-shared-time",
- "bmc-widget",
- "bmc-widget-protocol",
- "chrono",
- "chrono-tz",
- "clap",
- "serde",
- "serde_json",
- "slint",
- "slint-build",
- "thiserror 1.0.69",
- "tracing",
 ]
 
 [[package]]
@@ -2343,8 +2311,6 @@ dependencies = [
  "objc",
  "objc-foundation",
  "objc_id",
- "smithay-clipboard",
- "x11-clipboard",
 ]
 
 [[package]]
@@ -2588,12 +2554,6 @@ dependencies = [
  "generic-array",
  "typenum",
 ]
-
-[[package]]
-name = "ctor-lite"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f791803201ab277ace03903de1594460708d2d54df6053f2d9e82f592b19e3b"
 
 [[package]]
 name = "cursor-icon"
@@ -4657,8 +4617,6 @@ dependencies = [
  "copypasta",
  "derive_more",
  "futures",
- "glutin",
- "glutin-winit",
  "i-slint-common",
  "i-slint-core",
  "i-slint-core-macros",
@@ -9087,29 +9045,20 @@ version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "18051cdd562e792cad055119e0cdb2cfc137e44e3987532e0f9659a77931bb08"
 dependencies = [
- "as-raw-xcb-connection",
  "bytemuck",
  "cfg_aliases",
  "core-graphics 0.24.0",
- "fastrand",
  "foreign-types",
  "js-sys",
  "log",
- "memmap2",
  "objc2 0.5.2",
  "objc2-foundation 0.2.2",
  "objc2-quartz-core 0.2.2",
  "raw-window-handle",
  "redox_syscall 0.5.11",
- "rustix 0.38.44",
- "tiny-xlib",
  "wasm-bindgen",
- "wayland-backend",
- "wayland-client 0.31.14",
- "wayland-sys 0.31.11",
  "web-sys",
  "windows-sys 0.59.0",
- "x11rb",
 ]
 
 [[package]]
@@ -9631,19 +9580,6 @@ dependencies = [
  "arrayref",
  "bytemuck",
  "strict-num",
-]
-
-[[package]]
-name = "tiny-xlib"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0324504befd01cab6e0c994f34b2ffa257849ee019d3fb3b64fb2c858887d89e"
-dependencies = [
- "as-raw-xcb-connection",
- "ctor-lite",
- "libloading",
- "pkg-config",
- "tracing",
 ]
 
 [[package]]
@@ -11995,16 +11931,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
-]
-
-[[package]]
-name = "x11-clipboard"
-version = "0.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "662d74b3d77e396b8e5beb00b9cad6a9eccf40b2ef68cc858784b14c41d535a3"
-dependencies = [
- "libc",
- "x11rb",
 ]
 
 [[package]]

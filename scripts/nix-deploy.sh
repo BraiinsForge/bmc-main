@@ -12,7 +12,7 @@
 # Examples:
 #   ./scripts/nix-deploy.sh '.#deck-packages.core' 192.168.1.2
 #   ./scripts/nix-deploy.sh '.#deck-packages.core' '.#deck-packages.pomodoro' 192.168.1.2
-#   ./scripts/nix-deploy.sh '.#deck-packages.digital-clock' 192.168.1.2
+#   ./scripts/nix-deploy.sh '.#deck-packages.flip-clock' 192.168.1.2
 #   ./scripts/nix-deploy.sh '.#armv7-nixpkgs.bash' 192.168.1.2
 #   DEVICE_IP=192.168.1.2 ./scripts/nix-deploy.sh '.#deck-packages.flip-clock'
 #

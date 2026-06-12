@@ -93,7 +93,6 @@ If the widget should be present on the Deck out of the box (i.e. included in the
 initPackageNames = [
   "core"
   "nix"
-  "digital-clock"
   "flip-clock"
   "my-widget"        # <-- add here
 ];
