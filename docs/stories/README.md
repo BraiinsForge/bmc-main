@@ -22,6 +22,11 @@ A combined scene lets the user compose multiple compatible widgets on a single d
 model (`small`, `medium`, `large`) and keep their own widget-specific configuration while rendering as one scene.
 `full`-sized widgets are reserved for fullscreen scenes.
 
+### [Default Scenes](default-scenes.md)
+
+Factory default scene sets matched to each product, so a freshly provisioned or factory-reset device shows relevant
+content out of the box. Defaults cycle automatically and apply only when the device has no usable configuration.
+
 ### [Nix Store Initializer](nix-store-initializer.md)
 
 A last-resort recovery component that runs on every boot. When the device has no initialized Nix store — typically after
