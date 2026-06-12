@@ -1,6 +1,6 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! Ticker — Single Sparkline widget. Shows one instrument: a header (icon +
+//! Ticker — Single widget. Shows one instrument: a header (icon +
 //! symbol + period + signed change badge), a tile-centered price, and a
 //! bottom-anchored sparkline. Ported from deckfeeder's `ticker-single-sparkline`.
 
@@ -160,10 +160,7 @@ mod wasm_glue {
                 .and_then(|c| model::Series::from_candles(&c, liveness, now))
         } else {
             if class == FetchClass::Transient {
-                log_warn!(
-                    "ticker-single-sparkline: fetch failed (status {})",
-                    response.status
-                );
+                log_warn!("ticker-single: fetch failed (status {})", response.status);
             }
             None
         };

@@ -2,13 +2,13 @@
   "$schema": "../../bmc-widget-manifest/manifest.schema.json",
   "uid": "69ed377c-701b-4cdb-b4b6-0308cfe56b64",
   "version": "0.1.0",
-  "name": "Ticker - Single Sparkline",
-  "description": "Visualize stock, asset, and crypto prices on a single sparkline chart",
+  "name": "Ticker - Single",
+  "description": "Visualize stock, asset, and crypto prices on a single chart",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"
   },
-  "binary": "bin/ticker-single-sparkline",
+  "binary": "bin/ticker-single",
   "settings": [
     "localization"
   ],

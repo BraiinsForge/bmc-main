@@ -21,7 +21,7 @@ members = [
     "mining-clock",
     "mining-info",
     "ticker-list",
-    "ticker-single-sparkline",
+    "ticker-single",
     "weather",
 ]
 

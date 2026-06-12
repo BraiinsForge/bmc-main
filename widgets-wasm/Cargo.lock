@@ -1036,7 +1036,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ticker-single-sparkline"
+name = "ticker-single"
 version = "0.1.0"
 dependencies = [
  "bmc-wasm-sdk",
