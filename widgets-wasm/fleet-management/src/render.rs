@@ -112,12 +112,6 @@ const COL_COUNTS: f32 = 130.0;
 // content box.
 const COL_COUNTS_LARGE: f32 = 70.0;
 
-// The detail view's Name column in the Large band shares the fleet table's
-// header budget.
-const COL_NAME_LARGE: f32 = 180.0;
-const NAME_CHARS_FULL: usize = 26;
-const NAME_CHARS_LARGE: usize = 12;
-
 // Character budgets for the model column; longer names are cut with an
 // ellipsis so rows never wrap (the engine cannot ellipsize).
 const MODEL_CHARS_FULL: usize = 26;
@@ -393,7 +387,10 @@ struct TableColumns {
     counts_w: f32,
 }
 
-fn fleet_columns(variant: SizeVariant) -> TableColumns {
+// Shared by the fleet and detail tables: the detail view's Name column
+// reuses the model column's budget, so the two views' header geometry
+// cannot drift apart.
+fn table_columns(variant: SizeVariant) -> TableColumns {
     if matches!(variant, SizeVariant::Full) {
         TableColumns {
             label_w: COL_MODEL_FULL,
@@ -404,22 +401,6 @@ fn fleet_columns(variant: SizeVariant) -> TableColumns {
         TableColumns {
             label_w: COL_MODEL_LARGE,
             label_chars: MODEL_CHARS_LARGE,
-            counts_w: COL_COUNTS_LARGE,
-        }
-    }
-}
-
-fn detail_columns(variant: SizeVariant) -> TableColumns {
-    if matches!(variant, SizeVariant::Full) {
-        TableColumns {
-            label_w: COL_MODEL_FULL,
-            label_chars: NAME_CHARS_FULL,
-            counts_w: COL_COUNTS,
-        }
-    } else {
-        TableColumns {
-            label_w: COL_NAME_LARGE,
-            label_chars: NAME_CHARS_LARGE,
             counts_w: COL_COUNTS_LARGE,
         }
     }
@@ -653,7 +634,7 @@ pub struct Frame {
 // The model's own totals in the overview (title = model name, with Back),
 // then one page of device rows.
 fn detail_view(detail: &DetailData<'_>, height: u32, variant: SizeVariant) -> Frame {
-    let cols = detail_columns(variant);
+    let cols = table_columns(variant);
     let per_page = paging::rows_per_page_detail(height, variant);
     let count = paging::page_count(detail.rows.len(), per_page);
     let page = paging::effective_page(detail.page, count);
@@ -694,7 +675,7 @@ fn table_view(
     variant: SizeVariant,
     title: &str,
 ) -> Frame {
-    let cols = fleet_columns(variant);
+    let cols = table_columns(variant);
     let content_w = content_width(width);
     let per_page = paging::rows_per_page_fleet(height, variant);
     let count = paging::page_count(summary.groups.len(), per_page);
