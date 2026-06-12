@@ -1349,8 +1349,17 @@ fn after_scene_change(state: &mut AppState) {
 /// away lets a `Visible` widget learn it is `Leaving` before the first drag
 /// frame, so its animation loop stops driving renders that would otherwise
 /// contend with the drag for the GPU render lock.
+///
+/// If a deferred emission armed by a prior scene change has not flushed
+/// yet, it may carry transitions into `Dormant`; folding those into this
+/// inline path would send a buffer release before the after-render
+/// ordering. Leave the emission armed instead — the deferred flush reads
+/// the tracker at emission time, so it coalesces this drag's transitions.
 fn after_drag_scene_update(state: &mut AppState) {
     state.compositor.mark_full_output_damage();
+    if state.pending_lifecycle_emission {
+        return;
+    }
     let emission = emit_lifecycle_transitions(state);
     debug_assert!(
         emission.releases.is_empty(),
