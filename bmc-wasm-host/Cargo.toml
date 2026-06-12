@@ -22,10 +22,10 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
 wayland-client = { workspace = true }
 
 bmc-gpu-render-lock = { workspace = true }
+bmc-log = { workspace = true }
 bmc-render = { path = "../bmc-render" }
 bmc-wasm-protocol = { workspace = true }
 bmc-wasm-runtime = { workspace = true }

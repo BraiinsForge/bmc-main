@@ -42,6 +42,32 @@ pub fn derive_lockfile_path(socket_path: &std::path::Path) -> std::path::PathBuf
     std::path::PathBuf::from(s)
 }
 
+/// Log file path for the host serving `socket_path`.
+///
+/// One live host per socket is guaranteed by the lockfile, so deriving
+/// the log path from the socket keeps every log file single-writer.
+/// The full path is flattened into the file name (not just the stem) so
+/// distinct sockets with equal file names get distinct logs.
+#[must_use]
+pub fn derive_log_path(socket_path: &std::path::Path) -> std::path::PathBuf {
+    let flat = socket_path
+        .with_extension("")
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(part) => part.to_str(),
+            std::path::Component::Prefix(_)
+            | std::path::Component::RootDir
+            | std::path::Component::CurDir
+            | std::path::Component::ParentDir => None,
+        })
+        .collect::<Vec<_>>()
+        .join("-");
+    if flat.is_empty() {
+        return std::path::PathBuf::from("/var/log/bmc/bmc-wasm-host.log");
+    }
+    std::path::PathBuf::from(format!("/var/log/bmc/{flat}.log"))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, bincode::Encode, bincode::Decode)]
 pub enum HelloMsg {
     Load { wasm_path: String },
@@ -264,5 +290,36 @@ impl AckDecoder {
         }
 
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod log_path_tests {
+    use std::path::Path;
+
+    use super::derive_log_path;
+
+    #[test]
+    fn derives_log_path_from_flattened_socket_path() {
+        assert_eq!(
+            derive_log_path(Path::new("/run/bmc/wasm-host-sdk-v1.sock")),
+            Path::new("/var/log/bmc/run-bmc-wasm-host-sdk-v1.log")
+        );
+    }
+
+    #[test]
+    fn distinct_sockets_with_equal_file_names_get_distinct_logs() {
+        assert_ne!(
+            derive_log_path(Path::new("/tmp/a/host.sock")),
+            derive_log_path(Path::new("/tmp/b/host.sock"))
+        );
+    }
+
+    #[test]
+    fn falls_back_when_socket_path_has_no_components() {
+        assert_eq!(
+            derive_log_path(Path::new("/")),
+            Path::new("/var/log/bmc/bmc-wasm-host.log")
+        );
     }
 }

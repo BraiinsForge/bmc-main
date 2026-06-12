@@ -8,6 +8,7 @@ standalone = []
 
 [dependencies]
 # Widget SDK (gpu feature provides EGL/GBM/Wayland surface clients)
+bmc-log = { workspace = true }
 bmc-widget = { workspace = true, features = ["gpu"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -31,7 +32,6 @@ anyhow = { workspace = true }
 bytemuck = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [lints]
 workspace = true

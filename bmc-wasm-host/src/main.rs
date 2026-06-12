@@ -2,9 +2,10 @@
 
 use std::path::PathBuf;
 
+use anyhow::Context as _;
 use anyhow::Result;
 use bmc_wasm_host::startup::{StartupDecision, prepare_listener};
-use bmc_wasm_thin_protocol::default_socket_path;
+use bmc_wasm_thin_protocol::{default_socket_path, derive_log_path};
 use clap::Parser;
 
 // Fixed Deck-maximum staging FBO size. This intentionally stays a process-startup
@@ -23,10 +24,12 @@ struct Args {
 }
 
 fn main() -> Result<()> {
-    bmc_wasm_host::logging::init();
-
     let args = Args::parse();
     let socket_path = args.host_socket.unwrap_or_else(default_socket_path);
+    let log_path = derive_log_path(&socket_path);
+    bmc_wasm_host::logging::init(&log_path)
+        .with_context(|| format!("initialize host file logging at {}", log_path.display()))?;
+
     tracing::info!(
         socket = %socket_path.display(),
         release_lock_fd = ?args.release_lock_fd,

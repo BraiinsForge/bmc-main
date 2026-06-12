@@ -19,6 +19,7 @@ bmc-button.workspace = true
 bmc-grpc = { workspace = true, features = ["server"] }
 bmc-ipc.workspace = true
 bmc-led = { workspace = true, features = ["driver"] }
+bmc-log.workspace = true
 bmc-platform = { workspace = true, features = ["backlight"] }
 bmc-scheduler.workspace = true
 bmc-shared-ii-net.workspace = true
@@ -66,11 +67,11 @@ tower-http = { workspace = true, features = [
     "normalize-path",
 ] }
 tracing.workspace = true
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
 uuid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [lints]
 workspace = true

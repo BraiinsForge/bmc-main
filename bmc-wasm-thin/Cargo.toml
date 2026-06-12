@@ -13,8 +13,8 @@ libc = { workspace = true }
 rustix = { workspace = true }
 signal-hook = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
+bmc-log = { workspace = true }
 bmc-wasm-thin-protocol = { path = "../bmc-wasm-thin-protocol" }
 
 [dev-dependencies]

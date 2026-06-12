@@ -14,12 +14,8 @@ mod renderer;
 mod wayland;
 pub mod widget_protocol;
 
-use std::fs::OpenOptions;
-use std::sync::Mutex;
-
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use tracing_subscriber::{EnvFilter, filter::LevelFilter, fmt, prelude::*};
 
 /// Animation mode for the flip-clock
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
@@ -44,26 +40,8 @@ struct Args {
     mode: AnimationMode,
 }
 
-const WIDGET_LOG_PATH: &str = "/var/log/bmc/flip-clock-widget.log";
-
 fn main() -> Result<()> {
-    let log_file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(WIDGET_LOG_PATH)
-        .expect("BUG: failed to open flip-clock-widget log file");
-
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::default().add_directive(LevelFilter::INFO.into()));
-
-    tracing_subscriber::registry()
-        .with(
-            fmt::layer()
-                .with_ansi(false)
-                .with_writer(Mutex::new(log_file)),
-        )
-        .with(filter)
-        .init();
+    bmc_log::init_console();
 
     let args = Args::parse();
 

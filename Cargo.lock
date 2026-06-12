@@ -968,6 +968,7 @@ dependencies = [
  "bmc-grpc",
  "bmc-ipc",
  "bmc-led",
+ "bmc-log",
  "bmc-platform",
  "bmc-scheduler",
  "bmc-shared-time",
@@ -1246,6 +1247,7 @@ dependencies = [
  "bmc-gpu-render-lock",
  "bmc-kobject",
  "bmc-led",
+ "bmc-log",
  "bmc-platform",
  "bmc-shared-time",
  "bmc-support",
@@ -1253,7 +1255,6 @@ dependencies = [
  "calloop 0.14.2",
  "clap",
  "drm",
- "file-rotate",
  "flume",
  "futures",
  "get_if_addrs",
@@ -1276,7 +1277,6 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1574,6 +1574,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmc-gpu-render-lock",
+ "bmc-log",
  "bmc-render",
  "bmc-wasm-protocol",
  "bmc-wasm-runtime",
@@ -1594,7 +1595,6 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tracing",
- "tracing-subscriber",
  "wayland-client 0.31.14",
 ]
 
@@ -1691,6 +1691,7 @@ name = "bmc-wasm-thin"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bmc-log",
  "bmc-wasm-protocol",
  "bmc-wasm-thin-protocol",
  "clap",
@@ -1699,7 +1700,6 @@ dependencies = [
  "signal-hook",
  "tempfile",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1773,6 +1773,7 @@ version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
+ "bmc-log",
  "bmc-widget",
  "bytemuck",
  "chrono",
@@ -1784,7 +1785,6 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
