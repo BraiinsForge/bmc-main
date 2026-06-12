@@ -77,17 +77,9 @@ fn badge_node(text_str: String, trend: Color, band: &SizeBand) -> Node {
     )
 }
 
-/// The loaded view: header on top, sparkline + price on a canvas below. When
-/// `stale` is set (a refresh failed), a "Stale data" note is drawn under the
-/// price so the held series is not mistaken for a live one.
+/// The loaded view: header on top, sparkline + price on a canvas below.
 #[must_use]
-pub fn series_view(
-    series: &Series,
-    symbol: &str,
-    period_label: &str,
-    stale: bool,
-    ws: WidgetSize,
-) -> Node {
+pub fn series_view(series: &Series, symbol: &str, period_label: &str, ws: WidgetSize) -> Node {
     let band = band_for(ws.variant).scaled(ws.fit());
     #[expect(
         clippy::cast_precision_loss,
@@ -166,24 +158,6 @@ pub fn series_view(
             valign: VerticalAlign::Center,
         ),
     ));
-    if stale {
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "font sizes are small integers, exact in f32"
-        )]
-        let below_price = h / 2.0 - header_h + band.price_font as f32;
-        draws.push(Draw::text(
-            w / 2.0,
-            below_price,
-            "Stale data".to_owned(),
-            style!(
-                size: band.header_font,
-                color: SYMBOL_COLOR,
-                align: TextAlign::Center,
-                valign: VerticalAlign::Center,
-            ),
-        ));
-    }
 
     col(
         props!(background: BACKGROUND, width: w, height: h),

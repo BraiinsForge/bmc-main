@@ -1040,6 +1040,7 @@ name = "ticker-single-sparkline"
 version = "0.1.0"
 dependencies = [
  "bmc-wasm-sdk",
+ "mining",
  "prices",
  "units",
 ]

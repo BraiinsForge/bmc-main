@@ -235,13 +235,19 @@ mod wasm_glue {
             render::message_view("Enter symbol", ws)
         } else {
             STATE.with(|s| match &*s.borrow() {
-                State::Loaded { series, stale } => render::series_view(
-                    series,
-                    symbol,
-                    params.period.as_manifest_value(),
-                    *stale,
-                    ws,
-                ),
+                State::Loaded { series, stale } => {
+                    let view =
+                        render::series_view(series, symbol, params.period.as_manifest_value(), ws);
+                    if *stale {
+                        mining::overlay::with_overlay(
+                            view,
+                            mining::overlay::STALE_DATA_TEXT,
+                            widget_viewport().shape,
+                        )
+                    } else {
+                        view
+                    }
+                }
                 State::Loading => render::message_view("Loading\u{2026}", ws),
                 State::InputError => render::message_view("Symbol not found", ws),
                 State::Error => render::message_view(&fmt!("{symbol} unavailable"), ws),
