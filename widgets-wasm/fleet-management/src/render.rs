@@ -73,42 +73,44 @@ const SEPARATOR_COLOR: Color = GRAY_70;
 const SEPARATOR_PX: f32 = 1.0;
 
 // Uniform gap between every breakdown column.
-const ROW_GAP: f32 = 16.0;
+const ROW_GAP: f32 = 12.0;
 
 // Fixed breakdown column widths, shared by the header and data rows so labels
 // sit over their values. Each is its column's widest expected content plus a
 // roughly constant slack, so left-aligned values land at evenly spaced
 // positions for typical data (a much shorter value leaves more trailing space).
 // The widths also budget for the right-aligned pager cluster on the header row
-// (48 + 8 + ~28 + 8 + 48 ≈ 140 px plus its 16 px column gap); each data row
+// (48 + 8 + ~28 + 8 + 48 ≈ 140 px plus its 12 px column gap); each data row
 // right-aligns a labeled Details button (~105 px) into the same remainder.
-// The Large model column relies on code-side truncation.
-const COL_HASHRATE: f32 = 150.0;
-const COL_MODEL_FULL: f32 = 280.0;
-const COL_MODEL_LARGE: f32 = 160.0;
-const COL_POWER: f32 = 90.0;
-const COL_EFF: f32 = 155.0;
-const COL_TEMP: f32 = 155.0;
-const COL_COUNTS: f32 = 136.0;
+// The model column is the widest the header budget allows so full model names
+// such as "Braiins Mini Miner BMM 101" show untruncated in the Full band; the
+// Large model column relies on code-side truncation.
+const COL_HASHRATE: f32 = 140.0;
+const COL_MODEL_FULL: f32 = 375.0;
+const COL_MODEL_LARGE: f32 = 180.0;
+const COL_POWER: f32 = 80.0;
+const COL_EFF: f32 = 130.0;
+const COL_TEMP: f32 = 150.0;
+const COL_COUNTS: f32 = 130.0;
 // The Large band fits only three columns into 638px, so the model and status
 // columns share a tight budget. The status content is left-packed with a narrow
 // tail, so the model borrows that slack here to hold longer model names without
 // wrapping; the wide Full band keeps the roomier `COL_COUNTS`. The header
-// row packs 150 + 160 + 70 columns, four gaps (the spacer doubles the
-// trailing one), and the ~140 px pager cluster into ~585 of the 590 px
+// row packs 140 + 180 + 70 columns, four gaps (the spacer doubles the
+// trailing one), and the ~140 px pager cluster into ~580 of the 590 px
 // content box.
 const COL_COUNTS_LARGE: f32 = 70.0;
 
 // The detail view's Name column in the Large band shares the fleet table's
 // header budget.
-const COL_NAME_LARGE: f32 = 160.0;
-const NAME_CHARS_FULL: usize = 18;
-const NAME_CHARS_LARGE: usize = 10;
+const COL_NAME_LARGE: f32 = 180.0;
+const NAME_CHARS_FULL: usize = 26;
+const NAME_CHARS_LARGE: usize = 12;
 
 // Character budgets for the model column; longer names are cut with an
 // ellipsis so rows never wrap (the engine cannot ellipsize).
-const MODEL_CHARS_FULL: usize = 18;
-const MODEL_CHARS_LARGE: usize = 10;
+const MODEL_CHARS_FULL: usize = 26;
+const MODEL_CHARS_LARGE: usize = 12;
 
 fn value_string(rendered: Rendered) -> String {
     match rendered.unit {
