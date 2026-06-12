@@ -38,7 +38,7 @@ const FULL: Band = Band {
     badge_padding: 4.0,
     row_padding: 12.0,
     row_gap: 4.0,
-    company_chars: 20,
+    company_chars: 24,
     rows: 8,
     columns: 2,
     show_sparkline: true,
@@ -60,7 +60,7 @@ const MEDIUM: Band = Band {
 
 const SMALL: Band = Band {
     chart_height: 0.0,
-    company_chars: 9,
+    company_chars: 12,
     rows: 2,
     columns: 1,
     show_sparkline: false,
@@ -130,6 +130,6 @@ mod tests {
         assert_eq!(scaled.symbol_font, 16);
         assert!((scaled.chart_height - 25.0).abs() < 1e-3);
         assert_eq!(scaled.rows, 4);
-        assert_eq!(scaled.company_chars, 20);
+        assert_eq!(scaled.company_chars, 24);
     }
 }
