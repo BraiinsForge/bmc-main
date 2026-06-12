@@ -11,6 +11,8 @@ mod public_api;
 mod render;
 #[cfg(target_arch = "wasm32")]
 use std::cell::RefCell;
+#[cfg(target_arch = "wasm32")]
+use std::time::Duration;
 
 #[cfg(target_arch = "wasm32")]
 #[expect(
@@ -33,6 +35,11 @@ const MINER_REFRESH_MS: u32 = 5_000;
 const PUBLIC_REFRESH_MS: u32 = 60_000;
 #[cfg(target_arch = "wasm32")]
 const RETRY_MS: u32 = 10_000;
+// The miner lives on the local network, so an unreachable one should fail
+// fast instead of holding the SDK-default 10s timeout. Public API fetches
+// keep the default.
+#[cfg(target_arch = "wasm32")]
+const MINER_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
 // Ceiling for the login backoff: a persistently-wrong login stops retrying more
 // often than this rather than hammering `/auth/login` every `RETRY_MS` forever.
 #[cfg(target_arch = "wasm32")]
@@ -471,7 +478,8 @@ fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
     Some(
         FetchSpec::post(url)
             .headers("Content-Type: application/json")
-            .body(body.as_bytes()),
+            .body(body.as_bytes())
+            .timeout(MINER_FETCH_TIMEOUT),
     )
 }
 
@@ -484,7 +492,11 @@ fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
         &Params::current().miner_url,
         MINER_ENDPOINTS[miner_index(handle)].path,
     );
-    Some(FetchSpec::get(url).headers(header))
+    Some(
+        FetchSpec::get(url)
+            .headers(header)
+            .timeout(MINER_FETCH_TIMEOUT),
+    )
 }
 
 #[cfg(target_arch = "wasm32")]
