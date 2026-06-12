@@ -143,14 +143,9 @@ fn resolved_row(row_data: &TickerRow, name: Option<&str>, stale: bool, band: &Ba
         TREND_DOWN
     };
     let closed = row_data.is_closed_marked();
-    // A failed refresh takes over the company line: the held series is still
-    // worth showing, but the row must say it is no longer current.
-    let company = if stale {
-        "Stale data".to_owned()
-    } else {
-        name.map(|n| truncate_name(n, band.company_chars))
-            .unwrap_or_default()
-    };
+    let company = name
+        .map(|n| truncate_name(n, band.company_chars))
+        .unwrap_or_default();
     let left = col(
         props!(flex: 1.0, cross_align: CrossAlign::Start, gap: band.row_gap),
         [
@@ -166,9 +161,51 @@ fn resolved_row(row_data: &TickerRow, name: Option<&str>, stale: bool, band: &Ba
         children.push(sparkline_node(&row_data.series, trend, closed, band));
     }
     children.push(right);
+    if stale {
+        children.push(stale_overlay());
+    }
     row(
         props!(flex: 1.0, cross_align: CrossAlign::Center, padding: band.row_padding),
         children,
+    )
+}
+
+const STALE_TEXT_SIZE: u32 = 14;
+const STALE_ICON_PX: f32 = 16.0;
+const STALE_INSET: f32 = 8.0;
+
+/// The same warning banner the other widgets float over their root view
+/// (`mining::overlay`), anchored to one grid cell's bottom-left instead: the
+/// insets absolutely position it inside the cell row it is pushed into, so the
+/// held series is not mistaken for a live one.
+fn stale_overlay() -> Node {
+    row(
+        props!(inset_bottom: STALE_INSET, inset_left: STALE_INSET),
+        [row(
+            props!(
+                background: GRAY_100,
+                padding: 6.0,
+                gap: 6.0,
+                cross_align: CrossAlign::Center
+            ),
+            [
+                canvas(
+                    props!(width: STALE_ICON_PX, height: STALE_ICON_PX),
+                    [Draw::svg_builtin(
+                        0.0,
+                        0.0,
+                        STALE_ICON_PX,
+                        STALE_ICON_PX,
+                        ICON_WARN_FILLED,
+                        RED_50,
+                    )],
+                ),
+                text(
+                    "Stale data",
+                    style!(size: STALE_TEXT_SIZE, weight: FontWeight::BOLD, color: RED_50),
+                ),
+            ],
+        )],
     )
 }
 
