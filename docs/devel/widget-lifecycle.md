@@ -104,7 +104,9 @@ of arming the deferred flush. Emitting immediately lets a `Visible` widget learn
 frame, so its animation loop stops driving renders that would contend with the drag for the GPU render lock. The inline
 path is safe only while the emission carries no transition into `Dormant` — a buffer release must never bypass the
 after-render ordering. A drag only moves widgets between render-set states, so no release can ride on it;
-`after_drag_scene_update` asserts this no-release invariant.
+`after_drag_scene_update` asserts this no-release invariant. If a deferred emission armed by a prior scene change has
+not flushed yet, it may carry `Dormant` transitions, so the drag update leaves it armed instead of emitting inline; the
+deferred flush reads the tracker at emission time and coalesces the drag's transitions.
 
 ## Initial Lifecycle
 
@@ -132,17 +134,21 @@ It splits transitions into two batches:
 1. Release batch: transitions into `Dormant`.
 2. Acquire batch: all other transitions.
 
-The compositor sends and flushes the release batch before sending the acquire batch:
+The compositor sends and flushes the release batch — including `wl_buffer.release` for any buffers it still holds from
+the newly dormant widgets — before sending the acquire batch:
 
 ```text
 send dormant transitions
+send wl_buffer.release for the dormant widgets' held buffers
 flush affected clients
 send acquire/keep-target transitions
 flush affected clients
 ```
 
 This ordering is the important protocol contract. It lets clients that release scarce resources on `Dormant` do so
-before other widgets acquire resources for `Prepared`, `Entering`, or `Visible`.
+before other widgets acquire resources for `Prepared`, `Entering`, or `Visible`. Because the WASM host defers buffer
+destruction until `wl_buffer.release` arrives, the buffer release must ride in the release batch flush: were it flushed
+after the acquire batch, an acquiring slot could allocate while the dormant slot's CMA buffer is still held.
 
 Transitions that do not enter `Dormant` go in the acquire batch. For example, `Visible -> Prepared` and
 `Prepared -> Visible` keep the same broad protocol resource class, so they do not need release ordering. The current
