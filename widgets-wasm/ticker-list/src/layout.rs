@@ -26,6 +26,9 @@ pub struct Band {
     /// 2 at Full (two interleaved columns), 1 otherwise.
     pub columns: usize,
     pub show_sparkline: bool,
+    /// Whether the stale badge carries the "Stale data" label; icon-only on
+    /// bands too narrow to fit the label between symbol and price.
+    pub stale_label: bool,
 }
 
 const FULL: Band = Band {
@@ -42,6 +45,7 @@ const FULL: Band = Band {
     rows: 8,
     columns: 2,
     show_sparkline: true,
+    stale_label: true,
 };
 
 const LARGE: Band = Band {
@@ -64,6 +68,7 @@ const SMALL: Band = Band {
     rows: 2,
     columns: 1,
     show_sparkline: false,
+    stale_label: false,
     ..FULL
 };
 

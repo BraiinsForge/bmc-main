@@ -13,7 +13,7 @@ use bmc_wasm_sdk::*;
 use crate::layout::{Band, band_for};
 use crate::model::{RowState, TickerRow, truncate_name};
 use prices::chart;
-use prices::format::{change_text, fraction_digits};
+use prices::format::{MIN_PRICE, PricePrecision, change_text, price_precision};
 
 const BACKGROUND: Color = BLACK;
 const PRIMARY: Color = Color::from_rgb(0xf4, 0xf4, 0xf4);
@@ -68,8 +68,9 @@ fn closed_marker(band: &Band) -> Node {
     )
 }
 
-/// `symbol` line, with a gray stop-marker after it when the market is closed.
-fn symbol_line(symbol: &str, color: Color, band: &Band, closed: bool) -> Node {
+/// `symbol` line, with a gray stop-marker after it when the market is closed
+/// and a warning badge when the row's last refresh failed.
+fn symbol_line(symbol: &str, color: Color, band: &Band, closed: bool, stale: bool) -> Node {
     let mut children = vec![text(
         symbol,
         style!(size: band.symbol_font, weight: FontWeight::BOLD, color: color),
@@ -77,6 +78,10 @@ fn symbol_line(symbol: &str, color: Color, band: &Band, closed: bool) -> Node {
     if closed {
         children.push(fixed_width(band.row_gap));
         children.push(closed_marker(band));
+    }
+    if stale {
+        children.push(fixed_width(band.row_gap));
+        children.push(stale_badge(band.stale_label));
     }
     row(props!(cross_align: CrossAlign::Center), children)
 }
@@ -149,11 +154,18 @@ fn resolved_row(row_data: &TickerRow, name: Option<&str>, stale: bool, band: &Ba
     let left = col(
         props!(flex: 1.0, cross_align: CrossAlign::Start, gap: band.row_gap),
         [
-            symbol_line(&row_data.symbol, PRIMARY, band, closed),
+            symbol_line(&row_data.symbol, PRIMARY, band, closed, stale),
             text(company, style!(size: band.company_font, color: SECONDARY)),
         ],
     );
-    let price = format_number!(row_data.price, fraction_digits(row_data.price));
+    let price = match price_precision(&row_data.symbol, row_data.price) {
+        PricePrecision::Fraction(digits) => format_number!(row_data.price, digits),
+        PricePrecision::BelowMin => {
+            let mut out = String::from("<");
+            out.push_str(&format_number!(MIN_PRICE, 6));
+            out
+        }
+    };
     let right = right_col(price, change_text(row_data.change_pct), trend, band);
 
     let mut children = vec![left];
@@ -161,9 +173,6 @@ fn resolved_row(row_data: &TickerRow, name: Option<&str>, stale: bool, band: &Ba
         children.push(sparkline_node(&row_data.series, trend, closed, band));
     }
     children.push(right);
-    if stale {
-        children.push(stale_overlay());
-    }
     row(
         props!(flex: 1.0, cross_align: CrossAlign::Center, padding: band.row_padding),
         children,
@@ -172,40 +181,37 @@ fn resolved_row(row_data: &TickerRow, name: Option<&str>, stale: bool, band: &Ba
 
 const STALE_TEXT_SIZE: u32 = 14;
 const STALE_ICON_PX: f32 = 16.0;
-const STALE_INSET: f32 = 8.0;
 
-/// The same warning banner the other widgets float over their root view
-/// (`mining::overlay`), anchored to one grid cell's bottom-left instead: the
-/// insets absolutely position it inside the cell row it is pushed into, so the
-/// held series is not mistaken for a live one.
-fn stale_overlay() -> Node {
-    row(
-        props!(inset_bottom: STALE_INSET, inset_left: STALE_INSET),
-        [row(
-            props!(
-                background: GRAY_100,
-                padding: 6.0,
-                gap: 6.0,
-                cross_align: CrossAlign::Center
-            ),
-            [
-                canvas(
-                    props!(width: STALE_ICON_PX, height: STALE_ICON_PX),
-                    [Draw::svg_builtin(
-                        0.0,
-                        0.0,
-                        STALE_ICON_PX,
-                        STALE_ICON_PX,
-                        ICON_WARN_FILLED,
-                        RED_50,
-                    )],
-                ),
-                text(
-                    "Stale data",
-                    style!(size: STALE_TEXT_SIZE, weight: FontWeight::BOLD, color: RED_50),
-                ),
-            ],
+/// The same warning pill the other widgets float over their root view
+/// (`mining::overlay`), rendered inline after the row's symbol so the held
+/// series is not mistaken for a live one without covering any other field.
+/// `label` adds the "Stale data" text; icon-only on narrow bands.
+fn stale_badge(label: bool) -> Node {
+    let mut children = vec![canvas(
+        props!(width: STALE_ICON_PX, height: STALE_ICON_PX),
+        [Draw::svg_builtin(
+            0.0,
+            0.0,
+            STALE_ICON_PX,
+            STALE_ICON_PX,
+            ICON_WARN_FILLED,
+            RED_50,
         )],
+    )];
+    if label {
+        children.push(text(
+            "Stale data",
+            style!(size: STALE_TEXT_SIZE, weight: FontWeight::BOLD, color: RED_50),
+        ));
+    }
+    row(
+        props!(
+            background: GRAY_100,
+            padding: 6.0,
+            gap: 6.0,
+            cross_align: CrossAlign::Center
+        ),
+        children,
     )
 }
 
@@ -218,7 +224,7 @@ fn placeholder_row(symbol: &str, status: &str, symbol_color: Color, band: &Band)
     let left = col(
         props!(flex: 1.0, cross_align: CrossAlign::Start, gap: band.row_gap),
         [
-            symbol_line(symbol, sym, band, false),
+            symbol_line(symbol, sym, band, false, false),
             text(status, style!(size: band.company_font, color: muted)),
         ],
     );
