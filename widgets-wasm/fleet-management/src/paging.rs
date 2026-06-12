@@ -2,47 +2,49 @@
 
 use bmc_wasm_sdk::SizeVariant;
 
+use crate::layout::{DETAIL_ROW_H, FLEET_ROW_H, TABLE_GAP};
+
 // Vertical space above the table rows: 24px padding top and bottom, the
 // overview cluster (taller in Full: 64px title / 48px hero), the separator,
 // the 48px header row (its pager buttons set the height), and the column
 // gaps between them.
-const OVERHEAD_FULL: u32 = 196;
-const OVERHEAD_LARGE: u32 = 180;
-
-// One model row plus the column gap: the row is a 41px touchable canvas
-// (the whole row is the Details tap target), so the step is canvas height
-// plus the 5.8px column gap.
-const FLEET_ROW_STEP: u32 = 47;
-
-// Device rows are text-height: the 26px row text renders ~35px tall, plus
-// the 5.8px column gap.
-const DETAIL_ROW_STEP: u32 = 41;
+const OVERHEAD_FULL: f32 = 196.0;
+const OVERHEAD_LARGE: f32 = 180.0;
 
 /// Model rows that fit one page of the breakdown table; at least 1 so a
-/// pathological viewport still shows something.
+/// pathological viewport still shows something. A row's step is its drawn
+/// height plus the column gap, both shared with the renderer via `layout`.
 #[must_use]
 pub fn rows_per_page_fleet(height: u32, variant: SizeVariant) -> usize {
-    rows_for(height, overhead(variant), FLEET_ROW_STEP)
+    rows_for(height, overhead(variant), FLEET_ROW_H + TABLE_GAP)
 }
 
 /// Device rows that fit one page of the detail table.
 #[must_use]
 pub fn rows_per_page_detail(height: u32, variant: SizeVariant) -> usize {
-    rows_for(height, overhead(variant), DETAIL_ROW_STEP)
+    rows_for(height, overhead(variant), DETAIL_ROW_H + TABLE_GAP)
 }
 
-fn overhead(variant: SizeVariant) -> u32 {
+fn overhead(variant: SizeVariant) -> f32 {
     match variant {
         SizeVariant::Full => OVERHEAD_FULL,
         SizeVariant::Large | SizeVariant::Medium | SizeVariant::Small => OVERHEAD_LARGE,
     }
 }
 
-fn rows_for(height: u32, overhead: u32, step: u32) -> usize {
-    let rows = height.saturating_sub(overhead) / step;
-    usize::try_from(rows)
-        .expect("BUG: a u32 row count fits usize")
-        .max(1)
+fn rows_for(height: u32, overhead: f32, step: f32) -> usize {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "viewport heights stay within f32's exact integer range"
+    )]
+    let avail = height as f32 - overhead;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the quotient is non-negative and small; truncation is the floor we want"
+    )]
+    let rows = (avail.max(0.0) / step) as usize;
+    rows.max(1)
 }
 
 /// Pages needed for `len` rows; at least 1 so the indicator reads `1/1`.

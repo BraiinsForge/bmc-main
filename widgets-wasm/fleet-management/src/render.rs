@@ -28,7 +28,7 @@ use units::availability::Availability;
 use units::format::{Rendered, fixed};
 use units::units::{DegreeCelsius, Quantity};
 
-use crate::layout::{Layout, choose, truncate_label};
+use crate::layout::{FLEET_ROW_H, Layout, TABLE_GAP, choose, truncate_label};
 use crate::paging;
 use crate::summary::{FleetSummary, GroupSummary};
 use crate::view::{PageTurn, PagerScope, details_click_id, pager_click_id};
@@ -74,10 +74,6 @@ const SEPARATOR_PX: f32 = 1.0;
 
 // Uniform gap between every breakdown column.
 const ROW_GAP: f32 = 12.0;
-// Each breakdown row is one touchable canvas — the whole row is its group's
-// Details tap target. 41px is the tallest row that still fits six rows in
-// the 480px-tall bands.
-const FLEET_ROW_H: f32 = 41.0;
 // One drawn status pair's x budget (22px icon, gap, count text); a second
 // pair starts at this offset within the counts column.
 const COUNT_SLOT_W: f32 = 70.0;
@@ -661,7 +657,10 @@ fn detail_view(detail: &DetailData<'_>, height: u32, variant: SizeVariant) -> Fr
     }
 
     Frame {
-        root: col(props!(background: BLACK, padding: 24.0, gap: 5.8), children),
+        root: col(
+            props!(background: BLACK, padding: PADDING, gap: TABLE_GAP),
+            children,
+        ),
         page_count: count,
     }
 }
@@ -702,7 +701,7 @@ fn table_view(
 
     Frame {
         root: col(
-            props!(background: BLACK, padding: PADDING, gap: 5.8),
+            props!(background: BLACK, padding: PADDING, gap: TABLE_GAP),
             children,
         ),
         page_count: count,

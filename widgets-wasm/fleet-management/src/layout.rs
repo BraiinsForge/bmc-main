@@ -55,6 +55,22 @@ pub fn truncate_label(label: &str, max_chars: usize) -> String {
 const TABLE_MIN_WIDTH: u32 = 638;
 const TABLE_MIN_HEIGHT: u32 = 480;
 
+// Table-screen geometry shared by the renderer and the paging math, so the
+// rows-per-page calculation cannot drift from what is actually drawn.
+
+/// One breakdown row: a touchable canvas this tall (the whole row is its
+/// group's Details tap target). 41px is the tallest row that still fits six
+/// rows in the 480px-tall bands.
+pub const FLEET_ROW_H: f32 = 41.0;
+
+/// One detail device row: plain text cells; the 26px row text renders ~35px
+/// tall.
+pub const DETAIL_ROW_H: f32 = 35.0;
+
+/// The vertical gap between the table screens' stacked children (overview,
+/// separator, header row, data rows).
+pub const TABLE_GAP: f32 = 5.8;
+
 #[cfg(test)]
 mod tests {
     use super::*;
