@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Duration;
 
 use bmc_wasm_sdk::ufmt;
 use bmc_wasm_sdk::{
@@ -20,6 +21,9 @@ use crate::model::{MinerModel, ModelAccumulator};
 use crate::telemetry::TelemetryReading;
 
 const PASS_INTERVAL_MS: u32 = 30_000;
+// Fleet devices live on the local network, so an unreachable one should fail
+// fast instead of holding the SDK-default 10s timeout for a whole pass.
+const DEVICE_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
 
 enum FetchKind {
     Login,
@@ -344,7 +348,9 @@ fn fire_pending(
     for idx in pending_idxs {
         let url = fmt!("{}{}", base_url(adapter, host, port), endpoints[idx]);
         let req_id = send(
-            FetchRequest::get(&url).headers_opt(header.as_deref()),
+            FetchRequest::get(&url)
+                .headers_opt(header.as_deref())
+                .timeout(DEVICE_FETCH_TIMEOUT),
             delay_ms,
         );
         if let Some(req_id) = req_id {
@@ -392,7 +398,8 @@ fn issue_login(
     let generation = with_driver(family, |d| d.generation);
     let req = FetchRequest::post(&url)
         .headers("Content-Type: application/json")
-        .body(body.as_bytes());
+        .body(body.as_bytes())
+        .timeout(DEVICE_FETCH_TIMEOUT);
     let req_id = send(req, delay_ms);
     if let Some(req_id) = req_id {
         ROUTES.with(|r| {
