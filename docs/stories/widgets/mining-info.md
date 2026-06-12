@@ -66,14 +66,18 @@ other.
 - On the round 480×480 display (BFM100), all four screens use dedicated circular layouts. While the Mining and Geek have
   round gauges, the other two do not have specific round elements, they are just made to fit on a round screen.
 - *Mining* and *Geek* center the current hashrate inside a 28-segment ring and place four stats in the quadrants around
-  it. *Mining*'s quadrants are power consumption, MCR, temperature, and fan speed; *Geek* swaps MCR for efficiency
-  (J/TH) and fan speed for the BTC price. In these compact clusters temperature reads as the chip temperature alone, not
-  the board-to-chip range shown on the rectangular screens.
+  it. The hashrate value itself sits on the screen center, with the *TH/s* unit trailing to its right. *Mining*'s
+  quadrants are power consumption, MCR, temperature, and fan speed; *Geek* swaps MCR for efficiency (J/TH) and fan speed
+  for the BTC price. In these compact clusters temperature reads as the chip temperature alone, not the board-to-chip
+  range shown on the rectangular screens.
+- Above the ring, *Mining* and *Geek* show a chip header — a chip icon followed by the chip model and count (e.g.
+  *BM1370 x108*). It appears only when the miner reports both; otherwise it is omitted rather than showing placeholders.
+  The count is the miner's total across all of its hashboards.
 - The ring's fill reflects the miner's hashrate against its configured tuner targets. The sweep is anchored to three
   points — the minimum target a quarter of the way around the ring, the default at three-quarters, and the maximum at
   the full ring — interpolating linearly between, so a miner at its default target fills about three-quarters of it.
 - The ring's colour shows how the hashrate compares to the **default** target: green when within a small tolerance of it
-  (currently ±3%, *normal*), purple when at least that far above (*overclocked*), amber when at least that far below
+  (currently ±5%, *normal*), purple when at least that far above (*overclocked*), amber when at least that far below
   (*underclocked*), and red with a single lit tick when the miner is not hashing. When the hashrate or its target is
   unavailable the ring stays gray and unlit and the hashrate label reads neutral rather than implying a state. (The MCR
   shown in the *Mining* quadrant is a separate readout and does not drive the ring.)
@@ -126,9 +130,9 @@ other.
 - The *Miner password* is stored and shown as ordinary widget text because the manifest system has no secret-parameter
   type yet. This is a known limitation.
 - Field sets, labels, and units mirror the BOSer BMM screens.
-- Miner-local data (hashrate, temperature, power, MCR, fan, uptime, IP) comes from the miner's BOS REST API and
-  refreshes about every five seconds; Bitcoin price and network data come from `public-api.braiins.com` and refresh
-  about every sixty seconds. The two sources are independent and retry on failure.
+- Miner-local data (hashrate, temperature, power, MCR, fan, uptime, IP, chip model and count) comes from the miner's BOS
+  REST API and refreshes about every five seconds; Bitcoin price and network data come from `public-api.braiins.com` and
+  refresh about every sixty seconds. The two sources are independent and retry on failure.
 - The tuner constraints that scale the round gauge are read from `/configuration/constraints`. They are fetched only on
   the round *Mining* and *Geek* screens (the only ones with a ring), and only once per login, since they change only
   when the miner is re-tuned.

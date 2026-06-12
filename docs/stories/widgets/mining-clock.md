@@ -48,7 +48,7 @@ and reads live stats from a BOS miner over its REST API. It runs full-screen on 
 > under-performance at a glance.
 
 - Both rings are coloured by one state, derived from the miner's hashrate relative to its **default** hashrate target:
-  - **Normal** (green) — the hashrate is within a small tolerance of the default target (currently ±3%); the miner is
+  - **Normal** (green) — the hashrate is within a small tolerance of the default target (currently ±5%); the miner is
     running where it was configured.
   - **Overclocked** (purple) — the hashrate is at least the tolerance above the default target.
   - **Underclocked** (amber) — the hashrate is at least the tolerance below the default target.
