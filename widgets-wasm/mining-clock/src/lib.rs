@@ -16,6 +16,8 @@ mod shared;
 
 #[cfg(target_arch = "wasm32")]
 use std::cell::RefCell;
+#[cfg(target_arch = "wasm32")]
+use std::time::Duration;
 
 #[cfg(target_arch = "wasm32")]
 #[expect(
@@ -37,6 +39,10 @@ const STATS_REFRESH_MS: u32 = 5_000;
 const RETRY_MS: u32 = 10_000;
 #[cfg(target_arch = "wasm32")]
 const DEBOUNCE_MS: u32 = 300;
+// The miner lives on the local network, so an unreachable one should fail
+// fast instead of holding the SDK-default 10s timeout.
+#[cfg(target_arch = "wasm32")]
+const MINER_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[cfg(target_arch = "wasm32")]
 #[derive(Clone, Copy)]
@@ -147,7 +153,8 @@ fn build_login(_handle: PollHandle) -> Option<FetchSpec> {
     Some(
         FetchSpec::post(url)
             .headers("Content-Type: application/json")
-            .body(body.as_bytes()),
+            .body(body.as_bytes())
+            .timeout(MINER_FETCH_TIMEOUT),
     )
 }
 
@@ -158,7 +165,11 @@ fn build_miner(handle: PollHandle) -> Option<FetchSpec> {
         MinerSource::Stats => "/miner/stats",
         MinerSource::Constraints => "/configuration/constraints",
     };
-    Some(FetchSpec::get(miner::endpoint(&Params::current().miner_url, path)).headers(header))
+    Some(
+        FetchSpec::get(miner::endpoint(&Params::current().miner_url, path))
+            .headers(header)
+            .timeout(MINER_FETCH_TIMEOUT),
+    )
 }
 
 // Deliberately requests no frame: the clock paints once per second
