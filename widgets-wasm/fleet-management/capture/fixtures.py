@@ -27,13 +27,17 @@
 # multi-model fleet to record, so the fixtures are hand-authored here from the
 # adapter contracts in `src/families/{bos,ubos,bitaxe}.rs`.
 #
-# The fleet is fourteen reachable devices across four model groups, sized to
+# The fleet is eighteen reachable devices across eight model groups, sized to
 # exercise the breakdown table's column spacing (3-digit power, large group
-# hashrate, two-digit counts):
+# hashrate, two-digit counts) and its pager (eight groups, six rows per page):
 #   -  2x BOS    "Braiins Mini Miner BMM 101"
 #   -  1x uBOS   "BMM Adapter W5500"
 #   - 10x Bitaxe "NerdQAxe++"  (4.4 TH/s, 70 W each -> 44 TH/s, 700 W)
+#   -  4x Bitaxe singles "Gamma", "Max", "Supra", "Ultra"
 #   -  1x Bitaxe with no resolvable model -> the synthetic "Unknown" group
+# Groups order by family, alphabetically within it, Unknown pinned last:
+# fleet page 1 holds W5500, BMM 101, Gamma, Max, NerdQAxe++ and Supra;
+# page 2 holds Ultra and Unknown.
 #
 # The same fleet drives every declared size: `full`/`large` render the table,
 # while `medium`/`small` fall back to the summary-only layout (viewports below
@@ -178,6 +182,24 @@ for i in range(10):
         {'deviceModel': 'NerdQAxe++', 'ASICModel': 'BM1370', 'asicCount': 4},
     )
 
+# Four single-unit Bitaxe models (AxeOS reports bare deviceModel names) so
+# the fleet table itself paginates. Alphabetically they sandwich NerdQAxe++,
+# keeping it on page 1 where the lifecycle captures watch its telemetry.
+for axe_host, axe_name, axe_model, axe_asic, axe_ghs, axe_watt in [
+    ('10.0.0.50', 'gamma', 'Gamma', 'BM1370', 1200.0, 18.0),
+    ('10.0.0.51', 'max', 'Max', 'BM1397', 400.0, 12.0),
+    ('10.0.0.52', 'supra', 'Supra', 'BM1368', 700.0, 15.0),
+    ('10.0.0.53', 'ultra', 'Ultra', 'BM1366', 500.0, 13.0),
+]:
+    bitaxe(
+        axe_host,
+        f'{axe_name}._http._tcp.local.',
+        axe_ghs,
+        axe_watt,
+        51.0,
+        {'deviceModel': axe_model, 'ASICModel': axe_asic, 'asicCount': 1},
+    )
+
 # A Bitaxe with no model fields -> falls into the "Unknown" group.
 bitaxe('10.0.0.40', 'axe-unknown._http._tcp.local.', 1500.0, 22.0, 50.0, {})
 
@@ -227,24 +249,28 @@ def layout_lines():
     yield {'at_ms': CAPTURE_AT_MS, 'type': 'capture'}
 
 
-# ── Detail / pager scenario (the `large` fixture) ────────────────────
+# ── Detail / pager scenarios (the `large` fixture) ────────────────────
 #
-# The fleet table's four model groups fit one page in every band, so the
-# pager only exists in the NerdQAxe++ detail view: ten device rows against
-# 6 (full) / 7 (large) rows per page. Drill into that group and flip to
-# page 2 so the captures cover the detail table, the Back button, the
-# friendly-name mappings and both pager states. Details click IDs carry
-# the family index and the untruncated group label (see
+# Eight model groups paginate the fleet table itself (six rows per page);
+# NerdQAxe++ paginates the detail view (ten devices against 6 full / 7
+# large rows per page). Drill into NerdQAxe++ from fleet page 1, flip the
+# detail to its second page, then return and flip the fleet to its second
+# page — covering both tables' pager states, the Back button, the
+# friendly-name mappings and the Unknown group's last row. Details click
+# IDs carry the family index and the untruncated group label (see
 # `view::details_click_id`).
 DETAILS_NERDQAXE = 'details:2:NerdQAxe++'
 
 
 def detail_lines():
-    yield from layout_lines()  # frame_0000: fleet table
+    yield from layout_lines()  # frame_0000: fleet page 1/2
     yield click(35_000, DETAILS_NERDQAXE)
     yield {'at_ms': 36_000, 'type': 'capture'}  # frame_0001: detail page 1/2
     yield click(37_000, 'page_next')
     yield {'at_ms': 38_000, 'type': 'capture'}  # frame_0002: detail page 2/2
+    yield click(39_000, 'back')
+    yield click(40_000, 'page_next')
+    yield {'at_ms': 41_000, 'type': 'capture'}  # frame_0003: fleet page 2/2
 
 
 # ── Lifecycle timeline (the `full` fixture) ──────────────────────────
@@ -258,7 +284,7 @@ def detail_lines():
 # path stranded by a mid-pass removal. The NerdQAxe++ units report a value set
 # per pass (pass 2 = current values, so frame_0000 still matches the layout
 # baseline). Five captures walk one device through its whole lifecycle:
-#   frame_0000  initial fleet (all 11 Bitaxe present, pass-2 values)
+#   frame_0000  initial fleet (all 15 Bitaxe present, pass-2 values)
 #   frame_0001  after `nerdqaxe-0` is removed mid-flight (survivors keep rising)
 #   frame_0002  after `nerdqaxe-1` goes non-responsive (HTTP 500)
 #   frame_0003  after `nerdqaxe-0` is re-discovered and polled afresh
@@ -347,9 +373,10 @@ def lifecycle_lines():
     }
     yield {'at_ms': 135_000, 'type': 'capture'}  # frame_0003: nerdqaxe-0 re-discovered
     yield {'at_ms': 165_000, 'type': 'capture'}  # frame_0004: nerdqaxe-1 recovered
-    # Detail / pager scenario on the settled fleet: first the single-row
-    # detail of the table's first group (uBOS sorts first), then the
-    # paginated NerdQAxe++ detail and its second page.
+    # Detail / pager scenario on the settled fleet: the single-row detail
+    # of the table's first group (uBOS sorts first), the paginated
+    # NerdQAxe++ detail with its second page, then the fleet's own second
+    # page with the Unknown group last.
     yield click(170_000, 'details:1:BMM Adapter W5500')
     yield {'at_ms': 171_000, 'type': 'capture'}  # frame_0005: single-row detail
     yield click(172_000, 'back')
@@ -357,6 +384,9 @@ def lifecycle_lines():
     yield {'at_ms': 174_000, 'type': 'capture'}  # frame_0006: detail page 1/2
     yield click(175_000, 'page_next')
     yield {'at_ms': 176_000, 'type': 'capture'}  # frame_0007: detail page 2/2
+    yield click(177_000, 'back')
+    yield click(178_000, 'page_next')
+    yield {'at_ms': 179_000, 'type': 'capture'}  # frame_0008: fleet page 2/2
 
 
 def main():
