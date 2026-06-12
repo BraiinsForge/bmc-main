@@ -21,27 +21,23 @@ enum Transition {
     Store,
     /// Keep the last-known-good series on screen (a refresh failed).
     KeepStale,
-    /// First load against a backend that is still warming up.
-    Warming,
     /// The symbol/period is not resolvable; stop polling until params change.
     InputError,
-    /// Transient failure with nothing loaded yet.
+    /// Failed reply with nothing loaded yet; the poll keeps running.
     Error,
 }
 
 /// Fold an HTTP-status class and the parse result into a state transition.
-/// Held data survives any failed refresh; a 400/404 always disables the poll;
-/// a 503 with no data yet is a distinct "warming up" state.
+/// Held data survives any failed refresh; a 400/404 always disables the poll.
 #[cfg(any(target_arch = "wasm32", test))]
 fn outcome(class: FetchClass, parsed_ok: bool, has_data: bool) -> Transition {
     match class {
         FetchClass::Ok if parsed_ok => Transition::Store,
         FetchClass::InputError => Transition::InputError,
-        FetchClass::Warming if has_data => Transition::KeepStale,
-        FetchClass::Warming => Transition::Warming,
-        // A 2xx whose body did not parse, or a transient failure: keep the
-        // last-known-good series if we have one, otherwise hard-error.
-        FetchClass::Ok | FetchClass::Transient => {
+        // A 2xx whose body did not parse, a transient failure, or a 503
+        // (which also covers "no data for this symbol"): keep the
+        // last-known-good series if we have one, otherwise show unavailable.
+        FetchClass::Ok | FetchClass::Transient | FetchClass::Warming => {
             if has_data {
                 Transition::KeepStale
             } else {
@@ -76,24 +72,14 @@ mod tests {
     }
 
     #[test]
-    fn warming_only_when_nothing_is_loaded_yet() {
-        assert_eq!(
-            outcome(FetchClass::Warming, false, false),
-            Transition::Warming
-        );
-        // With data already shown, a 503 just keeps the last-good series.
-        assert_eq!(
-            outcome(FetchClass::Warming, false, true),
-            Transition::KeepStale
-        );
-    }
-
-    #[test]
     fn any_failure_keeps_data_when_present_else_errors() {
-        for class in [FetchClass::Ok, FetchClass::Transient] {
-            // Ok-but-unparsed and a transient failure both keep held data...
+        // A 503 with nothing loaded must surface as unavailable rather than
+        // an indefinite warming/loading state — the server also answers 503
+        // for symbols it has no data for, not just while warming up.
+        for class in [FetchClass::Ok, FetchClass::Transient, FetchClass::Warming] {
+            // Ok-but-unparsed and any failure keep held data...
             assert_eq!(outcome(class, false, true), Transition::KeepStale);
-            // ...but hard-error on first load with nothing yet.
+            // ...but show unavailable on first load with nothing yet.
             assert_eq!(outcome(class, false, false), Transition::Error);
         }
     }
@@ -119,7 +105,6 @@ mod wasm_glue {
         Loading,
         Loaded(model::Series),
         InputError,
-        Warming,
         Error,
     }
 
@@ -190,9 +175,6 @@ mod wasm_glue {
                     handle.retry();
                 }
             }
-            Transition::Warming => {
-                STATE.with(|s| *s.borrow_mut() = State::Warming);
-            }
             Transition::InputError => {
                 STATE.with(|s| *s.borrow_mut() = State::InputError);
                 handle.set_enabled(false);
@@ -241,9 +223,8 @@ mod wasm_glue {
                     render::series_view(series, symbol, params.period.as_manifest_value(), ws)
                 }
                 State::Loading => render::message_view("Loading\u{2026}", ws),
-                State::Warming => render::message_view("Warming up\u{2026}", ws),
                 State::InputError => render::message_view("Symbol not found", ws),
-                State::Error => render::message_view("Cannot load data", ws),
+                State::Error => render::message_view(&fmt!("{symbol} unavailable"), ws),
             })
         };
         let _ = render_ui(ws.width, ws.height, node);
