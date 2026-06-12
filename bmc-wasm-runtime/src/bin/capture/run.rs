@@ -263,6 +263,10 @@ fn run_unified_capture(
     let mut frame_count: u32 = 0;
     let mut captured_count: u32 = 0;
     let mut event_cursor: usize = 0;
+    // Due at 0 so the first step always paints: a widget is rendered once when
+    // it appears (registering its hit regions) even if it never requests a
+    // frame, matching the device host's initial paint.
+    let mut render_due: Option<u64> = Some(0);
 
     // Process all user events by advancing time to each one
     while event_cursor < user_events.len() {
@@ -275,10 +279,17 @@ fn run_unified_capture(
             runtime.set_time(system_time, monotonic_ms);
             runtime.inject_fixture_events(fixture_ms);
             deliver_all_io(&mut runtime, &mut renderer);
-            if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
-                bail!("widget died at frame {frame_count}");
+            if render_if_due(
+                &mut runtime,
+                &mut renderer,
+                ctx,
+                frame_count,
+                monotonic_ms,
+                &mut render_due,
+                false,
+            )? {
+                unsafe { gl.flush() };
             }
-            unsafe { gl.flush() };
 
             monotonic_ms += u64::from(DELTA_MS);
             fixture_ms += u64::from(DELTA_MS);
@@ -301,10 +312,17 @@ fn run_unified_capture(
                         runtime.set_time(system_time, monotonic_ms);
                         runtime.inject_fixture_events(fixture_ms);
                         deliver_all_io(&mut runtime, &mut renderer);
-                        if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
-                            bail!("widget died during settle at frame {frame_count}");
+                        if render_if_due(
+                            &mut runtime,
+                            &mut renderer,
+                            ctx,
+                            frame_count,
+                            monotonic_ms,
+                            &mut render_due,
+                            false,
+                        )? {
+                            unsafe { gl.flush() };
                         }
-                        unsafe { gl.flush() };
                         monotonic_ms += u64::from(DELTA_MS);
                         fixture_ms += u64::from(DELTA_MS);
                         system_time += chrono::Duration::milliseconds(i64::from(DELTA_MS));
@@ -351,22 +369,37 @@ fn run_unified_capture(
                             runtime.set_time(system_time, monotonic_ms);
                             runtime.inject_fixture_events(fixture_ms);
                             deliver_all_io(&mut runtime, &mut renderer);
-                            if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
-                                bail!("widget died at frame {frame_count}");
+                            if render_if_due(
+                                &mut runtime,
+                                &mut renderer,
+                                ctx,
+                                frame_count,
+                                monotonic_ms,
+                                &mut render_due,
+                                false,
+                            )? {
+                                unsafe { gl.flush() };
                             }
-                            unsafe { gl.flush() };
                             monotonic_ms += u64::from(DELTA_MS);
                             system_time += chrono::Duration::milliseconds(i64::from(DELTA_MS));
                             frame_count += 1;
                         }
 
-                        // Render and capture
+                        // Render and capture — forced: the snapshot needs a
+                        // framebuffer drawn at exactly this instant even if the
+                        // widget is idle.
                         runtime.set_time(system_time, monotonic_ms);
                         runtime.inject_fixture_events(fixture_ms);
                         deliver_all_io(&mut runtime, &mut renderer);
-                        if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
-                            bail!("widget died at frame {frame_count}");
-                        }
+                        render_if_due(
+                            &mut runtime,
+                            &mut renderer,
+                            ctx,
+                            frame_count,
+                            monotonic_ms,
+                            &mut render_due,
+                            true,
+                        )?;
                         unsafe { gl.flush() };
 
                         let path = ctx
@@ -420,6 +453,7 @@ fn run_unified_capture(
                         &mut fixture_ms,
                         &mut system_time,
                         &mut frame_count,
+                        &mut render_due,
                     )?;
                     runtime.push_touch_event(TouchEvent::Up);
                     tick_one_frame(
@@ -431,6 +465,7 @@ fn run_unified_capture(
                         &mut fixture_ms,
                         &mut system_time,
                         &mut frame_count,
+                        &mut render_due,
                     )?;
                 }
                 UnifiedEvent::Scroll { element, delta } => {
@@ -455,6 +490,7 @@ fn run_unified_capture(
                         &mut fixture_ms,
                         &mut system_time,
                         &mut frame_count,
+                        &mut render_due,
                     )?;
                     let mut current_y = cy;
                     for _ in 0..steps {
@@ -472,6 +508,7 @@ fn run_unified_capture(
                             &mut fixture_ms,
                             &mut system_time,
                             &mut frame_count,
+                            &mut render_due,
                         )?;
                     }
                     runtime.push_touch_event(TouchEvent::Up);
@@ -484,6 +521,7 @@ fn run_unified_capture(
                         &mut fixture_ms,
                         &mut system_time,
                         &mut frame_count,
+                        &mut render_due,
                     )?;
                 }
                 UnifiedEvent::Drag { element, from, to } => {
@@ -508,6 +546,7 @@ fn run_unified_capture(
                         &mut fixture_ms,
                         &mut system_time,
                         &mut frame_count,
+                        &mut render_due,
                     )?;
                     for i in 1..=DRAG_FRAMES {
                         let t = i as f32 / DRAG_FRAMES as f32;
@@ -522,6 +561,7 @@ fn run_unified_capture(
                             &mut fixture_ms,
                             &mut system_time,
                             &mut frame_count,
+                            &mut render_due,
                         )?;
                     }
                     runtime.push_touch_event(TouchEvent::Up);
@@ -534,6 +574,7 @@ fn run_unified_capture(
                         &mut fixture_ms,
                         &mut system_time,
                         &mut frame_count,
+                        &mut render_due,
                     )?;
                 }
                 // Operator-driven params update — call `deliver_params_update`
@@ -594,9 +635,48 @@ fn run_unified_capture(
 
 // ── Frame helpers ───────────────────────────────────────────────────
 
+/// Render only when the widget's frame schedule asks for it, or when `force`
+/// is set (capture snapshots, interaction ticks). Idle frames skip the render
+/// entirely — per `wants_next_frame`'s contract the host must not render an
+/// identical frame, and skipping is what lets a fixture wait out a long poll
+/// interval without rasterizing thousands of no-op frames.
+///
+/// `render_due` latches the monotonic deadline of a pending frame request
+/// (`request_frame()` is a zero-delay request, `request_frame_after(n)` an
+/// `n`-ms one). Requests can appear outside a render — fetch/param/system
+/// handlers run during delivery — so the deadline is (re)latched here every
+/// step and recomputed after each render consumes the schedule.
+///
+/// Returns whether a frame was rendered.
+fn render_if_due(
+    runtime: &mut WasmWidgetRuntime,
+    renderer: &mut FemtoVgRenderer,
+    ctx: &CaptureCtx,
+    frame_count: u32,
+    monotonic_ms: u64,
+    render_due: &mut Option<u64>,
+    force: bool,
+) -> Result<bool> {
+    if render_due.is_none() && runtime.wants_next_frame() {
+        *render_due = Some(monotonic_ms + u64::from(runtime.next_frame_delay().unwrap_or(0)));
+    }
+    if !(force || render_due.is_some_and(|due| monotonic_ms >= due)) {
+        return Ok(false);
+    }
+    if !render_frame(runtime, renderer, ctx, frame_count) {
+        bail!("widget died at frame {frame_count}");
+    }
+    *render_due = runtime
+        .wants_next_frame()
+        .then(|| monotonic_ms + u64::from(runtime.next_frame_delay().unwrap_or(0)));
+    Ok(true)
+}
+
 /// Tick a single frame: set time, inject fixtures, deliver I/O, render, advance.
 ///
-/// Both `monotonic_ms` and `fixture_ms` are advanced by `DELTA_MS`.
+/// The render is forced — interaction ticks need the widget to process the
+/// touch event and redraw. Both `monotonic_ms` and `fixture_ms` are advanced
+/// by `DELTA_MS`.
 #[expect(
     clippy::too_many_arguments,
     reason = "single-flow per-frame helper threading the replay loop's interlocked clocks; \
@@ -611,13 +691,20 @@ fn tick_one_frame(
     fixture_ms: &mut u64,
     system_time: &mut chrono::DateTime<chrono::FixedOffset>,
     frame_count: &mut u32,
+    render_due: &mut Option<u64>,
 ) -> Result<()> {
     runtime.set_time(*system_time, *monotonic_ms);
     runtime.inject_fixture_events(*fixture_ms);
     deliver_all_io(runtime, renderer);
-    if !render_frame(runtime, renderer, ctx, *frame_count) {
-        bail!("widget died at frame {}", *frame_count);
-    }
+    render_if_due(
+        runtime,
+        renderer,
+        ctx,
+        *frame_count,
+        *monotonic_ms,
+        render_due,
+        true,
+    )?;
     unsafe { gl.flush() };
     *monotonic_ms += u64::from(DELTA_MS);
     *fixture_ms += u64::from(DELTA_MS);
