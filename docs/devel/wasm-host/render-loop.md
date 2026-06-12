@@ -121,10 +121,12 @@ That requires all of these conditions:
 The minimum inter-frame interval is 8 ms. It caps a widget that continuously asks for immediate frames at roughly 120
 fps.
 
-Dirty surface renders come from lifecycle changes, param updates, touch input, and other host-side events that call
-`mark_needs_render()`. Those dirty renders can happen in `Prepared`, `Entering`, or `Leaving`. Runtime animation renders
-come from `WasmWidgetRuntime::wants_next_frame()` and `next_frame_delay()` after a previous render, and are honored only
-in `Visible`.
+Dirty surface renders come from lifecycle changes, param updates, and other host-side events that call
+`mark_needs_render()`. Those dirty renders can happen in `Prepared`, `Entering`, or `Leaving`. Touch input is not a
+dirty source: `dispatch_wayland_events` delivers touch events through the widget's `on_touch` export, and the host
+renders only if the widget responds by calling `request_frame()` — honored only while `Visible`. Runtime animation
+renders come from `WasmWidgetRuntime::wants_next_frame()` and `next_frame_delay()` after a previous render, and are
+honored only in `Visible`.
 
 ## Rendering A Frame
 
