@@ -28,6 +28,16 @@ pub struct SizeBand {
     /// Horizontal inset of the header content from the tile edges.
     pub edge_padding: f32,
     pub show_period: bool,
+    /// Width of the candlestick price-axis gutter.
+    pub axis_width: f32,
+    /// Gap between the chart area and the price-axis gutter.
+    pub axis_gap: f32,
+    pub axis_font: u32,
+    /// Height of the volume strip under the candles.
+    pub volume_height: f32,
+    /// Height of the time-label strip under the volume bars.
+    pub x_label_height: f32,
+    pub show_x_labels: bool,
 }
 
 const FULL: SizeBand = SizeBand {
@@ -41,6 +51,12 @@ const FULL: SizeBand = SizeBand {
     header_right_gap: 8.0,
     edge_padding: 16.0,
     show_period: true,
+    axis_width: 120.0,
+    axis_gap: 12.0,
+    axis_font: 20,
+    volume_height: 70.0,
+    x_label_height: 35.0,
+    show_x_labels: true,
 };
 
 const LARGE: SizeBand = SizeBand {
@@ -56,6 +72,7 @@ const MEDIUM: SizeBand = SizeBand {
     icon_diameter: 16.0,
     top_padding: 12.0,
     edge_padding: 12.0,
+    show_x_labels: false,
     ..FULL
 };
 
@@ -69,6 +86,7 @@ const SMALL: SizeBand = SizeBand {
     header_right_gap: 4.0,
     edge_padding: 8.0,
     show_period: false,
+    show_x_labels: false,
     ..FULL
 };
 
@@ -88,6 +106,12 @@ impl SizeBand {
             header_right_gap: self.header_right_gap * fit,
             edge_padding: self.edge_padding * fit,
             show_period: self.show_period,
+            axis_width: self.axis_width * fit,
+            axis_gap: self.axis_gap * fit,
+            axis_font: scale_font(self.axis_font, fit),
+            volume_height: self.volume_height * fit,
+            x_label_height: self.x_label_height * fit,
+            show_x_labels: self.show_x_labels,
         }
     }
 }
@@ -120,6 +144,27 @@ mod tests {
         assert_eq!(scaled.price_font, 77);
         assert_eq!(scaled.header_font, 12);
         assert!(scaled.show_period);
+    }
+
+    #[test]
+    fn candlestick_chrome_is_deckfeeder_fixed_and_fit_scaled() {
+        // Deckfeeder hardcodes the axis gutter (120px + 12 gap, 20px font),
+        // the 70px volume strip, and the 35px time-label strip at every
+        // size; only fit-scaling shrinks them. Time labels show at
+        // full/large only (per the reference previews).
+        let full = band_for(SizeVariant::Full);
+        assert!((full.axis_width - 120.0).abs() < f32::EPSILON);
+        assert!((full.axis_gap - 12.0).abs() < f32::EPSILON);
+        assert_eq!(full.axis_font, 20);
+        assert!((full.volume_height - 70.0).abs() < f32::EPSILON);
+        assert!((full.x_label_height - 35.0).abs() < f32::EPSILON);
+        assert!(full.show_x_labels);
+        assert!(band_for(SizeVariant::Large).show_x_labels);
+        assert!(!band_for(SizeVariant::Medium).show_x_labels);
+        assert!(!band_for(SizeVariant::Small).show_x_labels);
+        let scaled = full.scaled(0.5);
+        assert!((scaled.axis_width - 60.0).abs() < f32::EPSILON);
+        assert_eq!(scaled.axis_font, 10);
     }
 
     #[test]

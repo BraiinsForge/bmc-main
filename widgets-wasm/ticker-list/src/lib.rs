@@ -213,10 +213,12 @@ mod wasm_glue {
             return None;
         }
         let symbol = SYMBOLS.with(|s| s.borrow().get(row).cloned())?;
+        let period = period_of();
         Some(FetchSpec::get(fetch::prices_url(
             NEXUS_BASE,
             &symbol,
-            period_of(),
+            period,
+            period.candle(),
         )))
     }
 

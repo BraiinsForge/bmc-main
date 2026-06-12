@@ -4,6 +4,7 @@
 //! symbol + period + signed change badge), a tile-centered price, and a
 //! bottom-anchored sparkline. Ported from deckfeeder's `ticker-single-sparkline`.
 
+pub mod chart_layout;
 pub mod display;
 mod manifest_params;
 pub mod model;
@@ -94,7 +95,7 @@ mod wasm_glue {
     use bmc_wasm_sdk::*;
     use prices::candle;
     use prices::fetch::{self, FetchClass};
-    use prices::period::Period;
+    use prices::period::{Candle, Period};
 
     const REFRESH_MS: u32 = 60_000;
     const RETRY_MS: u32 = 10_000;
@@ -122,6 +123,14 @@ mod wasm_glue {
         Period::parse(params.period.as_manifest_value()).unwrap_or(Period::D7)
     }
 
+    fn candle_of(params: &manifest_params::Params) -> Candle {
+        let period = period_of(params);
+        match params.view {
+            manifest_params::View::Sparkline => period.candle(),
+            manifest_params::View::Candlestick => period.candlestick_candle(),
+        }
+    }
+
     #[unsafe(no_mangle)]
     pub extern "C" fn init() {
         let handle = register_poll(
@@ -147,6 +156,7 @@ mod wasm_glue {
             NEXUS_BASE,
             pair,
             period_of(&params),
+            candle_of(&params),
         )))
     }
 
@@ -205,7 +215,7 @@ mod wasm_glue {
         let cur = manifest_params::Params::current();
         let changed = prev
             .as_ref()
-            .is_none_or(|p| p.pair != cur.pair || p.period != cur.period);
+            .is_none_or(|p| p.pair != cur.pair || p.period != cur.period || p.view != cur.view);
         if changed {
             STATE.with(|s| *s.borrow_mut() = State::Loading);
             POLL.with(|p| {
@@ -233,8 +243,21 @@ mod wasm_glue {
         } else {
             STATE.with(|s| match &*s.borrow() {
                 State::Loaded { series, stale } => {
-                    let view =
-                        render::series_view(series, symbol, params.period.as_manifest_value(), ws);
+                    let view = match params.view {
+                        manifest_params::View::Sparkline => render::sparkline::series_view(
+                            series,
+                            symbol,
+                            params.period.as_manifest_value(),
+                            ws,
+                        ),
+                        manifest_params::View::Candlestick => render::candlestick::series_view(
+                            series,
+                            symbol,
+                            period_of(&params),
+                            params.period.as_manifest_value(),
+                            ws,
+                        ),
+                    };
                     if *stale {
                         mining::overlay::with_overlay(
                             view,

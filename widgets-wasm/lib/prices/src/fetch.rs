@@ -3,16 +3,16 @@
 //! Nexus price-resource path building and HTTP-status classification. Host-pure.
 
 use crate::instrument::to_instrument;
-use crate::period::Period;
+use crate::period::{Candle, Period};
 
 /// Build the resource path `prices/<window>/<candle>/<instrument>` with the raw
 /// (unencoded) instrument, e.g. `prices/7d/1h/BTC/USD`.
 #[must_use]
-pub fn resource_path(symbol: &str, period: Period) -> String {
+pub fn resource_path(symbol: &str, period: Period, candle: Candle) -> String {
     let mut out = String::from("prices/");
     out.push_str(period.window());
     out.push('/');
-    out.push_str(period.candle().token());
+    out.push_str(candle.token());
     out.push('/');
     out.push_str(&to_instrument(symbol));
     out
@@ -23,8 +23,8 @@ pub fn resource_path(symbol: &str, period: Period) -> String {
 /// resource char is encoded except the unreserved set and the `/` separators,
 /// matching what the deckfeeder `URL` constructor produces.
 #[must_use]
-pub fn prices_url(base: &str, symbol: &str, period: Period) -> String {
-    encode_resource_url(base, &resource_path(symbol, period))
+pub fn prices_url(base: &str, symbol: &str, period: Period, candle: Candle) -> String {
+    encode_resource_url(base, &resource_path(symbol, period, candle))
 }
 
 /// Join `base` and a resource path, percent-encoding each resource byte except
@@ -79,18 +79,34 @@ mod tests {
 
     #[test]
     fn resource_path_for_a_crypto_pair() {
-        assert_eq!(resource_path("BTC-USD", Period::D7), "prices/7d/1h/BTC/USD");
         assert_eq!(
-            resource_path("BTC-USD", Period::Mo1),
+            resource_path("BTC-USD", Period::D7, Period::D7.candle()),
+            "prices/7d/1h/BTC/USD"
+        );
+        assert_eq!(
+            resource_path("BTC-USD", Period::Mo1, Period::Mo1.candle()),
             "prices/1mo/4h/BTC/USD"
         );
-        assert_eq!(resource_path("AAPL", Period::D1), "prices/1d/15m/AAPL");
+        assert_eq!(
+            resource_path("AAPL", Period::D1, Period::D1.candle()),
+            "prices/1d/15m/AAPL"
+        );
+        // A candle other than period.candle() must be honored verbatim.
+        assert_eq!(
+            resource_path("BTC-USD", Period::D7, Candle::H4),
+            "prices/7d/4h/BTC/USD"
+        );
     }
 
     #[test]
     fn prices_url_joins_base_and_keeps_pair_slash() {
         assert_eq!(
-            prices_url("https://nexus/api/v1/data/", "BTC-USD", Period::D7),
+            prices_url(
+                "https://nexus/api/v1/data/",
+                "BTC-USD",
+                Period::D7,
+                Period::D7.candle()
+            ),
             "https://nexus/api/v1/data/prices/7d/1h/BTC/USD"
         );
     }
@@ -98,11 +114,11 @@ mod tests {
     #[test]
     fn prices_url_percent_encodes_index_and_fx_specials() {
         assert_eq!(
-            prices_url("b/", "^GSPC", Period::D7),
+            prices_url("b/", "^GSPC", Period::D7, Period::D7.candle()),
             "b/prices/7d/1h/%5EGSPC"
         );
         assert_eq!(
-            prices_url("b/", "EURUSD=X", Period::D7),
+            prices_url("b/", "EURUSD=X", Period::D7, Period::D7.candle()),
             "b/prices/7d/1h/EURUSD%3DX"
         );
     }

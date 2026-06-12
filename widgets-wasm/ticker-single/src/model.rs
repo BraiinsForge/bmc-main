@@ -3,14 +3,14 @@
 //! Host-pure data model: the price series, the change/price formatting, and the
 //! currency-icon table. No SDK draw types, so it all unit-tests on the host.
 
-use prices::candle::{self, Candles};
+use prices::candle::{self, CandleBar, Candles};
 use prices::instrument::base_symbol;
 use prices::period::Candle;
 
-/// The rendered series: the close line, the current price, the period change,
+/// The rendered series: the OHLCV bars, the current price, the period change,
 /// and whether the feed looks live.
 pub struct Series {
-    pub closes: Vec<f64>,
+    pub bars: Vec<CandleBar>,
     pub current: f64,
     pub change_pct: f64,
     pub market_open: bool,
@@ -28,16 +28,21 @@ impl Series {
         if first <= 0.0 {
             return None;
         }
-        let closes: Vec<f64> = candles.bars.iter().map(|b| b.close).collect();
-        let current = *closes.last()?;
+        let current = candles.bars.last()?.close;
         let change_pct = (current - first) / first * 100.0;
         let market_open = candle::market_open(&candles.bars, liveness, now_secs);
         Some(Series {
-            closes,
+            bars: candles.bars.clone(),
             current,
             change_pct,
             market_open,
         })
+    }
+
+    /// Close series for the sparkline path.
+    #[must_use]
+    pub fn closes(&self) -> Vec<f64> {
+        self.bars.iter().map(|b| b.close).collect()
     }
 
     #[must_use]
@@ -128,6 +133,8 @@ mod tests {
         assert!((s.current - 110.0).abs() < 1e-9);
         assert!((s.change_pct - 10.0).abs() < 1e-9);
         assert!(s.is_positive());
+        assert_eq!(s.bars.len(), 2);
+        assert_eq!(s.closes(), vec![100.0, 110.0]);
     }
 
     #[test]

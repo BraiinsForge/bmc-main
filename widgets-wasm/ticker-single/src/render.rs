@@ -1,7 +1,10 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! The wasm render path: the header row, and a canvas that draws the
-//! bottom-anchored sparkline with the tile-centered price drawn over it.
+//! The wasm render path shared by both chart views: the palette, the
+//! header row, the price formatting rule, and the status-message view.
+
+pub mod candlestick;
+pub mod sparkline;
 
 #[expect(
     clippy::wildcard_imports,
@@ -13,7 +16,6 @@ use crate::display::{SizeBand, band_for};
 use crate::model::{
     IconStyle, MIN_PRICE, PricePrecision, Series, change_text, icon_for, price_precision,
 };
-use prices::chart;
 
 const BACKGROUND: Color = BLACK;
 const SYMBOL_COLOR: Color = Color::from_rgb(0xc6, 0xc6, 0xc6);
@@ -21,16 +23,11 @@ const PRICE_COLOR: Color = Color::from_rgb(0xf4, 0xf4, 0xf4);
 const TREND_UP: Color = Color::from_rgb(0x42, 0xbe, 0x65);
 const TREND_DOWN: Color = Color::from_rgb(0xfa, 0x4d, 0x56);
 const BADGE_BG_ALPHA: f32 = 0.15;
-const CHART_STROKE: f32 = 2.0;
-const CHART_INSET: f32 = 2.0;
 /// The fill under the sparkline is a faint wash of the trend color, fading
 /// from 15% at the line's peak to a 2% tint at the bottom edge — matching the
 /// reference design previews.
 const CHART_FILL_TOP_ALPHA: f32 = 0.15;
 const CHART_FILL_BOTTOM_ALPHA: f32 = 0.02;
-/// The sparkline band fills the bottom fraction of the tile, the price number
-/// floating over it — matching the legacy bitcoin ticker's `0.6 × height` graph.
-const CHART_HEIGHT_FRACTION: f32 = 0.6;
 const CLOSED_ALPHA: f32 = 0.4;
 
 #[expect(
@@ -79,31 +76,17 @@ fn badge_node(text_str: String, trend: Color, band: &SizeBand) -> Node {
     )
 }
 
-/// The loaded view: header on top, sparkline + price on a canvas below.
-#[must_use]
-pub fn series_view(series: &Series, symbol: &str, period_label: &str, ws: WidgetSize) -> Node {
-    let band = band_for(ws.variant).scaled(ws.fit());
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "viewport dimensions are <= 1280, exact in f32"
-    )]
-    let (w, h) = (ws.width as f32, ws.height as f32);
-    let trend = if series.is_positive() {
-        TREND_UP
-    } else {
-        TREND_DOWN
-    };
-    let is_index = symbol.starts_with('^');
-    let alpha = if !series.market_open && !is_index {
-        CLOSED_ALPHA
-    } else {
-        1.0
-    };
-
-    let header_h = header_height(&band);
-    let canvas_h = (h - header_h).max(0.0);
-
-    // ── header ──────────────────────────────────────────────────────────
+/// The shared header row: icon + symbol, then period label and change
+/// badge right-aligned.
+fn header_row(
+    series: &Series,
+    symbol: &str,
+    period_label: &str,
+    band: &SizeBand,
+    trend: Color,
+    alpha: f32,
+    header_h: f32,
+) -> Node {
     let mut header_children = vec![fixed_width(band.edge_padding)];
     if let Some(icon) = icon_for(symbol) {
         header_children.push(icon_node(&icon, band.icon_diameter, band.glyph_font, alpha));
@@ -121,57 +104,24 @@ pub fn series_view(series: &Series, symbol: &str, period_label: &str, ws: Widget
         ));
         header_children.push(fixed_width(band.header_right_gap));
     }
-    header_children.push(badge_node(change_text(series.change_pct), trend, &band));
+    header_children.push(badge_node(change_text(series.change_pct), trend, band));
     header_children.push(fixed_width(band.edge_padding));
-    let header = row(
+    row(
         props!(height: header_h, cross_align: CrossAlign::Center),
         header_children,
-    );
+    )
+}
 
-    // ── chart + price canvas ────────────────────────────────────────────
-    let mut draws = Vec::new();
-    let chart_height = (h * CHART_HEIGHT_FRACTION).min(canvas_h);
-    let raw_line = chart::series_points(&series.closes, w, chart_height, CHART_INSET);
-    if raw_line.len() >= 2 {
-        let y0 = canvas_h - chart_height;
-        let line: Vec<(f32, f32)> = raw_line.iter().map(|&(x, y)| (x, y + y0)).collect();
-        let mut area = line.clone();
-        area.push((w, canvas_h));
-        area.push((0.0, canvas_h));
-        draws.push(fill!(
-            area,
-            linear: (
-                trend.with_alpha(CHART_FILL_TOP_ALPHA * alpha),
-                trend.with_alpha(CHART_FILL_BOTTOM_ALPHA * alpha)
-            )
-        ));
-        draws.push(path!(line, stroke: CHART_STROKE, color: trend.with_alpha(alpha)));
-    }
-    let price = match price_precision(symbol, series.current) {
-        PricePrecision::Fraction(digits) => format_number!(series.current, digits),
+/// The formatted price per the shared precision rule.
+fn price_text(symbol: &str, value: f64) -> String {
+    match price_precision(symbol, value) {
+        PricePrecision::Fraction(digits) => format_number!(value, digits),
         PricePrecision::BelowMin => {
             let mut out = String::from("<");
             out.push_str(&format_number!(MIN_PRICE, 6));
             out
         }
-    };
-    draws.push(Draw::text(
-        w / 2.0,
-        h / 2.0 - header_h,
-        price,
-        style!(
-            size: band.price_font,
-            weight: FontWeight::BOLD,
-            color: PRICE_COLOR,
-            align: TextAlign::Center,
-            valign: VerticalAlign::Center,
-        ),
-    ));
-
-    col(
-        props!(background: BACKGROUND, width: w, height: h),
-        [header, canvas(props!(width: w, height: canvas_h), draws)],
-    )
+    }
 }
 
 /// A centered status message (loading / error / warming / input error).

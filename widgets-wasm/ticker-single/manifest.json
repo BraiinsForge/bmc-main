@@ -3,7 +3,7 @@
   "uid": "69ed377c-701b-4cdb-b4b6-0308cfe56b64",
   "version": "0.1.0",
   "name": "Ticker - Single",
-  "description": "Visualize stock, asset, and crypto prices on a single chart",
+  "description": "Visualize stock, asset, and crypto prices on a sparkline or candlestick chart",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"
@@ -109,6 +109,22 @@
         {
           "value": "full",
           "label": "All Time"
+        }
+      ]
+    },
+    "view": {
+      "name": "View",
+      "description": "Chart style for the price series",
+      "type": "string",
+      "default_value": "sparkline",
+      "enum_values": [
+        {
+          "value": "sparkline",
+          "label": "Sparkline"
+        },
+        {
+          "value": "candlestick",
+          "label": "Candlestick"
         }
       ]
     }

@@ -101,6 +101,23 @@ impl Period {
         }
     }
 
+    /// Nexus candle size for the candlestick view: coarser than the
+    /// sparkline mapping so candle bodies stay readable, preferring natural
+    /// exchange sizes.
+    #[must_use]
+    pub fn candlestick_candle(self) -> Candle {
+        match self {
+            Period::H1 => Candle::M1,
+            Period::H3 | Period::H6 => Candle::M5,
+            Period::H12 | Period::D1 => Candle::M15,
+            Period::D3 | Period::D7 => Candle::H1,
+            Period::D14 => Candle::H4,
+            Period::Mo1 | Period::Mo3 | Period::Mo6 => Candle::D1,
+            Period::Mo9 | Period::Y1 | Period::Y2 | Period::Y3 => Candle::W1,
+            Period::Y5 | Period::Y10 | Period::Y25 | Period::Full => Candle::Mo1,
+        }
+    }
+
     /// Candle width for the market-open recency heuristic, kept separate from
     /// [`candle`](Self::candle) so the staleness window follows the market's
     /// natural update cadence rather than the chart's sample density.
@@ -243,6 +260,33 @@ mod tests {
                 assert_eq!(period.liveness(), period.candle());
             }
         }
+    }
+
+    #[test]
+    fn candlestick_candles_stay_coarse_enough_to_draw() {
+        // Spec table: natural exchange sizes targeting ≲190 bars; the
+        // 1d/7d/1mo rows match deckfeeder's candlestick widget. 25Y/Full
+        // exceed the target because 1mo is the coarsest Nexus size; the
+        // render-side merge covers them.
+        assert_eq!(Period::H1.candlestick_candle(), Candle::M1);
+        assert_eq!(Period::H3.candlestick_candle(), Candle::M5);
+        assert_eq!(Period::H6.candlestick_candle(), Candle::M5);
+        assert_eq!(Period::H12.candlestick_candle(), Candle::M15);
+        assert_eq!(Period::D1.candlestick_candle(), Candle::M15);
+        assert_eq!(Period::D3.candlestick_candle(), Candle::H1);
+        assert_eq!(Period::D7.candlestick_candle(), Candle::H1);
+        assert_eq!(Period::D14.candlestick_candle(), Candle::H4);
+        assert_eq!(Period::Mo1.candlestick_candle(), Candle::D1);
+        assert_eq!(Period::Mo3.candlestick_candle(), Candle::D1);
+        assert_eq!(Period::Mo6.candlestick_candle(), Candle::D1);
+        assert_eq!(Period::Mo9.candlestick_candle(), Candle::W1);
+        assert_eq!(Period::Y1.candlestick_candle(), Candle::W1);
+        assert_eq!(Period::Y2.candlestick_candle(), Candle::W1);
+        assert_eq!(Period::Y3.candlestick_candle(), Candle::W1);
+        assert_eq!(Period::Y5.candlestick_candle(), Candle::Mo1);
+        assert_eq!(Period::Y10.candlestick_candle(), Candle::Mo1);
+        assert_eq!(Period::Y25.candlestick_candle(), Candle::Mo1);
+        assert_eq!(Period::Full.candlestick_candle(), Candle::Mo1);
     }
 
     #[test]

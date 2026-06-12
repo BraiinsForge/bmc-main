@@ -133,10 +133,46 @@ impl Period {
     }
 }
 bmc_wasm_sdk::impl_manifest_str_enum!(Period);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum View {
+    Sparkline,
+    Candlestick,
+}
+impl View {
+    /// Every variant, in manifest-declaration order. Useful when a widget
+    /// wants to render a "pick one" UI or audit the enum exhaustively.
+    pub const ALL: &'static [Self] = &[Self::Sparkline, Self::Candlestick];
+    /// Manifest wire value for this variant.
+    #[must_use]
+    pub fn as_manifest_value(self) -> &'static str {
+        match self {
+            Self::Sparkline => "sparkline",
+            Self::Candlestick => "candlestick",
+        }
+    }
+    /// Human-readable label declared in the manifest's `enum_values`.
+    #[must_use]
+    pub fn as_manifest_label(self) -> &'static str {
+        match self {
+            Self::Sparkline => "Sparkline",
+            Self::Candlestick => "Candlestick",
+        }
+    }
+    #[must_use]
+    pub fn from_manifest_value(s: &str) -> Option<Self> {
+        match s {
+            "sparkline" => Some(Self::Sparkline),
+            "candlestick" => Some(Self::Candlestick),
+            _ => None,
+        }
+    }
+}
+bmc_wasm_sdk::impl_manifest_str_enum!(View);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Params {
     pub pair: String,
     pub period: Period,
+    pub view: View,
 }
 impl Params {
     /// Materialise a typed snapshot from a dynamic [`snapshot::Params`].
@@ -145,6 +181,7 @@ impl Params {
         Self {
             pair: <String as ParamRead>::read_required(snap, "pair"),
             period: <Period as ParamRead>::read_required(snap, "period"),
+            view: <View as ParamRead>::read_required(snap, "view"),
         }
     }
     /// Latest typed snapshot delivered for this widget instance.
@@ -195,6 +232,9 @@ impl Params {
         }
         if self.period != other.period {
             out.push("period");
+        }
+        if self.view != other.view {
+            out.push("view");
         }
         out
     }
