@@ -124,7 +124,6 @@ async fn main() -> Result<()> {
         OpenwrtSessionManager,
         current_timezone,
         wifi_manager,
-        "Braiins Deck".to_owned(),
         platform_override,
     )
     .await;

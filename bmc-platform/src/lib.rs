@@ -74,6 +74,17 @@ pub enum Product {
     Bfm100,
 }
 
+impl Product {
+    #[must_use]
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Bmc100 => "Braiins Deck",
+            Self::Bmm100 | Self::Bmm101 => "Mini Miner",
+            Self::Bfm100 => "Femto Miner",
+        }
+    }
+}
+
 impl BosPlatform {
     #[must_use]
     pub fn product(self) -> Product {

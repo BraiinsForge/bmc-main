@@ -43,7 +43,6 @@ pub struct Manager {
     wifi_manager: Arc<OpenwrtWifiManager>,
     /// Resolved WiFi network interface name (e.g. "wlan0", "phy0-sta0").
     wifi_iface_name: String,
-    wifi_ap_ssid_base: String,
     wifi_event_sender: tokio::sync::broadcast::Sender<WifiEvent>,
     uboot_env_manager: UbootEnvManager,
 }
@@ -72,7 +71,6 @@ impl Manager {
         session_manager: OpenwrtSessionManager,
         timezone: Timezone,
         wifi_manager: Arc<OpenwrtWifiManager>,
-        wifi_ap_ssid_base: String,
         platform_override: Option<BosPlatform>,
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(timezone);
@@ -103,7 +101,6 @@ impl Manager {
             timezone_sender,
             wifi_manager,
             wifi_iface_name,
-            wifi_ap_ssid_base,
             wifi_event_sender,
             uboot_env_manager: UbootEnvManager::new(),
         }
@@ -254,7 +251,10 @@ impl Manager {
     }
 
     fn make_wifi_ssid_for_mac(&self, mac_short_id: &str) -> String {
-        format!("{} {mac_short_id}", self.wifi_ap_ssid_base)
+        format!(
+            "{} {mac_short_id}",
+            self.platform().product().display_name()
+        )
     }
 
     async fn calculate_wifi_ssid(&self) -> anyhow::Result<String> {
