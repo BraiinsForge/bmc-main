@@ -21,8 +21,7 @@ use prices::fetch::FetchClass;
 enum RowTransition {
     /// Replace the row with a freshly parsed series.
     Store,
-    /// Leave the row unchanged (keep last-good data, or stay Loading on a
-    /// warming backend).
+    /// Leave the row unchanged, keeping the last-good data on screen.
     Keep,
     /// 400/404 — disable this row's poll; render a "Not found" placeholder.
     InputError,
@@ -37,9 +36,10 @@ fn row_transition(class: FetchClass, parsed_ok: bool, has_data: bool) -> RowTran
     match class {
         FetchClass::Ok if parsed_ok => RowTransition::Store,
         FetchClass::InputError => RowTransition::InputError,
-        // 503: the backend is warming up — keep polling, keep whatever we show.
-        FetchClass::Warming => RowTransition::Keep,
-        FetchClass::Ok | FetchClass::Transient => {
+        // 503 also covers "no data for this symbol", so without held data it
+        // degrades the row like any failure; the poll stays on, so a backend
+        // that was merely warming up recovers on a later reply.
+        FetchClass::Ok | FetchClass::Transient | FetchClass::Warming => {
             if has_data {
                 RowTransition::Keep
             } else {
@@ -74,21 +74,11 @@ mod tests {
     }
 
     #[test]
-    fn warming_keeps_the_row_loading_or_stale() {
-        // 503 never fails a row outright — the backend is just warming up.
-        assert_eq!(
-            row_transition(FetchClass::Warming, false, false),
-            RowTransition::Keep
-        );
-        assert_eq!(
-            row_transition(FetchClass::Warming, false, true),
-            RowTransition::Keep
-        );
-    }
-
-    #[test]
-    fn transient_keeps_held_data_else_fails() {
-        for class in [FetchClass::Ok, FetchClass::Transient] {
+    fn any_failure_keeps_held_data_else_fails() {
+        // A 503 row with nothing loaded must surface as unavailable rather
+        // than sit invisibly in Loading — the server also answers 503 for
+        // symbols it has no data for, not just while warming up.
+        for class in [FetchClass::Ok, FetchClass::Transient, FetchClass::Warming] {
             assert_eq!(row_transition(class, false, true), RowTransition::Keep);
             assert_eq!(row_transition(class, false, false), RowTransition::Fail);
         }

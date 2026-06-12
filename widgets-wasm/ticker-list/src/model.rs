@@ -16,7 +16,8 @@ pub enum RowState {
     Resolved(TickerRow),
     /// 404/400 — symbol not found / invalid; the row's poll is disabled.
     InputError,
-    /// Transient failure with nothing ever loaded for this row.
+    /// Any failed reply (including 503) with nothing ever loaded for this
+    /// row; the poll keeps running, so the row recovers on a later reply.
     Failed,
 }
 

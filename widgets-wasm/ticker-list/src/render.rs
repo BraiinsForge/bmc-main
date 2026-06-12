@@ -167,10 +167,17 @@ fn resolved_row(row_data: &TickerRow, name: Option<&str>, band: &Band) -> Node {
     )
 }
 
-/// A degraded row: symbol (error-colored for not-found, gray for transient) +
-/// a short status, price `N/A`, the whole row dimmed to 0.6 (deckfeeder
+/// A placeholder row: symbol (error-colored for not-found, gray otherwise) +
+/// a short status, a placeholder where the price goes (`N/A` for failures,
+/// `--` while loading), the whole row dimmed to 0.6 (deckfeeder
 /// `.ticker-item.error { opacity: 0.6 }`, reproduced as per-element alpha).
-fn error_row(symbol: &str, status: &str, symbol_color: Color, band: &Band) -> Node {
+fn placeholder_row(
+    symbol: &str,
+    status: &str,
+    price: &str,
+    symbol_color: Color,
+    band: &Band,
+) -> Node {
     let sym = symbol_color.with_alpha(ERROR_ROW_ALPHA);
     let muted = SECONDARY.with_alpha(ERROR_ROW_ALPHA);
     let left = col(
@@ -183,7 +190,7 @@ fn error_row(symbol: &str, status: &str, symbol_color: Color, band: &Band) -> No
     let right = col(
         props!(cross_align: CrossAlign::End),
         [text(
-            "N/A",
+            price,
             style!(size: band.price_font, weight: FontWeight::BOLD, color: muted, align: TextAlign::Right),
         )],
     );
@@ -212,9 +219,9 @@ fn slot(
         RowState::Resolved(row_data) => {
             resolved_row(row_data, names.get(index).and_then(Option::as_deref), band)
         }
-        RowState::InputError => error_row(symbol, "Not found", ERROR, band),
-        RowState::Failed => error_row(symbol, "N/A", SECONDARY, band),
-        RowState::Loading => empty_row(),
+        RowState::InputError => placeholder_row(symbol, "Not found", "N/A", ERROR, band),
+        RowState::Failed => placeholder_row(symbol, "Unavailable", "N/A", SECONDARY, band),
+        RowState::Loading => placeholder_row(symbol, "Loading\u{2026}", "--", SECONDARY, band),
     }
 }
 
