@@ -625,11 +625,14 @@ impl Renderer for FemtoVgRenderer {
                 .map_or(0.0, |m| m.width()),
         };
 
-        // Alignment: measure text width and offset x for Center/Right
+        // Alignment: measure text width and offset x for Center/Right.
+        // femtovg truncates the glyph pen x to whole pixels (no horizontal
+        // subpixel positioning), so a fractional draw_x always biases the
+        // glyphs left; round to keep the error symmetric.
         let draw_x = match style.align {
             TextAlign::Left => x,
-            TextAlign::Center => x - measured_width / 2.0,
-            TextAlign::Right => x - measured_width,
+            TextAlign::Center => (x - measured_width / 2.0).round(),
+            TextAlign::Right => (x - measured_width).round(),
         };
 
         // Text outline via 8-direction fill_text at each 1px ring up to outline_width.
