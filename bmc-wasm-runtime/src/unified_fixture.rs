@@ -433,7 +433,7 @@ mod tests {
     fn validate_rejects_empty_time() {
         let mut f = minimal_fixture();
         f.header.time = String::new();
-        let err = validate_fixture(&f).unwrap_err();
+        let err = validate_fixture(&f).expect_err("BUG: invalid fixture must fail validation");
         assert!(format!("{err:#}").contains("time is empty"));
     }
 
@@ -453,7 +453,7 @@ mod tests {
                 },
             }],
         };
-        let err = validate_fixture(&f).unwrap_err();
+        let err = validate_fixture(&f).expect_err("BUG: invalid fixture must fail validation");
         assert!(format!("{err:#}").contains("no capture events"));
     }
 
@@ -483,7 +483,7 @@ mod tests {
                 },
             ],
         };
-        let err = validate_fixture(&f).unwrap_err();
+        let err = validate_fixture(&f).expect_err("BUG: invalid fixture must fail validation");
         assert!(format!("{err:#}").contains("monotonically"));
     }
 
@@ -512,7 +512,7 @@ mod tests {
                 },
             ],
         };
-        let err = validate_fixture(&f).unwrap_err();
+        let err = validate_fixture(&f).expect_err("BUG: invalid fixture must fail validation");
         assert!(format!("{err:#}").contains("empty element ID"));
     }
 
@@ -542,7 +542,7 @@ mod tests {
                 },
             ],
         };
-        let err = validate_fixture(&f).unwrap_err();
+        let err = validate_fixture(&f).expect_err("BUG: invalid fixture must fail validation");
         assert!(format!("{err:#}").contains("empty element ID"));
     }
 

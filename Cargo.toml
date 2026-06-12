@@ -122,6 +122,7 @@ string_add = "warn"
 string_slice = "warn"
 unneeded_field_pattern = "warn"
 unseparated_literal_suffix = "warn"
+unwrap_used = "warn"
 wildcard_enum_match_arm = "warn"
 
 [workspace.dependencies]

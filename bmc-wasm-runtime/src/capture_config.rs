@@ -330,7 +330,8 @@ mod tests {
             settle_delay = 5
             typo_key = 42
         ";
-        let err = parse_capture_config(toml).unwrap_err();
+        let err =
+            parse_capture_config(toml).expect_err("BUG: invalid capture config must fail to parse");
         let msg = format!("{err:#}");
         assert!(msg.contains("typo_key"), "should name the bad key: {msg}");
     }
@@ -341,7 +342,8 @@ mod tests {
             settl_delay = 5
             iteractions = []
         ";
-        let err = parse_capture_config(toml).unwrap_err();
+        let err =
+            parse_capture_config(toml).expect_err("BUG: invalid capture config must fail to parse");
         let msg = format!("{err:#}");
         assert!(
             msg.contains("settl_delay") && msg.contains("iteractions"),
@@ -376,7 +378,8 @@ mod tests {
             time = "2026-03-10T18:00:00"
             settle_delay = 10
         "#;
-        let err = parse_capture_config(toml).unwrap_err();
+        let err =
+            parse_capture_config(toml).expect_err("BUG: invalid capture config must fail to parse");
         let msg = format!("{err:#}");
         assert!(
             msg.contains("time"),
@@ -449,7 +452,8 @@ mod tests {
             [fixtures]
             huge = "fixtures/huge.json"
         "#;
-        let err = parse_capture_config(toml).unwrap_err();
+        let err =
+            parse_capture_config(toml).expect_err("BUG: invalid capture config must fail to parse");
         let msg = format!("{err:#}");
         assert!(msg.contains("unknown size 'huge'"), "{msg}");
     }
@@ -460,7 +464,8 @@ mod tests {
             [fixtures]
             full = 42
         ";
-        let err = parse_capture_config(toml).unwrap_err();
+        let err =
+            parse_capture_config(toml).expect_err("BUG: invalid capture config must fail to parse");
         let msg = format!("{err:#}");
         assert!(msg.contains("fixtures.full"), "{msg}");
     }
@@ -470,7 +475,8 @@ mod tests {
         let toml = r#"
             fixtures = "not a table"
         "#;
-        let err = parse_capture_config(toml).unwrap_err();
+        let err =
+            parse_capture_config(toml).expect_err("BUG: invalid capture config must fail to parse");
         let msg = format!("{err:#}");
         assert!(msg.contains("[fixtures]"), "{msg}");
     }

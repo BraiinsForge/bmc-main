@@ -206,7 +206,7 @@ mod tests {
         let result = run_hooks(&gen_path, "hooks", None).await;
         assert!(result.is_err());
 
-        let err = result.unwrap_err();
+        let err = result.expect_err("BUG: failing hook must produce an error");
         match err {
             RunHooksError::HookFailed { hook, exit_code } => {
                 assert_eq!(hook, "01-fail");

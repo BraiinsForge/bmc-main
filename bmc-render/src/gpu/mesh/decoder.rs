@@ -618,7 +618,9 @@ mod tests {
     #[test]
     fn rejects_payload_smaller_than_header_plus_aabb() {
         let buf = vec![0_u8; HEADER_SIZE]; // missing AABB
-        let err = validate_mesh_header(&buf).unwrap_err().to_string();
+        let err = validate_mesh_header(&buf)
+            .expect_err("BUG: validator must reject this header")
+            .to_string();
         assert!(err.contains("too small"), "{err}");
     }
 
@@ -626,7 +628,9 @@ mod tests {
     fn rejects_bad_magic() {
         let mut buf = vec![0_u8; BODY_OFFSET];
         buf[0..4].copy_from_slice(b"NOPE");
-        let err = validate_mesh_header(&buf).unwrap_err().to_string();
+        let err = validate_mesh_header(&buf)
+            .expect_err("BUG: validator must reject this header")
+            .to_string();
         assert!(err.contains("magic"), "{err}");
     }
 
@@ -640,7 +644,9 @@ mod tests {
             0,
             BODY_OFFSET,
         );
-        let err = validate_mesh_header(&buf).unwrap_err().to_string();
+        let err = validate_mesh_header(&buf)
+            .expect_err("BUG: validator must reject this header")
+            .to_string();
         assert!(err.contains("MAX_VERTICES"), "{err}");
     }
 
@@ -654,14 +660,18 @@ mod tests {
             0,
             BODY_OFFSET,
         );
-        let err = validate_mesh_header(&buf).unwrap_err().to_string();
+        let err = validate_mesh_header(&buf)
+            .expect_err("BUG: validator must reject this header")
+            .to_string();
         assert!(err.contains("MAX_TRIANGLES"), "{err}");
     }
 
     #[test]
     fn rejects_index_count_not_multiple_of_three() {
         let buf = header_buffer(0, 7, BODY_OFFSET, BODY_OFFSET, 0, BODY_OFFSET + 14);
-        let err = validate_mesh_header(&buf).unwrap_err().to_string();
+        let err = validate_mesh_header(&buf)
+            .expect_err("BUG: validator must reject this header")
+            .to_string();
         assert!(err.contains("multiple of 3"), "{err}");
     }
 
@@ -679,7 +689,9 @@ mod tests {
             u16::try_from(MAX_TEXTURE_SIZE + 1).expect("BUG: MAX_TEXTURE_SIZE+1 fits in u16");
         buf[24..26].copy_from_slice(&oversize.to_le_bytes());
         buf[26..28].copy_from_slice(&oversize.to_le_bytes());
-        let err = validate_mesh_header(&buf).unwrap_err().to_string();
+        let err = validate_mesh_header(&buf)
+            .expect_err("BUG: validator must reject this header")
+            .to_string();
         assert!(err.contains("MAX_TEXTURE_SIZE"), "{err}");
     }
 
@@ -688,7 +700,9 @@ mod tests {
         // Claim 6 indices (12 bytes) at offset = HEADER+AABB but make the
         // buffer only large enough to hold the header.
         let buf = header_buffer(0, 6, BODY_OFFSET, BODY_OFFSET, 0, BODY_OFFSET);
-        let err = validate_mesh_header(&buf).unwrap_err().to_string();
+        let err = validate_mesh_header(&buf)
+            .expect_err("BUG: validator must reject this header")
+            .to_string();
         assert!(err.contains("index region"), "{err}");
     }
 
@@ -696,7 +710,9 @@ mod tests {
     fn rejects_offset_overflow() {
         // index_offset = u32::MAX, index_count = 6 → end overflows
         let buf = header_buffer(0, 6, BODY_OFFSET, u32::MAX as usize, 0, BODY_OFFSET);
-        let err = validate_mesh_header(&buf).unwrap_err().to_string();
+        let err = validate_mesh_header(&buf)
+            .expect_err("BUG: validator must reject this header")
+            .to_string();
         assert!(
             err.contains("end overflow") || err.contains("index region"),
             "{err}",
