@@ -9,6 +9,7 @@ use bmc_wasm_thin_protocol::{
     AckDecoder, AckMsg, HelloMsg, MAX_FRAME_LEN, PROTOCOL_VERSION, recv_hello_with_fd,
     send_hello_with_fd, write_ack,
 };
+use serial_test::serial;
 
 fn decode_ack(sock: &UnixStream) -> std::io::Result<AckMsg> {
     let mut dec = AckDecoder::new();
@@ -96,6 +97,7 @@ fn raw_sendmsg_with_fd(sender: &UnixStream, payload: &[u8], fd: std::os::fd::Bor
 }
 
 #[test]
+#[serial]
 fn hello_with_fd_round_trip() {
     let (a, b) = pair();
     let (fd_a, _fd_b) = pair();
@@ -122,6 +124,7 @@ fn hello_with_fd_round_trip() {
 }
 
 #[test]
+#[serial]
 fn ack_ok_and_err_round_trip() {
     let (writer, reader) = pair();
     write_ack(&writer, &AckMsg::Ok).expect("BUG: local socketpair write_ack Ok must succeed");
@@ -140,6 +143,7 @@ fn ack_ok_and_err_round_trip() {
 }
 
 #[test]
+#[serial]
 fn oversize_frame_is_rejected_before_alloc() {
     // The receiver checks the cmsg before parsing the frame length, so we attach a valid
     // SCM_RIGHTS payload to actually exercise the MAX_FRAME_LEN cap on the receiver. We
@@ -166,6 +170,7 @@ fn oversize_frame_is_rejected_before_alloc() {
 }
 
 #[test]
+#[serial]
 fn hello_without_scm_rights_is_protocol_error() {
     use std::io::Write;
 
@@ -187,6 +192,7 @@ fn hello_without_scm_rights_is_protocol_error() {
 
 #[cfg(target_os = "linux")]
 #[test]
+#[serial]
 fn too_many_fds_are_rejected_without_leaking_received_fd() {
     fn open_fd_count() -> usize {
         std::fs::read_dir("/proc/self/fd")
@@ -252,6 +258,7 @@ fn too_many_fds_are_rejected_without_leaking_received_fd() {
 }
 
 #[test]
+#[serial]
 fn hello_with_wrong_version_is_rejected_before_payload() {
     let (a, b) = pair();
     let dummy = UnixStream::pair()
@@ -271,6 +278,7 @@ fn hello_with_wrong_version_is_rejected_before_payload() {
 }
 
 #[test]
+#[serial]
 fn ack_decoder_rejects_runaway_input() {
     let mut dec = AckDecoder::new();
     // Feed a header that claims a body almost as large as MAX_FRAME_LEN, then drip bytes until
@@ -295,6 +303,7 @@ fn ack_decoder_rejects_runaway_input() {
 }
 
 #[test]
+#[serial]
 fn ack_decoder_rejects_oversize_frame_len() {
     let mut dec = AckDecoder::new();
     let oversize: u32 = MAX_FRAME_LEN + 1;
@@ -307,6 +316,7 @@ fn ack_decoder_rejects_oversize_frame_len() {
 }
 
 #[test]
+#[serial]
 fn ack_decoder_rejects_wrong_version() {
     let mut dec = AckDecoder::new();
     let mut header = 0xFFFF_u16.to_le_bytes().to_vec();
