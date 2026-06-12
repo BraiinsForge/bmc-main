@@ -103,7 +103,12 @@ mod wasm_glue {
 
     enum State {
         Loading,
-        Loaded(model::Series),
+        /// `stale` is set when a later refresh fails, so the held series is
+        /// still drawn but the tile says it is no longer current.
+        Loaded {
+            series: model::Series,
+            stale: bool,
+        },
         InputError,
         Error,
     }
@@ -162,13 +167,24 @@ mod wasm_glue {
             }
             None
         };
-        let has_data = STATE.with(|s| matches!(&*s.borrow(), State::Loaded(_)));
+        let has_data = STATE.with(|s| matches!(&*s.borrow(), State::Loaded { .. }));
         match outcome(class, parsed.is_some(), has_data) {
             Transition::Store => {
                 let series = parsed.expect("BUG: Store outcome implies a parsed series");
-                STATE.with(|s| *s.borrow_mut() = State::Loaded(series));
+                STATE.with(|s| {
+                    *s.borrow_mut() = State::Loaded {
+                        series,
+                        stale: false,
+                    };
+                });
             }
             Transition::KeepStale => {
+                // A failed refresh keeps the held series but marks it stale.
+                STATE.with(|s| {
+                    if let State::Loaded { stale, .. } = &mut *s.borrow_mut() {
+                        *stale = true;
+                    }
+                });
                 // A 2xx whose body failed to parse is worth retrying sooner
                 // than the next poll; a transient failure waits for the engine.
                 if class == FetchClass::Ok {
@@ -219,9 +235,13 @@ mod wasm_glue {
             render::message_view("Enter symbol", ws)
         } else {
             STATE.with(|s| match &*s.borrow() {
-                State::Loaded(series) => {
-                    render::series_view(series, symbol, params.period.as_manifest_value(), ws)
-                }
+                State::Loaded { series, stale } => render::series_view(
+                    series,
+                    symbol,
+                    params.period.as_manifest_value(),
+                    *stale,
+                    ws,
+                ),
                 State::Loading => render::message_view("Loading\u{2026}", ws),
                 State::InputError => render::message_view("Symbol not found", ws),
                 State::Error => render::message_view(&fmt!("{symbol} unavailable"), ws),
