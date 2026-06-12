@@ -44,6 +44,57 @@ verify-shared-crates:
   script:
     - nix run .#verify-shared-crates -- --summary
 
+cargo-deny:
+  stage: lint
+  needs: []
+  script:
+    - nix build -L .#checks.x86_64-linux.cargo-deny
+
+cargo-deny-wasm:
+  stage: lint
+  needs: []
+  script:
+    - nix build -L .#checks.x86_64-linux.cargo-deny-wasm
+
+no-fmt-in-wasm:
+  stage: lint
+  needs: []
+  script:
+    - nix build -L .#checks.x86_64-linux.no-fmt-in-wasm
+
+"docs: wasm":
+  stage: lint
+  needs: []
+  script:
+    - nix build -L .#checks.x86_64-linux.docs-wasm
+
+content-checks:
+  stage: lint
+  needs: []
+  script:
+    - nix build -L .#checks.x86_64-linux.content
+
+binary-lfs-check:
+  stage: lint
+  needs: []
+  variables:
+    # `git merge-base` needs to see master; default GitLab depth (50) is shallow.
+    GIT_DEPTH: 0
+  script:
+    - nix run .#check-binary-lfs
+
+frontend-lint:
+  stage: lint
+  needs: []
+  script:
+    - nix build .#checks.x86_64-linux.lint
+
+python-lint:
+  stage: lint
+  needs: []
+  script:
+    - nix build -L .#checks.x86_64-linux.python-lint
+
 ##################################
 ###### Dependencies Stage ########
 ##################################
@@ -61,7 +112,7 @@ workspace-deps-armv7:
     - nix build .#workspace-deps-armv7 --no-link
 
 ###################################
-########## Cargo Checks ###########
+########### Check Stage ###########
 ###################################
 
 build:
@@ -95,74 +146,11 @@ test-armv7:
   script:
     - nix build .#nextest-armv7 --no-link
 
-cargo-deny:
-  stage: check
-  needs: []
-  script:
-    - nix build -L .#checks.x86_64-linux.cargo-deny
-
-cargo-deny-wasm:
-  stage: check
-  needs: []
-  script:
-    - nix build -L .#checks.x86_64-linux.cargo-deny-wasm
-
-no-fmt-in-wasm:
-  stage: check
-  needs: []
-  script:
-    - nix build -L .#checks.x86_64-linux.no-fmt-in-wasm
-
-"docs: wasm":
-  stage: check
-  needs: []
-  script:
-    - nix build -L .#checks.x86_64-linux.docs-wasm
-
-content-checks:
-  stage: check
-  needs: []
-  script:
-    - nix build -L .#checks.x86_64-linux.content
-
-binary-lfs-check:
-  stage: check
-  needs: []
-  variables:
-    # `git merge-base` needs to see master; default GitLab depth (50) is shallow.
-    GIT_DEPTH: 0
-  script:
-    - nix run .#check-binary-lfs
-
-###################################
-######## Frontend Checks ##########
-###################################
-
-frontend-lint:
-  stage: check
-  needs: []
-  script:
-    - nix build .#checks.x86_64-linux.lint
-
 frontend-test:
   stage: check
   needs: []
   script:
     - nix build .#checks.x86_64-linux.test
-
-###################################
-########## Python Checks ##########
-###################################
-
-python-lint:
-  stage: check
-  needs: []
-  script:
-    - nix build -L .#checks.x86_64-linux.python-lint
-
-###################################
-########## bmc-virt Checks ########
-###################################
 
 bmc-virt-harness-check:
   stage: check
