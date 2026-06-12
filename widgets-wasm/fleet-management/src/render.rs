@@ -31,7 +31,7 @@ use units::units::{DegreeCelsius, Quantity};
 use crate::layout::{Layout, choose, truncate_label};
 use crate::paging;
 use crate::summary::{FleetSummary, GroupSummary};
-use crate::view::details_click_id;
+use crate::view::{PageTurn, PagerScope, details_click_id, pager_click_id};
 
 const OK_ICON: Svg = include_svg!("assets/ok.svg");
 const NOT_OK_ICON: Svg = include_svg!("assets/not-ok.svg");
@@ -433,12 +433,12 @@ struct Pager {
 // Chevron pager flanking the page indicator, right-aligned on the header
 // row. The buttons disable (not vanish) at the bounds so the cluster never
 // reflows under a mid-pagination finger.
-fn pager_cluster(pager: &Pager) -> Node {
+fn pager_cluster(scope: PagerScope, pager: &Pager) -> Node {
     row(
         props!(gap: 8.0, cross_align: CrossAlign::Center),
         [
             button!(
-                "page_prev",
+                pager_click_id(scope, PageTurn::Prev),
                 "",
                 style: Ghost,
                 size: Normal,
@@ -450,7 +450,7 @@ fn pager_cluster(pager: &Pager) -> Node {
                 style!(size: LABEL_FONT, color: LABEL_COLOR),
             ),
             button!(
-                "page_next",
+                pager_click_id(scope, PageTurn::Next),
                 "",
                 style: Ghost,
                 size: Normal,
@@ -461,7 +461,13 @@ fn pager_cluster(pager: &Pager) -> Node {
     )
 }
 
-fn header_row(variant: SizeVariant, cols: &TableColumns, label: &str, pager: &Pager) -> Node {
+fn header_row(
+    scope: PagerScope,
+    variant: SizeVariant,
+    cols: &TableColumns,
+    label: &str,
+    pager: &Pager,
+) -> Node {
     let full = matches!(variant, SizeVariant::Full);
     let mut cells = vec![
         header_cell(COL_HASHRATE, "Hashrate"),
@@ -475,7 +481,7 @@ fn header_row(variant: SizeVariant, cols: &TableColumns, label: &str, pager: &Pa
     cells.push(header_cell(cols.counts_w, "Status"));
     if pager.count > 1 {
         cells.push(spacer(1.0));
-        cells.push(pager_cluster(pager));
+        cells.push(pager_cluster(scope, pager));
     }
     row(props!(gap: ROW_GAP, cross_align: CrossAlign::Center), cells)
 }
@@ -663,7 +669,7 @@ fn detail_view(detail: &DetailData<'_>, height: u32, variant: SizeVariant) -> Fr
     let mut children: Vec<Node> = vec![
         overview(detail.group, variant, &title, true),
         separator(),
-        header_row(variant, &cols, "Name", &pager),
+        header_row(PagerScope::Detail, variant, &cols, "Name", &pager),
     ];
     for device in detail
         .rows
@@ -698,7 +704,13 @@ fn table_view(
 
     let mut children: Vec<Node> =
         vec![overview(&summary.total, variant, title, false), separator()];
-    children.push(header_row(variant, &cols, "Model", &pager));
+    children.push(header_row(
+        PagerScope::Fleet,
+        variant,
+        &cols,
+        "Model",
+        &pager,
+    ));
     for group in summary
         .groups
         .get(bounds)

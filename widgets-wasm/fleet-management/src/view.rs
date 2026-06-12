@@ -47,8 +47,36 @@ pub enum ClickAction {
         label: String,
     },
     Back,
-    PagePrev,
-    PageNext,
+    Page {
+        scope: PagerScope,
+        turn: PageTurn,
+    },
+}
+
+/// Which view's pager a click belongs to. The two pagers carry distinct
+/// click IDs: a tap queued in the detail view must not be consumed by the
+/// fleet pager when the selection vanishes between tap and render.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PagerScope {
+    Fleet,
+    Detail,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageTurn {
+    Prev,
+    Next,
+}
+
+/// The click ID of a view's pager button.
+#[must_use]
+pub const fn pager_click_id(scope: PagerScope, turn: PageTurn) -> &'static str {
+    match (scope, turn) {
+        (PagerScope::Fleet, PageTurn::Prev) => "fleet:page_prev",
+        (PagerScope::Fleet, PageTurn::Next) => "fleet:page_next",
+        (PagerScope::Detail, PageTurn::Prev) => "detail:page_prev",
+        (PagerScope::Detail, PageTurn::Next) => "detail:page_next",
+    }
 }
 
 /// The Details click ID for a model group. The partition key rides in the
@@ -68,11 +96,15 @@ pub fn details_click_id(family: Option<DeviceFamily>, label: &str) -> String {
 /// malformed IDs are ignored.
 #[must_use]
 pub fn parse_click(id: &str) -> Option<ClickAction> {
-    match id {
-        "back" => return Some(ClickAction::Back),
-        "page_prev" => return Some(ClickAction::PagePrev),
-        "page_next" => return Some(ClickAction::PageNext),
-        _ => {}
+    if id == "back" {
+        return Some(ClickAction::Back);
+    }
+    for scope in [PagerScope::Fleet, PagerScope::Detail] {
+        for turn in [PageTurn::Prev, PageTurn::Next] {
+            if id == pager_click_id(scope, turn) {
+                return Some(ClickAction::Page { scope, turn });
+            }
+        }
     }
     let rest = id.strip_prefix("details:")?;
     let (family, label) = rest.split_once(':')?;
@@ -110,22 +142,20 @@ pub fn apply(state: &mut ViewState, action: ClickAction, page_count: usize) -> b
             true
         }
         ClickAction::Back => state.detail.take().is_some(),
-        ClickAction::PagePrev => turn_page(active_page(state), page_count, PageTurn::Prev),
-        ClickAction::PageNext => turn_page(active_page(state), page_count, PageTurn::Next),
+        ClickAction::Page { scope, turn } => {
+            let page = match scope {
+                PagerScope::Fleet => &mut state.fleet_page,
+                // A detail-scoped click with no selection raced a fallback
+                // to the fleet table; ignore it rather than flip the wrong
+                // view's page.
+                PagerScope::Detail => match state.detail.as_mut() {
+                    Some(detail) => &mut detail.page,
+                    None => return false,
+                },
+            };
+            turn_page(page, page_count, turn)
+        }
     }
-}
-
-fn active_page(state: &mut ViewState) -> &mut usize {
-    state
-        .detail
-        .as_mut()
-        .map_or(&mut state.fleet_page, |d| &mut d.page)
-}
-
-#[derive(Clone, Copy)]
-enum PageTurn {
-    Prev,
-    Next,
 }
 
 fn turn_page(page: &mut usize, page_count: usize, turn: PageTurn) -> bool {
@@ -145,21 +175,58 @@ fn turn_page(page: &mut usize, page_count: usize, turn: PageTurn) -> bool {
 mod tests {
     use super::*;
 
+    fn page(scope: PagerScope, turn: PageTurn) -> ClickAction {
+        ClickAction::Page { scope, turn }
+    }
+
     #[test]
     fn parses_pager_clicks_and_ignores_foreign_ids() {
-        assert_eq!(parse_click("page_prev"), Some(ClickAction::PagePrev));
-        assert_eq!(parse_click("page_next"), Some(ClickAction::PageNext));
+        assert_eq!(
+            parse_click("fleet:page_prev"),
+            Some(page(PagerScope::Fleet, PageTurn::Prev))
+        );
+        assert_eq!(
+            parse_click("detail:page_next"),
+            Some(page(PagerScope::Detail, PageTurn::Next))
+        );
+        // The pager IDs are scoped per view; an unscoped ID must not
+        // navigate either pager.
+        assert_eq!(parse_click("page_next"), None);
         assert_eq!(parse_click("volume"), None);
+    }
+
+    #[test]
+    fn pager_click_ids_round_trip() {
+        for scope in [PagerScope::Fleet, PagerScope::Detail] {
+            for turn in [PageTurn::Prev, PageTurn::Next] {
+                assert_eq!(
+                    parse_click(pager_click_id(scope, turn)),
+                    Some(page(scope, turn))
+                );
+            }
+        }
     }
 
     #[test]
     fn next_advances_until_the_last_page() {
         let mut state = ViewState::new();
-        assert!(apply(&mut state, ClickAction::PageNext, 3));
+        assert!(apply(
+            &mut state,
+            page(PagerScope::Fleet, PageTurn::Next),
+            3
+        ));
         assert_eq!(state.fleet_page, 1);
-        assert!(apply(&mut state, ClickAction::PageNext, 3));
+        assert!(apply(
+            &mut state,
+            page(PagerScope::Fleet, PageTurn::Next),
+            3
+        ));
         assert_eq!(state.fleet_page, 2);
-        assert!(!apply(&mut state, ClickAction::PageNext, 3));
+        assert!(!apply(
+            &mut state,
+            page(PagerScope::Fleet, PageTurn::Next),
+            3
+        ));
         assert_eq!(state.fleet_page, 2);
     }
 
@@ -167,9 +234,17 @@ mod tests {
     fn prev_goes_back_and_stops_at_the_first_page() {
         let mut state = ViewState::new();
         state.fleet_page = 1;
-        assert!(apply(&mut state, ClickAction::PagePrev, 3));
+        assert!(apply(
+            &mut state,
+            page(PagerScope::Fleet, PageTurn::Prev),
+            3
+        ));
         assert_eq!(state.fleet_page, 0);
-        assert!(!apply(&mut state, ClickAction::PagePrev, 3));
+        assert!(!apply(
+            &mut state,
+            page(PagerScope::Fleet, PageTurn::Prev),
+            3
+        ));
         assert_eq!(state.fleet_page, 0);
     }
 
@@ -177,8 +252,28 @@ mod tests {
     fn a_stale_page_normalizes_against_the_current_count() {
         let mut state = ViewState::new();
         state.fleet_page = 9;
-        assert!(apply(&mut state, ClickAction::PagePrev, 3));
+        assert!(apply(
+            &mut state,
+            page(PagerScope::Fleet, PageTurn::Prev),
+            3
+        ));
         assert_eq!(state.fleet_page, 1);
+    }
+
+    #[test]
+    fn a_detail_page_click_without_a_selection_is_ignored() {
+        // The tap raced a fallback: the selected group vanished and the
+        // fleet table took over before the click was consumed. The fleet
+        // page must not move.
+        let mut state = ViewState::new();
+        state.fleet_page = 1;
+        assert!(!apply(
+            &mut state,
+            page(PagerScope::Detail, PageTurn::Next),
+            3
+        ));
+        assert_eq!(state.fleet_page, 1);
+        assert!(state.detail.is_none());
     }
 
     use crate::device::DeviceFamily;
@@ -283,7 +378,11 @@ mod tests {
             label: "BMM 101".to_owned(),
             page: 0,
         });
-        assert!(apply(&mut state, ClickAction::PageNext, 3));
+        assert!(apply(
+            &mut state,
+            page(PagerScope::Detail, PageTurn::Next),
+            3
+        ));
         assert_eq!(
             state.detail.as_ref().expect("BUG: still drilled in").page,
             1

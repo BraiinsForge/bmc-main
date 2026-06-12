@@ -266,10 +266,10 @@ def detail_lines():
     yield from layout_lines()  # frame_0000: fleet page 1/2
     yield click(35_000, DETAILS_NERDQAXE)
     yield {'at_ms': 36_000, 'type': 'capture'}  # frame_0001: detail page 1/2
-    yield click(37_000, 'page_next')
+    yield click(37_000, 'detail:page_next')
     yield {'at_ms': 38_000, 'type': 'capture'}  # frame_0002: detail page 2/2
     yield click(39_000, 'back')
-    yield click(40_000, 'page_next')
+    yield click(40_000, 'fleet:page_next')
     yield {'at_ms': 41_000, 'type': 'capture'}  # frame_0003: fleet page 2/2
 
 
@@ -382,10 +382,10 @@ def lifecycle_lines():
     yield click(172_000, 'back')
     yield click(173_000, DETAILS_NERDQAXE)
     yield {'at_ms': 174_000, 'type': 'capture'}  # frame_0006: detail page 1/2
-    yield click(175_000, 'page_next')
+    yield click(175_000, 'detail:page_next')
     yield {'at_ms': 176_000, 'type': 'capture'}  # frame_0007: detail page 2/2
     yield click(177_000, 'back')
-    yield click(178_000, 'page_next')
+    yield click(178_000, 'fleet:page_next')
     yield {'at_ms': 179_000, 'type': 'capture'}  # frame_0008: fleet page 2/2
 
 
