@@ -1099,6 +1099,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-log"
+version = "0.1.0"
+dependencies = [
+ "file-rotate",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "bmc-mock"
 version = "0.1.0"
 dependencies = [
