@@ -69,8 +69,7 @@ also re-emittable: when widget params change without a size change, the composit
 blob on the existing surface instead of stopping and respawning the widget process. Even on position changes, the widget
 does not respawn as positioning is a compositor concern, not a widget concern. The widget client surfaces the
 post-`configure_done` `params` event as a separate runtime event (`ParamUpdate`) so per-widget code can re-bind its
-state in place — Slint property setters for the digital-clock, plain Rust state plus a needs-render flag for the
-flip-clock, etc.
+state in place — plain Rust state plus a needs-render flag for the flip-clock, etc.
 
 Changes that *do* affect viewport size or shape still respawn — the widget only receives `configure(...)` and
 `display_info(...)` once, during the initial batch, so a new geometry needs a fresh process to size its renderer for.
