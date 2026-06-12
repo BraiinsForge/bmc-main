@@ -35,8 +35,6 @@ pub(crate) fn ths_from_ghs(value: f64) -> f64 {
     value / 1_000.0
 }
 
-pub(crate) const STALE_AFTER_MS: u32 = 15_000;
-
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct MinerData {
     pub(crate) hashrate_ths: Option<f64>,
@@ -80,10 +78,6 @@ fn target_range(json: &impl JsonLookup, base: &str, leaf: &str) -> Option<Target
         default: edge("default")?,
         max: edge("max")?,
     })
-}
-
-pub(crate) fn is_stale(age_ms: u32) -> bool {
-    age_ms >= STALE_AFTER_MS
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -202,12 +196,6 @@ mod tests {
         parse_constraints(&json, &mut data);
         assert!(data.constraints.hashrate.is_some());
         assert_eq!(data.constraints.power, None);
-    }
-
-    #[test]
-    fn staleness_threshold_is_exclusive_below_and_stale_at_threshold() {
-        assert!(!is_stale(STALE_AFTER_MS - 1));
-        assert!(is_stale(STALE_AFTER_MS));
     }
 }
 

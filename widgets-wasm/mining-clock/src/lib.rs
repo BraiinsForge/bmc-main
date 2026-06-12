@@ -29,11 +29,13 @@ use bmc_wasm_sdk::*;
 #[cfg(target_arch = "wasm32")]
 use manifest_params::Params;
 #[cfg(target_arch = "wasm32")]
-use miner::{AuthState, MinerData};
+use miner::AuthState;
+#[cfg(any(target_arch = "wasm32", test))]
+use miner::MinerData;
 #[cfg(target_arch = "wasm32")]
 use shared::clock_palette;
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 const STATS_REFRESH_MS: u32 = 5_000;
 #[cfg(target_arch = "wasm32")]
 const RETRY_MS: u32 = 10_000;
@@ -56,7 +58,6 @@ enum MinerSource {
 struct State {
     miner: MinerData,
     auth: AuthState,
-    stats_age_ms: Option<u32>,
     stats_stale: bool,
 }
 
@@ -216,7 +217,6 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
             match source {
                 MinerSource::Stats => {
                     miner::parse_stats(&response.json(), &mut state.miner);
-                    state.stats_age_ms = Some(0);
                     state.stats_stale = false;
                 }
                 // Constraints are slow-changing config: parse on success, but
@@ -237,7 +237,6 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
             let mut state = state.borrow_mut();
             match source {
                 MinerSource::Stats => {
-                    state.stats_age_ms = None;
                     state.stats_stale = true;
                 }
                 // Keep the last good constraints; a re-tune is rare and a failed
@@ -248,23 +247,10 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-fn advance_freshness(state: &mut State, delta_ms: u32) {
-    if let Some(age) = state.stats_age_ms {
-        let age = age.saturating_add(delta_ms);
-        if miner::is_stale(age) {
-            state.stats_age_ms = None;
-            state.stats_stale = true;
-        } else {
-            state.stats_age_ms = Some(age);
-        }
-    }
-}
-
 // The auth-error banner takes precedence over stale data, matching mining-info.
 // Stale data only surfaces once some data has loaded, so a never-connected miner
 // reads as N/A on the gauge rather than raising a stale banner.
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 fn overlay_message(auth_failed: bool, stale: bool, miner: &MinerData) -> Option<&'static str> {
     let has_data = miner.hashrate_ths.is_some() || miner.power_w.is_some();
     if auth_failed {
@@ -278,7 +264,7 @@ fn overlay_message(auth_failed: bool, stale: bool, miner: &MinerData) -> Option<
 
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
-pub extern "C" fn render(delta_ms: u32) {
+pub extern "C" fn render(_delta_ms: u32) {
     let WidgetSize {
         width: w,
         height: h,
@@ -289,8 +275,7 @@ pub extern "C" fn render(delta_ms: u32) {
     let effective_tz = params.timezone_override.as_deref().map(Tz::from_runtime);
     let palette = clock_palette(system::current().night_mode().unwrap_or(false));
     let (miner, auth_failed, stale) = STATE.with(|state| {
-        let mut state = state.borrow_mut();
-        advance_freshness(&mut state, delta_ms);
+        let state = state.borrow();
         (
             state.miner.clone(),
             matches!(state.auth, AuthState::Failed),
@@ -356,9 +341,33 @@ pub extern "C" fn on_params_update() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{miner::MinerData, overlay_message};
 
-    const _: () = {
-        assert!(STATS_REFRESH_MS < miner::STALE_AFTER_MS);
-    };
+    #[test]
+    fn auth_overlay_takes_precedence_over_stale_data() {
+        let miner = MinerData {
+            hashrate_ths: Some(122.48),
+            ..MinerData::default()
+        };
+
+        assert_eq!(
+            overlay_message(true, true, &miner),
+            Some(mining::overlay::AUTH_ERROR_TEXT)
+        );
+    }
+
+    #[test]
+    fn stale_overlay_requires_loaded_miner_data() {
+        assert_eq!(overlay_message(false, true, &MinerData::default()), None);
+
+        let miner = MinerData {
+            power_w: Some(41.0),
+            ..MinerData::default()
+        };
+
+        assert_eq!(
+            overlay_message(false, true, &miner),
+            Some(mining::overlay::STALE_DATA_TEXT)
+        );
+    }
 }
