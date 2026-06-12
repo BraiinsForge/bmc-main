@@ -86,6 +86,12 @@ impl InteractionState {
         self.scroll_pos = None;
         self.action_log.clear();
 
+        // A click the previous frame's build did not consume is stale: its
+        // button vanished (paged away, view switched) or was disabled. Drop
+        // it so it cannot fire on a much later frame that redraws the key.
+        self.pending_click = None;
+        self.pending_click_pos = None;
+
         // Process pending events BEFORE clearing hit regions
         // (events need to hit-test against previous frame's regions)
         while let Some(event) = self.event_queue.pop_front() {
@@ -412,6 +418,27 @@ mod tests {
         let (clicked, pos) = state.button_with_pos("btn", bounds);
         assert!(clicked);
         assert_eq!(pos, Some((40.0, 20.0)));
+    }
+
+    #[test]
+    fn unconsumed_click_expires_at_the_next_frame() {
+        let bounds = Rect::new(50.0, 20.0, 100.0, 40.0);
+        let mut state = InteractionState::new();
+
+        assert!(!state.button("btn", bounds));
+
+        state.push_event(TouchEvent::Down { x: 80.0, y: 35.0 });
+        state.push_event(TouchEvent::Up);
+        state.begin_frame();
+
+        // The frame right after the tap does not draw the button (it paged
+        // away or its view switched); the click must not survive into later
+        // frames and fire as spontaneous navigation.
+        state.begin_frame();
+
+        let (clicked, pos) = state.button_with_pos("btn", bounds);
+        assert!(!clicked);
+        assert_eq!(pos, None);
     }
 
     #[test]
