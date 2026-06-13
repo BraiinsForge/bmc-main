@@ -24,10 +24,10 @@
 )]
 use bmc_wasm_sdk::*;
 
-use crate::chart;
 use crate::format;
 use crate::layout::{self, Viewport};
 use crate::model::{Availability, MinerData, PublicData};
+use prices::chart;
 use units::units::Quantity;
 
 pub(crate) mod round;

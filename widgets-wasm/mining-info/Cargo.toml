@@ -15,6 +15,7 @@ crate-type = ["cdylib"]
 [dependencies]
 bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
 mining = { path = "../lib/mining" }
+prices = { path = "../lib/prices" }
 units = { path = "../lib/units" }
 
 [lints]

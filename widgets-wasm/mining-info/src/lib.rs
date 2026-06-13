@@ -18,7 +18,6 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-mod chart;
 mod format;
 mod layout;
 mod manifest_params;

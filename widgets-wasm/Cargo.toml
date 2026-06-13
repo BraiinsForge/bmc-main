@@ -21,6 +21,7 @@ members = [
     "image",
     "iss-position",
     "lib/mining",
+    "lib/prices",
     "lib/units",
     "mining-clock",
     "mining-info",

@@ -18,32 +18,31 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-// Geometry for the header price sparkline. Free of SDK draw types so it builds
-// and unit-tests on the host; the wasm render path turns these points into
-// canvas draw commands.
+//! Sparkline geometry, shared by both ticker widgets and mining-info. Free of
+//! SDK draw types so it builds and unit-tests on the host; the wasm render
+//! path turns these points into canvas draw commands.
 
-pub(crate) fn is_rising(series: &[f64]) -> bool {
+/// Trend direction: the series ends at or above where it started.
+#[must_use]
+pub fn is_rising(series: &[f64]) -> bool {
     match (series.first(), series.last()) {
         (Some(first), Some(last)) if series.len() >= 2 => last >= first,
         _ => false,
     }
 }
 
-// Map a price series onto a width x height box: x spreads the samples evenly
-// across the full width, y normalizes price into the box inverted (lowest price
-// at the bottom, highest at the top) with a vertical inset so the stroke isn't
-// clipped at the edges. A flat series sits on the centre line.
+/// Map a price series onto a `width × height` box: x spreads the samples evenly
+/// across the full width, y normalizes price into the box inverted (lowest
+/// price at the bottom, highest at the top) with a vertical inset so the stroke
+/// is not clipped at the edges. A flat series sits on the centre line. Returns
+/// an empty vec for fewer than two samples.
+#[must_use]
 #[expect(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     reason = "sample counts and fiat prices stay well within f32's exact range; sub-pixel error is irrelevant for a sparkline"
 )]
-pub(crate) fn series_points(
-    series: &[f64],
-    width: f32,
-    height: f32,
-    inset: f32,
-) -> Vec<(f32, f32)> {
+pub fn series_points(series: &[f64], width: f32, height: f32, inset: f32) -> Vec<(f32, f32)> {
     if series.len() < 2 {
         return Vec::new();
     }

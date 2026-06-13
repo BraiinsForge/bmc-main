@@ -843,6 +843,7 @@ version = "0.1.0"
 dependencies = [
  "bmc-wasm-sdk",
  "mining",
+ "prices",
  "units",
 ]
 
@@ -968,6 +969,13 @@ dependencies = [
  "fdeflate",
  "flate2",
  "miniz_oxide",
+]
+
+[[package]]
+name = "prices"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
 ]
 
 [[package]]
