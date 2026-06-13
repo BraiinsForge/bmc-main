@@ -1299,6 +1299,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ticker-single"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+ "prices",
+]
+
+[[package]]
 name = "tiff"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

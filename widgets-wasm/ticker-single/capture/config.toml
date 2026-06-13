@@ -1,0 +1,9 @@
+# Capture configuration for visual regression testing.
+
+# Settle a few frames after the fetch stub fires so the widget leaves Loading,
+# parses the candles, and draws the chart before the first capture.
+settle_delay = 5
+
+[fixtures.common]
+path = "fixtures/common.jsonl.gz"
+targets = ["bmc100:full", "bmc100:large", "bmc100:medium", "bmc100:small", "bmm101:full"]
