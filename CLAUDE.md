@@ -132,7 +132,7 @@ src/
 └── main.rs
 ```
 
-Format code using Nix formatter (formats Rust, Nix, Python, Shell, Protobuf, TOML, YAML):
+Format code using Nix formatter (formats Rust, Nix, Python, Shell, Protobuf, TOML, YAML, Markdown):
 
 ```bash
 nix fmt
