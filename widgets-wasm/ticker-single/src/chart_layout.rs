@@ -206,26 +206,61 @@ pub fn volume_heights(bars: &[CandleBar], strip_h: f32) -> Vec<Option<f32>> {
         .collect()
 }
 
-/// Indices of bars that get an x-axis label: one per `min_px` of plot
-/// width, skipping any label whose centre falls within 40px of the left
-/// edge (deckfeeder's crowding rule).
+/// Centres within this many pixels of the left edge would clip; an
+/// affected boundary may slide right within its own run instead
+/// (deckfeeder's crowding rule).
+const LEFT_CLIP_PX: f32 = 40.0;
+
+/// Indices of bars that get an x-axis label: the first bar of each run
+/// of equal label texts (a year/month/day boundary), thinned so kept
+/// labels stay at least `min_px` apart, skipping empty texts. A boundary
+/// whose centre falls within [`LEFT_CLIP_PX`] of the left edge slides to
+/// the first bar of its run that clears the edge (the text stays
+/// truthful), but yields entirely when the slide would land within
+/// `min_px` of the next true boundary or the run never clears the edge.
+/// Boundaries thinned by the `min_px` density rule never relocate — that
+/// would make the spacing uneven again.
 #[must_use]
 #[expect(
     clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "bar counts and pixel widths are small positive values"
+    reason = "bar counts stay far below f32 precision loss"
 )]
-pub fn label_indices(n: usize, plot_w: f32, min_px: f32) -> Vec<usize> {
-    if n == 0 || plot_w <= 0.0 {
+pub fn label_indices(texts: &[String], plot_w: f32, min_px: f32) -> Vec<usize> {
+    if texts.is_empty() || plot_w <= 0.0 {
         return Vec::new();
     }
-    let slot = plot_w / n as f32;
-    let stride = (min_px / slot).ceil().max(1.0) as usize;
-    (0..n)
-        .step_by(stride)
-        .filter(|&i| slot * (i as f32 + 0.5) >= 40.0)
-        .collect()
+    let slot = plot_w / texts.len() as f32;
+    let centre = |i: usize| slot * (i as f32 + 0.5);
+    let mut out = Vec::new();
+    let mut last_kept_x: Option<f32> = None;
+    for (i, text) in texts.iter().enumerate() {
+        if text.is_empty() || (i > 0 && texts[i - 1] == *text) {
+            continue;
+        }
+        let x = centre(i);
+        if last_kept_x.is_some_and(|last| x - last < min_px) {
+            continue;
+        }
+        let kept = if x < LEFT_CLIP_PX {
+            let Some(j) = (i + 1..texts.len())
+                .take_while(|&j| texts[j] == *text)
+                .find(|&j| centre(j) >= LEFT_CLIP_PX)
+            else {
+                continue;
+            };
+            let next_boundary =
+                (i + 1..texts.len()).find(|&k| !texts[k].is_empty() && texts[k] != texts[k - 1]);
+            if next_boundary.is_some_and(|k| centre(k) - centre(j) < min_px) {
+                continue;
+            }
+            j
+        } else {
+            i
+        };
+        out.push(kept);
+        last_kept_x = Some(centre(kept));
+    }
+    out
 }
 
 // The SDK's `format::push_int`/`push_pad2` live in a wasm-gated module
@@ -463,18 +498,99 @@ mod tests {
     }
 
     #[test]
-    fn label_indices_stride_to_70px_and_skip_the_crowded_left_edge() {
-        // 100 bars on 700px → 7px slots → stride 10.
+    fn label_indices_relocate_edge_clipped_years_within_their_runs() {
+        // BTC full period at full size: 142 monthly bars starting Sep 2014
+        // (4 bars of 2014, 12 each of 2015–2025, 6 of 2026) on 1144px.
+        let mut texts = Vec::new();
+        for (year, months) in std::iter::once((2014_u32, 4_usize))
+            .chain((2015..=2025).map(|y| (y, 12)))
+            .chain(std::iter::once((2026, 6)))
+        {
+            let mut t = String::new();
+            push_int(&mut t, year);
+            for _ in 0..months {
+                texts.push(t.clone());
+            }
+        }
+        assert_eq!(texts.len(), 142);
+        let kept = label_indices(&texts, 1144.0, 70.0);
+        // slot ≈ 8.06px: the 2014 (centre ≈ 4px) and 2015 (centre ≈ 36px)
+        // boundaries fall inside the 40px left margin. The 40px rule is a
+        // clipping constraint, not a density one: 2015 slides right within
+        // its own run to the first bar past the margin (index 5, ≈ 44px),
+        // which still leaves ≥ 70px to the 2016 boundary (≈ 133px). 2014's
+        // run never clears the margin, so it is dropped. Every later year's
+        // first bar is kept, 12 bars apart — even spacing.
         assert_eq!(
-            label_indices(100, 700.0, 70.0),
-            vec![10, 20, 30, 40, 50, 60, 70, 80, 90]
+            kept,
+            vec![5, 16, 28, 40, 52, 64, 76, 88, 100, 112, 124, 136]
         );
-        // Wide slots keep every index, but index 0 sits at x=30 (< 40px) and is dropped.
+        assert!(kept[1..].windows(2).all(|w| w[1] - w[0] == 12));
+    }
+
+    #[test]
+    fn label_indices_relocate_the_leading_day_of_an_hourly_week() {
+        // 7d period: 168 hourly bars (7 days × 24) starting at midnight
+        // 06 Jun on 1144px → slot ≈ 6.81px. The 06 Jun boundary (index 0,
+        // centre ≈ 3.4px) would be clipped at the left edge; without
+        // relocation the chart opens with an unlabeled day. It slides to
+        // the first bar past the 40px margin (index 6, ≈ 44px), leaving
+        // ≈ 123px to the 07 Jun boundary — both are kept.
+        let mut texts = Vec::new();
+        for day in 6_u8..=12 {
+            let mut t = String::new();
+            push_pad2(&mut t, day);
+            t.push_str(" Jun");
+            for _ in 0..24 {
+                texts.push(t.clone());
+            }
+        }
+        assert_eq!(texts.len(), 168);
         assert_eq!(
-            label_indices(10, 600.0, 50.0),
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9]
+            label_indices(&texts, 1144.0, 70.0),
+            vec![6, 24, 48, 72, 96, 120, 144]
         );
-        assert!(label_indices(0, 700.0, 70.0).is_empty());
+    }
+
+    #[test]
+    fn label_indices_with_unique_texts_degenerate_to_a_stride() {
+        // 100 unique texts on 700px → 7px slots; every bar is a boundary.
+        // First centre past 40px is i=6 (45.5px); 70px min gap → every 10th.
+        let texts: Vec<String> = (0..100_u32)
+            .map(|i| {
+                let mut t = String::from("t");
+                push_int(&mut t, i);
+                t
+            })
+            .collect();
+        assert_eq!(
+            label_indices(&texts, 700.0, 70.0),
+            vec![6, 16, 26, 36, 46, 56, 66, 76, 86, 96]
+        );
+    }
+
+    #[test]
+    fn label_indices_yield_the_edge_label_to_a_close_true_boundary() {
+        assert!(label_indices(&[], 700.0, 70.0).is_empty());
+        let empties = vec![String::new(); 5];
+        assert!(label_indices(&empties, 700.0, 70.0).is_empty());
+        // 60px slots: "A"'s boundary (index 0, centre 30px) is edge-clipped
+        // and could slide to index 1 (centre 90px), but that lands within
+        // 70px of the true "B" boundary (centre 150px) — the true boundary
+        // wins and "A" is dropped.
+        let texts: Vec<String> = ["A", "A", "B", "B"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        assert_eq!(label_indices(&texts, 240.0, 70.0), vec![2]);
+        assert!(label_indices(&texts, 0.0, 70.0).is_empty());
+        // a label never slides past its own run: "A"'s run ends at index 0,
+        // so it cannot borrow a "B" bar to clear the edge.
+        let texts: Vec<String> = ["A", "B", "B", "B"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        assert_eq!(label_indices(&texts, 240.0, 70.0), vec![1]);
     }
 
     #[test]

@@ -167,20 +167,19 @@ pub fn series_view(
         let kind = label_kind(period);
         let labels_y = plot_h + volume_h + labels_h / 2.0;
         let slot = plot_w / bars.len().max(1) as f32;
-        let mut previous = String::new();
-        for i in label_indices(bars.len(), plot_w, X_LABEL_MIN_PX) {
-            let Some(ldt) = tz_convert(bars[i].t_secs, &tz_name) else {
-                continue;
-            };
-            let text_str = label_text(kind, &ldt, time_format);
-            if text_str == previous {
-                continue;
-            }
-            previous.clone_from(&text_str);
+        let texts: Vec<String> = bars
+            .iter()
+            .map(|b| {
+                tz_convert(b.t_secs, &tz_name)
+                    .map(|ldt| label_text(kind, &ldt, time_format))
+                    .unwrap_or_default()
+            })
+            .collect();
+        for i in label_indices(&texts, plot_w, X_LABEL_MIN_PX) {
             draws.push(Draw::text(
                 plot_x + slot * (i as f32 + 0.5),
                 labels_y,
-                text_str,
+                texts[i].clone(),
                 style!(
                     size: band.axis_font,
                     color: SYMBOL_COLOR.with_alpha(alpha),
