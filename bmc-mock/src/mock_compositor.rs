@@ -4,13 +4,15 @@
 //!
 //! Logs all compositor operations instead of rendering to a display.
 
+use std::collections::BTreeSet;
+
 use bmc::compositor::{
-    Compositor, CompositorError, CompositorEvent, HardwareCapabilities, InstanceId,
+    ActiveScene, Compositor, CompositorError, CompositorEvent, HardwareCapabilities, InstanceId,
     LedRequestStatusEvent, Position, SceneCycling, SceneLayout, SettingUpdate, Size, WidgetAction,
     WidgetInitialConfig,
 };
 use bmc_platform::{HardwareProfile, Product};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 
 #[derive(Debug)]
 struct MockSceneState {
@@ -79,6 +81,8 @@ pub struct MockCompositor {
     action_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<WidgetAction>>>,
     event_tx: broadcast::Sender<CompositorEvent>,
     status_tx: mpsc::UnboundedSender<LedRequestStatusEvent>,
+    active_scene_tx: watch::Sender<Option<ActiveScene>>,
+    connected_widgets_tx: watch::Sender<BTreeSet<InstanceId>>,
     display_name: std::sync::Mutex<Option<String>>,
     product: Product,
     scene_state: std::sync::Mutex<MockSceneState>,
@@ -100,10 +104,14 @@ impl MockCompositor {
                 );
             }
         });
+        let (active_scene_tx, _) = watch::channel(None);
+        let (connected_widgets_tx, _) = watch::channel(BTreeSet::new());
         Self {
             action_rx: std::sync::Mutex::new(Some(action_rx)),
             event_tx,
             status_tx,
+            active_scene_tx,
+            connected_widgets_tx,
             display_name: std::sync::Mutex::new(None),
             product,
             scene_state: std::sync::Mutex::new(MockSceneState::default()),
@@ -115,10 +123,10 @@ impl MockCompositor {
         scene_id: bmc::scene::SceneId,
         widget_ids: Vec<InstanceId>,
     ) {
-        let _ = self.event_tx.send(CompositorEvent::ActiveSceneChanged {
+        let _ = self.active_scene_tx.send(Some(ActiveScene {
             scene_id,
             widget_ids,
-        });
+        }));
     }
 
     fn emit_active_scene_changed_if_changed<F>(&self, update_scene_state: F)
@@ -179,6 +187,9 @@ impl Compositor for MockCompositor {
             size.height,
             initial_config,
         );
+        self.connected_widgets_tx.send_modify(|set| {
+            set.insert(instance_id.clone());
+        });
         // Immediately signal that the widget is ready
         let _ = self
             .event_tx
@@ -197,6 +208,9 @@ impl Compositor for MockCompositor {
 
     fn unregister_widget(&self, instance_id: &InstanceId) -> Result<(), CompositorError> {
         tracing::info!("MockCompositor: unregister widget '{}'", instance_id);
+        self.connected_widgets_tx.send_modify(|set| {
+            set.remove(instance_id);
+        });
         Ok(())
     }
 
@@ -285,6 +299,14 @@ impl Compositor for MockCompositor {
         self.event_tx.subscribe()
     }
 
+    fn active_scene_watch(&self) -> watch::Receiver<Option<ActiveScene>> {
+        self.active_scene_tx.subscribe()
+    }
+
+    fn connected_widgets_watch(&self) -> watch::Receiver<BTreeSet<InstanceId>> {
+        self.connected_widgets_tx.subscribe()
+    }
+
     fn shutdown(&self) -> Result<(), CompositorError> {
         tracing::info!("MockCompositor: shutdown");
         Ok(())
@@ -293,9 +315,7 @@ impl Compositor for MockCompositor {
 
 #[cfg(test)]
 mod tests {
-    use bmc::compositor::{
-        Compositor, CompositorEvent, Position, SceneLayout, Size, WidgetPlacement,
-    };
+    use bmc::compositor::{ActiveScene, Compositor, Position, SceneLayout, Size, WidgetPlacement};
     use bmc::scene::SceneId;
     use bmc_platform::{DisplayShape, Product};
 
@@ -320,8 +340,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn mock_reports_bmc100_capabilities() {
+    #[tokio::test]
+    async fn mock_reports_bmc100_capabilities() {
         let caps = MockCompositor::new(Product::Bmc100).hardware_capabilities();
         assert_eq!((caps.display.width, caps.display.height), (1_280, 480));
         assert_eq!(caps.display.shape, DisplayShape::Rectangular);
@@ -330,7 +350,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_scene_cycling_emits_active_scene_changed_when_active_scene_falls_back() {
+    async fn set_scene_cycling_updates_active_scene_when_active_scene_falls_back() {
         let id_a = SceneId::generate();
         let id_b = SceneId::generate();
         let compositor = MockCompositor::new(Product::Bmc100);
@@ -344,7 +364,8 @@ mod tests {
             .set_active_scene(scene_with_id_and_widgets(id_b, &[("b-visible", true)]))
             .expect("BUG: set_active_scene should succeed");
 
-        let mut events = compositor.subscribe_events();
+        let mut active = compositor.active_scene_watch();
+        active.borrow_and_update();
         compositor
             .set_scene_cycling(vec![scene_with_id_and_widgets(
                 id_a,
@@ -352,22 +373,21 @@ mod tests {
             )])
             .expect("BUG: set_scene_cycling should succeed");
 
-        let event = events
-            .try_recv()
-            .expect("BUG: expected ActiveSceneChanged after active scene fallback");
-        match event {
-            CompositorEvent::ActiveSceneChanged {
+        assert!(
+            active
+                .has_changed()
+                .expect("BUG: watch sender must be live"),
+            "active scene must update on fallback"
+        );
+        match &*active.borrow_and_update() {
+            Some(ActiveScene {
                 scene_id,
                 widget_ids,
-            } => {
-                assert_eq!(scene_id, id_a);
-                assert_eq!(widget_ids, vec![String::from("a-visible")]);
+            }) => {
+                assert_eq!(*scene_id, id_a);
+                assert_eq!(*widget_ids, vec![String::from("a-visible")]);
             }
-            CompositorEvent::WidgetReady { .. }
-            | CompositorEvent::WidgetDisconnected { .. }
-            | CompositorEvent::ScreenActivity => {
-                panic!("BUG: expected ActiveSceneChanged event");
-            }
+            None => panic!("BUG: expected an active scene after fallback"),
         }
     }
 }

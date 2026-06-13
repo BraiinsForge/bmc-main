@@ -243,9 +243,12 @@ where
         };
 
         crate::widget::action_handler::spawn_action_handler(
-            compositor.action_receiver(),
-            compositor.subscribe_events(),
-            compositor.request_status_sender(),
+            crate::widget::action_handler::CompositorIo {
+                action_rx: compositor.action_receiver(),
+                active_scene_rx: compositor.active_scene_watch(),
+                connected_widgets_rx: compositor.connected_widgets_watch(),
+                status_tx: compositor.request_status_sender(),
+            },
             sound_controller.clone(),
             led_coordinator.clone(),
             initial_widget_scene_map,

@@ -18,8 +18,8 @@ use super::{
     widget_tracker::{LifecycleState, SceneTransitionTarget},
 };
 use bmc::compositor::{
-    Compositor, CompositorError, CompositorEvent, InstanceId, LedRequestStatusEvent, Position,
-    SceneLayout, Size, WidgetAction,
+    ActiveScene, Compositor, CompositorError, CompositorEvent, InstanceId, LedRequestStatusEvent,
+    Position, SceneLayout, Size, WidgetAction,
 };
 use bmc_platform::TouchTransform;
 use bmc_platform::linux_input::discover_touch_node;
@@ -45,7 +45,7 @@ use smithay::reexports::{
 };
 use smithay::utils::{Logical, Point};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     num::NonZeroU64,
     os::fd::AsFd,
     path::{Path, PathBuf},
@@ -62,7 +62,7 @@ use std::{
 /// satisfies that without the per-call overhead of sampling a realtime
 /// clock.
 static COMPOSITOR_BOOT: LazyLock<Instant> = LazyLock::new(Instant::now);
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 
 /// Synthetic refresh (mHz) advertised to clients in headless mode.
 /// Picked to be close to the 16 ms `FRAME_CALLBACK_TICK` cadence so
@@ -170,6 +170,11 @@ pub struct EglCompositor {
     /// [`Self::request_status_sender`].
     status_tx: mpsc::UnboundedSender<LedRequestStatusEvent>,
     status_rx: Mutex<Option<mpsc::UnboundedReceiver<LedRequestStatusEvent>>>,
+    /// Latest active scene; consumers subscribe via [`Self::active_scene_watch`].
+    active_scene_tx: watch::Sender<Option<ActiveScene>>,
+    /// Currently connected widgets; consumers subscribe via
+    /// [`Self::connected_widgets_watch`].
+    connected_widgets_tx: watch::Sender<BTreeSet<InstanceId>>,
     action_rx: Mutex<Option<mpsc::UnboundedReceiver<WidgetAction>>>,
     thread_handle: Mutex<Option<JoinHandle<()>>>,
     device_access: DeviceAccessConfig,
@@ -233,6 +238,8 @@ impl EglCompositor {
         let (action_tx, action_rx) = mpsc::unbounded_channel();
         let (event_tx, _) = broadcast::channel(64);
         let (status_tx, status_rx) = mpsc::unbounded_channel();
+        let (active_scene_tx, _) = watch::channel(None);
+        let (connected_widgets_tx, _) = watch::channel(BTreeSet::new());
 
         Self {
             wayland_display: Mutex::new(None),
@@ -242,6 +249,8 @@ impl EglCompositor {
             event_tx,
             status_tx,
             status_rx: Mutex::new(Some(status_rx)),
+            active_scene_tx,
+            connected_widgets_tx,
             action_rx: Mutex::new(Some(action_rx)),
             thread_handle: Mutex::new(None),
             device_access,
@@ -268,6 +277,8 @@ impl EglCompositor {
         action_tx: mpsc::UnboundedSender<WidgetAction>,
         event_tx: broadcast::Sender<CompositorEvent>,
         status_rx: mpsc::UnboundedReceiver<LedRequestStatusEvent>,
+        active_scene_tx: watch::Sender<Option<ActiveScene>>,
+        connected_widgets_tx: watch::Sender<BTreeSet<InstanceId>>,
         ready_tx: &flume::Sender<Result<String, String>>,
     ) {
         tracing::info!("Compositor thread starting (headless={})...", headless,);
@@ -408,6 +419,9 @@ impl EglCompositor {
             action_tx,
             event_tx,
             status_rx,
+            active_scene_tx,
+            connected_widgets_tx,
+            connected_widgets: BTreeSet::new(),
             gesture: GestureState::new(),
             gesture_slot: None,
             active_touch_slots: HashSet::new(),
@@ -819,6 +833,13 @@ struct AppState {
     action_tx: mpsc::UnboundedSender<WidgetAction>,
     event_tx: broadcast::Sender<CompositorEvent>,
     status_rx: mpsc::UnboundedReceiver<LedRequestStatusEvent>,
+    /// Latest active scene, published to consumers via a `watch` channel.
+    active_scene_tx: watch::Sender<Option<ActiveScene>>,
+    /// Connected-widget set, published to consumers via a `watch` channel.
+    connected_widgets_tx: watch::Sender<BTreeSet<InstanceId>>,
+    /// Mirror of the set last published on `connected_widgets_tx`, updated
+    /// as widgets connect and disconnect.
+    connected_widgets: BTreeSet<InstanceId>,
     /// Backend-agnostic gesture state machine, driven by libinput events.
     gesture: GestureState,
     /// Touch slot that owns compositor-level scene arbitration for the
@@ -1840,17 +1861,21 @@ fn emit_active_scene_changed_if_changed(
         state.compositor.widgets.active_scene_id(),
         state.compositor.widgets.active_visible_widget_ids(),
     );
-    if active_scene_before != &active_scene_after
-        && let Some(scene_id) = active_scene_after.0
-    {
-        let _ = state.event_tx.send(CompositorEvent::ActiveSceneChanged {
-            scene_id,
-            widget_ids: active_scene_after.1,
-        });
+    if active_scene_before == &active_scene_after {
+        return;
     }
+    // `None` scene_id publishes `None` so a cleared active scene reaches
+    // consumers too, not just transitions between scenes.
+    let (scene_id, widget_ids) = active_scene_after;
+    let value = scene_id.map(|scene_id| ActiveScene {
+        scene_id,
+        widget_ids,
+    });
+    let _ = state.active_scene_tx.send(value);
 }
 
 fn process_protocol_events(state: &mut AppState) {
+    let mut connected_set_changed = false;
     let connected = state.compositor.deck_widget_state.drain_connected();
     if !connected.is_empty() {
         let lifecycle_states = state.compositor.widgets.lifecycle_states();
@@ -1881,6 +1906,9 @@ fn process_protocol_events(state: &mut AppState) {
             }
 
             tracing::info!("Widget connected: {}", instance_id);
+            if state.connected_widgets.insert(instance_id.clone()) {
+                connected_set_changed = true;
+            }
             let _ = state
                 .event_tx
                 .send(CompositorEvent::WidgetReady { instance_id });
@@ -1896,9 +1924,15 @@ fn process_protocol_events(state: &mut AppState) {
 
     for instance_id in state.compositor.deck_widget_state.drain_disconnected() {
         tracing::info!("Widget disconnected: {}", instance_id);
+        if state.connected_widgets.remove(&instance_id) {
+            connected_set_changed = true;
+        }
+    }
+
+    if connected_set_changed {
         let _ = state
-            .event_tx
-            .send(CompositorEvent::WidgetDisconnected { instance_id });
+            .connected_widgets_tx
+            .send(state.connected_widgets.clone());
     }
 
     for (instance_id, payload) in state.compositor.deck_widget_state.drain_actions() {
@@ -1909,6 +1943,12 @@ fn process_protocol_events(state: &mut AppState) {
         });
     }
 
+    // Status acks come from the tokio side, so they have no calloop wake
+    // source of their own — they are drained here every loop iteration. The
+    // loop iterates at least every `FRAME_CALLBACK_TICK` (the tick is
+    // unconditional), so delivery is bounded to one tick; the channel is
+    // unbounded, so nothing is dropped while queued. If the tick ever becomes
+    // conditional, give this channel its own wake source instead.
     while let Ok(status) = state.status_rx.try_recv() {
         tracing::debug!(
             "Widget {} led_request_status: req={} status={:?}",
@@ -1965,6 +2005,8 @@ impl Compositor for EglCompositor {
             .expect("BUG: status_rx lock poisoned")
             .take()
             .expect("BUG: status_rx already taken");
+        let active_scene_tx = self.active_scene_tx.clone();
+        let connected_widgets_tx = self.connected_widgets_tx.clone();
 
         let handle = thread::Builder::new()
             .name("egl-compositor".to_owned())
@@ -1981,6 +2023,8 @@ impl Compositor for EglCompositor {
                     action_tx,
                     event_tx,
                     status_rx,
+                    active_scene_tx,
+                    connected_widgets_tx,
                     &ready_tx,
                 );
             })
@@ -2139,6 +2183,14 @@ impl Compositor for EglCompositor {
         self.event_tx.subscribe()
     }
 
+    fn active_scene_watch(&self) -> watch::Receiver<Option<ActiveScene>> {
+        self.active_scene_tx.subscribe()
+    }
+
+    fn connected_widgets_watch(&self) -> watch::Receiver<BTreeSet<InstanceId>> {
+        self.connected_widgets_tx.subscribe()
+    }
+
     fn shutdown(&self) -> Result<(), CompositorError> {
         self.command_tx
             .send(CompositorCommand::Shutdown)
@@ -2219,6 +2271,9 @@ mod tests {
         let (action_tx, _) = mpsc::unbounded_channel();
         let (event_tx, _) = tokio::sync::broadcast::channel(64);
         let (_status_tx, status_rx) = mpsc::unbounded_channel();
+        let (active_scene_tx, _) = tokio::sync::watch::channel(None);
+        let (connected_widgets_tx, _) =
+            tokio::sync::watch::channel(std::collections::BTreeSet::new());
 
         AppState {
             display,
@@ -2228,6 +2283,9 @@ mod tests {
             action_tx,
             event_tx,
             status_rx,
+            active_scene_tx,
+            connected_widgets_tx,
+            connected_widgets: std::collections::BTreeSet::new(),
             gesture: GestureState::new(),
             gesture_slot: None,
             active_touch_slots: HashSet::new(),
