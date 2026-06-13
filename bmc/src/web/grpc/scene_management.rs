@@ -1717,6 +1717,21 @@ mod tests {
             rx
         }
 
+        fn active_scene_watch(
+            &self,
+        ) -> tokio::sync::watch::Receiver<Option<crate::compositor::ActiveScene>> {
+            let (_tx, rx) = tokio::sync::watch::channel(None);
+            rx
+        }
+
+        fn connected_widgets_watch(
+            &self,
+        ) -> tokio::sync::watch::Receiver<std::collections::BTreeSet<crate::compositor::InstanceId>>
+        {
+            let (_tx, rx) = tokio::sync::watch::channel(std::collections::BTreeSet::new());
+            rx
+        }
+
         fn shutdown(&self) -> Result<(), crate::compositor::CompositorError> {
             Ok(())
         }

@@ -5,8 +5,10 @@
 //! The compositor runs in a separate thread (using calloop) while the main application runs
 //! on tokio. Communication happens via channels.
 
+use std::collections::BTreeSet;
+
 use thiserror::Error;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 
 pub use crate::data::SceneCycling;
 pub use bmc_platform::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
@@ -63,18 +65,17 @@ pub struct LedRequestStatusEvent {
     pub status: LedRequestStatus,
 }
 
+/// Latest active-scene snapshot, delivered over a `watch` channel so a
+/// consumer always sees current truth instead of a lossy event stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveScene {
+    pub scene_id: crate::scene::SceneId,
+    pub widget_ids: Vec<InstanceId>,
+}
+
 #[derive(Debug, Clone)]
 pub enum CompositorEvent {
-    WidgetReady {
-        instance_id: InstanceId,
-    },
-    WidgetDisconnected {
-        instance_id: InstanceId,
-    },
-    ActiveSceneChanged {
-        scene_id: crate::scene::SceneId,
-        widget_ids: Vec<InstanceId>,
-    },
+    WidgetReady { instance_id: InstanceId },
     ScreenActivity,
 }
 
@@ -185,8 +186,21 @@ pub trait Compositor: Send + Sync {
     /// `led_request_status` events on the matching widget surface.
     fn request_status_sender(&self) -> mpsc::UnboundedSender<LedRequestStatusEvent>;
 
-    /// Subscribe to the compositor event stream.
+    /// Subscribe to the compositor event stream (`WidgetReady`,
+    /// `ScreenActivity`). Authoritative scene/connection state is on the
+    /// `watch` channels below, not here.
     fn subscribe_events(&self) -> broadcast::Receiver<CompositorEvent>;
+
+    /// Latest active scene as a `watch` channel; `None` means no scene is
+    /// active. Latest-value delivery — a consumer never misses the current
+    /// scene to a lagged stream.
+    fn active_scene_watch(&self) -> watch::Receiver<Option<ActiveScene>>;
+
+    /// Set of currently connected widget instance ids as a `watch`
+    /// channel. Consumers reconcile against it (e.g. sweeping a
+    /// disconnected widget's effects) instead of reacting to one-shot
+    /// disconnect events that a lagged stream could drop.
+    fn connected_widgets_watch(&self) -> watch::Receiver<BTreeSet<InstanceId>>;
 
     /// Shutdown the compositor.
     fn shutdown(&self) -> Result<(), CompositorError>;
