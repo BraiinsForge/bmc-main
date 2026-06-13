@@ -28,6 +28,7 @@ members = [
     "nameday",
     "random-facts",
     "spacex-launch",
+    "ticker-list",
     "weather",
 ]
 

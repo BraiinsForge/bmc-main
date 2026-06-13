@@ -1,0 +1,9 @@
+# Capture configuration for visual regression testing.
+
+# 16 price+reference fetches resolve, then company names arrive a frame later
+# via the lazy per-row reference poll; settle long enough for all rows to draw.
+settle_delay = 10
+
+[fixtures.common]
+path = "fixtures/common.jsonl.gz"
+targets = ["bmc100:full", "bmc100:large", "bmc100:medium", "bmc100:small", "bmm101:full"]

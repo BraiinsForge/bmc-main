@@ -1,0 +1,167 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "51f48290-a8fd-466d-8693-1911b06c68c8",
+  "version": "0.1.0",
+  "name": "Financial Ticker List",
+  "description": "Display multiple financial symbols with prices, changes, and sparkline charts",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/ticker-list",
+  "icon": "assets/icon.svg",
+  "settings": [
+    "localization"
+  ],
+  "supported_viewports": [
+    {
+      "type": "rectangular",
+      "min_width": 317,
+      "max_width": 1280,
+      "min_height": 238,
+      "max_height": 480
+    }
+  ],
+  "params": {
+    "symbol_1": {
+      "name": "Symbol 1",
+      "description": "Financial symbol, stock ticker, or cryptocurrency pair for this row; leave empty to skip it",
+      "type": "string",
+      "optional": true,
+      "default_value": "NVDA"
+    },
+    "symbol_2": {
+      "name": "Symbol 2",
+      "description": "Financial symbol, stock ticker, or cryptocurrency pair for this row; leave empty to skip it",
+      "type": "string",
+      "optional": true,
+      "default_value": "AAPL"
+    },
+    "symbol_3": {
+      "name": "Symbol 3",
+      "description": "Financial symbol, stock ticker, or cryptocurrency pair for this row; leave empty to skip it",
+      "type": "string",
+      "optional": true,
+      "default_value": "TSLA"
+    },
+    "symbol_4": {
+      "name": "Symbol 4",
+      "description": "Financial symbol, stock ticker, or cryptocurrency pair for this row; leave empty to skip it",
+      "type": "string",
+      "optional": true,
+      "default_value": "MSTR"
+    },
+    "symbol_5": {
+      "name": "Symbol 5",
+      "description": "Financial symbol, stock ticker, or cryptocurrency pair for this row; leave empty to skip it",
+      "type": "string",
+      "optional": true,
+      "default_value": "JPM"
+    },
+    "symbol_6": {
+      "name": "Symbol 6",
+      "description": "Financial symbol, stock ticker, or cryptocurrency pair for this row; leave empty to skip it",
+      "type": "string",
+      "optional": true,
+      "default_value": "META"
+    },
+    "symbol_7": {
+      "name": "Symbol 7",
+      "description": "Financial symbol, stock ticker, or cryptocurrency pair for this row; leave empty to skip it",
+      "type": "string",
+      "optional": true,
+      "default_value": "SPY"
+    },
+    "symbol_8": {
+      "name": "Symbol 8",
+      "description": "Financial symbol, stock ticker, or cryptocurrency pair for this row; leave empty to skip it",
+      "type": "string",
+      "optional": true,
+      "default_value": "NFLX"
+    },
+    "period": {
+      "name": "Time Period",
+      "description": "Time period for the chart and the price change",
+      "type": "string",
+      "default_value": "7d",
+      "enum_values": [
+        {
+          "value": "1h",
+          "label": "1 Hour"
+        },
+        {
+          "value": "3h",
+          "label": "3 Hours"
+        },
+        {
+          "value": "6h",
+          "label": "6 Hours"
+        },
+        {
+          "value": "12h",
+          "label": "12 Hours"
+        },
+        {
+          "value": "1d",
+          "label": "1 Day"
+        },
+        {
+          "value": "3d",
+          "label": "3 Days"
+        },
+        {
+          "value": "7d",
+          "label": "7 Days"
+        },
+        {
+          "value": "14d",
+          "label": "14 Days"
+        },
+        {
+          "value": "1mo",
+          "label": "1 Month"
+        },
+        {
+          "value": "3mo",
+          "label": "3 Months"
+        },
+        {
+          "value": "6mo",
+          "label": "6 Months"
+        },
+        {
+          "value": "9mo",
+          "label": "9 Months"
+        },
+        {
+          "value": "1Y",
+          "label": "1 Year"
+        },
+        {
+          "value": "2Y",
+          "label": "2 Years"
+        },
+        {
+          "value": "3Y",
+          "label": "3 Years"
+        },
+        {
+          "value": "5Y",
+          "label": "5 Years"
+        },
+        {
+          "value": "10Y",
+          "label": "10 Years"
+        },
+        {
+          "value": "25Y",
+          "label": "25 Years"
+        },
+        {
+          "value": "full",
+          "label": "All Time"
+        }
+      ]
+    }
+  }
+}
