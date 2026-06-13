@@ -1,6 +1,6 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
 use bmc_led::data::{LedEffect as HwLedEffect, LedScene, Rgb};
@@ -86,24 +86,37 @@ impl LedSceneManager {
         if self.active_scene == Some(scene_id) {
             return;
         }
-
         // Leaving a scene drops its in-flight temp — a local temp never
         // ticks off-screen and is not paused/resumed. The scene's
         // remaining queue stays put and plays from the next entry on its
         // next visit.
+        self.drop_active_scene_temp();
+        self.active_scene = Some(scene_id);
+        self.scenes.entry(scene_id).or_default();
+        self.refresh_active_scene_effect();
+    }
+
+    /// The compositor reports no active scene. Drops the outgoing scene's
+    /// in-flight temp, same as navigating to a different scene.
+    pub(crate) fn on_active_scene_cleared(&mut self) {
+        if self.active_scene.is_none() {
+            return;
+        }
+        self.drop_active_scene_temp();
+        self.active_scene = None;
+        self.refresh_active_scene_effect();
+    }
+
+    /// Drop the active scene's running temp (if any), emitting `Expired`.
+    fn drop_active_scene_temp(&mut self) {
         let dropped = self
             .active_scene
             .and_then(|prev| self.scenes.get_mut(&prev))
             .and_then(|state| state.active_temp.take())
             .map(|active| (active.entry.instance_id, active.entry.request_id));
-
-        self.active_scene = Some(scene_id);
-        self.scenes.entry(scene_id).or_default();
-
         if let Some((instance_id, request_id)) = dropped {
             self.emit(instance_id, request_id, LedRequestStatus::Expired);
         }
-        self.refresh_active_scene_effect();
     }
 
     /// Reconcile `widget_to_scene` with the authoritative config snapshot.
@@ -256,8 +269,22 @@ impl LedSceneManager {
         self.refresh_active_scene_effect();
     }
 
-    pub(crate) fn on_widget_disconnected(&mut self, instance_id: &str) {
-        self.on_stop(instance_id, LED_REQUEST_ID_ALL);
+    /// Reconcile against the compositor's connected-widget set: sweep
+    /// every effect owned by a widget no longer connected. Idempotent —
+    /// reconciling against the same set twice is a no-op. This is the
+    /// disconnect-cleanup path; it works off latest state, so a dropped
+    /// notification cannot leak a dead widget's effect.
+    pub(crate) fn reconcile_connected(&mut self, connected: &BTreeSet<InstanceId>) {
+        let stale: HashSet<InstanceId> = self
+            .scenes
+            .values()
+            .chain(std::iter::once(&self.global_state))
+            .flat_map(state_widget_ids)
+            .filter(|widget| !connected.contains(widget))
+            .collect();
+        for widget in stale {
+            self.on_stop(&widget, LED_REQUEST_ID_ALL);
+        }
     }
 
     /// Drop scene entries that no widget still references and that hold
@@ -342,11 +369,17 @@ impl LedSceneManager {
     }
 
     fn emit(&self, instance_id: InstanceId, request_id: LedRequestId, status: LedRequestStatus) {
-        let _ = self.status_tx.send(LedRequestStatusEvent {
-            instance_id,
-            request_id,
-            status,
-        });
+        if self
+            .status_tx
+            .send(LedRequestStatusEvent {
+                instance_id,
+                request_id,
+                status,
+            })
+            .is_err()
+        {
+            warn!("led status receiver gone; dropping status update");
+        }
     }
 }
 
@@ -371,6 +404,22 @@ fn pick_winner_scene_for_layer(state: &mut SceneEffectState) -> Option<LedScene>
         .as_ref()
         .map(|t| t.entry.scene)
         .or_else(|| state.endless.as_ref().map(|entry| entry.scene))
+}
+
+/// Every widget id that currently owns any effect in this state — the
+/// endless slot, the running temp, or a queued temp.
+fn state_widget_ids(state: &SceneEffectState) -> Vec<InstanceId> {
+    let mut ids = Vec::new();
+    if let Some(entry) = &state.endless {
+        ids.push(entry.instance_id.clone());
+    }
+    if let Some(active) = &state.active_temp {
+        ids.push(active.entry.instance_id.clone());
+    }
+    for entry in &state.temp_queue {
+        ids.push(entry.instance_id.clone());
+    }
+    ids
 }
 
 /// Remove every entry from a state that matches the given predicate,
@@ -1293,7 +1342,7 @@ mod tests {
         );
         h.drain_statuses();
 
-        h.manager.on_widget_disconnected(&widget);
+        h.manager.reconcile_connected(&BTreeSet::new());
 
         let statuses = h.drain_statuses();
         let mut superseded_ids: Vec<_> = statuses
@@ -1338,7 +1387,9 @@ mod tests {
         );
         h.drain_statuses();
 
-        h.manager.on_widget_disconnected(&widget_b);
+        // widget_b disconnects; widget_a stays connected.
+        h.manager
+            .reconcile_connected(&BTreeSet::from([widget_a.clone()]));
 
         let statuses = h.drain_statuses();
         assert_eq!(statuses.len(), 1);
@@ -1434,9 +1485,10 @@ mod tests {
 
     #[test]
     fn widget_disconnect_keeps_mapping_so_respawned_widget_reroutes() {
-        // Regression: widget process restart (size change) used to wipe
-        // widget_to_scene via WidgetDisconnected, leaving subsequent
-        // LedEndless calls unroutable until the next scene change.
+        // A widget process restart (e.g. size change) drops it from the
+        // connected set. Reconcile sweeps its effects but leaves the
+        // config-derived scene mapping intact, so the respawned process
+        // can re-issue LED requests and they route to the same scene.
         let mut h = Harness::new();
         let scene = scene_id();
         let widget = instance_id("resize-survivor");
@@ -1456,10 +1508,10 @@ mod tests {
         );
         h.drain_statuses();
 
-        // Wayland disconnect (the widget's process is being respawned).
-        // The mapping must survive; effects get swept since the
-        // respawned process won't remember them.
-        h.manager.on_widget_disconnected(&widget);
+        // Wayland disconnect (the widget's process is being respawned):
+        // it drops out of the connected set. The mapping must survive;
+        // effects get swept since the respawned process won't remember them.
+        h.manager.reconcile_connected(&BTreeSet::new());
         assert_eq!(h.manager.widget_to_scene.get(&widget), Some(&scene));
         assert_eq!(h.manager.applied_local, None);
 
