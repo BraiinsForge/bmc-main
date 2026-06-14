@@ -26,6 +26,8 @@ wayland-client = { workspace = true }
 
 bmc-gpu-render-lock = { workspace = true }
 bmc-log = { workspace = true }
+bmc-overlay-device-info = { workspace = true }
+bmc-overlay-offline = { workspace = true }
 bmc-render = { path = "../bmc-render" }
 bmc-system-overlay = { workspace = true }
 bmc-wasm-protocol = { workspace = true }
