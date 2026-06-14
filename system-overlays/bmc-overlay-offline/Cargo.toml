@@ -1,0 +1,21 @@
+[package]
+name = "bmc-overlay-offline"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins Systems s.r.o."]
+description = "Bottom-right indicator shown while the device is offline"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bmc-overlay-offline"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+bmc-render.workspace = true
+bmc-system-overlay.workspace = true
+
+[lints]
+workspace = true
