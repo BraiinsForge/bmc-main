@@ -4,6 +4,7 @@ use std::io::Read;
 use std::mem::size_of;
 use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 
 use bmc_wasm_thin_protocol::{
     AckDecoder, AckMsg, HelloMsg, MAX_FRAME_LEN, PROTOCOL_VERSION, recv_hello_with_fd,
@@ -188,15 +189,25 @@ fn hello_without_scm_rights_is_protocol_error() {
 #[cfg(target_os = "linux")]
 #[test]
 fn too_many_fds_are_rejected_without_leaking_received_fd() {
-    fn open_fd_count() -> usize {
+    fn fd_target(fd: i32) -> std::path::PathBuf {
+        std::fs::read_link(format!("/proc/self/fd/{fd}"))
+            .expect("BUG: linux test fixture expects fd links in /proc/self/fd")
+    }
+
+    fn open_fd_count_for_target(target: &Path) -> usize {
         std::fs::read_dir("/proc/self/fd")
             .expect("BUG: linux test fixture expects /proc/self/fd")
+            .filter_map(Result::ok)
+            .filter_map(|entry| std::fs::read_link(entry.path()).ok())
+            .filter(|link| link == target)
             .count()
     }
 
     let (sender, receiver) = pair();
     let (fd_a, _fd_b) = pair();
     let (extra_a, _extra_b) = pair();
+    let primary_target = fd_target(fd_a.as_raw_fd());
+    let extra_target = fd_target(extra_a.as_raw_fd());
 
     let payload = build_frame_bytes(
         PROTOCOL_VERSION,
@@ -241,13 +252,19 @@ fn too_many_fds_are_rejected_without_leaking_received_fd() {
         );
     }
 
-    let baseline = open_fd_count();
+    let primary_baseline = open_fd_count_for_target(&primary_target);
+    let extra_baseline = open_fd_count_for_target(&extra_target);
     let err = recv_hello_with_fd(&receiver).expect_err("BUG: too many fds must be rejected");
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert_eq!(
-        open_fd_count(),
-        baseline,
+        open_fd_count_for_target(&primary_target),
+        primary_baseline,
         "recv_hello_with_fd must close any primary fd it received before rejecting extra fds",
+    );
+    assert_eq!(
+        open_fd_count_for_target(&extra_target),
+        extra_baseline,
+        "recv_hello_with_fd must close any extra fd it received before rejecting extra fds",
     );
 }
 
