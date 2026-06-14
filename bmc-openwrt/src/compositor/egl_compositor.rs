@@ -442,7 +442,7 @@ impl EglCompositor {
             ),
             pending_transition_warm_up: None,
             scene_cycling_timer_generation: 0,
-            last_fullscreen_overlay_active: false,
+            last_fullscreen_blocker_active: false,
         };
         app_state.reevaluate_automatic_cycling(Instant::now());
 
@@ -648,13 +648,13 @@ impl EglCompositor {
 
             // A layer-shell map/unmap is processed during the previous
             // iteration's dispatch, not on a scene command, so lifecycle does
-            // not re-emit on its own. Detect the fullscreen-overlay predicate
+            // not re-emit on its own. Detect the fullscreen-blocker predicate
             // flipping and re-emit so scene-swipe neighbors are demoted to
-            // `Dormant` when an overlay maps and restored to `Prepared` when it
+            // `Dormant` when a blocker maps and restored to `Prepared` when it
             // unmaps.
-            let overlay_active = app_state.compositor.fullscreen_overlay_active();
-            if overlay_active != app_state.last_fullscreen_overlay_active {
-                app_state.last_fullscreen_overlay_active = overlay_active;
+            let blocker_active = app_state.compositor.fullscreen_blocker_active();
+            if blocker_active != app_state.last_fullscreen_blocker_active {
+                app_state.last_fullscreen_blocker_active = blocker_active;
                 emit_lifecycle_transitions(&mut app_state);
                 release_dormant_widget_buffers(&mut app_state);
             }
@@ -909,13 +909,13 @@ struct AppState {
     /// stacking duplicate timers if multiple `DeviceRemoved` events fire
     /// in quick succession.
     touch_retry_pending: bool,
-    /// Last observed value of [`CompositorState::fullscreen_overlay_active`].
+    /// Last observed value of [`CompositorState::fullscreen_blocker_active`].
     /// A layer map/unmap happens during Wayland dispatch, not on a scene
     /// command, so lifecycle would not re-emit on its own. Comparing against
     /// this each loop iteration lets us re-emit when the predicate flips,
-    /// demoting scene-swipe neighbors to `Dormant` when a fullscreen overlay
+    /// demoting scene-swipe neighbors to `Dormant` when a fullscreen blocker
     /// maps and restoring them to `Prepared` when it unmaps.
-    last_fullscreen_overlay_active: bool,
+    last_fullscreen_blocker_active: bool,
 }
 
 impl AppState {
@@ -971,7 +971,7 @@ impl AppState {
         self.pending_transition_warm_up = None;
         self.compositor.mark_full_output_damage();
         let mut next = self.compositor.widgets.lifecycle_states();
-        if self.compositor.fullscreen_overlay_active() {
+        if self.compositor.fullscreen_blocker_active() {
             // Must mirror emit_lifecycle_transitions' suppression so the release-peek matches what will actually be emitted.
             crate::compositor::layer_surface::suppress_prepared(&mut next);
         }
@@ -1303,7 +1303,7 @@ impl AppState {
         if drag_activated
             && !self.scene_drag_active
             && self.compositor.widgets.can_drag()
-            && !self.compositor.fullscreen_overlay_active()
+            && !self.compositor.fullscreen_blocker_active()
         {
             // Mid-touch transition: arbitrate to scene drag and cancel the
             // wl_touch sequence the widget is currently seeing. Skipped when
@@ -1519,7 +1519,7 @@ impl LifecycleSink for AppStateLifecycleSink<'_> {
 /// an event.
 fn emit_lifecycle_transitions(state: &mut AppState) -> Emission {
     let mut next = state.compositor.widgets.lifecycle_states();
-    if state.compositor.fullscreen_overlay_active() {
+    if state.compositor.fullscreen_blocker_active() {
         crate::compositor::layer_surface::suppress_prepared(&mut next);
     }
     let emission = state.compositor.lifecycle.step(&next);
@@ -1551,7 +1551,7 @@ fn dormant_widget_ids(
 
 fn release_dormant_widget_buffers(state: &mut AppState) {
     let mut lifecycle_states = state.compositor.widgets.lifecycle_states();
-    if state.compositor.fullscreen_overlay_active() {
+    if state.compositor.fullscreen_blocker_active() {
         crate::compositor::layer_surface::suppress_prepared(&mut lifecycle_states);
     }
     let dormant_ids = dormant_widget_ids(&lifecycle_states);
@@ -1948,7 +1948,7 @@ fn process_protocol_events(state: &mut AppState) {
     let connected = state.compositor.deck_widget_state.drain_connected();
     if !connected.is_empty() {
         let mut lifecycle_states = state.compositor.widgets.lifecycle_states();
-        if state.compositor.fullscreen_overlay_active() {
+        if state.compositor.fullscreen_blocker_active() {
             crate::compositor::layer_surface::suppress_prepared(&mut lifecycle_states);
         }
         let mut connect_clients: Vec<ClientId> = Vec::new();
@@ -2378,7 +2378,7 @@ mod tests {
             ),
             pending_transition_warm_up: None,
             scene_cycling_timer_generation: 0,
-            last_fullscreen_overlay_active: false,
+            last_fullscreen_blocker_active: false,
         }
     }
 
