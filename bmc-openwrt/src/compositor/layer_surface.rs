@@ -91,14 +91,16 @@ pub fn paint_order(ranks: &[u8]) -> Vec<usize> {
     idx
 }
 
-/// True if a mapped overlay-layer surface at `geo` covers the whole output.
+/// True if a mapped layer surface at `geo` covers the whole output. Any layer
+/// above the background occludes the scene, so suppression is not tied to a
+/// specific layer.
 #[must_use]
-pub fn is_fullscreen_overlay(
+pub fn is_fullscreen_blocker(
     layer: Layer,
     geo: Rectangle<i32, Logical>,
     output: Size<i32, Logical>,
 ) -> bool {
-    layer == Layer::Overlay
+    layer != Layer::Background
         && geo.loc.x <= 0
         && geo.loc.y <= 0
         && geo.size.w >= output.w
@@ -272,24 +274,26 @@ mod tests {
     }
 
     #[test]
-    fn fullscreen_overlay_true_for_full_cover_overlay() {
+    fn fullscreen_blocker_true_for_full_cover_above_background() {
         let output = Size::from((1280, 480));
         let geo = Rectangle::from_loc_and_size((0, 0), (1280, 480));
-        assert!(is_fullscreen_overlay(Layer::Overlay, geo, output));
+        assert!(is_fullscreen_blocker(Layer::Overlay, geo, output));
+        assert!(is_fullscreen_blocker(Layer::Top, geo, output));
+        assert!(is_fullscreen_blocker(Layer::Bottom, geo, output));
     }
 
     #[test]
-    fn fullscreen_overlay_false_for_corner_surface() {
+    fn fullscreen_blocker_false_for_background_layer() {
+        let output = Size::from((1280, 480));
+        let geo = Rectangle::from_loc_and_size((0, 0), (1280, 480));
+        assert!(!is_fullscreen_blocker(Layer::Background, geo, output));
+    }
+
+    #[test]
+    fn fullscreen_blocker_false_for_corner_surface() {
         let output = Size::from((1280, 480));
         let geo = Rectangle::from_loc_and_size((1160, 440), (120, 40));
-        assert!(!is_fullscreen_overlay(Layer::Overlay, geo, output));
-    }
-
-    #[test]
-    fn fullscreen_overlay_false_for_top_layer() {
-        let output = Size::from((1280, 480));
-        let geo = Rectangle::from_loc_and_size((0, 0), (1280, 480));
-        assert!(!is_fullscreen_overlay(Layer::Top, geo, output));
+        assert!(!is_fullscreen_blocker(Layer::Overlay, geo, output));
     }
 
     #[test]
