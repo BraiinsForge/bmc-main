@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use bmc_gpu_render_lock::GpuRenderLock;
 use bmc_render::gpu::FemtoVgRenderer;
-use bmc_render::renderer::Renderer as _;
+use bmc_render::renderer::{FrameClear, Renderer as _};
 use bmc_widget::egl::{EglContext, SharedRenderScratch};
 
 use crate::gpu::{OverlayRenderTarget, wait_for_gpu};
@@ -165,18 +165,7 @@ fn render_frame(
     // begin_frame binds the staging FBO and sets the viewport, returning its id.
     // The renderer was constructed against that id, so the returned value is unused.
     let _staging = scratch.begin_frame(egl, size.0, size.1);
-    renderer.begin_frame(size.0, size.1, 1.0);
-    // BOTH scratch.begin_frame and FemtoVgRenderer::begin_frame clear opaque
-    // black. A see-through overlay must start transparent, so re-clear the bound
-    // staging FBO to alpha 0 AFTER femtovg's clear and before drawing — the
-    // recorded draws then flush over a transparent base.
-    // SAFETY: the EGL context is current on this (single render) thread; only GL state calls are made.
-    unsafe {
-        use glow::HasContext as _;
-        let gl = egl.gl();
-        gl.clear_color(0.0, 0.0, 0.0, 0.0);
-        gl.clear(glow::COLOR_BUFFER_BIT);
-    }
+    renderer.begin_frame_with_clear(size.0, size.1, 1.0, FrameClear::TransparentBlack);
     overlay.render(renderer, size);
     renderer.flush();
     scratch.blit_to(egl, target.current_fbo(), size.0, size.1);
