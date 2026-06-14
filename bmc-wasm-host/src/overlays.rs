@@ -3,7 +3,7 @@
 use std::ptr::NonNull;
 use std::time::Instant;
 
-use bmc_render::renderer::Renderer;
+use bmc_render::renderer::{FrameClear, Renderer};
 use bmc_system_overlay::{HostedOverlay, ValidationOverlay};
 use bmc_widget::egl::EglContext;
 
@@ -55,16 +55,7 @@ pub fn render_hosted_overlay(
         //     `&mut dyn Renderer` to this renderer is live during the call.
         let renderer = unsafe { ptr.as_ptr().as_mut() }
             .expect("BUG: NonNull renderer is non-null by construction");
-        renderer.begin_frame(size.0, size.1, 1.0);
-        // Both scratch.begin_frame and FemtoVgRenderer::begin_frame clear opaque
-        // black; a see-through overlay must start transparent. Re-clear to alpha
-        // 0 AFTER femtovg's clear and before drawing.
-        unsafe {
-            use glow::HasContext as _;
-            let gl = shared.egl.gl();
-            gl.clear_color(0.0, 0.0, 0.0, 0.0);
-            gl.clear(glow::COLOR_BUFFER_BIT);
-        }
+        renderer.begin_frame_with_clear(size.0, size.1, 1.0, FrameClear::TransparentBlack);
         overlay.overlay_mut().render(renderer, size);
         renderer.flush();
 
