@@ -6,7 +6,9 @@
 //! `wl_buffer.release` bookkeeping the compositor drives.
 
 use anyhow::Context as _;
-use bmc_widget::egl::{Depth, DmaBufInfo, DoubleBufferState, EglContext, SlotReleaseState};
+use bmc_widget::egl::{
+    Depth, DmaBufInfo, DoubleBufferState, EglContext, ExportFormat, SlotReleaseState,
+};
 use bmc_widget::surface::ReleasedBuffer;
 use glow::HasContext as _;
 use wayland_client::protocol::wl_buffer;
@@ -79,7 +81,7 @@ impl OverlayRenderTarget {
     /// `ensure_current`.
     pub fn new(_egl: &EglContext, w: u32, h: u32) -> anyhow::Result<Self> {
         Ok(Self {
-            buffers: DoubleBufferState::new(w, h, Depth::Disabled),
+            buffers: DoubleBufferState::new_with_format(w, h, Depth::Disabled, ExportFormat::Alpha),
             wl_buffers: [None, None],
             release: SlotReleaseState::new(),
         })
