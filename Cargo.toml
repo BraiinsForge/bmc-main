@@ -49,6 +49,7 @@ members = [
     "bmc-widget-codegen",
     "bmc-widget-manifest",
     "bmc-widget-protocol",
+    "system-overlays/bmc-overlay-device-info",
     "system-overlays/bmc-system-overlay",
     "system-overlays/layer-shell-test-client",
     "system-overlays/validation-overlay",
@@ -157,6 +158,7 @@ bmc-led = { path = "bmc-led", default-features = false }
 bmc-log = { path = "bmc-log" }
 bmc-nix = { path = "bmc-nix" }
 bmc-nix-init = { path = "bmc-nix-init" }
+bmc-overlay-device-info = { path = "system-overlays/bmc-overlay-device-info" }
 bmc-platform = { path = "bmc-platform" }
 bmc-render = { path = "bmc-render" }
 bmc-scheduler = { path = "bmc-scheduler" }
