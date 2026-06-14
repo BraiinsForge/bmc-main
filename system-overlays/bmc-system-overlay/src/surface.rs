@@ -218,6 +218,18 @@ impl LayerSurfaceClient {
         Ok(())
     }
 
+    /// Unmap the surface: attach a NULL buffer and commit. The compositor
+    /// releases the previously-attached buffer and evicts its texture (handled
+    /// compositor-side on the `Removed` assignment).
+    pub fn attach_null_buffer(&mut self) -> anyhow::Result<()> {
+        let surface = self.state.surface.as_ref().context("surface not created")?;
+        surface.attach(None, 0, 0);
+        surface.commit();
+        self.conn
+            .flush()
+            .map_err(|e| anyhow::anyhow!("wl flush on unmap: {e}"))
+    }
+
     #[must_use]
     pub fn size(&self) -> (u32, u32) {
         self.state.configured_size

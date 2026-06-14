@@ -181,6 +181,23 @@ impl OverlayRenderTarget {
             .clone())
     }
 
+    /// Free the GBM/GL export buffers and cached `wl_buffer`s for a hide, but
+    /// keep the target reusable: a later `ensure_current` reallocates lazily.
+    /// Distinct from [`Self::destroy`], which is terminal (shutdown only).
+    pub fn free_for_hide(
+        &mut self,
+        egl: &EglContext,
+        client: &mut crate::surface::LayerSurfaceClient,
+    ) {
+        self.buffers.destroy_all(egl);
+        for wl_buffer in &mut self.wl_buffers {
+            if let Some(buffer) = wl_buffer.take() {
+                client.destroy_minted_wl_buffer(buffer);
+            }
+        }
+        self.release = SlotReleaseState::new();
+    }
+
     /// Free all GL/EGL/GBM resources and destroy the cached `wl_buffer`s.
     ///
     /// [`DoubleBufferState`] does not clean up on `Drop`, so the owner must
