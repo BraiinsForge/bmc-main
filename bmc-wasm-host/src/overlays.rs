@@ -3,19 +3,33 @@
 use std::ptr::NonNull;
 use std::time::Instant;
 
+use bmc_overlay_device_info::DeviceInfoOverlay;
+use bmc_overlay_offline::OfflineOverlay;
 use bmc_render::renderer::{FrameClear, Renderer};
-use bmc_system_overlay::{HostedOverlay, ValidationOverlay};
+use bmc_system_overlay::{HostedOverlay, SystemOverlay};
 use bmc_widget::egl::EglContext;
 
 use crate::host::SharedHost;
 
-/// Build the compiled-in system overlays. For now: the validation overlay.
-/// Each opens its own Wayland connection and allocates buffers from `egl`.
+type OverlayFactory = (&'static str, fn() -> Box<dyn SystemOverlay>);
+
+/// Build the compiled-in system overlays. Each opens its own Wayland
+/// connection and allocates buffers from `egl`. A failure to start one overlay
+/// is logged and skipped, never fatal to the host.
 pub fn build_overlays(egl: &EglContext) -> Vec<HostedOverlay> {
+    // Stacking is by layer rank, not build order: the offline indicator is on
+    // the Bottom layer and the startup overlay on Top, so the fullscreen startup
+    // overlay occludes the offline chip regardless of the order built here.
+    let factories: Vec<OverlayFactory> = vec![
+        ("offline", || Box::new(OfflineOverlay::default())),
+        ("device-info", || Box::new(DeviceInfoOverlay::default())),
+    ];
     let mut overlays = Vec::new();
-    match HostedOverlay::connect(Box::new(ValidationOverlay::default()), egl) {
-        Ok(o) => overlays.push(o),
-        Err(e) => tracing::error!("failed to start validation overlay: {e}"),
+    for (name, make) in factories {
+        match HostedOverlay::connect(make(), egl) {
+            Ok(o) => overlays.push(o),
+            Err(e) => tracing::error!("failed to start {name} overlay: {e}"),
+        }
     }
     overlays
 }

@@ -52,7 +52,6 @@ members = [
     "system-overlays/bmc-overlay-offline",
     "system-overlays/bmc-system-overlay",
     "system-overlays/layer-shell-test-client",
-    "system-overlays/validation-overlay",
     "widgets/*",
 ]
 
