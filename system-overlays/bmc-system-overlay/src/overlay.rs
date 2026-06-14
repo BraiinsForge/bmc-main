@@ -50,7 +50,7 @@ impl LayerConfig {
     #[must_use]
     pub fn fullscreen(namespace: impl Into<String>) -> Self {
         Self {
-            layer: Layer::Overlay,
+            layer: Layer::Top,
             anchor: Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right,
             size: (0, 0),
             margin_top: 0,
