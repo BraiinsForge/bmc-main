@@ -734,12 +734,12 @@ impl CompositorState {
             .collect()
     }
 
-    /// True when a mapped overlay-layer surface covers the whole output. While
-    /// such an overlay is up, scene-drag is suppressed and scene-swipe
-    /// neighbors are demoted from `Prepared` to `Dormant`.
+    /// True when a mapped layer surface above the background covers the whole
+    /// output. While such a blocker is up, scene-drag is suppressed and
+    /// scene-swipe neighbors are demoted from `Prepared` to `Dormant`.
     #[must_use]
-    pub fn fullscreen_overlay_active(&self) -> bool {
-        use crate::compositor::layer_surface::is_fullscreen_overlay;
+    pub fn fullscreen_blocker_active(&self) -> bool {
+        use crate::compositor::layer_surface::is_fullscreen_blocker;
         let output = Size::from((
             i32::try_from(self.width).expect("BUG: logical display width fits i32"),
             i32::try_from(self.height).expect("BUG: logical display height fits i32"),
@@ -747,7 +747,7 @@ impl CompositorState {
         self.layer_surfaces.iter().any(|e| {
             e.is_mapped()
                 && e.last_geometry
-                    .is_some_and(|g| is_fullscreen_overlay(e.layer, g, output))
+                    .is_some_and(|g| is_fullscreen_blocker(e.layer, g, output))
         })
     }
 
