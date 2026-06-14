@@ -13,6 +13,15 @@ use bmc_wasm_protocol::{
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::tree::{SpanData, TextStyle};
 
+/// Base clear policy for a render frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameClear {
+    /// Opaque black frame base, used by normal widget surfaces.
+    OpaqueBlack,
+    /// Transparent black frame base, used by composited overlays.
+    TransparentBlack,
+}
+
 /// Rendering backend trait.
 ///
 /// Implemented by [`crate::gpu::FemtoVgRenderer`] for GPU-accelerated rendering.
@@ -279,6 +288,18 @@ pub trait Renderer {
     /// `dpi_scale` > 1.0 renders at higher internal resolution for sharper text.
     /// The coordinate system stays at `width × height` logical pixels.
     fn begin_frame(&mut self, width: u32, height: u32, dpi_scale: f32);
+
+    /// Begin a frame with an explicit clear policy.
+    fn begin_frame_with_clear(
+        &mut self,
+        width: u32,
+        height: u32,
+        dpi_scale: f32,
+        _clear: FrameClear,
+    ) {
+        self.begin_frame(width, height, dpi_scale);
+    }
+
     fn flush(&mut self);
     fn width(&self) -> f32;
     fn height(&self) -> f32;
