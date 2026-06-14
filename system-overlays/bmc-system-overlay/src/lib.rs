@@ -2,6 +2,7 @@
 
 //! Framework for privileged system overlays rendered as wlr-layer-shell clients.
 
+mod connectivity;
 mod gpu;
 mod hosted;
 mod overlay;
@@ -10,6 +11,7 @@ mod surface;
 mod tree;
 mod validation;
 
+pub use connectivity::{configured_station_ssid, primary_ipv4};
 pub use gpu::{OverlayRenderTarget, wait_for_gpu};
 pub use hosted::HostedOverlay;
 pub use overlay::{InputRegion, LayerConfig, SystemOverlay, TickOutcome, TouchEvent};
