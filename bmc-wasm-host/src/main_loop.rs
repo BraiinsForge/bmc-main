@@ -484,6 +484,13 @@ fn run_loop(
 
         for overlay in overlays.iter_mut() {
             overlay.tick(now);
+            if overlay.needs_hide() {
+                if let Err(e) = overlay.hide(&shared.egl) {
+                    tracing::error!("overlay hide error, dropping overlay: {e}");
+                    overlay.mark_failed();
+                }
+                continue;
+            }
             if overlay.needs_render(now)
                 && let Err(e) =
                     crate::overlays::render_hosted_overlay(overlay, renderer_ptr, shared, now)

@@ -11,10 +11,81 @@ use crate::surface::LayerSurfaceClient;
 
 const MIN_INTER_FRAME: Duration = Duration::from_millis(8);
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is a distinct render-gate predicate; a flags enum would be less readable at the single call site"
+)]
+#[derive(Debug, Clone, Copy)]
+struct RenderGate {
+    failed: bool,
+    visible: bool,
+    mapped: bool,
+    wants_render: bool,
+    inter_frame_ok: bool,
+    client_running: bool,
+    target_available: bool,
+}
+
+#[must_use]
+fn overlay_needs_render(gate: RenderGate) -> bool {
+    let wants = gate.wants_render || (gate.visible && !gate.mapped);
+    !gate.failed
+        && gate.visible
+        && wants
+        && gate.inter_frame_ok
+        && gate.client_running
+        && gate.target_available
+}
+
+#[must_use]
+fn overlay_needs_hide(mapped: bool, visible: bool) -> bool {
+    mapped && !visible
+}
+
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is a distinct wake-gate predicate; a flags enum would be less readable at the single call site"
+)]
+#[derive(Debug, Clone, Copy)]
+struct PollGate {
+    failed: bool,
+    visible: bool,
+    wants_render: bool,
+    client_running: bool,
+    target_available: bool,
+}
+
+/// Max time the host may sleep for this overlay. `next_wake` is the tick-based
+/// wake (already converted to a remaining `Duration`); `inter_frame_remaining`
+/// is `Some` while the 8 ms frame floor has time left.
+///
+/// The wake decision must agree with `overlay_needs_render`: while invisible
+/// (or otherwise non-rendering) a latched `wants_render` must not request an
+/// immediate wake, or the host busy-spins on a frame that never renders.
+#[must_use]
+fn overlay_poll_timeout(
+    gate: PollGate,
+    next_wake: Option<Duration>,
+    inter_frame_remaining: Option<Duration>,
+) -> Option<Duration> {
+    if gate.failed || !gate.wants_render || !gate.visible || !gate.client_running {
+        return next_wake;
+    }
+    match inter_frame_remaining {
+        Some(d) => Some(next_wake.map_or(d, |t| d.min(t))),
+        None if gate.target_available => Some(Duration::ZERO),
+        None => next_wake,
+    }
+}
+
 /// A system overlay hosted inside another process (e.g. bmc-wasm-host). It owns
 /// its Wayland connection and export buffers but borrows the host's renderer
 /// and GPU stack for the actual frame, which the host orchestrates.
 #[expect(missing_debug_implementations)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is a distinct overlay-state flag; a flags enum would obscure the field accesses"
+)]
 pub struct HostedOverlay {
     overlay: Box<dyn SystemOverlay>,
     client: LayerSurfaceClient,
@@ -24,6 +95,10 @@ pub struct HostedOverlay {
     last_render: Option<Instant>,
     next_wake: Option<Instant>,
     wants_render: bool,
+    /// Whether the overlay currently wants to be on-screen (from its `tick`).
+    visible: bool,
+    /// Whether the surface is currently mapped (has a live buffer attached).
+    mapped: bool,
     /// Set after a non-fatal render/export/attach error. A failed overlay is
     /// dropped from the host's list (terminal) — it must NOT keep `wants_render`
     /// latched, or it would busy-retry-and-log every pass.
@@ -50,6 +125,8 @@ impl HostedOverlay {
             last_render: None,
             next_wake: None,
             wants_render,
+            visible: false,
+            mapped: false,
             failed: false,
         })
     }
@@ -89,27 +166,54 @@ impl HostedOverlay {
         Ok(())
     }
 
-    /// Run background work; updates the next-wake hint.
+    /// Run background work; updates visibility, render-want and next-wake.
     pub fn tick(&mut self, now: Instant) {
         let outcome = self.overlay.tick(now);
-        if outcome.wants_render {
-            self.wants_render = true;
+        self.visible = outcome.visible;
+        if outcome.visible {
+            self.wants_render |= outcome.wants_render;
         }
         self.next_wake = outcome.next_wake;
     }
 
-    /// Whether the overlay should be rendered this pass (respecting the
-    /// inter-frame floor).
+    /// Whether a frame should be rendered+submitted this pass. A first show
+    /// (visible but not yet mapped) always renders, even without `wants_render`.
     #[must_use]
     pub fn needs_render(&self, now: Instant) -> bool {
         let inter_frame_ok = self
             .last_render
             .is_none_or(|t| now.duration_since(t) >= MIN_INTER_FRAME);
-        !self.failed
-            && self.wants_render
-            && inter_frame_ok
-            && self.client.running()
-            && self.target.available()
+        overlay_needs_render(RenderGate {
+            failed: self.failed,
+            visible: self.visible,
+            mapped: self.mapped,
+            wants_render: self.wants_render,
+            inter_frame_ok,
+            client_running: self.client.running(),
+            target_available: self.target.available(),
+        })
+    }
+
+    /// Whether the overlay is mapped but no longer wants to be — the host must
+    /// unmap and free its buffers this pass.
+    #[must_use]
+    pub fn needs_hide(&self) -> bool {
+        overlay_needs_hide(self.mapped, self.visible)
+    }
+
+    /// Unmap the surface and free export buffers. Called by the host when
+    /// `needs_hide` is true.
+    pub fn hide(&mut self, egl: &EglContext) -> anyhow::Result<()> {
+        // Ordering is load-bearing: flush the NULL attach before destroying
+        // exported buffers so the compositor observes the unmap first.
+        self.client.attach_null_buffer()?;
+        self.target.free_for_hide(egl, &mut self.client);
+        self.mapped = false;
+        self.wants_render = false;
+        // Clear the frame-floor timestamp so a later re-show renders promptly
+        // and the hosted/standalone loops stay symmetric.
+        self.last_render = None;
+        Ok(())
     }
 
     #[must_use]
@@ -141,18 +245,21 @@ impl HostedOverlay {
     #[must_use]
     pub fn poll_timeout(&self, now: Instant) -> Option<Duration> {
         let tick = self.next_wake.map(|t| t.saturating_duration_since(now));
-        if self.failed || !self.wants_render || !self.client.running() {
-            return tick;
-        }
         let inter_frame_remaining = self
             .last_render
             .and_then(|t| MIN_INTER_FRAME.checked_sub(now.duration_since(t)))
             .filter(|d| !d.is_zero());
-        match inter_frame_remaining {
-            Some(d) => Some(tick.map_or(d, |t| d.min(t))),
-            None if self.target.available() => Some(Duration::ZERO),
-            None => tick,
-        }
+        overlay_poll_timeout(
+            PollGate {
+                failed: self.failed,
+                visible: self.visible,
+                wants_render: self.wants_render,
+                client_running: self.client.running(),
+                target_available: self.target.available(),
+            },
+            tick,
+            inter_frame_remaining,
+        )
     }
 
     #[must_use]
@@ -182,9 +289,83 @@ impl HostedOverlay {
         Ok(())
     }
 
-    /// Mark a render as completed at `now` and clear the dirty flag.
+    /// Mark a render as completed at `now`; the surface is now mapped.
     pub fn mark_rendered(&mut self, now: Instant) {
         self.last_render = Some(now);
         self.wants_render = false;
+        self.mapped = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn runnable_gate(visible: bool, mapped: bool, wants_render: bool) -> RenderGate {
+        RenderGate {
+            failed: false,
+            visible,
+            mapped,
+            wants_render,
+            inter_frame_ok: true,
+            client_running: true,
+            target_available: true,
+        }
+    }
+
+    #[test]
+    fn first_show_renders_without_dirty_flag() {
+        assert!(overlay_needs_render(runnable_gate(true, false, false)));
+    }
+
+    #[test]
+    fn hidden_ignores_latched_render_request() {
+        assert!(!overlay_needs_render(runnable_gate(false, false, true)));
+    }
+
+    #[test]
+    fn mapped_but_invisible_needs_hide() {
+        assert!(overlay_needs_hide(true, false));
+    }
+
+    #[test]
+    fn throttled_first_show_waits_for_frame_floor() {
+        let mut gate = runnable_gate(true, false, false);
+        gate.inter_frame_ok = false;
+        assert!(!overlay_needs_render(gate));
+    }
+
+    fn runnable_poll_gate(visible: bool, wants_render: bool) -> PollGate {
+        PollGate {
+            failed: false,
+            visible,
+            wants_render,
+            client_running: true,
+            target_available: true,
+        }
+    }
+
+    #[test]
+    fn invisible_overlay_with_latched_render_does_not_busy_spin() {
+        let gate = runnable_poll_gate(false, true);
+        assert_eq!(
+            overlay_poll_timeout(gate, Some(Duration::from_secs(2)), None),
+            Some(Duration::from_secs(2))
+        );
+    }
+
+    #[test]
+    fn renderable_overlay_polls_immediately() {
+        let gate = runnable_poll_gate(true, true);
+        assert_eq!(overlay_poll_timeout(gate, None, None), Some(Duration::ZERO));
+    }
+
+    #[test]
+    fn renderable_overlay_waits_for_inter_frame_floor() {
+        let gate = runnable_poll_gate(true, true);
+        assert_eq!(
+            overlay_poll_timeout(gate, None, Some(Duration::from_millis(5))),
+            Some(Duration::from_millis(5))
+        );
     }
 }

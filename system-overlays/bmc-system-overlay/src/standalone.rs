@@ -46,6 +46,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
     // renders. take_needs_render()/tick are consumed every pass, so we latch
     // the request here rather than re-reading it.
     let mut pending_render = false;
+    let mut mapped = false;
 
     while client.running() {
         // Drain what the previous poll_dispatch delivered.
@@ -73,8 +74,19 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
 
         let now = Instant::now();
         let tick = overlay.tick(now);
-        if tick.wants_render || client.take_needs_render() {
-            pending_render = true;
+        if tick.visible {
+            if tick.wants_render || !mapped || client.take_needs_render() {
+                pending_render = true;
+            }
+        } else {
+            let _ = client.take_needs_render();
+            if mapped {
+                client.attach_null_buffer()?;
+                target.free_for_hide(&egl, &mut client);
+                mapped = false;
+                pending_render = false;
+                last_render = None;
+            }
         }
 
         // Remaining time on the inter-frame floor, if a render was throttled.
@@ -96,6 +108,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
                 size,
             )?;
             pending_render = false;
+            mapped = true;
             last_render = Some(now);
         }
 

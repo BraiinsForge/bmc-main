@@ -35,6 +35,7 @@ impl SystemOverlay for ValidationOverlay {
         // Render once; a later resize sets surface-dirty separately, so this
         // does not need to keep asking. No periodic wake.
         TickOutcome {
+            visible: true,
             wants_render: !self.rendered,
             next_wake: None,
         }
