@@ -1,0 +1,21 @@
+[package]
+name = "bmc-overlay-device-info"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins Systems s.r.o."]
+description = "Startup overlay showing device connection status and IP address"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bmc-overlay-device-info"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+bmc-render.workspace = true
+bmc-system-overlay.workspace = true
+
+[lints]
+workspace = true
