@@ -1270,6 +1270,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-overlay-device-info"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bmc-render",
+ "bmc-system-overlay",
+]
+
+[[package]]
+name = "bmc-overlay-offline"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bmc-render",
+ "bmc-system-overlay",
+]
+
+[[package]]
 name = "bmc-platform"
 version = "0.1.0"
 dependencies = [
@@ -1493,6 +1511,7 @@ dependencies = [
  "bmc-gpu-render-lock",
  "bmc-render",
  "bmc-widget",
+ "get_if_addrs",
  "glow 0.16.0",
  "libc",
  "taffy",
@@ -1582,6 +1601,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmc-gpu-render-lock",
+ "bmc-overlay-device-info",
+ "bmc-overlay-offline",
  "bmc-render",
  "bmc-system-overlay",
  "bmc-wasm-protocol",
@@ -10514,15 +10535,6 @@ dependencies = [
  "aligned-vec 0.5.0",
  "num-traits",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "validation-overlay"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bmc-render",
- "bmc-system-overlay",
 ]
 
 [[package]]
