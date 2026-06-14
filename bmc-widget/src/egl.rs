@@ -21,7 +21,9 @@ use smithay::{
         drm::DrmDeviceFd,
         egl::{EGLContext, EGLDisplay, fence::EGLFence},
     },
-    reexports::gbm::{AsRaw, BufferObject, BufferObjectFlags, Device as GbmDevice},
+    reexports::gbm::{
+        AsRaw, BufferObject, BufferObjectFlags, Device as GbmDevice, Format as GbmFormat,
+    },
 };
 
 /// Default GPU render node.
@@ -60,6 +62,33 @@ type GlEglImageTargetTexture2DOes = unsafe extern "C" fn(target: u32, image: *mu
 pub enum Depth {
     Enabled,
     Disabled,
+}
+
+/// Pixel format used for DMA-BUF export buffers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportFormat {
+    /// Opaque RGB buffer. This is the default for widgets.
+    Opaque,
+    /// ARGB buffer preserving per-pixel alpha for composited overlays.
+    Alpha,
+}
+
+impl ExportFormat {
+    #[must_use]
+    pub const fn drm_fourcc(self) -> DrmFourcc {
+        match self {
+            Self::Opaque => DrmFourcc::Xrgb8888,
+            Self::Alpha => DrmFourcc::Argb8888,
+        }
+    }
+
+    #[must_use]
+    const fn gbm_format(self) -> GbmFormat {
+        match self {
+            Self::Opaque => GbmFormat::Xrgb8888,
+            Self::Alpha => GbmFormat::Argb8888,
+        }
+    }
 }
 
 /// DMA-BUF export metadata for a rendered frame.
@@ -206,22 +235,31 @@ impl EglContext {
     ///
     /// The returned [`ExportBuffer`] can be used as a render target and then
     /// exported as a DMA-BUF via [`Self::export_dmabuf`].
-    #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
-    #[expect(clippy::too_many_lines, reason = "linear GL resource setup")]
     pub fn allocate_export_buffer(
         &self,
         width: u32,
         height: u32,
         depth: Depth,
     ) -> Result<ExportBuffer> {
-        use smithay::reexports::gbm::Format;
+        self.allocate_export_buffer_with_format(width, height, depth, ExportFormat::Opaque)
+    }
 
+    /// Allocate an export buffer using an explicit DMA-BUF pixel format.
+    #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
+    #[expect(clippy::too_many_lines, reason = "linear GL resource setup")]
+    pub fn allocate_export_buffer_with_format(
+        &self,
+        width: u32,
+        height: u32,
+        depth: Depth,
+        format: ExportFormat,
+    ) -> Result<ExportBuffer> {
         anyhow::ensure!(
             width > 0 && height > 0,
             "buffer dimensions must be non-zero"
         );
 
-        tracing::debug!("Allocating {width}x{height} GBM export buffer");
+        tracing::debug!("Allocating {width}x{height} {format:?} GBM export buffer");
 
         // Create GBM buffer object
         let bo = self
@@ -229,7 +267,7 @@ impl EglContext {
             .create_buffer_object::<()>(
                 width,
                 height,
-                Format::Xrgb8888,
+                format.gbm_format(),
                 BufferObjectFlags::RENDERING | BufferObjectFlags::LINEAR,
             )
             .context("Failed to create GBM buffer object")?;
@@ -348,6 +386,7 @@ impl EglContext {
             height,
             cached_fd: None,
             cached_stride,
+            format,
         })
     }
 
@@ -590,7 +629,7 @@ impl EglContext {
             width: buf.width,
             height: buf.height,
             stride: buf.cached_stride,
-            format: DrmFourcc::Xrgb8888,
+            format: buf.format.drm_fourcc(),
             modifier: DrmModifier::Linear,
         })
     }
@@ -644,6 +683,8 @@ pub struct ExportBuffer {
     cached_fd: Option<OwnedFd>,
     /// Cached stride in bytes.
     cached_stride: u32,
+    /// Pixel format used when this buffer is advertised as DMA-BUF.
+    format: ExportFormat,
 }
 
 impl fmt::Debug for ExportBuffer {
@@ -783,6 +824,7 @@ pub struct DoubleBufferState {
     width: u32,
     height: u32,
     depth: Depth,
+    format: ExportFormat,
 }
 
 impl fmt::Debug for DoubleBufferState {
@@ -792,6 +834,7 @@ impl fmt::Debug for DoubleBufferState {
             .field("width", &self.width)
             .field("height", &self.height)
             .field("depth", &self.depth)
+            .field("format", &self.format)
             .finish_non_exhaustive()
     }
 }
@@ -801,12 +844,20 @@ impl DoubleBufferState {
     /// on the first call to [`Self::ensure_current`].
     #[must_use]
     pub fn new(width: u32, height: u32, depth: Depth) -> Self {
+        Self::new_with_format(width, height, depth, ExportFormat::Opaque)
+    }
+
+    /// Create empty state at the given dimensions with an explicit export
+    /// format. Buffers are allocated lazily on first use.
+    #[must_use]
+    pub fn new_with_format(width: u32, height: u32, depth: Depth, format: ExportFormat) -> Self {
         Self {
             buffers: [None, None],
             current_buffer: 0,
             width,
             height,
             depth,
+            format,
         }
     }
 
@@ -822,6 +873,12 @@ impl DoubleBufferState {
         self.height
     }
 
+    /// Pixel format used by newly allocated export buffers.
+    #[must_use]
+    pub const fn export_format(&self) -> ExportFormat {
+        self.format
+    }
+
     /// Current back-buffer slot index.
     #[must_use]
     pub fn current_slot(&self) -> usize {
@@ -832,8 +889,12 @@ impl DoubleBufferState {
     pub fn ensure_current(&mut self, ctx: &EglContext) -> Result<&ExportBuffer> {
         let idx = self.current_buffer;
         if self.buffers[idx].is_none() {
-            self.buffers[idx] =
-                Some(ctx.allocate_export_buffer(self.width, self.height, self.depth)?);
+            self.buffers[idx] = Some(ctx.allocate_export_buffer_with_format(
+                self.width,
+                self.height,
+                self.depth,
+                self.format,
+            )?);
         }
         Ok(self.buffers[idx]
             .as_ref()
@@ -1294,6 +1355,12 @@ impl SharedRenderScratch {
         unsafe {
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(dest_fbo));
             gl.viewport(0, 0, w as i32, h as i32);
+            gl.disable(glow::SCISSOR_TEST);
+            gl.disable(glow::STENCIL_TEST);
+            gl.disable(glow::DEPTH_TEST);
+            gl.disable(glow::CULL_FACE);
+            gl.disable(glow::BLEND);
+            gl.color_mask(true, true, true, true);
 
             gl.use_program(Some(self.blit.program));
             let (u_scale, v_scale) =
@@ -1309,7 +1376,6 @@ impl SharedRenderScratch {
             gl.enable_vertex_attrib_array(self.blit.uv_loc);
             gl.vertex_attrib_pointer_f32(self.blit.uv_loc, 2, glow::FLOAT, false, 16, 8);
 
-            gl.disable(glow::STENCIL_TEST);
             gl.draw_arrays(glow::TRIANGLES, 0, 6);
 
             gl.disable_vertex_attrib_array(self.blit.pos_loc);
@@ -1351,9 +1417,10 @@ fn load_egl_proc<T>(name: &str) -> Result<T> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Depth, DoubleBufferState, EglContext, SharedRenderScratch, SlotReleaseState,
+        Depth, DoubleBufferState, EglContext, ExportFormat, SharedRenderScratch, SlotReleaseState,
         WidgetExportBuffer, shared_scratch_uv_scale,
     };
+    use drm_fourcc::DrmFourcc;
 
     #[test]
     fn release_state_blocks_presented_slot_until_release() {
@@ -1425,6 +1492,16 @@ mod tests {
         assert_eq!(state.current_buffer, 0);
         assert!(state.buffers.iter().all(Option::is_none));
         assert!(state.current_ref().is_none());
+    }
+
+    #[test]
+    fn double_buffer_state_keeps_alpha_export_format_explicit() {
+        let opaque = DoubleBufferState::new(640, 480, Depth::Disabled);
+        let alpha =
+            DoubleBufferState::new_with_format(640, 480, Depth::Disabled, ExportFormat::Alpha);
+
+        assert_eq!(opaque.export_format().drm_fourcc(), DrmFourcc::Xrgb8888);
+        assert_eq!(alpha.export_format().drm_fourcc(), DrmFourcc::Argb8888);
     }
 
     #[test]

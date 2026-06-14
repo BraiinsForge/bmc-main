@@ -26,7 +26,7 @@ use super::mesh::{MeshDrawArgs, MeshRenderer};
 use super::sphere::SphereRenderer;
 use super::svg::SvgRegistry;
 use super::text::{Fonts, ParagraphLayoutCache, WeightedFonts, to_femtovg_color};
-use crate::renderer::Renderer;
+use crate::renderer::{FrameClear, Renderer};
 use crate::tree::{SpanData, TextAlign, TextStyle, VerticalAlign};
 
 // Embed BraiinsSans fonts at compile time from the top-level assets directory.
@@ -1074,6 +1074,16 @@ impl Renderer for FemtoVgRenderer {
     // -- Frame lifecycle --
 
     fn begin_frame(&mut self, width: u32, height: u32, dpi_scale: f32) {
+        self.begin_frame_with_clear(width, height, dpi_scale, FrameClear::OpaqueBlack);
+    }
+
+    fn begin_frame_with_clear(
+        &mut self,
+        width: u32,
+        height: u32,
+        dpi_scale: f32,
+        clear: FrameClear,
+    ) {
         self.width = width as f32;
         self.height = height as f32;
         self.dpi_scale = dpi_scale;
@@ -1093,8 +1103,11 @@ impl Renderer for FemtoVgRenderer {
             (width as f32 * dpi_scale) as u32,
             (height as f32 * dpi_scale) as u32,
         );
-        self.canvas
-            .clear_rect(0, 0, pw, ph, femtovg::Color::rgbf(0.0, 0.0, 0.0));
+        let clear = match clear {
+            FrameClear::OpaqueBlack => femtovg::Color::rgbf(0.0, 0.0, 0.0),
+            FrameClear::TransparentBlack => femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0),
+        };
+        self.canvas.clear_rect(0, 0, pw, ph, clear);
         self.paragraph_cache.begin_frame(self.frame_counter);
     }
 
