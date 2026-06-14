@@ -62,6 +62,24 @@ impl LayerConfig {
             input: InputRegion::Full,
         }
     }
+
+    /// A small overlay pinned to the bottom-right corner with no input region,
+    /// on the `Bottom` layer so a fullscreen `Top`/`Overlay` surface occludes it.
+    #[must_use]
+    pub fn bottom_right(namespace: impl Into<String>, size: (u32, u32)) -> Self {
+        Self {
+            layer: Layer::Bottom,
+            anchor: Anchor::Bottom | Anchor::Right,
+            size,
+            margin_top: 0,
+            margin_right: 0,
+            margin_bottom: 0,
+            margin_left: 0,
+            exclusive_zone: 0,
+            namespace: namespace.into(),
+            input: InputRegion::None,
+        }
+    }
 }
 
 #[must_use]
@@ -86,10 +104,15 @@ pub(crate) fn resolved_configured_size(
 /// Result of an overlay's per-pass background work.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TickOutcome {
-    /// The overlay's content changed and it wants to be rendered this pass.
+    /// Whether the overlay wants to be on-screen. When `false` the framework
+    /// unmaps the surface (NULL buffer) and frees its export buffers; when it
+    /// flips back to `true` the framework reallocates and renders a fresh frame.
+    pub visible: bool,
+    /// The overlay's content changed and it wants a redraw this pass. Ignored
+    /// while `visible` is `false`.
     pub wants_render: bool,
-    /// Earliest instant the overlay wants to be ticked again (for non-event
-    /// driven work such as a clock). `None` means "only on external events".
+    /// Earliest instant the overlay wants to be ticked again. `None` means
+    /// "only on external events".
     pub next_wake: Option<Instant>,
 }
 
