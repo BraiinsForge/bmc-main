@@ -523,6 +523,7 @@ fn run_loop(
                 tracing::error!("overlay render error, dropping overlay: {e}");
                 overlay.mark_failed();
             }
+            overlay.forward_settings_requests();
         }
         // Drop overlays whose client closed or that hit a terminal error,
         // shutting down each first so its GPU resources are freed. A plain
