@@ -42,6 +42,25 @@ fn overlay_needs_hide(mapped: bool, visible: bool) -> bool {
     mapped && !visible
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ResizeTransition {
+    unmap_before_resize: bool,
+    mapped_after_resize: bool,
+}
+
+#[must_use]
+fn resize_transition(mapped: bool) -> ResizeTransition {
+    ResizeTransition {
+        unmap_before_resize: mapped,
+        mapped_after_resize: false,
+    }
+}
+
+#[must_use]
+fn screen_edge_visible(revealed: bool, overlay_visible: bool) -> bool {
+    revealed && overlay_visible
+}
+
 #[expect(
     clippy::struct_excessive_bools,
     reason = "each bool is a distinct wake-gate predicate; a flags enum would be less readable at the single call site"
@@ -103,6 +122,11 @@ pub struct HostedOverlay {
     /// dropped from the host's list (terminal) — it must NOT keep `wants_render`
     /// latched, or it would busy-retry-and-log every pass.
     failed: bool,
+    /// `Some(edge)` for a screen-edge overlay; its map/unmap is driven by
+    /// reveal/hide events, not directly by `tick`'s `visible`.
+    screen_edge: Option<crate::overlay::ScreenEdge>,
+    /// True between a `revealed` event and the next hide+re-arm.
+    revealed: bool,
 }
 
 impl HostedOverlay {
@@ -116,6 +140,10 @@ impl HostedOverlay {
         let target = OverlayRenderTarget::new(egl, size.0, size.1)?;
         let wants_render = client.take_needs_render();
         overlay.init();
+        let screen_edge = overlay.screen_edge();
+        if let Some(edge) = screen_edge {
+            client.create_screen_edge(edge)?;
+        }
         Ok(Self {
             overlay,
             client,
@@ -128,6 +156,8 @@ impl HostedOverlay {
             visible: false,
             mapped: false,
             failed: false,
+            screen_edge,
+            revealed: false,
         })
     }
 
@@ -149,13 +179,31 @@ impl HostedOverlay {
         for ev in self.client.drain_touch() {
             self.overlay.on_touch(ev);
         }
+        if self.screen_edge.is_some() {
+            if self.client.take_reveal() {
+                self.revealed = true;
+                self.overlay.on_reveal();
+                self.wants_render = true;
+            }
+            if self.client.take_hidden() {
+                self.revealed = false;
+            }
+        }
         for released in self.client.drain_released_buffers() {
             self.target.mark_released_buffer(&released);
         }
         if let Some(configured_size) = self.client.take_configured_size_change() {
             let size = resolved_configured_size(self.config_size, configured_size);
             if self.size != size {
-                self.target.resize(egl, &mut self.client, size.0, size.1);
+                let transition = resize_transition(self.mapped);
+                if transition.unmap_before_resize {
+                    self.client.attach_null_buffer()?;
+                    self.client.roundtrip_after_resize_unmap(configured_size)?;
+                    self.target.free_for_hide(egl, &mut self.client)?;
+                    self.last_render = None;
+                }
+                self.mapped = transition.mapped_after_resize;
+                self.target.resize(egl, &mut self.client, size.0, size.1)?;
                 self.size = size;
             }
             self.wants_render = true;
@@ -169,8 +217,11 @@ impl HostedOverlay {
     /// Run background work; updates visibility, render-want and next-wake.
     pub fn tick(&mut self, now: Instant) {
         let outcome = self.overlay.tick(now);
-        self.visible = outcome.visible;
-        if outcome.visible {
+        self.visible = match self.screen_edge {
+            Some(_) => screen_edge_visible(self.revealed, outcome.visible),
+            None => outcome.visible,
+        };
+        if self.visible {
             self.wants_render |= outcome.wants_render;
         }
         self.next_wake = outcome.next_wake;
@@ -207,12 +258,17 @@ impl HostedOverlay {
         // Ordering is load-bearing: flush the NULL attach before destroying
         // exported buffers so the compositor observes the unmap first.
         self.client.attach_null_buffer()?;
-        self.target.free_for_hide(egl, &mut self.client);
+        self.client.roundtrip_after_hide_unmap()?;
+        self.target.free_for_hide(egl, &mut self.client)?;
         self.mapped = false;
         self.wants_render = false;
         // Clear the frame-floor timestamp so a later re-show renders promptly
         // and the hosted/standalone loops stay symmetric.
         self.last_render = None;
+        if self.screen_edge.is_some() {
+            self.revealed = false;
+            self.client.rearm_screen_edge()?;
+        }
         Ok(())
     }
 
@@ -275,6 +331,21 @@ impl HostedOverlay {
         &mut self.target
     }
 
+    /// Restore layer-shell pending state after a NULL-buffer unmap before
+    /// rendering into a new frame.
+    pub fn prepare_for_render(&mut self, egl: &EglContext) -> anyhow::Result<()> {
+        if !self.client.ensure_ready_for_buffer_attach()? {
+            return Ok(());
+        }
+
+        let size = resolved_configured_size(self.config_size, self.client.size());
+        if self.size != size {
+            self.target.resize(egl, &mut self.client, size.0, size.1)?;
+            self.size = size;
+        }
+        Ok(())
+    }
+
     /// Attach an exported buffer: mint+cache its `wl_buffer`, commit it to the
     /// layer surface, and mark the slot in-flight until the compositor releases
     /// it. Borrows target and client together (legal as one `&mut self`).
@@ -326,6 +397,37 @@ mod tests {
     #[test]
     fn mapped_but_invisible_needs_hide() {
         assert!(overlay_needs_hide(true, false));
+    }
+
+    #[test]
+    fn mapped_resize_unmaps_before_destroying_buffers() {
+        assert_eq!(
+            resize_transition(true),
+            ResizeTransition {
+                unmap_before_resize: true,
+                mapped_after_resize: false,
+            }
+        );
+        assert_eq!(
+            resize_transition(false),
+            ResizeTransition {
+                unmap_before_resize: false,
+                mapped_after_resize: false,
+            }
+        );
+    }
+
+    #[test]
+    fn screen_edge_overlay_visible_only_while_revealed() {
+        assert!(
+            !screen_edge_visible(false, true),
+            "armed-but-hidden stays unmapped"
+        );
+        assert!(screen_edge_visible(true, true), "revealed and wanted maps");
+        assert!(
+            !screen_edge_visible(true, false),
+            "dismissed while revealed unmaps"
+        );
     }
 
     #[test]

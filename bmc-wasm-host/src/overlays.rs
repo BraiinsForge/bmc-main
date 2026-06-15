@@ -42,6 +42,7 @@ pub fn render_hosted_overlay(
     shared: &mut SharedHost,
     now: Instant,
 ) -> anyhow::Result<()> {
+    overlay.prepare_for_render(&shared.egl)?;
     let size = overlay.size();
     anyhow::ensure!(
         shared.scratch.supports_size(size.0, size.1),
