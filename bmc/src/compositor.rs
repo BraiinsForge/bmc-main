@@ -75,16 +75,8 @@ pub struct ActiveScene {
 
 #[derive(Debug, Clone)]
 pub enum CompositorEvent {
-    WidgetReady {
-        instance_id: InstanceId,
-    },
+    WidgetReady { instance_id: InstanceId },
     ScreenActivity,
-    /// Display-brightness change requested by the settings-tray overlay (0-100).
-    SetBrightness {
-        value: u8,
-    },
-    /// WiFi-reconfiguration entry requested by the settings-tray overlay.
-    ReconfigureWifi,
 }
 
 /// Lossless settings commands routed through the compositor-owned mpsc channel

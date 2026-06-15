@@ -8,12 +8,14 @@ use bmc_widget_protocol::{
 use indexmap::IndexMap;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{RwLock, broadcast, watch};
 use tracing::{debug, info, warn};
 
+use crate::BmcManager;
 use crate::compositor::{
     Compositor, CompositorError, HardwareCapabilities, Position, SceneLayout, Size, WidgetPlacement,
 };
+use crate::config::ConfigHandle;
 use crate::config::LocalizationConfig;
 use crate::scene::{Scene, SceneId, Widget};
 
@@ -142,6 +144,77 @@ impl std::fmt::Debug for Coordinator {
             .field("widget_manager", &self.widget_manager)
             .finish_non_exhaustive()
     }
+}
+
+/// Broadcast the effective display brightness to the settings-tray overlay
+/// whenever it changes (a manual change or a night-mode transition). Effective
+/// brightness mirrors `system_manager::set_current_brightness`: the night-mode
+/// percentage while night mode is active, else the configured percentage.
+pub fn start_brightness_listener(
+    compositor: Arc<dyn Compositor>,
+    config_handle: Arc<RwLock<ConfigHandle>>,
+    mut brightness_change_rx: broadcast::Receiver<()>,
+    mut night_mode_active_rx: watch::Receiver<bool>,
+) {
+    tokio::spawn(async move {
+        loop {
+            let night_active = *night_mode_active_rx.borrow_and_update();
+            let brightness = {
+                let cfg = config_handle.read().await;
+                if night_active {
+                    cfg.night_mode().brightness_pct
+                } else {
+                    cfg.brightness_pct()
+                }
+            };
+            if let Err(e) = compositor.broadcast_brightness(brightness) {
+                warn!("broadcast_brightness failed: {e}");
+            }
+            tokio::select! {
+                r = brightness_change_rx.recv() => match r {
+                    // Lagged is recoverable (we just missed some notifications);
+                    // re-broadcast the current value rather than killing the
+                    // listener. Only Closed is terminal.
+                    Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
+                r = night_mode_active_rx.changed() => if r.is_err() { break },
+            }
+        }
+    });
+}
+
+/// Broadcast the WiFi setup-AP SSID to the settings-tray overlay on every
+/// setup-mode transition. Resolves the SSID via the manager while in setup mode;
+/// `None` clears the overlay back to idle.
+pub fn start_wifi_reconfig_listener<M: BmcManager>(
+    compositor: Arc<dyn Compositor>,
+    manager: Arc<M>,
+    mut reconfig_rx: watch::Receiver<bool>,
+) {
+    tokio::spawn(async move {
+        loop {
+            let in_setup = *reconfig_rx.borrow_and_update();
+            if in_setup {
+                match manager.wifi_ssid().await {
+                    Ok(ssid) => {
+                        if let Err(e) = compositor.broadcast_wifi_ap(Some(ssid)) {
+                            warn!("broadcast_wifi_ap failed: {e}");
+                        }
+                    }
+                    // A lookup failure must not masquerade as "setup inactive"
+                    // (which an empty SSID signals): keep the overlay's
+                    // last-known value until the next real transition.
+                    Err(e) => warn!("wifi_ssid lookup failed during setup; keeping last SSID: {e}"),
+                }
+            } else if let Err(e) = compositor.broadcast_wifi_ap(None) {
+                warn!("broadcast_wifi_ap failed: {e}");
+            }
+            if reconfig_rx.changed().await.is_err() {
+                break;
+            }
+        }
+    });
 }
 
 impl Coordinator {

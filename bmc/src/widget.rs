@@ -4,7 +4,7 @@
 
 pub mod action_handler;
 mod capture;
-mod coordinator;
+pub(crate) mod coordinator;
 mod discovery;
 mod led_state;
 mod manager;

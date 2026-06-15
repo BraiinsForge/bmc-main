@@ -11,16 +11,21 @@ use tokio::time::sleep_until;
 use tracing::{info, warn};
 
 use super::led_state::LedSceneManager;
-use crate::compositor::{ActiveScene, LedRequestStatusEvent, WidgetAction};
+use crate::backlight::MIN_BRIGHTNESS_PCT;
+use crate::compositor::{ActiveScene, LedRequestStatusEvent, SettingsCommand, WidgetAction};
 use crate::led_coordinator::LedCoordinatorHandle;
+use crate::manager::BmcManager;
 use crate::sound::{SoundController, Sounds};
+use crate::system_manager::SystemManager;
 
 /// Compositor-facing channels the action handler owns for its lifetime.
 pub(crate) struct CompositorIo {
     pub action_rx: mpsc::UnboundedReceiver<WidgetAction>,
+    pub settings_rx: mpsc::UnboundedReceiver<SettingsCommand>,
     pub active_scene_rx: watch::Receiver<Option<ActiveScene>>,
     pub connected_widgets_rx: watch::Receiver<BTreeSet<crate::compositor::InstanceId>>,
     pub status_tx: mpsc::UnboundedSender<LedRequestStatusEvent>,
+    pub night_mode_active_rx: watch::Receiver<bool>,
 }
 
 /// Spawn a task that receives widget actions from the compositor and
@@ -28,18 +33,25 @@ pub(crate) struct CompositorIo {
 ///
 /// Sound playback runs on a dedicated task — `play_sound` blocks until
 /// the clip ends, and we don't want that to stall LED processing.
-pub(crate) fn spawn_action_handler(
+pub(crate) fn spawn_action_handler<T, U>(
     io: CompositorIo,
     sound_controller: SoundController,
     led_coordinator: LedCoordinatorHandle,
     initial_widget_scene_map: crate::config::WidgetSceneMap,
     mut scenes_rx: broadcast::Receiver<crate::config::WidgetSceneMap>,
-) {
+    system_manager: SystemManager<U>,
+    manager: std::sync::Arc<T>,
+) where
+    T: BmcManager,
+    U: crate::backlight::DisplayBacklightDriver,
+{
     let CompositorIo {
         mut action_rx,
+        mut settings_rx,
         mut active_scene_rx,
         mut connected_widgets_rx,
         status_tx,
+        night_mode_active_rx,
     } = io;
 
     // Unbounded so a StopSound is never dropped under backpressure — the
@@ -80,6 +92,12 @@ pub(crate) fn spawn_action_handler(
                     };
                     dispatch_widget_action(action, &sound_tx, &mut led);
                 }
+                cmd = settings_rx.recv() => {
+                    let Some(cmd) = cmd else {
+                        break;
+                    };
+                    dispatch_settings_command(cmd, &system_manager, &manager, &night_mode_active_rx).await;
+                }
                 changed = active_scene_rx.changed() => {
                     if changed.is_err() {
                         break;
@@ -110,6 +128,44 @@ pub(crate) fn spawn_action_handler(
         }
         info!("action handler shutting down — channel closed");
     });
+}
+
+/// Dispatch a settings command to the appropriate system handle.
+///
+/// `SystemManager::set_brightness` persists config AND notifies the
+/// physical-backlight loop; a bare `set_config_brightness` would update
+/// config without changing the actual backlight. Clamp to the product minimum.
+///
+/// When night mode is active the tray shows the night brightness, so a write
+/// must persist to the night config via `set_night_mode_brightness`; otherwise
+/// it persists to the day config via `set_brightness`.
+async fn dispatch_settings_command<T, U>(
+    cmd: SettingsCommand,
+    system_manager: &SystemManager<U>,
+    manager: &std::sync::Arc<T>,
+    night_mode_active_rx: &watch::Receiver<bool>,
+) where
+    T: BmcManager,
+    U: crate::backlight::DisplayBacklightDriver,
+{
+    match cmd {
+        SettingsCommand::SetBrightness(value) => {
+            let v = value.clamp(MIN_BRIGHTNESS_PCT, 100);
+            let result = if *night_mode_active_rx.borrow() {
+                system_manager.set_night_mode_brightness(v).await
+            } else {
+                system_manager.set_brightness(v).await
+            };
+            if let Err(e) = result {
+                warn!("settings overlay set_brightness failed: {e}");
+            }
+        }
+        SettingsCommand::ReconfigureWifi => {
+            if let Err(e) = manager.enter_wifi_reconfig().await {
+                warn!("settings overlay reconfigure_wifi failed: {e}");
+            }
+        }
+    }
 }
 
 /// Route a single widget action to the sound channel or the LED manager.

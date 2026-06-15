@@ -50,6 +50,10 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
 
     fn watch_timezone_updates(&self) -> watch::Receiver<Timezone>;
 
+    /// Watch WiFi-reconfiguration (setup) mode. `true` while setup mode is
+    /// active. Used to drive the settings-tray `wifi_ap` broadcast.
+    fn watch_wifi_reconfig(&self) -> watch::Receiver<bool>;
+
     // Checks if the system is in factory default state
     async fn is_factory_default(&self) -> bool;
 

@@ -49,6 +49,7 @@ pub struct Manager {
     port: u16,
     connected_wifi: Arc<tokio::sync::Mutex<Option<WifiNetworkConfig>>>,
     wifi_event_sender: tokio::sync::broadcast::Sender<WifiEvent>,
+    wifi_reconfig_sender: tokio::sync::watch::Sender<bool>,
 }
 
 impl Manager {
@@ -71,6 +72,7 @@ impl Manager {
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(Timezone::default());
         let (wifi_event_sender, _) = tokio::sync::broadcast::channel(Self::WIFI_EVENTS_CAPACITY);
+        let (wifi_reconfig_sender, _) = tokio::sync::watch::channel(false);
         Self {
             mockfs,
             platform,
@@ -84,6 +86,7 @@ impl Manager {
             port,
             connected_wifi: Arc::new(tokio::sync::Mutex::new(None)),
             wifi_event_sender,
+            wifi_reconfig_sender,
         }
     }
 }
@@ -157,6 +160,10 @@ impl bmc::BmcManager for Manager {
 
     fn watch_timezone_updates(&self) -> tokio::sync::watch::Receiver<Timezone> {
         self.timezone_sender.subscribe()
+    }
+
+    fn watch_wifi_reconfig(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.wifi_reconfig_sender.subscribe()
     }
 
     async fn is_factory_default(&self) -> bool {
