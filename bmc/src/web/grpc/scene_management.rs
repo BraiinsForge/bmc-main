@@ -1683,6 +1683,13 @@ mod tests {
             rx
         }
 
+        fn settings_receiver(
+            &self,
+        ) -> tokio::sync::mpsc::UnboundedReceiver<crate::compositor::SettingsCommand> {
+            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            rx
+        }
+
         fn request_status_sender(
             &self,
         ) -> tokio::sync::mpsc::UnboundedSender<crate::compositor::LedRequestStatusEvent> {

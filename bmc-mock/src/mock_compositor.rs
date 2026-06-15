@@ -8,8 +8,8 @@ use std::collections::BTreeSet;
 
 use bmc::compositor::{
     ActiveScene, Compositor, CompositorError, CompositorEvent, HardwareCapabilities, InstanceId,
-    LedRequestStatusEvent, Position, SceneCycling, SceneLayout, SettingUpdate, Size, WidgetAction,
-    WidgetInitialConfig,
+    LedRequestStatusEvent, Position, SceneCycling, SceneLayout, SettingUpdate, SettingsCommand,
+    Size, WidgetAction, WidgetInitialConfig,
 };
 use bmc_platform::{HardwareProfile, Product};
 use tokio::sync::{broadcast, mpsc, watch};
@@ -79,6 +79,7 @@ impl MockSceneState {
 #[derive(Debug)]
 pub struct MockCompositor {
     action_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<WidgetAction>>>,
+    settings_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<SettingsCommand>>>,
     event_tx: broadcast::Sender<CompositorEvent>,
     status_tx: mpsc::UnboundedSender<LedRequestStatusEvent>,
     active_scene_tx: watch::Sender<Option<ActiveScene>>,
@@ -92,6 +93,7 @@ impl MockCompositor {
     #[must_use]
     pub fn new(product: Product) -> Self {
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
+        let (_settings_tx, settings_rx) = mpsc::unbounded_channel();
         let (event_tx, _) = broadcast::channel(64);
         let (status_tx, mut status_rx) = mpsc::unbounded_channel::<LedRequestStatusEvent>();
         tokio::spawn(async move {
@@ -108,6 +110,7 @@ impl MockCompositor {
         let (connected_widgets_tx, _) = watch::channel(BTreeSet::new());
         Self {
             action_rx: std::sync::Mutex::new(Some(action_rx)),
+            settings_rx: std::sync::Mutex::new(Some(settings_rx)),
             event_tx,
             status_tx,
             active_scene_tx,
@@ -289,6 +292,14 @@ impl Compositor for MockCompositor {
             .expect("BUG: action_rx lock poisoned")
             .take()
             .expect("BUG: action_receiver already taken")
+    }
+
+    fn settings_receiver(&self) -> mpsc::UnboundedReceiver<SettingsCommand> {
+        self.settings_rx
+            .lock()
+            .expect("BUG: settings_rx lock poisoned")
+            .take()
+            .expect("BUG: settings_receiver already taken")
     }
 
     fn request_status_sender(&self) -> mpsc::UnboundedSender<LedRequestStatusEvent> {

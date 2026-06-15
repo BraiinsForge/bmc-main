@@ -75,8 +75,26 @@ pub struct ActiveScene {
 
 #[derive(Debug, Clone)]
 pub enum CompositorEvent {
-    WidgetReady { instance_id: InstanceId },
+    WidgetReady {
+        instance_id: InstanceId,
+    },
     ScreenActivity,
+    /// Display-brightness change requested by the settings-tray overlay (0-100).
+    SetBrightness {
+        value: u8,
+    },
+    /// WiFi-reconfiguration entry requested by the settings-tray overlay.
+    ReconfigureWifi,
+}
+
+/// Lossless settings commands routed through the compositor-owned mpsc channel
+/// instead of the lossy broadcast stream.
+#[derive(Debug)]
+pub enum SettingsCommand {
+    /// Display-brightness change requested by the settings-tray overlay (0-100).
+    SetBrightness(u8),
+    /// WiFi-reconfiguration entry requested by the settings-tray overlay.
+    ReconfigureWifi,
 }
 
 #[derive(Debug, Error)]
@@ -167,6 +185,20 @@ pub trait Compositor: Send + Sync {
     /// Broadcast a setting update to all connected widgets.
     fn broadcast_setting(&self, setting: SettingUpdate) -> Result<(), CompositorError>;
 
+    /// Report the effective display brightness (0-100) to the settings-tray
+    /// overlay via the `deck_settings_v1` `brightness` event. Default: no-op
+    /// (only the real compositor drives an overlay).
+    fn broadcast_brightness(&self, _value: u8) -> Result<(), CompositorError> {
+        Ok(())
+    }
+
+    /// Report the WiFi setup-AP SSID to the settings-tray overlay via the
+    /// `deck_settings_v1` `wifi_ap` event. `None` means setup mode is inactive.
+    /// Default: no-op.
+    fn broadcast_wifi_ap(&self, _ssid: Option<String>) -> Result<(), CompositorError> {
+        Ok(())
+    }
+
     /// Push fresh params to a single running widget without stopping
     /// its process. Only valid when geometry (size) is unchanged —
     /// callers route through `unregister_widget` + `register_widget`
@@ -180,6 +212,9 @@ pub trait Compositor: Send + Sync {
 
     /// Get a receiver for widget action requests (sound, LED).
     fn action_receiver(&self) -> mpsc::UnboundedReceiver<WidgetAction>;
+
+    /// Get a receiver for one-shot settings commands (brightness, WiFi reconfigure).
+    fn settings_receiver(&self) -> mpsc::UnboundedReceiver<SettingsCommand>;
 
     /// Get a sender for LED request status updates flowing back to the
     /// originating widget. The compositor owns the receiver and emits
