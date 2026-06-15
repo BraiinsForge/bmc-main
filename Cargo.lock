@@ -1255,6 +1255,7 @@ dependencies = [
  "calloop 0.14.2",
  "clap",
  "deck-screen-edge-v1",
+ "deck-settings-v1",
  "drm",
  "flume",
  "futures",
