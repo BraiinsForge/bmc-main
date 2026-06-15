@@ -54,6 +54,7 @@ members = [
     "system-overlays/bmc-overlay-offline",
     "system-overlays/bmc-system-overlay",
     "system-overlays/layer-shell-test-client",
+    "system-overlays/screen-edge-validation-overlay",
     "widgets/*",
 ]
 
@@ -180,7 +181,6 @@ bmc-wasm-runtime = { path = "bmc-wasm-runtime" }
 bmc-widget = { path = "bmc-widget" }
 bmc-widget-manifest = { path = "bmc-widget-manifest" }
 bmc-widget-protocol = { path = "bmc-widget-protocol" }
-deck-screen-edge-v1 = { path = "deck-screen-edge-v1" }
 bstr = "1.11.3"
 bytemuck = { version = "1.14", features = ["derive"] }
 bytes = { version = "1.6.0", default-features = false }
@@ -194,6 +194,7 @@ clap = { version = "4.5.37", features = ["derive", "std"] }
 cosmic-text = { version = "0.18", default-features = false, features = ["std", "swash"] }
 croner = "3.0.0"
 data-encoding = "2.6.0"
+deck-screen-edge-v1 = { path = "deck-screen-edge-v1" }
 dialoguer = "0.11.0"
 dirs = "6.0.0"
 drm = "0.14.1"
