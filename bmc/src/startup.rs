@@ -247,14 +247,18 @@ where
         crate::widget::action_handler::spawn_action_handler(
             crate::widget::action_handler::CompositorIo {
                 action_rx: compositor.action_receiver(),
+                settings_rx: compositor.settings_receiver(),
                 active_scene_rx: compositor.active_scene_watch(),
                 connected_widgets_rx: compositor.connected_widgets_watch(),
                 status_tx: compositor.request_status_sender(),
+                night_mode_active_rx: system_manager.subscribe_night_mode(),
             },
             sound_controller.clone(),
             led_coordinator.clone(),
             initial_widget_scene_map,
             scenes_rx,
+            system_manager.clone(),
+            manager.clone(),
         );
 
         {
@@ -280,6 +284,21 @@ where
                 )
                 .await;
         }
+
+        crate::widget::coordinator::start_brightness_listener(
+            compositor.clone(),
+            config_handle.clone(),
+            config_handle
+                .read()
+                .await
+                .subscribe_brightness_settings_change(),
+            system_manager.subscribe_night_mode(),
+        );
+        crate::widget::coordinator::start_wifi_reconfig_listener(
+            compositor.clone(),
+            manager.clone(),
+            manager.watch_wifi_reconfig(),
+        );
 
         Ok(Self {
             listener,

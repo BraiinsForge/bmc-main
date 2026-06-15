@@ -46,6 +46,7 @@ pub struct Manager {
     wifi_iface_name: String,
     wifi_ap_ssid_base: String,
     wifi_event_sender: tokio::sync::broadcast::Sender<WifiEvent>,
+    wifi_reconfig_sender: tokio::sync::watch::Sender<bool>,
     uboot_env_manager: UbootEnvManager,
 }
 
@@ -80,6 +81,7 @@ impl Manager {
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(timezone);
         let (wifi_event_sender, _) = tokio::sync::broadcast::channel(Self::WIFI_EVENTS_CAPACITY);
+        let (wifi_reconfig_sender, _) = tokio::sync::watch::channel(false);
 
         let bmc_info = match BmcInfo::load() {
             Ok(bmc_info) => Some(bmc_info),
@@ -99,7 +101,7 @@ impl Manager {
                 Self::DEFAULT_INTERFACE.to_owned()
             });
 
-        Self {
+        let manager = Self {
             bmc_info: Arc::new(bmc_info),
             platform_override,
             session_manager,
@@ -108,8 +110,20 @@ impl Manager {
             wifi_iface_name,
             wifi_ap_ssid_base,
             wifi_event_sender,
+            wifi_reconfig_sender,
             uboot_env_manager: UbootEnvManager::new(),
-        }
+        };
+
+        // Seed the WiFi-reconfig watch from real state so the settings tray
+        // reflects setup mode correctly if bmc starts while it is already active.
+        // Both FactoryDefault and WifiReconfiguration run the setup AP.
+        let setup_ap_active = matches!(
+            manager.device_state().await,
+            BmcState::FactoryDefault | BmcState::WifiReconfiguration
+        );
+        let _ = manager.wifi_reconfig_sender.send(setup_ap_active);
+
+        manager
     }
 
     async fn restart_system_service(&self) -> anyhow::Result<()> {
@@ -418,6 +432,10 @@ impl BmcManager for Manager {
         self.timezone_sender.subscribe()
     }
 
+    fn watch_wifi_reconfig(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.wifi_reconfig_sender.subscribe()
+    }
+
     async fn is_factory_default(&self) -> bool {
         call_command(
             "sh",
@@ -464,6 +482,8 @@ impl BmcManager for Manager {
         self.configure_wifi_ap().await?;
         self.enable_captive_portal().await?;
 
+        let _ = self.wifi_reconfig_sender.send(true);
+
         info!("WiFi reconfiguration mode enabled");
         Ok(())
     }
@@ -478,6 +498,8 @@ impl BmcManager for Manager {
 
         self.disable_captive_portal().await?;
         self.unset_wifi_reconfig_flag().await?;
+
+        let _ = self.wifi_reconfig_sender.send(false);
 
         info!("WiFi reconfiguration mode disabled");
         Ok(())
@@ -673,7 +695,7 @@ impl BmcManager for Manager {
         match self.device_state().await {
             BmcState::FactoryDefault => {
                 // Remove factory default flag
-                call_command(
+                let result = call_command(
                     "sh",
                     &[
                         "-c",
@@ -681,7 +703,11 @@ impl BmcManager for Manager {
                     ],
                 )
                 .await
-                .map_err(|e| anyhow!("Failed to remove factory default flag, error: {e}"))
+                .map_err(|e| anyhow!("Failed to remove factory default flag, error: {e}"));
+                if result.is_ok() {
+                    let _ = self.wifi_reconfig_sender.send(false);
+                }
+                result
             }
             BmcState::SetupPending => {
                 // Remove setup pending flag
@@ -700,7 +726,7 @@ impl BmcManager for Manager {
                 // NOTE: Intentionally duplicates unset_wifi_reconfig_flag() to match
                 // the pattern used by other states (FactoryDefault, SetupPending) and
                 // to avoid error type conversion from InitialSetupError to anyhow::Error
-                call_command(
+                let result = call_command(
                     "sh",
                     &[
                         "-c",
@@ -708,7 +734,11 @@ impl BmcManager for Manager {
                     ],
                 )
                 .await
-                .map_err(|e| anyhow!("Failed to remove wifi reconfig flag, error: {e}"))
+                .map_err(|e| anyhow!("Failed to remove wifi reconfig flag, error: {e}"));
+                if result.is_ok() {
+                    let _ = self.wifi_reconfig_sender.send(false);
+                }
+                result
             }
             BmcState::Operational => Ok(()),
         }
