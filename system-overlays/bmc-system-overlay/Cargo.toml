@@ -21,5 +21,8 @@ wayland-client.workspace = true
 wayland-protocols.workspace = true
 wayland-protocols-wlr = { workspace = true, features = ["client"] }
 
+[dev-dependencies]
+bmc-wasm-protocol.workspace = true
+
 [lints]
 workspace = true
