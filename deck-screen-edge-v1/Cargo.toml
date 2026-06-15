@@ -1,0 +1,15 @@
+[package]
+name = "deck-screen-edge-v1"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins Systems s.r.o."]
+description = "Vendored deck_screen_edge_v1 Wayland protocol (forked from kde-screen-edge-v1)"
+
+[dependencies]
+wayland-backend.workspace = true
+wayland-client.workspace = true
+wayland-scanner.workspace = true
+wayland-server.workspace = true
+
+[lints]
+workspace = true
