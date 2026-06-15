@@ -208,6 +208,7 @@ impl HostedOverlay {
                     self.client.attach_null_buffer()?;
                     self.client.roundtrip_after_resize_unmap(configured_size)?;
                     self.target.free_for_hide(egl, &mut self.client)?;
+                    self.overlay.mark_content_dirty();
                     self.last_render = None;
                 }
                 self.mapped = transition.mapped_after_resize;

@@ -114,6 +114,88 @@ struct TouchTrack {
     latest: Pt,
 }
 
+/// Duration of the reveal/dismiss slide ramp.
+const SLIDE_MS: u64 = 180;
+
+/// Which way the panel is sliding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SlidePhase {
+    Revealing,
+    Dismissing,
+}
+
+/// Pure eased vertical slide for the panel band: the panel translates from
+/// off-screen (`-height`) to settled (`0`) on reveal and back on dismiss. The
+/// offset is computed from `now`; nothing here touches the GPU, so the timing is
+/// unit-tested in isolation from the blit.
+#[derive(Debug, Clone, Copy, Default)]
+struct Slide {
+    phase: Option<(SlidePhase, Instant)>,
+}
+
+impl Slide {
+    fn start_reveal(&mut self, now: Instant) {
+        self.phase = Some((SlidePhase::Revealing, now));
+    }
+
+    fn start_dismiss(&mut self, now: Instant) {
+        self.phase = Some((SlidePhase::Dismissing, now));
+    }
+
+    /// Whether a dismiss ramp has been started (regardless of completion).
+    fn is_dismissing(&self) -> bool {
+        matches!(self.phase, Some((SlidePhase::Dismissing, _)))
+    }
+
+    /// The blit-only decision the host obeys: blit the cached panel at the
+    /// current offset only while a slide is running *and* the content has not
+    /// changed this frame; otherwise (`None`) the host full-paints. Keeping it a
+    /// method on `Slide` lets the invariant be unit-tested without a
+    /// platform-detected `SettingsTrayOverlay`.
+    fn cached_blit_offset(&self, now: Instant, content_dirty: bool, height: f32) -> Option<f32> {
+        (self.animating(now) && !content_dirty).then(|| self.offset(now, height))
+    }
+
+    /// Eased progress (0→1) of the active ramp at `now`. `ease-out` cubic so the
+    /// panel decelerates as it settles.
+    fn progress(start: Instant, now: Instant) -> f32 {
+        let elapsed = now.saturating_duration_since(start).as_millis();
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "slide elapsed/duration are small millisecond counts"
+        )]
+        let linear = (elapsed as f32 / SLIDE_MS as f32).clamp(0.0, 1.0);
+        let inv = 1.0 - linear;
+        1.0 - inv * inv * inv
+    }
+
+    /// Vertical offset (px) of the panel band at `now`, given the panel
+    /// `height`. `0` once settled (or when no slide is active).
+    fn offset(&self, now: Instant, height: f32) -> f32 {
+        match self.phase {
+            Some((SlidePhase::Revealing, start)) => -height * (1.0 - Self::progress(start, now)),
+            Some((SlidePhase::Dismissing, start)) => -height * Self::progress(start, now),
+            None => 0.0,
+        }
+    }
+
+    /// Whether a ramp is still in progress at `now`.
+    fn animating(&self, now: Instant) -> bool {
+        match self.phase {
+            Some((_, start)) => Self::progress(start, now) < 1.0,
+            None => false,
+        }
+    }
+
+    /// Whether a dismiss ramp has fully completed at `now`.
+    fn dismiss_done(&self, now: Instant) -> bool {
+        match self.phase {
+            Some((SlidePhase::Dismissing, start)) => Self::progress(start, now) >= 1.0,
+            Some((SlidePhase::Revealing, _)) | None => false,
+        }
+    }
+}
+
 #[expect(missing_debug_implementations, reason = "TreeUi is not Debug")]
 pub struct SettingsTrayOverlay {
     product: Product,
@@ -151,6 +233,9 @@ pub struct SettingsTrayOverlay {
     dismissing: bool,
     /// Set on any content change; drives the Task-9 panel cache.
     content_dirty: bool,
+    /// Pure reveal/dismiss slide phase; the host reads its offset to blit the
+    /// cached panel without re-laying-out the tree.
+    slide: Slide,
 
     pending_requests: Vec<SettingsRequest>,
 }
@@ -195,6 +280,7 @@ impl Default for SettingsTrayOverlay {
             slider_released: false,
             dismissing: false,
             content_dirty: true,
+            slide: Slide::default(),
             pending_requests: Vec::new(),
         }
     }
@@ -322,12 +408,14 @@ impl SystemOverlay for SettingsTrayOverlay {
     }
 
     fn on_reveal(&mut self) {
+        let now = Instant::now();
         self.button = ButtonState::default();
         self.reconnect = ReconnectState::default();
         self.touch_track = None;
         self.dismissing = false;
-        self.last_interaction = Instant::now();
+        self.last_interaction = now;
         self.content_dirty = true;
+        self.slide.start_reveal(now);
     }
 
     fn on_brightness(&mut self, value: u8) {
@@ -394,9 +482,16 @@ impl SystemOverlay for SettingsTrayOverlay {
         if now.duration_since(self.last_interaction) >= INACTIVITY_TIMEOUT {
             self.dismissing = true;
         }
+        // Begin the slide-out the first tick a dismiss is decided; report
+        // not-visible only once it has fully slid off so the framework keeps the
+        // surface mapped for the duration of the animation.
+        if self.dismissing && !self.slide.is_dismissing() {
+            self.slide.start_dismiss(now);
+        }
 
-        let visible = !self.dismissing;
-        let animating = self.animating();
+        let sliding = self.slide.animating(now);
+        let visible = !(self.dismissing && self.slide.dismiss_done(now));
+        let animating = self.animating() || sliding;
         let wants_render = visible && (was_dirty || self.content_dirty || animating);
         let next_wake = if !visible {
             None
@@ -478,5 +573,65 @@ impl SystemOverlay for SettingsTrayOverlay {
 
     fn drain_settings_requests(&mut self) -> Vec<SettingsRequest> {
         std::mem::take(&mut self.pending_requests)
+    }
+
+    fn wants_cached_blit(&self, now: Instant) -> Option<f32> {
+        self.slide
+            .cached_blit_offset(now, self.content_dirty, self.panel_height)
+    }
+
+    fn take_content_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.content_dirty)
+    }
+
+    fn mark_content_dirty(&mut self) {
+        self.content_dirty = true;
+    }
+}
+
+#[cfg(test)]
+mod slide_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn reveal_eases_from_offscreen_to_zero() {
+        let t0 = Instant::now();
+        let mut s = Slide::default();
+        s.start_reveal(t0);
+        assert!(s.offset(t0, 200.0) <= -199.0); // starts offscreen (height 200)
+        assert!(s.offset(t0 + Duration::from_millis(200), 200.0).abs() < 1e-3);
+        assert!(!s.animating(t0 + Duration::from_millis(200)));
+    }
+
+    #[test]
+    fn dismiss_eases_back_offscreen_then_reports_done() {
+        let t0 = Instant::now();
+        let mut s = Slide::default();
+        s.start_reveal(t0);
+        s.start_dismiss(t0 + Duration::from_millis(200));
+        assert!(s.offset(t0 + Duration::from_millis(200), 200.0).abs() < 1e-3);
+        assert!(!s.dismiss_done(t0 + Duration::from_millis(200)));
+        assert!(s.offset(t0 + Duration::from_millis(400), 200.0) <= -199.0);
+        assert!(s.dismiss_done(t0 + Duration::from_millis(400)));
+    }
+
+    #[test]
+    fn dirty_frame_full_paints_then_clean_frame_blits_cache() {
+        let t0 = Instant::now();
+        let mut s = Slide::default();
+        s.start_reveal(t0);
+        let mid = t0 + Duration::from_millis(90);
+        // First reveal frame is content-dirty: the host must full-paint (None).
+        assert_eq!(s.cached_blit_offset(mid, true, 200.0), None);
+        // Once a frame clears the dirty flag while still animating, the host
+        // blits the cache at the eased offset (no paint).
+        let blit = s.cached_blit_offset(mid, false, 200.0);
+        assert!(blit.is_some_and(|off| (-200.0..0.0).contains(&off)));
+        // After the ramp settles, no cached blit is requested even when clean.
+        assert_eq!(
+            s.cached_blit_offset(t0 + Duration::from_millis(200), false, 200.0),
+            None
+        );
     }
 }

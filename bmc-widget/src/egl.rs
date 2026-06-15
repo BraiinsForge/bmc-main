@@ -1222,6 +1222,145 @@ void main() {
     }
 }
 
+/// Resources for the offset panel-cache copy used by sliding system overlays.
+///
+/// Unlike [`BlitResources`] (which Y-flips a femtovg staging texture and fills
+/// the whole target), this copies an already-upright source texture into a
+/// destination FBO at a caller-supplied screen rectangle — a quad whose NDC
+/// bounds are passed as a uniform so the panel can be translated vertically per
+/// animation frame. No V-flip: the source was produced by a prior
+/// [`BlitResources`] copy and is already in destination orientation.
+struct OffsetBlitResources {
+    program: glow::Program,
+    vbo: glow::Buffer,
+    pos_loc: u32,
+    uv_loc: u32,
+    rect_loc: glow::UniformLocation,
+}
+
+impl OffsetBlitResources {
+    fn new(gl: &glow::Context) -> Result<Self> {
+        // a_pos carries the unit quad in [0,1]; u_rect = (x0, y0, x1, y1) in NDC
+        // remaps it to the destination rectangle, so the same VBO draws the
+        // panel at any vertical offset.
+        let vert_src = r"#version 100
+attribute vec2 a_pos;
+attribute vec2 a_uv;
+varying vec2 v_uv;
+uniform vec4 u_rect;
+void main() {
+    vec2 ndc = mix(u_rect.xy, u_rect.zw, a_pos);
+    v_uv = a_uv;
+    gl_Position = vec4(ndc, 0.0, 1.0);
+}
+";
+        let frag_src = r"#version 100
+precision mediump float;
+varying vec2 v_uv;
+uniform sampler2D u_tex;
+void main() {
+    gl_FragColor = texture2D(u_tex, v_uv);
+}
+";
+        let program = unsafe {
+            let vs = gl
+                .create_shader(glow::VERTEX_SHADER)
+                .map_err(|e| anyhow::anyhow!("OffsetBlit VS create: {e}"))?;
+            gl.shader_source(vs, vert_src);
+            gl.compile_shader(vs);
+            if !gl.get_shader_compile_status(vs) {
+                let log = gl.get_shader_info_log(vs);
+                gl.delete_shader(vs);
+                anyhow::bail!("OffsetBlit VS compile: {log}");
+            }
+            let fs = gl.create_shader(glow::FRAGMENT_SHADER).map_err(|e| {
+                gl.delete_shader(vs);
+                anyhow::anyhow!("OffsetBlit FS create: {e}")
+            })?;
+            gl.shader_source(fs, frag_src);
+            gl.compile_shader(fs);
+            if !gl.get_shader_compile_status(fs) {
+                let log = gl.get_shader_info_log(fs);
+                gl.delete_shader(vs);
+                gl.delete_shader(fs);
+                anyhow::bail!("OffsetBlit FS compile: {log}");
+            }
+            let prog = gl.create_program().map_err(|e| {
+                gl.delete_shader(vs);
+                gl.delete_shader(fs);
+                anyhow::anyhow!("OffsetBlit program create: {e}")
+            })?;
+            gl.attach_shader(prog, vs);
+            gl.attach_shader(prog, fs);
+            gl.link_program(prog);
+            gl.delete_shader(vs);
+            gl.delete_shader(fs);
+            if !gl.get_program_link_status(prog) {
+                let log = gl.get_program_info_log(prog);
+                gl.delete_program(prog);
+                anyhow::bail!("OffsetBlit program link: {log}");
+            }
+            prog
+        };
+
+        // Unit quad with a_uv == a_pos: an identity copy. The cached source was
+        // produced by the same `blit_to` the normal overlay path uses to fill
+        // the export buffer, so it already holds destination-oriented pixels —
+        // sampling it straight keeps the panel upright.
+        #[rustfmt::skip]
+        let vertices: [f32; 24] = [
+            0.0, 0.0,  0.0, 0.0,
+            1.0, 0.0,  1.0, 0.0,
+            1.0, 1.0,  1.0, 1.0,
+            0.0, 0.0,  0.0, 0.0,
+            1.0, 1.0,  1.0, 1.0,
+            0.0, 1.0,  0.0, 1.0,
+        ];
+
+        let vbo = unsafe {
+            let buf = gl.create_buffer().map_err(|e| {
+                gl.delete_program(program);
+                anyhow::anyhow!("OffsetBlit VBO create: {e}")
+            })?;
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(buf));
+            let bytes: &[u8] = std::slice::from_raw_parts(
+                vertices.as_ptr().cast::<u8>(),
+                std::mem::size_of_val(&vertices),
+            );
+            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STATIC_DRAW);
+            buf
+        };
+
+        let pos_loc = unsafe {
+            gl.get_attrib_location(program, "a_pos")
+                .expect("BUG: a_pos not found in offset-blit shader")
+        };
+        let uv_loc = unsafe {
+            gl.get_attrib_location(program, "a_uv")
+                .expect("BUG: a_uv not found in offset-blit shader")
+        };
+        let rect_loc = unsafe {
+            gl.get_uniform_location(program, "u_rect")
+                .expect("BUG: u_rect not found in offset-blit shader")
+        };
+
+        Ok(Self {
+            program,
+            vbo,
+            pos_loc,
+            uv_loc,
+            rect_loc,
+        })
+    }
+
+    fn destroy(&self, gl: &glow::Context) {
+        unsafe {
+            gl.delete_program(self.program);
+            gl.delete_buffer(self.vbo);
+        }
+    }
+}
+
 #[must_use]
 fn shared_scratch_uv_scale(max_width: u32, max_height: u32, w: u32, h: u32) -> (f32, f32) {
     #[expect(
@@ -1229,6 +1368,29 @@ fn shared_scratch_uv_scale(max_width: u32, max_height: u32, w: u32, h: u32) -> (
         reason = "pixel dimensions converted to normalized GL texture coordinates"
     )]
     (w as f32 / max_width as f32, h as f32 / max_height as f32)
+}
+
+/// NDC rectangle `(x0, y0, x1, y1)` for a panel of `panel_h` pixels anchored at
+/// the top of a `dest_h`-tall target, translated down by `offset_y` (negative =
+/// off the top). The panel spans the full width.
+///
+/// This overlay's export buffer is scanned out Y-flipped, so pixel-y (0 = the
+/// display top, growing downward) maps to NDC with +Y pointing *down*:
+/// `ndc = 2 * y / h - 1`. The panel's top edge therefore takes the smaller NDC
+/// y, pairing with the cache's top row (`a_pos.y = 0`, `a_uv.v = 0`).
+#[must_use]
+fn offset_panel_ndc_rect(dest_h: u32, panel_h: f32, offset_y: f32) -> [f32; 4] {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "target height in pixels converts to NDC without meaningful loss"
+    )]
+    let h = dest_h as f32;
+    // Top edge at screen-y = offset_y, bottom edge at offset_y + panel_h.
+    let top_px = offset_y;
+    let bottom_px = offset_y + panel_h;
+    let ndc_panel_top = 2.0 * top_px / h - 1.0;
+    let ndc_panel_bottom = 2.0 * bottom_px / h - 1.0;
+    [-1.0, ndc_panel_top, 1.0, ndc_panel_bottom]
 }
 
 /// Per-render-thread scratch resources for femtovg-rendering widgets.
@@ -1259,6 +1421,7 @@ fn shared_scratch_uv_scale(max_width: u32, max_height: u32, w: u32, h: u32) -> (
 pub struct SharedRenderScratch {
     staging: WidgetExportBuffer,
     blit: BlitResources,
+    offset_blit: OffsetBlitResources,
     staging_fbo_id_at_construction: u32,
 }
 
@@ -1279,16 +1442,25 @@ impl SharedRenderScratch {
         let staging = ctx
             .allocate_widget_export_buffer(max_width, max_height, Depth::Disabled)
             .context("Failed to allocate SharedRenderScratch staging")?;
-        match BlitResources::new(ctx.gl()) {
-            Ok(blit) => {
+        let blit = match BlitResources::new(ctx.gl()) {
+            Ok(blit) => blit,
+            Err(e) => {
+                ctx.destroy_widget_export_buffer(staging);
+                return Err(e);
+            }
+        };
+        match OffsetBlitResources::new(ctx.gl()) {
+            Ok(offset_blit) => {
                 let staging_fbo_id_at_construction = staging.fbo_id();
                 Ok(Self {
                     staging,
                     blit,
+                    offset_blit,
                     staging_fbo_id_at_construction,
                 })
             }
             Err(e) => {
+                blit.destroy(ctx.gl());
                 ctx.destroy_widget_export_buffer(staging);
                 Err(e)
             }
@@ -1383,12 +1555,68 @@ impl SharedRenderScratch {
         }
     }
 
+    /// Clear `dest_fbo` transparent and draw `src_tex` (an already-upright
+    /// `panel_h`-tall panel) into it as a full-width band translated down by
+    /// `offset_y` pixels. No femtovg, no layout: this is the per-frame
+    /// blit-only slide present for a sliding system overlay. `src_tex` is
+    /// sampled over its whole extent (UV `[0,1]`).
+    #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
+    pub fn blit_texture_at_offset(
+        &self,
+        ctx: &EglContext,
+        src_tex: glow::Texture,
+        dest_fbo: glow::Framebuffer,
+        dest_size: (u32, u32),
+        panel_h: f32,
+        offset_y: f32,
+    ) {
+        let (dest_w, dest_h) = dest_size;
+        let gl = ctx.gl();
+        let rect = offset_panel_ndc_rect(dest_h, panel_h, offset_y);
+        unsafe {
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(dest_fbo));
+            gl.viewport(0, 0, dest_w as i32, dest_h as i32);
+            gl.disable(glow::SCISSOR_TEST);
+            gl.disable(glow::STENCIL_TEST);
+            gl.disable(glow::DEPTH_TEST);
+            gl.disable(glow::CULL_FACE);
+            gl.disable(glow::BLEND);
+            gl.color_mask(true, true, true, true);
+            gl.clear_color(0.0, 0.0, 0.0, 0.0);
+            gl.clear(glow::COLOR_BUFFER_BIT);
+
+            gl.use_program(Some(self.offset_blit.program));
+            gl.uniform_4_f32(
+                Some(&self.offset_blit.rect_loc),
+                rect[0],
+                rect[1],
+                rect[2],
+                rect[3],
+            );
+
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D, Some(src_tex));
+
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.offset_blit.vbo));
+            gl.enable_vertex_attrib_array(self.offset_blit.pos_loc);
+            gl.vertex_attrib_pointer_f32(self.offset_blit.pos_loc, 2, glow::FLOAT, false, 16, 0);
+            gl.enable_vertex_attrib_array(self.offset_blit.uv_loc);
+            gl.vertex_attrib_pointer_f32(self.offset_blit.uv_loc, 2, glow::FLOAT, false, 16, 8);
+
+            gl.draw_arrays(glow::TRIANGLES, 0, 6);
+
+            gl.disable_vertex_attrib_array(self.offset_blit.pos_loc);
+            gl.disable_vertex_attrib_array(self.offset_blit.uv_loc);
+        }
+    }
+
     /// Release all GL resources. Callers must invoke this while `ctx` is
     /// current on this thread; dropping the value without calling `destroy`
-    /// leaks the staging FBO, color texture, stencil RBO, blit program, and
-    /// blit VBO.
+    /// leaks the staging FBO, color texture, stencil RBO, blit programs, and
+    /// blit VBOs.
     pub fn destroy(self, ctx: &EglContext) {
         self.blit.destroy(ctx.gl());
+        self.offset_blit.destroy(ctx.gl());
         ctx.destroy_widget_export_buffer(self.staging);
     }
 }
@@ -1418,7 +1646,7 @@ fn load_egl_proc<T>(name: &str) -> Result<T> {
 mod tests {
     use super::{
         Depth, DoubleBufferState, EglContext, ExportFormat, SharedRenderScratch, SlotReleaseState,
-        WidgetExportBuffer, shared_scratch_uv_scale,
+        WidgetExportBuffer, offset_panel_ndc_rect, shared_scratch_uv_scale,
     };
     use drm_fourcc::DrmFourcc;
 
@@ -1458,6 +1686,39 @@ mod tests {
     fn shared_scratch_uv_scale_samples_only_active_slot_region() {
         assert_eq!(shared_scratch_uv_scale(1280, 480, 640, 240), (0.5, 0.5));
         assert_eq!(shared_scratch_uv_scale(1280, 480, 1280, 480), (1.0, 1.0));
+    }
+
+    #[test]
+    fn offset_panel_ndc_rect_settled_panel_fills_full_band() {
+        // A full-height panel settled at offset 0 spans the whole NDC range.
+        // In the Y-flipped buffer y0 is the panel's top edge (display top = -1)
+        // and y1 its bottom edge (display bottom = +1).
+        let [x0, y0, x1, y1] = offset_panel_ndc_rect(480, 480.0, 0.0);
+        assert!((x0 + 1.0).abs() < 1e-6, "left edge at -1");
+        assert!(
+            (y0 + 1.0).abs() < 1e-6,
+            "panel top edge at -1 (display top)"
+        );
+        assert!((x1 - 1.0).abs() < 1e-6, "right edge at 1");
+        assert!(
+            (y1 - 1.0).abs() < 1e-6,
+            "panel bottom edge at 1 (display bottom)"
+        );
+    }
+
+    #[test]
+    fn offset_panel_ndc_rect_offscreen_pushes_band_above_top() {
+        // Slid fully off the top of the display. The buffer is Y-flipped, so the
+        // display's top edge is NDC y = -1; the whole band sits at or beyond it.
+        let [_, y0, _, y1] = offset_panel_ndc_rect(480, 480.0, -480.0);
+        assert!(
+            y1 <= -1.0,
+            "panel bottom edge at or beyond the display top (NDC -1)"
+        );
+        assert!(
+            y0 < y1,
+            "panel top edge pushed further off-screen than its bottom"
+        );
     }
 
     #[test]
