@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="deck_settings_v1">
+  <copyright>
+    Copyright (C) 2026 Braiins Systems s.r.o.
+    SPDX-License-Identifier: MIT
+
+    Re-homed from the BDK-343 btc-prague branch, where deck_settings_v1 lived in
+    bmc-widget-protocol and was bound by a settings widget. Here it is a
+    standalone protocol bound by the settings-tray layer-shell overlay. The
+    dismiss request is dropped: hide is owned by deck_screen_edge_v1.
+  </copyright>
+
+  <interface name="deck_settings_v1" version="1">
+    <description summary="Deck settings control interface">
+      Lightweight compositor-relayed IPC for the settings-tray overlay to control
+      system state it must not touch directly. The target platform (OpenWrt/ARMv7)
+      has no D-Bus/PipeWire/UPower; bmc owns the hardware drivers, so the overlay
+      relays control through the compositor's Wayland connection. Only the
+      settings-tray overlay binds this interface.
+    </description>
+
+    <request name="set_brightness">
+      <description summary="set display brightness">
+        Request a display brightness change. Value is 0-100. bmc applies it
+        night-mode-aware and reports the effective value back via brightness.
+      </description>
+      <arg name="value" type="uint" summary="brightness percentage 0-100"/>
+    </request>
+
+    <request name="reconfigure_wifi">
+      <description summary="enter WiFi setup mode">
+        Request the compositor to put the device into WiFi setup mode: an open
+        access point plus captive portal, the same flow used for factory-default
+        setup. One-way; the device leaves setup mode on its own once a network is
+        configured from the phone. Progress is reported via wifi_ap.
+      </description>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the settings interface"/>
+    </request>
+
+    <event name="brightness">
+      <description summary="current display brightness">
+        Report the effective display brightness. Emitted once when the overlay
+        binds, and again whenever the effective brightness changes, including the
+        night-mode value while night mode is active. Value is 0-100.
+      </description>
+      <arg name="value" type="uint" summary="brightness percentage 0-100"/>
+    </event>
+
+    <event name="wifi_ap">
+      <description summary="current WiFi setup access-point SSID">
+        Report the WiFi setup access-point SSID. A non-empty SSID means setup mode
+        is active and the user can join this network from their phone; an empty
+        string means setup mode is inactive. Emitted once on bind and again
+        whenever the setup state changes.
+      </description>
+      <arg name="ssid" type="string" summary="setup AP SSID, empty when inactive"/>
+    </event>
+  </interface>
+</protocol>
