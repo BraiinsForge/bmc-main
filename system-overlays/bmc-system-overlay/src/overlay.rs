@@ -24,6 +24,18 @@ pub enum InputRegion {
     None,
 }
 
+/// A screen edge an overlay can arm for swipe-reveal. Opt in via
+/// [`SystemOverlay::screen_edge`].
+///
+/// Top and bottom edges are supported. Left/right edges are omitted because
+/// horizontal gestures conflict with scene navigation, which can begin
+/// anywhere, including at a screen edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenEdge {
+    Top,
+    Bottom,
+}
+
 /// Static layer-surface configuration, applied once at map time.
 #[derive(Debug, Clone)]
 pub struct LayerConfig {
@@ -135,6 +147,18 @@ pub trait SystemOverlay {
 
     /// Handle a touch event (only delivered when input region is not `None`).
     fn on_touch(&mut self, _event: TouchEvent) {}
+
+    /// Opt in to screen-edge reveal. `None` (default) means a normal overlay
+    /// whose visibility is driven by [`TickOutcome::visible`]. `Some(edge)` arms
+    /// that edge at startup: the surface stays hidden (no buffer) until the
+    /// compositor reveals it on the edge gesture, and re-arms on hide.
+    fn screen_edge(&self) -> Option<ScreenEdge> {
+        None
+    }
+
+    /// Called once each time the compositor reveals the overlay's armed edge,
+    /// before the first frame of that reveal. Use it to reset per-reveal state.
+    fn on_reveal(&mut self) {}
 }
 
 #[cfg(test)]

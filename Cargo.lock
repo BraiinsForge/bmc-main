@@ -1511,6 +1511,7 @@ dependencies = [
  "bmc-gpu-render-lock",
  "bmc-render",
  "bmc-widget",
+ "deck-screen-edge-v1",
  "get_if_addrs",
  "glow 0.16.0",
  "libc",
