@@ -20,11 +20,14 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
+use crate::overlay::ScreenEdge;
 use bmc_widget::egl::DmaBufInfo;
 use bmc_widget::surface::{
     BufferSlotMap, PollOutcome, ReleasedBuffer, ReleasedBufferSet, create_buffer_from_dmabuf,
     drain_released_buffers, poll_dispatch, submit_buffer_to_surface,
 };
+use deck_screen_edge_v1::client::deck_auto_hide_screen_edge_v1::{self, DeckAutoHideScreenEdgeV1};
+use deck_screen_edge_v1::client::deck_screen_edge_manager_v1::{self, DeckScreenEdgeManagerV1};
 
 /// Wayland protocol state for a layer-shell overlay surface.
 ///
@@ -32,6 +35,10 @@ use bmc_widget::surface::{
 /// the dmabuf buffer-release bookkeeping that mirrors the `deck_widget`
 /// client. Lives behind [`LayerSurfaceClient`], which owns the connection and
 /// event queue.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Wayland client state stores independent protocol latches"
+)]
 struct State {
     /// Whether the event loop should keep running. Cleared on `Closed`.
     running: bool,
@@ -43,6 +50,12 @@ struct State {
     touch: Option<wl_touch::WlTouch>,
     surface: Option<wl_surface::WlSurface>,
     layer_surface: Option<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1>,
+    screen_edge_manager: Option<DeckScreenEdgeManagerV1>,
+    screen_edge: Option<DeckAutoHideScreenEdgeV1>,
+    /// Set when the compositor reveals an armed screen edge.
+    pending_reveal: bool,
+    /// Set when the compositor hides the revealed screen edge.
+    pending_hidden: bool,
 
     /// Set true on the first layer-surface Configure (after which we may map).
     configured: bool,
@@ -71,6 +84,10 @@ impl Default for State {
             touch: None,
             surface: None,
             layer_surface: None,
+            screen_edge_manager: None,
+            screen_edge: None,
+            pending_reveal: false,
+            pending_hidden: false,
             configured: false,
             configured_size: (0, 0),
             pending_touch: Vec::new(),
@@ -79,6 +96,18 @@ impl Default for State {
             buffer_slots: BufferSlotMap::new(),
             released_buffers: ReleasedBufferSet::new(),
         }
+    }
+}
+
+impl State {
+    fn mark_screen_edge_revealed(&mut self) {
+        self.pending_reveal = true;
+        self.pending_hidden = false;
+    }
+
+    fn mark_screen_edge_hidden(&mut self) {
+        self.pending_reveal = false;
+        self.pending_hidden = true;
     }
 }
 
@@ -230,6 +259,45 @@ impl LayerSurfaceClient {
             .map_err(|e| anyhow::anyhow!("wl flush on unmap: {e}"))
     }
 
+    /// Create and arm the compositor-managed auto-hide object for `edge`.
+    pub fn create_screen_edge(&mut self, edge: ScreenEdge) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.state.screen_edge.is_none(),
+            "screen edge already created for this layer surface"
+        );
+        let qh = self.queue.handle();
+        let manager = self
+            .state
+            .screen_edge_manager
+            .as_ref()
+            .context("deck_screen_edge_manager_v1 missing")?;
+        let surface = self.state.surface.as_ref().context("surface not created")?;
+        let border = match edge {
+            ScreenEdge::Top => deck_screen_edge_manager_v1::Border::Top,
+        };
+        let edge = manager.get_auto_hide_screen_edge(border, surface, &qh, ());
+        edge.activate();
+        self.state.screen_edge = Some(edge);
+        self.flush()
+    }
+
+    /// Re-arm an existing screen edge after the compositor hides it.
+    pub fn rearm_screen_edge(&mut self) -> anyhow::Result<()> {
+        let edge = self.state.screen_edge.as_ref().context("no screen edge")?;
+        edge.activate();
+        self.flush()
+    }
+
+    /// Drain whether the compositor revealed the armed screen edge.
+    pub fn take_reveal(&mut self) -> bool {
+        std::mem::take(&mut self.state.pending_reveal)
+    }
+
+    /// Drain whether the compositor hid the revealed screen edge.
+    pub fn take_hidden(&mut self) -> bool {
+        std::mem::take(&mut self.state.pending_hidden)
+    }
+
     #[must_use]
     pub fn size(&self) -> (u32, u32) {
         self.state.configured_size
@@ -341,6 +409,15 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     let seat = registry.bind::<wl_seat::WlSeat, _, _>(name, version.min(9), qh, ());
                     state.seat = Some(seat);
                 }
+                "deck_screen_edge_manager_v1" => {
+                    let manager = registry.bind::<DeckScreenEdgeManagerV1, _, _>(
+                        name,
+                        version.min(1),
+                        qh,
+                        (),
+                    );
+                    state.screen_edge_manager = Some(manager);
+                }
                 _ => {}
             }
         }
@@ -375,6 +452,39 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for State {
                 state.running = false;
             }
             _ => {}
+        }
+    }
+}
+
+impl Dispatch<DeckScreenEdgeManagerV1, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &DeckScreenEdgeManagerV1,
+        _: deck_screen_edge_manager_v1::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<DeckAutoHideScreenEdgeV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &DeckAutoHideScreenEdgeV1,
+        event: deck_auto_hide_screen_edge_v1::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            deck_auto_hide_screen_edge_v1::Event::Revealed => {
+                state.mark_screen_edge_revealed();
+            }
+            deck_auto_hide_screen_edge_v1::Event::Hidden => {
+                state.mark_screen_edge_hidden();
+            }
+            other => tracing::debug!(?other, "unhandled deck_auto_hide_screen_edge_v1 event"),
         }
     }
 }
@@ -539,5 +649,21 @@ impl Dispatch<wl_touch::WlTouch, ()> for State {
             }
             other => tracing::debug!(?other, "unhandled wl_touch event"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn screen_edge_hidden_clears_pending_reveal() {
+        let mut state = State::default();
+
+        state.mark_screen_edge_revealed();
+        state.mark_screen_edge_hidden();
+
+        assert!(!state.pending_reveal);
+        assert!(state.pending_hidden);
     }
 }

@@ -13,7 +13,7 @@ mod tree;
 pub use connectivity::{configured_station_ssid, primary_ipv4};
 pub use gpu::{OverlayRenderTarget, wait_for_gpu};
 pub use hosted::HostedOverlay;
-pub use overlay::{InputRegion, LayerConfig, SystemOverlay, TickOutcome, TouchEvent};
+pub use overlay::{InputRegion, LayerConfig, ScreenEdge, SystemOverlay, TickOutcome, TouchEvent};
 pub use standalone::run_standalone;
 pub use surface::LayerSurfaceClient;
 pub use tree::TreeUi;
