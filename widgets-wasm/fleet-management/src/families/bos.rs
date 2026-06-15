@@ -176,27 +176,12 @@ impl FamilyAdapter for BosAdapter {
                 }
             }
             EP_HASHBOARDS => {
-                let mut total: Option<u32> = None;
-                for i in 0..MAX_HASHBOARDS {
-                    let type_path = bmc_wasm_sdk::fmt!("/hashboards/{}/chip_type", i);
-                    let count_path = bmc_wasm_sdk::fmt!("/hashboards/{}/chips_count", i);
-                    let chip_type = json.str(&type_path).filter(|s| !s.is_empty());
-                    let chips = json.i64(&count_path).and_then(|v| u32::try_from(v).ok());
-                    // A failed or disabled board may be null or omitted; skip
-                    // the gap and keep scanning so present boards past it still
-                    // count, instead of stopping at the first absence.
-                    if chip_type.is_none() && chips.is_none() {
-                        continue;
-                    }
-                    if model.chip_type.is_none() {
-                        model.chip_type = chip_type;
-                    }
-                    if let Some(chips) = chips {
-                        total = Some(total.unwrap_or(0).saturating_add(chips));
-                    }
+                let summary = mining::hashboards::sum_chips(json);
+                if model.chip_type.is_none() {
+                    model.chip_type = summary.model;
                 }
-                if total.is_some() {
-                    model.chip_count = total;
+                if let Some(count) = summary.count {
+                    model.chip_count = u32::try_from(count).ok();
                 }
             }
             _ => {}

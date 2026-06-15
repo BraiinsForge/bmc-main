@@ -9,6 +9,7 @@ crate-type = ["cdylib"]
 [dependencies]
 base64 = { workspace = true }
 bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
+mining = { path = "../lib/mining" }
 units = { path = "../lib/units" }
 
 [lints]

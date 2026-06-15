@@ -1,25 +1,9 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-pub trait JsonLookup {
-    fn str(&self, path: &str) -> Option<String>;
-    fn i64(&self, path: &str) -> Option<i64>;
-    fn f64(&self, path: &str) -> Option<f64>;
-}
-
-#[cfg(target_arch = "wasm32")]
-impl JsonLookup for bmc_wasm_sdk::json::JsonDoc {
-    fn str(&self, path: &str) -> Option<String> {
-        self.str(path)
-    }
-
-    fn i64(&self, path: &str) -> Option<i64> {
-        self.i64(path)
-    }
-
-    fn f64(&self, path: &str) -> Option<f64> {
-        self.f64(path)
-    }
-}
+// The JSON lookup abstraction lives in the shared `mining` lib so this widget
+// and `mining-info` parse hashboards through one implementation. Re-exported
+// here so the family parsers keep referring to `crate::discovery::JsonLookup`.
+pub use mining::hashboards::JsonLookup;
 
 /// Pull the user-facing name plus routing endpoint out of an mDNS `Found`
 /// payload. Returns `None` when host or port are missing or unusable; the
