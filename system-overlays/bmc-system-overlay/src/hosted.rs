@@ -135,7 +135,7 @@ impl HostedOverlay {
     pub fn connect(mut overlay: Box<dyn SystemOverlay>, egl: &EglContext) -> anyhow::Result<Self> {
         let config = overlay.layer_config();
         let config_size = config.size;
-        let mut client = LayerSurfaceClient::connect(&config)?;
+        let mut client = LayerSurfaceClient::connect(&config, overlay.uses_settings())?;
         let size = resolved_configured_size(config_size, client.size());
         let target = OverlayRenderTarget::new(egl, size.0, size.1)?;
         let wants_render = client.take_needs_render();
@@ -187,6 +187,14 @@ impl HostedOverlay {
             }
             if self.client.take_hidden() {
                 self.revealed = false;
+            }
+        }
+        if self.overlay.uses_settings() {
+            if let Some(v) = self.client.take_brightness() {
+                self.overlay.on_brightness(v);
+            }
+            if let Some(ap) = self.client.take_wifi_ap() {
+                self.overlay.on_wifi_ap(ap.as_deref());
             }
         }
         for released in self.client.drain_released_buffers() {
@@ -365,6 +373,22 @@ impl HostedOverlay {
         self.last_render = Some(now);
         self.wants_render = false;
         self.mapped = true;
+    }
+
+    /// Forward the overlay's accumulated control requests to the compositor.
+    /// Called once per loop iteration after the render step so render-produced
+    /// requests (a brightness slider drag reads `TreeResult.drags` in `render`)
+    /// go out the same pass they were created. No-op unless the overlay opted
+    /// into `deck_settings_v1`.
+    pub fn forward_settings_requests(&mut self) {
+        if !self.overlay.uses_settings() {
+            return;
+        }
+        for req in self.overlay.drain_settings_requests() {
+            if let Err(e) = self.client.send_settings_request(req) {
+                tracing::warn!("settings request failed: {e}");
+            }
+        }
     }
 }
 

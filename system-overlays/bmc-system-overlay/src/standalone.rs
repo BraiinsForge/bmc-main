@@ -19,7 +19,7 @@ const MIN_INTER_FRAME: Duration = Duration::from_millis(8);
 pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()> {
     let config: LayerConfig = overlay.layer_config();
 
-    let mut client = LayerSurfaceClient::connect(&config)?;
+    let mut client = LayerSurfaceClient::connect(&config, overlay.uses_settings())?;
     let mut size = resolved_configured_size(config.size, client.size());
 
     let egl = EglContext::new()?;
@@ -74,6 +74,8 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
             &mut pending_render,
         );
 
+        deliver_settings_events(&mut client, &mut *overlay);
+
         let now = Instant::now();
         let tick = overlay.tick(now);
         let want_visible = match screen_edge {
@@ -81,9 +83,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
             None => tick.visible,
         };
         if want_visible {
-            if tick.wants_render || !mapped || client.take_needs_render() {
-                pending_render = true;
-            }
+            pending_render |= tick.wants_render || !mapped || client.take_needs_render();
         } else {
             let _ = client.take_needs_render();
             // Hidden overlays must drop latched render requests before the
@@ -123,6 +123,8 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
             now,
         )?;
 
+        forward_settings_requests(&mut client, &mut *overlay);
+
         client.poll_dispatch(poll_timeout_ms(
             pending_render,
             inter_frame_remaining,
@@ -151,6 +153,29 @@ fn drain_screen_edge_events(
     }
     if client.take_hidden() {
         *revealed = false;
+    }
+}
+
+fn deliver_settings_events(client: &mut LayerSurfaceClient, overlay: &mut dyn SystemOverlay) {
+    if !overlay.uses_settings() {
+        return;
+    }
+    if let Some(v) = client.take_brightness() {
+        overlay.on_brightness(v);
+    }
+    if let Some(ap) = client.take_wifi_ap() {
+        overlay.on_wifi_ap(ap.as_deref());
+    }
+}
+
+fn forward_settings_requests(client: &mut LayerSurfaceClient, overlay: &mut dyn SystemOverlay) {
+    if !overlay.uses_settings() {
+        return;
+    }
+    for req in overlay.drain_settings_requests() {
+        if let Err(e) = client.send_settings_request(req) {
+            tracing::warn!("settings request failed: {e}");
+        }
     }
 }
 

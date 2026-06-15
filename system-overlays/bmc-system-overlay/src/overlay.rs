@@ -36,6 +36,14 @@ pub enum ScreenEdge {
     Bottom,
 }
 
+/// A control request an overlay wants to send over `deck_settings_v1`. The
+/// framework drains these after `tick` and forwards them to the compositor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsRequest {
+    SetBrightness(u8),
+    ReconfigureWifi,
+}
+
 /// Static layer-surface configuration, applied once at map time.
 #[derive(Debug, Clone)]
 pub struct LayerConfig {
@@ -159,6 +167,28 @@ pub trait SystemOverlay {
     /// Called once each time the compositor reveals the overlay's armed edge,
     /// before the first frame of that reveal. Use it to reset per-reveal state.
     fn on_reveal(&mut self) {}
+
+    /// Whether this overlay binds the `deck_settings_v1` control channel. `false`
+    /// (default) means the framework neither binds it nor delivers settings
+    /// events to this overlay.
+    fn uses_settings(&self) -> bool {
+        false
+    }
+
+    /// Effective display brightness (0-100) reported by the compositor. Called
+    /// before `tick` when a `brightness` event arrived. Default: no-op.
+    fn on_brightness(&mut self, _value: u8) {}
+
+    /// WiFi setup-AP SSID reported by the compositor: `Some(ssid)` while setup
+    /// mode is active, `None` when inactive. Called before `tick`. Default:
+    /// no-op.
+    fn on_wifi_ap(&mut self, _ssid: Option<&str>) {}
+
+    /// Drain control requests the overlay wants to send this pass. Called after
+    /// `tick`. Default: none.
+    fn drain_settings_requests(&mut self) -> Vec<SettingsRequest> {
+        Vec::new()
+    }
 }
 
 #[cfg(test)]
