@@ -25,6 +25,7 @@ bmc-support.workspace = true
 bmc-widget-protocol.workspace = true
 calloop.workspace = true
 clap.workspace = true
+deck-screen-edge-v1 = { workspace = true }
 drm.workspace = true
 flume.workspace = true
 futures.workspace = true
