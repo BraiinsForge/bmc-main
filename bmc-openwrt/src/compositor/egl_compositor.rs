@@ -1950,6 +1950,12 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
                 .deck_widget_state
                 .broadcast_setting(&setting);
         }
+        CompositorCommand::SetBrightness { value } => {
+            state.compositor.settings.set_brightness(value);
+        }
+        CompositorCommand::SetWifiAp { ssid } => {
+            state.compositor.settings.set_wifi_ap(ssid);
+        }
         CompositorCommand::UpdateWidgetParams {
             instance_id,
             params,
@@ -2059,6 +2065,16 @@ fn process_protocol_events(state: &mut AppState) {
             instance_id,
             payload,
         });
+    }
+
+    for action in state.compositor.settings.drain_actions() {
+        use crate::compositor::settings::SettingsAction;
+        let event = match action {
+            SettingsAction::SetBrightness(value) => CompositorEvent::SetBrightness { value },
+            SettingsAction::ReconfigureWifi => CompositorEvent::ReconfigureWifi,
+        };
+        // A broadcast send errors only when there are no subscribers; ignore.
+        let _ = state.event_tx.send(event);
     }
 
     // Status acks come from the tokio side, so they have no calloop wake
@@ -2269,6 +2285,18 @@ impl Compositor for EglCompositor {
     fn broadcast_setting(&self, setting: SettingUpdate) -> Result<(), CompositorError> {
         self.command_tx
             .send(CompositorCommand::BroadcastSetting { setting })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn broadcast_brightness(&self, value: u8) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::SetBrightness { value })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn broadcast_wifi_ap(&self, ssid: Option<String>) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::SetWifiAp { ssid })
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 

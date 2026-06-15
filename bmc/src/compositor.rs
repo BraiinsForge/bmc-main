@@ -75,8 +75,16 @@ pub struct ActiveScene {
 
 #[derive(Debug, Clone)]
 pub enum CompositorEvent {
-    WidgetReady { instance_id: InstanceId },
+    WidgetReady {
+        instance_id: InstanceId,
+    },
     ScreenActivity,
+    /// Display-brightness change requested by the settings-tray overlay (0-100).
+    SetBrightness {
+        value: u8,
+    },
+    /// WiFi-reconfiguration entry requested by the settings-tray overlay.
+    ReconfigureWifi,
 }
 
 #[derive(Debug, Error)]
@@ -166,6 +174,20 @@ pub trait Compositor: Send + Sync {
 
     /// Broadcast a setting update to all connected widgets.
     fn broadcast_setting(&self, setting: SettingUpdate) -> Result<(), CompositorError>;
+
+    /// Report the effective display brightness (0-100) to the settings-tray
+    /// overlay via the `deck_settings_v1` `brightness` event. Default: no-op
+    /// (only the real compositor drives an overlay).
+    fn broadcast_brightness(&self, _value: u8) -> Result<(), CompositorError> {
+        Ok(())
+    }
+
+    /// Report the WiFi setup-AP SSID to the settings-tray overlay via the
+    /// `deck_settings_v1` `wifi_ap` event. `None` means setup mode is inactive.
+    /// Default: no-op.
+    fn broadcast_wifi_ap(&self, _ssid: Option<String>) -> Result<(), CompositorError> {
+        Ok(())
+    }
 
     /// Push fresh params to a single running widget without stopping
     /// its process. Only valid when geometry (size) is unchanged —

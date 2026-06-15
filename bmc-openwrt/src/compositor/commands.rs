@@ -42,6 +42,12 @@ pub enum CompositorCommand {
     BroadcastSetting {
         setting: SettingUpdate,
     },
+    SetBrightness {
+        value: u8,
+    },
+    SetWifiAp {
+        ssid: Option<String>,
+    },
     /// Push fresh params to a running widget without respawning it.
     /// Only valid when geometry (size) is unchanged; the widget keeps
     /// its EGL surface and Slint scene and re-reads its manifest
