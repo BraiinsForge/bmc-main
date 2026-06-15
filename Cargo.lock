@@ -1290,6 +1290,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-overlay-settings-tray"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bmc-platform",
+ "bmc-render",
+ "bmc-svg-compiler",
+ "bmc-system-overlay",
+ "bmc-wasm-protocol",
+ "tracing",
+]
+
+[[package]]
 name = "bmc-platform"
 version = "0.1.0"
 dependencies = [
