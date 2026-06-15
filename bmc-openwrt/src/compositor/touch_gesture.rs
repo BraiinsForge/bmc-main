@@ -24,6 +24,15 @@ pub const DRAG_DEAD_ZONE: f64 = 15.0;
 /// Default maximum vertical deviation allowed during a horizontal drag.
 pub const DRAG_MAX_Y_DEVIATION: f64 = 150.0;
 
+/// Fraction of screen height that accepts a top-edge reveal origin.
+pub const EDGE_HOT_ZONE_FRACTION: f64 = 0.20;
+
+/// Downward motion required before a top-edge reveal activates.
+pub const EDGE_ACTIVATION_DY: f64 = 40.0;
+
+/// Maximum horizontal deviation for top-edge reveal activation.
+pub const EDGE_MAX_X_DEVIATION: f64 = 150.0;
+
 /// Default number of recent position samples kept for velocity estimation.
 pub const VELOCITY_SAMPLE_COUNT: usize = 5;
 
@@ -50,6 +59,14 @@ pub struct GestureConfig {
     pub tap_max_duration_ms: u32,
     /// Maximum movement (logical pixels) for a tap gesture.
     pub tap_max_movement: f64,
+    /// Fraction of screen height that accepts a top-edge reveal origin.
+    pub edge_hot_zone_fraction: f64,
+    /// Downward motion required before a top-edge reveal activates.
+    pub edge_activation_dy: f64,
+    /// Maximum horizontal deviation for top-edge reveal activation.
+    pub edge_max_x_deviation: f64,
+    /// Screen height in logical pixels; `None` disables edge reveal.
+    pub screen_height: Option<f64>,
 }
 
 impl Default for GestureConfig {
@@ -60,6 +77,10 @@ impl Default for GestureConfig {
             velocity_sample_count: VELOCITY_SAMPLE_COUNT,
             tap_max_duration_ms: TAP_MAX_DURATION_MS,
             tap_max_movement: TAP_MAX_MOVEMENT,
+            edge_hot_zone_fraction: EDGE_HOT_ZONE_FRACTION,
+            edge_activation_dy: EDGE_ACTIVATION_DY,
+            edge_max_x_deviation: EDGE_MAX_X_DEVIATION,
+            screen_height: None,
         }
     }
 }
@@ -78,6 +99,32 @@ pub enum TouchGesture {
     DragEnd { dx: f64, velocity_x: f32 },
 }
 
+/// Which screen edge a reveal gesture originated from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GestureBorder {
+    Top,
+    Bottom,
+}
+
+/// Gesture activation emitted on the motion sample that claims a touch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotionActivation {
+    /// No gesture claimed this motion sample.
+    None,
+    /// Horizontal scene drag claimed this touch sequence.
+    SceneDrag,
+    /// Edge reveal claimed this touch sequence.
+    RevealEdge(GestureBorder),
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum EdgeState {
+    #[default]
+    Ineligible,
+    Candidate,
+    Active,
+}
+
 /// Pure gesture state machine.
 ///
 /// Positions are in the Smithay logical coordinate space. Callers pass
@@ -92,17 +139,13 @@ pub struct GestureState {
     current: Point<f64, Logical>,
     start_time_ms: u32,
     drag_active: bool,
+    top_edge: EdgeState,
+    bottom_edge: EdgeState,
     /// Recent `(x_logical, time_ms)` samples for velocity estimation.
     velocity_samples: VecDeque<(f64, u32)>,
 }
 
 impl GestureState {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    #[cfg(test)]
     #[must_use]
     pub fn with_config(config: GestureConfig) -> Self {
         Self {
@@ -123,21 +166,28 @@ impl GestureState {
         self.current = location;
         self.start_time_ms = time_ms;
         self.drag_active = false;
+        self.top_edge = if self.top_edge_contains(location.y) {
+            EdgeState::Candidate
+        } else {
+            EdgeState::Ineligible
+        };
+        self.bottom_edge = if self.bottom_edge_contains(location.y) {
+            EdgeState::Candidate
+        } else {
+            EdgeState::Ineligible
+        };
         self.velocity_samples.clear();
         self.velocity_samples.push_back((location.x, time_ms));
     }
 
-    /// Update the current touch position. Returns `true` when this call
-    /// transitions `drag_active` from `false` to `true`.
-    pub fn on_motion(&mut self, location: Point<f64, Logical>, time_ms: u32) -> bool {
+    /// Update the current touch position and report first activation.
+    pub fn on_motion(&mut self, location: Point<f64, Logical>, time_ms: u32) -> MotionActivation {
         if !self.active {
-            return false;
+            return MotionActivation::None;
         }
         self.current = location;
         self.push_velocity_sample(location.x, time_ms);
-        let was_active = self.drag_active;
-        self.update_drag_activation();
-        self.drag_active && !was_active
+        self.update_motion_activation()
     }
 
     /// Finalize the touch. Returns the detected gesture, if any.
@@ -148,6 +198,8 @@ impl GestureState {
         self.active = false;
         let gesture = self.classify(time_ms);
         self.drag_active = false;
+        self.top_edge = EdgeState::Ineligible;
+        self.bottom_edge = EdgeState::Ineligible;
         gesture
     }
 
@@ -156,6 +208,29 @@ impl GestureState {
     pub fn on_cancel(&mut self) {
         self.active = false;
         self.drag_active = false;
+        self.top_edge = EdgeState::Ineligible;
+        self.bottom_edge = EdgeState::Ineligible;
+    }
+
+    /// The caller could not find an armed edge to consume the reveal. Drop the
+    /// reveal candidacy so the same touch can still become a scene drag.
+    pub fn reject_edge_reveal(&mut self) {
+        if matches!(self.top_edge, EdgeState::Candidate | EdgeState::Active) {
+            self.top_edge = EdgeState::Ineligible;
+        }
+        if matches!(self.bottom_edge, EdgeState::Candidate | EdgeState::Active) {
+            self.bottom_edge = EdgeState::Ineligible;
+        }
+    }
+
+    /// The caller consumed the reveal; latch it so no further activation fires.
+    pub fn confirm_edge_reveal(&mut self) {
+        if matches!(self.top_edge, EdgeState::Candidate) {
+            self.top_edge = EdgeState::Active;
+        }
+        if matches!(self.bottom_edge, EdgeState::Candidate) {
+            self.bottom_edge = EdgeState::Active;
+        }
     }
 
     /// Drag info while a drag is active (past dead zone, finger still down).
@@ -177,16 +252,64 @@ impl GestureState {
         }
     }
 
-    fn update_drag_activation(&mut self) {
-        if self.drag_active {
-            return;
+    fn top_edge_contains(&self, y: f64) -> bool {
+        let Some(h) = self.config.screen_height else {
+            return false;
+        };
+        y <= h * self.config.edge_hot_zone_fraction
+    }
+
+    fn bottom_edge_contains(&self, y: f64) -> bool {
+        let Some(h) = self.config.screen_height else {
+            return false;
+        };
+        y >= h * (1.0 - self.config.edge_hot_zone_fraction)
+    }
+
+    fn update_motion_activation(&mut self) -> MotionActivation {
+        if self.drag_active
+            || matches!(self.top_edge, EdgeState::Active)
+            || matches!(self.bottom_edge, EdgeState::Active)
+        {
+            return MotionActivation::None;
         }
         let dx = (self.current.x - self.start.x).abs();
-        let dy = (self.current.y - self.start.y).abs();
-        if dx > self.config.drag_dead_zone && dy <= self.config.drag_max_y_deviation {
+        let dy_signed = self.current.y - self.start.y;
+
+        // Check edge reveals before scene drag. An edge swipe may drift
+        // horizontally past the scene-drag dead zone; the vertical activation
+        // threshold decides that sample belongs to reveal.
+        if matches!(self.top_edge, EdgeState::Candidate)
+            && dy_signed >= self.config.edge_activation_dy
+            && dx <= self.config.edge_max_x_deviation
+        {
+            tracing::debug!(
+                "Top-edge reveal activated: dy={:.1}, dx={:.1}",
+                dy_signed,
+                dx
+            );
+            return MotionActivation::RevealEdge(GestureBorder::Top);
+        }
+
+        if matches!(self.bottom_edge, EdgeState::Candidate)
+            && dy_signed <= -self.config.edge_activation_dy
+            && dx <= self.config.edge_max_x_deviation
+        {
+            tracing::debug!(
+                "Bottom-edge reveal activated: dy={:.1}, dx={:.1}",
+                dy_signed,
+                dx
+            );
+            return MotionActivation::RevealEdge(GestureBorder::Bottom);
+        }
+
+        if dx > self.config.drag_dead_zone && dy_signed.abs() <= self.config.drag_max_y_deviation {
             self.drag_active = true;
             tracing::debug!("Drag activated: dx={:.1}", dx);
+            return MotionActivation::SceneDrag;
         }
+
+        MotionActivation::None
     }
 
     fn classify(&self, end_time_ms: u32) -> Option<TouchGesture> {
@@ -248,53 +371,64 @@ fn compute_velocity(samples: &VecDeque<(f64, u32)>) -> f32 {
 mod tests {
     use smithay::utils::{Logical, Point};
 
-    use super::{DragInfo, GestureConfig, GestureState, TouchGesture};
+    use super::{
+        DragInfo, GestureBorder, GestureConfig, GestureState, MotionActivation, TouchGesture,
+    };
 
     fn p(x: f64, y: f64) -> Point<f64, Logical> {
         Point::<f64, Logical>::from((x, y))
     }
 
+    fn edge_aware() -> GestureState {
+        GestureState::with_config(GestureConfig {
+            screen_height: Some(480.0),
+            ..GestureConfig::default()
+        })
+    }
+
     #[test]
     fn short_touch_under_dead_zone_is_a_tap() {
-        let mut g = GestureState::new();
+        let mut g = GestureState::default();
         g.on_down(p(100.0, 200.0), 0);
-        assert!(!g.on_motion(p(110.0, 205.0), 50));
+        assert_eq!(g.on_motion(p(110.0, 205.0), 50), MotionActivation::None);
         assert_eq!(g.on_up(100), Some(TouchGesture::Tap));
     }
 
     #[test]
     fn slow_long_touch_is_not_a_tap() {
-        let mut g = GestureState::new();
+        let mut g = GestureState::default();
         g.on_down(p(100.0, 200.0), 0);
         assert_eq!(g.on_up(400), None);
     }
 
     #[test]
     fn horizontal_drag_beyond_dead_zone_activates_drag() {
-        let mut g = GestureState::new();
+        let mut g = GestureState::default();
         g.on_down(p(100.0, 200.0), 0);
-        assert!(!g.on_motion(p(110.0, 200.0), 10));
-        assert!(
+        assert_eq!(g.on_motion(p(110.0, 200.0), 10), MotionActivation::None);
+        assert_eq!(
             g.on_motion(p(120.0, 200.0), 20),
-            "drag should activate past dead zone"
+            MotionActivation::SceneDrag,
+            "drag should activate past dead zone",
         );
         assert_eq!(g.drag_info(), Some(DragInfo { dx: 20.0 }));
     }
 
     #[test]
     fn excessive_vertical_deviation_blocks_drag() {
-        let mut g = GestureState::new();
+        let mut g = GestureState::default();
         g.on_down(p(100.0, 200.0), 0);
-        assert!(
-            !g.on_motion(p(200.0, 400.0), 10),
-            "dy > DRAG_MAX_Y_DEVIATION must not activate drag"
+        assert_eq!(
+            g.on_motion(p(200.0, 400.0), 10),
+            MotionActivation::None,
+            "dy > DRAG_MAX_Y_DEVIATION must not activate drag",
         );
         assert_eq!(g.drag_info(), None);
     }
 
     #[test]
     fn drag_release_emits_dragend_with_velocity() {
-        let mut g = GestureState::new();
+        let mut g = GestureState::default();
         g.on_down(p(0.0, 200.0), 0);
         g.on_motion(p(50.0, 200.0), 50);
         g.on_motion(p(100.0, 200.0), 100);
@@ -315,7 +449,7 @@ mod tests {
 
     #[test]
     fn cancel_aborts_without_emitting_gesture() {
-        let mut g = GestureState::new();
+        let mut g = GestureState::default();
         g.on_down(p(100.0, 200.0), 0);
         g.on_motion(p(200.0, 200.0), 50);
         assert!(g.drag_info().is_some());
@@ -327,7 +461,7 @@ mod tests {
 
     #[test]
     fn duplicate_timestamps_produce_zero_velocity() {
-        let mut g = GestureState::new();
+        let mut g = GestureState::default();
         g.on_down(p(0.0, 0.0), 42);
         g.on_motion(p(80.0, 0.0), 42);
         g.on_motion(p(200.0, 0.0), 42);
@@ -345,8 +479,8 @@ mod tests {
 
     #[test]
     fn motion_before_down_is_a_no_op() {
-        let mut g = GestureState::new();
-        assert!(!g.on_motion(p(0.0, 0.0), 0));
+        let mut g = GestureState::default();
+        assert_eq!(g.on_motion(p(0.0, 0.0), 0), MotionActivation::None);
         assert_eq!(g.on_up(0), None);
     }
 
@@ -358,9 +492,10 @@ mod tests {
         };
         let mut g = GestureState::with_config(config);
         g.on_down(p(100.0, 200.0), 0);
-        assert!(
+        assert_eq!(
             g.on_motion(p(103.0, 200.0), 10),
-            "3 px motion should activate drag when dead zone is 2"
+            MotionActivation::SceneDrag,
+            "3 px motion should activate drag when dead zone is 2",
         );
     }
 
@@ -380,6 +515,120 @@ mod tests {
             g.on_up(150),
             Some(TouchGesture::Tap),
             "50 px motion should still count as tap at tap_max_movement=200"
+        );
+    }
+
+    #[test]
+    fn top_edge_reveal_activates_on_motion_from_hot_zone() {
+        let mut g = edge_aware();
+        g.on_down(p(100.0, 80.0), 0);
+
+        assert_eq!(
+            g.on_motion(p(100.0, 121.0), 10),
+            MotionActivation::RevealEdge(GestureBorder::Top)
+        );
+    }
+
+    #[test]
+    fn diagonal_downward_swipe_from_top_band_reveals_edge() {
+        let mut g = edge_aware();
+        g.on_down(p(100.0, 80.0), 0);
+
+        assert_eq!(
+            g.on_motion(p(200.0, 130.0), 10),
+            MotionActivation::RevealEdge(GestureBorder::Top),
+            "edge swipes may drift horizontally while moving down"
+        );
+    }
+
+    #[test]
+    fn top_edge_reveal_ignores_touch_started_in_the_middle() {
+        let mut g = edge_aware();
+        g.on_down(p(100.0, 200.0), 0);
+
+        assert_eq!(g.on_motion(p(100.0, 260.0), 10), MotionActivation::None);
+    }
+
+    #[test]
+    fn horizontal_drag_from_top_band_still_navigates_scenes() {
+        let mut g = edge_aware();
+        g.on_down(p(100.0, 80.0), 0);
+
+        assert_eq!(g.on_motion(p(116.0, 80.0), 10), MotionActivation::SceneDrag);
+    }
+
+    #[test]
+    fn top_edge_reveal_activates_only_once_per_sequence() {
+        let mut g = edge_aware();
+        g.on_down(p(100.0, 80.0), 0);
+
+        assert_eq!(
+            g.on_motion(p(100.0, 121.0), 10),
+            MotionActivation::RevealEdge(GestureBorder::Top)
+        );
+        // Caller consumed the reveal; latch so no further activation fires.
+        g.confirm_edge_reveal();
+        assert_eq!(g.on_motion(p(100.0, 180.0), 20), MotionActivation::None);
+    }
+
+    #[test]
+    fn top_edge_reveal_prevents_later_scene_drag() {
+        let mut g = edge_aware();
+        g.on_down(p(100.0, 80.0), 0);
+
+        assert_eq!(
+            g.on_motion(p(100.0, 121.0), 10),
+            MotionActivation::RevealEdge(GestureBorder::Top)
+        );
+        // Caller consumed the reveal; latch so scene drag cannot fire.
+        g.confirm_edge_reveal();
+        assert_eq!(g.on_motion(p(200.0, 121.0), 20), MotionActivation::None);
+        assert_eq!(g.drag_info(), None);
+    }
+
+    #[test]
+    fn default_config_does_not_silently_disable_reveal() {
+        // A default-constructed config used as-is must not be a valid "reveal off"
+        // sentinel; screen height is required to be set explicitly.
+        let cfg = GestureConfig::default();
+        assert!(
+            cfg.screen_height.is_none(),
+            "screen_height must be opt-in, not 0.0"
+        );
+    }
+
+    #[test]
+    fn top_edge_not_consumed_allows_scene_drag_fallback() {
+        let mut g = edge_aware();
+        g.on_down(p(100.0, 10.0), 0);
+        // First downward sample arms the reveal candidate -> reveal.
+        assert_eq!(
+            g.on_motion(p(110.0, 60.0), 16),
+            MotionActivation::RevealEdge(GestureBorder::Top)
+        );
+        // Caller found no armed edge and rejects the reveal.
+        g.reject_edge_reveal();
+        // A subsequent horizontal sample must still be able to become a scene drag.
+        assert_eq!(g.on_motion(p(260.0, 62.0), 32), MotionActivation::SceneDrag);
+    }
+
+    #[test]
+    fn bottom_edge_upward_swipe_reveals() {
+        let mut g = edge_aware(); // screen_height Some(480.0)
+        g.on_down(p(100.0, 470.0), 0); // inside bottom hot zone
+        assert_eq!(
+            g.on_motion(p(108.0, 410.0), 16),
+            MotionActivation::RevealEdge(GestureBorder::Bottom)
+        );
+    }
+
+    #[test]
+    fn top_edge_downward_swipe_reveals() {
+        let mut g = edge_aware();
+        g.on_down(p(100.0, 10.0), 0);
+        assert_eq!(
+            g.on_motion(p(108.0, 60.0), 16),
+            MotionActivation::RevealEdge(GestureBorder::Top)
         );
     }
 }
