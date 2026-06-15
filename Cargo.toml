@@ -48,6 +48,7 @@ members = [
     "bmc-widget-codegen",
     "bmc-widget-manifest",
     "bmc-widget-protocol",
+    "deck-screen-edge-v1",
     "system-overlays/bmc-overlay-device-info",
     "system-overlays/bmc-overlay-offline",
     "system-overlays/bmc-system-overlay",
@@ -178,6 +179,7 @@ bmc-wasm-runtime = { path = "bmc-wasm-runtime" }
 bmc-widget = { path = "bmc-widget" }
 bmc-widget-manifest = { path = "bmc-widget-manifest" }
 bmc-widget-protocol = { path = "bmc-widget-protocol" }
+deck-screen-edge-v1 = { path = "deck-screen-edge-v1" }
 bstr = "1.11.3"
 bytemuck = { version = "1.14", features = ["derive"] }
 bytes = { version = "1.6.0", default-features = false }
