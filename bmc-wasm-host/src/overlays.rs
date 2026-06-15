@@ -73,35 +73,92 @@ pub fn render_hosted_overlay(
         shared.scratch.max_size(),
         size,
     );
+    // Blit-only slide branch: while a slide is animating with unchanged content,
+    // skip Taffy layout + femtovg repaint entirely and present the once-painted
+    // GPU cache at the current offset. `None` means full-paint this frame
+    // (content changed, or no slide).
+    let cached_blit = overlay.overlay_mut().wants_cached_blit(now);
     let (dmabuf, slot) = {
         // Lock lifetime matches WidgetSlot::render: held across render+blit+
         // fence-wait, then dropped BEFORE export_and_swap. Bind it and `drop` it
         // explicitly (a bare `let _lock` would drop at block end, after export).
         let gpu_render_lock = shared.acquire_gpu_render_lock("host_system_overlay")?;
         overlay.target_mut().ensure_current(&shared.egl)?;
-        let _staging = shared.scratch.begin_frame(&shared.egl, size.0, size.1);
-        crate::slot::normalize_gl_state(&shared.egl, size.0, size.1);
 
-        // SAFETY: two invariants hold here.
-        // (1) Non-null + outlives-call: `ptr` is `NonNull<dyn Renderer>`, so
-        //     the address is guaranteed non-null, and the renderer is owned by
-        //     `main_loop::run` for the entire program lifetime — it outlives
-        //     this call.
-        // (2) Aliasing: `SharedHost` does not own the renderer (see its
-        //     aliasing invariant in host.rs); the host renders components
-        //     strictly one at a time in its single render loop, so no other
-        //     `&mut dyn Renderer` to this renderer is live during the call.
-        let renderer = unsafe { ptr.as_ptr().as_mut() }
-            .expect("BUG: NonNull renderer is non-null by construction");
-        renderer.begin_frame_with_clear(size.0, size.1, 1.0, FrameClear::TransparentBlack);
-        overlay.overlay_mut().render(renderer, size);
-        renderer.flush();
+        if let Some(offset_y) = cached_blit {
+            // Animation frame: clear-transparent + shader-copy the cached panel
+            // into the export buffer at the slide offset. No layout, no paint.
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "overlay band height in pixels converts to NDC without meaningful loss"
+            )]
+            let panel_h = size.1 as f32;
+            let fbo = overlay.target_mut().current_fbo();
+            overlay.target_mut().blit_cached_panel(
+                &shared.egl,
+                &shared.scratch,
+                fbo,
+                size,
+                panel_h,
+                offset_y,
+            )?;
+            shared.flush_and_wait_gl();
+            drop(gpu_render_lock);
+            overlay.target_mut().export_and_swap()?
+        } else {
+            let _staging = shared.scratch.begin_frame(&shared.egl, size.0, size.1);
+            crate::slot::normalize_gl_state(&shared.egl, size.0, size.1);
 
-        let fbo = overlay.target_mut().current_fbo();
-        shared.blit_staging_to(fbo, size.0, size.1);
-        shared.flush_and_wait_gl();
-        drop(gpu_render_lock); // release before the buffer handoff, like slot.rs
-        overlay.target_mut().export_and_swap()?
+            // SAFETY: two invariants hold here.
+            // (1) Non-null + outlives-call: `ptr` is `NonNull<dyn Renderer>`, so
+            //     the address is guaranteed non-null, and the renderer is owned by
+            //     `main_loop::run` for the entire program lifetime — it outlives
+            //     this call.
+            // (2) Aliasing: `SharedHost` does not own the renderer (see its
+            //     aliasing invariant in host.rs); the host renders components
+            //     strictly one at a time in its single render loop, so no other
+            //     `&mut dyn Renderer` to this renderer is live during the call.
+            let renderer = unsafe { ptr.as_ptr().as_mut() }
+                .expect("BUG: NonNull renderer is non-null by construction");
+            renderer.begin_frame_with_clear(size.0, size.1, 1.0, FrameClear::TransparentBlack);
+            overlay.overlay_mut().render(renderer, size);
+            renderer.flush();
+
+            // Refresh the cache from this paint if the content changed, so a
+            // later animation frame can present it without repainting.
+            if overlay.overlay_mut().take_content_dirty() {
+                overlay
+                    .target_mut()
+                    .capture_panel(&shared.egl, &shared.scratch, size.0, size.1)?;
+            }
+
+            // A dirty frame mid-slide must present at the offset, not the
+            // settled full-frame blit (which would snap the panel into place).
+            // After clearing the dirty flag above, `wants_cached_blit` reports
+            // the offset iff a slide is still animating.
+            let fbo = overlay.target_mut().current_fbo();
+            match overlay.overlay_mut().wants_cached_blit(now) {
+                Some(offset_y) if overlay.target_mut().is_cached() => {
+                    #[expect(
+                        clippy::cast_precision_loss,
+                        reason = "overlay band height in pixels converts to NDC without meaningful loss"
+                    )]
+                    let panel_h = size.1 as f32;
+                    overlay.target_mut().blit_cached_panel(
+                        &shared.egl,
+                        &shared.scratch,
+                        fbo,
+                        size,
+                        panel_h,
+                        offset_y,
+                    )?;
+                }
+                Some(_) | None => shared.blit_staging_to(fbo, size.0, size.1),
+            }
+            shared.flush_and_wait_gl();
+            drop(gpu_render_lock); // release before the buffer handoff, like slot.rs
+            overlay.target_mut().export_and_swap()?
+        }
     };
     // Mint+attach the wl_buffer and mark the slot in-flight. Done inside one
     // HostedOverlay method so target and client are borrowed together legally.
