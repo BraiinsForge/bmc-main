@@ -343,6 +343,69 @@ pub enum TreeNode {
     },
 }
 
+/// Column layout.
+#[must_use]
+pub fn col(props: PropsData, children: impl IntoIterator<Item = TreeNode>) -> TreeNode {
+    TreeNode::Column(props, children.into_iter().collect())
+}
+
+/// Row layout.
+#[must_use]
+pub fn row(props: PropsData, children: impl IntoIterator<Item = TreeNode>) -> TreeNode {
+    TreeNode::Row(props, children.into_iter().collect())
+}
+
+/// Centered container.
+#[must_use]
+pub fn center(props: PropsData, children: impl IntoIterator<Item = TreeNode>) -> TreeNode {
+    TreeNode::Center(props, children.into_iter().collect())
+}
+
+/// Single-span paragraph.
+#[must_use]
+pub fn text(content: impl Into<String>, style: TextStyle) -> TreeNode {
+    TreeNode::Paragraph {
+        props: PropsData::default(),
+        base_style: style,
+        spans: vec![SpanData {
+            text: content.into(),
+            weight: None,
+            color: None,
+            italic: false,
+            underline: false,
+            strikethrough: false,
+        }],
+    }
+}
+
+/// Create a button node.
+#[must_use]
+pub fn make_button(
+    id: impl Into<String>,
+    label: impl Into<String>,
+    style: ButtonStyle,
+    size: ButtonSize,
+    icon_id: Option<SvgId>,
+    disabled: bool,
+    skin: Option<ButtonSkinData>,
+) -> TreeNode {
+    TreeNode::Button {
+        id: id.into(),
+        label: label.into(),
+        style: style as u8,
+        size: size as u8,
+        icon_id,
+        disabled,
+        skin,
+    }
+}
+
+/// Flexible spacer.
+#[must_use]
+pub fn spacer(flex: f32) -> TreeNode {
+    TreeNode::Spacer { flex }
+}
+
 /// Reader for deserializing tree from bytes
 struct TreeReader<'a> {
     data: &'a [u8],

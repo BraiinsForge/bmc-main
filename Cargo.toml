@@ -53,6 +53,7 @@ members = [
     "deck-settings-v1",
     "system-overlays/bmc-overlay-device-info",
     "system-overlays/bmc-overlay-offline",
+    "system-overlays/bmc-overlay-settings-tray",
     "system-overlays/bmc-system-overlay",
     "system-overlays/layer-shell-test-client",
     "system-overlays/screen-edge-validation-overlay",
@@ -163,6 +164,7 @@ bmc-nix = { path = "bmc-nix" }
 bmc-nix-init = { path = "bmc-nix-init" }
 bmc-overlay-device-info = { path = "system-overlays/bmc-overlay-device-info" }
 bmc-overlay-offline = { path = "system-overlays/bmc-overlay-offline" }
+bmc-overlay-settings-tray = { path = "system-overlays/bmc-overlay-settings-tray" }
 bmc-platform = { path = "bmc-platform" }
 bmc-render = { path = "bmc-render" }
 bmc-scheduler = { path = "bmc-scheduler" }
@@ -173,6 +175,7 @@ bmc-shared-ii-net-drv = { package = "ii-net-drv", path = "bmc-shared/ii-net-drv"
 bmc-shared-time = { path = "bmc-shared/time" }
 bmc-shared-utils = { path = "bmc-shared/utils" }
 bmc-support = { path = "bmc-support" }
+bmc-svg-compiler = { path = "bmc-wasm-runtime/svg-compiler" }
 bmc-system-overlay = { path = "system-overlays/bmc-system-overlay" }
 bmc-upgrade = { path = "bmc-upgrade" }
 bmc-virt-ipc = { path = "bmc-virt/ipc" }
