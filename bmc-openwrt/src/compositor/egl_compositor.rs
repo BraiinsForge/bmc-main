@@ -19,7 +19,7 @@ use super::{
 };
 use bmc::compositor::{
     ActiveScene, Compositor, CompositorError, CompositorEvent, InstanceId, LedRequestStatusEvent,
-    Position, SceneLayout, Size, WidgetAction,
+    Position, SceneLayout, SettingsCommand, Size, WidgetAction,
 };
 use bmc_platform::TouchTransform;
 use bmc_platform::linux_input::discover_touch_node;
@@ -176,6 +176,8 @@ pub struct EglCompositor {
     /// [`Self::connected_widgets_watch`].
     connected_widgets_tx: watch::Sender<BTreeSet<InstanceId>>,
     action_rx: Mutex<Option<mpsc::UnboundedReceiver<WidgetAction>>>,
+    settings_tx: mpsc::UnboundedSender<SettingsCommand>,
+    settings_rx: Mutex<Option<mpsc::UnboundedReceiver<SettingsCommand>>>,
     thread_handle: Mutex<Option<JoinHandle<()>>>,
     device_access: DeviceAccessConfig,
     profile: bmc_platform::HardwareProfile,
@@ -240,6 +242,7 @@ impl EglCompositor {
         let (status_tx, status_rx) = mpsc::unbounded_channel();
         let (active_scene_tx, _) = watch::channel(None);
         let (connected_widgets_tx, _) = watch::channel(BTreeSet::new());
+        let (settings_tx, settings_rx) = mpsc::unbounded_channel();
 
         Self {
             wayland_display: Mutex::new(None),
@@ -252,6 +255,8 @@ impl EglCompositor {
             active_scene_tx,
             connected_widgets_tx,
             action_rx: Mutex::new(Some(action_rx)),
+            settings_tx,
+            settings_rx: Mutex::new(Some(settings_rx)),
             thread_handle: Mutex::new(None),
             device_access,
             profile,
@@ -276,6 +281,7 @@ impl EglCompositor {
         command_channel: calloop_channel::Channel<CompositorCommand>,
         action_tx: mpsc::UnboundedSender<WidgetAction>,
         event_tx: broadcast::Sender<CompositorEvent>,
+        settings_tx: mpsc::UnboundedSender<SettingsCommand>,
         status_rx: mpsc::UnboundedReceiver<LedRequestStatusEvent>,
         active_scene_tx: watch::Sender<Option<ActiveScene>>,
         connected_widgets_tx: watch::Sender<BTreeSet<InstanceId>>,
@@ -418,6 +424,7 @@ impl EglCompositor {
             listening_socket,
             action_tx,
             event_tx,
+            settings_tx,
             status_rx,
             active_scene_tx,
             connected_widgets_tx,
@@ -853,6 +860,7 @@ struct AppState {
     listening_socket: ListeningSocket,
     action_tx: mpsc::UnboundedSender<WidgetAction>,
     event_tx: broadcast::Sender<CompositorEvent>,
+    settings_tx: mpsc::UnboundedSender<SettingsCommand>,
     status_rx: mpsc::UnboundedReceiver<LedRequestStatusEvent>,
     /// Latest active scene, published to consumers via a `watch` channel.
     active_scene_tx: watch::Sender<Option<ActiveScene>>,
@@ -1941,6 +1949,12 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
                 .deck_widget_state
                 .broadcast_setting(&setting);
         }
+        CompositorCommand::SetBrightness { value } => {
+            state.compositor.settings.set_brightness(value);
+        }
+        CompositorCommand::SetWifiAp { ssid } => {
+            state.compositor.settings.set_wifi_ap(ssid);
+        }
         CompositorCommand::UpdateWidgetParams {
             instance_id,
             params,
@@ -2052,6 +2066,20 @@ fn process_protocol_events(state: &mut AppState) {
         });
     }
 
+    for action in state.compositor.settings.drain_actions() {
+        use crate::compositor::settings::SettingsAction;
+        let cmd = match action {
+            SettingsAction::SetBrightness(value) => SettingsCommand::SetBrightness(value),
+            SettingsAction::ReconfigureWifi => SettingsCommand::ReconfigureWifi,
+        };
+        if let Err(e) = state.settings_tx.send(cmd) {
+            tracing::error!(
+                ?e,
+                "dropped settings command: action handler receiver closed"
+            );
+        }
+    }
+
     // Status acks come from the tokio side, so they have no calloop wake
     // source of their own — they are drained here every loop iteration. The
     // loop iterates at least every `FRAME_CALLBACK_TICK` (the tick is
@@ -2108,6 +2136,7 @@ impl Compositor for EglCompositor {
             .expect("BUG: command_channel already taken");
         let action_tx = self.action_tx.clone();
         let event_tx = self.event_tx.clone();
+        let settings_tx = self.settings_tx.clone();
         let status_rx = self
             .status_rx
             .lock()
@@ -2131,6 +2160,7 @@ impl Compositor for EglCompositor {
                     command_channel,
                     action_tx,
                     event_tx,
+                    settings_tx,
                     status_rx,
                     active_scene_tx,
                     connected_widgets_tx,
@@ -2263,6 +2293,18 @@ impl Compositor for EglCompositor {
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 
+    fn broadcast_brightness(&self, value: u8) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::SetBrightness { value })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn broadcast_wifi_ap(&self, ssid: Option<String>) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::SetWifiAp { ssid })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
     fn update_widget_params(
         &self,
         instance_id: &InstanceId,
@@ -2282,6 +2324,14 @@ impl Compositor for EglCompositor {
             .expect("BUG: action_rx lock poisoned")
             .take()
             .expect("BUG: action_receiver already taken")
+    }
+
+    fn settings_receiver(&self) -> mpsc::UnboundedReceiver<SettingsCommand> {
+        self.settings_rx
+            .lock()
+            .expect("BUG: settings_rx lock poisoned")
+            .take()
+            .expect("BUG: settings_receiver already taken")
     }
 
     fn request_status_sender(&self) -> mpsc::UnboundedSender<LedRequestStatusEvent> {
@@ -2379,6 +2429,7 @@ mod tests {
             .expect("BUG: test Wayland socket should bind");
         let (action_tx, _) = mpsc::unbounded_channel();
         let (event_tx, _) = tokio::sync::broadcast::channel(64);
+        let (settings_tx, _) = mpsc::unbounded_channel();
         let (_status_tx, status_rx) = mpsc::unbounded_channel();
         let (active_scene_tx, _) = tokio::sync::watch::channel(None);
         let (connected_widgets_tx, _) =
@@ -2391,6 +2442,7 @@ mod tests {
             listening_socket,
             action_tx,
             event_tx,
+            settings_tx,
             status_rx,
             active_scene_tx,
             connected_widgets_tx,
@@ -3302,5 +3354,25 @@ mod tests {
         assert_eq!(clamp_initial_lifecycle(Dormant), Dormant);
         assert_eq!(clamp_initial_lifecycle(Prepared), Prepared);
         assert_eq!(clamp_initial_lifecycle(Visible), Visible);
+    }
+
+    #[test]
+    fn settings_receiver_receives_compositor_settings_commands() {
+        use bmc::compositor::{Compositor, SettingsCommand};
+        use bmc_platform::{HardwareProfile, Product};
+
+        let compositor =
+            super::EglCompositor::new(HardwareProfile::for_product(Product::Bmc100), true);
+        let mut rx = compositor.settings_receiver();
+
+        compositor
+            .settings_tx
+            .send(SettingsCommand::SetBrightness(42))
+            .expect("BUG: settings receiver should be alive in this test");
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(SettingsCommand::SetBrightness(42))
+        ));
     }
 }

@@ -47,25 +47,11 @@ impl SettingsState {
         self.resources.retain(|r| r != resource);
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "drained and broadcast by the bmc-forwarding wiring step"
-        )
-    )]
     pub fn drain_actions(&mut self) -> Vec<SettingsAction> {
         std::mem::take(&mut self.pending_actions)
     }
 
     /// Record the effective brightness and emit it to every live resource.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "drained and broadcast by the bmc-forwarding wiring step"
-        )
-    )]
     pub fn set_brightness(&mut self, value: u8) {
         self.last_brightness = Some(value);
         self.prune();
@@ -76,13 +62,6 @@ impl SettingsState {
 
     /// Record the setup-AP SSID (`None` = inactive) and emit it; an inactive
     /// state is sent as the empty string.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "drained and broadcast by the bmc-forwarding wiring step"
-        )
-    )]
     pub fn set_wifi_ap(&mut self, ssid: Option<String>) {
         self.last_wifi_ap.clone_from(&ssid);
         self.prune();
