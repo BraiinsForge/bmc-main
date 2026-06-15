@@ -19,27 +19,21 @@ const MIN_INTER_FRAME: Duration = Duration::from_millis(8);
 pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()> {
     let config: LayerConfig = overlay.layer_config();
 
-    // Connect and configure the layer surface; learn the real size.
     let mut client = LayerSurfaceClient::connect(&config)?;
     let mut size = resolved_configured_size(config.size, client.size());
 
-    // GPU stack (owned in standalone mode).
     let egl = EglContext::new()?;
     let mut scratch = SharedRenderScratch::new(&egl, size.0, size.1)?;
     let gpu_lock = GpuRenderLock::from_env()?;
-    // SAFETY: EglContext::new makes the GL context current on this thread; the standalone process renders single-threaded.
-    let mut renderer = unsafe {
-        FemtoVgRenderer::new(
-            EglContext::get_proc_address,
-            size.0,
-            size.1,
-            scratch.staging_fbo_id(),
-            0,
-        )?
-    };
+    let mut renderer = create_standalone_renderer(&scratch, size)?;
     let mut target = OverlayRenderTarget::new(&egl, size.0, size.1)?;
 
     overlay.init();
+    let screen_edge = overlay.screen_edge();
+    if let Some(edge) = screen_edge {
+        client.create_screen_edge(edge)?;
+    }
+    let mut revealed = false;
     let mut last_render: Option<Instant> = None;
     // A wanted render that can't run yet (no free buffer slot, or inter-frame
     // throttle) must NOT be lost — it stays pending until a frame actually
@@ -57,78 +51,233 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
             target.mark_released_buffer(&released);
         }
         if let Some(configured_size) = client.take_configured_size_change() {
-            let new_size = resolved_configured_size(config.size, configured_size);
-            if new_size != size {
-                resize_standalone_rendering(
-                    &egl,
-                    &mut scratch,
-                    &mut renderer,
-                    &mut target,
-                    &mut client,
-                    new_size,
-                )?;
-                size = new_size;
-            }
+            resize_standalone_if_needed(
+                &egl,
+                &mut scratch,
+                &mut renderer,
+                &mut target,
+                &mut client,
+                config.size,
+                configured_size,
+                &mut size,
+                &mut mapped,
+                &mut last_render,
+            )?;
             pending_render = true;
         }
 
+        drain_screen_edge_events(
+            &mut client,
+            &mut *overlay,
+            screen_edge.is_some(),
+            &mut revealed,
+            &mut pending_render,
+        );
+
         let now = Instant::now();
         let tick = overlay.tick(now);
-        if tick.visible {
+        let want_visible = match screen_edge {
+            Some(_) => revealed && tick.visible,
+            None => tick.visible,
+        };
+        if want_visible {
             if tick.wants_render || !mapped || client.take_needs_render() {
                 pending_render = true;
             }
         } else {
             let _ = client.take_needs_render();
-            if mapped {
-                client.attach_null_buffer()?;
-                target.free_for_hide(&egl, &mut client);
-                mapped = false;
-                pending_render = false;
-                last_render = None;
+            // Hidden overlays must drop latched render requests before the
+            // later render gate observes them.
+            pending_render = false;
+            if hide_standalone_if_mapped(
+                &egl,
+                &mut target,
+                &mut client,
+                &mut mapped,
+                &mut last_render,
+            )? && screen_edge.is_some()
+            {
+                revealed = false;
+                client.rearm_screen_edge()?;
             }
         }
 
-        // Remaining time on the inter-frame floor, if a render was throttled.
         let inter_frame_remaining = last_render
             .and_then(|t| MIN_INTER_FRAME.checked_sub(now.duration_since(t)))
             .filter(|d| !d.is_zero());
 
-        // `target.available()` gates on a free (released) export slot, so we
-        // never draw into a buffer the compositor is still displaying.
-        if pending_render && target.available() && inter_frame_remaining.is_none() {
-            render_frame(
-                &egl,
-                &scratch,
-                &gpu_lock,
-                &mut target,
-                &mut renderer,
-                &mut *overlay,
-                &mut client,
-                size,
-            )?;
-            pending_render = false;
-            mapped = true;
-            last_render = Some(now);
-        }
+        render_standalone_if_ready(
+            &egl,
+            &mut scratch,
+            &gpu_lock,
+            &mut target,
+            &mut renderer,
+            &mut *overlay,
+            &mut client,
+            config.size,
+            &mut size,
+            &mut pending_render,
+            &mut mapped,
+            &mut last_render,
+            inter_frame_remaining,
+            now,
+        )?;
 
-        let timeout = if pending_render && inter_frame_remaining.is_some() {
-            inter_frame_remaining
-        } else if pending_render {
-            None
-        } else {
-            tick.next_wake.map(|t| t.saturating_duration_since(now))
-        };
-        let timeout_ms = timeout.map_or(-1, |d| {
-            i32::try_from(d.as_millis().max(1)).unwrap_or(i32::MAX)
-        });
-        client.poll_dispatch(timeout_ms)?;
+        client.poll_dispatch(poll_timeout_ms(
+            pending_render,
+            inter_frame_remaining,
+            tick.next_wake,
+            now,
+        ))?;
     }
-    // Not called on the ? error paths above: the process exits shortly after and the Wayland connection close releases the wl_buffers.
-    // DoubleBufferState does not free on Drop; release GL/EGL/GBM explicitly.
+    destroy_standalone_rendering(&egl, scratch, renderer, target);
+    Ok(())
+}
+
+fn drain_screen_edge_events(
+    client: &mut LayerSurfaceClient,
+    overlay: &mut dyn SystemOverlay,
+    has_screen_edge: bool,
+    revealed: &mut bool,
+    pending_render: &mut bool,
+) {
+    if !has_screen_edge {
+        return;
+    }
+    if client.take_reveal() {
+        *revealed = true;
+        overlay.on_reveal();
+        *pending_render = true;
+    }
+    if client.take_hidden() {
+        *revealed = false;
+    }
+}
+
+fn poll_timeout_ms(
+    pending_render: bool,
+    inter_frame_remaining: Option<Duration>,
+    next_wake: Option<Instant>,
+    now: Instant,
+) -> i32 {
+    let timeout = if pending_render && inter_frame_remaining.is_some() {
+        inter_frame_remaining
+    } else if pending_render {
+        None
+    } else {
+        next_wake.map(|t| t.saturating_duration_since(now))
+    };
+    timeout.map_or(-1, |d| {
+        i32::try_from(d.as_millis().max(1)).unwrap_or(i32::MAX)
+    })
+}
+
+fn destroy_standalone_rendering(
+    egl: &EglContext,
+    scratch: SharedRenderScratch,
+    renderer: FemtoVgRenderer,
+    mut target: OverlayRenderTarget,
+) {
     drop(renderer);
-    target.destroy(&egl);
-    scratch.destroy(&egl);
+    target.destroy(egl);
+    scratch.destroy(egl);
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "resize owns the standalone GPU stack plus layer client"
+)]
+fn resize_standalone_if_needed(
+    egl: &EglContext,
+    scratch: &mut SharedRenderScratch,
+    renderer: &mut FemtoVgRenderer,
+    target: &mut OverlayRenderTarget,
+    client: &mut LayerSurfaceClient,
+    config_size: (u32, u32),
+    configured_size: (u32, u32),
+    size: &mut (u32, u32),
+    mapped: &mut bool,
+    last_render: &mut Option<Instant>,
+) -> anyhow::Result<()> {
+    let new_size = resolved_configured_size(config_size, configured_size);
+    if new_size == *size {
+        return Ok(());
+    }
+    hide_standalone_if_mapped(egl, target, client, mapped, last_render)?;
+    resize_standalone_rendering(egl, scratch, renderer, target, client, new_size)?;
+    *size = new_size;
+    Ok(())
+}
+
+fn hide_standalone_if_mapped(
+    egl: &EglContext,
+    target: &mut OverlayRenderTarget,
+    client: &mut LayerSurfaceClient,
+    mapped: &mut bool,
+    last_render: &mut Option<Instant>,
+) -> anyhow::Result<bool> {
+    if !*mapped {
+        return Ok(false);
+    }
+    client.attach_null_buffer()?;
+    client.roundtrip_after_hide_unmap()?;
+    target.free_for_hide(egl, client)?;
+    *mapped = false;
+    *last_render = None;
+    Ok(true)
+}
+
+fn prepare_standalone_for_render(
+    egl: &EglContext,
+    scratch: &mut SharedRenderScratch,
+    renderer: &mut FemtoVgRenderer,
+    target: &mut OverlayRenderTarget,
+    client: &mut LayerSurfaceClient,
+    config_size: (u32, u32),
+    size: &mut (u32, u32),
+) -> anyhow::Result<()> {
+    if !client.ensure_ready_for_buffer_attach()? {
+        return Ok(());
+    }
+    let new_size = resolved_configured_size(config_size, client.size());
+    if new_size != *size {
+        resize_standalone_rendering(egl, scratch, renderer, target, client, new_size)?;
+        *size = new_size;
+    }
+    Ok(())
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "standalone render owns loop latches plus the GPU stack and layer client"
+)]
+fn render_standalone_if_ready(
+    egl: &EglContext,
+    scratch: &mut SharedRenderScratch,
+    gpu_lock: &GpuRenderLock,
+    target: &mut OverlayRenderTarget,
+    renderer: &mut FemtoVgRenderer,
+    overlay: &mut dyn SystemOverlay,
+    client: &mut LayerSurfaceClient,
+    config_size: (u32, u32),
+    size: &mut (u32, u32),
+    pending_render: &mut bool,
+    mapped: &mut bool,
+    last_render: &mut Option<Instant>,
+    inter_frame_remaining: Option<Duration>,
+    now: Instant,
+) -> anyhow::Result<()> {
+    if !*pending_render || !target.available() || inter_frame_remaining.is_some() {
+        return Ok(());
+    }
+
+    prepare_standalone_for_render(egl, scratch, renderer, target, client, config_size, size)?;
+    render_frame(
+        egl, scratch, gpu_lock, target, renderer, overlay, client, *size,
+    )?;
+    *pending_render = false;
+    *mapped = true;
+    *last_render = Some(now);
     Ok(())
 }
 
@@ -141,22 +290,29 @@ fn resize_standalone_rendering(
     size: (u32, u32),
 ) -> anyhow::Result<()> {
     let new_scratch = SharedRenderScratch::new(egl, size.0, size.1)?;
-    // SAFETY: `egl` is current on this single-threaded standalone render loop,
-    // and `new_scratch` owns the FBO id passed as the renderer's screen target.
-    let new_renderer = unsafe {
+    let new_renderer = create_standalone_renderer(&new_scratch, size)?;
+    let old_scratch = std::mem::replace(scratch, new_scratch);
+    *renderer = new_renderer;
+    old_scratch.destroy(egl);
+    target.resize(egl, client, size.0, size.1)?;
+    Ok(())
+}
+
+fn create_standalone_renderer(
+    scratch: &SharedRenderScratch,
+    size: (u32, u32),
+) -> anyhow::Result<FemtoVgRenderer> {
+    // SAFETY: the standalone process renders on one thread with the current EGL
+    // context, and `scratch` owns the FBO id used as the renderer target.
+    unsafe {
         FemtoVgRenderer::new(
             EglContext::get_proc_address,
             size.0,
             size.1,
-            new_scratch.staging_fbo_id(),
+            scratch.staging_fbo_id(),
             0,
-        )?
-    };
-    let old_scratch = std::mem::replace(scratch, new_scratch);
-    *renderer = new_renderer;
-    old_scratch.destroy(egl);
-    target.resize(egl, client, size.0, size.1);
-    Ok(())
+        )
+    }
 }
 
 #[expect(
