@@ -11,6 +11,7 @@ mod protocol;
 mod render;
 mod scene_cycling;
 mod scene_renderer;
+mod screen_edge;
 mod state;
 mod touch_gesture;
 mod widget_tracker;

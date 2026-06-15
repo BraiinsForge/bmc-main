@@ -14,6 +14,7 @@ use bmc::compositor::InstanceId;
 use bmc_widget_protocol::server::{
     deck_widget_manager_v1::DeckWidgetManagerV1, deck_widget_surface_v1::DeckWidgetSurfaceV1,
 };
+use deck_screen_edge_v1::server::deck_screen_edge_manager_v1::Border;
 use smithay::{
     backend::allocator::{Buffer, Format, Fourcc, Modifier, dmabuf::Dmabuf},
     delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_image_capture_source,
@@ -142,6 +143,7 @@ pub struct CompositorState {
     pub layer_shell_state: WlrLayerShellState,
     /// Tracked wlr-layer-shell surfaces, drawn above the scene.
     pub layer_surfaces: Vec<crate::compositor::layer_surface::LayerEntry>,
+    pub screen_edge_sessions: Vec<crate::compositor::screen_edge::ScreenEdgeSession>,
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
     pub deck_widget_state: DeckWidgetProtocolState,
@@ -320,6 +322,7 @@ impl CompositorState {
 
         let deck_widget_state = DeckWidgetProtocolState::new();
         super::protocol::create_global::<Self>(&display_handle);
+        super::screen_edge::create_global(&display_handle);
 
         // Advertise the display as a wl_output so capture clients can reference it.
         let output = Output::new(
@@ -353,6 +356,7 @@ impl CompositorState {
             xdg_shell_state,
             layer_shell_state,
             layer_surfaces: Vec::new(),
+            screen_edge_sessions: Vec::new(),
             seat_state,
             data_device_state,
             deck_widget_state,
@@ -751,6 +755,61 @@ impl CompositorState {
         })
     }
 
+    /// True when `surface` is tracked as a wlr-layer-shell surface.
+    #[must_use]
+    pub fn surface_has_layer_role(&self, surface: &WlSurface) -> bool {
+        self.layer_surfaces
+            .iter()
+            .any(|entry| entry.surface.wl_surface() == surface)
+    }
+
+    #[must_use]
+    pub fn any_screen_edge_revealed(&self) -> bool {
+        self.screen_edge_sessions
+            .iter()
+            .any(|session| session.flags.revealed)
+    }
+
+    #[must_use]
+    pub fn neighbors_suppressed(&self) -> bool {
+        self.fullscreen_blocker_active() || self.any_screen_edge_revealed()
+    }
+
+    pub fn trigger_screen_edge(&mut self, border: Border) -> bool {
+        let mut resource = None;
+        for session in &mut self.screen_edge_sessions {
+            if session.flags.try_trigger(border) {
+                resource = Some(session.resource.clone());
+                break;
+            }
+        }
+
+        let Some(resource) = resource else {
+            return false;
+        };
+
+        resource.revealed();
+        self.mark_full_output_damage();
+        true
+    }
+
+    /// Re-arm the screen edge bound to `surface` (if any) when `unmapped`. An
+    /// unmap is the hidden resting state, so an overlay that unmaps without
+    /// re-arming would otherwise leave `revealed` set and the scene-drag
+    /// suppression it drives (`any_screen_edge_revealed`) pinned on.
+    fn rearm_screen_edge_on_unmap(&mut self, surface: &WlSurface, unmapped: bool) {
+        if !unmapped {
+            return;
+        }
+        if let Some(session) = self
+            .screen_edge_sessions
+            .iter_mut()
+            .find(|session| session.surface == *surface)
+        {
+            session.flags.rearm();
+        }
+    }
+
     /// Handle a commit for a tracked layer surface. Returns `true` if `surface`
     /// is a layer surface (and was handled), `false` otherwise.
     fn commit_layer_surface(&mut self, surface: &WlSurface) -> bool {
@@ -812,6 +871,7 @@ impl CompositorState {
         let mut dirty: Option<ObjectId> = None;
         let mut had_buffer_change = false;
         let mut had_damage = false;
+        let mut unmapped = false;
         let mut drained_callbacks: Vec<WlCallback> = Vec::new();
 
         with_states(surface, |states| {
@@ -842,6 +902,7 @@ impl CompositorState {
                             replace_buffer(&mut entry.buffer, &mut entry.buffer_id, None);
                         release = old_buf;
                         invalidate = old_id;
+                        unmapped = true;
                         // last_geometry stays so the renderer repaints the vacated region.
                     }
                 }
@@ -865,6 +926,7 @@ impl CompositorState {
         if had_buffer_change || effects.needs_damage || had_damage || had_callbacks {
             self.mark_full_output_damage();
         }
+        self.rearm_screen_edge_on_unmap(surface, unmapped);
 
         true
     }
@@ -1150,6 +1212,9 @@ impl WlrLayerShellHandler for CompositorState {
                 self.invalidated_buffers.push(id);
             }
             self.mark_full_output_damage();
+            let destroyed_surface = surface.wl_surface().clone();
+            self.screen_edge_sessions
+                .retain(|session| session.surface != destroyed_surface);
         } else {
             tracing::warn!("layer_destroyed for untracked surface");
         }
