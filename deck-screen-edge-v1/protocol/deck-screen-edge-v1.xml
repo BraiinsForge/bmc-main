@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="deck_screen_edge_v1">
+  <copyright>
+    Copyright (C) 2026  Braiins Systems s.r.o.
+
+    Forked from kde-screen-edge-v1 (SPDX-FileCopyrightText: 2023 Vlad Zahorodnii,
+    SPDX-License-Identifier: MIT-CMU). Renamed and re-contracted: the surface is
+    hidden by default and holds no buffer while hidden; revealed/hidden events
+    drive allocation and release.
+  </copyright>
+
+  <interface name="deck_screen_edge_manager_v1" version="1">
+    <description summary="screen edge manager">
+      Associates an auto-hide reveal action with a screen edge for a layer
+      surface. This is a Deck desktop-shell implementation detail; regular
+      clients must not use it.
+    </description>
+
+    <enum name="error">
+      <entry name="invalid_border" value="0" summary="the specified border value is invalid"/>
+      <entry name="invalid_role" value="1" summary="the surface has invalid role"/>
+      <entry name="already_constructed" value="2" summary="the surface already has a screen edge"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the screen edge manager">
+        Destroy the manager. Does not destroy objects created with it.
+      </description>
+    </request>
+
+    <enum name="border">
+      <description summary="screen border">
+        Top and bottom edges are supported. A top reveal is triggered by a
+        downward vertical gesture; a bottom reveal by an upward vertical gesture.
+        Left/right edges are omitted because horizontal gestures conflict with
+        scene navigation, which can begin anywhere, including at a screen edge.
+      </description>
+      <entry name="top" value="1" summary="top screen edge"/>
+      <entry name="bottom" value="2" summary="bottom screen edge"/>
+    </enum>
+
+    <request name="get_auto_hide_screen_edge">
+      <description summary="create an auto hide edge">
+        Create an auto-hide screen edge for the layer surface. Placement stays
+        owned by the layer surface; this only associates the reveal trigger.
+
+        invalid_border is raised for an out-of-range border; invalid_role is
+        raised unless the surface has the layer_surface role.
+      </description>
+      <arg name="id" type="new_id" interface="deck_auto_hide_screen_edge_v1"/>
+      <arg name="border" type="uint" enum="border"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+  </interface>
+
+  <interface name="deck_auto_hide_screen_edge_v1" version="1">
+    <description summary="auto hide screen edge">
+      Hides a layer surface and reveals it on the edge gesture. Unlike upstream,
+      the surface is hidden by default and holds no buffer while hidden.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the auto hide screen edge object"/>
+    </request>
+
+    <request name="deactivate">
+      <description summary="disarm and show">
+        Disarm the edge and request the surface be shown. The compositor emits
+        revealed.
+      </description>
+    </request>
+
+    <request name="activate">
+      <description summary="arm and hide">
+        Arm the edge and request the surface be hidden. The compositor emits
+        hidden; the client must commit a NULL buffer and free its buffers. A
+        spent edge (already triggered) must be re-armed with this request.
+      </description>
+    </request>
+
+    <event name="revealed">
+      <description summary="the edge was triggered; show the surface">
+        The edge gesture fired (or deactivate was called). The client should
+        allocate, render, and attach a buffer. The arming is now spent.
+      </description>
+    </event>
+
+    <event name="hidden">
+      <description summary="the surface should be hidden">
+        The surface should be hidden. The client should attach a NULL buffer and
+        free its DMA-BUFs.
+      </description>
+    </event>
+  </interface>
+</protocol>

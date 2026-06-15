@@ -2670,6 +2670,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c297a1c74b71ae29df00c3e22dd9534821d60eb9af5a0192823fa2acea70c2a"
 
 [[package]]
+name = "deck-screen-edge-v1"
+version = "0.1.0"
+dependencies = [
+ "wayland-backend",
+ "wayland-client 0.31.14",
+ "wayland-scanner 0.31.10",
+ "wayland-server",
+]
+
+[[package]]
 name = "deranged"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
