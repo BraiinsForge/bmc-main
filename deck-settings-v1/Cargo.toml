@@ -1,0 +1,15 @@
+[package]
+name = "deck-settings-v1"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins Systems s.r.o."]
+description = "Vendored deck_settings_v1 Wayland protocol (overlay system-control IPC)"
+
+[dependencies]
+wayland-backend.workspace = true
+wayland-client.workspace = true
+wayland-scanner.workspace = true
+wayland-server.workspace = true
+
+[lints]
+workspace = true
