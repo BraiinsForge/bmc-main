@@ -56,6 +56,7 @@ impl TreeUi {
         delta_ms: u32,
         renderer: &mut dyn Renderer,
     ) -> anyhow::Result<TreeResult> {
+        self.interaction.begin_frame();
         let frame_counter = self.frame_counter;
         self.frame_counter = self.frame_counter.wrapping_add(1);
         let mut timings = FrameTimings::default();
@@ -77,5 +78,100 @@ impl TreeUi {
         let (result, _has_active) =
             layout_and_render(node, width, height, renderer, &mut timings, &mut ctx)?;
         Ok(result)
+    }
+
+    /// Feed a touch event into the interaction state so the next `render`
+    /// hit-tests it against the tree's `touch_key`s.
+    pub fn push_touch(&mut self, event: crate::overlay::TouchEvent) {
+        use bmc_render::interaction::TouchEvent as IE;
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "surface-local logical coordinates fit f32 comfortably"
+        )]
+        let mapped = match event {
+            crate::overlay::TouchEvent::Down { x, y, .. } => IE::Down {
+                x: x as f32,
+                y: y as f32,
+            },
+            crate::overlay::TouchEvent::Motion { x, y, .. } => IE::Move {
+                x: x as f32,
+                y: y as f32,
+            },
+            crate::overlay::TouchEvent::Up { .. } => IE::Up,
+            crate::overlay::TouchEvent::Cancel => IE::Cancel,
+        };
+        self.interaction.push_event(mapped);
+    }
+
+    /// Whether an element with `key` is currently pressed (one-frame latency,
+    /// matching the WASM host). Backs the hold-to-confirm buttons.
+    #[must_use]
+    pub fn is_pressed(&self, key: &str) -> bool {
+        self.interaction.is_pressed(key)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TreeUi;
+    use crate::overlay::TouchEvent;
+    use crate::test_support::TestRenderer;
+    use bmc_render::colors::Color;
+    use bmc_render::tree::TreeNode;
+
+    /// A full-width ProgressBar carrying the brightness touch key.
+    fn slider_tree() -> TreeNode {
+        TreeNode::ProgressBar {
+            touch_key: Some("brightness".to_owned()),
+            track_h: 8.0,
+            mode: 0,
+            fraction: 0.0,
+            active: true,
+            fill_color: Color::from_rgba(0, 255, 0, 255),
+            track_color: Color::from_rgba(80, 80, 80, 255),
+            bg_color: Color::from_rgba(0, 0, 0, 0),
+            skin: None,
+        }
+    }
+
+    #[test]
+    fn touch_on_slider_reports_drag_fraction() {
+        let mut ui = TreeUi::default();
+        let mut r = TestRenderer::default();
+        // Warm-up frame establishes the slider's hit region (regions are
+        // prior-frame state); the touch is hit-tested on the next frame.
+        ui.render(&slider_tree(), (100, 20), 16, &mut r)
+            .expect("BUG: warm-up render must succeed");
+        // A 100px-wide frame; touch down at x≈75 → fraction ≈ 0.75.
+        ui.push_touch(TouchEvent::Down {
+            id: 0,
+            x: 75.0,
+            y: 10.0,
+        });
+        let result = ui
+            .render(&slider_tree(), (100, 20), 16, &mut r)
+            .expect("BUG: hit-test render must succeed");
+        let hit = result
+            .drags
+            .get("brightness")
+            .expect("slider drag should be hit-tested");
+        let frac = (hit.x / hit.width).clamp(0.0, 1.0);
+        assert!(
+            (0.6..=0.9).contains(&frac),
+            "expected ~0.75, got {frac} (x={}, w={})",
+            hit.x,
+            hit.width
+        );
+    }
+
+    #[test]
+    fn touch_off_the_slider_reports_no_drag() {
+        let mut ui = TreeUi::default();
+        let mut r = TestRenderer::default();
+        // No touch pushed → no drag entry.
+        let result = ui
+            .render(&slider_tree(), (100, 20), 16, &mut r)
+            .expect("BUG: render must succeed");
+        assert!(!result.drags.contains_key("brightness"));
     }
 }

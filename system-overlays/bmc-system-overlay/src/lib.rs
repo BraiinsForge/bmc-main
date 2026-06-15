@@ -9,6 +9,8 @@ mod overlay;
 mod screen_edge_validation;
 mod standalone;
 mod surface;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod tree;
 
 pub use connectivity::{configured_station_ssid, primary_ipv4};
