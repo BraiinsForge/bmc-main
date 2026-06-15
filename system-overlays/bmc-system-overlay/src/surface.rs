@@ -20,7 +20,7 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
-use crate::overlay::ScreenEdge;
+use crate::overlay::{InputRegion, LayerConfig, ScreenEdge};
 use bmc_widget::egl::DmaBufInfo;
 use bmc_widget::surface::{
     BufferSlotMap, PollOutcome, ReleasedBuffer, ReleasedBufferSet, create_buffer_from_dmabuf,
@@ -109,11 +109,73 @@ impl State {
         self.pending_reveal = false;
         self.pending_hidden = true;
     }
+
+    fn discard_unmap_configure(&mut self, previous_size: (u32, u32)) {
+        self.configured_size = previous_size;
+        self.pending_size_change = None;
+        self.needs_render = false;
+    }
+
+    fn discard_resize_unmap_configure(&mut self, requested_size: (u32, u32)) {
+        self.discard_unmap_configure(requested_size);
+    }
 }
 
 /// How long [`LayerSurfaceClient::connect`] waits for the compositor to send
 /// the first Configure before giving up.
 const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn apply_layer_config(
+    compositor: &wl_compositor::WlCompositor,
+    surface: &wl_surface::WlSurface,
+    layer_surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+    config: &LayerConfig,
+    qh: &QueueHandle<State>,
+) {
+    layer_surface.set_layer(config.layer);
+    layer_surface.set_anchor(config.anchor);
+    layer_surface.set_size(config.size.0, config.size.1);
+    layer_surface.set_margin(
+        config.margin_top,
+        config.margin_right,
+        config.margin_bottom,
+        config.margin_left,
+    );
+    layer_surface.set_exclusive_zone(config.exclusive_zone);
+    match config.input {
+        InputRegion::Full => surface.set_input_region(None),
+        InputRegion::None => {
+            let region = compositor.create_region(qh, ());
+            surface.set_input_region(Some(&region));
+            region.destroy();
+        }
+    }
+}
+
+fn wait_for_configure(
+    conn: &Connection,
+    queue: &mut EventQueue<State>,
+    state: &mut State,
+    context: &str,
+) -> anyhow::Result<()> {
+    let deadline = Instant::now() + CONFIGURE_TIMEOUT;
+    while !state.configured {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let remaining_ms = i32::try_from(remaining.as_millis()).unwrap_or(i32::MAX);
+        match poll_dispatch(conn, queue, state, remaining_ms)
+            .with_context(|| format!("{context}: dispatch awaiting configure"))?
+        {
+            PollOutcome::Events => {}
+            PollOutcome::Timeout => {
+                anyhow::bail!(
+                    "{context}: timed out after {:?} waiting for layer-surface configure",
+                    CONFIGURE_TIMEOUT
+                );
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Single-connection Wayland client for a wlr-layer-shell overlay surface.
 ///
@@ -124,6 +186,8 @@ pub struct LayerSurfaceClient {
     conn: Connection,
     queue: EventQueue<State>,
     state: State,
+    config: LayerConfig,
+    needs_remap_configure: bool,
 }
 
 impl std::fmt::Debug for LayerSurfaceClient {
@@ -170,41 +234,18 @@ impl LayerSurfaceClient {
             &qh,
             (),
         );
-        layer_surface.set_anchor(config.anchor);
-        layer_surface.set_size(config.size.0, config.size.1);
-        layer_surface.set_margin(
-            config.margin_top,
-            config.margin_right,
-            config.margin_bottom,
-            config.margin_left,
-        );
-        layer_surface.set_exclusive_zone(config.exclusive_zone);
-        if matches!(config.input, crate::overlay::InputRegion::None) {
-            let region = compositor.create_region(&qh, ());
-            surface.set_input_region(Some(&region));
-            region.destroy();
-        }
+        apply_layer_config(&compositor, &surface, &layer_surface, config, &qh);
         surface.commit();
 
         state.surface = Some(surface);
         state.layer_surface = Some(layer_surface);
 
-        let deadline = Instant::now() + CONFIGURE_TIMEOUT;
-        while !state.configured {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            let remaining_ms = i32::try_from(remaining.as_millis()).unwrap_or(i32::MAX);
-            match poll_dispatch(&conn, &mut queue, &mut state, remaining_ms)
-                .map_err(|e| anyhow::anyhow!("dispatch awaiting configure: {e}"))?
-            {
-                PollOutcome::Events => {}
-                PollOutcome::Timeout => {
-                    anyhow::bail!(
-                        "timed out after {:?} waiting for layer-surface configure",
-                        CONFIGURE_TIMEOUT
-                    );
-                }
-            }
-        }
+        wait_for_configure(
+            &conn,
+            &mut queue,
+            &mut state,
+            "initial layer-surface configure",
+        )?;
 
         tracing::info!(
             "Layer surface ready: {}x{} namespace={}",
@@ -214,7 +255,13 @@ impl LayerSurfaceClient {
         );
         state.pending_size_change = None;
 
-        Ok(Self { conn, queue, state })
+        Ok(Self {
+            conn,
+            queue,
+            state,
+            config: config.clone(),
+            needs_remap_configure: false,
+        })
     }
 
     /// Mint a `wl_buffer` from DMA-BUF info and register it for the given slot.
@@ -241,6 +288,10 @@ impl LayerSurfaceClient {
         info: &DmaBufInfo,
         buffer: &wl_buffer::WlBuffer,
     ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.needs_remap_configure,
+            "layer surface needs remap configure before buffer attach"
+        );
         let qh = self.queue.handle();
         let surface = self.state.surface.as_ref().context("surface not created")?;
         submit_buffer_to_surface(surface, &qh, buffer, info, false);
@@ -256,7 +307,74 @@ impl LayerSurfaceClient {
         surface.commit();
         self.conn
             .flush()
-            .map_err(|e| anyhow::anyhow!("wl flush on unmap: {e}"))
+            .map_err(|e| anyhow::anyhow!("wl flush on unmap: {e}"))?;
+        self.needs_remap_configure = true;
+        Ok(())
+    }
+
+    /// Drain the compositor response to an unmap commit before local buffer
+    /// proxies are destroyed. The compositor sends `wl_buffer.release` when it
+    /// observes the NULL attach; dispatching that before destruction avoids
+    /// later reads for already-dead client-side proxies.
+    pub fn roundtrip_after_unmap(&mut self) -> anyhow::Result<()> {
+        self.queue
+            .roundtrip(&mut self.state)
+            .map_err(|e| anyhow::anyhow!("wl roundtrip after unmap: {e}"))?;
+        Ok(())
+    }
+
+    /// Drain the compositor response to an unmap commit, but keep the last
+    /// usable mapped size. Some compositors send a placeholder configure while
+    /// the surface is unmapped; that size is not actionable for the reusable
+    /// render target and would shrink stretch-axis overlays before remap.
+    pub fn roundtrip_after_hide_unmap(&mut self) -> anyhow::Result<()> {
+        let previous_size = self.state.configured_size;
+        self.roundtrip_after_unmap()?;
+        self.state.discard_unmap_configure(previous_size);
+        Ok(())
+    }
+
+    /// Drain the compositor response to an unmap commit made during mapped
+    /// resize, preserving the configured size that triggered the resize.
+    pub fn roundtrip_after_resize_unmap(
+        &mut self,
+        requested_size: (u32, u32),
+    ) -> anyhow::Result<()> {
+        self.roundtrip_after_unmap()?;
+        self.state.discard_resize_unmap_configure(requested_size);
+        Ok(())
+    }
+
+    /// Re-apply layer-surface state after a NULL-buffer unmap, just before the
+    /// next real buffer commit.
+    ///
+    /// wlr-layer-shell resets layer/anchor/size/margins on unmap. The unmap
+    /// roundtrip already drains the compositor's initial configure; for the
+    /// custom screen-edge flow, waiting for another configure after `revealed`
+    /// can block indefinitely. The next buffer attach commits these restored
+    /// pending values together with the buffer.
+    pub fn ensure_ready_for_buffer_attach(&mut self) -> anyhow::Result<bool> {
+        if !self.needs_remap_configure {
+            return Ok(false);
+        }
+
+        {
+            let qh = self.queue.handle();
+            let compositor = self
+                .state
+                .compositor
+                .as_ref()
+                .context("wl_compositor missing")?;
+            let surface = self.state.surface.as_ref().context("surface not created")?;
+            let layer_surface = self
+                .state
+                .layer_surface
+                .as_ref()
+                .context("layer surface not created")?;
+            apply_layer_config(compositor, surface, layer_surface, &self.config, &qh);
+        }
+        self.needs_remap_configure = false;
+        Ok(true)
     }
 
     /// Create and arm the compositor-managed auto-hide object for `edge`.
@@ -276,6 +394,7 @@ impl LayerSurfaceClient {
             ScreenEdge::Top => deck_screen_edge_manager_v1::Border::Top,
         };
         let edge = manager.get_auto_hide_screen_edge(border, surface, &qh, ());
+        tracing::info!(?border, "Activating screen edge");
         edge.activate();
         self.state.screen_edge = Some(edge);
         self.flush()
@@ -284,6 +403,7 @@ impl LayerSurfaceClient {
     /// Re-arm an existing screen edge after the compositor hides it.
     pub fn rearm_screen_edge(&mut self) -> anyhow::Result<()> {
         let edge = self.state.screen_edge.as_ref().context("no screen edge")?;
+        tracing::info!("Re-arming screen edge after hide");
         edge.activate();
         self.flush()
     }
@@ -327,7 +447,7 @@ impl LayerSurfaceClient {
     pub fn poll_dispatch(&mut self, timeout_ms: i32) -> anyhow::Result<()> {
         poll_dispatch(&self.conn, &mut self.queue, &mut self.state, timeout_ms)
             .map(|_outcome| ())
-            .map_err(|e| anyhow::anyhow!("poll_dispatch: {e}"))
+            .context("poll_dispatch")
     }
 
     #[must_use]
@@ -348,17 +468,6 @@ impl LayerSurfaceClient {
         self.state.released_buffers.remove(&id);
         buffer.destroy();
         drop(buffer);
-    }
-
-    #[expect(
-        dead_code,
-        reason = "consumed by the render-target wiring landing in a later task"
-    )]
-    pub(crate) fn dmabuf(&self) -> &zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1 {
-        self.state
-            .linux_dmabuf
-            .as_ref()
-            .expect("BUG: dmabuf checked at connect")
     }
 }
 
@@ -479,9 +588,11 @@ impl Dispatch<DeckAutoHideScreenEdgeV1, ()> for State {
     ) {
         match event {
             deck_auto_hide_screen_edge_v1::Event::Revealed => {
+                tracing::info!("Screen edge revealed");
                 state.mark_screen_edge_revealed();
             }
             deck_auto_hide_screen_edge_v1::Event::Hidden => {
+                tracing::info!("Screen edge hidden");
                 state.mark_screen_edge_hidden();
             }
             other => tracing::debug!(?other, "unhandled deck_auto_hide_screen_edge_v1 event"),
@@ -665,5 +776,39 @@ mod tests {
 
         assert!(!state.pending_reveal);
         assert!(state.pending_hidden);
+    }
+
+    #[test]
+    fn unmap_configure_does_not_resize_reusable_surface() {
+        let mut state = State {
+            configured: true,
+            configured_size: (1, 200),
+            pending_size_change: Some((1, 200)),
+            needs_render: true,
+            ..State::default()
+        };
+
+        state.discard_unmap_configure((1280, 200));
+
+        assert_eq!(state.configured_size, (1280, 200));
+        assert_eq!(state.pending_size_change, None);
+        assert!(!state.needs_render);
+    }
+
+    #[test]
+    fn resize_unmap_configure_preserves_requested_surface_size() {
+        let mut state = State {
+            configured: true,
+            configured_size: (1, 200),
+            pending_size_change: Some((1, 200)),
+            needs_render: true,
+            ..State::default()
+        };
+
+        state.discard_resize_unmap_configure((1280, 240));
+
+        assert_eq!(state.configured_size, (1280, 240));
+        assert_eq!(state.pending_size_change, None);
+        assert!(!state.needs_render);
     }
 }
