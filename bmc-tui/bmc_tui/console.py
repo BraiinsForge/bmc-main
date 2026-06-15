@@ -1,12 +1,15 @@
 """Rich-based output formatting — headers, status, panels, user prompts."""
 
 import sys
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Protocol
 
 from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
+from rich.progress import BarColumn, DownloadColumn, Progress, TextColumn, TimeRemainingColumn
 from rich.status import Status
 from rich.syntax import Syntax
 from rich.text import Text
@@ -27,6 +30,7 @@ __all__ = [
     "ok",
     "out",
     "panel",
+    "progress",
     "spinner",
     "styled_data",
     "styled_name",
@@ -174,6 +178,29 @@ def spinner(msg: str) -> Status:
             vm.rr.pull(path)
     """
     return out.status(f"[dim]{msg}[/dim]", spinner="dots")
+
+
+@contextmanager
+def progress(label: str, total: int) -> Iterator[Callable[[int], None]]:
+    """Byte-count progress bar; yields an ``advance(n)`` callback.
+
+    Usage::
+
+        with console.progress("firmware.tar", size) as advance:
+            for chunk in source:
+                send(chunk)
+                advance(len(chunk))
+    """
+    bar = Progress(
+        TextColumn("[dim]{task.description}[/dim]"),
+        BarColumn(),
+        DownloadColumn(),
+        TimeRemainingColumn(),
+        console=out,
+    )
+    with bar:
+        task = bar.add_task(label, total=total)
+        yield lambda n: bar.advance(task, n)
 
 
 def panel(

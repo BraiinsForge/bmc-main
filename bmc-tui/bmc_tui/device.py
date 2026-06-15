@@ -1,16 +1,19 @@
-"""SSH/SCP transport to a real device, with a dry-run-aware exec seam.
+"""SSH transport to a real device, with a dry-run-aware exec seam.
 
 `read` is for read-only probes — it always executes, so probes reflect real
 device state even under `--dry-run`. `run`/`push` are mutations — under
 `--dry-run` they log and skip. Routine probes are exposed as getters
 (`reachable`, `board`, `version`) so call-sites never type raw ssh for them.
+
+All subprocess work goes through an injected `Exec` backend (`run` captures,
+`stream` feeds stdin) so tests need no real ssh.
 """
 
 import json
 import subprocess
-from collections.abc import Callable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from bmc_tui import console
 from bmc_tui.stage import dry_run
@@ -18,21 +21,48 @@ from bmc_tui.stage import dry_run
 # Key-based, accept-new host key, no password — unlike the VM's sshpass path.
 _SSH_OPTS = ["-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=8"]
 
-# The single point where a subprocess actually runs; tests inject a fake.
-Runner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
+_CHUNK = 1 << 16  # 64 KiB upload chunk
 
 
-def _subprocess_runner(argv: list[str]) -> "subprocess.CompletedProcess[str]":
-    return subprocess.run(argv, capture_output=True, text=True, check=True)
+class Exec(Protocol):
+    """Subprocess backend Device runs through — injected so tests need no ssh."""
+
+    def run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        """Run a command to completion and capture its output."""
+        ...
+
+    def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
+        """Run a command, feeding `chunks` to its stdin."""
+        ...
+
+
+class _RealExec:
+    def run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        return subprocess.run(argv, capture_output=True, text=True, check=True)
+
+    def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
+        # Capture stderr so ssh's connection warnings don't bleed into the live
+        # progress bar; surface it only if the upload actually fails.
+        with subprocess.Popen(argv, stdin=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
+            stdin = proc.stdin
+            if stdin is None:
+                msg = "BUG: Popen(stdin=PIPE) produced no stdin"
+                raise RuntimeError(msg)
+            for chunk in chunks:
+                stdin.write(chunk)
+            stdin.close()
+            stderr = proc.stderr.read() if proc.stderr is not None else b""
+        if proc.returncode:
+            raise subprocess.CalledProcessError(proc.returncode, argv, stderr=stderr)
 
 
 class Device:
     """A target device addressed over key-based SSH."""
 
-    def __init__(self, host: str, *, user: str = "root", runner: Runner | None = None) -> None:
+    def __init__(self, host: str, *, user: str = "root", backend: Exec | None = None) -> None:
         self._host = host
         self._user = user
-        self._exec: Runner = runner or _subprocess_runner
+        self._exec: Exec = backend or _RealExec()
         self._info: dict[str, Any] | None = None
 
     @property
@@ -50,29 +80,34 @@ class Device:
     def read(self, command: str) -> str:
         """Run a read-only command and return its stripped stdout. Always runs,
         even under --dry-run, so probes reflect real device state."""
-        return self._exec(self._ssh_argv(command)).stdout.strip()
+        return self._exec.run(self._ssh_argv(command)).stdout.strip()
 
-    def run(self, command: str, *, expect_disconnect: bool = False) -> None:
-        """Run a mutating command. Under --dry-run, log and skip.
+    def run(self, command: str, *, expect_disconnect: bool = False) -> str | None:
+        """Run a mutating command and return its stripped stdout. Under
+        --dry-run, log and skip, returning None.
 
         ``expect_disconnect`` treats a dropped connection as success — for
-        commands that intentionally kill the session (e.g. ``sysupgrade``).
+        commands that intentionally kill the session (e.g. ``sysupgrade``) —
+        and returns None since no output came back.
         """
         if dry_run.get():
             console.kv("would run", command)
-            return
+            return None
         try:
-            self._exec(self._ssh_argv(command))
+            return self._exec.run(self._ssh_argv(command)).stdout.strip()
         except subprocess.SubprocessError:
             if not expect_disconnect:
                 raise
+            return None
 
     def push(self, local: Path, remote: str) -> None:
-        """Upload a file via scp. Under --dry-run, log and skip."""
+        """Upload a file, streamed over ssh with a live progress bar. Under
+        --dry-run, log and skip."""
         if dry_run.get():
-            console.kv("would upload", f"{local} -> {remote}")
+            console.kv("would upload", f"{local.name} -> {remote}")
             return
-        self._exec(["scp", *_SSH_OPTS, str(local), f"{self._user}@{self._host}:{remote}"])
+        argv = ["ssh", *_SSH_OPTS, f"{self._user}@{self._host}", f"cat > {remote}"]
+        self._exec.stream(argv, _chunks(local))
 
     @property
     def reachable(self) -> bool:
@@ -105,3 +140,11 @@ class Device:
         """Installed firmware version. Not cached — sysupgrade changes it across
         the reboot, so each access re-reads the live value."""
         return self.read("cat /etc/bos_version")
+
+
+def _chunks(local: Path) -> Iterator[bytes]:
+    """Yield the file in chunks, advancing a byte-count progress bar as each is sent."""
+    with local.open("rb") as f, console.progress(local.name, local.stat().st_size) as advance:
+        while chunk := f.read(_CHUNK):
+            yield chunk
+            advance(len(chunk))

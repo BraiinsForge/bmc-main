@@ -1,6 +1,7 @@
-"""Unit tests for the SSH/SCP device transport."""
+"""Unit tests for the SSH device transport."""
 
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
@@ -9,127 +10,136 @@ from bmc_tui.device import Device
 from bmc_tui.stage import dry_run
 
 
-class _FakeRunner:
-    """Records argv and returns canned stdout, or raises a canned error."""
+class _FakeExec:
+    """Records run/stream calls; returns canned stdout or raises a canned error."""
 
     def __init__(self, *, stdout: str = "", error: Exception | None = None) -> None:
-        self.calls: list[list[str]] = []
+        self.runs: list[list[str]] = []
+        self.streams: list[tuple[list[str], bytes]] = []
         self._stdout = stdout
         self._error = error
 
-    def __call__(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
-        self.calls.append(argv)
+    def run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        self.runs.append(argv)
         if self._error is not None:
             raise self._error
         return subprocess.CompletedProcess(argv, 0, stdout=self._stdout, stderr="")
+
+    def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
+        self.streams.append((argv, b"".join(chunks)))
 
 
 # ── read / run / push ─────────────────────────────────────────────────────────
 
 
 def test_read_returns_stripped_stdout_over_ssh() -> None:
-    runner = _FakeRunner(stdout="  hello\n")
-    assert Device("h", runner=runner).read("echo hi") == "hello"
-    assert runner.calls[0][0] == "ssh"
-    assert runner.calls[0][-1] == "echo hi"
+    backend = _FakeExec(stdout="  hello\n")
+    assert Device("h", backend=backend).read("echo hi") == "hello"
+    assert backend.runs[0][0] == "ssh"
+    assert backend.runs[0][-1] == "echo hi"
 
 
 def test_run_executes_when_not_dry_run() -> None:
-    runner = _FakeRunner()
-    Device("h", runner=runner).run("sysupgrade x")
-    assert runner.calls[0][-1] == "sysupgrade x"
+    backend = _FakeExec()
+    Device("h", backend=backend).run("sysupgrade x")
+    assert backend.runs[0][-1] == "sysupgrade x"
 
 
 def test_run_skips_under_dry_run() -> None:
-    runner = _FakeRunner()
+    backend = _FakeExec()
     token = dry_run.set(True)
     try:
-        Device("h", runner=runner).run("sysupgrade x")
+        Device("h", backend=backend).run("sysupgrade x")
     finally:
         dry_run.reset(token)
-    assert runner.calls == []
+    assert backend.runs == []
 
 
-def test_push_builds_scp_when_not_dry_run() -> None:
-    runner = _FakeRunner()
-    Device("h", runner=runner).push(Path("/tmp/fw.tar"), "/mnt/data/")
-    argv = runner.calls[0]
-    assert argv[0] == "scp"
-    assert argv[-2:] == ["/tmp/fw.tar", "root@h:/mnt/data/"]
+def test_push_streams_file_over_ssh(tmp_path: Path) -> None:
+    fw = tmp_path / "fw.tar"
+    fw.write_bytes(b"firmware-bytes")
+    backend = _FakeExec()
+    Device("h", backend=backend).push(fw, "/mnt/data/fw.tar")
+    argv, data = backend.streams[0]
+    assert argv[0] == "ssh"
+    assert argv[-1] == "cat > /mnt/data/fw.tar"
+    assert data == b"firmware-bytes"
 
 
-def test_push_skips_under_dry_run() -> None:
-    runner = _FakeRunner()
+def test_push_skips_under_dry_run(tmp_path: Path) -> None:
+    fw = tmp_path / "fw.tar"
+    fw.write_bytes(b"x")
+    backend = _FakeExec()
     token = dry_run.set(True)
     try:
-        Device("h", runner=runner).push(Path("/tmp/fw.tar"), "/mnt/data/")
+        Device("h", backend=backend).push(fw, "/mnt/data/fw.tar")
     finally:
         dry_run.reset(token)
-    assert runner.calls == []
+    assert backend.streams == []
 
 
 # ── getters ──────────────────────────────────────────────────────────────────
 
 
 def test_reachable_true_on_success() -> None:
-    assert Device("h", runner=_FakeRunner()).reachable is True
+    assert Device("h", backend=_FakeExec()).reachable is True
 
 
 def test_reachable_false_on_ssh_error() -> None:
-    runner = _FakeRunner(error=subprocess.CalledProcessError(255, ["ssh"]))
-    assert Device("h", runner=runner).reachable is False
+    backend = _FakeExec(error=subprocess.CalledProcessError(255, ["ssh"]))
+    assert Device("h", backend=backend).reachable is False
 
 
 def test_board_parses_board_name_and_caches() -> None:
-    runner = _FakeRunner(stdout='{"board_name": "braiins,stm32mp157c-ii3-bmc1"}')
-    dev = Device("h", runner=runner)
+    backend = _FakeExec(stdout='{"board_name": "braiins,stm32mp157c-ii3-bmc1"}')
+    dev = Device("h", backend=backend)
     assert dev.board == "braiins,stm32mp157c-ii3-bmc1"
     assert dev.board == "braiins,stm32mp157c-ii3-bmc1"
-    assert len(runner.calls) == 1  # cached: only one ubus call
+    assert len(backend.runs) == 1  # cached: only one ubus call
 
 
 def test_version_reads_bos_version_and_is_not_cached() -> None:
-    runner = _FakeRunner(stdout="2026-06-14-0-c84f1b1d-26.07-plus-nightly")
-    dev = Device("h", runner=runner)
+    backend = _FakeExec(stdout="2026-06-14-0-c84f1b1d-26.07-plus-nightly")
+    dev = Device("h", backend=backend)
     assert dev.version == "2026-06-14-0-c84f1b1d-26.07-plus-nightly"
     _ = dev.version
-    assert len(runner.calls) == 2  # re-read each access
-    assert runner.calls[0][-1] == "cat /etc/bos_version"
+    assert len(backend.runs) == 2  # re-read each access
+    assert backend.runs[0][-1] == "cat /etc/bos_version"
 
 
 def test_version_runs_even_under_dry_run() -> None:
-    runner = _FakeRunner(stdout="v1")
+    backend = _FakeExec(stdout="v1")
     token = dry_run.set(True)
     try:
-        assert Device("h", runner=runner).version == "v1"
+        assert Device("h", backend=backend).version == "v1"
     finally:
         dry_run.reset(token)
-    assert runner.calls  # read still executed under dry-run
+    assert backend.runs  # read still executed under dry-run
 
 
 def test_target_parses_release_target_and_shares_board_cache() -> None:
-    runner = _FakeRunner(
+    backend = _FakeExec(
         stdout=(
             '{"board_name": "braiins,stm32mp157c-ii3-bmc1", "release": {"target": "stm32mp15/ii3"}}'
         )
     )
-    dev = Device("h", runner=runner)
+    dev = Device("h", backend=backend)
     assert dev.target == "stm32mp15/ii3"
     assert dev.board == "braiins,stm32mp157c-ii3-bmc1"
-    assert len(runner.calls) == 1  # one ubus call backs both getters
+    assert len(backend.runs) == 1  # one ubus call backs both getters
 
 
 def test_run_swallows_disconnect_when_expected() -> None:
-    runner = _FakeRunner(error=subprocess.CalledProcessError(255, ["ssh"]))
-    Device("h", runner=runner).run("sysupgrade x", expect_disconnect=True)  # no raise
+    backend = _FakeExec(error=subprocess.CalledProcessError(255, ["ssh"]))
+    Device("h", backend=backend).run("sysupgrade x", expect_disconnect=True)  # no raise
 
 
 def test_run_reraises_disconnect_when_not_expected() -> None:
-    runner = _FakeRunner(error=subprocess.CalledProcessError(255, ["ssh"]))
+    backend = _FakeExec(error=subprocess.CalledProcessError(255, ["ssh"]))
     with pytest.raises(subprocess.CalledProcessError):
-        Device("h", runner=runner).run("sysupgrade x")
+        Device("h", backend=backend).run("sysupgrade x")
 
 
 def test_print_shows_host(capsys: pytest.CaptureFixture[str]) -> None:
-    Device("192.168.1.183", runner=_FakeRunner()).print()
+    Device("192.168.1.183", backend=_FakeExec()).print()
     assert "192.168.1.183" in capsys.readouterr().out

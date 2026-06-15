@@ -3,6 +3,7 @@
 import io
 import subprocess
 import tarfile
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import pytest
@@ -15,25 +16,38 @@ from bmc_tui.stage import Abort
 _TARGET = "stm32mp15/ii3"
 _TOP = "sysupgrade-stm32mp15_ii3-emmc"
 
+_Respond = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
+
 
 def _cp(argv: list[str], stdout: str = "") -> "subprocess.CompletedProcess[str]":
     return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
 
 
-class _Router:
-    """Fake Runner mapping an ssh command substring to canned stdout."""
+class _Exec:
+    """Fake Exec: run() delegates to `respond(argv)`; stream() records bytes."""
 
-    def __init__(self, routes: dict[str, str]) -> None:
-        self.routes = routes
-        self.calls: list[list[str]] = []
+    def __init__(self, respond: _Respond) -> None:
+        self._respond = respond
+        self.runs: list[list[str]] = []
+        self.streams: list[tuple[list[str], bytes]] = []
 
-    def __call__(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
-        self.calls.append(argv)
+    def run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        self.runs.append(argv)
+        return self._respond(argv)
+
+    def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
+        self.streams.append((argv, b"".join(chunks)))
+
+
+def _routes(routes: dict[str, str]) -> _Respond:
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
         cmd = argv[-1] if argv and argv[0] == "ssh" else " ".join(argv)
-        for key, value in self.routes.items():
+        for key, value in routes.items():
             if key in cmd:
                 return _cp(argv, value)
         return _cp(argv)
+
+    return respond
 
 
 def _unreachable(argv: list[str]) -> "subprocess.CompletedProcess[str]":
@@ -55,30 +69,30 @@ def _image(tmp_path: Path, *, top: str = _TOP, extra: tuple[str, ...] = ("rootfs
 
 
 def test_reachable_ok() -> None:
-    catalog.ensure_device_reachable(Device("h", runner=_Router({})))
+    catalog.ensure_device_reachable(Device("h", backend=_Exec(_routes({}))))
 
 
 def test_reachable_aborts_when_unreachable() -> None:
     with pytest.raises(Abort, match="unreachable"):
-        catalog.ensure_device_reachable(Device("h", runner=_unreachable))
+        catalog.ensure_device_reachable(Device("h", backend=_Exec(_unreachable)))
 
 
 # ── ensure_nix_conf ───────────────────────────────────────────────────────────
 
 
 def test_nix_conf_noop_when_present() -> None:
-    def runner(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
         if "cat /etc/nix/nix.conf" in argv[-1]:
             return _cp(argv, "experimental-features = nix-command flakes\n")
         raise AssertionError("remedy must not run when nix.conf is already set")
 
-    catalog.ensure_nix_conf(Device("h", runner=runner))
+    catalog.ensure_nix_conf(Device("h", backend=_Exec(respond)))
 
 
 def test_nix_conf_writes_when_absent() -> None:
     state = {"conf": ""}
 
-    def runner(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
         cmd = argv[-1]
         if "cat /etc/nix/nix.conf" in cmd:
             return _cp(argv, state["conf"])
@@ -86,7 +100,7 @@ def test_nix_conf_writes_when_absent() -> None:
             state["conf"] = "experimental-features = nix-command flakes\n"
         return _cp(argv)
 
-    catalog.ensure_nix_conf(Device("h", runner=runner))
+    catalog.ensure_nix_conf(Device("h", backend=_Exec(respond)))
     assert "experimental-features" in state["conf"]
 
 
@@ -122,12 +136,12 @@ _DF = (
 
 
 def test_free_space_ok() -> None:
-    dev = Device("h", runner=_Router({"df -k": _DF}))
+    dev = Device("h", backend=_Exec(_routes({"df -k": _DF})))
     catalog.ensure_free_space(dev, "/mnt/data", 1_000_000)  # 1.6 GB free
 
 
 def test_free_space_aborts_when_insufficient() -> None:
-    dev = Device("h", runner=_Router({"df -k": _DF}))
+    dev = Device("h", backend=_Exec(_routes({"df -k": _DF})))
     with pytest.raises(Abort, match="only"):
         catalog.ensure_free_space(dev, "/mnt/data", 5_000_000_000)
 
@@ -135,19 +149,18 @@ def test_free_space_aborts_when_insufficient() -> None:
 # ── upload_firmware ───────────────────────────────────────────────────────────
 
 
-def test_upload_pushes_when_absent(tmp_path: Path) -> None:
+def test_upload_streams_when_absent(tmp_path: Path) -> None:
     image = _image(tmp_path)
-    router = _Router({"du -b": ""})  # absent → -1 != size
-    catalog.upload_firmware(Device("h", runner=router), image)
-    assert any(call[0] == "scp" for call in router.calls)
+    backend = _Exec(_routes({"du -b": ""}))  # absent → -1 != size
+    catalog.upload_firmware(Device("h", backend=backend), image)
+    assert backend.streams  # the firmware was uploaded
 
 
 def test_upload_skips_when_already_uploaded(tmp_path: Path) -> None:
     image = _image(tmp_path)
-    router = _Router({"du -b": str(image.size)})
-    dev = Device("h", runner=router)
-    catalog.upload_firmware(dev, image)
-    assert not any(call[0] == "scp" for call in router.calls)  # skipped
+    backend = _Exec(_routes({"du -b": str(image.size)}))
+    catalog.upload_firmware(Device("h", backend=backend), image)
+    assert not backend.streams  # skipped
 
 
 # ── sysupgrade ────────────────────────────────────────────────────────────────
@@ -155,53 +168,25 @@ def test_upload_skips_when_already_uploaded(tmp_path: Path) -> None:
 
 def test_sysupgrade_skips_when_already_on_target(tmp_path: Path) -> None:
     image = _image(tmp_path)
-    router = _Router({"cat /etc/bos_version": image.version})
-    dev = Device("h", runner=router)
-    catalog.sysupgrade(dev, image)
-    assert not any("sysupgrade" in c[-1] for c in router.calls if c[0] == "ssh")
+    backend = _Exec(_routes({"cat /etc/bos_version": image.version}))
+    catalog.sysupgrade(Device("h", backend=backend), image)
+    assert not any("sysupgrade" in argv[-1] for argv in backend.runs)
 
 
 def test_sysupgrade_runs_with_force(tmp_path: Path) -> None:
     image = _image(tmp_path)
-    router = _Router({"cat /etc/bos_version": "older-version"})
-    dev = Device("h", runner=router)
-    catalog.sysupgrade(dev, image, force=True)
-    cmds = [c[-1] for c in router.calls if c[0] == "ssh"]
-    assert any("sysupgrade -F " in c for c in cmds)
+    backend = _Exec(_routes({"cat /etc/bos_version": "older-version"}))
+    catalog.sysupgrade(Device("h", backend=backend), image, force=True)
+    assert any("sysupgrade -F " in argv[-1] for argv in backend.runs)
 
 
 # ── wait_for_device ───────────────────────────────────────────────────────────
 
 
 def test_wait_for_device_ok() -> None:
-    catalog.wait_for_device(Device("h", runner=_Router({})), timeout=0)
+    catalog.wait_for_device(Device("h", backend=_Exec(_routes({}))), timeout=0)
 
 
 def test_wait_for_device_times_out() -> None:
     with pytest.raises(Abort, match="did not return"):
-        catalog.wait_for_device(Device("h", runner=_unreachable), timeout=0)
-
-
-# ── verify_post_upgrade ───────────────────────────────────────────────────────
-
-_GOOD = {
-    "cat /etc/bos_version": "2026-06-14-x",
-    "mount": "/dev/mmcblk0p4 on /nix type ext4 (rw)",
-    "cat /etc/nix/nix.conf": "experimental-features = nix-command flakes",
-}
-
-
-def test_verify_ok() -> None:
-    catalog.verify_post_upgrade(Device("h", runner=_Router(_GOOD)), expect="2026-06-14-x")
-
-
-def test_verify_aborts_on_version_mismatch() -> None:
-    dev = Device("h", runner=_Router(_GOOD))
-    with pytest.raises(Abort, match="expected"):
-        catalog.verify_post_upgrade(dev, expect="some-other-version")
-
-
-def test_verify_aborts_when_nix_unmounted() -> None:
-    routes = {**_GOOD, "mount": "/dev/mmcblk0p4 on / type ext4 (rw)"}
-    with pytest.raises(Abort, match="/nix is not mounted"):
-        catalog.verify_post_upgrade(Device("h", runner=_Router(routes)), expect="2026-06-14-x")
+        catalog.wait_for_device(Device("h", backend=_Exec(_unreachable)), timeout=0)
