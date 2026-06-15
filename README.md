@@ -1,5 +1,15 @@
 Braiins clock
 
+## Setting up repository
+
+Install git-lfs through package manager of your choice and run
+
+```
+git lfs install
+```
+
+to initialize the binary files with proper contents.
+
 ## Development Environment
 
 Enter the dev shell for local development (Rust, frontend, GUI):
@@ -21,6 +31,20 @@ For ARM cross-compilation:
 ```shell
 nix develop .#armv7-glibc-release  # release builds
 nix develop .#armv7-glibc-debug    # debug builds
+```
+
+### Rust-analyzer
+
+Using rust-analyzer in the widgets requires further configuration as the widgets use the wasm32 target. It should be
+possible to work from the repository's root, supporting both the top-level workspace and the widgets-wasm workspace.
+
+in .vscode/settings.json, you will need
+
+```
+{
+    "rust-analyzer.linkedProjects": ["widgets-wasm/Cargo.toml", "./Cargo.toml"],
+    "rust-analyzer.cargo.target": "wasm32-unknown-unknown"
+}
 ```
 
 ## Build frontend
