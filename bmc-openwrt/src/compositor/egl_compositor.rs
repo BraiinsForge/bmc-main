@@ -14,7 +14,7 @@ use super::{
     },
     scene_renderer::SceneRenderer,
     state::{ClientState, CompositorState, release_widget_buffers},
-    touch_gesture::{GestureState, TouchGesture},
+    touch_gesture::{GestureConfig, GestureState, MotionActivation, TouchGesture},
     widget_tracker::{LifecycleState, SceneTransitionTarget},
 };
 use bmc::compositor::{
@@ -400,10 +400,14 @@ impl EglCompositor {
             listening_socket,
             action_tx,
             event_tx,
-            gesture: GestureState::new(),
+            gesture: GestureState::with_config(GestureConfig {
+                screen_height: f64::from(logical_height),
+                ..GestureConfig::default()
+            }),
             gesture_slot: None,
             active_touch_slots: HashSet::new(),
             scene_drag_active: false,
+            edge_reveal_active: false,
             touch_frame_dirty: false,
             logical_width,
             logical_height,
@@ -841,6 +845,9 @@ struct AppState {
     /// end-drag-on-release transitions are unambiguous even when the
     /// gesture state machine resets `drag_active` mid-handler.
     scene_drag_active: bool,
+    /// `true` once the current sequence is claimed by edge reveal;
+    /// subsequent motion/up are owned by reveal until lift.
+    edge_reveal_active: bool,
     /// `true` when at least one `wl_touch` event has been emitted since
     /// the last `wl_touch.frame`. Ensures `wl_touch.frame` is sent exactly
     /// once per libinput `TouchFrame` that produced forwarding.
@@ -1229,6 +1236,7 @@ impl AppState {
         self.gesture_slot = Some(slot);
         self.gesture.on_down(location, time);
         self.scene_drag_active = false;
+        self.edge_reveal_active = false;
 
         let touch_handle = self.compositor.touch_handle.clone();
         let focus = self.compositor.touch_focus_at(location.x, location.y);
@@ -1263,7 +1271,32 @@ impl AppState {
             return;
         }
 
-        let drag_activated = self.gesture.on_motion(location, time);
+        let activation = self.gesture.on_motion(location, time);
+
+        if !self.edge_reveal_active && matches!(activation, MotionActivation::TopEdgeReveal) {
+            use deck_screen_edge_v1::server::deck_screen_edge_manager_v1::Border;
+
+            if self.compositor.trigger_screen_edge(Border::Top) {
+                tracing::info!(
+                    slot = ?slot,
+                    x = location.x,
+                    y = location.y,
+                    time_ms = time,
+                    "top-edge screen-edge swipe consumed"
+                );
+                self.edge_reveal_active = true;
+                let touch_handle = self.compositor.touch_handle.clone();
+                touch_handle.cancel(&mut self.compositor);
+                self.touch_frame_dirty = true;
+                return;
+            }
+            tracing::info!("top-edge reveal gesture activated, but no armed edge consumed it");
+        }
+        if self.edge_reveal_active {
+            return;
+        }
+
+        let drag_activated = matches!(activation, MotionActivation::SceneDrag);
 
         if drag_activated
             && !self.scene_drag_active
@@ -1331,6 +1364,14 @@ impl AppState {
         self.gesture_slot = None;
         let gesture_result = self.gesture.on_up(time);
 
+        if self.edge_reveal_active {
+            self.edge_reveal_active = false;
+            if touch_sequence_finished {
+                self.reset_automatic_waiting(Instant::now());
+            }
+            return;
+        }
+
         if self.scene_drag_active {
             self.scene_drag_active = false;
             if let Some(TouchGesture::DragEnd { dx, velocity_x }) = gesture_result {
@@ -1378,6 +1419,8 @@ impl AppState {
 
     fn on_touch_cancel(&mut self) {
         self.gesture.on_cancel();
+        let edge_reveal_active = self.edge_reveal_active;
+        self.edge_reveal_active = false;
         self.gesture_slot = None;
         self.active_touch_slots.clear();
 
@@ -1385,6 +1428,9 @@ impl AppState {
             self.scene_drag_active = false;
             self.compositor.widgets.end_drag(0, 0.0);
             after_scene_change(self);
+        } else if edge_reveal_active {
+            self.reset_automatic_waiting(Instant::now());
+            return;
         } else {
             let touch_handle = self.compositor.touch_handle.clone();
             touch_handle.cancel(&mut self.compositor);
@@ -2161,9 +2207,9 @@ impl Compositor for EglCompositor {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppState, CompositorState, Emission, GestureState, LibinputInputBackend, LifecycleSink,
-        LifecycleState, RedrawState, TRANSITION_WARM_UP_TIMEOUT, TouchSlot, TransitionWarmUp,
-        clamp_initial_lifecycle, dispatch_timeout, emit_lifecycle_batches,
+        AppState, CompositorState, Emission, GestureConfig, GestureState, LibinputInputBackend,
+        LifecycleSink, LifecycleState, RedrawState, TRANSITION_WARM_UP_TIMEOUT, TouchSlot,
+        TransitionWarmUp, clamp_initial_lifecycle, dispatch_timeout, emit_lifecycle_batches,
         emit_lifecycle_transitions, emit_transition_incoming_batch, handle_clear_pid_command,
         handle_command, transition_incoming_widget_ids, transition_warm_up_ready,
     };
@@ -2224,10 +2270,14 @@ mod tests {
             listening_socket,
             action_tx,
             event_tx,
-            gesture: GestureState::new(),
+            gesture: GestureState::with_config(GestureConfig {
+                screen_height: 1280.0,
+                ..GestureConfig::default()
+            }),
             gesture_slot: None,
             active_touch_slots: HashSet::new(),
             scene_drag_active: false,
+            edge_reveal_active: false,
             touch_frame_dirty: false,
             logical_width: 480,
             logical_height: 1280,
@@ -2436,6 +2486,23 @@ mod tests {
                 .next_delay(started_at, Duration::from_secs(30)),
             Some(Duration::from_secs(30)),
         );
+    }
+
+    #[test]
+    fn edge_reveal_touch_cancel_does_not_forward_duplicate_cancel() {
+        let mut state = make_app_state();
+        state.edge_reveal_active = true;
+        state.touch_frame_dirty = false;
+        state.active_touch_slots.insert(TouchSlot::from(Some(1)));
+
+        state.on_touch_cancel();
+
+        assert!(
+            !state.touch_frame_dirty,
+            "edge-owned cancel must not emit a second wl_touch.cancel"
+        );
+        assert!(!state.edge_reveal_active);
+        assert!(state.active_touch_slots.is_empty());
     }
 
     #[test]
