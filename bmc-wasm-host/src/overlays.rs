@@ -13,6 +13,22 @@ use crate::host::SharedHost;
 
 type OverlayFactory = (&'static str, fn() -> Box<dyn SystemOverlay>);
 
+/// Whether the overlay named `name` is enabled. Each overlay maps to an env var
+/// `BMC_OVERLAY_<NAME>` (uppercased, `-`→`_`). Overlays are on by default; only
+/// `0`/`false`/`off` (case-insensitive) disable one. Unknown values keep it
+/// on. This is a development convenience, not product configuration.
+#[must_use]
+pub fn overlay_enabled(name: &str) -> bool {
+    let var = format!("BMC_OVERLAY_{}", name.to_uppercase().replace('-', "_"));
+    match std::env::var(var) {
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off"
+        ),
+        Err(_) => true,
+    }
+}
+
 /// Build the compiled-in system overlays. Each opens its own Wayland
 /// connection and allocates buffers from `egl`. A failure to start one overlay
 /// is logged and skipped, never fatal to the host.
@@ -29,6 +45,10 @@ pub fn build_overlays(egl: &EglContext) -> Vec<HostedOverlay> {
     ];
     let mut overlays = Vec::new();
     for (name, make) in factories {
+        if !overlay_enabled(name) {
+            tracing::info!("overlay {name} disabled via BMC_OVERLAY_* env var");
+            continue;
+        }
         match HostedOverlay::connect(make(), egl) {
             Ok(o) => overlays.push(o),
             Err(e) => tracing::error!("failed to start {name} overlay: {e}"),
@@ -88,4 +108,59 @@ pub fn render_hosted_overlay(
     overlay.submit_exported(&dmabuf, slot)?;
     overlay.mark_rendered(now);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::overlay_enabled;
+
+    fn with_var<R>(key: &str, val: Option<&str>, f: impl FnOnce() -> R) -> R {
+        let prev = std::env::var_os(key);
+        match val {
+            Some(v) => unsafe { std::env::set_var(key, v) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+        let out = f();
+        match prev {
+            Some(p) => unsafe { std::env::set_var(key, p) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+        out
+    }
+
+    // Each test uses a DISTINCT overlay name: `cargo test`/nextest run tests in
+    // parallel and the env is process-global, so two tests touching the same
+    // BMC_OVERLAY_* var would race the set/restore.
+
+    #[test]
+    fn default_on_when_unset() {
+        with_var("BMC_OVERLAY_ALARMS", None, || {
+            assert!(overlay_enabled("alarms"));
+        });
+    }
+
+    #[test]
+    fn disabled_by_falsey_values() {
+        for v in ["0", "false", "False", "OFF", "off"] {
+            with_var("BMC_OVERLAY_DEVICE_INFO", Some(v), || {
+                assert!(!overlay_enabled("device-info"), "{v} should disable");
+            });
+        }
+    }
+
+    #[test]
+    fn enabled_by_truthy_or_unknown_values() {
+        for v in ["1", "true", "on", "yes", "anything"] {
+            with_var("BMC_OVERLAY_OFFLINE", Some(v), || {
+                assert!(overlay_enabled("offline"), "{v} should keep enabled");
+            });
+        }
+    }
+
+    #[test]
+    fn name_maps_to_uppercased_underscored_var() {
+        with_var("BMC_OVERLAY_SETTINGS_TRAY", Some("0"), || {
+            assert!(!overlay_enabled("settings-tray"));
+        });
+    }
 }
