@@ -11,6 +11,7 @@ bmc-gpu-render-lock.workspace = true
 bmc-render.workspace = true
 bmc-widget = { workspace = true, features = ["gpu"] }
 deck-screen-edge-v1 = { workspace = true }
+deck-settings-v1 = { workspace = true }
 get_if_addrs.workspace = true
 glow.workspace = true
 libc.workspace = true

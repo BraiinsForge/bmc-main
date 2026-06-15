@@ -21,6 +21,7 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use crate::overlay::{InputRegion, LayerConfig, ScreenEdge};
+use ::deck_settings_v1::client::deck_settings_v1::{self, DeckSettingsV1};
 use bmc_widget::egl::DmaBufInfo;
 use bmc_widget::surface::{
     BufferSlotMap, PollOutcome, ReleasedBuffer, ReleasedBufferSet, create_buffer_from_dmabuf,
@@ -57,6 +58,21 @@ struct State {
     /// Set when the compositor hides the revealed screen edge.
     pending_hidden: bool,
 
+    /// Whether this overlay opted into `deck_settings_v1` (its
+    /// `SystemOverlay::uses_settings`). Set at construction; gates the registry
+    /// bind so non-settings overlays neither bind it nor receive its events.
+    wants_settings: bool,
+    settings: Option<DeckSettingsV1>,
+    /// Set on a `brightness` event; drained by the framework into on_brightness.
+    pending_brightness: Option<u8>,
+    /// Set on a `wifi_ap` event; `Some(Some(ssid))`/`Some(None)` distinguishes a
+    /// fresh event (active/inactive) from "no event this pass".
+    #[expect(
+        clippy::option_option,
+        reason = "outer Option latches event-arrived; inner Option carries active/inactive SSID"
+    )]
+    pending_wifi_ap: Option<Option<String>>,
+
     /// Set true on the first layer-surface Configure (after which we may map).
     configured: bool,
     /// Compositor-suggested size from the latest Configure.
@@ -88,6 +104,10 @@ impl Default for State {
             screen_edge: None,
             pending_reveal: false,
             pending_hidden: false,
+            wants_settings: false,
+            settings: None,
+            pending_brightness: None,
+            pending_wifi_ap: None,
             configured: false,
             configured_size: (0, 0),
             pending_touch: Vec::new(),
@@ -206,14 +226,20 @@ impl std::fmt::Debug for LayerSurfaceClient {
 impl LayerSurfaceClient {
     /// Connect to the Wayland display, create a layer surface from `config`,
     /// and block until the compositor emits its first Configure.
-    pub fn connect(config: &crate::overlay::LayerConfig) -> anyhow::Result<Self> {
+    pub fn connect(
+        config: &crate::overlay::LayerConfig,
+        wants_settings: bool,
+    ) -> anyhow::Result<Self> {
         let conn =
             Connection::connect_to_env().map_err(|e| anyhow::anyhow!("wayland connect: {e}"))?;
         let mut queue = conn.new_event_queue();
         let qh = queue.handle();
         conn.display().get_registry(&qh, ());
 
-        let mut state = State::default();
+        let mut state = State {
+            wants_settings,
+            ..State::default()
+        };
         queue
             .roundtrip(&mut state)
             .map_err(|e| anyhow::anyhow!("roundtrip: {e}"))?;
@@ -418,6 +444,31 @@ impl LayerSurfaceClient {
         std::mem::take(&mut self.state.pending_hidden)
     }
 
+    pub fn take_brightness(&mut self) -> Option<u8> {
+        self.state.pending_brightness.take()
+    }
+
+    pub fn take_wifi_ap(&mut self) -> Option<Option<String>> {
+        self.state.pending_wifi_ap.take()
+    }
+
+    pub fn send_settings_request(
+        &self,
+        req: crate::overlay::SettingsRequest,
+    ) -> anyhow::Result<()> {
+        use crate::overlay::SettingsRequest;
+        let settings = self
+            .state
+            .settings
+            .as_ref()
+            .context("deck_settings_v1 not bound")?;
+        match req {
+            SettingsRequest::SetBrightness(v) => settings.set_brightness(u32::from(v)),
+            SettingsRequest::ReconfigureWifi => settings.reconfigure_wifi(),
+        }
+        self.flush()
+    }
+
     #[must_use]
     pub fn size(&self) -> (u32, u32) {
         self.state.configured_size
@@ -527,6 +578,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     );
                     state.screen_edge_manager = Some(manager);
                 }
+                "deck_settings_v1" if state.wants_settings => {
+                    let settings =
+                        registry.bind::<DeckSettingsV1, _, _>(name, version.min(1), qh, ());
+                    state.settings = Some(settings);
+                }
                 _ => {}
             }
         }
@@ -596,6 +652,28 @@ impl Dispatch<DeckAutoHideScreenEdgeV1, ()> for State {
                 state.mark_screen_edge_hidden();
             }
             other => tracing::debug!(?other, "unhandled deck_auto_hide_screen_edge_v1 event"),
+        }
+    }
+}
+
+impl Dispatch<DeckSettingsV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &DeckSettingsV1,
+        event: deck_settings_v1::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            deck_settings_v1::Event::Brightness { value } => {
+                state.pending_brightness = Some(u8::try_from(value.min(100)).unwrap_or(100));
+            }
+            deck_settings_v1::Event::WifiAp { ssid } => {
+                let v = if ssid.is_empty() { None } else { Some(ssid) };
+                state.pending_wifi_ap = Some(v);
+            }
+            other => tracing::debug!(?other, "unhandled deck_settings_v1 event"),
         }
     }
 }
