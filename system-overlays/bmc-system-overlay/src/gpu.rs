@@ -83,9 +83,9 @@ impl OverlayRenderTarget {
         client: &mut crate::surface::LayerSurfaceClient,
         w: u32,
         h: u32,
-    ) {
+    ) -> anyhow::Result<()> {
         if self.size() == (w, h) {
-            return;
+            return Ok(());
         }
         for wl_buffer in &mut self.wl_buffers {
             if let Some(buffer) = wl_buffer.take() {
@@ -94,6 +94,7 @@ impl OverlayRenderTarget {
         }
         self.release = SlotReleaseState::new();
         self.buffers.resize(egl, w, h);
+        client.flush()
     }
 
     /// True when the next export slot's buffer has been released by the
@@ -151,7 +152,13 @@ impl OverlayRenderTarget {
         &mut self,
         egl: &EglContext,
         client: &mut crate::surface::LayerSurfaceClient,
-    ) {
+    ) -> anyhow::Result<()> {
+        let cached_wl_buffers = self
+            .wl_buffers
+            .iter()
+            .filter(|buffer| buffer.is_some())
+            .count();
+        tracing::info!(cached_wl_buffers, "free_for_hide: freeing overlay buffers");
         self.buffers.destroy_all(egl);
         for wl_buffer in &mut self.wl_buffers {
             if let Some(buffer) = wl_buffer.take() {
@@ -159,6 +166,7 @@ impl OverlayRenderTarget {
             }
         }
         self.release = SlotReleaseState::new();
+        client.flush()
     }
 
     /// Free all GL/EGL/GBM resources and destroy the cached `wl_buffer`s.
