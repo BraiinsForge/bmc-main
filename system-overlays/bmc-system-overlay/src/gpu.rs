@@ -7,7 +7,8 @@
 
 use anyhow::Context as _;
 use bmc_widget::egl::{
-    Depth, DmaBufInfo, DoubleBufferState, EglContext, ExportFormat, SlotReleaseState,
+    Depth, DmaBufInfo, DoubleBufferState, EglContext, ExportFormat, SharedRenderScratch,
+    SlotReleaseState, WidgetExportBuffer,
 };
 use bmc_widget::surface::ReleasedBuffer;
 use glow::HasContext as _;
@@ -35,6 +36,12 @@ pub struct OverlayRenderTarget {
     buffers: DoubleBufferState,
     wl_buffers: [Option<wl_buffer::WlBuffer>; 2],
     release: SlotReleaseState,
+    /// Once-painted panel source for the blit-only slide: an overlay paints the
+    /// panel band into this GL texture/FBO once (and again only when content
+    /// changes), then each animation frame copies it into the export buffer at
+    /// the current slide offset. `None` until first captured; freed on hide so
+    /// no fullscreen allocation survives an unmap.
+    panel_cache: Option<WidgetExportBuffer>,
 }
 
 impl OverlayRenderTarget {
@@ -47,6 +54,7 @@ impl OverlayRenderTarget {
             buffers: DoubleBufferState::new_with_format(w, h, Depth::Disabled, ExportFormat::Alpha),
             wl_buffers: [None, None],
             release: SlotReleaseState::new(),
+            panel_cache: None,
         })
     }
 
@@ -75,6 +83,67 @@ impl OverlayRenderTarget {
     #[must_use]
     pub fn size(&self) -> (u32, u32) {
         (self.buffers.width(), self.buffers.height())
+    }
+
+    /// Capture the just-painted panel band from `scratch`'s staging into the
+    /// cache source (GPU→GPU shader copy, no CPU read-back). Allocates the cache
+    /// lazily, reallocating if the band size changed. Call right after the
+    /// overlay's `render` + `flush`, inside the GPU render lock, gated on a
+    /// content change. The cache then holds the upright panel for
+    /// [`Self::blit_cached_panel`] to slide.
+    pub fn capture_panel(
+        &mut self,
+        egl: &EglContext,
+        scratch: &SharedRenderScratch,
+        w: u32,
+        panel_h: u32,
+    ) -> anyhow::Result<()> {
+        let needs_alloc = self
+            .panel_cache
+            .as_ref()
+            .is_none_or(|c| c.width != w || c.height != panel_h);
+        if needs_alloc {
+            if let Some(old) = self.panel_cache.take() {
+                egl.destroy_widget_export_buffer(old);
+            }
+            self.panel_cache = Some(
+                egl.allocate_widget_export_buffer(w, panel_h, Depth::Disabled)
+                    .context("allocate overlay panel cache")?,
+            );
+        }
+        let cache = self
+            .panel_cache
+            .as_ref()
+            .expect("BUG: panel cache allocated above");
+        scratch.blit_to(egl, cache.fbo(), w, panel_h);
+        Ok(())
+    }
+
+    /// Whether a panel source has been captured and can be blitted.
+    #[must_use]
+    pub fn is_cached(&self) -> bool {
+        self.panel_cache.is_some()
+    }
+
+    /// Present an animation frame by copying the cached panel into the current
+    /// export buffer translated by `offset_y` (clear-transparent + shader copy
+    /// at offset). No layout, no femtovg. Must be called after
+    /// [`Self::ensure_current`]; returns an error if no panel has been captured.
+    pub fn blit_cached_panel(
+        &self,
+        egl: &EglContext,
+        scratch: &SharedRenderScratch,
+        export_fbo: glow::Framebuffer,
+        size: (u32, u32),
+        panel_h: f32,
+        offset_y: f32,
+    ) -> anyhow::Result<()> {
+        let cache = self
+            .panel_cache
+            .as_ref()
+            .context("blit_cached_panel called before capture_panel")?;
+        scratch.blit_texture_at_offset(egl, cache.texture(), export_fbo, size, panel_h, offset_y);
+        Ok(())
     }
 
     pub fn resize(
@@ -160,6 +229,9 @@ impl OverlayRenderTarget {
             .count();
         tracing::info!(cached_wl_buffers, "free_for_hide: freeing overlay buffers");
         self.buffers.destroy_all(egl);
+        if let Some(cache) = self.panel_cache.take() {
+            egl.destroy_widget_export_buffer(cache);
+        }
         for wl_buffer in &mut self.wl_buffers {
             if let Some(buffer) = wl_buffer.take() {
                 client.destroy_minted_wl_buffer(buffer);
@@ -175,6 +247,9 @@ impl OverlayRenderTarget {
     /// call this explicitly while the EGL context is still current.
     pub fn destroy(&mut self, egl: &EglContext) {
         self.buffers.destroy_all(egl);
+        if let Some(cache) = self.panel_cache.take() {
+            egl.destroy_widget_export_buffer(cache);
+        }
         for wl_buffer in &mut self.wl_buffers {
             if let Some(buffer) = wl_buffer.take() {
                 buffer.destroy();

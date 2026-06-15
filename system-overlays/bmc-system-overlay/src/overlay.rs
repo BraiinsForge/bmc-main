@@ -189,6 +189,30 @@ pub trait SystemOverlay {
     fn drain_settings_requests(&mut self) -> Vec<SettingsRequest> {
         Vec::new()
     }
+
+    /// While a blit-only animation is running with unchanged content, the panel
+    /// offset (px) the host should blit the cached panel at this frame; `None`
+    /// when the host must full-paint (content changed or no animation).
+    ///
+    /// Lets a screen-edge overlay slide by re-blitting a once-painted GPU cache
+    /// instead of re-laying-out and repainting every frame. Default: `None`
+    /// (every frame full-paints), so non-animating overlays are unaffected.
+    fn wants_cached_blit(&self, _now: Instant) -> Option<f32> {
+        None
+    }
+
+    /// Take and clear the overlay's content-changed flag. The host calls this
+    /// after a full paint to learn whether the just-painted frame must refresh
+    /// the cached panel source. Default: `false` (overlays without a cache never
+    /// signal dirty, so the host always treats their paints as authoritative).
+    fn take_content_dirty(&mut self) -> bool {
+        false
+    }
+
+    /// Force the overlay's content-changed flag so the next full paint
+    /// refreshes the cached panel. No-op default: overlays that never cache
+    /// (offline, device-info) need not implement this.
+    fn mark_content_dirty(&mut self) {}
 }
 
 #[cfg(test)]
