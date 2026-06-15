@@ -299,7 +299,7 @@ class MetricsCollector:
             y_pos = -0.10 - 0.06 * (i % stagger_rows)
             ax1.annotate(
                 s.label,
-                xy=(s.ts, 0),  # ty: ignore[invalid-argument-type]
+                xy=(s.ts, 0),
                 xycoords=("data", "axes fraction"),
                 xytext=(0, y_pos * fig.get_figheight() * fig.dpi),
                 textcoords="offset points",

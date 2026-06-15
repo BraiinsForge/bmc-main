@@ -1,0 +1,22 @@
+# Root marker for the Python uv workspace. The repository is primarily Rust;
+# this only groups the in-repo Python packages so they share one lockfile and
+# resolve each other by path. Members are listed explicitly — no auto-discovery.
+[tool.uv.workspace]
+members = [
+    "bmc-tui",
+    "bmc-virt/harness",
+]
+
+# Shared dev tooling for the whole Python workspace, run via `uv run` (one venv covers both members).
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[tool.pytest.ini_options]
+# importlib mode keeps the two same-named `tests` dirs from colliding.
+addopts = "--import-mode=importlib"
+testpaths = [
+    "bmc-tui/tests",
+    "bmc-virt/harness/tests",
+]

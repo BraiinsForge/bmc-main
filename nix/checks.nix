@@ -109,6 +109,7 @@ in
             ../bmc-wasm-runtime/examples
             ../widgets-wasm
             ../bmc-virt/harness
+            ../bmc-tui
           ]);
       };
     } ''

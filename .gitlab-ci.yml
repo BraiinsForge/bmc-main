@@ -123,6 +123,12 @@ workspace-deps-armv7:
 ########### Check Stage ###########
 ###################################
 
+python-check:
+  stage: check
+  needs: []
+  script:
+    - nix develop --command just python
+
 build:
   stage: check
   needs:
@@ -165,12 +171,6 @@ test-wasm-widgets:
   needs: []
   script:
     - nix build -L .#checks.x86_64-linux.test-wasm-widgets
-
-bmc-virt-harness-check:
-  stage: check
-  needs: []
-  script:
-    - cd bmc-virt/harness && nix develop --command just validate
 
 ######################################
 ######## Regression Stage ############

@@ -1,5 +1,8 @@
-validate: format check test
+[private]
+default:
+    @just --justfile {{ source_file() }} --list
 
+# Run a harness script in the dev shell (lint/type/test live at the repo root).
 run script:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -16,15 +19,3 @@ run script:
         exit 1
     fi
     nix develop --command uv run python "$script_path"
-
-format:
-    ruff check --fix .
-    ruff format .
-
-check:
-    ty check .
-    ruff check .
-    ruff format --check .
-
-test *args:
-    uv run pytest {{ args }}

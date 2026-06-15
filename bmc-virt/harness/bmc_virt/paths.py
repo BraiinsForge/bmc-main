@@ -31,8 +31,8 @@ __all__ = [
     "BMC_LOG",
     "BMC_PID_FILE",
     "BMC_RUNTIME_DIR",
-    "WASM_DIR",
     "RELAY_LOG",
     "RR_BUNDLE",
     "RR_TRACE_DIR",
+    "WASM_DIR",
 ]

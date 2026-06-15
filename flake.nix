@@ -11,9 +11,27 @@
     ci-tools.inputs.nixpkgs.follows = "nixpkgs";
     ci-tools.inputs.flake-utils.follows = "flake-utils";
     ci-tools.inputs.nixlib.follows = "nixlib";
+
+    # uv2nix stack — builds the in-repo Python uv workspace (bmc-tui +
+    # bmc-virt harness) from the root uv.lock.
+    pyproject-nix = {
+      url = "github:pyproject-nix/pyproject.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    uv2nix = {
+      url = "github:pyproject-nix/uv2nix";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    pyproject-build-systems = {
+      url = "github:pyproject-nix/build-system-pkgs";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.uv2nix.follows = "uv2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, nixlib, ci-tools, ... }:
+  outputs = { self, nixpkgs, flake-utils, nixlib, ci-tools, pyproject-nix, uv2nix, pyproject-build-systems, ... }:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ] (localSystem:
       let
         pkgs = import nixpkgs {
@@ -56,17 +74,45 @@
           ];
         };
 
+        # ── Python uv workspace (bmc-tui + bmc-virt harness) ─────────────────
+        # Builds the in-repo Python packages from the root uv.lock. The harness
+        # venv is consumed by bmc-virt/flake.nix to deploy the guest event
+        # daemon; the interpreter follows the nixpkgs default (pkgs.python3).
+        pythonWorkspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ./.; };
+        pythonOverlay = pythonWorkspace.mkPyprojectOverlay { sourcePreference = "wheel"; };
+        pythonSet =
+          (pkgs.callPackage pyproject-nix.build.packages { python = pkgs.python3; }).overrideScope
+            (pkgs.lib.composeManyExtensions [
+              pyproject-build-systems.overlays.default
+              pythonOverlay
+            ]);
+        # The harness venv contains both members (bmc-virt depends on bmc-tui),
+        # so bmc_virt and bmc_tui are both importable for the guest daemon.
+        bmc-virt-harness-venv = pythonSet.mkVirtualEnv "bmc-virt-harness" pythonWorkspace.deps.default;
+
         # Local dev shell with Rust + frontend + GUI deps (native only).
-        localDevShell = bmc.profiles.fast.mkShell {
+        localDevShell = (bmc.profiles.fast.mkShell {
           name = "bmc-local-env";
           packages = (commonDeps.frontendDeps pkgs)
             ++ (with pkgs; [
             cargo-watch
             ffmpeg-headless
+            just
             odiff
             python3
+            ruff
+            ty
+            uv
           ]);
-        };
+        }).overrideAttrs (prev: {
+          # numpy/matplotlib (pulled in by the harness Python tests via uv)
+          # dlopen libstdc++ at import time; prepend it to the existing loader
+          # path so `just python` works in the pure-nix CI shell.
+          LD_LIBRARY_PATH =
+            pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]
+            + ":"
+            + (prev.LD_LIBRARY_PATH or "");
+        });
 
         # Pre-built ty binary — avoids compiling from source on CI builders
         # that lack the nixos binary cache substituter.
@@ -144,6 +190,8 @@
             "bmc-shared/ii-net-drv/*"
             # Harness has its own formatter config (bmc-virt/harness/pyproject.toml)
             "bmc-virt/harness/**/*.py"
+            # bmc-tui has its own formatter config (bmc-tui/pyproject.toml)
+            "bmc-tui/**/*.py"
             # yamlfmt canonicalises folded scalars to a single line (collapsing
             # the readable multi-line `>-` form used for `workspace_lints_ignore`).
             # Skip entirely; CI YAML is stable enough to hand-format.
@@ -181,6 +229,7 @@
             runtimeInputs = with pkgs; [ file gawk git ];
             text = ''exec ${./scripts/check-binary-lfs.sh} "$@"'';
           };
+          bmc-virt-harness = bmc-virt-harness-venv;
         };
 
         apps.fmt-svg = {

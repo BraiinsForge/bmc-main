@@ -1,19 +1,12 @@
 [project]
-name = "bmc-virt"
+name = "bmc-tui"
 version = "0.1.0"
-description = "BMC virtual machine event daemon, test harness, and CLI"
+description = "Shared rich-based TUI/DX tooling and the staged device-deploy engine"
 requires-python = ">=3.11"
 dependencies = [
     "rich>=14",
-    "matplotlib>=3.9",
-    "bmc-tui",
+    "tyro>=0.9",
 ]
-
-[project.scripts]
-bmc-virt = "bmc_virt.cli:main"
-
-[tool.uv.sources]
-bmc-tui = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -43,7 +36,7 @@ select = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["bmc_tui", "bmc_virt"]
+known-first-party = ["bmc_tui"]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests routinely assert against literal expected values.
