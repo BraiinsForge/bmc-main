@@ -24,6 +24,7 @@ bmc-support.workspace = true
 bmc-widget-protocol.workspace = true
 calloop.workspace = true
 clap.workspace = true
+deck-screen-edge-v1 = { workspace = true }
 drm.workspace = true
 file-rotate.workspace = true
 flume.workspace = true
