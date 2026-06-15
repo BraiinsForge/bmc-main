@@ -55,7 +55,6 @@ members = [
     "system-overlays/bmc-overlay-settings-tray",
     "system-overlays/bmc-system-overlay",
     "system-overlays/layer-shell-test-client",
-    "system-overlays/screen-edge-validation-overlay",
     "widgets/*",
 ]
 

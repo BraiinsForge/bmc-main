@@ -6,7 +6,6 @@ mod connectivity;
 mod gpu;
 mod hosted;
 mod overlay;
-mod screen_edge_validation;
 mod standalone;
 mod surface;
 #[cfg(test)]
@@ -19,7 +18,6 @@ pub use hosted::HostedOverlay;
 pub use overlay::{
     InputRegion, LayerConfig, ScreenEdge, SettingsRequest, SystemOverlay, TickOutcome, TouchEvent,
 };
-pub use screen_edge_validation::ScreenEdgeValidationOverlay;
 pub use standalone::run_standalone;
 pub use surface::LayerSurfaceClient;
 pub use tree::TreeUi;

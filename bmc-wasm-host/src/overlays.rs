@@ -6,7 +6,7 @@ use std::time::Instant;
 use bmc_overlay_device_info::DeviceInfoOverlay;
 use bmc_overlay_offline::OfflineOverlay;
 use bmc_render::renderer::{FrameClear, Renderer};
-use bmc_system_overlay::{HostedOverlay, ScreenEdgeValidationOverlay, SystemOverlay};
+use bmc_system_overlay::{HostedOverlay, SystemOverlay};
 use bmc_widget::egl::EglContext;
 
 use crate::host::SharedHost;
@@ -39,8 +39,8 @@ pub fn build_overlays(egl: &EglContext) -> Vec<HostedOverlay> {
     let factories: Vec<OverlayFactory> = vec![
         ("offline", || Box::new(OfflineOverlay::default())),
         ("device-info", || Box::new(DeviceInfoOverlay::default())),
-        ("screen-edge", || {
-            Box::new(ScreenEdgeValidationOverlay::default())
+        ("settings-tray", || {
+            Box::new(bmc_overlay_settings_tray::SettingsTrayOverlay::default())
         }),
     ];
     let mut overlays = Vec::new();
