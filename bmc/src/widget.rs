@@ -3,7 +3,7 @@
 //! Widget system for discovering, spawning, and managing widget processes.
 
 pub mod action_handler;
-mod coordinator;
+pub(crate) mod coordinator;
 mod discovery;
 mod led_state;
 mod manager;

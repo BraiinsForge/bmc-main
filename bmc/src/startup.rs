@@ -179,12 +179,29 @@ where
         let mut screen_woken_rx = system_manager.subscribe_screen_woken();
 
         let screen_activity_for_touch = button_manager.screen_activity.clone();
+        let system_manager_for_events = system_manager.clone();
+        let manager_for_events = manager.clone();
         tokio::spawn(async move {
             let mut event_rx = compositor_for_events.subscribe_events();
             loop {
                 match event_rx.recv().await {
                     Ok(CompositorEvent::ScreenActivity) => {
                         screen_activity_for_touch.notify_waiters();
+                    }
+                    Ok(CompositorEvent::SetBrightness { value }) => {
+                        // SystemManager::set_brightness persists config AND notifies
+                        // the physical-backlight loop (brightness_modified); a bare
+                        // set_config_brightness would update config without changing
+                        // the actual backlight. Clamp to the product minimum.
+                        let v = value.clamp(crate::backlight::MIN_BRIGHTNESS_PCT, 100);
+                        if let Err(e) = system_manager_for_events.set_brightness(v).await {
+                            tracing::warn!("settings overlay set_brightness failed: {e}");
+                        }
+                    }
+                    Ok(CompositorEvent::ReconfigureWifi) => {
+                        if let Err(e) = manager_for_events.enter_wifi_reconfig().await {
+                            tracing::warn!("settings overlay reconfigure_wifi failed: {e}");
+                        }
                     }
                     Ok(_) => {}
                     Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -278,6 +295,21 @@ where
                 )
                 .await;
         }
+
+        crate::widget::coordinator::start_brightness_listener(
+            compositor.clone(),
+            config_handle.clone(),
+            config_handle
+                .read()
+                .await
+                .subscribe_brightness_settings_change(),
+            system_manager.subscribe_night_mode(),
+        );
+        crate::widget::coordinator::start_wifi_reconfig_listener(
+            compositor.clone(),
+            manager.clone(),
+            manager.watch_wifi_reconfig(),
+        );
 
         Ok(Self {
             listener,
