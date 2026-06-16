@@ -11,7 +11,7 @@ import pytest
 from bmc_tui import catalog
 from bmc_tui.device import Device
 from bmc_tui.image import Image
-from bmc_tui.stage import Abort
+from bmc_tui.stage import Abort, dry_run
 
 _TARGET = "stm32mp15/ii3"
 _TOP = "sysupgrade-stm32mp15_ii3-emmc"
@@ -176,8 +176,37 @@ def test_sysupgrade_skips_when_already_on_target(tmp_path: Path) -> None:
 def test_sysupgrade_runs_with_force(tmp_path: Path) -> None:
     image = _image(tmp_path)
     backend = _Exec(_routes({"cat /etc/bos_version": "older-version"}))
-    catalog.sysupgrade(Device("h", backend=backend), image, force=True)
+    catalog.sysupgrade(Device("h", backend=backend), image, force=True, assume_yes=True)
     assert any("sysupgrade -F " in argv[-1] for argv in backend.runs)
+
+
+def test_sysupgrade_runs_with_assume_yes(tmp_path: Path) -> None:
+    image = _image(tmp_path)
+    backend = _Exec(_routes({"cat /etc/bos_version": "older-version"}))
+    catalog.sysupgrade(Device("h", backend=backend), image, assume_yes=True)
+    assert any("sysupgrade " in argv[-1] for argv in backend.runs)
+
+
+def test_sysupgrade_aborts_when_declined(tmp_path: Path) -> None:
+    # No --yes, no --dry-run, and stdin is not a TTY under pytest, so
+    # console.confirm returns False — the flash must be refused, not run.
+    image = _image(tmp_path)
+    backend = _Exec(_routes({"cat /etc/bos_version": "older-version"}))
+    with pytest.raises(Abort, match="flash declined"):
+        catalog.sysupgrade(Device("h", backend=backend), image)
+    assert not any("sysupgrade " in argv[-1] for argv in backend.runs)
+
+
+def test_sysupgrade_proceeds_under_dry_run(tmp_path: Path) -> None:
+    image = _image(tmp_path)
+    backend = _Exec(_routes({"cat /etc/bos_version": "older-version"}))
+    token = dry_run.set(True)
+    try:
+        catalog.sysupgrade(Device("h", backend=backend), image)
+    finally:
+        dry_run.reset(token)
+    # dry-run logs the mutation instead of running it, so no real sysupgrade ssh.
+    assert not any("sysupgrade " in argv[-1] for argv in backend.runs)
 
 
 # ── wait_for_device ───────────────────────────────────────────────────────────

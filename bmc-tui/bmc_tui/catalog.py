@@ -12,7 +12,7 @@ from collections.abc import Callable
 from bmc_tui import console
 from bmc_tui.device import Device
 from bmc_tui.image import Image
-from bmc_tui.stage import done_if, ensure, require, stage
+from bmc_tui.stage import done_if, dry_run, ensure, require, stage
 
 _NIX_CONF = "/etc/nix/nix.conf"
 _EXPERIMENTAL = "experimental-features = nix-command flakes"
@@ -64,8 +64,17 @@ def upload_firmware(dev: Device, image: Image) -> str:
 
 
 @stage("Sysupgrade")
-def sysupgrade(dev: Device, image: Image, *, force: bool = False) -> str:
+def sysupgrade(dev: Device, image: Image, *, force: bool = False, assume_yes: bool = False) -> str:
     done_if(dev.version == image.version)
+    require(
+        assume_yes
+        or dry_run.get()
+        or console.confirm(
+            f"Flash {console.lit(image.version)} to {console.lit(dev.host)}? "
+            "The device will reboot."
+        ),
+        "flash declined — pass --yes to skip the prompt",
+    )
     flag = "-F " if force else ""
     dev.run(f"sysupgrade {flag}{image.remote_path}", expect_disconnect=True)
     return "flashing — the device will reboot"

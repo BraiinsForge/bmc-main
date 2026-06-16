@@ -1,8 +1,12 @@
 """Rich-based output formatting — headers, status, panels, user prompts."""
 
+import shutil
+import subprocess
 import sys
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Protocol
 
@@ -10,6 +14,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
 from rich.progress import BarColumn, DownloadColumn, Progress, TextColumn, TimeRemainingColumn
+from rich.prompt import Confirm
 from rich.status import Status
 from rich.syntax import Syntax
 from rich.text import Text
@@ -17,9 +22,12 @@ from rich.text import Text
 __all__ = [
     "INSTRUCT_HINT",
     "SupportsCapture",
+    "alert",
     "cmd_output",
     "code",
+    "confirm",
     "console",
+    "desktop_notify",
     "error",
     "format_ts",
     "header",
@@ -27,6 +35,8 @@ __all__ = [
     "instruct_user",
     "kv",
     "lit",
+    "mark_run_start",
+    "notify",
     "ok",
     "out",
     "panel",
@@ -270,3 +280,58 @@ def instruct_user(
         metrics.capture(f"<{message}")
 
     return acked_at
+
+
+# ── Run clock + attention notifications ──────────────────────────────────────
+
+_run_started: ContextVar[float | None] = ContextVar("run_started", default=None)
+
+
+def mark_run_start() -> None:
+    """Stamp the run's start time; `alert` uses it to stay quiet on quick runs."""
+    _run_started.set(time.monotonic())
+
+
+def notify(summary: str, *, body: str | None = None) -> None:
+    """Ring the terminal bell and best-effort fire a desktop notification."""
+    if sys.stdout.isatty():
+        out.bell()
+    desktop_notify(summary, body=body)
+
+
+def alert(summary: str, *, body: str | None = None, after: float = 10.0) -> None:
+    """Notify that attention is needed, but only when interactive and the run
+    has been going at least `after` seconds — a quick run means the user is
+    watching, so stay silent (the undistract-me heuristic)."""
+    if not sys.stdout.isatty():
+        return
+    started = _run_started.get()
+    if started is not None and time.monotonic() - started < after:
+        return
+    notify(summary, body=body)
+
+
+def confirm(question: str) -> bool:
+    """Ask a yes/no question (default no). Returns False when not a TTY; alerts
+    before blocking so a looked-away user knows input is needed."""
+    if not sys.stdin.isatty():
+        return False
+    alert("confirmation required", body=question)
+    return Confirm.ask(question, default=False, console=out)
+
+
+def desktop_notify(summary: str, *, body: str | None = None) -> None:
+    """Best-effort OS notification via whichever notifier is on PATH; silent if
+    none. Standalone of the bell, so scripts can fire one without a TTY."""
+    text = body or summary
+    if shutil.which("notify-send"):
+        cmd = ["notify-send", summary, text]
+    elif shutil.which("terminal-notifier"):
+        cmd = ["terminal-notifier", "-title", summary, "-message", text]
+    elif shutil.which("osascript"):
+        title = summary.replace('"', '\\"')
+        message = text.replace('"', '\\"')
+        cmd = ["osascript", "-e", f'display notification "{message}" with title "{title}"']
+    else:
+        return
+    subprocess.run(cmd, check=False, capture_output=True)

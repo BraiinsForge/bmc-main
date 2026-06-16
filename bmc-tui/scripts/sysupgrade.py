@@ -18,6 +18,7 @@ class Args:
     device: str  # IP or host of the target Deck
     image: Path  # path to the firmware sysupgrade .tar
     force: bool = False  # pass -F to sysupgrade (override the device's compat check)
+    yes: bool = False  # skip the confirm prompt before the irreversible flash
     dry_run: bool = False  # run read-only checks; log mutations without executing
 
 
@@ -38,7 +39,7 @@ def main(args: Args) -> None:
     catalog.validate_firmware_image(image, device_target=dev.target)
     catalog.ensure_free_space(dev, "/mnt/data", image.size)
     catalog.upload_firmware(dev, image)
-    catalog.sysupgrade(dev, image, force=args.force)
+    catalog.sysupgrade(dev, image, force=args.force, assume_yes=args.yes)
     catalog.wait_for_device(dev)
     catalog.verify_post_upgrade(dev, expect=image.version)
 

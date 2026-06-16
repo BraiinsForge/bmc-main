@@ -105,6 +105,7 @@ def entrypoint(main: Callable[..., None]) -> Callable[..., None]:
 
     @functools.wraps(main)
     def wrapped(argv: list[str] | None = None) -> None:
+        console.mark_run_start()
         try:
             if args_type is None:
                 main()
