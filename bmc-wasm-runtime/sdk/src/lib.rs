@@ -262,6 +262,10 @@ pub mod tree;
 pub mod tz;
 #[cfg(target_arch = "wasm32")]
 pub mod udp_broadcast;
+// Private module, public types: `use bmc_wasm_sdk::*` brings `Length`/`Speed`
+// without exposing a `units` name that would clash with the `lib/units` crate
+// some widgets still depend on (it folds into the SDK later).
+mod units;
 #[cfg(target_arch = "wasm32")]
 pub mod ws;
 #[cfg(target_arch = "wasm32")]
@@ -296,6 +300,7 @@ pub use slot::*;
 pub use tree::*;
 pub use tz::Tz;
 pub use ufmt;
+pub use units::{Length, Speed};
 #[cfg(target_arch = "wasm32")]
 pub use ws::{Ws, WsEvent, ws_connect};
 #[cfg(target_arch = "wasm32")]

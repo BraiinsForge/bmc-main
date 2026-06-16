@@ -26,6 +26,7 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_xml_imports(linker)?;
     register_number_format_import(linker)?;
     register_speed_format_import(linker)?;
+    register_distance_format_import(linker)?;
     register_temperature_format_import(linker)?;
     register_rrule_import(linker)?;
     register_timezone_import(linker)?;
@@ -595,6 +596,70 @@ mod speed_format_tests {
         );
         assert_eq!(kmh, "62 mph");
         assert_eq!(ms, "62 mph");
+    }
+}
+
+fn format_distance_with_prefs(
+    number_format: NumberFormat,
+    unit_system: UnitSystem,
+    value_km: f64,
+    decimals: u32,
+) -> String {
+    let (converted, suffix) = match unit_system {
+        UnitSystem::Imperial => (value_km * 0.621_371_192, " mi"),
+        UnitSystem::Metric => (value_km, " km"),
+    };
+    let num = format_number_with_prefs(number_format, converted, decimals);
+    format!("{num}{suffix}")
+}
+
+fn register_distance_format_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_format_distance",
+        |mut caller: Caller<'_, HostState>,
+         value: f64,
+         decimals: u32,
+         out_ptr: u32,
+         out_len: u32|
+         -> i32 {
+            let (number_format, unit_system) = {
+                let s = caller.data().system.snapshot();
+                (s.settings.number_format, s.settings.unit_system)
+            };
+            let formatted = format_distance_with_prefs(number_format, unit_system, value, decimals);
+            write_to_wasm(&mut caller, &formatted, out_ptr, out_len)
+        },
+    )?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod distance_format_tests {
+    use super::*;
+
+    #[test]
+    fn metric_keeps_kilometers() {
+        let s = format_distance_with_prefs(
+            NumberFormat::SpaceGroupCommaDecimal,
+            UnitSystem::Metric,
+            420.0,
+            0,
+        );
+        assert_eq!(s, "420 km");
+    }
+
+    #[test]
+    fn imperial_converts_to_miles() {
+        // 420 km -> ~261 mi.
+        let s = format_distance_with_prefs(
+            NumberFormat::SpaceGroupCommaDecimal,
+            UnitSystem::Imperial,
+            420.0,
+            0,
+        );
+        assert_eq!(s, "261 mi");
     }
 }
 

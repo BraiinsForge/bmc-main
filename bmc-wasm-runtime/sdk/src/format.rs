@@ -25,6 +25,7 @@ unsafe extern "C" {
         out_ptr: *mut u8,
         out_len: u32,
     ) -> i32;
+    fn host_format_distance(value: f64, decimals: u32, out_ptr: *mut u8, out_len: u32) -> i32;
     fn host_format_date(
         timestamp: i64,
         fmt_ptr: *const u8,
@@ -74,6 +75,16 @@ pub fn _host_format_speed(value: f64, decimals: u32, metric_unit: u32) -> String
             buf.len() as u32,
         )
     };
+    read_host_buf(&buf, len)
+}
+
+/// Format a distance using host-side preferences.
+/// Called by [`format_distance!`].
+#[doc(hidden)]
+#[must_use]
+pub fn _host_format_distance(value: f64, decimals: u32) -> String {
+    let mut buf = [0_u8; 64];
+    let len = unsafe { host_format_distance(value, decimals, buf.as_mut_ptr(), buf.len() as u32) };
     read_host_buf(&buf, len)
 }
 
@@ -331,6 +342,21 @@ macro_rules! format_speed {
     };
     ($value:expr, $decimals:expr, ms) => {
         $crate::format::_host_format_speed($value as f64, $decimals, 1)
+    };
+}
+
+/// Format a distance value with user-preferred units and number formatting.
+///
+/// Input is always km; the host converts to miles if imperial.
+///
+/// # Example
+/// ```ignore
+/// let s = format_distance!(420.0, 0); // "420 km" or "261 mi"
+/// ```
+#[macro_export]
+macro_rules! format_distance {
+    ($value:expr, $decimals:expr) => {
+        $crate::format::_host_format_distance($value as f64, $decimals)
     };
 }
 
