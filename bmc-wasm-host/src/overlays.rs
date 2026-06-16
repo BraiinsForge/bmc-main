@@ -65,6 +65,33 @@ pub fn build_overlays(egl: &EglContext) -> Vec<HostedOverlay> {
     overlays
 }
 
+/// Pay each overlay's one-time renderer setup (SVG icon decode/upload, glyph
+/// atlas) at startup so the first screen-edge reveal does not stall mid-swipe.
+/// Mirrors `render_hosted_overlay`'s GL setup but draws into the host scratch
+/// and exports nothing — no overlay buffer is allocated or mapped.
+pub fn prewarm_hosted_overlay(
+    overlay: &mut HostedOverlay,
+    ptr: NonNull<dyn Renderer>,
+    shared: &mut SharedHost,
+) -> anyhow::Result<()> {
+    let (w, h) = shared.scratch.max_size();
+    let gpu_render_lock = shared.acquire_gpu_render_lock("host_overlay_prewarm")?;
+    let _staging = shared.scratch.begin_frame(&shared.egl, w, h);
+    crate::slot::normalize_gl_state(&shared.egl, w, h);
+    // SAFETY: same invariants as `render_hosted_overlay` — `ptr` is non-null by
+    // construction and the renderer outlives this call; the prewarm pass runs
+    // before the event loop, one overlay at a time, so no other `&mut dyn
+    // Renderer` to this renderer is live.
+    let renderer = unsafe { ptr.as_ptr().as_mut() }
+        .expect("BUG: NonNull renderer is non-null by construction");
+    renderer.begin_frame_with_clear(w, h, 1.0, FrameClear::TransparentBlack);
+    overlay.overlay_mut().prewarm(renderer);
+    renderer.flush();
+    shared.flush_and_wait_gl();
+    drop(gpu_render_lock);
+    Ok(())
+}
+
 /// Render one hosted overlay through the shared renderer, mirroring
 /// `WidgetSlot::render`: lock GPU, stage, draw, blit, fence-wait, export, attach.
 pub fn render_hosted_overlay(
