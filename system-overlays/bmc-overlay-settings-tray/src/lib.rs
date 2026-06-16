@@ -429,6 +429,10 @@ impl SystemOverlay for SettingsTrayOverlay {
     fn on_touch(&mut self, event: TouchEvent) {
         self.tree.push_touch(event);
         self.last_interaction = Instant::now();
+        // Force a render so the interaction state processes the queued event and
+        // runs its hit-test; without a paint frame the slider/buttons never see
+        // the touch (the dismiss path below works off raw deltas, not hit-tests).
+        self.content_dirty = true;
         #[expect(
             clippy::cast_possible_truncation,
             reason = "surface-local logical coordinates fit f32 comfortably"
