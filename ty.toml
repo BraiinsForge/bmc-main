@@ -7,4 +7,7 @@ python-version = "3.12"
 # Exclude sub-projects that have their own pyproject.toml with [tool.ty] config
 # and their own venv — they run ty separately via their own Makefile.
 [src]
-exclude = ["bmc-wasm-runtime/examples/*/tools/"]
+exclude = [
+    "bmc-wasm-runtime/examples/*/tools/",
+    "widgets-wasm/iss-position/tools/",
+]

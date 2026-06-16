@@ -15,6 +15,7 @@ members = [
     "blockheight",
     "clock",
     "fleet-management",
+    "iss-position",
     "lib/mining",
     "lib/units",
     "mining-clock",
@@ -36,6 +37,7 @@ unwrap_used = "warn"
 
 [workspace.dependencies]
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+sgp4 = { version = "2.4", default-features = false, features = ["std"] }
 
 # Shared profiles — all widgets are tiny WASM binaries optimized for size
 [profile.dev]

@@ -14,8 +14,13 @@ result**
 *.so
 
 # Misc Artifacts
+.direnv
 .DS_Store
 *.log
 *.pyc
 **/*#
 *~
+
+# Python tooling (uv venvs / bytecode caches under widget tools/)
+.venv/
+__pycache__/

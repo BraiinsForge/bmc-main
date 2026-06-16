@@ -7,7 +7,7 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-bmc-wasm-sdk = { path = "../../sdk" }
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
 sgp4.workspace = true
 
 [lints]

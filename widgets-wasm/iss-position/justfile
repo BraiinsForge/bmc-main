@@ -2,7 +2,7 @@
 # scripts live in ./tools as a uv project.
 
 # Import the repo-root justfile so `preview` can re-run `format` afterwards.
-mod root "../../.."
+mod root "../.."
 
 dir := justfile_directory()
 tools_dir := dir + "/tools"

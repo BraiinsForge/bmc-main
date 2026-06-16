@@ -1,6 +1,6 @@
 {
-  "$schema": "../../../bmc-widget-manifest/manifest.schema.json",
-  "uid": "550e8400-e29b-41d4-a716-446655440203",
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "0a3973c9-3a97-4bf2-957a-741e55353a19",
   "version": "0.1.0",
   "name": "ISS Position",
   "description": "Live ISS position on a world map with orbital track",

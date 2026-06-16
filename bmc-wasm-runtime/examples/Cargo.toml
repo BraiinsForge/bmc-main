@@ -15,7 +15,6 @@ members = [
     "calendar",
     "hello-widget",
     "home-assistant",
-    "iss-position",
     "media-control",
     "mesh-demo",
     "metronome",
@@ -39,7 +38,6 @@ unwrap_used = "warn"
 
 [workspace.dependencies]
 prost = "0.13"
-sgp4 = { version = "2.3", default-features = false, features = ["std"] }
 
 # Shared profiles — all examples are tiny WASM binaries optimized for size
 [profile.dev]
