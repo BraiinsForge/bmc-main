@@ -65,6 +65,8 @@
             ffmpeg-headless
             odiff
             python3
+            libinput.dev
+            libxkbcommon.dev
           ]);
         };
 

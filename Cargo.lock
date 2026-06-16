@@ -1430,11 +1430,15 @@ name = "bmc-storybook"
 version = "0.1.0"
 dependencies = [
  "anstyle-parse",
+ "bmc-overlay-device-info",
+ "bmc-overlay-offline",
+ "bmc-overlay-settings-tray",
  "bmc-render",
  "bmc-render-keyboard",
  "bmc-render-skin",
  "bmc-storybook-api",
  "bmc-storybook-macros",
+ "bmc-system-overlay",
  "bmc-wasm-sdk",
  "eframe",
  "egui",
@@ -1481,9 +1485,14 @@ dependencies = [
 name = "bmc-storybook-stories"
 version = "0.1.0"
 dependencies = [
+ "bmc-overlay-device-info",
+ "bmc-overlay-offline",
+ "bmc-overlay-settings-tray",
+ "bmc-render",
  "bmc-render-keyboard",
  "bmc-render-skin",
  "bmc-storybook-api",
+ "bmc-system-overlay",
  "bmc-wasm-sdk",
  "inventory",
  "toml",
