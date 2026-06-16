@@ -78,33 +78,6 @@ def test_reachable_aborts_when_unreachable() -> None:
         catalog.ensure_device_reachable(Device("h", backend=_Exec(_unreachable)))
 
 
-# ── ensure_nix_conf ───────────────────────────────────────────────────────────
-
-
-def test_nix_conf_noop_when_present() -> None:
-    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
-        if "cat /etc/nix/nix.conf" in argv[-1]:
-            return _cp(argv, "experimental-features = nix-command flakes\n")
-        raise AssertionError("remedy must not run when nix.conf is already set")
-
-    catalog.ensure_nix_conf(Device("h", backend=_Exec(respond)))
-
-
-def test_nix_conf_writes_when_absent() -> None:
-    state = {"conf": ""}
-
-    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
-        cmd = argv[-1]
-        if "cat /etc/nix/nix.conf" in cmd:
-            return _cp(argv, state["conf"])
-        if "printf" in cmd:
-            state["conf"] = "experimental-features = nix-command flakes\n"
-        return _cp(argv)
-
-    catalog.ensure_nix_conf(Device("h", backend=_Exec(respond)))
-    assert "experimental-features" in state["conf"]
-
-
 # ── validate_firmware_image ───────────────────────────────────────────────────
 
 

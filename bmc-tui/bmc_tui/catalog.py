@@ -25,7 +25,6 @@ _PROFILE_DIR = "/nix/var/nix/gcroots/profiles/bmc"
 _NIX_CLI = f"{_PROFILE_DIR}/bin/bmc-nix-cli"
 
 _NIX_CONF = "/etc/nix/nix.conf"
-_EXPERIMENTAL = "experimental-features = nix-command flakes"
 
 
 @stage("Device reachable")
@@ -33,14 +32,6 @@ def ensure_device_reachable(dev: Device) -> None:
     require(
         dev.reachable,
         f"{dev.host} is unreachable — power-cycle the Deck and check the network",
-    )
-
-
-@stage("nix.conf experimental-features")
-def ensure_nix_conf(dev: Device) -> None:
-    ensure(
-        lambda: "experimental-features" in dev.read(f"cat {_NIX_CONF} 2>/dev/null"),
-        lambda: dev.run(f"mkdir -p /etc/nix && printf '{_EXPERIMENTAL}\\n' > {_NIX_CONF}"),
     )
 
 

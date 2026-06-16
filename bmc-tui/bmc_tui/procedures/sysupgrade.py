@@ -33,7 +33,6 @@ class Sysupgrade:
         image.print()
 
         catalog.ensure_device_reachable(dev)
-        catalog.ensure_nix_conf(dev)
         catalog.validate_firmware_image(image, device_target=dev.target)
         catalog.ensure_free_space(dev, "/mnt/data", image.size)
         catalog.upload_firmware(dev, image)
