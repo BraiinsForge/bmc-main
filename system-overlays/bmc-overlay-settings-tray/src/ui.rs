@@ -286,7 +286,7 @@ fn brightness_section(brightness: u8, with_label: bool) -> TreeNode {
                     track_h: 8.0,
                     mode: 0,
                     fraction: frac,
-                    active: true,
+                    active: false,
                     fill_color: GREEN_50,
                     track_color: GRAY_80,
                     bg_color: TRANSPARENT,
