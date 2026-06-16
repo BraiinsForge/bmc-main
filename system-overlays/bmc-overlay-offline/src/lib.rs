@@ -7,14 +7,24 @@ use std::time::{Duration, Instant};
 
 use bmc_render::colors::Color;
 use bmc_render::renderer::Renderer;
+use bmc_render::tree::{FontFamily, FontWeight, TextAlign, TextStyle, VerticalAlign};
 use bmc_system_overlay::{LayerConfig, SystemOverlay, TickOutcome, primary_ipv4};
 
-/// Indicator size in logical pixels.
-const SIZE: (u32, u32) = (200, 56);
+/// Surface size in logical pixels. The visible indicator is a content-tight box
+/// drawn at the surface's bottom-right corner; the remainder stays transparent.
+const SIZE: (u32, u32) = (160, 48);
 /// Legacy display text; keep capital case.
 const LABEL: &str = "OFFLINE";
-/// Red see-through background.
-const BACKGROUND_RGBA: (u8, u8, u8, u8) = (180, 0, 0, 160);
+/// Label font size in logical pixels.
+const FONT_PX: u32 = 16;
+/// Horizontal padding around the label (8px outer + 16px inner item padding).
+const PAD_X: f32 = 24.0;
+/// Vertical padding around the label.
+const PAD_Y: f32 = 8.0;
+/// Opaque black indicator background.
+const BACKGROUND_RGBA: (u8, u8, u8, u8) = (0, 0, 0, 255);
+/// Red label text (palette red-50).
+const TEXT_RGBA: (u8, u8, u8, u8) = (249, 83, 85, 255);
 /// Connectivity re-check cadence.
 const POLL: Duration = Duration::from_secs(2);
 
@@ -100,26 +110,33 @@ impl SystemOverlay for OfflineOverlay {
             clippy::cast_precision_loss,
             reason = "indicator dimensions fit comfortably in f32 mantissa"
         )]
-        let (w, h) = (size.0 as f32, size.1 as f32);
+        let (w, h, font) = (size.0 as f32, size.1 as f32, FONT_PX as f32);
+
+        let (t_r, t_g, t_b, t_a) = TEXT_RGBA;
+        let style = TextStyle {
+            size: FONT_PX,
+            color: Color::from_rgba(t_r, t_g, t_b, t_a),
+            weight: FontWeight::SEMIBOLD,
+            align: TextAlign::Center,
+            vertical_align: VerticalAlign::Center,
+            family: FontFamily::Sans,
+            ..TextStyle::default()
+        };
+
+        let box_w = r.measure_text(LABEL, font) + PAD_X * 2.0;
+        let box_h = font * style.line_height + PAD_Y * 2.0;
+        let box_x = w - box_w;
+        let box_y = h - box_h;
+
         let (bg_r, bg_g, bg_b, bg_a) = BACKGROUND_RGBA;
-        r.fill_rounded_rect(
-            0.0,
-            0.0,
-            w,
-            h,
-            12.0,
+        r.fill_rect(
+            box_x,
+            box_y,
+            box_w,
+            box_h,
             Color::from_rgba(bg_r, bg_g, bg_b, bg_a),
         );
-        let text = LABEL;
-        let font = 28.0;
-        let tw = r.measure_text(text, font);
-        r.draw_text(
-            text,
-            (w - tw) / 2.0,
-            h / 2.0 + font / 3.0,
-            font,
-            Color::from_rgba(255, 255, 255, 255),
-        );
+        r.draw_canvas_text(LABEL, box_x + box_w / 2.0, box_y + box_h / 2.0, &style);
     }
 }
 
@@ -158,13 +175,15 @@ mod tests {
 
     #[test]
     fn constants_match_legacy_offline_indicator() {
-        let (red, green, blue, alpha) = BACKGROUND_RGBA;
-
         assert_eq!(LABEL, "OFFLINE");
+        assert_eq!(FONT_PX, 16);
+
+        // Legacy: opaque black box with red text.
+        assert_eq!(BACKGROUND_RGBA, (0, 0, 0, 255));
+        let (red, green, blue, alpha) = TEXT_RGBA;
         assert!(red > green);
         assert!(red > blue);
-        assert!(alpha > 0);
-        assert!(alpha < u8::MAX);
+        assert_eq!(alpha, u8::MAX);
     }
 
     #[test]
