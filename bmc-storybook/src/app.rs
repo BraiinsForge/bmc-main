@@ -277,7 +277,17 @@ impl StorybookApp {
         Option<Instant>,
     ) {
         if hot_reload {
-            match HotReloader::new(default_so_path(), &workspace_root()) {
+            let so_path = match default_so_path() {
+                Ok(path) => path,
+                Err(e) => {
+                    tracing::error!(
+                        "failed to resolve storybook .so path: {e}, falling back to static"
+                    );
+                    let (entries, groups) = load_static_stories();
+                    return (entries, groups, None, None);
+                }
+            };
+            match HotReloader::new(so_path, &workspace_root()) {
                 Ok(mut reloader) => {
                     let started = if reloader.start_build().is_ok() {
                         Some(Instant::now())

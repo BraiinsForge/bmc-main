@@ -156,6 +156,7 @@ impl fmt::Display for LoadSoError {
 #[expect(missing_debug_implementations)]
 pub struct HotReloader {
     so_path: PathBuf,
+    workspace_root: PathBuf,
     library: Option<Arc<libloading::Library>>,
     /// Set by the .so file watcher when the file changes.
     so_changed: Arc<AtomicBool>,
@@ -289,6 +290,7 @@ impl HotReloader {
 
         Ok(Self {
             so_path,
+            workspace_root: workspace_root.to_owned(),
             library: None,
             so_changed,
             source_changed,
@@ -398,16 +400,9 @@ impl HotReloader {
             return Ok(()); // Already building
         }
 
-        // Find workspace root (parent of source_dir's grandparent).
-        let workspace_root = self
-            .so_path
-            .ancestors()
-            .find(|p| p.join("Cargo.toml").exists() && p.join("Cargo.lock").exists())
-            .unwrap_or(Path::new("."));
-
         let child = Command::new("cargo")
             .args(["build", "-p", "bmc-storybook-stories", "--color=always"])
-            .current_dir(workspace_root)
+            .current_dir(&self.workspace_root)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
@@ -588,16 +583,31 @@ pub fn cleanup_temp_so_files(so_path: &Path) {
     }
 }
 
-/// Compute the default .so path from the workspace layout.
+/// Compute the default .so path from Cargo's target directory.
 ///
-/// Uses `CARGO_MANIFEST_DIR` (set at build time for bmc-storybook) to find the
-/// workspace root, then appends `target/debug/libbmc_storybook_stories.so`.
-#[must_use]
-pub fn default_so_path() -> PathBuf {
-    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("BUG: bmc-storybook must be inside workspace");
-    workspace_root.join("target/debug/libbmc_storybook_stories.so")
+/// Resolves the target dir through the shared `scripts/cargo_target_dir.py`
+/// tool so storybook hot-reload and the wasm testbed/capture flows agree on
+/// the active target dir (honoring `CARGO_TARGET_DIR` and cargo config).
+pub fn default_so_path() -> io::Result<PathBuf> {
+    let workspace_root = workspace_root();
+    Ok(cargo_target_dir(&workspace_root)?
+        .join("debug")
+        .join("libbmc_storybook_stories.so"))
+}
+
+/// Absolute cargo target directory for a workspace, via the shared resolver.
+fn cargo_target_dir(workspace_root: &Path) -> io::Result<PathBuf> {
+    let script = workspace_root.join("scripts/cargo_target_dir.py");
+    let output = Command::new(&script).arg(workspace_root).output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(format!(
+            "{} failed: {}",
+            script.display(),
+            String::from_utf8_lossy(&output.stderr),
+        )));
+    }
+    let dir = String::from_utf8(output.stdout).map_err(io::Error::other)?;
+    Ok(PathBuf::from(dir.trim()))
 }
 
 /// Compute the workspace root directory.
