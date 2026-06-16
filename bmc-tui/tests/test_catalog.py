@@ -11,6 +11,7 @@ import pytest
 from bmc_tui import catalog
 from bmc_tui.device import Device
 from bmc_tui.image import Image
+from bmc_tui.nix import Built, Pkg
 from bmc_tui.stage import Abort, dry_run
 
 _TARGET = "stm32mp15/ii3"
@@ -219,3 +220,108 @@ def test_wait_for_device_ok() -> None:
 def test_wait_for_device_times_out() -> None:
     with pytest.raises(Abort, match="did not return"):
         catalog.wait_for_device(Device("h", backend=_Exec(_unreachable)), timeout=0)
+
+
+# ── nix package deploy ────────────────────────────────────────────────────────
+
+
+class _Nix:
+    """Fake Nix: resolve names from the attr leaf, build to a fake store path."""
+
+    def __init__(self, widgets: tuple[str, ...] = ()) -> None:
+        self.widgets = list(widgets)
+        self.built: list[Pkg] = []
+        self.copied: list[tuple[list[str], str]] = []
+
+    def discover_widgets(self) -> list[str]:
+        return list(self.widgets)
+
+    def resolve(self, attr: str) -> Pkg:
+        name = attr.rsplit(".", 1)[-1]
+        return Pkg(name=name, version="1.0.0", installable=f"{attr}.pkg^out")
+
+    def build(self, pkgs: list[Pkg]) -> list[Built]:
+        self.built.extend(pkgs)
+        return [
+            Built(pkg.name, pkg.version, pkg.installable, store_path=f"/nix/store/{pkg.name}")
+            for pkg in pkgs
+        ]
+
+    def copy(self, store_paths: list[str], dest: str) -> None:
+        self.copied.append((store_paths, dest))
+
+
+def test_resolve_discovers_core_plus_widgets() -> None:
+    plan = catalog.Deployment(attrs=[])
+    catalog.resolve_packages(_Nix(widgets=("clock", "weather")), plan)
+    assert [p.name for p in plan.resolved] == ["core", "clock", "weather"]
+    assert plan.attrs[0] == ".#deck-packages.core"
+
+
+def test_resolve_uses_explicit_packages() -> None:
+    plan = catalog.Deployment(attrs=[".#deck-packages.core"])
+    catalog.resolve_packages(_Nix(widgets=("clock",)), plan)  # widgets ignored when explicit
+    assert [p.name for p in plan.resolved] == ["core"]
+
+
+def test_build_realises_each_resolved() -> None:
+    plan = catalog.Deployment(attrs=[], resolved=[Pkg("core", "1.0", ".#x.pkg^out")])
+    catalog.build_packages(_Nix(), plan)
+    assert [b.store_path for b in plan.built] == ["/nix/store/core"]
+
+
+def test_copy_closures_sends_built_paths() -> None:
+    nix = _Nix()
+    dev = Device("h", backend=_Exec(_routes({})))
+    plan = catalog.Deployment(
+        attrs=[], built=[Built("core", "1.0", ".#x.pkg^out", "/nix/store/core")]
+    )
+    catalog.copy_closures(nix, dev, plan)
+    assert nix.copied == [(["/nix/store/core"], dev.copy_dest)]
+
+
+def test_register_packages_builds_cli_command() -> None:
+    backend = _Exec(_routes({}))
+    dev = Device("h", backend=backend)
+    plan = catalog.Deployment(
+        attrs=[], built=[Built("core", "1.0", ".#x.pkg^out", "/nix/store/core")]
+    )
+    catalog.register_packages(dev, plan)
+    cmd = backend.runs[-1][-1]
+    assert "bmc-nix-cli add-packages" in cmd
+    assert "--name core --version 1.0 --store-path /nix/store/core" in cmd
+
+
+def test_generation_number_parses_link_path() -> None:
+    assert catalog._generation_number("/nix/var/nix/gcroots/profiles/bmc/3-link") == "3"
+
+
+def test_generation_number_absent_or_unexpected() -> None:
+    # None under dry-run, "" when nothing was printed, non-`-link` stdout ignored.
+    assert catalog._generation_number(None) is None
+    assert catalog._generation_number("") is None
+    assert catalog._generation_number("Profile unchanged.") is None
+
+
+def test_ensure_nix_cli_skips_when_present() -> None:
+    nix = _Nix()
+    dev = Device("h", backend=_Exec(_routes({"test -x": "ok"})))
+    catalog.ensure_nix_cli(nix, dev)
+    assert not nix.built  # no bootstrap needed
+
+
+def test_ensure_nix_cli_bootstraps_when_absent() -> None:
+    state = {"present": False}
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1]
+        if "add-packages" in cmd:
+            state["present"] = True
+        if "test -x" in cmd:
+            return _cp(argv, "ok" if state["present"] else "")
+        return _cp(argv)
+
+    nix = _Nix()
+    catalog.ensure_nix_cli(nix, Device("h", backend=_Exec(respond)))
+    assert [p.name for p in nix.built] == ["bmc-nix-cli"]
+    assert nix.copied  # the closure was shipped

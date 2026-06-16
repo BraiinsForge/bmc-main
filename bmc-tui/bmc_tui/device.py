@@ -69,6 +69,12 @@ class Device:
     def host(self) -> str:
         return self._host
 
+    @property
+    def copy_dest(self) -> str:
+        """`nix copy --to` URI driving the device's own nix-store binary, so the
+        device needs only the store, not a full nix."""
+        return f"ssh://{self._user}@{self._host}?remote-program=/run/current-profile/bin/nix-store"
+
     def print(self) -> None:
         """Print a one-line device summary for a run preamble."""
         target = self._host if self._user == "root" else f"{self._user}@{self._host}"
