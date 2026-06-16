@@ -1,0 +1,5 @@
+# Tooling scratch: earth-texture downloads, renders, and the preview viewer
+# produced by ../tools (`just iss-position::download` / `::render` / `::preview`).
+# The production basemap embedded by globe.rs lives at src/render/texture.jpg.
+*
+!.gitignore
