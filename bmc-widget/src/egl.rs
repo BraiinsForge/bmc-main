@@ -1303,16 +1303,18 @@ void main() {
             prog
         };
 
-        // Unit quad: a_pos in [0,1]^2, a_uv flipped in V so the upright source
-        // (texture origin top-left after the capture copy) lands upright again.
+        // Unit quad with a_uv == a_pos: an identity copy. The cached source was
+        // produced by the same `blit_to` the normal overlay path uses to fill
+        // the export buffer, so it already holds destination-oriented pixels —
+        // sampling it straight keeps the panel upright.
         #[rustfmt::skip]
         let vertices: [f32; 24] = [
-            0.0, 0.0,  0.0, 1.0,
-            1.0, 0.0,  1.0, 1.0,
-            1.0, 1.0,  1.0, 0.0,
-            0.0, 0.0,  0.0, 1.0,
-            1.0, 1.0,  1.0, 0.0,
-            0.0, 1.0,  0.0, 0.0,
+            0.0, 0.0,  0.0, 0.0,
+            1.0, 0.0,  1.0, 0.0,
+            1.0, 1.0,  1.0, 1.0,
+            0.0, 0.0,  0.0, 0.0,
+            1.0, 1.0,  1.0, 1.0,
+            0.0, 1.0,  0.0, 1.0,
         ];
 
         let vbo = unsafe {
@@ -1370,8 +1372,12 @@ fn shared_scratch_uv_scale(max_width: u32, max_height: u32, w: u32, h: u32) -> (
 
 /// NDC rectangle `(x0, y0, x1, y1)` for a panel of `panel_h` pixels anchored at
 /// the top of a `dest_h`-tall target, translated down by `offset_y` (negative =
-/// off the top). The panel spans the full width. GL NDC is +Y up, so the panel
-/// top edge `offset_y` maps to the larger NDC y.
+/// off the top). The panel spans the full width.
+///
+/// This overlay's export buffer is scanned out Y-flipped, so pixel-y (0 = the
+/// display top, growing downward) maps to NDC with +Y pointing *down*:
+/// `ndc = 2 * y / h - 1`. The panel's top edge therefore takes the smaller NDC
+/// y, pairing with the cache's top row (`a_pos.y = 0`, `a_uv.v = 0`).
 #[must_use]
 fn offset_panel_ndc_rect(dest_h: u32, panel_h: f32, offset_y: f32) -> [f32; 4] {
     #[expect(
@@ -1382,10 +1388,9 @@ fn offset_panel_ndc_rect(dest_h: u32, panel_h: f32, offset_y: f32) -> [f32; 4] {
     // Top edge at screen-y = offset_y, bottom edge at offset_y + panel_h.
     let top_px = offset_y;
     let bottom_px = offset_y + panel_h;
-    // Pixel-y (top-down) → NDC-y (bottom-up): ndc = 1 - 2 * y / h.
-    let ndc_top = 1.0 - 2.0 * top_px / h;
-    let ndc_bottom = 1.0 - 2.0 * bottom_px / h;
-    [-1.0, ndc_bottom, 1.0, ndc_top]
+    let ndc_panel_top = 2.0 * top_px / h - 1.0;
+    let ndc_panel_bottom = 2.0 * bottom_px / h - 1.0;
+    [-1.0, ndc_panel_top, 1.0, ndc_panel_bottom]
 }
 
 /// Per-render-thread scratch resources for femtovg-rendering widgets.
@@ -1686,19 +1691,34 @@ mod tests {
     #[test]
     fn offset_panel_ndc_rect_settled_panel_fills_full_band() {
         // A full-height panel settled at offset 0 spans the whole NDC range.
+        // In the Y-flipped buffer y0 is the panel's top edge (display top = -1)
+        // and y1 its bottom edge (display bottom = +1).
         let [x0, y0, x1, y1] = offset_panel_ndc_rect(480, 480.0, 0.0);
         assert!((x0 + 1.0).abs() < 1e-6, "left edge at -1");
-        assert!((y0 + 1.0).abs() < 1e-6, "bottom edge at -1");
+        assert!(
+            (y0 + 1.0).abs() < 1e-6,
+            "panel top edge at -1 (display top)"
+        );
         assert!((x1 - 1.0).abs() < 1e-6, "right edge at 1");
-        assert!((y1 - 1.0).abs() < 1e-6, "top edge at 1");
+        assert!(
+            (y1 - 1.0).abs() < 1e-6,
+            "panel bottom edge at 1 (display bottom)"
+        );
     }
 
     #[test]
     fn offset_panel_ndc_rect_offscreen_pushes_band_above_top() {
-        // Slid fully off the top: the whole band sits above NDC y=1.
+        // Slid fully off the top of the display. The buffer is Y-flipped, so the
+        // display's top edge is NDC y = -1; the whole band sits at or beyond it.
         let [_, y0, _, y1] = offset_panel_ndc_rect(480, 480.0, -480.0);
-        assert!(y0 >= 1.0, "bottom edge at or above the top of NDC");
-        assert!(y1 > y0, "top edge above the bottom edge");
+        assert!(
+            y1 <= -1.0,
+            "panel bottom edge at or beyond the display top (NDC -1)"
+        );
+        assert!(
+            y0 < y1,
+            "panel top edge pushed further off-screen than its bottom"
+        );
     }
 
     #[test]
