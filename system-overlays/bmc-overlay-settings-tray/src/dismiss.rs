@@ -50,6 +50,13 @@ pub fn brightness_from_fraction(frac: f32) -> u8 {
 /// 10 floor renders at 0 rather than underflowing (`(b-10)/90` would go
 /// negative).
 #[must_use]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "retained for its unit-test contract; no longer on the render call path"
+    )
+)]
 pub fn brightness_display_fraction(brightness: u8) -> f32 {
     let b = f32::from(brightness).clamp(10.0, 100.0);
     ((b - 10.0) / 90.0).clamp(0.0, 1.0)

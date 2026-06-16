@@ -55,6 +55,14 @@ fn phase_visible(phase: Phase) -> bool {
     !matches!(phase, Phase::Done)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeviceInfoView {
+    Connecting { ssid: Option<String> },
+    Success { ip: Ipv4Addr },
+    Failed { ssid: Option<String> },
+    Done,
+}
+
 /// Pure transition for one tick. Returns the next phase and whether the status
 /// text changed so a redraw is warranted.
 fn step(phase: Phase, now: Instant, ip: Option<Ipv4Addr>) -> (Phase, bool) {
@@ -135,6 +143,20 @@ impl Default for DeviceInfoOverlay {
 }
 
 impl DeviceInfoOverlay {
+    #[must_use]
+    fn view(&self) -> DeviceInfoView {
+        match self.phase {
+            Phase::Connecting { .. } => DeviceInfoView::Connecting {
+                ssid: self.ssid.clone(),
+            },
+            Phase::Success { ip, .. } => DeviceInfoView::Success { ip },
+            Phase::Failed { .. } => DeviceInfoView::Failed {
+                ssid: self.ssid.clone(),
+            },
+            Phase::Done => DeviceInfoView::Done,
+        }
+    }
+
     fn probe_if_due(&mut self, now: Instant) -> bool {
         if self
             .last_probe
@@ -151,13 +173,11 @@ impl DeviceInfoOverlay {
         self.ssid = next_ssid;
         changed
     }
+}
 
-    #[must_use]
-    fn ssid_text(&self, fallback: &str) -> String {
-        self.ssid
-            .as_deref()
-            .map_or_else(|| fallback.to_owned(), |ssid| format!("WiFi SSID: {ssid}"))
-    }
+#[must_use]
+fn ssid_text(ssid: Option<&str>, fallback: &str) -> String {
+    ssid.map_or_else(|| fallback.to_owned(), |ssid| format!("WiFi SSID: {ssid}"))
 }
 
 impl SystemOverlay for DeviceInfoOverlay {
@@ -196,40 +216,44 @@ impl SystemOverlay for DeviceInfoOverlay {
     }
 
     fn render(&mut self, r: &mut dyn Renderer, size: (u32, u32)) {
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "display dimensions fit comfortably in f32 mantissa"
-        )]
-        let (w, h) = (size.0 as f32, size.1 as f32);
-        // Opaque: this fullscreen Top surface must fully occlude the offline
-        // indicator on the Bottom layer while both are mapped at boot.
-        r.fill_rect(0.0, 0.0, w, h, Color::from_rgba(0, 0, 0, 255));
-        let (title, detail, footer) = match self.phase {
-            Phase::Connecting { .. } => (
-                "Connecting...",
-                self.ssid_text("Waiting for WiFi connection"),
-                Some("Waiting for IP address"),
-            ),
-            Phase::Success { ip, .. } => ("You're connected", format!("http://{ip}/"), None),
-            Phase::Failed { .. } => (
-                "Problem with connection.",
-                self.ssid_text("No WiFi SSID configured"),
-                Some("No IP address assigned"),
-            ),
-            Phase::Done => return,
-        };
-
-        draw_centered(r, title, w, h / 2.0 - 52.0, 44.0);
-        draw_centered(r, &detail, w, h / 2.0, 32.0);
-        if let Some(footer) = footer {
-            draw_centered(r, footer, w, h / 2.0 + 44.0, 26.0);
-        }
+        render_device_info(r, size, &self.view());
     }
 
     fn on_touch(&mut self, event: TouchEvent) {
         if matches!(event, TouchEvent::Down { .. }) {
             self.phase = Phase::Done;
         }
+    }
+}
+
+pub fn render_device_info(r: &mut dyn Renderer, size: (u32, u32), view: &DeviceInfoView) {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "display dimensions fit comfortably in f32 mantissa"
+    )]
+    let (w, h) = (size.0 as f32, size.1 as f32);
+
+    r.fill_rect(0.0, 0.0, w, h, Color::from_rgba(0, 0, 0, 255));
+
+    let (title, detail, footer) = match view {
+        DeviceInfoView::Connecting { ssid } => (
+            "Connecting...",
+            ssid_text(ssid.as_deref(), "Waiting for WiFi connection"),
+            Some("Waiting for IP address"),
+        ),
+        DeviceInfoView::Success { ip } => ("You're connected", format!("http://{ip}/"), None),
+        DeviceInfoView::Failed { ssid } => (
+            "Problem with connection.",
+            ssid_text(ssid.as_deref(), "No WiFi SSID configured"),
+            Some("No IP address assigned"),
+        ),
+        DeviceInfoView::Done => return,
+    };
+
+    draw_centered(r, title, w, h / 2.0 - 52.0, 44.0);
+    draw_centered(r, &detail, w, h / 2.0, 32.0);
+    if let Some(footer) = footer {
+        draw_centered(r, footer, w, h / 2.0 + 44.0, 26.0);
     }
 }
 
@@ -377,6 +401,40 @@ mod tests {
         let _ = overlay.tick(start + Duration::from_millis(500));
 
         assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn view_for_connecting_includes_configured_ssid() {
+        let start = t0();
+        let overlay = DeviceInfoOverlay {
+            phase: Phase::Connecting { since: start },
+            ip: None,
+            ssid: Some("Braiins-WiFi".to_owned()),
+            last_probe: None,
+            env: Box::new(StaticEnv { ip: None }),
+        };
+
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::Connecting {
+                ssid: Some("Braiins-WiFi".to_owned())
+            }
+        );
+    }
+
+    #[test]
+    fn view_for_success_includes_displayed_ip() {
+        let start = t0();
+        let ip = Ipv4Addr::new(192, 168, 1, 42);
+        let overlay = DeviceInfoOverlay {
+            phase: Phase::Success { since: start, ip },
+            ip: Some(ip),
+            ssid: None,
+            last_probe: None,
+            env: Box::new(StaticEnv { ip: Some(ip) }),
+        };
+
+        assert_eq!(overlay.view(), DeviceInfoView::Success { ip });
     }
 
     #[test]

@@ -48,6 +48,11 @@ fn decide(online: bool, was_visible: bool) -> (bool, bool) {
     (visible, wants_render)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OfflineView {
+    pub visible: bool,
+}
+
 pub struct OfflineOverlay {
     visible: bool,
     online: bool,
@@ -76,6 +81,13 @@ impl Default for OfflineOverlay {
 }
 
 impl OfflineOverlay {
+    #[must_use]
+    fn view(&self) -> OfflineView {
+        OfflineView {
+            visible: self.visible,
+        }
+    }
+
     fn probe_if_due(&mut self, now: Instant) {
         if self
             .last_probe
@@ -87,6 +99,40 @@ impl OfflineOverlay {
         self.last_probe = Some(now);
         self.online = self.env.online();
     }
+}
+
+pub fn render_offline(r: &mut dyn Renderer, size: (u32, u32), _view: OfflineView) {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "indicator dimensions fit comfortably in f32 mantissa"
+    )]
+    let (w, h, font) = (size.0 as f32, size.1 as f32, FONT_PX as f32);
+
+    let (t_r, t_g, t_b, t_a) = TEXT_RGBA;
+    let style = TextStyle {
+        size: FONT_PX,
+        color: Color::from_rgba(t_r, t_g, t_b, t_a),
+        weight: FontWeight::SEMIBOLD,
+        align: TextAlign::Center,
+        vertical_align: VerticalAlign::Center,
+        family: FontFamily::Sans,
+        ..TextStyle::default()
+    };
+
+    let box_w = r.measure_text(LABEL, font) + PAD_X * 2.0;
+    let box_h = font * style.line_height + PAD_Y * 2.0;
+    let box_x = w - box_w;
+    let box_y = h - box_h;
+
+    let (bg_r, bg_g, bg_b, bg_a) = BACKGROUND_RGBA;
+    r.fill_rect(
+        box_x,
+        box_y,
+        box_w,
+        box_h,
+        Color::from_rgba(bg_r, bg_g, bg_b, bg_a),
+    );
+    r.draw_canvas_text(LABEL, box_x + box_w / 2.0, box_y + box_h / 2.0, &style);
 }
 
 impl SystemOverlay for OfflineOverlay {
@@ -106,37 +152,7 @@ impl SystemOverlay for OfflineOverlay {
     }
 
     fn render(&mut self, r: &mut dyn Renderer, size: (u32, u32)) {
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "indicator dimensions fit comfortably in f32 mantissa"
-        )]
-        let (w, h, font) = (size.0 as f32, size.1 as f32, FONT_PX as f32);
-
-        let (t_r, t_g, t_b, t_a) = TEXT_RGBA;
-        let style = TextStyle {
-            size: FONT_PX,
-            color: Color::from_rgba(t_r, t_g, t_b, t_a),
-            weight: FontWeight::SEMIBOLD,
-            align: TextAlign::Center,
-            vertical_align: VerticalAlign::Center,
-            family: FontFamily::Sans,
-            ..TextStyle::default()
-        };
-
-        let box_w = r.measure_text(LABEL, font) + PAD_X * 2.0;
-        let box_h = font * style.line_height + PAD_Y * 2.0;
-        let box_x = w - box_w;
-        let box_y = h - box_h;
-
-        let (bg_r, bg_g, bg_b, bg_a) = BACKGROUND_RGBA;
-        r.fill_rect(
-            box_x,
-            box_y,
-            box_w,
-            box_h,
-            Color::from_rgba(bg_r, bg_g, bg_b, bg_a),
-        );
-        r.draw_canvas_text(LABEL, box_x + box_w / 2.0, box_y + box_h / 2.0, &style);
+        render_offline(r, size, self.view());
     }
 }
 
@@ -184,6 +200,24 @@ mod tests {
         assert!(red > green);
         assert!(red > blue);
         assert_eq!(alpha, u8::MAX);
+    }
+
+    #[test]
+    fn view_reflects_current_visibility_after_tick() {
+        let start = Instant::now();
+        let mut overlay = OfflineOverlay {
+            visible: false,
+            online: true,
+            last_probe: None,
+            env: Box::new(CountingEnv {
+                calls: Rc::new(Cell::new(0)),
+                online: false,
+            }),
+        };
+
+        let _ = overlay.tick(start);
+
+        assert_eq!(overlay.view(), OfflineView { visible: true });
     }
 
     #[test]

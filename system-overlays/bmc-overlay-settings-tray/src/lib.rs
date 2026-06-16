@@ -196,7 +196,75 @@ impl Slide {
     }
 }
 
+/// Product selector for deterministic storybook tray views.
+#[doc(hidden)]
+pub use bmc_platform::Product as SettingsTrayProduct;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsTrayView {
+    pub shape: DisplayShape,
+    pub width: u32,
+    pub height: u32,
+    pub brightness: u8,
+    pub hostname: Option<String>,
+    pub ip: Option<String>,
+    pub wifi_signal: Option<i32>,
+    pub ssid: Option<String>,
+    pub setup_ssid: Option<String>,
+    pub wifi_buttons: bool,
+    pub wifi_label: &'static str,
+}
+
+impl SettingsTrayView {
+    /// Build a deterministic storybook-facing view shell for a hardware product.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn for_product(product: SettingsTrayProduct) -> Self {
+        let profile = HardwareProfile::for_product(product);
+        Self {
+            shape: profile.display.shape,
+            width: profile.display.logical_width,
+            height: profile.display.logical_height,
+            brightness: 50,
+            hostname: None,
+            ip: None,
+            wifi_signal: None,
+            ssid: None,
+            setup_ssid: None,
+            wifi_buttons: wifi_reconfig_supported(product),
+            wifi_label: ButtonState::default().label(),
+        }
+    }
+}
+
 #[expect(missing_debug_implementations, reason = "TreeUi is not Debug")]
+pub struct SettingsTrayRenderState {
+    tree: TreeUi,
+    icons: Option<WifiIcons>,
+    last_render: Instant,
+}
+
+impl SettingsTrayRenderState {
+    #[must_use]
+    pub fn new(now: Instant) -> Self {
+        Self {
+            tree: TreeUi::new(),
+            icons: None,
+            last_render: now,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SettingsTrayRenderOutput {
+    pub brightness_drag: Option<u8>,
+}
+
+#[expect(missing_debug_implementations, reason = "TreeUi is not Debug")]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is a distinct single-bit latch with no natural enum pairing"
+)]
 pub struct SettingsTrayOverlay {
     product: Product,
     shape: DisplayShape,
@@ -218,17 +286,19 @@ pub struct SettingsTrayOverlay {
     reconnect: ReconnectState,
     reconnect_child: Option<Child>,
 
-    tree: TreeUi,
-    icons: Option<WifiIcons>,
+    render_state: SettingsTrayRenderState,
 
     touch_track: Option<TouchTrack>,
     last_interaction: Instant,
     last_network_refresh: Instant,
-    last_render: Instant,
     last_brightness_sent: Instant,
     /// Set on finger-up; consumed by the release flush, which sends the final
     /// brightness value once past the throttle.
     slider_released: bool,
+    /// Set by the adapter render when `brightness_drag` is returned (the slider
+    /// moved during this touch sequence); cleared on every finger-down so a
+    /// fresh sequence starts unlocked.
+    slider_dragged: bool,
 
     dismissing: bool,
     /// Set on any content change; drives the Task-9 panel cache.
@@ -242,19 +312,21 @@ pub struct SettingsTrayOverlay {
 
 impl Default for SettingsTrayOverlay {
     fn default() -> Self {
-        // The tray covers the full display, so its size is the panel
-        // resolution. Resolve it from the platform profile; detection failure
-        // is fatal because rendering at the wrong size is worse than not at all.
         let product = BmcInfo::load()
             .map(|info| info.bmc_platform.product())
             .expect("BUG: platform detection must succeed for the settings tray");
+        Self::new_for_product(product, read_hostname(), Instant::now())
+    }
+}
+
+impl SettingsTrayOverlay {
+    fn new_for_product(product: Product, hostname: Option<String>, now: Instant) -> Self {
         let profile = HardwareProfile::for_product(product);
         let width = profile.display.logical_width;
         let height = profile.display.logical_height;
         let shape = profile.display.shape;
         let panel_height = panel_height_for(shape, height);
 
-        let now = Instant::now();
         Self {
             product,
             shape,
@@ -262,7 +334,7 @@ impl Default for SettingsTrayOverlay {
             height,
             panel_height,
             brightness: 50,
-            hostname: read_hostname(),
+            hostname,
             ip: None,
             wifi_signal: None,
             ssid: None,
@@ -270,19 +342,35 @@ impl Default for SettingsTrayOverlay {
             button: ButtonState::default(),
             reconnect: ReconnectState::default(),
             reconnect_child: None,
-            tree: TreeUi::new(),
-            icons: None,
+            render_state: SettingsTrayRenderState::new(now),
             touch_track: None,
             last_interaction: now,
             last_network_refresh: now,
-            last_render: now,
             last_brightness_sent: now,
             slider_released: false,
+            slider_dragged: false,
             dismissing: false,
             content_dirty: true,
             slide: Slide::default(),
             pending_requests: Vec::new(),
         }
+    }
+
+    #[must_use]
+    fn view(&self) -> SettingsTrayView {
+        let mut view = SettingsTrayView::for_product(self.product);
+        view.shape = self.shape;
+        view.width = self.width;
+        view.height = self.height;
+        view.brightness = self.brightness;
+        view.hostname.clone_from(&self.hostname);
+        view.ip.clone_from(&self.ip);
+        view.wifi_signal = self.wifi_signal;
+        view.ssid.clone_from(&self.ssid);
+        view.setup_ssid.clone_from(&self.setup_ssid);
+        view.wifi_buttons = wifi_reconfig_supported(self.product);
+        view.wifi_label = self.button.label();
+        view
     }
 }
 
@@ -329,7 +417,7 @@ impl SettingsTrayOverlay {
     /// Advance both hold FSMs from the tree's press state and apply their side
     /// effects: queue a reconfigure request, spawn the reconnect sequence.
     fn advance_buttons(&mut self, now: Instant) {
-        let reconfig_pressed = self.tree.is_pressed(ui::WIFI_RECONFIG_KEY);
+        let reconfig_pressed = self.render_state.tree.is_pressed(ui::WIFI_RECONFIG_KEY);
         let prev = self.button;
         if self.button.tick(reconfig_pressed, now) == FsmAction::SendReconfigure {
             self.pending_requests.push(SettingsRequest::ReconfigureWifi);
@@ -339,7 +427,7 @@ impl SettingsTrayOverlay {
         }
 
         self.reap_reconnect_child();
-        let reconnect_pressed = self.tree.is_pressed(ui::WIFI_RECONNECT_KEY);
+        let reconnect_pressed = self.render_state.tree.is_pressed(ui::WIFI_RECONNECT_KEY);
         let prev_reconnect = self.reconnect;
         if self.reconnect.tick(reconnect_pressed, now) == ReconnectAction::Spawn {
             if let Some(mut prev) = self.reconnect_child.take() {
@@ -375,8 +463,8 @@ impl SettingsTrayOverlay {
     fn animating(&self) -> bool {
         self.button.is_animating()
             || self.reconnect.is_animating()
-            || self.tree.is_pressed(ui::WIFI_RECONFIG_KEY)
-            || self.tree.is_pressed(ui::WIFI_RECONNECT_KEY)
+            || self.render_state.tree.is_pressed(ui::WIFI_RECONFIG_KEY)
+            || self.render_state.tree.is_pressed(ui::WIFI_RECONNECT_KEY)
     }
 }
 
@@ -432,7 +520,7 @@ impl SystemOverlay for SettingsTrayOverlay {
     }
 
     fn on_touch(&mut self, event: TouchEvent) {
-        self.tree.push_touch(event);
+        self.render_state.tree.push_touch(event);
         self.last_interaction = Instant::now();
         // Force a render so the interaction state processes the queued event and
         // runs its hit-test; without a paint frame the slider/buttons never see
@@ -444,6 +532,7 @@ impl SystemOverlay for SettingsTrayOverlay {
         )]
         match event {
             TouchEvent::Down { x, y, .. } => {
+                self.slider_dragged = false;
                 let pt = Pt {
                     x: x as f32,
                     y: y as f32,
@@ -462,7 +551,7 @@ impl SystemOverlay for SettingsTrayOverlay {
                 }
             }
             TouchEvent::Up { .. } => {
-                self.slider_released = true;
+                self.slider_released = self.slider_dragged;
                 if let Some(track) = self.touch_track.take()
                     && dismiss::classify(track.start, track.latest, self.panel_height)
                 {
@@ -511,65 +600,29 @@ impl SystemOverlay for SettingsTrayOverlay {
         // One full off-screen render at host startup, so the first screen-edge
         // reveal does not stall mid-swipe paying these one-time costs: the
         // Wi-Fi SVG icon compile/upload, rasterizing the panel's text into the
-        // shared glyph atlas, and the first tree layout. `render` registers the
-        // icons on its first line, so this single pass warms all three; the
-        // painted pixels are discarded (the host exports no prewarm buffer).
-        self.render(renderer, (self.width, self.height));
+        // shared glyph atlas, and the first tree layout. `render_settings_tray`
+        // registers the icons on its first line, so this single pass warms all
+        // three; the painted pixels are discarded (the host exports no prewarm
+        // buffer).
+        let now = Instant::now();
+        let view = self.view();
+        let _ = render_settings_tray(
+            renderer,
+            (self.width, self.height),
+            &mut self.render_state,
+            &view,
+            now,
+        );
     }
 
     fn render(&mut self, renderer: &mut dyn Renderer, size: (u32, u32)) {
-        let icons = *self
-            .icons
-            .get_or_insert_with(|| icons::register_wifi_icons(renderer));
-
         let now = Instant::now();
-        let delta_ms =
-            u32::try_from(now.duration_since(self.last_render).as_millis()).unwrap_or(u32::MAX);
-        self.last_render = now;
+        let view = self.view();
+        let output = render_settings_tray(renderer, size, &mut self.render_state, &view, now);
 
-        let wifi_view = if let Some(ssid) = self.setup_ssid.as_deref() {
-            WifiView::Setup { ap_ssid: ssid }
-        } else {
-            WifiView::Idle {
-                label: self.button.label(),
-            }
-        };
-        // Drive the displayed slider from the (possibly sub-floor) brightness so
-        // a night value clamps to 0 rather than underflowing.
-        let display_brightness = dismiss::brightness_from_fraction(
-            dismiss::brightness_display_fraction(self.brightness),
-        );
-        let node = ui::build_tree(
-            display_brightness,
-            self.hostname.as_deref(),
-            self.ip.as_deref(),
-            self.wifi_signal,
-            self.ssid.as_deref(),
-            icons,
-            Panel {
-                shape: self.shape,
-                width: self.width,
-                height: self.height,
-                wifi_buttons: wifi_reconfig_supported(self.product),
-            },
-            wifi_view,
-        );
-
-        let result = match self.tree.render(&node, size, delta_ms, renderer) {
-            Ok(result) => result,
-            Err(err) => {
-                tracing::error!("settings-tray tree render failed: {err}");
-                return;
-            }
-        };
-
-        if let Some(hit) = result.drags.get(ui::BRIGHTNESS_SLIDER_KEY) {
-            let frac = (hit.x / hit.width).clamp(0.0, 1.0);
-            let b = dismiss::brightness_from_fraction(frac);
+        if let Some(b) = output.brightness_drag {
+            self.slider_dragged = true;
             if b != self.brightness {
-                // Optimistic local update: the slider follows the finger without
-                // waiting for the compositor round-trip; the later `brightness`
-                // event reconciles.
                 self.brightness = b;
                 self.content_dirty = true;
             }
@@ -596,6 +649,100 @@ impl SystemOverlay for SettingsTrayOverlay {
 
     fn mark_content_dirty(&mut self) {
         self.content_dirty = true;
+    }
+}
+
+pub fn render_settings_tray(
+    renderer: &mut dyn Renderer,
+    size: (u32, u32),
+    state: &mut SettingsTrayRenderState,
+    view: &SettingsTrayView,
+    now: Instant,
+) -> SettingsTrayRenderOutput {
+    let icons = *state
+        .icons
+        .get_or_insert_with(|| icons::register_wifi_icons(renderer));
+
+    let delta_ms =
+        u32::try_from(now.duration_since(state.last_render).as_millis()).unwrap_or(u32::MAX);
+    state.last_render = now;
+
+    let wifi_view = if let Some(ssid) = view.setup_ssid.as_deref() {
+        WifiView::Setup { ap_ssid: ssid }
+    } else {
+        WifiView::Idle {
+            label: view.wifi_label,
+        }
+    };
+    let node = ui::build_tree(
+        view.brightness,
+        view.hostname.as_deref(),
+        view.ip.as_deref(),
+        view.wifi_signal,
+        view.ssid.as_deref(),
+        icons,
+        Panel {
+            shape: view.shape,
+            width: view.width,
+            height: view.height,
+            wifi_buttons: view.wifi_buttons,
+        },
+        wifi_view,
+    );
+
+    let result = match state.tree.render(&node, size, delta_ms, renderer) {
+        Ok(result) => result,
+        Err(err) => {
+            tracing::error!("settings-tray tree render failed: {err}");
+            return SettingsTrayRenderOutput::default();
+        }
+    };
+
+    let brightness_drag = result.drags.get(ui::BRIGHTNESS_SLIDER_KEY).map(|hit| {
+        let frac = (hit.x / hit.width).clamp(0.0, 1.0);
+        dismiss::brightness_from_fraction(frac)
+    });
+
+    SettingsTrayRenderOutput { brightness_drag }
+}
+
+#[cfg(test)]
+mod view_tests {
+    use super::*;
+
+    #[test]
+    fn view_contains_runtime_state_and_setup_ap_status() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(
+            Product::Bmc100,
+            Some("braiins-deck".to_owned()),
+            now,
+        );
+        overlay.brightness = 70;
+        overlay.ip = Some("192.168.1.42".to_owned());
+        overlay.wifi_signal = Some(-52);
+        overlay.ssid = Some("Braiins-WiFi".to_owned());
+        overlay.on_wifi_ap(Some("Deck setup"));
+
+        let view = overlay.view();
+
+        assert_eq!(view.brightness, 70);
+        assert_eq!(view.hostname.as_deref(), Some("braiins-deck"));
+        assert_eq!(view.ip.as_deref(), Some("192.168.1.42"));
+        assert_eq!(view.wifi_signal, Some(-52));
+        assert_eq!(view.ssid.as_deref(), Some("Braiins-WiFi"));
+        assert_eq!(view.setup_ssid.as_deref(), Some("Deck setup"));
+        assert!(view.wifi_buttons);
+        assert_eq!(view.wifi_label, ButtonState::Active.label());
+    }
+
+    #[test]
+    fn view_for_product_exposes_bmm101_dimensions_for_stories() {
+        let view = SettingsTrayView::for_product(SettingsTrayProduct::Bmm101);
+
+        assert_eq!(view.width, 480);
+        assert_eq!(view.height, 320);
+        assert!(!view.wifi_buttons);
     }
 }
 
