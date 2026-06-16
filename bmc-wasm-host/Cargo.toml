@@ -7,6 +7,10 @@ edition = "2024"
 workspace = true
 
 [features]
+default = ["overlay-offline", "overlay-device-info", "overlay-settings-tray"]
+overlay-offline = ["dep:bmc-overlay-offline"]
+overlay-device-info = ["dep:bmc-overlay-device-info"]
+overlay-settings-tray = ["dep:bmc-overlay-settings-tray"]
 profiling = []
 
 [dependencies]
@@ -26,9 +30,9 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 wayland-client = { workspace = true }
 
 bmc-gpu-render-lock = { workspace = true }
-bmc-overlay-device-info = { workspace = true }
-bmc-overlay-offline = { workspace = true }
-bmc-overlay-settings-tray = { workspace = true }
+bmc-overlay-device-info = { workspace = true, optional = true }
+bmc-overlay-offline = { workspace = true, optional = true }
+bmc-overlay-settings-tray = { workspace = true, optional = true }
 bmc-render = { path = "../bmc-render" }
 bmc-system-overlay = { workspace = true }
 bmc-wasm-protocol = { workspace = true }
