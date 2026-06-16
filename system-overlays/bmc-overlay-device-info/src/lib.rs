@@ -132,6 +132,50 @@ impl Default for DeviceInfoOverlay {
 }
 
 impl DeviceInfoOverlay {
+    /// Preview-only: the connecting state showing `ssid`. Renders identically to
+    /// the live overlay but never touches the network; for storybook.
+    #[must_use]
+    pub fn preview_connecting(ssid: Option<String>) -> Self {
+        Self {
+            phase: Phase::Connecting {
+                since: Instant::now(),
+            },
+            ip: None,
+            ssid,
+            last_probe: None,
+            env: Box::new(OsEnv),
+        }
+    }
+
+    /// Preview-only: the success state showing `ip`; for storybook.
+    #[must_use]
+    pub fn preview_success(ip: Ipv4Addr) -> Self {
+        Self {
+            phase: Phase::Success {
+                since: Instant::now(),
+                ip,
+            },
+            ip: Some(ip),
+            ssid: None,
+            last_probe: None,
+            env: Box::new(OsEnv),
+        }
+    }
+
+    /// Preview-only: the connection-failure state; for storybook.
+    #[must_use]
+    pub fn preview_failed() -> Self {
+        Self {
+            phase: Phase::Failed {
+                since: Instant::now(),
+            },
+            ip: None,
+            ssid: None,
+            last_probe: None,
+            env: Box::new(OsEnv),
+        }
+    }
+
     fn probe_if_due(&mut self, now: Instant) -> bool {
         if self
             .last_probe
