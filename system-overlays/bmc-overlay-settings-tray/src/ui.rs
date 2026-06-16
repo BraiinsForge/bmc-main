@@ -6,7 +6,7 @@
 
 use bmc_platform::DisplayShape;
 use bmc_render::tree::{DrawCommand, PropsData, SpanData, TextStyle, TreeNode};
-use bmc_wasm_protocol::colors::{BLACK, GRAY_50, GRAY_80, GREEN_50, TRANSPARENT, WHITE};
+use bmc_wasm_protocol::colors::{GRAY_50, GRAY_80, GREEN_50, TRANSPARENT, WHITE};
 use bmc_wasm_protocol::{Color, CrossAlign, FontWeight, SvgId, TextAlign};
 
 /// Stable touch key for the brightness slider drag.
@@ -22,6 +22,11 @@ pub const WIFI_RECONNECT_KEY: &str = "wifi_reconnect";
 const BUTTON_STYLE_SECONDARY: u8 = 1;
 /// `ButtonSize::Normal` wire value (see `bmc_wasm_protocol::ButtonSize`).
 const BUTTON_SIZE_NORMAL: u8 = 1;
+
+/// Panel scrim: the tray composites over the live scene, so its background is a
+/// near-opaque black that lets the scene faintly show through. Matches the
+/// `0.95`-opacity black the shipped swipe rollettes used.
+const SCRIM: Color = Color::from_rgba(0, 0, 0, 0xF2);
 
 /// What to show in the WiFi/reconfig area of the overlay.
 #[derive(Debug, Clone, Copy)]
@@ -329,7 +334,7 @@ fn rect_overlay(
 ) -> TreeNode {
     col(
         PropsData {
-            background: BLACK,
+            background: SCRIM,
             padding: RECT_PADDING,
             gap: 16.0,
             ..PropsData::default()
@@ -514,7 +519,7 @@ pub fn build_tree(
             let info = round_info(icons, wifi_signal, ssid_str, &ip_str);
             col(
                 PropsData {
-                    background: BLACK,
+                    background: SCRIM,
                     gap: 16.0,
                     ..PropsData::default()
                 },
