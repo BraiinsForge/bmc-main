@@ -507,6 +507,16 @@ impl SystemOverlay for SettingsTrayOverlay {
         }
     }
 
+    fn prewarm(&mut self, renderer: &mut dyn Renderer) {
+        // One full off-screen render at host startup, so the first screen-edge
+        // reveal does not stall mid-swipe paying these one-time costs: the
+        // Wi-Fi SVG icon compile/upload, rasterizing the panel's text into the
+        // shared glyph atlas, and the first tree layout. `render` registers the
+        // icons on its first line, so this single pass warms all three; the
+        // painted pixels are discarded (the host exports no prewarm buffer).
+        self.render(renderer, (self.width, self.height));
+    }
+
     fn render(&mut self, renderer: &mut dyn Renderer, size: (u32, u32)) {
         let icons = *self
             .icons

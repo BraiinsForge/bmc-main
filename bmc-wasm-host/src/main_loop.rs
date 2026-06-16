@@ -345,6 +345,14 @@ fn run_loop(
     let renderer_ptr = NonNull::new(renderer_raw)
         .expect("BUG: &raw mut from a live &mut produces a non-null pointer");
 
+    // Pay overlays' one-time renderer setup (SVG icons, glyph atlas) before the
+    // event loop so the first screen-edge reveal is not slowed by it.
+    for overlay in overlays.iter_mut() {
+        if let Err(e) = crate::overlays::prewarm_hosted_overlay(overlay, renderer_ptr, shared) {
+            tracing::warn!("overlay prewarm failed: {e}");
+        }
+    }
+
     let mut lifetime = HostLifetime::new();
 
     while lifetime.should_continue(
