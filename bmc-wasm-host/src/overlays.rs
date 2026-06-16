@@ -3,7 +3,9 @@
 use std::ptr::NonNull;
 use std::time::Instant;
 
+#[cfg(feature = "overlay-device-info")]
 use bmc_overlay_device_info::DeviceInfoOverlay;
+#[cfg(feature = "overlay-offline")]
 use bmc_overlay_offline::OfflineOverlay;
 use bmc_render::renderer::{FrameClear, Renderer};
 use bmc_system_overlay::{HostedOverlay, SystemOverlay};
@@ -36,13 +38,19 @@ pub fn build_overlays(egl: &EglContext) -> Vec<HostedOverlay> {
     // Stacking is by layer rank, not build order: the offline indicator is on
     // the Bottom layer and the startup overlay on Top, so the fullscreen startup
     // overlay occludes the offline chip regardless of the order built here.
-    let factories: Vec<OverlayFactory> = vec![
-        ("offline", || Box::new(OfflineOverlay::default())),
-        ("device-info", || Box::new(DeviceInfoOverlay::default())),
-        ("settings-tray", || {
-            Box::new(bmc_overlay_settings_tray::SettingsTrayOverlay::default())
-        }),
-    ];
+    let mut factories: Vec<OverlayFactory> = Vec::new();
+    #[cfg(feature = "overlay-offline")]
+    factories.push(("offline", || -> Box<dyn SystemOverlay> {
+        Box::new(OfflineOverlay::default())
+    }));
+    #[cfg(feature = "overlay-device-info")]
+    factories.push(("device-info", || -> Box<dyn SystemOverlay> {
+        Box::new(DeviceInfoOverlay::default())
+    }));
+    #[cfg(feature = "overlay-settings-tray")]
+    factories.push(("settings-tray", || -> Box<dyn SystemOverlay> {
+        Box::new(bmc_overlay_settings_tray::SettingsTrayOverlay::default())
+    }));
     let mut overlays = Vec::new();
     for (name, make) in factories {
         if !overlay_enabled(name) {
