@@ -154,6 +154,13 @@ pub trait SystemOverlay {
     /// `&mut dyn Renderer` is valid only for this call: do not store it.
     fn render(&mut self, renderer: &mut dyn Renderer, size: (u32, u32));
 
+    /// Pay one-time renderer setup costs at host startup instead of on the
+    /// first reveal. The host calls this once, before the event loop, with the
+    /// GL context current. Use it to register SVG icons and warm font glyphs so
+    /// the first swipe-reveal does not stall. Default: no-op. The `&mut dyn
+    /// Renderer` is valid only for this call: do not store it.
+    fn prewarm(&mut self, _renderer: &mut dyn Renderer) {}
+
     /// Handle a touch event (only delivered when input region is not `None`).
     fn on_touch(&mut self, _event: TouchEvent) {}
 

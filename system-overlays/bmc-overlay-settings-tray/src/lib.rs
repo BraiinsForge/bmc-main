@@ -502,6 +502,13 @@ impl SystemOverlay for SettingsTrayOverlay {
         }
     }
 
+    fn prewarm(&mut self, renderer: &mut dyn Renderer) {
+        // Compile + upload the Wi-Fi SVG icons now, at host startup, so the
+        // first reveal does not pay the SVG decode/upload cost mid-swipe.
+        self.icons
+            .get_or_insert_with(|| icons::register_wifi_icons(renderer));
+    }
+
     fn render(&mut self, renderer: &mut dyn Renderer, size: (u32, u32)) {
         let icons = *self
             .icons
