@@ -286,6 +286,51 @@ impl Default for SettingsTrayOverlay {
     }
 }
 
+impl SettingsTrayOverlay {
+    /// Preview-only: a settled, fully-revealed tray with sample network data,
+    /// built from a fixed hardware profile so it runs on a dev host (the
+    /// `Default` path's `BmcInfo::load` panics off-device). For storybook.
+    #[must_use]
+    pub fn preview_revealed() -> Self {
+        let product = Product::Bmc100;
+        let profile = HardwareProfile::for_product(product);
+        let width = profile.display.logical_width;
+        let height = profile.display.logical_height;
+        let shape = profile.display.shape;
+        let panel_height = panel_height_for(shape, height);
+
+        let now = Instant::now();
+        Self {
+            product,
+            shape,
+            width,
+            height,
+            panel_height,
+            brightness: 70,
+            hostname: Some("braiins-deck".to_owned()),
+            ip: Some("192.168.1.42".to_owned()),
+            wifi_signal: Some(-52),
+            ssid: Some("Braiins-WiFi".to_owned()),
+            setup_ssid: None,
+            button: ButtonState::default(),
+            reconnect: ReconnectState::default(),
+            reconnect_child: None,
+            tree: TreeUi::new(),
+            icons: None,
+            touch_track: None,
+            last_interaction: now,
+            last_network_refresh: now,
+            last_render: now,
+            last_brightness_sent: now,
+            slider_released: false,
+            dismissing: false,
+            content_dirty: true,
+            slide: Slide::default(),
+            pending_requests: Vec::new(),
+        }
+    }
+}
+
 /// Panel band height: a round display draws the whole face; a rectangular one
 /// draws the full height too (the original `Panel` is always display-sized).
 fn panel_height_for(_shape: DisplayShape, height: u32) -> f32 {
