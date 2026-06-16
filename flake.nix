@@ -90,6 +90,9 @@
         # so bmc_virt and bmc_tui are both importable for the guest daemon.
         bmc-virt-harness-venv = pythonSet.mkVirtualEnv "bmc-virt-harness" pythonWorkspace.deps.default;
 
+        # Light venv backing the `deck` app — bmc-tui only (rich + tyro).
+        bmc-tui-venv = pythonSet.mkVirtualEnv "bmc-tui" { bmc-tui = [ ]; };
+
         # Local dev shell with Rust + frontend + GUI deps (native only).
         localDevShell = (bmc.profiles.fast.mkShell {
           name = "bmc-local-env";
@@ -245,6 +248,13 @@
         apps.wasm-capture = {
           type = "app";
           program = pkgs.lib.getExe capture.package;
+        };
+
+        # Single device-tooling entry point:
+        # `nix run .#deck -- <sysupgrade|deploy> …`.
+        apps.deck = {
+          type = "app";
+          program = "${bmc-tui-venv}/bin/deck";
         };
 
         # default: full local dev (Rust + frontend + GUI, both local and for Deck)

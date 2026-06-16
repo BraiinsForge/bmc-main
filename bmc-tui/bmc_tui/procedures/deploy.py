@@ -14,29 +14,33 @@ from bmc_tui.stage import dry_run, entrypoint
 
 
 @dataclass
-class Args:
+class Deploy:
     device: str  # IP or host of the target Deck
     packages: list[str] = field(default_factory=list)  # flake attrs; empty → core + all widgets
     dry_run: bool = False  # build + probe for real; log device mutations without executing
+    max_jobs: int | None = None  # nix --max-jobs for the build; None → use nix's own config
+
+    def run(self) -> None:
+        if self.dry_run:
+            dry_run.set(True)
+        dev = Device(self.device)
+        backend = nix.real(max_jobs=self.max_jobs)
+        plan = catalog.Deployment(attrs=self.packages)
+
+        console.header("Deploy packages")
+        dev.print()
+
+        catalog.ensure_device_reachable(dev)
+        catalog.ensure_nix_cli(backend, dev)
+        catalog.resolve_packages(backend, plan)
+        catalog.build_packages(backend, plan)
+        catalog.copy_closures(backend, dev, plan)
+        catalog.register_packages(dev, plan)
 
 
 @entrypoint
-def main(args: Args) -> None:
-    if args.dry_run:
-        dry_run.set(True)
-    dev = Device(args.device)
-    backend = nix.real()
-    plan = catalog.Deployment(attrs=args.packages)
-
-    console.header("Deploy packages")
-    dev.print()
-
-    catalog.ensure_device_reachable(dev)
-    catalog.ensure_nix_cli(backend, dev)
-    catalog.resolve_packages(backend, plan)
-    catalog.build_packages(backend, plan)
-    catalog.copy_closures(backend, dev, plan)
-    catalog.register_packages(dev, plan)
+def main(args: Deploy) -> None:
+    args.run()
 
 
 if __name__ == "__main__":

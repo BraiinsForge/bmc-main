@@ -70,7 +70,7 @@ def ensure_free_space(dev: Device, remote_dir: str, need: int) -> str:
 def upload_firmware(dev: Device, image: Image) -> str:
     done_if(_remote_size(dev, image.remote_path) == image.size)
     dev.push(image.path, image.remote_path)
-    return f"uploaded to {console.lit(image.remote_path)}"
+    return f"→ {console.lit(image.remote_path)}"
 
 
 @stage("Sysupgrade")
@@ -87,7 +87,7 @@ def sysupgrade(dev: Device, image: Image, *, force: bool = False, assume_yes: bo
     )
     flag = "-F " if force else ""
     dev.run(f"sysupgrade {flag}{image.remote_path}", expect_disconnect=True)
-    return "flashing — the device will reboot"
+    return f"{console.lit(image.version)} → reboot"
 
 
 @stage("Wait for device")
@@ -152,7 +152,7 @@ def build_packages(nix: Nix, plan: Deployment) -> str:
 @stage("Copy closures")
 def copy_closures(nix: Nix, dev: Device, plan: Deployment) -> str:
     nix.copy([b.store_path for b in plan.built], dev.copy_dest)
-    return f"copied {console.lit(len(plan.built))} closure(s)"
+    return f"{console.lit(len(plan.built))} closure(s) → {console.lit(dev.host)}"
 
 
 @stage("Register in bmc profile")
