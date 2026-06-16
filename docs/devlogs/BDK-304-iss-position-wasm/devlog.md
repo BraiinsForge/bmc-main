@@ -84,8 +84,51 @@ refactor; whether they actually cure the crash is a phase-3 question.
 - Open hygiene note: the tool `.venv` was ignored only via a now-dangling global excludesfile (`/home/pepa/.gitignore`);
   in-repo rules cover `__pycache__` but not `.venv`. Repo-wide gap — pending decision on root vs local `.gitignore`.
 
-### Phase 1b — module refactor + nexus migration (next)
+### Phase 1b — module refactor + nexus migration (done)
+
+- Split the monolithic `lib.rs` into `model.rs` (nexus payload + `TryFrom`), `orbit.rs` (pure SGP4/projection math),
+  `render.rs` + `render/{panels,globe}`, and a thin wasm-glue `lib.rs`.
+- `orbit.rs` functions take `now_unix`/`&Tle` as inputs (no clock, no globals), so the orbital path is unit-tested on
+  the host — 9 tests green.
+- Nexus migration: one `register_poll` fetch of `/api/v1/data/iss/position` replaces the two direct `wheretheiss.at`
+  calls; position + TLE arrive together, so the separate TLE fetch and the "wait for TLE" state machine are gone.
+- Keep-last-good on a failed refresh (the globe keeps propagating from the cached TLE) instead of dropping to an error
+  state; hard error only before the first load. No "stale" banner — the displayed position stays accurate via local
+  propagation, so a staleness banner would mislead.
+- TTL-driven refresh: next poll aligns with the remaining nexus cache lifetime (`ttl_secs`/`cache_age_secs`), floored at
+  60 s, baseline 30 min.
+- Dropped the debug-only scaffolding (`DEBUG_LANDMARKS`, `TIME_SPEED`, `project_point_to_globe`) and the misleading
+  "Next update" countdown row.
+- nexus also carries `altitude`/`footprint`/`timestamp`; left commented in `model.rs` to document the wire contract, not
+  surfaced by any variant yet.
+- `just validate-wasm` green; `sgp4` 2.4 validates TLE checksums (the test TLE needed correct check digits).
+
+### Phase 1c — SDK units layer + table widening (done)
+
+Comparing against the original Figma design (node 12164-106669) showed the server-image platform had cut capabilities
+the local runtime can restore. Decisions (with Josef):
+
+- **SDK units layer.** New `Length`/`Speed` dimensional newtypes in `bmc-wasm-runtime/sdk/src/units.rs` — named by
+  dimension, units only as `from_*`/`as_*` I/O, canonical SI internally. `.format()` delegates to the host formatters so
+  localisation stays in one place. Private module, public types (the `units` name would clash with the `lib/units` crate
+  until that folds in later). First, focused slice; weather/`lib-units` migrate separately.
+- **Host `format_distance`.** Added to the host formatter family (`runtime/imports/data.rs`) + `format_distance!` in the
+  SDK — the host had no length formatter (km↔mi). Per-format work stays a cheap host FFI; wasm never pulls `core::fmt`
+  (`fmt!` is `ufmt`-backed, `.format()` returns host bytes).
+- **Altitude** restored (nexus already sends it) as a table row — `Length`, localised km/mi.
+- **Velocity A1** — `7.66 km/s (27 571 km/h)`: km/s is the universal orbital convention shown to all; the parenthetical
+  localises (km/h/mph) via the host. Narrow variants (medium/small) show km/s only.
+- **Visibility** is `Sunlit`/`Eclipsed`, dropped on the full variant (the globe terminator already shows it), kept on
+  the table-only variants.
+- **Next pass in** (the design's headline real-time counter) **deferred**: needs an observer lat/lon, i.e. a `location`
+  param, which only pays off with a frontend name→lat/lon autocomplete. Skipped for now; the slot shows Altitude.
+- Parsing to newtypes happens once at fetch (`model::TryFrom`); render only formats. Both `just validate` and
+  `just validate-wasm` green.
 
 ### Phase 2 — PC correctness
+
+The capture fixture (`capture/fixtures/full.jsonl.gz`) and baselines still hold the old `wheretheiss.at` shape — they
+must be regenerated for the nexus envelope before `just wasm::verify-all` is meaningful. Baseline re-bless needs a human
+look at the rendered globe first.
 
 ### Phase 3 — on-device debug
