@@ -190,12 +190,6 @@ impl ParagraphLayoutCache {
         let span_offsets = &entry.span_offsets;
 
         for run in entry.buffer.layout_runs() {
-            let align_offset = match base_style.align {
-                TextAlign::Left => 0.0,
-                TextAlign::Center => (max_width - run.line_w) / 2.0,
-                TextAlign::Right => max_width - run.line_w,
-            };
-
             // run.line_y is the alphabetic baseline (not line top — see module docs)
             let baseline_y = y + run.line_y;
 
@@ -213,14 +207,14 @@ impl ParagraphLayoutCache {
                         canvas,
                         fonts,
                         &segment_text,
-                        x + segment_start_x + align_offset,
+                        x + segment_start_x,
                         baseline_y,
                         &style,
                     );
                     let w = segment_width(canvas, fonts, &segment_text, &style);
                     draw_decorations_for_segment(
                         canvas,
-                        x + segment_start_x + align_offset,
+                        x + segment_start_x,
                         baseline_y,
                         w,
                         &style,
@@ -245,18 +239,12 @@ impl ParagraphLayoutCache {
                     canvas,
                     fonts,
                     &segment_text,
-                    x + segment_start_x + align_offset,
+                    x + segment_start_x,
                     baseline_y,
                     &style,
                 );
                 let w = segment_width(canvas, fonts, &segment_text, &style);
-                draw_decorations_for_segment(
-                    canvas,
-                    x + segment_start_x + align_offset,
-                    baseline_y,
-                    w,
-                    &style,
-                );
+                draw_decorations_for_segment(canvas, x + segment_start_x, baseline_y, w, &style);
             }
         }
     }
