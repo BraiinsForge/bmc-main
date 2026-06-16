@@ -1064,7 +1064,7 @@
 
         devShells.default = pkgs.mkShell {
           name = "bmc-virt-env";
-          packages = [ run stop qemu ];
+          packages = [ run stop qemu pkgs.libxkbcommon.dev pkgs.libinput.dev ];
           env = consoleHostRustflagsEnv;
         };
       });

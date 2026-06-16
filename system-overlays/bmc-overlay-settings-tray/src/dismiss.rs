@@ -12,24 +12,15 @@ pub struct Pt {
 
 /// Upward travel (px) required for a swipe-up dismiss.
 const DISMISS_DY: f32 = 60.0;
-/// Maximum movement (px) for a touch to count as a tap.
-const TAP_SLOP: f32 = 12.0;
 
-/// Whether a finished touch (`start`→`end`) should dismiss the tray. Two cases:
-/// an upward swipe that begins on the panel (predominantly vertical, past the
-/// threshold), or a tap below the panel (`tap-outside`).
+/// Whether a finished touch (`start`→`end`) should dismiss the tray: an upward
+/// swipe past `DISMISS_DY` that is predominantly vertical, distinct from the
+/// horizontal slider drag. The tray is full-screen, so every touch is on it.
 #[must_use]
-pub fn classify(start: Pt, end: Pt, panel_height: f32) -> bool {
+pub fn classify(start: Pt, end: Pt) -> bool {
     let dx = (end.x - start.x).abs();
-    let dy = end.y - start.y; // negative = upward
-
-    let on_panel = start.y <= panel_height;
-    let upward_swipe = on_panel && (-dy) >= DISMISS_DY && (-dy) > dx;
-
-    let below_panel = start.y > panel_height;
-    let tap_outside = below_panel && dx <= TAP_SLOP && dy.abs() <= TAP_SLOP;
-
-    upward_swipe || tap_outside
+    let upward = start.y - end.y; // positive = upward
+    upward >= DISMISS_DY && upward > dx
 }
 
 /// Map a slider drag fraction (0.0..1.0) to a brightness percentage in 10..100,
@@ -50,6 +41,13 @@ pub fn brightness_from_fraction(frac: f32) -> u8 {
 /// 10 floor renders at 0 rather than underflowing (`(b-10)/90` would go
 /// negative).
 #[must_use]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "retained for its unit-test contract; no longer on the render call path"
+    )
+)]
 pub fn brightness_display_fraction(brightness: u8) -> f32 {
     let b = f32::from(brightness).clamp(10.0, 100.0);
     ((b - 10.0) / 90.0).clamp(0.0, 1.0)
@@ -63,34 +61,27 @@ mod tests {
         Pt { x, y }
     }
 
-    // panel occupies the top 200px in these cases.
     #[test]
-    fn upward_swipe_on_panel_dismisses() {
-        // start inside the panel, travel up past the threshold, mostly vertical.
-        assert!(classify(pt(240.0, 150.0), pt(250.0, 60.0), 200.0));
+    fn upward_swipe_dismisses() {
+        // travel up past the threshold, mostly vertical.
+        assert!(classify(pt(240.0, 150.0), pt(250.0, 60.0)));
     }
 
     #[test]
-    fn horizontal_drag_on_panel_is_not_dismiss() {
+    fn horizontal_drag_is_not_dismiss() {
         // a slider drag: large dx, small upward dy -> the tree owns it.
-        assert!(!classify(pt(100.0, 120.0), pt(300.0, 118.0), 200.0));
+        assert!(!classify(pt(100.0, 120.0), pt(300.0, 118.0)));
     }
 
     #[test]
-    fn downward_swipe_on_panel_is_not_dismiss() {
-        assert!(!classify(pt(240.0, 60.0), pt(245.0, 150.0), 200.0));
+    fn downward_swipe_is_not_dismiss() {
+        assert!(!classify(pt(240.0, 60.0), pt(245.0, 150.0)));
     }
 
     #[test]
-    fn tap_below_panel_dismisses() {
-        // tap-outside: starts below panel_height, negligible movement.
-        assert!(classify(pt(240.0, 400.0), pt(242.0, 404.0), 200.0));
-    }
-
-    #[test]
-    fn drag_below_panel_is_not_a_tap() {
-        // a moving touch outside the panel is not a tap-outside.
-        assert!(!classify(pt(240.0, 400.0), pt(360.0, 410.0), 200.0));
+    fn short_upward_swipe_is_not_dismiss() {
+        // upward but short of DISMISS_DY -> not a dismiss.
+        assert!(!classify(pt(240.0, 150.0), pt(242.0, 120.0)));
     }
 
     #[test]

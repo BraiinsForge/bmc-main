@@ -10,9 +10,14 @@ crate-type = ["cdylib"]
 toml.workspace = true
 
 [dependencies]
+bmc-overlay-device-info = { path = "../../system-overlays/bmc-overlay-device-info" }
+bmc-overlay-offline = { path = "../../system-overlays/bmc-overlay-offline" }
+bmc-overlay-settings-tray = { path = "../../system-overlays/bmc-overlay-settings-tray" }
+bmc-render = { path = "../../bmc-render" }
 bmc-render-keyboard = { path = "../../bmc-render/keyboard" }
 bmc-render-skin = { path = "../../bmc-render/skin" }
 bmc-storybook-api = { path = "../api" }
+bmc-system-overlay = { path = "../../system-overlays/bmc-system-overlay" }
 bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
 inventory.workspace = true
 
