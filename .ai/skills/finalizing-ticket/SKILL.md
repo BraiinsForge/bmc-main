@@ -1,0 +1,57 @@
+---
+name: finalizing-ticket
+description: Use when wrapping up a ticket's work and getting it ready for review — the umbrella checklist that runs before a branch is offered for merge. Triggers on phrases like "finalize the ticket", "wrap this up", "ready for review", "submit for review", "prep the MR", "mark it done", or when the implementation is complete and the next step is review. For Story-type tickets this skill defers the user-facing documentation step to the `finalizing-story-ticket` skill.
+---
+
+# Finalizing a ticket
+
+Run this before offering a branch for review. It is the single checklist that turns "the code works" into "this is ready
+for someone else to merge". The steps below apply to every ticket type; the **story addendum** at the end applies only
+when the ticket is a Story.
+
+## 1. Definition of Done holds
+
+Walk the Definition of Done from `.ai/instructions.md` and confirm each item is actually true, not assumed:
+
+- tests written and passing for the new behavior
+- code follows project conventions, no linter/formatter warnings
+- no TODOs without an issue number
+- the implementation matches the plan
+
+## 2. Validate the tree
+
+Run the repo's validation path — never raw `cargo`/`nix` substitutes. See the `repo-build-workflow` skill for which
+target fits the change; the default is plain `just validate`, with `just validate-wasm` as a supplement when touching
+`bmc-wasm-runtime/` or protocol crates. Finish on the full `just validate` and confirm the `validate: OK` marker.
+
+## 3. Clean up scratch state
+
+The planning devlog under `docs/devlogs/BDK-<ticket>-<slug>/` is scratch, not deliverable. Remove it once the stages are
+done — it must not land in the review. Permanent documentation (architecture notes, user stories) is a separate concern
+and lives elsewhere; see the story addendum below.
+
+## 4. Commit hygiene
+
+Each commit compiles and passes tests on its own (verify-at-every-commit). Commit messages follow the repo format —
+imperative subject, ticket reference, body explaining *why*. Squash fixups into the commit they belong to so the history
+reviewers read is the history that merges.
+
+## 5. The story addendum — only for Story-type tickets
+
+Check the ticket type (the Jira `issuetype` is `Story`, not `Task` / `Bug`). If it is a Story, the user-facing feature
+documentation under `docs/stories/` is part of finishing the ticket. **Switch to the `finalizing-story-ticket` skill**
+for that step before considering the ticket done. Task and Bug tickets skip it unless they change documented user-facing
+behavior.
+
+## 6. Push and open the MR are explicit actions
+
+Pushing the branch and opening / updating the MR are deliberate, outward-facing steps. Do them when the work is actually
+ready and you intend to publish it — not as a routine "make sure the remote is current" reflex. One authorization covers
+one push of the named branch, not a standing licence.
+
+## Hard rules — never
+
+- Never offer a branch for review with the scratch devlog still committed.
+- Never skip `just validate` (the formatter step is load-bearing) before calling a ticket done.
+- Never finalize a Story ticket without the `docs/stories/` entry — route through `finalizing-story-ticket`.
+- Never treat push / MR creation as an automatic finalization step; it is a separate, explicit action.

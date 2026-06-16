@@ -2,9 +2,11 @@
 target/
 result**
 
-# Development
-.claude
-.codex
+# AI
+.claude/*.local.*
+.codex/*.local.*
+
+# IDE
 .idea
 
 # Hot-reload cdylib output
