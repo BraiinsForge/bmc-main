@@ -154,6 +154,10 @@ glab api --method POST -H "Content-Type: application/json" \
 
 Body JSON is `{"body": "..."}`. No silent-drop failure mode here — no verification needed beyond confirming HTTP 200.
 
+Prefer this `glab api .../notes --input <file>` form over `glab`'s porcelain note subcommands: it's stable across glab
+versions and carries the body as a file, so backticks/apostrophes never have to survive the shell. If you do reach for a
+porcelain subcommand, check `glab <cmd> --help` first — its flags and deprecations drift between versions.
+
 ## Thread reply via glab CLI (fallback only)
 
 When MCP is unavailable, the equivalent of the discussion-reply tool:
@@ -192,6 +196,8 @@ summary:
 ## Hard rules — never
 
 - Never `curl` the GitLab host. Use `glab api` (handles auth) or the MCP tools.
+- Never assume a `glab` porcelain subcommand's flags are stable — prefer the `glab api` forms above, and check
+  `glab <cmd> --help` before relying on one.
 - Never auto-post a reply.
 - Never include commit hashes in a reply.
 - Never amend or force-push to "fix" a typo. Edit via
