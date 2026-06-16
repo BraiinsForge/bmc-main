@@ -861,6 +861,7 @@
             # — SDK examples plus production widgets, both flat in WASM_DIR.
             mkdir -p "$TMP_GUEST_OVERLAY${guestPaths.WASM_DIR}"
             cp -a "$WASM_EXAMPLES"/. "$TMP_GUEST_OVERLAY${guestPaths.WASM_DIR}/"
+            chmod -R u+w "$TMP_GUEST_OVERLAY${guestPaths.WASM_DIR}"
             cp -a "$WASM_WIDGETS"/. "$TMP_GUEST_OVERLAY${guestPaths.WASM_DIR}/"
 
             # Fonts
