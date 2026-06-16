@@ -30,12 +30,14 @@ stages:
 ########## Lint Stage ############
 ##################################
 
-# Override the included fmt job's script: the upstream check-fmt tool
-# runs git with a sealed PATH that lacks git-lfs, which breaks
-# `git diff` in this LFS-enabled repo.
+# Override the included fmt job's script: the upstream check-fmt tool runs git
+# with a sealed PATH that lacks git-lfs, which breaks `git diff` in this LFS-enabled repo.
+# The `fmt-svg` pass is run here too because `nix fmt` (treefmt) does not format SVGs
+# — the shared `git diff` check below then catches any un-svgo'd asset.
 fmt:
   script:
     - nix fmt --no-write-lock-file -- --no-cache --verbose
+    - nix run --no-write-lock-file .#fmt-svg
     - nix shell .#pkgs.git .#pkgs.git-lfs --command git diff --exit-code --color
 
 verify-shared-crates:
