@@ -8,6 +8,7 @@ result**
 
 # IDE
 .idea
+.direnv/
 
 # Hot-reload cdylib output
 *.so
