@@ -49,7 +49,7 @@ pub fn eci_to_geodetic(pos: &[f64; 3], gmst: f64) -> (f64, f64) {
     let lon_rad = y.atan2(x) - gmst;
     let lat_rad = z.atan2((x * x + y * y).sqrt());
     let lat = lat_rad.to_degrees();
-    let lon = ((lon_rad.to_degrees() + 540.0) % 360.0) - 180.0;
+    let lon = normalize_180(lon_rad.to_degrees());
     (lat, lon)
 }
 
@@ -57,6 +57,10 @@ pub fn eci_to_geodetic(pos: &[f64; 3], gmst: f64) -> (f64, f64) {
 ///
 /// `None` if the TLE fails to parse or propagation fails.
 #[must_use]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "unix-second timestamps are exact in f64 (well below 2^53)"
+)]
 pub fn propagate_at(tle: &Tle, now_unix: f64) -> Option<(f64, f64)> {
     let elements =
         sgp4::Elements::from_tle(None, tle.line1.as_bytes(), tle.line2.as_bytes()).ok()?;
@@ -79,6 +83,10 @@ pub fn propagate_at(tle: &Tle, now_unix: f64) -> Option<(f64, f64)> {
 /// lines up with a provided longitude — used to align with the API-reported
 /// position when the TLE is stale; pass `None` for unshifted SGP4 motion.
 #[must_use]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "unix-second timestamps and orbit-point indices are exact in f64 (well below 2^53)"
+)]
 pub fn ground_track(tle: &Tle, now_unix: f64, anchor_center_lon: Option<f64>) -> Vec<(f64, f64)> {
     let Ok(elements) = sgp4::Elements::from_tle(None, tle.line1.as_bytes(), tle.line2.as_bytes())
     else {
@@ -96,7 +104,7 @@ pub fn ground_track(tle: &Tle, now_unix: f64, anchor_center_lon: Option<f64>) ->
             let t0 = sgp4::MinutesSinceEpoch(minutes_since_epoch);
             let p0 = constants.propagate(t0).ok()?;
             let (_, sgp4_lon) = eci_to_geodetic(&p0.position, gmst_radians(now_unix));
-            Some(wrap_180(center_lon - sgp4_lon))
+            Some(normalize_180(center_lon - sgp4_lon))
         })
         .unwrap_or(0.0);
 
@@ -184,6 +192,10 @@ impl Basis {
 
     /// Project a geographic point to canvas pixels, culling points whose
     /// rotated `z` falls at or below `cull_z` (behind the visible hemisphere).
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "canvas geometry is f32; the pixel-coordinate downcast is intended"
+    )]
     fn project(&self, lat_deg: f64, lon_deg: f64, zoom: f64, cull_z: f64) -> Option<(f32, f32)> {
         let lat = lat_deg.to_radians();
         let lon = lon_deg.to_radians();
@@ -211,26 +223,18 @@ impl Basis {
         let uv_y = vy * scale;
 
         // UV [-1, 1] → canvas pixels (Y flipped for a top-down canvas).
-        let canvas_x = ((uv_x + 1.0) / 2.0 * f64::from(self.w)) as f32;
+        let canvas_x = (f64::midpoint(uv_x, 1.0) * f64::from(self.w)) as f32;
         let canvas_y = ((1.0 - uv_y) / 2.0 * f64::from(self.h)) as f32;
         Some((canvas_x, canvas_y))
     }
 }
 
-/// Wrap a longitude delta into `[-180, 180]`.
-fn wrap_180(mut d: f64) -> f64 {
-    if d > 180.0 {
-        d -= 360.0;
-    }
-    if d < -180.0 {
-        d += 360.0;
-    }
-    d
-}
-
-/// Normalize an absolute longitude into `[-180, 180]`.
+/// Normalize a longitude (or longitude delta) of any magnitude into
+/// `[-180, 180]`. `rem_euclid` keeps the result non-negative before the
+/// shift, so it holds for arbitrarily large or negative input — unlike a
+/// truncated `%`, which leaks the sign for input below `-540`.
 fn normalize_180(lon: f64) -> f64 {
-    ((lon + 540.0) % 360.0) - 180.0
+    (lon + 180.0).rem_euclid(360.0) - 180.0
 }
 
 #[cfg(test)]
@@ -295,6 +299,23 @@ mod tests {
             assert!(
                 (-180.0..=180.0).contains(&lon),
                 "track lon {lon} not normalized"
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_180_wraps_any_magnitude_into_range() {
+        // In-range values pass through unchanged.
+        assert!(normalize_180(0.0).abs() < 1e-9);
+        assert!((normalize_180(179.0) - 179.0).abs() < 1e-9);
+        // The anchor delta mixes an unnormalized nexus longitude with the SGP4
+        // subpoint, so it can land far outside a single ±360 wrap. Every
+        // magnitude, positive or negative, must still resolve into range.
+        for d in [360.0, 540.0, 700.0, -700.0, 1_000.0, -1_000.0, 1e6, -1e6] {
+            let n = normalize_180(d);
+            assert!(
+                (-180.0..=180.0).contains(&n),
+                "normalize_180({d}) = {n} out of range"
             );
         }
     }

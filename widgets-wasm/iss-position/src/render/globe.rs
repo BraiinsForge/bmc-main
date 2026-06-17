@@ -35,9 +35,23 @@ const MARKER_GLOW_R: f32 = 40.0;
 const MARKER_SOLID_R: f32 = 24.0;
 const MARKER_SIZE: f32 = 56.0;
 
+/// Cached ground track: its 60 SGP4 propagations are recomputed only when older
+/// than [`TRACK_MAX_AGE_SECS`] (the orbit shifts only over minutes), never every frame.
+/// Projection onto the moving globe stays per-frame — that's cheap trig.
+struct CachedTrack {
+    computed_at: f64,
+    anchor: Option<f64>,
+    geo: Vec<(f64, f64)>,
+}
+
+/// Max age of a cached track; over this the "now" point shifts well
+/// under one track-point's spacing, so reuse is imperceptible.
+const TRACK_MAX_AGE_SECS: f64 = 10.0;
+
 thread_local! {
     /// Smoothed globe center (lat, lon) in degrees, eased toward the live subpoint.
     static SMOOTHED_CENTER: RefCell<Option<(f64, f64)>> = const { RefCell::new(None) };
+    static TRACK_CACHE: RefCell<Option<CachedTrack>> = const { RefCell::new(None) };
 }
 
 /// Render the globe canvas with the orbital track and centered ISS marker.
@@ -55,14 +69,16 @@ pub fn map_panel(data: &IssData, delta_ms: u32) -> Node {
     // Prefer the live SGP4 subpoint so the globe rotates smoothly between
     // refreshes; fall back to the reported position if propagation fails.
     let mut use_anchor = false;
-    let (globe_lat, globe_lon) = data
-        .tle
-        .as_ref()
-        .and_then(|tle| orbit::propagate_at(tle, now_unix))
-        .unwrap_or_else(|| {
-            use_anchor = true;
-            (data.latitude, data.longitude)
-        });
+    let (globe_lat, globe_lon) = {
+        let _s = profile::span("propagate");
+        data.tle
+            .as_ref()
+            .and_then(|tle| orbit::propagate_at(tle, now_unix))
+            .unwrap_or_else(|| {
+                use_anchor = true;
+                (data.latitude, data.longitude)
+            })
+    };
     let smoothed = smooth_globe_center(globe_lat, globe_lon, delta_ms);
 
     // Layer 0: textured sphere — the shader handles rotation, light shading and
@@ -80,18 +96,32 @@ pub fn map_panel(data: &IssData, delta_ms: u32) -> Node {
         .transition("earth-sphere", 250, Easing::EaseOut),
     );
 
-    // Layer 1: orbital ground track projected onto the globe.
+    // Layer 1: orbital ground track (SGP4 cached; only projection runs per frame).
     if let Some(tle) = &data.tle {
-        let anchor_lon = use_anchor.then_some(data.longitude);
-        let geo_track = orbit::ground_track(tle, now_unix, anchor_lon);
-        let segments = orbit::project_orbit_to_globe(
-            &geo_track,
-            smoothed.lat,
-            smoothed.lon,
-            f64::from(globe_zoom),
-            MAP_W,
-            MAP_H,
-        );
+        let anchor = use_anchor.then_some(data.longitude);
+        let _s = profile::span("track");
+        let segments = TRACK_CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            let stale = cache.as_ref().is_none_or(|c| {
+                c.anchor != anchor || (now_unix - c.computed_at).abs() > TRACK_MAX_AGE_SECS
+            });
+            if stale {
+                *cache = Some(CachedTrack {
+                    computed_at: now_unix,
+                    anchor,
+                    geo: orbit::ground_track(tle, now_unix, anchor),
+                });
+            }
+            let geo = &cache.as_ref().expect("BUG: populated when stale").geo;
+            orbit::project_orbit_to_globe(
+                geo,
+                smoothed.lat,
+                smoothed.lon,
+                f64::from(globe_zoom),
+                MAP_W,
+                MAP_H,
+            )
+        });
         for seg in segments {
             if seg.len() > 1 {
                 draws.push(path!(seg, stroke: 3.0, color: ORBIT_COLOR, smooth));
