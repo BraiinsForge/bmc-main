@@ -234,12 +234,18 @@ fn descend_dir(
             }
         })?;
 
-        let is_dir = if lstat.is_symlink() {
+        // For a symlink-to-dir, follow it once to get the resolved metadata
+        // (used both to determine is_dir and for the cycle-identity dev/ino).
+        // For a plain dir, lstat already carries the identity.
+        let (is_dir, resolved_meta) = if lstat.is_symlink() {
             match std::fs::metadata(&src_path) {
-                Ok(m) => m.is_dir(),
+                Ok(m) => {
+                    let is_d = m.is_dir();
+                    (is_d, Some(m))
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     // Dangling symlink — treat as leaf
-                    false
+                    (false, None)
                 }
                 Err(source) => {
                     return Err(BuildProfileError::StatStorePath {
@@ -249,16 +255,11 @@ fn descend_dir(
                 }
             }
         } else {
-            lstat.is_dir()
+            (lstat.is_dir(), None)
         };
 
         if is_dir {
-            let stat = std::fs::metadata(&src_path).map_err(|source| {
-                BuildProfileError::StatStorePath {
-                    path: src_path.display().to_string(),
-                    source,
-                }
-            })?;
+            let stat = resolved_meta.as_ref().unwrap_or(&lstat);
             let identity = (stat.dev(), stat.ino());
             if ancestors.contains(&identity) {
                 return Err(BuildProfileError::SymlinkCycle {
@@ -1322,6 +1323,61 @@ mod tests {
         assert!(
             matches!(result, Err(BuildProfileError::StatStorePath { .. })),
             "expected StatStorePath error for ELOOP, got: {result:?}"
+        );
+    }
+
+    // Test 6: two directory symlinks pointing at the same real directory
+    // ("diamond") must both be unrolled successfully.  The ancestor set is
+    // scoped to the current call stack, so revisiting `shared/` via a
+    // different symlink is not a cycle.  A regression to a global visited
+    // set would incorrectly fail on the second arm.
+    #[tokio::test]
+    async fn build_symlink_tree_unrolls_diamond_without_false_cycle() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        let store = tmp.path().join("store");
+        std::fs::create_dir_all(&store).expect("BUG: create store");
+
+        // Create the shared real directory with one file inside it.
+        let shared = store.join("shared");
+        std::fs::create_dir_all(&shared).expect("BUG: create shared");
+        std::fs::write(shared.join("file.txt"), "shared content")
+            .expect("BUG: write shared/file.txt");
+
+        // x -> shared  and  y -> shared  (both are directory symlinks)
+        std::os::unix::fs::symlink(&shared, store.join("x")).expect("BUG: create x -> shared");
+        std::os::unix::fs::symlink(&shared, store.join("y")).expect("BUG: create y -> shared");
+
+        let packages = vec![test_resolved_package(
+            "pkg",
+            store.to_str().expect("BUG: valid UTF-8"),
+        )];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
+
+        build_symlink_tree(&output_dir, &packages)
+            .await
+            .expect("BUG: diamond should not be mistaken for a cycle");
+
+        let x_file = output_dir.join("x/file.txt");
+        assert!(
+            x_file
+                .symlink_metadata()
+                .expect("BUG: stat x/file.txt")
+                .file_type()
+                .is_symlink(),
+            "x/file.txt must be a symlink"
+        );
+
+        let y_file = output_dir.join("y/file.txt");
+        assert!(
+            y_file
+                .symlink_metadata()
+                .expect("BUG: stat y/file.txt")
+                .file_type()
+                .is_symlink(),
+            "y/file.txt must be a symlink"
         );
     }
 
