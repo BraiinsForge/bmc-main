@@ -25,7 +25,8 @@ use ::deck_settings_v1::client::deck_settings_v1::{self, DeckSettingsV1};
 use bmc_widget::egl::DmaBufInfo;
 use bmc_widget::surface::{
     BufferSlotMap, PollOutcome, ReleasedBuffer, ReleasedBufferSet, create_buffer_from_dmabuf,
-    drain_released_buffers, poll_dispatch, submit_buffer_to_surface,
+    drain_released_buffers, poll_dispatch, record_released_buffer, submit_buffer_to_surface,
+    unregister_wl_buffer_slot,
 };
 use deck_screen_edge_v1::client::deck_auto_hide_screen_edge_v1::{self, DeckAutoHideScreenEdgeV1};
 use deck_screen_edge_v1::client::deck_screen_edge_manager_v1::{self, DeckScreenEdgeManagerV1};
@@ -516,8 +517,11 @@ impl LayerSurfaceClient {
 
     pub fn destroy_minted_wl_buffer(&mut self, buffer: wl_buffer::WlBuffer) {
         let id = buffer.id();
-        self.state.buffer_slots.remove(&id);
-        self.state.released_buffers.remove(&id);
+        unregister_wl_buffer_slot(
+            &mut self.state.buffer_slots,
+            &mut self.state.released_buffers,
+            &id,
+        );
         buffer.destroy();
         drop(buffer);
     }
@@ -689,10 +693,11 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         if let wl_buffer::Event::Release = event {
-            let buffer_id = buffer.id();
-            if state.buffer_slots.contains_key(&buffer_id) {
-                state.released_buffers.insert(buffer_id);
-            }
+            record_released_buffer(
+                &state.buffer_slots,
+                &mut state.released_buffers,
+                buffer.id(),
+            );
         }
     }
 }

@@ -16,7 +16,7 @@ use super::common::{
     BufferSlotMap, PollOutcome, ReleasedBufferSet, blocking_dispatch_impl,
     create_buffer_from_dmabuf, drain_released_buffer_slots, impl_common_dispatch,
     invalidate_cached_wl_buffer_slots, invalidate_cached_wl_buffers, poll_dispatch,
-    submit_buffer_to_surface,
+    record_released_buffer, submit_buffer_to_surface,
 };
 use super::{WidgetEvent, WidgetSurface};
 
@@ -501,10 +501,11 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for XdgSurfaceState {
         _: &QueueHandle<Self>,
     ) {
         if let wl_buffer::Event::Release = event {
-            let buffer_id = buffer.id();
-            if state.buffer_slots.contains_key(&buffer_id) {
-                state.released_buffers.insert(buffer_id);
-            }
+            record_released_buffer(
+                &state.buffer_slots,
+                &mut state.released_buffers,
+                buffer.id(),
+            );
         }
     }
 }

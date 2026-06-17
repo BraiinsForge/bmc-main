@@ -813,6 +813,92 @@ impl Default for SlotReleaseState {
     }
 }
 
+#[derive(Debug)]
+pub struct TwoSlotBufferCache<B> {
+    buffers: [Option<B>; 2],
+    release: SlotReleaseState,
+}
+
+impl<B> TwoSlotBufferCache<B> {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            buffers: [None, None],
+            release: SlotReleaseState::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn cached_count(&self) -> usize {
+        self.buffers
+            .iter()
+            .filter(|buffer| buffer.is_some())
+            .count()
+    }
+
+    #[must_use]
+    pub fn is_available(&self, slot: usize) -> bool {
+        self.release.is_available(slot)
+    }
+
+    pub fn mark_presented(&mut self, slot: usize) {
+        self.release.mark_presented(slot);
+    }
+
+    pub fn mark_released(&mut self, slot: usize) {
+        self.release.mark_released(slot);
+    }
+
+    #[must_use]
+    pub const fn release_state(&self) -> SlotReleaseState {
+        self.release
+    }
+
+    pub fn reset_release_state(&mut self) {
+        self.release = SlotReleaseState::new();
+    }
+
+    pub fn get_or_try_insert_with<E>(
+        &mut self,
+        slot: usize,
+        make_buffer: impl FnOnce() -> Result<B, E>,
+    ) -> Result<Option<&B>, E> {
+        let Some(buffer) = self.buffers.get_mut(slot) else {
+            return Ok(None);
+        };
+        if buffer.is_none() {
+            *buffer = Some(make_buffer()?);
+        }
+        Ok(buffer.as_ref())
+    }
+
+    pub fn mark_released_matching(&mut self, mut matches: impl FnMut(&B) -> bool) -> bool {
+        let Some(slot) = self
+            .buffers
+            .iter()
+            .position(|buffer| buffer.as_ref().is_some_and(&mut matches))
+        else {
+            return false;
+        };
+        self.release.mark_released(slot);
+        true
+    }
+
+    pub fn take_slot(&mut self, slot: usize) -> Option<B> {
+        self.buffers.get_mut(slot)?.take()
+    }
+
+    pub fn take_all(&mut self) -> [Option<B>; 2] {
+        std::mem::take(&mut self.buffers)
+    }
+}
+
+impl<B> Default for TwoSlotBufferCache<B> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Double-buffered DMA-BUF export state.
 ///
 /// Manages two lazily-allocated [`ExportBuffer`]s with ping-pong swap.
@@ -1646,7 +1732,7 @@ fn load_egl_proc<T>(name: &str) -> Result<T> {
 mod tests {
     use super::{
         Depth, DoubleBufferState, EglContext, ExportFormat, SharedRenderScratch, SlotReleaseState,
-        WidgetExportBuffer, offset_panel_ndc_rect, shared_scratch_uv_scale,
+        TwoSlotBufferCache, WidgetExportBuffer, offset_panel_ndc_rect, shared_scratch_uv_scale,
     };
     use drm_fourcc::DrmFourcc;
 
@@ -1680,6 +1766,41 @@ mod tests {
 
         assert!(state.is_available(0));
         assert!(!state.is_available(1));
+    }
+
+    #[test]
+    fn two_slot_buffer_cache_reuses_buffers_and_marks_matching_release() {
+        let mut cache = TwoSlotBufferCache::new();
+
+        let first = cache
+            .get_or_try_insert_with(0, || Ok::<_, std::convert::Infallible>(42_u32))
+            .expect("BUG: infallible creation")
+            .expect("BUG: slot 0 exists");
+        assert_eq!(*first, 42);
+        let second = cache
+            .get_or_try_insert_with(0, || Ok::<_, std::convert::Infallible>(7_u32))
+            .expect("BUG: infallible creation")
+            .expect("BUG: slot 0 exists");
+        assert_eq!(*second, 42);
+
+        cache.mark_presented(0);
+        assert!(!cache.is_available(0));
+        assert!(cache.mark_released_matching(|value| *value == 42));
+
+        assert!(cache.is_available(0));
+        assert!(!cache.mark_released_matching(|value| *value == 99));
+    }
+
+    #[test]
+    fn two_slot_buffer_cache_reports_invalid_slots_without_allocating() {
+        let mut cache = TwoSlotBufferCache::new();
+
+        let value = cache
+            .get_or_try_insert_with(2, || Ok::<_, std::convert::Infallible>(42_u32))
+            .expect("BUG: infallible creation");
+
+        assert!(value.is_none());
+        assert_eq!(cache.cached_count(), 0);
     }
 
     #[test]
