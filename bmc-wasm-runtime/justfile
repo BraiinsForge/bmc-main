@@ -13,6 +13,9 @@ dir := source_directory()
 wasm_target := "wasm32-unknown-unknown"
 cargo_features := "--features testbed"
 
+# Shared cargo target-dir resolver (repo-level, used by storybook too).
+target_dir_tool := dir + "/../scripts/cargo_target_dir.py"
+
 # Visual regression output (shared across all widget roots).
 output_dir := dir + "/captures"
 
@@ -38,8 +41,7 @@ dev WIDGET ARGS="":
     #!/usr/bin/env bash
     set -euo pipefail
     root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
-    target=$(cargo metadata --manifest-path "$root/Cargo.toml" --format-version=1 --no-deps \
-        | grep -o '"target_directory":"[^"]*"' | cut -d '"' -f 4)
+    target=$({{ target_dir_tool }} "$root")
     wasm_file="$target/{{ wasm_target }}/debug/$(echo {{ WIDGET }} | tr - _).wasm"
     cargo build {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml
     cargo build --manifest-path "$root/Cargo.toml" -p {{ WIDGET }} --target {{ wasm_target }}
@@ -53,8 +55,7 @@ run WIDGET ARGS="":
     #!/usr/bin/env bash
     set -euo pipefail
     root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
-    target=$(cargo metadata --manifest-path "$root/Cargo.toml" --format-version=1 --no-deps \
-        | grep -o '"target_directory":"[^"]*"' | cut -d '"' -f 4)
+    target=$({{ target_dir_tool }} "$root")
     wasm_file="$target/{{ wasm_target }}/release/$(echo {{ WIDGET }} | tr - _).wasm"
     cargo build --manifest-path "$root/Cargo.toml" -p {{ WIDGET }} --release --target {{ wasm_target }}
     cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/{{ WIDGET }}" {{ ARGS }}
@@ -98,8 +99,7 @@ record WIDGET SIZE="full":
     #!/usr/bin/env bash
     set -euo pipefail
     root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
-    target=$(cargo metadata --manifest-path "$root/Cargo.toml" --format-version=1 --no-deps \
-        | grep -o '"target_directory":"[^"]*"' | cut -d '"' -f 4)
+    target=$({{ target_dir_tool }} "$root")
     wasm_file="$target/{{ wasm_target }}/release/$(echo {{ WIDGET }} | tr - _).wasm"
     cargo build --manifest-path "$root/Cargo.toml" -p {{ WIDGET }} --release --target {{ wasm_target }}
     cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/{{ WIDGET }}" --record={{ SIZE }}

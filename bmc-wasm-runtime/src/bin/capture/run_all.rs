@@ -255,19 +255,29 @@ pub fn discover_widgets(workspace: &Path) -> Result<Vec<String>> {
 
 // ── WASM paths ──────────────────────────────────────────────────────
 
-/// Default wasm output directory when building a workspace locally.
-fn default_wasm_dir(workspace: &Path, cargo_target_dir: Option<&Path>) -> PathBuf {
-    let target_dir = cargo_target_dir.map_or_else(
-        || workspace.join("target"),
-        |dir| {
-            if dir.is_absolute() {
-                dir.to_path_buf()
-            } else {
-                workspace.join(dir)
-            }
-        },
-    );
-    target_dir.join(WASM_TARGET).join("release")
+/// Absolute cargo target directory for a workspace, resolved through the
+/// shared `scripts/cargo_target_dir.py` tool so the testbed/hot-reload
+/// recipes and the capture binary agree on where wasm artifacts land.
+fn cargo_target_dir(workspace: &Path) -> Result<PathBuf> {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("BUG: bmc-wasm-runtime crate must live under the repo root")
+        .join("scripts/cargo_target_dir.py");
+    let output = Command::new(&script)
+        .arg(workspace)
+        .output()
+        .with_context(|| format!("failed to run {}", script.display()))?;
+    if !output.status.success() {
+        bail!(
+            "{} failed for {}:\n{}",
+            script.display(),
+            workspace.display(),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+    let dir =
+        String::from_utf8(output.stdout).context("cargo_target_dir.py emitted non-UTF-8 output")?;
+    Ok(PathBuf::from(dir.trim()))
 }
 
 /// Resolve the `.wasm` path for a widget within a given directory.
@@ -278,11 +288,13 @@ fn wasm_in_dir(dir: &Path, widget: &str) -> PathBuf {
 
 /// Resolve the `wasmDir` for a widget — either the paired `--wasm-dir`
 /// or the workspace's local cargo target dir.
-fn wasm_dir_for(entry: &WidgetEntry) -> PathBuf {
-    entry.wasm_dir.clone().unwrap_or_else(|| {
-        let cargo_target_dir = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from);
-        default_wasm_dir(&entry.workspace, cargo_target_dir.as_deref())
-    })
+fn wasm_dir_for(entry: &WidgetEntry) -> Result<PathBuf> {
+    match &entry.wasm_dir {
+        Some(dir) => Ok(dir.clone()),
+        None => Ok(cargo_target_dir(&entry.workspace)?
+            .join(WASM_TARGET)
+            .join("release")),
+    }
 }
 
 /// Widget capture directory (where `config.toml` and fixtures live).
@@ -337,7 +349,7 @@ fn capture_widget(
     show_progress: bool,
 ) -> Result<f64> {
     let example = entry.name.as_str();
-    let wasm = wasm_in_dir(&wasm_dir_for(entry), example);
+    let wasm = wasm_in_dir(&wasm_dir_for(entry)?, example);
     let cap_dir = capture_dir(&entry.workspace, example);
     let output_root = output_dir.join(example).join("current");
 
@@ -605,8 +617,7 @@ fn format_time(seconds: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{WASM_TARGET, default_wasm_dir, distill_capture_error};
-    use std::path::Path;
+    use super::distill_capture_error;
 
     #[test]
     fn distill_keeps_the_error_and_drops_capture_chatter() {
@@ -630,33 +641,5 @@ mod tests {
         let raw = "pci id for fd 9: 10de:2684, driver (null)\n\
                    Captured frame 0 → /x/frame_0000.png\n";
         assert_eq!(distill_capture_error(raw), raw.trim());
-    }
-
-    #[test]
-    fn default_wasm_dir_uses_absolute_cargo_target_dir() {
-        let workspace = Path::new("/workspace/widgets-wasm");
-
-        let dir = default_wasm_dir(workspace, Some(Path::new("/tmp/cargo-target")));
-
-        assert_eq!(
-            dir,
-            Path::new("/tmp/cargo-target")
-                .join(WASM_TARGET)
-                .join("release")
-        );
-    }
-
-    #[test]
-    fn default_wasm_dir_resolves_relative_cargo_target_dir_from_workspace() {
-        let workspace = Path::new("/workspace/widgets-wasm");
-
-        let dir = default_wasm_dir(workspace, Some(Path::new("cargo-target")));
-
-        assert_eq!(
-            dir,
-            Path::new("/workspace/widgets-wasm/cargo-target")
-                .join(WASM_TARGET)
-                .join("release")
-        );
     }
 }
