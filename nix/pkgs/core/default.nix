@@ -7,6 +7,18 @@ let
   inherit (deps) compositorRuntimeDeps frontend;
   profile = bmc.profiles.armv7-glibc-release;
 
+  nixConf = import ../../nix-conf.nix { pkgs = armv7Pkgs; };
+  nixConfActivation = import ./nix-conf-activation.nix { pkgs = armv7Pkgs; inherit nixConf; };
+  testBusybox = armv7Pkgs.buildPackages.busybox;
+  nixConfActivationTest = armv7Pkgs.runCommand "nix-conf-activation-test" { } ''
+    PATH=${testBusybox}/bin \
+    NIX_CONF_ACTIVATION_SHELL=${testBusybox}/bin/ash \
+      ${testBusybox}/bin/ash \
+        ${./tests/nix-conf-activation.sh} \
+        ${nixConfActivation}/bin/nix-conf-activation
+    ${testBusybox}/bin/touch $out
+  '';
+
   orchestrator = profile.buildCrate crates.bmc-nix-service-orchestrator { };
 
   # Ash wrapper around the orchestrator. procd will run the service in
@@ -118,9 +130,8 @@ let
       }"
     '';
   };
-in
-{
-  pkg = mkPackage {
+
+  package = mkPackage {
     name = "bmc-core";
     package = bmc-openwrt;
     hooks = [
@@ -129,6 +140,7 @@ in
       { prefix = "099"; bin = profile.buildCrate crates.bmc-hook-activation-resolver { }; }
     ];
     activation = mkPrioritizedEntries ./activation ++ [
+      { prefix = "052"; bin = nixConfActivation; }
       { prefix = "055"; bin = profile.buildCrate crates.bmc-activation-copy-files { }; }
       { prefix = "060"; bin = firmware-init-services; }
       { prefix = "090"; bin = start-service-orchestrator; }
@@ -148,6 +160,15 @@ in
       "/etc/rc.d/S91nix-activator"
     ];
   };
+
+  packageWithTests = package.overrideAttrs (old: {
+    passthru = (old.passthru or { }) // {
+      tests.activation = nixConfActivationTest;
+    };
+  });
+in
+{
+  pkg = packageWithTests;
   version = "0.1.0";
   category = "core";
   description = "Core system package (bmc-openwrt + activation/hooks)";

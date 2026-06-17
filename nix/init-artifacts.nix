@@ -43,11 +43,7 @@ let
     commit = self.rev or "dirty";
   };
 
-  nixConf = pkgs.writeText "nix.conf" ''
-    substituters = https://cache.braiins.com
-    # trusted-public-keys = cache.braiins.com:placeholder
-    extra-experimental-features = nix-command flakes
-  '';
+  nixConf = import ./nix-conf.nix { inherit pkgs; };
 
   # Initial keep.d entry so sysupgrade preserves /etc/nix/nix.conf before
   # the core package (which also lists it) has been activated.
