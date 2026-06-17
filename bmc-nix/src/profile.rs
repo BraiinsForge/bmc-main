@@ -1,11 +1,12 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
+use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::io::AsRawFd as _;
 use std::path::{Path, PathBuf};
 
 use tracing::{debug, info, warn};
-use walkdir::WalkDir;
 
 use crate::types::{ProfileGeneration, ResolvedPackage};
 
@@ -33,11 +34,18 @@ pub enum BuildProfileError {
         path: String,
         source: std::io::Error,
     },
-    #[error("failed to walk store path '{path}': {source}")]
-    WalkStorePath {
+    #[error("failed to read store directory '{path}': {source}")]
+    ReadStorePath {
         path: String,
-        source: walkdir::Error,
+        source: std::io::Error,
     },
+    #[error("failed to stat store entry '{path}': {source}")]
+    StatStorePath {
+        path: String,
+        source: std::io::Error,
+    },
+    #[error("symlink cycle detected at '{path}'")]
+    SymlinkCycle { path: String },
     #[error("hook execution failed: {0}")]
     Hooks(#[from] crate::hooks::RunHooksError),
     #[error("manifest error: {0}")]
@@ -186,12 +194,129 @@ pub async fn lock_profile_with_timeout(
     }
 }
 
+/// Read all entries in `dir` and return them sorted lexicographically by name.
+fn sorted_dir_entries(dir: &Path) -> Result<Vec<std::fs::DirEntry>, std::io::Error> {
+    let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    Ok(entries)
+}
+
+/// Recursive descent worker for `build_symlink_tree`.
+///
+/// `src_dir` is the directory being descended in the store. `dst_dir` is the
+/// corresponding real directory already created in the output tree.
+/// `ancestors` tracks `(dev, ino)` of directories on the current call stack
+/// to detect cycles introduced by directory symlinks.
+fn descend_dir(
+    src_dir: &Path,
+    dst_dir: &Path,
+    pkg_name: &str,
+    rel_prefix: &Path,
+    ownership: &mut HashMap<PathBuf, String>,
+    ancestors: &mut HashSet<(u64, u64)>,
+) -> Result<(), BuildProfileError> {
+    let entries =
+        sorted_dir_entries(src_dir).map_err(|source| BuildProfileError::ReadStorePath {
+            path: src_dir.display().to_string(),
+            source,
+        })?;
+
+    for entry in entries {
+        let entry_name = entry.file_name();
+        let src_path = src_dir.join(&entry_name);
+        let dst_path = dst_dir.join(&entry_name);
+        let rel_path = rel_prefix.join(&entry_name);
+
+        let lstat = std::fs::symlink_metadata(&src_path).map_err(|source| {
+            BuildProfileError::StatStorePath {
+                path: src_path.display().to_string(),
+                source,
+            }
+        })?;
+
+        let is_dir = if lstat.is_symlink() {
+            match std::fs::metadata(&src_path) {
+                Ok(m) => m.is_dir(),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // Dangling symlink — treat as leaf
+                    false
+                }
+                Err(source) => {
+                    return Err(BuildProfileError::StatStorePath {
+                        path: src_path.display().to_string(),
+                        source,
+                    });
+                }
+            }
+        } else {
+            lstat.is_dir()
+        };
+
+        if is_dir {
+            let stat = std::fs::metadata(&src_path).map_err(|source| {
+                BuildProfileError::StatStorePath {
+                    path: src_path.display().to_string(),
+                    source,
+                }
+            })?;
+            let identity = (stat.dev(), stat.ino());
+            if ancestors.contains(&identity) {
+                return Err(BuildProfileError::SymlinkCycle {
+                    path: src_path.display().to_string(),
+                });
+            }
+
+            std::fs::create_dir_all(&dst_path).map_err(|source| BuildProfileError::CreateDir {
+                path: dst_path.display().to_string(),
+                source,
+            })?;
+
+            ancestors.insert(identity);
+            descend_dir(
+                &src_path, &dst_path, pkg_name, &rel_path, ownership, ancestors,
+            )?;
+            ancestors.remove(&identity);
+        } else {
+            if let Some(existing_pkg) = ownership.get(&rel_path) {
+                warn!(
+                    path = %rel_path.display(),
+                    pkg_a = %existing_pkg,
+                    pkg_b = %pkg_name,
+                    "symlink conflict detected"
+                );
+                return Err(BuildProfileError::Conflict {
+                    path: rel_path.display().to_string(),
+                    pkg_a: existing_pkg.clone(),
+                    pkg_b: pkg_name.to_owned(),
+                });
+            }
+            ownership.insert(rel_path, pkg_name.to_owned());
+
+            std::os::unix::fs::symlink(&src_path, &dst_path).map_err(|source| {
+                BuildProfileError::CreateSymlink {
+                    path: dst_path.display().to_string(),
+                    source,
+                }
+            })?;
+
+            debug!(
+                pkg = %pkg_name,
+                src = %src_path.display(),
+                dst = %dst_path.display(),
+                "created symlink"
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /// Build a unified symlink tree from a set of resolved packages.
 ///
-/// Walks each package's `store_path` recursively. For directories, the
-/// corresponding directory is created inside `tmp_path`. For files and
-/// symlinks, a symlink is created in `tmp_path` pointing to the original
-/// file in the store path.
+/// Descends each package's `store_path` recursively. Every directory
+/// (including those reached through directory symlinks) is created as a real
+/// directory inside `tmp_path`. Every leaf — regular file, file symlink, or
+/// dangling symlink — is represented as a symlink pointing into the store.
 ///
 /// Returns a [`BuildProfileError::Conflict`] if two packages provide the
 /// same relative file path.
@@ -203,80 +328,22 @@ pub async fn build_symlink_tree(
     tmp_path: &Path,
     packages: &[ResolvedPackage],
 ) -> Result<(), BuildProfileError> {
-    // Track which package owns each relative path
     let mut ownership: HashMap<PathBuf, String> = HashMap::new();
 
     for pkg in packages {
         let store_path = Path::new(&pkg.store_path);
+        // Ancestor identity set is per-package-root, not shared across packages,
+        // so a diamond (two packages sharing a store directory) is handled correctly.
+        let mut ancestors: HashSet<(u64, u64)> = HashSet::new();
 
-        let walker = WalkDir::new(store_path).min_depth(1).follow_links(false);
-
-        for entry in walker {
-            let entry = entry.map_err(|e| BuildProfileError::WalkStorePath {
-                path: pkg.store_path.clone(),
-                source: e,
-            })?;
-
-            let rel_path = entry
-                .path()
-                .strip_prefix(store_path)
-                .expect("BUG: walkdir entry should always be under store_path");
-
-            let target_path = tmp_path.join(rel_path);
-
-            if entry.file_type().is_dir() {
-                std::fs::create_dir_all(&target_path).map_err(|source| {
-                    BuildProfileError::CreateDir {
-                        path: target_path.display().to_string(),
-                        source,
-                    }
-                })?;
-            } else {
-                // File or symlink -- check for conflicts
-                // TODO(stage-3): implement priority-based conflict resolution instead of
-                // failing hard. The concept doc specifies that packages with higher priority
-                // should win conflicts. For now, log a warning and fail.
-                let rel_path_buf = rel_path.to_path_buf();
-                if let Some(existing_pkg) = ownership.get(&rel_path_buf) {
-                    warn!(
-                        path = %rel_path.display(),
-                        pkg_a = %existing_pkg,
-                        pkg_b = %pkg.name,
-                        "symlink conflict detected"
-                    );
-                    return Err(BuildProfileError::Conflict {
-                        path: rel_path.display().to_string(),
-                        pkg_a: existing_pkg.clone(),
-                        pkg_b: pkg.name.clone(),
-                    });
-                }
-                ownership.insert(rel_path_buf, pkg.name.clone());
-
-                // Ensure parent directory exists
-                if let Some(parent) = target_path.parent() {
-                    std::fs::create_dir_all(parent).map_err(|source| {
-                        BuildProfileError::CreateDir {
-                            path: parent.display().to_string(),
-                            source,
-                        }
-                    })?;
-                }
-
-                std::os::unix::fs::symlink(entry.path(), &target_path).map_err(|source| {
-                    BuildProfileError::CreateSymlink {
-                        path: target_path.display().to_string(),
-                        source,
-                    }
-                })?;
-
-                debug!(
-                    pkg = %pkg.name,
-                    src = %entry.path().display(),
-                    dst = %target_path.display(),
-                    "created symlink"
-                );
-            }
-        }
+        descend_dir(
+            store_path,
+            tmp_path,
+            &pkg.name,
+            Path::new(""),
+            &mut ownership,
+            &mut ancestors,
+        )?;
     }
 
     Ok(())
@@ -604,7 +671,9 @@ mod tests {
             other @ (BuildProfileError::CreateDir { .. }
             | BuildProfileError::RemoveDir { .. }
             | BuildProfileError::CreateSymlink { .. }
-            | BuildProfileError::WalkStorePath { .. }
+            | BuildProfileError::ReadStorePath { .. }
+            | BuildProfileError::StatStorePath { .. }
+            | BuildProfileError::SymlinkCycle { .. }
             | BuildProfileError::Hooks(_)
             | BuildProfileError::Manifest(_)
             | BuildProfileError::Rename { .. }
@@ -1003,6 +1072,256 @@ mod tests {
         assert!(
             output_dir.join("a/b/c/deep_file").is_symlink(),
             "deep file should be a symlink"
+        );
+    }
+
+    // Test 1: the bug itself — package A exposes `share` as a symlink to a
+    // directory; package B contributes a real file under `share/`.  The build
+    // must succeed and `share` in the output must be a real directory.
+    #[tokio::test]
+    async fn dir_symlink_unrolled_merges_correctly() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        // pkg-a: share → real_share (a directory symlink inside the store)
+        let store_a = tmp.path().join("store-a");
+        std::fs::create_dir_all(&store_a).expect("BUG: create store-a");
+        let real_share = tmp.path().join("real_share");
+        std::fs::create_dir_all(&real_share).expect("BUG: create real_share");
+        std::fs::write(real_share.join("python3.11_foo"), "content")
+            .expect("BUG: write python3.11_foo");
+        std::os::unix::fs::symlink(&real_share, store_a.join("share"))
+            .expect("BUG: create share symlink");
+
+        // pkg-b: real share/applications/bar
+        let store_b = tmp.path().join("store-b");
+        create_fake_store(&store_b, &["share/applications/bar"]);
+
+        let packages = vec![
+            test_resolved_package("pkg-a", store_a.to_str().expect("BUG: valid UTF-8")),
+            test_resolved_package("pkg-b", store_b.to_str().expect("BUG: valid UTF-8")),
+        ];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
+
+        build_symlink_tree(&output_dir, &packages)
+            .await
+            .expect("BUG: build should succeed with dir symlink unrolling");
+
+        let share = output_dir.join("share");
+        assert!(
+            share
+                .symlink_metadata()
+                .expect("BUG: stat share")
+                .file_type()
+                .is_dir(),
+            "share must be a real directory, not a symlink"
+        );
+        assert!(
+            !share
+                .symlink_metadata()
+                .expect("BUG: stat share")
+                .file_type()
+                .is_symlink(),
+            "share must not be a symlink"
+        );
+        assert!(
+            output_dir.join("share/python3.11_foo").is_symlink(),
+            "share/python3.11_foo should be a symlink"
+        );
+        assert!(
+            output_dir.join("share/applications/bar").is_symlink(),
+            "share/applications/bar should be a symlink"
+        );
+    }
+
+    // Same merge as above, but with the real directory package first.  This
+    // covers the original failure where `share/` already existed in the output
+    // before the symlinked `share` package was processed.
+    #[tokio::test]
+    async fn dir_symlink_unrolled_merges_after_real_dir() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        // pkg-a: share → real_share (a directory symlink inside the store)
+        let store_a = tmp.path().join("store-a");
+        std::fs::create_dir_all(&store_a).expect("BUG: create store-a");
+        let real_share = tmp.path().join("real_share");
+        std::fs::create_dir_all(&real_share).expect("BUG: create real_share");
+        std::fs::write(real_share.join("python3.11_foo"), "content")
+            .expect("BUG: write python3.11_foo");
+        std::os::unix::fs::symlink(&real_share, store_a.join("share"))
+            .expect("BUG: create share symlink");
+
+        // pkg-b: real share/applications/bar
+        let store_b = tmp.path().join("store-b");
+        create_fake_store(&store_b, &["share/applications/bar"]);
+
+        let packages = vec![
+            test_resolved_package("pkg-b", store_b.to_str().expect("BUG: valid UTF-8")),
+            test_resolved_package("pkg-a", store_a.to_str().expect("BUG: valid UTF-8")),
+        ];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
+
+        build_symlink_tree(&output_dir, &packages)
+            .await
+            .expect("BUG: build should succeed with real dir before dir symlink");
+
+        let share = output_dir.join("share");
+        assert!(
+            share
+                .symlink_metadata()
+                .expect("BUG: stat share")
+                .file_type()
+                .is_dir(),
+            "share must be a real directory, not a symlink"
+        );
+        assert!(
+            !share
+                .symlink_metadata()
+                .expect("BUG: stat share")
+                .file_type()
+                .is_symlink(),
+            "share must not be a symlink"
+        );
+        assert!(
+            output_dir.join("share/python3.11_foo").is_symlink(),
+            "share/python3.11_foo should be a symlink"
+        );
+        assert!(
+            output_dir.join("share/applications/bar").is_symlink(),
+            "share/applications/bar should be a symlink"
+        );
+    }
+
+    // Test 2: a file symlink inside a store path is preserved as a symlink in
+    // the output (not resolved or copied).
+    #[tokio::test]
+    async fn file_symlink_preserved_as_symlink() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        let store = tmp.path().join("store");
+        std::fs::create_dir_all(&store).expect("BUG: create store");
+        let target = store.join("real_file");
+        std::fs::write(&target, "data").expect("BUG: write real_file");
+        std::os::unix::fs::symlink(&target, store.join("file_link"))
+            .expect("BUG: create file_link");
+
+        let packages = vec![test_resolved_package(
+            "pkg",
+            store.to_str().expect("BUG: valid UTF-8"),
+        )];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
+
+        build_symlink_tree(&output_dir, &packages)
+            .await
+            .expect("BUG: build should succeed");
+
+        let out_link = output_dir.join("file_link");
+        assert!(
+            out_link
+                .symlink_metadata()
+                .expect("BUG: stat file_link")
+                .file_type()
+                .is_symlink(),
+            "file_link in output must be a symlink"
+        );
+        assert_eq!(
+            std::fs::read_link(&out_link).expect("BUG: read file_link symlink"),
+            store.join("file_link"),
+            "file_link in output must point at the store symlink, not the resolved target"
+        );
+    }
+
+    // Test 3: when two packages provide the same file under a directory that
+    // was previously a symlink-dir, the conflict is reported correctly.
+    #[tokio::test]
+    async fn real_conflict_under_unrolled_dir() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        // pkg-a: share → real_share containing foo
+        let store_a = tmp.path().join("store-a");
+        std::fs::create_dir_all(&store_a).expect("BUG: create store-a");
+        let real_share = tmp.path().join("real_share");
+        std::fs::create_dir_all(&real_share).expect("BUG: create real_share");
+        std::fs::write(real_share.join("foo"), "content-a").expect("BUG: write foo");
+        std::os::unix::fs::symlink(&real_share, store_a.join("share"))
+            .expect("BUG: create share symlink");
+
+        // pkg-b: real share/foo
+        let store_b = tmp.path().join("store-b");
+        create_fake_store(&store_b, &["share/foo"]);
+
+        let packages = vec![
+            test_resolved_package("pkg-a", store_a.to_str().expect("BUG: valid UTF-8")),
+            test_resolved_package("pkg-b", store_b.to_str().expect("BUG: valid UTF-8")),
+        ];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
+
+        let result = build_symlink_tree(&output_dir, &packages).await;
+        assert!(
+            matches!(
+                result,
+                Err(BuildProfileError::Conflict { ref path, .. }) if path == "share/foo"
+            ),
+            "expected Conflict at share/foo, got: {result:?}"
+        );
+    }
+
+    // Test 4: a directory symlink cycle (`self -> .`) must cause SymlinkCycle,
+    // not an infinite recursion.
+    #[tokio::test]
+    async fn dir_symlink_cycle_returns_error() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        let store = tmp.path().join("store");
+        std::fs::create_dir_all(&store).expect("BUG: create store");
+        // `self` → `.` forms a cycle: resolves to `store/`, which is an ancestor.
+        std::os::unix::fs::symlink(".", store.join("self")).expect("BUG: create self symlink");
+
+        let packages = vec![test_resolved_package(
+            "pkg",
+            store.to_str().expect("BUG: valid UTF-8"),
+        )];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
+
+        let result = build_symlink_tree(&output_dir, &packages).await;
+        assert!(
+            matches!(result, Err(BuildProfileError::SymlinkCycle { .. })),
+            "expected SymlinkCycle error, got: {result:?}"
+        );
+    }
+
+    // Test 5: a mutual file-symlink loop (`a -> b`, `b -> a`) causes stat to
+    // fail with ELOOP, which must be propagated as StatStorePath.
+    #[tokio::test]
+    async fn eloop_file_symlink_propagated_as_stat_error() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        let store = tmp.path().join("store");
+        std::fs::create_dir_all(&store).expect("BUG: create store");
+        std::os::unix::fs::symlink(store.join("b"), store.join("a")).expect("BUG: create a -> b");
+        std::os::unix::fs::symlink(store.join("a"), store.join("b")).expect("BUG: create b -> a");
+
+        let packages = vec![test_resolved_package(
+            "pkg",
+            store.to_str().expect("BUG: valid UTF-8"),
+        )];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
+
+        let result = build_symlink_tree(&output_dir, &packages).await;
+        assert!(
+            matches!(result, Err(BuildProfileError::StatStorePath { .. })),
+            "expected StatStorePath error for ELOOP, got: {result:?}"
         );
     }
 
