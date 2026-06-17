@@ -27,6 +27,20 @@ pub trait CommandRunner: Send + Sync {
     ) -> impl std::future::Future<Output = Result<std::process::Output, std::io::Error>> + Send;
 }
 
+/// Run a `nix` (nix3-style) subcommand with the `nix-command` experimental
+/// feature enabled on the command line.
+///
+/// Passing the feature here rather than relying on `/etc/nix/nix.conf` keeps
+/// every nix3 invocation working even when that file is missing.
+async fn run_nix3(
+    runner: &impl CommandRunner,
+    args: &[&str],
+) -> Result<std::process::Output, std::io::Error> {
+    let mut full_args: Vec<&str> = vec!["--extra-experimental-features", "nix-command"];
+    full_args.extend(args);
+    runner.run("nix", &full_args).await
+}
+
 /// Default implementation using `tokio::process::Command`.
 #[derive(Debug)]
 pub struct TokioCommandRunner;
@@ -61,8 +75,7 @@ async fn paths_in_store(
     let mut args: Vec<&str> = vec!["path-info"];
     args.extend(store_paths);
 
-    let output = runner
-        .run("nix", &args)
+    let output = run_nix3(runner, &args)
         .await
         .map_err(CopyStorePathsError::PathInfoFailed)?;
 
@@ -315,12 +328,27 @@ mod tests {
                 args.iter().map(|s| (*s).to_owned()).collect(),
             ));
 
-            // Simulate nix path-info: supports batch queries
-            if program == "nix" && args.first() == Some(&"path-info") {
-                let queried_paths = &args[1..];
+            // Simulate nix path-info: supports batch queries. The production
+            // call prepends `--extra-experimental-features nix-command` before
+            // the subcommand, so detect path-info anywhere in the arguments.
+            if program == "nix" && args.contains(&"path-info") {
+                // Strip the subcommand and any `--extra-experimental-features
+                // <value>` pair; the remainder are the queried store paths.
+                let mut queried_paths: Vec<&str> = Vec::new();
+                let mut rest = args;
+                while let Some(arg) = rest.first() {
+                    match *arg {
+                        "--extra-experimental-features" => rest = rest.get(2..).unwrap_or(&[]),
+                        "path-info" => rest = rest.get(1..).unwrap_or(&[]),
+                        path => {
+                            queried_paths.push(path);
+                            rest = rest.get(1..).unwrap_or(&[]);
+                        }
+                    }
+                }
                 let mut stdout_lines = Vec::new();
                 let mut all_found = true;
-                for path in queried_paths {
+                for path in &queried_paths {
                     if self.existing_paths.iter().any(|p| p == path) {
                         stdout_lines.push(*path);
                     } else {
@@ -387,6 +415,33 @@ mod tests {
         assert!(
             matches!(err, CopyStorePathsError::MissingStorePath { .. }),
             "expected MissingStorePath, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn path_info_invocation_enables_nix_command_feature() {
+        // The feature must be passed on the CLI so `nix path-info` works even
+        // when /etc/nix/nix.conf (which would otherwise enable nix-command)
+        // has disappeared.
+        let runner = MockCommandRunner::new(vec!["/nix/store/a".into()]);
+        let packages = vec![test_resolved("a", "/nix/store/a", None)];
+        verify_store_paths(&runner, &packages)
+            .await
+            .expect("BUG: path present, should succeed");
+
+        let invocations = runner.invocations.lock().expect("BUG: mutex poisoned");
+        let (_, args) = invocations
+            .iter()
+            .find(|(program, args)| program == "nix" && args.iter().any(|a| a == "path-info"))
+            .expect("BUG: expected a nix path-info invocation");
+        let pos = args
+            .iter()
+            .position(|a| a == "--extra-experimental-features")
+            .expect("BUG: path-info must pass --extra-experimental-features");
+        assert_eq!(
+            args.get(pos + 1).map(String::as_str),
+            Some("nix-command"),
+            "path-info must enable the nix-command experimental feature on the CLI"
         );
     }
 
