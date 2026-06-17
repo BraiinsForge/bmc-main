@@ -616,7 +616,7 @@ impl WidgetSlot {
         let frame_start_instant = Instant::now();
         let frame_start = HostRenderProfiling::start_phase();
         let (dmabuf, slot_idx, status, target_width, target_height) = {
-            let phase_start = HostRenderProfiling::start_phase();
+            let frame_setup_phase = HostRenderProfiling::start_phase();
             let target = self.render_target.as_mut().expect(
                 "BUG: render() called on a slot without a render target — \
                  needs_render() should have gated this off when lifecycle ∉ {Prepared, Entering, Visible, Leaving}",
@@ -626,54 +626,56 @@ impl WidgetSlot {
             let egl_target = target.as_egl_mut().expect(
                 "BUG: EglRenderTargetFactory allocated all WidgetSlot render targets in Task 8",
             );
+            let wasm_basename = self.wasm_basename.as_str();
+            let runtime = &mut self.runtime;
+            let gl_wait_phase = std::cell::Cell::new(HostRenderProfiling::start_phase());
 
-            let gpu_render_lock = shared.acquire_gpu_render_lock("host_widget_render")?;
-            egl_target.buffers.ensure_current(&shared.egl)?;
-            let _staging_fbo = shared
-                .scratch
-                .begin_frame(&shared.egl, target_width, target_height);
-            normalize_gl_state(&shared.egl, target_width, target_height);
+            let status = stage_frame_under_gpu_lock(
+                shared,
+                "host_widget_render",
+                target_width,
+                target_height,
+                |shared| {
+                    egl_target.buffers.ensure_current(&shared.egl)?;
 
-            unsafe { ptr.as_ptr().as_mut() }
-                .expect(
-                    "BUG: renderer pointer was NonNull when stored, \
-                     raw-pointer reborrow must produce a non-null reference",
-                )
-                .begin_frame(target_width, target_height, 1.0);
-            HostRenderProfiling::log_phase(&self.wasm_basename, "frame_setup", phase_start);
+                    unsafe { ptr.as_ptr().as_mut() }
+                        .expect(
+                            "BUG: renderer pointer was NonNull when stored, \
+                             raw-pointer reborrow must produce a non-null reference",
+                        )
+                        .begin_frame(target_width, target_height, 1.0);
+                    HostRenderProfiling::log_phase(wasm_basename, "frame_setup", frame_setup_phase);
 
-            let phase_start = HostRenderProfiling::start_phase();
-            let status = self.runtime.with_renderer(ptr, |rt| rt.render(delta_ms))?;
-            HostRenderProfiling::log_phase(&self.wasm_basename, "runtime_render", phase_start);
+                    let phase_start = HostRenderProfiling::start_phase();
+                    let status = runtime.with_renderer(ptr, |rt| rt.render(delta_ms))?;
+                    HostRenderProfiling::log_phase(wasm_basename, "runtime_render", phase_start);
 
-            let phase_start = HostRenderProfiling::start_phase();
-            unsafe { ptr.as_ptr().as_mut() }
-                .expect(
-                    "BUG: renderer pointer was NonNull when stored, \
-                     raw-pointer reborrow must produce a non-null reference",
-                )
-                .flush();
-            HostRenderProfiling::log_phase(&self.wasm_basename, "femtovg_flush", phase_start);
+                    let phase_start = HostRenderProfiling::start_phase();
+                    unsafe { ptr.as_ptr().as_mut() }
+                        .expect(
+                            "BUG: renderer pointer was NonNull when stored, \
+                             raw-pointer reborrow must produce a non-null reference",
+                        )
+                        .flush();
+                    HostRenderProfiling::log_phase(wasm_basename, "femtovg_flush", phase_start);
 
-            let current_export = egl_target.buffers.current_ref().expect(
-                "BUG: ensure_current succeeded above, so DoubleBufferState::current_ref \
-                 must return Some; an internal invariant of DoubleBufferState was violated",
-            );
-            let phase_start = HostRenderProfiling::start_phase();
-            shared.blit_staging_to(current_export.fbo, target_width, target_height);
-            HostRenderProfiling::log_phase(&self.wasm_basename, "staging_blit", phase_start);
+                    let current_export = egl_target.buffers.current_ref().expect(
+                        "BUG: ensure_current succeeded above, so DoubleBufferState::current_ref \
+                         must return Some; an internal invariant of DoubleBufferState was violated",
+                    );
+                    let phase_start = HostRenderProfiling::start_phase();
+                    shared.blit_staging_to(current_export.fbo, target_width, target_height);
+                    HostRenderProfiling::log_phase(wasm_basename, "staging_blit", phase_start);
 
-            let phase_start = HostRenderProfiling::start_phase();
-            // Hold the cross-process GPU render lock until the host GL work is
-            // complete. This keeps host and compositor handoffs on the same
-            // no-overlapping-in-flight-jobs invariant.
-            shared.flush_and_wait_gl();
-            HostRenderProfiling::log_phase(&self.wasm_basename, "gl_wait", phase_start);
-            drop(gpu_render_lock);
+                    gl_wait_phase.set(HostRenderProfiling::start_phase());
+                    Ok(status)
+                },
+                || HostRenderProfiling::log_phase(wasm_basename, "gl_wait", gl_wait_phase.get()),
+            )?;
 
             let phase_start = HostRenderProfiling::start_phase();
             let (dmabuf, slot_idx) = egl_target.buffers.export_and_swap()?;
-            HostRenderProfiling::log_phase(&self.wasm_basename, "export_and_swap", phase_start);
+            HostRenderProfiling::log_phase(wasm_basename, "export_and_swap", phase_start);
             (dmabuf, slot_idx, status, target_width, target_height)
         };
 
@@ -1137,6 +1139,41 @@ impl HostRenderProfiling {
         _context: HostRenderFrameContext,
     ) {
     }
+}
+
+/// Acquire the GPU render lock, prepare the shared scratch FBO, normalise GL
+/// state, execute `render_fn` under the lock, then fence-wait and drop the
+/// lock before returning. `on_after_fence` fires immediately after the fence
+/// completes and before the lock is released (callers use it to record timing
+/// phases that span only the fence wait).
+///
+/// Lock invariant: the GPU render lock is held from acquisition until after
+/// [`SharedHost::flush_and_wait_gl`] completes, then dropped. Any
+/// `export_and_swap` call must happen AFTER this function returns.
+///
+/// `render_fn` receives `&mut SharedHost` so it can call
+/// [`SharedHost::blit_staging_to`] and access `shared.egl`. It must NOT
+/// call [`SharedHost::flush_and_wait_gl`] itself — the helper owns that step.
+pub(crate) fn stage_frame_under_gpu_lock<F, T, G>(
+    shared: &mut SharedHost,
+    lock_label: &'static str,
+    w: u32,
+    h: u32,
+    render_fn: F,
+    on_after_fence: G,
+) -> anyhow::Result<T>
+where
+    F: FnOnce(&mut SharedHost) -> anyhow::Result<T>,
+    G: FnOnce(),
+{
+    let gpu_render_lock = shared.acquire_gpu_render_lock(lock_label)?;
+    let _ = shared.scratch.begin_frame(&shared.egl, w, h);
+    normalize_gl_state(&shared.egl, w, h);
+    let result = render_fn(shared);
+    shared.flush_and_wait_gl();
+    on_after_fence();
+    drop(gpu_render_lock);
+    result
 }
 
 #[expect(
