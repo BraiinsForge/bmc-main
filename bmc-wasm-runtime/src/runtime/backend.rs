@@ -20,7 +20,7 @@ use bmc_render::FrameTimings;
 use bmc_render::renderer::Renderer;
 use bmc_render::tree::{self, TouchHit};
 
-use crate::host_api::{FixtureEvent, HostState, Lifecycle};
+use crate::host_api::{FixtureEvent, HermeticRun, HostState, Lifecycle};
 use crate::system::SystemSnapshot;
 
 use super::ParamsSnapshot;
@@ -185,6 +185,12 @@ pub struct RuntimeConfig {
     /// Intercept fetch requests before they hit the network.
     /// Return `Some((status, body))` to short-circuit, `None` to proceed normally.
     pub fetch_interceptor: Option<FetchInterceptor>,
+    /// Hermetic-run mode: refuse (and record) any live external I/O a fixture
+    /// does not satisfy, instead of hitting the network.
+    ///
+    /// The capture harness sets this so a stale/missing fixture fails loudly
+    /// rather than pulling live data into a visual baseline.
+    pub hermetic: bool,
     /// Called when a fetch response is delivered. Use for recording/logging.
     pub fetch_observer: Option<FetchObserver>,
     /// Enable recording of network events (SSDP, mDNS, WebSocket, etc.).
@@ -242,6 +248,7 @@ impl Default for RuntimeConfig {
             system: SystemSnapshot::default(),
             kv_store_path: None,
             fetch_interceptor: None,
+            hermetic: false,
             fetch_observer: None,
             record_events: false,
             event_fixtures: Vec::new(),
@@ -337,6 +344,7 @@ impl WasmWidgetRuntime {
             system,
             kv_store_path,
             fetch_interceptor,
+            hermetic,
             fetch_observer,
             record_events,
             event_fixtures,
@@ -384,6 +392,7 @@ impl WasmWidgetRuntime {
         state.display_dpi = display.dpi;
         state.kv_store_path = kv_store_path;
         state.fetch_interceptor = fetch_interceptor;
+        state.hermetic = hermetic.then(HermeticRun::default);
         state.fetch_observer = fetch_observer;
         state.record_events = record_events;
         state.rng_state = rng_seed;
@@ -930,6 +939,16 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn last_timings(&self) -> FrameTimings {
         self.store.data().last_timings
+    }
+
+    /// Breaches recorded during a hermetic run (empty otherwise).
+    #[must_use]
+    pub fn hermetic_breaches(&self) -> &[String] {
+        self.store
+            .data()
+            .hermetic
+            .as_ref()
+            .map_or(&[], |run| run.breaches.as_slice())
     }
 
     /// Prefix used to namespace every host-managed asset tag for this widget.

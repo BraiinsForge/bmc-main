@@ -894,6 +894,15 @@ impl WasmWidgetRuntime {
                 continue;
             }
 
+            if state.refuse_live_io("fetch", &format!("{method} {url}")) {
+                let _ = state.fetch_tx.send(CompletedFetch {
+                    request_id,
+                    status: 0,
+                    body: Vec::new(),
+                });
+                continue;
+            }
+
             let tx = state.fetch_tx.clone();
             let agent = state.fetch_agent.clone();
             std::thread::spawn(move || {

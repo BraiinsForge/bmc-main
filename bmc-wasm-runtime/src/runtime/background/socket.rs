@@ -56,17 +56,19 @@ pub(in crate::runtime) fn host_tls_connect_impl(
             .sockets
             .insert(socket_id, ActiveSocket { write_tx, event_rx });
         let port = port as u16;
-        let socket_id_wire = socket_id.to_wire();
-        std::thread::spawn(move || {
-            tls_background_thread(
-                socket_id_wire,
-                &host,
-                port,
-                verification_mode,
-                event_tx,
-                write_rx,
-            );
-        });
+        if !state.refuse_live_io("tls", &format!("{host}:{port}")) {
+            let socket_id_wire = socket_id.to_wire();
+            std::thread::spawn(move || {
+                tls_background_thread(
+                    socket_id_wire,
+                    &host,
+                    port,
+                    verification_mode,
+                    event_tx,
+                    write_rx,
+                );
+            });
+        }
     }
 
     socket_id.to_wire()

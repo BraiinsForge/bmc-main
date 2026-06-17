@@ -205,6 +205,8 @@ fn run_unified_capture(
         kv_store_path: Some(kv_dir),
         mesh_msaa_samples: 4,
         rng_seed: Some(42),
+        // Captures are hermetic: unmatched live I/O fails the run (breach check below).
+        hermetic: true,
         params: initial_params,
         system: initial_system,
         ..RuntimeConfig::default()
@@ -585,6 +587,18 @@ fn run_unified_capture(
     if is_tty {
         eprintln!();
     }
+
+    // Fail the run if it breached hermeticity (unmatched live I/O).
+    let breaches = runtime.hermetic_breaches();
+    if !breaches.is_empty() {
+        anyhow::bail!(
+            "hermetic capture breach in {widget_name} ({}x{}): widget attempted live I/O with no fixture:\n  {}",
+            ctx.width,
+            ctx.height,
+            breaches.join("\n  ")
+        );
+    }
+
     eprintln!(
         "Done: {captured_count} frame(s) captured to {}",
         ctx.output_dir.display()

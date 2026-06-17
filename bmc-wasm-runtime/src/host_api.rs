@@ -36,6 +36,21 @@ use crate::system::SystemSnapshot;
 use crate::xml::XmlDocumentIndex;
 use bmc_wasm_protocol::versioned_snapshot::VersionedSnapshotCache;
 
+/// Refused live-I/O attempts collected during a hermetic capture run.
+#[derive(Default)]
+pub struct HermeticRun {
+    /// Each a `"<kind>: <target>"`, e.g. `"fetch: GET https://…"`.
+    pub breaches: Vec<String>,
+}
+
+impl HermeticRun {
+    /// Record a refused live-I/O attempt. `kind` is the egress class
+    /// (`"fetch"`, `"websocket"`, …); `target` a human-readable destination.
+    pub fn record(&mut self, kind: &str, target: &str) {
+        self.breaches.push(format!("{kind}: {target}"));
+    }
+}
+
 /// A completed HTTP fetch response ready for delivery to WASM.
 pub struct CompletedFetch {
     pub request_id: FetchRequestId,
@@ -629,6 +644,9 @@ pub(crate) struct HostState {
     /// Return `Some((status, body))` to short-circuit, `None` to proceed normally.
     pub fetch_interceptor: Option<crate::runtime::FetchInterceptor>,
 
+    /// Hermetic-run state; `None` is a normal run. Set via `RuntimeConfig`.
+    pub hermetic: Option<HermeticRun>,
+
     /// Called when a fetch response is delivered. Use for recording/logging.
     pub fetch_observer: Option<crate::runtime::FetchObserver>,
 
@@ -712,6 +730,15 @@ pub(crate) struct HostState {
 }
 
 impl HostState {
+    /// In a hermetic run, record a breach and return `true`; else `false`.
+    /// Call sites: `if state.refuse_live_io(kind, target) { return reject; }`.
+    pub(crate) fn refuse_live_io(&mut self, kind: &str, target: &str) -> bool {
+        self.hermetic
+            .as_mut()
+            .map(|run| run.record(kind, target))
+            .is_some()
+    }
+
     /// Create new host state with default `system` / `params` snapshots
     /// (version 0). The runtime constructor stages the operator-supplied
     /// initial snapshots via `.replace(...)` to bump both to version 1
@@ -767,6 +794,7 @@ impl HostState {
             http_response_txs: HashMap::new(),
             next_http_request_id: 1,
             fetch_interceptor: None,
+            hermetic: None,
             fetch_observer: None,
             fetch_keys: HashMap::new(),
             fetch_agent: crate::runtime::build_fetch_agent(),
@@ -884,7 +912,25 @@ impl HostState {
 
 #[cfg(test)]
 mod tests {
-    use super::FrameScheduleState;
+    use super::{FrameScheduleState, HermeticRun, HostState};
+    use crate::runtime_limits::RuntimeResourceLimits;
+
+    #[test]
+    fn refuse_live_io_records_only_in_a_hermetic_run() {
+        let mut state = HostState::new(RuntimeResourceLimits::default());
+        // Not hermetic: the call is a no-op and reports "proceed".
+        assert!(!state.refuse_live_io("fetch", "GET https://x/y"));
+        assert!(state.hermetic.is_none());
+
+        // Hermetic: the call refuses and records the breach with kind + target.
+        state.hermetic = Some(HermeticRun::default());
+        assert!(state.refuse_live_io("fetch", "GET https://x/y"));
+        assert!(state.refuse_live_io("websocket", "wss://z"));
+        assert_eq!(
+            state.hermetic.as_ref().expect("BUG: set above").breaches,
+            ["fetch: GET https://x/y", "websocket: wss://z"]
+        );
+    }
 
     fn schedule(animation_cadence_ms: u32) -> FrameScheduleState {
         let mut s = FrameScheduleState::new();

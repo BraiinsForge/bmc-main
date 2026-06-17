@@ -96,6 +96,15 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return request_id.to_wire();
             }
 
+            if state.refuse_live_io("fetch", &format!("{method} {url}")) {
+                let _ = state.fetch_tx.send(CompletedFetch {
+                    request_id,
+                    status: 0,
+                    body: Vec::new(),
+                });
+                return request_id.to_wire();
+            }
+
             let tx = state.fetch_tx.clone();
             let agent = state.fetch_agent.clone();
             std::thread::spawn(move || {
@@ -234,10 +243,12 @@ fn register_websocket_imports(linker: &mut Linker<HostState>) -> Result<()> {
                 state
                     .websockets
                     .insert(ws_id, ActiveWebSocket { msg_tx, event_rx });
-                let ws_id_wire = ws_id.to_wire();
-                std::thread::spawn(move || {
-                    ws_background_thread(ws_id_wire, &url, &headers, event_tx, msg_rx);
-                });
+                if !state.refuse_live_io("websocket", &url) {
+                    let ws_id_wire = ws_id.to_wire();
+                    std::thread::spawn(move || {
+                        ws_background_thread(ws_id_wire, &url, &headers, event_tx, msg_rx);
+                    });
+                }
             }
 
             ws_id.to_wire()
@@ -314,10 +325,12 @@ fn register_socket_connect_imports(linker: &mut Linker<HostState>) -> Result<()>
                     .sockets
                     .insert(socket_id, ActiveSocket { write_tx, event_rx });
                 let port = port as u16;
-                let socket_id_wire = socket_id.to_wire();
-                std::thread::spawn(move || {
-                    tcp_background_thread(socket_id_wire, &host, port, event_tx, write_rx);
-                });
+                if !state.refuse_live_io("tcp", &format!("{host}:{port}")) {
+                    let socket_id_wire = socket_id.to_wire();
+                    std::thread::spawn(move || {
+                        tcp_background_thread(socket_id_wire, &host, port, event_tx, write_rx);
+                    });
+                }
             }
 
             socket_id.to_wire()
@@ -437,7 +450,7 @@ fn register_mdns_browse_imports(linker: &mut Linker<HostState>) -> Result<()> {
             if let Some(ref mut ef) = state.event_fixtures {
                 drop(stop_rx);
                 ef.mdns_event_txs.insert(browse_id, event_tx);
-            } else {
+            } else if !state.refuse_live_io("mdns-browse", &service_types.join(", ")) {
                 std::thread::spawn(move || {
                     mdns_browse_thread(service_types, event_tx, stop_rx);
                 });
@@ -512,6 +525,10 @@ fn register_mdns_register_import(linker: &mut Linker<HostState>) -> Result<()> {
                         .map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned()))
                 })
                 .collect();
+
+            if caller.data_mut().refuse_live_io("mdns-register", &svc_type) {
+                return 0;
+            }
 
             let daemon = match mdns_sd::ServiceDaemon::new() {
                 Ok(daemon) => daemon,
@@ -601,7 +618,7 @@ fn register_ssdp_imports(linker: &mut Linker<HostState>) -> Result<()> {
             if let Some(ref mut ef) = state.event_fixtures {
                 drop(stop_rx);
                 ef.ssdp_event_txs.insert(search_id, event_tx);
-            } else {
+            } else if !state.refuse_live_io("ssdp", &search_target) {
                 std::thread::spawn(move || {
                     ssdp_search_thread(search_target, timeout_secs, event_tx, stop_rx);
                 });
@@ -665,7 +682,7 @@ fn register_udp_broadcast_imports(linker: &mut Linker<HostState>) -> Result<()> 
             if let Some(ref mut ef) = state.event_fixtures {
                 drop(stop_rx);
                 ef.udp_event_txs.insert(broadcast_id, event_tx);
-            } else {
+            } else if !state.refuse_live_io("udp", &format!("port {port}")) {
                 std::thread::spawn(move || {
                     udp_broadcast_thread(port, message, timeout_secs, event_tx, stop_rx);
                 });
@@ -705,6 +722,9 @@ fn register_http_listener_imports(linker: &mut Linker<HostState>) -> Result<()> 
                     max_http_listeners = state.resource_limits.max_http_listeners,
                     "host_http_listen rejected: runtime HTTP listener limit reached"
                 );
+                return 0;
+            }
+            if state.refuse_live_io("http-listen", &format!("port {port}")) {
                 return 0;
             }
             let listener_id = HttpListenerId::alloc(&mut state.next_http_listener_id);

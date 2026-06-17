@@ -395,7 +395,7 @@ fn capture_widget(
                 let stderr = String::from_utf8_lossy(&result.stderr);
                 bail!(
                     "capture failed for {example} {size_label}\n{}",
-                    stderr.trim()
+                    distill_capture_error(&stderr)
                 );
             }
         }
@@ -404,14 +404,54 @@ fn capture_widget(
     Ok(t0.elapsed().as_secs_f64())
 }
 
+/// Strip a failed capture's stderr to the error — drop the GL stack's
+/// `pci id …` chatter, per-frame progress, replay headers, and blanks.
+fn distill_capture_error(stderr: &str) -> String {
+    let kept = stderr
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| {
+            let l = line.trim_start();
+            !l.is_empty()
+                && !l.starts_with("pci id for fd")
+                && !l.starts_with("Captured frame ")
+                && !l.starts_with("Unified replay:")
+                && !l.starts_with("Capturing ")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Never blank out a failure: if only chatter remains, fall back to raw.
+    if kept.is_empty() {
+        stderr.trim().to_owned()
+    } else {
+        kept
+    }
+}
+
 fn capture_sequential(binary: &Path, output_dir: &Path, widgets: &[WidgetEntry]) -> Result<()> {
     let is_tty = std::io::stderr().is_terminal();
+    let mut failures: Vec<(&str, &str, String)> = Vec::new();
     for entry in widgets {
-        let elapsed = capture_widget(binary, output_dir, entry, is_tty)?;
-        clear_progress();
-        widget_status_line(workspace_label(&entry.workspace), &entry.name, elapsed);
+        let ws = workspace_label(&entry.workspace);
+        match capture_widget(binary, output_dir, entry, is_tty) {
+            Ok(elapsed) => {
+                clear_progress();
+                widget_status_line(ws, &entry.name, elapsed);
+            }
+            Err(e) => {
+                clear_progress();
+                eprintln!("  {} {}/{}", "✗".red(), ws.red().dimmed(), entry.name.red());
+                failures.push((ws, &entry.name, format!("{e:#}")));
+            }
+        }
     }
-    Ok(())
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        report_capture_failures(&failures)
+    }
 }
 
 fn capture_parallel(
@@ -441,23 +481,47 @@ fn capture_parallel(
             .collect()
     });
 
-    let mut first_error = None;
+    // One line per widget here; failure detail goes to its own section below.
+    let mut failures: Vec<(&str, &str, String)> = Vec::new();
     for (ws, name, result) in &results {
         match result {
             Ok(elapsed) => widget_status_line(ws, name, *elapsed),
             Err(e) => {
-                eprintln!("  {} {}/{} {e:#}", "✗".red(), ws.red().dimmed(), name.red());
-                if first_error.is_none() {
-                    first_error = Some(format!("capture failed for {ws}/{name}"));
-                }
+                eprintln!("  {} {}/{}", "✗".red(), ws.red().dimmed(), name.red());
+                failures.push((ws, name, format!("{e:#}")));
             }
         }
     }
 
-    if let Some(msg) = first_error {
-        bail!("{msg}");
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        report_capture_failures(&failures)
     }
-    Ok(())
+}
+
+/// Print collected capture failures in a framed section and bail. Non-empty.
+fn report_capture_failures(failures: &[(&str, &str, String)]) -> Result<()> {
+    eprintln!();
+    section("Failures");
+    for (ws, name, err) in failures {
+        eprintln!(
+            "  {} {}/{}",
+            "✗".red().bold(),
+            ws.red().bold(),
+            name.red().bold()
+        );
+        // Header already names the widget; drop the redundant "capture failed for" line.
+        for line in err
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("capture failed for"))
+        {
+            eprintln!("      {line}");
+        }
+        eprintln!();
+    }
+    let (ws, name, _) = &failures[0];
+    bail!("capture failed for {ws}/{name}");
 }
 
 // ── Config helpers ──────────────────────────────────────────────────
@@ -541,8 +605,32 @@ fn format_time(seconds: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{WASM_TARGET, default_wasm_dir};
+    use super::{WASM_TARGET, default_wasm_dir, distill_capture_error};
     use std::path::Path;
+
+    #[test]
+    fn distill_keeps_the_error_and_drops_capture_chatter() {
+        let raw = "Unified replay: foo (3 events) for iss at 1280x480\n\
+                   pci id for fd 9: 10de:2684, driver (null)\n\
+                   Capturing iss at 1280x480 (SDK 0.1.0)\n\
+                   Captured frame 0 → /x/frame_0000.png\n\
+                   error: hermetic capture breach in iss (1280x480):\n\
+                   error:   fetch: GET https://x/y\n";
+        assert_eq!(
+            distill_capture_error(raw),
+            "error: hermetic capture breach in iss (1280x480):\n\
+             error:   fetch: GET https://x/y"
+        );
+    }
+
+    #[test]
+    fn distill_falls_back_to_raw_when_only_chatter() {
+        // A failure whose output is entirely chatter (or an unexpected shape)
+        // must still surface something — never an empty detail that hides it.
+        let raw = "pci id for fd 9: 10de:2684, driver (null)\n\
+                   Captured frame 0 → /x/frame_0000.png\n";
+        assert_eq!(distill_capture_error(raw), raw.trim());
+    }
 
     #[test]
     fn default_wasm_dir_uses_absolute_cargo_target_dir() {
