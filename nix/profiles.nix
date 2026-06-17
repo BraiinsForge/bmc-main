@@ -62,7 +62,9 @@ in
     minimalDeps = false;
     rustProfile = "fast";
     allFeatures = true;
-    nativeDeps = pkgs: with pkgs; [ util-linux ];
+    # python3: the wasm capture/verify recipes — and the capture binary's
+    # local-build wasm path — shell out to tools/widget_*.py.
+    nativeDeps = pkgs: with pkgs; [ util-linux python3 ];
     env = {
       # Force Mesa onto its software path.
       #
