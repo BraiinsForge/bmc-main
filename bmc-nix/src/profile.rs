@@ -194,8 +194,9 @@ pub async fn lock_profile_with_timeout(
     }
 }
 
-/// Read all entries in `dir` and return them sorted lexicographically by name.
-fn sorted_dir_entries(dir: &Path) -> Result<Vec<std::fs::DirEntry>, std::io::Error> {
+/// Read all entries in `dir` (files, directories, and symlinks) and return them
+/// sorted lexicographically by name.
+fn read_dir_sorted(dir: &Path) -> Result<Vec<std::fs::DirEntry>, std::io::Error> {
     let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
     entries.sort_by_key(std::fs::DirEntry::file_name);
     Ok(entries)
@@ -215,11 +216,10 @@ fn descend_dir(
     ownership: &mut HashMap<PathBuf, String>,
     ancestors: &mut HashSet<(u64, u64)>,
 ) -> Result<(), BuildProfileError> {
-    let entries =
-        sorted_dir_entries(src_dir).map_err(|source| BuildProfileError::ReadStorePath {
-            path: src_dir.display().to_string(),
-            source,
-        })?;
+    let entries = read_dir_sorted(src_dir).map_err(|source| BuildProfileError::ReadStorePath {
+        path: src_dir.display().to_string(),
+        source,
+    })?;
 
     for entry in entries {
         let entry_name = entry.file_name();
@@ -1480,6 +1480,88 @@ mod tests {
         assert!(
             second.is_none(),
             "timed lock should time out while another lock is held"
+        );
+    }
+
+    // Test: store path has `outer -> dirA`, inside dirA there is `inner -> dirB`,
+    // and dirB contains `leaf`.  The build must succeed, intermediate path
+    // components in the output must be real directories, and `leaf` must be a
+    // symlink.
+    #[tokio::test]
+    async fn build_symlink_tree_unrolls_nested_dir_symlinks() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        let store = tmp.path().join("store");
+        std::fs::create_dir_all(&store).expect("BUG: create store");
+
+        // dirB is a plain real directory with one file
+        let dir_b = tmp.path().join("dirB");
+        std::fs::create_dir_all(&dir_b).expect("BUG: create dirB");
+        std::fs::write(dir_b.join("leaf"), "data").expect("BUG: write leaf");
+
+        // dirA is a plain real directory whose `inner` entry is a symlink to dirB
+        let dir_a = tmp.path().join("dirA");
+        std::fs::create_dir_all(&dir_a).expect("BUG: create dirA");
+        std::os::unix::fs::symlink(&dir_b, dir_a.join("inner")).expect("BUG: create inner -> dirB");
+
+        // store/outer is a symlink to dirA
+        std::os::unix::fs::symlink(&dir_a, store.join("outer")).expect("BUG: create outer -> dirA");
+
+        let packages = vec![test_resolved_package(
+            "pkg",
+            store.to_str().expect("BUG: valid UTF-8"),
+        )];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
+
+        build_symlink_tree(&output_dir, &packages)
+            .await
+            .expect("BUG: nested dir symlinks should be unrolled successfully");
+
+        let outer = output_dir.join("outer");
+        assert!(
+            outer
+                .symlink_metadata()
+                .expect("BUG: stat outer")
+                .file_type()
+                .is_dir(),
+            "outer must be a real directory"
+        );
+        assert!(
+            !outer
+                .symlink_metadata()
+                .expect("BUG: stat outer")
+                .file_type()
+                .is_symlink(),
+            "outer must not be a symlink"
+        );
+
+        let inner = output_dir.join("outer/inner");
+        assert!(
+            inner
+                .symlink_metadata()
+                .expect("BUG: stat outer/inner")
+                .file_type()
+                .is_dir(),
+            "outer/inner must be a real directory"
+        );
+        assert!(
+            !inner
+                .symlink_metadata()
+                .expect("BUG: stat outer/inner")
+                .file_type()
+                .is_symlink(),
+            "outer/inner must not be a symlink"
+        );
+
+        let leaf = output_dir.join("outer/inner/leaf");
+        assert!(
+            leaf.symlink_metadata()
+                .expect("BUG: stat outer/inner/leaf")
+                .file_type()
+                .is_symlink(),
+            "outer/inner/leaf must be a symlink"
         );
     }
 }
