@@ -14,7 +14,8 @@ mod xdg;
 pub use common::{
     BufferSlotMap, LifecycleState, PollOutcome, ReleasedBuffer, ReleasedBufferSet, SettingUpdate,
     WidgetEvent, WidgetSurface, create_buffer_from_dmabuf, drain_released_buffer_slots,
-    drain_released_buffers, poll_dispatch, submit_buffer_to_surface,
+    drain_released_buffers, poll_dispatch, record_released_buffer, submit_buffer_to_surface,
+    unregister_wl_buffer_slot,
 };
 pub use deck_widget::{
     DeckWidgetEvent, DeckWidgetSurfaceClient, DeckWidgetSurfaceState, InitialState,

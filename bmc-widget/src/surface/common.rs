@@ -134,13 +134,29 @@ pub(crate) fn invalidate_cached_wl_buffer_slots(
     clippy::mutable_key_type,
     reason = "ObjectId has interior mutability but is safe to use as a HashMap key"
 )]
-pub(crate) fn unregister_wl_buffer_slot(
+pub fn unregister_wl_buffer_slot(
     buffer_slots: &mut BufferSlotMap,
     released_buffers: &mut ReleasedBufferSet,
     buffer_id: &ObjectId,
 ) -> Option<usize> {
     released_buffers.remove(buffer_id);
     buffer_slots.remove(buffer_id)
+}
+
+#[expect(
+    clippy::mutable_key_type,
+    reason = "ObjectId has interior mutability but is safe to use as a HashMap key"
+)]
+pub fn record_released_buffer(
+    buffer_slots: &BufferSlotMap,
+    released_buffers: &mut ReleasedBufferSet,
+    buffer_id: ObjectId,
+) -> bool {
+    if !buffer_slots.contains_key(&buffer_id) {
+        return false;
+    }
+    released_buffers.insert(buffer_id);
+    true
 }
 
 #[expect(
@@ -448,7 +464,7 @@ mod tests {
 
     use super::{
         BufferSlotMap, ReleasedBufferSet, drain_released_buffer_slots,
-        invalidate_cached_wl_buffers, unregister_wl_buffer_slot,
+        invalidate_cached_wl_buffers, record_released_buffer, unregister_wl_buffer_slot,
     };
 
     #[test]
@@ -515,5 +531,28 @@ mod tests {
 
         assert_eq!(released_slots, vec![7]);
         assert!(released_buffers.is_empty());
+    }
+
+    #[test]
+    fn record_released_buffer_tracks_known_buffer() {
+        let tracked_id = ObjectId::null();
+        #[expect(
+            clippy::mutable_key_type,
+            reason = "ObjectId has interior mutability but is safe to use as a HashMap key"
+        )]
+        let buffer_slots = BufferSlotMap::from([(tracked_id.clone(), 7)]);
+        #[expect(
+            clippy::mutable_key_type,
+            reason = "ObjectId has interior mutability but is safe to use as a HashSet key"
+        )]
+        let mut released_buffers = ReleasedBufferSet::new();
+
+        assert!(record_released_buffer(
+            &buffer_slots,
+            &mut released_buffers,
+            tracked_id.clone(),
+        ));
+
+        assert_eq!(released_buffers, ReleasedBufferSet::from([tracked_id]));
     }
 }

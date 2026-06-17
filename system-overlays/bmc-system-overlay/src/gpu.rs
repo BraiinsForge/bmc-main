@@ -8,7 +8,7 @@
 use anyhow::Context as _;
 use bmc_widget::egl::{
     Depth, DmaBufInfo, DoubleBufferState, EglContext, ExportFormat, SharedRenderScratch,
-    SlotReleaseState, WidgetExportBuffer,
+    TwoSlotBufferCache, WidgetExportBuffer,
 };
 use bmc_widget::surface::ReleasedBuffer;
 use glow::HasContext as _;
@@ -32,13 +32,12 @@ pub fn wait_for_gpu(egl: &EglContext) {
 /// Double-buffered DMA-BUF render target with `wl_buffer.release` tracking.
 ///
 /// Pairs [`DoubleBufferState`] (two lazily-allocated export buffers) with a
-/// cache of the minted `wl_buffer`s and a [`SlotReleaseState`] so that a
+/// cache of the minted `wl_buffer`s and release state so that a
 /// compositor `wl_buffer.release` frees the matching export slot for reuse.
 #[expect(missing_debug_implementations)]
 pub struct OverlayRenderTarget {
     buffers: DoubleBufferState,
-    wl_buffers: [Option<wl_buffer::WlBuffer>; 2],
-    release: SlotReleaseState,
+    wl_buffers: TwoSlotBufferCache<wl_buffer::WlBuffer>,
     /// Once-painted panel source for the blit-only slide: an overlay paints the
     /// panel band into this GL texture/FBO once (and again only when content
     /// changes), then each animation frame copies it into the export buffer at
@@ -55,8 +54,7 @@ impl OverlayRenderTarget {
     pub fn new(_egl: &EglContext, w: u32, h: u32) -> anyhow::Result<Self> {
         Ok(Self {
             buffers: DoubleBufferState::new_with_format(w, h, Depth::Disabled, ExportFormat::Alpha),
-            wl_buffers: [None, None],
-            release: SlotReleaseState::new(),
+            wl_buffers: TwoSlotBufferCache::new(),
             panel_cache: None,
         })
     }
@@ -159,12 +157,10 @@ impl OverlayRenderTarget {
         if self.size() == (w, h) {
             return Ok(());
         }
-        for wl_buffer in &mut self.wl_buffers {
-            if let Some(buffer) = wl_buffer.take() {
-                client.destroy_minted_wl_buffer(buffer);
-            }
+        for buffer in self.wl_buffers.take_all().into_iter().flatten() {
+            client.destroy_minted_wl_buffer(buffer);
         }
-        self.release = SlotReleaseState::new();
+        self.wl_buffers.reset_release_state();
         self.buffers.resize(egl, w, h);
         client.flush()
     }
@@ -173,27 +169,20 @@ impl OverlayRenderTarget {
     /// compositor (or has never been submitted).
     #[must_use]
     pub fn available(&self) -> bool {
-        self.release.is_available(self.buffers.current_slot())
+        self.wl_buffers.is_available(self.buffers.current_slot())
     }
 
     /// Record that `slot`'s buffer has been submitted to the compositor and is
     /// pinned until its `wl_buffer.release`.
     pub fn mark_presented(&mut self, slot: usize) {
-        self.release.mark_presented(slot);
+        self.wl_buffers.mark_presented(slot);
     }
 
     /// Translate a compositor `wl_buffer.release` into a freed export slot by
     /// matching the released buffer against the cached `wl_buffer`s.
     pub fn mark_released_buffer(&mut self, released: &ReleasedBuffer) {
-        for (slot, wl_buffer) in self.wl_buffers.iter().enumerate() {
-            if wl_buffer
-                .as_ref()
-                .is_some_and(|buffer| released.matches(buffer))
-            {
-                self.release.mark_released(slot);
-                return;
-            }
-        }
+        self.wl_buffers
+            .mark_released_matching(|buffer| released.matches(buffer));
     }
 
     /// Mint (once) and cache the `wl_buffer` for `slot` via the layer-surface
@@ -204,17 +193,13 @@ impl OverlayRenderTarget {
         info: &DmaBufInfo,
         slot: usize,
     ) -> anyhow::Result<wl_buffer::WlBuffer> {
-        let wl_buffer = self
+        let Some(wl_buffer) = self
             .wl_buffers
-            .get_mut(slot)
-            .with_context(|| format!("invalid export slot id: {slot}"))?;
-        if wl_buffer.is_none() {
-            *wl_buffer = Some(client.mint_wl_buffer(info, slot)?);
-        }
-        Ok(wl_buffer
-            .as_ref()
-            .expect("BUG: wl_buffer should exist after mint above")
-            .clone())
+            .get_or_try_insert_with(slot, || client.mint_wl_buffer(info, slot))?
+        else {
+            anyhow::bail!("invalid export slot id: {slot}");
+        };
+        Ok(wl_buffer.clone())
     }
 
     /// Free the GBM/GL export buffers and cached `wl_buffer`s for a hide, but
@@ -225,22 +210,16 @@ impl OverlayRenderTarget {
         egl: &EglContext,
         client: &mut crate::surface::LayerSurfaceClient,
     ) -> anyhow::Result<()> {
-        let cached_wl_buffers = self
-            .wl_buffers
-            .iter()
-            .filter(|buffer| buffer.is_some())
-            .count();
+        let cached_wl_buffers = self.wl_buffers.cached_count();
         tracing::info!(cached_wl_buffers, "free_for_hide: freeing overlay buffers");
         self.buffers.destroy_all(egl);
         if let Some(cache) = self.panel_cache.take() {
             egl.destroy_widget_export_buffer(cache);
         }
-        for wl_buffer in &mut self.wl_buffers {
-            if let Some(buffer) = wl_buffer.take() {
-                client.destroy_minted_wl_buffer(buffer);
-            }
+        for buffer in self.wl_buffers.take_all().into_iter().flatten() {
+            client.destroy_minted_wl_buffer(buffer);
         }
-        self.release = SlotReleaseState::new();
+        self.wl_buffers.reset_release_state();
         client.flush()
     }
 
@@ -260,10 +239,8 @@ impl OverlayRenderTarget {
         if let Some(cache) = self.panel_cache.take() {
             egl.destroy_widget_export_buffer(cache);
         }
-        for wl_buffer in &mut self.wl_buffers {
-            if let Some(buffer) = wl_buffer.take() {
-                buffer.destroy();
-            }
+        for buffer in self.wl_buffers.take_all().into_iter().flatten() {
+            buffer.destroy();
         }
     }
 }

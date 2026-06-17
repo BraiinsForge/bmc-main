@@ -3,7 +3,7 @@
 use std::any::Any;
 
 use crate::lifecycle::{LifecycleEgl, LifecycleSurface};
-use bmc_widget::egl::SlotReleaseState;
+use bmc_widget::egl::{SlotReleaseState, TwoSlotBufferCache};
 use bmc_widget::surface::ReleasedBuffer;
 
 #[derive(Debug, thiserror::Error)]
@@ -27,8 +27,7 @@ pub struct RenderTarget {
 #[expect(missing_debug_implementations)]
 pub struct EglRenderTarget {
     pub buffers: bmc_widget::egl::DoubleBufferState,
-    pub wl_buffers: [Option<wayland_client::protocol::wl_buffer::WlBuffer>; 2],
-    release_state: SlotReleaseState,
+    pub wl_buffers: TwoSlotBufferCache<wayland_client::protocol::wl_buffer::WlBuffer>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,27 +68,20 @@ fn prepared_compaction_slot(
 impl EglRenderTarget {
     #[must_use]
     pub fn current_slot_available(&self) -> bool {
-        self.release_state.is_available(self.buffers.current_slot())
+        self.wl_buffers.is_available(self.buffers.current_slot())
     }
 
     pub fn mark_presented(&mut self, slot: usize) {
-        self.release_state.mark_presented(slot);
+        self.wl_buffers.mark_presented(slot);
     }
 
     pub fn mark_released(&mut self, slot: usize) {
-        self.release_state.mark_released(slot);
+        self.wl_buffers.mark_released(slot);
     }
 
     pub fn mark_released_buffer(&mut self, released: &ReleasedBuffer) {
-        for (slot, wl_buffer) in self.wl_buffers.iter().enumerate() {
-            if wl_buffer
-                .as_ref()
-                .is_some_and(|buffer| released.matches(buffer))
-            {
-                self.release_state.mark_released(slot);
-                return;
-            }
-        }
+        self.wl_buffers
+            .mark_released_matching(|buffer| released.matches(buffer));
     }
 
     pub fn wl_buffer_for_slot(
@@ -98,18 +90,15 @@ impl EglRenderTarget {
         dmabuf: &bmc_widget::egl::DmaBufInfo,
         slot: usize,
     ) -> Result<wayland_client::protocol::wl_buffer::WlBuffer, String> {
-        let Some(wl_buffer) = self.wl_buffers.get_mut(slot) else {
+        let Some(wl_buffer) = self
+            .wl_buffers
+            .get_or_try_insert_with(slot, || surface.mint_wl_buffer(dmabuf, slot))?
+        else {
             return Err(format!(
                 "DoubleBufferState returned invalid slot id: {slot}"
             ));
         };
-        if wl_buffer.is_none() {
-            *wl_buffer = Some(surface.mint_wl_buffer(dmabuf, slot)?);
-        }
-        Ok(wl_buffer
-            .as_ref()
-            .expect("BUG: wl_buffer should exist after mint above")
-            .clone())
+        Ok(wl_buffer.clone())
     }
 
     pub fn compact_for_prepared(
@@ -119,14 +108,14 @@ impl EglRenderTarget {
     ) {
         let egl = egl.as_egl_context();
         let Some(slot) = prepared_compaction_slot(
-            self.release_state,
+            self.wl_buffers.release_state(),
             self.buffers.allocated_slots(),
             self.buffers.current_slot(),
         ) else {
             return;
         };
         if self.buffers.destroy_slot(egl, slot)
-            && let Some(buffer) = self.wl_buffers[slot].take()
+            && let Some(buffer) = self.wl_buffers.take_slot(slot)
         {
             surface.destroy_minted_wl_buffer(buffer);
         }
@@ -138,12 +127,13 @@ impl EglRenderTarget {
         surface: &mut dyn LifecycleSurface,
     ) -> RenderTargetCleanup {
         let egl = egl.as_egl_context();
-        let slots = self
-            .release_state
-            .destroyable_slots(self.buffers.allocated_slots());
+        let release_state = self.wl_buffers.release_state();
+        let slots: Vec<_> = release_state
+            .destroyable_slots(self.buffers.allocated_slots())
+            .collect();
         for slot in slots {
             if self.buffers.destroy_slot(egl, slot)
-                && let Some(buffer) = self.wl_buffers[slot].take()
+                && let Some(buffer) = self.wl_buffers.take_slot(slot)
             {
                 surface.destroy_minted_wl_buffer(buffer);
             }
@@ -170,11 +160,19 @@ impl RenderTarget {
         height: u32,
     ) -> Self {
         let [wl_buffer_a, wl_buffer_b] = wl_buffers;
+        let mut wl_buffers = TwoSlotBufferCache::new();
+        let _ = wl_buffers
+            .get_or_try_insert_with(0, || Ok::<_, std::convert::Infallible>(wl_buffer_a))
+            .expect("BUG: infallible wl_buffer insert")
+            .expect("BUG: two-slot cache has slot 0");
+        let _ = wl_buffers
+            .get_or_try_insert_with(1, || Ok::<_, std::convert::Infallible>(wl_buffer_b))
+            .expect("BUG: infallible wl_buffer insert")
+            .expect("BUG: two-slot cache has slot 1");
         Self {
             inner: Box::new(EglRenderTarget {
                 buffers,
-                wl_buffers: [Some(wl_buffer_a), Some(wl_buffer_b)],
-                release_state: SlotReleaseState::new(),
+                wl_buffers,
             }),
             width,
             height,
@@ -336,7 +334,7 @@ impl RenderTargetFactory for EglRenderTargetFactory {
             return;
         };
         target.buffers.destroy_all(egl);
-        for buffer in target.wl_buffers.into_iter().flatten() {
+        for buffer in target.wl_buffers.take_all().into_iter().flatten() {
             surface.destroy_minted_wl_buffer(buffer);
         }
     }
