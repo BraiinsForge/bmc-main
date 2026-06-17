@@ -3,17 +3,11 @@
 use std::ptr::NonNull;
 use std::time::Instant;
 
-#[cfg(feature = "overlay-device-info")]
-use bmc_overlay_device_info::DeviceInfoOverlay;
-#[cfg(feature = "overlay-offline")]
-use bmc_overlay_offline::OfflineOverlay;
 use bmc_render::renderer::{FrameClear, Renderer};
-use bmc_system_overlay::{HostedOverlay, SystemOverlay};
+use bmc_system_overlay::HostedOverlay;
 use bmc_widget::egl::EglContext;
 
 use crate::host::SharedHost;
-
-type OverlayFactory = (&'static str, fn() -> Box<dyn SystemOverlay>);
 
 /// Whether the overlay named `name` is enabled. Each overlay maps to an env var
 /// `BMC_OVERLAY_<NAME>` (uppercased, `-`→`_`). Overlays are on by default; only
@@ -31,6 +25,31 @@ pub fn overlay_enabled(name: &str) -> bool {
     }
 }
 
+/// Register one overlay entry in `build_overlays`.
+///
+/// Each invocation is the single source of truth for a compiled-in overlay:
+/// the Cargo feature gate, the runtime name (used for env-var lookup and
+/// logging), and the constructor expression all live here and nowhere else.
+/// Adding a new overlay = one new `register_overlay!` line.
+///
+/// Expands to: if the Cargo feature is enabled, check `overlay_enabled(name)`;
+/// if enabled push the result of `$make`, else log the disabled message.
+macro_rules! register_overlay {
+    ($overlays:expr, $egl:expr, $feature:literal, $name:literal, $make:expr) => {
+        #[cfg(feature = $feature)]
+        {
+            if overlay_enabled($name) {
+                match HostedOverlay::connect($make, $egl) {
+                    Ok(o) => $overlays.push(o),
+                    Err(e) => tracing::error!("failed to start {} overlay: {}", $name, e),
+                }
+            } else {
+                tracing::info!("overlay {} disabled via BMC_OVERLAY_* env var", $name);
+            }
+        }
+    };
+}
+
 /// Build the compiled-in system overlays. Each opens its own Wayland
 /// connection and allocates buffers from `egl`. A failure to start one overlay
 /// is logged and skipped, never fatal to the host.
@@ -38,30 +57,28 @@ pub fn build_overlays(egl: &EglContext) -> Vec<HostedOverlay> {
     // Stacking is by layer rank, not build order: the offline indicator is on
     // the Bottom layer and the startup overlay on Top, so the fullscreen startup
     // overlay occludes the offline chip regardless of the order built here.
-    let mut factories: Vec<OverlayFactory> = Vec::new();
-    #[cfg(feature = "overlay-offline")]
-    factories.push(("offline", || -> Box<dyn SystemOverlay> {
-        Box::new(OfflineOverlay::default())
-    }));
-    #[cfg(feature = "overlay-device-info")]
-    factories.push(("device-info", || -> Box<dyn SystemOverlay> {
-        Box::new(DeviceInfoOverlay::default())
-    }));
-    #[cfg(feature = "overlay-settings-tray")]
-    factories.push(("settings-tray", || -> Box<dyn SystemOverlay> {
-        Box::new(bmc_overlay_settings_tray::SettingsTrayOverlay::default())
-    }));
     let mut overlays = Vec::new();
-    for (name, make) in factories {
-        if !overlay_enabled(name) {
-            tracing::info!("overlay {name} disabled via BMC_OVERLAY_* env var");
-            continue;
-        }
-        match HostedOverlay::connect(make(), egl) {
-            Ok(o) => overlays.push(o),
-            Err(e) => tracing::error!("failed to start {name} overlay: {e}"),
-        }
-    }
+    register_overlay!(
+        overlays,
+        egl,
+        "overlay-offline",
+        "offline",
+        Box::new(bmc_overlay_offline::OfflineOverlay::default())
+    );
+    register_overlay!(
+        overlays,
+        egl,
+        "overlay-device-info",
+        "device-info",
+        Box::new(bmc_overlay_device_info::DeviceInfoOverlay::default())
+    );
+    register_overlay!(
+        overlays,
+        egl,
+        "overlay-settings-tray",
+        "settings-tray",
+        Box::new(bmc_overlay_settings_tray::SettingsTrayOverlay::default())
+    );
     overlays
 }
 
