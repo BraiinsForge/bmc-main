@@ -67,6 +67,14 @@ committed `manifest.schema.json` artifact (with rustdoc propagated into the sche
 How WASM widgets consume host-delivered inputs. Covers per-widget params generated from `manifest.json`, hardcoded
 deck-wide system settings exposed by the SDK, widget/display geometry, update hooks, examples, and testbed usage.
 
+### [System Overlays](system-overlays/)
+
+How privileged, non-widget UI surfaces (startup connection progress, an offline indicator, the swipe-from-top
+quick-settings panel) are built as `wlr-layer-shell` clients that stack above the active scene. Covers the
+`bmc-system-overlay` framework crate and its `SystemOverlay` trait, the hosted-vs-standalone run modes, the compositor's
+layer-shell compositing/buffer-tracking/edge-gesture support, the two vendored protocols (`deck_screen_edge_v1`,
+`deck_settings_v1`), and the concrete overlays.
+
 ### WASM Host
 
 Implementation notes for the multi-widget WASM runtime:
