@@ -678,6 +678,10 @@ pub(crate) struct HostState {
     /// Per-frame timing breakdown from the last rendered frame.
     pub last_timings: FrameTimings,
 
+    /// Fuel charged per profiling section in the current frame; drained per frame.
+    /// `BTreeMap` keeps the report's section order deterministic.
+    pub profile_sections: BTreeMap<String, u64>,
+
     /// Reusable Taffy layout tree (cleared each frame, keeps allocations).
     pub taffy: TaffyTree<NodeContext>,
 
@@ -803,6 +807,7 @@ impl HostState {
             recorded_events: Vec::new(),
             system: VersionedSnapshotCache::new(SystemSnapshot::default()),
             last_timings: FrameTimings::default(),
+            profile_sections: BTreeMap::new(),
             taffy: TaffyTree::with_capacity(64),
             resource_limits,
             rng_state: None, // None = auto-seed on first use (from monotonic_ms)

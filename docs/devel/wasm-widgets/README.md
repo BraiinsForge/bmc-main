@@ -34,3 +34,22 @@ intentional visual changes.
 How a widget reads its assigned viewport and the active logical display through `widget_viewport()` and
 `display_info()`. Covers rectangular versus round shape signals, platform viewports, testbed platform selection, and the
 temporary compatibility fallback to `widget_size()` / `SizeVariant::{Small, Medium, Large, Full}`.
+
+## Profiling
+
+Two ways to find where a widget spends time, for different questions:
+
+- **CPU sampling** — `just wasm::profile <widget>` writes a samply profile to `combined.json.gz`; view it with
+  `samply load <report>/combined.json.gz`. Widgets run inside the `wasmi` interpreter, so samples land on interpreter
+  dispatch — this measures the *host*, not your widget's own functions.
+- **Fuel profiling** — wrap sections in `profile::span("name")` and build with `--features profiling`
+  (`CARGO_EXTRA_FLAGS=--features profiling`). Fuel is `wasmi`'s instruction count — hardware-independent, so the ratios
+  you measure on a laptop hold on the Deck, and your sections show up as counter tracks in the same profile. Off by
+  default — `span()` compiles to nothing, so the instrumentation can live in the widget source permanently. This is the
+  one that answers "which part of *my* widget is expensive".
+
+Compare two runs with `tools/perf_compare.py` (fuel-delta table — the metric for "did this optimization help"); inspect
+a single report with `tools/perf_analyze.py`.
+
+For why fuel beats wall-clock, the report format, and a worked ISS example, see the
+[profiling-tooling devlog](../../devlogs/BDK-304-iss-position-wasm/profiling-tooling.md).

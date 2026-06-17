@@ -1,2 +1,5 @@
 mprocs.log
 *.pyc
+
+# Profiling captures from `just wasm::profile` (regenerable build output)
+reports/

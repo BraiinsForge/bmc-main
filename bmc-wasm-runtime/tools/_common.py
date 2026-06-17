@@ -2,7 +2,6 @@
 Shared utilities for WASM runtime development tools.
 """
 
-import gzip
 import json
 import re
 import shutil
@@ -78,17 +77,21 @@ def require_tools(*tools: tuple[str, str]) -> None:
             sys.exit(1)
 
 
-def build_example_wasm(example: str) -> Path:
-    """Build a widget in release mode and return the .wasm path.
+def build_example_wasm(
+    example: str, profile: str = 'release', features: tuple[str, ...] = ()
+) -> Path:
+    """Build a widget and return the .wasm path.
 
-    The widget's workspace root is resolved via `widget_root.py`.
-    Works for both the SDK examples in `bmc-wasm-runtime/examples/`
-    and production widgets in `widgets-wasm/`.
+    `profile` selects the cargo profile (e.g. 'profiling' keeps the wasm name
+    section). `features` are extra cargo features, including dep features like
+    'bmc-wasm-sdk/profiling'. The widget's workspace root is resolved via
+    `widget_root.py`; works for SDK examples and production widgets alike.
     """
 
     wasm_name = example.replace('-', '_')
     workspace_dir = resolve_widget_root(example)
 
+    feature_args = [arg for f in features for arg in ('--features', f)]
     # --message-format=json emits one compiler-artifact message per built
     # target; parse it so we get the exact .wasm path even with a custom
     # CARGO_TARGET_DIR.
@@ -98,14 +101,18 @@ def build_example_wasm(example: str) -> Path:
             'build',
             '-p',
             example,
-            '--release',
+            '--profile',
+            profile,
             '--target',
             WASM_TARGET,
+            *feature_args,
             '--message-format=json-render-diagnostics',
         ],
         cwd=workspace_dir,
         check=True,
-        capture_output=True,
+        # Capture only stdout (the JSON artifact stream we parse); let stderr
+        # inherit so cargo's `Compiling …` progress is visible during the build.
+        stdout=subprocess.PIPE,
         text=True,
     )
 
@@ -135,26 +142,6 @@ def extract_crate(sym: str) -> str:
     if '::' not in sym and '<' not in sym:
         return '[system]'
     return '[other]'
-
-
-def load_symbols(profile_path: Path) -> dict[str, str]:
-    """Load symbols.json sidecar if it exists next to the profile."""
-    symbols_path = profile_path.parent / 'symbols.json'
-    if symbols_path.exists():
-        with open(symbols_path) as f:
-            return json.load(f)
-    return {}
-
-
-def load_profile_data(profile_path: Path) -> tuple[dict, dict[str, str]]:
-    """Load a gzipped samply profile and its symbols sidecar."""
-    p = Path(profile_path)
-    if not p.exists():
-        print(f'Error: {p} does not exist', file=sys.stderr)
-        sys.exit(1)
-    with gzip.open(p, 'rt') as f:
-        data = json.load(f)
-    return data, load_symbols(p)
 
 
 def find_testbed_thread(data: dict) -> dict | None:

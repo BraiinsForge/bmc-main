@@ -1,5 +1,5 @@
 #!/usr/bin/env nix
-#!nix shell nixpkgs#python312
+#!nix shell ../..#pkgs.python312
 #!nix --command python3
 
 """
@@ -54,9 +54,14 @@ def prepare_report_dir(report_dir: Path) -> None:
 
 def build(example: str) -> tuple[Path, Path]:
     """Build wasm widget + testbed and return (wasm_file, testbed_binary)."""
-    wasm_file = build_example_wasm(example)
+    print(f'Building {example} wasm...')
+    # 'profiling' profile keeps the wasm name section; the SDK profiling feature
+    # turns on `profile::span`/`report` (fuel-based section attribution).
+    wasm_file = build_example_wasm(
+        example, profile='profiling', features=('bmc-wasm-sdk/profiling',)
+    )
 
-    print('Building testbed (profiling profile)...')
+    print('Building testbed for profiling...')
     result = subprocess.run(
         [
             'cargo',
@@ -70,7 +75,9 @@ def build(example: str) -> tuple[Path, Path]:
             '--message-format=json-render-diagnostics',
         ],
         check=True,
-        capture_output=True,
+        # Capture only stdout (parsed for the testbed artifact path); stderr
+        # inherits so the build's `Compiling …` progress is visible.
+        stdout=subprocess.PIPE,
         text=True,
     )
 
@@ -122,6 +129,12 @@ def record(
         check=True,
     )
 
+    print('Combining into final profile...')
+    subprocess.run(
+        [sys.executable, 'tools/perf_finalize.py', str(report_dir)],
+        check=True,
+    )
+
 
 def print_summary(report_dir: Path) -> None:
     print(f'\nSaved to {report_dir}/:')
@@ -129,10 +142,10 @@ def print_summary(report_dir: Path) -> None:
         size_kb = f.stat().st_size / 1024
         print(f'  {f.name:30s} {size_kb:8.1f} KB')
 
-    print(f'\nView:    samply load {report_dir}/profile.json.gz')
-    print(
-        f'Analyze: uv run --python 3.12 tools/perf_analyze.py {report_dir}/profile.json.gz'
-    )
+    # Absolute paths so the hints work regardless of the caller's cwd.
+    combined = (report_dir / 'combined.json.gz').resolve()
+    print(f'\nView:    samply load {combined}')
+    print(f'Analyze: uv run --python 3.12 tools/perf_analyze.py {combined}')
     print('Compare: uv run --python 3.12 tools/perf_compare.py reports/*/')
 
 

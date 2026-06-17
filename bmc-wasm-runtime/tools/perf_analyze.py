@@ -3,16 +3,17 @@
 #!nix --command python3
 
 """
-Analyze samply profile and show hot functions.
+Analyze a combined profile and show hot functions.
 
 Usage:
-    ./perf_analyze.py <profile.json.gz>
+    ./perf_analyze.py <combined.json.gz>
 
-Symbols are loaded from symbols.json next to the profile (produced by
-perf_symbolicate.py or ``make profile``). Without it, raw hex addresses
-are shown.
+Reads the funcTable symbolized in place by perf_finalize.py — the unresolved
+frames stay as raw hex addresses. The symbols.json sidecar is not consumed.
 """
 
+import gzip
+import json
 import sys
 from collections import Counter
 from pathlib import Path
@@ -20,7 +21,6 @@ from pathlib import Path
 from _common import (
     crate_breakdown_from_thread,
     find_testbed_thread,
-    load_profile_data,
 )
 
 
@@ -30,16 +30,15 @@ def truncate(s: str, width: int = 80) -> str:
 
 def main() -> None:
     if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} <profile.json.gz>', file=sys.stderr)
+        print(f'Usage: {sys.argv[0]} <combined.json.gz>', file=sys.stderr)
         sys.exit(1)
 
-    data, symbols = load_profile_data(Path(sys.argv[1]))
-
-    if symbols:
-        print(f'Loaded {len(symbols)} symbols from symbols.json\n', file=sys.stderr)
-
-    def resolve(sym: str) -> str:
-        return symbols.get(sym, sym)
+    path = Path(sys.argv[1])
+    if not path.exists():
+        print(f'Error: {path} does not exist', file=sys.stderr)
+        sys.exit(1)
+    with gzip.open(path, 'rt') as f:
+        data = json.load(f)
 
     thread = find_testbed_thread(data)
     if thread is None:
@@ -82,30 +81,20 @@ def main() -> None:
     total = sum(func_self.values())
 
     # Crate-level breakdown (uses shared helper)
-    crate_time, _ = crate_breakdown_from_thread(thread, symbols)
+    crate_time, _ = crate_breakdown_from_thread(thread, {})
 
     print(f'=== Crate Breakdown — inclusive ({total} samples) ===\n')
     for crate, count in crate_time.most_common(15):
         pct = 100.0 * count / total
         print(f'{pct:5.1f}%  {crate}')
 
-    # Top functions by inclusive time
-    merged_inclusive: Counter[str] = Counter()
-    for sym, count in func_inclusive.items():
-        merged_inclusive[resolve(sym)] += count
-
     print(f'\n=== Top Functions — inclusive ({total} samples) ===\n')
-    for sym, count in merged_inclusive.most_common(30):
+    for sym, count in func_inclusive.most_common(30):
         pct = 100.0 * count / total
         print(f'{pct:5.1f}% ({count:5d})  {truncate(sym)}')
 
-    # Top functions by self time
-    merged_self: Counter[str] = Counter()
-    for sym, count in func_self.items():
-        merged_self[resolve(sym)] += count
-
     print(f'\n=== Top Functions — self ({total} samples) ===\n')
-    for sym, count in merged_self.most_common(25):
+    for sym, count in func_self.most_common(25):
         pct = 100.0 * count / total
         print(f'{pct:5.1f}% ({count:5d})  {truncate(sym)}')
 

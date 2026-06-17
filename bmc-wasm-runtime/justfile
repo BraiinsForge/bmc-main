@@ -61,9 +61,9 @@ run WIDGET ARGS="":
 
 # === Profiling / size ===
 
-# Record a perf profile of WIDGET. Extra args go to perf_record.py.
-profile WIDGET ARGS="":
-    {{ dir }}/tools/perf_record.py -e {{ WIDGET }} {{ ARGS }}
+# Record a perf profile of WIDGET into reports/REPORT. Extra args → perf_record.py.
+profile WIDGET REPORT="00-latest" *ARGS:
+    {{ dir }}/tools/perf_record.py -e {{ WIDGET }} -r {{ REPORT }} {{ ARGS }}
 
 # Report the built wasm binary size for WIDGET.
 size WIDGET:

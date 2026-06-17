@@ -577,7 +577,11 @@ pub(super) fn is_round(shape: DisplayShape) -> bool {
 
 // ── Perf report ─────────────────────────────────────────────────────
 
-pub(super) fn write_perf_report(path: &Path, samples: &[bmc_render::FrameTimings]) {
+pub(super) fn write_perf_report(
+    path: &Path,
+    samples: &[bmc_render::FrameTimings],
+    section_samples: &[std::collections::BTreeMap<String, u64>],
+) {
     let n = samples.len();
     if n == 0 {
         return;
@@ -589,7 +593,49 @@ pub(super) fn write_perf_report(path: &Path, samples: &[bmc_render::FrameTimings
     let sum_flush: u64 = samples.iter().map(|s| u64::from(s.flush_us)).sum();
     let n_u64 = n as u64;
     let avg = |s: u64| s / n_u64;
-    let report = serde_json::json!({
+
+    // Average over frames the section fired in, not all frames — cached-tree
+    // frames run no guest code and would skew the per-frame cost down.
+    let mut totals: std::collections::BTreeMap<&str, (u64, u64)> =
+        std::collections::BTreeMap::new();
+    for frame in section_samples {
+        for (name, &fuel) in frame {
+            let entry = totals.entry(name.as_str()).or_default();
+            entry.0 += fuel;
+            entry.1 += 1;
+        }
+    }
+    let fuel_per_frame: serde_json::Map<String, serde_json::Value> = totals
+        .into_iter()
+        .map(|(name, (sum, frames))| ((*name).to_owned(), serde_json::json!(sum / frames)))
+        .collect();
+
+    // Per-frame series for `perf_finalize.py` to build Firefox-format counters.
+    // Each fuel series is zero on cached-tree frames (no guest code ran).
+    let section_names: std::collections::BTreeSet<&str> = section_samples
+        .iter()
+        .flat_map(|f| f.keys().map(String::as_str))
+        .collect();
+    let fuel_series: serde_json::Map<String, serde_json::Value> = section_names
+        .into_iter()
+        .map(|name| {
+            let series: Vec<u64> = section_samples
+                .iter()
+                .map(|f| f.get(name).copied().unwrap_or(0))
+                .collect();
+            (name.to_owned(), serde_json::json!(series))
+        })
+        .collect();
+    let per_frame = serde_json::json!({
+        "wasm_us": samples.iter().map(|s| s.wasm_us).collect::<Vec<_>>(),
+        "deserialize_us": samples.iter().map(|s| s.deserialize_us).collect::<Vec<_>>(),
+        "layout_us": samples.iter().map(|s| s.layout_us).collect::<Vec<_>>(),
+        "render_us": samples.iter().map(|s| s.render_us).collect::<Vec<_>>(),
+        "flush_us": samples.iter().map(|s| s.flush_us).collect::<Vec<_>>(),
+        "fuel": fuel_series,
+    });
+
+    let mut report = serde_json::json!({
         "frames": n,
         "avg_us": {
             "wasm": avg(sum_wasm),
@@ -597,8 +643,12 @@ pub(super) fn write_perf_report(path: &Path, samples: &[bmc_render::FrameTimings
             "layout": avg(sum_layout),
             "render": avg(sum_render),
             "flush": avg(sum_flush),
-        }
+        },
+        "per_frame": per_frame,
     });
+    if !fuel_per_frame.is_empty() {
+        report["fuel_per_frame"] = serde_json::Value::Object(fuel_per_frame);
+    }
     match std::fs::write(
         path,
         serde_json::to_string_pretty(&report).unwrap_or_default(),

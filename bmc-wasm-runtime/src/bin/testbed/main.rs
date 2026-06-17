@@ -1149,6 +1149,8 @@ struct PerfState {
     frame_count: u32,
     /// Per-frame timings from FULL tile's runtime; written to disk by `--perf-report=` at exit.
     samples: Vec<bmc_render::FrameTimings>,
+    /// Per-frame fuel per profiling section from the FULL tile's guest.
+    section_samples: Vec<std::collections::BTreeMap<String, u64>>,
     /// Last frame's wall-clock duration (microseconds); recent samples averaged for FPS.
     recent_frame_us: std::collections::VecDeque<u32>,
 }
@@ -1273,6 +1275,7 @@ impl TestbedApp {
             perf: PerfState {
                 frame_count: 0,
                 samples: Vec::new(),
+                section_samples: Vec::new(),
                 recent_frame_us: std::collections::VecDeque::with_capacity(60),
             },
             recording_mode: RecordingMode {
@@ -1624,8 +1627,11 @@ impl TestbedApp {
         }
         // Pick the FULL tile (idx 0) as the perf-report sampling source — matches the prior
         // testbed which sampled tile 0 too. The other tiles still render but aren't reported.
-        if let Some(tile) = self.tiles.first() {
+        if let Some(tile) = self.tiles.first_mut() {
             self.perf.samples.push(tile.runtime.last_timings());
+            self.perf
+                .section_samples
+                .push(tile.runtime.take_profile_sections());
         }
 
         // Restore framebuffer + viewport so egui draws onto the screen FBO at the right size.
@@ -1868,7 +1874,7 @@ impl eframe::App for TestbedApp {
         if let Some(ref path) = self.cli.perf_report_path
             && self.perf.frame_count >= self.cli.perf_frames
         {
-            write_perf_report(path, &self.perf.samples);
+            write_perf_report(path, &self.perf.samples, &self.perf.section_samples);
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }

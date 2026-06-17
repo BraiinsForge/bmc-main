@@ -30,6 +30,8 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_temperature_format_import(linker)?;
     register_rrule_import(linker)?;
     register_timezone_import(linker)?;
+    register_fuel_import(linker)?;
+    register_profile_section_import(linker)?;
     Ok(())
 }
 
@@ -801,6 +803,36 @@ fn register_rrule_import(linker: &mut Linker<HostState>) -> Result<()> {
                 }
             }
             needed_i32
+        },
+    )?;
+
+    Ok(())
+}
+
+// Remaining guest fuel (instruction budget) for the current frame. The SDK's
+// `profile` facility reads this around a span to attribute instruction count —
+// a hardware-independent cost — to a section. Always registered; widgets only
+// import it when built with the SDK `profiling` feature.
+fn register_fuel_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_fuel_remaining",
+        |caller: Caller<'_, HostState>| -> u64 { caller.get_fuel().unwrap_or(0) },
+    )?;
+
+    Ok(())
+}
+
+/// Accumulates a guest `(section, fuel)` pair into the current frame's tally.
+fn register_profile_section_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_profile_section",
+        |mut caller: Caller<'_, HostState>, name_ptr: u32, name_len: u32, fuel: u64| {
+            let Some(name) = read_string(&caller, name_ptr, name_len) else {
+                return;
+            };
+            *caller.data_mut().profile_sections.entry(name).or_default() += fuel;
         },
     )?;
 

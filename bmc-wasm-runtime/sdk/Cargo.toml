@@ -10,6 +10,9 @@ crate-type = ["rlib"]
 ## Enable 3D math utilities (glam re-export, Orientation↔Quat conversion).
 ## Adds ~6KB to WASM binary. Only needed for widgets doing 3D math beyond basic Orientation use.
 math-3d = ["glam"]
+## Enable `profile::span`/`report` (fuel-based section profiling). Off by
+## default so production widgets carry no profiling code.
+profiling = []
 
 [dependencies]
 bmc-led = { path = "../../bmc-led", default-features = false }

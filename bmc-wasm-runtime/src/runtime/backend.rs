@@ -941,6 +941,11 @@ impl WasmWidgetRuntime {
         self.store.data().last_timings
     }
 
+    /// Drains the fuel charged to each profiling section this frame.
+    pub fn take_profile_sections(&mut self) -> std::collections::BTreeMap<String, u64> {
+        std::mem::take(&mut self.store.data_mut().profile_sections)
+    }
+
     /// Breaches recorded during a hermetic run (empty otherwise).
     #[must_use]
     pub fn hermetic_breaches(&self) -> &[String] {
