@@ -1,10 +1,103 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bmc_render::renderer::Renderer;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor;
+
+/// Minimum wall-clock gap between two submitted frames. Both the standalone
+/// loop and the hosted driver enforce this floor identically.
+pub(crate) const MIN_INTER_FRAME: Duration = Duration::from_millis(8);
+
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is a distinct render-gate predicate; a flags enum would be less readable at the single call site"
+)]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RenderGate {
+    pub failed: bool,
+    pub visible: bool,
+    pub mapped: bool,
+    pub wants_render: bool,
+    pub inter_frame_ok: bool,
+    pub client_running: bool,
+    pub target_available: bool,
+}
+
+#[must_use]
+pub(crate) fn overlay_needs_render(gate: RenderGate) -> bool {
+    let wants = gate.wants_render || (gate.visible && !gate.mapped);
+    !gate.failed
+        && gate.visible
+        && wants
+        && gate.inter_frame_ok
+        && gate.client_running
+        && gate.target_available
+}
+
+#[must_use]
+pub(crate) fn overlay_needs_hide(mapped: bool, visible: bool) -> bool {
+    mapped && !visible
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ResizeTransition {
+    pub unmap_before_resize: bool,
+    pub mapped_after_resize: bool,
+}
+
+#[must_use]
+pub(crate) fn resize_transition(mapped: bool) -> ResizeTransition {
+    ResizeTransition {
+        unmap_before_resize: mapped,
+        mapped_after_resize: false,
+    }
+}
+
+/// Whether a screen-edge overlay is currently visible. An overlay armed to a
+/// screen edge is only shown when both the compositor has revealed it (`revealed`)
+/// and the overlay's own tick says it wants to be on screen (`overlay_visible`).
+#[must_use]
+pub(crate) fn screen_edge_visible(revealed: bool, overlay_visible: bool) -> bool {
+    revealed && overlay_visible
+}
+
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is a distinct wake-gate predicate; a flags enum would be less readable at the single call site"
+)]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PollGate {
+    pub failed: bool,
+    pub visible: bool,
+    pub wants_render: bool,
+    pub client_running: bool,
+    pub target_available: bool,
+}
+
+/// Max time the host may sleep for this overlay. `next_wake` is the tick-based
+/// wake (already converted to a remaining `Duration`); `inter_frame_remaining`
+/// is `Some` while the 8 ms frame floor has time left.
+///
+/// The wake decision must agree with `overlay_needs_render`: while invisible
+/// (or otherwise non-rendering) a latched `wants_render` must not request an
+/// immediate wake, or the host busy-spins on a frame that never renders.
+#[must_use]
+pub(crate) fn overlay_poll_timeout(
+    gate: PollGate,
+    next_wake: Option<Duration>,
+    inter_frame_remaining: Option<Duration>,
+) -> Option<Duration> {
+    if gate.failed || !gate.wants_render || !gate.visible || !gate.client_running {
+        return next_wake;
+    }
+    match inter_frame_remaining {
+        Some(d) => Some(next_wake.map_or(d, |t| d.min(t))),
+        None if gate.target_available => Some(Duration::ZERO),
+        None => next_wake,
+    }
+}
 
 /// A touch event delivered to an overlay (logical coordinates within the surface).
 #[derive(Debug, Clone, Copy)]
@@ -242,5 +335,104 @@ mod tests {
         assert_eq!(resolved_configured_size((420, 180), (0, 180)), (420, 180));
         assert_eq!(resolved_configured_size((420, 180), (420, 0)), (420, 180));
         assert_eq!(resolved_configured_size((0, 0), (0, 0)), (1, 1));
+    }
+
+    fn runnable_gate(visible: bool, mapped: bool, wants_render: bool) -> RenderGate {
+        RenderGate {
+            failed: false,
+            visible,
+            mapped,
+            wants_render,
+            inter_frame_ok: true,
+            client_running: true,
+            target_available: true,
+        }
+    }
+
+    #[test]
+    fn first_show_renders_without_dirty_flag() {
+        assert!(overlay_needs_render(runnable_gate(true, false, false)));
+    }
+
+    #[test]
+    fn hidden_ignores_latched_render_request() {
+        assert!(!overlay_needs_render(runnable_gate(false, false, true)));
+    }
+
+    #[test]
+    fn mapped_but_invisible_needs_hide() {
+        assert!(overlay_needs_hide(true, false));
+    }
+
+    #[test]
+    fn mapped_resize_unmaps_before_destroying_buffers() {
+        assert_eq!(
+            resize_transition(true),
+            ResizeTransition {
+                unmap_before_resize: true,
+                mapped_after_resize: false,
+            }
+        );
+        assert_eq!(
+            resize_transition(false),
+            ResizeTransition {
+                unmap_before_resize: false,
+                mapped_after_resize: false,
+            }
+        );
+    }
+
+    #[test]
+    fn screen_edge_overlay_visible_only_while_revealed() {
+        assert!(
+            !screen_edge_visible(false, true),
+            "armed-but-hidden stays unmapped"
+        );
+        assert!(screen_edge_visible(true, true), "revealed and wanted maps");
+        assert!(
+            !screen_edge_visible(true, false),
+            "dismissed while revealed unmaps"
+        );
+    }
+
+    #[test]
+    fn throttled_first_show_waits_for_frame_floor() {
+        let mut gate = runnable_gate(true, false, false);
+        gate.inter_frame_ok = false;
+        assert!(!overlay_needs_render(gate));
+    }
+
+    fn runnable_poll_gate(visible: bool, wants_render: bool) -> PollGate {
+        PollGate {
+            failed: false,
+            visible,
+            wants_render,
+            client_running: true,
+            target_available: true,
+        }
+    }
+
+    #[test]
+    fn invisible_overlay_with_latched_render_does_not_busy_spin() {
+        let gate = runnable_poll_gate(false, true);
+        assert_eq!(
+            overlay_poll_timeout(gate, Some(Duration::from_secs(2)), None),
+            Some(Duration::from_secs(2))
+        );
+    }
+
+    #[test]
+    fn renderable_overlay_polls_immediately() {
+        let gate = runnable_poll_gate(true, true);
+        assert_eq!(overlay_poll_timeout(gate, None, None), Some(Duration::ZERO));
+    }
+
+    #[test]
+    fn renderable_overlay_waits_for_inter_frame_floor() {
+        let gate = runnable_poll_gate(true, true);
+        assert_eq!(
+            overlay_poll_timeout(gate, None, Some(Duration::from_millis(5))),
+            Some(Duration::from_millis(5))
+        );
     }
 }

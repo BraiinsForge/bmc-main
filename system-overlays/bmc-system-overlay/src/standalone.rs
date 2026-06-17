@@ -10,10 +10,11 @@ use bmc_render::renderer::{FrameClear, Renderer as _};
 use bmc_widget::egl::{EglContext, SharedRenderScratch};
 
 use crate::gpu::{OverlayRenderTarget, wait_for_gpu};
-use crate::overlay::{LayerConfig, SystemOverlay, resolved_configured_size};
+use crate::overlay::{
+    LayerConfig, MIN_INTER_FRAME, SystemOverlay, resize_transition, resolved_configured_size,
+    screen_edge_visible,
+};
 use crate::surface::LayerSurfaceClient;
-
-const MIN_INTER_FRAME: Duration = Duration::from_millis(8);
 
 /// Run an overlay as its own process: own connection, renderer, and loop.
 pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()> {
@@ -79,7 +80,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
         let now = Instant::now();
         let tick = overlay.tick(now);
         let want_visible = match screen_edge {
-            Some(_) => revealed && tick.visible,
+            Some(_) => screen_edge_visible(revealed, tick.visible),
             None => tick.visible,
         };
         if want_visible {
@@ -228,7 +229,10 @@ fn resize_standalone_if_needed(
     if new_size == *size {
         return Ok(());
     }
-    hide_standalone_if_mapped(egl, target, client, mapped, last_render)?;
+    let transition = resize_transition(*mapped);
+    if transition.unmap_before_resize {
+        hide_standalone_if_mapped(egl, target, client, mapped, last_render)?;
+    }
     resize_standalone_rendering(egl, scratch, renderer, target, client, new_size)?;
     *size = new_size;
     Ok(())
