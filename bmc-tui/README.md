@@ -1,10 +1,10 @@
 # bmc-tui
 
-Staged-procedure harness for operating a Braiins Deck from a dev host: build and deploy nix packages, and flash firmware
-— each as a typed, dry-run-able procedure with progress, confirmation gates, and uniform error reporting. The package
-also carries the shared `rich` presentation layer the `bmc-virt` VM harness builds on.
+Staged-procedure harness for operating a Braiins Deck from a dev host: initialise its nix store, build and deploy nix
+packages, and flash firmware — each as a typed, dry-run-able procedure with progress, confirmation gates, and uniform
+error reporting. The package also carries the shared `rich` presentation layer the `bmc-virt` VM harness builds on.
 
-Run it via `nix run .#deck -- <deploy|sysupgrade> --help`.
+Run it via `nix run .#deck -- <init|deploy|sysupgrade> --help`.
 
 ## Architecture
 
@@ -20,8 +20,8 @@ run/skip/fail verdict.
 - **`nix`** — local nix operations behind an injected `Nix` seam: discover / resolve / build / copy.
 - **`image`** — a local firmware sysupgrade tarball and the metadata read from it.
 - **`catalog`** — the reusable stages the procedures compose.
-- **`procedures/`** — the procedures themselves (`deploy`, `sysupgrade`), each a standalone program; `cli` unions them
-  into the single `deck` entry point.
+- **`procedures/`** — the procedures themselves (`init`, `deploy`, `sysupgrade`), each a standalone program; `cli`
+  unions them into the single `deck` entry point.
 
 The injected seams (`Exec`, `Nix`) let the stages run under unit tests with no real ssh or nix.
 

@@ -78,6 +78,34 @@ def test_push_skips_under_dry_run(tmp_path: Path) -> None:
     assert backend.streams == []
 
 
+def test_extract_tar_streams_into_remote_tar(tmp_path: Path) -> None:
+    tarball = tmp_path / "nix.tar.gz"
+    tarball.write_bytes(b"init-bytes")
+    backend = _FakeExec()
+    Device("h", backend=backend).extract_tar(tarball)
+    argv, data = backend.streams[0]
+    assert argv[0] == "ssh"
+    assert argv[-1] == "tar xzf - -C /"
+    assert data == b"init-bytes"
+
+
+def test_extract_tar_skips_under_dry_run(tmp_path: Path) -> None:
+    tarball = tmp_path / "nix.tar.gz"
+    tarball.write_bytes(b"x")
+    backend = _FakeExec()
+    token = dry_run.set(True)
+    try:
+        Device("h", backend=backend).extract_tar(tarball)
+    finally:
+        dry_run.reset(token)
+    assert backend.streams == []
+
+
+def test_login_is_explicit_user_at_host() -> None:
+    assert Device("h", backend=_FakeExec()).login == "root@h"
+    assert Device("h", user="dev", backend=_FakeExec()).login == "dev@h"
+
+
 # ── getters ──────────────────────────────────────────────────────────────────
 
 

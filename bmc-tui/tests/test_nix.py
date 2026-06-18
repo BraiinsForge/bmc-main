@@ -63,6 +63,23 @@ def test_build_rejects_path_count_mismatch(monkeypatch: pytest.MonkeyPatch) -> N
         nix.real().build([Pkg("a", "1", ".#a^out"), Pkg("b", "1", ".#b^out")])
 
 
+def test_build_out_returns_the_lone_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[list[str]] = []
+    monkeypatch.setattr(
+        nix.subprocess,
+        "run",
+        lambda argv, **_: seen.append(argv) or _cp(argv, "/nix/store/init-tarball\n"),
+    )
+    assert nix.real().build_out(".#init-tarball-armv7") == "/nix/store/init-tarball"
+    assert seen == [["nix", "build", "--no-link", "--print-out-paths", ".#init-tarball-armv7"]]
+
+
+def test_build_out_rejects_multiple_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(nix.subprocess, "run", lambda *a, **_: _cp(list(a[0]), "/one\n/two\n"))
+    with pytest.raises(RuntimeError, match="printed 2 paths"):
+        nix.real().build_out(".#init-tarball-armv7")
+
+
 def test_copy_skips_under_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[object] = []
     monkeypatch.setattr(nix.subprocess, "run", lambda *a, **k: calls.append(a))

@@ -10,6 +10,7 @@ import shlex
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from bmc_tui import console
 from bmc_tui.device import Device
@@ -25,6 +26,12 @@ _PROFILE_DIR = "/nix/var/nix/gcroots/profiles/bmc"
 _NIX_CLI = f"{_PROFILE_DIR}/bin/bmc-nix-cli"
 
 _NIX_CONF = "/etc/nix/nix.conf"
+
+# Device-side nix store: a directory on the data partition, bind-mounted at /nix
+# so the read-only rootfs gains a writable store. Matches the init tarball layout.
+_NIX_STORE = "/nix"
+_NIX_BACKING = "/mnt/data/nix"
+_INIT_TARBALL = ".#init-tarball-armv7"
 
 
 @stage("Device reachable")
@@ -180,6 +187,83 @@ def _register_cmd(built: list[Built], *, cli: str = _NIX_CLI) -> str:
         args += ["--name", b.name, "--version", b.version, "--store-path", b.store_path]
     inner = " ".join(shlex.quote(a) for a in args)
     return f"PATH=/run/current-profile/bin:$PATH {inner}"
+
+
+# ── device init ───────────────────────────────────────────────────────────────
+
+
+@dataclass
+class Provisioning:
+    """Mutable carrier threaded through the init stages."""
+
+    tarball: Path | None = None  # the built init tarball, located by build_init_tarball
+
+
+@stage("Nix store absent")
+def ensure_store_absent(dev: Device) -> str:
+    # A populated store means an already-initialised device; reinitialising over
+    # it would orphan the live store, so we refuse and hand back the clear-down.
+    remedy = f"ssh {dev.login} 'umount /nix 2>/dev/null; rm -rf /mnt/data/nix /nix'"
+    require(
+        not _store_populated(dev),
+        f"{console.lit(_NIX_STORE)} or {console.lit(_NIX_BACKING)} already populated — "
+        f"to reinitialise, first clear them: {console.lit(remedy)}",
+    )
+    return "store is clean"
+
+
+@stage("Bind-mount /nix")
+def mount_nix_store(dev: Device) -> str:
+    done_if(_nix_mounted(dev))
+    dev.run(f"mkdir -p {_NIX_BACKING} {_NIX_STORE} && mount --bind {_NIX_BACKING} {_NIX_STORE}")
+    return f"{console.lit(_NIX_BACKING)} → {console.lit(_NIX_STORE)}"
+
+
+@stage("Build init tarball")
+def build_init_tarball(nix: Nix, plan: Provisioning) -> str:
+    # The derivation's out is a directory holding exactly one .tar.gz.
+    out = nix.build_out(_INIT_TARBALL)
+    tarballs = sorted(Path(out).glob("*.tar.gz"))
+    require(
+        len(tarballs) == 1,
+        f"expected one .tar.gz in {console.lit(out)}, found {len(tarballs)}",
+    )
+    plan.tarball = tarballs[0]
+    size = console.human_size(plan.tarball.stat().st_size)
+    return f"{console.lit(plan.tarball.name)} ({console.lit(size)})"
+
+
+@stage("Stream init tarball")
+def stream_init_tarball(dev: Device, plan: Provisioning) -> str:
+    tarball = plan.tarball
+    if tarball is None:
+        msg = "BUG: init tarball was not built before the stream stage"
+        raise RuntimeError(msg)
+    dev.extract_tar(tarball)
+    return f"extracted {console.lit(tarball.name)} → {console.lit('/')}"
+
+
+@stage("Activate profile")
+def activate_profile(dev: Device) -> str:
+    # Generation 1 is the freshly-extracted profile; its entrypoint wires up the
+    # store on the device (same step nix-init.sh ran by hand).
+    dev.run(f"{_PROFILE_DIR}/1-link/core/activation/entrypoint")
+    return f"activated {console.lit('generation 1')}"
+
+
+def _store_populated(dev: Device) -> bool:
+    # Lists the contents of either store dir; any output means a non-empty store.
+    # Empty-but-present and wholly absent both come back blank, so both pass.
+    listing = dev.read(
+        f'for d in {_NIX_STORE} {_NIX_BACKING}; do [ -d "$d" ] && ls -A "$d" 2>/dev/null; done'
+    )
+    return bool(listing)
+
+
+def _nix_mounted(dev: Device) -> bool:
+    # Match the mount-point field in /proc/mounts (`... /nix ...`); `|| true`
+    # keeps a no-match grep from looking like an ssh failure.
+    return bool(dev.read("grep ' /nix ' /proc/mounts || true"))
 
 
 def _mem_available(dev: Device) -> int:

@@ -56,6 +56,11 @@ class Nix(Protocol):
         progress goes to stderr. Returns the builts in the input order."""
         ...
 
+    def build_out(self, attr: str) -> str:
+        """Realise a single derivation and return its lone out-path — for
+        artifacts (e.g. the init tarball) that carry no package metadata."""
+        ...
+
     def copy(self, store_paths: list[str], dest: str) -> None:
         """Copy closures to `dest`. Under --dry-run, log and skip."""
         ...
@@ -109,6 +114,21 @@ class _RealNix:
             Built(pkg.name, pkg.version, pkg.installable, store_path=path)
             for pkg, path in zip(pkgs, paths, strict=True)
         ]
+
+    def build_out(self, attr: str) -> str:
+        # Single `nix build` of one attr; capture stdout for the out-path, let
+        # nix draw its own progress on the inherited stderr.
+        proc = subprocess.run(
+            ["nix", "build", "--no-link", "--print-out-paths", attr],
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        paths = proc.stdout.split()
+        if len(paths) != 1:
+            msg = f"BUG: nix build printed {len(paths)} paths for {attr}"
+            raise RuntimeError(msg)
+        return paths[0]
 
     def copy(self, store_paths: list[str], dest: str) -> None:
         if dry_run.get():

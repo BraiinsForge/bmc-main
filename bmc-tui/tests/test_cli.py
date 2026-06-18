@@ -5,7 +5,14 @@ from pathlib import Path
 import tyro
 
 from bmc_tui.procedures.deploy import Deploy
+from bmc_tui.procedures.init import Init
 from bmc_tui.procedures.sysupgrade import Sysupgrade
+
+
+def test_init_parses_args() -> None:
+    cmd = tyro.cli(Init, args=["--device", "h"])
+    assert cmd.device == "h"
+    assert cmd.dry_run is False
 
 
 def test_deploy_parses_args() -> None:

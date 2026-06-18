@@ -70,6 +70,12 @@ class Device:
         return self._host
 
     @property
+    def login(self) -> str:
+        """`user@host` SSH login, always explicit — for remediation hints and
+        commands the operator copy-pastes (unlike `print`, which elides root)."""
+        return f"{self._user}@{self._host}"
+
+    @property
     def copy_dest(self) -> str:
         """`nix copy --to` URI driving the device's own nix-store binary, so the
         device needs only the store, not a full nix."""
@@ -113,6 +119,15 @@ class Device:
             console.kv("would upload", f"{local.name} -> {remote}")
             return
         argv = ["ssh", *_SSH_OPTS, f"{self._user}@{self._host}", f"cat > {remote}"]
+        self._exec.stream(argv, _chunks(local))
+
+    def extract_tar(self, local: Path) -> None:
+        """Stream a local tarball into `tar xzf - -C /` on the device, with a
+        live progress bar — no intermediate copy. Under --dry-run, log and skip."""
+        if dry_run.get():
+            console.kv("would extract", f"{local.name} -> /")
+            return
+        argv = ["ssh", *_SSH_OPTS, f"{self._user}@{self._host}", "tar xzf - -C /"]
         self._exec.stream(argv, _chunks(local))
 
     @property

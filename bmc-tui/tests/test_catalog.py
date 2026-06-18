@@ -212,13 +212,17 @@ def test_wait_for_device_times_out() -> None:
 class _Nix:
     """Fake Nix: resolve names from the attr leaf, build to a fake store path."""
 
-    def __init__(self, widgets: tuple[str, ...] = ()) -> None:
+    def __init__(self, widgets: tuple[str, ...] = (), out_dir: str = "") -> None:
         self.widgets = list(widgets)
         self.built: list[Pkg] = []
         self.copied: list[tuple[list[str], str]] = []
+        self.out_dir = out_dir
 
     def discover_widgets(self) -> list[str]:
         return list(self.widgets)
+
+    def build_out(self, attr: str) -> str:
+        return self.out_dir
 
     def resolve(self, attr: str) -> Pkg:
         name = attr.rsplit(".", 1)[-1]
@@ -309,3 +313,75 @@ def test_ensure_nix_cli_bootstraps_when_absent() -> None:
     catalog.ensure_nix_cli(nix, Device("h", backend=_Exec(respond)))
     assert [p.name for p in nix.built] == ["bmc-nix-cli"]
     assert nix.copied  # the closure was shipped
+
+
+# ── device init ───────────────────────────────────────────────────────────────
+
+
+def test_store_absent_passes_when_clean() -> None:
+    # Probe returns nothing — neither store dir exists or both are empty.
+    catalog.ensure_store_absent(Device("h", backend=_Exec(_routes({}))))
+
+
+def test_store_absent_aborts_when_populated() -> None:
+    backend = _Exec(_routes({"for d in": "core\nbmc-nix-cli"}))
+    with pytest.raises(Abort, match="already populated"):
+        catalog.ensure_store_absent(Device("h", backend=backend))
+
+
+def test_mount_nix_store_skips_when_already_mounted() -> None:
+    backend = _Exec(_routes({"/proc/mounts": "/mnt/data/nix /nix none bind 0 0"}))
+    catalog.mount_nix_store(Device("h", backend=backend))
+    assert not any("mount --bind" in argv[-1] for argv in backend.runs)
+
+
+def test_mount_nix_store_binds_when_absent() -> None:
+    backend = _Exec(_routes({}))  # /proc/mounts probe is empty → not mounted
+    catalog.mount_nix_store(Device("h", backend=backend))
+    assert any("mount --bind /mnt/data/nix /nix" in argv[-1] for argv in backend.runs)
+
+
+def test_build_init_tarball_locates_the_archive(tmp_path: Path) -> None:
+    (tmp_path / "nix-2026.tar.gz").write_bytes(b"x")
+    plan = catalog.Provisioning()
+    catalog.build_init_tarball(_Nix(out_dir=str(tmp_path)), plan)
+    assert plan.tarball == tmp_path / "nix-2026.tar.gz"
+
+
+def test_build_init_tarball_aborts_when_archive_missing(tmp_path: Path) -> None:
+    plan = catalog.Provisioning()
+    with pytest.raises(Abort, match=r"expected one \.tar\.gz"):
+        catalog.build_init_tarball(_Nix(out_dir=str(tmp_path)), plan)
+
+
+def test_stream_init_tarball_streams_into_tar(tmp_path: Path) -> None:
+    tarball = tmp_path / "nix.tar.gz"
+    tarball.write_bytes(b"init-bytes")
+    backend = _Exec(_routes({}))
+    catalog.stream_init_tarball(Device("h", backend=backend), catalog.Provisioning(tarball))
+    argv, data = backend.streams[0]
+    assert argv[-1] == "tar xzf - -C /"
+    assert data == b"init-bytes"
+
+
+def test_stream_init_tarball_skips_under_dry_run(tmp_path: Path) -> None:
+    tarball = tmp_path / "nix.tar.gz"
+    tarball.write_bytes(b"x")
+    backend = _Exec(_routes({}))
+    token = dry_run.set(True)
+    try:
+        catalog.stream_init_tarball(Device("h", backend=backend), catalog.Provisioning(tarball))
+    finally:
+        dry_run.reset(token)
+    assert backend.streams == []
+
+
+def test_stream_init_tarball_raises_without_built_tarball() -> None:
+    with pytest.raises(RuntimeError, match="BUG"):
+        catalog.stream_init_tarball(Device("h", backend=_Exec(_routes({}))), catalog.Provisioning())
+
+
+def test_activate_profile_runs_the_entrypoint() -> None:
+    backend = _Exec(_routes({}))
+    catalog.activate_profile(Device("h", backend=backend))
+    assert backend.runs[-1][-1].endswith("/bmc/1-link/core/activation/entrypoint")
