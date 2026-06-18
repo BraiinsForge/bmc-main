@@ -24,7 +24,7 @@ default:
 # === Quick local validation (default; LLM-friendly) ===
 
 # Fast sanity check, not CI-reproducible (use `validate-full` for that).
-validate: format clippy python
+validate: format clippy python validate-wasm
     just manifest::check-schema
     nix build -L ".#checks.{{ NIX_SYSTEM }}.content"
     nix build -L ".#checks.{{ NIX_SYSTEM }}.docs-wasm"
@@ -72,11 +72,14 @@ validate-full:
 
 # === WASM Runtime ===
 
-# Validate the bmc-wasm-runtime crate (format, lint, clippy, test, build all wasm widget workspaces).
+# Validate the wasm runtime + widget workspaces (format, lint, clippy, test, build).
 validate-wasm: format validate-wasm-deny validate-wasm-no-fmt
     cargo clippy -p bmc-wasm-runtime --all-targets --features testbed -- -D warnings
     cargo clippy -p bmc-wasm-runtime --bin capture --features capture -- -D warnings
-    cargo nextest run -p bmc-wasm-runtime
+    # Wasm crates only: a full --workspace build breaks feature unification (bmc-wasm-sdk loses bmc_render_macros).
+    cargo nextest run -p bmc-wasm-runtime -p bmc-wasm-sdk -p bmc-wasm-sdk-macros -p bmc-wasm-protocol -p bmc-wasm-thin -p bmc-wasm-thin-protocol
+    # Production widgets are lint-gated (matches CI clippy-wasm-widgets); examples below build but aren't held to -D warnings.
+    (cd widgets-wasm && cargo clippy --target wasm32-unknown-unknown --workspace -- -D warnings)
     for root in $(bmc-wasm-runtime/tools/widget_root.py); do (cd "$root" && cargo build --target wasm32-unknown-unknown --workspace) || exit 1; done
 
 # Block bloat crates from creeping into the wasm32 dep graph (source: `nix/checks.nix::cargo-deny-wasm`).
