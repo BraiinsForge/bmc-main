@@ -26,7 +26,7 @@ resvg.workspace = true
 sublime_fuzzy.workspace = true
 taffy.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 # Workaround for egui glow backend not setting NSColorSpace on macOS (egui#2712).
 [target.'cfg(target_os = "macos")'.dependencies]

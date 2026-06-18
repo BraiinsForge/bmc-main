@@ -289,10 +289,12 @@ impl StorybookApp {
             };
             match HotReloader::new(so_path, &workspace_root()) {
                 Ok(mut reloader) => {
-                    let started = if reloader.start_build().is_ok() {
-                        Some(Instant::now())
-                    } else {
-                        None
+                    let started = match reloader.start_build() {
+                        Ok(()) => Some(Instant::now()),
+                        Err(e) => {
+                            tracing::error!("hot-reload: initial build failed to start: {e}");
+                            None
+                        }
                     };
                     (Vec::new(), Vec::new(), Some(reloader), started)
                 }
@@ -605,7 +607,7 @@ impl StorybookApp {
             }
             ReloadEvent::BuildFailed(stderr) => {
                 self.build_started = None;
-                tracing::warn!("hot-reload: build failed");
+                tracing::warn!("hot-reload: build failed:\n{stderr}");
                 self.build_error = Some(stderr);
             }
         }
