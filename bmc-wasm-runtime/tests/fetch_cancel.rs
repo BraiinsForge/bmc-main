@@ -29,8 +29,8 @@ fn fetch_cancel_wat() -> &'static str {
       (global $req_id (mut i32) (i32.const 0))
       (global $response_count (mut i32) (i32.const 0))
 
-      (func (export "__bmc_sdk_version") (result i64)
-        i64.const 65536)
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const 131072)
 
       (func (export "__alloc") (param $len i32) (result i32)
         (i32.const 1024))

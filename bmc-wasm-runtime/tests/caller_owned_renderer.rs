@@ -31,8 +31,8 @@ fn painting_wat() -> &'static str {
       (import "env" "host_fill_rect"
         (func $host_fill_rect (param i32 i32 i32 i32 i32)))
       (memory (export "memory") 1)
-      (func (export "__bmc_sdk_version") (result i64)
-        i64.const 65536)
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const 131072)
       (func (export "render") (param i32)
         i32.const 0
         i32.const 0

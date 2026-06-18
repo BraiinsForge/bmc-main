@@ -45,10 +45,10 @@ use common::headless_egl;
 /// Test widget that counts lifecycle invocations and records observations
 /// on each `on_params_update` call. Exports observation getters used by the tests.
 ///
-/// SDK version reported: (0, 1, 0) — matches `bmc_wasm_protocol::SDK_VERSION`
+/// SDK version reported: (0, 2, 0) — matches `bmc_wasm_protocol::SDK_VERSION`
 /// at the time of writing. If the host's major bumps, this fixture needs to bump too.
 fn probe_widget_wat() -> &'static str {
-    // Packed SDK version: major=0 | minor=1<<16 | patch=0<<32 = 0x10000 = 65536.
+    // Packed SDK version: major=0 | minor=2<<16 | patch=0<<32 = 0x20000 = 131072.
     // Update this constant in lockstep with `bmc_wasm_protocol::SDK_VERSION` (asserted below).
     r#"
     (module
@@ -65,8 +65,8 @@ fn probe_widget_wat() -> &'static str {
       (global $last_snapshot_len_in_update (mut i32) (i32.const 0))
 
       ;; Required by the host. Returns packed SDK_VERSION = (0, 1, 0).
-      (func (export "__bmc_sdk_version") (result i64)
-        i64.const 65536)
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const 131072)
 
       ;; Required by the host. Body is intentionally trivial — these tests don't render.
       (func (export "render") (param i32))
@@ -115,8 +115,8 @@ fn oob_snapshot_traps_wat() -> &'static str {
 
       (memory (export "memory") 1)
 
-      (func (export "__bmc_sdk_version") (result i64)
-        i64.const 65536)
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const 131072)
 
       (func (export "render") (param i32))
 
@@ -149,8 +149,8 @@ fn system_probe_widget_wat() -> &'static str {
       (global $last_system_version (mut i64) (i64.const 0))
       (global $last_system_snapshot_len (mut i32) (i32.const 0))
 
-      (func (export "__bmc_sdk_version") (result i64)
-        i64.const 65536)
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const 131072)
 
       (func (export "render") (param i32))
 
@@ -196,8 +196,8 @@ fn dual_probe_widget_wat() -> &'static str {
       (global $params_count (mut i32) (i32.const 0))
       (global $system_count (mut i32) (i32.const 0))
 
-      (func (export "__bmc_sdk_version") (result i64)
-        i64.const 65536)
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const 131072)
 
       (func (export "render") (param i32))
 
@@ -229,8 +229,8 @@ fn oob_system_snapshot_traps_wat() -> &'static str {
 
       (memory (export "memory") 1)
 
-      (func (export "__bmc_sdk_version") (result i64)
-        i64.const 65536)
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const 131072)
 
       (func (export "render") (param i32))
 
@@ -252,8 +252,8 @@ fn misbehaving_submit_tree_wat() -> &'static str {
 
       (memory (export "memory") 1)
 
-      (func (export "__bmc_sdk_version") (result i64)
-        i64.const 65536)
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const 131072)
 
       (func (export "render") (param i32))
 
@@ -281,8 +281,8 @@ fn touch_probe_widget_wat() -> &'static str {
 
       (global $touch_count (mut i32) (i32.const 0))
 
-      (func (export "__bmc_sdk_version") (result i64)
-        i64.const 65536)
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const 131072)
 
       (func (export "render") (param i32))
 
@@ -350,7 +350,7 @@ fn sdk_version_constant_matches_fixture_assumption() {
     let packed = u64::from(major) | (u64::from(minor) << 16) | (u64::from(patch) << 32);
     assert_eq!(
         packed, 65_536,
-        "probe WAT fixtures hardcode `i64.const 65536` for `__bmc_sdk_version`; \
+        "probe WAT fixtures hardcode `i64.const 65536` for `__bmc_sdk_init`; \
          host SDK version drifted to ({major}, {minor}, {patch}) — update fixtures."
     );
 }
@@ -642,7 +642,7 @@ fn widget_without_hook_is_silently_fine() {
     let wat = r#"
         (module
           (memory (export "memory") 1)
-          (func (export "__bmc_sdk_version") (result i64) i64.const 65536)
+          (func (export "__bmc_sdk_init") (result i64) i64.const 131072)
           (func (export "render") (param i32)))
     "#;
     let (mut runtime, _renderer) = build_runtime(wat, &gl, BTreeMap::new());
@@ -694,7 +694,7 @@ fn widget_without_on_touch_drops_touch_without_requesting_a_frame() {
     let wat = r#"
         (module
           (memory (export "memory") 1)
-          (func (export "__bmc_sdk_version") (result i64) i64.const 65536)
+          (func (export "__bmc_sdk_init") (result i64) i64.const 131072)
           (func (export "render") (param i32)))
     "#;
     let (mut runtime, _renderer) = build_runtime(wat, &gl, BTreeMap::new());

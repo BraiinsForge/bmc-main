@@ -10,9 +10,7 @@ use std::time::Instant;
 
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{
-    BLACK, ICON_METER, RED_60, SDK_VERSION, SDK_VERSION_EXPORT, version_unpack,
-};
+use bmc_wasm_protocol::{BLACK, ICON_METER, RED_60, SDK_INIT_EXPORT, SDK_VERSION, version_unpack};
 use chrono::{DateTime, FixedOffset};
 use wasmi::{Caller, Extern, Linker};
 
@@ -101,7 +99,7 @@ fn in_lifecycle<R>(
     result
 }
 
-/// Call the widget's `__bmc_sdk_version` export and validate against the host.
+/// Call the widget's `__bmc_sdk_init` export and validate against the host.
 ///
 /// Returns the widget's `(major, minor, patch)` version on success.
 /// Rejects on missing export or major version mismatch.
@@ -112,12 +110,12 @@ fn check_sdk_version(
     let (major, minor, patch) = SDK_VERSION;
 
     let version_func = instance
-        .get_typed_func::<(), u64>(&*store, SDK_VERSION_EXPORT)
+        .get_typed_func::<(), u64>(&*store, SDK_INIT_EXPORT)
         .map_err(|_| {
             anyhow::anyhow!(
-                "widget missing '{SDK_VERSION_EXPORT}' export — \
+                "widget missing '{SDK_INIT_EXPORT}' export — \
              if using Rust SDK, update bmc-wasm-sdk; \
-             otherwise export a `{SDK_VERSION_EXPORT}() -> u64` function \
+             otherwise export a `{SDK_INIT_EXPORT}() -> u64` function \
              (packed major|minor<<16|patch<<32, host expects {major}.{minor}.{patch})"
             )
         })?;
@@ -1302,8 +1300,8 @@ mod tests {
         r#"
         (module
           (memory (export "memory") 1)
-          (func (export "__bmc_sdk_version") (result i64)
-            i64.const 65536)
+          (func (export "__bmc_sdk_init") (result i64)
+            i64.const 131072)
           (func (export "render") (param i32)))
         "#
     }

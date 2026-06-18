@@ -55,9 +55,9 @@
 //! ```
 //!
 //! Optional. The host runs it once during instantiation if exported.
-//! Use for setup that must complete before the first `render`: panic-hook
-//! installation, KV reads to restore persisted state, kick-off fetches
-//! whose response will populate the first frame.
+//! Use for setup that must complete before the first `render`: KV reads to
+//! restore persisted state, kick-off fetches whose response will populate the
+//! first frame. (The SDK auto-installs the panic hook — no widget setup needed.)
 //!
 //! Viewport dimensions are no longer passed as arguments — call [`widget_size`]
 //! from anywhere (in `init`, in `render`, in helpers) and you get the same `WidgetSize`
@@ -203,12 +203,43 @@
 #![expect(clippy::cast_possible_truncation)]
 #![cfg_attr(target_arch = "wasm32", expect(clippy::cast_sign_loss))]
 
-// Embed protocol version as a WASM export.
-// The host calls this after instantiation to verify compatibility.
+// SDK instantiation handshake the host calls once: installs the panic hook,
+// returns the SDK version for the compat check.
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
-pub extern "C" fn __bmc_sdk_version() -> u64 {
+pub extern "C" fn __bmc_sdk_init() -> u64 {
+    install_panic_hook();
     version_pack(SDK_VERSION)
+}
+
+/// Logs widget panics as `file:line: message` — file name only, since the build
+/// path is meaningless for out-of-tree widgets and the host adds the widget name.
+/// Without it, `panic = "abort"` traps as a bare `unreachable`.
+///
+/// Verified on-device — a missing-param panic that was previously an opaque
+/// `unreachable` trap now reads in the host log (widget name supplied by the
+/// host's per-widget tracing span):
+///
+/// ```text
+/// ERROR widget{wasm="weather.wasm"}: widget panic at typed.rs:52: BUG: required param `location` missing from snapshot
+/// ```
+#[cfg(target_arch = "wasm32")]
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let (file, line) = info.location().map_or(("?", 0), |l| {
+            (
+                l.file().rsplit(['/', '\\']).next().unwrap_or(l.file()),
+                l.line(),
+            )
+        });
+        let msg = info
+            .payload()
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| info.payload().downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("panic");
+        crate::log_error!("widget panic at {}:{}: {}", file, line, msg);
+    }));
 }
 
 // -- WASM-only modules (require host FFI) --

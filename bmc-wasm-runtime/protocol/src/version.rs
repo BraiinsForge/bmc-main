@@ -2,8 +2,8 @@
 
 //! SDK protocol version for host/widget compatibility.
 //!
-//! The version is exported as `__bmc_sdk_version` from every compiled widget.
-//! The host calls this after instantiation and rejects on major version mismatch.
+//! Every widget exports `__bmc_sdk_init`; the host calls it once to read the
+//! version (rejecting on major mismatch) and install the panic hook.
 
 /// Current SDK protocol version (major, minor, patch).
 ///
@@ -13,8 +13,8 @@
 /// - Host-side behavioral contracts (e.g. button click reporting)
 pub const SDK_VERSION: (u16, u16, u16) = (0, 1, 0);
 
-/// Name of the WASM export that returns the packed SDK version.
-pub const SDK_VERSION_EXPORT: &str = "__bmc_sdk_version";
+/// The instantiation-handshake export: returns the version, installs the hook.
+pub const SDK_INIT_EXPORT: &str = "__bmc_sdk_init";
 
 /// Pack a version tuple into a u64 for passing through WASM export.
 #[must_use]

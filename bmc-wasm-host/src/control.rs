@@ -95,12 +95,20 @@ pub fn accept_and_load(
     let factory: Rc<dyn crate::render_target::RenderTargetFactory> =
         Rc::new(EglRenderTargetFactory);
 
-    let slot =
+    // Tag load-time logs (incl. a widget's panic-hook output) with the widget,
+    // so a panic during load names the widget, not just the host's target.
+    let wasm = path
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("widget");
+    let slot = {
+        let _span = tracing::info_span!("widget", wasm).entered();
         WidgetSlot::from_handshake(&path, wayland_fd, client.try_clone()?, peer_pid, factory)
             .map_err(|e| {
                 let _ = write_ack(&client, &AckMsg::Err(format!("load: {e}")));
                 e
-            })?;
+            })?
+    };
 
     write_ack(&client, &AckMsg::Ok)?;
     tracing::info!(

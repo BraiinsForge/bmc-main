@@ -11,9 +11,9 @@ can silently produce garbage rendering, crash on missing host functions, or misi
 
 ### Mechanism: exported function
 
-The SDK defines a `#[no_mangle] pub extern "C" fn __bmc_sdk_version() -> u64` that returns the version packed into a
-single `u64` (`major | minor << 16 | patch << 32`). Any widget depending on `bmc-wasm-sdk` automatically exports this
-function. The host calls it after instantiation but before `init`/`render` and rejects on mismatch.
+The SDK defines a `#[no_mangle] pub extern "C" fn __bmc_sdk_init() -> u64` that returns the version packed into a single
+`u64` (`major | minor << 16 | patch << 32`). Any widget depending on `bmc-wasm-sdk` automatically exports this function.
+The host calls it after instantiation but before `init`/`render` and rejects on mismatch.
 
 Why exported function over a WASM custom section: `#[link_section]` statics from dependency rlibs get stripped by
 wasm-ld in debug builds (no LTO). Only release builds with `lto = true` preserve them. Exported functions survive in all
@@ -32,7 +32,7 @@ The canonical constant is in `bmc-wasm-protocol` (the shared wire-format crate u
 exported function references it — any widget depending on `bmc-wasm-sdk` gets the version export automatically. No
 widget code changes needed.
 
-Non-Rust toolchains would need to export `__bmc_sdk_version() -> u64` manually (same packing scheme).
+Non-Rust toolchains would need to export `__bmc_sdk_init() -> u64` manually (same packing scheme).
 
 ### Host-side check
 
@@ -55,7 +55,7 @@ The check runs after instantiation (since it calls the export) but before any wi
 | File                      | Role                                                                             |
 | ------------------------- | -------------------------------------------------------------------------------- |
 | `protocol/src/version.rs` | `SDK_VERSION` constant, export name, pack/unpack helpers                         |
-| `sdk/src/lib.rs`          | `#[no_mangle] __bmc_sdk_version()` — auto-exported from every widget             |
+| `sdk/src/lib.rs`          | `#[no_mangle] __bmc_sdk_init()` — auto-exported from every widget                |
 | `src/runtime.rs`          | `check_sdk_version()` — calls export after instantiation; `sdk_version()` getter |
 | `src/bin/testbed.rs`      | Prints version to CLI, shows in window title (including on hot-reload)           |
 

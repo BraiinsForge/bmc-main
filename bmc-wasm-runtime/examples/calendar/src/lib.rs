@@ -14,15 +14,6 @@ use std::collections::HashMap;
 #[expect(clippy::wildcard_imports)]
 use bmc_wasm_sdk::*;
 
-/// Install a panic hook that logs the panic message before aborting.
-/// Without this, `panic = "abort"` just emits `unreachable` with no info.
-fn install_panic_hook() {
-    std::panic::set_hook(Box::new(|info| {
-        let msg = info.to_string();
-        log_error!("PANIC: {}", msg.as_str());
-    }));
-}
-
 use calendar::{CalendarSource, CalendarState};
 
 /// Refresh interval for iCal feeds (15 minutes).
@@ -72,7 +63,6 @@ thread_local! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn init() {
-    install_panic_hook();
     THEME_KEY.with(|t| {
         *t.borrow_mut() = match kv::get_string("theme").as_deref() {
             Some("light") => render::ThemeKey::Light,

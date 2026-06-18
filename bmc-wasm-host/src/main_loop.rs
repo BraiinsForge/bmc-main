@@ -381,6 +381,9 @@ fn run_loop(
             let delta_ms = slot.tick_delta(now);
             slot.advance_runtime_time(chrono::Local::now().fixed_offset(), now);
 
+            // Bind the guard — an unbound `.entered()` exits the span at once,
+            // before the render whose panics it should tag with the widget.
+            let _span = tracing::info_span!("widget", wasm = %slot.wasm_basename).entered();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 slot.render(renderer_ptr, delta_ms, shared)
             }));

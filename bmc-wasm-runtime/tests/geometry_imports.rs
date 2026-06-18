@@ -18,8 +18,8 @@ fn geometry_probe_wat() -> &'static str {
 
       (memory (export "memory") 1)
 
-      (func (export "__bmc_sdk_version") (result i64)
-        i64.const 65536)
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const 131072)
 
       (func (export "render") (param i32))
 

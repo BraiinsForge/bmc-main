@@ -82,7 +82,7 @@ major and accepts widgets for that SDK line. It moves independently of:
 - The host binary version (a host update that preserves the SDK compatibility line does not bump it).
 - The thin control protocol as long as that protocol remains compatible within the SDK line.
 
-The host still validates `__bmc_sdk_version` during per-widget setup as defense in depth. If a future SDK major needs to
+The host still validates `__bmc_sdk_init` during per-widget setup as defense in depth. If a future SDK major needs to
 run alongside the current one, it gets its own socket/lockfile path and therefore its own host process. Minor/patch
 control-protocol changes must remain backwards-compatible within a given SDK major; if the thin/host control protocol
 must break without an SDK bump, that needs an explicit migration plan rather than silently reusing the same SDK socket.
@@ -177,7 +177,7 @@ inherit any state from the thin wrapper that spawned it.
    `deck_widget_manager_v1`, call `get_widget_surface`, wait for `configure_done`. The compositor's `SO_PEERCRED` lookup
    on this connection authoritatively binds the resulting surface to the widget instance the coordinator registered for
    the thin's PID. The host captures the initial size, params JSON, and settings from the configure batch.
-4. Load WASM from `wasm_path`, validate `__bmc_sdk_version` major-equality, construct `WasmWidgetRuntime` against the
+4. Load WASM from `wasm_path`, validate `__bmc_sdk_init` major-equality, construct `WasmWidgetRuntime` against the
    shared `glow::Context`.
 5. Send `Ack::Ok` on the control socket. Insert the slot in the table with initial lifecycle state `dormant`.
 

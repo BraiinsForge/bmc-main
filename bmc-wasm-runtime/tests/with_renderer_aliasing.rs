@@ -24,8 +24,8 @@ fn probe_wat() -> &'static str {
     r#"
     (module
       (memory (export "memory") 1)
-      (func (export "__bmc_sdk_version") (result i64)
-        i64.const 65536)
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const 131072)
       (func (export "render") (param i32)))
     "#
 }
@@ -88,8 +88,8 @@ fn painting_wat() -> &'static str {
       (import "env" "host_fill_rect"
         (func $host_fill_rect (param i32 i32 i32 i32 i32)))
       (memory (export "memory") 1)
-      (func (export "__bmc_sdk_version") (result i64)
-        i64.const 65536)
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const 131072)
       (func (export "render") (param i32)
         i32.const 0
         i32.const 0
@@ -227,8 +227,8 @@ fn registering_wat(png: &[u8], tag: &str) -> String {
           (memory (export "memory") 1)
           (data (i32.const 0) "{blob}")
           (global $registered (mut i32) (i32.const 0))
-          (func (export "__bmc_sdk_version") (result i64)
-            i64.const 65536)
+          (func (export "__bmc_sdk_init") (result i64)
+            i64.const 131072)
           (func (export "render") (param i32)
             (if (i32.eqz (global.get $registered))
               (then
