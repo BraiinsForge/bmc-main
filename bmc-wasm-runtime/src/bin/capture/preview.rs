@@ -128,7 +128,16 @@ fn encode_video(ffmpeg: &Path, frame_dir: &Path, output: &Path, fps: u32) -> Res
             "-i",
         ])
         .arg(&input_pattern)
-        .args(["-c:v", "libx264", "-pix_fmt", "yuv420p"])
+        // libx264 rejects odd dimensions; the `small` capture size is 317x238
+        // (odd width), so pad each axis up to the next even number (≤1px, black).
+        .args([
+            "-vf",
+            "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+        ])
         .arg(output)
         .status()
         .context("failed to spawn ffmpeg")?;
