@@ -126,12 +126,16 @@ pub(super) struct RecordingState {
     pub(super) auto_capture: bool,
 }
 
-pub(super) fn record_size_to_idx(s: &str) -> usize {
+/// Map a record-size name to its tile index, or `None` for an unknown name.
+/// Unknown names are rejected loudly by `validate_recording_target` rather
+/// than silently defaulting to the full tile.
+pub(super) fn record_size_to_idx(s: &str) -> Option<usize> {
     match s {
-        "large" => 1,
-        "medium" => 2,
-        "small" => 3,
-        _ => 0, // "full" and unknown sizes default to tile 0
+        "full" => Some(0),
+        "large" => Some(1),
+        "medium" => Some(2),
+        "small" => Some(3),
+        _ => None,
     }
 }
 

@@ -353,7 +353,11 @@ fn validate_recording_target(
     let Some(size_name) = record_size else {
         return Ok(());
     };
-    let active_tile = record_size_to_idx(size_name);
+    let Some(active_tile) = record_size_to_idx(size_name) else {
+        return Err(format!(
+            "unknown record size '{size_name}'; valid sizes are full, large, medium, small"
+        ));
+    };
     if active_tile >= layout.tiles.len() {
         return Err(format!(
             "record size '{size_name}' is not available on platform '{active_platform_id}' \
@@ -1217,7 +1221,8 @@ impl TestbedApp {
         };
 
         let recording_state = cli.record_size.as_ref().map(|size_name| {
-            let active_tile = record_size_to_idx(size_name);
+            let active_tile = record_size_to_idx(size_name)
+                .expect("BUG: record size already validated by validate_recording_target");
             let widget_root = cli.resolved_widget_root();
             // Capture's fixture-header parser requires a timezone suffix on the time
             // field (e.g. `2026-05-13T15:48:38+02:00`); a naive datetime is rejected.
@@ -2033,6 +2038,20 @@ mod layout_tests {
                 "BMC100 catalog viewport size must match the preserved arrangement",
             );
         }
+    }
+
+    #[test]
+    fn validate_recording_target_rejects_unknown_size_and_accepts_known() {
+        let cat = bundled();
+        let p = cat.platform("BMC100").expect("BUG: BMC100 must exist");
+        let layout = TileLayout::for_platform(p);
+        for s in ["full", "large", "medium", "small"] {
+            validate_recording_target(Some(s), "BMC100", &layout)
+                .unwrap_or_else(|e| panic!("BUG: known size '{s}' must validate: {e}"));
+        }
+        let err = validate_recording_target(Some("SIZE=small"), "BMC100", &layout)
+            .expect_err("BUG: unknown size must be rejected, not defaulted to full");
+        assert!(err.contains("unknown record size 'SIZE=small'"), "{err}");
     }
 
     #[test]
