@@ -1,7 +1,7 @@
-# Capture configuration for visual regression testing.
-
-# ISS needs time so the globe renders with the fetched position.
 settle_delay = 5
 
 [fixtures]
 full = "fixtures/full.jsonl.gz"
+large = "fixtures/large.jsonl.gz"
+medium = "fixtures/medium.jsonl.gz"
+small = "fixtures/small.jsonl.gz"
