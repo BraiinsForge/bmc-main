@@ -104,14 +104,12 @@ Skip this step if the widget will only be installed on-demand.
 
 ## Deploying to a device
 
-Once the widget is registered in `nix/packages.nix`, you can deploy it to a device using `nix-deploy.sh`. This script
-builds the full Nix package, copies it to the device and activates a new profile generation with it. It works for both
-**native** and **wasm** widgets:
+Once the widget is registered in `nix/packages.nix`, you can deploy it to a device using `deck deploy`. It builds the
+full Nix package, copies it to the device and activates a new profile generation with it. It works for both **native**
+and **wasm** widgets:
 
 ```bash
-./scripts/nix-deploy.sh '.#deck-packages.flip-clock' 192.168.1.2
-# or
-DEVICE_IP=192.168.1.2 ./scripts/nix-deploy.sh '.#deck-packages.flip-clock'
+nix run .#deck -- deploy --device 192.168.1.2 --packages '.#deck-packages.flip-clock'
 ```
 
 The script:
@@ -134,10 +132,10 @@ nix develop .#armv7-glibc-release
 ./scripts/nix-cargo-deploy.sh widget my-widget 192.168.1.2
 ```
 
-This requires the widget to already be present on the device (deployed at least once with `nix-deploy.sh` or via the
-init tarball).
+This requires the widget to already be present on the device (deployed at least once with `deck deploy` or via the init
+tarball).
 
-NOTE: any subsequent `nix-deploy.sh` will override the effect of `nix-cargo-deploy.sh`
+NOTE: any subsequent `deck deploy` will override the effect of `nix-cargo-deploy.sh`
 
 **Wasm widgets are never deployed through `nix-cargo-deploy.sh`** — that script handles native binaries only. For wasm
-widgets, re-run `nix-deploy.sh`.
+widgets, re-run `deck deploy`.

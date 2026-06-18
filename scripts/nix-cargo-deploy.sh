@@ -16,7 +16,7 @@
 #
 # Prerequisites:
 #   - Executed in a devshell, such as .#armv7-glibc-release
-#   - Device initialized with nix-init.sh and packages deployed with nix-deploy.sh
+#   - Device initialized with `deck init` and packages deployed with `deck deploy`
 # Extra cargo flags:
 #   If you need to add extra flags, such as `--features profiling` for the compositor,
 #   use the environment variable CARGO_EXTRA_FLAGS.
@@ -65,11 +65,11 @@ set +x
 
 deploy_path="${deploy_dir}/${bin_name}"
 
-# Verify the target path exists on the device (requires prior nix-deploy.sh)
+# Verify the target path exists on the device (requires a prior `deck deploy`)
 # shellcheck disable=SC2029 # Intentional client-side expansion
 if ! ssh "root@${device}" "[ -e ${profile_path} ]"; then
     echo "Error: ${profile_path} not found on ${device}."
-    echo "Deploy the full package first with nix-deploy.sh."
+    echo "Deploy the full package first with 'deck deploy'."
     exit 1
 fi
 
@@ -82,7 +82,7 @@ if [ "$cmd" = "compositor" ]; then
         echo "  The compositor's default frontend path (baked via"
         echo "  BMC_WEB_FRONTEND_DIR) will be missing and the UI will not load."
         echo "  Deploy the frontend assets via the .#deck-packages.bmc-frontend"
-        echo "  package through nix-deploy.sh."
+        echo "  package through 'deck deploy'."
         printf '******************************************************************\033[0m\n\n'
     fi
 fi

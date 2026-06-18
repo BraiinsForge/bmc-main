@@ -1,80 +1,68 @@
-# Nix Device Scripts
+# Deck Device Operations
 
-Helper scripts for initializing and deploying packages to the Deck. All scripts accept the device IP either as an
-argument or via the `DEVICE_IP` environment variable.
+Initialising, deploying to, and iterating on a Deck from a dev host. The store-init, package-deploy, and firmware-flash
+flows live in the `deck` harness (`nix run .#deck`); a single shell script remains for fast native-binary iteration.
 
 ## Prerequisites
 
 - SSH access as root to the device
 - The device has a `/mnt/data` partition available
 
-## nix-init.sh — First-time Nix store setup
+## deck init — First-time Nix store setup
 
-Initializes a fresh device with the Nix store. This is a **one-time** operation for devices that have never had Nix
-installed.
+`nix run .#deck -- init` initializes a fresh device with the Nix store. This is a **one-time** operation for devices
+that have never had Nix installed.
 
-The script:
-
-1. Checks that `/nix` and `/mnt/data/nix` are empty (refuses to overwrite)
-2. Creates `/mnt/data/nix` and bind-mounts it to `/nix`
-3. Builds the `init-tarball-armv7` flake output (contains a minimal Nix store with `nix-store` binary and the core
-   profile)
-4. Streams and extracts the tarball on the device
-5. Activates the initial profile
+It refuses to overwrite a populated `/nix` or `/mnt/data/nix`, bind-mounts `/mnt/data/nix` at `/nix`, builds and streams
+the `init-tarball-armv7` flake output (a minimal Nix store with the `nix-store` binary and the core profile), extracts
+it on the device, and activates the initial profile generation.
 
 ```sh
-# With positional argument
-./scripts/nix-init.sh 192.168.1.2
-
-# With environment variable
-DEVICE_IP=192.168.1.2 ./scripts/nix-init.sh
+nix run .#deck -- init --device 192.168.1.2
 ```
 
-After this, the device has a working `/nix/store` and a `nix-store` binary at `/run/current-profile/bin/nix-store`,
-which is required by `nix-deploy.sh`.
+Add `--dry-run` to probe the device and build the tarball without mutating anything. After init the device has a working
+`/nix/store` and a `nix-store` binary at `/run/current-profile/bin/nix-store`, which `deck deploy` relies on.
 
-To reinitialize a device, first clean up the existing store:
+To reinitialize a device, first clean up the existing store (the abort hint prints this command):
 
 ```sh
 ssh root@192.168.1.2 'umount /nix 2>/dev/null; rm -rf /mnt/data/nix /nix'
 ```
 
-## nix-deploy.sh — Deploy packages to an initialized device
+## deck deploy — Deploy packages to an initialized device
 
-This is the primary means of deployment throughout day-to-day development. This kind of deployment always builds Nix
-packages, though. So for faster iteration on a single component, like a native widget or compositor, you might prefer
-`nix-cargo-deploy.sh`
+`nix run .#deck -- deploy` is the primary means of deployment throughout day-to-day development. This kind of deployment
+always builds Nix packages, though. So for faster iteration on a single component, like a native widget or compositor,
+you might prefer `nix-cargo-deploy.sh`.
 
-Builds Nix flake packages and copies their entire closures to the device's `/nix/store` using `nix copy`, then installs
-them into the bmc profile via one `bmc-nix-cli` call. The device must already be initialized with `nix-init.sh`.
+It builds Nix flake packages and copies their entire closures to the device's `/nix/store` using `nix copy`, then
+installs them into the bmc profile via one `bmc-nix-cli` call. The device must already be initialized with `deck init`.
 
-Package arguments are full flake URIs. Index packages (exposed under `deck-packages`) are auto-detected and their `.pkg`
-output is built. Raw nixpkgs derivations (e.g. `armv7-nixpkgs`) are built directly. If the last argument looks like an
-IPv4 address, it is used as the device IP; otherwise the script uses `DEVICE_IP`.
+With no `--packages`, it deploys `core` plus every widget (discovered from the nix-owned `category` metadata). Pass
+`--packages` with full flake URIs to deploy a specific set. Index packages (exposed under `deck-packages`) are
+auto-detected and their `.pkg` output is built; raw nixpkgs derivations (e.g. `armv7-nixpkgs`) are built directly.
 
 ```sh
-# To deploy our Deck packages
-./scripts/nix-deploy.sh '.#deck-packages.core' 192.168.1.2
-./scripts/nix-deploy.sh '.#deck-packages.flip-clock' 192.168.1.2
-./scripts/nix-deploy.sh '.#deck-packages.core' '.#deck-packages.pomodoro' 192.168.1.2
-# To deploy packages from nixpkgs
-./scripts/nix-deploy.sh '.#armv7-nixpkgs.strace' 192.168.1.2
-./scripts/nix-deploy.sh '.#armv7-nixpkgs.file' 192.168.1.2
+# core plus every widget
+nix run .#deck -- deploy --device 192.168.1.2
+
+# a specific set of Deck packages
+nix run .#deck -- deploy --device 192.168.1.2 --packages '.#deck-packages.core' '.#deck-packages.pomodoro'
+
+# a package from nixpkgs
+nix run .#deck -- deploy --device 192.168.1.2 --packages '.#armv7-nixpkgs.strace'
 ```
-
-The script prints the `/nix/store/...` path of each deployed package. You can then run binaries from those paths on the
-device.
-
-Nixpkgs is exposed as pkgs, the armv7 packages are exposed as "armv7-nixpkgs". So you can for example do
-`./scripts/nix-deploy.sh .#armv7-nixpkgs.strace` to deploy the strace package.
 
 The deployed packages are installed into the bmc profile and activated immediately. Executables are available under
 `/run/current-profile/bin/` for core and nixpkgs packages. Widget packages (native and wasm) are installed under
 `/run/current-profile/lib/bmc-widgets/<name>/`.
 
+Run `nix run .#deck -- <init|deploy|sysupgrade> --help` for the full option set of each procedure.
+
 ## nix-cargo-deploy.sh — Fast impure deploy of cargo-built native binaries
 
-This is for fast iteration over a given component of the system. Use nix-deploy.sh unless you're just making simple
+This is for fast iteration over a given component of the system. Use `deck deploy` unless you're just making simple
 fixes that you expect to work in the produced version. This will be faster, especially if you are doing a change in a
 leaf crate.
 
@@ -83,12 +71,12 @@ to `/mnt/data/tmp/cargo-deploy/`, and the existing profile entry under `/run/cur
 staged binary via symlink. Dynamic linker and rpath dependencies are copied over with `nix copy`.
 
 This script handles only native binaries (compositor and native widgets). **Wasm widgets are never deployed through this
-script** — use `nix-deploy.sh` for wasm widgets.
+script** — use `deck deploy` for wasm widgets.
 
 This is not suitable for deploying a brand new widget package directly. It only redeploys targets that already exist in
-the profile. Deploy the widget package first via `nix-deploy.sh`, then iterate with `nix-cargo-deploy.sh`.
+the profile. Deploy the widget package first via `deck deploy`, then iterate with `nix-cargo-deploy.sh`.
 
-The device must already have the packages deployed via `nix-deploy.sh` (so the target paths exist).
+The device must already have the packages deployed via `deck deploy` (so the target paths exist).
 
 ```sh
 # Execute in a dev shell such as nix develop ".#armv7-glibc-release"
@@ -122,7 +110,7 @@ The compositor binary (`bmc-openwrt`) has `/run/current-profile/www/bmc` baked i
 `nix-cargo-deploy.sh compositor` will warn.
 
 The dev-only `.#deck-packages.bmc-frontend` package wraps the frontend build so that its contents end up under
-`<profile>/www/bmc/`. It is marked `category = "dev"` and is NOT included in the init tarball. Use `nix-deploy.sh` for
+`<profile>/www/bmc/`. It is marked `category = "dev"` and is NOT included in the init tarball. Use `deck deploy` for
 deployment.
 
 ## Example: Running bmc-openwrt on the device
