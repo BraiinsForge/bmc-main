@@ -33,7 +33,7 @@ def test_size_and_remote_path(tmp_path: Path) -> None:
     _make_tar(fw)
     image = Image(fw)
     assert image.size == fw.stat().st_size
-    assert image.remote_path == "/mnt/data/fw.tar"
+    assert image.remote_path == "/tmp/fw.tar"
 
 
 def test_sysupgrade_dir_and_is_sysupgrade(tmp_path: Path) -> None:

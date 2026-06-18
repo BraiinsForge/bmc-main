@@ -34,7 +34,7 @@ class Sysupgrade:
 
         catalog.ensure_device_reachable(dev)
         catalog.validate_firmware_image(image, device_target=dev.target)
-        catalog.ensure_free_space(dev, "/mnt/data", image.size)
+        catalog.ensure_free_space(dev, image.remote_dir, image.size)
         catalog.upload_firmware(dev, image)
         catalog.sysupgrade(dev, image, force=self.force, assume_yes=self.yes)
         catalog.wait_for_device(dev)

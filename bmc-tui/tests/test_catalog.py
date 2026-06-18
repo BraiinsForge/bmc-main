@@ -103,21 +103,18 @@ def test_validate_aborts_on_missing_image(tmp_path: Path) -> None:
 
 # ── ensure_free_space ─────────────────────────────────────────────────────────
 
-_DF = (
-    "Filesystem 1K-blocks Used Available Use% Mounted\n"
-    "/dev/mmcblk0p4 2902528 1145000 1611000 42% /mnt/data"
-)
+_DF = "Filesystem 1K-blocks Used Available Use% Mounted\ntmpfs 102400 4096 98304 4% /tmp"
 
 
 def test_free_space_ok() -> None:
     dev = Device("h", backend=_Exec(_routes({"df -k": _DF})))
-    catalog.ensure_free_space(dev, "/mnt/data", 1_000_000)  # 1.6 GB free
+    catalog.ensure_free_space(dev, "/tmp", 50_000_000)  # ~96 MiB free
 
 
 def test_free_space_aborts_when_insufficient() -> None:
     dev = Device("h", backend=_Exec(_routes({"df -k": _DF})))
     with pytest.raises(Abort, match="only"):
-        catalog.ensure_free_space(dev, "/mnt/data", 5_000_000_000)
+        catalog.ensure_free_space(dev, "/tmp", 200_000_000)
 
 
 # ── upload_firmware ───────────────────────────────────────────────────────────

@@ -13,7 +13,9 @@ from pathlib import Path
 
 from bmc_tui import console
 
-_REMOTE_DIR = "/mnt/data"
+# /tmp (tmpfs), not the /nix-shared /mnt/data: sysupgrade flashes a /tmp image
+# in place, keeping firmware off the contended nix store.
+_REMOTE_DIR = "/tmp"
 
 
 @dataclass
@@ -35,8 +37,12 @@ class Image:
             return hashlib.file_digest(f, "sha256").hexdigest()
 
     @property
+    def remote_dir(self) -> str:
+        return _REMOTE_DIR
+
+    @property
     def remote_path(self) -> str:
-        return f"{_REMOTE_DIR}/{self.path.name}"
+        return f"{self.remote_dir}/{self.path.name}"
 
     def print(self) -> None:
         """Print a short image summary for a run preamble."""

@@ -47,14 +47,14 @@ def validate_firmware_image(image: Image, *, device_target: str) -> None:
     )
 
 
-@stage("Free space on /mnt/data")
+@stage("Free space")
 def ensure_free_space(dev: Device, remote_dir: str, need: int) -> str:
     free = _free_bytes(dev, remote_dir)
     require(
         free >= need,
         f"need {console.human_size(need)} on {remote_dir}, only {console.human_size(free)} free",
     )
-    return f"{console.lit(console.human_size(free))} free"
+    return f"{console.lit(remote_dir)}: {console.lit(console.human_size(free))} free"
 
 
 @stage("Upload firmware")
