@@ -101,20 +101,18 @@ def test_validate_aborts_on_missing_image(tmp_path: Path) -> None:
         catalog.validate_firmware_image(missing, device_target=_TARGET)
 
 
-# ── ensure_free_space ─────────────────────────────────────────────────────────
-
-_DF = "Filesystem 1K-blocks Used Available Use% Mounted\ntmpfs 102400 4096 98304 4% /tmp"
+# ── ensure_memory ─────────────────────────────────────────────────────────────
 
 
-def test_free_space_ok() -> None:
-    dev = Device("h", backend=_Exec(_routes({"df -k": _DF})))
-    catalog.ensure_free_space(dev, "/tmp", 50_000_000)  # ~96 MiB free
+def test_memory_ok() -> None:
+    dev = Device("h", backend=_Exec(_routes({"MemAvailable": "102924"})))  # ~100 MiB
+    catalog.ensure_memory(dev, 50_000_000)
 
 
-def test_free_space_aborts_when_insufficient() -> None:
-    dev = Device("h", backend=_Exec(_routes({"df -k": _DF})))
-    with pytest.raises(Abort, match="only"):
-        catalog.ensure_free_space(dev, "/tmp", 200_000_000)
+def test_memory_aborts_when_insufficient() -> None:
+    dev = Device("h", backend=_Exec(_routes({"MemAvailable": "102924"})))
+    with pytest.raises(Abort, match="free RAM"):
+        catalog.ensure_memory(dev, 200_000_000)
 
 
 # ── upload_firmware ───────────────────────────────────────────────────────────

@@ -12,6 +12,10 @@ from bmc_tui.device import Device
 from bmc_tui.image import Image
 from bmc_tui.stage import dry_run, entrypoint, require
 
+# sysupgrade stages the tar in /tmp (tmpfs) and pivots to a ramdisk, so it needs
+# RAM beyond the tar: a ~45 MB tar was observed needing >70 MB free, hence +20 MB.
+_FLASH_HEADROOM = 20 * 1024 * 1024
+
 
 @dataclass
 class Sysupgrade:
@@ -34,7 +38,7 @@ class Sysupgrade:
 
         catalog.ensure_device_reachable(dev)
         catalog.validate_firmware_image(image, device_target=dev.target)
-        catalog.ensure_free_space(dev, image.remote_dir, image.size)
+        catalog.ensure_memory(dev, image.size + _FLASH_HEADROOM)
         catalog.upload_firmware(dev, image)
         catalog.sysupgrade(dev, image, force=self.force, assume_yes=self.yes)
         catalog.wait_for_device(dev)

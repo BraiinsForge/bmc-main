@@ -47,14 +47,14 @@ def validate_firmware_image(image: Image, *, device_target: str) -> None:
     )
 
 
-@stage("Free space")
-def ensure_free_space(dev: Device, remote_dir: str, need: int) -> str:
-    free = _free_bytes(dev, remote_dir)
+@stage("Memory headroom")
+def ensure_memory(dev: Device, need: int) -> str:
+    available = _mem_available(dev)
     require(
-        free >= need,
-        f"need {console.human_size(need)} on {remote_dir}, only {console.human_size(free)} free",
+        available >= need,
+        f"need {console.human_size(need)} free RAM, only {console.human_size(available)} available",
     )
-    return f"{console.lit(remote_dir)}: {console.lit(console.human_size(free))} free"
+    return f"{console.lit(console.human_size(available))} RAM available"
 
 
 @stage("Upload firmware")
@@ -182,10 +182,10 @@ def _register_cmd(built: list[Built], *, cli: str = _NIX_CLI) -> str:
     return f"PATH=/run/current-profile/bin:$PATH {inner}"
 
 
-def _free_bytes(dev: Device, remote_dir: str) -> int:
-    # `df -k` → last line, column 4 (Available, in 1K blocks).
-    available_kb = dev.read(f"df -k {remote_dir}").splitlines()[-1].split()[3]
-    return int(available_kb) * 1024
+def _mem_available(dev: Device) -> int:
+    # /tmp is swapless tmpfs, so free RAM (not df) bounds the upload + flash.
+    kb = dev.read("awk '/^MemAvailable:/ {print $2}' /proc/meminfo")
+    return int(kb) * 1024
 
 
 def _remote_sha(dev: Device, remote_path: str) -> str:
