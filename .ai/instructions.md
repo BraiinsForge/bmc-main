@@ -76,8 +76,10 @@ nix develop .#armv7-glibc-debug
 
 ### Deploying to Device
 
-For deploying and running on the Braiins Deck, see [`docs/nix-device-scripts.md`](docs/nix-device-scripts.md). Key
-scripts:
+`nix run .#deck` is the staged harness for deploying packages and flashing firmware to a Deck; run it with `--help` (and
+`<subcommand> --help`) for its procedures and flags.
+
+For the lower-level scripts, see [`docs/nix-device-scripts.md`](docs/nix-device-scripts.md). Key scripts:
 
 - `scripts/nix-init.sh` — one-time Nix store setup
 - `scripts/nix-deploy.sh` — deploy Nix packages
