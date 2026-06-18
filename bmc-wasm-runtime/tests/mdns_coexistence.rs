@@ -9,14 +9,17 @@ use bmc_wasm_runtime::{RuntimeConfig, WasmWidgetRuntime};
 mod common;
 use common::headless_egl;
 
-fn probe_wat() -> &'static str {
-    r#"
+fn probe_wat() -> String {
+    format!(
+        r#"
     (module
       (memory (export "memory") 1)
       (func (export "__bmc_sdk_init") (result i64)
-        i64.const 131072)
+        i64.const {})
       (func (export "render") (param i32)))
-    "#
+    "#,
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+    )
 }
 
 #[test]

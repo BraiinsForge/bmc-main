@@ -15,8 +15,9 @@ use bmc_wasm_runtime::{RuntimeConfig, WasmWidgetRuntime};
 mod common;
 use common::headless_egl;
 
-fn delayed_fetch_wat() -> &'static str {
-    r#"
+fn delayed_fetch_wat() -> String {
+    format!(
+        r#"
     (module
       (import "env" "host_fetch_after"
         (func $host_fetch_after
@@ -29,7 +30,7 @@ fn delayed_fetch_wat() -> &'static str {
       (global $response_count (mut i32) (i32.const 0))
 
       (func (export "__bmc_sdk_init") (result i64)
-        i64.const 131072)
+        i64.const {})
 
       (func (export "__alloc") (param $len i32) (result i32)
         (i32.const 1024))
@@ -62,7 +63,9 @@ fn delayed_fetch_wat() -> &'static str {
 
       (func (export "response_count") (result i32)
         global.get $response_count))
-    "#
+    "#,
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+    )
 }
 
 #[test]

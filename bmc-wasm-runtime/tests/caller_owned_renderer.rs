@@ -25,14 +25,15 @@ use common::headless_egl;
 /// would never run. With it, ten iterations of the host-import reborrow are
 /// the regression surface: if a future refactor breaks the parked-pointer
 /// dispatch, this test fails along with the install-once aliasing test.
-fn painting_wat() -> &'static str {
-    r#"
+fn painting_wat() -> String {
+    format!(
+        r#"
     (module
       (import "env" "host_fill_rect"
         (func $host_fill_rect (param i32 i32 i32 i32 i32)))
       (memory (export "memory") 1)
       (func (export "__bmc_sdk_init") (result i64)
-        i64.const 131072)
+        i64.const {})
       (func (export "render") (param i32)
         i32.const 0
         i32.const 0
@@ -40,7 +41,9 @@ fn painting_wat() -> &'static str {
         i32.const 10
         i32.const 4278190335
         call $host_fill_rect))
-    "#
+    "#,
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+    )
 }
 
 #[test]

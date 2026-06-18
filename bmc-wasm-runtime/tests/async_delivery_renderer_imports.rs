@@ -65,7 +65,7 @@ fn fetch_callback_registers_bitmap_wat() -> String {
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
           (func (export "__bmc_sdk_init") (result i64)
-            i64.const 131072)
+            i64.const {sdk})
           (func (export "__alloc") (param $len i32) (result i32)
             (i32.const 1024))
           (func (export "init")
@@ -97,6 +97,7 @@ fn fetch_callback_registers_bitmap_wat() -> String {
         method_len = method.len(),
         url_len = url.len(),
         tag_len = tag.len(),
+        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
     )
 }
 

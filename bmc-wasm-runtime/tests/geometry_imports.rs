@@ -9,8 +9,9 @@ use bmc_wasm_protocol::{DisplayShape, ViewportShape};
 use bmc_wasm_runtime::{RuntimeConfig, RuntimeDisplayInfo, WasmWidgetRuntime};
 
 /// Minimal widget that re-exports the geometry imports.
-fn geometry_probe_wat() -> &'static str {
-    r#"
+fn geometry_probe_wat() -> String {
+    format!(
+        r#"
     (module
       (import "env" "host_widget_viewport_shape" (func $vp_shape (result i32)))
       (import "env" "host_display_size" (func $disp_size (result i64)))
@@ -19,7 +20,7 @@ fn geometry_probe_wat() -> &'static str {
       (memory (export "memory") 1)
 
       (func (export "__bmc_sdk_init") (result i64)
-        i64.const 131072)
+        i64.const {})
 
       (func (export "render") (param i32))
 
@@ -37,7 +38,9 @@ fn geometry_probe_wat() -> &'static str {
       (func (export "read_display_dpi") (result i32)
         call $disp_shape_dpi
         i32.wrap_i64))
-    "#
+    "#,
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+    )
 }
 
 #[test]

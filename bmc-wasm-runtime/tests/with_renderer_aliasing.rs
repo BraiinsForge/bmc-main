@@ -20,14 +20,17 @@ use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
 mod common;
 use common::headless_egl;
 
-fn probe_wat() -> &'static str {
-    r#"
+fn probe_wat() -> String {
+    format!(
+        r#"
     (module
       (memory (export "memory") 1)
       (func (export "__bmc_sdk_init") (result i64)
-        i64.const 131072)
+        i64.const {})
       (func (export "render") (param i32)))
-    "#
+    "#,
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+    )
 }
 
 fn build(gl: &headless_egl::HeadlessGl) -> (WasmWidgetRuntime, bmc_render::gpu::FemtoVgRenderer) {
@@ -82,14 +85,15 @@ fn install_use_clear_cycle() {
 
 /// WAT widget that paints one rectangle from `render` via `host_fill_rect`.
 /// Exercises the parked-pointer reborrow path end-to-end.
-fn painting_wat() -> &'static str {
-    r#"
+fn painting_wat() -> String {
+    format!(
+        r#"
     (module
       (import "env" "host_fill_rect"
         (func $host_fill_rect (param i32 i32 i32 i32 i32)))
       (memory (export "memory") 1)
       (func (export "__bmc_sdk_init") (result i64)
-        i64.const 131072)
+        i64.const {})
       (func (export "render") (param i32)
         i32.const 0
         i32.const 0
@@ -97,7 +101,9 @@ fn painting_wat() -> &'static str {
         i32.const 10
         i32.const 4278190335
         call $host_fill_rect))
-    "#
+    "#,
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+    )
 }
 
 #[test]
@@ -228,7 +234,7 @@ fn registering_wat(png: &[u8], tag: &str) -> String {
           (data (i32.const 0) "{blob}")
           (global $registered (mut i32) (i32.const 0))
           (func (export "__bmc_sdk_init") (result i64)
-            i64.const 131072)
+            i64.const {sdk})
           (func (export "render") (param i32)
             (if (i32.eqz (global.get $registered))
               (then
@@ -239,7 +245,8 @@ fn registering_wat(png: &[u8], tag: &str) -> String {
                     (i32.const {png_offset})
                     (i32.const {png_len})))
                 (global.set $registered (i32.const 1))))))
-        "#
+        "#,
+        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
     )
 }
 
