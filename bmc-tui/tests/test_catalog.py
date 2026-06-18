@@ -123,18 +123,34 @@ def test_free_space_aborts_when_insufficient() -> None:
 # ── upload_firmware ───────────────────────────────────────────────────────────
 
 
-def test_upload_streams_when_absent(tmp_path: Path) -> None:
+def test_upload_streams_then_verifies_when_absent(tmp_path: Path) -> None:
     image = _image(tmp_path)
-    backend = _Exec(_routes({"du -b": ""}))  # absent → -1 != size
+    backend = _Exec(_cp)  # placeholder responder; the real one is set below
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1] if argv and argv[0] == "ssh" else " ".join(argv)
+        if "sha256sum" in cmd:  # absent until the upload streams, then it matches
+            return _cp(argv, image.sha256 if backend.streams else "")
+        return _cp(argv)
+
+    backend._respond = respond
     catalog.upload_firmware(Device("h", backend=backend), image)
-    assert backend.streams  # the firmware was uploaded
+    assert backend.streams  # the firmware was uploaded and its checksum verified
 
 
 def test_upload_skips_when_already_uploaded(tmp_path: Path) -> None:
     image = _image(tmp_path)
-    backend = _Exec(_routes({"du -b": str(image.size)}))
+    backend = _Exec(_routes({"sha256sum": image.sha256}))  # present and intact
     catalog.upload_firmware(Device("h", backend=backend), image)
     assert not backend.streams  # skipped
+
+
+def test_upload_aborts_on_checksum_mismatch(tmp_path: Path) -> None:
+    image = _image(tmp_path)
+    backend = _Exec(_routes({"sha256sum": "deadbeef"}))  # device bytes never match
+    with pytest.raises(Abort, match="checksum mismatch"):
+        catalog.upload_firmware(Device("h", backend=backend), image)
+    assert backend.streams  # streamed, then caught the bad upload before flashing
 
 
 # ── sysupgrade ────────────────────────────────────────────────────────────────

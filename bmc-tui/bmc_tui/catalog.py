@@ -59,9 +59,19 @@ def ensure_free_space(dev: Device, remote_dir: str, need: int) -> str:
 
 @stage("Upload firmware")
 def upload_firmware(dev: Device, image: Image) -> str:
-    done_if(_remote_size(dev, image.remote_path) == image.size)
+    # The done_if doubles as the integrity gate on re-runs: a matching on-device
+    # sha256 means the upload is already present and intact, nothing to redo.
+    done_if(_remote_sha(dev, image.remote_path) == image.sha256)
     dev.push(image.path, image.remote_path)
-    return f"→ {console.lit(image.remote_path)}"
+    if dry_run.get():
+        return f"→ {console.lit(image.remote_path)}"
+    # A short/corrupt upload would otherwise be flashed blind under `sysupgrade
+    # -F`; verifying the bytes on the device before we ever flash prevents it.
+    require(
+        _remote_sha(dev, image.remote_path) == image.sha256,
+        f"upload corrupted: {console.lit(image.path.name)} checksum mismatch on device",
+    )
+    return f"→ {console.lit(image.remote_path)} (sha256 verified)"
 
 
 @stage("Sysupgrade")
@@ -178,10 +188,10 @@ def _free_bytes(dev: Device, remote_dir: str) -> int:
     return int(available_kb) * 1024
 
 
-def _remote_size(dev: Device, remote_path: str) -> int:
-    # `du -b` matches the firmware's own COMMAND; -1 when the file is absent.
-    raw = dev.read(f"du -b {remote_path} 2>/dev/null | cut -f1")
-    return int(raw or "-1")
+def _remote_sha(dev: Device, remote_path: str) -> str:
+    # Hex sha256 of the on-device file; empty when it is absent (the pipe exits
+    # 0 even though sha256sum fails), so it never matches a real local digest.
+    return dev.read(f"sha256sum {remote_path} 2>/dev/null | cut -d' ' -f1")
 
 
 def _wait_reachable(

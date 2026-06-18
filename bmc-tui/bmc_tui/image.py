@@ -5,8 +5,10 @@ not in ``version.json`` (which is the bosminer-toml schema marker). The
 authoritative compatibility check runs on the device during sysupgrade.
 """
 
+import hashlib
 import tarfile
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 
 from bmc_tui import console
@@ -23,6 +25,14 @@ class Image:
     @property
     def size(self) -> int:
         return self.path.stat().st_size
+
+    @cached_property
+    def sha256(self) -> str:
+        """Hex SHA-256 of the whole tarball, matched against the device's
+        `sha256sum` to prove the upload arrived intact. Cached — the file is
+        immutable for the run, and hashing it is not free."""
+        with self.path.open("rb") as f:
+            return hashlib.file_digest(f, "sha256").hexdigest()
 
     @property
     def remote_path(self) -> str:
