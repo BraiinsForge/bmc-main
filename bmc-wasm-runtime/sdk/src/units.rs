@@ -86,7 +86,9 @@ mod tests {
     use super::*;
 
     fn approx(a: f64, b: f64) -> bool {
-        (a - b).abs() < 1e-6
+        // Relative tolerance: at magnitudes around 1e4 (m/s), an absolute 1e-6
+        // is tighter than the precision of the hand-written decimal literal.
+        (a - b).abs() <= 1e-6 * b.abs().max(1.0)
     }
 
     #[test]
