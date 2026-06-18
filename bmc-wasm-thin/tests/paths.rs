@@ -11,19 +11,14 @@ use bmc_wasm_thin_protocol::{
 
 #[test]
 fn socket_defaults_follow_runtime_sdk_major() {
-    assert_eq!(bmc_wasm_protocol::SDK_VERSION, (0, 1, 0));
-    assert_eq!(
-        socket_path_for_sdk_major(bmc_wasm_protocol::SDK_VERSION.0),
-        default_socket_path(),
-    );
-    assert_eq!(
-        default_socket_path(),
-        Path::new("/run/bmc/wasm-host-sdk-v0.sock")
-    );
-    assert_eq!(
-        default_lockfile_path(),
-        Path::new("/run/bmc/wasm-host-sdk-v0.lock")
-    );
+    // Derives the major rather than pinning the version: this exercises the
+    // socket-path scheme, not the SDK version, so minor/patch bumps shouldn't touch it.
+    let major = bmc_wasm_protocol::SDK_VERSION.0;
+    let socket = format!("/run/bmc/wasm-host-sdk-v{major}.sock");
+    let lock = format!("/run/bmc/wasm-host-sdk-v{major}.lock");
+    assert_eq!(socket_path_for_sdk_major(major), default_socket_path());
+    assert_eq!(default_socket_path(), Path::new(&socket));
+    assert_eq!(default_lockfile_path(), Path::new(&lock));
 }
 
 #[test]
