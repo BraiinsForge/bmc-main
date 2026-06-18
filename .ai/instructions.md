@@ -4,9 +4,9 @@ This file provides shared guidance to AI coding agents working in this repositor
 both `AGENTS.md` and `CLAUDE.md`, and `.ai/` is the canonical repo-owned directory for shared AI instructions and
 skills.
 
-New skills go in `.ai/skills/<name>/SKILL.md` — never directly under `.claude/skills/` or `.codex/skills/`, which are
-symlinks into `.ai/skills/`. See the `ai-shared-layout` skill for the full layout, the `*.local.*` convention for
-per-user state, and the symlink-restore procedure.
+New skills go in `.ai/skills/<name>/SKILL.md` - never directly under `.claude/skills/` or `.agents/skills/`. Those
+tool-specific directories contain per-skill symlinks back to `.ai/skills/`. See the `ai-shared-layout` skill for the
+full layout, the `*.local.*` convention for per-user state, and the symlink-restore procedure.
 
 ## Overview
 
