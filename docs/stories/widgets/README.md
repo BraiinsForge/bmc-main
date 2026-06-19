@@ -48,6 +48,13 @@ A widget that counts down to the next SpaceX launch and shows its mission detail
 landing, booster reuse, payload, and spacecraft — across the four widget sizes, with a rocket illustration at the full
 size. Reads launch data from the Braiins Forge Nexus and keeps the last known launch on screen when a refresh fails.
 
+### [Nameday Widget](nameday.md)
+
+A widget that shows whose nameday it is today for a chosen country. Displays a country header with a flag, today's names
+as a large headline, and an optional date readout. Reads the day's names from the public `nameday.abalin.net` API,
+follows the device timezone to pick the correct local day, refreshes at local midnight, and truncates long name lists
+with an ellipsis. Renders at all four widget sizes on rectangular viewports.
+
 ### [Weather Widget](weather.md)
 
 A widget that shows current weather and forecast data for a chosen location, with hourly and daily forecast layouts

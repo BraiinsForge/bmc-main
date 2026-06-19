@@ -20,6 +20,7 @@ members = [
     "lib/units",
     "mining-clock",
     "mining-info",
+    "nameday",
     "spacex-launch",
     "weather",
 ]

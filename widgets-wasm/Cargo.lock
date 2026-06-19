@@ -677,6 +677,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nameday"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"

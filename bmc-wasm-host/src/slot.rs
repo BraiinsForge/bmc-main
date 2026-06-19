@@ -186,7 +186,7 @@ impl WidgetSlot {
         }
         let viewport_shape = bmc_wasm_protocol::ViewportShape::from(initial.viewport_shape);
         let display = bmc_wasm_runtime::RuntimeDisplayInfo::from(initial.display);
-        let mut runtime = WasmWidgetRuntime::new(
+        let runtime = WasmWidgetRuntime::new(
             &wasm_bytes,
             initial.width,
             initial.height,

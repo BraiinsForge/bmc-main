@@ -1,0 +1,109 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "5062553f-31eb-497c-b513-bb82f41a2809",
+  "version": "0.1.0",
+  "name": "Nameday",
+  "description": "Display today's nameday for the selected country.",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/nameday",
+  "settings": [
+    "localization",
+    "timezone"
+  ],
+  "supported_viewports": [
+    {
+      "type": "rectangular",
+      "min_width": 317,
+      "max_width": 1280,
+      "min_height": 238,
+      "max_height": 480
+    }
+  ],
+  "params": {
+    "country": {
+      "name": "Country",
+      "description": "Country whose name day calendar is used to show today's celebrated names",
+      "type": "string",
+      "default_value": "cz",
+      "enum_values": [
+        {
+          "value": "at",
+          "label": "Austria"
+        },
+        {
+          "value": "cz",
+          "label": "Czechia"
+        },
+        {
+          "value": "de",
+          "label": "Germany"
+        },
+        {
+          "value": "dk",
+          "label": "Denmark"
+        },
+        {
+          "value": "ee",
+          "label": "Estonia"
+        },
+        {
+          "value": "es",
+          "label": "Spain"
+        },
+        {
+          "value": "fi",
+          "label": "Finland"
+        },
+        {
+          "value": "fr",
+          "label": "France"
+        },
+        {
+          "value": "hr",
+          "label": "Croatia"
+        },
+        {
+          "value": "hu",
+          "label": "Hungary"
+        },
+        {
+          "value": "it",
+          "label": "Italy"
+        },
+        {
+          "value": "lt",
+          "label": "Lithuania"
+        },
+        {
+          "value": "lv",
+          "label": "Latvia"
+        },
+        {
+          "value": "pl",
+          "label": "Poland"
+        },
+        {
+          "value": "se",
+          "label": "Sweden"
+        },
+        {
+          "value": "sk",
+          "label": "Slovakia"
+        },
+        {
+          "value": "us",
+          "label": "United States"
+        }
+      ]
+    },
+    "show_date": {
+      "name": "Show Date",
+      "description": "Display the current date alongside the nameday",
+      "type": "boolean",
+      "default_value": true
+    }
+  }
+}
