@@ -42,6 +42,12 @@ A widget that shows mining and Bitcoin network information across four selectabl
 detail screen, a Bitcoin network screen, and a dense combined dashboard. Reads live miner stats over the BOS REST API
 and Bitcoin price and network data from the Braiins public API, with responsive field degradation on smaller displays.
 
+### [SpaceX Launch Widget](spacex-launch.md)
+
+A widget that counts down to the next SpaceX launch and shows its mission details — status, rocket, launch site,
+landing, booster reuse, payload, and spacecraft — across the four widget sizes, with a rocket illustration at the full
+size. Reads launch data from the Braiins Forge Nexus and keeps the last known launch on screen when a refresh fails.
+
 ### [Weather Widget](weather.md)
 
 A widget that shows current weather and forecast data for a chosen location, with hourly and daily forecast layouts

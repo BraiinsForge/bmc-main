@@ -1,6 +1,6 @@
 {
-  "$schema": "../../../bmc-widget-manifest/manifest.schema.json",
-  "uid": "550e8400-e29b-41d4-a716-446655440202",
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "e854e395-5d90-45ca-b4c9-eb5ee327a457",
   "version": "0.1.0",
   "name": "SpaceX Launch",
   "description": "Next SpaceX launch countdown and mission details",

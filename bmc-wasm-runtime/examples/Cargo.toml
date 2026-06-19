@@ -20,7 +20,6 @@ members = [
     "metronome",
     "params-demo",
     "pomodoro",
-    "spacex-launch",
     "stress-test",
 ]
 
