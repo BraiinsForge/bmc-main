@@ -23,6 +23,13 @@ miners over mDNS, polls each for live telemetry, and rolls them up into a fleet 
 per-family credentials, manual-host fallback, and model/family filtering. Falls back to a summary-only screen on smaller
 viewports.
 
+### [ISS Position Widget](iss-position.md)
+
+A live tracker for the International Space Station — at full size a 3D globe with the station marker, its orbital ground
+track, and a day/night terminator; at smaller sizes a position and telemetry panel (ground position, altitude, velocity,
+sunlit/eclipsed). Pulls data from the Braiins nexus service and propagates the live position on-device between
+refreshes. Rectangular viewports only.
+
 ### [Mining Clock Widget](mining-clock.md)
 
 The clock widget reshaped for a miner: a round analog dial wrapped in two live gauge rings — an outer hashrate ring and
