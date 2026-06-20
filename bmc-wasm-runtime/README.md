@@ -51,103 +51,53 @@ pub extern "C" fn render(_delta_ms: u32) {
 
 `init` / `on_params_update` / `on_system_update` / `unload` are all optional — define them only when you need them. The
 full widget lifecycle (when each hook fires, which host imports are legal in each phase, the trap-vs-soft-fail guard
-matrix) lives in the [`bmc_wasm_sdk`](sdk/src/lib.rs) crate-level rustdoc — render it locally with:
-
-```bash
-just wasm::docs
-```
-
-For the full SDK API reference (layout primitives, canvas drawing, animations, transitions, modals, colors, formatting,
-macros) browse the same generated docs.
+matrix) lives in the [`bmc_wasm_sdk`](sdk/src/lib.rs) crate-level rustdoc — render it locally with `just wasm::docs`.
 
 ## Development
 
+Local tasks run through the `wasm` just module; `just wasm::` lists them all. The flake is the source of truth for
+builds (`nix build .#wasm-capture`) — the recipes are local-iteration shortcuts.
+
 ```bash
-# Run testbed with hot reload (preview mode: all 4 sizes)
-make dev EXAMPLE=spacex-launch
-
-# Build and run release (preview mode)
-make run EXAMPLE=spacex-launch
-
-# Single-size mode (default hello-widget)
-make dev
-
-# CPU profile with samply + memory stats
-make profile EXAMPLE=spacex-launch ARGS=--preview
-
-# Check WASM binary size
-make size EXAMPLE=spacex-launch
-
-# Browse SDK API docs
-make docs
+just wasm::dev <widget>      # hot-reload testbed (preview: all sizes)
+just wasm::run <widget>      # release preview
+just wasm::profile <widget>  # CPU profile (samply) + memory stats
+just wasm::size <widget>     # WASM binary size
+just wasm::docs              # browse SDK API docs
 ```
 
-`make dev` and `make run` include `--preview` by default, which renders all 4 widget size variants (Full, Large, Medium,
-Small) simultaneously in a masonry layout with a performance overlay. Pass extra flags via `ARGS=...`.
+## Widgets
+
+Widgets live in two workspaces:
+
+- `examples/` — SDK demos (`hello-widget`, `spacex-launch`, `metronome`, …)
+- `widgets-wasm/` — production widgets (`clock`, `weather`, `iss-position`, `mining-info`, …)
+
+Developer guides for writing widgets — best practices, params, system settings, display geometry, and the regression
+workflow — live in [`docs/devel/wasm-widgets/`](../docs/devel/wasm-widgets/README.md). Read Best Practices before
+writing or changing a widget.
 
 ## Visual Regression Testing
 
-Pixel-level visual regression testing using headless EGL capture and [odiff](https://github.com/dmtrKovalenko/odiff)
-comparison. See `docs/regression-testing.md` for internals and `docs/devel/wasm-widgets/regression-testing.md` (in the
-workspace root) for the widget-author workflow.
+Pixel-level regression testing uses headless EGL capture and [odiff](https://github.com/dmtrKovalenko/odiff). The
+widget-author workflow (opting in, recording fixtures, setting and refreshing baselines) is documented in
+[`docs/devel/wasm-widgets/regression-testing.md`](../docs/devel/wasm-widgets/regression-testing.md); the host-side
+internals are in [`docs/regression-testing.md`](docs/regression-testing.md).
 
 ```bash
-make regression-test EXAMPLE=hello-widget   # capture + diff one widget
-make regression-test-all                     # capture + diff all widgets
-```
-
-### Adding a new widget
-
-```bash
-# 1. Generate a capture config
-capture init examples/my-widget
-#    → edit examples/my-widget/capture/config.toml
-
-# 2. Record fixtures (if the widget fetches data or uses events)
-make record EXAMPLE=my-widget SIZE=full
-#    → uncomment [fixtures] section in config.toml
-
-# 3. Capture, review, and set the baseline
-make capture EXAMPLE=my-widget
-make preview EXAMPLE=my-widget              # review captures/my-widget/preview_full.mp4
-make update-baselines EXAMPLE=my-widget     # compress into baselines.7z
-
-# 4. Verify the baseline passes
-make regression-test EXAMPLE=my-widget
-```
-
-### Accepting visual changes
-
-When a widget intentionally changes its rendering:
-
-```bash
-# 1. Run regression test — review diffs in captures/report.html
-make regression-test EXAMPLE=my-widget
-
-# 2. If the changes look correct, update the baseline
-make update-baselines EXAMPLE=my-widget
-
-# 3. Verify and commit
-make regression-test EXAMPLE=my-widget
-git add examples/my-widget/capture/baselines.7z
-```
-
-If the widget's network calls changed, re-record fixtures first:
-
-```bash
-make record EXAMPLE=my-widget SIZE=full
-make update-baselines EXAMPLE=my-widget
+just wasm::record <widget>            # record fetch/event fixtures
+just wasm::capture <widget>           # capture frames
+just wasm::preview <widget>           # review the captured mp4
+just wasm::update-baselines <widget>  # set/refresh the baseline
+just wasm::verify <widget>            # capture + diff against baseline
+just wasm::verify-all                 # all widgets
 ```
 
 ## Crate Structure
 
-- `bmc-wasm-runtime` — Host runtime: WASM execution (wasmi), flex layout (taffy), GPU rendering (FemtoVG), text shaping
+- `bmc-wasm-runtime` — host runtime: WASM execution (wasmi), flex layout (taffy), GPU rendering (FemtoVG), text shaping
   (cosmic-text)
-- `bmc-wasm-sdk` — Widget SDK (compiled to WASM)
-- `bmc-wasm-protocol` — Shared types and constants
-
-## Example Widgets
-
-- `examples/hello-widget` — Minimal skeleton (default for `make dev`)
-- `examples/spacex-launch` — SpaceX next launch countdown with network fetching and JSON parsing
-- `examples/iss-position` — ISS tracker with 3D globe, SGP4 orbital ground track, and day/night terminator overlay
+- `bmc-wasm-sdk` (`sdk/`) — widget SDK, compiled to WASM
+- `bmc-wasm-sdk-macros` (`sdk-macros/`) — SDK procedural macros
+- `bmc-wasm-protocol` (`protocol/`) — shared types and constants
+- `bmc-svg-compiler` (`svg-compiler/`) — build-time SVG → draw-call compiler
