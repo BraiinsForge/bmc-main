@@ -39,6 +39,26 @@ pub struct Svg {
     pub name: &'static str,
 }
 
+impl Svg {
+    /// The compiled-SVG viewBox `(width, height)`, read from the binary header
+    /// emitted by `bmc-svg-compiler`: `[viewbox_w: f32 LE][viewbox_h: f32 LE]…`.
+    /// The host scales X and Y independently, so a non-square glyph must be
+    /// fitted by the caller (see [`crate::Draw::svg_contain`]) or it comes out
+    /// stretched. Falls back to `(1.0, 1.0)` for a malformed or empty header.
+    #[must_use]
+    pub fn viewbox(&self) -> (f32, f32) {
+        let d = self.data;
+        if d.len() >= 8 {
+            let w = f32::from_le_bytes([d[0], d[1], d[2], d[3]]);
+            let h = f32::from_le_bytes([d[4], d[5], d[6], d[7]]);
+            if w > 0.0 && h > 0.0 {
+                return (w, h);
+            }
+        }
+        (1.0, 1.0)
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod icon_native {
     use super::IconRegistrar;

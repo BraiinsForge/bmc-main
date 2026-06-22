@@ -25,39 +25,13 @@ fn weekday(rfc3339: &str) -> String {
         .to_string()
 }
 
-/// The compiled-SVG viewBox, read from the binary header emitted by
-/// `bmc-svg-compiler`: `[viewbox_w: f32 LE][viewbox_h: f32 LE]…`. The host
-/// scales X and Y independently, so a non-square glyph must be fitted by the
-/// caller or it comes out stretched.
-fn svg_viewbox(svg: &Svg) -> (f32, f32) {
-    let d = svg.data;
-    if d.len() >= 8 {
-        let w = f32::from_le_bytes([d[0], d[1], d[2], d[3]]);
-        let h = f32::from_le_bytes([d[4], d[5], d[6], d[7]]);
-        if w > 0.0 && h > 0.0 {
-            return (w, h);
-        }
-    }
-    (1.0, 1.0)
-}
-
-/// Fit `svg` inside a `size`×`size` box preserving its aspect ratio and
-/// centering it — matching a browser's default `xMidYMid meet`.
-fn icon_draw(svg: &'static Svg, size: f32, color: Color) -> Draw {
-    let (vw, vh) = svg_viewbox(svg);
-    let scale = (size / vw).min(size / vh);
-    let w = vw * scale;
-    let h = vh * scale;
-    Draw::svg((size - w) / 2.0, (size - h) / 2.0, w, h, svg, color)
-}
-
 /// A multi-color weather condition icon. `TRANSPARENT` keeps the SVG's
 /// authored fills (cloud gray, sun yellow, rain blue) intact.
 #[must_use]
 pub(super) fn weather_icon(id: weather_code::IconId, size: f32) -> Node {
     canvas(
         props!(width: size, height: size),
-        vec![icon_draw(icons::icon_svg(id), size, TRANSPARENT)],
+        vec![Draw::svg_contain(icons::icon_svg(id), size, TRANSPARENT)],
     )
 }
 
@@ -66,7 +40,7 @@ pub(super) fn weather_icon(id: weather_code::IconId, size: f32) -> Node {
 pub(super) fn glyph(svg: &'static Svg, size: f32, color: Color) -> Node {
     canvas(
         props!(width: size, height: size),
-        vec![icon_draw(svg, size, color)],
+        vec![Draw::svg_contain(svg, size, color)],
     )
 }
 

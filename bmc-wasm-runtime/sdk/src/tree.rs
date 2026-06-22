@@ -740,6 +740,23 @@ impl Draw {
         }
     }
 
+    /// Fit `svg` inside a `size`×`size` box preserving its aspect ratio and
+    /// centering it — matching a browser's default `xMidYMid meet`. Because the
+    /// host scales X and Y independently, drawing a non-square glyph straight
+    /// into a square box via [`Draw::svg`] would stretch it; this reads the
+    /// glyph's [`Svg::viewbox`] and shrinks the larger axis to fit.
+    ///
+    /// Use `TRANSPARENT` (0) as color to render with original SVG colors,
+    /// or pass a color to tint the entire icon.
+    #[must_use]
+    pub fn svg_contain(svg: &Svg, size: f32, color: Color) -> Self {
+        let (vw, vh) = svg.viewbox();
+        let scale = (size / vw).min(size / vh);
+        let w = vw * scale;
+        let h = vh * scale;
+        Self::svg((size - w) / 2.0, (size - h) / 2.0, w, h, svg, color)
+    }
+
     /// Enable anti-aliasing on this draw command (currently only affects icons).
     #[must_use]
     pub fn with_anti_alias(mut self) -> Self {
