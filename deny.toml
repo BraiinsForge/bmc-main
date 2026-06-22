@@ -66,7 +66,6 @@ skip = [
     { crate = "bincode@1" },
 
     # egui/eframe transitive deps
-    { crate = "clipboard-win@3" },
     { crate = "jni@0.21" },
     { crate = "jni-sys@0.3" },
 
@@ -86,16 +85,12 @@ skip = [
     # Apple/ObjC framework splits (winit vs softbuffer vs slint vs egui)
     { crate = "block2@0.5" },
     { crate = "core-foundation@0.9" },
-    { crate = "core-graphics@0.23" },
-    { crate = "core-graphics-types@0.1" },
     { crate = "objc2@0.5" },
     { crate = "objc2-app-kit@0.2" },
     { crate = "objc2-foundation@0.2" },
-    { crate = "objc2-quartz-core@0.2" },
     { crate = "objc2-ui-kit@0.2" },
 
     # eframe/egui ecosystem splits (slint pulls older versions, eframe pulls newer)
-    { crate = "clipboard-win@3" },
     { crate = "foldhash@0.1" },
     { crate = "glow@0.16" },
     { crate = "jni@0.21" },
@@ -148,7 +143,6 @@ skip = [
 # Platform crate trees with massive version fragmentation — skip subtrees.
 skip-tree = [
     { crate = "windows@0.54" },
-    { crate = "windows@0.58" },
     { crate = "windows@0.61" },
     { crate = "windows-sys@0.45" },
     { crate = "windows-sys@0.48" },
