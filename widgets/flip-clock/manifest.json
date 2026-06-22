@@ -8,6 +8,7 @@
     "url": "https://braiinsforge.com"
   },
   "binary": "bin/bmc-widget-flip-clock",
+  "icon": "assets/icon.svg",
   "settings": [
     "timezone",
     "nightMode",

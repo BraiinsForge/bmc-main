@@ -9,6 +9,7 @@
     "url": "https://braiinsforge.com"
   },
   "binary": "bin/params-demo",
+  "icon": "assets/icon.svg",
   "settings": [],
   "supported_viewports": [
     {

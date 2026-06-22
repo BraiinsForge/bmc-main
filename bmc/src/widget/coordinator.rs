@@ -754,6 +754,7 @@ mod support_tests {
             description: "Test widget".to_owned(),
             author: None,
             binary: PathBuf::from("bin/widget"),
+            icon: None,
             settings: vec![],
             supported_viewports: vec![constraint],
             params: indexmap::IndexMap::new(),
@@ -762,6 +763,7 @@ mod support_tests {
             manifest,
             widget_dir: PathBuf::from("/test/widgets/test-widget"),
             binary_path: PathBuf::from("/test/widgets/test-widget/bin/widget"),
+            icon_path: None,
         }])
     }
 

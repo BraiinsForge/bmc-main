@@ -9,6 +9,7 @@
     "url": "https://braiinsforge.com"
   },
   "binary": "bin/weather",
+  "icon": "assets/icon.svg",
   "settings": [
     "localization",
     "timezone"

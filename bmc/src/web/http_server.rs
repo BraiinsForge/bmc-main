@@ -27,8 +27,9 @@ use tokio::fs::File;
 use tokio_util::io::ReaderStream;
 use tower_http::compression::CompressionLayer;
 use tracing::info;
+use uuid::Uuid;
 
-use crate::{BmcManager, manager::BmcState};
+use crate::{BmcManager, manager::BmcState, widget::WidgetRegistry};
 
 use super::{ServerConfig, captive_portal::CaptivePortalLayer};
 
@@ -37,9 +38,17 @@ const SUPPORT_ARCHIVE_FILENAME_PREFIX: &str = "support_archive_";
 const SUPPORT_ARCHIVE_FILENAME_SUFFIX: &str = ".zip.enc";
 const SUPPORT_ARCHIVE_FORMAT: SupportArchiveFormat = SupportArchiveFormat::ZipEncrypted;
 
+/// On-disk icon path for `/widgets/{uid}/icon`, or `None` (→ 404) for a bad uid,
+/// unknown widget, or no icon. A missing file 404s later when the handler opens it.
+fn widget_icon_path(registry: &WidgetRegistry, uid: &str) -> Option<PathBuf> {
+    let uid = Uuid::parse_str(uid).ok()?;
+    registry.get(&uid).and_then(|info| info.icon_path.clone())
+}
+
 pub(crate) struct HttpServer<T: BmcManager> {
     config: ServerConfig,
     manager: Arc<T>,
+    widget_registry: Arc<WidgetRegistry>,
 }
 
 impl<T: BmcManager> HttpServer<T> {
@@ -49,15 +58,25 @@ impl<T: BmcManager> HttpServer<T> {
     pub(crate) const DEVICE_SETUP_URL_ENDPOINT: &str = "/init_setup";
     pub(crate) const ROOT_URL_ENDPOINT: &str = "/";
     const SUPPORT_ARCHIVE: &str = "/api/get_support_archive";
+    const WIDGET_ICON: &str = "/widgets/{uid}/icon";
 
-    pub(crate) fn new(config: ServerConfig, manager: Arc<T>) -> Self {
-        Self { config, manager }
+    pub(crate) fn new(
+        config: ServerConfig,
+        manager: Arc<T>,
+        widget_registry: Arc<WidgetRegistry>,
+    ) -> Self {
+        Self {
+            config,
+            manager,
+            widget_registry,
+        }
     }
 
     pub(crate) fn build(&self) -> Router {
         Router::new()
             .merge(self.static_file_router())
             .merge(self.general_api_router())
+            .merge(self.widget_icon_router())
             .layer(CompressionLayer::new())
             .layer(CaptivePortalLayer::new(self.manager.clone()))
             .layer(middleware::from_fn(Self::log_request))
@@ -98,6 +117,34 @@ impl<T: BmcManager> HttpServer<T> {
         Router::new()
             .route(Self::SUPPORT_ARCHIVE, get(Self::handle_support_archive))
             .with_state(self.manager.clone())
+    }
+
+    fn widget_icon_router(&self) -> Router {
+        Router::new()
+            .route(Self::WIDGET_ICON, get(Self::handle_widget_icon))
+            .with_state(self.widget_registry.clone())
+    }
+
+    /// Serve a widget's manifest icon. The path is from the trusted install-time
+    /// manifest (the uid only selects the widget), so the URL adds no traversal.
+    async fn handle_widget_icon(
+        State(registry): State<Arc<WidgetRegistry>>,
+        Path(uid): Path<String>,
+    ) -> impl IntoResponse {
+        let Some(icon_path) = widget_icon_path(&registry, &uid) else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        let Ok(file) = File::open(&icon_path).await else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+
+        let filename = icon_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("icon");
+        let headers = Self::get_file_headers(filename, &file).await;
+        let body = Body::from_stream(ReaderStream::new(file));
+        (headers, body).into_response()
     }
 
     async fn file_handler_with_index_fallback(
@@ -340,5 +387,62 @@ impl<T: BmcManager> Clone for IndexState<T> {
             storage: self.storage.clone(),
             manager: self.manager.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr as _;
+
+    use super::*;
+    use crate::widget::{WidgetInfo, WidgetRegistry};
+
+    fn registry_with_icon(uid: Uuid, icon_path: Option<PathBuf>) -> WidgetRegistry {
+        let json = format!(
+            r#"{{
+                "uid": "{uid}",
+                "version": "1.0.0",
+                "name": "T",
+                "description": "T",
+                "binary": "bin/test",
+                "sizes": ["small"]
+            }}"#
+        );
+        let manifest = bmc_widget_manifest::Manifest::from_str(&json).expect("BUG: valid manifest");
+        WidgetRegistry::new(vec![WidgetInfo {
+            manifest,
+            widget_dir: PathBuf::from("/widgets/t"),
+            binary_path: PathBuf::from("/widgets/t/bin/test"),
+            icon_path,
+        }])
+    }
+
+    #[test]
+    fn widget_icon_path_rejects_malformed_uid() {
+        let registry = registry_with_icon(Uuid::new_v4(), Some(PathBuf::from("/icon.svg")));
+        assert!(widget_icon_path(&registry, "not-a-uuid").is_none());
+    }
+
+    #[test]
+    fn widget_icon_path_unknown_uid_is_none() {
+        let registry = registry_with_icon(Uuid::new_v4(), Some(PathBuf::from("/icon.svg")));
+        assert!(widget_icon_path(&registry, &Uuid::new_v4().to_string()).is_none());
+    }
+
+    #[test]
+    fn widget_icon_path_returns_icon_for_known_widget() {
+        let uid = Uuid::new_v4();
+        let registry = registry_with_icon(uid, Some(PathBuf::from("/widgets/t/icon.svg")));
+        assert_eq!(
+            widget_icon_path(&registry, &uid.to_string()),
+            Some(PathBuf::from("/widgets/t/icon.svg"))
+        );
+    }
+
+    #[test]
+    fn widget_icon_path_none_when_widget_has_no_icon() {
+        let uid = Uuid::new_v4();
+        let registry = registry_with_icon(uid, None);
+        assert!(widget_icon_path(&registry, &uid.to_string()).is_none());
     }
 }

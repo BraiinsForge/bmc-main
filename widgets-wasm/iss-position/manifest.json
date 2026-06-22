@@ -9,6 +9,7 @@
     "url": "https://braiinsforge.com"
   },
   "binary": "bin/iss-position",
+  "icon": "assets/icon.svg",
   "settings": [],
   "supported_viewports": [
     {

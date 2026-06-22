@@ -111,12 +111,22 @@ let
     , thin          # thin derivation with bin/bmc-wasm-thin
     , host          # host derivation with bin/bmc-wasm-host
     }:
+    let
+      # The .wasm embeds its runtime assets; only the manifest icon needs
+      # installing so the BMC /widgets/{uid}/icon endpoint can serve it.
+      icon = (builtins.fromJSON (builtins.readFile manifest)).icon or null;
+      iconSrc = if icon == null then null else builtins.dirOf manifest + "/${icon}";
+    in
     pkgs.runCommand "bmc-widget-${name}" { } ''
       base=$out/lib/bmc-widgets/${name}
       mkdir -p "$base/bin" "$base/lib/wasm"
 
       cp ${wasmDir}/${wasmFile} "$base/lib/wasm/${name}.wasm"
       cp ${manifest}            "$base/manifest.json"
+      ${lib.optionalString (icon != null) ''
+        mkdir -p "$(dirname "$base/${icon}")"
+        cp ${iconSrc} "$base/${icon}"
+      ''}
 
       # Unquoted heredoc on purpose: we want $out expanded now (at build
       # time) to bake the absolute store path into the wrapper, while

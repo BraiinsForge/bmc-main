@@ -383,6 +383,8 @@ struct RawManifest {
     author: Option<Author>,
     binary: PathBuf,
     #[serde(default)]
+    icon: Option<PathBuf>,
+    #[serde(default)]
     settings: Vec<SettingKey>,
     #[serde(default)]
     sizes: Option<Vec<SizeType>>,
@@ -455,6 +457,10 @@ pub struct Manifest {
     /// Path to the widget binary, relative to the widget's directory.
     #[schemars(with = "String")]
     pub binary: PathBuf,
+    /// Optional icon path, relative to the widget dir or absolute. Served by BMC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub icon: Option<PathBuf>,
     /// System-provided settings the widget wants injected (locale, timezone, night mode, etc.).
     /// Order is preserved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -508,6 +514,7 @@ impl Manifest {
             description: raw.description,
             author: raw.author,
             binary: raw.binary,
+            icon: raw.icon,
             settings: raw.settings,
             supported_viewports,
             params: raw.params,
@@ -1069,8 +1076,48 @@ mod tests {
             ViewportShape::Rectangular
         );
         assert!(manifest.author.is_none());
+        assert!(manifest.icon.is_none());
         assert!(manifest.settings.is_empty());
         assert!(manifest.params.is_empty());
+    }
+
+    #[test]
+    fn parse_relative_icon() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test Widget",
+            "description": "A test widget",
+            "binary": "bin/test",
+            "icon": "assets/icon.svg",
+            "supported_viewports": [
+                {"type":"rectangular","min_width":317,"max_width":317,
+                 "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}
+            ]
+        }"#;
+        let manifest = Manifest::from_str(json).expect("BUG: should parse");
+        assert_eq!(manifest.icon, Some(PathBuf::from("assets/icon.svg")));
+    }
+
+    #[test]
+    fn parse_absolute_icon() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test Widget",
+            "description": "A test widget",
+            "binary": "bin/test",
+            "icon": "/usr/share/bmc/icons/test.png",
+            "supported_viewports": [
+                {"type":"rectangular","min_width":317,"max_width":317,
+                 "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}
+            ]
+        }"#;
+        let manifest = Manifest::from_str(json).expect("BUG: should parse");
+        assert_eq!(
+            manifest.icon,
+            Some(PathBuf::from("/usr/share/bmc/icons/test.png"))
+        );
     }
 
     #[test]

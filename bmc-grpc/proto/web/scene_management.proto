@@ -139,6 +139,9 @@ message WidgetManifest {
   // Ordered: the FE renders fields in this order.
   // Uniqueness of `key` is enforced server-side.
   repeated ManifestParamDefinition params = 8;
+  // URL the FE loads the widget icon from.
+  // May be an absolute external or host relative internal.
+  optional string icon_url = 9;
 }
 
 // is_optional and per-variant default_value combine to express the four

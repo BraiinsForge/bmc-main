@@ -24,6 +24,13 @@
       "type": "string",
       "maxLength": 200
     },
+    "icon": {
+      "description": "Optional icon path, relative to the widget dir or absolute. Served by BMC.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "name": {
       "description": "Human-readable widget name, shown in the operator UI.\nCapped at 50 characters.",
       "type": "string",

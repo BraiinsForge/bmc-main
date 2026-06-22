@@ -555,6 +555,11 @@ fn widget_info_to_proto(
             .iter()
             .map(|(key, param)| param_definition_to_proto(key.as_str(), param))
             .collect(),
+        // BMC icon endpoint when an icon exists; absent → FE fallback glyph.
+        icon_url: info
+            .icon_path
+            .as_ref()
+            .map(|_| format!("/widgets/{}/icon", manifest.uid)),
     }
 }
 
@@ -1951,6 +1956,7 @@ mod tests {
             description: "T".into(),
             author: None,
             binary: std::path::PathBuf::from("bin/test"),
+            icon: None,
             settings: vec![],
             supported_viewports: vec![bmc_widget_manifest::WidgetViewportConstraint {
                 viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
@@ -1987,6 +1993,7 @@ mod tests {
             description: "T".into(),
             author: None,
             binary: std::path::PathBuf::from("bin/test"),
+            icon: None,
             settings: vec![],
             supported_viewports: vec![bmc_widget_manifest::WidgetViewportConstraint {
                 viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
@@ -2763,6 +2770,7 @@ mod tests {
             description: "Test widget".to_owned(),
             author: None,
             binary: std::path::PathBuf::from("bin/widget"),
+            icon: None,
             settings: vec![],
             supported_viewports: vec![bmc_widget_manifest::WidgetViewportConstraint {
                 viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
@@ -2779,6 +2787,7 @@ mod tests {
             manifest,
             widget_dir: std::path::PathBuf::from("/test/widgets/test-widget"),
             binary_path: std::path::PathBuf::from("/test/widgets/test-widget/bin/widget"),
+            icon_path: None,
         }]));
 
         let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
@@ -3374,5 +3383,39 @@ mod tests {
         let caps = caps_with(None, DisplayShape::Rectangular, 320, 240);
         let platform = PlatformDescriptor::from(&caps);
         assert!(platform.slot_sizes.is_empty());
+    }
+
+    #[test]
+    fn widget_info_to_proto_sets_icon_url_only_with_icon() {
+        use std::str::FromStr as _;
+
+        let uid = uuid::Uuid::new_v4();
+        let json = format!(
+            r#"{{
+                "uid": "{uid}",
+                "version": "1.0.0",
+                "name": "T",
+                "description": "T",
+                "binary": "bin/test",
+                "sizes": ["small"]
+            }}"#
+        );
+        let manifest = bmc_widget_manifest::Manifest::from_str(&json).expect("BUG: valid manifest");
+
+        let with_icon = crate::widget::WidgetInfo {
+            manifest,
+            widget_dir: std::path::PathBuf::from("/w"),
+            binary_path: std::path::PathBuf::from("/w/bin/test"),
+            icon_path: Some(std::path::PathBuf::from("/w/icon.svg")),
+        };
+        let proto = widget_info_to_proto(&with_icon, &bmc100_platform_descriptor());
+        assert_eq!(proto.icon_url, Some(format!("/widgets/{uid}/icon")));
+
+        let without_icon = crate::widget::WidgetInfo {
+            icon_path: None,
+            ..with_icon
+        };
+        let proto = widget_info_to_proto(&without_icon, &bmc100_platform_descriptor());
+        assert_eq!(proto.icon_url, None);
     }
 }

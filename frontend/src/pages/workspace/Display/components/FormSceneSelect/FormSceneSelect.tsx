@@ -7,7 +7,7 @@ import type * as pb from '@/proto';
 
 // Components
 import { Apps as IconApps } from '@carbon/react/icons';
-import { ModalCustom } from '@/components';
+import { Image, ModalCustom } from '@/components';
 
 // styles
 import cn from 'clsx';
@@ -85,7 +85,18 @@ function Cell(props: CellProps) {
 
     return (
         <button type="button" onClick={select} className={css.cell}>
-            <aside className={css.icon} children={<IconApps size={56} />} />
+            <aside
+                className={css.icon}
+                children={
+                    <Image
+                        src={manifest.iconUrl || null}
+                        alt={manifest.name}
+                        width={56}
+                        height={56}
+                        render={(img, failed) => (failed ? <IconApps size={56} /> : img())}
+                    />
+                }
+            />
             <main>
                 <div className={css.title} children={manifest.name} />
                 <div className={css.desc} children={manifest.description} />

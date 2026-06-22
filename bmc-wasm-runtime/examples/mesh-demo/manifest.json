@@ -9,6 +9,7 @@
     "url": "https://braiinsforge.com"
   },
   "binary": "bin/mesh-demo",
+  "icon": "assets/icon.svg",
   "settings": [],
   "supported_viewports": [
     {

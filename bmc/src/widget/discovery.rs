@@ -9,6 +9,16 @@ use tracing::warn;
 
 use super::{RegistryError, WidgetInfo};
 
+/// Whether `path` names an image we are willing to serve as a widget icon.
+/// The icon is browser-rendered (web UI widget picker), so any `image/*` type
+/// is fine — svg included. Uses the same `mime_guess` machinery the HTTP server
+/// uses to label the response, so "served as an image" and "accepted here" agree.
+fn is_image_path(path: &Path) -> bool {
+    mime_guess::from_path(path)
+        .first()
+        .is_some_and(|mime| mime.type_() == mime_guess::mime::IMAGE)
+}
+
 /// Trait for platform-specific widget discovery.
 ///
 /// This trait abstracts how widgets are discovered and loaded across different platforms.
@@ -130,10 +140,24 @@ impl PathDiscovery {
             }
         }
 
+        // Relative resolves against the widget dir, absolute wins, like `binary`.
+        // The manifest is install-time trusted, but only image-extension paths are
+        // served — so a stray `icon = "/etc/shadow"` can never reach the icon endpoint.
+        let icon_path = manifest.icon.as_ref().and_then(|icon| {
+            let path = widget_dir.join(icon);
+            if is_image_path(&path) {
+                Some(path)
+            } else {
+                warn!("widget icon is not an image, ignoring: {}", path.display());
+                None
+            }
+        });
+
         Ok(WidgetInfo {
             manifest,
             widget_dir: widget_dir.to_path_buf(),
             binary_path,
+            icon_path,
         })
     }
 }
@@ -193,6 +217,104 @@ mod tests {
             .expect("BUG: failed to set permissions");
 
         widget_dir
+    }
+
+    fn create_widget_with_icon(base_dir: &Path, name: &str, uid: &str, icon: &str) -> PathBuf {
+        let widget_dir = base_dir.join(name);
+        std_fs::create_dir_all(&widget_dir).expect("BUG: failed to create widget dir");
+
+        let manifest = format!(
+            r#"{{
+                "uid": "{uid}",
+                "version": "1.0.0",
+                "name": "{name}",
+                "description": "Test widget",
+                "binary": "widget",
+                "icon": "{icon}",
+                "sizes": ["small"]
+            }}"#
+        );
+        std_fs::write(widget_dir.join("manifest.json"), manifest)
+            .expect("BUG: failed to write manifest");
+
+        let binary_path = widget_dir.join("widget");
+        std_fs::write(&binary_path, "#!/bin/sh\necho test").expect("BUG: failed to write binary");
+        std_fs::set_permissions(&binary_path, std_fs::Permissions::from_mode(0o755))
+            .expect("BUG: failed to set permissions");
+
+        widget_dir
+    }
+
+    #[tokio::test]
+    async fn discover_resolves_relative_and_absolute_icon() {
+        let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
+        let rel_dir = create_widget_with_icon(
+            temp_dir.path(),
+            "rel-widget",
+            "550e8400-e29b-41d4-a716-446655440000",
+            "assets/icon.svg",
+        );
+        create_widget_with_icon(
+            temp_dir.path(),
+            "abs-widget",
+            "550e8400-e29b-41d4-a716-446655440001",
+            "/usr/share/bmc/icons/abs.png",
+        );
+
+        let discovery = PathDiscovery::new(vec![temp_dir.path().to_path_buf()]);
+        let widgets = discovery.discover().await;
+
+        let rel = widgets
+            .iter()
+            .find(|w| w.manifest.name == "rel-widget")
+            .expect("BUG: rel-widget should be discovered");
+        assert_eq!(rel.icon_path, Some(rel_dir.join("assets/icon.svg")));
+
+        let abs = widgets
+            .iter()
+            .find(|w| w.manifest.name == "abs-widget")
+            .expect("BUG: abs-widget should be discovered");
+        assert_eq!(
+            abs.icon_path,
+            Some(PathBuf::from("/usr/share/bmc/icons/abs.png")),
+            "absolute icon path is used as-is"
+        );
+    }
+
+    #[tokio::test]
+    async fn discover_rejects_non_image_icon() {
+        let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
+        create_widget_with_icon(
+            temp_dir.path(),
+            "shady-widget",
+            "550e8400-e29b-41d4-a716-446655440003",
+            "/etc/shadow",
+        );
+
+        let discovery = PathDiscovery::new(vec![temp_dir.path().to_path_buf()]);
+        let widgets = discovery.discover().await;
+
+        assert_eq!(widgets.len(), 1);
+        assert!(
+            widgets[0].icon_path.is_none(),
+            "a manifest icon that is not an image must not become a served path"
+        );
+    }
+
+    #[tokio::test]
+    async fn discover_widget_without_icon_has_none() {
+        let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
+        create_valid_widget(
+            temp_dir.path(),
+            "no-icon",
+            "550e8400-e29b-41d4-a716-446655440002",
+        );
+
+        let discovery = PathDiscovery::new(vec![temp_dir.path().to_path_buf()]);
+        let widgets = discovery.discover().await;
+
+        assert_eq!(widgets.len(), 1);
+        assert!(widgets[0].icon_path.is_none());
     }
 
     #[tokio::test]

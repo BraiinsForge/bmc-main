@@ -88,7 +88,12 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
     }
 
     pub(crate) async fn run(self, listener: TcpListener) -> Result<()> {
-        let http_router = http_server::HttpServer::new(self.config, self.manager.clone()).build();
+        let http_router = http_server::HttpServer::new(
+            self.config,
+            self.manager.clone(),
+            self.widget_registry.clone(),
+        )
+        .build();
         let grpc_router = grpc::GrpcWeb::new(
             self.manager.clone(),
             self.session_manager.clone(),

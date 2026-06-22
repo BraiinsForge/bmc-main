@@ -16,6 +16,8 @@ pub struct WidgetInfo {
     pub widget_dir: PathBuf,
     /// Absolute path to the widget binary.
     pub binary_path: PathBuf,
+    /// Resolved icon path when the manifest declares one; served by BMC.
+    pub icon_path: Option<PathBuf>,
 }
 
 /// Error that can occur during widget registry operations.
@@ -198,6 +200,7 @@ mod tests {
             description: "Test widget".to_owned(),
             author: None,
             binary: PathBuf::from("bin/widget"),
+            icon: None,
             settings: vec![],
             supported_viewports: viewports,
             params: indexmap::IndexMap::new(),
@@ -207,6 +210,7 @@ mod tests {
             manifest,
             widget_dir: PathBuf::from("/test/widgets").join(name),
             binary_path: PathBuf::from("/test/widgets").join(name).join("bin/widget"),
+            icon_path: None,
         }
     }
 

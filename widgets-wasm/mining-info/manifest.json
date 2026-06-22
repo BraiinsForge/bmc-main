@@ -9,6 +9,7 @@
     "url": "https://braiinsforge.com"
   },
   "binary": "bin/mining-info",
+  "icon": "assets/icon.svg",
   "settings": [
     "localization"
   ],

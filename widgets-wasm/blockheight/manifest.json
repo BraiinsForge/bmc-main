@@ -9,6 +9,7 @@
     "url": "https://braiinsforge.com"
   },
   "binary": "bin/blockheight",
+  "icon": "assets/icon.svg",
   "settings": [
     "localization",
     "timezone"
