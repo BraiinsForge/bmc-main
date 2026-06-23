@@ -51,6 +51,7 @@ fn stop_channel_workers_join_within_200ms_on_drop() {
         256,
         bmc_wasm_protocol::ViewportShape::Rectangular,
         common::test_display(256, 256),
+        chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
     )
     .expect("BUG: runtime A must construct");
@@ -60,6 +61,7 @@ fn stop_channel_workers_join_within_200ms_on_drop() {
         256,
         bmc_wasm_protocol::ViewportShape::Rectangular,
         common::test_display(256, 256),
+        chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
     )
     .expect("BUG: runtime B must construct");

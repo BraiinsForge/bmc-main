@@ -57,6 +57,7 @@ fn geometry_imports_reach_the_guest() {
             shape: DisplayShape::Round,
             dpi: 220,
         },
+        chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
     )
     .expect("BUG: probe runtime must construct");

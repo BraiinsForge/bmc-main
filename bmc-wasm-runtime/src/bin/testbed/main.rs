@@ -1359,6 +1359,7 @@ impl TestbedApp {
                 tile.gpu.height,
                 geometry.viewport_shape,
                 geometry.display,
+                chrono::Local::now().fixed_offset(),
                 rt_config,
             ) {
                 Ok(rt) => {
@@ -1518,6 +1519,7 @@ impl TestbedApp {
                 h,
                 geometry.viewport_shape,
                 geometry.display,
+                chrono::Local::now().fixed_offset(),
                 rt_config,
             )
             .with_context(|| format!("create runtime for {label}"))?;

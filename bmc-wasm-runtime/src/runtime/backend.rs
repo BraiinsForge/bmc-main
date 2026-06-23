@@ -332,6 +332,7 @@ impl WasmWidgetRuntime {
         height: u32,
         viewport_shape: bmc_wasm_protocol::ViewportShape,
         display: DisplayInfo,
+        initial_system_time: DateTime<FixedOffset>,
         config: RuntimeConfig,
     ) -> Result<Self> {
         // `mesh_msaa_samples` belongs to the caller-owned `FemtoVgRenderer` and is
@@ -368,7 +369,7 @@ impl WasmWidgetRuntime {
         let engine = wasmi::Engine::new(&engine_config);
         let module = wasmi::Module::new(&engine, wasm_bytes)?;
 
-        let host_state = HostState::new(resource_limits);
+        let host_state = HostState::new(resource_limits, initial_system_time);
 
         let mut store = wasmi::Store::new(&engine, host_state);
         store.set_fuel(fuel_per_frame)?;
@@ -1323,6 +1324,7 @@ mod tests {
                 shape: DisplayShape::Rectangular,
                 dpi: 42,
             },
+            chrono::Local::now().fixed_offset(),
             RuntimeConfig::default(),
         )
         .expect("BUG: runtime should construct from the minimal fixture");

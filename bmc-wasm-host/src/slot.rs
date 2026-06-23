@@ -192,6 +192,7 @@ impl WidgetSlot {
             initial.height,
             viewport_shape,
             display,
+            chrono::Local::now().fixed_offset(),
             RuntimeConfig {
                 params: bmc_wasm_runtime::parse_params_json(&initial.params).unwrap_or_else(
                     |err| {
@@ -203,7 +204,6 @@ impl WidgetSlot {
                 ..RuntimeConfig::default()
             },
         )?;
-        runtime.set_time(chrono::Local::now().fixed_offset(), 0);
         tracing::info!(
             peer_pid,
             wasm = %wasm_path.display(),

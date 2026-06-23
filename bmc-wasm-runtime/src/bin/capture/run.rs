@@ -2,6 +2,7 @@
 
 //! Run subcommand — headless capture of a single widget at a given size.
 
+use chrono::{DateTime, FixedOffset};
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
@@ -227,7 +228,8 @@ fn run_unified_capture(
     }
     rt_config.event_fixtures = network_events;
 
-    let (gl, fbo, _keep_alive, mut renderer, mut runtime) = setup_gl_and_runtime(ctx, rt_config)?;
+    let (gl, fbo, _keep_alive, mut renderer, mut runtime) =
+        setup_gl_and_runtime(ctx, system_time, rt_config)?;
 
     let (major, minor, patch) = runtime.sdk_version();
     eprintln!(
@@ -1079,6 +1081,7 @@ fn create_headless_egl_display() -> Result<Display> {
 )]
 fn setup_gl_and_runtime(
     ctx: &CaptureCtx,
+    initial_system_time: DateTime<FixedOffset>,
     rt_config: RuntimeConfig,
 ) -> Result<(
     glow::Context,
@@ -1161,6 +1164,7 @@ fn setup_gl_and_runtime(
             shape: display_shape_for_size(&ctx.size_name),
             dpi: 1,
         },
+        initial_system_time,
         rt_config,
     )
     .context("failed to create WASM runtime")?;
@@ -1211,6 +1215,7 @@ fn load_angle_egl() -> Result<khronos_egl::DynamicInstance<khronos_egl::EGL1_4>>
 )]
 fn setup_gl_and_runtime(
     ctx: &CaptureCtx,
+    initial_system_time: DateTime<FixedOffset>,
     rt_config: RuntimeConfig,
 ) -> Result<(
     glow::Context,
@@ -1319,6 +1324,7 @@ fn setup_gl_and_runtime(
             shape: display_shape_for_size(&ctx.size_name),
             dpi: 1,
         },
+        initial_system_time,
         rt_config,
     )
     .context("failed to create WASM runtime")?;

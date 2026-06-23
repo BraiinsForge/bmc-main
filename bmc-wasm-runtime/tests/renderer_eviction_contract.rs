@@ -114,6 +114,7 @@ fn renderer_keeps_widget_assets_alive_until_explicit_evict() {
         64,
         bmc_wasm_protocol::ViewportShape::Rectangular,
         common::test_display(64, 64),
+        chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
     )
     .expect("BUG: runtime construct");

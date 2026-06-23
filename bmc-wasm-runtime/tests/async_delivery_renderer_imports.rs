@@ -119,6 +119,7 @@ fn fetch_response_callback_can_register_renderer_asset() {
         64,
         bmc_wasm_protocol::ViewportShape::Rectangular,
         common::test_display(64, 64),
+        chrono::Local::now().fixed_offset(),
         RuntimeConfig {
             fetch_interceptor: Some(Box::new(move |_method, _url| Some((200, png.clone())))),
             ..RuntimeConfig::default()

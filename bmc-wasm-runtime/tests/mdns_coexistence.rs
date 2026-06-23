@@ -37,6 +37,7 @@ fn two_runtimes_one_process_see_each_others_mdns_announcements() {
         256,
         bmc_wasm_protocol::ViewportShape::Rectangular,
         common::test_display(256, 256),
+        chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
     )
     .expect("BUG: runtime A must construct");
@@ -46,6 +47,7 @@ fn two_runtimes_one_process_see_each_others_mdns_announcements() {
         256,
         bmc_wasm_protocol::ViewportShape::Rectangular,
         common::test_display(256, 256),
+        chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
     )
     .expect("BUG: runtime B must construct");

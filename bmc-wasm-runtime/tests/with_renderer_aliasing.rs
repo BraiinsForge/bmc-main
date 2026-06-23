@@ -46,6 +46,7 @@ fn build(gl: &headless_egl::HeadlessGl) -> (WasmWidgetRuntime, bmc_render::gpu::
         240,
         bmc_wasm_protocol::ViewportShape::Rectangular,
         common::test_display(320, 240),
+        chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
     )
     .expect("BUG: probe runtime must construct");
@@ -122,6 +123,7 @@ fn host_import_reborrows_parked_pointer() {
         240,
         bmc_wasm_protocol::ViewportShape::Rectangular,
         common::test_display(320, 240),
+        chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
     )
     .expect("BUG: probe runtime must construct");
@@ -151,6 +153,7 @@ fn host_import_outside_render_scope_traps_guest() {
         240,
         bmc_wasm_protocol::ViewportShape::Rectangular,
         common::test_display(320, 240),
+        chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
     )
     .expect("BUG: probe runtime must construct");
@@ -275,6 +278,7 @@ fn two_runtimes_share_one_renderer_without_cross_slot_bleeding() {
         64,
         bmc_wasm_protocol::ViewportShape::Rectangular,
         common::test_display(64, 64),
+        chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
     )
     .expect("BUG: runtime A must construct");
@@ -284,6 +288,7 @@ fn two_runtimes_share_one_renderer_without_cross_slot_bleeding() {
         64,
         bmc_wasm_protocol::ViewportShape::Rectangular,
         common::test_display(64, 64),
+        chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
     )
     .expect("BUG: runtime B must construct");

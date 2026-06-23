@@ -354,6 +354,7 @@ fn build_runtime_with_system(
         240,
         bmc_wasm_protocol::ViewportShape::Rectangular,
         common::test_display(320, 240),
+        chrono::Local::now().fixed_offset(),
         config,
     )
     .expect("BUG: probe runtime must construct");

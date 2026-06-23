@@ -8,6 +8,7 @@
 //! See `bmc_render`'s crate-level docs for the rationale on `glam` being part
 //! of the host-side public surface.
 
+use chrono::{DateTime, FixedOffset};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::ptr::NonNull;
@@ -751,7 +752,7 @@ impl HostState {
     /// The renderer is owned by the caller of [`crate::WasmWidgetRuntime::new`]
     /// and installed on `renderer_ptr` per-frame via
     /// `WasmWidgetRuntime::with_renderer`.
-    pub fn new(resource_limits: RuntimeResourceLimits) -> Self {
+    pub fn new(resource_limits: RuntimeResourceLimits, system_time: DateTime<FixedOffset>) -> Self {
         let (fetch_tx, fetch_rx) = mpsc::channel();
         Self {
             renderer_ptr: None,
@@ -766,7 +767,7 @@ impl HostState {
             transition_states: HashMap::new(),
             frame_counter: 0,
             cached_tree: None,
-            system_time: chrono::Local::now().fixed_offset(),
+            system_time,
             monotonic_ms: 0,
             params: VersionedSnapshotCache::new(ParamsSnapshot::new(BTreeMap::new())),
             current_lifecycle: Lifecycle::Idle,
@@ -922,7 +923,10 @@ mod tests {
 
     #[test]
     fn refuse_live_io_records_only_in_a_hermetic_run() {
-        let mut state = HostState::new(RuntimeResourceLimits::default());
+        let mut state = HostState::new(
+            RuntimeResourceLimits::default(),
+            chrono::Local::now().fixed_offset(),
+        );
         // Not hermetic: the call is a no-op and reports "proceed".
         assert!(!state.refuse_live_io("fetch", "GET https://x/y"));
         assert!(state.hermetic.is_none());

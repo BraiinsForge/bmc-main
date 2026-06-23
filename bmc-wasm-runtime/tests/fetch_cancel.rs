@@ -86,6 +86,7 @@ fn cancel_removes_queued_delayed_fetch_and_reports_status() {
         64,
         bmc_wasm_protocol::ViewportShape::Rectangular,
         common::test_display(64, 64),
+        chrono::Local::now().fixed_offset(),
         RuntimeConfig {
             fetch_interceptor: Some(Box::new(|_method, _url| Some((200, b"ok".to_vec())))),
             ..RuntimeConfig::default()

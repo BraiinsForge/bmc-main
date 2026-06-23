@@ -62,6 +62,7 @@ fn loop_of_ten_frames_succeeds() {
         240,
         bmc_wasm_protocol::ViewportShape::Rectangular,
         common::test_display(320, 240),
+        chrono::Local::now().fixed_offset(),
         RuntimeConfig::default(),
     )
     .expect("BUG: runtime construct");
