@@ -120,6 +120,17 @@ If `ssh.sh` returns a connection error, do not attempt to start, restart, or cle
 user and wait. Their preferred remediation may be `run.sh`, `clean.sh && run.sh`, or "leave it alone, I'm debugging the
 host."
 
+### "VM window vanished / closed on its own"
+
+QEMU exiting with no guest interaction is usually a *host* fault, not a guest crash or OOM. Check, in order:
+
+1. `bmc-virt/scripts/ssh.sh true` — confirms it's actually down (connection refused) vs. just the display surface dying.
+2. `journalctl -k --since -10min | grep -iE 'amdgpu|ring .* reset|wedged|page fault'` — a host GPU ring reset
+   (`amdgpu … device wedged, but recovered through reset`) destroys QEMU's GL context and takes the window with it.
+   That's a host Mesa/amdgpu issue, not the deck software — the GPU recovers, so the VM is safe to relaunch.
+
+Host `dmesg` is usually restricted (`kernel.dmesg_restrict=1`) — read the kernel ring via `journalctl -k` instead.
+
 ## When extending the tooling
 
 The scripts under `bmc-virt/scripts/` are designed for non-interactive, agent-driven use. New scripts and modifications

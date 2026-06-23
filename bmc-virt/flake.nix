@@ -632,6 +632,10 @@
               # Host QEMU binary.
               GPU_ARGS=""
               QEMU_BIN="${qemu}/bin/${qemuBin}"
+              # Optional pin of virgl's host GL render node (e.g. a discrete GPU)
+              # via BMC_VIRT_RENDERNODE; unset = QEMU auto-selects. Applies to the
+              # egl-headless paths only.
+              RENDERNODE_ARG="''${BMC_VIRT_RENDERNODE:+,rendernode=$BMC_VIRT_RENDERNODE}"
               if [[ "$(uname)" == "Darwin" ]]; then
                 # The QEMU here comes from the darwin-qemu-virgl flake input —
                 # patched for ANGLE-backed virgl on macOS. The working display
@@ -652,11 +656,11 @@
                 SYS_QEMU="$(command -v ${qemuBin} 2>/dev/null || true)"
                 if [ -n "$SYS_QEMU" ] && "$SYS_QEMU" -display help 2>&1 | grep -q egl-headless; then
                   QEMU_BIN="$SYS_QEMU"
-                  GPU_ARGS="-device virtio-gpu-gl-pci,xres=480,yres=1280 -display egl-headless"
+                  GPU_ARGS="-device virtio-gpu-gl-pci,xres=480,yres=1280 -display egl-headless$RENDERNODE_ARG"
                   echo "GPU: virgl via system QEMU (hardware-accelerated)"
                 elif ${qemu}/bin/${qemuBin} -display help 2>&1 | grep -q egl-headless && \
                      [ -d /run/opengl-driver ]; then
-                  GPU_ARGS="-device virtio-gpu-gl-pci,xres=480,yres=1280 -display egl-headless"
+                  GPU_ARGS="-device virtio-gpu-gl-pci,xres=480,yres=1280 -display egl-headless$RENDERNODE_ARG"
                   echo "GPU: virgl via nix QEMU (hardware-accelerated)"
                 else
                   GPU_ARGS="-device virtio-gpu-pci,xres=480,yres=1280 -display none"
