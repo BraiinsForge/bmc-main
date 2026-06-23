@@ -4,6 +4,13 @@ const config: StorybookConfig = {
     framework: 'storybook-react-rsbuild',
     stories: ['../src/**/*.stories.tsx'],
     addons: [],
+    features: {
+        // The rsbuild builder doesn't implement Storybook 10's change-detection hook,
+        // so the feature only logs "builder does not support change detection"
+        // and adds nothing. Turn it off to silence the warning.
+        changeDetection: false,
+        interactions: false,
+    },
     rsbuildFinal: async config => {
         // Fix: Remove the main app entries to prevent conflict with Storybook's iframe.html
         // The main rsbuild.config.ts defines multiple entries (index, index-connect) with html: true
