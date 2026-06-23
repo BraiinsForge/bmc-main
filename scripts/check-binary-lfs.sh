@@ -47,6 +47,12 @@ for path in "${binaries[@]}"; do
     # if the file is gone from the worktree for any reason.
     [[ -e $path ]] || continue
 
+    # JavaScript is text even when .gitattributes marks it `binary` to suppress
+    # diffs (e.g. Yarn's bundled runtime under .yarn/) — it is never LFS material.
+    case $path in
+    *.cjs | *.mjs | *.js) continue ;;
+    esac
+
     filter="$(git check-attr filter -- "$path" | awk -F': ' '{print $NF}')"
     if [[ $filter != "lfs" ]]; then
         violations+=("$path  (.gitattributes does not route through LFS)")

@@ -12,7 +12,7 @@ import {
 } from 'react';
 import { Key } from 'ts-key-enum';
 import isEqual from 'react-fast-compare';
-import { injectIntl, type IntlShape } from 'react-intl';
+import { useIntl, type IntlShape } from 'react-intl';
 import { isPlainObject, cloneDeep, debounce } from 'es-toolkit';
 
 import { assertUnreachable } from '@/lib/ts';
@@ -153,31 +153,6 @@ export type DataTableProps<ColumnID extends PropertyKey = string> = {
         selectAllTooltip?: ReactNode;
         totalItemsCount?: number;
 
-        messages?: {
-            // `{n} item[s] selected`
-            // Available variables:
-            //   - `selected`
-            // Example:
-            //   '{selected, plural, =1 {# item} other {# items}} selected'
-            generic?: string;
-
-            // `All {n} available item[s] selected`
-            // Available variables:
-            //   - `selected`
-            //   - `available`
-            // Example:
-            //   'All {selected, plural, =1 {# item} other {# items}} available items are selected'
-            all?: string;
-
-            // `All {m} items on this page are selected. Select all {n} items`
-            // Available variables:
-            //   - `selected`: Number of selected items
-            //   - `available`: Total number of items available
-            //   - `a`: Anchor bound to a "select all" function
-            // Example:
-            //   'All {selected, plural, =1 {# item} other {# items}} on this page are selected. <a>Select all {available, plural, =1 {# item} other {# items}}</a>.'
-            allOnPage?: string;
-        };
         CheckboxComponent?: ComponentType<CustomCheckboxComponentProps>;
     };
     expandedRows?: DataTableRowBoolMap;
@@ -282,7 +257,7 @@ type CheckboxInfo = {
     wasChecked: boolean;
 };
 
-export class DataTableComponent<ColumnID extends string> extends Component<Props<ColumnID>, State> {
+export class View<ColumnID extends string> extends Component<Props<ColumnID>, State> {
     static defaultProps = {
         withRowBorders: true,
     };
@@ -314,21 +289,14 @@ export class DataTableComponent<ColumnID extends string> extends Component<Props
 
         // `{n} item[s] selected`
         let selectedMessage: ReactNode = formatMessage(
-            {
-                defaultMessage:
-                    selection?.messages?.generic ?? '{selected, plural, =1 {# item} other {# items}} selected',
-            },
+            { defaultMessage: '{selected, plural, =1 {# item} other {# items}} selected' },
             { selected },
         );
 
         // `All {n} available item[s] selected`
         if (selected === available) {
             selectedMessage = formatMessage(
-                {
-                    defaultMessage:
-                        selection?.messages?.all ??
-                        'All {selected, plural, =1 {# item} other {# items}} available items are selected',
-                },
+                { defaultMessage: 'All {selected, plural, =1 {# item} other {# items}} available items are selected' },
                 { selected },
             );
         }
@@ -351,7 +319,6 @@ export class DataTableComponent<ColumnID extends string> extends Component<Props
             selectedMessage = formatMessage(
                 {
                     defaultMessage:
-                        selection?.messages?.allOnPage ??
                         'All {selected, plural, =1 {# item} other {# items}} on this page are selected. <a>Select all {available, plural, =1 {# item} other {# items}}</a>',
                 },
                 {
@@ -985,21 +952,19 @@ export class DataTableComponent<ColumnID extends string> extends Component<Props
     }
 }
 
-// Hacky way to keep the type-generic-ness of the component
-// while wrapping in HOC, but I haven't found a better way…
-type RealComponentType = {
-    <ColumnID extends PropertyKey = string>(props: DataTableProps<ColumnID>): ReactElement;
-    TableToolbarSearch: typeof TableToolbarSearch;
-    TableToolbarMenu: typeof TableToolbarMenu;
-    TableToolbarAction: typeof TableToolbarAction;
-};
-
 const isRTL = (): boolean => document.documentElement.getAttribute('dir') === 'rtl';
-export const DataTable = Object.assign(injectIntl(DataTableComponent), {
-    TableToolbarSearch,
-    TableToolbarMenu,
-    TableToolbarAction,
-}) as RealComponentType;
+
+// react-intl v7 dropped the `injectIntl` HOC; inject `intl` via a hook wrapper.
+// A generic function component keeps the per-`ColumnID` call signature, with the
+// toolbar sub-components attached as statics.
+function DataTable<ColumnID extends PropertyKey = string>(props: DataTableProps<ColumnID>): ReactElement {
+    const intl = useIntl();
+    return <View {...(props as DataTableProps<string>)} intl={intl} />;
+}
+DataTable.TableToolbarSearch = TableToolbarSearch;
+DataTable.TableToolbarMenu = TableToolbarMenu;
+DataTable.TableToolbarAction = TableToolbarAction;
+export { DataTable };
 
 export interface DataTableSkeletonProps {
     headers: DataTableProps['headers'];

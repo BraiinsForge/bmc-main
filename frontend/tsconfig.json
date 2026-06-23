@@ -1,7 +1,6 @@
 {
     "compilerOptions": {
         /* Resolving */
-        "baseUrl": ".",
         "paths": {
             "@/*": ["./src/*"]
         },
@@ -13,6 +12,9 @@
 
         "allowJs": true,
         "checkJs": false,
+        // Polyfill entrypoints (core-js, @formatjs locale-data) are untyped
+        // side-effect imports; don't require type declarations for them.
+        "noUncheckedSideEffectImports": false,
         "skipLibCheck": true,
         "resolveJsonModule": true,
 

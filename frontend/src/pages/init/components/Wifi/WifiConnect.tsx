@@ -167,8 +167,7 @@ class View extends Component<Props, State> {
                             itemToString={this.#renderEncryptionType}
                             renderSelectedItem={this.#renderEncryptionType}
                         />
-                        {!!manualEntryData.encryptionType &&
-                        manualEntryData.encryptionType !== pb.EncryptionType.NONE ? (
+                        {manualEntryData.encryptionType && manualEntryData.encryptionType !== pb.EncryptionType.NONE ? (
                             <TextInput
                                 id={$('password')}
                                 labelText={txt.password}
@@ -216,8 +215,7 @@ class View extends Component<Props, State> {
                             itemToElement={this.#netToElementMenu}
                             renderSelectedItem={this.#netToElementLabel}
                         />
-                        {!!selectedNetwork.encryptionType &&
-                        selectedNetwork.encryptionType !== pb.EncryptionType.NONE ? (
+                        {selectedNetwork.encryptionType && selectedNetwork.encryptionType !== pb.EncryptionType.NONE ? (
                             <TextInput
                                 id={$('password')}
                                 labelText={txt.password}

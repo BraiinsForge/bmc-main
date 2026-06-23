@@ -11,7 +11,7 @@ import css from './ModalCustom.scss';
 export interface CustomModalProps extends Omit<ComposedModalProps, 'title' | 'children' | 'open'> {
     // Header labeling
     title?: ReactNode;
-    label?: ReactNode;
+    label?: string;
 
     // Content
     children: ReactNode;

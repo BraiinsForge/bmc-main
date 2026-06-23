@@ -1443,7 +1443,7 @@ class View extends Component<Props, State> {
     }
 }
 
-export default function () {
+export default function Settings() {
     const intl = useIntl();
     const location = useLocation();
     const hasPassword = useStore(x => x.state.sessionInfo.hasPassword);

@@ -1,0 +1,12 @@
+{
+  // The Biome config lives in the frontend workspace, not at the repo root.
+  // Point the Zed Biome LSP at it (path is relative to the worktree root);
+  // without this it falls back to Biome's defaults and reports bogus diagnostics.
+  "lsp": {
+    "biome": {
+      "settings": {
+        "config_path": "frontend/biome.json"
+      }
+    }
+  }
+}

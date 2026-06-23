@@ -42,8 +42,6 @@ export function WifiSignalStrength(props: WifiSignalStrengthProps) {
             );
 
         case 'offline':
-            // @ts-expect-error: Mismatch between react svg element
-            // and html svg element types, irrelevant for us here
             return <WifiOff className={cn(css.svg, css.offline)} size={size} {...rest} />;
 
         case 'low':

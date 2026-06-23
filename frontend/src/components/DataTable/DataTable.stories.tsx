@@ -5,7 +5,7 @@ import { useState } from 'react';
 
 import {
     DataTable as Component,
-    DataTableComponent as Pure,
+    View as Pure,
     type DataTableProps,
     type DataTableRowBoolMap,
     type DataTableHeader,
