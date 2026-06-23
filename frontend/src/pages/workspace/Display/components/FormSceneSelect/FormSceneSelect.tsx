@@ -8,6 +8,7 @@ import type * as pb from '@/proto';
 // Components
 import { Apps as IconApps } from '@carbon/react/icons';
 import { Image, ModalCustom } from '@/components';
+import { WidgetName } from '../WidgetName';
 
 // styles
 import cn from 'clsx';
@@ -98,7 +99,9 @@ function Cell(props: CellProps) {
                 }
             />
             <main>
-                <div className={css.title} children={manifest.name} />
+                <div className={css.title}>
+                    <WidgetName name={manifest.name} subname={manifest.subname} />
+                </div>
                 <div className={css.desc} children={manifest.description} />
             </main>
         </button>

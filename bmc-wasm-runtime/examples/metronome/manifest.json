@@ -3,6 +3,7 @@
   "uid": "550e8400-e29b-41d4-a716-446655440207",
   "version": "0.1.0",
   "name": "Metronome",
+  "subname": "Tempo",
   "description": "Tap-to-tempo metronome with audible click track",
   "author": {
     "name": "Braiins Forge",

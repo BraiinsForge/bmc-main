@@ -197,6 +197,7 @@ mod tests {
             uid: Uuid::parse_str(uid).expect("BUG: invalid test UUID"),
             version: semver::Version::new(1, 0, 0),
             name: name.to_owned(),
+            subname: None,
             description: "Test widget".to_owned(),
             author: None,
             binary: PathBuf::from("bin/widget"),

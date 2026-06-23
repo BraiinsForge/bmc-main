@@ -751,6 +751,7 @@ mod support_tests {
             uid,
             version: semver::Version::new(1, 0, 0),
             name: "test-widget".to_owned(),
+            subname: None,
             description: "Test widget".to_owned(),
             author: None,
             binary: PathBuf::from("bin/widget"),

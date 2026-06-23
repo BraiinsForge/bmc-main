@@ -544,6 +544,7 @@ fn widget_info_to_proto(
     web::WidgetManifest {
         uid: manifest.uid.to_string(),
         name: manifest.name.clone(),
+        subname: manifest.subname.clone(),
         description: manifest.description.clone(),
         version: manifest.version.to_string(),
         supported_sizes: supported_sizes_for_constraints(platform, &manifest.supported_viewports)
@@ -1953,6 +1954,7 @@ mod tests {
             uid: uuid::Uuid::new_v4(),
             version: semver::Version::new(1, 0, 0),
             name: "T".into(),
+            subname: None,
             description: "T".into(),
             author: None,
             binary: std::path::PathBuf::from("bin/test"),
@@ -1990,6 +1992,7 @@ mod tests {
             uid: uuid::Uuid::new_v4(),
             version: semver::Version::new(1, 0, 0),
             name: "T".into(),
+            subname: None,
             description: "T".into(),
             author: None,
             binary: std::path::PathBuf::from("bin/test"),
@@ -2767,6 +2770,7 @@ mod tests {
             uid: widget_type_id,
             version: semver::Version::new(1, 0, 0),
             name: "test-widget".to_owned(),
+            subname: None,
             description: "Test widget".to_owned(),
             author: None,
             binary: std::path::PathBuf::from("bin/widget"),
@@ -3410,6 +3414,7 @@ mod tests {
         };
         let proto = widget_info_to_proto(&with_icon, &bmc100_platform_descriptor());
         assert_eq!(proto.icon_url, Some(format!("/widgets/{uid}/icon")));
+        assert_eq!(proto.subname, None, "no subname declared");
 
         let without_icon = crate::widget::WidgetInfo {
             icon_path: None,
@@ -3417,5 +3422,31 @@ mod tests {
         };
         let proto = widget_info_to_proto(&without_icon, &bmc100_platform_descriptor());
         assert_eq!(proto.icon_url, None);
+    }
+
+    #[test]
+    fn widget_info_to_proto_passes_subname_through() {
+        use std::str::FromStr as _;
+
+        let json = format!(
+            r#"{{
+                "uid": "{}",
+                "version": "1.0.0",
+                "name": "T",
+                "subname": "Analog",
+                "description": "T",
+                "binary": "bin/test",
+                "sizes": ["small"]
+            }}"#,
+            uuid::Uuid::new_v4()
+        );
+        let info = crate::widget::WidgetInfo {
+            manifest: bmc_widget_manifest::Manifest::from_str(&json).expect("BUG: valid manifest"),
+            widget_dir: std::path::PathBuf::from("/w"),
+            binary_path: std::path::PathBuf::from("/w/bin/test"),
+            icon_path: None,
+        };
+        let proto = widget_info_to_proto(&info, &bmc100_platform_descriptor());
+        assert_eq!(proto.subname.as_deref(), Some("Analog"));
     }
 }

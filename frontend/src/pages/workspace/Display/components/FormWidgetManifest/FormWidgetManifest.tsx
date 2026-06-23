@@ -7,6 +7,7 @@ import type { FormifiedParams, FormifiedValue, ParamsFormErrors } from '../../fn
 
 import { BoundToggle, BoundComboBox, type OptionItem, CheckYourScreenForPreview, WidgetSizeSelector } from '../shared';
 import { ModalCustom, Button, InlineNotification } from '@/components';
+import { WidgetName } from '../WidgetName';
 import { TextInput, NumberInput } from '@carbon/react';
 import css from '../shared.scss';
 
@@ -252,7 +253,7 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
             selectorPrimaryFocus="form input,button"
             size="sm"
             open={isOpen}
-            title={manifest.name}
+            title={<WidgetName name={manifest.name} subname={manifest.subname} />}
             label={formatMessage({ defaultMessage: 'Configure Widget' })}
             onClose={onCancel}
             children={form}

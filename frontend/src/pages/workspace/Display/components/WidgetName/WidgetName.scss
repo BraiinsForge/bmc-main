@@ -1,0 +1,21 @@
+@use 'styles/carbon' as *;
+
+.root {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: mini-units(1);
+    // Tighten the heading line-height so a wrapped subname doesn't inherit the
+    // full half-leading twice and read as a large vertical gap.
+    line-height: 1.2;
+}
+
+// Keep each part whole so the subname wraps below instead of the name breaking.
+.name,
+.subname {
+    white-space: nowrap;
+}
+
+.subname {
+    color: $text-secondary;
+}

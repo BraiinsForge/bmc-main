@@ -25,6 +25,13 @@ firmware rebuild.
 > usable as soon as they ship.
 
 - The widget picker shows every manifest the device currently has installed — no fixed enum.
+- Each entry is identified the way its manifest declares it: the `name`, an optional grayed `subname` beside it, and an
+  optional `icon`. All three come from the manifest, so out-of-tree widgets present themselves without any frontend
+  change.
+- The icon is served by BMC at `/widgets/{uid}/icon` and rendered in the browser, so any image format the browser
+  understands (svg, png, jpg, …) works. The manifest's icon path is validated at discovery: a path that does not name an
+  image is dropped, so a manifest cannot point the endpoint at an arbitrary file. Widgets without an icon fall back to a
+  default in the picker.
 - Widget size options are scene-aware and manifest-driven: combined scenes offer Small / Medium / Large; fullscreen
   scenes use Full.
 - Place a widget at a grid position within a combined scene; the dropped widget appears on the device immediately.

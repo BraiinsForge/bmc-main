@@ -75,8 +75,8 @@
     }
     .title {
         @include type-style(heading-03);
-        margin-block-end: mini-units(1);
-        height: to-rem(22px);
+        // Grow (don't clip) when an optional subname wraps to a second line.
+        min-height: to-rem(22px);
     }
     .desc {
         @include type-style(body-short-01);

@@ -10,6 +10,7 @@ import AppContext, { type AppContextType } from '@/context';
 import { ScenePreview } from '../images';
 import { type RenderSortableListItemProps, Sortable } from '@/components';
 import { SceneOverviewRow, SceneOverviewRowSkeleton } from '../SceneOverviewRow';
+import { WidgetName } from '../WidgetName';
 
 // Styles
 import cn from 'clsx';
@@ -74,6 +75,14 @@ class View extends Component<Props> {
             }
         })();
 
+        // Fullscreen scenes show the widget's name + optional grayed subname.
+        const fullscreenManifest = previewKind && previewKind !== 'combined' ? previewKind.manifest : undefined;
+        const titleNode = fullscreenManifest?.subname ? (
+            <WidgetName name={title} subname={fullscreenManifest.subname} />
+        ) : (
+            title
+        );
+
         const isNightModeWidget: boolean = firstEnabledSceneID === item.id;
 
         return (
@@ -87,7 +96,7 @@ class View extends Component<Props> {
                 layout={useCardLayout ? 'card' : 'row'}
                 enabled={item.enabled}
                 icon={<ScenePreview kind={previewKind} />}
-                title={title}
+                title={titleNode}
                 type={{ night: isNightModeWidget }}
                 description={description}
                 cycleEnabled={cycleEnabled}

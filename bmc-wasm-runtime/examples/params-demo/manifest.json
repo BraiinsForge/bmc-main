@@ -3,6 +3,7 @@
   "uid": "550e8400-e29b-41d4-a716-446655440300",
   "version": "0.1.0",
   "name": "Params Demo",
+  "subname": "Param showcase",
   "description": "Read-back exemplar for every ParamKind variant + the structural-flag matrix",
   "author": {
     "name": "Braiins Forge",

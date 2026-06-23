@@ -33,6 +33,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 const MAX_NAME_LENGTH: usize = 50;
+const MAX_SUBNAME_LENGTH: usize = 30;
 const MAX_DESCRIPTION_LENGTH: usize = 200;
 
 /// Maximum byte length of a [`ParamKey`].
@@ -78,6 +79,10 @@ pub enum ManifestError {
     /// The `name` field exceeded the declared length cap.
     #[error("name exceeds maximum length of {max} characters")]
     NameTooLong { max: usize },
+
+    /// The `subname` field exceeded the declared length cap.
+    #[error("subname exceeds maximum length of {max} characters")]
+    SubnameTooLong { max: usize },
 
     /// The `description` field exceeded the declared length cap.
     #[error("description exceeds maximum length of {max} characters")]
@@ -378,6 +383,8 @@ struct RawManifest {
     uid: Uuid,
     version: String,
     name: String,
+    #[serde(default)]
+    subname: Option<String>,
     description: String,
     #[serde(default)]
     author: Option<Author>,
@@ -447,6 +454,11 @@ pub struct Manifest {
     /// Capped at 50 characters.
     #[schemars(length(max = 50))]
     pub name: String,
+    /// Optional short secondary label, shown grayed beside `name`.
+    /// Capped at 30 characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = 30))]
+    pub subname: Option<String>,
     /// One-line widget description, shown in the operator UI.
     /// Capped at 200 characters.
     #[schemars(length(max = 200))]
@@ -511,6 +523,7 @@ impl Manifest {
             uid: raw.uid,
             version,
             name: raw.name,
+            subname: raw.subname,
             description: raw.description,
             author: raw.author,
             binary: raw.binary,
@@ -534,6 +547,16 @@ impl Manifest {
         if self.name.len() > MAX_NAME_LENGTH {
             return Err(ManifestError::NameTooLong {
                 max: MAX_NAME_LENGTH,
+            });
+        }
+
+        if self
+            .subname
+            .as_ref()
+            .is_some_and(|s| s.len() > MAX_SUBNAME_LENGTH)
+        {
+            return Err(ManifestError::SubnameTooLong {
+                max: MAX_SUBNAME_LENGTH,
             });
         }
 
@@ -1077,8 +1100,48 @@ mod tests {
         );
         assert!(manifest.author.is_none());
         assert!(manifest.icon.is_none());
+        assert!(manifest.subname.is_none());
         assert!(manifest.settings.is_empty());
         assert!(manifest.params.is_empty());
+    }
+
+    #[test]
+    fn parse_subname() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test Widget",
+            "subname": "Analog",
+            "description": "A test widget",
+            "binary": "bin/test",
+            "supported_viewports": [
+                {"type":"rectangular","min_width":317,"max_width":317,
+                 "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}
+            ]
+        }"#;
+        let manifest = Manifest::from_str(json).expect("BUG: should parse");
+        assert_eq!(manifest.subname.as_deref(), Some("Analog"));
+    }
+
+    #[test]
+    fn reject_subname_too_long() {
+        let json = format!(
+            r#"{{
+                "uid": "550e8400-e29b-41d4-a716-446655440000",
+                "version": "1.0.0",
+                "name": "Test Widget",
+                "subname": "{}",
+                "description": "A test widget",
+                "binary": "bin/test",
+                "supported_viewports": [
+                    {{"type":"rectangular","min_width":317,"max_width":317,
+                     "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}}
+                ]
+            }}"#,
+            "x".repeat(MAX_SUBNAME_LENGTH + 1)
+        );
+        let result = Manifest::from_str(&json);
+        assert!(matches!(result, Err(ManifestError::SubnameTooLong { .. })));
     }
 
     #[test]

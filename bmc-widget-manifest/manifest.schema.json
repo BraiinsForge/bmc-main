@@ -53,6 +53,14 @@
         "$ref": "#/$defs/SettingKey"
       }
     },
+    "subname": {
+      "description": "Optional short secondary label, shown grayed beside `name`.\nCapped at 30 characters.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 30
+    },
     "supported_viewports": {
       "description": "Viewport families this widget supports. Must be non-empty after\ncompatibility normalization of any legacy `sizes`.",
       "type": "array",
