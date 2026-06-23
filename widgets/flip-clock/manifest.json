@@ -9,6 +9,7 @@
   },
   "binary": "bin/bmc-widget-flip-clock",
   "icon": "assets/icon.svg",
+  "category": "clock",
   "settings": [
     "timezone",
     "nightMode",

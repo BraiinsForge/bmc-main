@@ -724,7 +724,7 @@ mod support_tests {
     use crate::compositor::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
     use crate::scene::{Scene, Widget};
     use crate::widget::{ViewportDescriptor, WidgetInfo, WidgetRegistry};
-    use bmc_widget_manifest::{Manifest, ViewportShape, WidgetViewportConstraint};
+    use bmc_widget_manifest::{Manifest, ViewportShape, WidgetCategory, WidgetViewportConstraint};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use uuid::Uuid;
@@ -756,6 +756,7 @@ mod support_tests {
             author: None,
             binary: PathBuf::from("bin/widget"),
             icon: None,
+            category: WidgetCategory::Misc,
             settings: vec![],
             supported_viewports: vec![constraint],
             params: indexmap::IndexMap::new(),

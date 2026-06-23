@@ -9,27 +9,40 @@ export default {
     component: Component,
 } satisfies Meta<FormSceneSelectProps>;
 
-function manifest(uid: string, name: string, description: string, subname?: string): pb.WidgetManifest {
+function manifest(
+    uid: string,
+    name: string,
+    description: string,
+    category: pb.WidgetCategory,
+    subname?: string,
+): pb.WidgetManifest {
     return pb.create(pb.WidgetManifestSchema, {
         uid,
         name,
         subname,
         description,
+        category,
         version: '1.0.0',
         supportedSizes: [pb.WidgetSize.FULL],
         params: [],
     });
 }
 
-// Mix of widgets with and without a `subname`, including a long one that wraps
-// to a second line — exercises the grayed inline label and the cell growth.
+const C = pb.WidgetCategory;
+
+// Spread across categories (and deliberately out of section order) to exercise
+// the category grouping, the `misc`-last ordering, and the within-section name
+// sort. Also mixes widgets with and without a `subname`, including a long one
+// that wraps to a second line.
 const manifestWidgets: pb.WidgetManifest[] = [
-    manifest('clock', 'Clock', 'Displays the current time.', 'Digital'),
-    manifest('ticker', 'Ticker', 'Live BTC/USD price.', 'BTC/USD'),
-    manifest('block-height', 'Block Height', 'Current Bitcoin block height.', 'Mainnet chain tip'),
-    manifest('halving', 'Halving Countdown', 'Time until the next halving.'),
-    manifest('weather', 'Weather', 'Local weather and forecast.', 'Forecast'),
-    manifest('nameday', 'Nameday', "Today's nameday celebrations."),
+    manifest('clock', 'Clock', 'Displays the current time.', C.CLOCK, 'Digital'),
+    manifest('ticker', 'Ticker', 'Live BTC/USD price.', C.MISC, 'BTC/USD'),
+    manifest('block-height', 'Block Height', 'Current Bitcoin block height.', C.MINING, 'Mainnet chain tip'),
+    manifest('halving', 'Halving Countdown', 'Time until the next halving.', C.MINING),
+    manifest('weather', 'Weather', 'Local weather and forecast.', C.WEATHER, 'Forecast'),
+    manifest('iss', 'ISS Position', 'Where the station is right now.', C.SPACE),
+    manifest('params', 'Params Demo', 'Read-back exemplar for every ParamKind.', C.UTILITY, 'Param showcase'),
+    manifest('nameday', 'Nameday', "Today's nameday celebrations.", C.MISC),
 ];
 
 export const Populated = () => (

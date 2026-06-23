@@ -11,6 +11,7 @@
   },
   "binary": "bin/media-control",
   "icon": "assets/icon.svg",
+  "category": "utility",
   "settings": [],
   "supported_viewports": [
     {

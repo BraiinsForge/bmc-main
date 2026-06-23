@@ -19,6 +19,11 @@
       "description": "Path to the widget binary, relative to the widget's directory.",
       "type": "string"
     },
+    "category": {
+      "description": "Catalog grouping for the Add-widget picker. Defaults to [`WidgetCategory::Misc`].",
+      "$ref": "#/$defs/WidgetCategory",
+      "default": "misc"
+    },
     "description": {
       "description": "One-line widget description, shown in the operator UI.\nCapped at 200 characters.",
       "type": "string",
@@ -433,6 +438,41 @@
           "description": "Round viewport.",
           "type": "string",
           "const": "round"
+        }
+      ]
+    },
+    "WidgetCategory": {
+      "description": "Catalog grouping a widget belongs to, used by the Add-widget picker to\nsection the list. A widget declares exactly one; the field defaults to\n[`WidgetCategory::Misc`] when absent.",
+      "oneOf": [
+        {
+          "description": "Miner, fleet, and pool / network mining stats.",
+          "type": "string",
+          "const": "mining"
+        },
+        {
+          "description": "Time and date.",
+          "type": "string",
+          "const": "clock"
+        },
+        {
+          "description": "Weather and forecast.",
+          "type": "string",
+          "const": "weather"
+        },
+        {
+          "description": "Space and astronomy.",
+          "type": "string",
+          "const": "space"
+        },
+        {
+          "description": "Diagnostic, demo, and system tools.",
+          "type": "string",
+          "const": "utility"
+        },
+        {
+          "description": "Uncategorized — the default fallback.",
+          "type": "string",
+          "const": "misc"
         }
       ]
     },

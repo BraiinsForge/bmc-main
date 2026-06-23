@@ -53,7 +53,8 @@ button wakeup, and separate LED notification enablement for night hours.
 
 Browser-based interface hosted by the device for managing scenes, widgets, and system-wide settings. Widget catalog and
 config forms are manifest-driven — any installed widget (including out-of-tree) is configurable without a firmware
-rebuild.
+rebuild. The catalog groups widgets into labeled category sections (with "Other" last) and offers category filter pills
+with per-category counts.
 
 ### [Widgets](widgets/README.md)
 

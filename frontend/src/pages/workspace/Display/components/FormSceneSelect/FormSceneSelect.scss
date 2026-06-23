@@ -86,6 +86,50 @@
 }
 
 //
+// Category filter pills
+//
+
+.filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: mini-units(1);
+    padding: mini-units(2) mini-units(2) mini-units(3);
+}
+
+.pill {
+    @include type-style(label-01);
+
+    display: inline-flex;
+    align-items: center;
+    padding: mini-units(0.5) mini-units(2);
+
+    border: 1px solid $border-strong;
+    border-radius: to-rem(16px);
+
+    cursor: pointer;
+    appearance: none;
+    background-color: transparent;
+    color: $text-secondary;
+
+    transition: all 250ms transition.$ease-in-out;
+
+    &:hover {
+        background-color: $layer-accent-01;
+        color: $text-primary;
+    }
+    &:focus {
+        outline: 1px dotted $focus;
+        outline-offset: -2px;
+    }
+}
+
+.pillActive {
+    border-color: $interactive;
+    background-color: $layer-accent-01;
+    color: $text-primary;
+}
+
+//
 // Manifest widgets section
 //
 
@@ -98,7 +142,7 @@
     }
 
     .grid {
-        margin: mini-units(2) 0 mini-units(3);
+        margin: mini-units(1) 0 mini-units(3);
     }
 }
 

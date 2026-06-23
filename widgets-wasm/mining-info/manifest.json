@@ -10,6 +10,7 @@
   },
   "binary": "bin/mining-info",
   "icon": "assets/icon.svg",
+  "category": "mining",
   "settings": [
     "localization"
   ],

@@ -36,6 +36,28 @@ firmware rebuild.
   scenes use Full.
 - Place a widget at a grid position within a combined scene; the dropped widget appears on the device immediately.
 
+### Browse the catalog grouped by category
+
+> As a user, I want the available widgets grouped into meaningful categories so I can quickly find the kind of widget I
+> want instead of scanning one flat, unordered grid.
+
+- The picker presents widgets in labeled category sections, for example Mining, Clock, Weather, Space, and Utility.
+- Sections appear in a consistent, predictable order every time the picker opens.
+- Widgets with no category, or a category not currently shown, fall under an "Other" section that always appears last.
+- Within a section, widgets are listed alphabetically by name.
+- Section headers show readable labels, not internal identifiers.
+
+### Filter the catalog by category
+
+> As a user, I want to filter the widget list to the categories I care about so I can narrow a long list to what is
+> relevant.
+
+- Each category is shown as a pill labeled with the category name and the number of widgets it contains.
+- Selecting one or more pills shows only those categories' widgets and hides the rest.
+- With no pill selected, every category is shown.
+- More than one category can be active at the same time.
+- The filter resets when the picker is closed, so it reopens showing everything.
+
 ### Configure widget settings
 
 > As a user, I want widget-specific settings to appear as a form I can fill in, without each widget needing its own
@@ -98,6 +120,9 @@ firmware rebuild.
 - **Widget settings are manifest-driven**, not hardcoded in the frontend.
 - **No dependency on the old monolith** — `DisplayController`, `WidgetTasks`, and the `WidgetKind` enum are not part of
   the new configuration flow.
+- **Each widget belongs to exactly one category**, declared in its manifest; a widget that declares none is treated as
+  uncategorized and appears under "Other". The category set is fixed and not user-editable, and categories only group
+  and filter the picker — they do not add free-text search.
 
 ## Out of scope
 

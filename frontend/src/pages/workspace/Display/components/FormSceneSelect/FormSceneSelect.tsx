@@ -3,7 +3,8 @@ import { type IntlShape, useIntl } from 'react-intl';
 
 // App
 import { getID } from '../const';
-import type * as pb from '@/proto';
+import { assertUnreachable } from '@/lib/ts';
+import * as pb from '@/proto';
 
 // Components
 import { Apps as IconApps } from '@carbon/react/icons';
@@ -26,23 +27,132 @@ interface Props extends FormSceneSelectProps {
     intl: IntlShape;
 }
 
+// Section order in the picker; widgets fall under `MISC` (rendered last) when
+// their category is unset or not one yet surfaced here.
+const CATEGORY_ORDER: pb.WidgetCategory[] = [
+    pb.WidgetCategory.MINING,
+    pb.WidgetCategory.CLOCK,
+    pb.WidgetCategory.WEATHER,
+    pb.WidgetCategory.SPACE,
+    pb.WidgetCategory.UTILITY,
+    pb.WidgetCategory.MISC,
+];
+
+function bucketOf(category: pb.WidgetCategory): pb.WidgetCategory {
+    return CATEGORY_ORDER.includes(category) ? category : pb.WidgetCategory.MISC;
+}
+
+function categoryLabel(intl: IntlShape, category: pb.WidgetCategory): string {
+    const { formatMessage } = intl;
+    switch (category) {
+        case pb.WidgetCategory.MINING:
+            return formatMessage({ defaultMessage: 'Mining' });
+
+        case pb.WidgetCategory.CLOCK:
+            return formatMessage({ defaultMessage: 'Clock' });
+
+        case pb.WidgetCategory.WEATHER:
+            return formatMessage({ defaultMessage: 'Weather' });
+
+        case pb.WidgetCategory.SPACE:
+            return formatMessage({ defaultMessage: 'Space' });
+
+        case pb.WidgetCategory.UTILITY:
+            return formatMessage({ defaultMessage: 'Utility' });
+
+        case pb.WidgetCategory.MISC:
+        case pb.WidgetCategory.UNSPECIFIED:
+            return formatMessage({ defaultMessage: 'Other' });
+
+        default:
+            return assertUnreachable(category, 'widget category');
+    }
+}
+
+interface CategorySection {
+    category: pb.WidgetCategory;
+    widgets: pb.WidgetManifest[];
+}
+
+// Non-empty category sections in display order, widgets name-sorted within each.
+export function groupByCategory(widgets: pb.WidgetManifest[]): CategorySection[] {
+    return CATEGORY_ORDER.map(category => ({
+        category,
+        widgets: widgets.filter(w => bucketOf(w.category) === category).sort((a, b) => a.name.localeCompare(b.name)),
+    })).filter(section => section.widgets.length > 0);
+}
+
+// Sections kept by the filter pills: an empty selection means "show everything".
+export function visibleSections(sections: CategorySection[], selected: Set<pb.WidgetCategory>): CategorySection[] {
+    return selected.size === 0 ? sections : sections.filter(s => selected.has(s.category));
+}
+
+interface State {
+    // Categories the user has toggled on; empty means no filter (show all).
+    selected: Set<pb.WidgetCategory>;
+}
+
 const $ = getID('scene-select-kind').get;
-class View extends Component<Props> {
+class View extends Component<Props, State> {
+    state: State = { selected: new Set() };
+
     #handleManifestSelect = (manifest: pb.WidgetManifest) => {
         this.props.onManifestSelection(manifest);
     };
 
+    #toggleCategory = (category: pb.WidgetCategory) => {
+        this.setState(prev => {
+            const selected = new Set(prev.selected);
+            if (selected.has(category)) {
+                selected.delete(category);
+            } else {
+                selected.add(category);
+            }
+            return { selected };
+        });
+    };
+
+    // Reset the filter when the dialog closes so it reopens unfiltered.
+    componentDidUpdate(prev: Props) {
+        if (prev.isOpen && !this.props.isOpen && this.state.selected.size > 0) {
+            this.setState({ selected: new Set() });
+        }
+    }
+
     render() {
         const { isOpen, onClose, intl, manifestWidgets, isLoading } = this.props;
         const { formatMessage } = intl;
+        const { selected } = this.state;
+
+        const sections = groupByCategory(manifestWidgets);
+        // Drop selected categories whose section is gone (e.g. the last widget in
+        // it hot-reloaded away): their pill no longer renders, so keeping them
+        // selected would strand the user on an empty, un-clearable view.
+        const available = new Set(sections.map(s => s.category));
+        const activeSelected = new Set([...selected].filter(c => available.has(c)));
 
         const body =
             manifestWidgets.length > 0 ? (
-                <section className={css.grid}>
-                    {manifestWidgets.map(m => (
-                        <Cell key={m.uid} manifest={m} onSelection={this.#handleManifestSelect} />
+                <Fragment>
+                    {sections.length > 1 ? (
+                        <CategoryFilter
+                            sections={sections}
+                            selected={activeSelected}
+                            intl={intl}
+                            onToggle={this.#toggleCategory}
+                        />
+                    ) : null}
+                    {visibleSections(sections, activeSelected).map(({ category, widgets }) => (
+                        <section key={category} className={css.manifestSection}>
+                            <h1 children={categoryLabel(intl, category)} />
+                            <div className={css.grid}>
+                                {widgets.map(m => (
+                                    <Cell key={m.uid} manifest={m} onSelection={this.#handleManifestSelect} />
+                                ))}
+                            </div>
+                        </section>
                     ))}
-                </section>
+                </Fragment>
             ) : isLoading ? (
                 <CellSkeletonSet count={3} />
             ) : (
@@ -74,6 +184,32 @@ class View extends Component<Props> {
 
 function EmptyState(props: { text: string }) {
     return <div className={css.empty} children={props.text} />;
+}
+
+interface CategoryFilterProps {
+    sections: CategorySection[];
+    selected: Set<pb.WidgetCategory>;
+    intl: IntlShape;
+    onToggle(category: pb.WidgetCategory): void;
+}
+// Toggleable category pills with per-category counts; a pill is active when its
+// category is in `selected`. Multi-select, mirroring the public widget gallery.
+function CategoryFilter(props: CategoryFilterProps) {
+    const { sections, selected, intl, onToggle } = props;
+    return (
+        <div className={css.filters}>
+            {sections.map(({ category, widgets }) => (
+                <button
+                    key={category}
+                    type="button"
+                    aria-pressed={selected.has(category)}
+                    className={cn(css.pill, selected.has(category) && css.pillActive)}
+                    onClick={() => onToggle(category)}
+                    children={`${categoryLabel(intl, category)} (${widgets.length})`}
+                />
+            ))}
+        </div>
+    );
 }
 
 interface CellProps {

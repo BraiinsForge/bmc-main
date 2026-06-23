@@ -10,6 +10,7 @@
   },
   "binary": "bin/iss-position",
   "icon": "assets/icon.svg",
+  "category": "space",
   "settings": [],
   "supported_viewports": [
     {

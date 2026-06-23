@@ -129,6 +129,19 @@ message SetSceneCyclingRequest {
 //
 // Widget parameters are described by custom manifest format.
 
+// Catalog grouping a widget belongs to. Mirrors `WidgetCategory` in
+// bmc-widget-manifest. The backend always sets a concrete value; UNSPECIFIED
+// exists only to satisfy the proto3 zero-value requirement.
+enum WidgetCategory {
+  WIDGET_CATEGORY_UNSPECIFIED = 0;
+  WIDGET_CATEGORY_MINING = 1;
+  WIDGET_CATEGORY_CLOCK = 2;
+  WIDGET_CATEGORY_WEATHER = 3;
+  WIDGET_CATEGORY_SPACE = 4;
+  WIDGET_CATEGORY_UTILITY = 5;
+  WIDGET_CATEGORY_MISC = 6;
+}
+
 message WidgetManifest {
   // UUID v4 from manifest.json
   string uid = 1;
@@ -144,6 +157,8 @@ message WidgetManifest {
   optional string icon_url = 9;
   // Optional short secondary label shown grayed beside `name`
   optional string subname = 10;
+  // Catalog grouping the FE uses to section the Add-widget picker.
+  WidgetCategory category = 11;
 }
 
 // is_optional and per-variant default_value combine to express the four

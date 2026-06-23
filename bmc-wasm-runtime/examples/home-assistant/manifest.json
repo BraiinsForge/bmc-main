@@ -11,6 +11,7 @@
   },
   "binary": "bin/home-assistant",
   "icon": "assets/icon.svg",
+  "category": "utility",
   "settings": [],
   "supported_viewports": [
     {

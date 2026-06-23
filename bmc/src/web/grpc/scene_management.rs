@@ -536,6 +536,18 @@ fn string_format_to_proto(f: bmc_widget_manifest::StringFormat) -> web::StringFo
     }
 }
 
+fn category_to_proto(c: bmc_widget_manifest::WidgetCategory) -> web::WidgetCategory {
+    use bmc_widget_manifest::WidgetCategory as C;
+    match c {
+        C::Mining => web::WidgetCategory::Mining,
+        C::Clock => web::WidgetCategory::Clock,
+        C::Weather => web::WidgetCategory::Weather,
+        C::Space => web::WidgetCategory::Space,
+        C::Utility => web::WidgetCategory::Utility,
+        C::Misc => web::WidgetCategory::Misc,
+    }
+}
+
 fn widget_info_to_proto(
     info: &crate::widget::WidgetInfo,
     platform: &PlatformDescriptor,
@@ -561,6 +573,7 @@ fn widget_info_to_proto(
             .icon_path
             .as_ref()
             .map(|_| format!("/widgets/{}/icon", manifest.uid)),
+        category: i32::from(category_to_proto(manifest.category)),
     }
 }
 
@@ -1959,6 +1972,7 @@ mod tests {
             author: None,
             binary: std::path::PathBuf::from("bin/test"),
             icon: None,
+            category: bmc_widget_manifest::WidgetCategory::Misc,
             settings: vec![],
             supported_viewports: vec![bmc_widget_manifest::WidgetViewportConstraint {
                 viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
@@ -1997,6 +2011,7 @@ mod tests {
             author: None,
             binary: std::path::PathBuf::from("bin/test"),
             icon: None,
+            category: bmc_widget_manifest::WidgetCategory::Misc,
             settings: vec![],
             supported_viewports: vec![bmc_widget_manifest::WidgetViewportConstraint {
                 viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
@@ -2775,6 +2790,7 @@ mod tests {
             author: None,
             binary: std::path::PathBuf::from("bin/widget"),
             icon: None,
+            category: bmc_widget_manifest::WidgetCategory::Misc,
             settings: vec![],
             supported_viewports: vec![bmc_widget_manifest::WidgetViewportConstraint {
                 viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
@@ -3448,5 +3464,40 @@ mod tests {
         };
         let proto = widget_info_to_proto(&info, &bmc100_platform_descriptor());
         assert_eq!(proto.subname.as_deref(), Some("Analog"));
+    }
+
+    #[test]
+    fn widget_info_to_proto_maps_category() {
+        use std::str::FromStr as _;
+
+        let make = |category_line: &str| {
+            let json = format!(
+                r#"{{
+                    "uid": "{}",
+                    "version": "1.0.0",
+                    "name": "T",
+                    "description": "T",
+                    "binary": "bin/test",
+                    {category_line}
+                    "sizes": ["small"]
+                }}"#,
+                uuid::Uuid::new_v4()
+            );
+            let info = crate::widget::WidgetInfo {
+                manifest: bmc_widget_manifest::Manifest::from_str(&json)
+                    .expect("BUG: valid manifest"),
+                widget_dir: std::path::PathBuf::from("/w"),
+                binary_path: std::path::PathBuf::from("/w/bin/test"),
+                icon_path: None,
+            };
+            widget_info_to_proto(&info, &bmc100_platform_descriptor()).category
+        };
+
+        assert_eq!(
+            make(r#""category": "space","#),
+            i32::from(web::WidgetCategory::Space)
+        );
+        // Absent category defaults to misc through the manifest layer.
+        assert_eq!(make(""), i32::from(web::WidgetCategory::Misc));
     }
 }

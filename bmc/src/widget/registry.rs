@@ -168,7 +168,7 @@ impl WidgetRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bmc_widget_manifest::{Manifest, ViewportShape, WidgetViewportConstraint};
+    use bmc_widget_manifest::{Manifest, ViewportShape, WidgetCategory, WidgetViewportConstraint};
 
     fn constraint(
         shape: ViewportShape,
@@ -202,6 +202,7 @@ mod tests {
             author: None,
             binary: PathBuf::from("bin/widget"),
             icon: None,
+            category: WidgetCategory::Misc,
             settings: vec![],
             supported_viewports: viewports,
             params: indexmap::IndexMap::new(),

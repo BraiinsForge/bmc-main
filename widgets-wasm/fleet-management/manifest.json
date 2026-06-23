@@ -10,6 +10,7 @@
   },
   "binary": "bin/fleet-management",
   "icon": "assets/icon.svg",
+  "category": "mining",
   "settings": [
     "localization"
   ],

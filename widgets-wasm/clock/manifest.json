@@ -10,6 +10,7 @@
   },
   "binary": "bin/clock",
   "icon": "assets/icon.svg",
+  "category": "clock",
   "settings": [],
   "supported_viewports": [
     {

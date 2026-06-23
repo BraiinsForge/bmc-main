@@ -10,6 +10,7 @@
   },
   "binary": "bin/blockheight",
   "icon": "assets/icon.svg",
+  "category": "mining",
   "settings": [
     "localization",
     "timezone"

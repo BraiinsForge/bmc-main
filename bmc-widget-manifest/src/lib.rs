@@ -392,6 +392,8 @@ struct RawManifest {
     #[serde(default)]
     icon: Option<PathBuf>,
     #[serde(default)]
+    category: WidgetCategory,
+    #[serde(default)]
     settings: Vec<SettingKey>,
     #[serde(default)]
     sizes: Option<Vec<SizeType>>,
@@ -473,6 +475,9 @@ pub struct Manifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<String>")]
     pub icon: Option<PathBuf>,
+    /// Catalog grouping for the Add-widget picker. Defaults to [`WidgetCategory::Misc`].
+    #[serde(default)]
+    pub category: WidgetCategory,
     /// System-provided settings the widget wants injected (locale, timezone, night mode, etc.).
     /// Order is preserved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -528,6 +533,7 @@ impl Manifest {
             author: raw.author,
             binary: raw.binary,
             icon: raw.icon,
+            category: raw.category,
             settings: raw.settings,
             supported_viewports,
             params: raw.params,
@@ -596,6 +602,27 @@ pub struct Author {
     /// Optional link to a project page or organisation site.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+}
+
+/// Catalog grouping a widget belongs to, used by the Add-widget picker to
+/// section the list. A widget declares exactly one; the field defaults to
+/// [`WidgetCategory::Misc`] when absent.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WidgetCategory {
+    /// Miner, fleet, and pool / network mining stats.
+    Mining,
+    /// Time and date.
+    Clock,
+    /// Weather and forecast.
+    Weather,
+    /// Space and astronomy.
+    Space,
+    /// Diagnostic, demo, and system tools.
+    Utility,
+    /// Uncategorized — the default fallback.
+    #[default]
+    Misc,
 }
 
 /// System-provided settings a widget can request, listed in the manifest's `settings` array.
@@ -1181,6 +1208,59 @@ mod tests {
             manifest.icon,
             Some(PathBuf::from("/usr/share/bmc/icons/test.png"))
         );
+    }
+
+    #[test]
+    fn parse_category() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test Widget",
+            "description": "A test widget",
+            "binary": "bin/test",
+            "category": "mining",
+            "supported_viewports": [
+                {"type":"rectangular","min_width":317,"max_width":317,
+                 "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}
+            ]
+        }"#;
+        let manifest = Manifest::from_str(json).expect("BUG: should parse");
+        assert_eq!(manifest.category, WidgetCategory::Mining);
+    }
+
+    #[test]
+    fn category_defaults_to_misc_when_absent() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test Widget",
+            "description": "A test widget",
+            "binary": "bin/test",
+            "supported_viewports": [
+                {"type":"rectangular","min_width":317,"max_width":317,
+                 "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}
+            ]
+        }"#;
+        let manifest = Manifest::from_str(json).expect("BUG: should parse");
+        assert_eq!(manifest.category, WidgetCategory::Misc);
+    }
+
+    #[test]
+    fn reject_unknown_category() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test Widget",
+            "description": "A test widget",
+            "binary": "bin/test",
+            "category": "bogus",
+            "supported_viewports": [
+                {"type":"rectangular","min_width":317,"max_width":317,
+                 "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}
+            ]
+        }"#;
+        let result = Manifest::from_str(json);
+        assert!(matches!(result, Err(ManifestError::ParseError(_))));
     }
 
     #[test]

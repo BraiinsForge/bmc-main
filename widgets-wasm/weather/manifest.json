@@ -10,6 +10,7 @@
   },
   "binary": "bin/weather",
   "icon": "assets/icon.svg",
+  "category": "weather",
   "settings": [
     "localization",
     "timezone"
