@@ -43,6 +43,7 @@ const manifestWidgets: pb.WidgetManifest[] = [
     manifest('iss', 'ISS Position', 'Where the station is right now.', C.SPACE),
     manifest('params', 'Params Demo', 'Read-back exemplar for every ParamKind.', C.UTILITY, 'Param showcase'),
     manifest('nameday', 'Nameday', "Today's nameday celebrations.", C.CALENDAR),
+    manifest('random-facts', 'Random Facts', 'Display a random factoid.', C.KNOWLEDGE),
 ];
 
 export const Populated = () => (

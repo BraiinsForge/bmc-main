@@ -22,6 +22,7 @@ members = [
     "mining-clock",
     "mining-info",
     "nameday",
+    "random-facts",
     "spacex-launch",
     "weather",
 ]

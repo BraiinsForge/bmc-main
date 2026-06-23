@@ -1,0 +1,25 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "af918b37-9df8-4faa-93c2-1985563eb94b",
+  "version": "0.1.0",
+  "name": "Random Facts",
+  "description": "Display a random factoid.",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/random-facts",
+  "icon": "assets/icon.svg",
+  "category": "knowledge",
+  "settings": [],
+  "supported_viewports": [
+    {
+      "type": "rectangular",
+      "min_width": 317,
+      "max_width": 1280,
+      "min_height": 238,
+      "max_height": 480
+    }
+  ],
+  "params": {}
+}
