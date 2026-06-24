@@ -33,6 +33,89 @@ nix develop .#armv7-glibc-release  # release builds
 nix develop .#armv7-glibc-debug    # debug builds
 ```
 
+## Build and validation
+
+Run validation commands from the repository root. Use the root `justfile` for routine checks, because it wraps the
+formatter, lint, tests, Python checks, wasm checks, and repo content checks in the same shape expected by CI.
+
+Common builds:
+
+```shell
+# Build frontend
+nix build -L .#frontend --print-out-paths --no-link
+
+# Build OpenWRT binaries
+nix build .#bmc-openwrt-armv7-glibc-release
+nix build .#bmc-openwrt-armv7-glibc-debug
+
+# Build deployable Deck packages
+nix build .#deck-packages.core.pkg
+nix build .#deck-packages.widget-clock.pkg
+nix build .#deck-packages.widget-blockheight.pkg
+nix build .#deck-packages.bmc-frontend.pkg
+
+# Cargo builds inside a dev shell
+cargo build
+cargo build --release
+```
+
+Top-level workspace validation:
+
+```shell
+# Format the workspace
+nix fmt
+
+# Run workspace clippy
+cargo clippy --workspace --all-targets --all-features --tests -- -D warnings
+
+# Run workspace tests
+cargo test --workspace
+```
+
+Or run the one-line validation recipe:
+
+```shell
+just validate
+```
+
+Production widget workspace validation:
+
+```shell
+# Format the workspace
+nix fmt
+
+# Run wasm-target widget clippy
+cargo clippy --manifest-path ./widgets-wasm/Cargo.toml --workspace --target wasm32-unknown-unknown
+
+# Run production widget workspace tests
+cargo test --manifest-path ./widgets-wasm/Cargo.toml --workspace
+```
+
+Or run the one-line wasm validation recipe:
+
+```shell
+just validate-wasm
+```
+
+Other useful focused recipes:
+
+```shell
+just format
+just clippy
+just test bmc
+just validate-full  # Full nix-driven check set matching the main CI stage; this is much heavier
+```
+
+Frontend commands live in `frontend/justfile`:
+
+```shell
+cd frontend
+just validate  # format, lint, type-check, and tests
+just build
+just lint
+just test
+```
+
 ### Rust-analyzer
 
 Using rust-analyzer in the widgets requires further configuration as the widgets use the wasm32 target. It should be
@@ -96,5 +179,4 @@ cargo run # or 'cargo run -- <ARGS>'
 ## Deployment during development
 
 `nix run .#deck` is the harness for deploying packages and flashing firmware to a device — run it with `--help` (and
-`<subcommand> --help`) for its procedures and options. For the lower-level scripts, see `docs/deployment.md`
-(deploy arbitrary Nix packages, the compositor, widgets, and so on).
+`<subcommand> --help`) for its procedures and options. For details see `docs/deployment.md`.
