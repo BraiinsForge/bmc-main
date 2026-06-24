@@ -6,6 +6,7 @@ use crate::config::{
     RGB_VIOLET60, SUCCESS_DURATION,
 };
 use crate::data::{LedCommand, LedEffect, LedEvent, LedScene};
+use std::time::Instant;
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, error};
 
@@ -60,6 +61,10 @@ impl LedDriver {
 pub struct LedIndicatorsState {
     wifi_persist: Option<LedCommand>,
     temp: Option<LedCommand>,
+    /// Wall-clock instant at which `temp` stops being active. Tracked
+    /// separately from `temp` so a later unrelated event re-resolving the
+    /// scene cannot extend or forget the original temp window.
+    temp_deadline: Option<Instant>,
     wifi_scan_persist: Option<LedCommand>,
     price_persist: Option<LedCommand>,
     clock_persist: Option<LedCommand>,
@@ -71,6 +76,26 @@ impl LedIndicatorsState {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Arm a one-shot temp scene, deriving its deadline from the scene's
+    /// own `duration`. A duration-less scene stays active until cleared.
+    fn set_temp(&mut self, scene: LedScene) {
+        self.temp_deadline = scene.duration.map(|d| Instant::now() + d);
+        self.temp = Some(LedCommand::SetEffect(scene));
+    }
+
+    fn clear_temp(&mut self) {
+        self.temp = None;
+        self.temp_deadline = None;
+    }
+
+    /// Instant at which the active temp expires, if any. The event loop
+    /// arms its wake-up timer from this so the temp window is owned here
+    /// rather than re-derived from the resolved scene on every event.
+    #[must_use]
+    pub fn temp_deadline(&self) -> Option<Instant> {
+        self.temp_deadline
     }
 
     pub fn apply_event(&mut self, event: LedEvent) {
@@ -94,15 +119,15 @@ impl LedIndicatorsState {
                     period: Some(KNIGHT_RIDER_PERIOD),
                     duration: None,
                 }));
-                self.temp = None;
+                self.clear_temp();
             }
             LedEvent::WifiConnected => {
                 self.wifi_persist = None;
-                self.temp = Some(LedCommand::SetEffect(LedScene {
+                self.set_temp(LedScene {
                     effect: LedEffect::Solid(RGB_GREEN),
                     period: None,
                     duration: Some(SUCCESS_DURATION),
-                }));
+                });
             }
             LedEvent::WifiNone | LedEvent::WifiError => {
                 self.wifi_persist = Some(LedCommand::SetEffect(LedScene {
@@ -110,7 +135,7 @@ impl LedIndicatorsState {
                     period: None,
                     duration: None,
                 }));
-                self.temp = None;
+                self.clear_temp();
             }
 
             LedEvent::WifiScan => {
@@ -119,7 +144,7 @@ impl LedIndicatorsState {
                     period: Some(KNIGHT_RIDER_PERIOD),
                     duration: None,
                 }));
-                self.temp = None;
+                self.clear_temp();
             }
 
             LedEvent::WifiScanEnded => {
@@ -167,19 +192,19 @@ impl LedIndicatorsState {
             }
             LedEvent::DownloadOrUpgradeSuccess => {
                 self.sys_persist = None;
-                self.temp = Some(LedCommand::SetEffect(LedScene {
+                self.set_temp(LedScene {
                     effect: LedEffect::Solid(RGB_GREEN),
                     period: None,
                     duration: Some(SUCCESS_DURATION),
-                }));
+                });
             }
             LedEvent::DownloadOrUpgradeError => {
                 self.sys_persist = None;
-                self.temp = Some(LedCommand::SetEffect(LedScene {
+                self.set_temp(LedScene {
                     effect: LedEffect::Solid(RGB_RED),
                     period: None,
                     duration: Some(ERROR_DURATION),
-                }));
+                });
             }
         }
     }
@@ -220,8 +245,10 @@ impl LedIndicatorsState {
     }
 
     /// Return the currently active scene, resolved across the priority
-    /// stack and the temp slot. The temp slot, when set, wins and is
-    /// consumed (one-shot semantics matching `apply_event`'s `temp.take()`).
+    /// stack and the temp slot. The temp slot, when set, wins and stays
+    /// active until its `temp_deadline` passes — it is dropped here once
+    /// expired, not consumed on first read, so polling it repeatedly within
+    /// its window keeps reporting it.
     ///
     /// `None` means "this layer has nothing to draw" — the coordinator
     /// falls through to lower layers. A resolved scene whose effect is
@@ -229,8 +256,15 @@ impl LedIndicatorsState {
     /// to a None-effect scene would mask every lower layer.
     #[must_use]
     pub fn current_scene(&mut self) -> Option<LedScene> {
-        let resolved = match self.temp.take() {
-            Some(LedCommand::SetEffect(scene)) => Some(scene),
+        self.current_scene_at(Instant::now())
+    }
+
+    fn current_scene_at(&mut self, now: Instant) -> Option<LedScene> {
+        if self.temp_deadline.is_some_and(|deadline| now >= deadline) {
+            self.clear_temp();
+        }
+        let resolved = match &self.temp {
+            Some(LedCommand::SetEffect(scene)) => Some(*scene),
             _ => match self.select_persistent(false) {
                 Some(LedCommand::SetEffect(scene)) => Some(scene),
                 _ => None,
@@ -306,22 +340,48 @@ mod tests {
     }
 
     #[test]
-    fn current_scene_temp_is_one_shot_then_falls_back_to_persistent() {
+    fn current_scene_temp_stays_active_until_deadline_then_persistent() {
         let mut state = LedIndicatorsState::new();
-        // A persistent system indicator underneath, plus a one-shot success temp.
+        // A persistent system indicator underneath, plus a success temp.
         state.apply_event(LedEvent::DownloadOrUpgradeStarted);
         state.apply_event(LedEvent::WifiConnected);
+        let deadline = state
+            .temp_deadline()
+            .expect("BUG: a duration-bearing temp must arm a deadline");
 
-        let temp = state.current_scene().expect("BUG: temp must show first");
-        assert!(matches!(temp.effect, LedEffect::Solid(_)));
-        assert!(temp.duration.is_some(), "a temp carries its duration");
+        // The temp is not consumed on read: repeated polls within its window
+        // keep reporting it, so an idle re-poll cannot drop the flash early.
+        for _ in 0..3 {
+            let temp = state.current_scene().expect("BUG: temp must stay active");
+            assert!(matches!(temp.effect, LedEffect::Solid(_)));
+        }
 
-        // The temp is consumed; the next poll falls back to the persistent.
+        // Once the deadline passes, the temp is dropped and the persistent
+        // underneath shows through.
         let persistent = state
-            .current_scene()
-            .expect("BUG: persistent must remain once the temp is consumed");
+            .current_scene_at(deadline)
+            .expect("BUG: persistent must remain once the temp expires");
         assert!(matches!(persistent.effect, LedEffect::KnightRider(_)));
         assert!(persistent.duration.is_none());
+        assert!(state.temp_deadline().is_none());
+    }
+
+    #[test]
+    fn unrelated_event_does_not_disturb_the_temp_window() {
+        let mut state = LedIndicatorsState::new();
+        state.apply_event(LedEvent::WifiConnected);
+        let deadline = state
+            .temp_deadline()
+            .expect("BUG: temp must arm a deadline");
+
+        // An event that does not touch the temp slot (a system indicator
+        // underneath) must neither end the flash early nor move its deadline.
+        state.apply_event(LedEvent::DownloadOrUpgradeStarted);
+        let scene = state
+            .current_scene()
+            .expect("BUG: the success flash must outlive an unrelated event");
+        assert!(matches!(scene.effect, LedEffect::Solid(_)));
+        assert_eq!(state.temp_deadline(), Some(deadline));
     }
 
     #[test]
