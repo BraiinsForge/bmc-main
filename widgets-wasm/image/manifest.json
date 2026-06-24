@@ -1,0 +1,36 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "f9e4956c-719d-450c-909d-4fc9d4440e15",
+  "version": "0.1.0",
+  "name": "Image",
+  "description": "Display an image fetched from a URL, fitted to the widget",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/image",
+  "icon": "assets/icon.svg",
+  "supported_viewports": [
+    {
+      "type": "rectangular",
+      "min_width": 317,
+      "max_width": 1280,
+      "min_height": 238,
+      "max_height": 480
+    }
+  ],
+  "params": {
+    "url": {
+      "name": "Image URL",
+      "description": "URL of a PNG or JPEG image to display",
+      "type": "string",
+      "default_value": ""
+    },
+    "refresh_seconds": {
+      "name": "Refresh interval (seconds)",
+      "description": "How often to re-fetch the image",
+      "type": "integer",
+      "default_value": 300
+    }
+  }
+}

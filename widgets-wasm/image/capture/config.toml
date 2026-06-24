@@ -1,0 +1,13 @@
+# Copyright (C) 2026  Braiins Systems s.r.o.
+
+# Visual-regression capture config. Settle a few frames after the image fetch
+# stub fires so the widget leaves Loading and registers the bitmap before the
+# first capture.
+settle_delay = 5
+
+[fixtures]
+small = "fixtures/small.jsonl.gz"
+medium = "fixtures/medium.jsonl.gz"
+large = "fixtures/large.jsonl.gz"
+full = "fixtures/full.jsonl.gz"
+bmm101 = "fixtures/bmm101.jsonl.gz"

@@ -15,6 +15,7 @@ members = [
     "blockheight",
     "clock",
     "fleet-management",
+    "image",
     "iss-position",
     "lib/mining",
     "lib/units",

@@ -1,0 +1,15 @@
+# Copyright (C) 2026  Braiins Systems s.r.o.
+
+[package]
+name = "image"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
+
+[lints]
+workspace = true

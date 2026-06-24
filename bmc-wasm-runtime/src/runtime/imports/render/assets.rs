@@ -27,6 +27,7 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_mesh_import(linker)?;
     register_bitmap_sample_import(linker)?;
     register_image_decode_import(linker)?;
+    register_max_image_pixels_import(linker)?;
     Ok(())
 }
 
@@ -254,6 +255,17 @@ fn register_image_decode_import(linker: &mut Linker<HostState>) -> Result<()> {
         },
     )?;
 
+    Ok(())
+}
+
+fn register_max_image_pixels_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_max_image_pixels",
+        |_caller: Caller<'_, HostState>| -> u32 {
+            u32::try_from(MAX_DECODE_IMAGE_PIXELS).unwrap_or(u32::MAX)
+        },
+    )?;
     Ok(())
 }
 

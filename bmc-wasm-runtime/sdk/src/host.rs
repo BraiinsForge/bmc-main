@@ -120,6 +120,9 @@ mod ffi {
 
         // Random number generation (host-seeded for deterministic replay)
         fn host_random_u32() -> u32;
+
+        // Max image size (pixels) the host will decode.
+        fn host_max_image_pixels() -> u32;
     }
 
     /// Fill a rectangle with a solid color.
@@ -354,6 +357,12 @@ mod ffi {
     #[must_use]
     pub fn random_u32() -> u32 {
         unsafe { host_random_u32() }
+    }
+
+    /// Maximum image size, in pixels, the host will decode.
+    #[must_use]
+    pub fn max_image_pixels() -> u32 {
+        unsafe { host_max_image_pixels() }
     }
 }
 
