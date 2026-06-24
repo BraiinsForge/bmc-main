@@ -212,14 +212,20 @@ def test_wait_for_device_times_out() -> None:
 class _Nix:
     """Fake Nix: resolve names from the attr leaf, build to a fake store path."""
 
-    def __init__(self, widgets: tuple[str, ...] = (), out_dir: str = "") -> None:
+    def __init__(
+        self, widgets: tuple[str, ...] = (), out_dir: str = "", packages: tuple[str, ...] = ()
+    ) -> None:
         self.widgets = list(widgets)
+        self.packages = list(packages) or ["core", *self.widgets]
         self.built: list[Pkg] = []
         self.copied: list[tuple[list[str], str]] = []
         self.out_dir = out_dir
 
     def discover_widgets(self) -> list[str]:
         return list(self.widgets)
+
+    def list_packages(self) -> list[str]:
+        return list(self.packages)
 
     def build_out(self, attr: str) -> str:
         return self.out_dir
@@ -252,6 +258,39 @@ def test_resolve_uses_explicit_packages() -> None:
     assert [p.name for p in plan.resolved] == ["core"]
 
 
+def test_resolve_aborts_with_suggestion_on_unknown_package() -> None:
+    class _BadNix(_Nix):
+        def resolve(self, attr: str) -> Pkg:
+            raise subprocess.CalledProcessError(1, ["nix", "eval", attr])
+
+    plan = catalog.Deployment(attrs=[".#deck-packages.image"])
+    with pytest.raises(Abort, match="widget-image"):
+        catalog.resolve_packages(_BadNix(widgets=("widget-image", "widget-clock")), plan)
+
+
+def test_resolve_suggests_non_widget_packages() -> None:
+    class _BadNix(_Nix):
+        def resolve(self, attr: str) -> Pkg:
+            raise subprocess.CalledProcessError(1, ["nix", "eval", attr])
+
+    plan = catalog.Deployment(attrs=[".#deck-packages.frontend"])
+    nix = _BadNix(packages=("core", "bmc-frontend", "widget-image"))
+    with pytest.raises(Abort, match="bmc-frontend"):
+        catalog.resolve_packages(nix, plan)
+
+
+def test_resolve_qualifies_bare_package_names() -> None:
+    plan = catalog.Deployment(attrs=["core", "widget-image"])
+    catalog.resolve_packages(_Nix(), plan)
+    assert plan.attrs == [".#deck-packages.core", ".#deck-packages.widget-image"]
+
+
+def test_resolve_leaves_qualified_attrs_alone() -> None:
+    plan = catalog.Deployment(attrs=[".#armv7-nixpkgs.strace"])
+    catalog.resolve_packages(_Nix(), plan)
+    assert plan.attrs == [".#armv7-nixpkgs.strace"]
+
+
 def test_build_realises_each_resolved() -> None:
     plan = catalog.Deployment(attrs=[], resolved=[Pkg("core", "1.0", ".#x.pkg^out")])
     catalog.build_packages(_Nix(), plan)
@@ -278,6 +317,31 @@ def test_register_packages_builds_cli_command() -> None:
     cmd = backend.runs[-1][-1]
     assert "bmc-nix-cli add-packages" in cmd
     assert "--name core --version 1.0 --store-path /nix/store/core" in cmd
+
+
+def test_restart_compositor_runs_on_confirm(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("bmc_tui.console.confirm", lambda _q: True)
+    backend = _Exec(_routes({}))
+    catalog.restart_compositor(Device("h", backend=backend))
+    assert "/etc/init.d/bmc-compositor restart" in backend.runs[-1][-1]
+
+
+def test_restart_compositor_skips_on_decline(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("bmc_tui.console.confirm", lambda _q: False)
+    backend = _Exec(_routes({}))
+    catalog.restart_compositor(Device("h", backend=backend))
+    assert backend.runs == []
+
+
+def test_restart_compositor_skips_under_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("bmc_tui.console.confirm", lambda _q: True)
+    token = dry_run.set(True)
+    backend = _Exec(_routes({}))
+    try:
+        catalog.restart_compositor(Device("h", backend=backend))
+    finally:
+        dry_run.reset(token)
+    assert backend.runs == []
 
 
 def test_generation_number_parses_link_path() -> None:

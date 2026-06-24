@@ -9,6 +9,7 @@ All work goes through an injected `Nix` backend so tests need no real nix.
 """
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from typing import Protocol
@@ -47,6 +48,10 @@ class Nix(Protocol):
         """Leaf names of every `category == "widget"` deck package."""
         ...
 
+    def list_packages(self) -> list[str]:
+        """Leaf names of every deck package."""
+        ...
+
     def resolve(self, attr: str) -> Pkg:
         """Detect index-vs-raw package and read its name, version, installable."""
         ...
@@ -72,6 +77,12 @@ class _RealNix:
 
     def discover_widgets(self) -> list[str]:
         out = _eval_json(_DECK_PACKAGES, _WIDGET_FILTER)
+        if not isinstance(out, list):
+            return []
+        return sorted(str(name) for name in out)
+
+    def list_packages(self) -> list[str]:
+        out = _eval_json(_DECK_PACKAGES, "builtins.attrNames")
         if not isinstance(out, list):
             return []
         return sorted(str(name) for name in out)
@@ -134,7 +145,10 @@ class _RealNix:
         if dry_run.get():
             console.kv("would copy", f"{len(store_paths)} closure(s) -> {dest}")
             return
-        subprocess.run(["nix", "copy", "--to", dest, *store_paths], check=True)
+        # quiet ssh's post-quantum-KEX warning
+        env = dict(os.environ)
+        env["NIX_SSHOPTS"] = f"{env.get('NIX_SSHOPTS', '')} -o LogLevel=ERROR".strip()
+        subprocess.run(["nix", "copy", "--to", dest, *store_paths], check=True, env=env)
 
 
 def real(*, max_jobs: int | None = None) -> Nix:

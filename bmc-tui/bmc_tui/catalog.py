@@ -6,7 +6,9 @@ run. The authoritative firmware compatibility check runs on the device during
 sysupgrade; this catalog only fails fast on the obvious local problems.
 """
 
+import difflib
 import shlex
+import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -16,7 +18,7 @@ from bmc_tui import console
 from bmc_tui.device import Device
 from bmc_tui.image import Image
 from bmc_tui.nix import Built, Nix, Pkg
-from bmc_tui.stage import done_if, dry_run, ensure, require, stage
+from bmc_tui.stage import Abort, done_if, dry_run, ensure, require, stage
 
 _PROFILE_DIR = "/nix/var/nix/gcroots/profiles/bmc"
 # Probe and invoke the CLI at the profile we deploy into, not
@@ -66,8 +68,8 @@ def ensure_memory(dev: Device, need: int) -> str:
 
 @stage("Upload firmware")
 def upload_firmware(dev: Device, image: Image) -> str:
-    # The done_if doubles as the integrity gate on re-runs: a matching on-device
-    # sha256 means the upload is already present and intact, nothing to redo.
+    """Upload the firmware; a matching on-device sha256 makes a re-run a no-op."""
+
     done_if(_remote_sha(dev, image.remote_path) == image.sha256)
     dev.push(image.path, image.remote_path)
     if dry_run.get():
@@ -143,17 +145,45 @@ def ensure_nix_cli(nix: Nix, dev: Device) -> None:
     ensure(present, bootstrap, "bmc-nix-cli bootstrap did not take")
 
 
+def _unknown_package_hint(attr: str, packages: list[str]) -> str:
+    """Clean 'does not exist' hint, suggesting the closest deck package."""
+    leaf = attr.rsplit(".", 1)[-1]
+    prefixed = f"widget-{leaf}"
+    if prefixed in packages:
+        guess = prefixed
+    else:
+        matches = difflib.get_close_matches(leaf, packages, n=1, cutoff=0.5)
+        guess = matches[0] if matches else None
+    suffix = f" — did you mean {console.lit(f'.#deck-packages.{guess}')}?" if guess else ""
+    return f"package {console.lit(attr)} does not exist{suffix}"
+
+
+def _qualify(attr: str) -> str:
+    """Expand a bare package name to its `.#deck-packages.` attr."""
+    return attr if "#" in attr else f".#deck-packages.{attr}"
+
+
 @stage("Resolve packages")
 def resolve_packages(nix: Nix, plan: Deployment) -> str:
     if not plan.attrs:
         plan.attrs = [f".#deck-packages.{name}" for name in ["core", *nix.discover_widgets()]]
-    plan.resolved = [nix.resolve(attr) for attr in plan.attrs]
+    plan.attrs = [_qualify(a) for a in plan.attrs]
+    resolved: list[Pkg] = []
+    for attr in plan.attrs:
+        try:
+            resolved.append(nix.resolve(attr))
+        except subprocess.CalledProcessError:
+            raise Abort(_unknown_package_hint(attr, nix.list_packages())) from None
+    plan.resolved = resolved
     return ", ".join(console.lit(pkg.name) for pkg in plan.resolved)
 
 
 @stage("Build packages")
 def build_packages(nix: Nix, plan: Deployment) -> str:
-    plan.built = nix.build(plan.resolved)
+    try:
+        plan.built = nix.build(plan.resolved)
+    except subprocess.CalledProcessError as e:
+        raise Abort(f"nix build failed (exit {e.returncode}); see the nix output above") from None
     return f"built {console.lit(len(plan.built))} package(s)"
 
 
@@ -171,10 +201,21 @@ def register_packages(dev: Device, plan: Deployment) -> str:
     return f"{names} → generation {console.lit(generation)}" if generation else names
 
 
+@stage("Restart compositor")
+def restart_compositor(dev: Device) -> str:
+    """Offer to restart the compositor so it reloads the widget set."""
+
+    if dry_run.get():
+        return "skipped (dry-run)"
+    if not console.confirm("Restart the compositor now to load new or changed widgets?"):
+        return "skipped"
+    dev.run("/etc/init.d/bmc-compositor restart")
+    return "restarted"
+
+
 def _generation_number(register_stdout: str | None) -> str | None:
-    # `add-packages` prints the new generation dir (e.g. .../bmc/3-link) on its
-    # last stdout line; the number is the basename minus the `-link` suffix.
-    # Absent under --dry-run, or when the profile was already up to date.
+    """Generation number from `add-packages` stdout's last line; None if absent."""
+
     if not register_stdout:
         return None
     leaf = register_stdout.splitlines()[-1].rsplit("/", 1)[-1]
@@ -201,8 +242,8 @@ class Provisioning:
 
 @stage("Nix store absent")
 def ensure_store_absent(dev: Device) -> str:
-    # A populated store means an already-initialised device; reinitialising over
-    # it would orphan the live store, so we refuse and hand back the clear-down.
+    """Refuse to reinitialise over a populated store; hand back the clear-down."""
+
     remedy = f"ssh {dev.login} 'umount /nix 2>/dev/null; rm -rf /mnt/data/nix /nix'"
     require(
         not _store_populated(dev),
@@ -221,7 +262,8 @@ def mount_nix_store(dev: Device) -> str:
 
 @stage("Build init tarball")
 def build_init_tarball(nix: Nix, plan: Provisioning) -> str:
-    # The derivation's out is a directory holding exactly one .tar.gz.
+    """Build the init tarball and locate its single `.tar.gz`."""
+
     out = nix.build_out(_INIT_TARBALL)
     tarballs = sorted(Path(out).glob("*.tar.gz"))
     require(
@@ -245,15 +287,15 @@ def stream_init_tarball(dev: Device, plan: Provisioning) -> str:
 
 @stage("Activate profile")
 def activate_profile(dev: Device) -> str:
-    # Generation 1 is the freshly-extracted profile; its entrypoint wires up the
-    # store on the device (same step nix-init.sh ran by hand).
+    """Activate generation 1 via its entrypoint, wiring up the device store."""
+
     dev.run(f"{_PROFILE_DIR}/1-link/core/activation/entrypoint")
     return f"activated {console.lit('generation 1')}"
 
 
 def _store_populated(dev: Device) -> bool:
-    # Lists the contents of either store dir; any output means a non-empty store.
-    # Empty-but-present and wholly absent both come back blank, so both pass.
+    """True if either store dir has contents; absent or empty both pass."""
+
     listing = dev.read(
         f'for d in {_NIX_STORE} {_NIX_BACKING}; do [ -d "$d" ] && ls -A "$d" 2>/dev/null; done'
     )
@@ -261,20 +303,21 @@ def _store_populated(dev: Device) -> bool:
 
 
 def _nix_mounted(dev: Device) -> bool:
-    # Match the mount-point field in /proc/mounts (`... /nix ...`); `|| true`
-    # keeps a no-match grep from looking like an ssh failure.
+    """True if /nix is mounted, per /proc/mounts."""
+
     return bool(dev.read("grep ' /nix ' /proc/mounts || true"))
 
 
 def _mem_available(dev: Device) -> int:
-    # /tmp is swapless tmpfs, so free RAM (not df) bounds the upload + flash.
+    """Free RAM in bytes; /tmp is swapless tmpfs, so RAM bounds upload+flash."""
+
     kb = dev.read("awk '/^MemAvailable:/ {print $2}' /proc/meminfo")
     return int(kb) * 1024
 
 
 def _remote_sha(dev: Device, remote_path: str) -> str:
-    # Hex sha256 of the on-device file; empty when it is absent (the pipe exits
-    # 0 even though sha256sum fails), so it never matches a real local digest.
+    """Hex sha256 of the on-device file; empty when absent, so never a false match."""
+
     return dev.read(f"sha256sum {remote_path} 2>/dev/null | cut -d' ' -f1")
 
 

@@ -40,15 +40,16 @@ It builds Nix flake packages and copies their entire closures to the device's `/
 installs them into the bmc profile via one `bmc-nix-cli` call. The device must already be initialized with `deck init`.
 
 With no `--packages`, it deploys `core` plus every widget (discovered from the nix-owned `category` metadata). Pass
-`--packages` with full flake URIs to deploy a specific set. Index packages (exposed under `deck-packages`) are
+`--packages` with bare names (e.g. `core widget-image`) that expand to `.#deck-packages.*`, or fully-qualified flake
+URIs (anything with `#`, e.g. `.#armv7-nixpkgs.strace`) used as-is. Index packages (exposed under `deck-packages`) are
 auto-detected and their `.pkg` output is built; raw nixpkgs derivations (e.g. `armv7-nixpkgs`) are built directly.
 
 ```sh
 # core plus every widget
 nix run .#deck -- deploy --device 192.168.1.2
 
-# a specific set of Deck packages
-nix run .#deck -- deploy --device 192.168.1.2 --packages '.#deck-packages.core' '.#deck-packages.widget-clock'
+# a specific set of Deck packages (bare names expand to .#deck-packages.*)
+nix run .#deck -- deploy --device 192.168.1.2 --packages core widget-clock
 
 # a package from nixpkgs
 nix run .#deck -- deploy --device 192.168.1.2 --packages '.#armv7-nixpkgs.strace'

@@ -19,7 +19,15 @@ from bmc_tui import console
 from bmc_tui.stage import dry_run
 
 # Key-based, accept-new host key, no password — unlike the VM's sshpass path.
-_SSH_OPTS = ["-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=8"]
+_SSH_OPTS = [
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-o",
+    "ConnectTimeout=8",
+    # quiet ssh's post-quantum-KEX warning
+    "-o",
+    "LogLevel=ERROR",
+]
 
 _CHUNK = 1 << 16  # 64 KiB upload chunk
 
