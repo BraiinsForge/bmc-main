@@ -5,6 +5,7 @@
 #![expect(clippy::cast_possible_truncation)]
 
 use anyhow::{Result, bail};
+use bmc_render::{MAX_DECODE_IMAGE_ALLOC_BYTES, MAX_DECODE_IMAGE_PIXELS};
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{BitmapId, MeshId, SvgId};
 use wasmi::{Caller, Extern, Linker};
@@ -24,6 +25,7 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_svg_import(linker)?;
     register_bitmap_import(linker)?;
     register_bitmap_nearest_import(linker)?;
+    register_bitmap_fit_import(linker)?;
     register_mesh_import(linker)?;
     register_bitmap_sample_import(linker)?;
     register_image_decode_import(linker)?;
@@ -107,6 +109,36 @@ fn register_bitmap_nearest_import(linker: &mut Linker<HostState>) -> Result<()> 
             super::super::with_renderer(&mut caller, |renderer| {
                 renderer
                     .register_bitmap_nearest(&tag, &data)
+                    .map_or(0, BitmapId::to_wire)
+                    .into()
+            })
+        },
+    )?;
+    Ok(())
+}
+
+fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_register_bitmap_fit",
+        |mut caller: Caller<'_, HostState>,
+         tag_ptr: u32,
+         tag_len: u32,
+         data_ptr: u32,
+         data_len: u32,
+         max_w: u32,
+         max_h: u32|
+         -> Result<u32, wasmi::Error> {
+            let Some(tag) = read_tag(&caller, tag_ptr, tag_len) else {
+                return Ok(0);
+            };
+            let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
+                return Ok(0);
+            };
+            let tag = caller.data_mut().namespaced_tag(&tag);
+            super::super::with_renderer(&mut caller, |renderer| {
+                renderer
+                    .register_bitmap_fit(&tag, &data, max_w, max_h)
                     .map_or(0, BitmapId::to_wire)
                     .into()
             })
@@ -268,15 +300,6 @@ fn register_max_image_pixels_import(linker: &mut Linker<HostState>) -> Result<()
     )?;
     Ok(())
 }
-
-/// Maximum decoded image size accepted by `host_decode_image` (RGBA pixels).
-const MAX_DECODE_IMAGE_PIXELS: u64 = 4_194_304;
-/// Maximum decoder allocation budget accepted by `host_decode_image`.
-///
-/// This is intentionally slightly above the 8-bit RGBA output budget so common
-/// decoders can keep modest working buffers, while still rejecting high
-/// bit-depth images before they allocate substantially larger intermediates.
-const MAX_DECODE_IMAGE_ALLOC_BYTES: u64 = 24 * 1024 * 1024;
 
 fn rgba_byte_len_limited(width: u32, height: u32) -> Result<usize> {
     let pixels = u64::from(width) * u64::from(height);

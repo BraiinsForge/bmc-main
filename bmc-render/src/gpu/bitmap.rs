@@ -16,21 +16,21 @@ use femtovg::{ImageFlags, ImageId, ImageSource, Paint, Path};
 use imgref::ImgRef;
 use rgb::{FromSlice as _, RGBA8};
 
-/// Decoded bitmap pixels retained for host-side sampling.
+/// GPU texture handle and source dimensions for a registered bitmap.
 struct StoredBitmap {
     image_id: ImageId,
-    pixels: Vec<u8>,
     width: u32,
     height: u32,
 }
 
-/// Registry mapping opaque widget-side IDs to FemtoVG GPU texture handles
-/// and retained RGBA pixel data for host-side sampling.
+/// Registry mapping opaque widget-side IDs to FemtoVG GPU texture handles.
 ///
 /// Registrations are deduped by tag: re-registering the same tag returns the
 /// cached ID without re-decoding or re-uploading.
 pub struct BitmapRegistry {
     bitmaps: HashMap<BitmapId, StoredBitmap>,
+    /// CPU RGBA kept only for `sample`; set by `register`, not `register_fit`.
+    sample_pixels: HashMap<BitmapId, Vec<u8>>,
     by_tag: HashMap<String, BitmapId>,
     next_id: u16,
 }
@@ -49,6 +49,7 @@ impl BitmapRegistry {
     pub fn new() -> Self {
         Self {
             bitmaps: HashMap::new(),
+            sample_pixels: HashMap::new(),
             by_tag: HashMap::new(),
             next_id: 1,
         }
@@ -85,7 +86,41 @@ impl BitmapRegistry {
             id,
             StoredBitmap {
                 image_id,
-                pixels,
+                width,
+                height,
+            },
+        );
+        self.sample_pixels.insert(id, pixels);
+        self.by_tag.insert(tag.to_owned(), id);
+        Some(id)
+    }
+
+    /// Register with downscale to fit `max_w`×`max_h` (no upscale).
+    /// Does not keep a CPU copy.
+    pub fn register_fit(
+        &mut self,
+        tag: &str,
+        data: &[u8],
+        canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
+        flags: ImageFlags,
+        max_w: u32,
+        max_h: u32,
+    ) -> Option<BitmapId> {
+        if let Some(&id) = self.by_tag.get(tag) {
+            return Some(id);
+        }
+        let (image_id, width, height) = match decode_fit_upload(data, canvas, flags, max_w, max_h) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!("failed to decode/upload bitmap ({tag}): {e}");
+                return None;
+            }
+        };
+        let id = BitmapId::alloc(&mut self.next_id);
+        self.bitmaps.insert(
+            id,
+            StoredBitmap {
+                image_id,
                 width,
                 height,
             },
@@ -113,6 +148,7 @@ impl BitmapRegistry {
         for bitmap in self.bitmaps.drain().map(|(_, bitmap)| bitmap) {
             canvas.delete_image(bitmap.image_id);
         }
+        self.sample_pixels.clear();
         self.by_tag.clear();
     }
 
@@ -132,6 +168,7 @@ impl BitmapRegistry {
         let Some(stored) = self.bitmaps.remove(&id) else {
             return false;
         };
+        self.sample_pixels.remove(&id);
         canvas.delete_image(stored.image_id);
         true
     }
@@ -167,6 +204,7 @@ impl BitmapRegistry {
     #[expect(clippy::many_single_char_names)]
     pub fn sample(&self, id: BitmapId, x: u32, y: u32, w: u32, h: u32) -> Option<u32> {
         let bmp = self.bitmaps.get(&id)?;
+        let pixels = self.sample_pixels.get(&id)?;
 
         let x0 = x.min(bmp.width);
         let y0 = y.min(bmp.height);
@@ -184,10 +222,10 @@ impl BitmapRegistry {
             let row_start = (row * bmp.width + x0) as usize * 4;
             for col in 0..region_w {
                 let idx = row_start + col as usize * 4;
-                r_sum += u64::from(bmp.pixels[idx]);
-                g_sum += u64::from(bmp.pixels[idx + 1]);
-                b_sum += u64::from(bmp.pixels[idx + 2]);
-                a_sum += u64::from(bmp.pixels[idx + 3]);
+                r_sum += u64::from(pixels[idx]);
+                g_sum += u64::from(pixels[idx + 1]);
+                b_sum += u64::from(pixels[idx + 2]);
+                a_sum += u64::from(pixels[idx + 3]);
             }
         }
 
@@ -232,8 +270,103 @@ fn decode_and_upload(
     Ok((image_id, rgba.into_raw(), w, h))
 }
 
-/// Draw a sub-rectangle of a bitmap: sample from `(sx, sy, sw, sh)` in the source
-/// and render it into `(dx, dy, dw, dh)` on the canvas.
+/// Decode, downscale to fit `max_w`×`max_h` (no upscale), and upload.
+fn decode_fit_upload(
+    data: &[u8],
+    canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
+    flags: ImageFlags,
+    max_w: u32,
+    max_h: u32,
+) -> anyhow::Result<(ImageId, u32, u32)> {
+    let (rgba, w, h) = decode_scaled_to_fit(data, max_w, max_h)?;
+    let pixels_rgba: &[RGBA8] = rgba.as_rgba();
+    let src = ImageSource::Rgba(ImgRef::new(pixels_rgba, w as usize, h as usize));
+    let image_id = canvas.create_image(src, flags)?;
+    Ok((image_id, w, h))
+}
+
+/// Decode to RGBA within `max_w`×`max_h` (no upscale); JPEG scales on load, others full-decode.
+fn decode_scaled_to_fit(
+    data: &[u8],
+    max_w: u32,
+    max_h: u32,
+) -> anyhow::Result<(Vec<u8>, u32, u32)> {
+    if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        decode_jpeg_scaled(data, max_w, max_h)
+    } else {
+        decode_full_resized(data, max_w, max_h)
+    }
+}
+
+/// DCT scale-on-load near the target, then resample to the exact fit.
+fn decode_jpeg_scaled(data: &[u8], max_w: u32, max_h: u32) -> anyhow::Result<(Vec<u8>, u32, u32)> {
+    let mut decoder = jpeg_decoder::Decoder::new(Cursor::new(data));
+    decoder.scale(
+        u16::try_from(max_w).unwrap_or(u16::MAX),
+        u16::try_from(max_h).unwrap_or(u16::MAX),
+    )?;
+    let info = decoder
+        .info()
+        .ok_or_else(|| anyhow::anyhow!("jpeg has no frame info"))?;
+    let pixels = decoder.decode()?;
+    let (sw, sh) = (u32::from(info.width), u32::from(info.height));
+    let rgba = jpeg_to_rgba(&pixels, info.pixel_format)?;
+    let img = image::RgbaImage::from_raw(sw, sh, rgba)
+        .ok_or_else(|| anyhow::anyhow!("jpeg pixel buffer size mismatch"))?;
+    Ok(resize_rgba_to_fit(
+        image::DynamicImage::ImageRgba8(img),
+        max_w,
+        max_h,
+    ))
+}
+
+/// Full decode (allocation-capped) then resample to fit.
+fn decode_full_resized(data: &[u8], max_w: u32, max_h: u32) -> anyhow::Result<(Vec<u8>, u32, u32)> {
+    let data = data.to_vec();
+    let decoded = panic::catch_unwind(|| {
+        let mut reader = image::ImageReader::new(Cursor::new(&data));
+        let mut limits = image::io::Limits::default();
+        limits.max_alloc = Some(crate::MAX_DECODE_IMAGE_ALLOC_BYTES);
+        reader.limits(limits);
+        reader
+            .with_guessed_format()
+            .map_err(image::ImageError::IoError)
+            .and_then(image::ImageReader::decode)
+    })
+    .map_err(|_| anyhow::anyhow!("image decoder panicked"))?
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(resize_rgba_to_fit(decoded, max_w, max_h))
+}
+
+/// Resample down to fit `max_w`×`max_h` preserving aspect; never upscales.
+fn resize_rgba_to_fit(img: image::DynamicImage, max_w: u32, max_h: u32) -> (Vec<u8>, u32, u32) {
+    let rgba = if img.width() > max_w || img.height() > max_h {
+        img.resize(max_w, max_h, image::imageops::FilterType::Triangle)
+            .into_rgba8()
+    } else {
+        img.into_rgba8()
+    };
+    let (w, h) = (rgba.width(), rgba.height());
+    (rgba.into_raw(), w, h)
+}
+
+/// Expand jpeg-decoder output to RGBA; only RGB and 8-bit grayscale.
+fn jpeg_to_rgba(pixels: &[u8], format: jpeg_decoder::PixelFormat) -> anyhow::Result<Vec<u8>> {
+    use jpeg_decoder::PixelFormat;
+    match format {
+        PixelFormat::RGB24 => Ok(pixels
+            .chunks_exact(3)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect()),
+        PixelFormat::L8 => Ok(pixels.iter().flat_map(|&g| [g, g, g, 255]).collect()),
+        fmt @ (PixelFormat::L16 | PixelFormat::CMYK32) => {
+            anyhow::bail!("unsupported jpeg pixel format: {fmt:?}")
+        }
+    }
+}
+
+/// Draw a sub-rectangle of a bitmap: sample from `(sx, sy, sw, sh)`
+/// in the source and render it into `(dx, dy, dw, dh)` on the canvas.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_bitmap_subrect(
     canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
@@ -415,6 +548,44 @@ mod tests {
             .write_to(&mut buf, ImageFormat::Png)
             .expect("BUG: PNG encode should succeed");
         buf.into_inner()
+    }
+
+    /// Solid-color RGB JPEG of the given size, encoded each call.
+    fn solid_jpeg(w: u32, h: u32) -> Vec<u8> {
+        use image::{DynamicImage, ImageBuffer, ImageFormat, Rgb};
+        use std::io::Cursor;
+
+        let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_pixel(w, h, Rgb([20, 120, 200]));
+        let mut buf = Cursor::new(Vec::new());
+        DynamicImage::ImageRgb8(img)
+            .write_to(&mut buf, ImageFormat::Jpeg)
+            .expect("BUG: JPEG encode should succeed");
+        buf.into_inner()
+    }
+
+    #[test]
+    fn jpeg_far_larger_than_viewport_bounds_to_it() {
+        let jpeg = solid_jpeg(4000, 3000);
+        let (rgba, w, h) = decode_scaled_to_fit(&jpeg, 640, 480).expect("BUG: large JPEG decode");
+        assert!(w <= 640 && h <= 480, "not bounded: {w}x{h}");
+        assert_eq!(rgba.len(), (w * h * 4) as usize);
+        // 4:3 source into a 4:3 viewport fills it exactly.
+        assert_eq!((w, h), (640, 480));
+    }
+
+    #[test]
+    fn jpeg_smaller_than_viewport_is_not_upscaled() {
+        let jpeg = solid_jpeg(100, 80);
+        let (_rgba, w, h) = decode_scaled_to_fit(&jpeg, 640, 480).expect("BUG: small JPEG decode");
+        assert_eq!((w, h), (100, 80));
+    }
+
+    #[test]
+    fn non_jpeg_decodes_within_bounds() {
+        let png = minimal_png();
+        let (rgba, w, h) = decode_scaled_to_fit(&png, 640, 480).expect("BUG: PNG decode");
+        assert!(w <= 640 && h <= 480);
+        assert_eq!(rgba.len(), (w * h * 4) as usize);
     }
 
     #[test]

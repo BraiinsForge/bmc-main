@@ -812,6 +812,23 @@ impl Renderer for FemtoVgRenderer {
             .register(tag, data, &mut self.canvas, femtovg::ImageFlags::NEAREST)
     }
 
+    fn register_bitmap_fit(
+        &mut self,
+        tag: &str,
+        data: &[u8],
+        max_w: u32,
+        max_h: u32,
+    ) -> Option<BitmapId> {
+        self.bitmap_registry.register_fit(
+            tag,
+            data,
+            &mut self.canvas,
+            femtovg::ImageFlags::empty(),
+            max_w,
+            max_h,
+        )
+    }
+
     fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: BitmapId) {
         if let Some(image_id) = self.bitmap_registry.get(bitmap_id) {
             super::bitmap::draw_bitmap(&mut self.canvas, image_id, x, y, w, h);

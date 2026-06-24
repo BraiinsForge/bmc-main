@@ -82,6 +82,15 @@ define_slot! {
     |name, data| host::register_bitmap(name, data)
 }
 
+impl BitmapSlot {
+    /// Set this slot to `data` downscaled to fit `max_w`×`max_h` (no upscale).
+    #[must_use]
+    pub fn set_fit(&self, data: &[u8], max_w: u32, max_h: u32) -> Option<BitmapId> {
+        host::evict_prefix(self.name);
+        host::register_bitmap_fit(self.name, data, max_w, max_h)
+    }
+}
+
 define_slot! {
     /// Slot for a dynamic raster bitmap rendered with nearest-neighbor
     /// filtering (pixel-art, 9-patch).

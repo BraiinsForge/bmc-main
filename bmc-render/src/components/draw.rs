@@ -1398,6 +1398,16 @@ mod tests {
             None
         }
 
+        fn register_bitmap_fit(
+            &mut self,
+            _tag: &str,
+            _data: &[u8],
+            _max_w: u32,
+            _max_h: u32,
+        ) -> Option<BitmapId> {
+            None
+        }
+
         fn draw_bitmap(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _bitmap_id: BitmapId) {}
 
         fn draw_nine_patch(

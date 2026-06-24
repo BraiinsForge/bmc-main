@@ -19,6 +19,7 @@ femtovg.workspace = true
 glow.workspace = true
 image = { workspace = true, features = ["default-formats"] }
 imgref.workspace = true
+jpeg-decoder.workspace = true
 rgb.workspace = true
 
 # Layout

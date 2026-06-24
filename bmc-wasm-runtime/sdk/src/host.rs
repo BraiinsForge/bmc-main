@@ -85,6 +85,14 @@ mod ffi {
             data_ptr: *const u8,
             data_len: u32,
         ) -> u32;
+        pub(super) fn host_register_bitmap_fit(
+            tag_ptr: *const u8,
+            tag_len: u32,
+            data_ptr: *const u8,
+            data_len: u32,
+            max_w: u32,
+            max_h: u32,
+        ) -> u32;
 
         // Mesh registration. The host dedups by tag.
         fn host_register_mesh(
@@ -302,6 +310,23 @@ mod ffi {
                 tag.len() as u32,
                 data.as_ptr(),
                 data.len() as u32,
+            ) as u16
+        })
+    }
+
+    /// Register `data` downscaled to fit `max_w`×`max_h` (no upscale).
+    /// Does not keep a CPU copy. Idempotent host-side.
+    #[expect(clippy::cast_possible_truncation)]
+    #[must_use]
+    pub fn register_bitmap_fit(tag: &str, data: &[u8], max_w: u32, max_h: u32) -> Option<BitmapId> {
+        BitmapId::from_wire(unsafe {
+            host_register_bitmap_fit(
+                tag.as_ptr(),
+                tag.len() as u32,
+                data.as_ptr(),
+                data.len() as u32,
+                max_w,
+                max_h,
             ) as u16
         })
     }

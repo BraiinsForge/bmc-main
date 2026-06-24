@@ -37,6 +37,11 @@ pub mod profile;
 pub mod renderer;
 pub mod tree;
 
+/// Maximum image size, in RGBA pixels, the host will decode.
+pub const MAX_DECODE_IMAGE_PIXELS: u64 = 4_194_304;
+/// Decoder allocation budget, above RGBA output so decoders keep working buffers.
+pub const MAX_DECODE_IMAGE_ALLOC_BYTES: u64 = 24 * 1024 * 1024;
+
 #[cfg(all(test, target_os = "linux"))]
 mod test_harness;
 

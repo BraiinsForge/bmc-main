@@ -20,6 +20,8 @@ mod wasm_glue {
 
     const RETRY_MS: u32 = 10_000;
     const DEBOUNCE_MS: u32 = 300;
+    /// jpeg-decoder DCT-scales to 1/8 per axis, tolerating 64× more source pixels.
+    const JPEG_SCALE_HEADROOM: u64 = 64;
 
     /// Displayed image; set() evicts the previous.
     static IMAGE: BitmapSlot = BitmapSlot::new("image");
@@ -43,6 +45,16 @@ mod wasm_glue {
     fn refresh_interval_ms() -> u32 {
         let secs = manifest_params::Params::current().refresh_seconds.max(1);
         u32::try_from(secs).unwrap_or(u32::MAX).saturating_mul(1000)
+    }
+
+    /// Largest source the host can bound for this body's format.
+    fn max_source_pixels(body: &[u8]) -> u64 {
+        let cap = u64::from(host::max_image_pixels());
+        if body.starts_with(&[0xFF, 0xD8, 0xFF]) {
+            cap * JPEG_SCALE_HEADROOM
+        } else {
+            cap
+        }
     }
 
     #[unsafe(no_mangle)]
@@ -79,19 +91,22 @@ mod wasm_glue {
             match host::image_dimensions(response.body()) {
                 None => Some((State::BadImage, false)),
                 Some((w, h))
-                    if u64::from(w) * u64::from(h) > u64::from(host::max_image_pixels()) =>
+                    if u64::from(w) * u64::from(h) > max_source_pixels(response.body()) =>
                 {
                     Some((State::TooLarge, false))
                 }
-                Some((w, h)) => match IMAGE.set(response.body()) {
-                    Some(bitmap) => {
-                        let aspect = render::aspect_of(w, h);
-                        STATE.with(|s| *s.borrow_mut() = State::Loaded { bitmap, aspect });
-                        STALE.with(|s| s.set(false));
-                        None
+                Some((w, h)) => {
+                    let size = widget_size();
+                    match IMAGE.set_fit(response.body(), size.width, size.height) {
+                        Some(bitmap) => {
+                            let aspect = render::aspect_of(w, h);
+                            STATE.with(|s| *s.borrow_mut() = State::Loaded { bitmap, aspect });
+                            STALE.with(|s| s.set(false));
+                            None
+                        }
+                        None => Some((State::BadImage, false)),
                     }
-                    None => Some((State::BadImage, false)),
-                },
+                }
             }
         };
 
