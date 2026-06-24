@@ -262,11 +262,15 @@ pub fn spawn_led_event_loop(command_sender: Sender<LedCommand>) -> Sender<data::
 
             state.apply_event(event);
 
-            if let Some(scene) = state.current_scene() {
-                let cmd = LedCommand::SetEffect(scene);
-                if let Err(e) = command_sender.send(cmd).await {
-                    error!("Failed to send LED command {:?}: {e}", cmd);
-                }
+            // A resolved `None` is an explicit clear, not "nothing to do":
+            // without it the SPI worker keeps its last scene, so e.g. the
+            // post-scan idle never replaces a finished scan animation.
+            let cmd = match state.current_scene() {
+                Some(scene) => LedCommand::SetEffect(scene),
+                None => LedIndicatorsState::NONE_SCENE,
+            };
+            if let Err(e) = command_sender.send(cmd).await {
+                error!("Failed to send LED command {:?}: {e}", cmd);
             }
         }
     });
