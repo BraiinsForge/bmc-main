@@ -163,6 +163,13 @@ impl LedSceneManager {
         duration_ms: u32,
         scope: LedScope,
     ) {
+        // 0 is the cancel-all sentinel, never a valid start id. Dispatch
+        // already drops it before we see it; guarding here keeps the manager
+        // correct on its own should a caller ever bypass dispatch.
+        if request_id == LED_REQUEST_ID_ALL {
+            return;
+        }
+
         let entry = TempEntry {
             instance_id: instance_id.clone(),
             request_id,
@@ -204,6 +211,13 @@ impl LedSceneManager {
         period_ms: u32,
         scope: LedScope,
     ) {
+        // 0 is the cancel-all sentinel, never a valid start id. Dispatch
+        // already drops it before we see it; guarding here keeps the manager
+        // correct on its own should a caller ever bypass dispatch.
+        if request_id == LED_REQUEST_ID_ALL {
+            return;
+        }
+
         let new_entry = EndlessEntry {
             instance_id: instance_id.clone(),
             request_id,
@@ -493,6 +507,15 @@ fn expire_state_if_due(
     }
 }
 
+/// Build the hardware scene for a request.
+///
+/// For temps, `duration_ms` is `Some`, so the published scene carries a
+/// duration that the SPI driver also expires on — a clock parallel to this
+/// manager's authoritative `on_active_expiry` (`RunningTemp::until`). The two
+/// start at slightly different instants, so the strip can momentarily show the
+/// driver's fallback before the manager re-publishes the next queued temp; it
+/// self-corrects on that re-publish. The driver-side duration is kept on
+/// purpose as a safety expiry in case a manager re-publish is ever missed.
 fn build_scene(
     effect: ProtoLedEffect,
     color: RgbColor,
