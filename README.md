@@ -96,5 +96,5 @@ cargo run # or 'cargo run -- <ARGS>'
 ## Deployment during development
 
 `nix run .#deck` is the harness for deploying packages and flashing firmware to a device — run it with `--help` (and
-`<subcommand> --help`) for its procedures and options. For the lower-level scripts, see `docs/nix-device-scripts.md`
+`<subcommand> --help`) for its procedures and options. For the lower-level scripts, see `docs/deployment.md`
 (deploy arbitrary Nix packages, the compositor, widgets, and so on).
