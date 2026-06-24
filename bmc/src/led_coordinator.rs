@@ -21,8 +21,11 @@ pub enum Layer {
 }
 
 impl Layer {
+    /// Number of layers; sizes every per-layer array and `ALL`.
+    pub const COUNT: usize = 4;
+
     /// Layers in priority order, highest first.
-    const ALL: [Layer; 4] = [
+    const ALL: [Layer; Self::COUNT] = [
         Layer::System,
         Layer::Preview,
         Layer::LocalScene,
@@ -30,9 +33,21 @@ impl Layer {
     ];
 }
 
+// Guard the `layer as usize` indexing: `ALL` must list every variant in
+// discriminant order so an index derived from any layer stays in bounds.
+// Adding a variant without extending `ALL` (or bumping `COUNT`) fails here
+// instead of panicking at runtime.
+const _: () = {
+    let mut i = 0;
+    while i < Layer::ALL.len() {
+        assert!(Layer::ALL[i] as usize == i);
+        i += 1;
+    }
+};
+
 #[derive(Debug)]
 pub struct LedCoordinator {
-    layers: [Option<LedScene>; 4],
+    layers: [Option<LedScene>; Layer::COUNT],
     enabled: bool,
     led_tx: mpsc::Sender<LedCommand>,
     /// Last `(Layer, LedScene)` we sent on the wire. Keyed by layer too
@@ -47,14 +62,14 @@ pub struct LedCoordinator {
 
 #[derive(Clone, Copy, Debug)]
 struct DesiredState {
-    layers: [Option<LedScene>; 4],
+    layers: [Option<LedScene>; Layer::COUNT],
     enabled: bool,
 }
 
 impl Default for DesiredState {
     fn default() -> Self {
         Self {
-            layers: [None, None, None, None],
+            layers: [None; Layer::COUNT],
             enabled: true,
         }
     }
@@ -82,7 +97,7 @@ impl LedCoordinatorHandle {
 impl LedCoordinator {
     pub(crate) fn new(led_tx: mpsc::Sender<LedCommand>) -> Self {
         Self {
-            layers: [None, None, None, None],
+            layers: [None; Layer::COUNT],
             enabled: true,
             led_tx,
             applied: None,
@@ -111,10 +126,14 @@ impl LedCoordinator {
             .find_map(|layer| self.layers[layer as usize].map(|scene| (layer, scene)))
     }
 
-    fn next_command(&self) -> Option<LedCommand> {
+    /// Next command to send, paired with the pick it was derived from so
+    /// `on_sent` records the originating layer without re-running `pick()`
+    /// against state that may have moved on. `None` pick rides with the
+    /// Enable/Disable and clear commands, which don't key on a layer.
+    fn next_command(&self) -> Option<(LedCommand, Option<(Layer, LedScene)>)> {
         match (self.enabled, self.output_enabled) {
-            (false, true) => return Some(LedCommand::Disable),
-            (true, false) => return Some(LedCommand::Enable),
+            (false, true) => return Some((LedCommand::Disable, None)),
+            (true, false) => return Some((LedCommand::Enable, None)),
             _ => {}
         }
         if !self.enabled {
@@ -125,17 +144,20 @@ impl LedCoordinator {
             return None;
         }
         match pick {
-            Some((_, scene)) => Some(LedCommand::SetEffect(scene)),
-            None if self.applied.is_some() => Some(LedCommand::SetEffect(LedScene {
-                effect: LedEffect::None,
-                period: None,
-                duration: None,
-            })),
+            Some((_, scene)) => Some((LedCommand::SetEffect(scene), pick)),
+            None if self.applied.is_some() => Some((
+                LedCommand::SetEffect(LedScene {
+                    effect: LedEffect::None,
+                    period: None,
+                    duration: None,
+                }),
+                None,
+            )),
             None => None,
         }
     }
 
-    fn on_sent(&mut self, command: LedCommand) {
+    fn on_sent(&mut self, command: LedCommand, pick: Option<(Layer, LedScene)>) {
         match command {
             LedCommand::Disable => {
                 self.output_enabled = false;
@@ -150,7 +172,7 @@ impl LedCoordinator {
                 self.applied = if matches!(scene.effect, LedEffect::None) {
                     None
                 } else {
-                    self.pick().map(|(layer, _)| (layer, scene))
+                    pick
                 };
             }
             LedCommand::SetBrightness(_) => {}
@@ -166,7 +188,7 @@ pub fn spawn_led_coordinator(led_tx: mpsc::Sender<LedCommand>) -> LedCoordinator
         loop {
             coord.apply_desired(*rx.borrow_and_update());
 
-            while let Some(command) = coord.next_command() {
+            while let Some((command, pick)) = coord.next_command() {
                 // Recompute from the latest desired state before sending so
                 // stale queued intents are coalesced (latest-wins semantics).
                 if rx.has_changed().unwrap_or(false) {
@@ -176,7 +198,7 @@ pub fn spawn_led_coordinator(led_tx: mpsc::Sender<LedCommand>) -> LedCoordinator
                 if coord.led_tx.send(command).await.is_err() {
                     return;
                 }
-                coord.on_sent(command);
+                coord.on_sent(command, pick);
                 coord.apply_desired(*rx.borrow_and_update());
             }
 
@@ -216,12 +238,12 @@ mod tests {
     }
 
     fn settle(coord: &mut LedCoordinator) {
-        while let Some(command) = coord.next_command() {
+        while let Some((command, pick)) = coord.next_command() {
             coord
                 .led_tx
                 .try_send(command)
                 .expect("BUG: test queue should have capacity");
-            coord.on_sent(command);
+            coord.on_sent(command, pick);
         }
     }
 
@@ -353,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn dedupe_persists_across_enable_cycle() {
+    fn dedupe_reestablished_after_enable_cycle() {
         let (mut coord, mut rx) = harness();
         coord.publish(Layer::LocalScene, Some(scene(RED)));
         settle(&mut coord);
