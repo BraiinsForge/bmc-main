@@ -404,6 +404,14 @@ fn run_loop(
                     to_teardown.push(*id);
                 }
             }
+
+            // A widget can emit LED requests from render-time input handling,
+            // which land after the pre-render flush. Drain them now so an
+            // otherwise-idle widget doesn't strand them on poll(-1) until some
+            // unrelated event wakes the loop.
+            if !to_teardown.contains(id) && slot.flush_led_requests().is_err() {
+                to_teardown.push(*id);
+            }
         }
 
         if !to_teardown.is_empty() {
