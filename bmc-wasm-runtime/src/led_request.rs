@@ -63,11 +63,9 @@ impl LedRequestIdAllocator {
 
     #[must_use]
     pub fn alloc(&mut self) -> LedRequestId {
-        if self.next == 0 {
-            self.next = 1;
-        }
         let id = self.next;
-        self.next = self.next.wrapping_add(1);
+        // Wrap straight back to 1 so the reserved 0 is never emitted.
+        self.next = self.next.checked_add(1).unwrap_or(1);
         id
     }
 }
