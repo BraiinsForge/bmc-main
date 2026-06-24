@@ -6,9 +6,11 @@ let
   # the workspace `Cargo.toml`), so the catalog's `workspaceName` tag drives 
   # which release profile picks the crate up in `nix/wasm-widgets.nix`.
   wasmWidgetCrates = lib.mapAttrs'
-    (name: _entry: lib.nameValuePair "wasm-widget-${name}" (defineCrate {
+    (name: entry: lib.nameValuePair "wasm-widget-${name}" (defineCrate {
       path = "./${name}";
-      packageName = name;
+      # Select by the crate's real package name (from its manifest); it may differ
+      # from the dir name to dodge a collision with a same-named dep crate (`image`).
+      packageName = (builtins.fromTOML (builtins.readFile (entry.src + "/Cargo.toml"))).package.name;
       # Use --package, not --bin, since wasm is cdylib
       binName = false;
     }))

@@ -1,11 +1,12 @@
 # Copyright (C) 2026  Braiins Systems s.r.o.
 
 [package]
-name = "image"
+name = "image-widget"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
+name = "image"
 crate-type = ["cdylib"]
 
 [dependencies]
