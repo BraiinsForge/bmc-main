@@ -23,7 +23,7 @@ _PROFILE_DIR = "/nix/var/nix/gcroots/profiles/bmc"
 # via the /run/current-profile symlink — the symlink only flips
 # to the bmc profile at boot, so right after a bootstrap
 # it can disagree with what we just registered.
-_NIX_CLI = f"{_PROFILE_DIR}/bin/bmc-nix-cli"
+_NIX_CLI = f"{_PROFILE_DIR}/current/bin/bmc-nix-cli"
 
 _NIX_CONF = "/etc/nix/nix.conf"
 
