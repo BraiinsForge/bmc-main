@@ -21,11 +21,10 @@ pub enum Layer {
 }
 
 impl Layer {
-    /// Number of layers; sizes every per-layer array and `ALL`.
-    pub const COUNT: usize = 4;
-
-    /// Layers in priority order, highest first.
-    const ALL: [Layer; Self::COUNT] = [
+    /// Layers in priority order, highest first. The single source of truth
+    /// for how many layers exist — every per-layer array sizes off
+    /// `ALL.len()`, so adding a variant here resizes them in lockstep.
+    const ALL: [Layer; 4] = [
         Layer::System,
         Layer::Preview,
         Layer::LocalScene,
@@ -35,8 +34,8 @@ impl Layer {
 
 // Guard the `layer as usize` indexing: `ALL` must list every variant in
 // discriminant order so an index derived from any layer stays in bounds.
-// Adding a variant without extending `ALL` (or bumping `COUNT`) fails here
-// instead of panicking at runtime.
+// Adding a variant without extending `ALL` fails here instead of panicking
+// at runtime.
 const _: () = {
     let mut i = 0;
     while i < Layer::ALL.len() {
@@ -47,7 +46,7 @@ const _: () = {
 
 #[derive(Debug)]
 pub struct LedCoordinator {
-    layers: [Option<LedScene>; Layer::COUNT],
+    layers: [Option<LedScene>; Layer::ALL.len()],
     enabled: bool,
     led_tx: mpsc::Sender<LedCommand>,
     /// Last `(Layer, LedScene)` we sent on the wire. Keyed by layer too
@@ -62,14 +61,14 @@ pub struct LedCoordinator {
 
 #[derive(Clone, Copy, Debug)]
 struct DesiredState {
-    layers: [Option<LedScene>; Layer::COUNT],
+    layers: [Option<LedScene>; Layer::ALL.len()],
     enabled: bool,
 }
 
 impl Default for DesiredState {
     fn default() -> Self {
         Self {
-            layers: [None; Layer::COUNT],
+            layers: [None; Layer::ALL.len()],
             enabled: true,
         }
     }
@@ -97,7 +96,7 @@ impl LedCoordinatorHandle {
 impl LedCoordinator {
     pub(crate) fn new(led_tx: mpsc::Sender<LedCommand>) -> Self {
         Self {
-            layers: [None; Layer::COUNT],
+            layers: [None; Layer::ALL.len()],
             enabled: true,
             led_tx,
             applied: None,
