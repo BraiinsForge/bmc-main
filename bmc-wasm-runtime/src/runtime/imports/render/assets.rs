@@ -208,6 +208,19 @@ fn register_image_decode_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return -1;
             };
 
+            // A null output pointer means dimensions-only: probe the header (no
+            // decode, no pixel budget) so oversized-but-valid images still
+            // report their real size. The budget gates only the actual decode.
+            if rgba_out_ptr == 0 {
+                return match probe_image_dimensions(&image_data) {
+                    Ok((w, h)) => (i64::from(w) << 32) | i64::from(h),
+                    Err(e) => {
+                        tracing::error!("host_decode_image probe: {e}");
+                        -1
+                    }
+                };
+            }
+
             let rgba = match decode_image_rgba_limited(&image_data) {
                 Ok(rgba) => rgba,
                 Err(e) => {
