@@ -29,6 +29,13 @@ pub enum RegistryError {
         source: std::io::Error,
     },
 
+    #[error("widget discovery task failed for '{path}': {source}")]
+    DiscoveryTask {
+        path: PathBuf,
+        #[source]
+        source: tokio::task::JoinError,
+    },
+
     #[error("failed to read manifest from '{path}': {source}")]
     ReadManifest {
         path: PathBuf,
@@ -214,6 +221,29 @@ mod tests {
             binary_path: PathBuf::from("/test/widgets").join(name).join("bin/widget"),
             icon_path: None,
         }
+    }
+
+    #[tokio::test]
+    async fn discovery_task_failure_message_is_not_read_dir_error() {
+        let path = PathBuf::from("/test/widgets");
+        let source = tokio::task::spawn_blocking(|| panic!("simulated discovery panic"))
+            .await
+            .expect_err("BUG: blocking task should panic");
+
+        let error = RegistryError::DiscoveryTask {
+            path: path.clone(),
+            source,
+        };
+        let message = error.to_string();
+
+        assert!(
+            message.starts_with("widget discovery task failed for '/test/widgets':"),
+            "message should identify discovery task failure, got {message:?}"
+        );
+        assert!(
+            !message.contains("failed to read directory"),
+            "join errors must not be labeled as directory read failures"
+        );
     }
 
     #[test]

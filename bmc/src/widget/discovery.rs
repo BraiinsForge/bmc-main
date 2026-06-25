@@ -4,8 +4,9 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use bmc_widget_manifest::Manifest;
-use tokio::fs;
+use tokio::{fs, task};
 use tracing::warn;
+use walkdir::WalkDir;
 
 use super::{RegistryError, WidgetInfo};
 
@@ -47,55 +48,10 @@ impl PathDiscovery {
     }
 
     async fn scan_directory(path: &Path) -> Result<Vec<WidgetInfo>, RegistryError> {
+        let widget_dirs = Self::discover_widget_dirs(path.to_path_buf()).await?;
         let mut widgets = Vec::new();
 
-        let mut entries = fs::read_dir(path)
-            .await
-            .map_err(|e| RegistryError::ReadDir {
-                path: path.to_path_buf(),
-                source: e,
-            })?;
-
-        while let Some(entry) = entries.next_entry().await.transpose() {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(e) => {
-                    warn!("failed to read directory entry: {}", e);
-                    continue;
-                }
-            };
-
-            let widget_dir = entry.path();
-            let file_type = match entry.file_type().await {
-                Ok(ft) => ft,
-                Err(e) => {
-                    warn!("failed to get file type: {}", e);
-                    continue;
-                }
-            };
-
-            let is_widget_dir = if file_type.is_dir() {
-                true
-            } else if file_type.is_symlink() {
-                match fs::metadata(&widget_dir).await {
-                    Ok(metadata) => metadata.is_dir(),
-                    Err(e) => {
-                        warn!(
-                            "failed to follow widget directory symlink '{}': {}",
-                            widget_dir.display(),
-                            e
-                        );
-                        false
-                    }
-                }
-            } else {
-                false
-            };
-
-            if !is_widget_dir {
-                continue;
-            }
-
+        for widget_dir in widget_dirs {
             match Self::load_widget(&widget_dir).await {
                 Ok(info) => widgets.push(info),
                 Err(e) => {
@@ -109,6 +65,44 @@ impl PathDiscovery {
         }
 
         Ok(widgets)
+    }
+
+    async fn discover_widget_dirs(path: PathBuf) -> Result<Vec<PathBuf>, RegistryError> {
+        let scan_path = path.clone();
+        task::spawn_blocking(move || Self::walk_widget_dirs(&scan_path))
+            .await
+            .map_err(|source| RegistryError::DiscoveryTask { path, source })
+    }
+
+    fn walk_widget_dirs(path: &Path) -> Vec<PathBuf> {
+        let mut widget_dirs = Vec::new();
+        let mut entries = WalkDir::new(path)
+            .follow_links(true)
+            .min_depth(1)
+            .max_depth(3)
+            .into_iter();
+
+        while let Some(entry) = entries.next() {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(e) => {
+                    warn!("failed to walk widget directory: {}", e);
+                    continue;
+                }
+            };
+
+            if !entry.file_type().is_dir() {
+                continue;
+            }
+
+            let widget_dir = entry.path();
+            if widget_dir.join("manifest.json").exists() {
+                widget_dirs.push(widget_dir.to_path_buf());
+                entries.skip_current_dir();
+            }
+        }
+
+        widget_dirs
     }
 
     async fn load_widget(widget_dir: &Path) -> Result<WidgetInfo, RegistryError> {
@@ -387,6 +381,93 @@ mod tests {
         assert_eq!(widgets.len(), 1);
         assert_eq!(widgets[0].manifest.name, "linked-widget");
         assert_eq!(widgets[0].widget_dir, link_path);
+    }
+
+    #[tokio::test]
+    async fn discover_widget_under_group_directory() {
+        let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
+        let group_dir = temp_dir.path().join("braiins");
+        std_fs::create_dir_all(&group_dir).expect("BUG: failed to create group dir");
+        let widget_dir = create_valid_widget(
+            &group_dir,
+            "grouped-widget",
+            "550e8400-e29b-41d4-a716-446655440004",
+        );
+
+        let discovery = PathDiscovery::new(vec![temp_dir.path().to_path_buf()]);
+        let widgets = discovery.discover().await;
+
+        assert_eq!(widgets.len(), 1);
+        assert_eq!(widgets[0].manifest.name, "grouped-widget");
+        assert_eq!(widgets[0].widget_dir, widget_dir);
+    }
+
+    #[tokio::test]
+    async fn discover_widget_under_subgroup_directory_only_within_supported_depth() {
+        let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
+        let subgroup_dir = temp_dir.path().join("braiins").join("clocks");
+        std_fs::create_dir_all(&subgroup_dir).expect("BUG: failed to create subgroup dir");
+        let widget_dir = create_valid_widget(
+            &subgroup_dir,
+            "subgrouped-widget",
+            "550e8400-e29b-41d4-a716-446655440008",
+        );
+
+        let deeper_dir = subgroup_dir.join("legacy");
+        std_fs::create_dir_all(&deeper_dir).expect("BUG: failed to create deeper dir");
+        create_valid_widget(
+            &deeper_dir,
+            "too-deep-widget",
+            "550e8400-e29b-41d4-a716-446655440009",
+        );
+
+        let discovery = PathDiscovery::new(vec![temp_dir.path().to_path_buf()]);
+        let widgets = discovery.discover().await;
+
+        assert_eq!(widgets.len(), 1);
+        assert_eq!(widgets[0].manifest.name, "subgrouped-widget");
+        assert_eq!(widgets[0].widget_dir, widget_dir);
+    }
+
+    #[tokio::test]
+    async fn does_not_discover_widget_nested_under_widget() {
+        let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
+        let widget_dir = create_valid_widget(
+            temp_dir.path(),
+            "parent-widget",
+            "550e8400-e29b-41d4-a716-446655440005",
+        );
+        create_valid_widget(
+            &widget_dir,
+            "child-widget",
+            "550e8400-e29b-41d4-a716-446655440006",
+        );
+
+        let discovery = PathDiscovery::new(vec![temp_dir.path().to_path_buf()]);
+        let widgets = discovery.discover().await;
+
+        assert_eq!(widgets.len(), 1);
+        assert_eq!(widgets[0].manifest.name, "parent-widget");
+    }
+
+    #[tokio::test]
+    async fn discover_ignores_symlink_cycle_in_group_directories() {
+        let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
+        let group_dir = temp_dir.path().join("braiins");
+        std_fs::create_dir_all(&group_dir).expect("BUG: failed to create group dir");
+        create_valid_widget(
+            &group_dir,
+            "grouped-widget",
+            "550e8400-e29b-41d4-a716-446655440007",
+        );
+        std::os::unix::fs::symlink(temp_dir.path(), group_dir.join("cycle"))
+            .expect("BUG: failed to create cycle symlink");
+
+        let discovery = PathDiscovery::new(vec![temp_dir.path().to_path_buf()]);
+        let widgets = discovery.discover().await;
+
+        assert_eq!(widgets.len(), 1);
+        assert_eq!(widgets[0].manifest.name, "grouped-widget");
     }
 
     #[tokio::test]

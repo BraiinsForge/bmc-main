@@ -68,6 +68,7 @@ tower-http = { workspace = true, features = [
 ] }
 tracing.workspace = true
 uuid.workspace = true
+walkdir.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
