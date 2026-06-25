@@ -17,7 +17,7 @@ glam.workspace = true
 cosmic-text.workspace = true
 femtovg.workspace = true
 glow.workspace = true
-image = { workspace = true, features = ["default-formats"] }
+image = { workspace = true, features = ["jpeg", "png"] }
 imgref.workspace = true
 jpeg-decoder.workspace = true
 rgb.workspace = true
