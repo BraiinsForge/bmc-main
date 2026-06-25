@@ -1,8 +1,7 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 use serde::Deserialize;
@@ -36,6 +35,10 @@ fn main() -> anyhow::Result<()> {
     let gen_path_str = std::env::var("PROFILE_NEW_GENERATION")
         .map_err(|_| anyhow::anyhow!("PROFILE_NEW_GENERATION environment variable must be set"))?;
     let gen_path = Path::new(&gen_path_str);
+    run(gen_path)
+}
+
+fn run(gen_path: &Path) -> anyhow::Result<()> {
     let symlinks_dir = gen_path.join("file-symlinks");
 
     if !symlinks_dir.exists() {
@@ -82,9 +85,6 @@ fn main() -> anyhow::Result<()> {
 
     // Generate activation script under core/activation/scripts/
     // Numbered 60- to run after write-boundary (50-)
-    let scripts_dir = gen_path.join("core/activation/scripts");
-    std::fs::create_dir_all(&scripts_dir)?;
-
     let mut script = String::from("#!/bin/sh\nset -e\n");
     for def in by_target.values() {
         writeln!(
@@ -95,9 +95,52 @@ fn main() -> anyhow::Result<()> {
         .expect("BUG: write to String should never fail");
     }
 
-    let script_path = scripts_dir.join("60-file-symlinks");
-    std::fs::write(&script_path, &script)?;
-    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))?;
+    bmc_nix::generation_path::write_generated_file(
+        gen_path,
+        Path::new("core/activation/scripts/60-file-symlinks"),
+        script.as_bytes(),
+        0o755,
+    )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn run_materializes_core_ancestor_before_writing_file_symlink_script() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let generation = tmp.path().join("generation");
+        let store_core = tmp.path().join("store/core");
+        let file_symlinks = generation.join("file-symlinks");
+        std::fs::create_dir_all(store_core.join("activation/scripts"))
+            .expect("BUG: create store scripts");
+        std::fs::create_dir_all(&file_symlinks).expect("BUG: create file-symlinks");
+        std::fs::write(
+            file_symlinks.join("link.json"),
+            r#"{"priority": 10, "from": "bin/source", "to": "/tmp/target"}"#,
+        )
+        .expect("BUG: write definition");
+        std::fs::create_dir_all(&generation).expect("BUG: create generation");
+        std::os::unix::fs::symlink(&store_core, generation.join("core"))
+            .expect("BUG: symlink core");
+
+        super::run(&generation).expect("BUG: file-symlinks hook should succeed");
+
+        let script = generation.join("core/activation/scripts/60-file-symlinks");
+        let meta = script
+            .symlink_metadata()
+            .expect("BUG: stat generated script");
+        assert!(meta.is_file(), "script should be a generated regular file");
+        assert!(
+            !meta.file_type().is_symlink(),
+            "script should not be a symlink into the store"
+        );
+        assert!(
+            !store_core
+                .join("activation/scripts/60-file-symlinks")
+                .exists(),
+            "store-backed scripts directory must not be modified"
+        );
+    }
 }

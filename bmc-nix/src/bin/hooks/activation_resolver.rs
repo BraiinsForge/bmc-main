@@ -1,7 +1,6 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 use std::fmt::Write as _;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 fn write_entrypoint(scripts: &[String]) -> String {
@@ -85,6 +84,10 @@ fn main() -> anyhow::Result<()> {
     let gen_path_str = std::env::var("PROFILE_NEW_GENERATION")
         .map_err(|_| anyhow::anyhow!("PROFILE_NEW_GENERATION environment variable must be set"))?;
     let gen_path = Path::new(&gen_path_str);
+    run(gen_path)
+}
+
+fn run(gen_path: &Path) -> anyhow::Result<()> {
     let scripts_dir = gen_path.join("core/activation/scripts");
 
     if !scripts_dir.exists() {
@@ -127,13 +130,13 @@ fn main() -> anyhow::Result<()> {
     // not set (e.g., called directly at boot by the init service).
     // It lives at <gen_path>/core/activation/entrypoint, so the generation
     // path is two directories up from its location.
-    let activation_dir = gen_path.join("core/activation");
-    std::fs::create_dir_all(&activation_dir)?;
-
     let entrypoint = write_entrypoint(&scripts);
-    let entrypoint_path = activation_dir.join("entrypoint");
-    std::fs::write(&entrypoint_path, &entrypoint)?;
-    std::fs::set_permissions(&entrypoint_path, std::fs::Permissions::from_mode(0o755))?;
+    bmc_nix::generation_path::write_generated_file(
+        gen_path,
+        Path::new("core/activation/entrypoint"),
+        entrypoint.as_bytes(),
+        0o755,
+    )?;
 
     Ok(())
 }
@@ -278,6 +281,36 @@ mod tests {
                 (key.to_owned(), value.to_owned())
             })
             .collect()
+    }
+
+    #[test]
+    fn run_materializes_core_ancestor_before_writing_entrypoint() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let generation = tmp.path().join("generation");
+        let store_core = tmp.path().join("store/core");
+        let scripts_dir = store_core.join("activation/scripts");
+        std::fs::create_dir_all(&scripts_dir).expect("BUG: create scripts dir");
+        write_executable(&scripts_dir.join("10-script"), "#!/bin/sh\nexit 0\n");
+        std::fs::create_dir_all(&generation).expect("BUG: create generation");
+        std::os::unix::fs::symlink(&store_core, generation.join("core"))
+            .expect("BUG: symlink core");
+
+        super::run(&generation).expect("BUG: activation resolver should succeed");
+
+        let entrypoint = generation.join("core/activation/entrypoint");
+        let meta = entrypoint.symlink_metadata().expect("BUG: stat entrypoint");
+        assert!(
+            meta.is_file(),
+            "entrypoint should be a generated regular file"
+        );
+        assert!(
+            !meta.file_type().is_symlink(),
+            "entrypoint should not be a symlink into the store"
+        );
+        assert!(
+            !store_core.join("activation/entrypoint").exists(),
+            "store-backed activation directory must not be modified"
+        );
     }
 
     #[test]

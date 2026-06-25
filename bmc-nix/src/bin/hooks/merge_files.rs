@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -9,6 +9,10 @@ fn main() -> anyhow::Result<()> {
     let gen_path_str = std::env::var("PROFILE_NEW_GENERATION")
         .map_err(|_| anyhow::anyhow!("PROFILE_NEW_GENERATION environment variable must be set"))?;
     let gen_path = Path::new(&gen_path_str);
+    run(gen_path)
+}
+
+fn run(gen_path: &Path) -> anyhow::Result<()> {
     let merge_dir = gen_path.join("merge-files");
 
     if !merge_dir.exists() {
@@ -19,7 +23,12 @@ fn main() -> anyhow::Result<()> {
     // (which becomes the target path in the generation root).
     let mut groups: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
 
-    for entry in WalkDir::new(&merge_dir).follow_links(false) {
+    // The union build links single-provider directories and leaves (including the
+    // merge-files root itself) as symlinks into the store, so fragments from
+    // multiple packages live behind symlinks. Follow them so the fragments are
+    // actually merged; walkdir yields an error when a symlink loop is
+    // encountered, which propagates out of the hook.
+    for entry in WalkDir::new(&merge_dir).follow_links(true) {
         let entry = entry?;
         if entry.file_type().is_file() {
             let rel = entry
@@ -44,43 +53,130 @@ fn main() -> anyhow::Result<()> {
             content.push_str(&std::fs::read_to_string(file)?);
         }
 
-        let output_path = gen_path.join(&target);
-
-        // Verify the output path doesn't escape the generation directory
-        // (e.g. via `..` components in merge-files/ entries).
-        let canonical_gen = gen_path.canonicalize().map_err(|e| {
-            anyhow::anyhow!(
-                "failed to canonicalize generation path '{}': {e}",
-                gen_path.display()
-            )
-        })?;
-        let canonical_output = if output_path.exists() {
-            output_path.canonicalize()?
-        } else {
-            // Parent must exist for canonicalize; resolve the parent and append the filename
-            if let Some(parent) = output_path.parent() {
-                std::fs::create_dir_all(parent)?;
-                parent.canonicalize()?.join(
-                    output_path
-                        .file_name()
-                        .expect("BUG: output_path must have a filename"),
-                )
-            } else {
-                output_path.clone()
-            }
-        };
-
-        anyhow::ensure!(
-            canonical_output.starts_with(&canonical_gen),
-            "merge-files output path escapes generation directory: {}",
-            output_path.display()
-        );
-
-        if let Some(parent) = output_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&output_path, &content)?;
+        bmc_nix::generation_path::write_generated_file(
+            gen_path,
+            &target,
+            content.as_bytes(),
+            0o644,
+        )?;
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn run_processes_symlinked_merge_files_root_and_does_not_mutate_store() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let generation = tmp.path().join("generation");
+        let store = tmp.path().join("store");
+        let store_merge = store.join("merge-files");
+        let store_etc = store.join("etc");
+        std::fs::create_dir_all(store_merge.join("etc/banner")).expect("BUG: create merge input");
+        std::fs::write(store_merge.join("etc/banner/10-a"), "from merge\n")
+            .expect("BUG: write merge input");
+        std::fs::create_dir_all(&store_etc).expect("BUG: create store etc");
+        std::fs::write(store_etc.join("banner"), "store banner\n")
+            .expect("BUG: write store banner");
+        std::fs::create_dir_all(&generation).expect("BUG: create generation");
+        std::os::unix::fs::symlink(&store_merge, generation.join("merge-files"))
+            .expect("BUG: symlink merge-files");
+        std::os::unix::fs::symlink(&store_etc, generation.join("etc")).expect("BUG: symlink etc");
+
+        super::run(&generation).expect("BUG: merge-files hook should succeed");
+
+        let output = generation.join("etc/banner");
+        let meta = output.symlink_metadata().expect("BUG: stat merged output");
+        assert!(
+            meta.is_file(),
+            "merged output should be a generated regular file"
+        );
+        assert!(
+            !meta.file_type().is_symlink(),
+            "merged output should not be a symlink into the store"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&output).expect("BUG: read merged output"),
+            "from merge\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(store_etc.join("banner")).expect("BUG: read store banner"),
+            "store banner\n",
+            "store-backed output must not be modified"
+        );
+    }
+
+    #[test]
+    fn run_merges_fragments_behind_symlinked_leaves() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let generation = tmp.path().join("generation");
+        let store = tmp.path().join("store");
+        std::fs::create_dir_all(store.join("a")).expect("BUG: create store a");
+        std::fs::create_dir_all(store.join("b")).expect("BUG: create store b");
+        std::fs::write(store.join("a/10-a"), "alpha\n").expect("BUG: write fragment a");
+        std::fs::write(store.join("b/20-b"), "beta\n").expect("BUG: write fragment b");
+
+        let banner = generation.join("merge-files/etc/banner");
+        std::fs::create_dir_all(&banner).expect("BUG: create merge dirs");
+        std::os::unix::fs::symlink(store.join("a/10-a"), banner.join("10-a"))
+            .expect("BUG: symlink fragment a");
+        std::os::unix::fs::symlink(store.join("b/20-b"), banner.join("20-b"))
+            .expect("BUG: symlink fragment b");
+
+        super::run(&generation).expect("BUG: merge-files hook should succeed");
+
+        let output = generation.join("etc/banner");
+        assert!(
+            !output
+                .symlink_metadata()
+                .expect("BUG: stat merged output")
+                .file_type()
+                .is_symlink(),
+            "merged output should be a generated regular file"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&output).expect("BUG: read merged output"),
+            "alpha\nbeta\n",
+            "fragments behind symlinks must be followed and concatenated in order"
+        );
+    }
+
+    #[test]
+    fn run_merges_fragments_behind_symlinked_directories() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let generation = tmp.path().join("generation");
+        let store = tmp.path().join("store");
+        std::fs::create_dir_all(store.join("frag/etc/banner")).expect("BUG: create store frag");
+        std::fs::write(store.join("frag/etc/banner/10-a"), "gamma\n").expect("BUG: write fragment");
+
+        std::fs::create_dir_all(generation.join("merge-files")).expect("BUG: create merge root");
+        std::os::unix::fs::symlink(store.join("frag/etc"), generation.join("merge-files/etc"))
+            .expect("BUG: symlink merge subdir");
+
+        super::run(&generation).expect("BUG: merge-files hook should succeed");
+
+        assert_eq!(
+            std::fs::read_to_string(generation.join("etc/banner"))
+                .expect("BUG: read merged output"),
+            "gamma\n",
+            "a symlinked merge-files subdirectory must be traversed"
+        );
+    }
+
+    #[test]
+    fn run_errors_on_symlinked_directory_cycle() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let generation = tmp.path().join("generation");
+        std::fs::create_dir_all(generation.join("merge-files")).expect("BUG: create merge root");
+        std::os::unix::fs::symlink(".", generation.join("merge-files/self"))
+            .expect("BUG: create cyclic symlink");
+
+        let result = super::run(&generation);
+
+        assert!(
+            result.is_err(),
+            "a symlink loop under merge-files must error, not loop forever"
+        );
+    }
 }
