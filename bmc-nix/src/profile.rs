@@ -203,15 +203,20 @@ pub async fn lock_profile_with_timeout(
 ///
 /// Returns a [`BuildProfileError::Conflict`] if two packages provide the
 /// same relative file path.
-#[expect(
-    clippy::unused_async,
-    reason = "async interface kept for future I/O offloading"
-)]
+///
+/// The tree is a sequential walk of many blocking filesystem syscalls, so it
+/// runs on a [`tokio::task::spawn_blocking`] thread and does not stall the
+/// async runtime of callers such as `bmc-openwrt`.
 pub async fn build_symlink_tree(
     tmp_path: &Path,
     packages: &[ResolvedPackage],
 ) -> Result<(), BuildProfileError> {
-    union::build_symlink_tree(tmp_path, packages)
+    let tmp_path = tmp_path.to_path_buf();
+    let packages = packages.to_vec();
+
+    tokio::task::spawn_blocking(move || union::build_symlink_tree(&tmp_path, &packages))
+        .await
+        .expect("BUG: symlink tree task should not panic")
 }
 
 /// Build a new profile generation.
