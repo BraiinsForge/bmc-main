@@ -6,6 +6,9 @@ result**
 .claude/*.local.*
 .agents/*.local.*
 
+# Agent scratch space (ephemeral outputs: extracted video frames, etc.)
+.ai/scratch/
+
 # IDE
 .idea
 .direnv/
