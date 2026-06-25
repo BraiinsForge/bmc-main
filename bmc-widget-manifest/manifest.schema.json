@@ -475,6 +475,11 @@
           "const": "utility"
         },
         {
+          "description": "Audio, video, and image media.",
+          "type": "string",
+          "const": "media"
+        },
+        {
           "description": "Uncategorized — the default fallback.",
           "type": "string",
           "const": "misc"

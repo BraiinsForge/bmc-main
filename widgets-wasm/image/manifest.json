@@ -10,6 +10,7 @@
   },
   "binary": "bin/image",
   "icon": "assets/icon.svg",
+  "category": "media",
   "supported_viewports": [
     {
       "type": "rectangular",

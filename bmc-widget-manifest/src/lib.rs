@@ -622,6 +622,8 @@ pub enum WidgetCategory {
     Space,
     /// Diagnostic, demo, and system tools.
     Utility,
+    /// Audio, video, and image media.
+    Media,
     /// Uncategorized — the default fallback.
     #[default]
     Misc,

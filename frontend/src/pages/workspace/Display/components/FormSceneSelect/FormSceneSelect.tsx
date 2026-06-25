@@ -35,6 +35,7 @@ const CATEGORY_ORDER: pb.WidgetCategory[] = [
     pb.WidgetCategory.WEATHER,
     pb.WidgetCategory.CALENDAR,
     pb.WidgetCategory.SPACE,
+    pb.WidgetCategory.MEDIA,
     pb.WidgetCategory.UTILITY,
     pb.WidgetCategory.MISC,
 ];
@@ -60,6 +61,9 @@ function categoryLabel(intl: IntlShape, category: pb.WidgetCategory): string {
 
         case pb.WidgetCategory.SPACE:
             return formatMessage({ defaultMessage: 'Space' });
+
+        case pb.WidgetCategory.MEDIA:
+            return formatMessage({ defaultMessage: 'Media' });
 
         case pb.WidgetCategory.UTILITY:
             return formatMessage({ defaultMessage: 'Utility' });

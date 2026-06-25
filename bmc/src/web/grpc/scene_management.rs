@@ -549,6 +549,7 @@ fn category_to_proto(c: bmc_widget_manifest::WidgetCategory) -> web::WidgetCateg
         C::Calendar => web::WidgetCategory::Calendar,
         C::Space => web::WidgetCategory::Space,
         C::Utility => web::WidgetCategory::Utility,
+        C::Media => web::WidgetCategory::Media,
         C::Misc => web::WidgetCategory::Misc,
     }
 }
