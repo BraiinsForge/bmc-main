@@ -826,6 +826,7 @@ mod support_tests {
             name: "test-widget".to_owned(),
             subname: None,
             description: "Test widget".to_owned(),
+            config_help: None,
             author: None,
             binary: PathBuf::from("bin/widget"),
             icon: None,

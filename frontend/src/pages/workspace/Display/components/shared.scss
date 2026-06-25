@@ -33,6 +33,35 @@
     }
 }
 
+.configHelp {
+    composes: inline vertical from 'styles/layout.scss';
+    gap: mini-units(1);
+    color: $text-secondary;
+    text-wrap: balance;
+
+    h1,
+    h2,
+    h3 {
+        @include type-style(heading-02);
+        color: $text-primary;
+    }
+
+    p {
+        @include type-style(body-short-01);
+    }
+
+    ul {
+        list-style-type: disc;
+        list-style-position: outside;
+        margin-inline-start: mini-units(3);
+        line-height: 1.5;
+    }
+
+    code {
+        @include type-style(code-01);
+    }
+}
+
 .modal :global(.cds--modal-header) {
     border-block-end: 1px solid $border-subtle;
     padding-block: mini-units(2);

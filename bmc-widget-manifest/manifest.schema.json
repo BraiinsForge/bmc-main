@@ -24,6 +24,14 @@
       "$ref": "#/$defs/WidgetCategory",
       "default": "misc"
     },
+    "config_help": {
+      "description": "Optional Markdown shown in the operator's widget-config window: a\npreface above the parameter fields, and the sole content when the\nwidget declares no parameters. Capped at 2000 characters.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 2000
+    },
     "description": {
       "description": "One-line widget description, shown in the operator UI.\nCapped at 200 characters.",
       "type": "string",

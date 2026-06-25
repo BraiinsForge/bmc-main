@@ -6,7 +6,7 @@ import { getID } from '../const';
 import type { FormifiedParams, FormifiedValue, ParamsFormErrors } from '../../fn';
 
 import { BoundToggle, BoundComboBox, type OptionItem, CheckYourScreenForPreview, WidgetSizeSelector } from '../shared';
-import { ModalCustom, Button, InlineNotification } from '@/components';
+import { ModalCustom, Button, InlineNotification, Markdown } from '@/components';
 import { WidgetName } from '../WidgetName';
 import { TextInput, NumberInput } from '@carbon/react';
 import css from '../shared.scss';
@@ -215,6 +215,8 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
 
     const form = (
         <Form className={css.form}>
+            {manifest.configHelp ? <Markdown source={manifest.configHelp} className={css.configHelp} /> : null}
+
             {showSizeSelector ? (
                 <WidgetSizeSelector field={{ value: size, options: sizeOptions, onChange: onSizeChange }} />
             ) : null}

@@ -161,6 +161,8 @@ message WidgetManifest {
   optional string subname = 10;
   // Catalog grouping the FE uses to section the Add-widget picker.
   WidgetCategory category = 11;
+  // Optional Markdown rendered in the widget-config window.
+  optional string config_help = 12;
 }
 
 // is_optional and per-variant default_value combine to express the four

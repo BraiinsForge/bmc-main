@@ -35,6 +35,7 @@ use uuid::Uuid;
 const MAX_NAME_LENGTH: usize = 50;
 const MAX_SUBNAME_LENGTH: usize = 30;
 const MAX_DESCRIPTION_LENGTH: usize = 200;
+const MAX_CONFIG_HELP_LENGTH: usize = 2_000;
 
 /// Maximum byte length of a [`ParamKey`].
 ///
@@ -87,6 +88,10 @@ pub enum ManifestError {
     /// The `description` field exceeded the declared length cap.
     #[error("description exceeds maximum length of {max} characters")]
     DescriptionTooLong { max: usize },
+
+    /// The `config_help` field exceeded the declared length cap.
+    #[error("config_help exceeds maximum length of {max} characters")]
+    ConfigHelpTooLong { max: usize },
 
     /// `supported_viewports` was empty after compatibility normalization.
     #[error("supported_viewports must not be empty")]
@@ -387,6 +392,8 @@ struct RawManifest {
     subname: Option<String>,
     description: String,
     #[serde(default)]
+    config_help: Option<String>,
+    #[serde(default)]
     author: Option<Author>,
     binary: PathBuf,
     #[serde(default)]
@@ -465,6 +472,12 @@ pub struct Manifest {
     /// Capped at 200 characters.
     #[schemars(length(max = 200))]
     pub description: String,
+    /// Optional Markdown shown in the operator's widget-config window: a
+    /// preface above the parameter fields, and the sole content when the
+    /// widget declares no parameters. Capped at 2000 characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = 2000))]
+    pub config_help: Option<String>,
     /// Optional author block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<Author>,
@@ -530,6 +543,7 @@ impl Manifest {
             name: raw.name,
             subname: raw.subname,
             description: raw.description,
+            config_help: raw.config_help,
             author: raw.author,
             binary: raw.binary,
             icon: raw.icon,
@@ -569,6 +583,16 @@ impl Manifest {
         if self.description.len() > MAX_DESCRIPTION_LENGTH {
             return Err(ManifestError::DescriptionTooLong {
                 max: MAX_DESCRIPTION_LENGTH,
+            });
+        }
+
+        if self
+            .config_help
+            .as_ref()
+            .is_some_and(|s| s.len() > MAX_CONFIG_HELP_LENGTH)
+        {
+            return Err(ManifestError::ConfigHelpTooLong {
+                max: MAX_CONFIG_HELP_LENGTH,
             });
         }
 
@@ -1173,6 +1197,51 @@ mod tests {
         );
         let result = Manifest::from_str(&json);
         assert!(matches!(result, Err(ManifestError::SubnameTooLong { .. })));
+    }
+
+    #[test]
+    fn parse_config_help() {
+        let json = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test Widget",
+            "description": "A test widget",
+            "config_help": "Use **markdown** here.",
+            "binary": "bin/test",
+            "supported_viewports": [
+                {"type":"rectangular","min_width":317,"max_width":317,
+                 "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}
+            ]
+        }"#;
+        let manifest = Manifest::from_str(json).expect("BUG: should parse");
+        assert_eq!(
+            manifest.config_help.as_deref(),
+            Some("Use **markdown** here.")
+        );
+    }
+
+    #[test]
+    fn reject_config_help_too_long() {
+        let json = format!(
+            r#"{{
+                "uid": "550e8400-e29b-41d4-a716-446655440000",
+                "version": "1.0.0",
+                "name": "Test Widget",
+                "description": "A test widget",
+                "config_help": "{}",
+                "binary": "bin/test",
+                "supported_viewports": [
+                    {{"type":"rectangular","min_width":317,"max_width":317,
+                     "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}}
+                ]
+            }}"#,
+            "x".repeat(MAX_CONFIG_HELP_LENGTH + 1)
+        );
+        let result = Manifest::from_str(&json);
+        assert!(matches!(
+            result,
+            Err(ManifestError::ConfigHelpTooLong { .. })
+        ));
     }
 
     #[test]

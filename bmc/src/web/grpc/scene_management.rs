@@ -564,6 +564,7 @@ fn widget_info_to_proto(
         name: manifest.name.clone(),
         subname: manifest.subname.clone(),
         description: manifest.description.clone(),
+        config_help: manifest.config_help.clone(),
         version: manifest.version.to_string(),
         supported_sizes: supported_sizes_for_constraints(platform, &manifest.supported_viewports)
             .into_iter()
@@ -2016,6 +2017,7 @@ mod tests {
             name: "T".into(),
             subname: None,
             description: "T".into(),
+            config_help: None,
             author: None,
             binary: std::path::PathBuf::from("bin/test"),
             icon: None,
@@ -2055,6 +2057,7 @@ mod tests {
             name: "T".into(),
             subname: None,
             description: "T".into(),
+            config_help: None,
             author: None,
             binary: std::path::PathBuf::from("bin/test"),
             icon: None,
@@ -2843,6 +2846,7 @@ mod tests {
             name: "test-widget".to_owned(),
             subname: None,
             description: "Test widget".to_owned(),
+            config_help: None,
             author: None,
             binary: std::path::PathBuf::from("bin/widget"),
             icon: None,
