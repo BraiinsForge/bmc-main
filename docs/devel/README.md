@@ -15,6 +15,11 @@ How `bmc-openwrt` detects the active hardware platform, how BOS platform strings
 `bmc-platform::HardwareProfile` describes display geometry, slot-grid support, LED strips, and frontend/backend
 capabilities for `BMC100`, `BMM100`, `BMM101`, and `BFM100`.
 
+### [BMC Profiles](profiles.md)
+
+How `bmc-nix` builds custom profile generations, how the optimized symlink tree is structured, and where hooks,
+activation scripts, generated files, and manifests fit into the profile lifecycle.
+
 ### [Widget Runtime Configuration](widget-runtime-configuration.md)
 
 How a widget process receives its geometry, per-instance params, and current system settings over the `deck_widget_v1`
