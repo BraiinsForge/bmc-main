@@ -5,6 +5,11 @@ edition = "2024"
 authors = ["Braiins Systems s.r.o."]
 description = "Vendored deck_screen_edge_v1 Wayland protocol (forked from kde-screen-edge-v1)"
 
+# Wayland protocol XML read by wayland_scanner proc macros; the nix source
+# filter keeps only rust/toml/lock unless a crate opts extra files in here.
+[package.metadata.nix]
+include = ["protocol/deck-screen-edge-v1.xml"]
+
 [dependencies]
 wayland-backend.workspace = true
 wayland-client.workspace = true

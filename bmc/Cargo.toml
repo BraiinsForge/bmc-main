@@ -4,6 +4,17 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Braiins <braiins@braiins.com>"]
 
+# Default-scene manifests embedded via include_str! from the sibling
+# widgets-wasm tree; the nix source filter keeps only rust/toml/lock otherwise.
+[package.metadata.nix]
+include = [
+    "../widgets-wasm/blockheight/manifest.json",
+    "../widgets-wasm/clock/manifest.json",
+    "../widgets-wasm/mining-clock/manifest.json",
+    "../widgets-wasm/mining-info/manifest.json",
+    "../widgets-wasm/weather/manifest.json",
+]
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

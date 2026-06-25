@@ -3,6 +3,11 @@ name = "bmc-grpc"
 version = "0.1.0"
 edition = "2024"
 
+# Proto sources compiled by build.rs; the nix source filter keeps only
+# rust/toml/lock unless a crate opts extra files in here.
+[package.metadata.nix]
+include = ["proto/**/*.proto"]
+
 # Without features, this crate only exposes prost message types (no tonic dependency).
 # Enable "server" for gRPC server traits (required by bmc, bmc-upgrade).
 [features]

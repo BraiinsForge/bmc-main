@@ -8,7 +8,7 @@ let
   inherit (pkgs) ii;
 
   crate = ii.rust.defineCrate {
-    path = "./bmc-wasm-runtime";
+    path = "bmc-wasm-runtime";
     packageName = "bmc-wasm-runtime";
     binName = "capture";
   };

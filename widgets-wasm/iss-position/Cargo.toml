@@ -3,6 +3,11 @@ name = "iss-position"
 version = "0.1.0"
 edition = "2024"
 
+# SVG icon plus the globe texture under src/, embedded at compile time via the
+# SDK include macros; the nix source filter keeps only rust/toml/lock otherwise.
+[package.metadata.nix]
+include = ["assets/**", "src/render/texture.jpg"]
+
 [lib]
 crate-type = ["cdylib"]
 

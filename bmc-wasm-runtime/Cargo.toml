@@ -3,6 +3,16 @@ name = "bmc-wasm-runtime"
 version = "0.1.0"
 edition = "2024"
 
+# The capture report askama template, the testbed's bundled platform list, and
+# the example manifests the testbed tests resolve at runtime; the nix source
+# filter keeps only rust/toml/lock otherwise.
+[package.metadata.nix]
+include = [
+    "templates/**",
+    "src/bin/testbed/platforms.default.json",
+    "examples/*/manifest.json",
+]
+
 [dependencies]
 anyhow.workspace = true
 bmc-led.workspace = true

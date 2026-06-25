@@ -3,6 +3,12 @@ name = "bmc-storybook"
 version = "0.1.0"
 edition = "2024"
 
+# Toolbar icon SVGs loaded via include_bytes!; the nix source filter keeps only
+# rust/toml/lock otherwise. The cross-crate assets referenced by the discovered
+# `*.stories.rs` are declared by their owning crates (e.g. bmc-render).
+[package.metadata.nix]
+include = ["assets/**"]
+
 [build-dependencies]
 toml.workspace = true
 

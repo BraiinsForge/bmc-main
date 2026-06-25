@@ -3,6 +3,11 @@ name = "clock"
 version = "0.1.0"
 edition = "2024"
 
+# SVG assets embedded at compile time via the SDK include_svg! macro;
+# the nix source filter keeps only rust/toml/lock unless opted in here.
+[package.metadata.nix]
+include = ["assets/**"]
+
 [lib]
 crate-type = ["cdylib"]
 

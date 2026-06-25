@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Braiins <braiins@braiins.com>"]
 
+# Non-Rust sources read at compile time; the nix source filter keeps only
+# rust/toml/lock unless a crate opts extra files in here.
+[package.metadata.nix]
+include = ["src/compositor/render/scanout_swizzle.frag"]
+
 
 [dependencies]
 anyhow.workspace = true

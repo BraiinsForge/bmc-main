@@ -3,6 +3,11 @@ name = "bmc-render-keyboard"
 version = "0.1.0"
 edition = "2024"
 
+# Layout XML (read by build.rs), key sounds, icon SVGs and skins are embedded
+# at compile time; the nix source filter keeps only rust/toml/lock otherwise.
+[package.metadata.nix]
+include = ["assets/**"]
+
 [dependencies]
 bmc-render = { path = ".." }
 bmc-render-macros = { path = "../macros" }

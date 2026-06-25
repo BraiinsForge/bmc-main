@@ -3,6 +3,11 @@ name = "bmc-widget-flip-clock"
 version = "0.1.0"
 edition = "2024"
 
+# Font embedded via include_bytes! from the top-level assets tree; the nix
+# source filter keeps only rust/toml/lock unless a crate opts extra files here.
+[package.metadata.nix]
+include = ["../../assets/fonts/BraiinsDeckSans-Regular.otf"]
+
 [features]
 standalone = []
 

@@ -12,9 +12,8 @@
 #                   Production widgets in `widgets-wasm/` get per-widget
 #                   derivations via `wasmWidgets` only.
 #   - wasmWidgets:  per-widget wasm derivations keyed by widget name; each
-#                   is built via buildCrate so its src closure is narrowed
-#                   by docker-spider — change one widget, only that
-#                   widget's wasm rebuilds.
+#                   is built via buildCrate, so change scope stays at the
+#                   individual widget's wasm derivation.
 #   - thin:         cross-compiled bmc-wasm-thin + autopatchelf for the
 #                   selected profile (typically armv7-glibc-release)
 #   - host:         cross-compiled bmc-wasm-host + autopatchelf for the
@@ -65,7 +64,7 @@ let
 
   # Per-widget wasm derivation.
   # Picks the release profile that owns the widget's workspace,
-  # so docker-spider narrows the src closure to that widget's crate.
+  # then builds only that widget's crate.
   mkWidgetWasm = name:
     let
       entry = widgetCatalog.${name};

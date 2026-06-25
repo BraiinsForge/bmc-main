@@ -5,6 +5,17 @@ edition = "2024"
 authors = ["Braiins Systems s.r.o."]
 description = "Reads a widget `manifest.json` and emits a typed-accessor `manifest_params.rs` Rust module"
 
+# The drift test reads every widget's manifest.json and its committed
+# src/manifest_params.rs from the widget/example trees (separate workspaces the
+# scoped filter would otherwise drop) to assert the generator is up to date.
+[package.metadata.nix]
+include = [
+    "../bmc-wasm-runtime/examples/*/manifest.json",
+    "../bmc-wasm-runtime/examples/*/src/manifest_params.rs",
+    "../widgets-wasm/*/manifest.json",
+    "../widgets-wasm/*/src/manifest_params.rs",
+]
+
 [[bin]]
 name = "bmc-widget-codegen"
 path = "src/main.rs"

@@ -10,7 +10,7 @@ let
 
   # One regression derivation per widget. Each pins to:
   #   - that widget's source dir only (per-widget src cache key)
-  #   - that widget's docker-spider-narrowed wasm (per-widget wasm rebuild)
+  #   - that widget's wasm derivation (per-widget wasm rebuild)
   #   - the capture wrapper for env + binary
   mkWidgetCheck = name: entry: pkgs.runCommand "wasm-regression-${name}"
     {

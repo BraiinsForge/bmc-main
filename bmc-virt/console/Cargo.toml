@@ -3,6 +3,11 @@ name = "bmc-virt-console"
 version = "0.1.0"
 edition = "2024"
 
+# Logo, icon SVGs and the embedded UI font are pulled in via include_bytes!;
+# the nix source filter keeps only rust/toml/lock otherwise.
+[package.metadata.nix]
+include = ["assets/**", "../../assets/fonts/NotoSans-Regular.ttf"]
+
 [lints]
 workspace = true
 

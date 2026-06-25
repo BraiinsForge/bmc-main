@@ -3,6 +3,12 @@ name = "bmc-nix-init"
 version = "0.1.0"
 edition = "2024"
 
+# Slint UI tree (compiled by build.rs), the embedded servers.json, and the
+# top-level Braiins fonts that theme.slint embeds via `import`; the nix source
+# filter keeps only rust/toml/lock otherwise.
+[package.metadata.nix]
+include = ["ui/**", "servers.json", "../assets/fonts/*"]
+
 [dependencies]
 async-trait.workspace = true
 axum.workspace = true
