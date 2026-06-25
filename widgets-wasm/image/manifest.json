@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "name": "Image",
   "description": "Display an image fetched from a URL, fitted to the widget",
+  "config_help": "Shows a PNG or JPEG image, fitted to the widget.\n\n**Server-side sizing:** put `{{width}}` and `{{height}}` in the URL and they're replaced with the widget's pixel size before fetching — e.g. `?w={{width}}&h={{height}}`. Cooperative servers return a right-sized image; otherwise the device downscales it.",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"

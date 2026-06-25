@@ -87,7 +87,13 @@ mod wasm_glue {
         if url.is_empty() {
             return None;
         }
-        Some(FetchSpec::get(url.to_owned()))
+        // {{width}}/{{height}} expand to the viewport pixels — 1:1 with the
+        // released Slint widget so existing server URLs carry over unchanged.
+        let size = widget_size();
+        let url = url
+            .replace("{{width}}", &size.width.to_string())
+            .replace("{{height}}", &size.height.to_string());
+        Some(FetchSpec::get(url))
     }
 
     fn on_image(handle: PollHandle, response: &FetchResponse) {
