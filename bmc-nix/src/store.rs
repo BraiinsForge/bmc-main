@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -62,8 +62,8 @@ impl CommandRunner for TokioCommandRunner {
 ///
 /// Queries all paths in a single `nix path-info` invocation.
 /// Returns the set of paths that are present. If `nix path-info`
-/// exits non-zero (some paths missing), parses stdout for the
-/// subset that was found.
+/// exits non-zero, checks paths individually to identify the present
+/// subset.
 async fn paths_in_store(
     runner: &impl CommandRunner,
     store_paths: &[&str],
@@ -83,13 +83,29 @@ async fn paths_in_store(
         return Ok(store_paths.iter().map(|s| (*s).to_owned()).collect());
     }
 
-    // Some paths missing — parse stdout for which paths were found
+    // Batch path-info can fail without printing the successful subset, so use
+    // stdout only as a hint and verify the remaining paths one by one.
     let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout
+    let mut present: HashSet<String> = stdout
         .lines()
         .map(|l| l.trim().to_owned())
         .filter(|l| !l.is_empty())
-        .collect())
+        .collect();
+
+    for &store_path in store_paths {
+        if present.contains(store_path) {
+            continue;
+        }
+
+        let output = run_nix3(runner, &["path-info", store_path])
+            .await
+            .map_err(CopyStorePathsError::PathInfoFailed)?;
+        if output.status.success() {
+            present.insert(store_path.to_owned());
+        }
+    }
+
+    Ok(present)
 }
 
 /// Verify that all store paths are registered in the local Nix store.
@@ -304,6 +320,8 @@ mod tests {
     struct MockCommandRunner {
         /// Store paths that should be reported as "already in store".
         existing_paths: Vec<String>,
+        /// Whether a failed batch query prints the found subset on stdout.
+        partial_stdout_on_batch_failure: bool,
         /// Recorded command invocations (program, args).
         invocations: std::sync::Mutex<Vec<(String, Vec<String>)>>,
     }
@@ -312,6 +330,15 @@ mod tests {
         fn new(existing_paths: Vec<String>) -> Self {
             Self {
                 existing_paths,
+                partial_stdout_on_batch_failure: true,
+                invocations: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn without_batch_partial_stdout(existing_paths: Vec<String>) -> Self {
+            Self {
+                existing_paths,
+                partial_stdout_on_batch_failure: false,
                 invocations: std::sync::Mutex::new(Vec::new()),
             }
         }
@@ -356,7 +383,14 @@ mod tests {
                     }
                 }
                 let code = i32::from(!all_found);
-                let stdout = stdout_lines.join("\n").into_bytes();
+                let stdout = if !all_found
+                    && queried_paths.len() > 1
+                    && !self.partial_stdout_on_batch_failure
+                {
+                    Vec::new()
+                } else {
+                    stdout_lines.join("\n").into_bytes()
+                };
                 return Ok(std::process::Output {
                     status: std::process::ExitStatus::from_raw(code << 8),
                     stdout,
@@ -416,6 +450,31 @@ mod tests {
             matches!(err, CopyStorePathsError::MissingStorePath { .. }),
             "expected MissingStorePath, got: {err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn verify_store_paths_reports_actual_missing_path_after_batch_failure() {
+        let cli_path = "/nix/store/aaa-bmc-nix-cli";
+        let missing_path = "/nix/store/bbb-weather-widget";
+        let runner = MockCommandRunner::without_batch_partial_stdout(vec![cli_path.into()]);
+        let packages = vec![
+            test_resolved("bmc-nix-cli", cli_path, None),
+            test_resolved("weather-widget", missing_path, None),
+        ];
+
+        let err = verify_store_paths(&runner, &packages)
+            .await
+            .expect_err("BUG: weather-widget path missing, should fail");
+
+        match err {
+            CopyStorePathsError::MissingStorePath { name, store_path } => {
+                assert_eq!(name, "weather-widget");
+                assert_eq!(store_path, missing_path);
+            }
+            CopyStorePathsError::PathInfoFailed(source) => {
+                panic!("expected MissingStorePath, got PathInfoFailed: {source}");
+            }
+        }
     }
 
     #[tokio::test]
