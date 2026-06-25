@@ -31,7 +31,10 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, SvgId};
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, SvgId};
 
 use crate::host;
 
@@ -83,11 +86,57 @@ define_slot! {
 }
 
 impl BitmapSlot {
-    /// Set this slot to `data` downscaled to fit `max_w`×`max_h` (no upscale).
+    /// Decode `data` to fit `max_w`×`max_h` off the render thread; `on_ready` fires when it replaces the slot's bitmap.
     #[must_use]
-    pub fn set_fit(&self, data: &[u8], max_w: u32, max_h: u32) -> Option<BitmapId> {
-        host::evict_prefix(self.name);
-        host::register_bitmap_fit(self.name, data, max_w, max_h)
+    pub fn set_fit(
+        &self,
+        data: &[u8],
+        max_w: u32,
+        max_h: u32,
+        on_ready: ImageReadyCallback,
+    ) -> Option<ImageJobId> {
+        let job_id = host::register_bitmap_fit(self.name, data, max_w, max_h)?;
+        let idx = register_image_callback(on_ready);
+        IMAGE_PENDING.with(|p| p.borrow_mut().insert(job_id, idx));
+        Some(job_id)
+    }
+}
+
+/// Async-decode result: the job handle, and `Some(id)` on success / `None` on failure.
+pub type ImageReadyCallback = fn(ImageJobId, Option<BitmapId>);
+
+thread_local! {
+    static IMAGE_CALLBACKS: RefCell<Vec<ImageReadyCallback>> = const { RefCell::new(Vec::new()) };
+    static IMAGE_PENDING: RefCell<HashMap<ImageJobId, usize>> = RefCell::new(HashMap::new());
+}
+
+/// Register a callback, deduping by function pointer; returns its index.
+fn register_image_callback(cb: ImageReadyCallback) -> usize {
+    IMAGE_CALLBACKS.with(|cbs| {
+        let mut cbs = cbs.borrow_mut();
+        for (i, existing) in cbs.iter().enumerate() {
+            if *existing as usize == cb as usize {
+                return i;
+            }
+        }
+        let idx = cbs.len();
+        cbs.push(cb);
+        idx
+    })
+}
+
+/// Host entry point: dispatch a finished decode to its `set_fit` callback.
+#[unsafe(no_mangle)]
+pub extern "C" fn __on_image_ready(job_id: u32, bitmap_id: u32) {
+    let Some(job_id) = ImageJobId::from_wire(job_id) else {
+        return;
+    };
+    let bitmap = BitmapId::from_ffi(bitmap_id);
+    let cb = IMAGE_PENDING
+        .with(|p| p.borrow_mut().remove(&job_id))
+        .and_then(|idx| IMAGE_CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
+    if let Some(cb) = cb {
+        cb(job_id, bitmap);
     }
 }
 

@@ -1398,12 +1398,12 @@ mod tests {
             None
         }
 
-        fn register_bitmap_fit(
+        fn register_bitmap_rgba(
             &mut self,
             _tag: &str,
-            _data: &[u8],
-            _max_w: u32,
-            _max_h: u32,
+            _rgba: &[u8],
+            _width: u32,
+            _height: u32,
         ) -> Option<BitmapId> {
             None
         }

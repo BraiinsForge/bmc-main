@@ -812,20 +812,20 @@ impl Renderer for FemtoVgRenderer {
             .register(tag, data, &mut self.canvas, femtovg::ImageFlags::NEAREST)
     }
 
-    fn register_bitmap_fit(
+    fn register_bitmap_rgba(
         &mut self,
         tag: &str,
-        data: &[u8],
-        max_w: u32,
-        max_h: u32,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
     ) -> Option<BitmapId> {
-        self.bitmap_registry.register_fit(
+        self.bitmap_registry.register_rgba(
             tag,
-            data,
+            rgba,
+            width,
+            height,
             &mut self.canvas,
             femtovg::ImageFlags::empty(),
-            max_w,
-            max_h,
         )
     }
 

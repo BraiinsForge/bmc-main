@@ -34,11 +34,20 @@ mod wasm_glue {
         BadImage,
     }
 
+    /// In-flight decode: its job handle and the source image's aspect ratio.
+    #[derive(Clone, Copy)]
+    struct Pending {
+        job: ImageJobId,
+        aspect: f32,
+    }
+
     thread_local! {
         static STATE: RefCell<State> = const { RefCell::new(State::Loading) };
         static POLL: Cell<Option<PollHandle>> = const { Cell::new(None) };
         // Held image; stale after a failed refresh.
         static STALE: Cell<bool> = const { Cell::new(false) };
+        // In-flight decode; results from superseded jobs are ignored.
+        static PENDING: Cell<Option<Pending>> = const { Cell::new(None) };
     }
 
     /// Refresh interval (ms); fixed at registration.
@@ -97,14 +106,14 @@ mod wasm_glue {
                 }
                 Some((w, h)) => {
                     let size = widget_size();
-                    match IMAGE.set_fit(response.body(), size.width, size.height) {
-                        Some(bitmap) => {
-                            let aspect = render::aspect_of(w, h);
-                            STATE.with(|s| *s.borrow_mut() = State::Loaded { bitmap, aspect });
-                            STALE.with(|s| s.set(false));
+                    let aspect = render::aspect_of(w, h);
+                    match IMAGE.set_fit(response.body(), size.width, size.height, on_decoded) {
+                        Some(job) => {
+                            PENDING.with(|p| p.set(Some(Pending { job, aspect })));
                             None
                         }
-                        None => Some((State::BadImage, false)),
+                        // Decode slots full — retry later.
+                        None => Some((State::LoadFailed, true)),
                     }
                 }
             }
@@ -120,6 +129,32 @@ mod wasm_glue {
             } else {
                 STATE.with(|s| *s.borrow_mut() = state);
             }
+        }
+        request_frame();
+    }
+
+    /// Async decode finished: swap to the new bitmap, or mark bad/stale on failure.
+    fn on_decoded(job: ImageJobId, bitmap: Option<BitmapId>) {
+        let Some(pending) = PENDING.with(Cell::get) else {
+            return;
+        };
+        if pending.job != job {
+            return;
+        }
+        match bitmap {
+            Some(bitmap) => {
+                STATE.with(|s| {
+                    *s.borrow_mut() = State::Loaded {
+                        bitmap,
+                        aspect: pending.aspect,
+                    };
+                });
+                STALE.with(|s| s.set(false));
+            }
+            None if STATE.with(|s| matches!(&*s.borrow(), State::Loaded { .. })) => {
+                STALE.with(|s| s.set(true));
+            }
+            None => STATE.with(|s| *s.borrow_mut() = State::BadImage),
         }
         request_frame();
     }

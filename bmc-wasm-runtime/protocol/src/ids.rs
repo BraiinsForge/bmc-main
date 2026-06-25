@@ -47,6 +47,27 @@ macro_rules! define_id {
     };
 }
 
+/// FFI bridge for the u16 renderer ids.
+/// They are u16 in storage and in the render-tree wire format
+/// (compact — 2 bytes per draw node), but wasm has no integer type
+/// narrower than i32, so they cross host imports/exports as u32.
+/// `to_ffi` widens (free); `from_ffi` narrows + range-checks.
+macro_rules! u16_ffi_bridge {
+    ($($name:ident),+ $(,)?) => { $(
+        impl $name {
+            #[must_use]
+            pub fn to_ffi(self) -> u32 {
+                u32::from(self.to_wire())
+            }
+
+            #[must_use]
+            pub fn from_ffi(raw: u32) -> Option<Self> {
+                u16::try_from(raw).ok().and_then(Self::from_wire)
+            }
+        }
+    )+ };
+}
+
 // ── Renderer resources (u16 wire) ───────────────────────────────────
 
 define_id! {
@@ -69,11 +90,18 @@ define_id! {
     AudioId, "audio", u16
 }
 
+u16_ffi_bridge!(SvgId, BitmapId, MeshId, AudioId);
+
 // ── Network / data resources (u32 wire — wasmi FFI calling convention) ─
 
 define_id! {
     /// Outbound HTTP fetch request handle, used to correlate fetch responses.
     FetchRequestId, "fetch request", u32
+}
+
+define_id! {
+    /// Off-thread image-decode job handle, used to correlate `__on_image_ready`.
+    ImageJobId, "image decode job", u32
 }
 
 define_id! {

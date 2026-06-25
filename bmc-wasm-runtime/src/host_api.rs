@@ -26,8 +26,8 @@ use bmc_render::renderer::Renderer;
 use bmc_render::tree::NodeContext;
 use bmc_render::{AnimationState, ModalState, ScrollState, TransitionState, TransitionStateKey};
 use bmc_wasm_protocol::{
-    AudioId, FetchRequestId, HttpListenerId, HttpRequestId, JsonId, MdnsBrowseId, MdnsRegId,
-    SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, XmlId,
+    AudioId, FetchRequestId, HttpListenerId, HttpRequestId, ImageJobId, JsonId, MdnsBrowseId,
+    MdnsRegId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, XmlId,
 };
 
 use crate::audio_registry::AudioRegistry;
@@ -57,6 +57,14 @@ pub struct CompletedFetch {
     pub request_id: FetchRequestId,
     pub status: u32,
     pub body: Vec<u8>,
+}
+
+/// A completed off-thread image decode, ready for GPU upload and delivery.
+pub struct CompletedImageDecode {
+    pub job_id: ImageJobId,
+    pub tag: String,
+    pub result: Result<(Vec<u8>, u32, u32), String>,
+    pub decode_us: u64,
 }
 
 #[cfg(feature = "testing")]
@@ -577,6 +585,18 @@ pub(crate) struct HostState {
     /// Number of HTTP fetches currently in flight (spawned but not yet completed).
     pub in_flight_fetches: u32,
 
+    /// Receiver for completed off-thread image decodes.
+    pub image_decode_rx: mpsc::Receiver<CompletedImageDecode>,
+
+    /// Sender cloned into each background image-decode thread.
+    pub image_decode_tx: mpsc::Sender<CompletedImageDecode>,
+
+    /// Next image-decode job id counter (for `ImageJobId::alloc`).
+    pub next_image_job_id: u32,
+
+    /// Number of image decodes currently in flight.
+    pub in_flight_image_decodes: u32,
+
     /// Parsed JSON documents, keyed by doc_id.
     pub json_docs: HashMap<JsonId, Value>,
 
@@ -763,6 +783,7 @@ impl HostState {
     /// `WasmWidgetRuntime::with_renderer`.
     pub fn new(resource_limits: RuntimeResourceLimits, system_time: DateTime<FixedOffset>) -> Self {
         let (fetch_tx, fetch_rx) = mpsc::channel();
+        let (image_decode_tx, image_decode_rx) = mpsc::channel();
         Self {
             renderer_ptr: None,
             interaction: InteractionState::new(),
@@ -785,6 +806,10 @@ impl HostState {
             fetch_tx,
             delayed_fetches: Vec::new(),
             in_flight_fetches: 0,
+            image_decode_rx,
+            image_decode_tx,
+            next_image_job_id: 1,
+            in_flight_image_decodes: 0,
             json_docs: HashMap::new(),
             next_json_id: 1,
             xml_indices: HashMap::new(),
@@ -864,6 +889,12 @@ impl HostState {
         self.delayed_fetches
             .len()
             .saturating_add(self.in_flight_fetches as usize)
+    }
+
+    /// Accumulate `us` wall-clock micros into the named profile section. The
+    /// `_us` name marks the unit apart from the guest fuel sections.
+    pub fn add_profile_us(&mut self, name: &str, us: u64) {
+        *self.profile_sections.entry(name.to_owned()).or_default() += us;
     }
 
     /// Evict every host-side audio asset (sample + matching playback sinks)

@@ -5,7 +5,7 @@
 #![expect(clippy::too_many_lines)]
 
 use bmc_wasm_protocol::{
-    FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, SocketId, SsdpSearchId,
+    BitmapId, FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, SocketId, SsdpSearchId,
     UdpBroadcastId, WebsocketId,
 };
 use std::ptr::NonNull;
@@ -242,6 +242,81 @@ impl WasmWidgetRuntime {
                 tracing::error!("__on_fetch_response failed: {e}");
             }
         }
+    }
+
+    /// Upload completed off-thread image decodes and notify
+    /// the guest via `__on_image_ready`.
+    /// A render-less poll defers them to the next render.
+    pub fn deliver_image_decode_results(&mut self) {
+        if self.store.data().renderer_ptr.is_none() {
+            return;
+        }
+
+        let mut completed = Vec::new();
+        let state = self.store.data_mut();
+        while let Ok(done) = state.image_decode_rx.try_recv() {
+            state.in_flight_image_decodes = state.in_flight_image_decodes.saturating_sub(1);
+            completed.push(done);
+        }
+        if completed.is_empty() {
+            return;
+        }
+
+        let Ok(on_ready) = self
+            .instance
+            .get_typed_func::<(u32, u32), ()>(&self.store, "__on_image_ready")
+        else {
+            // Widget did not opt into async image decode; drop the results.
+            return;
+        };
+
+        for done in completed {
+            self.store
+                .data_mut()
+                .add_profile_us("image_decode_us", done.decode_us);
+            // A `0` bitmap id is the absent sentinel — the guest reads it as a
+            // decode failure.
+            let bitmap_id = match done.result {
+                Ok((rgba, w, h)) => {
+                    let started = std::time::Instant::now();
+                    let id = self
+                        .register_decoded_bitmap(&done.tag, &rgba, w, h)
+                        .map_or(0, BitmapId::to_ffi);
+                    let upload_us =
+                        u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+                    self.store
+                        .data_mut()
+                        .add_profile_us("image_upload_us", upload_us);
+                    id
+                }
+                Err(e) => {
+                    tracing::error!(job = done.job_id.to_wire(), "image decode failed: {e}");
+                    0
+                }
+            };
+            if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
+                tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
+            if let Err(e) = on_ready.call(&mut self.store, (done.job_id.to_wire(), bitmap_id)) {
+                tracing::error!("__on_image_ready failed: {e}");
+            }
+        }
+    }
+
+    /// Reborrow the parked renderer to upload a pre-decoded RGBA buffer.
+    fn register_decoded_bitmap(
+        &mut self,
+        tag: &str,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Option<BitmapId> {
+        let mut ptr = self.store.data().renderer_ptr?;
+        // SAFETY: parked by `WasmWidgetRuntime::with_renderer` on this thread;
+        // single-threaded wasmi dispatch means no other `&mut Renderer` is live.
+        let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
+        renderer.register_bitmap_rgba(tag, rgba, width, height)
     }
 
     /// Whether there are pending or in-flight fetches that need polling.
@@ -803,6 +878,7 @@ impl WasmWidgetRuntime {
     /// stable across host revisions.
     pub fn poll_deliveries(&mut self) {
         self.deliver_fetch_responses();
+        self.deliver_image_decode_results();
         self.deliver_ws_messages();
         self.deliver_socket_events();
         self.deliver_mdns_events();
@@ -829,6 +905,7 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn has_pending_io(&self) -> bool {
         self.has_pending_fetches()
+            || self.store.data().in_flight_image_decodes > 0
             || self.has_active_websockets()
             || self.has_active_sockets()
             || self.has_active_mdns_browses()

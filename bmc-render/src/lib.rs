@@ -42,6 +42,9 @@ pub const MAX_DECODE_IMAGE_PIXELS: u64 = 4_194_304;
 /// Decoder allocation budget, above RGBA output so decoders keep working buffers.
 pub const MAX_DECODE_IMAGE_ALLOC_BYTES: u64 = 24 * 1024 * 1024;
 
+/// Decode image bytes to RGBA within `max_w`×`max_h` (no upscale), off the render thread.
+pub use gpu::bitmap::decode_scaled_to_fit;
+
 #[cfg(all(test, target_os = "linux"))]
 mod test_harness;
 

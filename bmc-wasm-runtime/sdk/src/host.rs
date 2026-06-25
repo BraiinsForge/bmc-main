@@ -8,7 +8,7 @@
 
 // Re-export from protocol — single source of truth for wire-format enums
 #[cfg(target_arch = "wasm32")]
-use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, SvgId};
+use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, SvgId};
 pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
 
 // ============================================================================
@@ -220,13 +220,13 @@ mod ffi {
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
     pub fn register_svg(tag: &str, data: &[u8]) -> Option<SvgId> {
-        SvgId::from_wire(unsafe {
+        SvgId::from_ffi(unsafe {
             host_register_svg(
                 tag.as_ptr(),
                 tag.len() as u32,
                 data.as_ptr(),
                 data.len() as u32,
-            ) as u16
+            )
         })
     }
 
@@ -244,13 +244,13 @@ mod ffi {
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
     pub fn register_mesh(tag: &str, data: &[u8]) -> Option<MeshId> {
-        MeshId::from_wire(unsafe {
+        MeshId::from_ffi(unsafe {
             host_register_mesh(
                 tag.as_ptr(),
                 tag.len() as u32,
                 data.as_ptr(),
                 data.len() as u32,
-            ) as u16
+            )
         })
     }
 
@@ -258,13 +258,13 @@ mod ffi {
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
     pub fn register_audio(data: &[u8], name: &str) -> Option<AudioId> {
-        AudioId::from_wire(unsafe {
+        AudioId::from_ffi(unsafe {
             host_register_audio(
                 data.as_ptr(),
                 data.len() as u32,
                 name.as_ptr(),
                 name.len() as u32,
-            ) as u16
+            )
         })
     }
 
@@ -275,13 +275,13 @@ mod ffi {
     /// `ensure_audio_registered` without unwrapping.
     pub fn audio_play(sound_id: Option<AudioId>, volume: super::Volume) {
         let Some(id) = sound_id else { return };
-        unsafe { host_audio_play(u32::from(id.to_wire()), u32::from(volume)) }
+        unsafe { host_audio_play(id.to_ffi(), u32::from(volume)) }
     }
 
     /// Stop playback of a registered audio sample. `None` no-ops.
     pub fn audio_stop(sound_id: Option<AudioId>) {
         let Some(id) = sound_id else { return };
-        unsafe { host_audio_stop(u32::from(id.to_wire())) }
+        unsafe { host_audio_stop(id.to_ffi()) }
     }
 
     /// Register bitmap data (PNG bytes) with the host under `tag`. Idempotent
@@ -289,13 +289,13 @@ mod ffi {
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
     pub fn register_bitmap(tag: &str, data: &[u8]) -> Option<BitmapId> {
-        BitmapId::from_wire(unsafe {
+        BitmapId::from_ffi(unsafe {
             host_register_bitmap(
                 tag.as_ptr(),
                 tag.len() as u32,
                 data.as_ptr(),
                 data.len() as u32,
-            ) as u16
+            )
         })
     }
 
@@ -304,22 +304,28 @@ mod ffi {
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
     pub fn register_bitmap_nearest(tag: &str, data: &[u8]) -> Option<BitmapId> {
-        BitmapId::from_wire(unsafe {
+        BitmapId::from_ffi(unsafe {
             host_register_bitmap_nearest(
                 tag.as_ptr(),
                 tag.len() as u32,
                 data.as_ptr(),
                 data.len() as u32,
-            ) as u16
+            )
         })
     }
 
-    /// Register `data` downscaled to fit `max_w`×`max_h` (no upscale).
-    /// Does not keep a CPU copy. Idempotent host-side.
+    /// Decode + downscale `data` to fit `max_w`×`max_h` off the render thread.
+    /// The bitmap is delivered later via `__on_image_ready`; returns the job
+    /// handle (`None` = rejected).
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
-    pub fn register_bitmap_fit(tag: &str, data: &[u8], max_w: u32, max_h: u32) -> Option<BitmapId> {
-        BitmapId::from_wire(unsafe {
+    pub fn register_bitmap_fit(
+        tag: &str,
+        data: &[u8],
+        max_w: u32,
+        max_h: u32,
+    ) -> Option<ImageJobId> {
+        ImageJobId::from_wire(unsafe {
             host_register_bitmap_fit(
                 tag.as_ptr(),
                 tag.len() as u32,
@@ -327,7 +333,7 @@ mod ffi {
                 data.len() as u32,
                 max_w,
                 max_h,
-            ) as u16
+            )
         })
     }
 

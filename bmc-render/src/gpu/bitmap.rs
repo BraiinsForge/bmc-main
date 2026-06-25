@@ -29,7 +29,7 @@ struct StoredBitmap {
 /// cached ID without re-decoding or re-uploading.
 pub struct BitmapRegistry {
     bitmaps: HashMap<BitmapId, StoredBitmap>,
-    /// CPU RGBA kept only for `sample`; set by `register`, not `register_fit`.
+    /// CPU RGBA kept only for `sample`; set by `register`, not `register_rgba`.
     sample_pixels: HashMap<BitmapId, Vec<u8>>,
     by_tag: HashMap<String, BitmapId>,
     next_id: u16,
@@ -95,27 +95,51 @@ impl BitmapRegistry {
         Some(id)
     }
 
-    /// Register with downscale to fit `max_w`×`max_h` (no upscale).
-    /// Does not keep a CPU copy.
-    pub fn register_fit(
+    /// Upload a pre-decoded RGBA buffer to GPU; no CPU copy.
+    /// Replaces any existing bitmap registered under `tag`.
+    pub fn register_rgba(
         &mut self,
         tag: &str,
-        data: &[u8],
+        rgba: &[u8],
+        width: u32,
+        height: u32,
         canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
         flags: ImageFlags,
-        max_w: u32,
-        max_h: u32,
     ) -> Option<BitmapId> {
-        if let Some(&id) = self.by_tag.get(tag) {
-            return Some(id);
+        let expected = (width as usize)
+            .saturating_mul(height as usize)
+            .saturating_mul(4);
+        if rgba.len() != expected {
+            tracing::error!(
+                "register_rgba ({tag}): buffer len {} != {width}x{height}x4 ({expected})",
+                rgba.len()
+            );
+            return None;
         }
-        let (image_id, width, height) = match decode_fit_upload(data, canvas, flags, max_w, max_h) {
-            Ok(t) => t,
+        let pixels_rgba: &[RGBA8] = rgba.as_rgba();
+        let src = ImageSource::Rgba(ImgRef::new(pixels_rgba, width as usize, height as usize));
+        let image_id = match canvas.create_image(src, flags) {
+            Ok(i) => i,
             Err(e) => {
-                tracing::error!("failed to decode/upload bitmap ({tag}): {e}");
+                tracing::error!("failed to upload bitmap ({tag}): {e}");
                 return None;
             }
         };
+        // Reuse the tag's existing id, swapping the GPU image in place, so a slot
+        // that re-registers every refresh doesn't march `next_id` toward overflow.
+        if let Some(&id) = self.by_tag.get(tag) {
+            if let Some(old) = self.bitmaps.insert(
+                id,
+                StoredBitmap {
+                    image_id,
+                    width,
+                    height,
+                },
+            ) {
+                canvas.delete_image(old.image_id);
+            }
+            return Some(id);
+        }
         let id = BitmapId::alloc(&mut self.next_id);
         self.bitmaps.insert(
             id,
@@ -270,23 +294,9 @@ fn decode_and_upload(
     Ok((image_id, rgba.into_raw(), w, h))
 }
 
-/// Decode, downscale to fit `max_w`×`max_h` (no upscale), and upload.
-fn decode_fit_upload(
-    data: &[u8],
-    canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
-    flags: ImageFlags,
-    max_w: u32,
-    max_h: u32,
-) -> anyhow::Result<(ImageId, u32, u32)> {
-    let (rgba, w, h) = decode_scaled_to_fit(data, max_w, max_h)?;
-    let pixels_rgba: &[RGBA8] = rgba.as_rgba();
-    let src = ImageSource::Rgba(ImgRef::new(pixels_rgba, w as usize, h as usize));
-    let image_id = canvas.create_image(src, flags)?;
-    Ok((image_id, w, h))
-}
-
-/// Decode to RGBA within `max_w`×`max_h` (no upscale); JPEG scales on load, others full-decode.
-fn decode_scaled_to_fit(
+/// Decode to RGBA within `max_w`×`max_h` (no upscale);
+/// JPEG scales on load, others full-decode.
+pub fn decode_scaled_to_fit(
     data: &[u8],
     max_w: u32,
     max_h: u32,

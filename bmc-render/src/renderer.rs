@@ -147,14 +147,13 @@ pub trait Renderer {
     /// cause color bleeding across sub-rect boundaries. Idempotent by `tag`.
     fn register_bitmap_nearest(&mut self, tag: &str, data: &[u8]) -> Option<BitmapId>;
 
-    /// Register a bitmap downscaled to fit `max_w`×`max_h` (no upscale).
-    /// Does not keep a CPU copy. Idempotent by `tag`.
-    fn register_bitmap_fit(
+    /// Upload a pre-decoded RGBA buffer (decoded off the render thread). Idempotent by `tag`.
+    fn register_bitmap_rgba(
         &mut self,
         tag: &str,
-        data: &[u8],
-        max_w: u32,
-        max_h: u32,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
     ) -> Option<BitmapId>;
 
     /// Draw a registered bitmap at the given position and size.

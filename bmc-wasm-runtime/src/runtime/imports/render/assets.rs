@@ -5,12 +5,12 @@
 #![expect(clippy::cast_possible_truncation)]
 
 use anyhow::{Result, bail};
-use bmc_render::{MAX_DECODE_IMAGE_ALLOC_BYTES, MAX_DECODE_IMAGE_PIXELS};
+use bmc_render::{MAX_DECODE_IMAGE_ALLOC_BYTES, MAX_DECODE_IMAGE_PIXELS, decode_scaled_to_fit};
 use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{BitmapId, MeshId, SvgId};
+use bmc_wasm_protocol::{BitmapId, ImageJobId, MeshId, SvgId};
 use wasmi::{Caller, Extern, Linker};
 
-use crate::host_api::HostState;
+use crate::host_api::{CompletedImageDecode, HostState};
 
 use super::super::super::memory::read_bytes;
 
@@ -51,10 +51,7 @@ fn register_svg_import(linker: &mut Linker<HostState>) -> Result<()> {
             };
             let tag = caller.data_mut().namespaced_tag(&tag);
             super::super::with_renderer(&mut caller, |renderer| {
-                renderer
-                    .register_svg(&tag, &data)
-                    .map_or(0, SvgId::to_wire)
-                    .into()
+                renderer.register_svg(&tag, &data).map_or(0, SvgId::to_ffi)
             })
         },
     )?;
@@ -81,8 +78,7 @@ fn register_bitmap_import(linker: &mut Linker<HostState>) -> Result<()> {
             super::super::with_renderer(&mut caller, |renderer| {
                 renderer
                     .register_bitmap(&tag, &data)
-                    .map_or(0, BitmapId::to_wire)
-                    .into()
+                    .map_or(0, BitmapId::to_ffi)
             })
         },
     )?;
@@ -109,14 +105,15 @@ fn register_bitmap_nearest_import(linker: &mut Linker<HostState>) -> Result<()> 
             super::super::with_renderer(&mut caller, |renderer| {
                 renderer
                     .register_bitmap_nearest(&tag, &data)
-                    .map_or(0, BitmapId::to_wire)
-                    .into()
+                    .map_or(0, BitmapId::to_ffi)
             })
         },
     )?;
     Ok(())
 }
 
+/// Decode off the render thread, register when done.
+/// Returns a job id (`0` = rejected); guest notified via `__on_image_ready`.
 fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
@@ -128,20 +125,37 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
          data_len: u32,
          max_w: u32,
          max_h: u32|
-         -> Result<u32, wasmi::Error> {
+         -> u32 {
             let Some(tag) = read_tag(&caller, tag_ptr, tag_len) else {
-                return Ok(0);
+                return 0;
             };
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
-                return Ok(0);
+                return 0;
             };
-            let tag = caller.data_mut().namespaced_tag(&tag);
-            super::super::with_renderer(&mut caller, |renderer| {
-                renderer
-                    .register_bitmap_fit(&tag, &data, max_w, max_h)
-                    .map_or(0, BitmapId::to_wire)
-                    .into()
-            })
+            let state = caller.data_mut();
+            if state.in_flight_image_decodes as usize >= state.resource_limits.max_image_decodes {
+                tracing::warn!(
+                    max_image_decodes = state.resource_limits.max_image_decodes,
+                    "host_register_bitmap_fit rejected: decode limit reached"
+                );
+                return 0;
+            }
+            let tag = state.namespaced_tag(&tag);
+            let job_id = ImageJobId::alloc(&mut state.next_image_job_id);
+            state.in_flight_image_decodes += 1;
+            let tx = state.image_decode_tx.clone();
+            std::thread::spawn(move || {
+                let started = std::time::Instant::now();
+                let result = decode_scaled_to_fit(&data, max_w, max_h).map_err(|e| e.to_string());
+                let decode_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+                let _ = tx.send(CompletedImageDecode {
+                    job_id,
+                    tag,
+                    result,
+                    decode_us,
+                });
+            });
+            job_id.to_wire()
         },
     )?;
     Ok(())
@@ -170,8 +184,7 @@ fn register_mesh_import(linker: &mut Linker<HostState>) -> Result<()> {
             let id: u32 = super::super::with_renderer(&mut caller, |renderer| {
                 renderer
                     .register_mesh(&tag, &data)
-                    .map_or(0, MeshId::to_wire)
-                    .into()
+                    .map_or(0, MeshId::to_ffi)
             })?;
 
             #[cfg(feature = "profiling")]
@@ -194,7 +207,7 @@ fn register_bitmap_sample_import(linker: &mut Linker<HostState>) -> Result<()> {
          w: u32,
          h: u32|
          -> Result<u32, wasmi::Error> {
-            let Some(bitmap_id) = BitmapId::from_wire(bitmap_id as u16) else {
+            let Some(bitmap_id) = BitmapId::from_ffi(bitmap_id) else {
                 return Ok(0);
             };
             super::super::with_renderer(&mut caller, |renderer| {

@@ -25,6 +25,8 @@ pub struct RuntimeResourceLimits {
     pub max_udp_broadcasts: usize,
     /// Maximum active HTTP listeners.
     pub max_http_listeners: usize,
+    /// Maximum image-decode jobs in flight (background decode threads).
+    pub max_image_decodes: usize,
 }
 
 impl Default for RuntimeResourceLimits {
@@ -38,6 +40,7 @@ impl Default for RuntimeResourceLimits {
             max_ssdp_searches: 4,
             max_udp_broadcasts: 4,
             max_http_listeners: 2,
+            max_image_decodes: 1,
         }
     }
 }
@@ -58,5 +61,6 @@ mod tests {
         assert!(limits.max_ssdp_searches > 0);
         assert!(limits.max_udp_broadcasts > 0);
         assert!(limits.max_http_listeners > 0);
+        assert!(limits.max_image_decodes > 0);
     }
 }
