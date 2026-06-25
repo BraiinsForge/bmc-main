@@ -42,7 +42,7 @@ const manifestWidgets: pb.WidgetManifest[] = [
     manifest('weather', 'Weather', 'Local weather and forecast.', C.WEATHER, 'Forecast'),
     manifest('iss', 'ISS Position', 'Where the station is right now.', C.SPACE),
     manifest('params', 'Params Demo', 'Read-back exemplar for every ParamKind.', C.UTILITY, 'Param showcase'),
-    manifest('nameday', 'Nameday', "Today's nameday celebrations.", C.MISC),
+    manifest('nameday', 'Nameday', "Today's nameday celebrations.", C.CALENDAR),
 ];
 
 export const Populated = () => (

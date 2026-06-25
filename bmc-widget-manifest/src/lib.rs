@@ -616,6 +616,8 @@ pub enum WidgetCategory {
     Clock,
     /// Weather and forecast.
     Weather,
+    /// Calendar and dated events.
+    Calendar,
     /// Space and astronomy.
     Space,
     /// Diagnostic, demo, and system tools.

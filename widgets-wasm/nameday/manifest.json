@@ -9,6 +9,8 @@
     "url": "https://braiinsforge.com"
   },
   "binary": "bin/nameday",
+  "icon": "assets/icon.svg",
+  "category": "calendar",
   "settings": [
     "localization",
     "timezone"

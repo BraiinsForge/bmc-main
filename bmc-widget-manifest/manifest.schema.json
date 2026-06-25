@@ -460,6 +460,11 @@
           "const": "weather"
         },
         {
+          "description": "Calendar and dated events.",
+          "type": "string",
+          "const": "calendar"
+        },
+        {
           "description": "Space and astronomy.",
           "type": "string",
           "const": "space"

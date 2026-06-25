@@ -140,6 +140,7 @@ enum WidgetCategory {
   WIDGET_CATEGORY_SPACE = 4;
   WIDGET_CATEGORY_UTILITY = 5;
   WIDGET_CATEGORY_MISC = 6;
+  WIDGET_CATEGORY_CALENDAR = 7;
 }
 
 message WidgetManifest {
