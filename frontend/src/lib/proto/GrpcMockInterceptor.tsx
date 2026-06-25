@@ -40,7 +40,7 @@ type MockFn<Method extends DescMethod, Input extends Message, Output extends Mes
       PlainMessage<Output>;
 
 /** Describes a mapping of service method names to their mockers */
-type ServiceMocks<Service extends GenService<any>> = {
+export type ServiceMocks<Service extends GenService<any>> = {
     [Key in keyof Service['method']]: MockFn<
         Service['method'][Key],
         GetRuntimeShape<Service['method'][Key]['input']>,

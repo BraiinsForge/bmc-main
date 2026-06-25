@@ -1,0 +1,144 @@
+import { afterEach, beforeEach, describe, test, expect, rstest } from '@rstest/core';
+import { act, cleanup, fireEvent, render } from '@testing-library/react/pure';
+import { MemoryRouter } from 'react-router';
+import { IntlProvider } from 'react-intl';
+import { HelmetProvider } from '@dr.pogodin/react-helmet';
+
+import DisplayList from './DisplayList';
+import * as pb from '@/proto';
+import { mocks } from '@/proto/transport';
+import { type ServiceMocks } from '@/lib/proto';
+
+// `mocks.service` wants every method typed; at runtime it only registers what we
+// pass. This lets us register a typed subset.
+type AnyService = Parameters<typeof mocks.service>[0];
+function registerMocks<S extends AnyService>(service: S, methods: Partial<ServiceMocks<S>>): void {
+    mocks.service(service, methods as ServiceMocks<S>);
+}
+
+// One Clone button per row, id `bmc-display-comp-scene-overview-row-<sceneId>-clone`.
+// Used to count rows and read back each row's scene id.
+const ROW_ID_PREFIX = 'bmc-display-comp-scene-overview-row-';
+const ROW_ID_SUFFIX = '-clone';
+
+function rowSceneIds(container: HTMLElement): string[] {
+    const sel = `[id^="${ROW_ID_PREFIX}"][id$="${ROW_ID_SUFFIX}"]`;
+    return [...container.querySelectorAll<HTMLElement>(sel)].map(el =>
+        el.id.slice(ROW_ID_PREFIX.length, -ROW_ID_SUFFIX.length),
+    );
+}
+
+function makeScene(id: string): pb.Scene {
+    return pb.create(pb.SceneSchema, { id, enabled: true, cycleDurationSec: 30 });
+}
+
+// Backend scene store stand-in; the cloneScene mock inserts one fresh scene next
+// to the source, like the real backend.
+let server: pb.Scene[] = [];
+let cloneSeq = 0;
+
+function installMocks(): void {
+    mocks.clear();
+
+    registerMocks(pb.services.SceneManagementService, {
+        getScenes: () => ({ scenes: server.map(s => ({ ...s })) }),
+        cloneScene: ({ req }) => {
+            const srcId = req.value;
+            const idx = server.findIndex(s => s.id === srcId);
+            cloneSeq += 1;
+            const base = idx >= 0 ? server[idx] : server[0];
+            const copy = makeScene(`${srcId}_c${cloneSeq}`);
+            copy.enabled = base.enabled;
+            server.splice((idx >= 0 ? idx : server.length - 1) + 1, 0, copy);
+            return { value: copy.id };
+        },
+        getSceneCycling: () => ({}),
+        getAvailableWidgets: () => ({ widgets: [] }),
+    });
+
+    registerMocks(pb.services.HardwareService, {
+        getHardwareCapabilities: () => ({ combinedScenesSupported: false }),
+    });
+
+    registerMocks(pb.services.SystemService, {
+        getTimezoneList: () => ({ timezones: [] }),
+    });
+}
+
+function renderPage() {
+    return render(
+        <HelmetProvider>
+            <IntlProvider locale="en">
+                <MemoryRouter>
+                    <DisplayList />
+                </MemoryRouter>
+            </IntlProvider>
+        </HelmetProvider>,
+    );
+}
+
+// Advance fake timers and flush the RPC/debounce promise chain inside act().
+async function flush(ms = 10): Promise<void> {
+    await act(async () => {
+        await rstest.advanceTimersByTimeAsync(ms);
+    });
+}
+
+function clickFirstClone(container: HTMLElement): void {
+    const btn = container.querySelector<HTMLElement>(
+        `[id^="${ROW_ID_PREFIX}"][id$="${ROW_ID_SUFFIX}"]`,
+    );
+    if (!btn) throw new Error('no clone button rendered');
+    fireEvent.click(btn);
+}
+
+beforeEach(() => {
+    rstest.useFakeTimers();
+    cloneSeq = 0;
+    server = [makeScene('A')];
+    installMocks();
+});
+
+afterEach(() => {
+    cleanup();
+    mocks.clear();
+    rstest.useRealTimers();
+});
+
+describe('DisplayList scene clone (BDK-527)', () => {
+    test('cloning a scene never renders two rows for the same scene id', async () => {
+        const { container } = renderPage();
+        await flush();
+
+        expect(rowSceneIds(container)).toEqual(['A']);
+
+        clickFirstClone(container);
+
+        // Optimistic update applied: must not render two rows with the same id.
+        const ids = rowSceneIds(container);
+        expect(new Set(ids).size).toBe(ids.length);
+    });
+
+    test('repeated clones settle to the backend scene list, no duplicates', async () => {
+        const CLICKS = 3;
+        const { container } = renderPage();
+        await flush();
+        expect(rowSceneIds(container)).toEqual(['A']);
+
+        // Clone several times within the 1s reload-debounce window, letting each
+        // RPC resolve between clicks (one toast per click, per the ticket).
+        for (let i = 0; i < CLICKS; i += 1) {
+            clickFirstClone(container);
+            await flush(5);
+        }
+
+        // Let the debounced reload fire and reconcile against the backend.
+        await flush(1_100);
+
+        // Rows must match the backend (original + one per click), all distinct.
+        const ids = rowSceneIds(container);
+        expect(ids.length).toBe(server.length);
+        expect(ids.length).toBe(1 + CLICKS);
+        expect(new Set(ids).size).toBe(ids.length);
+    });
+});
