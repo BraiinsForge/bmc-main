@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -74,7 +74,25 @@ impl PathDiscovery {
                 }
             };
 
-            if !file_type.is_dir() {
+            let is_widget_dir = if file_type.is_dir() {
+                true
+            } else if file_type.is_symlink() {
+                match fs::metadata(&widget_dir).await {
+                    Ok(metadata) => metadata.is_dir(),
+                    Err(e) => {
+                        warn!(
+                            "failed to follow widget directory symlink '{}': {}",
+                            widget_dir.display(),
+                            e
+                        );
+                        false
+                    }
+                }
+            } else {
+                false
+            };
+
+            if !is_widget_dir {
                 continue;
             }
 
@@ -348,6 +366,27 @@ mod tests {
 
         assert_eq!(widgets.len(), 1);
         assert_eq!(widgets[0].manifest.name, "test-widget");
+    }
+
+    #[tokio::test]
+    async fn discover_symlinked_widget_directory() {
+        let scan_dir = TempDir::new().expect("BUG: failed to create scan dir");
+        let target_dir = TempDir::new().expect("BUG: failed to create target dir");
+        let widget_dir = create_valid_widget(
+            target_dir.path(),
+            "linked-widget",
+            "550e8400-e29b-41d4-a716-446655440003",
+        );
+        let link_path = scan_dir.path().join("linked-widget");
+        std::os::unix::fs::symlink(&widget_dir, &link_path)
+            .expect("BUG: failed to create widget symlink");
+
+        let discovery = PathDiscovery::new(vec![scan_dir.path().to_path_buf()]);
+        let widgets = discovery.discover().await;
+
+        assert_eq!(widgets.len(), 1);
+        assert_eq!(widgets[0].manifest.name, "linked-widget");
+        assert_eq!(widgets[0].widget_dir, link_path);
     }
 
     #[tokio::test]
