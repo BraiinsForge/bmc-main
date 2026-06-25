@@ -36,7 +36,8 @@ const _: () = assert!(
 
 use crate::host::SharedHost;
 use crate::lifecycle::{
-    LifecycleState, LifecycleStateMachine, SlotApplyCtx, frame_callback_enabled, should_render,
+    LifecycleHook, LifecycleState, LifecycleStateMachine, SlotApplyCtx, frame_callback_enabled,
+    lifecycle_hook, should_render,
 };
 use crate::render_target::{EglRenderTarget, RenderTarget, RenderTargetFactory};
 
@@ -603,6 +604,15 @@ impl WidgetSlot {
                 render_target = self.render_target.is_some(),
                 "slot lifecycle applied"
             );
+            match lifecycle_hook(previous, current) {
+                Some(LifecycleHook::Wake) => {
+                    self.runtime.notify_wake();
+                }
+                Some(LifecycleHook::Dormant) => {
+                    self.runtime.notify_dormant();
+                }
+                None => {}
+            }
         }
     }
 

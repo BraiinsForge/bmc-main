@@ -294,6 +294,9 @@ pub struct WasmWidgetRuntime {
     /// call `request_frame()` from it — the host no longer force-renders on
     /// touch, so without the hook the widget's touch is dropped.
     on_touch_func: Option<wasmi::TypedFunc<(), ()>>,
+    /// Optional guest exports fired on the dormancy/wake edge.
+    on_wake_func: Option<wasmi::TypedFunc<(), ()>>,
+    on_dormant_func: Option<wasmi::TypedFunc<(), ()>>,
     sdk_version: (u16, u16, u16),
     /// Instruction budget reset before each WASM frame execution.
     pub(super) fuel_per_frame: u64,
@@ -436,6 +439,8 @@ impl WasmWidgetRuntime {
             .get_typed_func::<(), ()>(&store, "on_system_update")
             .ok();
         let on_touch_func = instance.get_typed_func::<(), ()>(&store, "on_touch").ok();
+        let on_wake_func = instance.get_typed_func::<(), ()>(&store, "on_wake").ok();
+        let on_dormant_func = instance.get_typed_func::<(), ()>(&store, "on_dormant").ok();
         tracing::info!(
             guest_id = %guest_id,
             width,
@@ -464,6 +469,8 @@ impl WasmWidgetRuntime {
             on_params_update_func,
             on_system_update_func,
             on_touch_func,
+            on_wake_func,
+            on_dormant_func,
             sdk_version,
             fuel_per_frame,
             fuel_strikes: 0,
@@ -871,6 +878,16 @@ impl WasmWidgetRuntime {
     /// trap), matching the other deliver methods.
     pub fn deliver_touch(&mut self) -> bool {
         self.fire_update_hook(self.on_touch_func, "on_touch", Lifecycle::Touch)
+    }
+
+    /// Notify the widget it is going dormant — release off-scene resources.
+    pub fn notify_dormant(&mut self) -> bool {
+        self.fire_update_hook(self.on_dormant_func, "on_dormant", Lifecycle::Dormant)
+    }
+
+    /// Notify the widget it is waking — restore resources before the first frame.
+    pub fn notify_wake(&mut self) -> bool {
+        self.fire_update_hook(self.on_wake_func, "on_wake", Lifecycle::Wake)
     }
 
     /// Common tail of `deliver_params_update` / `deliver_system_update`:

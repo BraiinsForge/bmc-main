@@ -165,6 +165,23 @@
 //! is dropped (scene swap, hot reload, shutdown). The place to flush in-memory state to KV.
 //! Frame requests fired from `unload` are silently ignored — the runtime is about to be torn down.
 //!
+//! ### `on_wake` / `on_dormant`
+//!
+//! ```rust,ignore
+//! #[unsafe(no_mangle)]
+//! pub extern "C" fn on_dormant() { /* release off-scene resources */ }
+//! #[unsafe(no_mangle)]
+//! pub extern "C" fn on_wake() { /* restore them before the first frame */ }
+//! ```
+//!
+//! Optional, paired with the dormancy edge. `on_dormant` fires when the widget
+//! scrolls off-scene; `on_wake` fires before the first frame when it returns.
+//! Implementing `on_wake` opts the slot into eviction: the host frees its
+//! renderer bitmaps on dormancy, and `on_wake` re-registers them. Without
+//! `on_wake` the slot keeps its assets. `on_dormant` is also where a widget
+//! releases its own heavy buffers or persists downloaded/parsed/derived state
+//! to rebuild on wake without re-fetching.
+//!
 //! ## Lifecycle guard matrix
 //!
 //! A handful of host imports are only meaningful inside specific hooks.
@@ -178,8 +195,8 @@
 //!   (`None` for touch reads, no-op for frame requests). Used when reading defensively
 //!   is reasonable and the widget composes naturally with the sentinel.
 //!
-//! `on_params_update`, `on_system_update`, and `on_touch` share the same
-//! import-legality row — all three run with state-mutation legal and
+//! `on_params_update`, `on_system_update`, `on_touch`, `on_wake`, and
+//! `on_dormant` share the same import-legality row — state-mutation legal,
 //! tree-submission illegal.
 //!
 //! | Import                                              | `init` | `render` | `on_*`* | `unload` |

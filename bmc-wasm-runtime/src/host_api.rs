@@ -199,6 +199,10 @@ pub(crate) enum Lifecycle {
     /// re-render in response); submitting a tree and touch readback are not —
     /// the queued touch is consumed at the next render, not here.
     Touch,
+    /// `on_dormant` is on the stack — release off-scene resources.
+    Dormant,
+    /// `on_wake` is on the stack — restore resources; `request_frame` is legal.
+    Wake,
     /// `unload` is on the stack. Synchronous cleanup only; frame requests no-op.
     Unload,
 }

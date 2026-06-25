@@ -56,6 +56,25 @@ pub fn frame_callback_enabled(s: LifecycleState) -> bool {
     matches!(s, LifecycleState::Visible)
 }
 
+/// Guest lifecycle hook a committed state transition fires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecycleHook {
+    /// Left `Dormant` — restore before the first frame.
+    Wake,
+    /// Entered `Dormant` — release off-scene resources.
+    Dormant,
+}
+
+/// Hook for a committed `previous → current` transition — the `has_render_target` flip.
+#[must_use]
+pub fn lifecycle_hook(previous: LifecycleState, current: LifecycleState) -> Option<LifecycleHook> {
+    match (has_render_target(previous), has_render_target(current)) {
+        (false, true) => Some(LifecycleHook::Wake),
+        (true, false) => Some(LifecycleHook::Dormant),
+        _ => None,
+    }
+}
+
 #[derive(Debug)]
 pub struct LifecycleStateMachine {
     current: LifecycleState,
@@ -236,5 +255,49 @@ impl LifecycleStateMachine {
             ctx.factory
                 .compact_for_prepared(target, ctx.egl, ctx.surface);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LifecycleState::{Dormant, Entering, Leaving, Prepared, Visible};
+    use super::{LifecycleHook, LifecycleState, lifecycle_hook};
+
+    const RENDER_STATES: [LifecycleState; 4] = [Prepared, Entering, Visible, Leaving];
+
+    #[test]
+    fn wake_fires_on_leaving_dormant() {
+        for to in RENDER_STATES {
+            assert_eq!(
+                lifecycle_hook(Dormant, to),
+                Some(LifecycleHook::Wake),
+                "Dormant -> {to:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn dormant_fires_on_entering_dormant() {
+        for from in RENDER_STATES {
+            assert_eq!(
+                lifecycle_hook(from, Dormant),
+                Some(LifecycleHook::Dormant),
+                "{from:?} -> Dormant"
+            );
+        }
+    }
+
+    #[test]
+    fn no_hook_between_render_target_states() {
+        for from in RENDER_STATES {
+            for to in RENDER_STATES {
+                assert_eq!(lifecycle_hook(from, to), None, "{from:?} -> {to:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn no_hook_when_staying_dormant() {
+        assert_eq!(lifecycle_hook(Dormant, Dormant), None);
     }
 }
