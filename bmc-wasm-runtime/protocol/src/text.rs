@@ -6,6 +6,7 @@ use core::fmt;
 
 use crate::colors::{Color, GRAY_10, TRANSPARENT};
 use crate::ids::BitmapId;
+use crate::wire;
 
 /// Horizontal text alignment.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
@@ -308,11 +309,6 @@ impl TextStyle {
     ///   4-31:  reserved
     #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
-        let mut buf = [0_u8; Self::SIZE];
-        buf[0..4].copy_from_slice(&self.size.to_le_bytes());
-        buf[4..8].copy_from_slice(&self.color.to_u32().to_le_bytes());
-        buf[8..12].copy_from_slice(&self.max_width.to_le_bytes());
-
         let weight_bits = u32::from(self.weight.0) & 0xFFF;
         // line_height scaled to 12-bit fixed point, clamped to valid range
         let lh_scaled = (self.line_height * 100.0).clamp(0.0, 4095.0);
@@ -324,7 +320,6 @@ impl TextStyle {
         let strike_bit = if self.strikethrough { 1 << 26 } else { 0 };
         let align_bits = (self.align as u32 & 0x3) << 27;
         let overflow_bits = (self.text_overflow as u32 & 0x3) << 29;
-
         let flags = weight_bits
             | lh_bits
             | italic_bit
@@ -333,24 +328,30 @@ impl TextStyle {
             | align_bits
             | overflow_bits;
         let flags2 = (self.vertical_align as u32 & 0x3) | ((self.family as u32 & 0x3) << 2);
-        buf[12..16].copy_from_slice(&flags.to_le_bytes());
-        buf[16..20].copy_from_slice(&self.outline_color.to_u32().to_le_bytes());
-        buf[20..24].copy_from_slice(&self.outline_width.to_le_bytes());
-        buf[24..28].copy_from_slice(&flags2.to_le_bytes());
+
+        let mut buf = [0_u8; Self::SIZE];
+        let mut p = 0;
+        wire::write_u32(&mut buf, &mut p, self.size);
+        wire::write_color(&mut buf, &mut p, self.color);
+        wire::write_u32(&mut buf, &mut p, self.max_width);
+        wire::write_u32(&mut buf, &mut p, flags);
+        wire::write_color(&mut buf, &mut p, self.outline_color);
+        wire::write_f32(&mut buf, &mut p, self.outline_width);
+        wire::write_u32(&mut buf, &mut p, flags2);
         buf
     }
 
     /// Deserialize from 28 bytes
     #[must_use]
-    pub fn from_bytes(data: &[u8]) -> Self {
-        let size = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-        let color = Color::from_raw(u32::from_le_bytes([data[4], data[5], data[6], data[7]]));
-        let max_width = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
-        let flags = u32::from_le_bytes([data[12], data[13], data[14], data[15]]);
-        let outline_color =
-            Color::from_raw(u32::from_le_bytes([data[16], data[17], data[18], data[19]]));
-        let outline_width = f32::from_le_bytes([data[20], data[21], data[22], data[23]]);
-        let flags2 = u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        let mut p = 0;
+        let size = wire::read_u32(data, &mut p)?;
+        let color = wire::read_color(data, &mut p)?;
+        let max_width = wire::read_u32(data, &mut p)?;
+        let flags = wire::read_u32(data, &mut p)?;
+        let outline_color = wire::read_color(data, &mut p)?;
+        let outline_width = wire::read_f32(data, &mut p)?;
+        let flags2 = wire::read_u32(data, &mut p)?;
 
         let weight = FontWeight((flags & 0xFFF) as u16);
         // 12-bit value (max 4095) fits exactly in f32 mantissa (23 bits), no precision loss
@@ -381,7 +382,7 @@ impl TextStyle {
             _ => FontFamily::Sans,
         };
 
-        Self {
+        Some(Self {
             size,
             color,
             max_width,
@@ -396,7 +397,7 @@ impl TextStyle {
             outline_width,
             vertical_align,
             family,
-        }
+        })
     }
 }
 
@@ -473,61 +474,77 @@ impl PropsData {
     #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         let mut buf = [0_u8; Self::SIZE];
-        buf[0..4].copy_from_slice(&self.padding.to_le_bytes());
-        buf[4..8].copy_from_slice(&self.margin.to_le_bytes());
-        buf[8..12].copy_from_slice(&self.gap.to_le_bytes());
-        buf[12..16].copy_from_slice(&self.background.to_u32().to_le_bytes());
-        buf[16..20].copy_from_slice(&self.width.to_le_bytes());
-        buf[20..24].copy_from_slice(&self.height.to_le_bytes());
-        buf[24..28].copy_from_slice(&self.flex.to_le_bytes());
-        buf[28..32].copy_from_slice(&self.max_width.to_le_bytes());
-        buf[32..36].copy_from_slice(&self.max_height.to_le_bytes());
-        let layout_flags = LayoutFlags::new(self.cross_align, self.wrap);
-        buf[36..40].copy_from_slice(&layout_flags.bits().to_le_bytes());
-        buf[40..42].copy_from_slice(&self.bg_np_id.map_or(0, BitmapId::to_wire).to_le_bytes());
-        buf[42..44].copy_from_slice(&self.bg_np_left.to_le_bytes());
-        buf[44..46].copy_from_slice(&self.bg_np_top.to_le_bytes());
-        buf[46..48].copy_from_slice(&self.bg_np_right.to_le_bytes());
-        buf[48..50].copy_from_slice(&self.bg_np_bottom.to_le_bytes());
-        buf[50..54].copy_from_slice(&self.inset_top.to_le_bytes());
-        buf[54..58].copy_from_slice(&self.inset_right.to_le_bytes());
-        buf[58..62].copy_from_slice(&self.inset_bottom.to_le_bytes());
-        buf[62..66].copy_from_slice(&self.inset_left.to_le_bytes());
+        let mut p = 0;
+        wire::write_f32(&mut buf, &mut p, self.padding);
+        wire::write_f32(&mut buf, &mut p, self.margin);
+        wire::write_f32(&mut buf, &mut p, self.gap);
+        wire::write_color(&mut buf, &mut p, self.background);
+        wire::write_f32(&mut buf, &mut p, self.width);
+        wire::write_f32(&mut buf, &mut p, self.height);
+        wire::write_f32(&mut buf, &mut p, self.flex);
+        wire::write_f32(&mut buf, &mut p, self.max_width);
+        wire::write_f32(&mut buf, &mut p, self.max_height);
+        wire::write_u32(
+            &mut buf,
+            &mut p,
+            LayoutFlags::new(self.cross_align, self.wrap).bits(),
+        );
+        wire::write_u16(&mut buf, &mut p, self.bg_np_id.map_or(0, BitmapId::to_wire));
+        wire::write_u16(&mut buf, &mut p, self.bg_np_left);
+        wire::write_u16(&mut buf, &mut p, self.bg_np_top);
+        wire::write_u16(&mut buf, &mut p, self.bg_np_right);
+        wire::write_u16(&mut buf, &mut p, self.bg_np_bottom);
+        wire::write_f32(&mut buf, &mut p, self.inset_top);
+        wire::write_f32(&mut buf, &mut p, self.inset_right);
+        wire::write_f32(&mut buf, &mut p, self.inset_bottom);
+        wire::write_f32(&mut buf, &mut p, self.inset_left);
         buf
     }
 
     #[must_use]
-    pub fn from_bytes(data: &[u8]) -> Self {
-        Self {
-            padding: f32::from_le_bytes([data[0], data[1], data[2], data[3]]),
-            margin: f32::from_le_bytes([data[4], data[5], data[6], data[7]]),
-            gap: f32::from_le_bytes([data[8], data[9], data[10], data[11]]),
-            background: Color::from_raw(u32::from_le_bytes([
-                data[12], data[13], data[14], data[15],
-            ])),
-            width: f32::from_le_bytes([data[16], data[17], data[18], data[19]]),
-            height: f32::from_le_bytes([data[20], data[21], data[22], data[23]]),
-            flex: f32::from_le_bytes([data[24], data[25], data[26], data[27]]),
-            max_width: f32::from_le_bytes([data[28], data[29], data[30], data[31]]),
-            max_height: f32::from_le_bytes([data[32], data[33], data[34], data[35]]),
-            cross_align: LayoutFlags::from_bits(u32::from_le_bytes([
-                data[36], data[37], data[38], data[39],
-            ]))
-            .cross_align(),
-            wrap: LayoutFlags::from_bits(u32::from_le_bytes([
-                data[36], data[37], data[38], data[39],
-            ]))
-            .wrap(),
-            bg_np_id: BitmapId::from_wire(u16::from_le_bytes([data[40], data[41]])),
-            bg_np_left: u16::from_le_bytes([data[42], data[43]]),
-            bg_np_top: u16::from_le_bytes([data[44], data[45]]),
-            bg_np_right: u16::from_le_bytes([data[46], data[47]]),
-            bg_np_bottom: u16::from_le_bytes([data[48], data[49]]),
-            inset_top: f32::from_le_bytes([data[50], data[51], data[52], data[53]]),
-            inset_right: f32::from_le_bytes([data[54], data[55], data[56], data[57]]),
-            inset_bottom: f32::from_le_bytes([data[58], data[59], data[60], data[61]]),
-            inset_left: f32::from_le_bytes([data[62], data[63], data[64], data[65]]),
-        }
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        let mut p = 0;
+        let padding = wire::read_f32(data, &mut p)?;
+        let margin = wire::read_f32(data, &mut p)?;
+        let gap = wire::read_f32(data, &mut p)?;
+        let background = wire::read_color(data, &mut p)?;
+        let width = wire::read_f32(data, &mut p)?;
+        let height = wire::read_f32(data, &mut p)?;
+        let flex = wire::read_f32(data, &mut p)?;
+        let max_width = wire::read_f32(data, &mut p)?;
+        let max_height = wire::read_f32(data, &mut p)?;
+        let layout = LayoutFlags::from_bits(wire::read_u32(data, &mut p)?);
+        let bg_np_id = BitmapId::from_wire(wire::read_u16(data, &mut p)?);
+        let bg_np_left = wire::read_u16(data, &mut p)?;
+        let bg_np_top = wire::read_u16(data, &mut p)?;
+        let bg_np_right = wire::read_u16(data, &mut p)?;
+        let bg_np_bottom = wire::read_u16(data, &mut p)?;
+        let inset_top = wire::read_f32(data, &mut p)?;
+        let inset_right = wire::read_f32(data, &mut p)?;
+        let inset_bottom = wire::read_f32(data, &mut p)?;
+        let inset_left = wire::read_f32(data, &mut p)?;
+        Some(Self {
+            padding,
+            margin,
+            gap,
+            background,
+            width,
+            height,
+            flex,
+            max_width,
+            max_height,
+            cross_align: layout.cross_align(),
+            wrap: layout.wrap(),
+            bg_np_id,
+            bg_np_left,
+            bg_np_top,
+            bg_np_right,
+            bg_np_bottom,
+            inset_top,
+            inset_right,
+            inset_bottom,
+            inset_left,
+        })
     }
 }
 
@@ -564,10 +581,49 @@ mod tests {
     }
 
     #[test]
+    fn props_data_round_trips() {
+        let props = PropsData {
+            padding: 1.0,
+            margin: 2.0,
+            gap: 3.0,
+            background: GRAY_10,
+            width: 4.0,
+            height: 5.0,
+            flex: 6.0,
+            max_width: 7.0,
+            max_height: 8.0,
+            cross_align: CrossAlign::Center,
+            wrap: true,
+            bg_np_id: BitmapId::from_wire(42),
+            bg_np_left: 10,
+            bg_np_top: 11,
+            bg_np_right: 12,
+            bg_np_bottom: 13,
+            inset_top: 14.0,
+            inset_right: 15.0,
+            inset_bottom: 16.0,
+            inset_left: 17.0,
+        };
+        let bytes = props.to_bytes();
+        let back = PropsData::from_bytes(&bytes).expect("full-size buffer decodes");
+        // Re-encoding the decoded props reproduces the bytes exactly.
+        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.bg_np_id, BitmapId::from_wire(42));
+        assert_eq!(back.cross_align, CrossAlign::Center);
+        assert!(back.wrap);
+        assert_eq!(back.bg_np_bottom, 13);
+    }
+
+    #[test]
+    fn props_data_from_bytes_rejects_truncated() {
+        assert!(PropsData::from_bytes(&[0_u8; PropsData::SIZE - 1]).is_none());
+    }
+
+    #[test]
     fn text_style_round_trips_default() {
         let s = TextStyle::default();
         let bytes = s.to_bytes();
-        let back = TextStyle::from_bytes(&bytes);
+        let back = TextStyle::from_bytes(&bytes).expect("full-size buffer decodes");
         assert_eq!(back.vertical_align, VerticalAlign::Top);
         assert_eq!(back.align, TextAlign::Left);
         assert_eq!(back.family, FontFamily::Sans);
@@ -581,7 +637,7 @@ mod tests {
                 ..TextStyle::default()
             };
             let bytes = s.to_bytes();
-            let back = TextStyle::from_bytes(&bytes);
+            let back = TextStyle::from_bytes(&bytes).expect("full-size buffer decodes");
             assert_eq!(back.family, variant);
         }
     }
@@ -593,7 +649,7 @@ mod tests {
             vertical_align: VerticalAlign::Baseline,
             ..TextStyle::default()
         };
-        let back = TextStyle::from_bytes(&s.to_bytes());
+        let back = TextStyle::from_bytes(&s.to_bytes()).expect("full-size buffer decodes");
         assert_eq!(back.family, FontFamily::DeckSans);
         assert_eq!(back.vertical_align, VerticalAlign::Baseline);
     }
@@ -611,7 +667,7 @@ mod tests {
                 ..TextStyle::default()
             };
             let bytes = s.to_bytes();
-            let back = TextStyle::from_bytes(&bytes);
+            let back = TextStyle::from_bytes(&bytes).expect("full-size buffer decodes");
             assert_eq!(back.vertical_align, variant);
         }
     }
@@ -630,7 +686,7 @@ mod tests {
             vertical_align: VerticalAlign::Baseline,
             ..TextStyle::default()
         };
-        let back = TextStyle::from_bytes(&s.to_bytes());
+        let back = TextStyle::from_bytes(&s.to_bytes()).expect("full-size buffer decodes");
         assert_eq!(back.size, 32);
         assert_eq!(back.weight, FontWeight::BOLD);
         assert!(back.italic);

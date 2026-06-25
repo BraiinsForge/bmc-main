@@ -512,10 +512,9 @@ impl<'a> TreeReader<'a> {
     }
 
     fn read_props(&mut self) -> Result<PropsData> {
-        if self.pos + PropsData::SIZE > self.data.len() {
+        let Some(props) = PropsData::from_bytes(&self.data[self.pos..]) else {
             bail!("unexpected end of tree data reading props");
-        }
-        let props = PropsData::from_bytes(&self.data[self.pos..self.pos + PropsData::SIZE]);
+        };
         self.pos += PropsData::SIZE;
         Ok(props)
     }
@@ -531,10 +530,9 @@ impl<'a> TreeReader<'a> {
     }
 
     fn read_text_style(&mut self) -> Result<TextStyle> {
-        if self.pos + TextStyle::SIZE > self.data.len() {
+        let Some(style) = TextStyle::from_bytes(&self.data[self.pos..]) else {
             bail!("unexpected end of tree data reading text style");
-        }
-        let style = TextStyle::from_bytes(&self.data[self.pos..self.pos + TextStyle::SIZE]);
+        };
         self.pos += TextStyle::SIZE;
         Ok(style)
     }

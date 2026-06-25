@@ -5,12 +5,12 @@
 //! Format: each node is `[type:u8][data...]`. Per-variant layout:
 //!
 //! ```text
-//! Container: [type][props:32B][child_count:u16][children...]
-//! Paragraph: [type][props:32B][text_style:16B][span_count:u16][spans...]
+//! Container: [type][props][child_count:u16][children...]
+//! Paragraph: [type][props][text_style][span_count:u16][spans...]
 //! Button:    [type][id_len:u16][id_bytes...][style:u8][size:u8]
 //!            [icon_id:u16][label_len:u16][label_bytes...]
 //! Spacer:    [type][flex:f32]
-//! Canvas:    [type][props:32B]
+//! Canvas:    [type][props]
 //! ```
 
 use std::cell::RefCell;
@@ -158,7 +158,7 @@ impl TreeBuffer {
     /// Write a paragraph node.
     ///
     /// ```text
-    /// [NODE_PARAGRAPH][props:32B][text_style:16B][span_count:u16][spans...]
+    /// [NODE_PARAGRAPH][props][text_style][span_count:u16][spans...]
     /// each span: [flags:u16][extra_flags:u8][len:u16][text bytes...][color:u32 if has_color]
     /// ```
     pub fn write_paragraph(&mut self, props: &PropsData, base_style: &TextStyle, spans: &[Span]) {
@@ -212,7 +212,7 @@ impl TreeBuffer {
 
     /// Write a canvas node with draw children
     ///
-    /// Wire format: `[NODE_CANVAS][props:40B][key_len:u16][key_bytes...][draw_count:u16][draws...]`
+    /// Wire format: `[NODE_CANVAS][props][key_len:u16][key_bytes...][draw_count:u16][draws...]`
     pub fn write_canvas(&mut self, props: &PropsData, touch_key: Option<&str>, draw_count: u16) {
         self.write_u8(NODE_CANVAS);
         self.write_props(props);
@@ -228,7 +228,7 @@ impl TreeBuffer {
     /// Write a scroll container.
     ///
     /// ```text
-    /// [NODE_SCROLL][key_len:u16][key_bytes...][props:32B][child_count:u16][children...]
+    /// [NODE_SCROLL][key_len:u16][key_bytes...][props][child_count:u16][children...]
     /// ```
     pub fn write_scroll(&mut self, scroll_key: &str, props: &PropsData, child_count: u16) {
         self.write_u8(NODE_SCROLL);
