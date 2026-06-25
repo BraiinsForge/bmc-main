@@ -59,6 +59,12 @@ members = [
     "widgets/*",
 ]
 
+[workspace.metadata.nix]
+include = [
+    "deny-wasm.toml",
+    "deny.toml",
+]
+
 [profile.release]
 strip = true
 lto = true

@@ -172,9 +172,16 @@ let
     frontendDeps = pkgs: with pkgs; [ nodejs yarn ];
   };
 
+  # Nested sub-workspaces that are not members of the root cargo workspace
+  # (widgets-wasm is standalone; bmc-wasm-runtime/examples is cargo-excluded).
+  # Drop them from the root workspace source so editing a widget does not
+  # rebuild the root profiles (core, bmc-mock, …).
+  rootExcludeSrc = [ "widgets-wasm" "bmc-wasm-runtime/examples" ];
+
   # Minimal workspace config for musl profiles (bmc-openwrt, statically linked)
   workspaceMinimal = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
+    excludeSrc = rootExcludeSrc;
     nativeDeps = _pkgs: (commonDeps.buildDeps _pkgs);
     # Workspace-deps step compiles ALL Cargo.lock entries, including
     # crates from glibc-only binaries (compositor, widgets). Provide
@@ -191,21 +198,16 @@ let
     env = {
       FONTCONFIG_FILE = commonDeps.env.FONTCONFIG_FILE;
     };
-    includeExtraSrc = [
-      "assets"
-    ];
   };
 
   # Full workspace config for glibc profiles (widgets, compositor)
   workspace = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
+    excludeSrc = rootExcludeSrc;
     nativeDeps = _pkgs: (commonDeps.buildDeps _pkgs) ++ (commonDeps.guiBuildDeps _pkgs);
     # packages that will be cross-compiled for target arch
     targetDeps = commonDeps.guiTargetDeps;
     env = commonDeps.env;
-    includeExtraSrc = [
-      "assets"
-    ];
   };
 
   # Build a --remap-path-prefix flag for a ${storeDir}/<hash>-<name>
