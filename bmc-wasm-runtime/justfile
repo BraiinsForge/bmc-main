@@ -41,24 +41,26 @@ dev WIDGET ARGS="":
     #!/usr/bin/env bash
     set -euo pipefail
     root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
+    name=$({{ dir }}/tools/widget_root.py --dir {{ WIDGET }})
     target=$({{ target_dir_tool }} "$root")
-    wasm_file="$target/{{ wasm_target }}/debug/$(echo {{ WIDGET }} | tr - _).wasm"
+    wasm_file="$target/{{ wasm_target }}/debug/$(echo "$name" | tr - _).wasm"
     cargo build {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml
-    cargo build --manifest-path "$root/Cargo.toml" -p {{ WIDGET }} --target {{ wasm_target }}
+    cargo build --manifest-path "$root/$name/Cargo.toml" --target {{ wasm_target }}
     mprocs \
         --names "watch,testbed" \
-        "cd '$root' && cargo watch -x 'build -p {{ WIDGET }} --target {{ wasm_target }}'" \
-        "cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- '$wasm_file' --widget-root '$root/{{ WIDGET }}' {{ ARGS }}"
+        "cd '$root' && cargo watch -x 'build --manifest-path $name/Cargo.toml --target {{ wasm_target }}'" \
+        "cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- '$wasm_file' --widget-root '$root/$name' {{ ARGS }}"
 
 # Run a release-built widget once in the testbed.
 run WIDGET ARGS="":
     #!/usr/bin/env bash
     set -euo pipefail
     root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
+    name=$({{ dir }}/tools/widget_root.py --dir {{ WIDGET }})
     target=$({{ target_dir_tool }} "$root")
-    wasm_file="$target/{{ wasm_target }}/release/$(echo {{ WIDGET }} | tr - _).wasm"
-    cargo build --manifest-path "$root/Cargo.toml" -p {{ WIDGET }} --release --target {{ wasm_target }}
-    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/{{ WIDGET }}" {{ ARGS }}
+    wasm_file="$target/{{ wasm_target }}/release/$(echo "$name" | tr - _).wasm"
+    cargo build --manifest-path "$root/$name/Cargo.toml" --release --target {{ wasm_target }}
+    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/$name" {{ ARGS }}
 
 # === Profiling / size ===
 
@@ -81,10 +83,11 @@ gen WIDGET:
     #!/usr/bin/env bash
     set -euo pipefail
     root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
+    name=$({{ dir }}/tools/widget_root.py --dir {{ WIDGET }})
     cargo run -p bmc-widget-codegen \
         --manifest-path {{ dir }}/../Cargo.toml -- \
-            --manifest "$root/{{ WIDGET }}/manifest.json" \
-            --out "$root/{{ WIDGET }}/src/manifest_params.rs"
+            --manifest "$root/$name/manifest.json" \
+            --out "$root/$name/src/manifest_params.rs"
 
 # === Docs ===
 

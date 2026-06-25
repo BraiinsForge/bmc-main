@@ -10,7 +10,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from widget_root import resolve as resolve_widget_root
+from widget_root import find as find_widget
 
 WASM_TARGET = 'wasm32-unknown-unknown'
 
@@ -88,8 +88,8 @@ def build_example_wasm(
     `widget_root.py`; works for SDK examples and production widgets alike.
     """
 
-    wasm_name = example.replace('-', '_')
-    workspace_dir = resolve_widget_root(example)
+    workspace_dir, dir_name = find_widget(example)
+    wasm_name = dir_name.replace('-', '_')
 
     feature_args = [arg for f in features for arg in ('--features', f)]
     # --message-format=json emits one compiler-artifact message per built
@@ -99,8 +99,8 @@ def build_example_wasm(
         [
             'cargo',
             'build',
-            '-p',
-            example,
+            '--manifest-path',
+            str(workspace_dir / dir_name / 'Cargo.toml'),
             '--profile',
             profile,
             '--target',
