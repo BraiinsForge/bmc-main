@@ -23,6 +23,8 @@ import { assertUnreachable } from '@/lib/ts.ts';
 
 export interface SceneOverviewRowProps {
     id: string;
+    // List is settling a clone placeholder; disable this row's controls.
+    locked?: boolean;
     enabled: boolean;
     onToggle(id: string, value: boolean): void;
 
@@ -97,13 +99,13 @@ class View extends Component<Props> {
         );
     };
     DurationInput = (props: { label: 'top' | 'none' }): ReactElement => {
-        const { enabled, cycleEnabled, cycleDurationValue, cycleDurationDefault } = this.props;
+        const { enabled, cycleEnabled, cycleDurationValue, cycleDurationDefault, locked } = this.props;
         const { formatMessage } = this.props.intl;
 
         return (
             <div className={cn(css.duration, !cycleEnabled && css.disabled)}>
                 <NumberInput
-                    disabled={!enabled || !cycleEnabled}
+                    disabled={!enabled || !cycleEnabled || locked}
                     id={this.#id('duration')}
                     min={1}
                     step={5}
@@ -124,7 +126,7 @@ class View extends Component<Props> {
         return <div className={css.icon} children={icon} />;
     };
     Toggler = (props: { labeled?: boolean }): ReactElement => {
-        const { enabled, intl } = this.props;
+        const { enabled, intl, locked } = this.props;
         const { formatMessage } = intl;
         const { labeled } = props;
 
@@ -134,6 +136,7 @@ class View extends Component<Props> {
                     id={this.#id('enabled')}
                     size="md"
                     hideLabel={!labeled}
+                    disabled={locked}
                     labelA={formatMessage({ defaultMessage: 'Off' })}
                     labelB={formatMessage({ defaultMessage: 'On' })}
                     toggled={enabled}
@@ -160,7 +163,7 @@ class View extends Component<Props> {
         );
     };
     Actions = (): ReactElement => {
-        const { intl, onReload } = this.props;
+        const { intl, onReload, locked } = this.props;
         const { formatMessage } = intl;
 
         return (
@@ -171,6 +174,7 @@ class View extends Component<Props> {
                         size="sm"
                         kind="ghost"
                         hasIconOnly
+                        disabled={locked}
                         icon={IconRestart}
                         tooltipPosition="bottom"
                         title={formatMessage({ defaultMessage: 'Reload' })}
@@ -182,6 +186,7 @@ class View extends Component<Props> {
                     size="sm"
                     kind="ghost"
                     hasIconOnly
+                    disabled={locked}
                     icon={IconClone}
                     tooltipPosition="bottom"
                     title={formatMessage({ defaultMessage: 'Clone' })}
@@ -192,6 +197,7 @@ class View extends Component<Props> {
                     size="sm"
                     kind="ghost"
                     hasIconOnly
+                    disabled={locked}
                     icon={IconDelete}
                     tooltipPosition="bottom"
                     title={formatMessage({ defaultMessage: 'Delete' })}
@@ -201,6 +207,7 @@ class View extends Component<Props> {
                     id={this.#id('edit')}
                     size="sm"
                     kind="primary"
+                    disabled={locked}
                     tooltipPosition="bottom"
                     children={formatMessage({ defaultMessage: 'Edit' })}
                     onClick={this.#edit}

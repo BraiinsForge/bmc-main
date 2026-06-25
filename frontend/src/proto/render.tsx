@@ -453,3 +453,25 @@ export function sceneDescription(scene: Maybe<pb.Scene>, manifests: Maybe<Manife
             assertUnreachable(sceneKindCase, 'scene kind');
     }
 }
+
+// ── Optimistic clone placeholder ──────────────────────────────────────
+//
+// Cloning a scene inserts a placeholder row immediately for snappy feedback,
+// before the debounced reload swaps in the real backend scene.
+//
+// The placeholder needs a unique id (so it gets a distinct React key
+// — no key collision, no doubling on repeated clicks, clean reconcile on reload)
+// that is also recognizable, so the UI can disable controls that act by id
+// while the row is not yet a real backend scene.
+
+export const OPTIMISTIC_SCENE_ID_PREFIX = '__bmc-optimistic-clone__:';
+
+/** Build a unique placeholder scene id from a monotonic sequence value. */
+export function optimisticSceneId(seq: number): string {
+    return `${OPTIMISTIC_SCENE_ID_PREFIX}${seq}`;
+}
+
+/** True for placeholder rows inserted by an in-flight clone (not yet on the backend). */
+export function isOptimisticSceneId(id: string): boolean {
+    return id.startsWith(OPTIMISTIC_SCENE_ID_PREFIX);
+}

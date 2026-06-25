@@ -58,11 +58,13 @@ export interface RenderSortableListItemProps<D extends Datum> {
 export type Item<D extends Datum> = {
     index: number;
     data: D;
+    disabled?: boolean;
     render(props: RenderSortableListItemProps<D>): ReactElement;
 };
-function Item<D extends Datum>({ index, data, render }: Item<D>) {
+function Item<D extends Datum>({ index, data, disabled, render }: Item<D>) {
     const { attributes, listeners, setNodeRef, transform, transition, isOver, isDragging } = useSortable({
         id: data.id,
+        disabled,
         transition: { duration: 150, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' },
     });
     const $transform = transform
@@ -93,13 +95,14 @@ export interface SortableProps<D extends Datum> {
     items: Array<D>;
     onChange(items: Array<D>, move: { id: D['id']; from: number; into: number }): void;
     renderItem(props: RenderSortableListItemProps<D>): ReactElement;
+    isItemDisabled?(item: D): boolean;
 
     className?: string;
     style?: CSSProperties;
     wrapperRef?: Ref<HTMLDivElement>;
 }
 export function Sortable<D extends Datum>(props: SortableProps<D>) {
-    const { items, renderItem, onChange, className, style, wrapperRef } = props;
+    const { items, renderItem, onChange, isItemDisabled, className, style, wrapperRef } = props;
 
     const [activeId, setActiveId] = useState<D['id'] | null>(null);
     const activeIndex = activeId !== null ? items.findIndex(x => x.id === activeId) : -1;
@@ -153,7 +156,9 @@ export function Sortable<D extends Datum>(props: SortableProps<D>) {
                 <SortableContext
                     items={items}
                     strategy={verticalListSortingStrategy}
-                    children={items.map((d, i) => <Item index={i} data={d} key={d.id} render={renderItem} />)}
+                    children={items.map((d, i) => (
+                        <Item index={i} data={d} key={d.id} disabled={isItemDisabled?.(d)} render={renderItem} />
+                    ))}
                 />
 
                 <DragOverlay dropAnimation={dropAnimation}>

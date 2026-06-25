@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, test, expect, rstest } from '@rstest/core';
-import { act, cleanup, fireEvent, render } from '@testing-library/react/pure';
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react/pure';
 import { MemoryRouter } from 'react-router';
 import { IntlProvider } from 'react-intl';
 import { HelmetProvider } from '@dr.pogodin/react-helmet';
@@ -7,7 +7,7 @@ import { HelmetProvider } from '@dr.pogodin/react-helmet';
 import DisplayList from './DisplayList';
 import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
-import { type ServiceMocks } from '@/lib/proto';
+import type { ServiceMocks } from '@/lib/proto';
 
 // `mocks.service` wants every method typed; at runtime it only registers what we
 // pass. This lets us register a typed subset.
@@ -85,9 +85,7 @@ async function flush(ms = 10): Promise<void> {
 }
 
 function clickFirstClone(container: HTMLElement): void {
-    const btn = container.querySelector<HTMLElement>(
-        `[id^="${ROW_ID_PREFIX}"][id$="${ROW_ID_SUFFIX}"]`,
-    );
+    const btn = container.querySelector<HTMLElement>(`[id^="${ROW_ID_PREFIX}"][id$="${ROW_ID_SUFFIX}"]`);
     if (!btn) throw new Error('no clone button rendered');
     fireEvent.click(btn);
 }
@@ -119,26 +117,39 @@ describe('DisplayList scene clone (BDK-527)', () => {
         expect(new Set(ids).size).toBe(ids.length);
     });
 
-    test('repeated clones settle to the backend scene list, no duplicates', async () => {
-        const CLICKS = 3;
+    test('a clone settles to the backend scene list with a unique id', async () => {
+        // Real timers: the debounced reload that swaps the placeholder for the real
+        // scene is a genuine ~1s wait, awkward to model with fake timers here.
+        rstest.useRealTimers();
+
+        const { container } = renderPage();
+        await waitFor(() => expect(rowSceneIds(container)).toEqual(['A']));
+
+        clickFirstClone(container);
+
+        // After the reload, rows mirror the backend exactly — original + the one
+        // real clone, distinct ids, no leftover placeholder or duplicate.
+        await waitFor(() => expect(rowSceneIds(container)).toEqual(server.map(s => s.id)), { timeout: 2_000 });
+        const ids = rowSceneIds(container);
+        expect(ids.length).toBe(2);
+        expect(new Set(ids).size).toBe(ids.length);
+    });
+
+    test('while a clone settles, the whole list locks', async () => {
         const { container } = renderPage();
         await flush();
         expect(rowSceneIds(container)).toEqual(['A']);
 
-        // Clone several times within the 1s reload-debounce window, letting each
-        // RPC resolve between clicks (one toast per click, per the ticket).
-        for (let i = 0; i < CLICKS; i += 1) {
-            clickFirstClone(container);
-            await flush(5);
-        }
+        clickFirstClone(container);
 
-        // Let the debounced reload fire and reconcile against the backend.
-        await flush(1_100);
+        const optimisticId = rowSceneIds(container).find(id => id.startsWith('__bmc-optimistic-clone__'));
+        expect(optimisticId).toBeTruthy();
 
-        // Rows must match the backend (original + one per click), all distinct.
-        const ids = rowSceneIds(container);
-        expect(ids.length).toBe(server.length);
-        expect(ids.length).toBe(1 + CLICKS);
-        expect(new Set(ids).size).toBe(ids.length);
+        const cloneBtn = (sceneId: string) =>
+            container.querySelector<HTMLButtonElement>(`[id="${ROW_ID_PREFIX}${sceneId}${ROW_ID_SUFFIX}"]`);
+
+        // Both the placeholder and the existing source row are locked until reload.
+        expect(cloneBtn(optimisticId as string)?.disabled).toBe(true);
+        expect(cloneBtn('A')?.disabled).toBe(true);
     });
 });

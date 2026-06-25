@@ -41,7 +41,11 @@ class View extends Component<Props> {
 
     componentWillUnmount = () => pb.abort.all(this);
 
-    #renderItem = (props: RenderSortableListItemProps<pb.Scene>, firstEnabledSceneID: Maybe<pb.Scene['id']>) => {
+    #renderItem = (
+        props: RenderSortableListItemProps<pb.Scene>,
+        firstEnabledSceneID: Maybe<pb.Scene['id']>,
+        locked: boolean,
+    ) => {
         const {
             cycleEnabled,
             cycleDefaultDuration,
@@ -88,6 +92,7 @@ class View extends Component<Props> {
         return (
             <SceneOverviewRow
                 id={item.id}
+                locked={locked}
                 className={cn(
                     css.line,
                     state.isDragging && css.dragged,
@@ -119,6 +124,9 @@ class View extends Component<Props> {
         const { scenes, onMove, intl, sizeRef } = this.props;
 
         const firstEnabledSceneID = scenes.find(x => x.enabled)?.id;
+        // A placeholder's indices don't match the backend yet — lock the whole
+        // list (controls + drag) until the reload settles.
+        const settling = scenes.some(x => pb.isOptimisticSceneId(x.id));
         if (!scenes.length) {
             return (
                 <div className={css.placeholder}>
@@ -137,7 +145,8 @@ class View extends Component<Props> {
                 className={css.list}
                 items={scenes}
                 onChange={onMove}
-                renderItem={x => this.#renderItem(x, firstEnabledSceneID)}
+                isItemDisabled={() => settling}
+                renderItem={x => this.#renderItem(x, firstEnabledSceneID, settling)}
             />
         );
     }

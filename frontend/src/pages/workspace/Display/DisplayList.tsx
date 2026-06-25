@@ -33,6 +33,9 @@ import css from './DisplayList.scss';
 
 const $ = getID('list').get;
 
+// Monotonic source of unique ids for optimistic clone placeholders.
+let optimisticCloneSeq = 0;
+
 type OpenDialogKind = null | 'scene-select' | 'manifest';
 
 interface ManifestFormState {
@@ -625,15 +628,18 @@ class View extends Component<Props, State> {
         const { formatMessage } = this.props.intl;
         const { signal } = this.abortSceneClone.replace();
 
+        // Placeholder clone with a unique id (computed out here to keep the
+        // updater pure); the debounced reload swaps in the real scene.
+        optimisticCloneSeq += 1;
+        const optimisticId = pb.optimisticSceneId(optimisticCloneSeq);
+
         try {
-            // Optimistic update first
             this.setState(s => {
                 const res: pb.Scene[] = [];
 
                 s.scenes.forEach(x => {
                     res.push(x);
-                    // Second push for matched scene
-                    if (x.id === id) res.push(x);
+                    if (x.id === id) res.push({ ...x, id: optimisticId });
                 });
 
                 return { scenes: res };
