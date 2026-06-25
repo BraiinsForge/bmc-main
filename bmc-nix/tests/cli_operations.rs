@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 //! Integration tests for CLI operations: add-packages, remove-packages, reset-profile.
 //!
@@ -35,6 +35,19 @@ async fn apply_plan(profile_dir: &Path, plan: &UpgradePlan) -> ProfileGeneration
         .await
         .expect("BUG: activate_profile failed");
     generation
+}
+
+fn assert_generation_bin_link(generation: &ProfileGeneration, store_path: &Path) {
+    let bin = generation.path.join("bin");
+    let metadata = bin.symlink_metadata().expect("BUG: stat bin link");
+    assert!(
+        metadata.file_type().is_symlink(),
+        "single-provider bin should be linked at the directory level"
+    );
+    assert_eq!(
+        std::fs::read_link(&bin).expect("BUG: read bin symlink"),
+        store_path.join("bin")
+    );
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -87,10 +100,11 @@ async fn add_packages_to_empty_profile() {
         "version should be 1.0.0"
     );
 
-    // Symlink tree should have bin/app-a
+    // Single-provider directories are linked at the highest directory.
+    assert_generation_bin_link(&generation, &store_a);
     assert!(
-        generation.path.join("bin/app-a").is_symlink(),
-        "bin/app-a symlink should exist"
+        generation.path.join("bin/app-a").exists(),
+        "bin/app-a should resolve through the bin symlink"
     );
 }
 
@@ -213,15 +227,11 @@ async fn add_packages_replaces_existing() {
         "version should be updated to 2.0.0"
     );
 
-    // bin/app-a symlink should point into the v2 store path
-    let link_target =
-        std::fs::read_link(generation.path.join("bin/app-a")).expect("BUG: read symlink");
+    // The single-provider bin directory should point into the v2 store path.
+    assert_generation_bin_link(&generation, &store_a_v2);
     assert!(
-        link_target
-            .to_str()
-            .expect("BUG: valid UTF-8")
-            .contains("store-a-2.0.0"),
-        "bin/app-a should point to v2 store, got: {link_target:?}"
+        generation.path.join("bin/app-a").exists(),
+        "bin/app-a should resolve through the v2 bin symlink"
     );
 }
 
@@ -273,10 +283,12 @@ async fn remove_packages_from_profile() {
         "should no longer have 'b'"
     );
 
-    // bin/app-a should still be present, bin/app-b should be gone
+    // bin/app-a should still be present via package a's bin link,
+    // while bin/app-b should be gone.
+    assert_generation_bin_link(&generation, &store_a);
     assert!(
-        generation.path.join("bin/app-a").is_symlink(),
-        "bin/app-a should still exist"
+        generation.path.join("bin/app-a").exists(),
+        "bin/app-a should still resolve through the bin symlink"
     );
     assert!(
         !generation.path.join("bin/app-b").exists(),

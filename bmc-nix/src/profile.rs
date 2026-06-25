@@ -1,14 +1,13 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::io::AsRawFd as _;
 use std::path::{Path, PathBuf};
 
-use tracing::{debug, info, warn};
+use tracing::info;
 
 use crate::types::{ProfileGeneration, ResolvedPackage};
+
+mod union;
 
 /// Errors that can occur when building or managing profiles.
 #[derive(Debug, thiserror::Error)]
@@ -194,130 +193,13 @@ pub async fn lock_profile_with_timeout(
     }
 }
 
-/// Read all entries in `dir` (files, directories, and symlinks) and return them
-/// sorted lexicographically by name.
-fn read_dir_sorted(dir: &Path) -> Result<Vec<std::fs::DirEntry>, std::io::Error> {
-    let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
-    entries.sort_by_key(std::fs::DirEntry::file_name);
-    Ok(entries)
-}
-
-/// Recursive descent worker for `build_symlink_tree`.
-///
-/// `src_dir` is the directory being descended in the store. `dst_dir` is the
-/// corresponding real directory already created in the output tree.
-/// `ancestors` tracks `(dev, ino)` of directories on the current call stack
-/// to detect cycles introduced by directory symlinks.
-fn descend_dir(
-    src_dir: &Path,
-    dst_dir: &Path,
-    pkg_name: &str,
-    rel_prefix: &Path,
-    ownership: &mut HashMap<PathBuf, String>,
-    ancestors: &mut HashSet<(u64, u64)>,
-) -> Result<(), BuildProfileError> {
-    let entries = read_dir_sorted(src_dir).map_err(|source| BuildProfileError::ReadStorePath {
-        path: src_dir.display().to_string(),
-        source,
-    })?;
-
-    for entry in entries {
-        let entry_name = entry.file_name();
-        let src_path = src_dir.join(&entry_name);
-        let dst_path = dst_dir.join(&entry_name);
-        let rel_path = rel_prefix.join(&entry_name);
-
-        let lstat = std::fs::symlink_metadata(&src_path).map_err(|source| {
-            BuildProfileError::StatStorePath {
-                path: src_path.display().to_string(),
-                source,
-            }
-        })?;
-
-        // For a symlink-to-dir, follow it once to get the resolved metadata
-        // (used both to determine is_dir and for the cycle-identity dev/ino).
-        // For a plain dir, lstat already carries the identity.
-        let (is_dir, resolved_meta) = if lstat.is_symlink() {
-            match std::fs::metadata(&src_path) {
-                Ok(m) => {
-                    let is_d = m.is_dir();
-                    (is_d, Some(m))
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    // Dangling symlink — treat as leaf
-                    (false, None)
-                }
-                Err(source) => {
-                    return Err(BuildProfileError::StatStorePath {
-                        path: src_path.display().to_string(),
-                        source,
-                    });
-                }
-            }
-        } else {
-            (lstat.is_dir(), None)
-        };
-
-        if is_dir {
-            let stat = resolved_meta.as_ref().unwrap_or(&lstat);
-            let identity = (stat.dev(), stat.ino());
-            if ancestors.contains(&identity) {
-                return Err(BuildProfileError::SymlinkCycle {
-                    path: src_path.display().to_string(),
-                });
-            }
-
-            std::fs::create_dir_all(&dst_path).map_err(|source| BuildProfileError::CreateDir {
-                path: dst_path.display().to_string(),
-                source,
-            })?;
-
-            ancestors.insert(identity);
-            descend_dir(
-                &src_path, &dst_path, pkg_name, &rel_path, ownership, ancestors,
-            )?;
-            ancestors.remove(&identity);
-        } else {
-            if let Some(existing_pkg) = ownership.get(&rel_path) {
-                warn!(
-                    path = %rel_path.display(),
-                    pkg_a = %existing_pkg,
-                    pkg_b = %pkg_name,
-                    "symlink conflict detected"
-                );
-                return Err(BuildProfileError::Conflict {
-                    path: rel_path.display().to_string(),
-                    pkg_a: existing_pkg.clone(),
-                    pkg_b: pkg_name.to_owned(),
-                });
-            }
-            ownership.insert(rel_path, pkg_name.to_owned());
-
-            std::os::unix::fs::symlink(&src_path, &dst_path).map_err(|source| {
-                BuildProfileError::CreateSymlink {
-                    path: dst_path.display().to_string(),
-                    source,
-                }
-            })?;
-
-            debug!(
-                pkg = %pkg_name,
-                src = %src_path.display(),
-                dst = %dst_path.display(),
-                "created symlink"
-            );
-        }
-    }
-
-    Ok(())
-}
-
 /// Build a unified symlink tree from a set of resolved packages.
 ///
-/// Descends each package's `store_path` recursively. Every directory
-/// (including those reached through directory symlinks) is created as a real
-/// directory inside `tmp_path`. Every leaf — regular file, file symlink, or
-/// dangling symlink — is represented as a symlink pointing into the store.
+/// Single-provider directories are linked directly into `tmp_path`.
+/// Directories provided by multiple packages are materialized in `tmp_path`,
+/// then their children are recursively resolved with the same rules.
+/// Leaves — regular files, file symlinks, and dangling symlinks — are
+/// represented as symlinks pointing into the store.
 ///
 /// Returns a [`BuildProfileError::Conflict`] if two packages provide the
 /// same relative file path.
@@ -329,25 +211,7 @@ pub async fn build_symlink_tree(
     tmp_path: &Path,
     packages: &[ResolvedPackage],
 ) -> Result<(), BuildProfileError> {
-    let mut ownership: HashMap<PathBuf, String> = HashMap::new();
-
-    for pkg in packages {
-        let store_path = Path::new(&pkg.store_path);
-        // Ancestor identity set is per-package-root, not shared across packages,
-        // so a diamond (two packages sharing a store directory) is handled correctly.
-        let mut ancestors: HashSet<(u64, u64)> = HashSet::new();
-
-        descend_dir(
-            store_path,
-            tmp_path,
-            &pkg.name,
-            Path::new(""),
-            &mut ownership,
-            &mut ancestors,
-        )?;
-    }
-
-    Ok(())
+    union::build_symlink_tree(tmp_path, packages)
 }
 
 /// Build a new profile generation.
@@ -728,9 +592,84 @@ mod tests {
             "manifest should contain pkg-a"
         );
 
-        // Verify symlink was created
-        let hello_link = generation.path.join("bin/hello");
-        assert!(hello_link.is_symlink(), "bin/hello should be a symlink");
+        let bin_link = generation.path.join("bin");
+        assert!(
+            bin_link
+                .symlink_metadata()
+                .expect("BUG: stat bin")
+                .file_type()
+                .is_symlink(),
+            "single-provider bin should be a symlink"
+        );
+        assert_eq!(
+            std::fs::read_link(&bin_link).expect("BUG: read bin symlink"),
+            store_a.join("bin")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn build_profile_replaces_package_manifest_leaf_without_mutating_store() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+        let store = tmp.path().join("store");
+        std::fs::create_dir_all(&store).expect("BUG: create store");
+        std::fs::write(store.join("manifest"), "package manifest")
+            .expect("BUG: write manifest leaf");
+
+        let packages = vec![test_resolved_package(
+            "pkg-with-manifest",
+            store.to_str().expect("BUG: valid UTF-8"),
+        )];
+        let profile_dir = tmp.path().join("bmc");
+
+        let generation = build_profile(&profile_dir, 1, &packages, "hooks", None)
+            .await
+            .expect("BUG: build_profile should succeed");
+
+        let manifest_path = generation.path.join("manifest");
+        let meta = manifest_path
+            .symlink_metadata()
+            .expect("BUG: stat generated manifest");
+        assert!(
+            meta.is_file(),
+            "generated manifest should be a regular file"
+        );
+        assert!(
+            !meta.file_type().is_symlink(),
+            "generated manifest should not be a symlink into the store"
+        );
+        assert_eq!(
+            std::fs::read_to_string(store.join("manifest")).expect("BUG: read store manifest"),
+            "package manifest",
+            "profile manifest writing must not mutate the package store path"
+        );
+
+        let manifest_content =
+            std::fs::read_to_string(&manifest_path).expect("BUG: read generated manifest");
+        let manifest: Manifest = serde_json::from_str(&manifest_content)
+            .expect("BUG: generated manifest should be JSON");
+        assert!(manifest.packages.contains_key("pkg-with-manifest"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn build_profile_errors_when_manifest_target_is_directory() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+        let store = tmp.path().join("store");
+        std::fs::create_dir_all(store.join("manifest")).expect("BUG: create manifest directory");
+
+        let packages = vec![test_resolved_package(
+            "pkg-with-manifest-dir",
+            store.to_str().expect("BUG: valid UTF-8"),
+        )];
+        let profile_dir = tmp.path().join("bmc");
+
+        let result = build_profile(&profile_dir, 1, &packages, "hooks", None).await;
+
+        assert!(
+            matches!(result, Err(BuildProfileError::Manifest(_))),
+            "expected manifest write error, got {result:?}"
+        );
     }
 
     #[test]
@@ -1048,7 +987,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_symlink_tree_preserves_nested_directories() {
+    async fn single_provider_nested_directory_links_highest_directory() {
         let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
 
         let store = tmp.path().join("store");
@@ -1066,18 +1005,83 @@ mod tests {
             .await
             .expect("BUG: should handle nested directories");
 
+        let a = output_dir.join("a");
+        let meta = a.symlink_metadata().expect("BUG: stat a");
         assert!(
-            output_dir.join("a/b/c").is_dir(),
-            "nested directories should be created"
+            meta.file_type().is_symlink(),
+            "single-provider top-level directory should be a symlink"
         );
-        assert!(
-            output_dir.join("a/b/c/deep_file").is_symlink(),
-            "deep file should be a symlink"
+        assert_eq!(
+            std::fs::read_link(&a).expect("BUG: read a symlink"),
+            store.join("a")
         );
     }
 
-    // Test 1: the bug itself — package A exposes `share` as a symlink to a
-    // directory; package B contributes a real file under `share/`.  The build
+    #[tokio::test]
+    async fn directory_and_leaf_at_same_path_conflict() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        let store_a = tmp.path().join("store-a");
+        create_fake_store(&store_a, &["a"]);
+
+        let store_b = tmp.path().join("store-b");
+        create_fake_store(&store_b, &["a/child"]);
+
+        let packages = vec![
+            test_resolved_package("pkg-a", store_a.to_str().expect("BUG: valid UTF-8")),
+            test_resolved_package("pkg-b", store_b.to_str().expect("BUG: valid UTF-8")),
+        ];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: create output");
+
+        let result = build_symlink_tree(&output_dir, &packages).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(BuildProfileError::Conflict { ref path, ref pkg_a, ref pkg_b })
+                    if path == "a" && pkg_a == "pkg-a" && pkg_b == "pkg-b"
+            ),
+            "expected Conflict at a with package names, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn later_directory_provider_upgrades_linkable_directory_to_merge() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        let store_a = tmp.path().join("store-a");
+        create_fake_store(&store_a, &["share/foo"]);
+
+        let store_b = tmp.path().join("store-b");
+        create_fake_store(&store_b, &["share/bar"]);
+
+        let packages = vec![
+            test_resolved_package("pkg-a", store_a.to_str().expect("BUG: valid UTF-8")),
+            test_resolved_package("pkg-b", store_b.to_str().expect("BUG: valid UTF-8")),
+        ];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: create output");
+
+        build_symlink_tree(&output_dir, &packages)
+            .await
+            .expect("BUG: shared directory should merge");
+
+        let share = output_dir.join("share");
+        let meta = share.symlink_metadata().expect("BUG: stat share");
+        assert!(meta.is_dir(), "shared directory should be materialized");
+        assert!(
+            !meta.file_type().is_symlink(),
+            "shared directory should be a real generation directory"
+        );
+        assert!(output_dir.join("share/foo").is_symlink());
+        assert!(output_dir.join("share/bar").is_symlink());
+    }
+
+    // Package A exposes `share` as a symlink to a directory.
+    // Package B contributes a real file under `share/`. The build
     // must succeed and `share` in the output must be a real directory.
     #[tokio::test]
     async fn dir_symlink_unrolled_merges_correctly() {
@@ -1130,9 +1134,18 @@ mod tests {
             output_dir.join("share/python3.11_foo").is_symlink(),
             "share/python3.11_foo should be a symlink"
         );
+        let applications_link = output_dir.join("share/applications");
         assert!(
-            output_dir.join("share/applications/bar").is_symlink(),
-            "share/applications/bar should be a symlink"
+            applications_link
+                .symlink_metadata()
+                .expect("BUG: stat share/applications")
+                .file_type()
+                .is_symlink(),
+            "share/applications should stay linked when it has a single provider"
+        );
+        assert_eq!(
+            std::fs::read_link(&applications_link).expect("BUG: read share/applications symlink"),
+            store_b.join("share/applications")
         );
     }
 
@@ -1190,14 +1203,23 @@ mod tests {
             output_dir.join("share/python3.11_foo").is_symlink(),
             "share/python3.11_foo should be a symlink"
         );
+        let applications_link = output_dir.join("share/applications");
         assert!(
-            output_dir.join("share/applications/bar").is_symlink(),
-            "share/applications/bar should be a symlink"
+            applications_link
+                .symlink_metadata()
+                .expect("BUG: stat share/applications")
+                .file_type()
+                .is_symlink(),
+            "share/applications should stay linked when it has a single provider"
+        );
+        assert_eq!(
+            std::fs::read_link(&applications_link).expect("BUG: read share/applications symlink"),
+            store_b.join("share/applications")
         );
     }
 
-    // Test 2: a file symlink inside a store path is preserved as a symlink in
-    // the output (not resolved or copied).
+    // A file symlink inside a store path is preserved as a symlink in the
+    // output, not resolved or copied.
     #[tokio::test]
     async fn file_symlink_preserved_as_symlink() {
         let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
@@ -1237,8 +1259,8 @@ mod tests {
         );
     }
 
-    // Test 3: when two packages provide the same file under a directory that
-    // was previously a symlink-dir, the conflict is reported correctly.
+    // When two packages provide the same file under a directory that was
+    // previously a symlink-dir, report the conflict correctly.
     #[tokio::test]
     async fn real_conflict_under_unrolled_dir() {
         let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
@@ -1274,15 +1296,12 @@ mod tests {
         );
     }
 
-    // Test 4: a directory symlink cycle (`self -> .`) must cause SymlinkCycle,
-    // not an infinite recursion.
     #[tokio::test]
-    async fn dir_symlink_cycle_returns_error() {
+    async fn single_provider_dir_symlink_cycle_is_linked_without_descent() {
         let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
 
         let store = tmp.path().join("store");
         std::fs::create_dir_all(&store).expect("BUG: create store");
-        // `self` → `.` forms a cycle: resolves to `store/`, which is an ancestor.
         std::os::unix::fs::symlink(".", store.join("self")).expect("BUG: create self symlink");
 
         let packages = vec![test_resolved_package(
@@ -1293,15 +1312,55 @@ mod tests {
         let output_dir = tmp.path().join("output");
         std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
 
-        let result = build_symlink_tree(&output_dir, &packages).await;
+        build_symlink_tree(&output_dir, &packages)
+            .await
+            .expect("BUG: single-provider directory cycle should be linked");
+
+        let self_link = output_dir.join("self");
         assert!(
-            matches!(result, Err(BuildProfileError::SymlinkCycle { .. })),
-            "expected SymlinkCycle error, got: {result:?}"
+            self_link
+                .symlink_metadata()
+                .expect("BUG: stat self")
+                .file_type()
+                .is_symlink(),
+            "single-provider cyclic directory should be emitted as a symlink"
+        );
+        assert_eq!(
+            std::fs::read_link(&self_link).expect("BUG: read self symlink"),
+            store.join("self")
         );
     }
 
-    // Test 5: a mutual file-symlink loop (`a -> b`, `b -> a`) causes stat to
-    // fail with ELOOP, which must be propagated as StatStorePath.
+    #[tokio::test]
+    async fn merged_dir_symlink_cycle_returns_error() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        let store_a = tmp.path().join("store-a");
+        std::fs::create_dir_all(store_a.join("share")).expect("BUG: create store-a share");
+        std::os::unix::fs::symlink(".", store_a.join("share/loop"))
+            .expect("BUG: create loop symlink");
+
+        let store_b = tmp.path().join("store-b");
+        create_fake_store(&store_b, &["share/loop/leaf"]);
+
+        let packages = vec![
+            test_resolved_package("pkg-a", store_a.to_str().expect("BUG: valid UTF-8")),
+            test_resolved_package("pkg-b", store_b.to_str().expect("BUG: valid UTF-8")),
+        ];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
+
+        let result = build_symlink_tree(&output_dir, &packages).await;
+
+        assert!(
+            matches!(result, Err(BuildProfileError::SymlinkCycle { .. })),
+            "expected SymlinkCycle during merged-directory recursion, got {result:?}"
+        );
+    }
+
+    // A mutual file-symlink loop (`a -> b`, `b -> a`) causes stat to fail with
+    // ELOOP, which must be propagated as StatStorePath.
     #[tokio::test]
     async fn eloop_file_symlink_propagated_as_stat_error() {
         let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
@@ -1326,13 +1385,10 @@ mod tests {
         );
     }
 
-    // Test 6: two directory symlinks pointing at the same real directory
-    // ("diamond") must both be unrolled successfully.  The ancestor set is
-    // scoped to the current call stack, so revisiting `shared/` via a
-    // different symlink is not a cycle.  A regression to a global visited
-    // set would incorrectly fail on the second arm.
+    // Two directory symlinks pointing at the same real directory are both kept
+    // as generation-root links when the package is their only provider.
     #[tokio::test]
-    async fn build_symlink_tree_unrolls_diamond_without_false_cycle() {
+    async fn single_provider_diamond_dir_symlinks_stay_linked() {
         let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
 
         let store = tmp.path().join("store");
@@ -1358,27 +1414,22 @@ mod tests {
 
         build_symlink_tree(&output_dir, &packages)
             .await
-            .expect("BUG: diamond should not be mistaken for a cycle");
+            .expect("BUG: single-provider diamond links should build");
 
-        let x_file = output_dir.join("x/file.txt");
-        assert!(
-            x_file
-                .symlink_metadata()
-                .expect("BUG: stat x/file.txt")
-                .file_type()
-                .is_symlink(),
-            "x/file.txt must be a symlink"
-        );
-
-        let y_file = output_dir.join("y/file.txt");
-        assert!(
-            y_file
-                .symlink_metadata()
-                .expect("BUG: stat y/file.txt")
-                .file_type()
-                .is_symlink(),
-            "y/file.txt must be a symlink"
-        );
+        for name in ["x", "y"] {
+            let link = output_dir.join(name);
+            assert!(
+                link.symlink_metadata()
+                    .expect("BUG: stat diamond symlink")
+                    .file_type()
+                    .is_symlink(),
+                "{name} should stay linked when it has a single provider"
+            );
+            assert_eq!(
+                std::fs::read_link(&link).expect("BUG: read diamond symlink"),
+                store.join(name)
+            );
+        }
     }
 
     #[tokio::test]
@@ -1484,11 +1535,10 @@ mod tests {
     }
 
     // Test: store path has `outer -> dirA`, inside dirA there is `inner -> dirB`,
-    // and dirB contains `leaf`.  The build must succeed, intermediate path
-    // components in the output must be real directories, and `leaf` must be a
-    // symlink.
+    // and dirB contains `leaf`. The build must keep the single-provider
+    // `outer` entry linked instead of materializing it in the output tree.
     #[tokio::test]
-    async fn build_symlink_tree_unrolls_nested_dir_symlinks() {
+    async fn single_provider_nested_dir_symlink_subtree_stays_linked() {
         let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
 
         let store = tmp.path().join("store");
@@ -1517,7 +1567,7 @@ mod tests {
 
         build_symlink_tree(&output_dir, &packages)
             .await
-            .expect("BUG: nested dir symlinks should be unrolled successfully");
+            .expect("BUG: single-provider nested dir symlink should stay linked");
 
         let outer = output_dir.join("outer");
         assert!(
@@ -1525,43 +1575,12 @@ mod tests {
                 .symlink_metadata()
                 .expect("BUG: stat outer")
                 .file_type()
-                .is_dir(),
-            "outer must be a real directory"
-        );
-        assert!(
-            !outer
-                .symlink_metadata()
-                .expect("BUG: stat outer")
-                .file_type()
                 .is_symlink(),
-            "outer must not be a symlink"
+            "outer should stay linked when only one package provides it"
         );
-
-        let inner = output_dir.join("outer/inner");
-        assert!(
-            inner
-                .symlink_metadata()
-                .expect("BUG: stat outer/inner")
-                .file_type()
-                .is_dir(),
-            "outer/inner must be a real directory"
-        );
-        assert!(
-            !inner
-                .symlink_metadata()
-                .expect("BUG: stat outer/inner")
-                .file_type()
-                .is_symlink(),
-            "outer/inner must not be a symlink"
-        );
-
-        let leaf = output_dir.join("outer/inner/leaf");
-        assert!(
-            leaf.symlink_metadata()
-                .expect("BUG: stat outer/inner/leaf")
-                .file_type()
-                .is_symlink(),
-            "outer/inner/leaf must be a symlink"
+        assert_eq!(
+            std::fs::read_link(&outer).expect("BUG: read outer symlink"),
+            store.join("outer")
         );
     }
 }

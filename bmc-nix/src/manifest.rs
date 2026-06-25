@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -17,6 +17,12 @@ pub enum WriteManifestError {
         path: String,
         #[source]
         source: std::io::Error,
+    },
+    #[error("failed to write generated manifest to {path}: {source}")]
+    WriteGenerated {
+        path: String,
+        #[source]
+        source: crate::generation_path::GenerationPathError,
     },
 }
 
@@ -100,14 +106,18 @@ pub fn build_manifest(packages: &[ResolvedPackage]) -> Manifest {
 
 /// Write a manifest as pretty-printed JSON to `<profile_path>/manifest`.
 ///
-/// Note: `fs::write` itself is not atomic (it truncates and writes in place).
-/// Atomicity is provided by the caller (`build_profile`) which writes into a
-/// temporary directory and renames it to the final generation path.
+/// The target is prepared through the generated-file helper so a package
+/// `manifest` symlink is replaced in the profile without mutating the store.
 pub fn write_manifest(profile_path: &Path, manifest: &Manifest) -> Result<(), WriteManifestError> {
     let json = serde_json::to_string_pretty(manifest).map_err(WriteManifestError::Serialize)?;
-    let manifest_path = profile_path.join("manifest");
-    std::fs::write(&manifest_path, json).map_err(|source| WriteManifestError::Write {
-        path: manifest_path.display().to_string(),
+    crate::generation_path::write_generated_file(
+        profile_path,
+        Path::new("manifest"),
+        json.as_bytes(),
+        0o644,
+    )
+    .map_err(|source| WriteManifestError::WriteGenerated {
+        path: profile_path.join("manifest").display().to_string(),
         source,
     })?;
     Ok(())

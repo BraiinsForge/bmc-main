@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Systems s.r.o.
 
 use std::os::unix::fs::PermissionsExt;
 
@@ -144,10 +144,11 @@ async fn full_profile_build() {
     assert!(gen1.path.join("bin/core-binary").is_symlink());
     assert!(gen1.path.join("bin/widget-clock").is_symlink());
     assert!(gen1.path.join("lib/libcore.so").is_symlink());
+    assert!(gen1.path.join("lib/bmc-widgets").is_symlink());
     assert!(
         gen1.path
             .join("lib/bmc-widgets/clock/manifest.json")
-            .is_symlink()
+            .exists()
     );
 
     // Verify manifest
