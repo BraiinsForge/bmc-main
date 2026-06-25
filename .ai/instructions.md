@@ -138,7 +138,8 @@ src/
 └── main.rs
 ```
 
-Format code using Nix formatter (formats Rust, Nix, Python, Shell, Protobuf, TOML, YAML):
+Always run the Nix formatter (treefmt) after changing any file — don't assume a file type is exempt; the one exclusion
+is `frontend/`, which formats itself with Biome:
 
 ```bash
 nix fmt
@@ -224,7 +225,8 @@ Proto files are in `bmc-grpc/proto/web/`. Changes to `.proto` files require
 
 - Rust unit tests are colocated with code
 - Integration tests use standard Cargo test structure
-- Frontend tests use React Testing Library and Vitest
+- Frontend tests run on `@rstest/core` (Vitest-compatible API) with React Testing Library; specs are `*.spec.tsx`, run
+  via `just fe::test` — see [`frontend/CLAUDE.md`](frontend/CLAUDE.md) for the setup
 - The CI runs both nextest and standard cargo test
 
 # Development Guidelines
