@@ -90,6 +90,7 @@ trait WidgetSurface {
         dpi: u32,
     );
     fn params(&self, params_json: String);
+    fn widget_identity(&self, json: String);
     fn emit_setting(&self, setting: &SettingUpdate);
     fn configure_done(&self);
 }
@@ -116,6 +117,10 @@ impl WidgetSurface for DeckWidgetSurfaceV1 {
 
     fn params(&self, params_json: String) {
         self.params(params_json);
+    }
+
+    fn widget_identity(&self, json: String) {
+        self.widget_identity(json);
     }
 
     fn emit_setting(&self, setting: &SettingUpdate) {
@@ -419,6 +424,10 @@ impl DeckWidgetProtocolState {
             config.display.dpi,
         );
 
+        if let Some(identity) = &config.identity {
+            surface.widget_identity(identity.to_wire());
+        }
+
         let params_json = serde_json::Value::Object(config.params.clone()).to_string();
         surface.params(params_json);
 
@@ -616,6 +625,7 @@ enum RecordedEvent {
         dpi: u32,
     },
     Params,
+    WidgetIdentity,
     Setting,
     ConfigureDone,
 }
@@ -658,6 +668,10 @@ impl WidgetSurface for RecordingSurface {
         self.events.borrow_mut().push(RecordedEvent::Params);
     }
 
+    fn widget_identity(&self, _json: String) {
+        self.events.borrow_mut().push(RecordedEvent::WidgetIdentity);
+    }
+
     fn emit_setting(&self, _setting: &SettingUpdate) {
         self.events.borrow_mut().push(RecordedEvent::Setting);
     }
@@ -685,6 +699,7 @@ impl RecordedEvents {
             .map(|e| match e {
                 RecordedEvent::Configure(..) => "configure",
                 RecordedEvent::DisplayInfo { .. } => "display_info",
+                RecordedEvent::WidgetIdentity => "widget_identity",
                 RecordedEvent::Params => "params",
                 RecordedEvent::Setting => "setting",
                 RecordedEvent::ConfigureDone => "configure_done",
@@ -742,6 +757,7 @@ mod tests {
             viewport_shape: bmc_widget_protocol::ViewportShape::Rectangular,
             display: bmc_widget_protocol::DisplayInfo::BMC100,
             params: serde_json::Map::new(),
+            identity: None,
         }
     }
 
@@ -899,6 +915,32 @@ mod tests {
                 bmc_widget_protocol::DisplayShape::Rectangular,
                 217
             )),
+        );
+    }
+
+    #[test]
+    fn emit_initial_state_sends_widget_identity_after_display_info() {
+        let mut state = DeckWidgetProtocolState::new();
+        let mut config = make_config();
+        config.identity = Some(
+            bmc_widget_protocol::WidgetIdentity::from_wire(r#"{"token":"abcd-2x1"}"#)
+                .expect("BUG: valid widget identity json"),
+        );
+        state.register_widget("alpha".to_owned(), config);
+
+        let events = state
+            .test_emit_initial_state_events("alpha")
+            .expect("BUG: alpha must be registered");
+
+        assert_eq!(
+            events.names(),
+            [
+                "configure",
+                "display_info",
+                "widget_identity",
+                "params",
+                "configure_done"
+            ],
         );
     }
 }

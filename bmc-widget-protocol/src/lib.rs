@@ -67,6 +67,6 @@ pub use client::deck_widget_surface_v1::LifecycleState;
 pub use types::{
     ActionPayload, DisplayInfo, DisplayShape, LED_REQUEST_ID_ALL, LedEffect, LedRequestId,
     LedRequestStatus, LedScope, Localization, NextAlarm, RgbColor, SettingUpdate, Settings,
-    ViewportShape, WidgetInitialConfig,
+    ViewportShape, WidgetIdentity, WidgetInitialConfig,
 };
 pub use wayland_client;

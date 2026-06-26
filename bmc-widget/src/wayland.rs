@@ -722,7 +722,8 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
             Event::LedRequestStatus { request_id, status } => {
                 tracing::debug!("Received led_request_status: req={request_id} status={status:?}");
             }
-            _ => {}
+            // No widget_identity consumer here; the wasm host uses the other client.
+            Event::WidgetIdentity { .. } | _ => {}
         }
     }
 }

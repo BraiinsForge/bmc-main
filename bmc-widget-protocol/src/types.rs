@@ -44,6 +44,40 @@ impl DisplayInfo {
     };
 }
 
+/// Out-of-band facts the compositor hands a widget on the handshake; extensible
+/// (add serde-defaulted fields, not new events). Currently the instance token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WidgetIdentity {
+    /// Opaque, stable per-instance token the compositor mints.
+    pub token: String,
+}
+
+impl WidgetIdentity {
+    /// Pure-serde codec, paired with [`Self::from_wire`].
+    #[must_use]
+    pub fn to_wire(&self) -> String {
+        serde_json::to_string(self).expect("BUG: WidgetIdentity is always serializable")
+    }
+
+    pub fn from_wire(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+}
+
+#[cfg(test)]
+mod widget_identity_tests {
+    use super::WidgetIdentity;
+
+    #[test]
+    fn wire_round_trips() {
+        let id = WidgetIdentity {
+            token: "1234-2x1".to_owned(),
+        };
+        let decoded = WidgetIdentity::from_wire(&id.to_wire()).expect("round-trips");
+        assert_eq!(decoded, id);
+    }
+}
+
 /// Full initial configuration for a widget instance.
 ///
 /// The coordinator pushes one of these into the compositor before spawning
@@ -65,6 +99,9 @@ pub struct WidgetInitialConfig {
     /// means the widget has no configured params.
     #[serde(default)]
     pub params: serde_json::Map<String, serde_json::Value>,
+    /// Widget instance identity (opaque); defaulted for back-compat.
+    #[serde(default)]
+    pub identity: Option<WidgetIdentity>,
 }
 
 fn default_viewport_shape() -> ViewportShape {

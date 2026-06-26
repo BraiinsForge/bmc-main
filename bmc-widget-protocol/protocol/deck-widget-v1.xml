@@ -45,6 +45,7 @@
 
         configure(width, height, viewport_shape)
         display_info(width, height, shape, dpi)
+        widget_identity(json)
         params(json)
         timezone / night_mode / date_format / ... (setting events)
         configure_done
@@ -165,6 +166,17 @@
       <arg name="height" type="uint" summary="logical display height in pixels"/>
       <arg name="shape" type="uint" enum="display_shape"/>
       <arg name="dpi" type="uint" summary="display density; advisory"/>
+    </event>
+
+    <event name="widget_identity">
+      <description summary="the widget's stable, opaque instance identity">
+        Delivered once in the initial configure batch. A JSON-encoded
+        `WidgetIdentity` whose token is opaque to the widget and stable across
+        its lifetime (dormancy, restart) — usable to key per-instance resources
+        such as an asset cache. Extensible: new facts add fields to the JSON,
+        never new events.
+      </description>
+      <arg name="json" type="string" summary="JSON-encoded WidgetIdentity"/>
     </event>
 
     <event name="params">

@@ -50,6 +50,14 @@ fn placement_viewport_size(
     })
 }
 
+/// Path-safe placement tag for the opaque instance token: `full` or `<cols>x<rows>`.
+fn placement_tag(placement: &crate::scene::WidgetPlacement) -> String {
+    match placement {
+        crate::scene::WidgetPlacement::Fullscreen => "full".to_owned(),
+        crate::scene::WidgetPlacement::SlotSpan(s) => format!("{}x{}", s.columns, s.rows),
+    }
+}
+
 fn manifest_to_protocol_viewport_shape(shape: bmc_widget_manifest::ViewportShape) -> ViewportShape {
     match shape {
         bmc_widget_manifest::ViewportShape::Rectangular => ViewportShape::Rectangular,
@@ -425,6 +433,13 @@ impl Coordinator {
             viewport_shape: manifest_to_protocol_viewport_shape(widget.viewport_shape),
             display: platform_to_protocol_display(self.hardware_capabilities.display),
             params: params_to_json_map(&widget.params),
+            identity: Some(bmc_widget_protocol::WidgetIdentity {
+                token: format!(
+                    "{}-{}",
+                    widget.id.as_uuid(),
+                    placement_tag(&widget.placement)
+                ),
+            }),
         };
 
         // Register widget with compositor before spawning.

@@ -382,6 +382,7 @@ mod tests {
             viewport_shape: ViewportShape::Rectangular,
             display: bmc_widget_protocol::DisplayInfo::BMC100,
             params: serde_json::Map::new(),
+            identity: None,
         }
     }
 
