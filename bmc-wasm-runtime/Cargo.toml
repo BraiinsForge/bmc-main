@@ -30,6 +30,7 @@ taffy.workspace = true
 
 # Network + JSON/XML (for host-side fetch and parsing)
 mdns-sd.workspace = true
+memmap2.workspace = true
 roxmltree.workspace = true
 rrule.workspace = true
 rustls.workspace = true
@@ -107,6 +108,8 @@ wat.workspace = true
 # construct a real `WasmWidgetRuntime` under the `ci` build profile
 # (Mesa + llvmpipe + surfaceless EGL).
 glutin.workspace = true
+# Temp dirs for the image-cache round-trip tests.
+tempfile.workspace = true
 
 [lints]
 workspace = true

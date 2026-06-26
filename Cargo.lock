@@ -1696,6 +1696,7 @@ dependencies = [
  "khronos-egl",
  "libc",
  "mdns-sd",
+ "memmap2",
  "notify",
  "owo-colors",
  "raw-window-handle",
