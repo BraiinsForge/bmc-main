@@ -265,6 +265,12 @@ impl Default for RuntimeConfig {
     }
 }
 
+/// A lifecycle edge awaiting its guest hook.
+enum PendingHook {
+    Wake,
+    Dormant,
+}
+
 /// WebAssembly widget runtime.
 ///
 /// Executes WASM modules in a sandboxed environment with fuel metering.
@@ -300,6 +306,8 @@ pub struct WasmWidgetRuntime {
     /// Optional guest exports fired on the dormancy/wake edge.
     on_wake_func: Option<wasmi::TypedFunc<(), ()>>,
     on_dormant_func: Option<wasmi::TypedFunc<(), ()>>,
+    /// Lifecycle edge awaiting its hook (fired in `poll_deliveries` scope).
+    pending_hook: Option<PendingHook>,
     sdk_version: (u16, u16, u16),
     /// Instruction budget reset before each WASM frame execution.
     pub(super) fuel_per_frame: u64,
@@ -476,6 +484,7 @@ impl WasmWidgetRuntime {
             on_touch_func,
             on_wake_func,
             on_dormant_func,
+            pending_hook: None,
             sdk_version,
             fuel_per_frame,
             fuel_strikes: 0,
@@ -885,14 +894,29 @@ impl WasmWidgetRuntime {
         self.fire_update_hook(self.on_touch_func, "on_touch", Lifecycle::Touch)
     }
 
-    /// Notify the widget it is going dormant — release off-scene resources.
+    /// Queue the dormant edge; the hook fires later, in `poll_deliveries` scope.
     pub fn notify_dormant(&mut self) -> bool {
-        self.fire_update_hook(self.on_dormant_func, "on_dormant", Lifecycle::Dormant)
+        self.pending_hook = Some(PendingHook::Dormant);
+        self.on_dormant_func.is_some()
     }
 
-    /// Notify the widget it is waking — restore resources before the first frame.
+    /// Queue the wake edge; the hook fires later, in `poll_deliveries` scope.
     pub fn notify_wake(&mut self) -> bool {
-        self.fire_update_hook(self.on_wake_func, "on_wake", Lifecycle::Wake)
+        self.pending_hook = Some(PendingHook::Wake);
+        self.on_wake_func.is_some()
+    }
+
+    /// Fire the queued hook here, where the renderer is parked, so `on_wake` can restore assets.
+    pub(super) fn flush_pending_lifecycle(&mut self) {
+        match self.pending_hook.take() {
+            Some(PendingHook::Wake) => {
+                self.fire_update_hook(self.on_wake_func, "on_wake", Lifecycle::Wake);
+            }
+            Some(PendingHook::Dormant) => {
+                self.fire_update_hook(self.on_dormant_func, "on_dormant", Lifecycle::Dormant);
+            }
+            None => {}
+        }
     }
 
     /// Common tail of `deliver_params_update` / `deliver_system_update`:

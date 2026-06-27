@@ -202,6 +202,72 @@ mod wasm_glue {
     }
 
     #[unsafe(no_mangle)]
+    pub extern "C" fn on_dormant() {
+        // Stop polling off-screen; the host frees our texture.
+        POLL.with(|p| {
+            if let Some(handle) = p.get() {
+                handle.set_enabled(false);
+            }
+        });
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn on_wake() {
+        // Restore from the bucket if it still matches config and is fresh, else refetch.
+        let restored = expanded_url().is_some_and(|url| try_restore(&url));
+        if !restored {
+            STATE.with(|s| *s.borrow_mut() = State::Loading);
+            POLL.with(|p| {
+                if let Some(handle) = p.get() {
+                    handle.set_enabled(true);
+                    handle.invalidate();
+                }
+            });
+        }
+        STALE.with(|s| s.set(false));
+        request_frame();
+    }
+
+    /// Re-register the cached image if its identity matches `current_url` and it
+    /// is within the refresh TTL; bytes stay host-side, we get only a `BitmapId`.
+    fn try_restore(current_url: &str) -> bool {
+        let Some(stat) = cache::stat(IMAGE.name()) else {
+            return false;
+        };
+        let Some((w, h, identity)) = parse_meta(&stat.metadata) else {
+            return false;
+        };
+        if identity != current_url.as_bytes() || !is_fresh(stat.saved_at) {
+            return false;
+        }
+        let Some(bitmap) = assets::register_image(cache::lazy_get(IMAGE.name())) else {
+            return false;
+        };
+        STATE.with(|s| {
+            *s.borrow_mut() = State::Loaded {
+                bitmap,
+                aspect: render::aspect_of(w, h),
+            };
+        });
+        true
+    }
+
+    // Cache metadata is `[w u32 | h u32 | identity]` (the host write path).
+    fn parse_meta(meta: &[u8]) -> Option<(u32, u32, &[u8])> {
+        let w = u32::from_le_bytes(meta.get(0..4)?.try_into().ok()?);
+        let h = u32::from_le_bytes(meta.get(4..8)?.try_into().ok()?);
+        Some((w, h, meta.get(8..)?))
+    }
+
+    // Cached entry age (now − saved_at) is under the refresh interval.
+    fn is_fresh(saved_at_ms: u64) -> bool {
+        let now_ms = u64::try_from(host::SystemTime::now().unix_secs)
+            .unwrap_or(0)
+            .saturating_mul(1000);
+        now_ms.saturating_sub(saved_at_ms) < u64::from(refresh_interval_ms())
+    }
+
+    #[unsafe(no_mangle)]
     pub extern "C" fn render(_delta_ms: u32) {
         let size = widget_size();
         let url = manifest_params::Params::current().url;

@@ -889,6 +889,7 @@ impl WasmWidgetRuntime {
     /// `deliver_*` calls must stay in this order so payload ordering remains
     /// stable across host revisions.
     pub fn poll_deliveries(&mut self) {
+        self.flush_pending_lifecycle();
         self.deliver_fetch_responses();
         self.deliver_image_decode_results();
         self.deliver_ws_messages();
