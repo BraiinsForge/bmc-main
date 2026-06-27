@@ -216,6 +216,7 @@ pub(crate) enum Lifecycle {
 /// Minted from a process-wide monotonic counter at HostState construction.
 /// Used as the leading component of every asset tag the host stores,
 /// so two instances of the same widget can't collide on slot names.
+#[deprecated(note = "ephemeral; superseded by the stable WidgetIdentity bucket token")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GuestId(u32);
 
