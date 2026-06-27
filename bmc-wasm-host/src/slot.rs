@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::mpsc;
@@ -12,9 +12,10 @@ use anyhow::{Context, Result};
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
 use bmc_wasm_runtime::{
-    LedEffect, LedRequest, LedScope, NextAlarm as RuntimeNextAlarm, RenderStatus, RuntimeConfig,
-    SystemSnapshot, WasmWidgetRuntime,
+    DiskCache, LedEffect, LedRequest, LedScope, NextAlarm as RuntimeNextAlarm, RenderStatus,
+    RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
 };
+use bmc_wasm_thin_protocol::{WIDGET_CACHE_BUCKET_MAX_BYTES, WIDGET_CACHE_DIR};
 use bmc_widget::surface::{DeckWidgetSurfaceClient, WidgetEvent, WidgetSurface};
 use bmc_widget_protocol::{
     ActionPayload, LedEffect as ProtoEffect, LedScope as ProtoScope, NextAlarm as WireNextAlarm,
@@ -224,6 +225,12 @@ impl WidgetSlot {
                 ),
                 system: pending_system.clone(),
                 led_request_sender: Some(led_tx),
+                asset_cache: initial.identity.as_ref().map(|id| {
+                    DiskCache::new(
+                        PathBuf::from(WIDGET_CACHE_DIR).join(&id.token),
+                        WIDGET_CACHE_BUCKET_MAX_BYTES,
+                    )
+                }),
                 ..RuntimeConfig::default()
             },
         )?;

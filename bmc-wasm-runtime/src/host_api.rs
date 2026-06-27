@@ -747,6 +747,9 @@ pub(crate) struct HostState {
     /// so their `<guest_id>:<tag>` registrations and prefix evictions can't collide.
     pub guest_id: GuestId,
 
+    /// Per-instance asset cache, curried to this widget's bucket.
+    pub asset_cache: Option<crate::disk_cache::DiskCache>,
+
     /// Audio output stream — must stay alive for the entire session.
     /// `None` if audio output is unavailable (headless, no ALSA, etc.).
     #[cfg(feature = "audio")]
@@ -861,6 +864,7 @@ impl HostState {
             led_request_alloc: crate::led_request::LedRequestIdAllocator::new(),
             audio: AudioRegistry::new(),
             guest_id: GuestId::alloc(),
+            asset_cache: None,
             #[cfg(feature = "audio")]
             audio_stream: {
                 match rodio::OutputStream::try_default() {

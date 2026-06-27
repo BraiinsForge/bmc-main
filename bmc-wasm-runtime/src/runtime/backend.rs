@@ -233,6 +233,8 @@ pub struct RuntimeConfig {
     /// deliveries through [`WasmWidgetRuntime::deliver_params_update`]).
     pub params:
         std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
+    /// Per-instance asset cache, curried to this widget's bucket; `None` disables it.
+    pub asset_cache: Option<crate::disk_cache::DiskCache>,
 }
 
 impl RuntimeConfig {
@@ -258,6 +260,7 @@ impl Default for RuntimeConfig {
             led_request_sender: None,
             animation_frame_delay_ms: Self::DEFAULT_ANIMATION_FRAME_DELAY_MS,
             params: std::collections::BTreeMap::new(),
+            asset_cache: None,
         }
     }
 }
@@ -357,6 +360,7 @@ impl WasmWidgetRuntime {
             led_request_sender,
             animation_frame_delay_ms,
             params,
+            asset_cache,
             ..
         } = config;
 
@@ -395,6 +399,7 @@ impl WasmWidgetRuntime {
         state.display_shape = display.shape;
         state.display_dpi = display.dpi;
         state.kv_store_path = kv_store_path;
+        state.asset_cache = asset_cache;
         state.fetch_interceptor = fetch_interceptor;
         state.hermetic = hermetic.then(HermeticRun::default);
         state.fetch_observer = fetch_observer;

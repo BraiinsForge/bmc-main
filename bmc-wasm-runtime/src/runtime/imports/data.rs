@@ -17,6 +17,7 @@ use super::super::time::{expand_rrule_impl, format_number_with_prefs, tz_convert
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_kv_write_imports(linker)?;
     register_kv_get_import(linker)?;
+    register_cache_imports(linker)?;
     register_log_import(linker)?;
     register_json_parse_import(linker)?;
     register_json_string_import(linker)?;
@@ -172,6 +173,113 @@ fn register_kv_get_import(linker: &mut Linker<HostState>) -> Result<()> {
             }
 
             -1
+        },
+    )?;
+
+    Ok(())
+}
+
+// Flash blob cache, curried per widget instance; `get` returns the `DiskCache` record verbatim.
+fn register_cache_imports(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_cache_put",
+        |caller: Caller<'_, HostState>,
+         tag_ptr: u32,
+         tag_len: u32,
+         meta_ptr: u32,
+         meta_len: u32,
+         bytes_ptr: u32,
+         bytes_len: u32| {
+            let (Some(tag), Some(meta), Some(bytes)) = (
+                read_string(&caller, tag_ptr, tag_len),
+                read_bytes(&caller, meta_ptr, meta_len),
+                read_bytes(&caller, bytes_ptr, bytes_len),
+            ) else {
+                return;
+            };
+            if let Err(e) = validate_kv_key(&tag) {
+                tracing::warn!("cache_put rejected tag: {e}");
+                return;
+            }
+            let state = caller.data();
+            let Some(cache) = state.asset_cache.as_ref() else {
+                return;
+            };
+            // `saved_at` rides the injected clock so hermetic replay is deterministic.
+            let saved_at = u64::try_from(state.system_time.timestamp_millis()).unwrap_or(0);
+            if let Err(e) = cache.put(&tag, saved_at, &meta, &bytes) {
+                tracing::warn!("cache_put failed for {tag}: {e}");
+            }
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "host_cache_get",
+        |mut caller: Caller<'_, HostState>,
+         tag_ptr: u32,
+         tag_len: u32,
+         out_ptr: u32,
+         out_cap: u32|
+         -> i32 {
+            let Some(tag) = read_string(&caller, tag_ptr, tag_len) else {
+                return -1;
+            };
+            if let Err(e) = validate_kv_key(&tag) {
+                tracing::warn!("cache_get rejected tag: {e}");
+                return -1;
+            }
+            let record = {
+                let state = caller.data();
+                let Some(cache) = state.asset_cache.as_ref() else {
+                    return -1;
+                };
+                let Some(blob) = cache.get(&tag) else {
+                    return -1;
+                };
+                let meta = blob.metadata();
+                let bytes = blob.bytes();
+                let mut record = Vec::with_capacity(12 + meta.len() + bytes.len());
+                record.extend_from_slice(&blob.saved_at.to_le_bytes());
+                let meta_len = u32::try_from(meta.len()).unwrap_or(u32::MAX);
+                record.extend_from_slice(&meta_len.to_le_bytes());
+                record.extend_from_slice(meta);
+                record.extend_from_slice(bytes);
+                record
+            };
+
+            let needed = i32::try_from(record.len()).unwrap_or(i32::MAX);
+            if out_cap == 0 || (out_cap as usize) < record.len() {
+                return needed;
+            }
+            let memory = caller.get_export("memory").and_then(Extern::into_memory);
+            if let Some(memory) = memory {
+                let mem = memory.data_mut(&mut caller);
+                let start = out_ptr as usize;
+                let end = start + record.len();
+                if end <= mem.len() {
+                    mem[start..end].copy_from_slice(&record);
+                }
+            }
+            needed
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "host_cache_evict",
+        |caller: Caller<'_, HostState>, tag_ptr: u32, tag_len: u32| {
+            let Some(tag) = read_string(&caller, tag_ptr, tag_len) else {
+                return;
+            };
+            if validate_kv_key(&tag).is_err() {
+                return;
+            }
+            let state = caller.data();
+            if let Some(cache) = state.asset_cache.as_ref() {
+                cache.evict(&tag);
+            }
         },
     )?;
 

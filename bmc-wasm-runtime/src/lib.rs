@@ -95,6 +95,7 @@ mod xml;
 
 mod audio_registry;
 pub mod disk_cache;
+pub use disk_cache::DiskCache;
 mod host_api;
 pub mod led_request;
 #[cfg(feature = "perf-overlay")]

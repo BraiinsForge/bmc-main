@@ -22,6 +22,12 @@ pub fn default_socket_path() -> std::path::PathBuf {
     socket_path_for_sdk_major(bmc_wasm_protocol::SDK_VERSION.0)
 }
 
+/// Persistent root for per-instance widget asset buckets (`<root>/<bucket>`).
+pub const WIDGET_CACHE_DIR: &str = "/mnt/data/bmc/widget-cache";
+
+/// Per-bucket byte cap for the generic blob cache (content-agnostic).
+pub const WIDGET_CACHE_BUCKET_MAX_BYTES: u64 = 16 * 1_024 * 1_024;
+
 #[must_use]
 pub fn default_lockfile_path() -> std::path::PathBuf {
     derive_lockfile_path(&default_socket_path())
