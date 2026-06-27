@@ -130,6 +130,14 @@ pub fn ensure_bitmap_registered(bmp: &Bitmap) -> Option<BitmapId> {
     }
 }
 
+/// Restore a bitmap from a host-side cache source (e.g. `cache::lazy_get(tag)`):
+/// the RGBA goes mmap → texture entirely host-side. `None` on a cache miss.
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn register_image(source: crate::cache::CacheSource<'_>) -> Option<BitmapId> {
+    host::register_bitmap_from_cache(source.tag())
+}
+
 // ── Audio ────────────────────────────────────────────────────────────
 
 /// Embedded audio data (output of `include_audio!` proc macro).

@@ -95,6 +95,7 @@ mod ffi {
             identity_ptr: *const u8,
             identity_len: u32,
         ) -> u32;
+        pub(super) fn host_register_bitmap_from_cache(tag_ptr: *const u8, tag_len: u32) -> u32;
 
         // Mesh registration. The host dedups by tag.
         fn host_register_mesh(
@@ -339,6 +340,16 @@ mod ffi {
                 identity.as_ptr(),
                 identity.len() as u32,
             )
+        })
+    }
+
+    /// Restore a bitmap from its per-instance cache entry
+    /// (host-side mmap → texture; no bytes cross into wasm).
+    /// `None` on a miss.
+    #[must_use]
+    pub fn register_bitmap_from_cache(tag: &str) -> Option<BitmapId> {
+        BitmapId::from_ffi(unsafe {
+            host_register_bitmap_from_cache(tag.as_ptr(), tag.len() as u32)
         })
     }
 

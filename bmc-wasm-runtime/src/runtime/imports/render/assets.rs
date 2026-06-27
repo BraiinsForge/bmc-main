@@ -30,6 +30,47 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_bitmap_sample_import(linker)?;
     register_image_decode_import(linker)?;
     register_max_image_pixels_import(linker)?;
+    register_bitmap_from_cache_import(linker)?;
+    Ok(())
+}
+
+// Restore a bitmap from the per-instance cache:
+// mmap RGBA → texture, no fetch, no decode,
+// and the bytes never enter wasm.
+//
+// Metadata is the image layer's `[w u32 | h u32 | identity]`;
+// only the dims are needed to re-upload.
+fn register_bitmap_from_cache_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_register_bitmap_from_cache",
+        |mut caller: Caller<'_, HostState>,
+         tag_ptr: u32,
+         tag_len: u32|
+         -> Result<u32, wasmi::Error> {
+            let Some(raw_tag) = read_tag(&caller, tag_ptr, tag_len) else {
+                return Ok(0);
+            };
+            super::super::with_renderer_and_state(&mut caller, |renderer, state| {
+                let Some(cache) = state.asset_cache.as_ref() else {
+                    return 0;
+                };
+                let Some(blob) = cache.get(&raw_tag) else {
+                    return 0;
+                };
+                let meta = blob.metadata();
+                if meta.len() < 8 {
+                    return 0;
+                }
+                let w = u32::from_le_bytes([meta[0], meta[1], meta[2], meta[3]]);
+                let h = u32::from_le_bytes([meta[4], meta[5], meta[6], meta[7]]);
+                let tag = state.namespaced_tag(&raw_tag);
+                renderer
+                    .register_bitmap_rgba(&tag, blob.bytes(), w, h)
+                    .map_or(0, BitmapId::to_ffi)
+            })
+        },
+    )?;
     Ok(())
 }
 

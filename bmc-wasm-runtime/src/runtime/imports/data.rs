@@ -283,6 +283,60 @@ fn register_cache_imports(linker: &mut Linker<HostState>) -> Result<()> {
         },
     )?;
 
+    register_cache_stat_import(linker)?;
+
+    Ok(())
+}
+
+// Freshness peek: returns `[saved_at u64 | metadata]` with no payload bytes, so a
+// widget can check identity + TTL without pulling the blob into wasm.
+fn register_cache_stat_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_cache_stat",
+        |mut caller: Caller<'_, HostState>,
+         tag_ptr: u32,
+         tag_len: u32,
+         out_ptr: u32,
+         out_cap: u32|
+         -> i32 {
+            let Some(tag) = read_string(&caller, tag_ptr, tag_len) else {
+                return -1;
+            };
+            if let Err(e) = validate_kv_key(&tag) {
+                tracing::warn!("cache_stat rejected tag: {e}");
+                return -1;
+            }
+            let record = {
+                let state = caller.data();
+                let Some(cache) = state.asset_cache.as_ref() else {
+                    return -1;
+                };
+                let Some(blob) = cache.get(&tag) else {
+                    return -1;
+                };
+                let meta = blob.metadata();
+                let mut record = Vec::with_capacity(8 + meta.len());
+                record.extend_from_slice(&blob.saved_at.to_le_bytes());
+                record.extend_from_slice(meta);
+                record
+            };
+            let needed = i32::try_from(record.len()).unwrap_or(i32::MAX);
+            if out_cap == 0 || (out_cap as usize) < record.len() {
+                return needed;
+            }
+            let memory = caller.get_export("memory").and_then(Extern::into_memory);
+            if let Some(memory) = memory {
+                let mem = memory.data_mut(&mut caller);
+                let start = out_ptr as usize;
+                let end = start + record.len();
+                if end <= mem.len() {
+                    mem[start..end].copy_from_slice(&record);
+                }
+            }
+            needed
+        },
+    )?;
     Ok(())
 }
 

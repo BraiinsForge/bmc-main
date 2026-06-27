@@ -31,6 +31,7 @@ unsafe extern "C" {
         bytes_len: u32,
     );
     fn host_cache_get(tag_ptr: *const u8, tag_len: u32, out_ptr: *mut u8, out_cap: u32) -> i32;
+    fn host_cache_stat(tag_ptr: *const u8, tag_len: u32, out_ptr: *mut u8, out_cap: u32) -> i32;
     fn host_cache_evict(tag_ptr: *const u8, tag_len: u32);
 }
 
@@ -79,6 +80,55 @@ pub fn evict(tag: &str) {
     unsafe {
         host_cache_evict(tag.as_ptr(), tag.len() as u32);
     }
+}
+
+/// An entry's freshness header: the host `saved_at` stamp plus the opaque
+/// caller metadata, fetched without pulling the payload bytes into wasm.
+#[derive(Debug, Clone)]
+pub struct Stat {
+    pub saved_at: u64,
+    pub metadata: Vec<u8>,
+}
+
+/// Peek the entry for `tag` — `saved_at` + metadata only, no payload. `None` on a miss.
+#[must_use]
+pub fn stat(tag: &str) -> Option<Stat> {
+    let len = unsafe { host_cache_stat(tag.as_ptr(), tag.len() as u32, core::ptr::null_mut(), 0) };
+    if len <= 0 {
+        return None;
+    }
+    let mut buf = vec![0u8; len as usize];
+    let written =
+        unsafe { host_cache_stat(tag.as_ptr(), tag.len() as u32, buf.as_mut_ptr(), len as u32) };
+    if written < 0 {
+        return None;
+    }
+    let saved_at = u64::from_le_bytes(buf.get(0..8)?.try_into().ok()?);
+    Some(Stat {
+        saved_at,
+        metadata: buf.get(8..)?.to_vec(),
+    })
+}
+
+/// A lazily-resolved, host-side reference to this widget's cache entry for `tag`.
+/// Pass it to a type registrar (e.g. `assets::register_image`) which resolves
+/// the bytes host-side — they never enter wasm.
+#[derive(Debug, Clone, Copy)]
+pub struct CacheSource<'a> {
+    tag: &'a str,
+}
+
+impl CacheSource<'_> {
+    #[must_use]
+    pub fn tag(&self) -> &str {
+        self.tag
+    }
+}
+
+/// Build a [`CacheSource`] for `tag` — nothing is read until a registrar consumes it.
+#[must_use]
+pub fn lazy_get(tag: &str) -> CacheSource<'_> {
+    CacheSource { tag }
 }
 
 // Split the host record `[saved_at u64 | meta_len u32 | metadata | bytes]`.
