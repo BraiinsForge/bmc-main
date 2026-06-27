@@ -76,13 +76,9 @@ nix develop .#armv7-glibc-debug
 
 ### Deploying to Device
 
-`nix run .#deck` is the staged harness for initialising a device, deploying packages, and flashing firmware to a Deck;
-run it with `--help` (and `<subcommand> --help`) for its procedures (`init`, `deploy`, `sysupgrade`) and flags.
-
-For the one remaining lower-level script, see [`docs/nix-device-scripts.md`](docs/nix-device-scripts.md):
-
-- `scripts/nix-cargo-deploy.sh` — fast iterative deploy of cargo-built native binaries (compositor and native widgets
-  only; wasm widgets are never deployed through this script)
+Deploying to, inspecting, and iterating on a real Deck — the `nix run .#deck` harness (`init`/`deploy`/`sysupgrade`),
+the `nix-cargo-deploy.sh` fast path, and on-device log/cache/config — is documented in
+**[`docs/deployment.md`](docs/deployment.md) ("Deck Device Operations")**.
 
 ### Cargo Commands
 

@@ -27,6 +27,13 @@ Line breaks should help the scanner. Break at **sentence and clause boundaries**
 Within the semantic breaks above, prefer roughly even line lengths. Avoid 5-char-then-95-char asymmetry — think CSS
 `text-wrap: balance`. Never sacrifice skimmability for balance; this is the second layer, not the first.
 
+### Length — one line by default
+
+Most comments are a single line. Reach for a second only when a distinct, non-obvious fact needs it — never to restate
+the code, the type name, or a doc that already carries the fact (an on-disk format documented where it is defined does
+not get re-documented at every call site). Cut comments that narrate the obvious: a `{}` borrow scope, a widening cast.
+When the same fact would live in two places, keep it in one and point to it.
+
 ## Comments — workarounds must cite the cause
 
 Never paper over a mistake with vague rationale:
