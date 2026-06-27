@@ -1534,6 +1534,10 @@ mod tests {
         fn evict_prefix(&mut self, _prefix: &str) -> usize {
             0
         }
+
+        fn bitmap_resident_bytes(&self) -> u64 {
+            0
+        }
     }
 
     fn animation_context<'a>(

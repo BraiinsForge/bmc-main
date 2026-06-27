@@ -541,7 +541,23 @@ let
   armv7PackageDefs = import ./nix/packages.nix {
     inherit bmc armv7Pkgs deps;
     inherit wasmWidgetCatalog;
+    profile = bmc.profiles.armv7-glibc-release;
+    openwrtFeatures = [ ];
     inherit (wasmWidgetsModule) wasmWidgets thin host mkWasmWidget;
+  };
+
+  # Same package set, built debug with the `profiling` feature on the
+  # compositor and the wasm host — exposed as `deck-packages-debug` so a
+  # `deck deploy --profile debug` surfaces the mesh::profile timing/memory
+  # channel on the device. Package names are identical to the release set;
+  # only the build profile differs.
+  wasmWidgetsModuleDebug = wasmWidgetsFor bmc.profiles.armv7-glibc-debug [ "profiling" ];
+  armv7PackageDefsDebug = import ./nix/packages.nix {
+    inherit bmc armv7Pkgs deps;
+    inherit wasmWidgetCatalog;
+    profile = bmc.profiles.armv7-glibc-debug;
+    openwrtFeatures = [ "profiling" ];
+    inherit (wasmWidgetsModuleDebug) wasmWidgets thin host mkWasmWidget;
   };
 
   initArtifacts = import ./nix/init-artifacts.nix {
@@ -566,6 +582,7 @@ in
   # through the `legacyPackages` chain.
   legacyPackages = {
     deck-packages = armv7PackageDefs;
+    deck-packages-debug = armv7PackageDefsDebug;
   };
   packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // initArtifacts // {
     inherit bmc-video-play-armv7;

@@ -59,6 +59,16 @@ The deployed packages are installed into the bmc profile and activated immediate
 `/run/current-profile/bin/` for core and nixpkgs packages. Widget packages (native and wasm) are installed under
 `/run/current-profile/lib/bmc-widgets/<name>/`.
 
+`--profile {release,debug}` selects the build (default `release`). `debug` deploys the parallel
+`.#deck-packages-debug.*` set — the same package names built with the `profiling` feature on the compositor and the wasm
+host — so the device surfaces the `mesh::profile` channel: ii-stopwatch timing, MemProbe RSS, and the asset-cache
+write/evict/restore events. Use it when you need to observe or measure on-device, then redeploy `release` to drop the
+overhead.
+
+```sh
+nix run .#deck -- deploy --device 192.168.1.2 --profile debug
+```
+
 Run `nix run .#deck -- <init|deploy|sysupgrade> --help` for the full option set of each procedure.
 
 ## nix-cargo-deploy.sh — Fast impure deploy of cargo-built native binaries
@@ -125,3 +135,45 @@ should be restarted automatically.
 In case you're running nix-cargo-deploy.sh, stop the service via `/etc/init.d/bmc-compositor stop`, then use
 `start-compositor bmc-openwrt` to start the compositor in a dirty way, without the service. The service always refers to
 the core package in `/nix/store`, so it will not pick up compositor changes through `nix-cargo-deploy.sh`
+
+## Inspecting the device — logs, cache, scene config
+
+### Logs
+
+App logs live under `/var/log/bmc/`. **Sort by mtime first (`ls -lat /var/log/bmc/`)** — a stale legacy file sits next
+to the live one and looks just as authoritative:
+
+| File                               | Source                                                                 |
+| ---------------------------------- | ---------------------------------------------------------------------- |
+| `bmc.log`                          | compositor (`bmc-openwrt`)                                             |
+| `run-bmc-wasm-host-sdk-v0.log`     | **live** wasm host — widget + asset-cache events; rotated (`.1.gz`, …) |
+| `widgets.log`, `bmc-wasm-thin.log` | widget / thin-client host                                              |
+| `bmc-wasm-host.log`                | **stale legacy** — predates the versioned host log; do not grep this   |
+
+On a `--profile debug` build the asset-cache observability rides the `mesh::profile` target in the live wasm-host log:
+
+```sh
+ssh root@192.168.1.2 'grep -E "cache write|dormant eviction|cache restore" \
+  /var/log/bmc/run-bmc-wasm-host-sdk-v0.log'
+```
+
+### Asset cache
+
+Per-instance flash buckets live at `/mnt/data/bmc/widget-cache/<widget-uuid>-<extent>/<tag>.blob` — one per widget
+instance (the image widget writes `image.blob`). Their presence proves write-at-decode ran even when logging is off.
+
+### Scene config and the dormancy prerequisite
+
+The active scene set is `/etc/bmc_config.json` — a `scenes` array plus `scene_cycling`, `accounts`, and display
+settings. There is no `jq` on the device, so edit locally and push back, preserving the other top-level fields:
+
+```sh
+ssh root@192.168.1.2 'cat /etc/bmc_config.json' > cfg.json
+jq --slurpfile s bmc-virt/data/configs/image-cache.json '.scenes = $s[0].scenes' cfg.json > cfg.new.json
+ssh root@192.168.1.2 'cp /etc/bmc_config.json /etc/bmc_config.json.bak; cat > /etc/bmc_config.json' < cfg.new.json
+ssh root@192.168.1.2 'killall bmc-openwrt'   # procd respawns, reloads config at startup
+```
+
+To exercise a widget's dormant/wake path (e.g. the image cache's RAM reclaim), the config needs **≥4 enabled scenes**:
+the compositor keeps the active scene `Visible` and both cycle neighbours `Prepared`, so only a non-neighbour scene
+reaches `Dormant`. With 2–3 enabled scenes nothing ever goes dormant, and the evict/restore path never fires.

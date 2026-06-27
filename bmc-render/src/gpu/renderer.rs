@@ -1148,6 +1148,10 @@ impl Renderer for FemtoVgRenderer {
         }
         n
     }
+
+    fn bitmap_resident_bytes(&self) -> u64 {
+        self.bitmap_registry.resident_bytes()
+    }
 }
 
 fn femtovg_baseline(vertical_align: VerticalAlign) -> femtovg::Baseline {

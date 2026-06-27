@@ -122,12 +122,26 @@ def verify_post_upgrade(dev: Device, *, expect: str) -> str:
 
 # ── nix package deploy ────────────────────────────────────────────────────────
 
+_DECK_PACKAGES = ".#deck-packages"
+
+
+def package_prefix(profile: str) -> str:
+    """Flake attr root for a build `profile`.
+
+    `release` deploys `.#deck-packages.<name>`; any other profile (e.g.
+    `debug`) deploys the parallel `.#deck-packages-<profile>.<name>` set, which
+    is the same packages built with the compositor + wasm-host `profiling`
+    feature on (the mesh::profile timing/memory channel).
+    """
+    return _DECK_PACKAGES if profile == "release" else f"{_DECK_PACKAGES}-{profile}"
+
 
 @dataclass
 class Deployment:
     """Mutable carrier threaded through the deploy stages."""
 
     attrs: list[str]  # flake attrs to deploy; empty → discover core + all widgets
+    prefix: str = _DECK_PACKAGES  # attr root for the build profile (see package_prefix)
     resolved: list[Pkg] = field(default_factory=list)
     built: list[Built] = field(default_factory=list)
 
@@ -145,7 +159,7 @@ def ensure_nix_cli(nix: Nix, dev: Device) -> None:
     ensure(present, bootstrap, "bmc-nix-cli bootstrap did not take")
 
 
-def _unknown_package_hint(attr: str, packages: list[str]) -> str:
+def _unknown_package_hint(attr: str, packages: list[str], prefix: str) -> str:
     """Clean 'does not exist' hint, suggesting the closest deck package."""
     leaf = attr.rsplit(".", 1)[-1]
     prefixed = f"widget-{leaf}"
@@ -154,26 +168,26 @@ def _unknown_package_hint(attr: str, packages: list[str]) -> str:
     else:
         matches = difflib.get_close_matches(leaf, packages, n=1, cutoff=0.5)
         guess = matches[0] if matches else None
-    suffix = f" — did you mean {console.lit(f'.#deck-packages.{guess}')}?" if guess else ""
+    suffix = f" — did you mean {console.lit(f'{prefix}.{guess}')}?" if guess else ""
     return f"package {console.lit(attr)} does not exist{suffix}"
 
 
-def _qualify(attr: str) -> str:
-    """Expand a bare package name to its `.#deck-packages.` attr."""
-    return attr if "#" in attr else f".#deck-packages.{attr}"
+def _qualify(attr: str, prefix: str) -> str:
+    """Expand a bare package name to its `prefix.` attr (profile-aware)."""
+    return attr if "#" in attr else f"{prefix}.{attr}"
 
 
 @stage("Resolve packages")
 def resolve_packages(nix: Nix, plan: Deployment) -> str:
     if not plan.attrs:
-        plan.attrs = [f".#deck-packages.{name}" for name in ["core", *nix.discover_widgets()]]
-    plan.attrs = [_qualify(a) for a in plan.attrs]
+        plan.attrs = [f"{plan.prefix}.{name}" for name in ["core", *nix.discover_widgets()]]
+    plan.attrs = [_qualify(a, plan.prefix) for a in plan.attrs]
     resolved: list[Pkg] = []
     for attr in plan.attrs:
         try:
             resolved.append(nix.resolve(attr))
         except subprocess.CalledProcessError:
-            raise Abort(_unknown_package_hint(attr, nix.list_packages())) from None
+            raise Abort(_unknown_package_hint(attr, nix.list_packages(), plan.prefix)) from None
     plan.resolved = resolved
     return ", ".join(console.lit(pkg.name) for pkg in plan.resolved)
 

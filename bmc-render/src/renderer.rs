@@ -319,4 +319,7 @@ pub trait Renderer {
     /// with `prefix`, releasing the associated GPU resources.
     /// Returns the total count of evicted entries across all three registries.
     fn evict_prefix(&mut self, prefix: &str) -> usize;
+
+    /// Total resident texture bytes across registered bitmaps.
+    fn bitmap_resident_bytes(&self) -> u64;
 }

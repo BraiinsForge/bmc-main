@@ -7,6 +7,7 @@ its own nix-store binary, not a full nix.
 """
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 from bmc_tui import catalog, console, nix
 from bmc_tui.device import Device
@@ -17,6 +18,7 @@ from bmc_tui.stage import dry_run, entrypoint
 class Deploy:
     device: str  # IP or host of the target Deck
     packages: list[str] = field(default_factory=list)  # flake attrs; empty → core + all widgets
+    profile: Literal["release", "debug"] = "release"  # debug → profiling build (mesh::profile)
     dry_run: bool = False  # build + probe for real; log device mutations without executing
     max_jobs: int | None = None  # nix --max-jobs for the build; None → use nix's own config
 
@@ -25,7 +27,7 @@ class Deploy:
             dry_run.set(True)
         dev = Device(self.device)
         backend = nix.real(max_jobs=self.max_jobs)
-        plan = catalog.Deployment(attrs=self.packages)
+        plan = catalog.Deployment(attrs=self.packages, prefix=catalog.package_prefix(self.profile))
 
         console.header("Deploy packages")
         dev.print()

@@ -3,13 +3,22 @@
 # Single source of truth for what packages exist. Each entry pairs
 # build logic with release metadata. Consumers (e.g. init-artifacts)
 # select the subset they need.
-{ bmc, armv7Pkgs, deps, wasmWidgets, thin, host, mkWasmWidget, wasmWidgetCatalog }:
+{ bmc
+, armv7Pkgs
+, deps
+, wasmWidgets
+, thin
+, host
+, mkWasmWidget
+, wasmWidgetCatalog
+, profile
+, openwrtFeatures ? [ ]
+}:
 let
   inherit (bmc.lib) mkWidgetPackage;
   inherit (bmc) crates;
   inherit (deps) widgetRuntimeDeps frontend;
   lib = armv7Pkgs.lib;
-  profile = bmc.profiles.armv7-glibc-release;
 
   # Per-wasm-widget package def, generated from the filesystem-derived catalog.
   # Description + version are read from each widget's `manifest.json` at eval time
@@ -37,7 +46,7 @@ let
     shippableCatalog;
 in
 wasmWidgetPackages // {
-  core = import ./pkgs/core { inherit bmc armv7Pkgs deps; };
+  core = import ./pkgs/core { inherit bmc armv7Pkgs deps profile openwrtFeatures; };
   bos-avahi = import ./pkgs/bos-avahi { inherit bmc armv7Pkgs; };
   bmc-nix-cli = {
     pkg = profile.buildCrate crates.bmc-nix-cli { };

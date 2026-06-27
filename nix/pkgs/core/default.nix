@@ -1,11 +1,14 @@
 # Core package: bmc-openwrt with activation scripts, hooks, and copy-files.
-{ bmc, armv7Pkgs, deps }:
+#
+# `profile` and `openwrtFeatures` are supplied by the caller so a debug build
+# can flip on the compositor's `profiling` feature (ii-stopwatch timing + the
+# mesh::profile observability channel) without forking this file.
+{ bmc, armv7Pkgs, deps, profile, openwrtFeatures ? [ ] }:
 let
   inherit (bmc.lib) mkPackage mkPrioritizedEntries autopatchelfBinaries
     mkOpenWrtService mkOpenWrtDaemon;
   inherit (bmc) crates;
   inherit (deps) compositorRuntimeDeps frontend;
-  profile = bmc.profiles.armv7-glibc-release;
 
   nixConf = import ../../nix-conf.nix { pkgs = armv7Pkgs; };
   nixConfActivation = import ./nix-conf-activation.nix { pkgs = armv7Pkgs; inherit nixConf; };
@@ -41,6 +44,7 @@ let
   bmc-openwrt = autopatchelfBinaries {
     drv = profile.buildCrate crates.bmc-openwrt {
       env.BMC_WEB_FRONTEND_DIR = "${frontend}";
+      features = openwrtFeatures;
     };
     runtimeDeps = compositorRuntimeDeps armv7Pkgs;
   };

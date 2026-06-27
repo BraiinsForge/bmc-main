@@ -295,8 +295,24 @@ impl WasmWidgetRuntime {
                         meta.extend_from_slice(&w.to_le_bytes());
                         meta.extend_from_slice(&h.to_le_bytes());
                         meta.extend_from_slice(&done.identity);
-                        if let Err(e) = cache.put(&done.raw_tag, saved_at, &meta, &rgba) {
-                            tracing::warn!("image cache put failed ({}): {e}", done.raw_tag);
+                        match cache.put(&done.raw_tag, saved_at, &meta, &rgba) {
+                            Ok(()) => {
+                                #[cfg(feature = "profiling")]
+                                {
+                                    let (entries, bytes) = cache.stats();
+                                    tracing::info!(
+                                        target: bmc_render::profile::TARGET,
+                                        tag = %done.raw_tag,
+                                        written = rgba.len(),
+                                        entries,
+                                        bytes,
+                                        "cache write"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("image cache write failed ({}): {e}", done.raw_tag);
+                            }
                         }
                     }
                     id

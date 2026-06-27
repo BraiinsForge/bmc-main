@@ -291,6 +291,17 @@ def test_resolve_leaves_qualified_attrs_alone() -> None:
     assert plan.attrs == [".#armv7-nixpkgs.strace"]
 
 
+def test_package_prefix_maps_profile_to_attr_root() -> None:
+    assert catalog.package_prefix("release") == ".#deck-packages"
+    assert catalog.package_prefix("debug") == ".#deck-packages-debug"
+
+
+def test_resolve_uses_debug_prefix_for_discovery_and_bare_names() -> None:
+    plan = catalog.Deployment(attrs=[], prefix=catalog.package_prefix("debug"))
+    catalog.resolve_packages(_Nix(widgets=("clock",)), plan)
+    assert plan.attrs == [".#deck-packages-debug.core", ".#deck-packages-debug.clock"]
+
+
 def test_build_realises_each_resolved() -> None:
     plan = catalog.Deployment(attrs=[], resolved=[Pkg("core", "1.0", ".#x.pkg^out")])
     catalog.build_packages(_Nix(), plan)

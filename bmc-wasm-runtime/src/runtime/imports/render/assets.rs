@@ -56,6 +56,8 @@ fn register_bitmap_from_cache_import(linker: &mut Linker<HostState>) -> Result<(
                     return 0;
                 };
                 let Some(blob) = cache.get(&raw_tag) else {
+                    #[cfg(feature = "profiling")]
+                    tracing::info!(target: bmc_render::profile::TARGET, tag = %raw_tag, "cache restore miss");
                     return 0;
                 };
                 let meta = blob.metadata();
@@ -65,9 +67,24 @@ fn register_bitmap_from_cache_import(linker: &mut Linker<HostState>) -> Result<(
                 let w = u32::from_le_bytes([meta[0], meta[1], meta[2], meta[3]]);
                 let h = u32::from_le_bytes([meta[4], meta[5], meta[6], meta[7]]);
                 let tag = state.namespaced_tag(&raw_tag);
-                renderer
+                let id = renderer
                     .register_bitmap_rgba(&tag, blob.bytes(), w, h)
-                    .map_or(0, BitmapId::to_ffi)
+                    .map_or(0, BitmapId::to_ffi);
+                #[cfg(feature = "profiling")]
+                {
+                    let age_ms = u64::try_from(state.system_time.timestamp_millis())
+                        .unwrap_or(0)
+                        .saturating_sub(blob.saved_at);
+                    let resident = renderer.bitmap_resident_bytes();
+                    tracing::info!(
+                        target: bmc_render::profile::TARGET,
+                        tag = %raw_tag,
+                        age_ms,
+                        resident,
+                        "cache restore hit"
+                    );
+                }
+                id
             })
         },
     )?;

@@ -159,6 +159,15 @@ impl BitmapRegistry {
         self.bitmaps.get(&id).map(|b| b.image_id)
     }
 
+    /// Total resident texture bytes across registered bitmaps (`w·h·4` each).
+    #[must_use]
+    pub fn resident_bytes(&self) -> u64 {
+        self.bitmaps
+            .values()
+            .map(|b| u64::from(b.width) * u64::from(b.height) * 4)
+            .sum()
+    }
+
     /// Get the FemtoVG `ImageId` and source dimensions for a registered bitmap.
     #[must_use]
     pub fn get_with_size(&self, id: BitmapId) -> Option<(ImageId, u32, u32)> {

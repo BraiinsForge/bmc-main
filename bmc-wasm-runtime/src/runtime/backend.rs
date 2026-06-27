@@ -937,9 +937,19 @@ impl WasmWidgetRuntime {
         // single-threaded dispatch means no other `&mut Renderer` is live.
         let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
         let evicted = renderer.evict_prefix(&ns);
+        #[cfg(feature = "profiling")]
         if evicted > 0 {
-            tracing::debug!(namespace = %ns, evicted, "evicted dormant slot assets");
+            let resident = renderer.bitmap_resident_bytes();
+            tracing::info!(
+                target: bmc_render::profile::TARGET,
+                namespace = %ns,
+                evicted,
+                resident,
+                "dormant eviction"
+            );
         }
+        #[cfg(not(feature = "profiling"))]
+        let _ = evicted;
     }
 
     /// Common tail of `deliver_params_update` / `deliver_system_update`:
