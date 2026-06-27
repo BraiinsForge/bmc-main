@@ -34,6 +34,16 @@ mod wasm_glue {
         BadImage,
     }
 
+    /// Outcome of restoring the cached image on wake.
+    enum Restore {
+        /// Restored and within the refresh TTL — nothing more to do.
+        Fresh,
+        /// Restored but past the TTL — shown now, refreshing in the background.
+        Stale,
+        /// No usable bucket (missing, or a different URL/viewport) — must refetch.
+        Miss,
+    }
+
     /// In-flight decode: its job handle and the source image's aspect ratio.
     #[derive(Clone, Copy)]
     struct Pending {
@@ -46,6 +56,8 @@ mod wasm_glue {
         static POLL: Cell<Option<PollHandle>> = const { Cell::new(None) };
         // Held image; stale after a failed refresh.
         static STALE: Cell<bool> = const { Cell::new(false) };
+        // Showing a cached image while a fresh fetch runs (wake from a past-TTL bucket).
+        static REFRESHING: Cell<bool> = const { Cell::new(false) };
         // In-flight decode; results from superseded jobs are ignored.
         static PENDING: Cell<Option<Pending>> = const { Cell::new(None) };
     }
@@ -140,7 +152,8 @@ mod wasm_glue {
 
         if let Some((state, transient)) = error {
             if has_image {
-                // Failed refresh: keep last good (stale); retry transient.
+                // Failed refresh: keep last good (stale), drop the overlay; retry transient.
+                REFRESHING.with(|s| s.set(false));
                 STALE.with(|s| s.set(true));
                 if transient {
                     handle.retry();
@@ -160,6 +173,8 @@ mod wasm_glue {
         if pending.job != job {
             return;
         }
+        // The refresh resolved either way — drop the overlay.
+        REFRESHING.with(|r| r.set(false));
         match bitmap {
             Some(bitmap) => {
                 STATE.with(|s| {
@@ -186,12 +201,8 @@ mod wasm_glue {
             // No evict: renderer imports trap outside render; set() replaces it.
             STATE.with(|s| *s.borrow_mut() = State::Loading);
             STALE.with(|s| s.set(false));
-            POLL.with(|p| {
-                if let Some(handle) = p.get() {
-                    handle.set_enabled(true);
-                    handle.invalidate();
-                }
-            });
+            REFRESHING.with(|r| r.set(false));
+            resume_polling();
         }
         request_frame();
     }
@@ -213,35 +224,45 @@ mod wasm_glue {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn on_wake() {
-        // Restore from the bucket if it still matches config and is fresh, else refetch.
-        let restored = expanded_url().is_some_and(|url| try_restore(&url));
-        if !restored {
-            STATE.with(|s| *s.borrow_mut() = State::Loading);
-            POLL.with(|p| {
-                if let Some(handle) = p.get() {
-                    handle.set_enabled(true);
-                    handle.invalidate();
-                }
-            });
-        }
         STALE.with(|s| s.set(false));
+        match expanded_url().map_or(Restore::Miss, |url| try_restore(&url)) {
+            Restore::Fresh => REFRESHING.with(|r| r.set(false)),
+            Restore::Stale => {
+                REFRESHING.with(|r| r.set(true));
+                resume_polling();
+            }
+            Restore::Miss => {
+                REFRESHING.with(|r| r.set(false));
+                STATE.with(|s| *s.borrow_mut() = State::Loading);
+                resume_polling();
+            }
+        }
         request_frame();
     }
 
-    /// Re-register the cached image if its identity matches `current_url` and it
-    /// is within the refresh TTL; bytes stay host-side, we get only a `BitmapId`.
-    fn try_restore(current_url: &str) -> bool {
+    /// Re-enable the refresh poll and fetch immediately.
+    fn resume_polling() {
+        POLL.with(|p| {
+            if let Some(handle) = p.get() {
+                handle.set_enabled(true);
+                handle.invalidate();
+            }
+        });
+    }
+
+    /// Re-register the cached image on an identity match, regardless of freshness.
+    fn try_restore(current_url: &str) -> Restore {
         let Some(stat) = cache::stat(IMAGE.name()) else {
-            return false;
+            return Restore::Miss;
         };
         let Some((w, h, identity)) = parse_meta(&stat.metadata) else {
-            return false;
+            return Restore::Miss;
         };
-        if identity != current_url.as_bytes() || !is_fresh(stat.saved_at) {
-            return false;
+        if identity != current_url.as_bytes() {
+            return Restore::Miss;
         }
         let Some(bitmap) = assets::register_image(cache::lazy_get(IMAGE.name())) else {
-            return false;
+            return Restore::Miss;
         };
         STATE.with(|s| {
             *s.borrow_mut() = State::Loaded {
@@ -249,7 +270,11 @@ mod wasm_glue {
                 aspect: render::aspect_of(w, h),
             };
         });
-        true
+        if is_fresh(stat.saved_at) {
+            Restore::Fresh
+        } else {
+            Restore::Stale
+        }
     }
 
     // Cache metadata is `[w u32 | h u32 | identity]` (the host write path).
@@ -277,7 +302,9 @@ mod wasm_glue {
             STATE.with(|s| match &*s.borrow() {
                 State::Loaded { bitmap, aspect } => {
                     let view = render::image_view(*bitmap, *aspect, size);
-                    if STALE.with(Cell::get) {
+                    if REFRESHING.with(Cell::get) {
+                        render::with_updating_overlay(view)
+                    } else if STALE.with(Cell::get) {
                         render::with_stale_banner(view)
                     } else {
                         view

@@ -19,6 +19,7 @@ const STALE_DATA_TEXT: &str = "Stale data";
 const STALE_TEXT_SIZE: u32 = 14;
 const STALE_ICON_PX: f32 = 16.0;
 const STALE_INSET: f32 = 8.0;
+const UPDATING_TEXT: &str = "Updating";
 
 /// Aspect ratio (`w / h`) of an image, defaulting to square on a zero height.
 #[must_use]
@@ -120,6 +121,38 @@ fn stale_banner() -> Node {
 pub fn with_stale_banner(mut root: Node) -> Node {
     if let Node::Column(_, children) | Node::Row(_, children) = &mut root {
         children.push(stale_banner());
+    }
+    root
+}
+
+/// Subtle "updating" pill over the cached image during a background refresh.
+fn updating_overlay() -> Node {
+    row(
+        props!(inset_bottom: STALE_INSET, inset_left: STALE_INSET),
+        [row(
+            props!(
+                background: GRAY_100,
+                padding: 6.0,
+                cross_align: CrossAlign::Center
+            ),
+            [text(
+                UPDATING_TEXT.to_string(),
+                style!(
+                    size: STALE_TEXT_SIZE,
+                    weight: FontWeight::REGULAR,
+                    color: GRAY_30,
+                    line_height: 1.0
+                ),
+            )],
+        )],
+    )
+}
+
+/// Overlay an "updating" pill onto a column/row root.
+#[must_use]
+pub fn with_updating_overlay(mut root: Node) -> Node {
+    if let Node::Column(_, children) | Node::Row(_, children) = &mut root {
+        children.push(updating_overlay());
     }
     root
 }
