@@ -914,8 +914,31 @@ impl WasmWidgetRuntime {
             }
             Some(PendingHook::Dormant) => {
                 self.fire_update_hook(self.on_dormant_func, "on_dormant", Lifecycle::Dormant);
+                // Implementing on_wake opts the slot into eviction; on_wake restores the assets.
+                if self.on_wake_func.is_some() {
+                    self.evict_dormant_assets();
+                }
             }
             None => {}
+        }
+    }
+
+    /// Free this slot's renderer-registered bitmaps on dormancy.
+    /// Gated on `on_wake` (the opt-in): `on_wake` must re-register them before
+    /// the first frame, and a slot without `on_wake` keeps its assets.
+    /// All-or-nothing — a bitmap id registered before dormancy is dropped,
+    /// so a widget must not reuse it after wake without re-registering.
+    fn evict_dormant_assets(&mut self) {
+        let Some(mut ptr) = self.store.data().renderer_ptr else {
+            return;
+        };
+        let ns = self.asset_namespace();
+        // SAFETY: same parked-renderer reborrow as `register_decoded_bitmap`;
+        // single-threaded dispatch means no other `&mut Renderer` is live.
+        let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
+        let evicted = renderer.evict_prefix(&ns);
+        if evicted > 0 {
+            tracing::debug!(namespace = %ns, evicted, "evicted dormant slot assets");
         }
     }
 
