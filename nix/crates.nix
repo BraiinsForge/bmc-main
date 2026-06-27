@@ -35,6 +35,11 @@ wasmWidgetCrates // {
     path = "bmc-openwrt";
     packageName = "bmc-openwrt";
   };
+  bmc-nix = defineCrate {
+    path = "bmc-nix";
+    packageName = "bmc-nix";
+    binName = false;
+  };
   bmc-nix-cli = defineCrate {
     path = "bmc-nix";
     packageName = "bmc-nix";
@@ -54,11 +59,6 @@ wasmWidgetCrates // {
     path = "bmc-nix";
     packageName = "bmc-nix";
     binName = "bmc-hook-activation-resolver";
-  };
-  bmc-nix-service-orchestrator = defineCrate {
-    path = "bmc-nix";
-    packageName = "bmc-nix";
-    binName = "bmc-nix-service-orchestrator";
   };
   bmc-activation-copy-files = defineCrate {
     path = "bmc-nix";

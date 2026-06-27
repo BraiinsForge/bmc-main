@@ -22,7 +22,10 @@ let
     ${testBusybox}/bin/touch $out
   '';
 
-  orchestrator = profile.buildCrate crates.bmc-nix-service-orchestrator { };
+  bmcNix = profile.buildCrate crates.bmc-nix { };
+  selectBmcNixBin = bmc.lib.selectBmcNixBin { pkgs = armv7Pkgs; inherit bmcNix; };
+
+  orchestrator = selectBmcNixBin "bmc-nix-service-orchestrator";
 
   # Ash wrapper around the orchestrator. procd will run the service in
   # a context where LD_PRELOAD is set; Shebang is pinned to /bin/ash
@@ -139,13 +142,13 @@ let
     name = "bmc-core";
     package = bmc-openwrt;
     hooks = [
-      { prefix = "001"; bin = profile.buildCrate crates.bmc-hook-merge-files { }; }
-      { prefix = "002"; bin = profile.buildCrate crates.bmc-hook-file-symlinks { }; }
-      { prefix = "099"; bin = profile.buildCrate crates.bmc-hook-activation-resolver { }; }
+      { prefix = "001"; bin = selectBmcNixBin "bmc-hook-merge-files"; }
+      { prefix = "002"; bin = selectBmcNixBin "bmc-hook-file-symlinks"; }
+      { prefix = "099"; bin = selectBmcNixBin "bmc-hook-activation-resolver"; }
     ];
     activation = mkPrioritizedEntries ./activation ++ [
       { prefix = "052"; bin = nixConfActivation; }
-      { prefix = "055"; bin = profile.buildCrate crates.bmc-activation-copy-files { }; }
+      { prefix = "055"; bin = selectBmcNixBin "bmc-activation-copy-files"; }
       { prefix = "060"; bin = firmware-init-services; }
       { prefix = "090"; bin = start-service-orchestrator; }
     ];

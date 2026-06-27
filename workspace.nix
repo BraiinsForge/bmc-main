@@ -483,13 +483,16 @@ let
     })
     widgets);
 
-  # Native hooks package (hooks run on build host during init tarball build)
+  # Native hooks package (hooks run on build host during init tarball build).
+  # Build bmc-nix once and symlink each hook binary out of it.
+  nativeBmcNix = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix { };
+  selectNativeBmcNixBin = bmc.lib.selectBmcNixBin { inherit pkgs; bmcNix = nativeBmcNix; };
   nativeHooksPackage = bmc.lib.mkPackage {
     name = "native-hooks";
     hooks = [
-      { prefix = "001"; bin = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-merge-files { }; }
-      { prefix = "002"; bin = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-file-symlinks { }; }
-      { prefix = "099"; bin = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-activation-resolver { }; }
+      { prefix = "001"; bin = selectNativeBmcNixBin "bmc-hook-merge-files"; }
+      { prefix = "002"; bin = selectNativeBmcNixBin "bmc-hook-file-symlinks"; }
+      { prefix = "099"; bin = selectNativeBmcNixBin "bmc-hook-activation-resolver"; }
     ];
   };
 
