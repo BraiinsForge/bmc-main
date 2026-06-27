@@ -284,9 +284,21 @@ impl WasmWidgetRuntime {
                         .map_or(0, BitmapId::to_ffi);
                     let upload_us =
                         u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-                    self.store
-                        .data_mut()
-                        .add_profile_us("image_upload_us", upload_us);
+                    let state = self.store.data_mut();
+                    state.add_profile_us("image_upload_us", upload_us);
+                    // Write-at-decode: stamp the downscaled RGBA into the per-instance
+                    // bucket so wake/restart can restore it without re-fetching.
+                    if let Some(cache) = state.asset_cache.as_ref() {
+                        let saved_at =
+                            u64::try_from(state.system_time.timestamp_millis()).unwrap_or(0);
+                        let mut meta = Vec::with_capacity(8 + done.identity.len());
+                        meta.extend_from_slice(&w.to_le_bytes());
+                        meta.extend_from_slice(&h.to_le_bytes());
+                        meta.extend_from_slice(&done.identity);
+                        if let Err(e) = cache.put(&done.raw_tag, saved_at, &meta, &rgba) {
+                            tracing::warn!("image cache put failed ({}): {e}", done.raw_tag);
+                        }
+                    }
                     id
                 }
                 Err(e) => {

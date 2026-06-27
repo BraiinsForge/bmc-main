@@ -92,6 +92,8 @@ mod ffi {
             data_len: u32,
             max_w: u32,
             max_h: u32,
+            identity_ptr: *const u8,
+            identity_len: u32,
         ) -> u32;
 
         // Mesh registration. The host dedups by tag.
@@ -324,6 +326,7 @@ mod ffi {
         data: &[u8],
         max_w: u32,
         max_h: u32,
+        identity: &[u8],
     ) -> Option<ImageJobId> {
         ImageJobId::from_wire(unsafe {
             host_register_bitmap_fit(
@@ -333,6 +336,8 @@ mod ffi {
                 data.len() as u32,
                 max_w,
                 max_h,
+                identity.as_ptr(),
+                identity.len() as u32,
             )
         })
     }

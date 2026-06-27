@@ -62,7 +62,11 @@ pub struct CompletedFetch {
 /// A completed off-thread image decode, ready for GPU upload and delivery.
 pub struct CompletedImageDecode {
     pub job_id: ImageJobId,
+    /// Registry tag (slot-namespaced); `raw_tag` is the un-namespaced cache key.
     pub tag: String,
+    pub raw_tag: String,
+    /// Guest identity blob, stored in the cache entry's metadata.
+    pub identity: Vec<u8>,
     pub result: Result<(Vec<u8>, u32, u32), String>,
     pub decode_us: u64,
 }

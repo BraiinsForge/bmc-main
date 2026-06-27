@@ -81,19 +81,23 @@ mod wasm_glue {
         POLL.with(|p| p.set(Some(handle)));
     }
 
-    fn build_request(_handle: PollHandle) -> Option<FetchSpec> {
+    // {{width}}/{{height}} expand to the viewport pixels — 1:1 with the
+    // released Slint widget so existing server URLs carry over unchanged.
+    fn expanded_url() -> Option<String> {
         let url = manifest_params::Params::current().url;
         let url = url.trim();
         if url.is_empty() {
             return None;
         }
-        // {{width}}/{{height}} expand to the viewport pixels — 1:1 with the
-        // released Slint widget so existing server URLs carry over unchanged.
         let size = widget_size();
-        let url = url
-            .replace("{{width}}", &size.width.to_string())
-            .replace("{{height}}", &size.height.to_string());
-        Some(FetchSpec::get(url))
+        Some(
+            url.replace("{{width}}", &size.width.to_string())
+                .replace("{{height}}", &size.height.to_string()),
+        )
+    }
+
+    fn build_request(_handle: PollHandle) -> Option<FetchSpec> {
+        expanded_url().map(FetchSpec::get)
     }
 
     fn on_image(handle: PollHandle, response: &FetchResponse) {
@@ -113,7 +117,16 @@ mod wasm_glue {
                 Some((w, h)) => {
                     let size = widget_size();
                     let aspect = render::aspect_of(w, h);
-                    match IMAGE.set_fit(response.body(), size.width, size.height, on_decoded) {
+                    // Expanded URL = the image identity (URL + viewport size);
+                    // the host stamps it for restore-on-wake.
+                    let identity = expanded_url().unwrap_or_default();
+                    match IMAGE.set_fit(
+                        response.body(),
+                        size.width,
+                        size.height,
+                        identity.as_bytes(),
+                        on_decoded,
+                    ) {
                         Some(job) => {
                             PENDING.with(|p| p.set(Some(Pending { job, aspect })));
                             None

@@ -121,6 +121,27 @@ impl DiskCache {
         }
     }
 
+    /// Entry count and total bytes currently stored (for size reporting).
+    #[must_use]
+    pub fn stats(&self) -> (usize, u64) {
+        let Ok(entries) = fs::read_dir(&self.dir) else {
+            return (0, 0);
+        };
+        let mut count = 0;
+        let mut bytes = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some(EXT) {
+                continue;
+            }
+            if let Ok(meta) = entry.metadata() {
+                count += 1;
+                bytes += meta.len();
+            }
+        }
+        (count, bytes)
+    }
+
     /// Trim to `max_bytes`, evicting oldest-modified entries first.
     fn trim(&self) {
         let Ok(entries) = fs::read_dir(&self.dir) else {

@@ -124,14 +124,17 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
          data_ptr: u32,
          data_len: u32,
          max_w: u32,
-         max_h: u32|
+         max_h: u32,
+         identity_ptr: u32,
+         identity_len: u32|
          -> u32 {
-            let Some(tag) = read_tag(&caller, tag_ptr, tag_len) else {
+            let Some(raw_tag) = read_tag(&caller, tag_ptr, tag_len) else {
                 return 0;
             };
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
                 return 0;
             };
+            let identity = read_bytes(&caller, identity_ptr, identity_len).unwrap_or_default();
             let state = caller.data_mut();
             if state.in_flight_image_decodes as usize >= state.resource_limits.max_image_decodes {
                 tracing::warn!(
@@ -140,7 +143,7 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
                 );
                 return 0;
             }
-            let tag = state.namespaced_tag(&tag);
+            let tag = state.namespaced_tag(&raw_tag);
             let job_id = ImageJobId::alloc(&mut state.next_image_job_id);
             state.in_flight_image_decodes += 1;
             let tx = state.image_decode_tx.clone();
@@ -151,6 +154,8 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
                 let _ = tx.send(CompletedImageDecode {
                     job_id,
                     tag,
+                    raw_tag,
+                    identity,
                     result,
                     decode_us,
                 });

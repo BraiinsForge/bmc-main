@@ -86,16 +86,20 @@ define_slot! {
 }
 
 impl BitmapSlot {
-    /// Decode `data` to fit `max_w`×`max_h` off the render thread; `on_ready` fires when it replaces the slot's bitmap.
+    /// Decode `data` to fit `max_w`×`max_h` off the render thread;
+    /// `on_ready` fires when it replaces the slot's bitmap.
+    /// `identity` is recorded in the per-instance asset cache
+    /// so the host can restore the bitmap on wake.
     #[must_use]
     pub fn set_fit(
         &self,
         data: &[u8],
         max_w: u32,
         max_h: u32,
+        identity: &[u8],
         on_ready: ImageReadyCallback,
     ) -> Option<ImageJobId> {
-        let job_id = host::register_bitmap_fit(self.name, data, max_w, max_h)?;
+        let job_id = host::register_bitmap_fit(self.name, data, max_w, max_h, identity)?;
         let idx = register_image_callback(on_ready);
         IMAGE_PENDING.with(|p| p.borrow_mut().insert(job_id, idx));
         Some(job_id)
