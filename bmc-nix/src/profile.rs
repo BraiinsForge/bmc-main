@@ -7,6 +7,7 @@ use tracing::info;
 
 use crate::types::{ProfileGeneration, ResolvedPackage};
 
+mod collisions;
 mod union;
 
 /// Errors that can occur when building or managing profiles.
@@ -553,6 +554,126 @@ mod tests {
                 panic!("expected Conflict error, got: {other}")
             }
         }
+    }
+
+    #[tokio::test]
+    async fn build_symlink_tree_allows_dir_path_collision() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        let store_a = tmp.path().join("store-a");
+        create_fake_store(&store_a, &["share/doc/README"]);
+        let store_b = tmp.path().join("store-b");
+        create_fake_store(&store_b, &["share/doc/README"]);
+
+        let packages = vec![
+            test_resolved_package("pkg-a", store_a.to_str().expect("BUG: valid UTF-8")),
+            test_resolved_package("pkg-b", store_b.to_str().expect("BUG: valid UTF-8")),
+        ];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
+
+        build_symlink_tree(&output_dir, &packages)
+            .await
+            .expect("BUG: allowlisted collision should not error");
+
+        let readme = output_dir.join("share/doc/README");
+        assert!(readme.is_symlink(), "share/doc/README should be a symlink");
+        assert_eq!(
+            std::fs::read_link(&readme).expect("BUG: should read symlink"),
+            store_a.join("share/doc/README"),
+            "first package's symlink should win",
+        );
+    }
+
+    #[tokio::test]
+    async fn build_symlink_tree_allows_dir_name_collision() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        let store_a = tmp.path().join("store-a");
+        create_fake_store(&store_a, &["lib/foo/__pycache__/m.pyc"]);
+        let store_b = tmp.path().join("store-b");
+        create_fake_store(&store_b, &["lib/foo/__pycache__/m.pyc"]);
+
+        let packages = vec![
+            test_resolved_package("pkg-a", store_a.to_str().expect("BUG: valid UTF-8")),
+            test_resolved_package("pkg-b", store_b.to_str().expect("BUG: valid UTF-8")),
+        ];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
+
+        build_symlink_tree(&output_dir, &packages)
+            .await
+            .expect("BUG: allowlisted collision should not error");
+
+        let target = output_dir.join("lib/foo/__pycache__/m.pyc");
+        assert!(target.is_symlink(), "m.pyc should be a symlink");
+        assert_eq!(
+            std::fs::read_link(&target).expect("BUG: should read symlink"),
+            store_a.join("lib/foo/__pycache__/m.pyc"),
+            "first package's symlink should win",
+        );
+    }
+
+    #[tokio::test]
+    async fn build_symlink_tree_allows_file_path_collision() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        let store_a = tmp.path().join("store-a");
+        create_fake_store(&store_a, &["share/applications/mimeinfo.cache"]);
+        let store_b = tmp.path().join("store-b");
+        create_fake_store(&store_b, &["share/applications/mimeinfo.cache"]);
+
+        let packages = vec![
+            test_resolved_package("pkg-a", store_a.to_str().expect("BUG: valid UTF-8")),
+            test_resolved_package("pkg-b", store_b.to_str().expect("BUG: valid UTF-8")),
+        ];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
+
+        build_symlink_tree(&output_dir, &packages)
+            .await
+            .expect("BUG: allowlisted collision should not error");
+
+        let target = output_dir.join("share/applications/mimeinfo.cache");
+        assert!(target.is_symlink(), "mimeinfo.cache should be a symlink");
+        assert_eq!(
+            std::fs::read_link(&target).expect("BUG: should read symlink"),
+            store_a.join("share/applications/mimeinfo.cache"),
+            "first package's symlink should win",
+        );
+    }
+
+    #[tokio::test]
+    async fn build_symlink_tree_allows_file_name_collision() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        let store_a = tmp.path().join("store-a");
+        create_fake_store(&store_a, &["share/icons/hicolor/icon-theme.cache"]);
+        let store_b = tmp.path().join("store-b");
+        create_fake_store(&store_b, &["share/icons/hicolor/icon-theme.cache"]);
+
+        let packages = vec![
+            test_resolved_package("pkg-a", store_a.to_str().expect("BUG: valid UTF-8")),
+            test_resolved_package("pkg-b", store_b.to_str().expect("BUG: valid UTF-8")),
+        ];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
+
+        build_symlink_tree(&output_dir, &packages)
+            .await
+            .expect("BUG: allowlisted collision should not error");
+
+        let cache = output_dir.join("share/icons/hicolor/icon-theme.cache");
+        assert!(cache.is_symlink(), "cache file should be a symlink");
+        assert_eq!(
+            std::fs::read_link(&cache).expect("BUG: should read symlink"),
+            store_a.join("share/icons/hicolor/icon-theme.cache"),
+            "first package's symlink should win",
+        );
     }
 
     #[tokio::test]

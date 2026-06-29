@@ -4,6 +4,9 @@ use std::collections::BTreeMap;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 
+use tracing::warn;
+
+use super::collisions;
 use crate::profile::BuildProfileError;
 use crate::types::ResolvedPackage;
 
@@ -117,6 +120,7 @@ fn resolve_node<'a>(
                 .next()
                 .expect("BUG: one provider should exist"),
         )),
+        (2.., 0) if collisions::allowed(rel_path) => Ok(allow_leaf_collision(rel_path, &providers)),
         (0, 1) => Ok(UnionNode::LinkableDirectory(
             providers
                 .into_iter()
@@ -126,6 +130,22 @@ fn resolve_node<'a>(
         (0, _) => Ok(UnionNode::MergedDirectory(providers)),
         _ => conflict(rel_path, &providers),
     }
+}
+
+fn allow_leaf_collision<'a>(rel_path: &Path, providers: &[Provider<'a>]) -> UnionNode<'a> {
+    let (winner, dropped) = providers
+        .split_first()
+        .expect("BUG: allowed collision requires at least one provider");
+    for provider in dropped {
+        warn!(
+            path = %rel_path.display(),
+            pkg_a = %winner.package.name,
+            pkg_b = %provider.package.name,
+            "allowed symlink collision: keeping first provider"
+        );
+    }
+
+    UnionNode::Leaf(winner.clone())
 }
 
 fn conflict<'a>(
