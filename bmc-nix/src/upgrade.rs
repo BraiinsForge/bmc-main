@@ -43,6 +43,22 @@ pub enum UpgradePhase {
     Cleaning,
 }
 
+impl UpgradePhase {
+    /// Stable lowercase name used in progress output. The `match` is
+    /// exhaustive with no wildcard so a new variant fails to compile
+    /// until it is given a name here.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UpgradePhase::Realizing => "realizing",
+            UpgradePhase::Verifying => "verifying",
+            UpgradePhase::Building => "building",
+            UpgradePhase::Activating => "activating",
+            UpgradePhase::Cleaning => "cleaning",
+        }
+    }
+}
+
 /// Progress callback for upgrade phases and store-path realization.
 pub trait UpgradeProgress: Send + Sync {
     fn on_phase(&self, phase: UpgradePhase);
@@ -344,6 +360,15 @@ mod tests {
             phases.contains(&UpgradePhase::Building),
             "build phase must follow verification, got {phases:?}"
         );
+    }
+
+    #[test]
+    fn upgrade_phase_as_str_covers_every_variant() {
+        assert_eq!(UpgradePhase::Realizing.as_str(), "realizing");
+        assert_eq!(UpgradePhase::Verifying.as_str(), "verifying");
+        assert_eq!(UpgradePhase::Building.as_str(), "building");
+        assert_eq!(UpgradePhase::Activating.as_str(), "activating");
+        assert_eq!(UpgradePhase::Cleaning.as_str(), "cleaning");
     }
 
     #[test]
