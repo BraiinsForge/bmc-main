@@ -194,6 +194,7 @@ cbc = { version = "0.1.2", default-features = false }
 chrono = { version = "0.4.40", features = ["serde"] }
 chrono-tz = { version = "0.10.3", default-features = false }
 clap = { version = "4.5.37", features = ["derive", "std"] }
+cognos = "1.0.1"
 cosmic-text = { version = "0.18", default-features = false, features = ["std", "swash"] }
 croner = "3.0.0"
 data-encoding = "2.6.0"

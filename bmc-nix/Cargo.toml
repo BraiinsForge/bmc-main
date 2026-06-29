@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
+cognos.workspace = true
 file-rotate.workspace = true
 futures.workspace = true
 libc.workspace = true
