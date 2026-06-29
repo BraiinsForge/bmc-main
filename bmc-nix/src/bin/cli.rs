@@ -69,10 +69,24 @@ fn print_profile_diff(result: &InstallResult) {
     }
 }
 
+/// Output format for realization progress (on stderr).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum LogFormat {
+    /// Throttled, human-readable lines.
+    #[default]
+    Human,
+    /// Line-delimited JSON, one object per event, each prefixed `@bmc `.
+    InternalJson,
+}
+
 /// Top-level CLI for bmc-nix profile management.
 #[derive(Debug, Parser)]
 #[command(name = "bmc-nix-cli")]
 struct Cli {
+    /// Progress output format on stderr (stdout is unchanged).
+    #[arg(long, global = true, default_value_t = LogFormat::Human, value_enum)]
+    log_format: LogFormat,
+
     #[command(subcommand)]
     command: Commands,
 }
