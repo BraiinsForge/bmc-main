@@ -52,9 +52,12 @@ start_service() {
     procd_open_instance
     procd_set_param command /bin/sh -c \
         "exec $LAUNCHER $BMC_BIN $WIDGETS_ARGS $EXTRA_ARGS $WWW_ARGS >>$BMC_LOG 2>&1"
+    # BMC_WIDGET_GC_PERIOD_SECS shortens the widget asset-cache GC cadence from
+    # the 30-min default so the GC is observable within a VM session (#BDK-546).
     procd_set_param env \
         RUST_BACKTRACE=full \
         RUST_LOG=debug \
+        BMC_WIDGET_GC_PERIOD_SECS=120 \
         BMC_WIFI_SYSPATH=/sys/devices/virtual/mac80211_hwsim/hwsim0/ \
         XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR_EFF"
     procd_set_param file "$BMC_CONFIG"
