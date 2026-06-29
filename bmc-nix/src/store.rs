@@ -519,7 +519,7 @@ mod tests {
     use std::os::unix::process::ExitStatusExt;
 
     use super::*;
-    use crate::types::{InstalledBy, PinStrategy};
+    use crate::types::InstalledBy;
 
     /// Exit outcome the mock reports for a `--realise` invocation.
     #[derive(Clone, Copy)]
@@ -653,7 +653,7 @@ mod tests {
             install_strategy: None,
             installed_by: InstalledBy::System,
             installed_from: "local".into(),
-            pinned: PinStrategy::None,
+            pinned: None,
         }
     }
 

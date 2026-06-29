@@ -272,7 +272,7 @@ async fn cmd_add_packages(
             install_strategy: None,
             installed_by: bmc_nix::types::InstalledBy::User,
             installed_from: "local".into(),
-            pinned: bmc_nix::types::PinStrategy::None,
+            pinned: None,
         })
         .collect();
 

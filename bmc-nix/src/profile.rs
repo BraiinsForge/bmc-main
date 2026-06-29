@@ -423,7 +423,7 @@ mod tests {
     use serial_test::serial;
 
     use super::*;
-    use crate::types::{InstalledBy, Manifest, PinStrategy};
+    use crate::types::{InstalledBy, Manifest};
 
     fn test_resolved_package(name: &str, store_path: &str) -> ResolvedPackage {
         ResolvedPackage {
@@ -436,7 +436,7 @@ mod tests {
             install_strategy: None,
             installed_by: InstalledBy::System,
             installed_from: "local".into(),
-            pinned: PinStrategy::None,
+            pinned: None,
         }
     }
 
