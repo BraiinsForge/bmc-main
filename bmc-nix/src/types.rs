@@ -18,10 +18,6 @@ where
     Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
-fn default_cache_name() -> String {
-    "local".into()
-}
-
 /// Which existing generation the caller wants to diff the new
 /// generation against.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,15 +133,6 @@ pub struct ResolvedPackage {
     pub name: String,
     pub version: String,
     pub store_path: String,
-    /// URL of the binary cache to fetch this package from.
-    /// `None` when the store path is already present locally (e.g. kept
-    /// packages from the manifest or local dev builds).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_url: Option<String>,
-    /// Name of the binary cache this package was resolved from.
-    /// Set to `"local"` for packages resolved from a local index.
-    #[serde(default = "default_cache_name")]
-    pub cache_name: String,
     #[serde(default)]
     pub category: Option<String>,
     #[serde(default)]
@@ -174,11 +161,12 @@ pub struct Manifest {
     pub packages: BTreeMap<String, ManifestPackage>,
 }
 
-/// Per-package manifest entry
+/// Per-package manifest entry.
+///
+/// Cache metadata is not persisted here — it lives only in `PackageIndex`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestPackage {
     pub version: String,
-    pub cache: String,
     pub store_path: String,
     #[serde(default)]
     pub category: Option<String>,
@@ -350,7 +338,6 @@ mod tests {
                 "test-pkg".into(),
                 ManifestPackage {
                     version: "1.0.0".into(),
-                    cache: "local".into(),
                     store_path: "/nix/store/abc-test-pkg-1.0.0".into(),
                     category: Some("core".into()),
                     description: Some("Test".into()),
@@ -538,8 +525,6 @@ mod tests {
                 name: "a".into(),
                 version: "1.0.0".into(),
                 store_path: "/nix/store/a".into(),
-                cache_url: None,
-                cache_name: String::new(),
                 category: None,
                 description: None,
                 upgrade_strategy: Some(UpgradeStrategy::Reboot),
@@ -552,8 +537,6 @@ mod tests {
                 name: "b".into(),
                 version: "1.0.0".into(),
                 store_path: "/nix/store/b".into(),
-                cache_url: None,
-                cache_name: String::new(),
                 category: None,
                 description: None,
                 upgrade_strategy: Some(UpgradeStrategy::Reboot),

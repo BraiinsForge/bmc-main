@@ -410,13 +410,11 @@ mod tests {
         }
     }
 
-    fn test_resolved(name: &str, store_path: &str, cache_url: Option<&str>) -> ResolvedPackage {
+    fn test_resolved(name: &str, store_path: &str) -> ResolvedPackage {
         ResolvedPackage {
             name: name.into(),
             version: "1.0.0".into(),
             store_path: store_path.into(),
-            cache_url: cache_url.map(String::from),
-            cache_name: "local".into(),
             category: None,
             description: None,
             upgrade_strategy: None,
@@ -431,8 +429,8 @@ mod tests {
     async fn verify_store_paths_all_present_succeeds() {
         let runner = MockCommandRunner::new(vec!["/nix/store/a".into(), "/nix/store/b".into()]);
         let packages = vec![
-            test_resolved("a", "/nix/store/a", None),
-            test_resolved("b", "/nix/store/b", None),
+            test_resolved("a", "/nix/store/a"),
+            test_resolved("b", "/nix/store/b"),
         ];
         verify_store_paths(&runner, &packages)
             .await
@@ -443,8 +441,8 @@ mod tests {
     async fn verify_store_paths_missing_returns_error() {
         let runner = MockCommandRunner::new(vec!["/nix/store/a".into()]);
         let packages = vec![
-            test_resolved("a", "/nix/store/a", None),
-            test_resolved("b", "/nix/store/b", None),
+            test_resolved("a", "/nix/store/a"),
+            test_resolved("b", "/nix/store/b"),
         ];
         let err = verify_store_paths(&runner, &packages)
             .await
@@ -461,8 +459,8 @@ mod tests {
         let missing_path = "/nix/store/bbb-weather-widget";
         let runner = MockCommandRunner::new(vec![cli_path.into()]);
         let packages = vec![
-            test_resolved("bmc-nix-cli", cli_path, None),
-            test_resolved("weather-widget", missing_path, None),
+            test_resolved("bmc-nix-cli", cli_path),
+            test_resolved("weather-widget", missing_path),
         ];
 
         let err = verify_store_paths(&runner, &packages)
@@ -489,7 +487,7 @@ mod tests {
     #[tokio::test]
     async fn validity_check_uses_nix_store_without_nix_command_feature() {
         let runner = MockCommandRunner::new(vec!["/nix/store/a".into()]);
-        let packages = vec![test_resolved("a", "/nix/store/a", None)];
+        let packages = vec![test_resolved("a", "/nix/store/a")];
         verify_store_paths(&runner, &packages)
             .await
             .expect("BUG: path present, should succeed");
@@ -555,9 +553,9 @@ mod tests {
     async fn realize_store_paths_uses_single_nix_store_realise_invocation() {
         let runner = MockCommandRunner::new(vec![]);
         let packages = vec![
-            test_resolved("b", "/nix/store/b", None),
-            test_resolved("a", "/nix/store/a", None),
-            test_resolved("a-dup", "/nix/store/a", None),
+            test_resolved("b", "/nix/store/b"),
+            test_resolved("a", "/nix/store/a"),
+            test_resolved("a-dup", "/nix/store/a"),
         ];
         realize_store_paths(&runner, &packages, None)
             .await

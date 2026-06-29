@@ -79,7 +79,8 @@ pub enum PlanConflict {
 /// Build a [`Manifest`] from a slice of resolved packages.
 ///
 /// Each [`ResolvedPackage`] is converted into a [`ManifestPackage`] and keyed
-/// by its name. The `cache` field is taken from `ResolvedPackage::cache_name`.
+/// by its name. Cache metadata is not persisted — it lives only in the
+/// package index.
 #[must_use]
 pub fn build_manifest(packages: &[ResolvedPackage]) -> Manifest {
     let packages = packages
@@ -87,7 +88,6 @@ pub fn build_manifest(packages: &[ResolvedPackage]) -> Manifest {
         .map(|pkg| {
             let entry = ManifestPackage {
                 version: pkg.version.clone(),
-                cache: pkg.cache_name.clone(),
                 store_path: pkg.store_path.clone(),
                 category: pkg.category.clone(),
                 description: pkg.description.clone(),
@@ -194,17 +194,15 @@ pub fn read_manifest_by_selector(
 
 /// Convert a manifest package back to a resolved package.
 ///
-/// This is lossy — `ManifestPackage` does not store `cache_url`, only
-/// `cache` (name). The `cache_url` is set to `None`. The store path
-/// is expected to already be present locally.
+/// Manifests do not persist cache metadata. The store path is expected
+/// to already be present locally and will be realised through configured
+/// Nix substituters if needed.
 #[must_use]
 pub fn manifest_package_to_resolved(name: &str, mp: &ManifestPackage) -> ResolvedPackage {
     ResolvedPackage {
         name: name.to_owned(),
         version: mp.version.clone(),
         store_path: mp.store_path.clone(),
-        cache_url: None,
-        cache_name: mp.cache.clone(),
         category: mp.category.clone(),
         description: mp.description.clone(),
         upgrade_strategy: mp.upgrade_strategy.clone(),
@@ -344,8 +342,6 @@ mod tests {
             name: name.into(),
             version: "1.0.0".into(),
             store_path: store_path.into(),
-            cache_url: Some("https://cache.example.com".into()),
-            cache_name: "local".into(),
             category: None,
             description: None,
             upgrade_strategy: None,
@@ -363,7 +359,6 @@ mod tests {
     ) -> ManifestPackage {
         ManifestPackage {
             version: version.into(),
-            cache: "default".into(),
             store_path: format!("/nix/store/hash-pkg-{version}"),
             category: None,
             description: None,
@@ -410,30 +405,16 @@ mod tests {
     }
 
     #[test]
-    fn build_manifest_uses_local_cache() {
-        let packages = vec![test_package("some-pkg", "/nix/store/xyz-some-pkg-1.0.0")];
-
-        let manifest = build_manifest(&packages);
-        let pkg = manifest
-            .packages
-            .get("some-pkg")
-            .expect("BUG: some-pkg should be present in manifest");
-
-        assert_eq!(pkg.cache, "local");
-    }
-
-    #[test]
-    fn build_manifest_uses_cache_name_from_resolved() {
-        let mut pkg = test_package("some-pkg", "/nix/store/xyz-some-pkg-1.0.0");
-        pkg.cache_name = "my-cache".into();
-
+    fn build_manifest_does_not_persist_cache_metadata() {
+        let pkg = test_package("some-pkg", "/nix/store/xyz-some-pkg-1.0.0");
         let manifest = build_manifest(&[pkg]);
         let entry = manifest
             .packages
             .get("some-pkg")
             .expect("BUG: some-pkg should be present");
 
-        assert_eq!(entry.cache, "my-cache");
+        assert_eq!(entry.store_path, "/nix/store/xyz-some-pkg-1.0.0");
+        assert_eq!(entry.installed_from, "local");
     }
 
     #[test]
@@ -701,7 +682,6 @@ mod tests {
                 "widget".into(),
                 ManifestPackage {
                     version: "1.0.0".into(),
-                    cache: "default".into(),
                     store_path: "/nix/store/aaa-widget-1.0.0".into(),
                     category: None,
                     description: None,

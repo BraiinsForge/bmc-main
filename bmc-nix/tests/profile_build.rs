@@ -117,8 +117,7 @@ async fn full_profile_build() {
     };
 
     // Resolve packages
-    let packages =
-        bmc_nix::index::resolve_all_from_index(&index).expect("BUG: resolve should succeed");
+    let packages = bmc_nix::index::resolve_all_from_index(&index);
     assert_eq!(packages.len(), 2);
 
     // Profile dir

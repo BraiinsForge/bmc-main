@@ -430,8 +430,6 @@ mod tests {
             name: name.into(),
             version: "1.0.0".into(),
             store_path: store_path.into(),
-            cache_url: Some("https://cache.example.com".into()),
-            cache_name: "local".into(),
             category: None,
             description: None,
             upgrade_strategy: None,
