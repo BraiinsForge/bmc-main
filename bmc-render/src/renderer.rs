@@ -11,7 +11,7 @@ use bmc_wasm_protocol::{
 };
 
 use crate::gpu::mesh::MeshDrawArgs;
-use crate::tree::{SpanData, TextStyle};
+use crate::tree::{AutoFit, SpanData, TextStyle};
 
 /// Base clear policy for a render frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,6 +236,23 @@ pub trait Renderer {
     /// Alignment is handled by the caller via `TextStyle.align`:
     /// Left = text starts at x, Center = centered on x, Right = text ends at x.
     fn draw_canvas_text(&mut self, text: &str, x: f32, y: f32, style: &TextStyle);
+
+    /// Draw `text` scaled to fit the `(box_width, box_height)` rectangle whose
+    /// top-left is `(x, y)`. The font size is searched per `mode` within
+    /// `[min_size, max_size]` (0 = use defaults: floor 12 / bounded by box).
+    #[expect(clippy::too_many_arguments)]
+    fn draw_autofit_text(
+        &mut self,
+        x: f32,
+        y: f32,
+        box_width: f32,
+        box_height: f32,
+        text: &str,
+        style: &TextStyle,
+        mode: AutoFit,
+        min_size: u16,
+        max_size: u16,
+    );
 
     /// Draw styled text with glyph centers placed on a circular arc.
     #[expect(clippy::too_many_arguments)]

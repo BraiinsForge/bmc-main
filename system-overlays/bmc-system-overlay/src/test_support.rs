@@ -5,7 +5,7 @@
 use bmc_render::colors::Color;
 use bmc_render::gpu::mesh::MeshDrawArgs;
 use bmc_render::renderer::Renderer;
-use bmc_render::tree::{SpanData, TextStyle};
+use bmc_render::tree::{AutoFit, SpanData, TextStyle};
 use bmc_wasm_protocol::{
     ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
 };
@@ -215,6 +215,20 @@ impl Renderer for TestRenderer {
     }
 
     fn draw_canvas_text(&mut self, _text: &str, _x: f32, _y: f32, _style: &TextStyle) {}
+
+    fn draw_autofit_text(
+        &mut self,
+        _x: f32,
+        _y: f32,
+        _box_width: f32,
+        _box_height: f32,
+        _text: &str,
+        _style: &TextStyle,
+        _mode: AutoFit,
+        _min_size: u16,
+        _max_size: u16,
+    ) {
+    }
 
     fn draw_curved_text(
         &mut self,

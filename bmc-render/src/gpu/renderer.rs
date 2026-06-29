@@ -25,9 +25,11 @@ use super::curved_text::arc_glyph_layout;
 use super::mesh::{MeshDrawArgs, MeshRenderer};
 use super::sphere::SphereRenderer;
 use super::svg::SvgRegistry;
-use super::text::{Fonts, ParagraphLayoutCache, WeightedFonts, to_femtovg_color};
+use super::text::{
+    Fonts, ParagraphLayoutCache, WeightedFonts, autofit_bounds, search_fit_size, to_femtovg_color,
+};
 use crate::renderer::{FrameClear, Renderer};
-use crate::tree::{SpanData, TextAlign, TextStyle, VerticalAlign};
+use crate::tree::{AutoFit, SpanData, TextAlign, TextStyle, VerticalAlign};
 
 // Embed BraiinsSans fonts at compile time from the top-level assets directory.
 const FONT_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/BraiinsSans-Regular.otf");
@@ -729,6 +731,66 @@ impl Renderer for FemtoVgRenderer {
             let _ = self.canvas.fill_text(-width / 2.0, 0.0, glyph, &paint);
             self.canvas.restore();
         }
+    }
+
+    fn draw_autofit_text(
+        &mut self,
+        x: f32,
+        y: f32,
+        box_width: f32,
+        box_height: f32,
+        text: &str,
+        style: &TextStyle,
+        mode: AutoFit,
+        min_size: u16,
+        max_size: u16,
+    ) {
+        if text.is_empty() || box_width <= 0.0 || box_height <= 0.0 {
+            return;
+        }
+        let spans = [SpanData {
+            text: text.to_string(),
+            weight: None,
+            color: None,
+            italic: false,
+            underline: false,
+            strikethrough: false,
+        }];
+
+        let (lower, upper) = autofit_bounds(
+            style.size,
+            u32::from(min_size),
+            u32::from(max_size),
+            mode,
+            Some(box_height),
+            style.line_height,
+        );
+        let fitted = search_fit_size(lower, upper, Some(box_width), Some(box_height), |size| {
+            let probe = TextStyle { size, ..*style };
+            self.paragraph_cache
+                .measure(&mut self.font_system, &probe, &spans, Some(box_width))
+        });
+
+        let sized = TextStyle {
+            size: fitted,
+            ..*style
+        };
+        let (_, block_h) =
+            self.paragraph_cache
+                .measure(&mut self.font_system, &sized, &spans, Some(box_width));
+        // Vertically center the fitted block within the box (never above the top).
+        let draw_y = y + ((box_height - block_h) / 2.0).max(0.0);
+
+        self.paragraph_cache.draw(
+            &mut self.font_system,
+            &mut self.canvas,
+            self.fonts,
+            &sized,
+            &spans,
+            x,
+            draw_y,
+            box_width,
+        );
     }
 
     // -- Rich text paragraphs --

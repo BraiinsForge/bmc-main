@@ -1213,7 +1213,7 @@ mod tests {
 
     use super::*;
     use crate::TransitionStateKey;
-    use crate::tree::SpanData;
+    use crate::tree::{AutoFit, SpanData};
 
     #[derive(Debug)]
     enum RenderEvent {
@@ -1241,6 +1241,18 @@ mod tests {
             facing: ArcTextFacing,
             text: String,
             style: TextStyle,
+        },
+        #[expect(dead_code)]
+        AutofitText {
+            x: f32,
+            y: f32,
+            box_width: f32,
+            box_height: f32,
+            text: String,
+            size: u32,
+            mode: AutoFit,
+            min_size: u16,
+            max_size: u16,
         },
     }
 
@@ -1489,6 +1501,31 @@ mod tests {
                 facing,
                 text: text.to_owned(),
                 style: *style,
+            });
+        }
+
+        fn draw_autofit_text(
+            &mut self,
+            x: f32,
+            y: f32,
+            box_width: f32,
+            box_height: f32,
+            text: &str,
+            style: &TextStyle,
+            mode: AutoFit,
+            min_size: u16,
+            max_size: u16,
+        ) {
+            self.events.push(RenderEvent::AutofitText {
+                x,
+                y,
+                box_width,
+                box_height,
+                text: text.to_string(),
+                size: style.size,
+                mode,
+                min_size,
+                max_size,
             });
         }
 

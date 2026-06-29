@@ -424,8 +424,9 @@ fn segment_width(canvas: &mut Canvas<OpenGl>, fonts: Fonts, text: &str, style: &
 pub(crate) const DEFAULT_MIN_AUTOFIT: u32 = 12;
 
 /// Inclusive `[lower, upper]` font-size search range for an autofit command.
-/// `target_height` bounds growth when `max_size` is unset (a line at size S is
-/// ≥ S px tall, so a fitting size never exceeds the target height). Pure.
+/// `target_height` bounds growth when `max_size` is unset: a line at size S is
+/// `S * line_height` px tall, so a fitting size never exceeds
+/// `target_height / line_height`. Pure.
 ///
 /// `pub(crate)` so the GPU renderer (sibling `gpu::renderer` module) can call it.
 pub(crate) fn autofit_bounds(
@@ -434,6 +435,7 @@ pub(crate) fn autofit_bounds(
     max_size: u32,
     mode: AutoFit,
     target_height: Option<f32>,
+    line_height: f32,
 ) -> (u32, u32) {
     let floor_default = if min_size > 0 {
         min_size
@@ -451,12 +453,19 @@ pub(crate) fn autofit_bounds(
                 max_size
             } else {
                 target_height.map_or(size, |h| {
+                    // A line at size S is `S * line_height` px tall, so the
+                    // tallest size that can fit is `h / line_height`. Guard a
+                    // non-positive line_height (degenerate) by falling back to
+                    // `size`, which never grows the text.
+                    if line_height <= 0.0 {
+                        return size;
+                    }
                     #[expect(
                         clippy::cast_possible_truncation,
                         clippy::cast_sign_loss,
                         reason = "box height is small, finite and non-negative"
                     )]
-                    let cap = h.floor() as u32;
+                    let cap = (h / line_height).floor() as u32;
                     cap
                 })
             }
@@ -540,47 +549,79 @@ mod autofit_tests {
     #[test]
     fn shrink_bounds_are_floor_to_size() {
         assert_eq!(
-            autofit_bounds(40, 14, 0, AutoFit::Shrink, Some(100.0)),
+            autofit_bounds(40, 14, 0, AutoFit::Shrink, Some(100.0), 1.4),
             (14, 40)
         );
     }
     #[test]
     fn shrink_without_min_uses_default_floor() {
         assert_eq!(
-            autofit_bounds(40, 0, 0, AutoFit::Shrink, Some(100.0)),
+            autofit_bounds(40, 0, 0, AutoFit::Shrink, Some(100.0), 1.4),
             (DEFAULT_MIN_AUTOFIT, 40)
         );
     }
     #[test]
     fn grow_bounds_are_size_to_max() {
         assert_eq!(
-            autofit_bounds(24, 0, 64, AutoFit::Grow, Some(100.0)),
+            autofit_bounds(24, 0, 64, AutoFit::Grow, Some(100.0), 1.4),
             (24, 64)
         );
     }
     #[test]
     fn grow_without_max_uses_box_height_ceiling() {
+        // At line_height 1.0 the ceiling is the box height itself.
         assert_eq!(
-            autofit_bounds(24, 0, 0, AutoFit::Grow, Some(80.7)),
+            autofit_bounds(24, 0, 0, AutoFit::Grow, Some(80.7), 1.0),
             (24, 80)
         );
     }
     #[test]
+    fn grow_ceiling_accounts_for_line_height() {
+        // A line at size S is `S * line_height` px tall, so a sub-unit
+        // line_height lets the fitting size exceed the raw box height:
+        // 80 / 0.8 = 100. A >= 1.0 line_height caps below it: 80 / 1.4 = 57.
+        assert_eq!(
+            autofit_bounds(24, 0, 0, AutoFit::Grow, Some(80.0), 0.8),
+            (24, 100)
+        );
+        assert_eq!(
+            autofit_bounds(24, 0, 0, AutoFit::Grow, Some(80.0), 1.4),
+            (24, 57)
+        );
+    }
+    #[test]
+    fn grow_ceiling_guards_non_positive_line_height() {
+        // A degenerate line_height must not divide by zero or grow the text.
+        assert_eq!(
+            autofit_bounds(24, 0, 0, AutoFit::Grow, Some(80.0), 0.0),
+            (24, 24)
+        );
+    }
+    #[test]
     fn grow_without_max_and_without_height_cannot_grow() {
-        assert_eq!(autofit_bounds(24, 0, 0, AutoFit::Grow, None), (24, 24));
+        assert_eq!(autofit_bounds(24, 0, 0, AutoFit::Grow, None, 1.4), (24, 24));
     }
     #[test]
     fn shrink_and_grow_spans_min_to_max() {
         assert_eq!(
-            autofit_bounds(999, 14, 64, AutoFit::ShrinkAndGrow, Some(100.0)),
+            autofit_bounds(999, 14, 64, AutoFit::ShrinkAndGrow, Some(100.0), 1.4),
             (14, 64)
         );
     }
     #[test]
     fn bounds_clamp_when_min_exceeds_max() {
-        let (lo, hi) = autofit_bounds(40, 80, 20, AutoFit::ShrinkAndGrow, Some(100.0));
+        let (lo, hi) = autofit_bounds(40, 80, 20, AutoFit::ShrinkAndGrow, Some(100.0), 1.4);
         assert!(lo <= hi);
         assert_eq!((lo, hi), (80, 80));
+    }
+    #[test]
+    fn shrink_below_default_floor_does_not_grow() {
+        // size 10 is below DEFAULT_MIN_AUTOFIT (12); a shrink-only search must
+        // not be clamped up to the floor and enlarge the text.
+        assert_eq!(
+            autofit_bounds(10, 0, 0, AutoFit::Shrink, Some(100.0), 1.4),
+            (10, 10)
+        );
     }
 
     // ── search_fit_size ─────────────────────────────────────────────
