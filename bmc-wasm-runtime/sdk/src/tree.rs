@@ -19,13 +19,13 @@ use std::string::String;
 use std::vec::Vec;
 
 use bmc_wasm_protocol::{
-    AnimProperty, ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Color,
-    ColorSpace, DRAW_ARC, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE, DRAW_CURVED_TEXT, DRAW_ICON,
-    DRAW_MESH, DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH, DRAW_RECT, DRAW_ROTATED,
-    DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Easing, Fill, LoopMode, MeshId,
-    NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL, NODE_NOTIFICATION,
-    NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL, NODE_SPACER, PathPaint, SvgId,
-    encode_arc_cap, encode_arc_fill, encode_arc_segments, encode_fill,
+    AnimProperty, ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, AutoFit, BitmapId, Color,
+    ColorSpace, DRAW_ARC, DRAW_AUTOFIT_TEXT, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE,
+    DRAW_CURVED_TEXT, DRAW_ICON, DRAW_MESH, DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH,
+    DRAW_RECT, DRAW_ROTATED, DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Easing,
+    Fill, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL,
+    NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL, NODE_SPACER,
+    PathPaint, SvgId, encode_arc_cap, encode_arc_fill, encode_arc_segments, encode_fill,
 };
 
 use crate::PropsFieldValue;
@@ -535,6 +535,18 @@ pub enum Draw {
         text: String,
         style: TextStyle,
     },
+    /// Text scaled to fit an explicit `(box_width, box_height)` rectangle.
+    AutofitText {
+        x: f32,
+        y: f32,
+        box_width: f32,
+        box_height: f32,
+        mode: AutoFit,
+        min_size: u16,
+        max_size: u16,
+        text: String,
+        style: TextStyle,
+    },
     /// 9-patch bitmap: sliced into 9 quads, corners stay fixed, edges stretch.
     NinePatch {
         x: f32,
@@ -1022,6 +1034,56 @@ impl Draw {
             angle,
             anchor,
             facing,
+            text: content.into(),
+            style: style.into(),
+        }
+    }
+
+    /// Autofit text that only shrinks to fit (floor 12 px, no growth).
+    #[must_use]
+    pub fn autofit_text(
+        x: f32,
+        y: f32,
+        box_width: f32,
+        box_height: f32,
+        content: impl Into<String>,
+        style: impl Into<TextStyle>,
+    ) -> Self {
+        Self::autofit_text_ranged(
+            x,
+            y,
+            box_width,
+            box_height,
+            content,
+            style,
+            AutoFit::Shrink,
+            0,
+            0,
+        )
+    }
+
+    /// Autofit text with explicit mode and size bounds (`0` = default floor / box-bounded).
+    #[must_use]
+    #[expect(clippy::too_many_arguments)]
+    pub fn autofit_text_ranged(
+        x: f32,
+        y: f32,
+        box_width: f32,
+        box_height: f32,
+        content: impl Into<String>,
+        style: impl Into<TextStyle>,
+        mode: AutoFit,
+        min_size: u16,
+        max_size: u16,
+    ) -> Self {
+        Self::AutofitText {
+            x,
+            y,
+            box_width,
+            box_height,
+            mode,
+            min_size,
+            max_size,
             text: content.into(),
             style: style.into(),
         }
@@ -1909,6 +1971,32 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_u16(len);
             buf.write_bytes(bytes);
         }
+        Draw::AutofitText {
+            x,
+            y,
+            box_width,
+            box_height,
+            mode,
+            min_size,
+            max_size,
+            text,
+            style,
+        } => {
+            buf.write_u8(DRAW_AUTOFIT_TEXT);
+            buf.write_f32(*x);
+            buf.write_f32(*y);
+            buf.write_f32(*box_width);
+            buf.write_f32(*box_height);
+            buf.write_u8(*mode as u8);
+            buf.write_u16(*min_size);
+            buf.write_u16(*max_size);
+            buf.write_bytes(&style.to_bytes());
+            let bytes = text.as_bytes();
+            let len = u16::try_from(bytes.len())
+                .expect("BUG: Draw::AutofitText text exceeds u16::MAX bytes");
+            buf.write_u16(len);
+            buf.write_bytes(bytes);
+        }
         Draw::Sphere {
             x,
             y,
@@ -2369,5 +2457,69 @@ mod fill_wire_tests {
                 width: 2.0
             }
         );
+    }
+}
+
+#[cfg(test)]
+mod autofit_text_tests {
+    use super::*;
+    use bmc_wasm_protocol::AutoFit;
+
+    #[test]
+    fn autofit_text_serializes_geometry_mode_bounds_style_and_text() {
+        let style = TextStyle {
+            size: 40,
+            ..TextStyle::default()
+        };
+        let draw = Draw::autofit_text_ranged(
+            10.0,
+            20.0,
+            100.0,
+            50.0,
+            "HELLO",
+            style,
+            AutoFit::ShrinkAndGrow,
+            14,
+            64,
+        );
+        let mut buf = TreeBuffer::new();
+        serialize_draw(&mut buf, &draw);
+        let bytes = buf.into_bytes();
+
+        assert_eq!(bytes[0], DRAW_AUTOFIT_TEXT);
+        assert_eq!(&bytes[1..5], &10.0_f32.to_le_bytes());
+        assert_eq!(&bytes[5..9], &20.0_f32.to_le_bytes());
+        assert_eq!(&bytes[9..13], &100.0_f32.to_le_bytes());
+        assert_eq!(&bytes[13..17], &50.0_f32.to_le_bytes());
+        assert_eq!(bytes[17], AutoFit::ShrinkAndGrow as u8);
+        assert_eq!(&bytes[18..20], &14_u16.to_le_bytes());
+        assert_eq!(&bytes[20..22], &64_u16.to_le_bytes());
+        let style_end = 22 + TextStyle::SIZE;
+        assert_eq!(&bytes[22..style_end], &style.to_bytes());
+        assert_eq!(
+            u16::from_le_bytes(
+                bytes[style_end..style_end + 2]
+                    .try_into()
+                    .expect("BUG: len")
+            ),
+            5
+        );
+        assert_eq!(&bytes[style_end + 2..], b"HELLO");
+    }
+
+    #[test]
+    fn autofit_text_defaults_to_shrink() {
+        let draw = Draw::autofit_text(0.0, 0.0, 10.0, 10.0, "x", TextStyle::default());
+        let Draw::AutofitText {
+            mode,
+            min_size,
+            max_size,
+            ..
+        } = draw
+        else {
+            panic!("BUG: expected AutofitText");
+        };
+        assert_eq!(mode, AutoFit::Shrink);
+        assert_eq!((min_size, max_size), (0, 0));
     }
 }
