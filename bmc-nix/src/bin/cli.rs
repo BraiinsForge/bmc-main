@@ -387,6 +387,7 @@ async fn cmd_add_packages(
     hooks_override_path: Option<PathBuf>,
     base: BaseSelector,
     no_activate: bool,
+    log_format: LogFormat,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         name.len() == version.len() && name.len() == store_path.len(),
@@ -419,6 +420,7 @@ async fn cmd_add_packages(
 
     let base_manifest = resolve_base(&profile_dir, &base)?;
 
+    let progress = progress::CliProgress::new(log_format);
     let result = bmc_nix::upgrade::apply_profile_change(
         &profile_dir,
         base_manifest,
@@ -427,7 +429,7 @@ async fn cmd_add_packages(
         &[],
         activation_mode_from_no_activate(no_activate),
         None,
-        None,
+        Some(&progress),
         &hooks_dir,
         hooks_override_path.as_deref(),
     )
@@ -447,11 +449,13 @@ async fn cmd_remove_packages(
     hooks_override_path: Option<PathBuf>,
     base: BaseSelector,
     no_activate: bool,
+    log_format: LogFormat,
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(&profile_dir)?;
 
     let base_manifest = resolve_base(&profile_dir, &base)?;
 
+    let progress = progress::CliProgress::new(log_format);
     let result = bmc_nix::upgrade::apply_profile_change(
         &profile_dir,
         base_manifest,
@@ -460,7 +464,7 @@ async fn cmd_remove_packages(
         &names,
         activation_mode_from_no_activate(no_activate),
         None,
-        None,
+        Some(&progress),
         &hooks_dir,
         hooks_override_path.as_deref(),
     )
@@ -479,6 +483,7 @@ async fn cmd_reset_profile(
     hooks_dir: String,
     hooks_override_path: Option<PathBuf>,
     no_activate: bool,
+    log_format: LogFormat,
 ) -> anyhow::Result<()> {
     let index_content = std::fs::read_to_string(&index)?;
     let package_index: bmc_nix::types::PackageIndex = serde_json::from_str(&index_content)?;
@@ -486,6 +491,7 @@ async fn cmd_reset_profile(
 
     std::fs::create_dir_all(&profile_dir)?;
 
+    let progress = progress::CliProgress::new(log_format);
     let result = bmc_nix::upgrade::apply_profile_change(
         &profile_dir,
         Some(Manifest::default()),
@@ -494,7 +500,7 @@ async fn cmd_reset_profile(
         &[],
         activation_mode_from_no_activate(no_activate),
         None,
-        None,
+        Some(&progress),
         &hooks_dir,
         hooks_override_path.as_deref(),
     )
@@ -623,6 +629,7 @@ async fn cmd_gc(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    let log_format = cli.log_format;
 
     match cli.command {
         Commands::BuildProfile {
@@ -658,6 +665,7 @@ async fn main() -> anyhow::Result<()> {
                 common.hooks_override_path,
                 base,
                 common.no_activate,
+                log_format,
             )
             .await
         }
@@ -674,6 +682,7 @@ async fn main() -> anyhow::Result<()> {
                 common.hooks_override_path,
                 base,
                 common.no_activate,
+                log_format,
             )
             .await
         }
@@ -685,6 +694,7 @@ async fn main() -> anyhow::Result<()> {
                 common.hooks_dir,
                 common.hooks_override_path,
                 common.no_activate,
+                log_format,
             )
             .await
         }
