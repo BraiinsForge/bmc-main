@@ -48,7 +48,7 @@ pkgs.runCommand "nix-tarball-${bos_version}"
   # 1. Build profile generation inside the tarball root
   bmc-nix-cli build-profile \
     --no-activate \
-    --index ${index}/index.json \
+    --index ${index}/nix-package-index.v1.json \
     --profile-dir $rootDir${profile_path} \
     ${lib.optionalString (hooksOverridePath != null) "--hooks-override-path ${hooksOverridePath}"}
 
