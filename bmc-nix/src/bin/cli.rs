@@ -203,7 +203,7 @@ async fn cmd_build_profile(
 
     let index_content = std::fs::read_to_string(&index)?;
     let package_index: bmc_nix::types::PackageIndex = serde_json::from_str(&index_content)?;
-    let packages = bmc_nix::index::resolve_all_from_index(&package_index)?;
+    let packages = bmc_nix::index::resolve_all_from_index(&package_index);
 
     std::fs::create_dir_all(&profile_dir)?;
 
@@ -266,8 +266,6 @@ async fn cmd_add_packages(
             name: n,
             version: v,
             store_path: sp,
-            cache_url: None,
-            cache_name: "local".into(),
             category: None,
             description: None,
             upgrade_strategy: None,
@@ -343,7 +341,7 @@ async fn cmd_reset_profile(
 
     let index_content = std::fs::read_to_string(&index)?;
     let package_index: bmc_nix::types::PackageIndex = serde_json::from_str(&index_content)?;
-    let packages = bmc_nix::index::resolve_all_from_index(&package_index)?;
+    let packages = bmc_nix::index::resolve_all_from_index(&package_index);
 
     std::fs::create_dir_all(&profile_dir)?;
 
