@@ -78,8 +78,40 @@ pub enum FetchIndexesError {
     },
     #[error("unsupported index version {version} from {url}")]
     UnsupportedVersion { url: String, version: u32 },
+    #[error("index file not found: {path}")]
+    FileNotFound { path: String },
+    #[error("failed to read index file {path}: {source}")]
+    FileRead {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error(
+        "index from {location} is too large: {size} bytes exceeds the {MAX_INDEX_BYTES}-byte cap"
+    )]
+    IndexTooLarge { location: String, size: u64 },
     #[error("federated index walk exceeded the {limit}-index cap")]
     TooManyIndexes { limit: usize },
+}
+
+/// Maximum accepted size of a single fetched index, in bytes.
+///
+/// A JSON package index is small. HTTP fetches reject early on a
+/// `Content-Length` over this cap and otherwise accumulate the body chunk
+/// by chunk against a running ceiling; `file://` reads reject on the file
+/// `metadata` length before reading. This bounds the memory an oversized
+/// or hostile response can allocate.
+const MAX_INDEX_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Reject an index whose byte length exceeds `cap`.
+fn check_index_size_with_cap(location: &str, len: u64, cap: u64) -> Result<(), FetchIndexesError> {
+    if len > cap {
+        return Err(FetchIndexesError::IndexTooLarge {
+            location: location.to_owned(),
+            size: len,
+        });
+    }
+    Ok(())
 }
 
 /// Errors that can occur when resolving a single package.
@@ -117,16 +149,67 @@ fn parse_and_validate_index(url: &str, body: &[u8]) -> Result<PackageIndex, Fetc
     Ok(index)
 }
 
-/// Fetch a single index from a base URL.
+/// Turn an index reference into `(location, bytes)`, branching on scheme.
 ///
-/// The full URL is constructed via [`make_index_url`] and includes the
-/// versioned filename suffix.
-pub async fn fetch_index(
+/// `file://<path>` reads `<path>` verbatim — the reference is the direct
+/// path to the index JSON, so no filename is appended. Every other
+/// reference is treated as an `http(s)` base URL whose versioned index
+/// path is built by [`make_index_url`]. `location` is the resolved URL or
+/// path, used for diagnostics and by `parse_and_validate_index`.
+async fn fetch_index_bytes(
     client: &reqwest::Client,
-    base_url: &str,
-) -> Result<PackageIndex, FetchIndexesError> {
-    let url = make_index_url(base_url);
-    let body = client
+    reference: &str,
+) -> Result<(String, Vec<u8>), FetchIndexesError> {
+    fetch_index_bytes_with_cap(client, reference, MAX_INDEX_BYTES).await
+}
+
+/// [`fetch_index_bytes`] with an explicit byte cap, so the streaming and
+/// early-reject ceiling can be exercised without a multi-megabyte fixture.
+async fn fetch_index_bytes_with_cap(
+    client: &reqwest::Client,
+    reference: &str,
+    cap: u64,
+) -> Result<(String, Vec<u8>), FetchIndexesError> {
+    if let Some(path) = reference.strip_prefix("file://") {
+        let metadata = tokio::fs::metadata(path).await.map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                FetchIndexesError::FileNotFound {
+                    path: path.to_owned(),
+                }
+            } else {
+                FetchIndexesError::FileRead {
+                    path: path.to_owned(),
+                    source,
+                }
+            }
+        })?;
+        if !metadata.file_type().is_file() {
+            return Err(FetchIndexesError::FileRead {
+                path: path.to_owned(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "index reference is not a regular file",
+                ),
+            });
+        }
+        check_index_size_with_cap(path, metadata.len(), cap)?;
+        let bytes = tokio::fs::read(path).await.map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                FetchIndexesError::FileNotFound {
+                    path: path.to_owned(),
+                }
+            } else {
+                FetchIndexesError::FileRead {
+                    path: path.to_owned(),
+                    source,
+                }
+            }
+        })?;
+        return Ok((path.to_owned(), bytes));
+    }
+
+    let url = make_index_url(reference);
+    let mut response = client
         .get(&url)
         .send()
         .await
@@ -134,14 +217,37 @@ pub async fn fetch_index(
         .map_err(|source| FetchIndexesError::Fetch {
             url: url.clone(),
             source,
-        })?
-        .bytes()
+        })?;
+
+    if let Some(len) = response.content_length() {
+        check_index_size_with_cap(&url, len, cap)?;
+    }
+
+    let mut bytes: Vec<u8> = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
         .map_err(|source| FetchIndexesError::Fetch {
             url: url.clone(),
             source,
-        })?;
-    parse_and_validate_index(&url, &body)
+        })?
+    {
+        check_index_size_with_cap(&url, (bytes.len() + chunk.len()) as u64, cap)?;
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok((url, bytes))
+}
+
+/// Fetch and validate a single index from a reference.
+///
+/// The reference is an `http(s)` base URL (the versioned filename is
+/// appended) or a `file://` path to the index JSON (read verbatim).
+pub async fn fetch_index(
+    client: &reqwest::Client,
+    base_url: &str,
+) -> Result<PackageIndex, FetchIndexesError> {
+    let (location, body) = fetch_index_bytes(client, base_url).await?;
+    parse_and_validate_index(&location, &body)
 }
 
 /// Upper bound on the total number of indexes fetched in a single
@@ -1431,6 +1537,132 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn fetch_index_reads_file_url_verbatim() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let path = dir.path().join("my-index.json");
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"version":{PACKAGE_INDEX_VERSION},"provenance":null,"indexes":[],"caches":[],"packages":[{{"name":"clock","version":"1.0.0","store_path":"/nix/store/clock"}}]}}"#
+            ),
+        )
+        .expect("BUG: write index file");
+
+        let client = reqwest::Client::new();
+        let reference = format!("file://{}", path.display());
+        let index = fetch_index(&client, &reference)
+            .await
+            .expect("BUG: file:// fetch should parse");
+
+        assert_eq!(index.packages.len(), 1);
+        assert_eq!(index.packages[0].name, "clock");
+    }
+
+    #[tokio::test]
+    async fn fetch_index_missing_file_returns_file_not_found() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let missing = dir.path().join("absent.json");
+        let reference = format!("file://{}", missing.display());
+
+        let client = reqwest::Client::new();
+        let err = fetch_index(&client, &reference)
+            .await
+            .expect_err("missing file must error");
+
+        assert!(
+            matches!(err, FetchIndexesError::FileNotFound { ref path } if path == &missing.display().to_string()),
+            "expected FileNotFound carrying the path, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn check_index_size_accepts_within_cap() {
+        check_index_size_with_cap("file:///idx.json", 4, 4)
+            .expect("BUG: a payload at the cap must be accepted");
+    }
+
+    #[test]
+    fn check_index_size_rejects_over_cap() {
+        let err = check_index_size_with_cap("file:///idx.json", 5, 4)
+            .expect_err("a payload over the cap must be rejected");
+        assert!(
+            matches!(
+                err,
+                FetchIndexesError::IndexTooLarge { ref location, size }
+                    if location == "file:///idx.json" && size == 5
+            ),
+            "expected IndexTooLarge carrying location and size, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_index_file_over_cap_rejected() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let path = dir.path().join("big.json");
+        std::fs::write(&path, b"0123456789").expect("BUG: write index file");
+
+        let client = reqwest::Client::new();
+        let reference = format!("file://{}", path.display());
+        let err = fetch_index_bytes_with_cap(&client, &reference, 4)
+            .await
+            .expect_err("a file over the cap must be rejected before reading");
+
+        assert!(
+            matches!(
+                err,
+                FetchIndexesError::IndexTooLarge { ref location, size }
+                    if location == &path.display().to_string() && size == 10
+            ),
+            "expected IndexTooLarge carrying the path and size, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_index_file_non_regular_rejected() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let reference = format!("file://{}", dir.path().display());
+
+        let client = reqwest::Client::new();
+        let err = fetch_index(&client, &reference)
+            .await
+            .expect_err("a non-regular file must be rejected");
+
+        assert!(
+            matches!(
+                err,
+                FetchIndexesError::FileRead { ref path, .. }
+                    if path == &dir.path().display().to_string()
+            ),
+            "expected FileRead for a non-regular file, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_index_file_wrong_version_rejected() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let path = dir.path().join("v99.json");
+        std::fs::write(
+            &path,
+            r#"{"version":99,"provenance":null,"indexes":[],"caches":[],"packages":[]}"#,
+        )
+        .expect("BUG: write index file");
+
+        let client = reqwest::Client::new();
+        let reference = format!("file://{}", path.display());
+        let err = fetch_index(&client, &reference)
+            .await
+            .expect_err("version 99 must be rejected");
+
+        assert!(
+            matches!(
+                err,
+                FetchIndexesError::UnsupportedVersion { version: 99, .. }
+            ),
+            "expected UnsupportedVersion, got {err:?}"
+        );
+    }
+
     // ---- federation walk / canonicalization / streaming-cap tests ----
 
     fn write_index(
@@ -1466,6 +1698,117 @@ mod tests {
         }
     }
 
+    /// Spawn a local HTTP listener that serves `body` as a `200 OK` JSON
+    /// response to every connection, returning its `http://` base URL and
+    /// the server task handle (the caller must `abort()` it when done).
+    async fn spawn_mock_index_server(body: String) -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("BUG: failed to bind mock server");
+        let addr = listener.local_addr().expect("BUG: no local addr");
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let mut buf = [0_u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+
+        (format!("http://{addr}"), server)
+    }
+
+    /// Bind an ephemeral port and immediately drop the listener, yielding a
+    /// `http://` URL that no server is listening on, so connecting to it
+    /// fails fast with a real network error.
+    async fn dead_http_url() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("BUG: failed to bind ephemeral port");
+        let addr = listener.local_addr().expect("BUG: no local addr");
+        drop(listener);
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn federation_walk_aborts_when_total_exceeds_cap() {
+        let leaf_url = dead_http_url().await;
+        let middle_body = format!(
+            r#"{{"version":{PACKAGE_INDEX_VERSION},"provenance":null,"indexes":[{}],"caches":[],"packages":[]}}"#,
+            serde_json::to_string(&leaf_url).expect("BUG: serialize child url"),
+        );
+        let (middle_url, middle_server) = spawn_mock_index_server(middle_body).await;
+
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let root = write_index(dir.path(), "root.json", &[middle_url], "");
+
+        let client = reqwest::Client::new();
+        let servers = vec![server_entry(&root)];
+        let err = fetch_and_merge_indexes_with_cap(&client, &servers, 2)
+            .await
+            .expect_err("a federation chain past the cap must abort");
+
+        middle_server.abort();
+
+        assert!(
+            matches!(err, FetchIndexesError::TooManyIndexes { limit: 2 }),
+            "expected TooManyIndexes {{ limit: 2 }}, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn federation_walk_within_cap_merges_whole_chain() {
+        let leaf_body = format!(
+            r#"{{"version":{PACKAGE_INDEX_VERSION},"provenance":null,"indexes":[],"caches":[],"packages":[{{"name":"leaf","version":"1.0.0","store_path":"/nix/store/leaf"}}]}}"#
+        );
+        let (leaf_url, leaf_server) = spawn_mock_index_server(leaf_body).await;
+
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let root = write_index(dir.path(), "root.json", &[leaf_url], "");
+
+        let client = reqwest::Client::new();
+        let servers = vec![server_entry(&root)];
+        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, 2)
+            .await
+            .expect("BUG: a chain at the cap must merge");
+
+        leaf_server.abort();
+
+        assert_eq!(merged.by_name.get("leaf").map(Vec::len), Some(1));
+    }
+
+    #[tokio::test]
+    async fn failing_children_still_consume_the_walk_cap() {
+        let dead0 = dead_http_url().await;
+        let dead1 = dead_http_url().await;
+        let dead2 = dead_http_url().await;
+
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let root = write_index(dir.path(), "root.json", &[dead0, dead1, dead2], "");
+
+        let client = reqwest::Client::new();
+        let servers = vec![server_entry(&root)];
+        let err = fetch_and_merge_indexes_with_cap(&client, &servers, 2)
+            .await
+            .expect_err("dead children must still consume the cap and abort the walk");
+
+        assert!(
+            matches!(err, FetchIndexesError::TooManyIndexes { limit: 2 }),
+            "expected TooManyIndexes {{ limit: 2 }}, got {err:?}"
+        );
+    }
+
     #[tokio::test]
     async fn too_many_top_level_servers_exceed_cap() {
         let dir = tempfile::tempdir().expect("BUG: temp dir");
@@ -1486,6 +1829,118 @@ mod tests {
         assert!(
             matches!(err, FetchIndexesError::TooManyIndexes { limit: 2 }),
             "expected TooManyIndexes {{ limit: 2 }}, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_scheme_child_references_are_rejected() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        // The child is a perfectly valid index; only the scheme guard can
+        // keep its package out of the merge.
+        let child = write_index(
+            dir.path(),
+            "child.json",
+            &[],
+            r#"{"name":"smuggled","version":"1.0.0","store_path":"/nix/store/smuggled"}"#,
+        );
+        let root = write_index(dir.path(), "root.json", &[child], "");
+
+        let client = reqwest::Client::new();
+        let servers = vec![server_entry(&root)];
+        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, 256)
+            .await
+            .expect("BUG: a rejected child scheme must not abort the whole walk");
+
+        assert!(
+            !merged.by_name.contains_key("smuggled"),
+            "a file:// child reference must be rejected, not read"
+        );
+    }
+
+    #[tokio::test]
+    async fn federation_canonicalizes_trailing_slash_to_fetch_child_once() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("BUG: failed to bind mock server");
+        let addr = listener.local_addr().expect("BUG: no local addr");
+
+        let body = format!(
+            r#"{{"version":{PACKAGE_INDEX_VERSION},"provenance":null,"indexes":[],"caches":[],"packages":[{{"name":"leaf","version":"1.0.0","store_path":"/nix/store/leaf"}}]}}"#
+        );
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let mut buf = [0_u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let child = format!("http://{addr}");
+        let child_slash = format!("http://{addr}/");
+        let root = write_index(dir.path(), "root.json", &[child, child_slash], "");
+
+        let client = reqwest::Client::new();
+        let servers = vec![server_entry(&root)];
+        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, 256)
+            .await
+            .expect("BUG: federation should merge");
+
+        server.abort();
+
+        assert_eq!(
+            merged.by_name.get("leaf").map(Vec::len),
+            Some(1),
+            "a child listed with and without a trailing slash must be fetched once"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_index_http_over_cap_without_content_length_rejected() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("BUG: failed to bind mock server");
+        let addr = listener.local_addr().expect("BUG: no local addr");
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("BUG: mock server failed to accept");
+            let mut buf = [0_u8; 4096];
+            let _ = stream.read(&mut buf).await;
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n0123456789")
+                .await
+                .expect("BUG: failed to write response");
+        });
+
+        let client = reqwest::Client::new();
+        let base_url = format!("http://{addr}");
+        let err = fetch_index_bytes_with_cap(&client, &base_url, 4)
+            .await
+            .expect_err("a body over the cap with no Content-Length must be rejected");
+
+        server.await.expect("BUG: mock server task panicked");
+
+        assert!(
+            matches!(err, FetchIndexesError::IndexTooLarge { size, .. } if size > 4),
+            "expected IndexTooLarge from the streaming ceiling, got {err:?}"
         );
     }
 }
