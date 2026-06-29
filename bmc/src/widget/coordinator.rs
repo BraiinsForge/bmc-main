@@ -433,13 +433,11 @@ impl Coordinator {
             viewport_shape: manifest_to_protocol_viewport_shape(widget.viewport_shape),
             display: platform_to_protocol_display(self.hardware_capabilities.display),
             params: params_to_json_map(&widget.params),
-            identity: Some(bmc_widget_protocol::WidgetIdentity {
-                token: format!(
-                    "{}-{}",
-                    widget.id.as_uuid(),
-                    placement_tag(&widget.placement)
-                ),
-            }),
+            token: format!(
+                "{}-{}",
+                widget.id.as_uuid(),
+                placement_tag(&widget.placement)
+            ),
         };
 
         // Register widget with compositor before spawning.

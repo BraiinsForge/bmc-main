@@ -43,9 +43,8 @@
       emits initial configuration as a sequence of events, terminated by
       configure_done:
 
-        configure(width, height, viewport_shape)
+        configure(width, height, viewport_shape, token)
         display_info(width, height, shape, dpi)
-        widget_identity(json)
         params(json)
         timezone / night_mode / date_format / ... (setting events)
         configure_done
@@ -143,15 +142,18 @@
     -->
 
     <event name="configure">
-      <description summary="widget geometry and viewport shape">
+      <description summary="widget geometry, viewport shape, and instance identity">
         Delivered once on surface creation. Carries the widget's pixel
-        dimensions and the shape of its viewport. Follow-up `param_*` and
-        setting events refine configuration; the batch is terminated by
+        dimensions, the shape of its viewport, and the opaque, stable
+        per-instance token (usable to key per-instance resources such as an
+        asset cache; stable across dormancy and restart). Follow-up `param_*`
+        and setting events refine configuration; the batch is terminated by
         `configure_done`.
       </description>
       <arg name="width" type="uint" summary="pixel width"/>
       <arg name="height" type="uint" summary="pixel height"/>
       <arg name="viewport_shape" type="uint" enum="viewport_shape"/>
+      <arg name="token" type="string" summary="opaque stable per-instance identity"/>
     </event>
 
     <event name="display_info">
@@ -168,16 +170,6 @@
       <arg name="dpi" type="uint" summary="display density; advisory"/>
     </event>
 
-    <event name="widget_identity">
-      <description summary="the widget's stable, opaque instance identity">
-        Delivered once in the initial configure batch. A JSON-encoded
-        `WidgetIdentity` whose token is opaque to the widget and stable across
-        its lifetime (dormancy, restart) — usable to key per-instance resources
-        such as an asset cache. Extensible: new facts add fields to the JSON,
-        never new events.
-      </description>
-      <arg name="json" type="string" summary="JSON-encoded WidgetIdentity"/>
-    </event>
 
     <event name="params">
       <description summary="widget-specific configuration params">

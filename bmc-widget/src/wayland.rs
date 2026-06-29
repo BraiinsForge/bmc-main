@@ -632,6 +632,7 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
                 width,
                 height,
                 viewport_shape,
+                ..
             } => apply_configure_event(state, width, height, viewport_shape),
             Event::Params { json } => handle_params_json(
                 &mut state.pending_params,
@@ -722,8 +723,7 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
             Event::LedRequestStatus { request_id, status } => {
                 tracing::debug!("Received led_request_status: req={request_id} status={status:?}");
             }
-            // No widget_identity consumer here; the wasm host uses the other client.
-            Event::WidgetIdentity { .. } | _ => {}
+            _ => {}
         }
     }
 }

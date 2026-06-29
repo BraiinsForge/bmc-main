@@ -211,6 +211,7 @@ impl WidgetSlot {
         }
         let viewport_shape = bmc_wasm_protocol::ViewportShape::from(initial.viewport_shape);
         let display = bmc_wasm_runtime::RuntimeDisplayInfo::from(initial.display);
+        let token = initial.token.clone();
         let (led_tx, led_rx) = mpsc::channel();
         let runtime = WasmWidgetRuntime::new(
             &wasm_bytes,
@@ -228,13 +229,11 @@ impl WidgetSlot {
                 ),
                 system: pending_system.clone(),
                 led_request_sender: Some(led_tx),
-                asset_cache: initial.identity.as_ref().map(|id| {
-                    DiskCache::new(
-                        PathBuf::from(WIDGET_CACHE_DIR).join(&id.token),
-                        WIDGET_CACHE_BUCKET_MAX_BYTES,
-                    )
-                }),
-                instance_token: initial.identity.as_ref().map(|id| id.token.clone()),
+                asset_cache: Some(DiskCache::new(
+                    PathBuf::from(WIDGET_CACHE_DIR).join(&token),
+                    WIDGET_CACHE_BUCKET_MAX_BYTES,
+                )),
+                instance_token: Some(token.clone()),
                 ..RuntimeConfig::default()
             },
         )?;
@@ -263,7 +262,7 @@ impl WidgetSlot {
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default(),
-            cache_token: initial.identity.as_ref().map(|id| id.token.clone()),
+            cache_token: Some(token),
             control_socket,
             next_frame_due_at: None,
             touch_drop_logged: false,

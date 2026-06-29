@@ -731,7 +731,7 @@ pub(crate) struct HostState {
     /// The host stores original encoded data and decodes on each play.
     pub audio: AudioRegistry,
 
-    /// Namespaces every host-side asset tag — the compositor `WidgetIdentity`
+    /// Namespaces every host-side asset tag — the compositor-minted instance
     /// token, or a synthetic `dev-N` for the testbed/capture harness.
     pub instance_id: String,
 

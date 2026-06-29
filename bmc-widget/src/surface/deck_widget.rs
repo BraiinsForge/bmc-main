@@ -17,7 +17,7 @@ use bmc_widget_protocol::client::{
     deck_widget_manager_v1::DeckWidgetManagerV1,
     deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
 };
-use bmc_widget_protocol::{ActionPayload, NextAlarm, SettingUpdate, ViewportShape, WidgetIdentity};
+use bmc_widget_protocol::{ActionPayload, NextAlarm, SettingUpdate, ViewportShape};
 use wayland_client::WEnum;
 
 use crate::egl::DmaBufInfo;
@@ -103,8 +103,9 @@ pub struct InitialState {
     pub display: bmc_widget_protocol::DisplayInfo,
     pub params: serde_json::Map<String, serde_json::Value>,
     pub settings: Vec<SettingUpdate>,
-    /// Widget identity delivered on the handshake; `None` for old compositors.
-    pub identity: Option<WidgetIdentity>,
+    /// Opaque, stable per-instance token delivered on the handshake (via
+    /// `configure`); keys per-instance resources such as the asset cache.
+    pub token: String,
 }
 
 /// Surface state for a `deck_widget_v1` widget with DMA-BUF support.
@@ -137,9 +138,9 @@ pub struct DeckWidgetSurfaceState {
     /// Becomes `true` when the compositor emits `configure_done`. Used by
     /// [`DeckWidgetSurfaceClient::connect`] to stop blocking.
     configure_done: bool,
-    /// Accumulated `configure` data (dimensions + viewport shape). `None` until
-    /// the compositor emits its `configure` event.
-    pending_size: Option<(ViewportShape, u32, u32)>,
+    /// Accumulated `configure` data (dimensions, viewport shape, instance
+    /// token). `None` until the compositor emits its `configure` event.
+    pending_size: Option<(ViewportShape, u32, u32, String)>,
     /// Accumulated `display_info` event. `None` until the compositor emits
     /// it; resolved to the BMC100 default for old compositors that do not.
     pending_display: Option<bmc_widget_protocol::DisplayInfo>,
@@ -148,8 +149,6 @@ pub struct DeckWidgetSurfaceState {
     pending_params: serde_json::Map<String, serde_json::Value>,
     /// Accumulated setting events emitted before `configure_done`.
     pending_initial_settings: Vec<SettingUpdate>,
-    /// Accumulated `widget_identity` event. `None` for old compositors.
-    pending_identity: Option<WidgetIdentity>,
 
     pending_events: Vec<DeckWidgetEvent>,
     buffer_slots: BufferSlotMap,
@@ -297,7 +296,6 @@ impl DeckWidgetSurfaceClient {
             pending_display: None,
             pending_params: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
-            pending_identity: None,
             pending_events: Vec::new(),
             buffer_slots: BufferSlotMap::new(),
             released_buffers: ReleasedBufferSet::new(),
@@ -343,8 +341,9 @@ impl DeckWidgetSurfaceClient {
             }
         }
 
-        let (viewport_shape, width, height) = state
+        let (viewport_shape, width, height, token) = state
             .pending_size
+            .take()
             .context("configure_done without prior configure event")?;
         state.width = width;
         state.height = height;
@@ -356,7 +355,7 @@ impl DeckWidgetSurfaceClient {
             display: resolve_display(state.pending_display.take()),
             params: std::mem::take(&mut state.pending_params),
             settings: std::mem::take(&mut state.pending_initial_settings),
-            identity: state.pending_identity.take(),
+            token,
         };
 
         tracing::info!(
@@ -422,7 +421,6 @@ impl DeckWidgetSurfaceClient {
             pending_display: None,
             pending_params: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
-            pending_identity: None,
             pending_events: Vec::new(),
             buffer_slots: BufferSlotMap::new(),
             released_buffers: ReleasedBufferSet::new(),
@@ -473,8 +471,9 @@ impl DeckWidgetSurfaceClient {
             }
         }
 
-        let (viewport_shape, width, height) = state
+        let (viewport_shape, width, height, token) = state
             .pending_size
+            .take()
             .context("configure_done without prior configure event")?;
         state.width = width;
         state.height = height;
@@ -486,7 +485,7 @@ impl DeckWidgetSurfaceClient {
             display: resolve_display(state.pending_display.take()),
             params: std::mem::take(&mut state.pending_params),
             settings: std::mem::take(&mut state.pending_initial_settings),
-            identity: state.pending_identity.take(),
+            token,
         };
 
         tracing::info!(
@@ -928,6 +927,7 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
                 width,
                 height,
                 viewport_shape,
+                token,
             } => {
                 let Some(shape) = (match viewport_shape {
                     WEnum::Value(v) => Some(v.into()),
@@ -942,7 +942,7 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
                     return;
                 };
                 tracing::debug!("Configure: {}x{} viewport_shape={:?}", width, height, shape);
-                state.pending_size = Some((shape, width, height));
+                state.pending_size = Some((shape, width, height, token));
             }
             deck_widget_surface_v1::Event::DisplayInfo {
                 width,
@@ -950,12 +950,6 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
                 shape,
                 dpi,
             } => apply_display_info_event(state, width, height, shape, dpi),
-            deck_widget_surface_v1::Event::WidgetIdentity { json } => {
-                match WidgetIdentity::from_wire(&json) {
-                    Ok(id) => state.pending_identity = Some(id),
-                    Err(e) => tracing::warn!("invalid widget_identity json: {e}"),
-                }
-            }
             deck_widget_surface_v1::Event::Params { json } => {
                 handle_params_json(
                     &mut state.pending_params,
@@ -1222,7 +1216,6 @@ mod tests {
             pending_display: None,
             pending_params: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
-            pending_identity: None,
             pending_events: Vec::new(),
             buffer_slots: super::BufferSlotMap::new(),
             released_buffers: super::ReleasedBufferSet::new(),
@@ -1370,7 +1363,6 @@ mod tests {
             pending_display: None,
             pending_params: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
-            pending_identity: None,
             pending_events: Vec::new(),
             buffer_slots: super::BufferSlotMap::new(),
             released_buffers: super::ReleasedBufferSet::new(),
@@ -1405,7 +1397,6 @@ mod tests {
             pending_display: None,
             pending_params: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
-            pending_identity: None,
             pending_events: Vec::new(),
             buffer_slots: super::BufferSlotMap::new(),
             released_buffers: super::ReleasedBufferSet::new(),
