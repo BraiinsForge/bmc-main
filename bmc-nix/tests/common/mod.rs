@@ -43,8 +43,6 @@ pub fn test_resolved_package(name: &str, version: &str, store_path: &str) -> Res
         name: name.into(),
         version: version.into(),
         store_path: store_path.into(),
-        cache_url: None,
-        cache_name: "local".into(),
         category: None,
         description: None,
         upgrade_strategy: None,
