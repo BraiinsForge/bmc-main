@@ -239,7 +239,6 @@ pub struct CliProgress {
 
 impl CliProgress {
     #[must_use]
-    #[expect(dead_code, reason = "wired into CLI dispatch in a subsequent commit")]
     pub fn new(format: LogFormat) -> Self {
         Self {
             format,
