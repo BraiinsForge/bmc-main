@@ -276,6 +276,18 @@ pub struct MergedPackageEntry {
     pub server_priority: u32,
 }
 
+/// GC configuration (`/etc/nix-upgrade/gc.json`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GcConfig {
+    pub keep_generations: usize,
+    /// Keep generations newer than this many days. `None` disables
+    /// age-based retention.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_days: Option<usize>,
+    pub min_free_space: String,
+    pub protected_generations: Vec<usize>,
+}
+
 /// Output of computing an upgrade plan.
 #[derive(Debug)]
 pub struct UpgradePlan {
@@ -287,6 +299,10 @@ pub struct UpgradePlan {
     pub removed: Vec<PackageVersion>,
     /// Packages that change version.
     pub changed: Vec<PackageChange>,
+    /// Packages present in the current manifest but missing (or with no
+    /// satisfying version) in the merged index. Carried over at the
+    /// current version so they remain installed.
+    pub stale: Vec<PackageVersion>,
 }
 
 /// A package that changes between the current and target profile.
@@ -354,11 +370,34 @@ pub struct InstallResult {
     pub added: Vec<PackageVersion>,
     pub removed: Vec<PackageVersion>,
     pub changed: Vec<PackageChange>,
+    /// Packages carried over because they are no longer represented in the
+    /// live merged indexes. Surfaced so callers can warn the operator.
+    pub stale: Vec<PackageVersion>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn install_result_carries_stale_packages() {
+        let result = InstallResult {
+            generation: None,
+            strategies: StrategySummary {
+                upgrade: vec![],
+                install: vec![],
+            },
+            added: vec![],
+            removed: vec![],
+            changed: vec![],
+            stale: vec![PackageVersion {
+                name: "clock".into(),
+                version: "1.0.0".into(),
+            }],
+        };
+
+        assert_eq!(result.stale[0].name, "clock");
+    }
 
     #[test]
     fn deserialize_package_index() {

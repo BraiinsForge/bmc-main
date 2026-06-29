@@ -3,8 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use crate::index::{self, ResolvePackageError};
 use crate::types::{
-    Manifest, ManifestPackage, PackageChange, PackageVersion, ResolvedPackage, UpgradePlan,
+    Manifest, ManifestPackage, MergedIndex, PackageChange, PackageVersion, ResolvedPackage,
+    UpgradePlan,
 };
 
 /// Error type for manifest write operations.
@@ -74,6 +76,19 @@ pub enum PlanConflict {
 
     #[error("package `{0}` requested for removal but not present in the current profile")]
     RemoveNotInstalled(String),
+}
+
+/// Error type for upgrade plan computation.
+#[derive(Debug, thiserror::Error)]
+pub enum ComputeUpgradePlanError {
+    #[error(transparent)]
+    Conflict(#[from] PlanConflict),
+    #[error("failed to resolve package `{name}`: {source}")]
+    Resolve {
+        name: String,
+        #[source]
+        source: ResolvePackageError,
+    },
 }
 
 /// Build a [`Manifest`] from a slice of resolved packages.
@@ -214,28 +229,41 @@ pub fn manifest_package_to_resolved(name: &str, mp: &ManifestPackage) -> Resolve
 }
 
 /// Compute an upgrade plan by diffing the current manifest against
-/// add/remove requests.
+/// add/remove requests, optionally resolving each kept package against
+/// a merged index.
 ///
-/// - Existing packages not being removed or replaced are kept at their
-///   current version.
+/// - Existing packages not being removed or replaced are kept. When
+///   `merged` is `None` they are carried at their current version. When
+///   `merged` is `Some`, each kept package is resolved through
+///   [`index::resolve_installed_package`]: a newer version satisfying the
+///   package's pin strategy becomes a `changed` entry; a package missing
+///   from the index (or with no satisfying version) is reported as `stale`
+///   and carried at its current version.
 /// - `add_packages` are new packages to install (or replace existing ones).
 /// - `remove_packages` are package names to remove from the profile.
 ///
-/// Returns [`PlanConflict`] when the request is self-contradictory or
-/// cannot be honoured against the current manifest (e.g. removing a
-/// package that is not installed). Conflicts are checked in a deterministic
-/// order: add/remove overlap, duplicate add, duplicate remove, remove of a
-/// not-installed package.
+/// Returns [`ComputeUpgradePlanError::Conflict`] when the request is
+/// self-contradictory or cannot be honoured against the current manifest
+/// (e.g. removing a package that is not installed). Conflicts are checked
+/// in a deterministic order: add/remove overlap, duplicate add, duplicate
+/// remove, remove of a not-installed package. Returns
+/// [`ComputeUpgradePlanError::Resolve`] when a kept package resolves
+/// ambiguously against the merged index.
+#[expect(
+    clippy::too_many_lines,
+    reason = "single-pass plan construction is clearer than splitting"
+)]
 pub fn compute_upgrade_plan(
     current: &Manifest,
+    merged: Option<&MergedIndex>,
     add_packages: &[ResolvedPackage],
     remove_packages: &[String],
-) -> Result<UpgradePlan, PlanConflict> {
+) -> Result<UpgradePlan, ComputeUpgradePlanError> {
     // 1. Reject names that appear in both add and remove lists.
     let remove_set: BTreeSet<&str> = remove_packages.iter().map(String::as_str).collect();
     for pkg in add_packages {
         if remove_set.contains(pkg.name.as_str()) {
-            return Err(PlanConflict::AddAndRemove(pkg.name.clone()));
+            return Err(PlanConflict::AddAndRemove(pkg.name.clone()).into());
         }
     }
 
@@ -251,7 +279,8 @@ pub fn compute_upgrade_plan(
                     first_store_path: prev.store_path.clone(),
                     second_version: pkg.version.clone(),
                     second_store_path: pkg.store_path.clone(),
-                });
+                }
+                .into());
             }
             // exact duplicate — silently deduped
             continue;
@@ -267,14 +296,14 @@ pub fn compute_upgrade_plan(
     let mut seen_remove: BTreeSet<&str> = BTreeSet::new();
     for name in remove_packages {
         if !seen_remove.insert(name.as_str()) {
-            return Err(PlanConflict::DuplicateRemove(name.clone()));
+            return Err(PlanConflict::DuplicateRemove(name.clone()).into());
         }
     }
 
     // 4. Reject removal of a not-installed package.
     for name in remove_packages {
         if !current.packages.contains_key(name) {
-            return Err(PlanConflict::RemoveNotInstalled(name.clone()));
+            return Err(PlanConflict::RemoveNotInstalled(name.clone()).into());
         }
     }
 
@@ -283,6 +312,7 @@ pub fn compute_upgrade_plan(
     let mut added = Vec::new();
     let mut removed = Vec::new();
     let mut changed = Vec::new();
+    let mut stale = Vec::new();
 
     for (name, pkg) in &current.packages {
         if remove_set.contains(name.as_str()) {
@@ -307,6 +337,43 @@ pub fn compute_upgrade_plan(
             continue;
         }
 
+        // Resolve kept packages against the merged index for upgrade
+        // detection when one is available.
+        if let Some(merged) = merged {
+            match index::resolve_installed_package(merged, name, pkg) {
+                Ok(resolved) => {
+                    if resolved.version != pkg.version || resolved.store_path != pkg.store_path {
+                        changed.push(PackageChange {
+                            name: name.clone(),
+                            from_version: pkg.version.clone(),
+                            to_version: resolved.version.clone(),
+                            from_store_path: pkg.store_path.clone(),
+                            to_store_path: resolved.store_path.clone(),
+                        });
+                    }
+                    packages.push(resolved);
+                }
+                Err(
+                    ResolvePackageError::PackageNotFound(_)
+                    | ResolvePackageError::VersionNotFound { .. },
+                ) => {
+                    // Package not in index or no matching version — stale.
+                    stale.push(PackageVersion {
+                        name: name.clone(),
+                        version: pkg.version.clone(),
+                    });
+                    packages.push(manifest_package_to_resolved(name, pkg));
+                }
+                Err(e @ ResolvePackageError::Ambiguous { .. }) => {
+                    return Err(ComputeUpgradePlanError::Resolve {
+                        name: name.clone(),
+                        source: e,
+                    });
+                }
+            }
+            continue;
+        }
+
         packages.push(manifest_package_to_resolved(name, pkg));
     }
 
@@ -327,6 +394,7 @@ pub fn compute_upgrade_plan(
         added,
         removed,
         changed,
+        stale,
     })
 }
 
@@ -335,7 +403,35 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    use crate::types::{InstalledBy, ManifestPackage, PinStrategy};
+    use crate::index::ResolvePackageError;
+    use crate::types::{InstalledBy, ManifestPackage, MergedPackageEntry, PinStrategy};
+    use semver::Version;
+
+    /// Build a [`MergedIndex`] from a set of entries, deriving `by_name`.
+    fn merged_index_with(entries: Vec<MergedPackageEntry>) -> MergedIndex {
+        let mut by_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for (i, entry) in entries.iter().enumerate() {
+            by_name.entry(entry.name.clone()).or_default().push(i);
+        }
+        MergedIndex {
+            packages: entries,
+            by_name,
+        }
+    }
+
+    fn merged_entry(name: &str, version: &str, priority: u32) -> MergedPackageEntry {
+        MergedPackageEntry {
+            name: name.into(),
+            version: Version::parse(version).expect("BUG: test version is valid semver"),
+            store_path: format!("/nix/store/hash-{name}-{version}"),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            server_id: "braiins".into(),
+            server_priority: priority,
+        }
+    }
 
     fn test_package(name: &str, store_path: &str) -> ResolvedPackage {
         ResolvedPackage {
@@ -591,8 +687,8 @@ mod tests {
             packages: BTreeMap::new(),
         };
         let new_pkg = test_package("new-widget", "/nix/store/new");
-        let plan =
-            compute_upgrade_plan(&current, &[new_pkg], &[]).expect("BUG: plan should succeed");
+        let plan = compute_upgrade_plan(&current, None, &[new_pkg], &[])
+            .expect("BUG: plan should succeed");
         assert_eq!(plan.added.len(), 1);
         assert_eq!(plan.added[0].name, "new-widget");
     }
@@ -612,7 +708,7 @@ mod tests {
             ]),
         };
         let new_pkg = test_package("add-pkg", "/nix/store/add");
-        let plan = compute_upgrade_plan(&current, &[new_pkg], &["remove-pkg".into()])
+        let plan = compute_upgrade_plan(&current, None, &[new_pkg], &["remove-pkg".into()])
             .expect("BUG: plan should succeed");
         assert_eq!(plan.added.len(), 1);
         assert_eq!(plan.removed.len(), 1);
@@ -630,8 +726,8 @@ mod tests {
         };
         let mut new_pkg = test_package("widget", "/nix/store/widget-2");
         new_pkg.version = "2.0.0".into();
-        let plan =
-            compute_upgrade_plan(&current, &[new_pkg], &[]).expect("BUG: plan should succeed");
+        let plan = compute_upgrade_plan(&current, None, &[new_pkg], &[])
+            .expect("BUG: plan should succeed");
         // Should count as a change, not an add
         assert_eq!(plan.changed.len(), 1);
         assert!(plan.added.is_empty());
@@ -652,7 +748,8 @@ mod tests {
                 ),
             ]),
         };
-        let plan = compute_upgrade_plan(&current, &[], &[]).expect("BUG: plan should succeed");
+        let plan =
+            compute_upgrade_plan(&current, None, &[], &[]).expect("BUG: plan should succeed");
         assert!(plan.changed.is_empty());
         assert!(plan.added.is_empty());
         assert!(plan.removed.is_empty());
@@ -668,7 +765,8 @@ mod tests {
             test_package("app-a", "/nix/store/a"),
             test_package("app-b", "/nix/store/b"),
         ];
-        let plan = compute_upgrade_plan(&current, &pkgs, &[]).expect("BUG: plan should succeed");
+        let plan =
+            compute_upgrade_plan(&current, None, &pkgs, &[]).expect("BUG: plan should succeed");
         assert_eq!(plan.added.len(), 2);
         assert_eq!(plan.packages.len(), 2);
         assert!(plan.changed.is_empty());
@@ -697,8 +795,8 @@ mod tests {
         let mut new_pkg = test_package("widget", "/nix/store/bbb-widget-1.0.0");
         new_pkg.version = "1.0.0".into();
 
-        let plan =
-            compute_upgrade_plan(&current, &[new_pkg], &[]).expect("BUG: plan should succeed");
+        let plan = compute_upgrade_plan(&current, None, &[new_pkg], &[])
+            .expect("BUG: plan should succeed");
 
         assert_eq!(
             plan.changed.len(),
@@ -726,10 +824,14 @@ mod tests {
         let add = vec![test_package("widget", "/nix/store/widget-2")];
         let remove = vec!["widget".to_owned()];
 
-        let err = compute_upgrade_plan(&current, &add, &remove)
+        let err = compute_upgrade_plan(&current, None, &add, &remove)
             .expect_err("expected AddAndRemove conflict");
         assert!(
-            matches!(err, PlanConflict::AddAndRemove(ref name) if name == "widget"),
+            matches!(
+                err,
+                ComputeUpgradePlanError::Conflict(PlanConflict::AddAndRemove(ref name))
+                    if name == "widget"
+            ),
             "got unexpected error: {err:?}"
         );
     }
@@ -742,10 +844,16 @@ mod tests {
         let mut p2 = test_package("foo", "/nix/store/foo-b");
         p2.version = "2.0.0".into();
 
-        let err = compute_upgrade_plan(&current, &[p1, p2], &[])
+        let err = compute_upgrade_plan(&current, None, &[p1, p2], &[])
             .expect_err("expected DuplicateAddMismatch");
         assert!(
-            matches!(err, PlanConflict::DuplicateAddMismatch { ref name, .. } if name == "foo"),
+            matches!(
+                err,
+                ComputeUpgradePlanError::Conflict(PlanConflict::DuplicateAddMismatch {
+                    ref name,
+                    ..
+                }) if name == "foo"
+            ),
             "got unexpected error: {err:?}"
         );
     }
@@ -756,7 +864,7 @@ mod tests {
         let p1 = test_package("foo", "/nix/store/foo-a");
         let p2 = p1.clone();
 
-        let plan = compute_upgrade_plan(&current, &[p1, p2], &[])
+        let plan = compute_upgrade_plan(&current, None, &[p1, p2], &[])
             .expect("BUG: exact duplicate adds should be deduped silently");
         assert_eq!(plan.packages.len(), 1);
         assert_eq!(plan.added.len(), 1);
@@ -771,10 +879,14 @@ mod tests {
                 test_manifest_package("1.0.0", "server_a", PinStrategy::None),
             )]),
         };
-        let err = compute_upgrade_plan(&current, &[], &["widget".into(), "widget".into()])
+        let err = compute_upgrade_plan(&current, None, &[], &["widget".into(), "widget".into()])
             .expect_err("expected DuplicateRemove");
         assert!(
-            matches!(err, PlanConflict::DuplicateRemove(ref name) if name == "widget"),
+            matches!(
+                err,
+                ComputeUpgradePlanError::Conflict(PlanConflict::DuplicateRemove(ref name))
+                    if name == "widget"
+            ),
             "got unexpected error: {err:?}"
         );
     }
@@ -801,10 +913,104 @@ mod tests {
                 test_manifest_package("1.0.0", "server_a", PinStrategy::None),
             )]),
         };
-        let err = compute_upgrade_plan(&current, &[], &["ghost".into()])
+        let err = compute_upgrade_plan(&current, None, &[], &["ghost".into()])
             .expect_err("expected RemoveNotInstalled");
         assert!(
-            matches!(err, PlanConflict::RemoveNotInstalled(ref name) if name == "ghost"),
+            matches!(
+                err,
+                ComputeUpgradePlanError::Conflict(PlanConflict::RemoveNotInstalled(ref name))
+                    if name == "ghost"
+            ),
+            "got unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn compute_upgrade_plan_without_merged_index_keeps_existing_behavior() {
+        let current = Manifest {
+            packages: BTreeMap::from([(
+                "clock".to_owned(),
+                test_manifest_package("1.0.0", "local", PinStrategy::None),
+            )]),
+        };
+
+        let plan = compute_upgrade_plan(&current, None, &[], &[])
+            .expect("BUG: unchanged manifest should plan");
+
+        assert_eq!(plan.packages.len(), 1);
+        assert!(plan.added.is_empty());
+        assert!(plan.removed.is_empty());
+        assert!(plan.changed.is_empty());
+        assert!(plan.stale.is_empty());
+    }
+
+    #[test]
+    fn compute_upgrade_plan_reports_stale_package_missing_from_merged_index() {
+        let current = Manifest {
+            packages: BTreeMap::from([(
+                "clock".to_owned(),
+                test_manifest_package("1.0.0", "braiins", PinStrategy::None),
+            )]),
+        };
+        let merged = MergedIndex {
+            packages: vec![],
+            by_name: BTreeMap::new(),
+        };
+
+        let plan = compute_upgrade_plan(&current, Some(&merged), &[], &[])
+            .expect("BUG: stale package should be carried");
+
+        assert_eq!(plan.packages[0].name, "clock");
+        assert_eq!(plan.stale.len(), 1);
+        assert_eq!(plan.stale[0].name, "clock");
+    }
+
+    #[test]
+    fn compute_upgrade_plan_changes_installed_package_from_merged_index() {
+        let current = Manifest {
+            packages: BTreeMap::from([(
+                "clock".to_owned(),
+                test_manifest_package("1.0.0", "braiins", PinStrategy::None),
+            )]),
+        };
+        let merged = merged_index_with(vec![merged_entry("clock", "1.1.0", 0)]);
+
+        let plan = compute_upgrade_plan(&current, Some(&merged), &[], &[])
+            .expect("BUG: newer version should plan as a change");
+
+        assert_eq!(plan.changed.len(), 1);
+        assert_eq!(plan.changed[0].name, "clock");
+        assert_eq!(plan.changed[0].from_version, "1.0.0");
+        assert_eq!(plan.changed[0].to_version, "1.1.0");
+        assert_eq!(plan.packages[0].version, "1.1.0");
+        assert!(plan.stale.is_empty());
+    }
+
+    #[test]
+    fn compute_upgrade_plan_returns_resolve_error_on_ambiguous_installed_package() {
+        let current = Manifest {
+            packages: BTreeMap::from([(
+                "clock".to_owned(),
+                test_manifest_package("1.0.0", "braiins", PinStrategy::None),
+            )]),
+        };
+        // Two entries at the same version and priority cannot be
+        // disambiguated, so resolution fails as ambiguous.
+        let merged = merged_index_with(vec![
+            merged_entry("clock", "1.1.0", 0),
+            merged_entry("clock", "1.1.0", 0),
+        ]);
+
+        let err = compute_upgrade_plan(&current, Some(&merged), &[], &[])
+            .expect_err("expected ambiguous resolution");
+        assert!(
+            matches!(
+                err,
+                ComputeUpgradePlanError::Resolve {
+                    ref name,
+                    source: ResolvePackageError::Ambiguous { .. },
+                } if name == "clock"
+            ),
             "got unexpected error: {err:?}"
         );
     }

@@ -283,9 +283,12 @@ async fn cmd_add_packages(
     let result = bmc_nix::upgrade::apply_profile_change(
         &profile_dir,
         base_manifest,
+        None,
         &add_packages,
         &[],
         activate,
+        None,
+        None,
         &hooks_dir,
         hooks_override_path.as_deref(),
     )
@@ -315,9 +318,12 @@ async fn cmd_remove_packages(
     let result = bmc_nix::upgrade::apply_profile_change(
         &profile_dir,
         base_manifest,
+        None,
         &[],
         &names,
         activate,
+        None,
+        None,
         &hooks_dir,
         hooks_override_path.as_deref(),
     )
@@ -348,9 +354,12 @@ async fn cmd_reset_profile(
     let result = bmc_nix::upgrade::apply_profile_change(
         &profile_dir,
         Some(Manifest::default()),
+        None,
         &packages,
         &[],
         activate,
+        None,
+        None,
         &hooks_dir,
         hooks_override_path.as_deref(),
     )

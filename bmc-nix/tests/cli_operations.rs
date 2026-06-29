@@ -74,7 +74,7 @@ async fn add_packages_to_empty_profile() {
 
     // Replicate CLI: read current manifest (empty), compute plan, apply
     let current_manifest = Manifest::default();
-    let plan = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &add_packages, &[])
+    let plan = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, None, &add_packages, &[])
         .expect("BUG: plan should succeed");
 
     let generation = apply_plan(&profile_dir, &plan).await;
@@ -128,7 +128,7 @@ async fn add_packages_to_existing_profile() {
         store_a.to_str().expect("BUG: valid UTF-8"),
     )];
     let plan_gen1 =
-        bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), &packages_gen1, &[])
+        bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), None, &packages_gen1, &[])
             .expect("BUG: plan should succeed");
     apply_plan(&profile_dir, &plan_gen1).await;
 
@@ -145,7 +145,7 @@ async fn add_packages_to_existing_profile() {
 
     let current_manifest =
         bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read current manifest");
-    let plan = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &add_packages, &[])
+    let plan = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, None, &add_packages, &[])
         .expect("BUG: plan should succeed");
 
     let generation = apply_plan(&profile_dir, &plan).await;
@@ -191,7 +191,7 @@ async fn add_packages_replaces_existing() {
         store_a_v1.to_str().expect("BUG: valid UTF-8"),
     )];
     let plan_gen1 =
-        bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), &packages_gen1, &[])
+        bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), None, &packages_gen1, &[])
             .expect("BUG: plan should succeed");
     apply_plan(&profile_dir, &plan_gen1).await;
 
@@ -208,7 +208,7 @@ async fn add_packages_replaces_existing() {
 
     let current_manifest =
         bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read current manifest");
-    let plan = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &add_packages, &[])
+    let plan = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, None, &add_packages, &[])
         .expect("BUG: plan should succeed");
 
     // Plan should report a change, not an add
@@ -257,7 +257,7 @@ async fn remove_packages_from_profile() {
         test_resolved_package("b", "1.0.0", store_b.to_str().expect("BUG: valid UTF-8")),
     ];
     let plan_gen1 =
-        bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), &packages_gen1, &[])
+        bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), None, &packages_gen1, &[])
             .expect("BUG: plan should succeed");
     apply_plan(&profile_dir, &plan_gen1).await;
 
@@ -266,8 +266,9 @@ async fn remove_packages_from_profile() {
 
     let current_manifest =
         bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read current manifest");
-    let plan = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &[], &names_to_remove)
-        .expect("BUG: plan should succeed");
+    let plan =
+        bmc_nix::manifest::compute_upgrade_plan(&current_manifest, None, &[], &names_to_remove)
+            .expect("BUG: plan should succeed");
 
     let generation = apply_plan(&profile_dir, &plan).await;
 
@@ -317,7 +318,7 @@ async fn remove_nonexistent_package_errors() {
         store_a.to_str().expect("BUG: valid UTF-8"),
     )];
     let plan_gen1 =
-        bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), &packages_gen1, &[])
+        bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), None, &packages_gen1, &[])
             .expect("BUG: plan should succeed");
     apply_plan(&profile_dir, &plan_gen1).await;
 
@@ -326,13 +327,15 @@ async fn remove_nonexistent_package_errors() {
 
     let current_manifest =
         bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read current manifest");
-    let err = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &[], &names_to_remove)
-        .expect_err("removing a missing package should error");
+    let err =
+        bmc_nix::manifest::compute_upgrade_plan(&current_manifest, None, &[], &names_to_remove)
+            .expect_err("removing a missing package should error");
     assert!(
         matches!(
             err,
-            bmc_nix::manifest::PlanConflict::RemoveNotInstalled(ref name)
-                if name == "nonexistent"
+            bmc_nix::manifest::ComputeUpgradePlanError::Conflict(
+                bmc_nix::manifest::PlanConflict::RemoveNotInstalled(ref name),
+            ) if name == "nonexistent"
         ),
         "got unexpected error: {err:?}"
     );
@@ -361,7 +364,7 @@ async fn reset_profile_ignores_existing_manifest() {
         test_resolved_package("b", "1.0.0", store_b.to_str().expect("BUG: valid UTF-8")),
     ];
     let plan_gen1 =
-        bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), &packages_gen1, &[])
+        bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), None, &packages_gen1, &[])
             .expect("BUG: plan should succeed");
     apply_plan(&profile_dir, &plan_gen1).await;
 
@@ -377,8 +380,9 @@ async fn reset_profile_ignores_existing_manifest() {
     )];
 
     // Replicate CLI: start from empty manifest (full reset — no merging)
-    let plan = bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), &index_packages, &[])
-        .expect("BUG: plan should succeed");
+    let plan =
+        bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), None, &index_packages, &[])
+            .expect("BUG: plan should succeed");
 
     let generation = apply_plan(&profile_dir, &plan).await;
 
@@ -429,8 +433,9 @@ async fn add_packages_noop_skips_generation() {
         "1.0.0",
         store_a.to_str().expect("BUG: valid UTF-8"),
     )];
-    let plan_gen1 = bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), &packages, &[])
-        .expect("BUG: plan should succeed");
+    let plan_gen1 =
+        bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), None, &packages, &[])
+            .expect("BUG: plan should succeed");
     apply_plan(&profile_dir, &plan_gen1).await;
 
     assert!(profile_dir.join("1-link").exists(), "gen 1 should exist");
@@ -444,9 +449,12 @@ async fn add_packages_noop_skips_generation() {
     let result = bmc_nix::upgrade::apply_profile_change(
         &profile_dir,
         None, // default base: try current, fall back to latest
+        None, // no merged index
         &packages,
         &[],
         /* activate = */ false,
+        None, // no GC
+        None, // no progress sink
         "hooks",
         None,
     )
@@ -486,7 +494,7 @@ async fn compute_plan_rejects_add_and_remove_same_name() {
         "1.0.0",
         store_a.to_str().expect("BUG: valid UTF-8"),
     )];
-    let plan_gen1 = bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), &seed, &[])
+    let plan_gen1 = bmc_nix::manifest::compute_upgrade_plan(&Manifest::default(), None, &seed, &[])
         .expect("BUG: plan should succeed");
     apply_plan(&profile_dir, &plan_gen1).await;
 
@@ -502,12 +510,14 @@ async fn compute_plan_rejects_add_and_remove_same_name() {
 
     let current_manifest =
         bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read current manifest");
-    let err = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, &adds, &removes)
+    let err = bmc_nix::manifest::compute_upgrade_plan(&current_manifest, None, &adds, &removes)
         .expect_err("add+remove of same name should error");
     assert!(
         matches!(
             err,
-            bmc_nix::manifest::PlanConflict::AddAndRemove(ref name) if name == "a"
+            bmc_nix::manifest::ComputeUpgradePlanError::Conflict(
+                bmc_nix::manifest::PlanConflict::AddAndRemove(ref name),
+            ) if name == "a"
         ),
         "got unexpected error: {err:?}"
     );
@@ -539,6 +549,7 @@ async fn add_packages_with_base_latest_uses_latest_not_current() {
 
     let plan1 = bmc_nix::manifest::compute_upgrade_plan(
         &Manifest::default(),
+        None,
         std::slice::from_ref(&pkg_one),
         &[],
     )
@@ -547,6 +558,7 @@ async fn add_packages_with_base_latest_uses_latest_not_current() {
 
     let plan2 = bmc_nix::manifest::compute_upgrade_plan(
         &bmc_nix::manifest::read_current_manifest(&profile_dir).expect("BUG: read current"),
+        None,
         std::slice::from_ref(&pkg_two),
         &[],
     )
@@ -575,7 +587,7 @@ async fn add_packages_with_base_latest_uses_latest_not_current() {
         &bmc_nix::types::BaseSelector::Latest,
     )
     .expect("BUG: read latest");
-    let plan3 = bmc_nix::manifest::compute_upgrade_plan(&base_manifest, &[pkg_three], &[])
+    let plan3 = bmc_nix::manifest::compute_upgrade_plan(&base_manifest, None, &[pkg_three], &[])
         .expect("BUG: plan3");
     let gen3 = apply_plan(&profile_dir, &plan3).await;
 
@@ -609,6 +621,7 @@ async fn add_packages_with_base_generation_n_uses_specific_generation() {
 
     let plan1 = bmc_nix::manifest::compute_upgrade_plan(
         &Manifest::default(),
+        None,
         std::slice::from_ref(&pkg_a),
         &[],
     )
@@ -616,6 +629,7 @@ async fn add_packages_with_base_generation_n_uses_specific_generation() {
     apply_plan(&profile_dir, &plan1).await;
     let plan2 = bmc_nix::manifest::compute_upgrade_plan(
         &Manifest::default(),
+        None,
         std::slice::from_ref(&pkg_noise),
         &[],
     )
@@ -634,7 +648,8 @@ async fn add_packages_with_base_generation_n_uses_specific_generation() {
         &bmc_nix::types::BaseSelector::Generation(1),
     )
     .expect("BUG: read gen 1");
-    let plan3 = bmc_nix::manifest::compute_upgrade_plan(&base, &[pkg_b], &[]).expect("BUG: plan3");
+    let plan3 =
+        bmc_nix::manifest::compute_upgrade_plan(&base, None, &[pkg_b], &[]).expect("BUG: plan3");
     let gen3 = apply_plan(&profile_dir, &plan3).await;
 
     let m = read_manifest(&gen3.path).expect("BUG: read gen3 manifest");
@@ -684,6 +699,7 @@ async fn add_packages_default_base_falls_back_to_latest_when_current_missing() {
     // Seed gen 1 with pkg-a.
     let plan1 = bmc_nix::manifest::compute_upgrade_plan(
         &Manifest::default(),
+        None,
         std::slice::from_ref(&pkg_a),
         &[],
     )
@@ -701,7 +717,8 @@ async fn add_packages_default_base_falls_back_to_latest_when_current_missing() {
 
     let base =
         bmc_nix::manifest::read_latest_manifest(&profile_dir).expect("BUG: read latest manifest");
-    let plan = bmc_nix::manifest::compute_upgrade_plan(&base, &[pkg_b], &[]).expect("BUG: plan");
+    let plan =
+        bmc_nix::manifest::compute_upgrade_plan(&base, None, &[pkg_b], &[]).expect("BUG: plan");
     let gen2 = apply_plan(&profile_dir, &plan).await;
 
     // Gen 2 must carry pkg-a (from latest = gen 1) AND pkg-b.
