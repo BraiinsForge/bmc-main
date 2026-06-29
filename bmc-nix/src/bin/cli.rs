@@ -212,6 +212,12 @@ enum Commands {
         #[arg(long)]
         servers_config: Option<PathBuf>,
 
+        /// Ad-hoc index reference (repeatable): an http(s) base URL, or a
+        /// `file://` path to an index JSON. Highest precedence; a fetch
+        /// failure aborts the run.
+        #[arg(long = "index")]
+        indexes: Vec<String>,
+
         /// Base generation to diff against: `current` (default),
         /// `latest`, or a positive integer generation number.
         #[arg(long, default_value = "current")]
@@ -354,6 +360,30 @@ fn apply_gc_overrides(
     if !protected_generations.is_empty() {
         config.protected_generations = protected_generations;
     }
+}
+
+/// Build the fetch set: the configured servers plus one synthetic
+/// entry per `--index` reference.
+///
+/// Custom entries sit at priority 0 (highest precedence), so a custom
+/// index wins a version tie against any configured server. Ids are
+/// `custom-<n>` by flag order; the `custom` type is a stable marker and
+/// is not consulted during resolution.
+fn build_fetch_set(
+    mut configured: Vec<ServerEntry>,
+    custom_indexes: &[String],
+) -> Vec<ServerEntry> {
+    for (i, reference) in custom_indexes.iter().enumerate() {
+        configured.push(ServerEntry {
+            id: format!("custom-{i}"),
+            server_type: "custom".to_owned(),
+            base_url: reference.clone(),
+            known_public_key: String::new(),
+            priority: 0,
+            enabled: true,
+        });
+    }
+    configured
 }
 
 /// Fail when the fetch set has no enabled entry to fetch from.
@@ -556,8 +586,13 @@ async fn cmd_reset_profile(
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "CLI dispatch — all args are required"
+)]
 async fn cmd_upgrade(
     servers_config: Option<PathBuf>,
+    indexes: Vec<String>,
     profile_dir: PathBuf,
     hooks_dir: String,
     hooks_override_path: Option<PathBuf>,
@@ -568,7 +603,7 @@ async fn cmd_upgrade(
     let servers_path =
         servers_config.unwrap_or_else(|| PathBuf::from("/etc/nix-upgrade/servers.json"));
     let config = load_servers_config(&servers_path)?;
-    let fetch_set: Vec<ServerEntry> = config.servers;
+    let fetch_set = build_fetch_set(config.servers, &indexes);
     ensure_fetchable(&fetch_set)?;
 
     let client = reqwest::Client::builder()
@@ -779,11 +814,13 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Upgrade {
             servers_config,
+            indexes,
             base,
             common,
         } => {
             cmd_upgrade(
                 servers_config,
+                indexes,
                 common.profile_dir,
                 common.hooks_dir,
                 common.hooks_override_path,
@@ -1035,6 +1072,30 @@ mod tests {
     }
 
     #[test]
+    fn build_fetch_set_appends_synthetic_custom_entries() {
+        let configured = vec![configured_server("s1", 10)];
+        let customs = vec![
+            "file:///mnt/data/local.json".to_owned(),
+            "https://cache.example.com/v1".to_owned(),
+        ];
+
+        let set = build_fetch_set(configured, &customs);
+
+        assert_eq!(set.len(), 3);
+        assert_eq!(set[0].id, "s1");
+
+        assert_eq!(set[1].id, "custom-0");
+        assert_eq!(set[1].base_url, "file:///mnt/data/local.json");
+        assert_eq!(set[1].priority, 0);
+        assert_eq!(set[1].server_type, "custom");
+        assert!(set[1].enabled);
+
+        assert_eq!(set[2].id, "custom-1");
+        assert_eq!(set[2].base_url, "https://cache.example.com/v1");
+        assert_eq!(set[2].priority, 0);
+    }
+
+    #[test]
     fn ensure_fetchable_errors_when_no_enabled_entries() {
         assert!(
             ensure_fetchable(&[]).is_err(),
@@ -1053,5 +1114,57 @@ mod tests {
     fn ensure_fetchable_ok_with_one_enabled_entry() {
         ensure_fetchable(&[configured_server("s1", 10)])
             .expect("BUG: one enabled entry should be fetchable");
+    }
+
+    #[tokio::test]
+    async fn custom_index_wins_version_tie_against_configured_server() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+
+        let configured_path = dir.path().join("configured.json");
+        std::fs::write(
+            &configured_path,
+            r#"{"version":1,"provenance":null,"indexes":[],"caches":[],"packages":[{"name":"clock","version":"1.0.0","store_path":"/nix/store/configured-clock"}]}"#,
+        )
+        .expect("BUG: write configured index");
+
+        let custom_path = dir.path().join("custom.json");
+        std::fs::write(
+            &custom_path,
+            r#"{"version":1,"provenance":null,"indexes":[],"caches":[],"packages":[{"name":"clock","version":"1.0.0","store_path":"/nix/store/custom-clock"}]}"#,
+        )
+        .expect("BUG: write custom index");
+
+        let configured = vec![ServerEntry {
+            id: "braiins".to_owned(),
+            server_type: "mirror".to_owned(),
+            base_url: format!("file://{}", configured_path.display()),
+            known_public_key: "k".to_owned(),
+            priority: 10,
+            enabled: true,
+        }];
+        let customs = vec![format!("file://{}", custom_path.display())];
+
+        let fetch_set = build_fetch_set(configured, &customs);
+        let client = reqwest::Client::new();
+        let merged = bmc_nix::index::fetch_and_merge_indexes(&client, &fetch_set)
+            .await
+            .expect("BUG: merge should succeed");
+
+        let current = bmc_nix::types::ManifestPackage {
+            version: "0.9.0".to_owned(),
+            store_path: "/nix/store/current-clock".to_owned(),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: bmc_nix::types::InstalledBy::System,
+            installed_from: "local".to_owned(),
+            pinned: None,
+        };
+        let resolved = bmc_nix::index::resolve_installed_package(&merged, "clock", &current)
+            .expect("BUG: clock should resolve");
+
+        assert_eq!(resolved.installed_from, "custom-0");
+        assert_eq!(resolved.store_path, "/nix/store/custom-clock");
     }
 }
