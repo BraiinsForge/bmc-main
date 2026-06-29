@@ -1,6 +1,7 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
 pub mod activation;
+pub mod gc;
 pub mod generation_path;
 pub mod hooks;
 pub mod index;
