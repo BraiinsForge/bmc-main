@@ -16,10 +16,14 @@ pub enum StorePathError {
     MissingStorePath { name: String, store_path: String },
     #[error("nix-store --realise failed to start: {0}")]
     RealiseFailed(#[source] std::io::Error),
-    #[error("nix-store --realise exited with {status}: {stderr}")]
+    #[error("nix-store --realise failed ({status}): {}", .messages.join("; "))]
     RealiseExited {
         status: std::process::ExitStatus,
-        stderr: String,
+        /// Human-readable error messages parsed from nix `internal-json`
+        /// output (ANSI-stripped), e.g. the failing store path and the
+        /// reason a substituter could not be reached. Never empty: when nix
+        /// emits no error-level message a bounded raw-output snippet is used.
+        messages: Vec<String>,
     },
 }
 
@@ -262,8 +266,10 @@ pub async fn realize_store_paths(
     args.extend(paths.iter().copied());
 
     let mut tracker = progress::DownloadStatusTracker::default();
+    let mut diagnostics = progress::RealizeDiagnostics::default();
     let output = runner
         .run_with_stderr_lines("nix-store", &args, |line| {
+            diagnostics.ingest_line(line);
             if let Some(snapshot) = tracker.ingest_line(line)
                 && let Some(p) = progress
             {
@@ -274,10 +280,21 @@ pub async fn realize_store_paths(
         .map_err(StorePathError::RealiseFailed)?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        let mut messages = diagnostics.into_messages();
+        if messages.is_empty() {
+            // nix emitted no error-level message we could parse; fall back to
+            // a bounded snippet of raw output so the failure is never silent.
+            let raw = String::from_utf8_lossy(&output.stderr);
+            let snippet: String = raw.trim().chars().take(500).collect();
+            messages.push(if snippet.is_empty() {
+                format!("nix-store --realise exited with {}", output.status)
+            } else {
+                snippet
+            });
+        }
         return Err(StorePathError::RealiseExited {
             status: output.status,
-            stderr,
+            messages,
         });
     }
 
@@ -504,6 +521,13 @@ mod tests {
     use super::*;
     use crate::types::{InstalledBy, PinStrategy};
 
+    /// Exit outcome the mock reports for a `--realise` invocation.
+    #[derive(Clone, Copy)]
+    enum RealiseOutcome {
+        Success,
+        Failure,
+    }
+
     /// Mock command runner that records invocations and returns configurable output.
     struct MockCommandRunner {
         /// Store paths that should be reported as "already in store".
@@ -512,6 +536,8 @@ mod tests {
         invocations: std::sync::Mutex<Vec<(String, Vec<String>)>>,
         /// Lines to emit as stderr for `--realise` calls.
         realise_stderr_lines: Vec<String>,
+        /// Exit outcome for `--realise` calls.
+        realise_outcome: RealiseOutcome,
     }
 
     impl MockCommandRunner {
@@ -520,11 +546,18 @@ mod tests {
                 existing_paths,
                 invocations: std::sync::Mutex::new(Vec::new()),
                 realise_stderr_lines: Vec::new(),
+                realise_outcome: RealiseOutcome::Success,
             }
         }
 
         fn with_realise_stderr(mut self, lines: Vec<String>) -> Self {
             self.realise_stderr_lines = lines;
+            self
+        }
+
+        fn with_realise_failure(mut self, lines: Vec<String>) -> Self {
+            self.realise_stderr_lines = lines;
+            self.realise_outcome = RealiseOutcome::Failure;
             self
         }
     }
@@ -590,8 +623,12 @@ mod tests {
                     stderr_bytes.extend_from_slice(line.as_bytes());
                     stderr_bytes.push(b'\n');
                 }
+                let code = match self.realise_outcome {
+                    RealiseOutcome::Success => 0,
+                    RealiseOutcome::Failure => 1,
+                };
                 return Ok(std::process::Output {
-                    status: std::process::ExitStatus::from_raw(0),
+                    status: std::process::ExitStatus::from_raw(code << 8),
                     stdout: Vec::new(),
                     stderr: stderr_bytes,
                 });
@@ -690,8 +727,8 @@ mod tests {
             StorePathError::RealiseFailed(source) => {
                 panic!("expected MissingStorePath, got RealiseFailed: {source}");
             }
-            StorePathError::RealiseExited { status, stderr } => {
-                panic!("expected MissingStorePath, got RealiseExited({status}): {stderr}");
+            StorePathError::RealiseExited { status, messages } => {
+                panic!("expected MissingStorePath, got RealiseExited({status}): {messages:?}");
             }
         }
     }
@@ -903,6 +940,60 @@ mod tests {
         assert_eq!(final_snapshot.downloaded_bytes, 300);
         assert_eq!(final_snapshot.total_bytes, Some(1000));
         assert_eq!(final_snapshot.remaining_bytes, Some(700));
+    }
+
+    #[tokio::test]
+    async fn realize_store_paths_reports_readable_error_on_failure() {
+        let stderr_lines = vec![
+            r#"@nix {"action":"start","id":42,"level":3,"parent":0,"text":"","type":108,"fields":["/nix/store/a","https://cache.example.com"]}"#.to_owned(),
+            r#"@nix {"action":"start","id":43,"level":3,"parent":42,"text":"","type":101,"fields":["https://cache.example.com/nar/a.nar.xz"]}"#.to_owned(),
+            r#"@nix {"action":"msg","level":0,"msg":"error: unable to download 'https://cache.example.com/nar/a.nar.xz': Couldn't resolve host name (6)"}"#.to_owned(),
+            r#"@nix {"action":"msg","level":0,"msg":"error: build of '/nix/store/a' failed"}"#.to_owned(),
+        ];
+        let runner = MockCommandRunner::new(vec![]).with_realise_failure(stderr_lines);
+        let packages = vec![test_resolved("a", "/nix/store/a")];
+
+        let err = realize_store_paths(&runner, &packages, None)
+            .await
+            .expect_err("BUG: realise failed, should error");
+
+        let StorePathError::RealiseExited { messages, .. } = &err else {
+            panic!("expected RealiseExited, got: {err:?}");
+        };
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("cache.example.com/nar/a.nar.xz")
+                    && m.contains("Couldn't resolve host name")),
+            "expected the failing URL and reason among messages, got: {messages:?}"
+        );
+
+        // The user-facing Display must read the nix error, not raw JSON.
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("Couldn't resolve host name"),
+            "rendered error must contain the reason, got: {rendered}"
+        );
+        assert!(
+            !rendered.contains("@nix") && !rendered.contains("\"action\""),
+            "raw internal-json must not leak into the user-facing error: {rendered}"
+        );
+    }
+
+    #[tokio::test]
+    async fn realize_store_paths_failure_without_parsable_error_falls_back_to_raw() {
+        let runner = MockCommandRunner::new(vec![])
+            .with_realise_failure(vec!["something opaque went wrong".to_owned()]);
+        let packages = vec![test_resolved("a", "/nix/store/a")];
+
+        let err = realize_store_paths(&runner, &packages, None)
+            .await
+            .expect_err("BUG: realise failed, should error");
+
+        let StorePathError::RealiseExited { messages, .. } = &err else {
+            panic!("expected RealiseExited, got: {err:?}");
+        };
+        assert_eq!(messages, &["something opaque went wrong".to_owned()]);
     }
 
     #[test]

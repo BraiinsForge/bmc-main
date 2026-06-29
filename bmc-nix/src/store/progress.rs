@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use cognos::internal::json::{Actions, Activities, Id, ResultType};
+use cognos::internal::json::{Actions, Activities, Id, ResultType, Verbosity};
 
 /// Download status for a single active file transfer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,6 +190,117 @@ impl DownloadStatusTracker {
             Actions::Start { .. } | Actions::Message { .. } | Actions::Result { .. } => None,
         }
     }
+}
+
+/// Collects human-readable error diagnostics from nix `--log-format
+/// internal-json` output.
+///
+/// Under `internal-json` every stderr line is a JSON object, so a failed
+/// realization can no longer surface nix's own error text directly. This
+/// collector keeps the error-level messages (e.g. an unreachable
+/// substituter, a 404 NAR, a signature mismatch) so the failure can be
+/// reported in the terms a user understands rather than as raw JSON.
+#[derive(Debug, Default)]
+pub struct RealizeDiagnostics {
+    errors: Vec<String>,
+    omitted: usize,
+}
+
+/// Upper bound on retained distinct error messages. A failing
+/// `nix-store --realise` can emit many distinct error lines; the consumer
+/// joins all retained messages, so an unbounded set would grow the failure
+/// report without bound. The earliest messages are the most useful, so the
+/// cap keeps the head and counts the rest as omitted.
+const MAX_DIAGNOSTIC_MESSAGES: usize = 50;
+
+impl RealizeDiagnostics {
+    /// Parse one line of nix internal-json output and record it when it is an
+    /// error-level diagnostic message. Non-error messages and non-message
+    /// actions are ignored. Once [`MAX_DIAGNOSTIC_MESSAGES`] distinct
+    /// messages are retained, further distinct messages are counted but not
+    /// stored.
+    pub fn ingest_line(&mut self, line: &str) {
+        let Some(Actions::Message {
+            level: Verbosity::Error,
+            msg,
+            raw_msg,
+            ..
+        }) = cognos::internal::json::parse_line(line)
+        else {
+            return;
+        };
+
+        // Prefer `raw_msg` (no error trace) but strip either variant: Lix
+        // pre-strips ANSI from `raw_msg`, nix does not.
+        let text = strip_ansi(raw_msg.as_deref().unwrap_or(&msg));
+        let text = text.trim();
+        if text.is_empty() || self.errors.iter().any(|e| e == text) {
+            return;
+        }
+        if self.errors.len() >= MAX_DIAGNOSTIC_MESSAGES {
+            self.omitted += 1;
+            return;
+        }
+        self.errors.push(text.to_owned());
+    }
+
+    /// The collected error messages, in emission order, deduplicated.
+    #[must_use]
+    pub fn messages(&self) -> &[String] {
+        &self.errors
+    }
+
+    /// Whether any error-level message was collected.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.errors.is_empty()
+    }
+
+    /// Whether the retained set was capped and further distinct messages
+    /// were dropped.
+    #[must_use]
+    pub fn truncated(&self) -> bool {
+        self.omitted > 0
+    }
+
+    /// Consume the collector, returning the collected error messages. When
+    /// the retained set was capped, a final note records how many further
+    /// distinct messages were omitted.
+    #[must_use]
+    pub fn into_messages(mut self) -> Vec<String> {
+        if self.omitted > 0 {
+            self.errors.push(format!(
+                "… ({} additional error messages omitted)",
+                self.omitted
+            ));
+        }
+        self.errors
+    }
+}
+
+/// Remove ANSI CSI escape sequences (color codes and cursor control) from a
+/// string.
+fn strip_ansi(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        // ESC: drop a CSI sequence `ESC [ params... final-byte`, where the
+        // final byte is in the range `@`..=`~` (0x40..=0x7e).
+        if chars.peek() == Some(&'[') {
+            chars.next();
+            while let Some(&seq) = chars.peek() {
+                chars.next();
+                if ('@'..='~').contains(&seq) {
+                    break;
+                }
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -421,6 +532,143 @@ mod tests {
 
         assert_eq!(snapshot.downloaded_bytes, 8_000_000);
         assert_eq!(snapshot.total_bytes, Some(31_500_000));
+    }
+
+    #[test]
+    fn diagnostics_strips_ansi_from_raw_msg() {
+        let mut diagnostics = RealizeDiagnostics::default();
+
+        // nix populates raw_msg with the color codes intact (only Lix
+        // pre-strips them).
+        diagnostics.ingest_line(
+            r#"@nix {"action":"msg","level":0,"msg":"error: colored","raw_msg":"error: path '\u001b[35;1m/nix/store/abc-core\u001b[0m' is required"}"#,
+        );
+
+        assert_eq!(diagnostics.messages().len(), 1);
+        assert_eq!(
+            diagnostics.messages()[0],
+            "error: path '/nix/store/abc-core' is required"
+        );
+    }
+
+    #[test]
+    fn diagnostics_collects_error_level_message_with_failing_url() {
+        let mut diagnostics = RealizeDiagnostics::default();
+
+        diagnostics.ingest_line(
+            r#"@nix {"action":"msg","level":0,"msg":"error: unable to download 'https://cache.example.com/nar/a.nar.xz': Couldn't resolve host name (6)"}"#,
+        );
+
+        assert_eq!(diagnostics.messages().len(), 1);
+        assert_eq!(
+            diagnostics.messages()[0],
+            "error: unable to download 'https://cache.example.com/nar/a.nar.xz': Couldn't resolve host name (6)"
+        );
+    }
+
+    #[test]
+    fn diagnostics_ignores_non_error_messages_and_other_actions() {
+        let mut diagnostics = RealizeDiagnostics::default();
+
+        diagnostics
+            .ingest_line(r#"@nix {"action":"msg","level":1,"msg":"warning: substituter is slow"}"#);
+        diagnostics.ingest_line(r#"@nix {"action":"msg","level":3,"msg":"copying path"}"#);
+        diagnostics.ingest_line(
+            r#"@nix {"action":"start","id":42,"level":3,"parent":0,"text":"","type":108,"fields":["/nix/store/a"]}"#,
+        );
+        diagnostics.ingest_line(r#"@nix {"action":"stop","id":42}"#);
+        diagnostics.ingest_line("not internal-json at all");
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn diagnostics_strips_ansi_color_codes_from_nix_message() {
+        let mut diagnostics = RealizeDiagnostics::default();
+
+        // Nix embeds ANSI color codes in `msg` and provides no `raw_msg`.
+        // Build the wire form so the escape is the real control byte, JSON
+        // escaped exactly as nix would emit it.
+        let esc = '\u{1b}';
+        let colored = format!("{esc}[31;1merror:{esc}[0m host unreachable");
+        let line = format!(
+            r#"@nix {{"action":"msg","level":0,"msg":{}}}"#,
+            serde_json::to_string(&colored).expect("BUG: serialize msg"),
+        );
+        diagnostics.ingest_line(&line);
+
+        assert_eq!(
+            diagnostics.messages(),
+            &["error: host unreachable".to_owned()]
+        );
+    }
+
+    #[test]
+    fn diagnostics_prefers_lix_raw_msg_over_ansi_msg() {
+        let mut diagnostics = RealizeDiagnostics::default();
+
+        let esc = '\u{1b}';
+        let colored = format!("{esc}[31merror:{esc}[0m boom");
+        let line = format!(
+            r#"@nix {{"action":"msg","level":0,"msg":{},"raw_msg":"error: boom"}}"#,
+            serde_json::to_string(&colored).expect("BUG: serialize msg"),
+        );
+        diagnostics.ingest_line(&line);
+
+        assert_eq!(diagnostics.messages(), &["error: boom".to_owned()]);
+    }
+
+    #[test]
+    fn diagnostics_deduplicates_repeated_error_messages() {
+        let mut diagnostics = RealizeDiagnostics::default();
+        let line = r#"@nix {"action":"msg","level":0,"msg":"error: build failed"}"#;
+
+        diagnostics.ingest_line(line);
+        diagnostics.ingest_line(line);
+
+        assert_eq!(diagnostics.messages().len(), 1);
+    }
+
+    #[test]
+    fn diagnostics_caps_retained_messages_and_flags_truncation() {
+        let mut diagnostics = RealizeDiagnostics::default();
+
+        let total = MAX_DIAGNOSTIC_MESSAGES + 7;
+        for i in 0..total {
+            diagnostics.ingest_line(&format!(
+                r#"@nix {{"action":"msg","level":0,"msg":"error: failure number {i}"}}"#
+            ));
+        }
+
+        assert_eq!(diagnostics.messages().len(), MAX_DIAGNOSTIC_MESSAGES);
+        assert!(diagnostics.truncated());
+
+        let messages = diagnostics.into_messages();
+        assert_eq!(messages.len(), MAX_DIAGNOSTIC_MESSAGES + 1);
+        assert_eq!(
+            messages.last().map(String::as_str),
+            Some("… (7 additional error messages omitted)")
+        );
+        assert_eq!(messages[0], "error: failure number 0");
+    }
+
+    #[test]
+    fn diagnostics_under_cap_appends_no_truncation_note() {
+        let mut diagnostics = RealizeDiagnostics::default();
+
+        for i in 0..3 {
+            diagnostics.ingest_line(&format!(
+                r#"@nix {{"action":"msg","level":0,"msg":"error: failure number {i}"}}"#
+            ));
+        }
+
+        assert!(!diagnostics.truncated());
+        let messages = diagnostics.into_messages();
+        assert_eq!(messages.len(), 3);
+        assert!(
+            !messages.iter().any(|m| m.contains("omitted")),
+            "no truncation note must appear under the cap"
+        );
     }
 
     #[test]
