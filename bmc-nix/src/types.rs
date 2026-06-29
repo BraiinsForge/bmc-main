@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use semver::Version;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -233,6 +234,46 @@ pub struct FactoryTarball {
     pub bos_version: String,
     pub download_url: String,
     pub profile_path: String,
+}
+
+/// A single fetched index bundled with its source-server metadata.
+///
+/// Built by [`crate::index::fetch_and_merge_indexes`] from `ServerEntry`
+/// data and consumed by [`crate::index::merge_indexes`].
+#[derive(Debug, Clone)]
+pub struct FetchedIndex {
+    pub server_id: String,
+    pub server_priority: u32,
+    pub index: PackageIndex,
+}
+
+/// Result of merging indexes from all servers.
+///
+/// Stores all package entries from all servers in a flat vec.
+/// `by_name` provides fast lookup by package name to indices into `packages`.
+#[derive(Debug, Clone)]
+pub struct MergedIndex {
+    /// All entries in insertion order.
+    pub packages: Vec<MergedPackageEntry>,
+    /// Lookup by package name → indices into `packages`.
+    pub by_name: BTreeMap<String, Vec<usize>>,
+}
+
+/// A package entry within a [`MergedIndex`], tagged with server metadata.
+///
+/// Cache metadata is intentionally absent — store paths are realised
+/// through configured Nix substituters.
+#[derive(Debug, Clone)]
+pub struct MergedPackageEntry {
+    pub name: String,
+    pub version: Version,
+    pub store_path: String,
+    pub category: Option<String>,
+    pub description: Option<String>,
+    pub upgrade_strategy: Option<UpgradeStrategy>,
+    pub install_strategy: Option<InstallStrategy>,
+    pub server_id: String,
+    pub server_priority: u32,
 }
 
 /// Output of computing an upgrade plan.
