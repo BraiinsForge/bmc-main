@@ -207,6 +207,36 @@ pub enum TextOverflow {
     Ellipsis = 2,
 }
 
+/// How an autofit text draw command scales its font size within its box.
+///
+/// This is a draw-command parameter (see `DRAW_AUTOFIT_TEXT`), not a
+/// `TextStyle` field. `Shrink` searches `[min_size, size]`, `Grow` searches
+/// `[size, max_size]`, `ShrinkAndGrow` searches `[min_size, max_size]`
+/// (configured `size` is then only a starting hint).
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AutoFit {
+    /// Only shrink to fit (default).
+    #[default]
+    Shrink = 0,
+    /// Only grow to fill.
+    Grow = 1,
+    /// Shrink or grow to fit.
+    ShrinkAndGrow = 2,
+}
+
+impl AutoFit {
+    /// Decode a wire byte, defaulting unknown values to `Shrink`.
+    #[must_use]
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Grow,
+            2 => Self::ShrinkAndGrow,
+            _ => Self::Shrink,
+        }
+    }
+}
+
 /// CSS-style font weight, stored as a raw `u16` so widget code can use
 /// either the named constants ([`Self::REGULAR`], [`Self::SEMIBOLD`],
 /// [`Self::BOLD`]) or an arbitrary intermediate value (`FontWeight(500)`).
@@ -670,6 +700,19 @@ mod tests {
             let back = TextStyle::from_bytes(&bytes).expect("full-size buffer decodes");
             assert_eq!(back.vertical_align, variant);
         }
+    }
+
+    #[test]
+    fn auto_fit_round_trips_every_variant() {
+        for variant in [AutoFit::Shrink, AutoFit::Grow, AutoFit::ShrinkAndGrow] {
+            assert_eq!(AutoFit::from_u8(variant as u8), variant);
+        }
+    }
+
+    #[test]
+    fn auto_fit_unknown_byte_falls_back_to_shrink() {
+        assert_eq!(AutoFit::from_u8(255), AutoFit::Shrink);
+        assert_eq!(AutoFit::default(), AutoFit::Shrink);
     }
 
     #[test]
