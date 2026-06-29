@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use futures::future::try_join_all;
-use semver::Version;
+use semver::{Version, VersionReq};
 use tracing::{debug, warn};
 
 use crate::types::{
@@ -89,6 +89,8 @@ pub enum ResolvePackageError {
     PackageNotFound(String),
     #[error("no version matching '{constraint}' for package '{package}'")]
     VersionNotFound { package: String, constraint: String },
+    #[error("invalid version constraint '{constraint}'")]
+    InvalidVersionConstraint { constraint: String },
     #[error(
         "ambiguous resolution for package '{package}': multiple servers at same version and priority"
     )]
@@ -380,12 +382,13 @@ pub fn resolve_new_package(
     let mut candidates: Vec<&MergedPackageEntry> =
         indices.iter().map(|&i| &merged.packages[i]).collect();
 
-    if let Some(constraint) = version {
-        candidates.retain(|e| version_matches(&e.version, constraint));
+    if let Some(constraint_str) = version {
+        let constraint = VersionConstraint::parse(constraint_str)?;
+        candidates.retain(|e| constraint.matches(&e.version));
         if candidates.is_empty() {
             return Err(ResolvePackageError::VersionNotFound {
                 package: name.to_owned(),
-                constraint: constraint.to_owned(),
+                constraint: constraint_str.to_owned(),
             });
         }
     }
@@ -509,10 +512,34 @@ fn merged_entry_to_resolved(
     }
 }
 
-/// Check if a version matches a prefix constraint (e.g., "1.2" matches "1.2.3").
-fn version_matches(version: &Version, constraint: &str) -> bool {
-    let version_str = version.to_string();
-    version_str == constraint || version_str.starts_with(&format!("{constraint}."))
+/// A parsed package version constraint.
+///
+/// A bare, fully specified version (`1.2.3`) means exactly that version.
+/// Every other form is a `semver` range (`^1.2`, `>=1.2, <2`, `*`, and a
+/// bare partial such as `1.2`, which `VersionReq` reads as `^1.2`).
+enum VersionConstraint {
+    Exact(Version),
+    Range(VersionReq),
+}
+
+impl VersionConstraint {
+    fn parse(constraint: &str) -> Result<Self, ResolvePackageError> {
+        if let Ok(version) = Version::parse(constraint) {
+            return Ok(Self::Exact(version));
+        }
+        VersionReq::parse(constraint).map(Self::Range).map_err(|_| {
+            ResolvePackageError::InvalidVersionConstraint {
+                constraint: constraint.to_owned(),
+            }
+        })
+    }
+
+    fn matches(&self, version: &Version) -> bool {
+        match self {
+            Self::Exact(exact) => version == exact,
+            Self::Range(req) => req.matches(version),
+        }
+    }
 }
 
 /// Check if a candidate version is allowed by a pin strategy relative to
@@ -821,6 +848,186 @@ mod tests {
             .expect_err("same version and priority should be ambiguous");
 
         assert!(matches!(err, ResolvePackageError::Ambiguous { .. }));
+    }
+
+    #[test]
+    fn resolve_new_package_exact_version_rejects_other_patches() {
+        let merged = merge_indexes(vec![
+            fetched(
+                "a",
+                10,
+                vec![versioned_package("clock", "1.2.3", "/nix/store/v123")],
+            ),
+            fetched(
+                "b",
+                10,
+                vec![versioned_package("clock", "1.2.4", "/nix/store/v124")],
+            ),
+        ]);
+
+        let resolved = resolve_new_package(&merged, "clock", Some("1.2.3"), InstalledBy::User)
+            .expect("BUG: exact version should resolve");
+
+        assert_eq!(resolved.version, "1.2.3");
+        assert_eq!(resolved.store_path, "/nix/store/v123");
+    }
+
+    #[test]
+    fn resolve_new_package_two_component_pin_resolves_padded_entry() {
+        let merged = merge_indexes(vec![
+            fetched(
+                "a",
+                10,
+                vec![versioned_package("avahi", "0.8", "/nix/store/v08")],
+            ),
+            fetched(
+                "b",
+                10,
+                vec![versioned_package("avahi", "0.9", "/nix/store/v09")],
+            ),
+        ]);
+
+        let resolved = resolve_new_package(&merged, "avahi", Some("0.8"), InstalledBy::User)
+            .expect("BUG: a two-component exact pin should resolve");
+
+        assert_eq!(resolved.version, "0.8.0");
+        assert_eq!(resolved.store_path, "/nix/store/v08");
+    }
+
+    #[test]
+    fn resolve_new_package_caret_constraint_picks_latest_in_range() {
+        let merged = merge_indexes(vec![
+            fetched(
+                "a",
+                10,
+                vec![versioned_package("clock", "1.2.0", "/nix/store/v120")],
+            ),
+            fetched(
+                "b",
+                10,
+                vec![versioned_package("clock", "1.5.0", "/nix/store/v150")],
+            ),
+        ]);
+
+        let resolved = resolve_new_package(&merged, "clock", Some("^1.2.0"), InstalledBy::User)
+            .expect("BUG: caret constraint should resolve");
+
+        assert_eq!(resolved.version, "1.5.0");
+    }
+
+    #[test]
+    fn resolve_new_package_range_constraint_excludes_out_of_range() {
+        let merged = merge_indexes(vec![
+            fetched(
+                "a",
+                10,
+                vec![versioned_package("clock", "1.2.0", "/nix/store/v120")],
+            ),
+            fetched(
+                "b",
+                10,
+                vec![versioned_package("clock", "1.5.0", "/nix/store/v150")],
+            ),
+            fetched(
+                "c",
+                10,
+                vec![versioned_package("clock", "2.0.0", "/nix/store/v200")],
+            ),
+        ]);
+
+        let resolved =
+            resolve_new_package(&merged, "clock", Some(">=1.2, <2.0.0"), InstalledBy::User)
+                .expect("BUG: range constraint should resolve");
+
+        assert_eq!(resolved.version, "1.5.0");
+    }
+
+    #[test]
+    fn resolve_new_package_bare_partial_behaves_as_caret() {
+        let merged = merge_indexes(vec![
+            fetched(
+                "a",
+                10,
+                vec![versioned_package("clock", "1.2.0", "/nix/store/v120")],
+            ),
+            fetched(
+                "b",
+                10,
+                vec![versioned_package("clock", "1.9.0", "/nix/store/v190")],
+            ),
+        ]);
+
+        let resolved = resolve_new_package(&merged, "clock", Some("1.2"), InstalledBy::User)
+            .expect("BUG: bare partial constraint should resolve");
+
+        assert_eq!(resolved.version, "1.9.0");
+    }
+
+    #[test]
+    fn resolve_new_package_prerelease_matches_exactly() {
+        let merged = merge_indexes(vec![fetched(
+            "a",
+            10,
+            vec![versioned_package("clock", "1.2.3-rc1", "/nix/store/rc1")],
+        )]);
+
+        let resolved = resolve_new_package(&merged, "clock", Some("1.2.3-rc1"), InstalledBy::User)
+            .expect("BUG: pre-release exact should resolve");
+
+        assert_eq!(resolved.version, "1.2.3-rc1");
+    }
+
+    #[test]
+    fn resolve_new_package_invalid_constraint_returns_invalid_error() {
+        let merged = merge_indexes(vec![fetched(
+            "a",
+            10,
+            vec![versioned_package("clock", "1.2.0", "/nix/store/v120")],
+        )]);
+
+        let err = resolve_new_package(&merged, "clock", Some("not-a-version"), InstalledBy::User)
+            .expect_err("malformed constraint should error");
+
+        assert!(matches!(
+            err,
+            ResolvePackageError::InvalidVersionConstraint { constraint }
+                if constraint == "not-a-version"
+        ));
+    }
+
+    #[test]
+    fn resolve_new_package_wildcard_constraint_matches_within_minor() {
+        let merged = merge_indexes(vec![
+            fetched(
+                "a",
+                10,
+                vec![versioned_package("clock", "1.2.7", "/nix/store/v127")],
+            ),
+            fetched(
+                "b",
+                10,
+                vec![versioned_package("clock", "1.3.0", "/nix/store/v130")],
+            ),
+        ]);
+
+        let resolved = resolve_new_package(&merged, "clock", Some("1.2.x"), InstalledBy::User)
+            .expect("BUG: wildcard constraint should resolve");
+
+        assert_eq!(resolved.version, "1.2.7");
+    }
+
+    #[test]
+    fn resolve_new_package_valid_constraint_no_match_returns_version_not_found() {
+        let merged = merge_indexes(vec![fetched(
+            "a",
+            10,
+            vec![versioned_package("clock", "1.2.0", "/nix/store/v120")],
+        )]);
+
+        let err = resolve_new_package(&merged, "clock", Some("^3.0.0"), InstalledBy::User)
+            .expect_err("no matching version should error");
+
+        assert!(matches!(err, ResolvePackageError::VersionNotFound { .. }));
     }
 
     // ---- resolve_installed_package tests ----

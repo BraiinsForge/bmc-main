@@ -364,7 +364,10 @@ pub fn compute_upgrade_plan(
                     });
                     packages.push(manifest_package_to_resolved(name, pkg));
                 }
-                Err(e @ ResolvePackageError::Ambiguous { .. }) => {
+                Err(
+                    e @ (ResolvePackageError::Ambiguous { .. }
+                    | ResolvePackageError::InvalidVersionConstraint { .. }),
+                ) => {
                     return Err(ComputeUpgradePlanError::Resolve {
                         name: name.clone(),
                         source: e,
