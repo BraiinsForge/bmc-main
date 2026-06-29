@@ -4,20 +4,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use semver::Version;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer, Serialize};
-
-/// Deserialize a value that may be `null` in JSON, mapping `null` to `T::default()`.
-///
-/// This is useful for fields like `pinned` where the JSON may contain `null`
-/// but the Rust type is not `Option<T>`.
-fn deserialize_null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Default + DeserializeOwned,
-{
-    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
-}
+use serde::{Deserialize, Serialize};
 
 /// Which existing generation the caller wants to diff the new
 /// generation against.
@@ -96,17 +83,6 @@ pub enum InstallStrategy {
     Reboot,
 }
 
-/// Pin strategy controlling which version upgrades are allowed.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PinStrategy {
-    #[default]
-    None,
-    Major,
-    Minor,
-    Patch,
-}
-
 /// A package entry as it appears in the remote index
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageEntry {
@@ -144,8 +120,8 @@ pub struct ResolvedPackage {
     pub install_strategy: Option<InstallStrategy>,
     pub installed_by: InstalledBy,
     pub installed_from: String,
-    #[serde(default, deserialize_with = "deserialize_null_as_default")]
-    pub pinned: PinStrategy,
+    #[serde(default)]
+    pub pinned: Option<String>,
 }
 
 /// What initiated the installation of a package
@@ -160,6 +136,19 @@ pub enum InstalledBy {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Manifest {
     pub packages: BTreeMap<String, ManifestPackage>,
+}
+
+/// Map the legacy `"pinned": "none"` sentinel to `None`.
+///
+/// Pre-branch manifests stored `pinned` as an enum whose `None` variant
+/// serialized to the string `"none"`. Those persisted manifests must read
+/// back as unpinned; real constraints and `null`/absent are left intact.
+fn deserialize_legacy_pin<'de, D>(d: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(d)?;
+    Ok(raw.filter(|v| v != "none"))
 }
 
 /// Per-package manifest entry.
@@ -179,8 +168,8 @@ pub struct ManifestPackage {
     pub install_strategy: Option<InstallStrategy>,
     pub installed_by: InstalledBy,
     pub installed_from: String,
-    #[serde(default, deserialize_with = "deserialize_null_as_default")]
-    pub pinned: PinStrategy,
+    #[serde(default, deserialize_with = "deserialize_legacy_pin")]
+    pub pinned: Option<String>,
 }
 
 /// Profile generation metadata
@@ -439,7 +428,7 @@ mod tests {
                     install_strategy: None,
                     installed_by: InstalledBy::System,
                     installed_from: "local".into(),
-                    pinned: PinStrategy::None,
+                    pinned: None,
                 },
             )]),
         };
@@ -489,7 +478,55 @@ mod tests {
             .packages
             .get("test-pkg")
             .expect("BUG: test-pkg should exist");
-        assert_eq!(pkg.pinned, PinStrategy::None);
+        assert_eq!(pkg.pinned, None);
+    }
+
+    /// A pre-branch manifest persisting the legacy `"pinned": "none"`
+    /// sentinel must deserialize as unpinned, not as the constraint
+    /// `"none"` (which fails to parse and would abort `upgrade`).
+    #[test]
+    fn pinned_legacy_none_sentinel_deserializes_as_unpinned() {
+        let json = r#"{
+            "packages": {
+                "test-pkg": {
+                    "version": "1.0.0",
+                    "store_path": "/nix/store/abc-test-pkg-1.0.0",
+                    "installed_by": "system",
+                    "installed_from": "local",
+                    "pinned": "none"
+                }
+            }
+        }"#;
+        let manifest: Manifest =
+            serde_json::from_str(json).expect("BUG: legacy sentinel manifest should deserialize");
+        let pkg = manifest
+            .packages
+            .get("test-pkg")
+            .expect("BUG: test-pkg should exist");
+        assert_eq!(pkg.pinned, None);
+    }
+
+    /// A real constraint must survive deserialization unchanged.
+    #[test]
+    fn pinned_real_constraint_deserializes_verbatim() {
+        let json = r#"{
+            "packages": {
+                "test-pkg": {
+                    "version": "1.0.0",
+                    "store_path": "/nix/store/abc-test-pkg-1.0.0",
+                    "installed_by": "system",
+                    "installed_from": "local",
+                    "pinned": "^1.0.0"
+                }
+            }
+        }"#;
+        let manifest: Manifest =
+            serde_json::from_str(json).expect("BUG: constraint manifest should deserialize");
+        let pkg = manifest
+            .packages
+            .get("test-pkg")
+            .expect("BUG: test-pkg should exist");
+        assert_eq!(pkg.pinned.as_deref(), Some("^1.0.0"));
     }
 
     /// Deserialize a real index.json as produced by `nix build .#init-index-armv7`.
@@ -627,7 +664,7 @@ mod tests {
                 install_strategy: None,
                 installed_by: InstalledBy::System,
                 installed_from: "local".into(),
-                pinned: PinStrategy::None,
+                pinned: None,
             },
             ResolvedPackage {
                 name: "b".into(),
@@ -639,7 +676,7 @@ mod tests {
                 install_strategy: Some(InstallStrategy::Reboot),
                 installed_by: InstalledBy::System,
                 installed_from: "local".into(),
-                pinned: PinStrategy::None,
+                pinned: None,
             },
         ];
         let summary = StrategySummary::from_packages(&packages);

@@ -407,7 +407,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::index::ResolvePackageError;
-    use crate::types::{InstalledBy, ManifestPackage, MergedPackageEntry, PinStrategy};
+    use crate::types::{InstalledBy, ManifestPackage, MergedPackageEntry};
     use semver::Version;
 
     /// Build a [`MergedIndex`] from a set of entries, deriving `by_name`.
@@ -447,14 +447,14 @@ mod tests {
             install_strategy: None,
             installed_by: InstalledBy::System,
             installed_from: "local".into(),
-            pinned: PinStrategy::None,
+            pinned: None,
         }
     }
 
     fn test_manifest_package(
         version: &str,
         installed_from: &str,
-        pinned: PinStrategy,
+        pinned: Option<String>,
     ) -> ManifestPackage {
         ManifestPackage {
             version: version.into(),
@@ -702,11 +702,11 @@ mod tests {
             packages: BTreeMap::from([
                 (
                     "keep-pkg".into(),
-                    test_manifest_package("1.0.0", "server_a", PinStrategy::None),
+                    test_manifest_package("1.0.0", "server_a", None),
                 ),
                 (
                     "remove-pkg".into(),
-                    test_manifest_package("1.0.0", "server_a", PinStrategy::None),
+                    test_manifest_package("1.0.0", "server_a", None),
                 ),
             ]),
         };
@@ -724,7 +724,7 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "widget".into(),
-                test_manifest_package("1.0.0", "server_a", PinStrategy::None),
+                test_manifest_package("1.0.0", "server_a", None),
             )]),
         };
         let mut new_pkg = test_package("widget", "/nix/store/widget-2");
@@ -743,11 +743,11 @@ mod tests {
             packages: BTreeMap::from([
                 (
                     "widget".into(),
-                    test_manifest_package("1.0.0", "server_a", PinStrategy::None),
+                    test_manifest_package("1.0.0", "server_a", None),
                 ),
                 (
                     "gadget".into(),
-                    test_manifest_package("3.0.0", "server_a", PinStrategy::None),
+                    test_manifest_package("3.0.0", "server_a", None),
                 ),
             ]),
         };
@@ -790,7 +790,7 @@ mod tests {
                     install_strategy: None,
                     installed_by: InstalledBy::System,
                     installed_from: "server_a".into(),
-                    pinned: PinStrategy::None,
+                    pinned: None,
                 },
             )]),
         };
@@ -821,7 +821,7 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "widget".into(),
-                test_manifest_package("1.0.0", "server_a", PinStrategy::None),
+                test_manifest_package("1.0.0", "server_a", None),
             )]),
         };
         let add = vec![test_package("widget", "/nix/store/widget-2")];
@@ -879,7 +879,7 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "widget".into(),
-                test_manifest_package("1.0.0", "server_a", PinStrategy::None),
+                test_manifest_package("1.0.0", "server_a", None),
             )]),
         };
         let err = compute_upgrade_plan(&current, None, &[], &["widget".into(), "widget".into()])
@@ -913,7 +913,7 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "widget".into(),
-                test_manifest_package("1.0.0", "server_a", PinStrategy::None),
+                test_manifest_package("1.0.0", "server_a", None),
             )]),
         };
         let err = compute_upgrade_plan(&current, None, &[], &["ghost".into()])
@@ -933,7 +933,7 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "clock".to_owned(),
-                test_manifest_package("1.0.0", "local", PinStrategy::None),
+                test_manifest_package("1.0.0", "local", None),
             )]),
         };
 
@@ -952,7 +952,7 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "clock".to_owned(),
-                test_manifest_package("1.0.0", "braiins", PinStrategy::None),
+                test_manifest_package("1.0.0", "braiins", None),
             )]),
         };
         let merged = MergedIndex {
@@ -973,7 +973,7 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "clock".to_owned(),
-                test_manifest_package("1.0.0", "braiins", PinStrategy::None),
+                test_manifest_package("1.0.0", "braiins", None),
             )]),
         };
         let merged = merged_index_with(vec![merged_entry("clock", "1.1.0", 0)]);
@@ -994,15 +994,14 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "clock".to_owned(),
-                test_manifest_package("1.0.0", "braiins", PinStrategy::None),
+                test_manifest_package("1.0.0", "braiins", None),
             )]),
         };
-        // Two entries at the same version and priority cannot be
-        // disambiguated, so resolution fails as ambiguous.
-        let merged = merged_index_with(vec![
-            merged_entry("clock", "1.1.0", 0),
-            merged_entry("clock", "1.1.0", 0),
-        ]);
+        // Two entries at the same version and priority with different
+        // store paths cannot be disambiguated, so resolution fails.
+        let mut other = merged_entry("clock", "1.1.0", 0);
+        other.store_path = "/nix/store/other-clock-1.1.0".to_owned();
+        let merged = merged_index_with(vec![merged_entry("clock", "1.1.0", 0), other]);
 
         let err = compute_upgrade_plan(&current, Some(&merged), &[], &[])
             .expect_err("expected ambiguous resolution");
@@ -1012,6 +1011,83 @@ mod tests {
                 ComputeUpgradePlanError::Resolve {
                     ref name,
                     source: ResolvePackageError::Ambiguous { .. },
+                } if name == "clock"
+            ),
+            "got unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn compute_upgrade_plan_succeeds_for_legacy_none_pin_manifest() {
+        // A pre-branch manifest persists `"pinned": "none"`. After
+        // deserialization it must read as unpinned and plan a normal
+        // upgrade, not abort with a Resolve error on the bogus constraint.
+        let manifest_json = r#"{
+            "packages": {
+                "clock": {
+                    "version": "1.0.0",
+                    "store_path": "/nix/store/hash-clock-1.0.0",
+                    "installed_by": "system",
+                    "installed_from": "braiins",
+                    "pinned": "none"
+                }
+            }
+        }"#;
+        let current: Manifest =
+            serde_json::from_str(manifest_json).expect("BUG: legacy manifest should deserialize");
+        let merged = merged_index_with(vec![merged_entry("clock", "1.1.0", 0)]);
+
+        let plan = compute_upgrade_plan(&current, Some(&merged), &[], &[])
+            .expect("BUG: legacy none-pin package must plan, not error");
+
+        assert!(plan.stale.is_empty(), "legacy none-pin must not be stale");
+        assert_eq!(plan.changed.len(), 1);
+        assert_eq!(plan.changed[0].name, "clock");
+        assert_eq!(plan.changed[0].to_version, "1.1.0");
+    }
+
+    #[test]
+    fn compute_upgrade_plan_keeps_installed_when_index_only_older() {
+        // The index offers only a version older than installed; the
+        // no-downgrade guard marks the package stale and keeps the
+        // installed store path rather than activating the older one.
+        let current = Manifest {
+            packages: BTreeMap::from([(
+                "clock".to_owned(),
+                test_manifest_package("1.5.0", "braiins", Some("^1.0.0".to_owned())),
+            )]),
+        };
+        let merged = merged_index_with(vec![merged_entry("clock", "1.4.0", 0)]);
+
+        let plan = compute_upgrade_plan(&current, Some(&merged), &[], &[])
+            .expect("BUG: older-only index should keep installed, not error");
+
+        assert!(plan.changed.is_empty(), "must not record a downgrade");
+        assert_eq!(plan.stale.len(), 1);
+        assert_eq!(plan.stale[0].name, "clock");
+        assert_eq!(plan.stale[0].version, "1.5.0");
+        assert_eq!(plan.packages[0].version, "1.5.0");
+        assert_eq!(plan.packages[0].store_path, "/nix/store/hash-pkg-1.5.0");
+    }
+
+    #[test]
+    fn compute_upgrade_plan_returns_error_for_invalid_pin_constraint() {
+        let current = Manifest {
+            packages: BTreeMap::from([(
+                "clock".to_owned(),
+                test_manifest_package("1.0.0", "braiins", Some("not-a-version".to_owned())),
+            )]),
+        };
+        let merged = merged_index_with(vec![merged_entry("clock", "1.0.0", 0)]);
+
+        let err = compute_upgrade_plan(&current, Some(&merged), &[], &[])
+            .expect_err("expected resolve error for invalid pin constraint");
+        assert!(
+            matches!(
+                err,
+                ComputeUpgradePlanError::Resolve {
+                    ref name,
+                    source: ResolvePackageError::InvalidVersionConstraint { .. },
                 } if name == "clock"
             ),
             "got unexpected error: {err:?}"

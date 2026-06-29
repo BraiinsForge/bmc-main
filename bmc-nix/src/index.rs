@@ -8,7 +8,7 @@ use tracing::{debug, warn};
 
 use crate::types::{
     FetchedIndex, InstalledBy, ManifestPackage, MergedIndex, MergedPackageEntry, PackageIndex,
-    PinStrategy, ResolvedPackage, ServerEntry,
+    ResolvedPackage, ServerEntry,
 };
 
 pub const PACKAGE_INDEX_VERSION: u32 = 1;
@@ -56,7 +56,7 @@ pub fn resolve_all_from_index(index: &PackageIndex) -> Vec<ResolvedPackage> {
             install_strategy: entry.install_strategy.clone(),
             installed_by: InstalledBy::System,
             installed_from: "local".into(),
-            pinned: PinStrategy::None,
+            pinned: None,
         })
         .collect()
 }
@@ -393,12 +393,12 @@ pub fn resolve_new_package(
         }
     }
 
-    pick_best_candidate(name, &candidates, installed_by, PinStrategy::None)
+    pick_best_candidate(name, &candidates, installed_by, None)
 }
 
 /// Resolve an already-installed package to its upgraded version.
 ///
-/// Uses the manifest entry to determine source server and pin strategy.
+/// Uses the manifest entry to determine source server and pin constraint.
 /// First looks on the same server (`installed_from`), then falls back
 /// to all servers.
 pub fn resolve_installed_package(
@@ -414,26 +414,47 @@ pub fn resolve_installed_package(
     let all_entries: Vec<&MergedPackageEntry> =
         indices.iter().map(|&i| &merged.packages[i]).collect();
 
-    let current_version =
-        Version::parse(&current.version).map_err(|_| ResolvePackageError::VersionNotFound {
-            package: name.to_owned(),
-            constraint: format!("current version '{}' is invalid semver", current.version),
-        })?;
-
-    let pin_filtered: Vec<&MergedPackageEntry> = all_entries
-        .iter()
-        .filter(|e| version_matches_pin(&e.version, &current_version, &current.pinned))
-        .copied()
-        .collect();
+    let pin_filtered: Vec<&MergedPackageEntry> = match &current.pinned {
+        Some(constraint_str) => {
+            let constraint = VersionConstraint::parse(constraint_str)?;
+            all_entries
+                .iter()
+                .filter(|e| constraint.matches(&e.version))
+                .copied()
+                .collect()
+        }
+        None => all_entries.clone(),
+    };
 
     if pin_filtered.is_empty() {
         return Err(ResolvePackageError::VersionNotFound {
             package: name.to_owned(),
-            constraint: format!("pin strategy {:?} from {}", current.pinned, current.version),
+            constraint: current.pinned.clone().unwrap_or_else(|| "*".to_owned()),
         });
     }
 
-    let same_server: Vec<&MergedPackageEntry> = pin_filtered
+    // An `upgrade` must never activate a store path older than the
+    // installed one. Drop candidates below the installed version while
+    // keeping equal ones, so same-version store-path rebuilds still
+    // resolve. A malformed installed version disables the guard rather
+    // than masking every candidate as stale.
+    let no_downgrade: Vec<&MergedPackageEntry> = match parse_package_version(&current.version) {
+        Some(current_version) => pin_filtered
+            .iter()
+            .filter(|e| e.version >= current_version)
+            .copied()
+            .collect(),
+        None => pin_filtered.clone(),
+    };
+
+    if no_downgrade.is_empty() {
+        return Err(ResolvePackageError::VersionNotFound {
+            package: name.to_owned(),
+            constraint: current.pinned.clone().unwrap_or_else(|| "*".to_owned()),
+        });
+    }
+
+    let same_server: Vec<&MergedPackageEntry> = no_downgrade
         .iter()
         .filter(|e| e.server_id == current.installed_from)
         .copied()
@@ -450,7 +471,7 @@ pub fn resolve_installed_package(
 
     pick_best_candidate(
         name,
-        &pin_filtered,
+        &no_downgrade,
         current.installed_by.clone(),
         current.pinned.clone(),
     )
@@ -462,7 +483,7 @@ fn pick_best_candidate(
     name: &str,
     candidates: &[&MergedPackageEntry],
     installed_by: InstalledBy,
-    pinned: PinStrategy,
+    pinned: Option<String>,
 ) -> Result<ResolvedPackage, ResolvePackageError> {
     if candidates.is_empty() {
         return Err(ResolvePackageError::VersionNotFound {
@@ -480,13 +501,19 @@ fn pick_best_candidate(
 
     let best = sorted[0];
 
-    if sorted.len() > 1 {
-        let second = sorted[1];
-        if best.version == second.version && best.server_priority == second.server_priority {
-            return Err(ResolvePackageError::Ambiguous {
-                package: name.to_owned(),
-            });
-        }
+    // A version/priority tie is only a conflict when the tied entries
+    // disagree on the store path; servers mirroring the byte-identical
+    // package are not ambiguous.
+    let conflicting = sorted[1..]
+        .iter()
+        .take_while(|entry| {
+            entry.version == best.version && entry.server_priority == best.server_priority
+        })
+        .any(|entry| entry.store_path != best.store_path);
+    if conflicting {
+        return Err(ResolvePackageError::Ambiguous {
+            package: name.to_owned(),
+        });
     }
 
     Ok(merged_entry_to_resolved(best, installed_by, pinned))
@@ -496,7 +523,7 @@ fn pick_best_candidate(
 fn merged_entry_to_resolved(
     entry: &MergedPackageEntry,
     installed_by: InstalledBy,
-    pinned: PinStrategy,
+    pinned: Option<String>,
 ) -> ResolvedPackage {
     ResolvedPackage {
         name: entry.name.clone(),
@@ -539,17 +566,6 @@ impl VersionConstraint {
             Self::Exact(exact) => version == exact,
             Self::Range(req) => req.matches(version),
         }
-    }
-}
-
-/// Check if a candidate version is allowed by a pin strategy relative to
-/// the currently installed version.
-fn version_matches_pin(candidate: &Version, current: &Version, pin: &PinStrategy) -> bool {
-    match pin {
-        PinStrategy::None => true,
-        PinStrategy::Major => candidate.major == current.major,
-        PinStrategy::Minor => candidate.major == current.major && candidate.minor == current.minor,
-        PinStrategy::Patch => candidate == current,
     }
 }
 
@@ -637,7 +653,7 @@ mod tests {
         assert_eq!(pkg.version, "1.0.0");
         assert_eq!(pkg.store_path, "/nix/store/abc-hello-1.0.0");
         assert_eq!(pkg.installed_from, "local");
-        assert_eq!(pkg.pinned, PinStrategy::None);
+        assert_eq!(pkg.pinned, None);
         assert!(matches!(pkg.installed_by, InstalledBy::System));
     }
 
@@ -851,6 +867,30 @@ mod tests {
     }
 
     #[test]
+    fn resolve_new_package_accepts_identical_entries_from_tied_servers() {
+        // Two servers mirroring the byte-identical package (same version,
+        // priority, and store path) offer the same target; that is not a
+        // conflict.
+        let merged = merge_indexes(vec![
+            fetched(
+                "a",
+                10,
+                vec![versioned_package("clock", "2.0.0", "/nix/store/same")],
+            ),
+            fetched(
+                "b",
+                10,
+                vec![versioned_package("clock", "2.0.0", "/nix/store/same")],
+            ),
+        ]);
+
+        let resolved = resolve_new_package(&merged, "clock", None, InstalledBy::User)
+            .expect("BUG: identical tied entries must resolve, not read as ambiguous");
+
+        assert_eq!(resolved.store_path, "/nix/store/same");
+    }
+
+    #[test]
     fn resolve_new_package_exact_version_rejects_other_patches() {
         let merged = merge_indexes(vec![
             fetched(
@@ -1055,7 +1095,7 @@ mod tests {
             install_strategy: None,
             installed_by: InstalledBy::System,
             installed_from: "braiins".into(),
-            pinned: PinStrategy::Major,
+            pinned: Some("^1.0.0".to_owned()),
         };
 
         let resolved = resolve_installed_package(&merged, "clock", &current)
@@ -1084,13 +1124,227 @@ mod tests {
             install_strategy: None,
             installed_by: InstalledBy::System,
             installed_from: "braiins".into(),
-            pinned: PinStrategy::Patch,
+            pinned: Some("1.0.0".to_owned()),
         };
 
         let resolved = resolve_installed_package(&merged, "clock", &current)
             .expect("BUG: package should resolve at exact version");
 
         assert_eq!(resolved.version, "1.0.0");
+    }
+
+    #[test]
+    fn resolve_installed_package_unpinned_resolves_latest() {
+        let merged = merge_indexes(vec![fetched(
+            "braiins",
+            10,
+            vec![
+                versioned_package("clock", "1.2.0", "/nix/store/v120"),
+                versioned_package("clock", "1.5.0", "/nix/store/v150"),
+            ],
+        )]);
+        let current = ManifestPackage {
+            version: "1.0.0".into(),
+            store_path: "/nix/store/current".into(),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: InstalledBy::System,
+            installed_from: "braiins".into(),
+            pinned: None,
+        };
+
+        let resolved = resolve_installed_package(&merged, "clock", &current)
+            .expect("BUG: unpinned package should resolve");
+
+        assert_eq!(resolved.version, "1.5.0");
+    }
+
+    #[test]
+    fn resolve_installed_package_range_pin_limits_upgrade() {
+        let merged = merge_indexes(vec![fetched(
+            "braiins",
+            10,
+            vec![
+                versioned_package("clock", "1.2.5", "/nix/store/v125"),
+                versioned_package("clock", "1.3.0", "/nix/store/v130"),
+            ],
+        )]);
+        let current = ManifestPackage {
+            version: "1.2.0".into(),
+            store_path: "/nix/store/current".into(),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: InstalledBy::System,
+            installed_from: "braiins".into(),
+            pinned: Some("~1.2".to_owned()),
+        };
+
+        let resolved = resolve_installed_package(&merged, "clock", &current)
+            .expect("BUG: tilde-pinned package should resolve within minor");
+
+        assert_eq!(resolved.version, "1.2.5");
+    }
+
+    #[test]
+    fn resolve_installed_package_refuses_downgrade_when_index_only_older() {
+        let merged = merge_indexes(vec![fetched(
+            "braiins",
+            10,
+            vec![versioned_package("clock", "1.4.0", "/nix/store/v140")],
+        )]);
+        let current = ManifestPackage {
+            version: "1.5.0".into(),
+            store_path: "/nix/store/v150".into(),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: InstalledBy::System,
+            installed_from: "braiins".into(),
+            pinned: Some("^1.0.0".to_owned()),
+        };
+
+        let err = resolve_installed_package(&merged, "clock", &current)
+            .expect_err("an older-only index must not downgrade an installed package");
+
+        assert!(
+            matches!(err, ResolvePackageError::VersionNotFound { .. }),
+            "expected VersionNotFound (→ stale), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_installed_package_upgrades_to_newer_in_pin() {
+        let merged = merge_indexes(vec![fetched(
+            "braiins",
+            10,
+            vec![versioned_package("clock", "1.1.0", "/nix/store/v110")],
+        )]);
+        let current = ManifestPackage {
+            version: "1.0.0".into(),
+            store_path: "/nix/store/v100".into(),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: InstalledBy::System,
+            installed_from: "braiins".into(),
+            pinned: Some("^1.0.0".to_owned()),
+        };
+
+        let resolved = resolve_installed_package(&merged, "clock", &current)
+            .expect("BUG: a newer in-pin version should still upgrade");
+
+        assert_eq!(resolved.version, "1.1.0");
+        assert_eq!(resolved.store_path, "/nix/store/v110");
+    }
+
+    #[test]
+    fn resolve_installed_package_allows_same_version_store_path_rebuild() {
+        let merged = merge_indexes(vec![fetched(
+            "braiins",
+            10,
+            vec![versioned_package("clock", "1.0.0", "/nix/store/rebuilt")],
+        )]);
+        let current = ManifestPackage {
+            version: "1.0.0".into(),
+            store_path: "/nix/store/original".into(),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: InstalledBy::System,
+            installed_from: "braiins".into(),
+            pinned: None,
+        };
+
+        let resolved = resolve_installed_package(&merged, "clock", &current)
+            .expect("BUG: same-version store-path rebuild should resolve");
+
+        assert_eq!(resolved.version, "1.0.0");
+        assert_eq!(resolved.store_path, "/nix/store/rebuilt");
+    }
+
+    #[test]
+    fn resolve_installed_two_component_current_upgrades_to_newer() {
+        let merged = merge_indexes(vec![fetched(
+            "braiins",
+            10,
+            vec![
+                versioned_package("avahi", "0.8", "/nix/store/v08"),
+                versioned_package("avahi", "0.9", "/nix/store/v09"),
+            ],
+        )]);
+        let current = ManifestPackage {
+            version: "0.8".into(),
+            store_path: "/nix/store/v08".into(),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: InstalledBy::System,
+            installed_from: "braiins".into(),
+            pinned: None,
+        };
+
+        let resolved = resolve_installed_package(&merged, "avahi", &current)
+            .expect("BUG: a two-component current version should upgrade");
+
+        assert_eq!(resolved.version, "0.9.0");
+    }
+
+    #[test]
+    fn resolve_installed_two_component_current_resolves_same_version() {
+        let merged = merge_indexes(vec![fetched(
+            "braiins",
+            10,
+            vec![versioned_package("avahi", "0.8", "/nix/store/v08")],
+        )]);
+        let current = ManifestPackage {
+            version: "0.8".into(),
+            store_path: "/nix/store/old".into(),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: InstalledBy::System,
+            installed_from: "braiins".into(),
+            pinned: None,
+        };
+
+        let resolved = resolve_installed_package(&merged, "avahi", &current)
+            .expect("BUG: a same-version two-component current must not be stale");
+
+        assert_eq!(resolved.version, "0.8.0");
+    }
+
+    #[test]
+    fn resolve_installed_two_component_current_refuses_downgrade() {
+        let merged = merge_indexes(vec![fetched(
+            "braiins",
+            10,
+            vec![versioned_package("avahi", "0.7", "/nix/store/v07")],
+        )]);
+        let current = ManifestPackage {
+            version: "0.8".into(),
+            store_path: "/nix/store/v08".into(),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: InstalledBy::System,
+            installed_from: "braiins".into(),
+            pinned: None,
+        };
+
+        let err = resolve_installed_package(&merged, "avahi", &current)
+            .expect_err("an older-only index must not downgrade a two-component current");
+
+        assert!(matches!(err, ResolvePackageError::VersionNotFound { .. }));
     }
 
     // ---- fetch_index tests (pure parse_and_validate_index path) ----
