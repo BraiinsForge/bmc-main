@@ -97,7 +97,8 @@ pub async fn apply_profile_change(
         });
     }
 
-    // 4. Verify store paths
+    // 4. Realise store paths, then verify as defense-in-depth
+    store::realize_store_paths(&store::TokioCommandRunner, &plan.packages, None).await?;
     store::verify_store_paths(&store::TokioCommandRunner, &plan.packages).await?;
 
     // 5. Build new profile generation
