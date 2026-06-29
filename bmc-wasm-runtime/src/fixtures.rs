@@ -96,52 +96,26 @@ pub fn write_jsonl_fixture(
 
 /// Update `config.toml` to add/update a `[fixtures].<size>` entry.
 ///
-/// Creates the file if it doesn't exist. Preserves existing content
-/// by doing a minimal TOML-aware edit: if `[fixtures]` table exists,
-/// update or add the key; otherwise append the table.
+/// Creates the file if it doesn't exist.
+/// Edits in place with `toml_edit` so the file's comments
+/// and key ordering survive — a plain `toml::Value`
+/// round-trip drops both.
 pub fn update_config_toml_fixtures(
     config_path: &Path,
     size_name: &str,
     fixture_rel_path: &str,
 ) -> Result<()> {
-    use std::io::Write;
-
     let content = std::fs::read_to_string(config_path).unwrap_or_default();
+    let mut doc = content
+        .parse::<toml_edit::DocumentMut>()
+        .with_context(|| format!("failed to parse {}", config_path.display()))?;
+    doc["fixtures"][size_name] = toml_edit::value(fixture_rel_path);
 
-    // Parse as TOML value for manipulation
-    let mut doc: toml::Value = if content.is_empty() {
-        toml::Value::Table(toml::map::Map::new())
-    } else {
-        toml::from_str(&content)
-            .with_context(|| format!("failed to parse {}", config_path.display()))?
-    };
-
-    // Ensure [fixtures] table exists and set the key
-    let table = doc
-        .as_table_mut()
-        .expect("BUG: root TOML value is not a table");
-    let fixtures = table
-        .entry("fixtures")
-        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-    let fixtures_table = fixtures
-        .as_table_mut()
-        .context("[fixtures] exists but is not a table")?;
-    fixtures_table.insert(
-        size_name.to_owned(),
-        toml::Value::String(fixture_rel_path.to_owned()),
-    );
-
-    let _ = std::fs::create_dir_all(
-        config_path
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new(".")),
-    );
-    let toml_str = toml::to_string_pretty(&doc).context("failed to serialize config TOML")?;
-    let mut f = std::fs::File::create(config_path)
-        .with_context(|| format!("failed to create {}", config_path.display()))?;
-    f.write_all(toml_str.as_bytes())
+    if let Some(parent) = config_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(config_path, doc.to_string())
         .with_context(|| format!("failed to write {}", config_path.display()))?;
-
     Ok(())
 }
 

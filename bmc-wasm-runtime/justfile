@@ -102,10 +102,11 @@ record WIDGET SIZE="full":
     #!/usr/bin/env bash
     set -euo pipefail
     root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
+    name=$({{ dir }}/tools/widget_root.py --dir {{ WIDGET }})
     target=$({{ target_dir_tool }} "$root")
-    wasm_file="$target/{{ wasm_target }}/release/$(echo {{ WIDGET }} | tr - _).wasm"
-    cargo build --manifest-path "$root/Cargo.toml" -p {{ WIDGET }} --release --target {{ wasm_target }}
-    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/{{ WIDGET }}" --record={{ SIZE }}
+    wasm_file="$target/{{ wasm_target }}/release/$(echo "$name" | tr - _).wasm"
+    cargo build --manifest-path "$root/$name/Cargo.toml" --release --target {{ wasm_target }}
+    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/$name" --record={{ SIZE }}
 
 # === Visual regression ===
 

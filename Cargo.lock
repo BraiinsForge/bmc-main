@@ -1712,6 +1712,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "toml",
+ "toml_edit 0.22.24",
  "tracing",
  "tracing-subscriber",
  "tungstenite",

@@ -73,6 +73,7 @@ rayon = { workspace = true, optional = true }
 sevenz-rust2 = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 toml = { workspace = true, optional = true }
+toml_edit = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -81,7 +82,7 @@ perf-overlay = []
 profiling = ["ii-stopwatch/enabled", "bmc-render/profiling"]
 audio = ["rodio"]
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
-fixtures = ["host", "base64", "flate2", "owo-colors", "toml"]
+fixtures = ["host", "base64", "flate2", "owo-colors", "toml", "toml_edit"]
 testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "eframe", "egui", "egui_autocomplete"]
 capture = ["host", "askama", "base64", "clap", "khronos-egl", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile"]
 

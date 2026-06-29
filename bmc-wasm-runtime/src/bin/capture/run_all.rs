@@ -323,7 +323,11 @@ fn build_wasm_workspace(workspace: &Path, widgets: &[String]) -> Result<()> {
         .current_dir(workspace);
 
     if widgets.len() == 1 {
-        cmd.args(["-p", &widgets[0]]);
+        // Select the package by its manifest path, not `-p <dir>`:
+        // a widget's crate name can differ from its directory
+        // and can collide with a published cargo package.
+        let manifest = workspace.join(&widgets[0]).join("Cargo.toml");
+        cmd.arg("--manifest-path").arg(&manifest);
     } else {
         cmd.arg("--workspace");
     }
