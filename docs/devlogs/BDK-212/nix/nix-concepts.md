@@ -67,13 +67,12 @@ Binary caches use the standard Nix format with NAR archives and narinfo metadata
 
 ```
 https://cache.braiins.com/
-├── nix-cache-info                   # Cache metadata
-├── v1/
-│   └── miniminer-index.json         # Root index (package list)
-│   └── factory.json       # Tarballs for initialization
-├── <hash>.narinfo                   # Package metadata files
+├── nix-cache-info                  # Cache metadata
+├── nix-package-index.v1.json       # Root index (package list)
+├── nix-factory.v1.json             # Tarballs for initialization
+├── <hash>.narinfo                  # Package metadata files
 └── nar/
-    ├── <hash>.nar.xz                # Compressed NAR archives
+    ├── <hash>.nar.xz               # Compressed NAR archives
     └── <hash>.nar.zst
 ```
 
@@ -109,7 +108,7 @@ a lightweight supplementary index. This lists the latest available versions of p
 
 ### Index Structure
 
-**Location:** `<https://<server>>/v1/miniminer-index.json`
+**Location:** `<https://<server>>/nix-package-index.v1.json`
 
 ```json
 {
@@ -118,8 +117,8 @@ a lightweight supplementary index. This lists the latest available versions of p
     "commit": "a1b2c3d4e5f6789..."
   },
   "indexes": [
-    "https://other-server.example.com/v1/miniminer-index.json",
-    "https://community-cache.example.com/v1/miniminer-index.json"
+    "https://other-server.example.com",
+    "https://community-cache.example.com"
   ],
   "caches": [
     {
@@ -132,7 +131,6 @@ a lightweight supplementary index. This lists the latest available versions of p
     {
       "name": "miniminer-display",
       "version": "2.1.0",
-      "cache": "default",
       "store_path": "/nix/store/abc123def456-bmc-2.1.0",
       "category": "core",
       "description": "Main display application for the Deck",
@@ -142,7 +140,6 @@ a lightweight supplementary index. This lists the latest available versions of p
     {
       "name": "hashrate-widget",
       "version": "1.2.0",
-      "cache": "default",
       "store_path": "/nix/store/xyz789ghi012-hashrate-widget-1.2.0",
       "category": "widget",
       "description": "Widget showing current hashrate statistics",
@@ -170,7 +167,8 @@ should then choose latest by default in user's UI. Specific version might be use
 - `packages` - Array of available packages (a package name can appear multiple times with different versions):
   - `name` - Package name
   - `version` - Package version
-  - `cache` - The cache that hosts this package. Default cache from the index used if not present.
+  - `cache` - Optional cache identifier for this package. When absent, the package is fetched from any cache in
+    `caches[]` that holds its store path.
   - `store_path` - Nix store path for direct `nix copy` from binary cache
   - `category` - Package category (display, widget, etc.)
   - `description` - Human-readable package description
@@ -183,7 +181,7 @@ should then choose latest by default in user's UI. Specific version might be use
 This is used for initialization of Nix on a given device. Braiins should ensure there is always a tarball for the latest
 firmware to prevent users not getting Nix initialized.
 
-**Location:** `<https://<server>>/v1/factory.json`
+**Location:** `<https://<server>>/nix-factory.v1.json`
 
 ```json
 {
@@ -229,7 +227,7 @@ Additional metadata about servers (priority, enabled state).
 {
   "factory": {
       "id": "braiins_server",
-      "index_url": "https://cache.braiins.com/v1/factory.json",
+      "base_url": "https://cache.braiins.com",
       "known_public_key": "cache.braiins.com:AAAAB3NzaC1...",
       "priority": 1,
       "enabled": true
@@ -238,7 +236,7 @@ Additional metadata about servers (priority, enabled state).
     {
       "id": "braiins_server",
       "type": "system",
-      "index_url": "https://cache.braiins.com/v1/miniminer-index.json",
+      "base_url": "https://cache.braiins.com",
       "known_public_key": "cache.braiins.com:AAAAB3NzaC1...",
       "priority": 1,
       "enabled": true
@@ -246,7 +244,7 @@ Additional metadata about servers (priority, enabled state).
     {
       "id": "app_a_server",
       "type": "application",
-      "index_url": "https://apps-cache.braiins.com/v1/miniminer-index.json",
+      "base_url": "https://apps-cache.braiins.com",
       "known_public_key": "apps-cache.braiins.com:BBBBB4NzaC2...",
       "priority": 2,
       "enabled": true
@@ -259,14 +257,14 @@ Additional metadata about servers (priority, enabled state).
 
 - `factory` - Server entry for the factory index (used for initialization/reset):
   - `id` - Unique server identifier
-  - `index_url` - URL of the factory index (`factory.json`)
+  - `base_url` - Base URL for the factory server; the client appends /nix-factory.v1.json to fetch the factory index.
   - `public_key` - Public key for signature verification
   - `priority` - Resolution priority (lower = higher priority)
   - `enabled` - Whether this server is active
 - `servers` - List of server entries for package indexes:
   - `id` - Unique server identifier
   - `type` - Server type (user facing type, ie. system or application)
-  - `index_url` - URL of the package index (`miniminer-index.json`)
+  - `base_url` - Base URL for the package server; the client appends /nix-package-index.v1.json to fetch the index.
   - `known_public_key` - Already known public key for signature verification. The server can also offer new keys with
     new cache servers. The keys here are already trusted.
   - `priority` - Conflict resolution priority (lower = higher priority)
@@ -368,7 +366,7 @@ upgrading existing ones, as long as compatibility checks pass via checker packag
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │ 1. User Selection & BOS Check                                    │
-│    - System fetches miniminer-index.json from all servers        │
+│    - System fetches nix-package-index.v1.json from all servers   │
 │    - User browses and selects applications in web UI             │
 │    - Run compatibility checker packages                          │
 │    - If incompatibility detected: offer only full upgrade        │
@@ -408,7 +406,7 @@ upgrading existing ones, as long as compatibility checks pass via checker packag
 
 ### Phase 1: User Selection & BOS Check
 
-1. System fetches `miniminer-index.json` from all enabled servers
+1. System fetches `nix-package-index.v1.json` from all enabled servers
 2. User browses available applications in web UI
 3. User selects applications to install or update
 4. For each selected app, run compatibility checker packages. If a newer BOS is necessary, full upgrade has to be
@@ -455,8 +453,7 @@ x86_64 binaries.
 #### Manifest
 
 The manifest kept inside of the profile should be similarly structured as the indexes the packages are downloaded from.
-Each package has its name, store_path, cache, version, description, where it came from and who/what has installed it
-specified.
+Each package has its name, store_path, version, description, where it came from and who/what has installed it specified.
 
 However, there needs to be also additional information stating what has actually installed this package. This can then
 be used as part of deciding when a package might be removed - what/who installed it can also decide on when to remove
@@ -479,7 +476,6 @@ to choose if there are multiple with the same name.
   "packages": {
     "miniminer-display": {
       "version": "2.1.0",
-      "cache": "default",
       "store_path": "/nix/store/abc123def456-bmc-2.1.0",
       "category": "core",
       "description": "Main display application for the Deck",
@@ -489,7 +485,6 @@ to choose if there are multiple with the same name.
     },
     "hashrate-widget": {
       "version": "1.2.0",
-      "cache": "default",
       "store_path": "/nix/store/xyz789ghi012-hashrate-widget-1.2.0",
       "category": "widget",
       "description": "Widget showing current hashrate statistics",
@@ -505,7 +500,6 @@ to choose if there are multiple with the same name.
 
 - `packages` - Installed packages with their metadata:
   - `version` - Installed version
-  - `cache` - Cache identifier the package was fetched from
   - `store_path` - Nix store path of the installed package
   - `category` - Package category (core, widget, etc.)
   - `description` - Human-readable package description

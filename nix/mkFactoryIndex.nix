@@ -1,4 +1,4 @@
-# mkFactoryIndex: Generate factory.json from tarball entries.
+# mkFactoryIndex: Generate nix-factory.v1.json from tarball entries.
 #
 # Each entry provides bos_version, download_url, and profile_path.
 # This is used for:
@@ -7,7 +7,7 @@
 { pkgs }:
 { tarballs # [ { bos_version; download_url; profile_path; } ]
 }:
-pkgs.writeTextDir "factory.json" (builtins.toJSON {
+pkgs.writeTextDir "nix-factory.v1.json" (builtins.toJSON {
   version = 1;
   inherit tarballs;
 })
