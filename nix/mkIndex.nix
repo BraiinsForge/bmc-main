@@ -1,4 +1,4 @@
-# mkIndex: Generate index.json from a package list.
+# mkIndex: Generate nix-package-index.v1.json from a package list.
 #
 # Takes a list of package entries (each with a `pkg` derivation and metadata)
 # and produces a JSON index file that bmc-nix-cli can consume.
@@ -10,9 +10,6 @@
 , commit ? "" # git commit hash for provenance field
 }:
 let
-  defaultCache =
-    if caches != [ ] then (builtins.head caches).name else null;
-
   mkPackageEntry = p: {
     inherit (p) name version;
     store_path = "${p.pkg}";
@@ -20,8 +17,8 @@ let
     description = p.description or null;
     upgrade_strategy = p.upgrade_strategy or null;
     install_strategy = p.install_strategy or null;
-  } // lib.optionalAttrs (defaultCache != null) {
-    cache = p.cache or defaultCache;
+  } // lib.optionalAttrs (p ? cache && p.cache != null) {
+    inherit (p) cache;
   };
 
   indexData = {
@@ -31,4 +28,4 @@ let
     packages = map mkPackageEntry packages;
   };
 in
-pkgs.writeTextDir "index.json" (builtins.toJSON indexData)
+pkgs.writeTextDir "nix-package-index.v1.json" (builtins.toJSON indexData)
