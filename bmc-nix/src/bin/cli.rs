@@ -5,13 +5,17 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use bmc_nix::manifest;
 use bmc_nix::types::{
-    BaseSelector, GcConfig, InstallResult, Manifest, PackageChange, PackageVersion, ServersConfig,
+    BaseSelector, GcConfig, InstallResult, Manifest, PackageChange, PackageVersion, ServerEntry,
+    ServersConfig,
 };
 use bmc_nix::upgrade::ActivationMode;
 use clap::{Parser, Subcommand};
 
 #[path = "cli/progress.rs"]
 mod progress;
+
+/// Per-request timeout for fetching upgrade indexes over HTTP.
+const INDEX_FETCH_TIMEOUT_SECS: u64 = 30;
 
 /// Print a human-readable diff of an `InstallResult` on stderr.
 ///
@@ -201,6 +205,22 @@ enum Commands {
         common: ProfileCommonArgs,
     },
 
+    /// Upgrade installed packages against the configured indexes
+    Upgrade {
+        /// Path to the server registry
+        /// (default: /etc/nix-upgrade/servers.json).
+        #[arg(long)]
+        servers_config: Option<PathBuf>,
+
+        /// Base generation to diff against: `current` (default),
+        /// `latest`, or a positive integer generation number.
+        #[arg(long, default_value = "current")]
+        base: BaseSelector,
+
+        #[command(flatten)]
+        common: ProfileCommonArgs,
+    },
+
     /// Initialize the Nix store from the configured factory tarball
     Init {
         /// Path to the server registry.
@@ -285,6 +305,17 @@ fn resolve_base(
     }
 }
 
+/// Load the server registry from `path`.
+///
+/// A missing or unparseable file is fatal: `upgrade` consumes the config
+/// init already provisioned and never repairs or falls back.
+fn load_servers_config(path: &Path) -> anyhow::Result<ServersConfig> {
+    let contents = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read servers config at {}", path.display()))?;
+    serde_json::from_str(&contents)
+        .with_context(|| format!("failed to parse servers config at {}", path.display()))
+}
+
 /// Load the GC config from `path`, falling back to defaults when absent.
 ///
 /// A present-but-unparseable file is fatal: it signals a provisioning
@@ -323,6 +354,18 @@ fn apply_gc_overrides(
     if !protected_generations.is_empty() {
         config.protected_generations = protected_generations;
     }
+}
+
+/// Fail when the fetch set has no enabled entry to fetch from.
+///
+/// The shipped default `servers.json` carries an empty `servers` list, so
+/// a plain `upgrade` with no `--index` would otherwise fetch nothing,
+/// resolve every package as absent and mislabel them all as stale.
+fn ensure_fetchable(fetch_set: &[ServerEntry]) -> anyhow::Result<()> {
+    if fetch_set.iter().any(|s| s.enabled) {
+        return Ok(());
+    }
+    anyhow::bail!("no upgrade index configured: add a server to servers.json or pass --index <url>")
 }
 
 fn activation_mode_from_no_activate(no_activate: bool) -> ActivationMode {
@@ -513,15 +556,50 @@ async fn cmd_reset_profile(
     Ok(())
 }
 
-/// Load the server registry from `path`.
-///
-/// A missing or unparseable file is fatal: init consumes the config
-/// provisioning already installed and never repairs or falls back.
-fn load_servers_config(path: &Path) -> anyhow::Result<ServersConfig> {
-    let contents = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read servers config at {}", path.display()))?;
-    serde_json::from_str(&contents)
-        .with_context(|| format!("failed to parse servers config at {}", path.display()))
+async fn cmd_upgrade(
+    servers_config: Option<PathBuf>,
+    profile_dir: PathBuf,
+    hooks_dir: String,
+    hooks_override_path: Option<PathBuf>,
+    base: BaseSelector,
+    no_activate: bool,
+    log_format: LogFormat,
+) -> anyhow::Result<()> {
+    let servers_path =
+        servers_config.unwrap_or_else(|| PathBuf::from("/etc/nix-upgrade/servers.json"));
+    let config = load_servers_config(&servers_path)?;
+    let fetch_set: Vec<ServerEntry> = config.servers;
+    ensure_fetchable(&fetch_set)?;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(INDEX_FETCH_TIMEOUT_SECS))
+        .build()
+        .expect("BUG: reqwest client builder");
+    let merged = bmc_nix::index::fetch_and_merge_indexes(&client, &fetch_set).await?;
+
+    std::fs::create_dir_all(&profile_dir)?;
+    let base_manifest = resolve_base(&profile_dir, &base)?;
+
+    let progress = progress::CliProgress::new(log_format);
+    let result = bmc_nix::upgrade::apply_profile_change(
+        &profile_dir,
+        base_manifest,
+        Some(&merged),
+        &[],
+        &[],
+        activation_mode_from_no_activate(no_activate),
+        None,
+        Some(&progress),
+        &hooks_dir,
+        hooks_override_path.as_deref(),
+    )
+    .await?;
+
+    print_profile_diff(&result);
+    if let Some(generation) = result.generation {
+        println!("{}", generation.path.display());
+    }
+    Ok(())
 }
 
 /// Build a shared HTTP client for first-boot init downloads.
@@ -693,6 +771,23 @@ async fn main() -> anyhow::Result<()> {
                 common.profile_dir,
                 common.hooks_dir,
                 common.hooks_override_path,
+                common.no_activate,
+                log_format,
+            )
+            .await
+        }
+
+        Commands::Upgrade {
+            servers_config,
+            base,
+            common,
+        } => {
+            cmd_upgrade(
+                servers_config,
+                common.profile_dir,
+                common.hooks_dir,
+                common.hooks_override_path,
+                base,
                 common.no_activate,
                 log_format,
             )
@@ -926,5 +1021,37 @@ mod tests {
         assert_eq!(config.keep_days, Some(10));
         assert_eq!(config.min_free_space, "1G");
         assert_eq!(config.protected_generations, vec![1, 2]);
+    }
+
+    fn configured_server(id: &str, priority: u32) -> ServerEntry {
+        ServerEntry {
+            id: id.to_owned(),
+            server_type: "mirror".to_owned(),
+            base_url: format!("https://{id}.example.com/v1"),
+            known_public_key: "k".to_owned(),
+            priority,
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn ensure_fetchable_errors_when_no_enabled_entries() {
+        assert!(
+            ensure_fetchable(&[]).is_err(),
+            "an empty fetch set must be a fatal error"
+        );
+
+        let mut disabled = configured_server("s1", 10);
+        disabled.enabled = false;
+        assert!(
+            ensure_fetchable(&[disabled]).is_err(),
+            "an all-disabled fetch set must be a fatal error"
+        );
+    }
+
+    #[test]
+    fn ensure_fetchable_ok_with_one_enabled_entry() {
+        ensure_fetchable(&[configured_server("s1", 10)])
+            .expect("BUG: one enabled entry should be fetchable");
     }
 }
