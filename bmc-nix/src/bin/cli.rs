@@ -10,6 +10,9 @@ use bmc_nix::types::{
 use bmc_nix::upgrade::ActivationMode;
 use clap::{Parser, Subcommand};
 
+#[path = "cli/progress.rs"]
+mod progress;
+
 /// Print a human-readable diff of an `InstallResult` on stderr.
 ///
 /// Format (matches spec §4):
