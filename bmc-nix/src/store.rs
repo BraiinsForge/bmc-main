@@ -5,13 +5,20 @@ use std::path::{Path, PathBuf};
 
 use crate::types::{FactoryServerEntry, FactoryTarball, ResolvedPackage};
 
-/// Errors that can occur when verifying store paths.
+/// Errors that can occur when verifying or realising store paths.
 #[derive(Debug, thiserror::Error)]
 pub enum StorePathError {
     #[error("nix-store --check-validity failed: {0}")]
     CheckValidityFailed(#[source] std::io::Error),
     #[error("store path for '{name}' not found: {store_path}")]
     MissingStorePath { name: String, store_path: String },
+    #[error("nix-store --realise failed to start: {0}")]
+    RealiseFailed(#[source] std::io::Error),
+    #[error("nix-store --realise exited with {status}: {stderr}")]
+    RealiseExited {
+        status: std::process::ExitStatus,
+        stderr: String,
+    },
 }
 
 /// Abstraction over command execution for testability.
@@ -104,6 +111,59 @@ pub async fn verify_store_paths(
             });
         }
     }
+    Ok(())
+}
+
+/// Progress callback for store path realization.
+pub trait RealizeProgress: Send + Sync {
+    fn on_realization_started(&self, total_paths: usize);
+    fn on_realization_finished(&self);
+}
+
+/// Realise store paths via `nix-store --realise`.
+///
+/// Collects unique store paths from `packages`, deduplicates and sorts
+/// them, then invokes one `nix-store --realise` command. Missing paths
+/// are fetched from configured Nix substituters.
+///
+/// Returns `Ok(())` immediately for an empty package list without
+/// spawning any command.
+pub async fn realize_store_paths(
+    runner: &impl CommandRunner,
+    packages: &[ResolvedPackage],
+    progress: Option<&dyn RealizeProgress>,
+) -> Result<(), StorePathError> {
+    use std::collections::BTreeSet;
+
+    let paths: BTreeSet<&str> = packages.iter().map(|p| p.store_path.as_str()).collect();
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    if let Some(p) = progress {
+        p.on_realization_started(paths.len());
+    }
+
+    let mut args: Vec<&str> = vec!["--realise"];
+    args.extend(paths.iter().copied());
+
+    let output = runner
+        .run("nix-store", &args)
+        .await
+        .map_err(StorePathError::RealiseFailed)?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        return Err(StorePathError::RealiseExited {
+            status: output.status,
+            stderr,
+        });
+    }
+
+    if let Some(p) = progress {
+        p.on_realization_finished();
+    }
+
     Ok(())
 }
 
@@ -334,6 +394,14 @@ mod tests {
                 });
             }
 
+            if program == "nix-store" && args.first() == Some(&"--realise") {
+                return Ok(std::process::Output {
+                    status: std::process::ExitStatus::from_raw(0),
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                });
+            }
+
             Ok(std::process::Output {
                 status: std::process::ExitStatus::from_raw(1 << 8),
                 stdout: Vec::new(),
@@ -409,6 +477,12 @@ mod tests {
             StorePathError::CheckValidityFailed(source) => {
                 panic!("expected MissingStorePath, got CheckValidityFailed: {source}");
             }
+            StorePathError::RealiseFailed(source) => {
+                panic!("expected MissingStorePath, got RealiseFailed: {source}");
+            }
+            StorePathError::RealiseExited { status, stderr } => {
+                panic!("expected MissingStorePath, got RealiseExited({status}): {stderr}");
+            }
         }
     }
 
@@ -475,5 +549,46 @@ mod tests {
         }];
         let found = find_tarball_for_version(&tarballs, "9.9.9");
         assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn realize_store_paths_uses_single_nix_store_realise_invocation() {
+        let runner = MockCommandRunner::new(vec![]);
+        let packages = vec![
+            test_resolved("b", "/nix/store/b", None),
+            test_resolved("a", "/nix/store/a", None),
+            test_resolved("a-dup", "/nix/store/a", None),
+        ];
+        realize_store_paths(&runner, &packages, None)
+            .await
+            .expect("BUG: realise should succeed");
+
+        let invocations = runner.invocations.lock().expect("BUG: mutex poisoned");
+        assert_eq!(invocations.len(), 1, "expected exactly one invocation");
+        let (program, args) = &invocations[0];
+        assert_eq!(program, "nix-store");
+        assert_eq!(
+            args,
+            &vec![
+                "--realise".to_owned(),
+                "/nix/store/a".to_owned(),
+                "/nix/store/b".to_owned(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn realize_store_paths_empty_list_does_not_spawn_nix_store() {
+        let runner = MockCommandRunner::new(vec![]);
+        realize_store_paths(&runner, &[], None)
+            .await
+            .expect("BUG: empty list should succeed");
+
+        let invocations = runner.invocations.lock().expect("BUG: mutex poisoned");
+        assert_eq!(
+            invocations.len(),
+            0,
+            "expected no invocations for empty input"
+        );
     }
 }
