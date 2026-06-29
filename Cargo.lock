@@ -1147,6 +1147,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "cognos",
  "file-rotate",
  "futures",
  "libc",
@@ -2255,6 +2256,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
  "unicode-width",
+]
+
+[[package]]
+name = "cognos"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a503261a7903c21088a4459c8e50908d6ae4e63e8b43f09e7c69c51183ff7989"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_repr",
 ]
 
 [[package]]

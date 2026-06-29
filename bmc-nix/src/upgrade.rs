@@ -48,6 +48,7 @@ pub trait UpgradeProgress: Send + Sync {
     fn on_phase(&self, phase: UpgradePhase);
     fn on_realization_started(&self, total_paths: usize);
     fn on_realization_finished(&self);
+    fn on_download_status(&self, snapshot: &store::progress::DownloadSnapshot);
 }
 
 /// Adapter exposing an [`UpgradeProgress`] as a [`store::RealizeProgress`]
@@ -61,6 +62,10 @@ impl store::RealizeProgress for UpgradeRealizeProgress<'_> {
 
     fn on_realization_finished(&self) {
         self.0.on_realization_finished();
+    }
+
+    fn on_download_status(&self, snapshot: &store::progress::DownloadSnapshot) {
+        self.0.on_download_status(snapshot);
     }
 }
 
@@ -295,6 +300,7 @@ mod tests {
 
         fn on_realization_started(&self, _total_paths: usize) {}
         fn on_realization_finished(&self) {}
+        fn on_download_status(&self, _snapshot: &store::progress::DownloadSnapshot) {}
     }
 
     #[tokio::test]
