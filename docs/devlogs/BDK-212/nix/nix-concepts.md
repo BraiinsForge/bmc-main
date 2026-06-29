@@ -85,7 +85,7 @@ For ease of use, all widgets are kept in a single repository with the flake, but
 other repositories.
 
 The build process produces both the packages and the index that gets published to the server. This allows to capture the
-whole closure, copying only the resulting index.json to the server's store.
+whole closure, copying only the resulting `nix-package-index.v1.json` to the server's store.
 
 ### Dependencies
 
@@ -169,7 +169,7 @@ should then choose latest by default in user's UI. Specific version might be use
   - `version` - Package version
   - `cache` - Optional cache identifier for this package. When absent, the package is fetched from any cache in
     `caches[]` that holds its store path.
-  - `store_path` - Nix store path for direct `nix copy` from binary cache
+  - `store_path` - Nix store path, realised on-device via `nix-store --realise` from the configured substituters
   - `category` - Package category (display, widget, etc.)
   - `description` - Human-readable package description
   - `upgrade_strategy` - This is the strategy in order to completely update the package. When reboot, the user is asked
@@ -319,8 +319,8 @@ version.
 Conflict resolution decides which package versions are selected when multiple servers publish the same package name. The
 algorithm is:
 
-1. If a package is already installed, first look for matches on the same server listed in `installed_from`, and pick
-   versions according to the package's pin strategy.
+1. If a package is already installed, first look for matches on the same server listed in `installed_from`, and keep
+   only versions allowed by the package's pin constraint (see the manifest `pinned` field).
 2. If no matches exist on that server, look across other servers for the same package name.
 3. From the remaining matches, choose the latest version.
 4. If multiple packages remain after version selection, resolve by server priority (lower number wins). Priorities must
@@ -374,7 +374,7 @@ upgrading existing ones, as long as compatibility checks pass via checker packag
                                 │
                                 ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│ 2. Copy Store Paths (nix copy)                                   │
+│ 2. Realise Store Paths (nix-store --realise)                     │
 │    - Collect store paths from the index                          │
 │    - Fetch packages and all dependencies from binary cache       │
 │    - If store paths not available: abort                         │
@@ -413,10 +413,10 @@ upgrading existing ones, as long as compatibility checks pass via checker packag
    performed (see "Checker Packages").
 5. User clicks "Install Selected" or "Upgrade System & Install Selected"
 
-### Phase 2: Copy store paths from index using nix-copy
+### Phase 2: Realise store paths from index using nix-store --realise
 
-The store paths are collected from the indexes. Then, they're fetched through nix-copy. Nix queries the binary cache for
-the computed store path.
+The store paths are collected from the indexes. Then, they're realised through `nix-store --realise`, which fetches any
+missing paths and their dependencies from the configured substituters (binary caches).
 
 If the store paths are not available, the whole process is aborted.
 
@@ -463,7 +463,11 @@ The usual value of "installed_by" is going to be "user", where the user is the o
 user can remove it, ie. the user has installed a widget. We keep that widget as long as it exists or the user has
 removed it.
 
-Each package can also be pinned, either by "major", "minor", "patch", null, saying how it should be treated on upgrade.
+Each package can also be pinned to a semver version constraint that limits which versions an upgrade may move it to. The
+constraint is a string such as `1.2.3` (exactly that version), `^1.2` (compatible `1.x`), `~1.2.3` (within the minor),
+`1.2.x` (any patch of `1.2`), or a range like `>=1.2, <2.0.0`. A bare, fully specified version (`1.2.3`) means exactly
+that version; every other form follows `semver` range semantics. `null` (or an omitted field) means the package is
+unpinned and may upgrade to any version.
 
 This could allow for partial upgrades if we wanted to support those, since all information necessary to build a new
 profile is kept. Also the upgrades will be performed thanks to them, looking at the packages based on the names.
@@ -490,7 +494,7 @@ to choose if there are multiple with the same name.
       "description": "Widget showing current hashrate statistics",
       "installed_by": "user",
       "installed_from": "braiins_server",
-      "pinned": null
+      "pinned": "^1.2.0"
     }
   }
 }
@@ -505,7 +509,8 @@ to choose if there are multiple with the same name.
   - `description` - Human-readable package description
   - `installed_by` - What initiated the installation (e.g., "system", "user")
   - `installed_from` - What server from servers.json configuration this package is installed from
-  - `pinned` - Version pinning strategy ("major", "minor", "patch", "none" or null)
+  - `pinned` - Semver version constraint the package is pinned to (e.g. `1.2.3`, `^1.2`, `~1.2.3`, `1.2.x`,
+    `>=1.2, <2`); a bare full version means exactly that version. `null` or an absent field means unpinned (any version)
 
 ### Phase 4: BOS Upgrade
 
