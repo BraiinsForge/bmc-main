@@ -114,6 +114,11 @@ pub(crate) fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
         | DrawCommand::Shadow { inner, .. }
         | DrawCommand::Orbit { inner, .. } => get_draw_bounds(inner),
         DrawCommand::Text { .. } | DrawCommand::CurvedText { .. } => (0.0, 0.0),
+        DrawCommand::AutofitText {
+            box_width,
+            box_height,
+            ..
+        } => (*box_width, *box_height),
         DrawCommand::Path { points, .. } => {
             if points.is_empty() {
                 (0.0, 0.0)
@@ -867,6 +872,60 @@ fn render_draw_inner(
                 renderer.restore();
             }
         }
+        DrawCommand::AutofitText {
+            x,
+            y,
+            box_width,
+            box_height,
+            mode,
+            min_size,
+            max_size,
+            text,
+            style,
+        } => {
+            let rx = cx + *x + offset_x;
+            let ry = cy + *y + offset_y;
+            let bw = *box_width * scale;
+            let bh = *box_height * scale;
+            let mut render_style = *style;
+            let base_color = color_override.unwrap_or(style.color);
+            render_style.color = if alpha < 1.0 {
+                base_color.scale_alpha(alpha)
+            } else {
+                base_color
+            };
+            if rotation == 0.0 {
+                renderer.draw_autofit_text(
+                    rx,
+                    ry,
+                    bw,
+                    bh,
+                    text,
+                    &render_style,
+                    *mode,
+                    *min_size,
+                    *max_size,
+                );
+            } else {
+                let pivot_x = cx + cw / 2.0;
+                let pivot_y = cy + ch / 2.0;
+                renderer.save();
+                renderer.translate(pivot_x, pivot_y);
+                renderer.rotate(rotation);
+                renderer.draw_autofit_text(
+                    rx - pivot_x,
+                    ry - pivot_y,
+                    bw,
+                    bh,
+                    text,
+                    &render_style,
+                    *mode,
+                    *min_size,
+                    *max_size,
+                );
+                renderer.restore();
+            }
+        }
         DrawCommand::Sphere {
             x,
             y,
@@ -1128,6 +1187,19 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
             color: style.color,
             ..Default::default()
         },
+        DrawCommand::AutofitText {
+            x,
+            y,
+            box_width,
+            box_height,
+            ..
+        } => PrevDrawValues {
+            x: *x,
+            y: *y,
+            w: *box_width,
+            h: *box_height,
+            ..Default::default()
+        },
     }
 }
 
@@ -1242,7 +1314,6 @@ mod tests {
             text: String,
             style: TextStyle,
         },
-        #[expect(dead_code)]
         AutofitText {
             x: f32,
             y: f32,
@@ -1816,5 +1887,73 @@ mod tests {
         assert_eq!(text, "hashrate");
         assert_eq!(style.size, expected_style.size);
         assert_eq!(style.color, expected_style.color);
+    }
+
+    #[test]
+    fn autofit_text_dispatches_to_renderer() {
+        let mut renderer = RecordingRenderer::default();
+        let mut animation_states = HashMap::new();
+        let mut transition_states = HashMap::new();
+        let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
+        let draw = DrawCommand::AutofitText {
+            x: 5.0,
+            y: 7.0,
+            box_width: 100.0,
+            box_height: 40.0,
+            mode: AutoFit::Shrink,
+            min_size: 16,
+            max_size: 0,
+            text: "hi".to_string(),
+            style: TextStyle {
+                size: 32,
+                ..TextStyle::default()
+            },
+        };
+
+        render_draw_inner(
+            &mut renderer,
+            &draw,
+            0.0,
+            0.0,
+            200.0,
+            100.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+            0.0,
+            None,
+            &mut anim_ctx,
+        );
+
+        let [
+            RenderEvent::AutofitText {
+                x,
+                y,
+                box_width,
+                box_height,
+                text,
+                size,
+                mode,
+                min_size,
+                max_size,
+            },
+        ] = &renderer.events[..]
+        else {
+            panic!(
+                "expected exactly one AutofitText render event, got: {:?}",
+                renderer.events
+            );
+        };
+        assert!((*x - 5.0).abs() < f32::EPSILON);
+        assert!((*y - 7.0).abs() < f32::EPSILON);
+        assert!((*box_width - 100.0).abs() < f32::EPSILON);
+        assert!((*box_height - 40.0).abs() < f32::EPSILON);
+        assert_eq!(text, "hi");
+        assert_eq!(*size, 32);
+        assert_eq!(*mode, AutoFit::Shrink);
+        assert_eq!(*min_size, 16);
+        assert_eq!(*max_size, 0);
     }
 }

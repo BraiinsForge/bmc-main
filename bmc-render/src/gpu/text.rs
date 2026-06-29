@@ -440,7 +440,10 @@ pub(crate) fn autofit_bounds(
     let floor_default = if min_size > 0 {
         min_size
     } else {
-        DEFAULT_MIN_AUTOFIT
+        // Never let the implicit readability floor exceed the configured `size`:
+        // for a `size` below the floor, a Shrink search would otherwise be
+        // clamped *up* to the floor and grow text in a shrink-only mode.
+        DEFAULT_MIN_AUTOFIT.min(size.max(1))
     };
     let lower = match mode {
         AutoFit::Grow => size,

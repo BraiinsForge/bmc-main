@@ -227,6 +227,17 @@ pub enum DrawCommand {
         text: String,
         style: TextStyle,
     },
+    AutofitText {
+        x: f32,
+        y: f32,
+        box_width: f32,
+        box_height: f32,
+        mode: AutoFit,
+        min_size: u16,
+        max_size: u16,
+        text: String,
+        style: TextStyle,
+    },
     NinePatch {
         x: f32,
         y: f32,
@@ -1145,6 +1156,29 @@ impl<'a> TreeReader<'a> {
                     bottom,
                 })
             }
+            DRAW_AUTOFIT_TEXT => {
+                let x = self.read_f32()?;
+                let y = self.read_f32()?;
+                let box_width = self.read_f32()?;
+                let box_height = self.read_f32()?;
+                let mode = AutoFit::from_u8(self.read_u8()?);
+                let min_size = self.read_u16()?;
+                let max_size = self.read_u16()?;
+                let style = self.read_text_style()?;
+                let len = self.read_u16()?;
+                let text = self.read_string(len)?;
+                Ok(DrawCommand::AutofitText {
+                    x,
+                    y,
+                    box_width,
+                    box_height,
+                    mode,
+                    min_size,
+                    max_size,
+                    text,
+                    style,
+                })
+            }
             _ => bail!("unknown draw command: {draw_type}"),
         }
     }
@@ -1218,6 +1252,47 @@ mod fill_decode_tests {
             panic!("expected Path");
         };
         assert_eq!(paint, PathPaint::Fill(Fill::linear(0.0, a, b)));
+    }
+
+    #[test]
+    fn autofit_text_decodes_geometry_mode_bounds_style_and_text() {
+        let style = TextStyle {
+            size: 40,
+            ..TextStyle::default()
+        };
+        let mut data = vec![DRAW_AUTOFIT_TEXT];
+        data.extend_from_slice(&10.0_f32.to_le_bytes());
+        data.extend_from_slice(&20.0_f32.to_le_bytes());
+        data.extend_from_slice(&100.0_f32.to_le_bytes());
+        data.extend_from_slice(&50.0_f32.to_le_bytes());
+        data.push(AutoFit::ShrinkAndGrow as u8);
+        data.extend_from_slice(&14_u16.to_le_bytes());
+        data.extend_from_slice(&64_u16.to_le_bytes());
+        data.extend_from_slice(&style.to_bytes());
+        data.extend_from_slice(&5_u16.to_le_bytes());
+        data.extend_from_slice(b"HELLO");
+
+        let mut reader = TreeReader::new(&data);
+        let cmd = reader.read_draw().expect("BUG: decode");
+        let DrawCommand::AutofitText {
+            x,
+            y,
+            box_width,
+            box_height,
+            mode,
+            min_size,
+            max_size,
+            text,
+            style: s,
+        } = cmd
+        else {
+            panic!("BUG: expected AutofitText");
+        };
+        assert_eq!((x, y, box_width, box_height), (10.0, 20.0, 100.0, 50.0));
+        assert_eq!(mode, AutoFit::ShrinkAndGrow);
+        assert_eq!((min_size, max_size), (14, 64));
+        assert_eq!(text, "HELLO");
+        assert_eq!(s.size, 40);
     }
 }
 
