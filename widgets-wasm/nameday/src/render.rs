@@ -23,43 +23,45 @@ struct SizeParams {
     country_pad_left: u32,
     country_pad_top: u32,
     date_pad_bottom: u32,
-
-    /// Max length of string with names to print. Empirically measured
-    /// with respect to font (style and size) used for printing names.
-    max_names_len: usize,
+    names_pad_vertical: u32,
+    names_pad_horizontal: u32,
 }
 
 const SMALL: SizeParams = SizeParams {
-    name_font_size: 28,
+    name_font_size: 64,
     date_font_size: 24,
     country_pad_left: 16,
     country_pad_top: 8,
     date_pad_bottom: 16,
-    max_names_len: 40,
+    names_pad_vertical: 8,
+    names_pad_horizontal: 16,
 };
 const MEDIUM: SizeParams = SizeParams {
-    name_font_size: 40,
+    name_font_size: 96,
     date_font_size: 24,
     country_pad_left: 16,
     country_pad_top: 8,
     date_pad_bottom: 16,
-    max_names_len: 40,
+    names_pad_vertical: 8,
+    names_pad_horizontal: 16,
 };
 const LARGE: SizeParams = SizeParams {
-    name_font_size: 64,
+    name_font_size: 120,
     date_font_size: 24,
     country_pad_left: 16,
     country_pad_top: 8,
     date_pad_bottom: 16,
-    max_names_len: 40,
+    names_pad_vertical: 8,
+    names_pad_horizontal: 16,
 };
 const FULL: SizeParams = SizeParams {
-    name_font_size: 64,
+    name_font_size: 200,
     date_font_size: 32,
     country_pad_left: 16,
     country_pad_top: 16,
     date_pad_bottom: 24,
-    max_names_len: 80,
+    names_pad_vertical: 16,
+    names_pad_horizontal: 16,
 };
 
 fn get_size_params(variant: SizeVariant) -> &'static SizeParams {
@@ -97,43 +99,48 @@ pub(super) fn country_icon(country: Country, size: f32) -> Node {
 pub(super) fn names_draw(ws: WidgetSize, names: &str) -> Node {
     let size_params = get_size_params(ws.variant).scaled(ws.fit());
 
-    let names = truncate_with_ellipsis(names, size_params.max_names_len);
+    // Names region: full width, height left between the country and date bands.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "COUNTRY_ICON_SIZE is 24.0 — positive, fits u32"
+    )]
+    let country_band = size_params.country_pad_top + COUNTRY_ICON_SIZE as u32;
+    let date_band = size_params.date_font_size + size_params.date_pad_bottom;
+    let region_h = ws
+        .height
+        .saturating_sub(country_band + date_band + 2 * size_params.names_pad_vertical);
+    let region_w = ws
+        .width
+        .saturating_sub(size_params.names_pad_horizontal * 2);
 
-    center(
-        props!(),
-        [text(
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "widget dimensions are small — u32→f32 is exact well below 2^24"
+    )]
+    let box_w = region_w as f32;
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "widget dimensions are small — u32→f32 is exact well below 2^24"
+    )]
+    let box_h = region_h as f32;
+
+    canvas(
+        props!(width: region_w, height: region_h, inset_top: country_band + size_params.names_pad_vertical, inset_left: size_params.names_pad_horizontal),
+        vec![Draw::autofit_text(
+            0.0,
+            0.0,
+            box_w,
+            box_h,
             names,
             style!(
                 size: size_params.name_font_size,
                 weight: FontWeight::BOLD,
-                text_overflow: TextOverflow::Wrap,
-                align: TextAlign::Center
+                align: TextAlign::Center,
+                valign: VerticalAlign::Center
             ),
         )],
     )
-}
-
-/// Truncate `text` to at most `max_chars` characters, appending an ellipsis
-/// when it overflows. Counts characters, not bytes, so a multi-byte text is
-/// never split mid-`char` (which would panic) and the budget matches the
-/// font measurement regardless of accents. A trailing separator is dropped
-/// so the ellipsis never follows a `,` or space.
-fn truncate_with_ellipsis(text: &str, max_chars: usize) -> String {
-    const ELLIPSIS_STRING: &str = "...";
-
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-
-    let keep = max_chars.saturating_sub(ELLIPSIS_STRING.chars().count());
-    let mut out: String = text.chars().take(keep).collect();
-
-    while out.ends_with(',') || out.ends_with(' ') {
-        out.pop();
-    }
-
-    out.push_str(ELLIPSIS_STRING);
-    out
 }
 
 pub(super) fn country_draw(ws: WidgetSize, country: Country) -> Node {
@@ -218,68 +225,4 @@ pub fn stale_banner() -> Node {
             ],
         )],
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn keeps_string_shorter_than_limit_unchanged() {
-        assert_eq!(truncate_with_ellipsis("Adam", 40), "Adam");
-    }
-
-    #[test]
-    fn keeps_string_exactly_at_limit_unchanged() {
-        let names = "abcde";
-        assert_eq!(truncate_with_ellipsis(names, 5), names);
-    }
-
-    #[test]
-    fn truncates_and_appends_ellipsis_when_over_limit() {
-        // 6 chars truncated to 5: keep 2 chars, then "...".
-        assert_eq!(truncate_with_ellipsis("abcdef", 5), "ab...");
-    }
-
-    #[test]
-    fn result_never_exceeds_limit() {
-        let out = truncate_with_ellipsis("abcdefghij", 5);
-        assert_eq!(out.chars().count(), 5);
-    }
-
-    #[test]
-    fn counts_characters_not_bytes_for_multibyte_input() {
-        // Each 'á' is two bytes but one char; the limit is in chars.
-        let names = "áááááá";
-        assert_eq!(names.chars().count(), 6);
-        let out = truncate_with_ellipsis(names, 5);
-        assert_eq!(out, "áá...");
-        assert_eq!(out.chars().count(), 5);
-    }
-
-    #[test]
-    fn drops_trailing_comma_before_ellipsis() {
-        // "Adam, Eva" is 9 chars; limit 8 keeps the first 5 ("Adam,"), and
-        // the trailing comma is dropped before the ellipsis is appended.
-        assert_eq!(truncate_with_ellipsis("Adam, Eva", 8), "Adam...");
-    }
-
-    #[test]
-    fn drops_trailing_comma_and_space_before_ellipsis() {
-        // "Adam, Eva, Bob" limit 9 keeps the first 6 ("Adam, "); both the
-        // trailing space and the comma are stripped, leaving "Adam".
-        assert_eq!(truncate_with_ellipsis("Adam, Eva, Bob", 9), "Adam...");
-    }
-
-    #[test]
-    fn handles_limit_smaller_than_ellipsis() {
-        // keep saturates to 0, so only the ellipsis remains.
-        assert_eq!(truncate_with_ellipsis("abcdef", 2), "...");
-        assert_eq!(truncate_with_ellipsis("abcdef", 0), "...");
-    }
-
-    #[test]
-    fn keeps_empty_string_unchanged() {
-        assert_eq!(truncate_with_ellipsis("", 40), "");
-    }
 }
