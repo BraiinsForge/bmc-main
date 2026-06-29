@@ -279,6 +279,7 @@ pub enum TreeNode {
         size: u8,
         icon_id: Option<SvgId>,
         disabled: bool,
+        stretch: bool,
         skin: Option<ButtonSkinData>,
     },
     Spacer {
@@ -612,6 +613,7 @@ impl<'a> TreeReader<'a> {
                 let size = self.read_u8()?;
                 let icon_id = self.read_icon_id()?;
                 let disabled = self.read_u8()? != 0;
+                let stretch = self.read_u8()? != 0;
                 let len = self.read_u16()?;
                 let label = self.read_string(len)?;
                 // Trailing optional skin payload
@@ -642,6 +644,7 @@ impl<'a> TreeReader<'a> {
                     size,
                     icon_id,
                     disabled,
+                    stretch,
                     skin,
                 })
             }
@@ -1661,6 +1664,7 @@ pub(crate) fn build_taffy_node(
             size: btn_size,
             icon_id,
             disabled,
+            stretch,
             skin,
         } => {
             let sz = ButtonSize::from(*btn_size);
@@ -1673,7 +1677,12 @@ pub(crate) fn build_taffy_node(
                 },
                 // Buttons should never shrink below their content size
                 flex_shrink: 0.0,
-                align_self: Some(AlignSelf::FlexStart),
+                // Stretch fills the cross axis (full-width in a column); else content.
+                align_self: Some(if *stretch {
+                    AlignSelf::Stretch
+                } else {
+                    AlignSelf::FlexStart
+                }),
                 ..Default::default()
             };
             let id = taffy.new_leaf(style)?;

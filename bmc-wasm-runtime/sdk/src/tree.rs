@@ -179,9 +179,11 @@ impl TreeBuffer {
         }
     }
 
-    /// Write a button node
-    ///
-    /// Wire format: `[NODE_BUTTON][id_len:u16][id_bytes...][style:u8][size:u8][icon_id:u16][disabled:u8][label_len:u16][label_bytes...]`
+    /// Wire format: `[NODE_BUTTON][id_len:u16][id_bytes...][style:u8][size:u8][icon_id:u16][disabled:u8][stretch:u8][label_len:u16][label_bytes...]`
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one positional arg per button wire field"
+    )]
     pub fn write_button(
         &mut self,
         id: &str,
@@ -190,6 +192,7 @@ impl TreeBuffer {
         size: ButtonSize,
         icon_id: Option<SvgId>,
         disabled: bool,
+        stretch: bool,
     ) {
         self.write_u8(NODE_BUTTON);
         let id_bytes = id.as_bytes();
@@ -199,6 +202,7 @@ impl TreeBuffer {
         self.write_u8(size as u8);
         self.write_icon_id(icon_id);
         self.write_u8(u8::from(disabled));
+        self.write_u8(u8::from(stretch));
         let bytes = label.as_bytes();
         self.write_u16(bytes.len() as u16);
         self.write_bytes(bytes);
@@ -1226,6 +1230,8 @@ pub enum Node {
         size: ButtonSize,
         icon_id: Option<SvgId>,
         disabled: bool,
+        /// Fill the container's cross axis instead of sizing to content.
+        stretch: bool,
         skin: Option<ButtonSkin>,
     },
     Spacer {
@@ -1331,7 +1337,19 @@ pub fn make_button(
         size,
         icon_id,
         disabled,
+        stretch: false,
         skin,
+    }
+}
+
+impl Node {
+    /// Tell a button to fill its container's cross axis (no-op for other nodes).
+    #[must_use]
+    pub fn stretch(mut self) -> Self {
+        if let Node::Button { stretch, .. } = &mut self {
+            *stretch = true;
+        }
+        self
     }
 }
 
@@ -1544,9 +1562,10 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             size,
             icon_id,
             disabled,
+            stretch,
             skin,
         } => {
-            buf.write_button(id, label, *style, *size, *icon_id, *disabled);
+            buf.write_button(id, label, *style, *size, *icon_id, *disabled, *stretch);
             // Trailing optional skin payload
             if let Some(s) = skin {
                 buf.write_u8(1); // has_skin

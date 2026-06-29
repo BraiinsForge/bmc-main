@@ -10,6 +10,8 @@ use bmc_wasm_sdk::*;
 
 use crate::manifest_params::Sizing;
 
+const ICON_RENEW: Svg = include_svg!("assets/renew.svg");
+
 pub const CONFIGURE_URL: &str = "Set an image URL";
 pub const LOADING: &str = "Loading image";
 pub const LOAD_FAILED: &str = "Failed to load image";
@@ -159,6 +161,57 @@ fn updating_overlay() -> Node {
 pub fn with_updating_overlay(mut root: Node) -> Node {
     if let Node::Column(_, children) | Node::Row(_, children) = &mut root {
         children.push(updating_overlay());
+    }
+    root
+}
+
+// ── Tap-to-reveal menu ───────────────────────────────────────────────
+
+/// Tap-handling keys, shared with the widget.
+pub const KEY_TAP: &str = "img_tap";
+pub const KEY_RELOAD: &str = "menu_reload";
+pub const KEY_CLOSE: &str = "menu_close";
+
+const MENU_WIDTH: f32 = 200.0;
+const MENU_GAP: f32 = 8.0;
+const MENU_PADDING: f32 = 12.0;
+
+/// Full-bleed transparent catcher (absolute via insets): opens / tap-outside-dismisses.
+fn tap_catcher() -> Node {
+    touchable(
+        KEY_TAP,
+        props!(inset_top: 0.0, inset_right: 0.0, inset_bottom: 0.0, inset_left: 0.0),
+        Vec::<Draw>::new(),
+    )
+}
+
+/// The reveal menu — two stacked buttons, absolutely positioned over the image.
+fn menu_panel() -> Node {
+    center(
+        props!(inset_top: 0.0, inset_right: 0.0, inset_bottom: 0.0, inset_left: 0.0),
+        [col(
+            props!(
+                width: MENU_WIDTH,
+                gap: MENU_GAP,
+                padding: MENU_PADDING,
+                background: GRAY_100
+            ),
+            [
+                button!(KEY_RELOAD, "Reload", style: Primary, icon: tree::ensure_registered(&ICON_RENEW)).stretch(),
+                button!(KEY_CLOSE, "Close", style: Secondary).stretch(),
+            ],
+        )],
+    )
+}
+
+/// Overlay the tap catcher (always) and the menu (when open) onto the root.
+#[must_use]
+pub fn with_interaction(mut root: Node, menu_open: bool) -> Node {
+    if let Node::Column(_, children) | Node::Row(_, children) = &mut root {
+        children.push(tap_catcher());
+        if menu_open {
+            children.push(menu_panel());
+        }
     }
     root
 }

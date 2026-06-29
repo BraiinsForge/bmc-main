@@ -22,6 +22,8 @@ mod wasm_glue {
     const DEBOUNCE_MS: u32 = 300;
     /// jpeg-decoder DCT-scales to 1/8 per axis, tolerating 64× more source pixels.
     const JPEG_SCALE_HEADROOM: u64 = 64;
+    /// Menu clears itself this long after opening, untouched.
+    const MENU_AUTO_DISMISS_MS: u32 = 10_000;
 
     /// Displayed image; set() evicts the previous.
     static IMAGE: BitmapSlot = BitmapSlot::new("image");
@@ -60,6 +62,8 @@ mod wasm_glue {
         static REFRESHING: Cell<bool> = const { Cell::new(false) };
         // In-flight decode; results from superseded jobs are ignored.
         static PENDING: Cell<Option<Pending>> = const { Cell::new(None) };
+        // Menu auto-dismiss countdown (ms); 0 = closed.
+        static MENU_MS: Cell<u32> = const { Cell::new(0) };
     }
 
     /// Refresh interval (ms); fixed at registration.
@@ -232,6 +236,12 @@ mod wasm_glue {
     }
 
     #[unsafe(no_mangle)]
+    pub extern "C" fn on_touch() {
+        // The host only delivers touch to on_touch exporters; wake a frame to read it.
+        request_frame();
+    }
+
+    #[unsafe(no_mangle)]
     pub extern "C" fn on_dormant() {
         // Stop polling off-screen; the host frees our texture.
         POLL.with(|p| {
@@ -267,6 +277,30 @@ mod wasm_glue {
                 handle.invalidate();
             }
         });
+    }
+
+    fn menu_open() -> bool {
+        MENU_MS.with(Cell::get) > 0
+    }
+
+    fn open_menu() {
+        MENU_MS.with(|m| m.set(MENU_AUTO_DISMISS_MS));
+    }
+
+    fn close_menu() {
+        MENU_MS.with(|m| m.set(0));
+    }
+
+    /// Re-fetch now, bypassing the TTL — the menu's Reload and error-retry path.
+    fn force_reload() {
+        let has_image = STATE.with(|s| matches!(&*s.borrow(), State::Loaded { .. }));
+        if has_image {
+            REFRESHING.with(|r| r.set(true));
+        } else {
+            STATE.with(|s| *s.borrow_mut() = State::Loading);
+            STALE.with(|s| s.set(false));
+        }
+        resume_polling();
     }
 
     /// Re-register the cached image on an identity match, regardless of freshness.
@@ -312,10 +346,16 @@ mod wasm_glue {
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn render(_delta_ms: u32) {
+    pub extern "C" fn render(delta_ms: u32) {
+        // Advance the menu auto-dismiss countdown.
+        if menu_open() {
+            let remaining = MENU_MS.with(Cell::get).saturating_sub(delta_ms);
+            MENU_MS.with(|m| m.set(remaining));
+        }
+
         let size = widget_size();
         let params = manifest_params::Params::current();
-        let node = if params.url.trim().is_empty() {
+        let base = if params.url.trim().is_empty() {
             render::message_view(render::CONFIGURE_URL, size)
         } else {
             STATE.with(|s| match &*s.borrow() {
@@ -335,6 +375,40 @@ mod wasm_glue {
                 State::BadImage => render::message_view(render::BAD_IMAGE, size),
             })
         };
-        let _ = render_ui(size.width, size.height, node);
+
+        let open = menu_open();
+        let result = render_ui(
+            size.width,
+            size.height,
+            render::with_interaction(base, open),
+        );
+
+        // Route taps: a button when the menu is open, otherwise open/dismiss it.
+        let changed = if open {
+            if result.clicks.contains_key(render::KEY_RELOAD) {
+                force_reload();
+                close_menu();
+                true
+            } else if result.clicks.contains_key(render::KEY_CLOSE)
+                || result.clicks.contains_key(render::KEY_TAP)
+            {
+                close_menu();
+                true
+            } else {
+                false
+            }
+        } else if result.clicks.contains_key(render::KEY_TAP) {
+            open_menu();
+            true
+        } else {
+            false
+        };
+
+        // Re-render on a change; else hold one frame at the dismiss deadline.
+        if changed {
+            request_frame();
+        } else if menu_open() {
+            request_frame_after(MENU_MS.with(Cell::get));
+        }
     }
 }
