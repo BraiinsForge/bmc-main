@@ -7,9 +7,9 @@ use std::time::{Duration, Instant};
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
-
 use bmc_system_overlay::HostedOverlay;
 
+use crate::cache_gc;
 use crate::control::{ListenSocket, accept_and_load};
 use crate::host::SharedHost;
 use crate::slot::WidgetSlot;
@@ -326,6 +326,15 @@ pub fn drain_if_err<T>(
 
 const LISTENER_INDEX: usize = 0;
 
+/// Publish this host's live cache tokens to its GC-root file. Best-effort: a
+/// write failure is logged, never fatal — the next tick retries.
+fn publish_gc_root(slots: &SlotTable) {
+    let tokens: Vec<String> = slots.iter().filter_map(|s| s.cache_token.clone()).collect();
+    if let Err(err) = cache_gc::write_root(&tokens) {
+        tracing::warn!(%err, "failed to publish widget cache GC root");
+    }
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "the main loop body is a single coherent dispatch cycle; splitting would obscure the control flow"
@@ -355,6 +364,11 @@ fn run_loop(
 
     let mut lifetime = HostLifetime::new();
 
+    // Publish our root so peers see us live. No reconcile yet: we haven't loaded
+    // our widgets, so sweeping now would wipe buckets we're about to re-use.
+    let mut last_gc = Instant::now();
+    publish_gc_root(slots);
+
     while lifetime.should_continue(
         slots.len(),
         overlays.iter().any(HostedOverlay::running),
@@ -368,8 +382,20 @@ fn run_loop(
                 wake = Some(wake.map_or(d, |w| w.min(d)));
             }
         }
-        // -1 = poll(2) block-forever sentinel; reached only when neither slots nor overlays want a wake.
-        let timeout_ms = wake.map_or(-1, |d| i32::try_from(d.as_millis()).unwrap_or(i32::MAX));
+        // -1 = block-forever sentinel; only when neither slots nor overlays want a wake.
+        let slot_timeout = wake.map_or(-1, |d| i32::try_from(d.as_millis()).unwrap_or(i32::MAX));
+        // Cap the wait by the next GC tick so an idle host still wakes to tick.
+        let gc_ms = i32::try_from(
+            cache_gc::gc_period()
+                .saturating_sub(last_gc.elapsed())
+                .as_millis(),
+        )
+        .unwrap_or(i32::MAX);
+        let timeout_ms = if slot_timeout < 0 {
+            gc_ms
+        } else {
+            slot_timeout.min(gc_ms)
+        };
 
         let mut pollfds: Vec<libc::pollfd> =
             Vec::with_capacity(1 + 2 * slots.len() + overlays.len());
@@ -423,6 +449,8 @@ fn run_loop(
                         let slot_id = slots.insert(slot);
                         tracing::info!(slot_id, peer_pid, wasm = %wasm, "slot inserted");
                         lifetime.note_accept();
+                        // Publish the new token so a peer's GC keeps its bucket.
+                        publish_gc_root(slots);
                     }
                     Err(e) => {
                         if slots.is_empty() {
@@ -556,6 +584,14 @@ fn run_loop(
             if slots.is_empty() {
                 lifetime.note_disconnect(Instant::now());
             }
+        }
+
+        // Periodic heartbeat + sweep; republishing also picks up teardowns.
+        if last_gc.elapsed() >= cache_gc::gc_period() {
+            publish_gc_root(slots);
+            let stats = cache_gc::reconcile();
+            tracing::debug!(?stats, "widget asset cache GC");
+            last_gc = Instant::now();
         }
     }
     Ok(())

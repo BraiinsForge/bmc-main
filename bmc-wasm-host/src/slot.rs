@@ -154,6 +154,9 @@ pub struct WidgetSlot {
     pub pending_system: SystemSnapshot,
     pub peer_pid: libc::pid_t,
     pub wasm_basename: String,
+    /// Asset-cache bucket token, published to the host's GC-root file so the
+    /// cross-host cache GC keeps this bucket alive. `None` if no cache identity.
+    pub cache_token: Option<String>,
     pub control_socket: UnixStream,
     pub next_frame_due_at: Option<Instant>,
     /// One-time diagnostic latch: set after logging that touch events were
@@ -259,6 +262,7 @@ impl WidgetSlot {
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default(),
+            cache_token: initial.identity.as_ref().map(|id| id.token.clone()),
             control_socket,
             next_frame_due_at: None,
             touch_drop_logged: false,
