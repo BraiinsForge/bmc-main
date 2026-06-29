@@ -76,6 +76,28 @@ fn print_profile_diff(result: &InstallResult) {
     }
 }
 
+/// Render the stale-package warning for an `upgrade`, or `None` when no
+/// installed package fell out of the merged indexes.
+///
+/// Stale packages are kept at their installed version; the warning tells
+/// the operator they are pinned to whatever the device already has.
+fn format_stale_warning(stale: &[PackageVersion]) -> Option<String> {
+    use std::fmt::Write as _;
+    if stale.is_empty() {
+        return None;
+    }
+    let mut sorted: Vec<&PackageVersion> = stale.iter().collect();
+    sorted.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut out = format!(
+        "Warning: {} package(s) kept at installed version (absent from the indexes or no in-pin upgrade available):",
+        sorted.len(),
+    );
+    for pv in sorted {
+        let _ = write!(out, "\n  ! {} {}", pv.name, pv.version);
+    }
+    Some(out)
+}
+
 /// Output format for realization progress (on stderr).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum LogFormat {
@@ -631,6 +653,9 @@ async fn cmd_upgrade(
     .await?;
 
     print_profile_diff(&result);
+    if let Some(warning) = format_stale_warning(&result.stale) {
+        eprintln!("{warning}");
+    }
     if let Some(generation) = result.generation {
         println!("{}", generation.path.display());
     }
@@ -1114,6 +1139,100 @@ mod tests {
     fn ensure_fetchable_ok_with_one_enabled_entry() {
         ensure_fetchable(&[configured_server("s1", 10)])
             .expect("BUG: one enabled entry should be fetchable");
+    }
+
+    #[test]
+    fn format_stale_warning_none_when_empty() {
+        assert_eq!(format_stale_warning(&[]), None);
+    }
+
+    #[test]
+    fn format_stale_warning_lists_sorted_packages() {
+        let stale = vec![
+            PackageVersion {
+                name: "zeta".to_owned(),
+                version: "2.0.0".to_owned(),
+            },
+            PackageVersion {
+                name: "alpha".to_owned(),
+                version: "1.0.0".to_owned(),
+            },
+        ];
+        let warning = format_stale_warning(&stale).expect("BUG: non-empty stale set must warn");
+        assert_eq!(
+            warning,
+            "Warning: 2 package(s) kept at installed version (absent from the indexes or no in-pin upgrade available):\n  ! alpha 1.0.0\n  ! zeta 2.0.0"
+        );
+    }
+
+    #[tokio::test]
+    async fn upgrade_cycle_changes_in_pin_and_reports_stale() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let index_path = dir.path().join("index.json");
+        std::fs::write(
+            &index_path,
+            r#"{"version":1,"provenance":null,"indexes":[],"caches":[],"packages":[{"name":"clock","version":"1.1.0","store_path":"/nix/store/clock-1.1.0"}]}"#,
+        )
+        .expect("BUG: write index");
+
+        let file_server = ServerEntry {
+            id: "braiins".to_owned(),
+            server_type: "mirror".to_owned(),
+            base_url: format!("file://{}", index_path.display()),
+            known_public_key: "k".to_owned(),
+            priority: 10,
+            enabled: true,
+        };
+
+        let client = reqwest::Client::new();
+        let merged = bmc_nix::index::fetch_and_merge_indexes(&client, &[file_server])
+            .await
+            .expect("BUG: merge should succeed");
+
+        let mut packages = std::collections::BTreeMap::new();
+        packages.insert(
+            "clock".to_owned(),
+            bmc_nix::types::ManifestPackage {
+                version: "1.0.0".to_owned(),
+                store_path: "/nix/store/clock-1.0.0".to_owned(),
+                category: None,
+                description: None,
+                upgrade_strategy: None,
+                install_strategy: None,
+                installed_by: bmc_nix::types::InstalledBy::System,
+                installed_from: "braiins".to_owned(),
+                pinned: Some("^1.0.0".to_owned()),
+            },
+        );
+        packages.insert(
+            "ghost".to_owned(),
+            bmc_nix::types::ManifestPackage {
+                version: "3.0.0".to_owned(),
+                store_path: "/nix/store/ghost-3.0.0".to_owned(),
+                category: None,
+                description: None,
+                upgrade_strategy: None,
+                install_strategy: None,
+                // A missing system package is a hard error; only user
+                // packages go stale when absent from every index.
+                installed_by: bmc_nix::types::InstalledBy::User,
+                installed_from: "braiins".to_owned(),
+                pinned: None,
+            },
+        );
+        let base = Manifest { packages };
+
+        let plan = bmc_nix::manifest::compute_upgrade_plan(&base, Some(&merged), &[], &[])
+            .expect("BUG: plan should compute");
+
+        assert_eq!(plan.changed.len(), 1, "clock should change within its pin");
+        assert_eq!(plan.changed[0].name, "clock");
+        assert_eq!(plan.changed[0].from_version, "1.0.0");
+        assert_eq!(plan.changed[0].to_version, "1.1.0");
+
+        assert_eq!(plan.stale.len(), 1, "ghost is absent from the index");
+        assert_eq!(plan.stale[0].name, "ghost");
+        assert_eq!(plan.stale[0].version, "3.0.0");
     }
 
     #[tokio::test]
