@@ -32,7 +32,7 @@ use cosmic_text::{
 };
 use femtovg::{Canvas, FontId, Paint, renderer::OpenGl};
 
-use crate::tree::{FontFamily, FontWeight, SpanData, TextAlign, TextStyle};
+use crate::tree::{AutoFit, FontFamily, FontWeight, SpanData, TextAlign, TextStyle};
 
 /// Three weight-variant fonts used to render text spans. The renderer picks
 /// the closest match for each span's `weight` via [`WeightedFonts::select`].
@@ -418,6 +418,91 @@ fn segment_width(canvas: &mut Canvas<OpenGl>, fonts: Fonts, text: &str, style: &
         .map_or(0.0, |m| m.width())
 }
 
+// ── Autofit helpers ─────────────────────────────────────────────────
+
+/// Readability floor used when the caller does not specify `min_size`.
+pub(crate) const DEFAULT_MIN_AUTOFIT: u32 = 12;
+
+/// Inclusive `[lower, upper]` font-size search range for an autofit command.
+/// `target_height` bounds growth when `max_size` is unset (a line at size S is
+/// ≥ S px tall, so a fitting size never exceeds the target height). Pure.
+///
+/// `pub(crate)` so the GPU renderer (sibling `gpu::renderer` module) can call it.
+pub(crate) fn autofit_bounds(
+    size: u32,
+    min_size: u32,
+    max_size: u32,
+    mode: AutoFit,
+    target_height: Option<f32>,
+) -> (u32, u32) {
+    let floor_default = if min_size > 0 {
+        min_size
+    } else {
+        DEFAULT_MIN_AUTOFIT
+    };
+    let lower = match mode {
+        AutoFit::Grow => size,
+        AutoFit::Shrink | AutoFit::ShrinkAndGrow => floor_default,
+    };
+    let upper = match mode {
+        AutoFit::Shrink => size,
+        AutoFit::Grow | AutoFit::ShrinkAndGrow => {
+            if max_size > 0 {
+                max_size
+            } else {
+                target_height.map_or(size, |h| {
+                    #[expect(
+                        clippy::cast_possible_truncation,
+                        clippy::cast_sign_loss,
+                        reason = "box height is small, finite and non-negative"
+                    )]
+                    let cap = h.floor() as u32;
+                    cap
+                })
+            }
+        }
+    };
+    let lower = lower.max(1);
+    let upper = upper.max(lower);
+    (lower, upper)
+}
+
+/// Binary-search the largest integer size in `[lower, upper]` whose measured
+/// layout fits both targets. `measure_at(size)` returns `(width, height)`;
+/// an absent target is always satisfied. Returns `lower` if even `lower`
+/// overflows. Pure; ~log2(range) calls to `measure_at`.
+pub(crate) fn search_fit_size(
+    lower: u32,
+    upper: u32,
+    target_width: Option<f32>,
+    target_height: Option<f32>,
+    mut measure_at: impl FnMut(u32) -> (f32, f32),
+) -> u32 {
+    let fits = |w: f32, h: f32| {
+        target_width.is_none_or(|tw| w <= tw) && target_height.is_none_or(|th| h <= th)
+    };
+    let mut lo = lower;
+    let mut hi = upper;
+    let mut best = lower;
+    while lo <= hi {
+        #[expect(
+            clippy::integer_division,
+            reason = "binary search midpoint; truncation is correct"
+        )]
+        let mid = lo + (hi - lo) / 2;
+        let (w, h) = measure_at(mid);
+        if fits(w, h) {
+            best = mid;
+            lo = mid + 1;
+        } else if mid == lower {
+            break;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    best
+}
+
 /// Draw underline / strikethrough for a text segment.
 /// `baseline_y` is the text baseline (from cosmic-text `line_y`).
 fn draw_decorations_for_segment(
@@ -443,5 +528,91 @@ fn draw_decorations_for_segment(
         let mut path = femtovg::Path::new();
         path.rect(x, sy, w, sh);
         canvas.fill_path(&path, &Paint::color(to_femtovg_color(style.color.to_u32())));
+    }
+}
+
+#[cfg(test)]
+mod autofit_tests {
+    use super::{DEFAULT_MIN_AUTOFIT, autofit_bounds, search_fit_size};
+    use crate::tree::AutoFit;
+
+    // ── autofit_bounds ──────────────────────────────────────────────
+    #[test]
+    fn shrink_bounds_are_floor_to_size() {
+        assert_eq!(
+            autofit_bounds(40, 14, 0, AutoFit::Shrink, Some(100.0)),
+            (14, 40)
+        );
+    }
+    #[test]
+    fn shrink_without_min_uses_default_floor() {
+        assert_eq!(
+            autofit_bounds(40, 0, 0, AutoFit::Shrink, Some(100.0)),
+            (DEFAULT_MIN_AUTOFIT, 40)
+        );
+    }
+    #[test]
+    fn grow_bounds_are_size_to_max() {
+        assert_eq!(
+            autofit_bounds(24, 0, 64, AutoFit::Grow, Some(100.0)),
+            (24, 64)
+        );
+    }
+    #[test]
+    fn grow_without_max_uses_box_height_ceiling() {
+        assert_eq!(
+            autofit_bounds(24, 0, 0, AutoFit::Grow, Some(80.7)),
+            (24, 80)
+        );
+    }
+    #[test]
+    fn grow_without_max_and_without_height_cannot_grow() {
+        assert_eq!(autofit_bounds(24, 0, 0, AutoFit::Grow, None), (24, 24));
+    }
+    #[test]
+    fn shrink_and_grow_spans_min_to_max() {
+        assert_eq!(
+            autofit_bounds(999, 14, 64, AutoFit::ShrinkAndGrow, Some(100.0)),
+            (14, 64)
+        );
+    }
+    #[test]
+    fn bounds_clamp_when_min_exceeds_max() {
+        let (lo, hi) = autofit_bounds(40, 80, 20, AutoFit::ShrinkAndGrow, Some(100.0));
+        assert!(lo <= hi);
+        assert_eq!((lo, hi), (80, 80));
+    }
+
+    // ── search_fit_size ─────────────────────────────────────────────
+    // Synthetic measure: width == height == size px. So size N fits a target of N.
+    fn linear(size: u32) -> (f32, f32) {
+        (size as f32, size as f32)
+    }
+
+    #[test]
+    fn search_picks_largest_fitting_size() {
+        assert_eq!(search_fit_size(10, 40, Some(30.0), Some(30.0), linear), 30);
+    }
+    #[test]
+    fn search_returns_upper_when_everything_fits() {
+        assert_eq!(
+            search_fit_size(10, 40, Some(100.0), Some(100.0), linear),
+            40
+        );
+    }
+    #[test]
+    fn search_returns_lower_when_nothing_fits() {
+        assert_eq!(search_fit_size(10, 40, Some(5.0), Some(5.0), linear), 10);
+    }
+    #[test]
+    fn search_absent_target_is_satisfied() {
+        assert_eq!(search_fit_size(10, 40, Some(20.0), None, linear), 20);
+    }
+    #[test]
+    fn search_single_point_range() {
+        assert_eq!(
+            search_fit_size(16, 16, Some(100.0), Some(100.0), linear),
+            16
+        );
     }
 }

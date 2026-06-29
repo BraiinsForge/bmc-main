@@ -55,7 +55,7 @@ pub use crate::components::notification::{
     measure_notification_banner, render_notification_banner,
 };
 pub use bmc_wasm_protocol::{
-    CrossAlign, FontFamily, FontWeight, PropsData, TextAlign, TextOverflow, TextStyle,
+    AutoFit, CrossAlign, FontFamily, FontWeight, PropsData, TextAlign, TextOverflow, TextStyle,
     VerticalAlign,
 };
 
