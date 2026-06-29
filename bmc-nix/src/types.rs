@@ -194,13 +194,27 @@ pub struct ProfileGeneration {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServersConfig {
     pub factory: FactoryServerEntry,
+    #[serde(default)]
+    pub servers: Vec<ServerEntry>,
 }
 
 /// Factory server entry in the server registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FactoryServerEntry {
     pub id: String,
-    pub index_url: String,
+    pub base_url: String,
+    pub known_public_key: String,
+    pub priority: u32,
+    pub enabled: bool,
+}
+
+/// A configured package server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerEntry {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub server_type: String,
+    pub base_url: String,
     pub known_public_key: String,
     pub priority: u32,
     pub enabled: bool,
@@ -471,7 +485,9 @@ mod tests {
         let config: ServersConfig =
             serde_json::from_str(json).expect("BUG: production servers.json should be valid");
         assert_eq!(config.factory.id, "braiins");
+        assert_eq!(config.factory.base_url, "https://cache.braiins.com/v1");
         assert!(config.factory.enabled);
+        assert!(config.servers.is_empty());
     }
 
     #[test]
