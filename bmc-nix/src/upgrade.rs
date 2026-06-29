@@ -2,9 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::manifest::PlanConflict;
-use crate::types::{InstallResult, Manifest, ProfileGeneration, ResolvedPackage, StrategySummary};
-use crate::{activation, manifest, profile, store};
+use crate::manifest::ComputeUpgradePlanError;
+use crate::types::{
+    GcConfig, InstallResult, Manifest, MergedIndex, ProfileGeneration, ResolvedPackage,
+    StrategySummary,
+};
+use crate::{activation, gc, manifest, profile, store};
 use tracing::warn;
 
 /// Errors that can occur during an install/upgrade operation.
@@ -21,18 +24,52 @@ pub enum InstallError {
     #[error("activation failed: {0}")]
     Activation(#[from] activation::ActivationError),
     #[error(transparent)]
-    Plan(#[from] PlanConflict),
+    Plan(#[from] ComputeUpgradePlanError),
+    #[error(transparent)]
+    CleanupGenerations(#[from] gc::CleanupGenerationsError),
     #[error("failed to resolve current profile symlink: {0}")]
     ResolveCurrent(#[source] std::io::Error),
     #[error("`current` symlink target does not follow the `<N>-link` convention: {}", target.display())]
     MalformedCurrent { target: PathBuf },
 }
 
+/// Coarse-grained phases reported during an upgrade run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpgradePhase {
+    Realizing,
+    Verifying,
+    Building,
+    Activating,
+    Cleaning,
+}
+
+/// Progress callback for upgrade phases and store-path realization.
+pub trait UpgradeProgress: Send + Sync {
+    fn on_phase(&self, phase: UpgradePhase);
+    fn on_realization_started(&self, total_paths: usize);
+    fn on_realization_finished(&self);
+}
+
+/// Adapter exposing an [`UpgradeProgress`] as a [`store::RealizeProgress`]
+/// so realization can report through the same sink as the upgrade phases.
+struct UpgradeRealizeProgress<'a>(&'a dyn UpgradeProgress);
+
+impl store::RealizeProgress for UpgradeRealizeProgress<'_> {
+    fn on_realization_started(&self, total_paths: usize) {
+        self.0.on_realization_started(total_paths);
+    }
+
+    fn on_realization_finished(&self) {
+        self.0.on_realization_finished();
+    }
+}
+
 /// Apply an add/remove change to a profile.
 ///
 /// Acquires the profile lock, resolves the base manifest, computes
-/// the upgrade plan, verifies store paths, builds a new generation,
-/// and optionally activates it.
+/// the upgrade plan, realises and verifies store paths, builds a new
+/// generation, optionally activates it, and optionally garbage-collects
+/// older generations.
 ///
 /// `base_manifest`:
 /// - `None` — default path: read the current manifest under the
@@ -45,16 +82,32 @@ pub enum InstallError {
 ///   `--base` selections and by `reset-profile` (which passes an
 ///   empty manifest).
 ///
+/// `merged`:
+/// - `None` — kept packages are carried at their current version
+///   (offline path; the result is the manifest plus any explicit
+///   add/remove changes).
+/// - `Some(&MergedIndex)` — kept packages are resolved through the
+///   merged index, so a newer version satisfying the package's pin
+///   strategy becomes a `changed` entry; a package missing from the
+///   index is reported as `stale` and carried at its current version.
+///
 /// The no-op short-circuit (empty plan → skip rebuild, return the
 /// resolved current generation) applies ONLY when `base_manifest`
 /// is `None`. With an explicit base, a new generation is always
 /// built even if the plan is empty against that base.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "orchestration entrypoint - every parameter is required"
+)]
 pub async fn apply_profile_change(
     profile_dir: &Path,
     base_manifest: Option<Manifest>,
+    merged: Option<&MergedIndex>,
     add_packages: &[ResolvedPackage],
     remove_packages: &[String],
     activate: bool,
+    gc_config: Option<&GcConfig>,
+    progress: Option<&dyn UpgradeProgress>,
     hooks_dir: &str,
     hooks_override_path: Option<&Path>,
 ) -> Result<InstallResult, InstallError> {
@@ -81,7 +134,18 @@ pub async fn apply_profile_change(
         },
     };
 
-    let plan = manifest::compute_upgrade_plan(&base, add_packages, remove_packages)?;
+    // Capture the pre-activation `current` generation number, if any, so
+    // GC doesn't reclaim it before the orchestration layer (service
+    // restart planning, rollback) can read its manifest.
+    let previous_generation: Option<usize> = profile::current_generation_link(profile_dir)
+        .map_err(InstallError::ResolveCurrent)?
+        .and_then(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .and_then(profile::parse_generation_link_name)
+        });
+
+    let plan = manifest::compute_upgrade_plan(&base, merged, add_packages, remove_packages)?;
 
     // 3. No-op short-circuit — only applies on the default (None) base
     //    path. Explicit bases always build a new generation.
@@ -94,14 +158,32 @@ pub async fn apply_profile_change(
             added: plan.added,
             removed: plan.removed,
             changed: plan.changed,
+            stale: plan.stale,
         });
     }
 
-    // 4. Realise store paths, then verify as defense-in-depth
-    store::realize_store_paths(&store::TokioCommandRunner, &plan.packages, None).await?;
+    // 4. Realise store paths, then verify as defense-in-depth.
+    if let Some(p) = progress {
+        p.on_phase(UpgradePhase::Realizing);
+    }
+    let realize_progress = progress.map(UpgradeRealizeProgress);
+    store::realize_store_paths(
+        &store::TokioCommandRunner,
+        &plan.packages,
+        realize_progress
+            .as_ref()
+            .map(|p| p as &dyn store::RealizeProgress),
+    )
+    .await?;
+    if let Some(p) = progress {
+        p.on_phase(UpgradePhase::Verifying);
+    }
     store::verify_store_paths(&store::TokioCommandRunner, &plan.packages).await?;
 
     // 5. Build new profile generation
+    if let Some(p) = progress {
+        p.on_phase(UpgradePhase::Building);
+    }
     let gen_number = profile::max_generation(profile_dir)?.unwrap_or(0) + 1;
     let generation = profile::build_profile(
         profile_dir,
@@ -114,6 +196,9 @@ pub async fn apply_profile_change(
 
     // 6. Optionally activate
     if activate {
+        if let Some(p) = progress {
+            p.on_phase(UpgradePhase::Activating);
+        }
         profile::activate_profile(
             profile_dir,
             generation.number,
@@ -123,12 +208,24 @@ pub async fn apply_profile_change(
         .await?;
     }
 
+    // 7. GC old generations (optional). Protect the pre-activation
+    //    generation from this run's cleanup so the caller can still
+    //    diff against it; persistent protection lives in `GcConfig`.
+    if let Some(gc_config) = gc_config {
+        if let Some(p) = progress {
+            p.on_phase(UpgradePhase::Cleaning);
+        }
+        let keep_extra: Vec<usize> = previous_generation.into_iter().collect();
+        gc::cleanup_generations(profile_dir, gc_config, &keep_extra)?;
+    }
+
     Ok(InstallResult {
         strategies: StrategySummary::from_packages(&plan.packages),
         generation: Some(generation),
         added: plan.added,
         removed: plan.removed,
         changed: plan.changed,
+        stale: plan.stale,
     })
 }
 
@@ -168,6 +265,122 @@ fn resolve_current_generation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    use crate::gc;
+    use crate::types::GcConfig;
+
+    /// Records the phases reported through [`UpgradeProgress`].
+    #[derive(Default)]
+    struct PhaseCollector {
+        phases: Mutex<Vec<UpgradePhase>>,
+    }
+
+    impl PhaseCollector {
+        fn phases(&self) -> Vec<UpgradePhase> {
+            self.phases
+                .lock()
+                .expect("BUG: phase lock poisoned")
+                .clone()
+        }
+    }
+
+    impl UpgradeProgress for PhaseCollector {
+        fn on_phase(&self, phase: UpgradePhase) {
+            self.phases
+                .lock()
+                .expect("BUG: phase lock poisoned")
+                .push(phase);
+        }
+
+        fn on_realization_started(&self, _total_paths: usize) {}
+        fn on_realization_finished(&self) {}
+    }
+
+    #[tokio::test]
+    async fn apply_profile_change_reports_realizing_and_verifying_phases() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+
+        let collector = PhaseCollector::default();
+
+        // An explicit (empty) base disables the no-op short-circuit, so a
+        // generation is built and the realize/verify phases are reported.
+        // An empty package set keeps the store steps as in-process no-ops,
+        // so the test does not depend on a live Nix store.
+        apply_profile_change(
+            &profile_dir,
+            Some(Manifest::default()),
+            None,
+            &[],
+            &[],
+            /* activate = */ false,
+            None,
+            Some(&collector),
+            "hooks",
+            None,
+        )
+        .await
+        .expect("BUG: profile change should succeed");
+
+        let phases = collector.phases();
+        assert!(
+            phases.len() >= 2,
+            "expected at least the realize and verify phases, got {phases:?}"
+        );
+        assert_eq!(
+            &phases[..2],
+            &[UpgradePhase::Realizing, UpgradePhase::Verifying],
+            "phases must begin with Realizing then Verifying, got {phases:?}"
+        );
+        assert!(
+            phases.contains(&UpgradePhase::Building),
+            "build phase must follow verification, got {phases:?}"
+        );
+    }
+
+    #[test]
+    fn cleanup_generations_keeps_previous_current_generation_after_activation() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+
+        // Simulate generations 1, 2, 3 with current pointing at the latest
+        // (3), as it would after an activation whose pre-activation current
+        // was 2.
+        for n in 1..=3 {
+            let gen_dir = profile_dir.join(format!("{n}-link"));
+            std::fs::create_dir_all(&gen_dir).expect("BUG: mkdir gen");
+            std::fs::write(gen_dir.join("manifest"), r#"{"packages":{}}"#)
+                .expect("BUG: write manifest");
+        }
+        let current_link = profile_dir.join("current");
+        std::os::unix::fs::symlink("3-link", &current_link).expect("BUG: symlink current");
+
+        let gc_config = GcConfig {
+            keep_generations: 1,
+            keep_days: None,
+            min_free_space: "0".into(),
+            protected_generations: vec![],
+        };
+        // `keep_extra = [2]` is the pre-activation current that the
+        // orchestration layer still needs after activation.
+        gc::cleanup_generations(&profile_dir, &gc_config, &[2]).expect("BUG: cleanup failed");
+
+        assert!(
+            !profile_dir.join("1-link").exists(),
+            "gen 1 is unprotected and outside the keep window"
+        );
+        assert!(
+            profile_dir.join("2-link").exists(),
+            "previous current (gen 2) must be preserved via keep_extra"
+        );
+        assert!(
+            profile_dir.join("3-link").exists(),
+            "current/latest gen 3 must be preserved"
+        );
+    }
 
     #[test]
     fn resolve_current_generation_rejects_malformed_target() {
