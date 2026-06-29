@@ -1,5 +1,7 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
+pub mod progress;
+
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -21,6 +23,27 @@ pub enum StorePathError {
     },
 }
 
+/// Upper bound on retained raw stderr from a streamed command.
+///
+/// Error-level diagnostics are captured separately; the raw buffer only
+/// feeds a small failure-fallback snippet, so a noisy `internal-json`
+/// realization must not grow it without bound.
+const MAX_RETAINED_STDERR_BYTES: usize = 64 * 1024;
+
+/// Append `line` (plus a newline) to `buf` while keeping `buf` within
+/// `cap` bytes. Once the cap is reached, further lines are dropped so the
+/// retained head stays bounded.
+fn append_bounded_stderr(buf: &mut Vec<u8>, line: &str, cap: usize) {
+    if buf.len() >= cap {
+        return;
+    }
+    buf.extend_from_slice(line.as_bytes());
+    buf.push(b'\n');
+    if buf.len() > cap {
+        buf.truncate(cap);
+    }
+}
+
 /// Abstraction over command execution for testability.
 ///
 /// Uses native async fn (RPITIT), which means this trait is NOT
@@ -32,6 +55,19 @@ pub trait CommandRunner: Send + Sync {
         program: &str,
         args: &[&str],
     ) -> impl std::future::Future<Output = Result<std::process::Output, std::io::Error>> + Send;
+
+    /// Run a command with stderr streamed line-by-line to a callback.
+    ///
+    /// Returns the full `std::process::Output` (stdout captured, stderr
+    /// accumulated from the streamed lines).
+    fn run_with_stderr_lines<F>(
+        &self,
+        program: &str,
+        args: &[&str],
+        on_line: F,
+    ) -> impl std::future::Future<Output = Result<std::process::Output, std::io::Error>> + Send
+    where
+        F: FnMut(&str) + Send;
 }
 
 /// Default implementation using `tokio::process::Command`.
@@ -48,6 +84,83 @@ impl CommandRunner for TokioCommandRunner {
             .args(args)
             .output()
             .await
+    }
+
+    async fn run_with_stderr_lines<F>(
+        &self,
+        program: &str,
+        args: &[&str],
+        mut on_line: F,
+    ) -> Result<std::process::Output, std::io::Error>
+    where
+        F: FnMut(&str) + Send,
+    {
+        use tokio::io::AsyncBufReadExt as _;
+        use tokio::io::AsyncReadExt as _;
+
+        let mut child = tokio::process::Command::new(program)
+            .args(args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()?;
+
+        let stdout_handle = child
+            .stdout
+            .take()
+            .expect("BUG: stdout was piped but is missing");
+        let stderr_handle = child
+            .stderr
+            .take()
+            .expect("BUG: stderr was piped but is missing");
+
+        // Drain stdout concurrently so its pipe buffer can never fill while
+        // the current task is blocked reading stderr line-by-line. nix-store
+        // --realise writes realized store paths to stdout; for a large
+        // realization the 64 KB pipe buffer can fill, causing the child to
+        // block on stdout while the parent is also blocked on stderr → hang.
+        let stdout_task = tokio::task::spawn(async move {
+            let mut buf = Vec::new();
+            tokio::io::BufReader::new(stdout_handle)
+                .read_to_end(&mut buf)
+                .await
+                .map(|_| buf)
+        });
+
+        let mut stderr_reader = tokio::io::BufReader::new(stderr_handle);
+        let mut stderr_bytes: Vec<u8> = Vec::new();
+        let mut line_buf: Vec<u8> = Vec::new();
+
+        // Read stderr as raw bytes and convert lossily: nix is free to
+        // emit non-UTF-8 (e.g. file names), and one bad byte must not
+        // abort the run — the error return would kill_on_drop a child
+        // that may be about to succeed.
+        loop {
+            line_buf.clear();
+            if stderr_reader.read_until(b'\n', &mut line_buf).await? == 0 {
+                break;
+            }
+            if line_buf.last() == Some(&b'\n') {
+                line_buf.pop();
+                if line_buf.last() == Some(&b'\r') {
+                    line_buf.pop();
+                }
+            }
+            let line = String::from_utf8_lossy(&line_buf);
+            on_line(&line);
+            append_bounded_stderr(&mut stderr_bytes, &line, MAX_RETAINED_STDERR_BYTES);
+        }
+
+        let stdout = stdout_task
+            .await
+            .expect("BUG: stdout drain task panicked")?;
+        let status = child.wait().await?;
+
+        Ok(std::process::Output {
+            status,
+            stdout,
+            stderr: stderr_bytes,
+        })
     }
 }
 
@@ -118,6 +231,7 @@ pub async fn verify_store_paths(
 pub trait RealizeProgress: Send + Sync {
     fn on_realization_started(&self, total_paths: usize);
     fn on_realization_finished(&self);
+    fn on_download_status(&self, snapshot: &progress::DownloadSnapshot);
 }
 
 /// Realise store paths via `nix-store --realise`.
@@ -144,11 +258,18 @@ pub async fn realize_store_paths(
         p.on_realization_started(paths.len());
     }
 
-    let mut args: Vec<&str> = vec!["--realise"];
+    let mut args: Vec<&str> = vec!["--log-format", "internal-json", "--realise", "--"];
     args.extend(paths.iter().copied());
 
+    let mut tracker = progress::DownloadStatusTracker::default();
     let output = runner
-        .run("nix-store", &args)
+        .run_with_stderr_lines("nix-store", &args, |line| {
+            if let Some(snapshot) = tracker.ingest_line(line)
+                && let Some(p) = progress
+            {
+                p.on_download_status(&snapshot);
+            }
+        })
         .await
         .map_err(StorePathError::RealiseFailed)?;
 
@@ -389,6 +510,8 @@ mod tests {
         existing_paths: Vec<String>,
         /// Recorded command invocations (program, args).
         invocations: std::sync::Mutex<Vec<(String, Vec<String>)>>,
+        /// Lines to emit as stderr for `--realise` calls.
+        realise_stderr_lines: Vec<String>,
     }
 
     impl MockCommandRunner {
@@ -396,7 +519,13 @@ mod tests {
             Self {
                 existing_paths,
                 invocations: std::sync::Mutex::new(Vec::new()),
+                realise_stderr_lines: Vec::new(),
             }
+        }
+
+        fn with_realise_stderr(mut self, lines: Vec<String>) -> Self {
+            self.realise_stderr_lines = lines;
+            self
         }
     }
 
@@ -425,11 +554,46 @@ mod tests {
                 });
             }
 
-            if program == "nix-store" && args.first() == Some(&"--realise") {
+            if program == "nix-store" && args.contains(&"--realise") {
                 return Ok(std::process::Output {
                     status: std::process::ExitStatus::from_raw(0),
                     stdout: Vec::new(),
                     stderr: Vec::new(),
+                });
+            }
+
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(1 << 8),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            })
+        }
+
+        async fn run_with_stderr_lines<F>(
+            &self,
+            program: &str,
+            args: &[&str],
+            mut on_line: F,
+        ) -> Result<std::process::Output, std::io::Error>
+        where
+            F: FnMut(&str) + Send,
+        {
+            self.invocations.lock().expect("BUG: mutex poisoned").push((
+                program.to_owned(),
+                args.iter().map(|s| (*s).to_owned()).collect(),
+            ));
+
+            if program == "nix-store" && args.contains(&"--realise") {
+                let mut stderr_bytes: Vec<u8> = Vec::new();
+                for line in &self.realise_stderr_lines {
+                    on_line(line);
+                    stderr_bytes.extend_from_slice(line.as_bytes());
+                    stderr_bytes.push(b'\n');
+                }
+                return Ok(std::process::Output {
+                    status: std::process::ExitStatus::from_raw(0),
+                    stdout: Vec::new(),
+                    stderr: stderr_bytes,
                 });
             }
 
@@ -454,6 +618,23 @@ mod tests {
             installed_from: "local".into(),
             pinned: PinStrategy::None,
         }
+    }
+
+    #[tokio::test]
+    async fn run_with_stderr_lines_tolerates_non_utf8_stderr() {
+        let mut lines: Vec<String> = Vec::new();
+        let output = TokioCommandRunner
+            .run_with_stderr_lines("sh", &["-c", r"printf 'bad \377 byte\nok\n' >&2"], |line| {
+                lines.push(line.to_owned());
+            })
+            .await
+            .expect("BUG: a non-UTF-8 stderr byte must not abort the run");
+        assert!(output.status.success());
+        assert_eq!(
+            lines,
+            vec!["bad \u{FFFD} byte".to_owned(), "ok".to_owned()],
+            "every stderr line must be surfaced, bad bytes replaced"
+        );
     }
 
     #[tokio::test]
@@ -548,6 +729,28 @@ mod tests {
     }
 
     #[test]
+    fn append_bounded_stderr_caps_retained_bytes() {
+        let cap = 64;
+        let mut buf: Vec<u8> = Vec::new();
+        for _ in 0..1000 {
+            append_bounded_stderr(&mut buf, "a noisy progress line", cap);
+        }
+        assert!(
+            buf.len() <= cap,
+            "retained stderr must stay within the cap, got {}",
+            buf.len()
+        );
+    }
+
+    #[test]
+    fn append_bounded_stderr_keeps_short_output_intact() {
+        let mut buf: Vec<u8> = Vec::new();
+        append_bounded_stderr(&mut buf, "line one", MAX_RETAINED_STDERR_BYTES);
+        append_bounded_stderr(&mut buf, "line two", MAX_RETAINED_STDERR_BYTES);
+        assert_eq!(buf, b"line one\nline two\n");
+    }
+
+    #[test]
     fn find_tarball_for_version_matches() {
         let tarballs = vec![
             FactoryTarball {
@@ -599,10 +802,14 @@ mod tests {
         assert_eq!(
             args,
             &vec![
+                "--log-format".to_owned(),
+                "internal-json".to_owned(),
                 "--realise".to_owned(),
+                "--".to_owned(),
                 "/nix/store/a".to_owned(),
                 "/nix/store/b".to_owned(),
-            ]
+            ],
+            "store paths must follow a `--` terminator"
         );
     }
 
@@ -619,6 +826,83 @@ mod tests {
             0,
             "expected no invocations for empty input"
         );
+    }
+
+    struct SnapshotCollector {
+        snapshots: std::sync::Mutex<Vec<progress::DownloadSnapshot>>,
+    }
+
+    impl SnapshotCollector {
+        fn new() -> Self {
+            Self {
+                snapshots: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn snapshots(&self) -> Vec<progress::DownloadSnapshot> {
+            self.snapshots.lock().expect("BUG: mutex poisoned").clone()
+        }
+    }
+
+    impl RealizeProgress for SnapshotCollector {
+        fn on_realization_started(&self, _total_paths: usize) {}
+        fn on_realization_finished(&self) {}
+        fn on_download_status(&self, snapshot: &progress::DownloadSnapshot) {
+            self.snapshots
+                .lock()
+                .expect("BUG: mutex poisoned")
+                .push(snapshot.clone());
+        }
+    }
+
+    #[tokio::test]
+    async fn realize_store_paths_streams_internal_json_download_progress() {
+        let stderr_lines = vec![
+            r#"@nix {"action":"start","id":42,"level":3,"parent":0,"text":"","type":108,"fields":["/nix/store/a","https://cache"]}"#.to_owned(),
+            r#"@nix {"action":"start","id":43,"level":3,"parent":42,"text":"","type":101,"fields":["https://cache/nar/a"]}"#.to_owned(),
+            r#"@nix {"action":"result","id":43,"type":105,"fields":[300,1000,1,0]}"#.to_owned(),
+            r#"@nix {"action":"stop","id":43}"#.to_owned(),
+            r#"@nix {"action":"stop","id":42}"#.to_owned(),
+        ];
+        let runner = MockCommandRunner::new(vec![]).with_realise_stderr(stderr_lines);
+        let packages = vec![test_resolved("a", "/nix/store/a")];
+        let collector = SnapshotCollector::new();
+
+        realize_store_paths(&runner, &packages, Some(&collector))
+            .await
+            .expect("BUG: realise should succeed");
+
+        let snapshots = collector.snapshots();
+
+        // file-transfer start → active snapshot with store_path context
+        let active_snapshot = snapshots
+            .iter()
+            .find(|s| !s.active.is_empty())
+            .expect("BUG: expected at least one active snapshot");
+        assert_eq!(
+            active_snapshot.active[0].store_path.as_deref(),
+            Some("/nix/store/a")
+        );
+
+        // progress update → downloaded 300, total Some(1000), remaining Some(700)
+        let progress_snapshot = snapshots
+            .iter()
+            .find(|s| s.downloaded_bytes == 300)
+            .expect("BUG: expected a progress snapshot with 300 downloaded bytes");
+        assert_eq!(progress_snapshot.total_bytes, Some(1000));
+        assert_eq!(progress_snapshot.remaining_bytes, Some(700));
+
+        // final (after both stops) → no active transfers, aggregate totals retained
+        let final_snapshot = snapshots
+            .last()
+            .expect("BUG: expected at least one snapshot");
+        assert!(
+            final_snapshot.active.is_empty(),
+            "final snapshot must have no active transfers"
+        );
+        assert_eq!(final_snapshot.downloaded_bytes, 300);
+        assert_eq!(final_snapshot.total_bytes, Some(1000));
+        assert_eq!(final_snapshot.remaining_bytes, Some(700));
     }
 
     #[test]
