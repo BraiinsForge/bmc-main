@@ -49,6 +49,6 @@ pub fn test_resolved_package(name: &str, version: &str, store_path: &str) -> Res
         install_strategy: None,
         installed_by: InstalledBy::User,
         installed_from: "local".into(),
-        pinned: PinStrategy::None,
+        pinned: None,
     }
 }
