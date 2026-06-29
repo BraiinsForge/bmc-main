@@ -15,7 +15,7 @@ pub enum InstallError {
     #[error("failed to read current manifest: {0}")]
     ReadManifest(#[from] manifest::ReadManifestError),
     #[error(transparent)]
-    CopyStorePaths(#[from] store::CopyStorePathsError),
+    StorePaths(#[from] store::StorePathError),
     #[error(transparent)]
     BuildProfile(#[from] profile::BuildProfileError),
     #[error("activation failed: {0}")]
