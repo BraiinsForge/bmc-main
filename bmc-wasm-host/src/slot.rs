@@ -234,6 +234,7 @@ impl WidgetSlot {
                         WIDGET_CACHE_BUCKET_MAX_BYTES,
                     )
                 }),
+                instance_token: initial.identity.as_ref().map(|id| id.token.clone()),
                 ..RuntimeConfig::default()
             },
         )?;

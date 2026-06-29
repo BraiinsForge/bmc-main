@@ -53,7 +53,7 @@ fn hex_data_segment(bytes: &[u8]) -> String {
 
 /// WAT widget that, on its first `render`, registers a single bitmap under
 /// the guest-supplied tag `"album"` (host expands to
-/// `<guest_id>:album` before storing in the renderer registry).
+/// `<instance_id>:album` before storing in the renderer registry).
 ///
 /// PNG bytes are baked into a `data` segment at offset `tag_len`, with the
 /// tag string `"album"` at offset 0.
@@ -120,7 +120,7 @@ fn renderer_keeps_widget_assets_alive_until_explicit_evict() {
     .expect("BUG: runtime construct");
 
     // Capture the asset namespace BEFORE the runtime drops; the host-side
-    // GuestId is the only handle we have on the prefix the renderer uses.
+    // instance id is the only handle we have on the prefix the renderer uses.
     let namespace = runtime.asset_namespace();
 
     // One render frame: the WAT registers the bitmap into the

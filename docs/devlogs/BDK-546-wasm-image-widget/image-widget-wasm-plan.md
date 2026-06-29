@@ -185,13 +185,15 @@ put/get/evict-by-tag API; write-at-decode; restore-on-wake with the sizing-aware
 eviction; the fit/fill sizing mode; observability on the profiling channel; and the cross-host asset-cache GC (per-host
 GC-root files + union reconcile — [`asset-cache-gc.md`](../../devel/wasm-host/asset-cache-gc.md)).
 
-**Remaining:** the core cache work is complete; `GuestId` retirement (below) is the only tail-end follow-up.
+**Remaining:** none — the core cache work is complete and the `GuestId` retirement (below) has landed.
 
-**Followup (tail end).** `GuestId(u32)` (`host_api.rs:216`) is a *separate*, process-local auto-increment id that
-namespaces in-memory asset tags (audio prefix evictions, `namespaced_tag`) — minted fresh per process, unrelated to the
-persisted bucket token. Once the stable `WidgetIdentity` bucket id is plumbed, revisit whether `GuestId` collapses into
-it (one stable per-instance id serving both in-memory namespacing and the flash bucket) or stays independent. Deferred
-to the tail of this work so it does not entangle the step-3 wiring.
+**Followup (tail end) — done.** `GuestId(u32)` was a *separate*, process-local auto-increment id that namespaced
+in-memory asset tags (audio prefix evictions, `namespaced_tag`), minted fresh per process and unrelated to the persisted
+bucket token. It is now retired: the host namespaces by `HostState::instance_id`, set from the compositor-minted
+`WidgetIdentity` token (plumbed through `RuntimeConfig::instance_token`), and falls back to a synthetic `dev-N` only for
+the testbed/capture harness that bypass the handshake. One stable per-instance id now serves both in-memory namespacing
+and the flash bucket; the `Option<WidgetIdentity>` stays optional purely because those two harnesses do not mint a
+token.
 
 **Raised in review (MR !367).** The provisional constants (`WIDGET_CACHE_BUCKET_MAX_BYTES`, `WIDGET_CACHE_DIR` + the
 `/mnt/data`-mounted dependency), the collected observability evidence (`observability-verification.md`), and the live

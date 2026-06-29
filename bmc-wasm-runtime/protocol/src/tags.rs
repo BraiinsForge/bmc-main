@@ -101,8 +101,8 @@ mod tests {
     }
 
     #[test]
-    fn numeric_guest_id_namespacing_does_not_alias() {
-        // Verifies the actual GuestId-prefix use case: instance 1's tags
+    fn numeric_instance_id_namespacing_does_not_alias() {
+        // Verifies the actual instance-id prefix use case: instance 1's tags
         // must not be reached by a sweep targeting instance 11.
         assert!(tag_matches_prefix("1:album_art", "1"));
         assert!(!tag_matches_prefix("11:album_art", "1"));
@@ -114,7 +114,7 @@ mod tests {
     fn double_colon_inside_segment_is_just_text() {
         // The `include_*!` macros emit tags like `<crate>::<file_stem>`.
         // The host treats `<crate>::<file_stem>` as a single segment of an
-        // outer `<guest_id>:<crate>::<file_stem>` tag — the `::` is content
+        // outer `<instance_id>:<crate>::<file_stem>` tag — the `::` is content
         // inside one segment, not two delimiters.
         let tag = "1:bmc_widget_media_control::album_art";
         assert!(tag_matches_prefix(tag, "1"));

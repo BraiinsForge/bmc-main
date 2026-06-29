@@ -1635,7 +1635,7 @@ impl TestbedApp {
                     if !tile.ever_rendered {
                         tracing::info!(
                             label = %tile.label,
-                            guest_id = %tile.runtime.guest_id(),
+                            instance_id = %tile.runtime.asset_namespace(),
                             "tile: first render after construction/reload"
                         );
                         tile.ever_rendered = true;

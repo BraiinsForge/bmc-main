@@ -235,6 +235,8 @@ pub struct RuntimeConfig {
         std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
     /// Per-instance asset cache, curried to this widget's bucket; `None` disables it.
     pub asset_cache: Option<crate::disk_cache::DiskCache>,
+    /// Compositor token for asset-tag namespacing; `None` → synthetic `dev-N`.
+    pub instance_token: Option<String>,
 }
 
 impl RuntimeConfig {
@@ -261,6 +263,7 @@ impl Default for RuntimeConfig {
             animation_frame_delay_ms: Self::DEFAULT_ANIMATION_FRAME_DELAY_MS,
             params: std::collections::BTreeMap::new(),
             asset_cache: None,
+            instance_token: None,
         }
     }
 }
@@ -369,6 +372,7 @@ impl WasmWidgetRuntime {
             animation_frame_delay_ms,
             params,
             asset_cache,
+            instance_token,
             ..
         } = config;
 
@@ -408,6 +412,9 @@ impl WasmWidgetRuntime {
         state.display_dpi = display.dpi;
         state.kv_store_path = kv_store_path;
         state.asset_cache = asset_cache;
+        if let Some(token) = instance_token {
+            state.instance_id = token;
+        }
         state.fetch_interceptor = fetch_interceptor;
         state.hermetic = hermetic.then(HermeticRun::default);
         state.fetch_observer = fetch_observer;
@@ -438,7 +445,7 @@ impl WasmWidgetRuntime {
                 udp_event_txs: HashMap::new(),
             });
         }
-        let guest_id = state.guest_id;
+        let instance_id = state.instance_id.clone();
 
         // State is staged; instantiate (running `start`, if any) and resolve exports.
         let instance = linker.instantiate_and_start(&mut store, &module)?;
@@ -455,7 +462,7 @@ impl WasmWidgetRuntime {
         let on_wake_func = instance.get_typed_func::<(), ()>(&store, "on_wake").ok();
         let on_dormant_func = instance.get_typed_func::<(), ()>(&store, "on_dormant").ok();
         tracing::info!(
-            guest_id = %guest_id,
+            instance_id = %instance_id,
             width,
             height,
             has_unload = unload_func.is_some(),
@@ -469,9 +476,9 @@ impl WasmWidgetRuntime {
         // The guest reads its viewport via `widget_size()` / `host_widget_size`
         // rather than init arguments, so the typed func is `() -> ()`.
         if let Ok(init_func) = instance.get_typed_func::<(), ()>(&store, "init") {
-            tracing::trace!(guest_id = %guest_id, "calling widget init");
+            tracing::trace!(instance_id = %instance_id, "calling widget init");
             in_lifecycle(&mut store, Lifecycle::Init, |s| init_func.call(s, ()))?;
-            tracing::trace!(guest_id = %guest_id, "widget init completed");
+            tracing::trace!(instance_id = %instance_id, "widget init completed");
         }
 
         Ok(Self {
@@ -518,7 +525,7 @@ impl WasmWidgetRuntime {
     pub fn render(&mut self, delta_ms: u32) -> Result<RenderStatus> {
         let state = self.store.data_mut();
         tracing::trace!(
-            guest_id = %state.guest_id,
+            instance_id = %state.instance_id,
             delta_ms,
             fuel_dead = self.fuel_dead,
             cached_tree = state.cached_tree.is_some(),
@@ -536,7 +543,7 @@ impl WasmWidgetRuntime {
             state.begin_render_frame();
             Self::render_cached_tree(state, delta_ms);
             Self::draw_dead_overlay(state);
-            tracing::trace!(guest_id = %state.guest_id, "render skipped because widget is dead");
+            tracing::trace!(instance_id = %state.instance_id, "render skipped because widget is dead");
             return Ok(RenderStatus::Dead);
         }
 
@@ -562,7 +569,7 @@ impl WasmWidgetRuntime {
         if animation_only {
             Self::render_cached_tree(state, delta_ms);
             tracing::trace!(
-                guest_id = %state.guest_id,
+                instance_id = %state.instance_id,
                 delta_ms,
                 "render replayed cached tree without wasm"
             );
@@ -580,7 +587,7 @@ impl WasmWidgetRuntime {
         ii_stopwatch::stopwatch_start!(self.wasm_w);
         let render_func = self.render_func;
         tracing::trace!(
-            guest_id = %self.store.data().guest_id,
+            instance_id = %self.store.data().instance_id,
             wasm_delta,
             fuel_per_frame = self.fuel_per_frame,
             "calling widget render"
@@ -609,7 +616,7 @@ impl WasmWidgetRuntime {
                 self.store.data_mut().last_timings.wasm_us = wasm_us;
                 self.fuel_strikes = 0;
                 tracing::trace!(
-                    guest_id = %self.store.data().guest_id,
+                    instance_id = %self.store.data().instance_id,
                     wasm_delta,
                     wasm_us,
                     wants_next_frame = self.wants_next_frame(),
@@ -646,7 +653,7 @@ impl WasmWidgetRuntime {
             }
             Err(e) => {
                 tracing::warn!(
-                    guest_id = %self.store.data().guest_id,
+                    instance_id = %self.store.data().instance_id,
                     trap = %e,
                     "widget render trapped"
                 );
@@ -1046,7 +1053,7 @@ impl WasmWidgetRuntime {
     /// dropping the renderer itself.
     #[must_use]
     pub fn asset_namespace(&self) -> String {
-        self.store.data().guest_id.to_string()
+        self.store.data().instance_id.clone()
     }
 
     /// Whether the widget needs another frame rendered.
@@ -1087,12 +1094,6 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn sdk_version(&self) -> (u16, u16, u16) {
         self.sdk_version
-    }
-
-    /// Stable per-runtime identity used in host logs and asset namespacing.
-    #[must_use]
-    pub fn guest_id(&self) -> crate::host_api::GuestId {
-        self.store.data().guest_id
     }
 
     /// The SDK version the host expects (major, minor, patch).

@@ -211,26 +211,10 @@ pub(crate) enum Lifecycle {
     Unload,
 }
 
-/// Identifies a single `WasmWidgetRuntime` instance.
-///
-/// Minted from a process-wide monotonic counter at HostState construction.
-/// Used as the leading component of every asset tag the host stores,
-/// so two instances of the same widget can't collide on slot names.
-#[deprecated(note = "ephemeral; superseded by the stable WidgetIdentity bucket token")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct GuestId(u32);
-
-impl GuestId {
-    fn alloc() -> Self {
-        static NEXT: AtomicU32 = AtomicU32::new(1);
-        Self(NEXT.fetch_add(1, Ordering::Relaxed))
-    }
-}
-
-impl std::fmt::Display for GuestId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
+/// Fallback id when no compositor token is supplied (testbed/capture harness).
+fn synthetic_instance_id() -> String {
+    static NEXT: AtomicU32 = AtomicU32::new(1);
+    format!("dev-{}", NEXT.fetch_add(1, Ordering::Relaxed))
 }
 
 /// A registered audio sample with metadata.
@@ -747,10 +731,9 @@ pub(crate) struct HostState {
     /// The host stores original encoded data and decodes on each play.
     pub audio: AudioRegistry,
 
-    /// Per-instance identity used to namespace every asset tag the host stores.
-    /// Two `WasmWidgetRuntime`s for the same widget get different `guest_id`s,
-    /// so their `<guest_id>:<tag>` registrations and prefix evictions can't collide.
-    pub guest_id: GuestId,
+    /// Namespaces every host-side asset tag — the compositor `WidgetIdentity`
+    /// token, or a synthetic `dev-N` for the testbed/capture harness.
+    pub instance_id: String,
 
     /// Per-instance asset cache, curried to this widget's bucket.
     pub asset_cache: Option<crate::disk_cache::DiskCache>,
@@ -868,7 +851,7 @@ impl HostState {
             led_request_sender: None,
             led_request_alloc: crate::led_request::LedRequestIdAllocator::new(),
             audio: AudioRegistry::new(),
-            guest_id: GuestId::alloc(),
+            instance_id: synthetic_instance_id(),
             asset_cache: None,
             #[cfg(feature = "audio")]
             audio_stream: {
@@ -921,13 +904,13 @@ impl HostState {
         self.audio.evict_prefix(prefix)
     }
 
-    /// Wrap a guest-supplied tag with this instance's `GuestId` prefix.
+    /// Wrap a guest-supplied tag with this instance's id prefix.
     /// Every host-side asset registration and eviction goes through this
     /// helper, so two `WasmWidgetRuntime`s for the same widget can use the
     /// same slot names without collision.
     #[must_use]
     pub fn namespaced_tag(&self, tag: &str) -> String {
-        format!("{}:{tag}", self.guest_id)
+        format!("{}:{tag}", self.instance_id)
     }
 
     /// Evict every host-side audio asset belonging to this widget instance.
@@ -936,7 +919,7 @@ impl HostState {
     /// renderer-side assets are reclaimed when the caller drops their
     /// caller-owned `FemtoVgRenderer`.
     pub fn evict_widget(&mut self) -> usize {
-        let prefix = self.guest_id.to_string();
+        let prefix = self.instance_id.clone();
         self.evict_audio_prefix(&prefix)
     }
 
