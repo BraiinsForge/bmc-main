@@ -108,6 +108,19 @@ mod wasm_glue {
         )
     }
 
+    // Cache identity: the expanded URL plus the sizing mode,
+    // so a URL, viewport, or sizing change is a distinct cached blob.
+    fn cache_identity() -> Option<String> {
+        let mut id = expanded_url()?;
+        id.push('\u{1f}');
+        id.push_str(
+            manifest_params::Params::current()
+                .sizing
+                .as_manifest_value(),
+        );
+        Some(id)
+    }
+
     fn build_request(_handle: PollHandle) -> Option<FetchSpec> {
         expanded_url().map(FetchSpec::get)
     }
@@ -129,13 +142,16 @@ mod wasm_glue {
                 Some((w, h)) => {
                     let size = widget_size();
                     let aspect = render::aspect_of(w, h);
-                    // Expanded URL = the image identity (URL + viewport size);
-                    // the host stamps it for restore-on-wake.
-                    let identity = expanded_url().unwrap_or_default();
+                    // Identity = URL + viewport + sizing; the host stamps it for
+                    // restore-on-wake (a distinct blob per sizing mode).
+                    let identity = cache_identity().unwrap_or_default();
+                    let cover =
+                        manifest_params::Params::current().sizing == manifest_params::Sizing::Cover;
                     match IMAGE.set_fit(
                         response.body(),
                         size.width,
                         size.height,
+                        cover,
                         identity.as_bytes(),
                         on_decoded,
                     ) {
@@ -197,7 +213,10 @@ mod wasm_glue {
     pub extern "C" fn on_params_update() {
         let prev = manifest_params::Params::previous();
         let cur = manifest_params::Params::current();
-        if prev.as_ref().is_none_or(|p| p.url != cur.url) {
+        if prev
+            .as_ref()
+            .is_none_or(|p| p.url != cur.url || p.sizing != cur.sizing)
+        {
             // No evict: renderer imports trap outside render; set() replaces it.
             STATE.with(|s| *s.borrow_mut() = State::Loading);
             STALE.with(|s| s.set(false));
@@ -225,7 +244,7 @@ mod wasm_glue {
     #[unsafe(no_mangle)]
     pub extern "C" fn on_wake() {
         STALE.with(|s| s.set(false));
-        match expanded_url().map_or(Restore::Miss, |url| try_restore(&url)) {
+        match cache_identity().map_or(Restore::Miss, |id| try_restore(&id)) {
             Restore::Fresh => REFRESHING.with(|r| r.set(false)),
             Restore::Stale => {
                 REFRESHING.with(|r| r.set(true));
@@ -251,14 +270,14 @@ mod wasm_glue {
     }
 
     /// Re-register the cached image on an identity match, regardless of freshness.
-    fn try_restore(current_url: &str) -> Restore {
+    fn try_restore(current_identity: &str) -> Restore {
         let Some(stat) = cache::stat(IMAGE.name()) else {
             return Restore::Miss;
         };
         let Some((w, h, identity)) = parse_meta(&stat.metadata) else {
             return Restore::Miss;
         };
-        if identity != current_url.as_bytes() {
+        if identity != current_identity.as_bytes() {
             return Restore::Miss;
         }
         let Some(bitmap) = assets::register_image(cache::lazy_get(IMAGE.name())) else {
@@ -295,13 +314,13 @@ mod wasm_glue {
     #[unsafe(no_mangle)]
     pub extern "C" fn render(_delta_ms: u32) {
         let size = widget_size();
-        let url = manifest_params::Params::current().url;
-        let node = if url.trim().is_empty() {
+        let params = manifest_params::Params::current();
+        let node = if params.url.trim().is_empty() {
             render::message_view(render::CONFIGURE_URL, size)
         } else {
             STATE.with(|s| match &*s.borrow() {
                 State::Loaded { bitmap, aspect } => {
-                    let view = render::image_view(*bitmap, *aspect, size);
+                    let view = render::image_view(*bitmap, *aspect, size, params.sizing);
                     if REFRESHING.with(Cell::get) {
                         render::with_updating_overlay(view)
                     } else if STALE.with(Cell::get) {

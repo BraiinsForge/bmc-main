@@ -8,6 +8,8 @@
 )]
 use bmc_wasm_sdk::*;
 
+use crate::manifest_params::Sizing;
+
 pub const CONFIGURE_URL: &str = "Set an image URL";
 pub const LOADING: &str = "Loading image";
 pub const LOAD_FAILED: &str = "Failed to load image";
@@ -42,15 +44,19 @@ fn contain(aspect: f32, w: f32, h: f32) -> (f32, f32, f32, f32) {
     }
 }
 
-/// The image fitted to the viewport, letterboxed on black.
+/// The image drawn on black: `Contain` letterboxes the fit-within blob; `Cover`
+/// fills 1:1 (the host already cropped that blob to the viewport).
 #[must_use]
 #[expect(
     clippy::cast_precision_loss,
     reason = "viewport dimensions are < 2^24 and exact in f32"
 )]
-pub fn image_view(bitmap: BitmapId, aspect: f32, size: WidgetSize) -> Node {
+pub fn image_view(bitmap: BitmapId, aspect: f32, size: WidgetSize, sizing: Sizing) -> Node {
     let (w, h) = (size.width as f32, size.height as f32);
-    let (x, y, dw, dh) = contain(aspect, w, h);
+    let (x, y, dw, dh) = match sizing {
+        Sizing::Contain => contain(aspect, w, h),
+        Sizing::Cover => (0.0, 0.0, w, h),
+    };
     col(
         props!(background: BLACK),
         [canvas(

@@ -13,7 +13,8 @@
           "widget_type_id": "f9e4956c-719d-450c-909d-4fc9d4440e15",
           "params": {
             "url": "https://picsum.photos/id/237/{{width}}/{{height}}",
-            "refresh_seconds": 300
+            "refresh_seconds": 300,
+            "sizing": "cover"
           }
         }
       ]
@@ -31,7 +32,8 @@
           "widget_type_id": "f9e4956c-719d-450c-909d-4fc9d4440e15",
           "params": {
             "url": "https://picsum.photos/id/870/{{width}}/{{height}}",
-            "refresh_seconds": 300
+            "refresh_seconds": 300,
+            "sizing": "contain"
           }
         }
       ]
@@ -49,7 +51,8 @@
           "widget_type_id": "f9e4956c-719d-450c-909d-4fc9d4440e15",
           "params": {
             "url": "https://picsum.photos/id/1015/{{width}}/{{height}}",
-            "refresh_seconds": 300
+            "refresh_seconds": 300,
+            "sizing": "cover"
           }
         }
       ]
@@ -67,7 +70,8 @@
           "widget_type_id": "f9e4956c-719d-450c-909d-4fc9d4440e15",
           "params": {
             "url": "https://picsum.photos/id/1025/{{width}}/{{height}}",
-            "refresh_seconds": 300
+            "refresh_seconds": 300,
+            "sizing": "contain"
           }
         }
       ]

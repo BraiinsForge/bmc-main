@@ -5,7 +5,10 @@
 #![expect(clippy::cast_possible_truncation)]
 
 use anyhow::{Result, bail};
-use bmc_render::{MAX_DECODE_IMAGE_ALLOC_BYTES, MAX_DECODE_IMAGE_PIXELS, decode_scaled_to_fit};
+use bmc_render::{
+    MAX_DECODE_IMAGE_ALLOC_BYTES, MAX_DECODE_IMAGE_PIXELS, decode_scaled_to_cover,
+    decode_scaled_to_fit,
+};
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{BitmapId, ImageJobId, MeshId, SvgId};
 use wasmi::{Caller, Extern, Linker};
@@ -183,6 +186,7 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
          data_len: u32,
          max_w: u32,
          max_h: u32,
+         cover: u32,
          identity_ptr: u32,
          identity_len: u32|
          -> u32 {
@@ -207,7 +211,12 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
             let tx = state.image_decode_tx.clone();
             std::thread::spawn(move || {
                 let started = std::time::Instant::now();
-                let result = decode_scaled_to_fit(&data, max_w, max_h).map_err(|e| e.to_string());
+                let result = if cover != 0 {
+                    decode_scaled_to_cover(&data, max_w, max_h)
+                } else {
+                    decode_scaled_to_fit(&data, max_w, max_h)
+                }
+                .map_err(|e| e.to_string());
                 let decode_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
                 let _ = tx.send(CompletedImageDecode {
                     job_id,

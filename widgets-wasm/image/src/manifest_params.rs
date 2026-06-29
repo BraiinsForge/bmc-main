@@ -10,9 +10,45 @@
 
 use bmc_wasm_sdk::params as snapshot;
 use bmc_wasm_sdk::params::typed::ParamRead;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sizing {
+    Contain,
+    Cover,
+}
+impl Sizing {
+    /// Every variant, in manifest-declaration order. Useful when a widget
+    /// wants to render a "pick one" UI or audit the enum exhaustively.
+    pub const ALL: &'static [Self] = &[Self::Contain, Self::Cover];
+    /// Manifest wire value for this variant.
+    #[must_use]
+    pub fn as_manifest_value(self) -> &'static str {
+        match self {
+            Self::Contain => "contain",
+            Self::Cover => "cover",
+        }
+    }
+    /// Human-readable label declared in the manifest's `enum_values`.
+    #[must_use]
+    pub fn as_manifest_label(self) -> &'static str {
+        match self {
+            Self::Contain => "Fit — whole image",
+            Self::Cover => "Fill — crop to edges",
+        }
+    }
+    #[must_use]
+    pub fn from_manifest_value(s: &str) -> Option<Self> {
+        match s {
+            "contain" => Some(Self::Contain),
+            "cover" => Some(Self::Cover),
+            _ => None,
+        }
+    }
+}
+bmc_wasm_sdk::impl_manifest_str_enum!(Sizing);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Params {
     pub refresh_seconds: i32,
+    pub sizing: Sizing,
     pub url: String,
 }
 impl Params {
@@ -21,6 +57,7 @@ impl Params {
     pub fn from_snapshot(snap: &snapshot::Params) -> Self {
         Self {
             refresh_seconds: <i32 as ParamRead>::read_required(snap, "refresh_seconds"),
+            sizing: <Sizing as ParamRead>::read_required(snap, "sizing"),
             url: <String as ParamRead>::read_required(snap, "url"),
         }
     }
@@ -69,6 +106,9 @@ impl Params {
         let mut out = Vec::new();
         if self.refresh_seconds != other.refresh_seconds {
             out.push("refresh_seconds");
+        }
+        if self.sizing != other.sizing {
+            out.push("sizing");
         }
         if self.url != other.url {
             out.push("url");

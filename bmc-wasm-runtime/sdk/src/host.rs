@@ -92,6 +92,7 @@ mod ffi {
             data_len: u32,
             max_w: u32,
             max_h: u32,
+            cover: u32,
             identity_ptr: *const u8,
             identity_len: u32,
         ) -> u32;
@@ -327,6 +328,7 @@ mod ffi {
         data: &[u8],
         max_w: u32,
         max_h: u32,
+        cover: bool,
         identity: &[u8],
     ) -> Option<ImageJobId> {
         ImageJobId::from_wire(unsafe {
@@ -337,6 +339,7 @@ mod ffi {
                 data.len() as u32,
                 max_w,
                 max_h,
+                u32::from(cover),
                 identity.as_ptr(),
                 identity.len() as u32,
             )

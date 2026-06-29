@@ -303,22 +303,42 @@ fn decode_and_upload(
     Ok((image_id, rgba.into_raw(), w, h))
 }
 
-/// Decode to RGBA within `max_w`×`max_h` (no upscale);
-/// JPEG scales on load, others full-decode.
+/// Decode to RGBA scaled to fit within `max_w`×`max_h` (no upscale), letterboxed
+/// at render. JPEG scales on load, others full-decode.
 pub fn decode_scaled_to_fit(
     data: &[u8],
     max_w: u32,
     max_h: u32,
 ) -> anyhow::Result<(Vec<u8>, u32, u32)> {
+    Ok(resize_rgba_to_fit(
+        decode_to_dynamic(data, max_w, max_h)?,
+        max_w,
+        max_h,
+    ))
+}
+
+/// Decode to RGBA scaled to cover `w`×`h` and centre-cropped to exactly that,
+/// filled (no letterbox) at render. JPEG scales on load, others full-decode.
+pub fn decode_scaled_to_cover(data: &[u8], w: u32, h: u32) -> anyhow::Result<(Vec<u8>, u32, u32)> {
+    Ok(resize_rgba_to_cover(&decode_to_dynamic(data, w, h)?, w, h))
+}
+
+/// Decode to a `DynamicImage` at least `max_w`×`max_h` where the source allows:
+/// JPEG DCT-scales on load near the target, others full-decode (alloc-capped).
+fn decode_to_dynamic(data: &[u8], max_w: u32, max_h: u32) -> anyhow::Result<image::DynamicImage> {
     if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        decode_jpeg_scaled(data, max_w, max_h)
+        decode_jpeg_to_dynamic(data, max_w, max_h)
     } else {
-        decode_full_resized(data, max_w, max_h)
+        decode_full_to_dynamic(data)
     }
 }
 
-/// DCT scale-on-load near the target, then resample to the exact fit.
-fn decode_jpeg_scaled(data: &[u8], max_w: u32, max_h: u32) -> anyhow::Result<(Vec<u8>, u32, u32)> {
+/// DCT scale-on-load near the target; returns the decoded image (un-resampled).
+fn decode_jpeg_to_dynamic(
+    data: &[u8],
+    max_w: u32,
+    max_h: u32,
+) -> anyhow::Result<image::DynamicImage> {
     let mut decoder = jpeg_decoder::Decoder::new(Cursor::new(data));
     decoder.scale(
         u16::try_from(max_w).unwrap_or(u16::MAX),
@@ -332,17 +352,13 @@ fn decode_jpeg_scaled(data: &[u8], max_w: u32, max_h: u32) -> anyhow::Result<(Ve
     let rgba = jpeg_to_rgba(&pixels, info.pixel_format)?;
     let img = image::RgbaImage::from_raw(sw, sh, rgba)
         .ok_or_else(|| anyhow::anyhow!("jpeg pixel buffer size mismatch"))?;
-    Ok(resize_rgba_to_fit(
-        image::DynamicImage::ImageRgba8(img),
-        max_w,
-        max_h,
-    ))
+    Ok(image::DynamicImage::ImageRgba8(img))
 }
 
-/// Full decode (allocation-capped) then resample to fit.
-fn decode_full_resized(data: &[u8], max_w: u32, max_h: u32) -> anyhow::Result<(Vec<u8>, u32, u32)> {
+/// Full decode (allocation-capped); returns the decoded image (un-resampled).
+fn decode_full_to_dynamic(data: &[u8]) -> anyhow::Result<image::DynamicImage> {
     let data = data.to_vec();
-    let decoded = panic::catch_unwind(|| {
+    panic::catch_unwind(|| {
         let mut reader = image::ImageReader::new(Cursor::new(&data));
         let mut limits = image::io::Limits::default();
         limits.max_alloc = Some(crate::MAX_DECODE_IMAGE_ALLOC_BYTES);
@@ -353,8 +369,7 @@ fn decode_full_resized(data: &[u8], max_w: u32, max_h: u32) -> anyhow::Result<(V
             .and_then(image::ImageReader::decode)
     })
     .map_err(|_| anyhow::anyhow!("image decoder panicked"))?
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
-    Ok(resize_rgba_to_fit(decoded, max_w, max_h))
+    .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 /// Resample down to fit `max_w`×`max_h` preserving aspect; never upscales.
@@ -367,6 +382,36 @@ fn resize_rgba_to_fit(img: image::DynamicImage, max_w: u32, max_h: u32) -> (Vec<
     };
     let (w, h) = (rgba.width(), rgba.height());
     (rgba.into_raw(), w, h)
+}
+
+/// Centre-crop the source to the `w:h` aspect, then resample to exactly `w`×`h`.
+/// Crop-first bounds the transient (no oversized resize-to-cover intermediate).
+#[expect(
+    clippy::integer_division,
+    reason = "pixel crop dims and centre offsets — integer truncation is intended"
+)]
+fn resize_rgba_to_cover(img: &image::DynamicImage, w: u32, h: u32) -> (Vec<u8>, u32, u32) {
+    let (sw, sh) = (img.width(), img.height());
+    let (cw, ch) = cover_crop(sw, sh, w, h);
+    let rgba = img
+        .crop_imm((sw - cw) / 2, (sh - ch) / 2, cw, ch)
+        .resize_exact(w, h, image::imageops::FilterType::Triangle)
+        .into_rgba8();
+    (rgba.into_raw(), w, h)
+}
+
+/// Largest centred `w:h`-aspect rect fitting in `sw`×`sh`.
+#[expect(
+    clippy::integer_division,
+    reason = "pixel crop dimensions — integer truncation is intended"
+)]
+fn cover_crop(sw: u32, sh: u32, w: u32, h: u32) -> (u32, u32) {
+    let (sw64, sh64, w64, h64) = (u64::from(sw), u64::from(sh), u64::from(w), u64::from(h));
+    if sw64 * h64 >= sh64 * w64 {
+        (u32::try_from(sh64 * w64 / h64).unwrap_or(sw).min(sw), sh)
+    } else {
+        (sw, u32::try_from(sw64 * h64 / w64).unwrap_or(sh).min(sh))
+    }
 }
 
 /// Expand jpeg-decoder output to RGBA; only RGB and 8-bit grayscale.

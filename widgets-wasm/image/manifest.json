@@ -33,6 +33,22 @@
       "description": "How often to re-fetch the image",
       "type": "integer",
       "default_value": 300
+    },
+    "sizing": {
+      "name": "Sizing",
+      "description": "Fit the whole image (letterboxed), or fill the widget and crop the overflow",
+      "type": "string",
+      "default_value": "contain",
+      "enum_values": [
+        {
+          "value": "contain",
+          "label": "Fit — whole image"
+        },
+        {
+          "value": "cover",
+          "label": "Fill — crop to edges"
+        }
+      ]
     }
   }
 }
