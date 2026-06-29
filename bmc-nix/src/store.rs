@@ -176,11 +176,14 @@ pub enum InitStoreError {
         #[source]
         source: reqwest::Error,
     },
-    #[error("invalid factory index JSON: {source}")]
+    #[error("invalid factory index JSON from {url}: {source}")]
     FactoryIndexParse {
+        url: String,
         #[source]
-        source: reqwest::Error,
+        source: serde_json::Error,
     },
+    #[error("unsupported factory index version {version} from {url}")]
+    UnsupportedFactoryVersion { url: String, version: u32 },
     #[error("no factory tarball for BOS version '{0}'")]
     MissingBosVersion(String),
     #[error("tarball download failed: {source}")]
@@ -225,6 +228,29 @@ pub fn find_tarball_for_version<'a>(
     tarballs.iter().find(|t| t.bos_version == bos_version)
 }
 
+/// Parse and validate a factory-index response body.
+///
+/// Pure function — no I/O. Returns `FactoryIndexParse` on bad JSON,
+/// `UnsupportedFactoryVersion` when `version != FACTORY_INDEX_VERSION`,
+/// otherwise the parsed [`crate::types::FactoryIndex`].
+fn parse_and_validate_factory_index(
+    url: &str,
+    body: &[u8],
+) -> Result<crate::types::FactoryIndex, InitStoreError> {
+    let parsed: crate::types::FactoryIndex =
+        serde_json::from_slice(body).map_err(|source| InitStoreError::FactoryIndexParse {
+            url: url.to_owned(),
+            source,
+        })?;
+    if parsed.version != crate::index::FACTORY_INDEX_VERSION {
+        return Err(InitStoreError::UnsupportedFactoryVersion {
+            url: url.to_owned(),
+            version: parsed.version,
+        });
+    }
+    Ok(parsed)
+}
+
 /// Initialize the Nix store from a factory tarball.
 ///
 /// 1. Fetch factory index from the factory server
@@ -243,22 +269,27 @@ pub async fn init_store(
     use tokio::io::AsyncWriteExt;
 
     // Step 1: Fetch factory index
-    let factory_index: crate::types::FactoryIndex = client
-        .get(&factory_server.index_url)
+    let factory_url = crate::index::make_factory_url(&factory_server.base_url);
+    let factory_body = client
+        .get(&factory_url)
         .send()
         .await
         .map_err(|source| InitStoreError::FactoryIndexFetch {
-            url: factory_server.index_url.clone(),
+            url: factory_url.clone(),
             source,
         })?
         .error_for_status()
         .map_err(|source| InitStoreError::FactoryIndexFetch {
-            url: factory_server.index_url.clone(),
+            url: factory_url.clone(),
             source,
         })?
-        .json()
+        .bytes()
         .await
-        .map_err(|source| InitStoreError::FactoryIndexParse { source })?;
+        .map_err(|source| InitStoreError::FactoryIndexFetch {
+            url: factory_url.clone(),
+            source,
+        })?;
+    let factory_index = parse_and_validate_factory_index(&factory_url, &factory_body)?;
 
     // Step 2: Find matching tarball
     let tarball = find_tarball_for_version(&factory_index.tarballs, bos_version)
@@ -587,6 +618,40 @@ mod tests {
             invocations.len(),
             0,
             "expected no invocations for empty input"
+        );
+    }
+
+    #[test]
+    fn parse_factory_index_accepts_v1() {
+        let body = br#"{"version": 1, "tarballs": []}"#;
+        let parsed = parse_and_validate_factory_index("http://test", body)
+            .expect("BUG: v1 factory index should parse");
+        assert_eq!(parsed.version, 1);
+        assert!(parsed.tarballs.is_empty());
+    }
+
+    #[test]
+    fn parse_factory_index_rejects_unsupported_version() {
+        let body = br#"{"version": 99, "tarballs": []}"#;
+        let err = parse_and_validate_factory_index("http://test", body)
+            .expect_err("BUG: version 99 should be rejected");
+        assert!(
+            matches!(
+                err,
+                InitStoreError::UnsupportedFactoryVersion { version: 99, .. }
+            ),
+            "expected UnsupportedFactoryVersion {{ version: 99 }}, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_factory_index_rejects_bad_json() {
+        let body = b"not json";
+        let err = parse_and_validate_factory_index("http://test", body)
+            .expect_err("BUG: garbage bytes should not parse");
+        assert!(
+            matches!(err, InitStoreError::FactoryIndexParse { .. }),
+            "expected FactoryIndexParse, got {err:?}"
         );
     }
 }

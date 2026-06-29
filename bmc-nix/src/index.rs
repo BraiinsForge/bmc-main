@@ -2,6 +2,27 @@
 
 use crate::types::{InstalledBy, PackageIndex, PinStrategy, ResolvedPackage};
 
+pub const PACKAGE_INDEX_VERSION: u32 = 1;
+pub const FACTORY_INDEX_VERSION: u32 = 1;
+
+#[must_use]
+pub fn make_index_url(base_url: &str) -> String {
+    format!(
+        "{}/nix-package-index.v{}.json",
+        base_url.trim_end_matches('/'),
+        PACKAGE_INDEX_VERSION,
+    )
+}
+
+#[must_use]
+pub fn make_factory_url(base_url: &str) -> String {
+    format!(
+        "{}/nix-factory.v{}.json",
+        base_url.trim_end_matches('/'),
+        FACTORY_INDEX_VERSION,
+    )
+}
+
 /// Resolve all packages in an index to [`ResolvedPackage`] values.
 ///
 /// Each package entry is given Stage 1 defaults: `installed_by = System`,
@@ -35,6 +56,38 @@ pub fn resolve_all_from_index(index: &PackageIndex) -> Vec<ResolvedPackage> {
 mod tests {
     use super::*;
     use crate::types::{CacheEntry, PackageEntry, PackageIndex, Provenance};
+
+    #[test]
+    fn make_index_url_normalizes_configured_base_url() {
+        assert_eq!(
+            make_index_url("https://cache.braiins.com/v1"),
+            "https://cache.braiins.com/v1/nix-package-index.v1.json"
+        );
+    }
+
+    #[test]
+    fn make_factory_url_normalizes_configured_base_url() {
+        assert_eq!(
+            make_factory_url("https://cache.braiins.com/v1"),
+            "https://cache.braiins.com/v1/nix-factory.v1.json"
+        );
+    }
+
+    #[test]
+    fn make_index_url_trims_trailing_slashes() {
+        assert_eq!(
+            make_index_url("https://cache.braiins.com/v1///"),
+            "https://cache.braiins.com/v1/nix-package-index.v1.json"
+        );
+    }
+
+    #[test]
+    fn make_factory_url_trims_trailing_slashes() {
+        assert_eq!(
+            make_factory_url("https://cache.braiins.com/v1/"),
+            "https://cache.braiins.com/v1/nix-factory.v1.json"
+        );
+    }
 
     /// Helper: build a minimal `PackageIndex` from given caches and packages.
     fn make_index(caches: Vec<CacheEntry>, packages: Vec<PackageEntry>) -> PackageIndex {
