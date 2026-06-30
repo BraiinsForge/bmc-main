@@ -16,6 +16,9 @@ use crate::slot::WidgetSlot;
 
 const GRACE_DURATION: Duration = Duration::from_millis(100);
 
+/// Let a startup/scene burst settle before the next GC, per review.
+const GC_SETTLE_DELAY: Duration = Duration::from_secs(5);
+
 #[derive(Debug)]
 pub struct HostLifetime {
     ever_had_slot: bool,
@@ -364,10 +367,10 @@ fn run_loop(
 
     let mut lifetime = HostLifetime::new();
 
-    // Publish our root so peers see us live. No reconcile yet: we haven't loaded
-    // our widgets, so sweeping now would wipe buckets we're about to re-use.
-    let mut last_gc = Instant::now();
-    publish_gc_root(slots);
+    // Defer the first publish + reconcile until widgets load.
+    // An empty root now would let a peer's sweep wipe buckets we re-use;
+    // the previous run's root protects them until the scheduled pass.
+    let mut next_gc = Instant::now() + GC_SETTLE_DELAY;
 
     while lifetime.should_continue(
         slots.len(),
@@ -386,8 +389,8 @@ fn run_loop(
         let slot_timeout = wake.map_or(-1, |d| i32::try_from(d.as_millis()).unwrap_or(i32::MAX));
         // Cap the wait by the next GC tick so an idle host still wakes to tick.
         let gc_ms = i32::try_from(
-            cache_gc::gc_period()
-                .saturating_sub(last_gc.elapsed())
+            next_gc
+                .saturating_duration_since(Instant::now())
                 .as_millis(),
         )
         .unwrap_or(i32::MAX);
@@ -449,8 +452,9 @@ fn run_loop(
                         let slot_id = slots.insert(slot);
                         tracing::info!(slot_id, peer_pid, wasm = %wasm, "slot inserted");
                         lifetime.note_accept();
-                        // Publish the new token so a peer's GC keeps its bucket.
-                        publish_gc_root(slots);
+                        // Pull the next GC in so the new token publishes soon
+                        // (a startup/scene burst coalesces into one).
+                        next_gc = next_gc.min(Instant::now() + GC_SETTLE_DELAY);
                     }
                     Err(e) => {
                         if slots.is_empty() {
@@ -586,12 +590,13 @@ fn run_loop(
             }
         }
 
-        // Periodic heartbeat + sweep; republishing also picks up teardowns.
-        if last_gc.elapsed() >= cache_gc::gc_period() {
+        // Heartbeat + sweep on the next_gc deadline; republishing also picks up
+        // teardowns. After a run the deadline resets a full period out.
+        if Instant::now() >= next_gc {
             publish_gc_root(slots);
             let stats = cache_gc::reconcile();
             tracing::debug!(?stats, "widget asset cache GC");
-            last_gc = Instant::now();
+            next_gc = Instant::now() + cache_gc::gc_period();
         }
     }
     Ok(())
