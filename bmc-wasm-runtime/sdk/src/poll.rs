@@ -85,6 +85,18 @@ pub struct Config {
     pub enabled: bool,
 }
 
+impl Default for Config {
+    /// The common widget polling cadence; override what differs.
+    fn default() -> Self {
+        Self {
+            interval_ms: None,
+            retry_ms: 10_000,
+            debounce_ms: 300,
+            enabled: true,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Handle(usize);
 

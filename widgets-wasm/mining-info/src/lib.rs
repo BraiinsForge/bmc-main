@@ -44,12 +44,6 @@ const MINER_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
 // often than this rather than hammering `/auth/login` every `RETRY_MS` forever.
 #[cfg(target_arch = "wasm32")]
 const MAX_LOGIN_RETRY_MS: u32 = 300_000;
-// Settle a burst of rapid parameter changes before refetching: a change schedules
-// the request after this delay rather than firing immediately, and the next
-// change cancels the still-queued timer and restarts it, so dragging a control or
-// typing a URL issues one request when the value settles instead of one per step.
-#[cfg(target_arch = "wasm32")]
-const DEBOUNCE_MS: u32 = 300;
 
 #[cfg(target_arch = "wasm32")]
 type MinerParser = fn(&JsonDoc, &mut MinerData);
@@ -347,10 +341,8 @@ pub extern "C" fn init() {
         build_login,
         on_login_reply,
         PollConfig {
-            interval_ms: None,
-            retry_ms: RETRY_MS,
-            debounce_ms: DEBOUNCE_MS,
             enabled: view_needs_miner(view),
+            ..Default::default()
         },
     );
     let miner = std::array::from_fn(|idx| {
@@ -359,9 +351,8 @@ pub extern "C" fn init() {
             on_miner_reply,
             PollConfig {
                 interval_ms: MINER_ENDPOINTS[idx].interval_ms,
-                retry_ms: RETRY_MS,
-                debounce_ms: DEBOUNCE_MS,
                 enabled: miner_endpoint_needed(idx, view, shape),
+                ..Default::default()
             },
         )
     });
@@ -371,9 +362,8 @@ pub extern "C" fn init() {
             on_public_reply,
             PollConfig {
                 interval_ms: Some(PUBLIC_REFRESH_MS),
-                retry_ms: RETRY_MS,
-                debounce_ms: DEBOUNCE_MS,
                 enabled: public_endpoint_needed(idx, view),
+                ..Default::default()
             },
         )
     });

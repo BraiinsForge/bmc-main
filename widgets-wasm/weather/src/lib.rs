@@ -112,8 +112,6 @@ mod wasm_glue {
     use bmc_wasm_sdk::*;
 
     const REFRESH_MS: u32 = 300_000;
-    const RETRY_MS: u32 = 10_000;
-    const DEBOUNCE_MS: u32 = 300;
     const NEXUS_BASE: &str = "https://nexus.braiinsforge.com/api/v1/data/weather/";
 
     enum State {
@@ -139,9 +137,7 @@ mod wasm_glue {
             on_weather,
             PollConfig {
                 interval_ms: Some(REFRESH_MS),
-                retry_ms: RETRY_MS,
-                debounce_ms: DEBOUNCE_MS,
-                enabled: true,
+                ..Default::default()
             },
         );
         POLL.with(|p| p.set(Some(handle)));

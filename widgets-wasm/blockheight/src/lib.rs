@@ -21,7 +21,6 @@ mod wasm_glue {
     const BLOCK_HEIGHT_API_URL: &str =
         "https://public-api.braiins.com/v2/blocks?limit=1&currency=usd";
     const REFRESH_MS: u32 = 60_000;
-    const RETRY_MS: u32 = 10_000;
 
     const NOT_AVAILABLE: &str = "--";
 
@@ -123,9 +122,8 @@ mod wasm_glue {
             on_block_data,
             PollConfig {
                 interval_ms: Some(REFRESH_MS),
-                retry_ms: RETRY_MS,
                 debounce_ms: 0,
-                enabled: true,
+                ..Default::default()
             },
         );
     }

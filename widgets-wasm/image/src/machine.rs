@@ -223,11 +223,11 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
     }
 }
 
-/// Substitute `{{width}}`/`{{height}}` in a URL; `None` for an empty URL.
+/// Substitute `{{width}}`/`{{height}}`; `None` unless the URL is `http(s)`.
 #[must_use]
 pub fn expand_url(url: &str, width: u32, height: u32) -> Option<String> {
     let url = url.trim();
-    if url.is_empty() {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
         return None;
     }
     Some(
@@ -476,7 +476,13 @@ mod tests {
             Some("http://x/64x48")
         );
         assert_eq!(expand_url("   ", 1, 1), None);
+        assert_eq!(expand_url("ftp://x/img", 1, 1), None);
+        assert_eq!(expand_url("not-a-url", 1, 1), None);
         assert_eq!(expand_url("http://x", 64, 48).as_deref(), Some("http://x"));
+        assert_eq!(
+            expand_url("https://x", 64, 48).as_deref(),
+            Some("https://x")
+        );
     }
 
     #[test]

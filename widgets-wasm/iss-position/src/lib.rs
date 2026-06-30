@@ -50,7 +50,6 @@ mod wasm_glue {
     /// position. A fixed interval keeps the fleet from polling nexus in lockstep.
     const REFRESH_MS: u32 = 1_800_000;
     const RETRY_MS: u32 = 30_000;
-    const DEBOUNCE_MS: u32 = 300;
     /// ~30 fps while the globe animates; static states idle at 1 fps.
     const GLOBE_FRAME_MS: u32 = 33;
     const IDLE_FRAME_MS: u32 = 1_000;
@@ -74,8 +73,7 @@ mod wasm_glue {
             PollConfig {
                 interval_ms: Some(REFRESH_MS),
                 retry_ms: RETRY_MS,
-                debounce_ms: DEBOUNCE_MS,
-                enabled: true,
+                ..Default::default()
             },
         );
         POLL.with(|p| p.set(Some(handle)));

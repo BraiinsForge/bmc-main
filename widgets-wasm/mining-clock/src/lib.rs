@@ -37,10 +37,6 @@ use shared::clock_palette;
 
 #[cfg(target_arch = "wasm32")]
 const STATS_REFRESH_MS: u32 = 5_000;
-#[cfg(target_arch = "wasm32")]
-const RETRY_MS: u32 = 10_000;
-#[cfg(target_arch = "wasm32")]
-const DEBOUNCE_MS: u32 = 300;
 // The miner lives on the local network, so an unreachable one should fail
 // fast instead of holding the SDK-default 10s timeout.
 #[cfg(target_arch = "wasm32")]
@@ -81,38 +77,18 @@ thread_local! {
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn init() {
-    let login = register_poll(
-        build_login,
-        on_login_reply,
-        PollConfig {
-            interval_ms: None,
-            retry_ms: RETRY_MS,
-            debounce_ms: DEBOUNCE_MS,
-            enabled: true,
-        },
-    );
+    let login = register_poll(build_login, on_login_reply, PollConfig::default());
     let stats = register_poll(
         build_miner,
         on_miner_reply,
         PollConfig {
             interval_ms: Some(STATS_REFRESH_MS),
-            retry_ms: RETRY_MS,
-            debounce_ms: DEBOUNCE_MS,
-            enabled: true,
+            ..Default::default()
         },
     );
     // Tuner constraints anchor both gauge rings. Fetched once per login
     // (constraints change only on a re-tune): one-shot, invalidated on login.
-    let constraints = register_poll(
-        build_miner,
-        on_miner_reply,
-        PollConfig {
-            interval_ms: None,
-            retry_ms: RETRY_MS,
-            debounce_ms: DEBOUNCE_MS,
-            enabled: true,
-        },
-    );
+    let constraints = register_poll(build_miner, on_miner_reply, PollConfig::default());
     HANDLES.with(|handles| {
         *handles.borrow_mut() = Some(Handles {
             login,

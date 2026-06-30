@@ -21,8 +21,6 @@ mod wasm_glue {
     )]
     use bmc_wasm_sdk::*;
 
-    const RETRY_MS: u32 = 10_000;
-    const DEBOUNCE_MS: u32 = 300;
     /// jpeg-decoder DCT-scales to 1/8 per axis, tolerating 64× more source pixels.
     const JPEG_SCALE_HEADROOM: u64 = 64;
     /// Menu clears itself this long after opening, untouched.
@@ -47,9 +45,8 @@ mod wasm_glue {
             on_image,
             PollConfig {
                 interval_ms: Some(refresh_interval_ms()),
-                retry_ms: RETRY_MS,
-                debounce_ms: DEBOUNCE_MS,
                 enabled: false, // first render restores + schedules
+                ..Default::default()
             },
         );
         POLL.with(|p| p.set(Some(handle)));

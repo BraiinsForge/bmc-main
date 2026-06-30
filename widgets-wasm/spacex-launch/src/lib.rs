@@ -56,7 +56,6 @@ mod wasm_glue {
     /// Fixed 5-min refresh; a fixed period keeps Decks from refreshing in lockstep.
     const REFRESH_MS: u32 = 300_000;
     const RETRY_MS: u32 = 30_000;
-    const DEBOUNCE_MS: u32 = 300;
     /// Countdown re-renders once a second.
     const TICK_MS: u32 = 1_000;
 
@@ -80,8 +79,7 @@ mod wasm_glue {
             PollConfig {
                 interval_ms: Some(REFRESH_MS),
                 retry_ms: RETRY_MS,
-                debounce_ms: DEBOUNCE_MS,
-                enabled: true,
+                ..Default::default()
             },
         );
         POLL.with(|p| p.set(Some(handle)));

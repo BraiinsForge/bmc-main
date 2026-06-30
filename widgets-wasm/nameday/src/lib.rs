@@ -24,7 +24,6 @@ mod wasm_glue {
 
     const NAMEDAY_API_URL_TEMPLATE: &str =
         "https://nameday.abalin.net/api/V2/date?day={DAY_PLACEHOLDER}&month={MONTH_PLACEHOLDER}";
-    const RETRY_MS: u32 = 10_000;
 
     // As the data are checked for validity in render (as we do not have
     // a scheduler and fetch_after is unreliable due to RTC implementation),
@@ -90,10 +89,8 @@ mod wasm_glue {
             build_request,
             on_nameday_data,
             PollConfig {
-                interval_ms: None,
-                retry_ms: RETRY_MS,
                 debounce_ms: 0,
-                enabled: true,
+                ..Default::default()
             },
         );
 
