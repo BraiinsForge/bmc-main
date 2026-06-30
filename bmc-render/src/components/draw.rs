@@ -888,6 +888,14 @@ fn render_draw_inner(
             let bw = *box_width * scale;
             let bh = *box_height * scale;
             let mut render_style = *style;
+            // Scale the font size and search bounds with the box, exactly as the
+            // `Text`/`CurvedText` arms scale `render_style.size`. Otherwise the box
+            // lives in scaled (device) units while the size cap and bounds stay in
+            // unscaled units, and autofit text under a non-unit scale renders at a
+            // different size than a plain scaled `Text` beside it.
+            render_style.size = (style.size as f32 * scale) as u32;
+            let min_size = (f32::from(*min_size) * scale) as u16;
+            let max_size = (f32::from(*max_size) * scale) as u16;
             let base_color = color_override.unwrap_or(style.color);
             render_style.color = if alpha < 1.0 {
                 base_color.scale_alpha(alpha)
@@ -903,8 +911,8 @@ fn render_draw_inner(
                     text,
                     &render_style,
                     *mode,
-                    *min_size,
-                    *max_size,
+                    min_size,
+                    max_size,
                 );
             } else {
                 let pivot_x = cx + cw / 2.0;
@@ -920,8 +928,8 @@ fn render_draw_inner(
                     text,
                     &render_style,
                     *mode,
-                    *min_size,
-                    *max_size,
+                    min_size,
+                    max_size,
                 );
                 renderer.restore();
             }
