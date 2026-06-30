@@ -476,7 +476,7 @@ async fn cmd_gc(
     // pruning generations or store paths a concurrent upgrade is realizing.
     let _lock = bmc_nix::profile::lock_profile(&profile_dir).await?;
     bmc_nix::gc::cleanup_generations(&profile_dir, &config, &[])?;
-    bmc_nix::gc::collect_garbage().await?;
+    bmc_nix::gc::collect_garbage(&bmc_nix::store::TokioCommandRunner, None).await?;
     Ok(())
 }
 

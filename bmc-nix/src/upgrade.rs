@@ -39,6 +39,10 @@ pub enum UpgradePhase {
     Building,
     Activating,
     Cleaning,
+    /// A garbage-collection sub-phase, wrapping the phase `collect_garbage`
+    /// reports so it can travel through the single `on_phase` channel during
+    /// the broader `Cleaning` step.
+    CollectingGarbage(gc::CollectGarbagePhase),
 }
 
 impl UpgradePhase {
@@ -53,6 +57,7 @@ impl UpgradePhase {
             UpgradePhase::Building => "building",
             UpgradePhase::Activating => "activating",
             UpgradePhase::Cleaning => "cleaning",
+            UpgradePhase::CollectingGarbage(phase) => phase.as_str(),
         }
     }
 }
@@ -63,6 +68,11 @@ pub trait UpgradeProgress: Send + Sync {
     fn on_realization_started(&self, total_paths: usize);
     fn on_realization_finished(&self);
     fn on_download_status(&self, snapshot: &store::progress::DownloadSnapshot);
+    /// Running count of store paths deleted during garbage collection.
+    fn on_gc_deleted(&self, deleted_paths: usize);
+    /// Final garbage-collection tally; `freed_bytes` is `None` when nix's
+    /// summary line could not be parsed.
+    fn on_gc_finished(&self, deleted_paths: usize, freed_bytes: Option<u64>);
 }
 
 /// Adapter exposing an [`UpgradeProgress`] as a [`store::RealizeProgress`]
@@ -80,6 +90,26 @@ impl store::RealizeProgress for UpgradeRealizeProgress<'_> {
 
     fn on_download_status(&self, snapshot: &store::progress::DownloadSnapshot) {
         self.0.on_download_status(snapshot);
+    }
+}
+
+/// Adapter exposing an [`UpgradeProgress`] as a [`gc::CollectGarbageProgress`]
+/// so the post-activation GC sweep reports through the same sink as the
+/// upgrade phases. GC phases are wrapped into [`UpgradePhase::CollectingGarbage`];
+/// deletion progress and the final tally map onto the trait's GC methods.
+struct UpgradeCollectGarbageProgress<'a>(&'a dyn UpgradeProgress);
+
+impl gc::CollectGarbageProgress for UpgradeCollectGarbageProgress<'_> {
+    fn on_phase(&self, phase: gc::CollectGarbagePhase) {
+        self.0.on_phase(UpgradePhase::CollectingGarbage(phase));
+    }
+
+    fn on_deleted(&self, deleted_paths: usize) {
+        self.0.on_gc_deleted(deleted_paths);
+    }
+
+    fn on_finished(&self, deleted_paths: usize, freed_bytes: Option<u64>) {
+        self.0.on_gc_finished(deleted_paths, freed_bytes);
     }
 }
 
@@ -240,7 +270,7 @@ pub async fn apply_profile_change(
                 p.on_phase(UpgradePhase::Cleaning);
             }
             let keep_extra: Vec<usize> = previous_generation.into_iter().collect();
-            run_gc(profile_dir, gc_config, &keep_extra).await
+            run_gc(profile_dir, gc_config, &keep_extra, progress).await
         }
         None => Ok(()),
     };
@@ -264,9 +294,17 @@ async fn run_gc(
     profile_dir: &Path,
     gc_config: &GcConfig,
     keep_extra: &[usize],
+    progress: Option<&dyn UpgradeProgress>,
 ) -> Result<(), gc::GcError> {
     gc::cleanup_generations(profile_dir, gc_config, keep_extra)?;
-    gc::collect_garbage().await?;
+    let gc_progress = progress.map(UpgradeCollectGarbageProgress);
+    gc::collect_garbage(
+        &store::TokioCommandRunner,
+        gc_progress
+            .as_ref()
+            .map(|p| p as &dyn gc::CollectGarbageProgress),
+    )
+    .await?;
     Ok(())
 }
 
@@ -337,6 +375,39 @@ mod tests {
         fn on_realization_started(&self, _total_paths: usize) {}
         fn on_realization_finished(&self) {}
         fn on_download_status(&self, _snapshot: &store::progress::DownloadSnapshot) {}
+        fn on_gc_deleted(&self, _deleted_paths: usize) {}
+        fn on_gc_finished(&self, _deleted_paths: usize, _freed_bytes: Option<u64>) {}
+    }
+
+    /// Records every event reached through [`UpgradeProgress`] as a string,
+    /// so a test can assert the GC adapter routes to the right methods.
+    #[derive(Default)]
+    struct EventRecorder {
+        events: Mutex<Vec<String>>,
+    }
+
+    impl UpgradeProgress for EventRecorder {
+        fn on_phase(&self, phase: UpgradePhase) {
+            self.push(format!("phase:{}", phase.as_str()));
+        }
+        fn on_realization_started(&self, _total_paths: usize) {}
+        fn on_realization_finished(&self) {}
+        fn on_download_status(&self, _snapshot: &store::progress::DownloadSnapshot) {}
+        fn on_gc_deleted(&self, deleted_paths: usize) {
+            self.push(format!("gc_deleted:{deleted_paths}"));
+        }
+        fn on_gc_finished(&self, deleted_paths: usize, freed_bytes: Option<u64>) {
+            self.push(format!("gc_finished:{deleted_paths}:{freed_bytes:?}"));
+        }
+    }
+
+    impl EventRecorder {
+        fn push(&self, event: String) {
+            self.events
+                .lock()
+                .expect("BUG: event lock poisoned")
+                .push(event);
+        }
     }
 
     #[tokio::test]
@@ -389,6 +460,39 @@ mod tests {
         assert_eq!(UpgradePhase::Building.as_str(), "building");
         assert_eq!(UpgradePhase::Activating.as_str(), "activating");
         assert_eq!(UpgradePhase::Cleaning.as_str(), "cleaning");
+        assert_eq!(
+            UpgradePhase::CollectingGarbage(gc::CollectGarbagePhase::FindingRoots).as_str(),
+            "finding_roots"
+        );
+        assert_eq!(
+            UpgradePhase::CollectingGarbage(gc::CollectGarbagePhase::DeterminingLiveness).as_str(),
+            "determining_liveness"
+        );
+    }
+
+    #[test]
+    fn collect_garbage_adapter_routes_events_to_upgrade_sink() {
+        use gc::CollectGarbageProgress as _;
+
+        let recorder = EventRecorder::default();
+        let adapter = UpgradeCollectGarbageProgress(&recorder);
+
+        adapter.on_phase(gc::CollectGarbagePhase::FindingRoots);
+        adapter.on_deleted(42);
+        adapter.on_finished(7, Some(1536));
+
+        assert_eq!(
+            recorder
+                .events
+                .lock()
+                .expect("BUG: event lock poisoned")
+                .as_slice(),
+            &[
+                "phase:finding_roots".to_owned(),
+                "gc_deleted:42".to_owned(),
+                "gc_finished:7:Some(1536)".to_owned(),
+            ],
+        );
     }
 
     #[test]
