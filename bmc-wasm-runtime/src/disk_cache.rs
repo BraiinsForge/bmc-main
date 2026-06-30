@@ -29,7 +29,8 @@ pub struct DiskCache {
 #[derive(Debug)]
 pub struct CachedBlob {
     map: Mmap,
-    meta_len: usize,
+    /// `HEADER + meta_len`, validated `<= map.len()` so the slices can't overflow.
+    meta_end: usize,
     pub saved_at: u64,
 }
 
@@ -37,13 +38,13 @@ impl CachedBlob {
     /// Opaque caller metadata stored beside the artifact (e.g. a URL hash, dimensions).
     #[must_use]
     pub fn metadata(&self) -> &[u8] {
-        &self.map[HEADER..HEADER + self.meta_len]
+        &self.map[HEADER..self.meta_end]
     }
 
     /// The cached artifact bytes.
     #[must_use]
     pub fn bytes(&self) -> &[u8] {
-        &self.map[HEADER + self.meta_len..]
+        &self.map[self.meta_end..]
     }
 }
 
@@ -95,12 +96,11 @@ impl DiskCache {
         }
         let saved_at = u64::from_le_bytes(map[0..8].try_into().ok()?);
         let meta_len = u32::from_le_bytes(map[8..12].try_into().ok()?) as usize;
-        if map.len() < HEADER + meta_len {
-            return None;
-        }
+        // checked_add so a crafted meta_len near usize::MAX can't wrap on armv7.
+        let meta_end = HEADER.checked_add(meta_len).filter(|&e| e <= map.len())?;
         Some(CachedBlob {
             map,
-            meta_len,
+            meta_end,
             saved_at,
         })
     }
@@ -233,6 +233,17 @@ mod tests {
         // meta_len claims 99 bytes but the file ends right after the header.
         let mut bad = TS.to_le_bytes().to_vec();
         bad.extend_from_slice(&99_u32.to_le_bytes());
+        std::fs::write(c.path("k").expect("valid key"), bad).expect("write");
+        assert!(c.get("k").is_none());
+    }
+
+    #[test]
+    fn huge_meta_len_is_none() {
+        let (_d, c) = cache(1 << 20);
+        // meta_len = u32::MAX would wrap HEADER + meta_len on a 32-bit usize.
+        let mut bad = TS.to_le_bytes().to_vec();
+        bad.extend_from_slice(&u32::MAX.to_le_bytes());
+        bad.extend_from_slice(b"some payload");
         std::fs::write(c.path("k").expect("valid key"), bad).expect("write");
         assert!(c.get("k").is_none());
     }
