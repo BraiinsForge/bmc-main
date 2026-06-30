@@ -760,12 +760,28 @@ async fn cmd_gc(
     Ok(())
 }
 
+/// Install a stderr `tracing` subscriber so emitted events (e.g. gc
+/// generation removals) are visible. Stdout is reserved for command
+/// output, so logs go to stderr. The level defaults to `info` and is
+/// overridable via `RUST_LOG`.
+fn init_logging() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(std::io::stderr)
+        .with_env_filter(filter)
+        .init();
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "CLI dispatch — one match arm per subcommand"
 )]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    init_logging();
+
     let cli = Cli::parse();
     let log_format = cli.log_format;
 
