@@ -339,20 +339,24 @@ fn decode_jpeg_to_dynamic(
     max_w: u32,
     max_h: u32,
 ) -> anyhow::Result<image::DynamicImage> {
-    let mut decoder = jpeg_decoder::Decoder::new(Cursor::new(data));
-    decoder.scale(
-        u16::try_from(max_w).unwrap_or(u16::MAX),
-        u16::try_from(max_h).unwrap_or(u16::MAX),
-    )?;
-    let info = decoder
-        .info()
-        .ok_or_else(|| anyhow::anyhow!("jpeg has no frame info"))?;
-    let pixels = decoder.decode()?;
-    let (sw, sh) = (u32::from(info.width), u32::from(info.height));
-    let rgba = jpeg_to_rgba(&pixels, info.pixel_format)?;
-    let img = image::RgbaImage::from_raw(sw, sh, rgba)
-        .ok_or_else(|| anyhow::anyhow!("jpeg pixel buffer size mismatch"))?;
-    Ok(image::DynamicImage::ImageRgba8(img))
+    let data = data.to_vec();
+    panic::catch_unwind(|| {
+        let mut decoder = jpeg_decoder::Decoder::new(Cursor::new(&data));
+        decoder.scale(
+            u16::try_from(max_w).unwrap_or(u16::MAX),
+            u16::try_from(max_h).unwrap_or(u16::MAX),
+        )?;
+        let info = decoder
+            .info()
+            .ok_or_else(|| anyhow::anyhow!("jpeg has no frame info"))?;
+        let pixels = decoder.decode()?;
+        let (sw, sh) = (u32::from(info.width), u32::from(info.height));
+        let rgba = jpeg_to_rgba(&pixels, info.pixel_format)?;
+        let img = image::RgbaImage::from_raw(sw, sh, rgba)
+            .ok_or_else(|| anyhow::anyhow!("jpeg pixel buffer size mismatch"))?;
+        Ok(image::DynamicImage::ImageRgba8(img))
+    })
+    .map_err(|_| anyhow::anyhow!("jpeg decoder panicked"))?
 }
 
 /// Full decode (allocation-capped); returns the decoded image (un-resampled).

@@ -197,6 +197,12 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return 0;
             };
             let identity = read_bytes(&caller, identity_ptr, identity_len).unwrap_or_default();
+            // A zero max dimension divides by zero in the cover crop; reject it
+            // here rather than trust the guest's integers.
+            if max_w == 0 || max_h == 0 {
+                tracing::warn!("host_register_bitmap_fit rejected: zero max dimension");
+                return 0;
+            }
             let state = caller.data_mut();
             if state.in_flight_image_decodes as usize >= state.resource_limits.max_image_decodes {
                 tracing::warn!(
@@ -211,12 +217,17 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
             let tx = state.image_decode_tx.clone();
             std::thread::spawn(move || {
                 let started = std::time::Instant::now();
-                let result = if cover != 0 {
-                    decode_scaled_to_cover(&data, max_w, max_h)
-                } else {
-                    decode_scaled_to_fit(&data, max_w, max_h)
-                }
-                .map_err(|e| e.to_string());
+                // catch_unwind so a decode panic still reports a failed job and
+                // releases the in-flight slot instead of leaking it forever.
+                let result = std::panic::catch_unwind(|| {
+                    if cover != 0 {
+                        decode_scaled_to_cover(&data, max_w, max_h)
+                    } else {
+                        decode_scaled_to_fit(&data, max_w, max_h)
+                    }
+                    .map_err(|e| e.to_string())
+                })
+                .unwrap_or_else(|_| Err("image decode panicked".to_owned()));
                 let decode_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
                 let _ = tx.send(CompletedImageDecode {
                     job_id,
