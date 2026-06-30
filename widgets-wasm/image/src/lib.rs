@@ -3,12 +3,15 @@
 //! Image widget — fetches an image from a URL and displays it fitted to the
 //! widget viewport.
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod machine;
 mod manifest_params;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod render;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm_glue {
+    use super::machine::{self, Action, Badge, ErrorKind, Event, View};
     use super::{manifest_params, render};
     use std::cell::{Cell, RefCell};
 
@@ -28,60 +31,13 @@ mod wasm_glue {
     /// Displayed image; set() evicts the previous.
     static IMAGE: BitmapSlot = BitmapSlot::new("image");
 
-    enum State {
-        Loading,
-        Loaded { bitmap: BitmapId, aspect: f32 },
-        LoadFailed,
-        TooLarge,
-        BadImage,
-    }
-
-    /// Outcome of restoring the cached image.
-    enum Restore {
-        /// Within TTL; carries ms until the next refresh.
-        Fresh { remaining_ms: u32 },
-        /// Restored but past the TTL — shown now, refreshing in the background.
-        Stale,
-        /// No usable bucket (missing, or a different URL/viewport) — must refetch.
-        Miss,
-    }
-
-    /// In-flight decode: its job handle and the source image's aspect ratio.
-    #[derive(Clone, Copy)]
-    struct Pending {
-        job: ImageJobId,
-        aspect: f32,
-    }
-
     thread_local! {
-        static STATE: RefCell<State> = const { RefCell::new(State::Loading) };
+        static VIEW: RefCell<View> = const { RefCell::new(View::Loading { decode: None }) };
         static POLL: Cell<Option<PollHandle>> = const { Cell::new(None) };
-        // Held image; stale after a failed refresh.
-        static STALE: Cell<bool> = const { Cell::new(false) };
-        // Showing a cached image while a fresh fetch runs (wake from a past-TTL bucket).
-        static REFRESHING: Cell<bool> = const { Cell::new(false) };
-        // In-flight decode; results from superseded jobs are ignored.
-        static PENDING: Cell<Option<Pending>> = const { Cell::new(None) };
         // Menu auto-dismiss countdown (ms); 0 = closed.
         static MENU_MS: Cell<u32> = const { Cell::new(0) };
         // First render restores from cache (init() has no renderer scope).
         static INITIAL_RESTORE: Cell<bool> = const { Cell::new(false) };
-    }
-
-    /// Refresh interval (ms); fixed at registration.
-    fn refresh_interval_ms() -> u32 {
-        let secs = manifest_params::Params::current().refresh_seconds.max(1);
-        u32::try_from(secs).unwrap_or(u32::MAX).saturating_mul(1000)
-    }
-
-    /// Largest source the host can bound for this body's format.
-    fn max_source_pixels(body: &[u8]) -> u64 {
-        let cap = u64::from(host::max_image_pixels());
-        if body.starts_with(&[0xFF, 0xD8, 0xFF]) {
-            cap * JPEG_SCALE_HEADROOM
-        } else {
-            cap
-        }
     }
 
     #[unsafe(no_mangle)]
@@ -100,23 +56,60 @@ mod wasm_glue {
         INITIAL_RESTORE.with(|f| f.set(true));
     }
 
+    /// Fold an event into the view and run its side effects.
+    fn dispatch(event: Event) {
+        let cur = VIEW.with(|v| v.replace(View::Loading { decode: None }));
+        let (next, actions) = machine::step(cur, event);
+        VIEW.with(|v| *v.borrow_mut() = next);
+        for action in actions {
+            match action {
+                Action::EnablePollAfter(ms) => with_poll(|h| h.enable_after(ms)),
+                Action::ResumePoll => with_poll(|h| {
+                    h.set_enabled(true);
+                    h.invalidate();
+                }),
+                Action::DisablePoll => with_poll(|h| h.set_enabled(false)),
+                Action::Retry => with_poll(PollHandle::retry),
+                Action::RequestFrame => request_frame(),
+            }
+        }
+    }
+
+    fn with_poll(f: impl FnOnce(PollHandle)) {
+        POLL.with(|p| {
+            if let Some(handle) = p.get() {
+                f(handle);
+            }
+        });
+    }
+
+    fn refresh_interval_ms() -> u32 {
+        let secs = manifest_params::Params::current().refresh_seconds.max(1);
+        u32::try_from(secs).unwrap_or(u32::MAX).saturating_mul(1000)
+    }
+
+    /// Largest source the host can bound for this body's format.
+    fn max_source_pixels(body: &[u8]) -> u64 {
+        let cap = u64::from(host::max_image_pixels());
+        if body.starts_with(&[0xFF, 0xD8, 0xFF]) {
+            cap * JPEG_SCALE_HEADROOM
+        } else {
+            cap
+        }
+    }
+
     // {{width}}/{{height}} expand to the viewport pixels — 1:1 with the
     // released Slint widget so existing server URLs carry over unchanged.
     fn expanded_url() -> Option<String> {
-        let url = manifest_params::Params::current().url;
-        let url = url.trim();
-        if url.is_empty() {
-            return None;
-        }
         let size = widget_size();
-        Some(
-            url.replace("{{width}}", &size.width.to_string())
-                .replace("{{height}}", &size.height.to_string()),
+        machine::expand_url(
+            &manifest_params::Params::current().url,
+            size.width,
+            size.height,
         )
     }
 
-    // Cache identity: the expanded URL plus the sizing mode,
-    // so a URL, viewport, or sizing change is a distinct cached blob.
+    // Cache identity: expanded URL + sizing, so a URL/viewport/sizing change is a distinct blob.
     fn cache_identity() -> Option<String> {
         let mut id = expanded_url()?;
         id.push('\u{1f}');
@@ -132,88 +125,58 @@ mod wasm_glue {
         expanded_url().map(FetchSpec::get)
     }
 
-    fn on_image(handle: PollHandle, response: &FetchResponse) {
-        let has_image = STATE.with(|s| matches!(&*s.borrow(), State::Loaded { .. }));
-
-        // Probe dims before register so oversized skips the upload.
-        let error: Option<(State, bool)> = if !response.ok() || response.body().is_empty() {
-            Some((State::LoadFailed, true))
-        } else {
-            match host::image_dimensions(response.body()) {
-                None => Some((State::BadImage, false)),
-                Some((w, h))
-                    if u64::from(w) * u64::from(h) > max_source_pixels(response.body()) =>
-                {
-                    Some((State::TooLarge, false))
-                }
-                Some((w, h)) => {
-                    let size = widget_size();
-                    let aspect = render::aspect_of(w, h);
-                    // Identity = URL + viewport + sizing; the host stamps it for
-                    // restore-on-wake (a distinct blob per sizing mode).
-                    let identity = cache_identity().unwrap_or_default();
-                    let cover =
-                        manifest_params::Params::current().sizing == manifest_params::Sizing::Cover;
-                    match IMAGE.set_fit(
-                        response.body(),
-                        size.width,
-                        size.height,
-                        cover,
-                        identity.as_bytes(),
-                        on_decoded,
-                    ) {
-                        Some(job) => {
-                            PENDING.with(|p| p.set(Some(Pending { job, aspect })));
-                            None
-                        }
-                        // Decode slots full — retry later.
-                        None => Some((State::LoadFailed, true)),
-                    }
-                }
-            }
-        };
-
-        if let Some((state, transient)) = error {
-            if has_image {
-                // Failed refresh: keep last good (stale), drop the overlay; retry transient.
-                REFRESHING.with(|s| s.set(false));
-                STALE.with(|s| s.set(true));
-                if transient {
-                    handle.retry();
-                }
-            } else {
-                STATE.with(|s| *s.borrow_mut() = state);
-            }
-        }
-        request_frame();
+    fn on_image(_handle: PollHandle, response: &FetchResponse) {
+        dispatch(classify_response(response));
     }
 
-    /// Async decode finished: swap to the new bitmap, or mark bad/stale on failure.
-    fn on_decoded(job: ImageJobId, bitmap: Option<BitmapId>) {
-        let Some(pending) = PENDING.with(Cell::get) else {
-            return;
+    /// Probe the response and, on success, start the decode — yielding the event.
+    fn classify_response(response: &FetchResponse) -> Event {
+        if !response.ok() || response.body().is_empty() {
+            return Event::FetchError {
+                kind: ErrorKind::LoadFailed,
+                transient: true,
+            };
+        }
+        let Some((w, h)) = host::image_dimensions(response.body()) else {
+            return Event::FetchError {
+                kind: ErrorKind::BadImage,
+                transient: false,
+            };
         };
-        if pending.job != job {
-            return;
+        if u64::from(w) * u64::from(h) > max_source_pixels(response.body()) {
+            return Event::FetchError {
+                kind: ErrorKind::TooLarge,
+                transient: false,
+            };
         }
-        // The refresh resolved either way — drop the overlay.
-        REFRESHING.with(|r| r.set(false));
-        match bitmap {
-            Some(bitmap) => {
-                STATE.with(|s| {
-                    *s.borrow_mut() = State::Loaded {
-                        bitmap,
-                        aspect: pending.aspect,
-                    };
-                });
-                STALE.with(|s| s.set(false));
-            }
-            None if STATE.with(|s| matches!(&*s.borrow(), State::Loaded { .. })) => {
-                STALE.with(|s| s.set(true));
-            }
-            None => STATE.with(|s| *s.borrow_mut() = State::BadImage),
+        let size = widget_size();
+        let identity = cache_identity().unwrap_or_default();
+        let cover = manifest_params::Params::current().sizing == manifest_params::Sizing::Cover;
+        match IMAGE.set_fit(
+            response.body(),
+            size.width,
+            size.height,
+            cover,
+            identity.as_bytes(),
+            on_decoded,
+        ) {
+            Some(job) => Event::DecodeStarted {
+                job,
+                aspect: render::aspect_of(w, h),
+            },
+            // Decode slots full — retry later.
+            None => Event::FetchError {
+                kind: ErrorKind::LoadFailed,
+                transient: true,
+            },
         }
-        request_frame();
+    }
+
+    fn on_decoded(job: ImageJobId, bitmap: Option<BitmapId>) {
+        dispatch(match bitmap {
+            Some(bitmap) => Event::Decoded { job, bitmap },
+            None => Event::DecodeFailed { job },
+        });
     }
 
     #[unsafe(no_mangle)]
@@ -224,13 +187,10 @@ mod wasm_glue {
             .as_ref()
             .is_none_or(|p| p.url != cur.url || p.sizing != cur.sizing)
         {
-            // No evict: renderer imports trap outside render; set() replaces it.
-            STATE.with(|s| *s.borrow_mut() = State::Loading);
-            STALE.with(|s| s.set(false));
-            REFRESHING.with(|r| r.set(false));
-            resume_polling();
+            dispatch(Event::ParamsChanged);
+        } else {
+            request_frame();
         }
-        request_frame();
     }
 
     #[unsafe(no_mangle)]
@@ -246,105 +206,42 @@ mod wasm_glue {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn on_dormant() {
-        // Stop polling off-screen; the host frees our texture.
-        POLL.with(|p| {
-            if let Some(handle) = p.get() {
-                handle.set_enabled(false);
-            }
-        });
+        dispatch(Event::Dormant);
     }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn on_wake() {
-        INITIAL_RESTORE.with(|f| f.set(false)); // wake subsumes cold-start restore
-        STALE.with(|s| s.set(false));
-        restore_then_schedule();
-        request_frame();
+        INITIAL_RESTORE.with(|f| f.set(false)); // wake subsumes the cold-start restore
+        dispatch(restore_event());
     }
 
-    /// Restore from cache, then schedule the poll (fresh → fetch at TTL;
-    /// stale/miss → now). Render-scope only — calls renderer imports.
-    fn restore_then_schedule() {
-        match cache_identity().map_or(Restore::Miss, |id| try_restore(&id)) {
-            Restore::Fresh { remaining_ms } => {
-                REFRESHING.with(|r| r.set(false));
-                POLL.with(|p| {
-                    if let Some(handle) = p.get() {
-                        handle.enable_after(remaining_ms);
-                    }
-                });
-            }
-            Restore::Stale => {
-                REFRESHING.with(|r| r.set(true));
-                resume_polling();
-            }
-            Restore::Miss => {
-                REFRESHING.with(|r| r.set(false));
-                STATE.with(|s| *s.borrow_mut() = State::Loading);
-                resume_polling();
-            }
-        }
-    }
-
-    /// Re-enable the refresh poll and fetch immediately.
-    fn resume_polling() {
-        POLL.with(|p| {
-            if let Some(handle) = p.get() {
-                handle.set_enabled(true);
-                handle.invalidate();
-            }
-        });
-    }
-
-    fn menu_open() -> bool {
-        MENU_MS.with(Cell::get) > 0
-    }
-
-    fn open_menu() {
-        MENU_MS.with(|m| m.set(MENU_AUTO_DISMISS_MS));
-    }
-
-    fn close_menu() {
-        MENU_MS.with(|m| m.set(0));
-    }
-
-    /// Re-fetch now, bypassing the TTL — the menu's Reload and error-retry path.
-    fn force_reload() {
-        let has_image = STATE.with(|s| matches!(&*s.borrow(), State::Loaded { .. }));
-        if has_image {
-            REFRESHING.with(|r| r.set(true));
-        } else {
-            STATE.with(|s| *s.borrow_mut() = State::Loading);
-            STALE.with(|s| s.set(false));
-        }
-        resume_polling();
-    }
-
-    /// Re-register the cached image on an identity match, regardless of freshness.
-    fn try_restore(current_identity: &str) -> Restore {
+    /// Restore the cached image if its identity matches; renderer-scope only.
+    fn restore_event() -> Event {
+        let Some(identity) = cache_identity() else {
+            return Event::RestoreMiss;
+        };
         let Some(stat) = cache::stat(IMAGE.name()) else {
-            return Restore::Miss;
+            return Event::RestoreMiss;
         };
-        let Some((w, h, identity)) = parse_meta(&stat.metadata) else {
-            return Restore::Miss;
+        let Some((w, h, id_bytes)) = parse_meta(&stat.metadata) else {
+            return Event::RestoreMiss;
         };
-        if identity != current_identity.as_bytes() {
-            return Restore::Miss;
+        if id_bytes != identity.as_bytes() {
+            return Event::RestoreMiss;
         }
         let Some(bitmap) = assets::register_image(cache::lazy_get(IMAGE.name())) else {
-            return Restore::Miss;
+            return Event::RestoreMiss;
         };
-        STATE.with(|s| {
-            *s.borrow_mut() = State::Loaded {
+        let aspect = render::aspect_of(w, h);
+        let remaining = remaining_ttl_ms(stat.saved_at);
+        if remaining > 0 {
+            Event::Restored {
                 bitmap,
-                aspect: render::aspect_of(w, h),
-            };
-        });
-        let remaining_ms = remaining_ttl_ms(stat.saved_at);
-        if remaining_ms > 0 {
-            Restore::Fresh { remaining_ms }
+                aspect,
+                remaining_ms: remaining,
+            }
         } else {
-            Restore::Stale
+            Event::RestoredStale { bitmap, aspect }
         }
     }
 
@@ -355,26 +252,25 @@ mod wasm_glue {
         Some((w, h, meta.get(8..)?))
     }
 
-    // Ms left in the refresh interval; 0 once past.
     fn remaining_ttl_ms(saved_at_ms: u64) -> u32 {
         let now_ms = u64::try_from(host::SystemTime::now().unix_secs)
             .unwrap_or(0)
             .saturating_mul(1000);
-        let elapsed = now_ms.saturating_sub(saved_at_ms);
-        let remaining = u64::from(refresh_interval_ms()).saturating_sub(elapsed);
-        u32::try_from(remaining).unwrap_or(u32::MAX)
+        machine::ttl_remaining(now_ms, saved_at_ms, refresh_interval_ms())
+    }
+
+    fn menu_open() -> bool {
+        MENU_MS.with(Cell::get) > 0
     }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn render(delta_ms: u32) {
-        // First render restores from cache + schedules the poll here, rather
-        // than init(), because renderer imports trap outside a render scope.
+        // First render restores from cache (init() has no renderer scope).
         if INITIAL_RESTORE.with(Cell::get) {
             INITIAL_RESTORE.with(|f| f.set(false));
-            restore_then_schedule();
+            dispatch(restore_event());
         }
 
-        // Advance the menu auto-dismiss countdown.
         if menu_open() {
             let remaining = MENU_MS.with(Cell::get).saturating_sub(delta_ms);
             MENU_MS.with(|m| m.set(remaining));
@@ -385,21 +281,26 @@ mod wasm_glue {
         let base = if params.url.trim().is_empty() {
             render::message_view(render::CONFIGURE_URL, size)
         } else {
-            STATE.with(|s| match &*s.borrow() {
-                State::Loaded { bitmap, aspect } => {
+            VIEW.with(|v| match &*v.borrow() {
+                View::Shown {
+                    bitmap,
+                    aspect,
+                    badge,
+                    ..
+                } => {
                     let view = render::image_view(*bitmap, *aspect, size, params.sizing);
-                    if REFRESHING.with(Cell::get) {
-                        render::with_updating_overlay(view)
-                    } else if STALE.with(Cell::get) {
-                        render::with_stale_banner(view)
-                    } else {
-                        view
+                    match badge {
+                        Badge::Updating => render::with_updating_overlay(view),
+                        Badge::Stale => render::with_stale_banner(view),
+                        Badge::Fresh => view,
                     }
                 }
-                State::Loading => render::message_view(render::LOADING, size),
-                State::LoadFailed => render::message_view(render::LOAD_FAILED, size),
-                State::TooLarge => render::message_view(render::TOO_LARGE, size),
-                State::BadImage => render::message_view(render::BAD_IMAGE, size),
+                View::Loading { .. } => render::message_view(render::LOADING, size),
+                View::Failed(ErrorKind::LoadFailed) => {
+                    render::message_view(render::LOAD_FAILED, size)
+                }
+                View::Failed(ErrorKind::TooLarge) => render::message_view(render::TOO_LARGE, size),
+                View::Failed(ErrorKind::BadImage) => render::message_view(render::BAD_IMAGE, size),
             })
         };
 
@@ -413,19 +314,19 @@ mod wasm_glue {
         // Route taps: a button when the menu is open, otherwise open/dismiss it.
         let changed = if open {
             if result.clicks.contains_key(render::KEY_RELOAD) {
-                force_reload();
-                close_menu();
+                dispatch(Event::Reload);
+                MENU_MS.with(|m| m.set(0));
                 true
             } else if result.clicks.contains_key(render::KEY_CLOSE)
                 || result.clicks.contains_key(render::KEY_TAP)
             {
-                close_menu();
+                MENU_MS.with(|m| m.set(0));
                 true
             } else {
                 false
             }
         } else if result.clicks.contains_key(render::KEY_TAP) {
-            open_menu();
+            MENU_MS.with(|m| m.set(MENU_AUTO_DISMISS_MS));
             true
         } else {
             false

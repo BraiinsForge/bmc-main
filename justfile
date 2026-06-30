@@ -82,6 +82,8 @@ validate-wasm: format validate-wasm-deny validate-wasm-no-fmt
     # Production widgets are lint-gated (matches CI clippy-wasm-widgets); examples below build but aren't held to -D warnings.
     (cd widgets-wasm && cargo clippy --target wasm32-unknown-unknown --workspace -- -D warnings)
     for root in $(bmc-wasm-runtime/tools/widget_root.py); do (cd "$root" && cargo build --target wasm32-unknown-unknown --workspace) || exit 1; done
+    # Widget logic has native unit tests; the wasm32 build above can't run them.
+    (cd widgets-wasm && cargo nextest run --workspace)
 
 # Block bloat crates from creeping into the wasm32 dep graph (source: `nix/checks.nix::cargo-deny-wasm`).
 validate-wasm-deny:

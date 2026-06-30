@@ -1,0 +1,488 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+//! Pure state machine for the image widget — no SDK calls, unit-testable.
+//! The wasm shell turns host callbacks into [`Event`]s, runs [`step`], and
+//! executes the returned [`Action`]s. Folding the in-flight decode into the
+//! states that own it makes a stale completion impossible to install.
+
+use bmc_wasm_sdk::{BitmapId, ImageJobId};
+
+/// An in-flight host decode; its completion is matched by `job`.
+#[derive(Clone, Copy)]
+pub struct Decode {
+    pub job: ImageJobId,
+    pub aspect: f32,
+}
+
+/// Overlay badge on a shown image.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Badge {
+    Fresh,
+    Updating,
+    Stale,
+}
+
+/// Why no image is shown.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ErrorKind {
+    LoadFailed,
+    TooLarge,
+    BadImage,
+}
+
+/// What the widget is showing.
+pub enum View {
+    Loading {
+        decode: Option<Decode>,
+    },
+    Failed(ErrorKind),
+    Shown {
+        bitmap: BitmapId,
+        aspect: f32,
+        badge: Badge,
+        decode: Option<Decode>,
+    },
+}
+
+/// Something the host reported.
+#[derive(Clone, Copy)]
+pub enum Event {
+    Restored {
+        bitmap: BitmapId,
+        aspect: f32,
+        remaining_ms: u32,
+    },
+    RestoredStale {
+        bitmap: BitmapId,
+        aspect: f32,
+    },
+    RestoreMiss,
+    DecodeStarted {
+        job: ImageJobId,
+        aspect: f32,
+    },
+    Decoded {
+        job: ImageJobId,
+        bitmap: BitmapId,
+    },
+    DecodeFailed {
+        job: ImageJobId,
+    },
+    FetchError {
+        kind: ErrorKind,
+        transient: bool,
+    },
+    ParamsChanged,
+    Reload,
+    Dormant,
+}
+
+/// A host side effect for the shell to run.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Action {
+    EnablePollAfter(u32),
+    ResumePoll,
+    DisablePoll,
+    Retry,
+    RequestFrame,
+}
+
+/// Fold an event into the view, returning the next view and its side effects.
+#[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "exhaustive event × state transition table"
+)]
+pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
+    use Action as A;
+    use Event as E;
+    match event {
+        E::Restored {
+            bitmap,
+            aspect,
+            remaining_ms,
+        } => (
+            View::Shown {
+                bitmap,
+                aspect,
+                badge: Badge::Fresh,
+                decode: None,
+            },
+            vec![A::EnablePollAfter(remaining_ms), A::RequestFrame],
+        ),
+        E::RestoredStale { bitmap, aspect } => (
+            View::Shown {
+                bitmap,
+                aspect,
+                badge: Badge::Updating,
+                decode: None,
+            },
+            vec![A::ResumePoll, A::RequestFrame],
+        ),
+        E::RestoreMiss | E::ParamsChanged => (
+            View::Loading { decode: None },
+            vec![A::ResumePoll, A::RequestFrame],
+        ),
+        // A refresh of a shown image keeps it and its badge; only the decode is tracked.
+        E::DecodeStarted { job, aspect } => {
+            let decode = Some(Decode { job, aspect });
+            match view {
+                View::Shown {
+                    bitmap,
+                    aspect: shown,
+                    badge,
+                    ..
+                } => (
+                    View::Shown {
+                        bitmap,
+                        aspect: shown,
+                        badge,
+                        decode,
+                    },
+                    vec![A::RequestFrame],
+                ),
+                _ => (View::Loading { decode }, vec![A::RequestFrame]),
+            }
+        }
+        E::Decoded { job, bitmap } => match view {
+            View::Loading { decode: Some(d) }
+            | View::Shown {
+                decode: Some(d), ..
+            } if d.job == job => (
+                View::Shown {
+                    bitmap,
+                    aspect: d.aspect,
+                    badge: Badge::Fresh,
+                    decode: None,
+                },
+                vec![A::RequestFrame],
+            ),
+            // Superseded completion (e.g. after a params change) — ignore.
+            other => (other, vec![]),
+        },
+        E::DecodeFailed { job } => match view {
+            View::Loading { decode: Some(d) } if d.job == job => {
+                (View::Failed(ErrorKind::BadImage), vec![A::RequestFrame])
+            }
+            View::Shown {
+                bitmap,
+                aspect,
+                decode: Some(d),
+                ..
+            } if d.job == job => (
+                View::Shown {
+                    bitmap,
+                    aspect,
+                    badge: Badge::Stale,
+                    decode: None,
+                },
+                vec![A::RequestFrame],
+            ),
+            other => (other, vec![]),
+        },
+        E::FetchError { kind, transient } => match view {
+            // Keep the last good image, mark it stale; retry sooner if transient.
+            View::Shown {
+                bitmap,
+                aspect,
+                decode,
+                ..
+            } => {
+                let mut actions = vec![A::RequestFrame];
+                if transient {
+                    actions.push(A::Retry);
+                }
+                (
+                    View::Shown {
+                        bitmap,
+                        aspect,
+                        badge: Badge::Stale,
+                        decode,
+                    },
+                    actions,
+                )
+            }
+            _ => (View::Failed(kind), vec![A::RequestFrame]),
+        },
+        E::Reload => match view {
+            View::Shown { bitmap, aspect, .. } => (
+                View::Shown {
+                    bitmap,
+                    aspect,
+                    badge: Badge::Updating,
+                    decode: None,
+                },
+                vec![A::ResumePoll, A::RequestFrame],
+            ),
+            _ => (
+                View::Loading { decode: None },
+                vec![A::ResumePoll, A::RequestFrame],
+            ),
+        },
+        E::Dormant => (view, vec![A::DisablePoll]),
+    }
+}
+
+/// Substitute `{{width}}`/`{{height}}` in a URL; `None` for an empty URL.
+#[must_use]
+pub fn expand_url(url: &str, width: u32, height: u32) -> Option<String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return None;
+    }
+    Some(
+        url.replace("{{width}}", &width.to_string())
+            .replace("{{height}}", &height.to_string()),
+    )
+}
+
+/// Milliseconds left before `saved_at + interval`; 0 once past.
+#[must_use]
+pub fn ttl_remaining(now_ms: u64, saved_at_ms: u64, interval_ms: u32) -> u32 {
+    let elapsed = now_ms.saturating_sub(saved_at_ms);
+    let remaining = u64::from(interval_ms).saturating_sub(elapsed);
+    u32::try_from(remaining).unwrap_or(u32::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job(n: u32) -> ImageJobId {
+        ImageJobId::from_wire(n).expect("nonzero job id")
+    }
+    fn bmp(n: u16) -> BitmapId {
+        BitmapId::from_wire(n).expect("nonzero bitmap id")
+    }
+    fn shown(badge: Badge, decode: Option<Decode>) -> View {
+        View::Shown {
+            bitmap: bmp(1),
+            aspect: 1.0,
+            badge,
+            decode,
+        }
+    }
+
+    #[test]
+    fn decoded_matching_job_shows_image() {
+        let v = View::Loading {
+            decode: Some(Decode {
+                job: job(1),
+                aspect: 1.5,
+            }),
+        };
+        let (next, actions) = step(
+            v,
+            Event::Decoded {
+                job: job(1),
+                bitmap: bmp(7),
+            },
+        );
+        assert!(
+            matches!(next, View::Shown { badge: Badge::Fresh, decode: None, aspect, .. } if aspect == 1.5)
+        );
+        assert!(actions.contains(&Action::RequestFrame));
+    }
+
+    #[test]
+    fn decoded_stale_job_is_ignored() {
+        let v = View::Loading {
+            decode: Some(Decode {
+                job: job(2),
+                aspect: 1.0,
+            }),
+        };
+        let (next, actions) = step(
+            v,
+            Event::Decoded {
+                job: job(1),
+                bitmap: bmp(7),
+            },
+        );
+        assert!(matches!(next, View::Loading { decode: Some(_) }));
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn params_change_drops_in_flight_decode() {
+        let v = shown(
+            Badge::Fresh,
+            Some(Decode {
+                job: job(5),
+                aspect: 1.0,
+            }),
+        );
+        let (next, _) = step(v, Event::ParamsChanged);
+        assert!(matches!(next, View::Loading { decode: None }));
+        // A late completion of the dropped job can no longer install.
+        let (after, actions) = step(
+            next,
+            Event::Decoded {
+                job: job(5),
+                bitmap: bmp(9),
+            },
+        );
+        assert!(matches!(after, View::Loading { decode: None }));
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn fresh_restore_schedules_at_ttl() {
+        let (next, actions) = step(
+            View::Loading { decode: None },
+            Event::Restored {
+                bitmap: bmp(1),
+                aspect: 2.0,
+                remaining_ms: 4_000,
+            },
+        );
+        assert!(matches!(
+            next,
+            View::Shown {
+                badge: Badge::Fresh,
+                ..
+            }
+        ));
+        assert!(actions.contains(&Action::EnablePollAfter(4_000)));
+    }
+
+    #[test]
+    fn stale_restore_refreshes_now() {
+        let (next, actions) = step(
+            View::Loading { decode: None },
+            Event::RestoredStale {
+                bitmap: bmp(1),
+                aspect: 1.0,
+            },
+        );
+        assert!(matches!(
+            next,
+            View::Shown {
+                badge: Badge::Updating,
+                ..
+            }
+        ));
+        assert!(actions.contains(&Action::ResumePoll));
+    }
+
+    #[test]
+    fn miss_loads_now() {
+        let (next, actions) = step(shown(Badge::Fresh, None), Event::RestoreMiss);
+        assert!(matches!(next, View::Loading { decode: None }));
+        assert!(actions.contains(&Action::ResumePoll));
+    }
+
+    #[test]
+    fn normal_refresh_shows_no_overlay() {
+        let (mid, _) = step(
+            shown(Badge::Fresh, None),
+            Event::DecodeStarted {
+                job: job(1),
+                aspect: 1.0,
+            },
+        );
+        assert!(matches!(
+            mid,
+            View::Shown {
+                badge: Badge::Fresh,
+                decode: Some(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn failed_refresh_keeps_last_good_stale() {
+        let v = shown(
+            Badge::Fresh,
+            Some(Decode {
+                job: job(1),
+                aspect: 1.0,
+            }),
+        );
+        let (next, _) = step(v, Event::DecodeFailed { job: job(1) });
+        assert!(matches!(
+            next,
+            View::Shown {
+                badge: Badge::Stale,
+                decode: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn fetch_error_without_image_fails() {
+        let (next, _) = step(
+            View::Loading { decode: None },
+            Event::FetchError {
+                kind: ErrorKind::TooLarge,
+                transient: false,
+            },
+        );
+        assert!(matches!(next, View::Failed(ErrorKind::TooLarge)));
+    }
+
+    #[test]
+    fn transient_fetch_error_with_image_retries() {
+        let (next, actions) = step(
+            shown(Badge::Fresh, None),
+            Event::FetchError {
+                kind: ErrorKind::LoadFailed,
+                transient: true,
+            },
+        );
+        assert!(matches!(
+            next,
+            View::Shown {
+                badge: Badge::Stale,
+                ..
+            }
+        ));
+        assert!(actions.contains(&Action::Retry));
+    }
+
+    #[test]
+    fn reload_with_image_updates_and_refetches() {
+        let (next, actions) = step(shown(Badge::Stale, None), Event::Reload);
+        assert!(matches!(
+            next,
+            View::Shown {
+                badge: Badge::Updating,
+                decode: None,
+                ..
+            }
+        ));
+        assert!(actions.contains(&Action::ResumePoll));
+    }
+
+    #[test]
+    fn dormant_disables_poll() {
+        let (next, actions) = step(shown(Badge::Fresh, None), Event::Dormant);
+        assert!(matches!(
+            next,
+            View::Shown {
+                badge: Badge::Fresh,
+                ..
+            }
+        ));
+        assert_eq!(actions, vec![Action::DisablePoll]);
+    }
+
+    #[test]
+    fn expand_url_substitutes_dims() {
+        assert_eq!(
+            expand_url("http://x/{{width}}x{{height}}", 64, 48).as_deref(),
+            Some("http://x/64x48")
+        );
+        assert_eq!(expand_url("   ", 1, 1), None);
+        assert_eq!(expand_url("http://x", 64, 48).as_deref(), Some("http://x"));
+    }
+
+    #[test]
+    fn ttl_remaining_clamps_at_zero() {
+        assert_eq!(ttl_remaining(1_000, 0, 5_000), 4_000);
+        assert_eq!(ttl_remaining(5_000, 0, 5_000), 0);
+        assert_eq!(ttl_remaining(9_000, 0, 5_000), 0);
+    }
+}
