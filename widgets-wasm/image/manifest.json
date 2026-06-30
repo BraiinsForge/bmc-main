@@ -14,11 +14,7 @@
   "category": "media",
   "supported_viewports": [
     {
-      "type": "rectangular",
-      "min_width": 317,
-      "max_width": 1280,
-      "min_height": 238,
-      "max_height": 480
+      "type": "rectangular"
     }
   ],
   "params": {
@@ -32,7 +28,7 @@
       "name": "Refresh interval (seconds)",
       "description": "How often to re-fetch the image",
       "type": "integer",
-      "default_value": 300
+      "default_value": 3600
     },
     "sizing": {
       "name": "Sizing",
