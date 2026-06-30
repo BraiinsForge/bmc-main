@@ -145,6 +145,16 @@ pub extern "C" fn __on_image_ready(job_id: u32, bitmap_id: u32) {
     }
 }
 
+/// Reclaim a decode's pending entry without dispatching — fired when the decode
+/// finished while dormant (the result is cached; wake restores it).
+#[unsafe(no_mangle)]
+pub extern "C" fn __on_image_dropped(job_id: u32) {
+    let Some(job_id) = ImageJobId::from_wire(job_id) else {
+        return;
+    };
+    IMAGE_PENDING.with(|p| p.borrow_mut().remove(&job_id));
+}
+
 define_slot! {
     /// Slot for a dynamic raster bitmap rendered with nearest-neighbor
     /// filtering (pixel-art, 9-patch).

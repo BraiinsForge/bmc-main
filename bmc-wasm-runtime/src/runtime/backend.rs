@@ -318,6 +318,8 @@ pub struct WasmWidgetRuntime {
     fuel_strikes: u32,
     /// Widget permanently stopped after exceeding [`Self::max_fuel_strikes`].
     fuel_dead: bool,
+    /// Off-screen (`on_dormant` fired); suppresses async-decode GPU uploads.
+    pub(super) dormant: bool,
     /// How many consecutive fuel-outs before the widget is killed.
     max_fuel_strikes: u32,
     #[cfg(feature = "profiling")]
@@ -496,6 +498,7 @@ impl WasmWidgetRuntime {
             fuel_per_frame,
             fuel_strikes: 0,
             fuel_dead: false,
+            dormant: false,
             max_fuel_strikes: 5,
             #[cfg(feature = "profiling")]
             wasm_w: ii_stopwatch::StopWatch::default(),
@@ -904,12 +907,14 @@ impl WasmWidgetRuntime {
     /// Queue the dormant edge; the hook fires later, in `poll_deliveries` scope.
     pub fn notify_dormant(&mut self) -> bool {
         self.pending_hook = Some(PendingHook::Dormant);
+        self.dormant = true;
         self.on_dormant_func.is_some()
     }
 
     /// Queue the wake edge; the hook fires later, in `poll_deliveries` scope.
     pub fn notify_wake(&mut self) -> bool {
         self.pending_hook = Some(PendingHook::Wake);
+        self.dormant = false;
         self.on_wake_func.is_some()
     }
 

@@ -269,7 +269,13 @@ impl WasmWidgetRuntime {
             // Widget did not opt into async image decode; drop the results.
             return;
         };
+        // Fired while dormant to reclaim the guest's pending entry (optional export).
+        let on_dropped = self
+            .instance
+            .get_typed_func::<u32, ()>(&self.store, "__on_image_dropped")
+            .ok();
 
+        let dormant = self.dormant;
         for done in completed {
             self.store
                 .data_mut()
@@ -278,16 +284,24 @@ impl WasmWidgetRuntime {
             // decode failure.
             let bitmap_id = match done.result {
                 Ok((rgba, w, h)) => {
-                    let started = std::time::Instant::now();
-                    let id = self
-                        .register_decoded_bitmap(&done.tag, &rgba, w, h)
-                        .map_or(0, BitmapId::to_ffi);
-                    let upload_us =
-                        u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-                    let state = self.store.data_mut();
-                    state.add_profile_us("image_upload_us", upload_us);
+                    // Skip the GPU upload while dormant; the cache write persists it.
+                    let id = if dormant {
+                        0
+                    } else {
+                        let started = std::time::Instant::now();
+                        let id = self
+                            .register_decoded_bitmap(&done.tag, &rgba, w, h)
+                            .map_or(0, BitmapId::to_ffi);
+                        let upload_us =
+                            u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+                        self.store
+                            .data_mut()
+                            .add_profile_us("image_upload_us", upload_us);
+                        id
+                    };
                     // Write-at-decode: stamp the downscaled RGBA into the per-instance
                     // bucket so wake/restart can restore it without re-fetching.
+                    let state = self.store.data();
                     if let Some(cache) = state.asset_cache.as_ref() {
                         let saved_at =
                             u64::try_from(state.system_time.timestamp_millis()).unwrap_or(0);
@@ -324,6 +338,15 @@ impl WasmWidgetRuntime {
             };
             if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
                 tracing::error!("set_fuel failed: {e}");
+                continue;
+            }
+            // Dormant: reclaim the pending entry but don't drive the widget.
+            if dormant {
+                if let Some(on_dropped) = on_dropped
+                    && let Err(e) = on_dropped.call(&mut self.store, done.job_id.to_wire())
+                {
+                    tracing::error!("__on_image_dropped failed: {e}");
+                }
                 continue;
             }
             if let Err(e) = on_ready.call(&mut self.store, (done.job_id.to_wire(), bitmap_id)) {
