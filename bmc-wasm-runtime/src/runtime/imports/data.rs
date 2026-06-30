@@ -257,8 +257,9 @@ fn register_cache_imports(linker: &mut Linker<HostState>) -> Result<()> {
             if let Some(memory) = memory {
                 let mem = memory.data_mut(&mut caller);
                 let start = out_ptr as usize;
-                let end = start + record.len();
-                if end <= mem.len() {
+                if let Some(end) = start.checked_add(record.len())
+                    && end <= mem.len()
+                {
                     mem[start..end].copy_from_slice(&record);
                 }
             }
@@ -329,8 +330,9 @@ fn register_cache_stat_import(linker: &mut Linker<HostState>) -> Result<()> {
             if let Some(memory) = memory {
                 let mem = memory.data_mut(&mut caller);
                 let start = out_ptr as usize;
-                let end = start + record.len();
-                if end <= mem.len() {
+                if let Some(end) = start.checked_add(record.len())
+                    && end <= mem.len()
+                {
                     mem[start..end].copy_from_slice(&record);
                 }
             }
