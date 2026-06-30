@@ -315,6 +315,23 @@ fn run_unified_capture(
                         frame_count += 1;
                     }
 
+                    // Async image decodes finish on a real OS thread;
+                    // the instant virtual settle frames don't wait.
+                    // Drain in real time but WITHOUT advancing the fixture clock,
+                    // so the timeline — and the captured frame sequence
+                    // — stays deterministic across machines.
+                    let drain_start = std::time::Instant::now();
+                    while runtime.has_pending_image_decodes()
+                        && drain_start.elapsed() < std::time::Duration::from_secs(5)
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                        deliver_all_io(&mut runtime, &mut renderer);
+                        if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
+                            bail!("widget died draining decodes at frame {frame_count}");
+                        }
+                        unsafe { gl.flush() };
+                    }
+
                     // How many frames to capture and at what interval
                     let (total_frames, capture_interval_ms) = match (*duration_ms, *fps) {
                         (Some(dur), Some(f)) if f > 0 => {
@@ -681,6 +698,7 @@ fn deliver_all_io(runtime: &mut WasmWidgetRuntime, renderer: &mut FemtoVgRendere
         let had_ssdp = runtime.deliver_ssdp_events();
         let had_udp = runtime.deliver_udp_broadcast_events();
         runtime.deliver_http_requests();
+        runtime.deliver_image_decode_results();
         fetches_completed || had_ws || had_socket || had_mdns || had_ssdp || had_udp
     })
 }

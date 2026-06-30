@@ -951,6 +951,12 @@ impl WasmWidgetRuntime {
         self.with_renderer(renderer, Self::poll_deliveries);
     }
 
+    /// True while an async image decode is still in flight (real-thread work).
+    #[must_use]
+    pub fn has_pending_image_decodes(&self) -> bool {
+        self.store.data().in_flight_image_decodes > 0
+    }
+
     /// Predicate consumed by the multi-slot host's `compute_poll_timeout` to clamp the
     /// `poll(2)` wakeup to 100 ms whenever any slot still has async work that could
     /// produce a delivery before the next render or lifecycle event.
