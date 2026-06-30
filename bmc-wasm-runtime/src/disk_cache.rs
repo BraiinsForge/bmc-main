@@ -119,12 +119,18 @@ impl DiskCache {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some(EXT) {
-                continue;
-            }
-            let key = path.file_stem().and_then(|s| s.to_str());
-            if key.is_some_and(|k| !live.contains(k)) {
-                let _ = fs::remove_file(&path);
+            match path.extension().and_then(|e| e.to_str()) {
+                Some(EXT) => {
+                    let key = path.file_stem().and_then(|s| s.to_str());
+                    if key.is_some_and(|k| !live.contains(k)) {
+                        let _ = fs::remove_file(&path);
+                    }
+                }
+                // A `.tmp` is a crashed put() between write and rename — always an orphan.
+                Some("tmp") => {
+                    let _ = fs::remove_file(&path);
+                }
+                _ => {}
             }
         }
     }
@@ -256,6 +262,15 @@ mod tests {
         c.sweep(&["live"].into_iter().collect());
         assert!(c.get("live").is_some());
         assert!(c.get("orphan").is_none());
+    }
+
+    #[test]
+    fn sweep_reclaims_tmp_orphans() {
+        let (d, c) = cache(1 << 20);
+        let tmp = d.path().join("k.tmp");
+        std::fs::write(&tmp, b"partial").expect("write tmp");
+        c.sweep(&std::collections::HashSet::new());
+        assert!(!tmp.exists());
     }
 
     #[test]
