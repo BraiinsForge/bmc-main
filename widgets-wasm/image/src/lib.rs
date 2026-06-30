@@ -36,10 +36,10 @@ mod wasm_glue {
         BadImage,
     }
 
-    /// Outcome of restoring the cached image on wake.
+    /// Outcome of restoring the cached image.
     enum Restore {
-        /// Restored and within the refresh TTL — nothing more to do.
-        Fresh,
+        /// Within TTL; carries ms until the next refresh.
+        Fresh { remaining_ms: u32 },
         /// Restored but past the TTL — shown now, refreshing in the background.
         Stale,
         /// No usable bucket (missing, or a different URL/viewport) — must refetch.
@@ -64,6 +64,8 @@ mod wasm_glue {
         static PENDING: Cell<Option<Pending>> = const { Cell::new(None) };
         // Menu auto-dismiss countdown (ms); 0 = closed.
         static MENU_MS: Cell<u32> = const { Cell::new(0) };
+        // First render restores from cache (init() has no renderer scope).
+        static INITIAL_RESTORE: Cell<bool> = const { Cell::new(false) };
     }
 
     /// Refresh interval (ms); fixed at registration.
@@ -91,10 +93,11 @@ mod wasm_glue {
                 interval_ms: Some(refresh_interval_ms()),
                 retry_ms: RETRY_MS,
                 debounce_ms: DEBOUNCE_MS,
-                enabled: true,
+                enabled: false, // first render restores + schedules
             },
         );
         POLL.with(|p| p.set(Some(handle)));
+        INITIAL_RESTORE.with(|f| f.set(true));
     }
 
     // {{width}}/{{height}} expand to the viewport pixels — 1:1 with the
@@ -253,9 +256,24 @@ mod wasm_glue {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn on_wake() {
+        INITIAL_RESTORE.with(|f| f.set(false)); // wake subsumes cold-start restore
         STALE.with(|s| s.set(false));
+        restore_then_schedule();
+        request_frame();
+    }
+
+    /// Restore from cache, then schedule the poll (fresh → fetch at TTL;
+    /// stale/miss → now). Render-scope only — calls renderer imports.
+    fn restore_then_schedule() {
         match cache_identity().map_or(Restore::Miss, |id| try_restore(&id)) {
-            Restore::Fresh => REFRESHING.with(|r| r.set(false)),
+            Restore::Fresh { remaining_ms } => {
+                REFRESHING.with(|r| r.set(false));
+                POLL.with(|p| {
+                    if let Some(handle) = p.get() {
+                        handle.enable_after(remaining_ms);
+                    }
+                });
+            }
             Restore::Stale => {
                 REFRESHING.with(|r| r.set(true));
                 resume_polling();
@@ -266,7 +284,6 @@ mod wasm_glue {
                 resume_polling();
             }
         }
-        request_frame();
     }
 
     /// Re-enable the refresh poll and fetch immediately.
@@ -323,8 +340,9 @@ mod wasm_glue {
                 aspect: render::aspect_of(w, h),
             };
         });
-        if is_fresh(stat.saved_at) {
-            Restore::Fresh
+        let remaining_ms = remaining_ttl_ms(stat.saved_at);
+        if remaining_ms > 0 {
+            Restore::Fresh { remaining_ms }
         } else {
             Restore::Stale
         }
@@ -337,16 +355,25 @@ mod wasm_glue {
         Some((w, h, meta.get(8..)?))
     }
 
-    // Cached entry age (now − saved_at) is under the refresh interval.
-    fn is_fresh(saved_at_ms: u64) -> bool {
+    // Ms left in the refresh interval; 0 once past.
+    fn remaining_ttl_ms(saved_at_ms: u64) -> u32 {
         let now_ms = u64::try_from(host::SystemTime::now().unix_secs)
             .unwrap_or(0)
             .saturating_mul(1000);
-        now_ms.saturating_sub(saved_at_ms) < u64::from(refresh_interval_ms())
+        let elapsed = now_ms.saturating_sub(saved_at_ms);
+        let remaining = u64::from(refresh_interval_ms()).saturating_sub(elapsed);
+        u32::try_from(remaining).unwrap_or(u32::MAX)
     }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn render(delta_ms: u32) {
+        // First render restores from cache + schedules the poll here, rather
+        // than init(), because renderer imports trap outside a render scope.
+        if INITIAL_RESTORE.with(Cell::get) {
+            INITIAL_RESTORE.with(|f| f.set(false));
+            restore_then_schedule();
+        }
+
         // Advance the menu auto-dismiss countdown.
         if menu_open() {
             let remaining = MENU_MS.with(Cell::get).saturating_sub(delta_ms);

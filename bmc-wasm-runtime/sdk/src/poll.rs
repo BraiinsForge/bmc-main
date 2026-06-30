@@ -258,6 +258,18 @@ impl Registry {
         }
     }
 
+    /// Enable and schedule the next fetch after `delay_ms` (no immediate kick).
+    pub(crate) fn set_enabled_after(
+        &mut self,
+        handle: Handle,
+        delay_ms: u32,
+        backend: &mut dyn FetchBackend,
+    ) {
+        let idx = handle.0;
+        self.polls[idx].enabled = true;
+        self.kick(idx, Some(delay_ms), backend);
+    }
+
     pub(crate) fn enabled(&self, handle: Handle) -> bool {
         self.polls[handle.0].enabled
     }
@@ -356,6 +368,14 @@ mod wasm {
     impl Handle {
         pub fn set_enabled(self, enabled: bool) {
             REGISTRY.with(|r| r.borrow_mut().set_enabled(self, enabled, &mut ProdBackend));
+        }
+
+        /// Enable with the next fetch after `delay_ms` instead of the debounce.
+        pub fn enable_after(self, delay_ms: u32) {
+            REGISTRY.with(|r| {
+                r.borrow_mut()
+                    .set_enabled_after(self, delay_ms, &mut ProdBackend)
+            });
         }
 
         pub fn invalidate(self) {
@@ -708,6 +728,23 @@ mod tests {
         reg.start(h, &mut be);
         reg.set_enabled(h, true, &mut be);
         assert_eq!(be.sends.len(), 1);
+    }
+
+    #[test]
+    fn enable_after_schedules_at_the_given_delay() {
+        let mut reg = Registry::default();
+        let mut be = FakeBackend::new();
+        let h = reg.register(
+            build_url,
+            Config {
+                enabled: false,
+                ..CFG
+            },
+        );
+        reg.set_enabled_after(h, 7_000, &mut be);
+        assert!(reg.enabled(h));
+        assert_eq!(be.sends.len(), 1);
+        assert_eq!(be.sends[0].1, Some(7_000));
     }
 
     #[test]
