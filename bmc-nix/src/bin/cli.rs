@@ -2,8 +2,11 @@
 
 use std::path::{Path, PathBuf};
 
+use anyhow::Context as _;
 use bmc_nix::manifest;
-use bmc_nix::types::{BaseSelector, InstallResult, Manifest, PackageChange, PackageVersion};
+use bmc_nix::types::{
+    BaseSelector, GcConfig, InstallResult, Manifest, PackageChange, PackageVersion,
+};
 use clap::{Parser, Subcommand};
 
 /// Print a human-readable diff of an `InstallResult` on stderr.
@@ -179,6 +182,36 @@ enum Commands {
         #[command(flatten)]
         common: ProfileCommonArgs,
     },
+
+    /// Prune old profile generations, then collect store garbage
+    Gc {
+        /// Path to the GC config (default: /etc/nix-upgrade/gc.json).
+        /// Falls back to built-in defaults when the file is absent.
+        #[arg(long)]
+        gc_config: Option<PathBuf>,
+
+        /// Directory for the profile generations.
+        #[arg(long, default_value = "/nix/var/nix/gcroots/profiles/bmc")]
+        profile_dir: PathBuf,
+
+        /// Override the number of most-recent generations to keep.
+        #[arg(long)]
+        keep_generations: Option<usize>,
+
+        /// Override the age cutoff: keep generations newer than this many
+        /// days.
+        #[arg(long)]
+        keep_days: Option<usize>,
+
+        /// Override the minimum free space target.
+        #[arg(long)]
+        min_free_space: Option<String>,
+
+        /// Generation number to protect (repeatable). A non-empty list
+        /// replaces the configured `protected_generations`.
+        #[arg(long = "protected-generation")]
+        protected_generations: Vec<usize>,
+    },
 }
 
 /// Resolve a `BaseSelector` into the optional `base_manifest` argument
@@ -197,6 +230,46 @@ fn resolve_base(
         BaseSelector::Latest | BaseSelector::Generation(_) => Ok(Some(
             manifest::read_manifest_by_selector(profile_dir, selector)?,
         )),
+    }
+}
+
+/// Load the GC config from `path`, falling back to defaults when absent.
+///
+/// A present-but-unparseable file is fatal: it signals a provisioning
+/// error rather than an unconfigured device.
+fn load_gc_config(path: &Path) -> anyhow::Result<GcConfig> {
+    if !path.exists() {
+        return Ok(GcConfig::default());
+    }
+    let contents = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read gc config at {}", path.display()))?;
+    serde_json::from_str(&contents)
+        .with_context(|| format!("failed to parse gc config at {}", path.display()))
+}
+
+/// Apply CLI overrides onto a loaded [`GcConfig`].
+///
+/// Each `Some` scalar replaces the loaded value; `None` keeps it. A
+/// non-empty `protected_generations` replaces the loaded list, an empty
+/// one keeps it.
+fn apply_gc_overrides(
+    config: &mut GcConfig,
+    keep_generations: Option<usize>,
+    keep_days: Option<usize>,
+    min_free_space: Option<String>,
+    protected_generations: Vec<usize>,
+) {
+    if let Some(value) = keep_generations {
+        config.keep_generations = value;
+    }
+    if let Some(value) = keep_days {
+        config.keep_days = Some(value);
+    }
+    if let Some(value) = min_free_space {
+        config.min_free_space = value;
+    }
+    if !protected_generations.is_empty() {
+        config.protected_generations = protected_generations;
     }
 }
 
@@ -380,6 +453,33 @@ async fn cmd_reset_profile(
     Ok(())
 }
 
+async fn cmd_gc(
+    gc_config: Option<PathBuf>,
+    profile_dir: PathBuf,
+    keep_generations: Option<usize>,
+    keep_days: Option<usize>,
+    min_free_space: Option<String>,
+    protected_generations: Vec<usize>,
+) -> anyhow::Result<()> {
+    let config_path = gc_config.unwrap_or_else(|| PathBuf::from("/etc/nix-upgrade/gc.json"));
+    let mut config = load_gc_config(&config_path)?;
+    apply_gc_overrides(
+        &mut config,
+        keep_generations,
+        keep_days,
+        min_free_space,
+        protected_generations,
+    );
+
+    // Hold the profile lock across both mutations: the profiles.md invariant
+    // requires every profile mutation to take the lock, and it keeps gc from
+    // pruning generations or store paths a concurrent upgrade is realizing.
+    let _lock = bmc_nix::profile::lock_profile(&profile_dir).await?;
+    bmc_nix::gc::cleanup_generations(&profile_dir, &config, &[])?;
+    bmc_nix::gc::collect_garbage().await?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -448,5 +548,118 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
         }
+
+        Commands::Gc {
+            gc_config,
+            profile_dir,
+            keep_generations,
+            keep_days,
+            min_free_space,
+            protected_generations,
+        } => {
+            cmd_gc(
+                gc_config,
+                profile_dir,
+                keep_generations,
+                keep_days,
+                min_free_space,
+                protected_generations,
+            )
+            .await
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_gc_config_missing_file_falls_back_to_defaults() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let path = dir.path().join("absent.json");
+        let config = load_gc_config(&path).expect("BUG: missing file must default, not fail");
+        let default = GcConfig::default();
+        assert_eq!(config.keep_generations, default.keep_generations);
+        assert_eq!(config.keep_days, default.keep_days);
+        assert_eq!(config.min_free_space, default.min_free_space);
+        assert_eq!(config.protected_generations, default.protected_generations);
+    }
+
+    #[test]
+    fn load_gc_config_reads_valid_file() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let path = dir.path().join("gc.json");
+        std::fs::write(
+            &path,
+            r#"{"keep_generations":7,"keep_days":14,"min_free_space":"1G","protected_generations":[2,5]}"#,
+        )
+        .expect("BUG: write gc.json");
+
+        let config = load_gc_config(&path).expect("BUG: valid config should load");
+        assert_eq!(config.keep_generations, 7);
+        assert_eq!(config.keep_days, Some(14));
+        assert_eq!(config.min_free_space, "1G");
+        assert_eq!(config.protected_generations, vec![2, 5]);
+    }
+
+    #[test]
+    fn load_gc_config_partial_file_fills_missing_fields_from_defaults() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let path = dir.path().join("gc.json");
+        std::fs::write(&path, r#"{"keep_generations":9}"#).expect("BUG: write gc.json");
+
+        let config = load_gc_config(&path).expect("BUG: partial config should load");
+        let default = GcConfig::default();
+        assert_eq!(config.keep_generations, 9);
+        assert_eq!(config.min_free_space, default.min_free_space);
+        assert_eq!(config.protected_generations, default.protected_generations);
+    }
+
+    #[test]
+    fn load_gc_config_unparseable_present_file_is_fatal() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let path = dir.path().join("gc.json");
+        std::fs::write(&path, "this is not json").expect("BUG: write garbage");
+        assert!(
+            load_gc_config(&path).is_err(),
+            "a present-but-unparseable config must be a fatal error"
+        );
+    }
+
+    #[test]
+    fn apply_gc_overrides_replaces_only_provided_fields() {
+        let mut config = GcConfig {
+            keep_generations: 3,
+            keep_days: None,
+            min_free_space: "0".to_owned(),
+            protected_generations: vec![1],
+        };
+        apply_gc_overrides(
+            &mut config,
+            Some(8),
+            Some(30),
+            Some("2G".to_owned()),
+            vec![4, 6],
+        );
+        assert_eq!(config.keep_generations, 8);
+        assert_eq!(config.keep_days, Some(30));
+        assert_eq!(config.min_free_space, "2G");
+        assert_eq!(config.protected_generations, vec![4, 6]);
+    }
+
+    #[test]
+    fn apply_gc_overrides_keeps_loaded_values_when_unset() {
+        let mut config = GcConfig {
+            keep_generations: 3,
+            keep_days: Some(10),
+            min_free_space: "1G".to_owned(),
+            protected_generations: vec![1, 2],
+        };
+        apply_gc_overrides(&mut config, None, None, None, Vec::new());
+        assert_eq!(config.keep_generations, 3);
+        assert_eq!(config.keep_days, Some(10));
+        assert_eq!(config.min_free_space, "1G");
+        assert_eq!(config.protected_generations, vec![1, 2]);
     }
 }
