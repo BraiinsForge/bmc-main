@@ -21,7 +21,15 @@ use clap::{Parser, Subcommand};
 /// rendered as `~ pkg: version (store path changed)`.
 ///
 /// Prints `Profile unchanged.` when the diff is empty.
+///
+/// A garbage-collection failure is reported as a warning: the profile
+/// change itself already succeeded, only the post-activation cleanup did
+/// not.
 fn print_profile_diff(result: &InstallResult) {
+    if let Err(err) = &result.gc {
+        eprintln!("Warning: profile updated but garbage collection failed: {err}");
+    }
+
     if result.added.is_empty() && result.removed.is_empty() && result.changed.is_empty() {
         eprintln!("Profile unchanged.");
         return;
