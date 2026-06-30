@@ -138,6 +138,8 @@ impl BitmapRegistry {
             ) {
                 canvas.delete_image(old.image_id);
             }
+            // register_rgba keeps no CPU copy; drop any stale sample pixels.
+            self.sample_pixels.remove(&id);
             return Some(id);
         }
         let id = BitmapId::alloc(&mut self.next_id);
