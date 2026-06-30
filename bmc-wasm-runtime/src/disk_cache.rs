@@ -53,13 +53,20 @@ impl DiskCache {
         Self { dir, max_bytes }
     }
 
-    fn path(&self, key: &str) -> PathBuf {
-        self.dir.join(format!("{key}.{EXT}"))
+    /// `None` for a path-escaping key, so a guest tag can't reach a sibling bucket.
+    fn path(&self, key: &str) -> Option<PathBuf> {
+        if key.is_empty() || key.contains('/') || key.contains('\\') || key.contains("..") {
+            return None;
+        }
+        Some(self.dir.join(format!("{key}.{EXT}")))
     }
 
     /// Write an entry (temp+rename, torn-read-safe), then trim. `saved_at` is a
     /// caller UTC epoch; `metadata` is an opaque blob returned verbatim by `get`.
     pub fn put(&self, key: &str, saved_at: u64, metadata: &[u8], bytes: &[u8]) -> io::Result<()> {
+        let path = self
+            .path(key)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid cache key"))?;
         fs::create_dir_all(&self.dir)?;
         let meta_len = u32::try_from(metadata.len())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "metadata too large"))?;
@@ -68,7 +75,6 @@ impl DiskCache {
         buf.extend_from_slice(&meta_len.to_le_bytes());
         buf.extend_from_slice(metadata);
         buf.extend_from_slice(bytes);
-        let path = self.path(key);
         let tmp = path.with_extension("tmp");
         fs::write(&tmp, &buf)?;
         fs::rename(&tmp, &path)?;
@@ -80,7 +86,7 @@ impl DiskCache {
     /// malformed file, so the caller falls back to a fresh fetch.
     #[must_use]
     pub fn get(&self, key: &str) -> Option<CachedBlob> {
-        let file = fs::File::open(self.path(key)).ok()?;
+        let file = fs::File::open(self.path(key)?).ok()?;
         // SAFETY: host-owned dir, entries written atomically (temp+rename), so a
         // mapped file is never truncated mid-read by this process.
         let map = unsafe { Mmap::map(&file) }.ok()?;
@@ -100,7 +106,9 @@ impl DiskCache {
     }
 
     pub fn evict(&self, key: &str) {
-        let _ = fs::remove_file(self.path(key));
+        if let Some(path) = self.path(key) {
+            let _ = fs::remove_file(path);
+        }
     }
 
     /// Mark-and-sweep: delete every entry whose key is not in `live`. Models
@@ -195,6 +203,16 @@ mod tests {
     }
 
     #[test]
+    fn rejects_path_escaping_keys() {
+        let (_d, c) = cache(1 << 20);
+        assert!(c.put("../escape", TS, b"m", b"p").is_err());
+        assert!(c.get("../escape").is_none());
+        assert!(c.get("a/b").is_none());
+        assert!(c.get("").is_none());
+        c.evict("../escape"); // no-op; must not touch a sibling path
+    }
+
+    #[test]
     fn empty_metadata_round_trips() {
         let (_d, c) = cache(1 << 20);
         c.put("k", TS, &[], b"payload").expect("put");
@@ -215,7 +233,7 @@ mod tests {
         // meta_len claims 99 bytes but the file ends right after the header.
         let mut bad = TS.to_le_bytes().to_vec();
         bad.extend_from_slice(&99_u32.to_le_bytes());
-        std::fs::write(c.path("k"), bad).expect("write");
+        std::fs::write(c.path("k").expect("valid key"), bad).expect("write");
         assert!(c.get("k").is_none());
     }
 
