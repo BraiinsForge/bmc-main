@@ -47,9 +47,26 @@ def frame_times(thread: dict, frames: int) -> list[float]:
     """Distribute `frames` evenly across the thread's sample time range. Frame
     pacing is ~uniform at steady state, so this aligns the counter timeline with
     the CPU samples closely enough for inspection."""
-    times = thread['samples']['time']
-    if not times or frames == 0:
+    if frames == 0:
+        return []
+    samples = thread['samples']
+    if 'time' in samples:
+        times = samples['time']
+    elif 'timeDeltas' in samples:
+        # samply's processed format stores per-sample deltas, not absolute
+        # timestamps; absolute time is the running sum (delta[0] is the
+        # offset from profile start).
+        times = []
+        acc = 0.0
+        for delta in samples['timeDeltas']:
+            acc += delta
+            times.append(acc)
+    else:
         return [0.0] * frames
+
+    if not times:
+        return [0.0] * frames
+
     first, last = times[0], times[-1]
     if frames == 1:
         return [first]
