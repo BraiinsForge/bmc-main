@@ -362,6 +362,11 @@ pub struct InstallResult {
     /// Packages carried over because they are no longer represented in the
     /// live merged indexes. Surfaced so callers can warn the operator.
     pub stale: Vec<PackageVersion>,
+    /// Outcome of the post-activation GC sweep. The generation is already
+    /// built and activated by the time GC runs, so a failure here is
+    /// reported for the operator to see rather than failing the upgrade.
+    /// `Ok(())` also covers the case where GC was not requested.
+    pub gc: Result<(), crate::gc::GcError>,
 }
 
 #[cfg(test)]
@@ -383,6 +388,7 @@ mod tests {
                 name: "clock".into(),
                 version: "1.0.0".into(),
             }],
+            gc: Ok(()),
         };
 
         assert_eq!(result.stale[0].name, "clock");

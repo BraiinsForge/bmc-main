@@ -33,6 +33,19 @@ pub enum CollectGarbageError {
     NixCommand(#[source] std::io::Error),
 }
 
+/// Failure of the post-activation GC sweep, unifying both GC steps.
+///
+/// The new generation is already built and activated before GC runs, so
+/// these errors are reported to the operator rather than failing the
+/// upgrade.
+#[derive(Debug, thiserror::Error)]
+pub enum GcError {
+    #[error(transparent)]
+    Cleanup(#[from] CleanupGenerationsError),
+    #[error(transparent)]
+    Collect(#[from] CollectGarbageError),
+}
+
 /// Parse a generation number from a directory name matching `N-link`.
 fn parse_generation_number(name: &str) -> Option<usize> {
     let stripped = name.strip_suffix("-link")?;
