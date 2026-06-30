@@ -25,8 +25,6 @@ pub enum InstallError {
     Activation(#[from] activation::ActivationError),
     #[error(transparent)]
     Plan(#[from] ComputeUpgradePlanError),
-    #[error(transparent)]
-    CleanupGenerations(#[from] gc::CleanupGenerationsError),
     #[error("failed to resolve current profile symlink: {0}")]
     ResolveCurrent(#[source] std::io::Error),
     #[error("`current` symlink target does not follow the `<N>-link` convention: {}", target.display())]
@@ -180,6 +178,7 @@ pub async fn apply_profile_change(
             removed: plan.removed,
             changed: plan.changed,
             stale: plan.stale,
+            gc: Ok(()),
         });
     }
 
@@ -232,13 +231,19 @@ pub async fn apply_profile_change(
     // 7. GC old generations (optional). Protect the pre-activation
     //    generation from this run's cleanup so the caller can still
     //    diff against it; persistent protection lives in `GcConfig`.
-    if let Some(gc_config) = gc_config {
-        if let Some(p) = progress {
-            p.on_phase(UpgradePhase::Cleaning);
+    //
+    //    The generation is already built and activated, so a GC failure
+    //    is captured into the result rather than aborting the run.
+    let gc = match gc_config {
+        Some(gc_config) => {
+            if let Some(p) = progress {
+                p.on_phase(UpgradePhase::Cleaning);
+            }
+            let keep_extra: Vec<usize> = previous_generation.into_iter().collect();
+            run_gc(profile_dir, gc_config, &keep_extra).await
         }
-        let keep_extra: Vec<usize> = previous_generation.into_iter().collect();
-        gc::cleanup_generations(profile_dir, gc_config, &keep_extra)?;
-    }
+        None => Ok(()),
+    };
 
     Ok(InstallResult {
         strategies: StrategySummary::from_packages(&plan.packages),
@@ -247,7 +252,22 @@ pub async fn apply_profile_change(
         removed: plan.removed,
         changed: plan.changed,
         stale: plan.stale,
+        gc,
     })
+}
+
+/// Run the post-activation GC sweep: prune old generation links, then
+/// collect now-unreferenced store paths. Cleanup failing short-circuits
+/// the heavier collection, since a broken cleanup suggests the profile
+/// directory is in a bad state.
+async fn run_gc(
+    profile_dir: &Path,
+    gc_config: &GcConfig,
+    keep_extra: &[usize],
+) -> Result<(), gc::GcError> {
+    gc::cleanup_generations(profile_dir, gc_config, keep_extra)?;
+    gc::collect_garbage().await?;
+    Ok(())
 }
 
 /// Resolve `profile_dir/current` into a `ProfileGeneration` when present.
