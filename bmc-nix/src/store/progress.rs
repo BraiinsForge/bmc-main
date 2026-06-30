@@ -57,6 +57,11 @@ pub struct DownloadStatusTracker {
     transfers: BTreeMap<Id, FileTransferActivity>,
     finished_downloaded_bytes: u64,
     finished_total_bytes: AggregateTotalBytes,
+    /// Whole-closure download total nix announces via `SetExpected` once it
+    /// has queried the missing paths' narinfos, before the bulk bytes flow.
+    /// When present it is the authoritative denominator, since it counts every
+    /// missing path rather than only the transfers that have already started.
+    expected_download_bytes: Option<u64>,
 }
 
 fn remaining(downloaded: u64, total: Option<u64>) -> Option<u64> {
@@ -83,18 +88,24 @@ impl DownloadStatusTracker {
         let active_downloaded: u64 = active.iter().map(|s| s.downloaded_bytes).sum();
         let downloaded_bytes = self.finished_downloaded_bytes + active_downloaded;
 
-        let total_bytes = match self.finished_total_bytes {
-            AggregateTotalBytes::Unknown => None,
-            AggregateTotalBytes::Known(finished_total) => {
-                let all_known = active.iter().all(|s| s.total_bytes.is_some());
-                if all_known {
-                    let active_total: u64 = active.iter().filter_map(|s| s.total_bytes).sum();
-                    Some(finished_total + active_total)
-                } else {
-                    None
+        // A zero expected total means nix had no size information (a cache
+        // whose narinfos omit FileSize), not an empty download — fall back
+        // to the per-transfer totals in that case.
+        let total_bytes = self
+            .expected_download_bytes
+            .filter(|&expected| expected > 0)
+            .or(match self.finished_total_bytes {
+                AggregateTotalBytes::Unknown => None,
+                AggregateTotalBytes::Known(finished_total) => {
+                    let all_known = active.iter().all(|s| s.total_bytes.is_some());
+                    if all_known {
+                        let active_total: u64 = active.iter().filter_map(|s| s.total_bytes).sum();
+                        Some(finished_total + active_total)
+                    } else {
+                        None
+                    }
                 }
-            }
-        };
+            });
 
         let remaining_bytes = remaining(downloaded_bytes, total_bytes);
 
@@ -164,6 +175,24 @@ impl DownloadStatusTracker {
                 transfer.downloaded_bytes = transfer.downloaded_bytes.max(downloaded);
                 transfer.total_bytes = total.or(transfer.total_bytes);
                 Some(self.snapshot())
+            }
+
+            Actions::Result {
+                result_type: ResultType::SetExpected,
+                fields,
+                ..
+            } => {
+                // nix reports per-activity-type expected totals; for the
+                // FileTransfer activity the expected value is download bytes
+                // (other activity types carry counts, not bytes).
+                let activity = fields.first().and_then(serde_json::Value::as_u64);
+                if activity == Some(Activities::FileTransfer as u64)
+                    && let Some(expected) = fields.get(1).and_then(serde_json::Value::as_u64)
+                {
+                    self.expected_download_bytes = Some(expected);
+                    return Some(self.snapshot());
+                }
+                None
             }
 
             Actions::Stop { id } => {
@@ -549,6 +578,87 @@ mod tests {
             diagnostics.messages()[0],
             "error: path '/nix/store/abc-core' is required"
         );
+    }
+
+    #[test]
+    fn tracker_uses_set_expected_as_whole_closure_download_total() {
+        let mut tracker = DownloadStatusTracker::default();
+
+        // nix announces the closure-wide download total (FileTransfer = 101)
+        // once narinfos are queried, before any bytes flow.
+        let snapshot = tracker
+            .ingest_line(r#"@nix {"action":"result","id":1,"type":106,"fields":[101,57684]}"#)
+            .expect("BUG: SetExpected for FileTransfer should produce a snapshot");
+
+        assert_eq!(snapshot.downloaded_bytes, 0);
+        assert_eq!(snapshot.total_bytes, Some(57684));
+        assert_eq!(snapshot.remaining_bytes, Some(57684));
+    }
+
+    #[test]
+    fn tracker_ignores_set_expected_for_non_file_transfer_activity() {
+        let mut tracker = DownloadStatusTracker::default();
+
+        // CopyPath (100) carries unpacked bytes, not the download denominator.
+        assert!(
+            tracker
+                .ingest_line(r#"@nix {"action":"result","id":1,"type":106,"fields":[100,274640]}"#)
+                .is_none()
+        );
+        // Falls back to the per-transfer accumulation (nothing started yet).
+        assert_eq!(tracker.snapshot().total_bytes, Some(0));
+    }
+
+    #[test]
+    fn tracker_ignores_zero_set_expected_download_total() {
+        let mut tracker = DownloadStatusTracker::default();
+
+        // A cache whose narinfos omit FileSize yields a zero closure-wide
+        // estimate; zero means "no information", not an empty download.
+        tracker.ingest_line(r#"@nix {"action":"result","id":1,"type":106,"fields":[101,0]}"#);
+
+        tracker.ingest_line(
+            r#"@nix {"action":"start","id":42,"level":3,"parent":0,"text":"","type":108,"fields":["/nix/store/a","https://cache"]}"#,
+        );
+        tracker.ingest_line(
+            r#"@nix {"action":"start","id":43,"level":3,"parent":42,"text":"","type":101,"fields":["https://cache/nar/a"]}"#,
+        );
+        let snapshot = tracker
+            .ingest_line(r#"@nix {"action":"result","id":43,"type":105,"fields":[200,400,1,0]}"#)
+            .expect("BUG: file transfer progress should produce a snapshot");
+
+        assert_eq!(snapshot.downloaded_bytes, 200);
+        // The denominator comes from the per-transfer totals, not the
+        // useless zero estimate.
+        assert_eq!(snapshot.total_bytes, Some(400));
+        assert_eq!(snapshot.remaining_bytes, Some(200));
+    }
+
+    #[test]
+    fn tracker_prefers_set_expected_over_started_transfer_accumulation() {
+        let mut tracker = DownloadStatusTracker::default();
+
+        // Closure-wide download total known up front: 1000 bytes.
+        tracker.ingest_line(r#"@nix {"action":"result","id":1,"type":106,"fields":[101,1000]}"#);
+
+        // Only the first of several paths has begun transferring, reporting its
+        // own smaller per-file total.
+        tracker.ingest_line(
+            r#"@nix {"action":"start","id":42,"level":3,"parent":0,"text":"","type":108,"fields":["/nix/store/a","https://cache"]}"#,
+        );
+        tracker.ingest_line(
+            r#"@nix {"action":"start","id":43,"level":3,"parent":42,"text":"","type":101,"fields":["https://cache/nar/a"]}"#,
+        );
+        let snapshot = tracker
+            .ingest_line(r#"@nix {"action":"result","id":43,"type":105,"fields":[200,400,1,0]}"#)
+            .expect("BUG: file transfer progress should produce a snapshot");
+
+        assert_eq!(snapshot.downloaded_bytes, 200);
+        // The denominator stays the closure-wide expected total, not the lone
+        // started transfer's 400 — this is the whole point of consuming
+        // SetExpected instead of accumulating started transfers.
+        assert_eq!(snapshot.total_bytes, Some(1000));
+        assert_eq!(snapshot.remaining_bytes, Some(800));
     }
 
     #[test]
