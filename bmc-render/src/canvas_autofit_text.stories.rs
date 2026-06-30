@@ -118,9 +118,13 @@ fn vertical_alignment(c: &mut StoryCtx) {
         "Top, Center and Bottom alignment modes",
     );
 
-    let alignments = [TextAlign::Left, TextAlign::Center, TextAlign::Right];
+    let alignments = [
+        VerticalAlign::Top,
+        VerticalAlign::Center,
+        VerticalAlign::Bottom,
+    ];
 
-    for align in alignments {
+    for valign in alignments {
         c.ui.div(
             (400, 120),
             canvas(
@@ -133,7 +137,8 @@ fn vertical_alignment(c: &mut StoryCtx) {
                     get_string_prefix(EXAMPLE_TEXT_EN, 57),
                     style!(
                         size: 30,
-                        align: TextAlign::Center
+                        align: TextAlign::Center,
+                        valign: valign,
                     ),
                 )],
             ),

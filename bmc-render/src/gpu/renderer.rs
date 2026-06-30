@@ -778,8 +778,15 @@ impl Renderer for FemtoVgRenderer {
         let (_, block_h) =
             self.paragraph_cache
                 .measure(&mut self.font_system, &sized, &spans, Some(box_width));
-        // Vertically center the fitted block within the box (never above the top).
-        let draw_y = y + ((box_height - block_h) / 2.0).max(0.0);
+
+        let draw_y = match style.vertical_align {
+            VerticalAlign::Top => y,
+            // Currently the Baseline behaves the same as the Center option.
+            VerticalAlign::Center | VerticalAlign::Baseline => {
+                y + ((box_height - block_h) / 2.0).max(0.0)
+            }
+            VerticalAlign::Bottom => y + (box_height - block_h).max(0.0),
+        };
 
         self.paragraph_cache.draw(
             &mut self.font_system,
