@@ -361,21 +361,30 @@ fn decode_jpeg_to_dynamic(
     .map_err(|_| anyhow::anyhow!("jpeg decoder panicked"))?
 }
 
-/// Full decode (allocation-capped); returns the decoded image (un-resampled).
+/// Full decode (pixel- and allocation-capped); returns the decoded image (un-resampled).
 fn decode_full_to_dynamic(data: &[u8]) -> anyhow::Result<image::DynamicImage> {
     let data = data.to_vec();
     panic::catch_unwind(|| {
+        // Reject oversized sources before the full decode allocates (pixel budget).
+        let (w, h) = image::ImageReader::new(Cursor::new(&data))
+            .with_guessed_format()
+            .map_err(image::ImageError::IoError)?
+            .into_dimensions()?;
+        anyhow::ensure!(
+            u64::from(w) * u64::from(h) <= crate::MAX_DECODE_IMAGE_PIXELS,
+            "image exceeds pixel budget ({w}x{h})"
+        );
         let mut reader = image::ImageReader::new(Cursor::new(&data));
         let mut limits = image::io::Limits::default();
         limits.max_alloc = Some(crate::MAX_DECODE_IMAGE_ALLOC_BYTES);
         reader.limits(limits);
         reader
             .with_guessed_format()
-            .map_err(image::ImageError::IoError)
-            .and_then(image::ImageReader::decode)
+            .map_err(image::ImageError::IoError)?
+            .decode()
+            .map_err(anyhow::Error::from)
     })
     .map_err(|_| anyhow::anyhow!("image decoder panicked"))?
-    .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 /// Resample down to fit `max_w`×`max_h` preserving aspect; never upscales.

@@ -426,8 +426,6 @@ fn decode_image_rgba_limited(data: &[u8]) -> Result<image::RgbaImage> {
     let (width, height) = probe_image_dimensions(data)?;
     let _ = rgba_byte_len_limited(width, height)?;
     let mut limits = image::io::Limits::default();
-    limits.max_image_width = Some(width);
-    limits.max_image_height = Some(height);
     limits.max_alloc = Some(MAX_DECODE_IMAGE_ALLOC_BYTES);
 
     match std::panic::catch_unwind(|| {
