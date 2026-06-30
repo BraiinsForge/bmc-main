@@ -362,6 +362,12 @@ fn decode_jpeg_to_dynamic(
 }
 
 /// Full decode (pixel- and allocation-capped); returns the decoded image (un-resampled).
+///
+/// Unlike the JPEG path (`decode_jpeg_to_dynamic` DCT-shrinks on load), this
+/// decodes the whole source into memory before the caller downscales — peak
+/// memory is the full source (within budget), not the target. A streaming
+/// row-wise PNG decode was deferred: it only helps non-interlaced PNGs and is
+/// messy for that narrow gain; large sources lean on server-side `{{width}}`.
 fn decode_full_to_dynamic(data: &[u8]) -> anyhow::Result<image::DynamicImage> {
     let data = data.to_vec();
     panic::catch_unwind(|| {
