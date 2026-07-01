@@ -452,7 +452,7 @@ async fn add_packages_noop_skips_generation() {
         None, // no merged index
         &packages,
         &[],
-        /* activate = */ false,
+        bmc_nix::upgrade::ActivationMode::Skip,
         None, // no GC
         None, // no progress sink
         "hooks",
