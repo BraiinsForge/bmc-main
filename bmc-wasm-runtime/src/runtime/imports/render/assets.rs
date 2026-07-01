@@ -173,6 +173,15 @@ fn register_bitmap_nearest_import(linker: &mut Linker<HostState>) -> Result<()> 
     Ok(())
 }
 
+/// True if a `max_w`×`max_h` decode target fits the pixel budget — cover mode
+/// resizes to exactly the target, so an unbounded target over-allocates.
+/// Overflow counts as over-budget.
+fn decode_target_within_budget(max_w: u32, max_h: u32) -> bool {
+    u64::from(max_w)
+        .checked_mul(u64::from(max_h))
+        .is_some_and(|px| px <= MAX_DECODE_IMAGE_PIXELS)
+}
+
 /// Decode off the render thread, register when done.
 /// Returns a job id (`0` = rejected); guest notified via `__on_image_ready`.
 fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
@@ -201,6 +210,14 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
             // here rather than trust the guest's integers.
             if max_w == 0 || max_h == 0 {
                 tracing::warn!("host_register_bitmap_fit rejected: zero max dimension");
+                return 0;
+            }
+            if !decode_target_within_budget(max_w, max_h) {
+                tracing::warn!(
+                    max_w,
+                    max_h,
+                    "host_register_bitmap_fit rejected: target over budget"
+                );
                 return 0;
             }
             let state = caller.data_mut();
@@ -448,7 +465,17 @@ mod tests {
 
     use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba, RgbaImage};
 
-    use super::{MAX_DECODE_IMAGE_PIXELS, decode_image_rgba_limited, rgba_byte_len_limited};
+    use super::{
+        MAX_DECODE_IMAGE_PIXELS, decode_image_rgba_limited, decode_target_within_budget,
+        rgba_byte_len_limited,
+    };
+
+    #[test]
+    fn decode_target_budget_rejects_oversized_and_overflow() {
+        assert!(decode_target_within_budget(64, 64));
+        assert!(!decode_target_within_budget(100_000, 100_000));
+        assert!(!decode_target_within_budget(u32::MAX, u32::MAX));
+    }
 
     #[test]
     fn rgba_budget_rejects_images_over_limit() {
