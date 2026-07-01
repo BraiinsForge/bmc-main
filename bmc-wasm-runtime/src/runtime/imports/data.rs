@@ -180,6 +180,10 @@ fn register_kv_get_import(linker: &mut Linker<HostState>) -> Result<()> {
 }
 
 // Flash blob cache, curried per widget instance; `get` returns the `DiskCache` record verbatim.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the paired cache put/get imports register most clearly together"
+)]
 fn register_cache_imports(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
@@ -191,11 +195,7 @@ fn register_cache_imports(linker: &mut Linker<HostState>) -> Result<()> {
          meta_len: u32,
          bytes_ptr: u32,
          bytes_len: u32| {
-            let (Some(tag), Some(meta), Some(bytes)) = (
-                read_string(&caller, tag_ptr, tag_len),
-                read_bytes(&caller, meta_ptr, meta_len),
-                read_bytes(&caller, bytes_ptr, bytes_len),
-            ) else {
+            let Some(tag) = read_string(&caller, tag_ptr, tag_len) else {
                 return;
             };
             if let Err(e) = validate_kv_key(&tag) {
@@ -204,6 +204,22 @@ fn register_cache_imports(linker: &mut Linker<HostState>) -> Result<()> {
             }
             let state = caller.data();
             let Some(cache) = state.asset_cache.as_ref() else {
+                return;
+            };
+            // Reject an over-cap entry by its declared sizes before copying the
+            // payload out of guest memory.
+            if !cache.accepts_entry(meta_len as usize, bytes_len as usize) {
+                tracing::warn!(
+                    meta_len,
+                    bytes_len,
+                    "cache_put rejected: entry over bucket cap"
+                );
+                return;
+            }
+            let (Some(meta), Some(bytes)) = (
+                read_bytes(&caller, meta_ptr, meta_len),
+                read_bytes(&caller, bytes_ptr, bytes_len),
+            ) else {
                 return;
             };
             // `saved_at` rides the injected clock so hermetic replay is deterministic.

@@ -10,6 +10,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io;
+use std::io::Write;
 use std::path::PathBuf;
 
 use memmap2::Mmap;
@@ -17,6 +18,13 @@ use memmap2::Mmap;
 /// On-disk header (LE): `saved_at` u64, `meta_len` u32; then metadata, then bytes.
 const HEADER: usize = 12;
 const EXT: &str = "blob";
+
+/// Total on-disk size of an entry (`header + metadata + payload`); `None` on overflow.
+fn entry_len(metadata_len: usize, bytes_len: usize) -> Option<u64> {
+    (HEADER as u64)
+        .checked_add(metadata_len as u64)?
+        .checked_add(bytes_len as u64)
+}
 
 /// Flash store under a single directory, trimmed to a byte cap.
 #[derive(Debug)]
@@ -68,19 +76,38 @@ impl DiskCache {
         let path = self
             .path(key)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid cache key"))?;
-        fs::create_dir_all(&self.dir)?;
         let meta_len = u32::try_from(metadata.len())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "metadata too large"))?;
-        let mut buf = Vec::with_capacity(HEADER + metadata.len() + bytes.len());
-        buf.extend_from_slice(&saved_at.to_le_bytes());
-        buf.extend_from_slice(&meta_len.to_le_bytes());
-        buf.extend_from_slice(metadata);
-        buf.extend_from_slice(bytes);
+
+        // Reject an over-cap entry before creating the temp file,
+        // so an oversized write never lands and leaves no `.tmp` behind.
+        if !self.accepts_entry(metadata.len(), bytes.len()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "cache entry exceeds bucket cap",
+            ));
+        }
+
+        fs::create_dir_all(&self.dir)?;
         let tmp = path.with_extension("tmp");
-        fs::write(&tmp, &buf)?;
+        // Stream header/metadata/payload rather than concatenating one big buffer.
+        let mut w = io::BufWriter::new(fs::File::create(&tmp)?);
+        w.write_all(&saved_at.to_le_bytes())?;
+        w.write_all(&meta_len.to_le_bytes())?;
+        w.write_all(metadata)?;
+        w.write_all(bytes)?;
+        w.flush()?;
+        drop(w);
         fs::rename(&tmp, &path)?;
         self.trim();
         Ok(())
+    }
+
+    /// True if a `metadata_len` + `bytes_len` entry fits the bucket cap. Callers
+    /// check the declared sizes before copying the payload out of guest memory.
+    #[must_use]
+    pub fn accepts_entry(&self, metadata_len: usize, bytes_len: usize) -> bool {
+        entry_len(metadata_len, bytes_len).is_some_and(|len| len <= self.max_bytes)
     }
 
     /// `mmap` the entry for `key`, validating its header. `None` on a miss or a
@@ -252,6 +279,25 @@ mod tests {
         bad.extend_from_slice(b"some payload");
         std::fs::write(c.path("k").expect("valid key"), bad).expect("write");
         assert!(c.get("k").is_none());
+    }
+
+    #[test]
+    fn over_cap_entry_is_rejected_with_no_leftover_files() {
+        let (d, c) = cache(1 << 10); // 1 KiB bucket
+        assert!(c.put("k", TS, &[], &vec![0_u8; 4096]).is_err());
+        assert!(c.get("k").is_none());
+        let stray: Vec<_> = std::fs::read_dir(d.path())
+            .expect("readdir")
+            .filter_map(|e| e.ok().map(|e| e.file_name()))
+            .collect();
+        assert!(stray.is_empty(), "leftover files: {stray:?}");
+    }
+
+    #[test]
+    fn accepts_entry_matches_the_cap() {
+        let (_d, c) = cache(HEADER as u64 + 10);
+        assert!(c.accepts_entry(4, 6)); // 12 + 4 + 6 == 22 == cap
+        assert!(!c.accepts_entry(4, 7)); // 23 > cap
     }
 
     #[test]
