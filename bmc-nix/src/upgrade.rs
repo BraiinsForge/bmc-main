@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::manifest::ComputeUpgradePlanError;
 use crate::types::{
     GcConfig, InstallResult, Manifest, MergedIndex, ProfileGeneration, ResolvedPackage,
-    StrategySummary,
+    StrategySummary, UpgradePlan,
 };
 use crate::{activation, gc, manifest, profile, store};
 use tracing::warn;
@@ -29,6 +29,19 @@ pub enum InstallError {
     ResolveCurrent(#[source] std::io::Error),
     #[error("`current` symlink target does not follow the `<N>-link` convention: {}", target.display())]
     MalformedCurrent { target: PathBuf },
+    #[error("failed to stage next-boot activation marker: {0}")]
+    StageNext(#[source] std::io::Error),
+}
+
+/// Activation behavior for a newly built profile generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivationMode {
+    /// Swap `current` and run the generation's activation entrypoint now.
+    Activate,
+    /// Build the generation but leave `current` untouched.
+    Skip,
+    /// Build the generation and stage it for the boot-time activator.
+    NextBoot,
 }
 
 /// Coarse-grained phases reported during an upgrade run.
@@ -117,8 +130,8 @@ impl gc::CollectGarbageProgress for UpgradeCollectGarbageProgress<'_> {
 ///
 /// Acquires the profile lock, resolves the base manifest, computes
 /// the upgrade plan, realises and verifies store paths, builds a new
-/// generation, optionally activates it, and optionally garbage-collects
-/// older generations.
+/// generation, applies the selected activation mode, and optionally
+/// garbage-collects older generations.
 ///
 /// `base_manifest`:
 /// - `None` — default path: read the current manifest under the
@@ -154,7 +167,7 @@ pub async fn apply_profile_change(
     merged: Option<&MergedIndex>,
     add_packages: &[ResolvedPackage],
     remove_packages: &[String],
-    activate: bool,
+    activation: ActivationMode,
     gc_config: Option<&GcConfig>,
     progress: Option<&dyn UpgradeProgress>,
     hooks_dir: &str,
@@ -165,8 +178,55 @@ pub async fn apply_profile_change(
         .await
         .map_err(InstallError::Lock)?;
 
-    // 2. Resolve the base manifest. Track whether the caller passed
-    //    one so we can scope the no-op short-circuit correctly.
+    let (base, explicit_base) = resolve_base_manifest(profile_dir, base_manifest)?;
+
+    // Capture the pre-activation `current` generation number, if any, so
+    // GC doesn't reclaim it before the orchestration layer (service
+    // restart planning, rollback) can read its manifest.
+    let previous_generation = previous_generation_number(profile_dir)?;
+
+    let plan = manifest::compute_upgrade_plan(&base, merged, add_packages, remove_packages)?;
+
+    // 3. No-op short-circuit — only applies on the default (None) base
+    //    path. Explicit bases always build a new generation.
+    if should_skip_rebuild(explicit_base, &plan) {
+        remove_stale_next(profile_dir)?;
+        let generation = resolve_current_generation(profile_dir)?;
+        return Ok(install_result_from_plan(plan, generation, Ok(())));
+    }
+
+    let generation =
+        realize_and_build_generation(profile_dir, &plan, progress, hooks_dir, hooks_override_path)
+            .await?;
+
+    // 6. Apply the requested activation behavior.
+    match activation {
+        ActivationMode::Activate => {
+            activate_generation(profile_dir, &generation, &lock, progress).await?;
+            remove_stale_next(profile_dir)?;
+        }
+        ActivationMode::Skip => {
+            remove_stale_next(profile_dir)?;
+        }
+        ActivationMode::NextBoot => stage_next_boot(profile_dir, &generation)?,
+    }
+
+    // 7. GC old generations (optional). Protect the pre-activation
+    //    generation from this run's cleanup so the caller can still
+    //    diff against it; persistent protection lives in `GcConfig`.
+    //
+    //    The generation is already built and activated or staged, so a
+    //    GC failure is captured into the result rather than aborting
+    //    the run.
+    let gc = run_gc_if_configured(profile_dir, gc_config, previous_generation, progress).await;
+
+    Ok(install_result_from_plan(plan, Some(generation), gc))
+}
+
+fn resolve_base_manifest(
+    profile_dir: &Path,
+    base_manifest: Option<Manifest>,
+) -> Result<(Manifest, bool), InstallError> {
     let explicit_base = base_manifest.is_some();
     let base = match base_manifest {
         Some(m) => m,
@@ -182,37 +242,30 @@ pub async fn apply_profile_change(
             Err(other) => return Err(other.into()),
         },
     };
+    Ok((base, explicit_base))
+}
 
-    // Capture the pre-activation `current` generation number, if any, so
-    // GC doesn't reclaim it before the orchestration layer (service
-    // restart planning, rollback) can read its manifest.
-    let previous_generation: Option<usize> = profile::current_generation_link(profile_dir)
+fn previous_generation_number(profile_dir: &Path) -> Result<Option<usize>, InstallError> {
+    Ok(profile::current_generation_link(profile_dir)
         .map_err(InstallError::ResolveCurrent)?
         .and_then(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
                 .and_then(profile::parse_generation_link_name)
-        });
+        }))
+}
 
-    let plan = manifest::compute_upgrade_plan(&base, merged, add_packages, remove_packages)?;
+fn should_skip_rebuild(explicit_base: bool, plan: &UpgradePlan) -> bool {
+    !explicit_base && plan.added.is_empty() && plan.removed.is_empty() && plan.changed.is_empty()
+}
 
-    // 3. No-op short-circuit — only applies on the default (None) base
-    //    path. Explicit bases always build a new generation.
-    if !explicit_base && plan.added.is_empty() && plan.removed.is_empty() && plan.changed.is_empty()
-    {
-        let generation = resolve_current_generation(profile_dir)?;
-        return Ok(InstallResult {
-            strategies: StrategySummary::from_packages(&plan.packages),
-            generation,
-            added: plan.added,
-            removed: plan.removed,
-            changed: plan.changed,
-            stale: plan.stale,
-            gc: Ok(()),
-        });
-    }
-
-    // 4. Realise store paths, then verify as defense-in-depth.
+async fn realize_and_build_generation(
+    profile_dir: &Path,
+    plan: &UpgradePlan,
+    progress: Option<&dyn UpgradeProgress>,
+    hooks_dir: &str,
+    hooks_override_path: Option<&Path>,
+) -> Result<ProfileGeneration, InstallError> {
     if let Some(p) = progress {
         p.on_phase(UpgradePhase::Realizing);
     }
@@ -225,66 +278,83 @@ pub async fn apply_profile_change(
             .map(|p| p as &dyn store::RealizeProgress),
     )
     .await?;
+
     if let Some(p) = progress {
         p.on_phase(UpgradePhase::Verifying);
     }
     store::verify_store_paths(&store::TokioCommandRunner, &plan.packages).await?;
 
-    // 5. Build new profile generation
     if let Some(p) = progress {
         p.on_phase(UpgradePhase::Building);
     }
     let gen_number = profile::max_generation(profile_dir)?.unwrap_or(0) + 1;
-    let generation = profile::build_profile(
+    profile::build_profile(
         profile_dir,
         gen_number,
         &plan.packages,
         hooks_dir,
         hooks_override_path,
     )
-    .await?;
+    .await
+    .map_err(InstallError::from)
+}
 
-    // 6. Optionally activate
-    if activate {
-        activate_generation(profile_dir, &generation, &lock, progress).await?;
-    }
-
-    // 7. GC old generations (optional). Protect the pre-activation
-    //    generation from this run's cleanup so the caller can still
-    //    diff against it; persistent protection lives in `GcConfig`.
-    //    The newly built generation is also passed explicitly as
-    //    belt-and-suspenders — `cleanup_generations` already keeps it
-    //    as `current`/latest, but an explicit entry survives any future
-    //    refactor of those defaults.
-    //
-    //    The generation is already built and activated, so a GC failure
-    //    is captured into the result rather than aborting the run.
-    let gc = match gc_config {
-        Some(gc_config) => {
-            if let Some(p) = progress {
-                p.on_phase(UpgradePhase::Cleaning);
-            }
-            run_gc(
-                profile_dir,
-                gc_config,
-                previous_generation,
-                generation.number,
-                progress,
-            )
-            .await
-        }
-        None => Ok(()),
+async fn run_gc_if_configured(
+    profile_dir: &Path,
+    gc_config: Option<&GcConfig>,
+    previous_generation: Option<usize>,
+    progress: Option<&dyn UpgradeProgress>,
+) -> Result<(), gc::GcError> {
+    let Some(gc_config) = gc_config else {
+        return Ok(());
     };
+    if let Some(p) = progress {
+        p.on_phase(UpgradePhase::Cleaning);
+    }
+    run_gc(profile_dir, gc_config, previous_generation, progress).await
+}
 
-    Ok(InstallResult {
+fn install_result_from_plan(
+    plan: UpgradePlan,
+    generation: Option<ProfileGeneration>,
+    gc: Result<(), gc::GcError>,
+) -> InstallResult {
+    InstallResult {
         strategies: StrategySummary::from_packages(&plan.packages),
-        generation: Some(generation),
+        generation,
         added: plan.added,
         removed: plan.removed,
         changed: plan.changed,
         stale: plan.stale,
         gc,
-    })
+    }
+}
+
+/// Remove a stale deferred-activation marker superseded by this run.
+fn remove_stale_next(profile_dir: &Path) -> Result<(), InstallError> {
+    let next = profile_dir.join("next");
+    match next.symlink_metadata() {
+        Ok(_) => std::fs::remove_file(&next).map_err(InstallError::StageNext),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(InstallError::StageNext(err)),
+    }
+}
+
+/// Stage a built generation for the boot-time activator.
+fn stage_next_boot(profile_dir: &Path, generation: &ProfileGeneration) -> Result<(), InstallError> {
+    let link_name = profile::generation_link_name(generation.number);
+    let tmp = profile_dir.join("next.tmp");
+    remove_file_if_present(&tmp).map_err(InstallError::StageNext)?;
+    std::os::unix::fs::symlink(&link_name, &tmp).map_err(InstallError::StageNext)?;
+    std::fs::rename(&tmp, profile_dir.join("next")).map_err(InstallError::StageNext)
+}
+
+fn remove_file_if_present(path: &Path) -> Result<(), std::io::Error> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
 }
 
 /// Activate a freshly built generation, reporting the phase.
@@ -309,13 +379,13 @@ async fn run_gc(
     profile_dir: &Path,
     gc_config: &GcConfig,
     previous_generation: Option<usize>,
-    new_generation: usize,
     progress: Option<&dyn UpgradeProgress>,
 ) -> Result<(), gc::GcError> {
-    // Protect both the pre-activation generation and the freshly built
-    // one from cleanup, regardless of current/latest defaults.
-    let mut keep_extra: Vec<usize> = previous_generation.into_iter().collect();
-    keep_extra.push(new_generation);
+    // Protect the pre-activation generation: after activation it is
+    // neither `current` nor the latest, so cleanup would otherwise prune
+    // it. The freshly built generation is the latest and is already
+    // retained by `cleanup_generations`.
+    let keep_extra: Vec<usize> = previous_generation.into_iter().collect();
     gc::cleanup_generations(profile_dir, gc_config, &keep_extra)?;
     let gc_progress = progress.map(UpgradeCollectGarbageProgress);
     gc::collect_garbage(
@@ -364,6 +434,7 @@ fn resolve_current_generation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
     use std::sync::Mutex;
 
     use crate::gc;
@@ -430,6 +501,142 @@ mod tests {
         }
     }
 
+    fn create_empty_generation(profile_dir: &Path, number: usize) {
+        let gen_dir = profile_dir.join(format!("{number}-link"));
+        std::fs::create_dir_all(&gen_dir).expect("BUG: mkdir generation");
+        std::fs::write(gen_dir.join("manifest"), r#"{"packages":{}}"#)
+            .expect("BUG: write manifest");
+    }
+
+    fn set_current(profile_dir: &Path, number: usize) {
+        let current = profile_dir.join("current");
+        let _ = std::fs::remove_file(&current);
+        std::os::unix::fs::symlink(format!("{number}-link"), current)
+            .expect("BUG: symlink current");
+    }
+
+    #[tokio::test]
+    async fn apply_profile_change_next_boot_stages_next_symlink_without_touching_current() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+        create_empty_generation(&profile_dir, 1);
+        set_current(&profile_dir, 1);
+
+        let result = apply_profile_change(
+            &profile_dir,
+            Some(Manifest::default()),
+            None,
+            &[],
+            &[],
+            ActivationMode::NextBoot,
+            None,
+            None,
+            "hooks",
+            None,
+        )
+        .await
+        .expect("BUG: staged build must succeed");
+
+        let generation = result
+            .generation
+            .expect("BUG: a built generation must be reported");
+        let target =
+            std::fs::read_link(profile_dir.join("next")).expect("BUG: next symlink must exist");
+        assert_eq!(target, PathBuf::from(format!("{}-link", generation.number)));
+        assert_eq!(
+            std::fs::read_link(profile_dir.join("current")).expect("BUG: current must survive"),
+            PathBuf::from("1-link"),
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_run_preserves_previously_staged_next() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+        create_empty_generation(&profile_dir, 1);
+        set_current(&profile_dir, 1);
+        std::os::unix::fs::symlink("2-link", profile_dir.join("next"))
+            .expect("BUG: symlink staged next");
+
+        let unrealizable_pkg = ResolvedPackage {
+            name: "bogus".into(),
+            version: "1.0.0".into(),
+            store_path: "/nix/store/00000000000000000000000000000000-does-not-exist".into(),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: crate::types::InstalledBy::System,
+            installed_from: "local".into(),
+            pinned: None,
+        };
+
+        let result = apply_profile_change(
+            &profile_dir,
+            Some(Manifest::default()),
+            None,
+            &[unrealizable_pkg],
+            &[],
+            ActivationMode::Skip,
+            None,
+            None,
+            "hooks",
+            None,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(InstallError::StorePaths(_))),
+            "expected a store-path realization failure, got {result:?}"
+        );
+
+        let next = profile_dir.join("next");
+        assert_eq!(
+            std::fs::read_link(&next).expect("BUG: next must survive a failed run"),
+            PathBuf::from("2-link"),
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_profile_change_removes_stale_next_before_noop_short_circuit() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+        create_empty_generation(&profile_dir, 1);
+        set_current(&profile_dir, 1);
+        std::os::unix::fs::symlink("99-link", profile_dir.join("next"))
+            .expect("BUG: symlink stale next");
+
+        let result = apply_profile_change(
+            &profile_dir,
+            None,
+            None,
+            &[],
+            &[],
+            ActivationMode::Skip,
+            None,
+            None,
+            "hooks",
+            None,
+        )
+        .await
+        .expect("BUG: no-op profile change must succeed");
+
+        assert_eq!(
+            result
+                .generation
+                .expect("BUG: current generation must be reported")
+                .number,
+            1,
+        );
+        assert!(
+            profile_dir.join("next").symlink_metadata().is_err(),
+            "stale next must be invalidated even when no new generation is built"
+        );
+    }
+
     #[tokio::test]
     async fn apply_profile_change_reports_realizing_and_verifying_phases() {
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
@@ -448,7 +655,7 @@ mod tests {
             None,
             &[],
             &[],
-            /* activate = */ false,
+            ActivationMode::Skip,
             None,
             Some(&collector),
             "hooks",
