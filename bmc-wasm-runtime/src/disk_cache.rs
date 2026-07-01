@@ -27,7 +27,7 @@ fn entry_len(metadata_len: usize, bytes_len: usize) -> Option<u64> {
 }
 
 /// Flash store under a single directory, trimmed to a byte cap.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DiskCache {
     dir: PathBuf,
     max_bytes: u64,

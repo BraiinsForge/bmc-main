@@ -232,6 +232,8 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
             let job_id = ImageJobId::alloc(&mut state.next_image_job_id);
             state.in_flight_image_decodes += 1;
             let tx = state.image_decode_tx.clone();
+            let cache = state.asset_cache.clone();
+            let saved_at = u64::try_from(state.system_time.timestamp_millis()).unwrap_or(0);
             std::thread::spawn(move || {
                 let started = std::time::Instant::now();
                 // catch_unwind so a decode panic still reports a failed job and
@@ -246,11 +248,19 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
                 })
                 .unwrap_or_else(|_| Err("image decode panicked".to_owned()));
                 let decode_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+                // Write-at-decode, off the render thread; wake restores from it.
+                if let (Ok((rgba, w, h)), Some(cache)) = (&result, &cache) {
+                    let mut meta = Vec::with_capacity(8 + identity.len());
+                    meta.extend_from_slice(&w.to_le_bytes());
+                    meta.extend_from_slice(&h.to_le_bytes());
+                    meta.extend_from_slice(&identity);
+                    if let Err(e) = cache.put(&raw_tag, saved_at, &meta, rgba) {
+                        tracing::warn!("image cache write failed ({raw_tag}): {e}");
+                    }
+                }
                 let _ = tx.send(CompletedImageDecode {
                     job_id,
                     tag,
-                    raw_tag,
-                    identity,
                     result,
                     decode_us,
                 });

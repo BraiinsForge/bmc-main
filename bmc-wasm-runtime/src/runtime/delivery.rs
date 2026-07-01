@@ -285,7 +285,7 @@ impl WasmWidgetRuntime {
             let bitmap_id = match done.result {
                 Ok((rgba, w, h)) => {
                     // Skip the GPU upload while dormant; the cache write persists it.
-                    let id = if dormant {
+                    if dormant {
                         0
                     } else {
                         let started = std::time::Instant::now();
@@ -298,38 +298,7 @@ impl WasmWidgetRuntime {
                             .data_mut()
                             .add_profile_us("image_upload_us", upload_us);
                         id
-                    };
-                    // Write-at-decode: stamp the downscaled RGBA into the per-instance
-                    // bucket so wake/restart can restore it without re-fetching.
-                    let state = self.store.data();
-                    if let Some(cache) = state.asset_cache.as_ref() {
-                        let saved_at =
-                            u64::try_from(state.system_time.timestamp_millis()).unwrap_or(0);
-                        let mut meta = Vec::with_capacity(8 + done.identity.len());
-                        meta.extend_from_slice(&w.to_le_bytes());
-                        meta.extend_from_slice(&h.to_le_bytes());
-                        meta.extend_from_slice(&done.identity);
-                        match cache.put(&done.raw_tag, saved_at, &meta, &rgba) {
-                            Ok(()) => {
-                                #[cfg(feature = "profiling")]
-                                {
-                                    let (entries, bytes) = cache.stats();
-                                    tracing::info!(
-                                        target: bmc_render::profile::TARGET,
-                                        tag = %done.raw_tag,
-                                        written = rgba.len(),
-                                        entries,
-                                        bytes,
-                                        "cache write"
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!("image cache write failed ({}): {e}", done.raw_tag);
-                            }
-                        }
                     }
-                    id
                 }
                 Err(e) => {
                     tracing::error!(job = done.job_id.to_wire(), "image decode failed: {e}");
