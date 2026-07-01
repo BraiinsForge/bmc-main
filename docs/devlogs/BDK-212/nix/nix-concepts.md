@@ -258,7 +258,7 @@ Additional metadata about servers (priority, enabled state).
 - `factory` - Server entry for the factory index (used for initialization/reset):
   - `id` - Unique server identifier
   - `base_url` - Base URL for the factory server; the client appends /nix-factory.v1.json to fetch the factory index.
-  - `public_key` - Public key for signature verification
+  - `known_public_key` - Public key for signature verification
   - `priority` - Resolution priority (lower = higher priority)
   - `enabled` - Whether this server is active
 - `servers` - List of server entries for package indexes:
@@ -319,13 +319,19 @@ version.
 Conflict resolution decides which package versions are selected when multiple servers publish the same package name. The
 algorithm is:
 
-1. If a package is already installed, first look for matches on the same server listed in `installed_from`, and keep
-   only versions allowed by the package's pin constraint (see the manifest `pinned` field).
-2. If no matches exist on that server, look across other servers for the same package name.
-3. From the remaining matches, choose the latest version.
-4. If multiple packages remain after version selection, resolve by server priority (lower number wins). Priorities must
+1. If a package is already installed and the server listed in `installed_from` publishes any entry for it, consider only
+   that server's entries. Other servers are consulted only when the origin server lists no entry for the package at all.
+2. **Filter out downgrades.** Within the considered entries, discard any entry for a package whose version is strictly
+   lower than the currently installed version. Upgrades never downgrade an installed package — this holds regardless of
+   pin state or server priority. Entries with the *same* version as the installed one are kept, because their
+   `store_path` may differ (e.g. a rebuild against a new toolchain or dependency) and picking up that new store path is
+   a legitimate upgrade. If this filter leaves no candidates for an installed package, keep the installed version as-is
+   — an origin stuck on lower versions reports the package stale rather than migrating to another server.
+3. Keep only versions allowed by the package's pin constraint (see the manifest `pinned` field).
+4. From what remains, choose the latest version.
+5. If multiple packages remain after version selection, resolve by server priority (lower number wins). Priorities must
    be unique.
-5. If multiple packages still remain, fail explicitly. This is a server-side publishing error and should not be resolved
+6. If multiple packages still remain, fail explicitly. This is a server-side publishing error and should not be resolved
    on-device.
 
 This conflict resolution is independent of file-level conflicts in the profile merge (see Installation flow).
@@ -518,17 +524,55 @@ Compatibility checks are handled by checker packages. When a checker signals inc
 upgrade (see "Checker Packages"). During the upgrade, both BOS and the application parts managed through Nix are
 upgraded to latest version.
 
-The BOS upgrade is handled entirely outside of the Nix functions (`bmc-upgrade`). It triggers a reboot. The new Nix
-profile is built before the BOS upgrade but not yet activated. A flag is written to the filesystem to indicate a pending
-profile activation. After the reboot, a boot service detects this flag and runs the profile activation (Phase 5).
+The BOS upgrade is handled by `bmc-upgrade`. It triggers a reboot. Unlike a normal package upgrade, the Nix side of a
+firmware upgrade is not driven from indexes fetched over the network — instead, the firmware tarball itself ships
+`bmc-nix-cli` together with a **pinned index** baked into the firmware image. That pinned index is the sole and
+authoritative source of package versions for this upgrade step. This guarantees that the set of applications activated
+alongside the new BOS matches exactly what the firmware was built and tested against, independent of what any remote
+server currently advertises.
+
+Concretely:
+
+- Every firmware image includes `bmc-nix-cli` and one pinned `nix-package-index.v1.json`.
+- During a firmware upgrade, `bmc-nix-cli` is invoked from the tarball, and the pinned index is the only index used to
+  resolve store paths and build the new profile. Remote indexes and `servers.json` entries are ignored for this run.
+- The no-downgrade filter from "Conflict Resolution" still applies against the currently installed versions, so a
+  firmware upgrade will not roll an installed application back either.
+- After the firmware upgrade completes and the device is back to normal operation, subsequent upgrades (application
+  layer only) resume using the configured remote indexes as usual.
+
+The new Nix profile is built before the BOS upgrade but not yet activated. A flag is written to the filesystem to
+indicate a pending profile activation. After the reboot, a boot service detects this flag and runs the profile
+activation (Phase 5).
 
 **Important:**
 
 - BOS upgrade happens BEFORE the profile activation (step 5), but triggers a reboot
 - Profile activation runs after boot via a service that checks the pending activation flag
 - BOS is NOT a Nix dependency — compatibility is checked by checker packages (see "Checker Packages")
+- The pinned index inside the firmware tarball is the only index consulted for the firmware-upgrade Nix step
 
 **User experience:** User selected "Install Miniminer Display v2.1.0" and sees installation progress.
+
+#### BOS Downgrade
+
+On some platforms (currently BMM101) the user is allowed to downgrade BOS to an older firmware. This case reuses the
+same mechanism as a firmware upgrade — the older firmware tarball still ships `bmc-nix-cli` and a pinned index — but
+with a different resolution outcome: the pinned index will typically advertise lower application versions than what is
+currently installed.
+
+The no-downgrade filter from "Conflict Resolution" still applies here without any special case. Entries in the pinned
+index whose version is lower than the currently installed version are discarded, and the installed version is kept
+as-is. In practice this means:
+
+- Installed applications keep their current, newer versions across a BOS downgrade.
+- The pinned index effectively acts as a floor / compatibility hint only for packages that would otherwise be missing;
+  for anything already installed at a higher version, its entries are thrown away.
+- No Nix-level rollback of application packages happens as a side effect of the BOS downgrade. If the user also wants to
+  downgrade an application, that is a separate action (profile rollback or an explicit install of a specific version).
+
+If a checker package indicates the newer application versions are not compatible with the older BOS, the downgrade is
+blocked in the same way an upgrade would be — via the checker mechanism, not via silent version rewriting.
 
 ### Phase 5: Activation, atomic profile switch
 
