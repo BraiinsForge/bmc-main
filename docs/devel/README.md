@@ -20,6 +20,12 @@ capabilities for `BMC100`, `BMM100`, `BMM101`, and `BFM100`.
 How `bmc-nix` builds custom profile generations, how the optimized symlink tree is structured, and where hooks,
 activation scripts, generated files, and manifests fit into the profile lifecycle.
 
+### [Upgrades](upgrades.md)
+
+How application and firmware upgrades are resolved and applied: package indexes and servers, the no-downgrade resolution
+algorithm, the firmware-pinned index used during BOS upgrades, BOS downgrade on BMM101, rollback, garbage collection,
+and store initialization.
+
 ### [Widget Runtime Configuration](widget-runtime-configuration.md)
 
 How a widget process receives its geometry, per-instance params, and current system settings over the `deck_widget_v1`
