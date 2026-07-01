@@ -7,6 +7,7 @@ use bmc_nix::manifest;
 use bmc_nix::types::{
     BaseSelector, GcConfig, InstallResult, Manifest, PackageChange, PackageVersion,
 };
+use bmc_nix::upgrade::ActivationMode;
 use clap::{Parser, Subcommand};
 
 /// Print a human-readable diff of an `InstallResult` on stderr.
@@ -273,6 +274,14 @@ fn apply_gc_overrides(
     }
 }
 
+fn activation_mode_from_no_activate(no_activate: bool) -> ActivationMode {
+    if no_activate {
+        ActivationMode::Skip
+    } else {
+        ActivationMode::Activate
+    }
+}
+
 async fn cmd_build_profile(
     index: PathBuf,
     profile_dir: PathBuf,
@@ -328,8 +337,6 @@ async fn cmd_add_packages(
     base: BaseSelector,
     no_activate: bool,
 ) -> anyhow::Result<()> {
-    let activate = !no_activate;
-
     anyhow::ensure!(
         name.len() == version.len() && name.len() == store_path.len(),
         "--name, --version, and --store-path must each be provided the same number of times \
@@ -367,7 +374,7 @@ async fn cmd_add_packages(
         None,
         &add_packages,
         &[],
-        activate,
+        activation_mode_from_no_activate(no_activate),
         None,
         None,
         &hooks_dir,
@@ -390,8 +397,6 @@ async fn cmd_remove_packages(
     base: BaseSelector,
     no_activate: bool,
 ) -> anyhow::Result<()> {
-    let activate = !no_activate;
-
     std::fs::create_dir_all(&profile_dir)?;
 
     let base_manifest = resolve_base(&profile_dir, &base)?;
@@ -402,7 +407,7 @@ async fn cmd_remove_packages(
         None,
         &[],
         &names,
-        activate,
+        activation_mode_from_no_activate(no_activate),
         None,
         None,
         &hooks_dir,
@@ -424,8 +429,6 @@ async fn cmd_reset_profile(
     hooks_override_path: Option<PathBuf>,
     no_activate: bool,
 ) -> anyhow::Result<()> {
-    let activate = !no_activate;
-
     let index_content = std::fs::read_to_string(&index)?;
     let package_index: bmc_nix::types::PackageIndex = serde_json::from_str(&index_content)?;
     let packages = bmc_nix::index::resolve_all_from_index(&package_index);
@@ -438,7 +441,7 @@ async fn cmd_reset_profile(
         None,
         &packages,
         &[],
-        activate,
+        activation_mode_from_no_activate(no_activate),
         None,
         None,
         &hooks_dir,
