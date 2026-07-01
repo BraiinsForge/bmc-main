@@ -397,6 +397,7 @@ pub fn make_button(
         size: size as u8,
         icon_id,
         disabled,
+        stretch: false,
         skin,
     }
 }
