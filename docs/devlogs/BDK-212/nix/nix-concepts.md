@@ -167,8 +167,8 @@ should then choose latest by default in user's UI. Specific version might be use
 - `packages` - Array of available packages (a package name can appear multiple times with different versions):
   - `name` - Package name
   - `version` - Package version
-  - `cache` - Optional cache identifier for this package. When absent, the package is fetched from any cache in
-    `caches[]` that holds its store path.
+  - `cache` - Optional cache identifier for this package. Informational only — store paths are realised through the
+    substituters configured on the device, not by matching this field against `caches[]`.
   - `store_path` - Nix store path, realised on-device via `nix-store --realise` from the configured substituters
   - `category` - Package category (display, widget, etc.)
   - `description` - Human-readable package description
@@ -787,7 +787,7 @@ and activate the profile.
 
 The `factory` field in `/etc/nix-upgrade/servers.json` is the url used for fetching the available tarballs.
 
-The initial tarball is selected based on the bos version saved in `/etc/bos-version`. In case there is no tarball for a
+The initial tarball is selected based on the bos version saved in `/etc/bos_version`. In case there is no tarball for a
 given version, the service will upgrade BOS itself. The latest version always has to have a tarball, otherwise this
 would break.
 
@@ -873,7 +873,7 @@ Users interact through a web UI to:
 
 - BMC version shown to user (the main core packages version, user friendly, ie. 26.01)
 - Individual application version shown to user (e.g., "Miniminer Display v2.1.0")
-- BOS version hidden (available in advanced settings, stored in `/etc/bos-version`)
+- BOS version hidden (available in advanced settings, stored in `/etc/bos_version`)
 
 ---
 
