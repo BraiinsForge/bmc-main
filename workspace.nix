@@ -594,6 +594,8 @@ in
     bmc-nix-init-armv7-release =
       bmc.profiles.armv7-musl-release.buildCrate bmc.crates.bmc-nix-init-openwrt { };
     bmc-nix-cli = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-cli { };
+    bmc-nix-cli-armv7-release =
+      bmc.profiles.armv7-musl-release.buildCrate bmc.crates.bmc-nix-cli { };
 
     # Native widgets joined with wasm widgets whose host is built natively,
     # so bmc-mock sees the full catalog under lib/bmc-widgets/<name>/.

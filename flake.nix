@@ -231,6 +231,10 @@
           wasm-capture = capture.package;
           wasm-examples = capture.wasmExamples;
           wasm-widgets = capture.wasmWidgetsBundle;
+          firmware-nix-payload = import ./nix/firmware-nix-payload.nix { inherit pkgs; } {
+            init-tarball = workspace.packages.init-tarball-armv7;
+            bmc-nix-cli = workspace.packages.bmc-nix-cli-armv7-release;
+          };
           verify-shared-crates = pkgs.writeShellApplication {
             name = "verify-shared-crates";
             runtimeInputs = with pkgs; [ coreutils git getopt jq ];
