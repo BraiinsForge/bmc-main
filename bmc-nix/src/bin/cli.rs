@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use bmc_nix::manifest;
 use bmc_nix::types::{
-    BaseSelector, GcConfig, InstallResult, Manifest, PackageChange, PackageVersion, ServerEntry,
-    ServersConfig,
+    BaseSelector, FetchedIndex, GcConfig, InstallResult, Manifest, MergedIndex, PackageChange,
+    PackageVersion, ServerEntry, ServersConfig,
 };
 use bmc_nix::upgrade::ActivationMode;
 use clap::{Parser, Subcommand};
@@ -240,6 +240,16 @@ enum Commands {
         #[arg(long = "index")]
         indexes: Vec<String>,
 
+        /// Resolve exclusively against the --index references; do not read
+        /// or consult the server registry.
+        #[arg(
+            long,
+            action = clap::ArgAction::SetTrue,
+            requires = "indexes",
+            conflicts_with = "servers_config"
+        )]
+        only_indexes: bool,
+
         /// Base generation to diff against: `current` (default),
         /// `latest`, or a positive integer generation number.
         #[arg(long, default_value = "current")]
@@ -428,6 +438,26 @@ fn ensure_fetchable(fetch_set: &[ServerEntry]) -> anyhow::Result<()> {
         return Ok(());
     }
     anyhow::bail!("no upgrade index configured: add a server to servers.json or pass --index <url>")
+}
+
+async fn fetch_and_merge_primary_indexes(
+    client: &reqwest::Client,
+    fetch_set: &[ServerEntry],
+) -> Result<MergedIndex, bmc_nix::index::FetchIndexesError> {
+    let mut enabled_servers: Vec<&ServerEntry> = fetch_set.iter().filter(|s| s.enabled).collect();
+    enabled_servers.sort_by_key(|s| s.priority);
+
+    let mut fetched = Vec::with_capacity(enabled_servers.len());
+    for server in enabled_servers {
+        let index = bmc_nix::index::fetch_index(client, &server.base_url).await?;
+        fetched.push(FetchedIndex {
+            server_id: server.id.clone(),
+            server_priority: server.priority,
+            index,
+        });
+    }
+
+    Ok(bmc_nix::index::merge_indexes(fetched))
 }
 
 fn activation_mode_from_no_activate(no_activate: bool) -> ActivationMode {
@@ -625,6 +655,7 @@ async fn cmd_reset_profile(
 async fn cmd_upgrade(
     servers_config: Option<PathBuf>,
     indexes: Vec<String>,
+    only_indexes: bool,
     profile_dir: PathBuf,
     hooks_dir: String,
     hooks_override_path: Option<PathBuf>,
@@ -633,17 +664,25 @@ async fn cmd_upgrade(
     next_boot: bool,
     log_format: LogFormat,
 ) -> anyhow::Result<()> {
-    let servers_path =
-        servers_config.unwrap_or_else(|| PathBuf::from("/etc/nix-upgrade/servers.json"));
-    let config = load_servers_config(&servers_path)?;
-    let fetch_set = build_fetch_set(config.servers, &indexes);
+    let fetch_set = if only_indexes {
+        build_fetch_set(Vec::new(), &indexes)
+    } else {
+        let servers_path =
+            servers_config.unwrap_or_else(|| PathBuf::from("/etc/nix-upgrade/servers.json"));
+        let config = load_servers_config(&servers_path)?;
+        build_fetch_set(config.servers, &indexes)
+    };
     ensure_fetchable(&fetch_set)?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(INDEX_FETCH_TIMEOUT_SECS))
         .build()
         .expect("BUG: reqwest client builder");
-    let merged = bmc_nix::index::fetch_and_merge_indexes(&client, &fetch_set).await?;
+    let merged = if only_indexes {
+        fetch_and_merge_primary_indexes(&client, &fetch_set).await?
+    } else {
+        bmc_nix::index::fetch_and_merge_indexes(&client, &fetch_set).await?
+    };
 
     std::fs::create_dir_all(&profile_dir)?;
     let base_manifest = resolve_base(&profile_dir, &base)?;
@@ -871,6 +910,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Upgrade {
             servers_config,
             indexes,
+            only_indexes,
             base,
             next_boot,
             common,
@@ -878,6 +918,7 @@ async fn main() -> anyhow::Result<()> {
             cmd_upgrade(
                 servers_config,
                 indexes,
+                only_indexes,
                 common.profile_dir,
                 common.hooks_dir,
                 common.hooks_override_path,
@@ -977,6 +1018,47 @@ mod tests {
             "--no-activate",
         ])
         .expect_err("BUG: next-boot conflicts with no-activate");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn upgrade_only_indexes_requires_an_index() {
+        let err = Cli::try_parse_from(["bmc-nix-cli", "upgrade", "--only-indexes"])
+            .expect_err("BUG: --only-indexes requires at least one --index");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn upgrade_accepts_only_indexes_with_explicit_index() {
+        let cli = Cli::try_parse_from([
+            "bmc-nix-cli",
+            "upgrade",
+            "--only-indexes",
+            "--index",
+            "file:///tmp/index.json",
+        ])
+        .expect("BUG: --only-indexes with --index should parse");
+
+        let Commands::Upgrade { only_indexes, .. } = cli.command else {
+            panic!("BUG: parsed command must be upgrade");
+        };
+        assert!(only_indexes, "only-indexes flag must be recorded");
+    }
+
+    #[test]
+    fn upgrade_only_indexes_conflicts_with_servers_config() {
+        let err = Cli::try_parse_from([
+            "bmc-nix-cli",
+            "upgrade",
+            "--only-indexes",
+            "--index",
+            "file:///tmp/index.json",
+            "--servers-config",
+            "/custom/servers.json",
+        ])
+        .expect_err("BUG: --only-indexes must reject --servers-config, not silently drop it");
 
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
@@ -1211,6 +1293,42 @@ mod tests {
     fn ensure_fetchable_ok_with_one_enabled_entry() {
         ensure_fetchable(&[configured_server("s1", 10)])
             .expect("BUG: one enabled entry should be fetchable");
+    }
+
+    #[tokio::test]
+    async fn only_index_fetch_does_not_follow_federated_indexes() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+
+        let child_path = dir.path().join("child.json");
+        let child_ref = format!("file://{}", child_path.display());
+        std::fs::write(
+            &child_path,
+            r#"{"version":1,"provenance":null,"indexes":[],"caches":[],"packages":[{"name":"federated","version":"1.0.0","store_path":"/nix/store/federated"}]}"#,
+        )
+        .expect("BUG: write child index");
+
+        let root_path = dir.path().join("root.json");
+        std::fs::write(
+            &root_path,
+            format!(
+                r#"{{"version":1,"provenance":null,"indexes":[{}],"caches":[],"packages":[{{"name":"pinned","version":"1.0.0","store_path":"/nix/store/pinned"}}]}}"#,
+                serde_json::to_string(&child_ref).expect("BUG: serialize child reference")
+            ),
+        )
+        .expect("BUG: write root index");
+
+        let root_ref = format!("file://{}", root_path.display());
+        let fetch_set = build_fetch_set(Vec::new(), &[root_ref]);
+        let client = reqwest::Client::new();
+        let merged = fetch_and_merge_primary_indexes(&client, &fetch_set)
+            .await
+            .expect("BUG: primary-only fetch should merge the explicit index");
+
+        assert_eq!(merged.by_name.get("pinned").map(Vec::len), Some(1));
+        assert!(
+            !merged.by_name.contains_key("federated"),
+            "only-indexes must not follow indexes[] children"
+        );
     }
 
     #[test]
