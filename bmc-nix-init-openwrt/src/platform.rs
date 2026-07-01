@@ -261,26 +261,12 @@ impl InitPlatform for OpenwrtPlatform {
             .clone()
     }
 
-    async fn prepare_nix_store(&self, config: &InitConfig, wipe: bool) -> Result<(), InitError> {
+    async fn mount_nix_store(&self, config: &InitConfig) -> Result<(), InitError> {
         let Some(data_nix) = &config.nix_data_dir else {
             return Ok(());
         };
         let nix = Path::new("/nix");
 
-        if data_nix.exists() && wipe {
-            tracing::info!("wiping existing store at {}", data_nix.display());
-            let _ = tokio::process::Command::new("umount")
-                .arg("/nix")
-                .output()
-                .await;
-            std::fs::remove_dir_all(data_nix).map_err(|e| {
-                InitError::config(format!("failed to clean {}: {e}", data_nix.display()))
-            })?;
-        }
-
-        std::fs::create_dir_all(data_nix).map_err(|e| {
-            InitError::config(format!("failed to create {}: {e}", data_nix.display()))
-        })?;
         std::fs::create_dir_all(nix)
             .map_err(|e| InitError::config(format!("failed to create /nix: {e}")))?;
 
