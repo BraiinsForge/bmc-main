@@ -87,10 +87,43 @@ One rule from the general flow still applies: the no-downgrade filter still runs
 versions. A firmware upgrade will not roll an installed application backwards even if the pinned index would otherwise
 suggest a lower version.
 
-Sequencing: the new Nix profile is built before the firmware image is applied but not activated. `bmc-upgrade` writes a
-pending-activation flag to the filesystem and reboots. On boot, a service detects the flag and runs the profile
-activation. After the device is back to normal operation, subsequent upgrades resume the ordinary application-layer flow
-using remote indexes.
+Sequencing: the new Nix profile is prepared before the firmware image is applied but not activated. `bmc-upgrade`
+invokes `bmc-nix-cli upgrade --next-boot`, which produces a "next" pointer instead of a live generation (see
+[Deferred Activation](#deferred-activation---next-boot)). After the reboot into the new BOS, an OpenWrt boot service
+promotes that pointer into a real generation and runs its activation. Once the device is back to normal operation,
+subsequent upgrades resume the ordinary application-layer flow using remote indexes.
+
+## Deferred Activation (`--next-boot`)
+
+`bmc-nix-cli upgrade --next-boot` is the same resolution and profile-build path as a normal upgrade, but it stops before
+activation and before promoting the built generation into the profile ring. Instead, it writes a **`next` file** — a
+small marker inside the profile directory (`/nix/var/nix/gcroots/profiles/bmc/next`) that points at the staged
+generation contents and captures the intent to activate them on the next boot.
+
+At boot, a dedicated OpenWrt init service (`bmc-nix-next` or equivalent) checks for `next`. If it is present, the
+service:
+
+1. Promotes the staged contents into the next numbered generation directory (`<N>-link`), taking the same atomic rename
+   step used by a normal profile build.
+2. Removes the `next` marker.
+3. Runs the new generation's activation entrypoint against the previous `current`, atomically swapping `current` at the
+   write boundary.
+4. Leaves the system in the same state a normal upgrade would leave it in — previous generation still on disk as a
+   rollback target, new generation active.
+
+If `next` is missing on boot, the service is a no-op — this is the common case on ordinary boots.
+
+The design intent is:
+
+- The upgrade run does not have to defer any of its heavy work to boot; realisation, symlink-tree build, hooks, and
+  manifest generation all happen up-front while the CLI is running normally. Only activation is delayed.
+- Failure modes are limited. If the reboot never happens or the device is powered off before the init service runs, the
+  `next` marker simply sits until the next boot; nothing about the current generation has been touched.
+- If the boot-time promotion or activation fails, the current generation remains active — the same behaviour as any
+  other failed activation.
+
+`--next-boot` is the mechanism the firmware-upgrade path uses (see [Firmware Upgrades](#firmware-upgrades)), but it is
+not exclusive to it: any caller that needs to synchronise activation with a reboot can request it.
 
 ## BOS Downgrade
 
