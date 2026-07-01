@@ -160,25 +160,41 @@ fn parse_binary_size(s: &str) -> Option<u64> {
     Some((value * multiplier) as u64)
 }
 
-/// Parse a generation number from a directory name matching `N-link`.
-fn parse_generation_number(name: &str) -> Option<usize> {
-    let stripped = name.strip_suffix("-link")?;
-    stripped.parse::<usize>().ok()
+/// Generation number named by a `<N>-link` symlink target, if any.
+fn generation_number_of(target: &Path) -> Option<usize> {
+    let name = target.file_name()?.to_str()?;
+    crate::profile::parse_generation_link_name(name)
 }
 
 /// Read the `current` symlink in `profile_dir` and return the generation
 /// number it points to.
-fn current_generation_number(profile_dir: &Path) -> Option<usize> {
-    let current_link = profile_dir.join("current");
-    let target = std::fs::read_link(&current_link).ok()?;
-    let name = target.file_name()?.to_str()?;
-    parse_generation_number(name)
+///
+/// `Ok(None)` when `current` is absent or does not name a `<N>-link`. A
+/// read failure other than absence is propagated so gc aborts rather than
+/// silently treating the protected generation as unprotected.
+fn current_generation_number(profile_dir: &Path) -> Result<Option<usize>, std::io::Error> {
+    Ok(
+        crate::profile::current_generation_link(profile_dir)?
+            .and_then(|t| generation_number_of(&t)),
+    )
+}
+
+/// Read the `next` symlink in `profile_dir` and return the generation
+/// number it points to, with the same error semantics as
+/// [`current_generation_number`].
+fn next_generation_number(profile_dir: &Path) -> Result<Option<usize>, std::io::Error> {
+    match std::fs::read_link(profile_dir.join("next")) {
+        Ok(target) => Ok(generation_number_of(&target)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 /// Remove old profile generations according to GC policy.
 ///
 /// Keeps:
 /// - the current generation (pointed to by the `current` symlink);
+/// - the next-boot generation (pointed to by the `next` symlink);
 /// - the latest numbered generation, even when it is not current yet
 ///   (preserves generations built for deferred activation);
 /// - protected generations from `gc_config.protected_generations`;
@@ -209,7 +225,7 @@ pub fn cleanup_generations(
     for entry in entries {
         let entry = entry.map_err(CleanupGenerationsError::Cleanup)?;
         let name = entry.file_name();
-        if let Some(num) = parse_generation_number(&name.to_string_lossy()) {
+        if let Some(num) = crate::profile::parse_generation_link_name(&name.to_string_lossy()) {
             generations.push(num);
         }
     }
@@ -222,8 +238,16 @@ pub fn cleanup_generations(
 
     let mut keep: HashSet<usize> = HashSet::new();
 
-    if let Some(current) = current_generation_number(profile_dir) {
+    if let Some(current) =
+        current_generation_number(profile_dir).map_err(CleanupGenerationsError::Cleanup)?
+    {
         keep.insert(current);
+    }
+
+    if let Some(next) =
+        next_generation_number(profile_dir).map_err(CleanupGenerationsError::Cleanup)?
+    {
+        keep.insert(next);
     }
 
     if let Some(&latest) = generations.last() {
@@ -247,7 +271,7 @@ pub fn cleanup_generations(
             SystemTime::now() - std::time::Duration::from_secs((days as u64) * 24 * 60 * 60);
 
         for &gen_num in &generations {
-            let gen_dir = profile_dir.join(format!("{gen_num}-link"));
+            let gen_dir = profile_dir.join(crate::profile::generation_link_name(gen_num));
             let metadata = std::fs::metadata(&gen_dir).map_err(CleanupGenerationsError::Cleanup)?;
             let mtime = metadata
                 .modified()
@@ -271,7 +295,7 @@ pub fn cleanup_generations(
         }
 
         attempted += 1;
-        let gen_dir = profile_dir.join(format!("{gen_num}-link"));
+        let gen_dir = profile_dir.join(crate::profile::generation_link_name(gen_num));
         info!(generation = gen_num, path = %gen_dir.display(), "removing old generation");
         if let Err(e) = std::fs::remove_dir_all(&gen_dir) {
             warn!(
@@ -376,8 +400,48 @@ mod tests {
         std::os::unix::fs::symlink(format!("{number}-link"), &current_link).expect("BUG: symlink");
     }
 
+    fn set_next(profile_dir: &Path, number: usize) {
+        let next_link = profile_dir.join("next");
+        let _ = std::fs::remove_file(&next_link);
+        std::os::unix::fs::symlink(format!("{number}-link"), &next_link)
+            .expect("BUG: symlink next");
+    }
+
     fn generation_exists(profile_dir: &Path, number: usize) -> bool {
         profile_dir.join(format!("{number}-link")).exists()
+    }
+
+    #[test]
+    fn cleanup_generations_aborts_when_current_symlink_unreadable() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+        for n in 1..=3 {
+            create_generation(&profile_dir, n);
+        }
+        // `current` is a regular file, not a symlink: read_link fails with a
+        // non-NotFound error. GC must abort rather than silently treat the
+        // current generation as unprotected and prune it.
+        std::fs::write(profile_dir.join("current"), b"not a symlink").expect("BUG: write");
+
+        let gc_config = GcConfig {
+            keep_generations: 1,
+            keep_days: None,
+            min_free_space: "0".into(),
+            protected_generations: vec![],
+        };
+        let err = cleanup_generations(&profile_dir, &gc_config, &[])
+            .expect_err("BUG: an unreadable current symlink must abort GC");
+        assert!(
+            matches!(err, CleanupGenerationsError::Cleanup(_)),
+            "got {err:?}"
+        );
+        for n in 1..=3 {
+            assert!(
+                generation_exists(&profile_dir, n),
+                "no generation may be pruned once GC aborts"
+            );
+        }
     }
 
     #[test]
@@ -552,6 +616,33 @@ mod tests {
             generation_exists(&profile_dir, 2),
             "latest non-current gen is kept for deferred activation"
         );
+    }
+
+    #[test]
+    fn cleanup_generations_protects_next_target() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+
+        for n in 1..=5 {
+            create_generation(&profile_dir, n);
+        }
+        set_current(&profile_dir, 5);
+        set_next(&profile_dir, 3);
+
+        let gc_config = GcConfig {
+            keep_generations: 1,
+            keep_days: None,
+            min_free_space: "0".into(),
+            protected_generations: vec![],
+        };
+        cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
+
+        assert!(
+            generation_exists(&profile_dir, 3),
+            "generation targeted by next must survive cleanup"
+        );
+        assert!(generation_exists(&profile_dir, 5), "current gen is kept");
     }
 
     #[test]
