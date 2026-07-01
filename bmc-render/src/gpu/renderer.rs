@@ -13,7 +13,7 @@ use std::num::NonZeroU32;
 use anyhow::Result;
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
-    ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId,
+    ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, BitmapId, Fill, MeshId, SvgId, WHITE,
 };
 use cosmic_text::fontdb;
 use femtovg::renderer::OpenGl;
@@ -766,7 +766,12 @@ impl Renderer for FemtoVgRenderer {
             style.line_height,
         );
         let fitted = search_fit_size(lower, upper, Some(box_width), Some(box_height), |size| {
-            let probe = TextStyle { size, ..*style };
+            // Performance enhancement: Normalize the color, so the cache is not invalidated on repeated measurements e.g., during fade.
+            let probe = TextStyle {
+                size,
+                color: WHITE,
+                ..*style
+            };
             self.paragraph_cache
                 .measure(&mut self.font_system, &probe, &spans, Some(box_width))
         });
