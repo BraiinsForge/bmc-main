@@ -5,8 +5,8 @@ use std::path::Path;
 
 use crate::index::{self, ResolvePackageError};
 use crate::types::{
-    Manifest, ManifestPackage, MergedIndex, PackageChange, PackageVersion, ResolvedPackage,
-    UpgradePlan,
+    InstalledBy, Manifest, ManifestPackage, MergedIndex, PackageChange, PackageVersion,
+    ResolvedPackage, UpgradePlan,
 };
 
 /// Error type for manifest write operations.
@@ -83,6 +83,8 @@ pub enum PlanConflict {
 pub enum ComputeUpgradePlanError {
     #[error(transparent)]
     Conflict(#[from] PlanConflict),
+    #[error("system package {name} missing from every index")]
+    MissingSystemPackage { name: String },
     #[error("failed to resolve package `{name}`: {source}")]
     Resolve {
         name: String,
@@ -237,8 +239,9 @@ pub fn manifest_package_to_resolved(name: &str, mp: &ManifestPackage) -> Resolve
 ///   `merged` is `Some`, each kept package is resolved through
 ///   [`index::resolve_installed_package`]: a newer version satisfying the
 ///   package's pin strategy becomes a `changed` entry; a package missing
-///   from the index (or with no satisfying version) is reported as `stale`
-///   and carried at its current version.
+///   from the index is an error for system packages and `stale` for user
+///   packages. A package with no satisfying version is reported as `stale`
+///   for both kinds and carried at its current version.
 /// - `add_packages` are new packages to install (or replace existing ones).
 /// - `remove_packages` are package names to remove from the profile.
 ///
@@ -247,7 +250,9 @@ pub fn manifest_package_to_resolved(name: &str, mp: &ManifestPackage) -> Resolve
 /// (e.g. removing a package that is not installed). Conflicts are checked
 /// in a deterministic order: add/remove overlap, duplicate add, duplicate
 /// remove, remove of a not-installed package. Returns
-/// [`ComputeUpgradePlanError::Resolve`] when a kept package resolves
+/// [`ComputeUpgradePlanError::MissingSystemPackage`] when a system package is
+/// absent from every merged index. Returns [`ComputeUpgradePlanError::Resolve`]
+/// when a kept package has an invalid version constraint or resolves
 /// ambiguously against the merged index.
 #[expect(
     clippy::too_many_lines,
@@ -342,7 +347,11 @@ pub fn compute_upgrade_plan(
         if let Some(merged) = merged {
             match index::resolve_installed_package(merged, name, pkg) {
                 Ok(resolved) => {
-                    if resolved.version != pkg.version || resolved.store_path != pkg.store_path {
+                    // The resolver renders normalized versions ("0.8" →
+                    // "0.8.0") while manifest versions are verbatim, so
+                    // only the store path decides whether the package
+                    // actually changes.
+                    if resolved.store_path != pkg.store_path {
                         changed.push(PackageChange {
                             name: name.clone(),
                             from_version: pkg.version.clone(),
@@ -353,11 +362,32 @@ pub fn compute_upgrade_plan(
                     }
                     packages.push(resolved);
                 }
+                Err(ResolvePackageError::PackageNotFound(_))
+                    if pkg.installed_by == InstalledBy::System =>
+                {
+                    return Err(ComputeUpgradePlanError::MissingSystemPackage {
+                        name: name.clone(),
+                    });
+                }
                 Err(
                     ResolvePackageError::PackageNotFound(_)
                     | ResolvePackageError::VersionNotFound { .. },
                 ) => {
-                    // Package not in index or no matching version — stale.
+                    // User packages missing from every index and packages with
+                    // no matching version stay stale.
+                    stale.push(PackageVersion {
+                        name: name.clone(),
+                        version: pkg.version.clone(),
+                    });
+                    packages.push(manifest_package_to_resolved(name, pkg));
+                }
+                Err(err @ ResolvePackageError::InvalidVersionConstraint { .. })
+                    if pkg.installed_by != InstalledBy::System =>
+                {
+                    // A user package with an unparseable pin must not
+                    // block upgrades of everything else; keep it stale
+                    // like a package that vanished from the indexes.
+                    tracing::warn!(package = name, %err, "ignoring unparseable pin");
                     stale.push(PackageVersion {
                         name: name.clone(),
                         version: pkg.version.clone(),
@@ -456,6 +486,15 @@ mod tests {
         installed_from: &str,
         pinned: Option<String>,
     ) -> ManifestPackage {
+        test_manifest_package_installed_by(version, installed_from, pinned, InstalledBy::System)
+    }
+
+    fn test_manifest_package_installed_by(
+        version: &str,
+        installed_from: &str,
+        pinned: Option<String>,
+        installed_by: InstalledBy,
+    ) -> ManifestPackage {
         ManifestPackage {
             version: version.into(),
             store_path: format!("/nix/store/hash-pkg-{version}"),
@@ -463,10 +502,14 @@ mod tests {
             description: None,
             upgrade_strategy: None,
             install_strategy: None,
-            installed_by: InstalledBy::System,
+            installed_by,
             installed_from: installed_from.into(),
             pinned,
         }
+    }
+
+    fn empty_merged_index() -> MergedIndex {
+        merged_index_with(Vec::new())
     }
 
     #[test]
@@ -952,13 +995,10 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "clock".to_owned(),
-                test_manifest_package("1.0.0", "braiins", None),
+                test_manifest_package_installed_by("1.0.0", "braiins", None, InstalledBy::User),
             )]),
         };
-        let merged = MergedIndex {
-            packages: vec![],
-            by_name: BTreeMap::new(),
-        };
+        let merged = empty_merged_index();
 
         let plan = compute_upgrade_plan(&current, Some(&merged), &[], &[])
             .expect("BUG: stale package should be carried");
@@ -966,6 +1006,62 @@ mod tests {
         assert_eq!(plan.packages[0].name, "clock");
         assert_eq!(plan.stale.len(), 1);
         assert_eq!(plan.stale[0].name, "clock");
+    }
+
+    #[test]
+    fn compute_upgrade_plan_fails_when_system_package_missing_from_index() {
+        let current = Manifest {
+            packages: BTreeMap::from([(
+                "core-pkg".to_owned(),
+                test_manifest_package_installed_by("1.0.0", "braiins", None, InstalledBy::System),
+            )]),
+        };
+        let merged = empty_merged_index();
+
+        let err = compute_upgrade_plan(&current, Some(&merged), &[], &[])
+            .expect_err("missing system package must fail");
+
+        assert!(
+            matches!(
+                err,
+                ComputeUpgradePlanError::MissingSystemPackage { ref name } if name == "core-pkg"
+            ),
+            "got unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn compute_upgrade_plan_keeps_stale_user_package_missing_from_index() {
+        let current = Manifest {
+            packages: BTreeMap::from([(
+                "widget".to_owned(),
+                test_manifest_package_installed_by("1.0.0", "braiins", None, InstalledBy::User),
+            )]),
+        };
+        let merged = empty_merged_index();
+
+        let plan = compute_upgrade_plan(&current, Some(&merged), &[], &[])
+            .expect("BUG: missing user package must stay stale");
+
+        assert_eq!(plan.stale.len(), 1);
+        assert_eq!(plan.stale[0].name, "widget");
+    }
+
+    #[test]
+    fn compute_upgrade_plan_keeps_system_package_with_no_candidate_version() {
+        let current = Manifest {
+            packages: BTreeMap::from([(
+                "core-pkg".to_owned(),
+                test_manifest_package_installed_by("2.0.0", "braiins", None, InstalledBy::System),
+            )]),
+        };
+        let merged = merged_index_with(vec![merged_entry("core-pkg", "1.0.0", 0)]);
+
+        let plan = compute_upgrade_plan(&current, Some(&merged), &[], &[])
+            .expect("BUG: filtered-out system package must stay stale");
+
+        assert_eq!(plan.stale.len(), 1);
+        assert_eq!(plan.stale[0].name, "core-pkg");
     }
 
     #[test]
@@ -1092,5 +1188,53 @@ mod tests {
             ),
             "got unexpected error: {err:?}"
         );
+    }
+
+    #[test]
+    fn compute_upgrade_plan_keeps_user_package_with_invalid_pin_stale() {
+        // A user package's broken pin must degrade like a vanished user
+        // package instead of blocking every other upgrade in the plan.
+        let current = Manifest {
+            packages: BTreeMap::from([(
+                "widget".to_owned(),
+                test_manifest_package_installed_by(
+                    "1.0.0",
+                    "braiins",
+                    Some("not-a-version".to_owned()),
+                    InstalledBy::User,
+                ),
+            )]),
+        };
+        let merged = merged_index_with(vec![merged_entry("widget", "1.1.0", 0)]);
+
+        let plan = compute_upgrade_plan(&current, Some(&merged), &[], &[])
+            .expect("BUG: a user package's broken pin must not abort the plan");
+
+        assert_eq!(plan.stale.len(), 1);
+        assert_eq!(plan.stale[0].name, "widget");
+        assert_eq!(plan.packages[0].store_path, "/nix/store/hash-pkg-1.0.0");
+        assert!(plan.changed.is_empty());
+    }
+
+    #[test]
+    fn compute_upgrade_plan_ignores_version_normalization_without_store_path_change() {
+        // The resolver renders "0.8" as "0.8.0"; with an identical store
+        // path that rendering difference is not a package change.
+        let entry = merged_entry("clock", "0.8.0", 0);
+        let mut manifest_pkg = test_manifest_package("0.8", "braiins", None);
+        manifest_pkg.store_path.clone_from(&entry.store_path);
+        let current = Manifest {
+            packages: BTreeMap::from([("clock".to_owned(), manifest_pkg)]),
+        };
+        let merged = merged_index_with(vec![entry]);
+
+        let plan = compute_upgrade_plan(&current, Some(&merged), &[], &[])
+            .expect("BUG: plan should succeed");
+
+        assert!(
+            plan.changed.is_empty(),
+            "a phantom change with identical store paths must not be planned"
+        );
+        assert!(plan.stale.is_empty());
     }
 }
