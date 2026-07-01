@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use bmc_nix::manifest;
 use bmc_nix::types::{
-    BaseSelector, GcConfig, InstallResult, Manifest, PackageChange, PackageVersion,
+    BaseSelector, GcConfig, InstallResult, Manifest, PackageChange, PackageVersion, ServersConfig,
 };
 use bmc_nix::upgrade::ActivationMode;
 use clap::{Parser, Subcommand};
@@ -70,7 +70,7 @@ fn print_profile_diff(result: &InstallResult) {
 }
 
 /// Top-level CLI for bmc-nix profile management.
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 #[command(name = "bmc-nix-cli")]
 struct Cli {
     #[command(subcommand)]
@@ -105,7 +105,7 @@ struct ProfileCommonArgs {
 }
 
 /// Available subcommands.
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum Commands {
     // `BuildProfile` keeps its args inline: its `--profile-dir` is
     // required (no default), so it cannot share `ProfileCommonArgs`
@@ -182,6 +182,40 @@ enum Commands {
 
         #[command(flatten)]
         common: ProfileCommonArgs,
+    },
+
+    /// Initialize the Nix store from the configured factory tarball
+    Init {
+        /// Path to the server registry.
+        #[arg(long, default_value = "/etc/nix-upgrade/servers.json")]
+        servers_config: PathBuf,
+
+        /// Data partition device to format and mount when needed.
+        #[arg(long, default_value = "/dev/mmcblk0p4")]
+        data_partition: PathBuf,
+
+        /// Data partition mount point and staged extraction root.
+        #[arg(long, default_value = "/mnt/data")]
+        data_dir: PathBuf,
+
+        /// File containing the current BOS version.
+        #[arg(long, default_value = "/etc/bos_version")]
+        bos_version_file: PathBuf,
+
+        /// Directory for the downloaded factory tarball.
+        #[arg(long, default_value = "/mnt/data")]
+        download_dir: PathBuf,
+
+        /// Replace an existing promoted store at <data-dir>/nix.
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        wipe: bool,
+    },
+
+    /// Check whether the promoted Nix store exists
+    IsInitialized {
+        /// Data partition mount point.
+        #[arg(long, default_value = "/mnt/data")]
+        data_dir: PathBuf,
     },
 
     /// Prune old profile generations, then collect store garbage
@@ -456,6 +490,82 @@ async fn cmd_reset_profile(
     Ok(())
 }
 
+/// Load the server registry from `path`.
+///
+/// A missing or unparseable file is fatal: init consumes the config
+/// provisioning already installed and never repairs or falls back.
+fn load_servers_config(path: &Path) -> anyhow::Result<ServersConfig> {
+    let contents = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read servers config at {}", path.display()))?;
+    serde_json::from_str(&contents)
+        .with_context(|| format!("failed to parse servers config at {}", path.display()))
+}
+
+/// Build a shared HTTP client for first-boot init downloads.
+///
+/// TLS cert validation is disabled because NTP has not synced on
+/// first boot (clock is at epoch → certs appear "not yet valid").
+/// Tarball integrity is ensured by signature verification, not TLS.
+fn build_init_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .danger_accept_invalid_certs(true)
+        .build()
+        .expect("BUG: failed to build HTTP client")
+}
+
+fn read_bos_version(path: &Path) -> anyhow::Result<String> {
+    Ok(std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read BOS version from {}", path.display()))?
+        .trim()
+        .to_owned())
+}
+
+fn is_initialized(data_dir: &Path) -> bool {
+    data_dir.join("nix").is_dir()
+}
+
+async fn cmd_init(
+    servers_config: PathBuf,
+    data_partition: PathBuf,
+    data_dir: PathBuf,
+    bos_version_file: PathBuf,
+    download_dir: PathBuf,
+    wipe: bool,
+) -> anyhow::Result<()> {
+    bmc_nix::partition::prepare_data_partition(
+        &bmc_nix::store::TokioCommandRunner,
+        &data_partition,
+        &data_dir,
+    )
+    .await?;
+
+    // The firmware COMMAND distinguishes this no-op from a fresh
+    // initialization by stdout: keep it empty here; a fresh init
+    // prints the promoted profile path below.
+    if is_initialized(&data_dir) && !wipe {
+        tracing::info!("store already initialized");
+        return Ok(());
+    }
+
+    let servers = load_servers_config(&servers_config)?;
+    let bos_version = read_bos_version(&bos_version_file)?;
+    let client = build_init_http_client();
+    let result = bmc_nix::store::init_store(
+        &client,
+        &servers.factory,
+        &bos_version,
+        &download_dir,
+        &data_dir,
+        wipe,
+        None,
+    )
+    .await?;
+
+    println!("{}", result.profile_path.display());
+    Ok(())
+}
+
 async fn cmd_gc(
     gc_config: Option<PathBuf>,
     profile_dir: PathBuf,
@@ -483,6 +593,10 @@ async fn cmd_gc(
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "CLI dispatch — one match arm per subcommand"
+)]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -552,6 +666,33 @@ async fn main() -> anyhow::Result<()> {
             .await
         }
 
+        Commands::Init {
+            servers_config,
+            data_partition,
+            data_dir,
+            bos_version_file,
+            download_dir,
+            wipe,
+        } => {
+            cmd_init(
+                servers_config,
+                data_partition,
+                data_dir,
+                bos_version_file,
+                download_dir,
+                wipe,
+            )
+            .await
+        }
+
+        Commands::IsInitialized { data_dir } => {
+            if is_initialized(&data_dir) {
+                Ok(())
+            } else {
+                std::process::exit(1)
+            }
+        }
+
         Commands::Gc {
             gc_config,
             profile_dir,
@@ -576,6 +717,94 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn init_download_dir_defaults_to_persistent_storage() {
+        let cli = Cli::try_parse_from(["bmc-nix-cli", "init"])
+            .expect("BUG: init should parse with defaults");
+        let Commands::Init { download_dir, .. } = cli.command else {
+            panic!("BUG: parsed command must be init");
+        };
+        // The factory closure is too large for the /tmp tmpfs; it must land
+        // on persistent storage.
+        assert_eq!(download_dir, PathBuf::from("/mnt/data"));
+    }
+
+    #[test]
+    fn is_initialized_defaults_to_data_dir() {
+        let cli = Cli::try_parse_from(["bmc-nix-cli", "is-initialized"])
+            .expect("BUG: is-initialized should parse with defaults");
+
+        let Commands::IsInitialized { data_dir } = cli.command else {
+            panic!("BUG: parsed command must be is-initialized");
+        };
+        assert_eq!(data_dir, PathBuf::from("/mnt/data"));
+    }
+
+    #[test]
+    fn is_initialized_requires_promoted_store_directory() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        assert!(!is_initialized(tmp.path()));
+
+        std::fs::create_dir_all(tmp.path().join("nix.tmp/nix")).expect("BUG: setup");
+        assert!(
+            !is_initialized(tmp.path()),
+            "staged but unpromoted store must not count as initialized"
+        );
+
+        std::fs::write(tmp.path().join("nix"), "").expect("BUG: setup");
+        assert!(
+            !is_initialized(tmp.path()),
+            "a non-directory nix path must not count as initialized"
+        );
+        std::fs::remove_file(tmp.path().join("nix")).expect("BUG: cleanup");
+
+        std::fs::create_dir(tmp.path().join("nix")).expect("BUG: setup");
+        assert!(is_initialized(tmp.path()));
+    }
+
+    #[test]
+    fn load_servers_config_reads_valid_file() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let path = dir.path().join("servers.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "factory": {"id":"braiins","base_url":"https://cache.braiins.com/v1","known_public_key":"k","priority":0,"enabled":true},
+                "servers": [
+                    {"id":"s1","type":"mirror","base_url":"https://s1.example.com/v1","known_public_key":"k","priority":10,"enabled":true}
+                ]
+            }"#,
+        )
+        .expect("BUG: write servers.json");
+
+        let config = load_servers_config(&path).expect("BUG: valid config should load");
+        assert_eq!(config.servers.len(), 1);
+        assert_eq!(config.servers[0].id, "s1");
+        assert!(config.servers[0].enabled);
+    }
+
+    #[test]
+    fn load_servers_config_missing_file_is_fatal() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let path = dir.path().join("absent.json");
+        assert!(
+            load_servers_config(&path).is_err(),
+            "missing config must be a fatal error"
+        );
+    }
+
+    #[test]
+    fn load_servers_config_unparseable_file_is_fatal() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let path = dir.path().join("servers.json");
+        std::fs::write(&path, "this is not json").expect("BUG: write garbage");
+        assert!(
+            load_servers_config(&path).is_err(),
+            "unparseable config must be a fatal error"
+        );
+    }
 
     #[test]
     fn load_gc_config_missing_file_falls_back_to_defaults() {

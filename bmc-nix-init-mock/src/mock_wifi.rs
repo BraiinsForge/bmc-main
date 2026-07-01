@@ -92,7 +92,7 @@ impl InitPlatform for MockPlatform {
         Ok(())
     }
 
-    async fn prepare_nix_store(&self, _config: &InitConfig, _wipe: bool) -> Result<(), InitError> {
+    async fn mount_nix_store(&self, _config: &InitConfig) -> Result<(), InitError> {
         tracing::info!("mock: skipping nix store mount");
         Ok(())
     }
