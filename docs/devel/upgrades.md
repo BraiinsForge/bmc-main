@@ -8,15 +8,25 @@ dependency — and its lifecycle is coordinated with the Nix side rather than ex
 This document covers the pieces a contributor needs to work on the upgrade flow itself: what indexes exist, how versions
 are chosen, how a firmware upgrade differs from an application-only upgrade, and how downgrade and rollback are handled.
 
+> **Implementation status:** this document describes the target design; several pieces are ahead of the code. Not yet
+> implemented: deferred activation (`--next-boot`, the `next` marker, and the boot-time promotion service — today the
+> CLI offers `--no-activate` and the `nix-activator` boot service only activates the current generation), the
+> firmware-upgrade path driving the on-tarball `bmc-nix-cli` with the pinned index, `bmc-nix-cli init` (today a
+> standalone `bmc-nix-init` binary that extracts directly to `/`), the resolution rule ordering below (the code
+> currently applies the pin filter before the no-downgrade filter and the same-server preference), the
+> `installed_by`-aware removal policy (the planner currently treats missing `system` and `user` packages alike, as
+> stale), and Ed25519 tarball signature verification.
+
 ## Sources of Truth
 
 Two independent inputs drive package selection at runtime:
 
 - **Remote package indexes.** Each configured server publishes `nix-package-index.v1.json` listing available packages
-  (name, version, `store_path`, `installed_from` server, cache reference, optional `upgrade_strategy` /
-  `install_strategy` hints). Servers are declared in `/etc/nix-upgrade/servers.json` with a `priority` and
-  `known_public_key`. Indexes may also transitively reference other indexes (`indexes[]`) for federated discovery. Store
-  paths in indexes are realised on-device via `nix-store --realise` from the caches declared in each index's `caches[]`.
+  (name, version, `store_path`, optional `upgrade_strategy` / `install_strategy` hints). Servers are declared in
+  `/etc/nix-upgrade/servers.json` with a `priority` and `known_public_key`. Indexes may also transitively reference
+  other indexes (`indexes[]`) for federated discovery. Store paths in indexes are realised on-device via
+  `nix-store --realise` from the substituters configured on the device; cache metadata in the index (`caches[]`,
+  per-package `cache`) is informational only and ignored by resolution.
 - **The installed manifest.** Every profile generation carries its own `manifest` — the same shape as an index, plus
   `installed_by` (`system` or `user`), `installed_from` (server id), and `pinned` (semver constraint). The manifest is
   the record of what is currently installed; upgrade planning diffs it against the merged remote view.
@@ -58,15 +68,11 @@ warning), see [`profiles.md`](profiles.md).
 An application-layer upgrade — the common case, no firmware change — runs entirely on-device:
 
 1. Fetch and merge indexes from every enabled server in `servers.json`.
-2. Run compatibility checker packages against the resolved target set. Checkers are shipped as regular packages and
-   validate things Nix cannot (wayland protocol versions, kernel driver presence, minimum BOS version, etc.). Checks
-   always run against the *target* version, not the currently active one. A negative checker verdict either escalates to
-   a full firmware upgrade or blocks the operation.
-3. Realise all target store paths via `nix-store --realise`, which pulls missing NARs and dependencies from the caches
-   declared in the index. Missing store paths abort the upgrade.
-4. Build a new profile generation from the resolved package set (`bmc-nix` profile builder — symlink tree, hooks,
+2. Realise all target store paths via `nix-store --realise`, which pulls missing NARs and dependencies from the
+   configured substituters. Missing store paths abort the upgrade.
+3. Build a new profile generation from the resolved package set (`bmc-nix` profile builder — symlink tree, hooks,
    manifest; see [`profiles.md`](profiles.md)).
-5. Run the generation's activation entrypoint, which atomically swaps `current` at the write boundary.
+4. Run the generation's activation entrypoint, which atomically swaps `current` at the write boundary.
 
 The previous generation stays on disk and remains the rollback target.
 
@@ -162,8 +168,8 @@ The device must always have enough free space for the next upgrade, including th
 changes (glibc or compiler bumps). `bmc-nix::gc` reclaims space in two stages:
 
 - **Generation cleanup.** Old generation directories are removed according to `/etc/nix-upgrade/gc.json`
-  (`keep_generations`, `keep_days`, `protected_generations`, `min_free_space`). Generation 1 (factory) is protected by
-  default.
+  (`keep_generations`, `keep_days`, `protected_generations`, `min_free_space`). The current and the latest generations
+  are always kept, as is the freshly built generation during an upgrade; `protected_generations` is empty by default.
 - **Nix store GC.** `nix-collect-garbage` removes store paths no longer referenced by any surviving generation.
 
 GC runs via the `bmc-nix-cli gc` subcommand, intended for a periodic timer or for when disk space runs low — it is not
@@ -177,12 +183,16 @@ The Nix store on new devices is populated in one of three ways:
 - **Factory flash.** New devices are shipped with `/nix/store` and `/nix/var/nix` already populated and the initial
   profile activated (or activated on first boot).
 - **First-boot upgrade from a pre-Nix firmware.** The first Nix-capable firmware is marked as a required version (users
-  cannot skip it). Its image `COMMAND` downloads the initial store tarball and extracts it to the root partition; the
-  profile activates on next boot.
+  cannot skip it). Its image `COMMAND` invokes `bmc-nix-cli init` from the tarball, which prepares `/mnt/data`, fetches
+  the initialization tarball for the current `/etc/bos_version`, and stages it into `/mnt/data/nix.tmp` before
+  atomically promoting it to `nix` (see [`openwrt-tarball.md`](openwrt-tarball.md#initialization)); the profile
+  activates on next boot.
 - **Fallback initializer.** A small statically-linked binary is kept forever on the device to recover from a wiped
   store. It offers minimal Wi-Fi configuration, then downloads the tarball listed in `factory` from `servers.json` for
-  the current `/etc/bos-version`. Because NTP has not synced yet, the client disables TLS certificate validation and
+  the current `/etc/bos_version`. Because NTP has not synced yet, the client disables TLS certificate validation and
   relies on the tarball's Ed25519 signature (verified against `known_public_key`) as the primary integrity guarantee.
+  Signature verification is not implemented yet — `known_public_key` is parsed but unused, so the tarball is currently
+  trusted without verification (see [`../stories/nix-store-initializer.md`](../stories/nix-store-initializer.md)).
 
 Factory reset drops a marker file that instructs the initializer to wipe `/nix/store` and its state on the next boot.
 Doing it via the initializer avoids fighting running processes that hold open files in the store.

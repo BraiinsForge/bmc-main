@@ -4,6 +4,10 @@ The OpenWrt firmware tarball is the sysupgrade artifact produced by BOS builds �
 alternate partition and reboots into. This document covers the pieces of that tarball that the Nix upgrade path cares
 about; the OpenWrt image itself (kernel, rootfs, boot glue) is a BOS concern.
 
+> **Implementation status:** this describes the target design; the on-tarball `bmc-nix-cli`, the `COMMAND` hook, and
+> `bmc-nix-cli init` are not wired up in code yet — initialization currently lives in the standalone `bmc-nix-init`
+> binary. See the status note in [`upgrades.md`](upgrades.md) for the full list of gaps.
+
 Two things ship inside every tarball that concern `bmc-nix`:
 
 - **`bmc-nix-cli`** — the CLI wrapper around the `bmc-nix` library used during firmware installation and, when the store
@@ -40,7 +44,7 @@ input. The CLI:
 3. Applies the standard resolution rules — including the no-downgrade filter, so lower-version entries in the pinned
    index are discarded and any application already installed at a higher version stays at its current version. See
    [`upgrades.md`](upgrades.md#resolution-algorithm).
-4. Realises the resolved store paths (the caches to fetch from are declared inside the pinned index's `caches[]`).
+4. Realises the resolved store paths from the substituters configured on the device.
 5. Builds a new profile generation.
 6. Leaves the new generation staged as a `next` pointer instead of promoting it into the profile ring, via
    `bmc-nix-cli upgrade --next-boot`. Firmware upgrades **always** take this deferred-activation path — the profile is
@@ -57,13 +61,11 @@ Every firmware build must produce, in addition to the OpenWrt image itself:
 
 - The pinned `nix-package-index.v1.json` covering all applications intended to ship with that firmware release.
 - A `bmc-nix-cli` binary matching the target architecture (armv7-glibc for `bmc-openwrt`).
-- Enough closure information that the on-device `nix-store --realise` step can pull the required store paths from the
-  caches referenced inside the pinned index. (In practice the pinned index carries the same `caches[]` block that a
-  remote index would.)
+- A substituter setup on the device (`nix.conf`) from which the on-device `nix-store --realise` step can pull every
+  store path the pinned index references.
 
-The pinned index must be self-consistent: every `store_path` it references must be reachable from a cache in its
-`caches[]`, and every checker package the release relies on must be listed. There is no fallback to remote indexes to
-paper over a missing entry — the run will abort.
+The pinned index must be self-consistent: every `store_path` it references must be reachable from the configured
+substituters. There is no fallback to remote indexes to paper over a missing entry — the run will abort.
 
 ## Initialization
 
@@ -93,7 +95,7 @@ in the tarball.
 2. **Mount `/mnt/data` if it is not yet mounted.** This must happen before anything is written under it, and it must be
    idempotent — the CLI may be re-run after a partial init.
 3. **Select and download the initialization tarball.** Selection is by the current BOS version read from
-   `/etc/bos-version`, matched against the factory index (the `factory` entry from `/etc/nix-upgrade/servers.json`; see
+   `/etc/bos_version`, matched against the factory index (the `factory` entry from `/etc/nix-upgrade/servers.json`; see
    [`upgrades.md`](upgrades.md#initialization-and-factory-reset) for how first-boot certificate validation and
    Ed25519-signed tarballs interact). If no tarball matches the current BOS version, the initializer escalates to a full
    BOS upgrade — the latest BOS version always has to have a tarball on the factory server, otherwise this whole path
