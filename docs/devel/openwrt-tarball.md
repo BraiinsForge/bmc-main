@@ -43,8 +43,9 @@ input. The CLI:
 4. Realises the resolved store paths (the caches to fetch from are declared inside the pinned index's `caches[]`).
 5. Builds a new profile generation.
 6. Leaves the new generation staged as a `next` pointer instead of promoting it into the profile ring, via
-   `bmc-nix-cli upgrade --next-boot`. An OpenWrt boot service promotes and activates it after the BOS partition swap;
-   see [Deferred Activation](upgrades.md#deferred-activation---next-boot).
+   `bmc-nix-cli upgrade --next-boot`. Firmware upgrades **always** take this deferred-activation path — the profile is
+   never activated in-place against the outgoing BOS. An OpenWrt boot service promotes and activates it after the BOS
+   partition swap; see [Deferred Activation](upgrades.md#deferred-activation---next-boot).
 
 `bmc-nix-cli` inside the tarball is intentionally the same binary used for the offline build-time profile assembly
 (`build-profile`, factory-tarball construction). Reusing one CLI keeps the resolution and profile-build code paths
