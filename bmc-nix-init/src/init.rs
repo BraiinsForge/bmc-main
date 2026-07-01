@@ -30,15 +30,11 @@ pub trait InitPlatform: Send + Sync {
     /// Set persistent init marker after successful first-time init.
     fn set_init_marker(&self, config: &InitConfig) -> Result<(), InitError>;
 
-    /// Prepare the Nix store directory (e.g. bind mount /mnt/data/nix to /nix).
-    ///
-    /// When `wipe` is `true`, any existing store directory is removed before
-    /// mounting. On retry attempts `wipe` should be `false` to avoid
-    /// discarding a partially-populated store that might still be valid.
-    fn prepare_nix_store(
+    /// Mount the promoted Nix store directory (e.g. bind mount
+    /// /mnt/data/nix to /nix).
+    fn mount_nix_store(
         &self,
         config: &InitConfig,
-        wipe: bool,
     ) -> impl std::future::Future<Output = Result<(), InitError>> + Send;
 
     /// Activate the latest profile generation in the given profile directory.
@@ -421,10 +417,10 @@ fn build_http_client() -> reqwest::Client {
 
 /// Execute the store initialization and activation steps (4-9).
 ///
-/// This covers: prepare store, read config, fetch index, download,
-/// activate, set setup pending, and set init marker.
+/// This covers: read config, fetch index, download, staged extraction,
+/// mount store, activate, set setup pending, and set init marker.
 ///
-/// `wipe_store` is forwarded to `prepare_nix_store`. Pass `true` on the
+/// `wipe_store` is forwarded to `store::init_store`. Pass `true` on the
 /// first attempt and `false` on subsequent retries so the store is not
 /// wiped unnecessarily.
 async fn init_store_and_activate<P: InitPlatform + 'static>(
@@ -434,8 +430,6 @@ async fn init_store_and_activate<P: InitPlatform + 'static>(
     client: &reqwest::Client,
     wipe_store: bool,
 ) -> Result<(), InitError> {
-    platform.prepare_nix_store(config, wipe_store).await?;
-
     let servers_config = load_servers_config(&config.servers_config_path)?;
     let bos_version = config
         .read_bos_version()
@@ -450,10 +444,14 @@ async fn init_store_and_activate<P: InitPlatform + 'static>(
         &servers_config.factory,
         &bos_version,
         &config.download_dir,
+        &config.nix_stage_dir(),
+        wipe_store,
         Some(&progress_observer),
     )
     .await
     .map_err(InitError::Store)?;
+
+    platform.mount_nix_store(config).await?;
 
     observer.on_state_change(&InitState::Activating);
     platform
@@ -472,8 +470,8 @@ async fn init_store_and_activate<P: InitPlatform + 'static>(
 /// Flow:
 /// 1. Check if already activated this boot → exit
 /// 3. Check WiFi connectivity, enter AP mode if needed
-/// 4. Prepare Nix store (bind mount)
-/// 5. Fetch factory index, download and extract tarball
+/// 4. Fetch factory index, download and extract tarball
+/// 5. Bind mount the promoted store
 /// 6. Activate initial profile
 /// 7. Set persistent init marker
 ///
@@ -752,11 +750,7 @@ mod tests {
         fn set_init_marker(&self, _config: &InitConfig) -> Result<(), InitError> {
             Ok(())
         }
-        async fn prepare_nix_store(
-            &self,
-            _config: &InitConfig,
-            _wipe: bool,
-        ) -> Result<(), InitError> {
+        async fn mount_nix_store(&self, _config: &InitConfig) -> Result<(), InitError> {
             Ok(())
         }
         async fn activate_generation(&self, _profile_dir: &Path) -> Result<(), InitError> {

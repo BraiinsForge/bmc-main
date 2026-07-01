@@ -49,6 +49,18 @@ impl Default for InitConfig {
 }
 
 impl InitConfig {
+    /// Data root used for staged store extraction.
+    ///
+    /// `nix_data_dir` is the bind-mount source for `/nix`; the staging
+    /// directory is its parent so promotion creates `<data-root>/nix`.
+    #[must_use]
+    pub fn nix_stage_dir(&self) -> PathBuf {
+        self.nix_data_dir
+            .as_ref()
+            .and_then(|path| path.parent())
+            .map_or_else(|| self.download_dir.clone(), std::path::Path::to_path_buf)
+    }
+
     /// Read the BOS version string from `/etc/bos_version`.
     ///
     /// Returns the complete version (e.g. `2026-03-04-0-8436f26b-26.02`).
