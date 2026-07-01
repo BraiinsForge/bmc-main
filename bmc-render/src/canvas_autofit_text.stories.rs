@@ -44,6 +44,36 @@ fn text_length_slider(c: &mut StoryCtx, default: f32) -> usize {
     len
 }
 
+/// One labeled autofit demo: `label` above a dark box that scales `content`
+/// with the given mode and explicit bounds via `Draw::autofit_text_ranged`.
+fn mode_demo(label: &str, content: &str, mode: AutoFit, min_size: u16, max_size: u16) -> Node {
+    const W: f32 = 300.0;
+    const H: f32 = 100.0;
+    col(
+        props!(gap: 8),
+        [
+            text(label, style!(size: 14, color: GRAY_50)),
+            canvas(
+                props!(width: W, height: H),
+                [
+                    Draw::rect(0.0, 0.0, W, H, Fill::Solid(GRAY_80)),
+                    Draw::autofit_text_ranged(
+                        0.0,
+                        0.0,
+                        W,
+                        H,
+                        content,
+                        style!(size: 30, align: TextAlign::Center),
+                        mode,
+                        min_size,
+                        max_size,
+                    ),
+                ],
+            ),
+        ],
+    )
+}
+
 // This story uses also Czech text to show correct handling of multibyte characters.
 #[story(default)]
 fn basic(c: &mut StoryCtx) {
@@ -189,6 +219,90 @@ fn text_positioning(c: &mut StoryCtx) {
                         align: TextAlign::Center,
                         valign: VerticalAlign::Top,
                     ),
+                ),
+            ],
+        ),
+    );
+}
+
+// Same content and box in every mode. Start size is 30. Drag the slider:
+// short text lets Grow / ShrinkAndGrow enlarge to fill, while Shrink stays at
+// 30; long text lets Shrink / ShrinkAndGrow scale down, while Grow cannot and
+// overflows.
+#[story]
+fn fit_modes(c: &mut StoryCtx) {
+    c.ui.header(
+        "Fit Modes",
+        "Shrink, Grow and ShrinkAndGrow at start size 30 in a 300x100 box",
+    );
+
+    let text_length = text_length_slider(c, 12.0);
+    let content = get_string_prefix(EXAMPLE_TEXT_EN, text_length);
+
+    c.ui.div(
+        (350, AutoH),
+        col(
+            props!(gap: 16, padding: 16),
+            [
+                // Shrink ignores max_size and searches [min_size, size].
+                mode_demo("Shrink [12..30]", content, AutoFit::Shrink, 12, 0),
+                // Grow ignores min_size and searches [size, max_size].
+                mode_demo("Grow [30..120]", content, AutoFit::Grow, 0, 120),
+                mode_demo(
+                    "ShrinkAndGrow [12..120]",
+                    content,
+                    AutoFit::ShrinkAndGrow,
+                    12,
+                    120,
+                ),
+            ],
+        ),
+    );
+}
+
+// Explicit min/max clamp the fitted size: it never leaves [min, max] even when
+// the box could fit a larger or smaller line. Uses ShrinkAndGrow so both
+// bounds are active.
+#[story]
+fn explicit_bounds(c: &mut StoryCtx) {
+    const W: f32 = 400.0;
+    const H: f32 = 160.0;
+
+    c.ui.header(
+        "Explicit Bounds",
+        "ShrinkAndGrow clamped to an explicit min/max font size",
+    );
+
+    let text_length = text_length_slider(c, 40.0);
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the slider yields a small non-negative font size"
+    )]
+    let min_size = c.slider("Min size", 16.0, 4.0, 80.0).get() as u16;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the slider yields a small non-negative font size"
+    )]
+    let max_size = c.slider("Max size", 72.0, 4.0, 160.0).get() as u16;
+
+    c.ui.div(
+        (W, H),
+        canvas(
+            props!(width: W, height: H),
+            [
+                Draw::rect(0.0, 0.0, W, H, Fill::Solid(GRAY_80)),
+                Draw::autofit_text_ranged(
+                    0.0,
+                    0.0,
+                    W,
+                    H,
+                    get_string_prefix(EXAMPLE_TEXT_EN, text_length),
+                    style!(size: 30, align: TextAlign::Center),
+                    AutoFit::ShrinkAndGrow,
+                    min_size,
+                    max_size,
                 ),
             ],
         ),
