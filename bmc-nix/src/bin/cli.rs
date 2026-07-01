@@ -113,7 +113,7 @@ enum Commands {
     // single outlier.
     /// Build a profile from an index JSON file
     BuildProfile {
-        /// Path to miniminer-index.json
+        /// Path to nix-package-index.v1.json
         #[arg(long)]
         index: PathBuf,
 
@@ -175,7 +175,7 @@ enum Commands {
 
     /// Reset profile from an index JSON (no manifest merging)
     ResetProfile {
-        /// Path to miniminer-index.json
+        /// Path to nix-package-index.v1.json
         #[arg(long)]
         index: PathBuf,
 

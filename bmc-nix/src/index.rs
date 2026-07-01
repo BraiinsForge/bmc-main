@@ -505,8 +505,13 @@ pub fn resolve_new_package(
 /// Resolve an already-installed package to its upgraded version.
 ///
 /// Uses the manifest entry to determine source server and pin constraint.
-/// First looks on the same server (`installed_from`), then falls back
-/// to all servers.
+/// Entries are first scoped to the server the package was installed from.
+/// If that server still lists the package, resolution stays confined to
+/// it: no-downgrade, pin constraint, latest version, and server priority
+/// are applied strictly within that server's entries, so an origin stuck
+/// on old versions reports stale rather than migrating to another server.
+/// Only when the origin server has no entry at all for the package does
+/// resolution fall back to the same steps across every server.
 pub fn resolve_installed_package(
     merged: &MergedIndex,
     name: &str,
@@ -520,24 +525,23 @@ pub fn resolve_installed_package(
     let all_entries: Vec<&MergedPackageEntry> =
         indices.iter().map(|&i| &merged.packages[i]).collect();
 
-    let pin_filtered: Vec<&MergedPackageEntry> = match &current.pinned {
-        Some(constraint_str) => {
-            let constraint = VersionConstraint::parse(constraint_str)?;
-            all_entries
-                .iter()
-                .filter(|e| constraint.matches(&e.version))
-                .copied()
-                .collect()
-        }
-        None => all_entries.clone(),
-    };
+    let constraint = current
+        .pinned
+        .as_deref()
+        .map(VersionConstraint::parse)
+        .transpose()?;
 
-    if pin_filtered.is_empty() {
-        return Err(ResolvePackageError::VersionNotFound {
-            package: name.to_owned(),
-            constraint: current.pinned.clone().unwrap_or_else(|| "*".to_owned()),
-        });
-    }
+    let origin: Vec<&MergedPackageEntry> = all_entries
+        .iter()
+        .filter(|e| e.server_id == current.installed_from)
+        .copied()
+        .collect();
+
+    let scoped = if origin.is_empty() {
+        all_entries
+    } else {
+        origin
+    };
 
     // An `upgrade` must never activate a store path older than the
     // installed one. Drop candidates below the installed version while
@@ -545,12 +549,12 @@ pub fn resolve_installed_package(
     // resolve. A malformed installed version disables the guard rather
     // than masking every candidate as stale.
     let no_downgrade: Vec<&MergedPackageEntry> = match parse_package_version(&current.version) {
-        Some(current_version) => pin_filtered
+        Some(current_version) => scoped
             .iter()
             .filter(|e| e.version >= current_version)
             .copied()
             .collect(),
-        None => pin_filtered.clone(),
+        None => scoped,
     };
 
     if no_downgrade.is_empty() {
@@ -560,24 +564,24 @@ pub fn resolve_installed_package(
         });
     }
 
-    let same_server: Vec<&MergedPackageEntry> = no_downgrade
-        .iter()
-        .filter(|e| e.server_id == current.installed_from)
-        .copied()
-        .collect();
+    let candidates: Vec<&MergedPackageEntry> = match &constraint {
+        Some(constraint) => no_downgrade
+            .into_iter()
+            .filter(|e| constraint.matches(&e.version))
+            .collect(),
+        None => no_downgrade,
+    };
 
-    if !same_server.is_empty() {
-        return pick_best_candidate(
-            name,
-            &same_server,
-            current.installed_by.clone(),
-            current.pinned.clone(),
-        );
+    if candidates.is_empty() {
+        return Err(ResolvePackageError::VersionNotFound {
+            package: name.to_owned(),
+            constraint: current.pinned.clone().unwrap_or_else(|| "*".to_owned()),
+        });
     }
 
     pick_best_candidate(
         name,
-        &no_downgrade,
+        &candidates,
         current.installed_by.clone(),
         current.pinned.clone(),
     )
@@ -1212,6 +1216,40 @@ mod tests {
     }
 
     #[test]
+    fn resolve_installed_package_stays_on_source_server_when_pin_excludes_it() {
+        let merged = merge_indexes(vec![
+            fetched(
+                "a",
+                1,
+                vec![versioned_package("clock", "2.0.0", "/nix/store/source")],
+            ),
+            fetched(
+                "b",
+                2,
+                vec![versioned_package("clock", "1.3.0", "/nix/store/other")],
+            ),
+        ]);
+        let current = ManifestPackage {
+            version: "1.2.0".into(),
+            store_path: "/nix/store/current".into(),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: InstalledBy::System,
+            installed_from: "a".into(),
+            pinned: Some("^1.2".to_owned()),
+        };
+
+        let result = resolve_installed_package(&merged, "clock", &current);
+
+        assert!(matches!(
+            result,
+            Err(ResolvePackageError::VersionNotFound { .. })
+        ));
+    }
+
+    #[test]
     fn resolve_installed_package_respects_patch_pin() {
         let merged = merge_indexes(vec![fetched(
             "braiins",
@@ -1426,6 +1464,79 @@ mod tests {
             .expect("BUG: a same-version two-component current must not be stale");
 
         assert_eq!(resolved.version, "0.8.0");
+    }
+
+    #[test]
+    fn origin_with_only_older_versions_stays_stale_not_migrated() {
+        let merged = merge_indexes(vec![
+            fetched(
+                "srv-a",
+                10,
+                vec![versioned_package("clock", "1.9.0", "/nix/store/old")],
+            ),
+            fetched(
+                "srv-b",
+                1,
+                vec![versioned_package("clock", "2.1.0", "/nix/store/new")],
+            ),
+        ]);
+        let current = ManifestPackage {
+            version: "2.0.0".into(),
+            store_path: "/nix/store/current".into(),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: InstalledBy::System,
+            installed_from: "srv-a".into(),
+            pinned: None,
+        };
+
+        let err = resolve_installed_package(&merged, "clock", &current)
+            .expect_err("BUG: must not migrate to another server");
+
+        assert!(matches!(err, ResolvePackageError::VersionNotFound { .. }));
+    }
+
+    #[test]
+    fn missing_origin_falls_back_to_other_servers_without_downgrade() {
+        let merged = merge_indexes(vec![
+            fetched(
+                "srv-b",
+                5,
+                vec![
+                    versioned_package("clock", "1.5.0", "/nix/store/older"),
+                    versioned_package("clock", "2.1.0", "/nix/store/newer"),
+                ],
+            ),
+            fetched(
+                "srv-c",
+                20,
+                vec![versioned_package(
+                    "clock",
+                    "2.1.0",
+                    "/nix/store/worse-priority",
+                )],
+            ),
+        ]);
+        let current = ManifestPackage {
+            version: "2.0.0".into(),
+            store_path: "/nix/store/current".into(),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: InstalledBy::System,
+            installed_from: "srv-a".into(),
+            pinned: None,
+        };
+
+        let resolved = resolve_installed_package(&merged, "clock", &current)
+            .expect("BUG: a package whose origin lists no entries must fall back");
+
+        assert_eq!(resolved.version, "2.1.0");
+        assert_eq!(resolved.installed_from, "srv-b");
+        assert_eq!(resolved.store_path, "/nix/store/newer");
     }
 
     #[test]
