@@ -286,7 +286,6 @@ fn decode_and_upload(
     flags: ImageFlags,
 ) -> anyhow::Result<(ImageId, Vec<u8>, u32, u32)> {
     // Decode on a owned copy so the closure is UnwindSafe (no &mut references).
-    let data = data.to_vec();
     let rgba = panic::catch_unwind(|| {
         image::ImageReader::new(Cursor::new(&data))
             .with_guessed_format()
@@ -341,7 +340,6 @@ fn decode_jpeg_to_dynamic(
     max_w: u32,
     max_h: u32,
 ) -> anyhow::Result<image::DynamicImage> {
-    let data = data.to_vec();
     panic::catch_unwind(|| {
         let mut decoder = jpeg_decoder::Decoder::new(Cursor::new(&data));
         decoder.scale(
@@ -369,7 +367,6 @@ fn decode_jpeg_to_dynamic(
 /// row-wise PNG decode was deferred: it only helps non-interlaced PNGs and is
 /// messy for that narrow gain; large sources lean on server-side `{{width}}`.
 fn decode_full_to_dynamic(data: &[u8]) -> anyhow::Result<image::DynamicImage> {
-    let data = data.to_vec();
     panic::catch_unwind(|| {
         // Reject oversized sources before the full decode allocates (pixel budget).
         let (w, h) = image::ImageReader::new(Cursor::new(&data))
