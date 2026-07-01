@@ -246,21 +246,16 @@ pub async fn apply_profile_change(
 
     // 6. Optionally activate
     if activate {
-        if let Some(p) = progress {
-            p.on_phase(UpgradePhase::Activating);
-        }
-        profile::activate_profile(
-            profile_dir,
-            generation.number,
-            &generation.path,
-            Some(&lock),
-        )
-        .await?;
+        activate_generation(profile_dir, &generation, &lock, progress).await?;
     }
 
     // 7. GC old generations (optional). Protect the pre-activation
     //    generation from this run's cleanup so the caller can still
     //    diff against it; persistent protection lives in `GcConfig`.
+    //    The newly built generation is also passed explicitly as
+    //    belt-and-suspenders — `cleanup_generations` already keeps it
+    //    as `current`/latest, but an explicit entry survives any future
+    //    refactor of those defaults.
     //
     //    The generation is already built and activated, so a GC failure
     //    is captured into the result rather than aborting the run.
@@ -269,8 +264,14 @@ pub async fn apply_profile_change(
             if let Some(p) = progress {
                 p.on_phase(UpgradePhase::Cleaning);
             }
-            let keep_extra: Vec<usize> = previous_generation.into_iter().collect();
-            run_gc(profile_dir, gc_config, &keep_extra, progress).await
+            run_gc(
+                profile_dir,
+                gc_config,
+                previous_generation,
+                generation.number,
+                progress,
+            )
+            .await
         }
         None => Ok(()),
     };
@@ -286,6 +287,20 @@ pub async fn apply_profile_change(
     })
 }
 
+/// Activate a freshly built generation, reporting the phase.
+async fn activate_generation(
+    profile_dir: &Path,
+    generation: &ProfileGeneration,
+    lock: &profile::ProfileLock,
+    progress: Option<&dyn UpgradeProgress>,
+) -> Result<(), InstallError> {
+    if let Some(p) = progress {
+        p.on_phase(UpgradePhase::Activating);
+    }
+    profile::activate_profile(profile_dir, generation.number, &generation.path, Some(lock)).await?;
+    Ok(())
+}
+
 /// Run the post-activation GC sweep: prune old generation links, then
 /// collect now-unreferenced store paths. Cleanup failing short-circuits
 /// the heavier collection, since a broken cleanup suggests the profile
@@ -293,10 +308,15 @@ pub async fn apply_profile_change(
 async fn run_gc(
     profile_dir: &Path,
     gc_config: &GcConfig,
-    keep_extra: &[usize],
+    previous_generation: Option<usize>,
+    new_generation: usize,
     progress: Option<&dyn UpgradeProgress>,
 ) -> Result<(), gc::GcError> {
-    gc::cleanup_generations(profile_dir, gc_config, keep_extra)?;
+    // Protect both the pre-activation generation and the freshly built
+    // one from cleanup, regardless of current/latest defaults.
+    let mut keep_extra: Vec<usize> = previous_generation.into_iter().collect();
+    keep_extra.push(new_generation);
+    gc::cleanup_generations(profile_dir, gc_config, &keep_extra)?;
     let gc_progress = progress.map(UpgradeCollectGarbageProgress);
     gc::collect_garbage(
         &store::TokioCommandRunner,
