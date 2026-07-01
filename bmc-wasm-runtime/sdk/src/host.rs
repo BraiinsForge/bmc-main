@@ -130,6 +130,9 @@ mod ffi {
         // Tag-prefix eviction across icon, bitmap, mesh, and audio registries.
         fn host_evict_prefix(prefix_ptr: *const u8, prefix_len: u32) -> u32;
 
+        // Evict this widget's entire namespace (all icons, bitmaps, meshes, audio).
+        fn host_evict_all() -> u32;
+
         // Random number generation (host-seeded for deterministic replay)
         fn host_random_u32() -> u32;
 
@@ -370,6 +373,12 @@ mod ffi {
     #[expect(clippy::cast_possible_truncation)]
     pub fn evict_prefix(prefix: &str) -> u32 {
         unsafe { host_evict_prefix(prefix.as_ptr(), prefix.len() as u32) }
+    }
+
+    /// Evict everything this widget registered — its whole namespace.
+    /// Returns the number of entries evicted.
+    pub fn evict_all() -> u32 {
+        unsafe { host_evict_all() }
     }
 
     /// Get the dimensions of an image (PNG, JPEG, etc.) without decoding the full pixel data.

@@ -85,6 +85,7 @@ pub enum Action {
     DisablePoll,
     Retry,
     RequestFrame,
+    EvictBitmap,
 }
 
 /// Fold an event into the view, returning the next view and its side effects.
@@ -219,7 +220,10 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
                 vec![A::ResumePoll, A::RequestFrame],
             ),
         },
-        E::Dormant => (view, vec![A::DisablePoll]),
+        E::Dormant => (
+            View::Loading { decode: None },
+            vec![A::DisablePoll, A::EvictBitmap],
+        ),
     }
 }
 
@@ -457,16 +461,25 @@ mod tests {
     }
 
     #[test]
-    fn dormant_disables_poll() {
+    fn dormant_drops_bitmap_and_disables_poll() {
         let (next, actions) = step(shown(Badge::Fresh, None), Event::Dormant);
-        assert!(matches!(
-            next,
-            View::Shown {
-                badge: Badge::Fresh,
-                ..
-            }
-        ));
-        assert_eq!(actions, vec![Action::DisablePoll]);
+        assert!(matches!(next, View::Loading { decode: None }));
+        assert_eq!(actions, vec![Action::DisablePoll, Action::EvictBitmap]);
+    }
+
+    #[test]
+    fn dormant_then_restore_returns_to_shown() {
+        let (dormant, _) = step(shown(Badge::Fresh, None), Event::Dormant);
+        assert!(matches!(dormant, View::Loading { decode: None }));
+        let (woken, _) = step(
+            dormant,
+            Event::Restored {
+                bitmap: bmp(1),
+                aspect: 2.0,
+                remaining_ms: 4_000,
+            },
+        );
+        assert!(matches!(woken, View::Shown { .. }));
     }
 
     #[test]

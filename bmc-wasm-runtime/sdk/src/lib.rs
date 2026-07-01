@@ -176,11 +176,11 @@
 //!
 //! Optional, paired with the dormancy edge. `on_dormant` fires when the widget
 //! scrolls off-scene; `on_wake` fires before the first frame when it returns.
-//! Implementing `on_wake` opts the slot into eviction: the host frees its
-//! renderer bitmaps on dormancy, and `on_wake` re-registers them. Without
-//! `on_wake` the slot keeps its assets. `on_dormant` is also where a widget
-//! releases its own heavy buffers or persists downloaded/parsed/derived state
-//! to rebuild on wake without re-fetching.
+//! A lifecycle hook is a callback, not a signal —
+//! the host never touches a widget's assets on its own.
+//! A widget sheds its own assets in `on_dormant` (`Slot::evict()`,
+//! or `evict_all()` for the whole namespace) and re-registers in `on_wake`.
+//! `on_dormant` is also where it persists state to rebuild on wake.
 //!
 //! ## Lifecycle guard matrix
 //!

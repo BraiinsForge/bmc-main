@@ -910,6 +910,13 @@ impl HostState {
         format!("{}:{tag}", self.instance_id)
     }
 
+    /// The bare namespace root (`instance_id`) every asset tag lives under.
+    /// `evict_prefix(instance_namespace())` sweeps the whole bucket.
+    #[must_use]
+    pub fn instance_namespace(&self) -> &str {
+        &self.instance_id
+    }
+
     /// Evict every host-side audio asset belonging to this widget instance.
     /// Returns the number of evicted entries.
     /// Used as the audio-side safety sweep in `WasmWidgetRuntime`'s `Drop`;

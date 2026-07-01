@@ -68,6 +68,7 @@ mod wasm_glue {
                 Action::DisablePoll => with_poll(|h| h.set_enabled(false)),
                 Action::Retry => with_poll(PollHandle::retry),
                 Action::RequestFrame => request_frame(),
+                Action::EvictBitmap => IMAGE.evict(),
             }
         }
     }
