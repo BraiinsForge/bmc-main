@@ -478,6 +478,11 @@
           "const": "space"
         },
         {
+          "description": "Facts & trivia.",
+          "type": "string",
+          "const": "knowledge"
+        },
+        {
           "description": "Diagnostic, demo, and system tools.",
           "type": "string",
           "const": "utility"

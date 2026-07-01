@@ -644,6 +644,8 @@ pub enum WidgetCategory {
     Calendar,
     /// Space and astronomy.
     Space,
+    /// Facts & trivia.
+    Knowledge,
     /// Diagnostic, demo, and system tools.
     Utility,
     /// Audio, video, and image media.
