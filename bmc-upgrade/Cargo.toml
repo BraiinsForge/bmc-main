@@ -20,7 +20,6 @@ croner.workspace = true
 data-encoding.workspace = true
 index-bmc.workspace = true
 index-common.workspace = true
-minerctl-defs.workspace = true
 rand.workspace = true
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 ring.workspace = true

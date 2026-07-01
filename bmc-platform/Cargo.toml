@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Braiins <braiins@braiins.com>"]
 
+# `mkWorkspaceConfig` omits root includes from per-crate sources,
+# so keep the complete nested tooling workspace in this dependency closure.
+[package.metadata.nix]
+include = ["../tooling/**"]
+
 [features]
 backlight = ["dep:anyhow", "dep:tracing"]
 linux-input = ["dep:tracing"]

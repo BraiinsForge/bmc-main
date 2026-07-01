@@ -1,0 +1,76 @@
+[package]
+name = "tooling-workspace"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+
+[workspace]
+resolver = "3"
+members = [
+    "index-bmc",
+    "index-common",
+]
+
+[workspace.dependencies]
+# local path dependencies
+index-bmc = { path = "index-bmc" }
+index-common = { path = "index-common" }
+
+# third-party dependencies
+chrono = { version = "0.4.40", features = ["serde"] }
+fs-err = { version = "3.1.0", features = ["tokio"] }
+hex = "0.4.3"
+itertools = "0.14.0"
+rand = "0.9.0"
+regex = "1.11.1"
+reqwest = { version = "=0.11", default-features = false, features = ["gzip", "json", "multipart", "rustls-tls", "stream"] } # TODO: upgrade hyper to v1
+serde = { version = "1.0.218", features = ["derive", "rc"] }
+serde_json = { version = "1.0.140", features = ["raw_value"] }
+sha2 = "0.10.8"
+strum = { version = "0.27.1", features = ["derive"] }
+tap = "1.0.1"
+thiserror = "2.0.11"
+url = { version = "2.5.4", features = ["serde"] }
+uuid = { version = "1.15.1", features = ["fast-rng", "serde", "v4"] }
+
+[workspace.lints.rust]
+# deny
+unused_must_use = "deny"
+# warn
+explicit_outlives_requirements = "warn"
+future_incompatible = { level = "warn", priority = -1 }
+macro_use_extern_crate = "warn"
+missing_debug_implementations = "warn"
+nonstandard_style = { level = "warn", priority = -1 }
+rust_2018_idioms = { level = "warn", priority = -1 }
+trivial_numeric_casts = "warn"
+# allow
+deprecated = "allow"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# lints from the clippy::pedantic group that are explicitly allowed
+doc_markdown = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+new_without_default = "allow"
+similar_names = "allow"
+unreadable_literal = "allow"
+# additional useful lints not coveded by clippy::pedantic
+allow_attributes = "warn"
+get_unwrap = "warn"
+integer_division = "warn"
+lossy_float_literal = "warn"
+modulo_arithmetic = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+str_to_string = "warn"
+string_add = "warn"
+string_slice = "warn"
+string_to_string = "warn"
+unneeded_field_pattern = "warn"
+unseparated_literal_suffix = "warn"
+wildcard_enum_match_arm = "warn"

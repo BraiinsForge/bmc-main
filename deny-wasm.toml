@@ -140,6 +140,4 @@ allow-registry = [
     "https://github.com/rust-lang/crates.io-index",
     "sparse+http://registry.ii.zone/api/v1/crates/",
 ]
-allow-git = [
-    "ssh://git@gitlab.ii.zone/tooling/tooling.git",
-]
+allow-git = []

@@ -68,7 +68,6 @@ tonic-middleware.workspace = true
 tonic-reflection.workspace = true
 tonic-types.workspace = true
 tonic-web.workspace = true
-tooling-std.workspace = true
 tower = { workspace = true, features = ["steer"] }
 tower-cookies.workspace = true
 tower-http = { workspace = true, features = [

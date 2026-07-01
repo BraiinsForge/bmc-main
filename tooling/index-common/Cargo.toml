@@ -1,0 +1,27 @@
+[package]
+name = "index-common"
+description = "Common types and download logic for BMC release indexes"
+version = "0.0.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+fs-err.workspace = true
+hex.workspace = true
+itertools.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+strum.workspace = true
+tap.workspace = true
+thiserror.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+rand.workspace = true

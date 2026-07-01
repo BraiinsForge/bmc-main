@@ -8,7 +8,7 @@ use index_bmc::{
     query_layer::{IndexQueryLayer, UpgradeResolverError},
 };
 use index_common::NormalizedIndex;
-use minerctl_defs::bos::version::BosVersion;
+use index_common::bos::version::BosVersion;
 use reqwest::Client;
 use std::time::Duration;
 use tracing::warn;
