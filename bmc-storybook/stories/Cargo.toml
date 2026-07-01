@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [lib]
-crate-type = ["cdylib"]
+# rlib lets targets that cannot produce a cdylib (the static musl
+# workspace-deps build) drop it with a warning instead of failing.
+crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]
 toml.workspace = true

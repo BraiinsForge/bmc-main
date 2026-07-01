@@ -190,6 +190,7 @@ let
       seatd
       (compositorUdev pkgs)
       libdrm
+      alsa-lib
     ];
     env = {
       FONTCONFIG_FILE = commonDeps.env.FONTCONFIG_FILE;
