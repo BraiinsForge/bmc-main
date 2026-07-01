@@ -74,7 +74,7 @@ pub enum Event {
     },
     ParamsChanged,
     Reload,
-    Dormant,
+    Sleep,
 }
 
 /// A host side effect for the shell to run.
@@ -220,7 +220,7 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
                 vec![A::ResumePoll, A::RequestFrame],
             ),
         },
-        E::Dormant => (
+        E::Sleep => (
             View::Loading { decode: None },
             vec![A::DisablePoll, A::EvictBitmap],
         ),
@@ -462,14 +462,14 @@ mod tests {
 
     #[test]
     fn dormant_drops_bitmap_and_disables_poll() {
-        let (next, actions) = step(shown(Badge::Fresh, None), Event::Dormant);
+        let (next, actions) = step(shown(Badge::Fresh, None), Event::Sleep);
         assert!(matches!(next, View::Loading { decode: None }));
         assert_eq!(actions, vec![Action::DisablePoll, Action::EvictBitmap]);
     }
 
     #[test]
     fn dormant_then_restore_returns_to_shown() {
-        let (dormant, _) = step(shown(Badge::Fresh, None), Event::Dormant);
+        let (dormant, _) = step(shown(Badge::Fresh, None), Event::Sleep);
         assert!(matches!(dormant, View::Loading { decode: None }));
         let (woken, _) = step(
             dormant,

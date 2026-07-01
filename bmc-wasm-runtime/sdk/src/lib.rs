@@ -165,22 +165,22 @@
 //! is dropped (scene swap, hot reload, shutdown). The place to flush in-memory state to KV.
 //! Frame requests fired from `unload` are silently ignored — the runtime is about to be torn down.
 //!
-//! ### `on_wake` / `on_dormant`
+//! ### `on_wake` / `on_sleep`
 //!
 //! ```rust,ignore
 //! #[unsafe(no_mangle)]
-//! pub extern "C" fn on_dormant() { /* release off-scene resources */ }
+//! pub extern "C" fn on_sleep() { /* release off-scene resources */ }
 //! #[unsafe(no_mangle)]
 //! pub extern "C" fn on_wake() { /* restore them before the first frame */ }
 //! ```
 //!
-//! Optional, paired with the dormancy edge. `on_dormant` fires when the widget
+//! Optional, paired with the dormancy edge. `on_sleep` fires when the widget
 //! scrolls off-scene; `on_wake` fires before the first frame when it returns.
 //! A lifecycle hook is a callback, not a signal —
 //! the host never touches a widget's assets on its own.
-//! A widget sheds its own assets in `on_dormant` (`Slot::evict()`,
+//! A widget sheds its own assets in `on_sleep` (`Slot::evict()`,
 //! or `evict_all()` for the whole namespace) and re-registers in `on_wake`.
-//! `on_dormant` is also where it persists state to rebuild on wake.
+//! `on_sleep` is also where it persists state to rebuild on wake.
 //!
 //! ## Lifecycle guard matrix
 //!
@@ -196,7 +196,7 @@
 //!   is reasonable and the widget composes naturally with the sentinel.
 //!
 //! `on_params_update`, `on_system_update`, `on_touch`, `on_wake`, and
-//! `on_dormant` share the same import-legality row — state-mutation legal,
+//! `on_sleep` share the same import-legality row — state-mutation legal,
 //! tree-submission illegal.
 //!
 //! | Import                                              | `init` | `render` | `on_*`* | `unload` |

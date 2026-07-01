@@ -203,8 +203,8 @@ mod wasm_glue {
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn on_dormant() {
-        dispatch(Event::Dormant);
+    pub extern "C" fn on_sleep() {
+        dispatch(Event::Sleep);
     }
 
     #[unsafe(no_mangle)]

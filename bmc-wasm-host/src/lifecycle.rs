@@ -62,7 +62,7 @@ pub enum LifecycleHook {
     /// Left `Dormant` — restore before the first frame.
     Wake,
     /// Entered `Dormant` — release off-scene resources.
-    Dormant,
+    Sleep,
 }
 
 /// Hook for a committed `previous → current` transition — the `has_render_target` flip.
@@ -70,7 +70,7 @@ pub enum LifecycleHook {
 pub fn lifecycle_hook(previous: LifecycleState, current: LifecycleState) -> Option<LifecycleHook> {
     match (has_render_target(previous), has_render_target(current)) {
         (false, true) => Some(LifecycleHook::Wake),
-        (true, false) => Some(LifecycleHook::Dormant),
+        (true, false) => Some(LifecycleHook::Sleep),
         _ => None,
     }
 }
@@ -281,7 +281,7 @@ mod tests {
         for from in RENDER_STATES {
             assert_eq!(
                 lifecycle_hook(from, Dormant),
-                Some(LifecycleHook::Dormant),
+                Some(LifecycleHook::Sleep),
                 "{from:?} -> Dormant"
             );
         }

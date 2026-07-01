@@ -271,7 +271,7 @@ impl Default for RuntimeConfig {
 /// A lifecycle edge awaiting its guest hook.
 enum PendingHook {
     Wake,
-    Dormant,
+    Sleep,
 }
 
 /// WebAssembly widget runtime.
@@ -308,7 +308,7 @@ pub struct WasmWidgetRuntime {
     on_touch_func: Option<wasmi::TypedFunc<(), ()>>,
     /// Optional guest exports fired on the dormancy/wake edge.
     on_wake_func: Option<wasmi::TypedFunc<(), ()>>,
-    on_dormant_func: Option<wasmi::TypedFunc<(), ()>>,
+    on_sleep_func: Option<wasmi::TypedFunc<(), ()>>,
     /// Lifecycle edge awaiting its hook (fired in `poll_deliveries` scope).
     pending_hook: Option<PendingHook>,
     sdk_version: (u16, u16, u16),
@@ -318,7 +318,7 @@ pub struct WasmWidgetRuntime {
     fuel_strikes: u32,
     /// Widget permanently stopped after exceeding [`Self::max_fuel_strikes`].
     fuel_dead: bool,
-    /// Off-screen (`on_dormant` fired); suppresses async-decode GPU uploads.
+    /// Off-screen (`on_sleep` fired); suppresses async-decode GPU uploads.
     pub(super) dormant: bool,
     /// How many consecutive fuel-outs before the widget is killed.
     max_fuel_strikes: u32,
@@ -462,7 +462,7 @@ impl WasmWidgetRuntime {
             .ok();
         let on_touch_func = instance.get_typed_func::<(), ()>(&store, "on_touch").ok();
         let on_wake_func = instance.get_typed_func::<(), ()>(&store, "on_wake").ok();
-        let on_dormant_func = instance.get_typed_func::<(), ()>(&store, "on_dormant").ok();
+        let on_sleep_func = instance.get_typed_func::<(), ()>(&store, "on_sleep").ok();
         tracing::info!(
             instance_id = %instance_id,
             width,
@@ -492,7 +492,7 @@ impl WasmWidgetRuntime {
             on_system_update_func,
             on_touch_func,
             on_wake_func,
-            on_dormant_func,
+            on_sleep_func,
             pending_hook: None,
             sdk_version,
             fuel_per_frame,
@@ -906,9 +906,9 @@ impl WasmWidgetRuntime {
 
     /// Queue the dormant edge; the hook fires later, in `poll_deliveries` scope.
     pub fn notify_dormant(&mut self) -> bool {
-        self.pending_hook = Some(PendingHook::Dormant);
+        self.pending_hook = Some(PendingHook::Sleep);
         self.dormant = true;
-        self.on_dormant_func.is_some()
+        self.on_sleep_func.is_some()
     }
 
     /// Queue the wake edge; the hook fires later, in `poll_deliveries` scope.
@@ -924,8 +924,8 @@ impl WasmWidgetRuntime {
             Some(PendingHook::Wake) => {
                 self.fire_update_hook(self.on_wake_func, "on_wake", Lifecycle::Wake);
             }
-            Some(PendingHook::Dormant) => {
-                self.fire_update_hook(self.on_dormant_func, "on_dormant", Lifecycle::Dormant);
+            Some(PendingHook::Sleep) => {
+                self.fire_update_hook(self.on_sleep_func, "on_sleep", Lifecycle::Sleep);
             }
             None => {}
         }

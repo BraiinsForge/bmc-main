@@ -619,7 +619,7 @@ impl WidgetSlot {
                 Some(LifecycleHook::Wake) => {
                     self.runtime.notify_wake();
                 }
-                Some(LifecycleHook::Dormant) => {
+                Some(LifecycleHook::Sleep) => {
                     self.runtime.notify_dormant();
                 }
                 None => {}
