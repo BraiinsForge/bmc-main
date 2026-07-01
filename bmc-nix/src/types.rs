@@ -45,7 +45,7 @@ impl std::str::FromStr for BaseSelector {
     }
 }
 
-/// Remote package index (miniminer-index.json)
+/// Remote package index (`nix-package-index.v1.json`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageIndex {
     pub version: u32,
@@ -210,7 +210,7 @@ pub struct ServerEntry {
     pub enabled: bool,
 }
 
-/// Factory initialization index (`miniminer-factory.json`).
+/// Factory initialization index (`nix-factory.v1.json`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FactoryIndex {
     pub version: u32,
