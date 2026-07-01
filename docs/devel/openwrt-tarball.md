@@ -6,7 +6,8 @@ about; the OpenWrt image itself (kernel, rootfs, boot glue) is a BOS concern.
 
 Two things ship inside every tarball that concern `bmc-nix`:
 
-- **`bmc-nix-cli`** — the CLI wrapper around the `bmc-nix` library used during firmware installation.
+- **`bmc-nix-cli`** — the CLI wrapper around the `bmc-nix` library used during firmware installation and, when the store
+  does not exist yet, initialization.
 - **The firmware index** — a `nix-package-index.v1.json` pinned to the exact package versions the firmware was built and
   tested against.
 
@@ -61,6 +62,60 @@ Every firmware build must produce, in addition to the OpenWrt image itself:
 The pinned index must be self-consistent: every `store_path` it references must be reachable from a cache in its
 `caches[]`, and every checker package the release relies on must be listed. There is no fallback to remote indexes to
 paper over a missing entry — the run will abort.
+
+## Initialization
+
+The firmware tarball is also the vehicle by which a device that has never had Nix gains a `/nix/store` for the first
+time. This is used both by the very first firmware release that introduces Nix (users cannot skip that version) and by
+the fallback recovery path after a factory reset that wipes the store.
+
+Two pieces are involved:
+
+- `bmc-nix-cli init` — an initialization subcommand of the same on-tarball CLI. It performs the on-device steps
+  described below.
+- The firmware image `COMMAND` — the sysupgrade hook that BOS runs before applying the new image. When the `COMMAND`
+  detects that `/nix/store` does not yet exist, it invokes `bmc-nix-cli init` to prepare it. On subsequent firmware
+  upgrades the store is already there and this step is skipped.
+
+The `init` command is intentionally distinct from the firmware-upgrade flow (`build-profile` and friends). Init operates
+before there is any profile to diff against; it only has to populate the store and lay down the initial profile shipped
+in the tarball.
+
+### On-device Steps
+
+`bmc-nix-cli init` performs the following, in order:
+
+1. **Initialize the `/mnt/data` partition if it is not yet initialized.** New devices ship without an application-data
+   partition; on legacy devices upgrading to the first Nix-capable firmware the partition may exist but be empty. The
+   CLI creates the filesystem structure it expects there.
+2. **Mount `/mnt/data` if it is not yet mounted.** This must happen before anything is written under it, and it must be
+   idempotent — the CLI may be re-run after a partial init.
+3. **Select and download the initialization tarball.** Selection is by the current BOS version read from
+   `/etc/bos-version`, matched against the factory index (the `factory` entry from `/etc/nix-upgrade/servers.json`; see
+   [`upgrades.md`](upgrades.md#initialization-and-factory-reset) for how first-boot certificate validation and
+   Ed25519-signed tarballs interact). If no tarball matches the current BOS version, the initializer escalates to a full
+   BOS upgrade — the latest BOS version always has to have a tarball on the factory server, otherwise this whole path
+   breaks.
+4. **Unpack the tarball into `/mnt/data` and atomically promote `nix.tmp` to `nix`.** The tarball extracts into a
+   `nix.tmp/` staging directory inside `/mnt/data`. Only after the extraction fully succeeds is `nix.tmp` renamed to
+   `nix`. This gives the boot-time services a single check — "does `/mnt/data/nix` exist?" — that cannot observe a
+   half-extracted store. A crash or power loss mid-extract leaves `nix.tmp` behind, which the next `init` run wipes and
+   re-extracts.
+
+Once `nix` is in place, the initial profile shipped inside the tarball is available and can be activated on next boot.
+Activation itself is not part of `init` — the boot-time service handles it, the same way it would after a firmware
+upgrade.
+
+### Relation to the Fallback Initializer
+
+The static fallback initializer covered in [`upgrades.md`](upgrades.md#initialization-and-factory-reset) — the small
+program kept forever for recovering from a wiped store on a device that no longer has any Nix-produced code available —
+performs a similar sequence, but from outside the tarball. `bmc-nix-cli init` is the in-tarball path for the common
+case, where the tarball itself carries the code that will do the initialization; the static initializer is the
+last-resort path for when the tarball cannot be applied because nothing on the device can execute it yet.
+
+Both paths must converge on the same on-disk layout: `/mnt/data/nix` containing the store,
+`/nix/var/nix/gcroots/profiles/` carrying the initial profile, with `nix.tmp` used only as a staging directory.
 
 ## BOS Downgrade
 
