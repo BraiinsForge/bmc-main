@@ -333,12 +333,41 @@ pub enum InitStoreError {
     DownloadStalled { timeout_secs: u64 },
     #[error("failed to write tarball to disk: {0}")]
     WriteFailed(#[source] std::io::Error),
+    #[error("initialized store already exists at {path}; pass --wipe to replace it")]
+    StoreAlreadyExists { path: String },
+    #[error("failed to prepare staging path {path}: {source}")]
+    StagePrepareFailed {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("tarball extraction failed: {0}")]
     ExtractionFailed(#[source] std::io::Error),
     #[error("tar exited with {status}: {stderr}")]
     TarFailed {
         status: std::process::ExitStatus,
         stderr: String,
+    },
+    #[error("factory tarball did not contain a nix subtree at {path}")]
+    MissingNixSubtree { path: String },
+    #[error("failed to copy root overlay {path}: {source}")]
+    OverlayCopyFailed {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("cp -a for root overlay {path} exited with {status}: {stderr}")]
+    OverlayCopyExited {
+        path: String,
+        status: std::process::ExitStatus,
+        stderr: String,
+    },
+    #[error("failed to promote staged Nix store from {from} to {to}: {source}")]
+    PromoteFailed {
+        from: String,
+        to: String,
+        #[source]
+        source: std::io::Error,
     },
 }
 
@@ -355,6 +384,164 @@ pub struct InitStoreResult {
 pub trait DownloadProgress: Send + Sync {
     fn on_bytes_downloaded(&self, downloaded: usize, total: Option<usize>);
     fn on_extracting(&self);
+}
+
+pub(crate) fn stderr_snippet(stderr: &[u8]) -> String {
+    String::from_utf8_lossy(stderr).chars().take(500).collect()
+}
+
+pub(crate) fn path_string(path: &Path) -> String {
+    path.display().to_string()
+}
+
+fn remove_path_if_exists(path: &Path) -> Result<(), std::io::Error> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => std::fs::remove_dir_all(path),
+        Ok(_) => std::fs::remove_file(path),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+fn prepare_promoted_store_path(stage_dir: &Path, wipe_store: bool) -> Result<(), InitStoreError> {
+    let promoted_store = stage_dir.join("nix");
+    match std::fs::symlink_metadata(&promoted_store) {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => {
+            return Err(InitStoreError::StagePrepareFailed {
+                path: path_string(&promoted_store),
+                source,
+            });
+        }
+    }
+
+    if !wipe_store {
+        return Err(InitStoreError::StoreAlreadyExists {
+            path: path_string(&promoted_store),
+        });
+    }
+
+    remove_path_if_exists(&promoted_store).map_err(|source| InitStoreError::StagePrepareFailed {
+        path: path_string(&promoted_store),
+        source,
+    })
+}
+
+async fn copy_root_overlay(entry: &Path, root: &Path) -> Result<(), InitStoreError> {
+    let output = tokio::process::Command::new("cp")
+        .arg("-a")
+        .arg(entry)
+        .arg(root)
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await
+        .map_err(|source| InitStoreError::OverlayCopyFailed {
+            path: path_string(entry),
+            source,
+        })?;
+
+    if !output.status.success() {
+        return Err(InitStoreError::OverlayCopyExited {
+            path: path_string(entry),
+            status: output.status,
+            stderr: stderr_snippet(&output.stderr),
+        });
+    }
+
+    Ok(())
+}
+
+async fn extract_staged(
+    tarball_path: &Path,
+    stage_dir: &Path,
+    root: &Path,
+) -> Result<(), InitStoreError> {
+    std::fs::create_dir_all(stage_dir).map_err(|source| InitStoreError::StagePrepareFailed {
+        path: path_string(stage_dir),
+        source,
+    })?;
+
+    let staging = stage_dir.join("nix.tmp");
+    remove_path_if_exists(&staging).map_err(|source| InitStoreError::StagePrepareFailed {
+        path: path_string(&staging),
+        source,
+    })?;
+    std::fs::create_dir(&staging).map_err(|source| InitStoreError::StagePrepareFailed {
+        path: path_string(&staging),
+        source,
+    })?;
+
+    let result = async {
+        let output = tokio::process::Command::new("tar")
+            .arg("xzf")
+            .arg(tarball_path)
+            .arg("-C")
+            .arg(&staging)
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await
+            .map_err(InitStoreError::ExtractionFailed)?;
+
+        if !output.status.success() {
+            return Err(InitStoreError::TarFailed {
+                status: output.status,
+                stderr: stderr_snippet(&output.stderr),
+            });
+        }
+
+        // Validate the tarball before copying any overlay onto `/`: a
+        // tarball without a `nix/` subtree is rejected here, so a malformed
+        // download never mutates the live root filesystem.
+        let staged_nix = staging.join("nix");
+        if !staged_nix.is_dir() {
+            return Err(InitStoreError::MissingNixSubtree {
+                path: path_string(&staged_nix),
+            });
+        }
+
+        for entry in
+            std::fs::read_dir(&staging).map_err(|source| InitStoreError::StagePrepareFailed {
+                path: path_string(&staging),
+                source,
+            })?
+        {
+            let entry = entry.map_err(|source| InitStoreError::StagePrepareFailed {
+                path: path_string(&staging),
+                source,
+            })?;
+            if entry.file_name() == std::ffi::OsStr::new("nix") {
+                continue;
+            }
+            copy_root_overlay(&entry.path(), root).await?;
+        }
+
+        let promoted_nix = stage_dir.join("nix");
+        std::fs::rename(&staged_nix, &promoted_nix).map_err(|source| {
+            InitStoreError::PromoteFailed {
+                from: path_string(&staged_nix),
+                to: path_string(&promoted_nix),
+                source,
+            }
+        })?;
+
+        Ok(())
+    }
+    .await;
+
+    if result.is_err() {
+        let _ = remove_path_if_exists(&staging);
+    }
+    result?;
+
+    if let Err(err) = remove_path_if_exists(&staging) {
+        tracing::warn!(
+            "failed to remove staging directory {}: {err}",
+            staging.display()
+        );
+    }
+
+    Ok(())
 }
 
 /// Find the factory tarball matching the given BOS version.
@@ -394,14 +581,18 @@ fn parse_and_validate_factory_index(
 /// 1. Fetch factory index from the factory server
 /// 2. Find tarball matching current BOS version
 /// 3. Download tarball to `download_dir` (streaming to disk)
-/// 4. Extract to root filesystem
-/// 5. Clean up downloaded tarball
-/// 6. Return the `profile_path` from the tarball metadata
+/// 4. Extract to `<stage_dir>/nix.tmp`
+/// 5. Copy root overlays to `/`
+/// 6. Promote `<stage_dir>/nix.tmp/nix` to `<stage_dir>/nix`
+/// 7. Clean up downloaded tarball
+/// 8. Return the `profile_path` from the tarball metadata
 pub async fn init_store(
     client: &reqwest::Client,
     factory_server: &FactoryServerEntry,
     bos_version: &str,
     download_dir: &Path,
+    stage_dir: &Path,
+    wipe_store: bool,
     progress: Option<&dyn DownloadProgress>,
 ) -> Result<InitStoreResult, InitStoreError> {
     use tokio::io::AsyncWriteExt;
@@ -471,40 +662,18 @@ pub async fn init_store(
     file.flush().await.map_err(InitStoreError::WriteFailed)?;
     drop(file);
 
-    // Step 4: Extract to root
+    // Step 4: Extract into staging and promote the store atomically
     if let Some(p) = progress {
         p.on_extracting();
     }
 
-    let output = tokio::process::Command::new("tar")
-        .arg("xzf")
-        .arg(&tarball_path)
-        .arg("-C")
-        .arg("/")
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .await
-        .map_err(InitStoreError::ExtractionFailed)?;
-
-    if !output.status.success() {
-        // Wipe partially-extracted store to avoid inconsistent state on retry.
-        // Best-effort — if this fails, the next attempt with wipe_store=true
-        // will handle it.
-        tracing::warn!("tar extraction failed, wiping partial store");
-        let _ = tokio::process::Command::new("rm")
-            .args(["-rf", "/nix/store", "/nix/var"])
-            .status()
-            .await;
-
-        // Truncate stderr — tar can produce megabytes of output when
-        // many files fail, which causes display rendering issues.
-        let full_stderr = String::from_utf8_lossy(&output.stderr);
-        let stderr: String = full_stderr.chars().take(500).collect();
-        return Err(InitStoreError::TarFailed {
-            status: output.status,
-            stderr,
-        });
-    }
+    let staging = stage_dir.join("nix.tmp");
+    remove_path_if_exists(&staging).map_err(|source| InitStoreError::StagePrepareFailed {
+        path: path_string(&staging),
+        source,
+    })?;
+    prepare_promoted_store_path(stage_dir, wipe_store)?;
+    extract_staged(&tarball_path, stage_dir, Path::new("/")).await?;
 
     // Step 5: Clean up tarball
     let _ = tokio::fs::remove_file(&tarball_path).await;
@@ -517,6 +686,7 @@ pub async fn init_store(
 #[cfg(test)]
 mod tests {
     use std::os::unix::process::ExitStatusExt;
+    use std::path::Path;
 
     use super::*;
     use crate::types::InstalledBy;
@@ -1027,6 +1197,59 @@ mod tests {
         assert!(
             matches!(err, InitStoreError::FactoryIndexParse { .. }),
             "expected FactoryIndexParse, got {err:?}"
+        );
+    }
+
+    fn make_test_tarball(
+        root: &Path,
+        entries: &[(&str, &[u8])],
+    ) -> Result<PathBuf, std::io::Error> {
+        let source = root.join("archive-root");
+        std::fs::create_dir_all(&source)?;
+        for (relative, contents) in entries {
+            let path = source.join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, contents)?;
+        }
+
+        let tarball = root.join("init-tarball.tar.gz");
+        let status = std::process::Command::new("tar")
+            .arg("czf")
+            .arg(&tarball)
+            .arg("-C")
+            .arg(&source)
+            .arg(".")
+            .status()?;
+        assert!(status.success(), "BUG: tarball fixture creation failed");
+        Ok(tarball)
+    }
+
+    #[tokio::test]
+    async fn extract_staged_promotes_nix_atomically_and_wipes_stale_staging() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let stage = tmp.path().join("stage");
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(stage.join("nix.tmp/garbage")).expect("BUG: setup");
+        std::fs::create_dir_all(&root).expect("BUG: setup");
+
+        let tarball =
+            make_test_tarball(tmp.path(), &[("nix/store/foo", b"x"), ("etc/marker", b"y")])
+                .expect("BUG: tarball fixture");
+
+        extract_staged(&tarball, &stage, &root)
+            .await
+            .expect("BUG: extraction should succeed");
+
+        assert!(stage.join("nix/store/foo").exists());
+        assert!(
+            root.join("etc/marker").exists(),
+            "root overlays must be copied before the store promotion"
+        );
+        assert!(
+            !stage.join("nix.tmp").exists(),
+            "staging directory must be removed after promotion"
         );
     }
 }
