@@ -125,7 +125,7 @@ pub struct ResolvedPackage {
 }
 
 /// What initiated the installation of a package
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InstalledBy {
     System,
