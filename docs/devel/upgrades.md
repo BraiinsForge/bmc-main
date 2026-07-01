@@ -87,11 +87,17 @@ One rule from the general flow still applies: the no-downgrade filter still runs
 versions. A firmware upgrade will not roll an installed application backwards even if the pinned index would otherwise
 suggest a lower version.
 
-Sequencing: the new Nix profile is prepared before the firmware image is applied but not activated. `bmc-upgrade`
-invokes `bmc-nix-cli upgrade --next-boot`, which produces a "next" pointer instead of a live generation (see
-[Deferred Activation](#deferred-activation---next-boot)). After the reboot into the new BOS, an OpenWrt boot service
-promotes that pointer into a real generation and runs its activation. Once the device is back to normal operation,
-subsequent upgrades resume the ordinary application-layer flow using remote indexes.
+**Activation is always deferred.** A firmware upgrade never activates the new profile in-place — the running BOS is on
+its way out, and its running services must not be reconfigured to match a generation built for the incoming BOS.
+`bmc-upgrade` invariably invokes `bmc-nix-cli upgrade --next-boot`, which produces a `next` pointer instead of a live
+generation (see [Deferred Activation](#deferred-activation---next-boot)). After the reboot into the new BOS, an OpenWrt
+boot service promotes that pointer into a real generation and runs its activation against the previous `current`. Once
+the device is back to normal operation, subsequent upgrades resume the ordinary application-layer flow using remote
+indexes.
+
+There is no code path in the firmware-upgrade flow that activates the profile immediately — treating `--next-boot` as
+optional here would risk activating a generation whose services expect kernel/userland facilities the current (about to
+be replaced) BOS does not provide.
 
 ## Deferred Activation (`--next-boot`)
 
