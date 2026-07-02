@@ -71,11 +71,8 @@ pub(crate) fn generation_link_name(n: usize) -> String {
 }
 
 /// Parse a generation number out of a directory name matching `<N>-link`.
-///
-/// `pub(crate)` so `upgrade::resolve_current_generation` can reuse it
-/// instead of duplicating the strip/parse dance inline.
 #[must_use]
-pub(crate) fn parse_generation_link_name(name: &str) -> Option<usize> {
+pub fn parse_generation_link_name(name: &str) -> Option<usize> {
     name.strip_suffix("-link")?.parse::<usize>().ok()
 }
 
