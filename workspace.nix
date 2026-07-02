@@ -405,6 +405,7 @@ let
 
   specialPackages = {
     workspace-deps = bmc.profiles.fast.deps;
+    workspace-deps-wasm-widgets = bmc.profiles.wasm-widgets-debug.deps;
     inherit (bmc.profiles.ci) build clippy test nextest;
     workspace-deps-armv7 = bmc.profiles.armv7-glibc-release.deps;
     nextest-armv7 = bmc.profiles.armv7-glibc-release.nextest;

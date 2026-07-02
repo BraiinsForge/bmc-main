@@ -72,11 +72,8 @@ in
     package = "bmc-wasm-sdk";
   };
 
-  # Clippy over the widgets-wasm workspace at the wasm32 target — enforces
-  # the lint gate from docs/devel/wasm-widgets/best-practices.md.
-  # Lib/bin targets only (no --all-targets): widget test code is host-only
-  # by design and cannot compile for wasm32. crane bakes the clippy flags
-  # into buildPhase at eval time, so strip the flag from the script itself.
+  build-wasm-widgets = profiles.wasm-widgets-debug.build;
+
   clippy-wasm-widgets = profiles.wasm-widgets-debug.clippy.overrideAttrs (old: {
     buildPhase = builtins.replaceStrings [ " --all-targets" ] [ " --target wasm32-unknown-unknown" ] old.buildPhase;
   });

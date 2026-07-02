@@ -64,12 +64,6 @@ no-fmt-in-wasm:
   script:
     - nix build -L .#checks.x86_64-linux.no-fmt-in-wasm
 
-clippy-wasm-widgets:
-  stage: lint
-  needs: []
-  script:
-    - nix build -L .#checks.x86_64-linux.clippy-wasm-widgets
-
 "docs: wasm":
   stage: lint
   needs: []
@@ -107,6 +101,12 @@ python-lint:
 ###### Dependencies Stage ########
 ##################################
 
+workspace-deps-wasm-widgets:
+  stage: dependencies
+  needs: []
+  script:
+    - nix build .#workspace-deps-wasm-widgets --no-link
+
 workspace-deps:
   stage: dependencies
   needs: []
@@ -136,12 +136,12 @@ build:
   script:
     - nix build .#build --no-link
 
-clippy:
+build-wasm-widgets:
   stage: check
   needs:
-    - workspace-deps
+    - workspace-deps-wasm-widgets
   script:
-    - nix build .#clippy --no-link
+    - nix build .#checks.x86_64-linux.build-wasm-widgets --no-link
 
 test:
   stage: check
@@ -160,17 +160,32 @@ test-armv7:
   script:
     - nix build .#nextest-armv7 --no-link
 
+test-wasm-widgets:
+  stage: check
+  needs:
+    - workspace-deps-wasm-widgets
+  script:
+    - nix build -L .#checks.x86_64-linux.test-wasm-widgets
+
+clippy:
+  stage: check
+  needs:
+    - workspace-deps
+  script:
+    - nix build .#clippy --no-link
+
+clippy-wasm-widgets:
+  stage: check
+  needs:
+    - workspace-deps-wasm-widgets
+  script:
+    - nix build -L .#checks.x86_64-linux.clippy-wasm-widgets
+
 frontend-test:
   stage: check
   needs: []
   script:
     - nix build .#checks.x86_64-linux.test
-
-test-wasm-widgets:
-  stage: check
-  needs: []
-  script:
-    - nix build -L .#checks.x86_64-linux.test-wasm-widgets
 
 ######################################
 ######## Regression Stage ############
