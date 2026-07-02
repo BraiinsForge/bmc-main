@@ -533,6 +533,12 @@ async fn cmd_init(
     download_dir: PathBuf,
     wipe: bool,
 ) -> anyhow::Result<()> {
+    // An active /nix means the system is running from the store this
+    // wipe would delete out from under it.
+    if wipe && bmc_nix::partition::is_path_mounted(Path::new("/nix"))? {
+        anyhow::bail!("refusing to wipe the store: /nix is an active mount");
+    }
+
     bmc_nix::partition::prepare_data_partition(
         &bmc_nix::store::TokioCommandRunner,
         &data_partition,
