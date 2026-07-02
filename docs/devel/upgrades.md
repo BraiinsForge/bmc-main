@@ -8,14 +8,9 @@ dependency — and its lifecycle is coordinated with the Nix side rather than ex
 This document covers the pieces a contributor needs to work on the upgrade flow itself: what indexes exist, how versions
 are chosen, how a firmware upgrade differs from an application-only upgrade, and how downgrade and rollback are handled.
 
-> **Implementation status:** this document describes the target design; several pieces are ahead of the code. Not yet
-> implemented: deferred activation (`--next-boot`, the `next` marker, and the boot-time promotion service — today the
-> CLI offers `--no-activate` and the `nix-activator` boot service only activates the current generation), the
-> firmware-upgrade path driving the on-tarball `bmc-nix-cli` with the pinned index, `bmc-nix-cli init` (today a
-> standalone `bmc-nix-init` binary that extracts directly to `/`), the resolution rule ordering below (the code
-> currently applies the pin filter before the no-downgrade filter and the same-server preference), the
-> `installed_by`-aware removal policy (the planner currently treats missing `system` and `user` packages alike, as
-> stale), and Ed25519 tarball signature verification.
+> **Implementation status:** this document describes the implemented `bmc-main` behavior. Remaining cross-repo work:
+> pack and invoke the firmware Nix payload from the OpenWrt tarball `COMMAND`, publish factory tarball `.sig` files, and
+> flip the shipped `FactoryServerEntry.require_signature` setting once signatures are available.
 
 ## Sources of Truth
 
@@ -57,8 +52,10 @@ cares about. The rules, in order:
    on the `store_path` is a publishing bug on the server side. `bmc-nix` refuses to guess; byte-identical entries (same
    `store_path`) are accepted as mirrors.
 
-If the filter chain leaves an installed package with no candidates, the installed version is kept as-is. If a package is
-present in the manifest but absent from every index, it is reported as *stale* (also kept as-is).
+If the filter chain leaves an installed package with no candidate version, the installed version is kept as-is for both
+`system` and `user` packages and reported as *stale*. If a package is present in the manifest but absent from every
+consulted index, the `installed_by` field decides the outcome: `system` is a hard failure, while `user` is stale and
+kept.
 
 File-level conflicts inside the merged symlink tree are a separate concern — resolved by server priority (with a
 warning), see [`profiles.md`](profiles.md).
@@ -78,7 +75,7 @@ The previous generation stays on disk and remains the rollback target.
 
 ## Firmware Upgrades
 
-Firmware (BOS) upgrades are orchestrated by `bmc-upgrade` and, unlike a normal package upgrade, do not consult remote
+Firmware (BOS) upgrades are orchestrated by `bmc-upgrade` and, unlike a normal package upgrade, must not consult remote
 indexes at all. Every firmware tarball ships with:
 
 - a copy of `bmc-nix-cli`, and
@@ -93,13 +90,17 @@ One rule from the general flow still applies: the no-downgrade filter still runs
 versions. A firmware upgrade will not roll an installed application backwards even if the pinned index would otherwise
 suggest a lower version.
 
+The CLI contract for the tarball path is
+`bmc-nix-cli upgrade --only-indexes --index file://<tarball>/nix-package-index.v1.json --next-boot`. `--only-indexes`
+makes the consulted index set exactly the explicit `--index` references: it does not read `servers.json`, and it does
+not follow federated `indexes[]` references inside those indexes.
+
 **Activation is always deferred.** A firmware upgrade never activates the new profile in-place — the running BOS is on
-its way out, and its running services must not be reconfigured to match a generation built for the incoming BOS.
-`bmc-upgrade` invariably invokes `bmc-nix-cli upgrade --next-boot`, which produces a `next` pointer instead of a live
-generation (see [Deferred Activation](#deferred-activation---next-boot)). After the reboot into the new BOS, an OpenWrt
-boot service promotes that pointer into a real generation and runs its activation against the previous `current`. Once
-the device is back to normal operation, subsequent upgrades resume the ordinary application-layer flow using remote
-indexes.
+its way out, and its running services must not be reconfigured to match a generation built for the incoming BOS. The
+tarball command must invoke `bmc-nix-cli upgrade --next-boot`, which produces a `next` symlink to a built generation
+(see [Deferred Activation](#deferred-activation---next-boot)). After the reboot into the new BOS, `nix-activator`
+consumes that symlink and runs the target generation's activation against the previous `current`. Once the device is
+back to normal operation, subsequent upgrades resume the ordinary application-layer flow using remote indexes.
 
 There is no code path in the firmware-upgrade flow that activates the profile immediately — treating `--next-boot` as
 optional here would risk activating a generation whose services expect kernel/userland facilities the current (about to
@@ -108,20 +109,21 @@ be replaced) BOS does not provide.
 ## Deferred Activation (`--next-boot`)
 
 `bmc-nix-cli upgrade --next-boot` is the same resolution and profile-build path as a normal upgrade, but it stops before
-activation and before promoting the built generation into the profile ring. Instead, it writes a **`next` file** — a
-small marker inside the profile directory (`/nix/var/nix/gcroots/profiles/bmc/next`) that points at the staged
-generation contents and captures the intent to activate them on the next boot.
+activation. It still builds the next numbered generation directory (`<N>-link`) up front. Instead of swapping `current`,
+it atomically writes `next` as a symlink inside the profile directory (`/nix/var/nix/gcroots/profiles/bmc/next`)
+pointing at that freshly built `<N>-link`.
 
-At boot, a dedicated OpenWrt init service (`bmc-nix-next` or equivalent) checks for `next`. If it is present, the
-service:
+Every profile apply run removes a stale `next` symlink immediately after taking the profile lock. This means any later
+run invalidates a pending deferred activation, including a no-op run that does not build a replacement generation. A
+second `--next-boot` run before reboot therefore replaces the pending target with the newly built generation.
 
-1. Promotes the staged contents into the next numbered generation directory (`<N>-link`), taking the same atomic rename
-   step used by a normal profile build.
-2. Removes the `next` marker.
-3. Runs the new generation's activation entrypoint against the previous `current`, atomically swapping `current` at the
-   write boundary.
-4. Leaves the system in the same state a normal upgrade would leave it in — previous generation still on disk as a
-   rollback target, new generation active.
+At boot, `nix-activator` checks for `next`. If it is present, the service:
+
+1. Backs up `current` as `previous`.
+2. Runs the target generation's activation entrypoint; the generation already exists, so no boot-time promotion or
+   renumbering happens.
+3. Removes `next` after a successful activation.
+4. Restores `previous` and re-activates it if the target activation fails.
 
 If `next` is missing on boot, the service is a no-op — this is the common case on ordinary boots.
 
@@ -129,9 +131,10 @@ The design intent is:
 
 - The upgrade run does not have to defer any of its heavy work to boot; realisation, symlink-tree build, hooks, and
   manifest generation all happen up-front while the CLI is running normally. Only activation is delayed.
-- Failure modes are limited. If the reboot never happens or the device is powered off before the init service runs, the
-  `next` marker simply sits until the next boot; nothing about the current generation has been touched.
-- If the boot-time promotion or activation fails, the current generation remains active — the same behaviour as any
+- Failure modes are limited. If the reboot never happens or the device is powered off before `nix-activator` runs, the
+  `next` symlink simply sits until the next boot or until a later profile apply run invalidates it; nothing about the
+  current generation has been touched.
+- If the boot-time activation fails, the previous generation is restored and re-activated — the same behaviour as any
   other failed activation.
 
 `--next-boot` is the mechanism the firmware-upgrade path uses (see [Firmware Upgrades](#firmware-upgrades)), but it is
@@ -169,7 +172,7 @@ changes (glibc or compiler bumps). `bmc-nix::gc` reclaims space in two stages:
 
 - **Generation cleanup.** Old generation directories are removed according to `/etc/nix-upgrade/gc.json`
   (`keep_generations`, `keep_days`, `protected_generations`, `min_free_space`). The current and the latest generations
-  are always kept, as is the freshly built generation during an upgrade; `protected_generations` is empty by default.
+  are always kept, as is the generation pointed to by `next`; `protected_generations` is empty by default.
 - **Nix store GC.** `nix-collect-garbage` removes store paths no longer referenced by any surviving generation.
 
 GC runs via the `bmc-nix-cli gc` subcommand, intended for a periodic timer or for when disk space runs low — it is not
@@ -183,16 +186,18 @@ The Nix store on new devices is populated in one of three ways:
 - **Factory flash.** New devices are shipped with `/nix/store` and `/nix/var/nix` already populated and the initial
   profile activated (or activated on first boot).
 - **First-boot upgrade from a pre-Nix firmware.** The first Nix-capable firmware is marked as a required version (users
-  cannot skip it). Its image `COMMAND` invokes `bmc-nix-cli init` from the tarball, which prepares `/mnt/data`, fetches
-  the initialization tarball for the current `/etc/bos_version`, and stages it into `/mnt/data/nix.tmp` before
-  atomically promoting it to `nix` (see [`openwrt-tarball.md`](openwrt-tarball.md#initialization)); the profile
-  activates on next boot.
+  cannot skip it). Its image `COMMAND` invokes `bmc-nix-cli init` from the tarball, which prepares `/dev/mmcblk0p4` as
+  an ext4 data partition mounted at `/mnt/data`, fetches the initialization tarball for the current `/etc/bos_version`,
+  stages it into `/mnt/data/nix.tmp`, copies root overlays to `/`, and atomically promotes `nix.tmp/nix` to `nix` (see
+  [`openwrt-tarball.md`](openwrt-tarball.md#initialization)); the profile activates on next boot. If `/mnt/data/nix`
+  already exists, `init` exits successfully without changing it unless `--wipe` is passed.
 - **Fallback initializer.** A small statically-linked binary is kept forever on the device to recover from a wiped
   store. It offers minimal Wi-Fi configuration, then downloads the tarball listed in `factory` from `servers.json` for
-  the current `/etc/bos_version`. Because NTP has not synced yet, the client disables TLS certificate validation and
-  relies on the tarball's Ed25519 signature (verified against `known_public_key`) as the primary integrity guarantee.
-  Signature verification is not implemented yet — `known_public_key` is parsed but unused, so the tarball is currently
-  trusted without verification (see [`../stories/nix-store-initializer.md`](../stories/nix-store-initializer.md)).
+  the current `/etc/bos_version`. Because NTP has not synced yet, the client disables TLS certificate validation and can
+  rely on the tarball's Ed25519 signature (verified against `known_public_key`) as the primary integrity guarantee.
+  Verification is controlled by `factory.require_signature`: when true, the initializer fetches `<download_url>.sig` and
+  aborts on a missing, malformed, or rejected signature; when false (the serde default), it skips verification and logs
+  a warning (see [`../stories/nix-store-initializer.md`](../stories/nix-store-initializer.md)).
 
 Factory reset drops a marker file that instructs the initializer to wipe `/nix/store` and its state on the next boot.
 Doing it via the initializer avoids fighting running processes that hold open files in the store.
@@ -204,9 +209,10 @@ The manifest's `installed_by` field controls how a package is treated during upg
 - `system` — installed as part of the core set. Upgraded automatically. The user cannot uninstall.
 - `user` — explicitly installed by the user. Kept across upgrades until the user removes it.
 
-This matters for the upgrade planner: `system` packages missing from a new index are treated as a hard failure
-(something is wrong on the server side); `user` packages missing from any index become stale and hold at their current
-version.
+This matters for the upgrade planner: `system` packages missing from every consulted index are treated as a hard failure
+(something is wrong on the server side); `user` packages missing from every consulted index become stale and hold at
+their current version. A package that exists in the indexes but has no candidate version after resolution filters is
+stale-and-kept for both `system` and `user`.
 
 ## Contributor Checklist
 

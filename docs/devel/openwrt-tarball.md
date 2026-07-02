@@ -4,9 +4,9 @@ The OpenWrt firmware tarball is the sysupgrade artifact produced by BOS builds �
 alternate partition and reboots into. This document covers the pieces of that tarball that the Nix upgrade path cares
 about; the OpenWrt image itself (kernel, rootfs, boot glue) is a BOS concern.
 
-> **Implementation status:** this describes the target design; the on-tarball `bmc-nix-cli`, the `COMMAND` hook, and
-> `bmc-nix-cli init` are not wired up in code yet — initialization currently lives in the standalone `bmc-nix-init`
-> binary. See the status note in [`upgrades.md`](upgrades.md) for the full list of gaps.
+> **Implementation status:** this describes the implemented `bmc-main` firmware payload and CLI behavior. Remaining
+> cross-repo work: pack and invoke the payload from the OpenWrt tarball `COMMAND`, publish factory tarball `.sig` files,
+> and flip the shipped `FactoryServerEntry.require_signature` setting once signatures are available.
 
 Two things ship inside every tarball that concern `bmc-nix`:
 
@@ -28,28 +28,37 @@ firmware release was never tested with.
 
 The firmware index closes that gap. It is a normal `nix-package-index.v1.json` — same schema, same conflict-resolution
 rules — but frozen at firmware build time and shipped inside the tarball. During the firmware-upgrade Nix step, it is
-the sole and authoritative source of package versions. Remote indexes and `/etc/nix-upgrade/servers.json` entries are
-ignored for that run.
+the sole and authoritative source of package versions. `bmc-nix-cli upgrade --only-indexes` makes the consulted index
+set exactly the explicit `--index` references: remote indexes, `/etc/nix-upgrade/servers.json`, and federated
+`indexes[]` recursion are ignored for that run.
 
 See [`upgrades.md`](upgrades.md#firmware-upgrades) for how this index plugs into the overall upgrade flow, and
 [`../devlogs/BDK-212/nix/nix-concepts.md`](../devlogs/BDK-212/nix/nix-concepts.md) for the ambient concepts.
 
 ## What `bmc-nix-cli` Does From The Tarball
 
-During a firmware upgrade, `bmc-upgrade` invokes `bmc-nix-cli` from the tarball with the tarball's firmware index as
-input. The CLI:
+During a firmware upgrade, the tarball `COMMAND` must invoke `bmc-nix-cli` from the tarball with the tarball's firmware
+index as input:
+
+```sh
+bmc-nix-cli upgrade --only-indexes --index file://<tarball>/nix-package-index.v1.json --next-boot
+```
+
+The CLI:
 
 1. Parses the pinned `nix-package-index.v1.json`.
 2. Diffs it against the current profile manifest.
 3. Applies the standard resolution rules — including the no-downgrade filter, so lower-version entries in the pinned
    index are discarded and any application already installed at a higher version stays at its current version. See
    [`upgrades.md`](upgrades.md#resolution-algorithm).
-4. Realises the resolved store paths from the substituters configured on the device.
-5. Builds a new profile generation.
-6. Leaves the new generation staged as a `next` pointer instead of promoting it into the profile ring, via
-   `bmc-nix-cli upgrade --next-boot`. Firmware upgrades **always** take this deferred-activation path — the profile is
-   never activated in-place against the outgoing BOS. An OpenWrt boot service promotes and activates it after the BOS
-   partition swap; see [Deferred Activation](upgrades.md#deferred-activation---next-boot).
+4. Ignores `servers.json` and does not follow `indexes[]` references inside the pinned index because `--only-indexes`
+   was selected.
+5. Realises the resolved store paths from the substituters configured on the device.
+6. Builds a new profile generation.
+7. Leaves the new generation staged as a `next` symlink to the built `<N>-link`, via `bmc-nix-cli upgrade --next-boot`.
+   Firmware upgrades **always** take this deferred-activation path — the profile is never activated in-place against the
+   outgoing BOS. `nix-activator` consumes the symlink after the BOS partition swap; see
+   [Deferred Activation](upgrades.md#deferred-activation---next-boot).
 
 `bmc-nix-cli` inside the tarball is intentionally the same binary used for the offline build-time profile assembly
 (`build-profile`, factory-tarball construction). Reusing one CLI keeps the resolution and profile-build code paths
@@ -60,7 +69,7 @@ identical across build-host, factory-tarball, and firmware-tarball contexts.
 Every firmware build must produce, in addition to the OpenWrt image itself:
 
 - The pinned `nix-package-index.v1.json` covering all applications intended to ship with that firmware release.
-- A `bmc-nix-cli` binary matching the target architecture (armv7-glibc for `bmc-openwrt`).
+- A static armv7-musl `bmc-nix-cli` binary for the device.
 - A substituter setup on the device (`nix.conf`) from which the on-device `nix-store --realise` step can pull every
   store path the pinned index references.
 
@@ -78,8 +87,9 @@ Two pieces are involved:
 - `bmc-nix-cli init` — an initialization subcommand of the same on-tarball CLI. It performs the on-device steps
   described below.
 - The firmware image `COMMAND` — the sysupgrade hook that BOS runs before applying the new image. When the `COMMAND`
-  detects that `/nix/store` does not yet exist, it invokes `bmc-nix-cli init` to prepare it. On subsequent firmware
-  upgrades the store is already there and this step is skipped.
+  detects that the promoted store does not yet exist, it invokes `bmc-nix-cli init` to prepare it. On subsequent
+  firmware upgrades the store is already there and this step is skipped. The probe is
+  `bmc-nix-cli is-initialized --data-dir /mnt/data`, which exits 0 when `<data-dir>/nix` exists and 1 otherwise.
 
 The `init` command is intentionally distinct from the firmware-upgrade flow (`build-profile` and friends). Init operates
 before there is any profile to diff against; it only has to populate the store and lay down the initial profile shipped
@@ -89,22 +99,25 @@ in the tarball.
 
 `bmc-nix-cli init` performs the following, in order:
 
-1. **Initialize the `/mnt/data` partition if it is not yet initialized.** New devices ship without an application-data
-   partition; on legacy devices upgrading to the first Nix-capable firmware the partition may exist but be empty. The
-   CLI creates the filesystem structure it expects there.
-2. **Mount `/mnt/data` if it is not yet mounted.** This must happen before anything is written under it, and it must be
-   idempotent — the CLI may be re-run after a partial init.
+1. **Prepare the data partition.** The default device is `/dev/mmcblk0p4` and the default mount point is `/mnt/data`.
+   The CLI verifies the block device, uses `blkid` to detect an existing filesystem, runs `mkfs.ext4` when the partition
+   is blank, checks it with `e2fsck`, creates the mount point, and mounts it as ext4. If `/mnt/data` is already mounted,
+   this step is a no-op.
+2. **Short-circuit when the store is already promoted.** If `<data-dir>/nix` exists, `init` exits 0 without changing it
+   unless `--wipe` is passed.
 3. **Select and download the initialization tarball.** Selection is by the current BOS version read from
    `/etc/bos_version`, matched against the factory index (the `factory` entry from `/etc/nix-upgrade/servers.json`; see
-   [`upgrades.md`](upgrades.md#initialization-and-factory-reset) for how first-boot certificate validation and
-   Ed25519-signed tarballs interact). If no tarball matches the current BOS version, the initializer escalates to a full
-   BOS upgrade — the latest BOS version always has to have a tarball on the factory server, otherwise this whole path
-   breaks.
-4. **Unpack the tarball into `/mnt/data` and atomically promote `nix.tmp` to `nix`.** The tarball extracts into a
-   `nix.tmp/` staging directory inside `/mnt/data`. Only after the extraction fully succeeds is `nix.tmp` renamed to
-   `nix`. This gives the boot-time services a single check — "does `/mnt/data/nix` exist?" — that cannot observe a
-   half-extracted store. A crash or power loss mid-extract leaves `nix.tmp` behind, which the next `init` run wipes and
-   re-extracts.
+   [`upgrades.md`](upgrades.md#initialization-and-factory-reset) for how first-boot certificate validation and tarball
+   signatures interact). If no tarball matches the current BOS version, the initializer escalates to a full BOS upgrade
+   — the latest BOS version always has to have a tarball on the factory server, otherwise this whole path breaks.
+4. **Apply the factory tarball signature policy.** If the factory entry has `require_signature: true`, the CLI fetches
+   `<download_url>.sig`, verifies the tarball against `known_public_key`, and aborts on a missing, malformed, or
+   rejected signature. If `require_signature` is absent or false, verification is skipped and a warning is logged.
+5. **Unpack the tarball into `/mnt/data/nix.tmp` and atomically promote `nix.tmp/nix` to `nix`.** The tarball extracts
+   into a staging directory inside `/mnt/data`. Root overlay entries from the tarball are copied to `/`, then the
+   extracted `nix.tmp/nix` subtree is renamed to `<data-dir>/nix`. This gives the boot-time services a single check —
+   "does `/mnt/data/nix` exist?" — that cannot observe a half-extracted store. A crash or power loss mid-extract leaves
+   `nix.tmp` behind, which the next `init` run wipes and re-extracts.
 
 Once `nix` is in place, the initial profile shipped inside the tarball is available and can be activated on next boot.
 Activation itself is not part of `init` — the boot-time service handles it, the same way it would after a firmware
