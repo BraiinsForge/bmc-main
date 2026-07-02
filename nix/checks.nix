@@ -78,7 +78,7 @@ in
   # by design and cannot compile for wasm32. crane bakes the clippy flags
   # into buildPhase at eval time, so strip the flag from the script itself.
   clippy-wasm-widgets = profiles.wasm-widgets-debug.clippy.overrideAttrs (old: {
-    buildPhase = builtins.replaceStrings [ " --all-targets" ] [ "" ] old.buildPhase;
+    buildPhase = builtins.replaceStrings [ " --all-targets" ] [ " --target wasm32-unknown-unknown" ] old.buildPhase;
   });
 
   # Widget unit tests, compiled and run on the host target.
