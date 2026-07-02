@@ -86,10 +86,16 @@ Two pieces are involved:
 
 - `bmc-nix-cli init` — an initialization subcommand of the same on-tarball CLI. It performs the on-device steps
   described below.
-- The firmware image `COMMAND` — the sysupgrade hook that BOS runs before applying the new image. When the `COMMAND`
-  detects that the promoted store does not yet exist, it invokes `bmc-nix-cli init` to prepare it. On subsequent
-  firmware upgrades the store is already there and this step is skipped. The probe is
-  `bmc-nix-cli is-initialized --data-dir /mnt/data`, which exits 0 when `<data-dir>/nix` exists and 1 otherwise.
+- The firmware image `COMMAND` — the sysupgrade hook that BOS runs before applying the new image. On a Nix-era running
+  system — identified by the presence of `/etc/init.d/nix-activator`, a rootfs marker independent of this boot's mount
+  and activation state — the `COMMAND` first runs `bmc-nix-cli init` without `--wipe`: it mounts the data partition when
+  necessary, no-ops when the store already exists (empty stdout), and otherwise initializes it for the incoming firmware
+  version (printing the new profile path), in which case staging is already complete. When the store pre-existed, the
+  `COMMAND` restores the `/nix` bind mount when missing, extends `PATH` with `/run/current-profile/bin` (otherwise added
+  only by login shells; realisation spawns `nix-store` on the outgoing system), and runs the pinned-index upgrade. On a
+  pre-Nix system it runs `bmc-nix-cli init --wipe`, replacing any store left behind by an earlier aborted upgrade with
+  one matching the firmware being flashed. In both branches the `COMMAND` passes the incoming firmware's version via
+  `--bos-version-file` — the running `/etc/bos_version` may predate Nix and have no factory tarball.
 
 The `init` command is intentionally distinct from the firmware-upgrade flow (`build-profile` and friends). Init operates
 before there is any profile to diff against; it only has to populate the store and lay down the initial profile shipped
@@ -104,9 +110,10 @@ in the tarball.
    is blank, checks it with `e2fsck`, creates the mount point, and mounts it as ext4. If `/mnt/data` is already mounted,
    this step is a no-op.
 2. **Short-circuit when the store is already promoted.** If `<data-dir>/nix` exists, `init` exits 0 without changing it
-   unless `--wipe` is passed.
-3. **Select and download the initialization tarball.** Selection is by the current BOS version read from
-   `/etc/bos_version`, matched against the factory index (the `factory` entry from `/etc/nix-upgrade/servers.json`; see
+   unless `--wipe` is passed. `--wipe` refuses to run while `/nix` is an active mount — the running system would be
+   using the very store it deletes.
+3. **Select and download the initialization tarball.** Selection is by the BOS version read from `/etc/bos_version`,
+   matched against the factory index (the `factory` entry from `/etc/nix-upgrade/servers.json`; see
    [`upgrades.md`](upgrades.md#initialization-and-factory-reset) for how first-boot certificate validation and tarball
    signatures interact). If no tarball matches the current BOS version, the initializer escalates to a full BOS upgrade
    — the latest BOS version always has to have a tarball on the factory server, otherwise this whole path breaks.

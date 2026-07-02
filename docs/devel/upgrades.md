@@ -187,7 +187,8 @@ The Nix store on new devices is populated in one of three ways:
   profile activated (or activated on first boot).
 - **First-boot upgrade from a pre-Nix firmware.** The first Nix-capable firmware is marked as a required version (users
   cannot skip it). Its image `COMMAND` invokes `bmc-nix-cli init` from the tarball, which prepares `/dev/mmcblk0p4` as
-  an ext4 data partition mounted at `/mnt/data`, fetches the initialization tarball for the current `/etc/bos_version`,
+  an ext4 data partition mounted at `/mnt/data`, fetches the initialization tarball for the incoming firmware's version
+  (passed by the `COMMAND` via `--bos-version-file`; the running `/etc/bos_version` predates Nix and has no tarball),
   stages it into `/mnt/data/nix.tmp`, copies root overlays to `/`, and atomically promotes `nix.tmp/nix` to `nix` (see
   [`openwrt-tarball.md`](openwrt-tarball.md#initialization)); the profile activates on next boot. If `/mnt/data/nix`
   already exists, `init` exits successfully without changing it unless `--wipe` is passed.
