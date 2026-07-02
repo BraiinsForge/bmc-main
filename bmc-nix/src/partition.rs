@@ -26,6 +26,17 @@ pub enum PreparePartitionError {
         #[source]
         source: std::io::Error,
     },
+    #[error("failed to read /proc/mounts: {source}")]
+    ReadMounts {
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("mount point {mount_point} already holds {mounted}, but {requested} was requested")]
+    ForeignMount {
+        mount_point: String,
+        requested: String,
+        mounted: String,
+    },
 }
 
 async fn run_command(
@@ -69,6 +80,69 @@ fn require_e2fsck_success(output: &std::process::Output) -> Result<(), PreparePa
     })
 }
 
+/// The deployed BusyBox does not ship `mountpoint(1)`, so the mount
+/// table is consulted directly. `/proc/mounts` octal-escapes whitespace
+/// and backslashes in paths (e.g. `\040` for a space), so fields are
+/// decoded before comparing.
+fn is_mount_point(mounts: &str, mount_point: &Path) -> bool {
+    let needle = mount_point.to_string_lossy();
+    mounts
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(1))
+        .any(|mounted| crate::mount::decode_mount_field(mounted) == needle)
+}
+
+/// Whether `mount_point` is an active mount according to
+/// `/proc/mounts`.
+pub fn is_path_mounted(mount_point: &Path) -> Result<bool, PreparePartitionError> {
+    let mounts = std::fs::read_to_string("/proc/mounts")
+        .map_err(|source| PreparePartitionError::ReadMounts { source })?;
+    Ok(is_mount_point(&mounts, mount_point))
+}
+
+/// Whether `mount_point` already carries the requested partition.
+#[derive(Debug)]
+enum MountState {
+    /// Nothing is mounted at `mount_point`.
+    Absent,
+    /// The requested partition is already mounted at `mount_point`.
+    Prepared,
+}
+
+/// Inspect `/proc/mounts` for what, if anything, occupies `mount_point`.
+///
+/// A line's first whitespace-separated field is the source device and
+/// the second is the mount point; both may carry octal escapes. When the
+/// mount point is occupied by a different device than `partition`,
+/// preparation must abort rather than reformat a foreign filesystem.
+fn mount_state(
+    mounts: &str,
+    mount_point: &Path,
+    partition: &Path,
+) -> Result<MountState, PreparePartitionError> {
+    let needle = mount_point.to_string_lossy();
+    for line in mounts.lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(source), Some(mounted)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        if crate::mount::decode_mount_field(mounted) != needle {
+            continue;
+        }
+        let source = crate::mount::decode_mount_field(source);
+        return if source == partition.to_string_lossy() {
+            Ok(MountState::Prepared)
+        } else {
+            Err(PreparePartitionError::ForeignMount {
+                mount_point: path_string(mount_point),
+                requested: path_string(partition),
+                mounted: source,
+            })
+        };
+    }
+    Ok(MountState::Absent)
+}
+
 pub async fn prepare_data_partition(
     runner: &impl CommandRunner,
     partition: &Path,
@@ -77,9 +151,11 @@ pub async fn prepare_data_partition(
     let partition_arg = partition.to_string_lossy();
     let mount_point_arg = mount_point.to_string_lossy();
 
-    let mountpoint = run_command(runner, "mountpoint", &["-q", mount_point_arg.as_ref()]).await?;
-    if mountpoint.status.success() {
-        return Ok(());
+    let mounts = std::fs::read_to_string("/proc/mounts")
+        .map_err(|source| PreparePartitionError::ReadMounts { source })?;
+    match mount_state(&mounts, mount_point, partition)? {
+        MountState::Prepared => return Ok(()),
+        MountState::Absent => {}
     }
 
     let block_device = run_command(runner, "test", &["-b", partition_arg.as_ref()]).await?;
@@ -102,8 +178,9 @@ pub async fn prepare_data_partition(
         // would destroy an existing filesystem. The device ships BusyBox
         // blkid, whose exit code for "no filesystem" is not reliable, so
         // treat any error output as "could not examine" rather than trusting
-        // the status.
-        if !blkid.stderr.is_empty() {
+        // the status. A probe killed by a signal (e.g. the OOM killer) can
+        // die with empty output, so that is distinguished via the status.
+        if !blkid.stderr.is_empty() || blkid.status.code().is_none() {
             return Err(PreparePartitionError::CommandExited {
                 program: "blkid".to_owned(),
                 status: blkid.status,
@@ -164,15 +241,19 @@ mod tests {
             Self::output(0, stdout)
         }
 
-        fn failure() -> std::process::Output {
-            Self::output(1, b"")
-        }
-
         fn output(code: i32, stdout: &[u8]) -> std::process::Output {
             std::process::Output {
                 status: std::process::ExitStatus::from_raw(code << 8),
                 stdout: stdout.to_vec(),
                 stderr: Vec::new(),
+            }
+        }
+
+        fn output_with_stderr(code: i32, stdout: &[u8], stderr: &[u8]) -> std::process::Output {
+            std::process::Output {
+                status: std::process::ExitStatus::from_raw(code << 8),
+                stdout: stdout.to_vec(),
+                stderr: stderr.to_vec(),
             }
         }
 
@@ -233,22 +314,43 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
-    #[tokio::test]
-    async fn prepare_data_partition_returns_when_mount_point_is_already_mounted() {
-        let tmp = tempfile::tempdir().expect("BUG: tempdir");
-        let runner = ScriptedRunner::new(vec![ScriptedRunner::success(b"")]);
+    #[test]
+    fn is_mount_point_finds_mounted_path() {
+        let mounts = "/dev/root / ext4 rw 0 0\n/dev/mmcblk0p4 /mnt/data ext4 rw 0 0\n";
+        assert!(super::is_mount_point(mounts, Path::new("/mnt/data")));
+    }
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), tmp.path())
-            .await
-            .expect("BUG: mounted partition should be accepted");
+    #[test]
+    fn is_mount_point_rejects_unmounted_and_prefix_paths() {
+        let mounts = "/dev/root / ext4 rw 0 0\n/dev/mmcblk0p4 /mnt/data ext4 rw 0 0\n";
+        assert!(!super::is_mount_point(mounts, Path::new("/mnt")));
+        assert!(!super::is_mount_point(mounts, Path::new("/mnt/data/nix")));
+    }
 
-        assert_invocations(
-            &runner,
-            &[(
-                "mountpoint",
-                &["-q", tmp.path().to_str().expect("BUG: utf8 path")],
-            )],
-        );
+    #[test]
+    fn foreign_source_at_mount_point_is_an_error() {
+        let mounts = "tmpfs /mnt/data tmpfs rw 0 0\n";
+        super::mount_state(mounts, Path::new("/mnt/data"), Path::new("/dev/mmcblk0p4"))
+            .expect_err("BUG: a foreign source at the mount point must not read as prepared");
+    }
+
+    #[test]
+    fn matching_source_at_mount_point_is_prepared() {
+        let mounts = "/dev/mmcblk0p4 /mnt/data ext4 rw 0 0\n";
+        assert!(matches!(
+            super::mount_state(mounts, Path::new("/mnt/data"), Path::new("/dev/mmcblk0p4")),
+            Ok(super::MountState::Prepared)
+        ));
+    }
+
+    #[test]
+    fn is_mount_point_decodes_octal_escapes() {
+        let mounts = "/dev/mmcblk0p4 /mnt/data\\040disk ext4 rw 0 0\n";
+        assert!(super::is_mount_point(mounts, Path::new("/mnt/data disk")));
+        assert!(!super::is_mount_point(
+            mounts,
+            Path::new("/mnt/data\\040disk")
+        ));
     }
 
     #[tokio::test]
@@ -256,7 +358,6 @@ mod tests {
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let mount_point = tmp.path().join("data");
         let runner = ScriptedRunner::new(vec![
-            ScriptedRunner::failure(),
             ScriptedRunner::success(b""),
             ScriptedRunner::success(b""),
             ScriptedRunner::success(b""),
@@ -271,10 +372,6 @@ mod tests {
         assert_invocations(
             &runner,
             &[
-                (
-                    "mountpoint",
-                    &["-q", mount_point.to_str().expect("BUG: utf8 path")],
-                ),
                 ("test", &["-b", "/dev/mmcblk0p4"]),
                 ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
                 ("mkfs.ext4", &["-F", "/dev/mmcblk0p4"]),
@@ -297,7 +394,6 @@ mod tests {
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let mount_point = tmp.path().join("data");
         let runner = ScriptedRunner::new(vec![
-            ScriptedRunner::failure(),
             ScriptedRunner::success(b""),
             ScriptedRunner::success(b"ext4\n"),
             ScriptedRunner::output(1, b""),
@@ -311,10 +407,6 @@ mod tests {
         assert_invocations(
             &runner,
             &[
-                (
-                    "mountpoint",
-                    &["-q", mount_point.to_str().expect("BUG: utf8 path")],
-                ),
                 ("test", &["-b", "/dev/mmcblk0p4"]),
                 ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
                 ("e2fsck", &["-p", "/dev/mmcblk0p4"]),
@@ -327,6 +419,58 @@ mod tests {
                         mount_point.to_str().expect("BUG: utf8 path"),
                     ],
                 ),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_does_not_format_when_blkid_errors() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let mount_point = tmp.path().join("data");
+        // blkid prints no TYPE but reports an error: the partition may hold a
+        // filesystem it simply could not read, so it must not be formatted.
+        let runner = ScriptedRunner::new(vec![
+            ScriptedRunner::success(b""),
+            ScriptedRunner::output_with_stderr(4, b"", b"blkid: /dev/mmcblk0p4: I/O error"),
+        ]);
+
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point)
+            .await
+            .expect_err("BUG: a failed blkid probe must not format the partition");
+
+        assert_invocations(
+            &runner,
+            &[
+                ("test", &["-b", "/dev/mmcblk0p4"]),
+                ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_does_not_format_when_blkid_is_killed() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let mount_point = tmp.path().join("data");
+        // blkid dies on a signal (e.g. the OOM killer) with no output at
+        // all: the partition was never probed, so it must not be formatted.
+        let runner = ScriptedRunner::new(vec![
+            ScriptedRunner::success(b""),
+            std::process::Output {
+                status: std::process::ExitStatus::from_raw(libc::SIGKILL),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            },
+        ]);
+
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point)
+            .await
+            .expect_err("BUG: a signal-killed blkid probe must not format the partition");
+
+        assert_invocations(
+            &runner,
+            &[
+                ("test", &["-b", "/dev/mmcblk0p4"]),
+                ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
             ],
         );
     }
