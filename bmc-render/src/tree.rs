@@ -316,6 +316,13 @@ pub enum TreeNode {
         title: String,
         subtitle: String,
     },
+    /// Host-rendered relative-time label.
+    RelTime {
+        anchor: i64,
+        format: RelTimeFormat,
+        clamp: RelTimeClamp,
+        style: TextStyle,
+    },
     /// Modal dialog overlay
     Modal {
         modal_id: String,
@@ -468,6 +475,10 @@ impl<'a> TreeReader<'a> {
 
     fn read_f32(&mut self) -> Result<f32> {
         Ok(f32::from_bits(self.read_u32()?))
+    }
+
+    fn read_i64(&mut self) -> Result<i64> {
+        Ok(i64::from_le_bytes(self.read_bytes(8)?.try_into()?))
     }
 
     fn read_bytes(&mut self, n: usize) -> Result<&'a [u8]> {
@@ -755,6 +766,18 @@ impl<'a> TreeReader<'a> {
                     kind,
                     title,
                     subtitle,
+                })
+            }
+            NODE_RELTIME => {
+                let anchor = self.read_i64()?;
+                let format = RelTimeFormat::try_from(self.read_u8()?)?;
+                let clamp = RelTimeClamp::try_from(self.read_u8()?)?;
+                let style = self.read_text_style()?;
+                Ok(TreeNode::RelTime {
+                    anchor,
+                    format,
+                    clamp,
+                    style,
                 })
             }
             NODE_PROGRESS_BAR => {
@@ -1345,6 +1368,8 @@ pub(crate) struct AnimationContext<'a> {
     pub(crate) mesh_slot_counter: u8,
     /// Set to true when any animation or transition is in progress.
     pub(crate) has_active: bool,
+    /// Injected clock (unix seconds) for lazily-built subtrees.
+    pub(crate) now_unix_secs: i64,
 }
 
 /// Touch interaction info (position relative to element, plus element dimensions).
@@ -1370,6 +1395,8 @@ pub struct TreeResult {
     /// Content bounding box (width, height) after layout. May be smaller than
     /// the viewport if the story content doesn't fill the available space.
     pub content_size: (f32, f32),
+    /// Soonest ms until a time node's label changes; drives the boundary re-render.
+    pub next_frame_delay_ms: Option<u32>,
 }
 
 /// Paragraph data for measurement and rendering
@@ -1445,6 +1472,8 @@ pub struct ProcessContext<'a> {
     pub taffy: &'a mut TaffyTree<NodeContext>,
     pub frame_counter: u64,
     pub delta_ms: u32,
+    /// Injected unix-seconds clock for host-formatted time nodes.
+    pub now_unix_secs: i64,
 }
 
 /// Process a tree: deserialize, layout, render.
@@ -1490,7 +1519,13 @@ pub fn layout_and_render(
 
     // Reuse taffy tree — clear nodes but keep internal allocations
     ctx.taffy.clear();
-    let root_id = build_taffy_node(ctx.taffy, tree_node, &mut result, &mut modals)?;
+    let root_id = build_taffy_node(
+        ctx.taffy,
+        tree_node,
+        ctx.now_unix_secs,
+        &mut result,
+        &mut modals,
+    )?;
 
     // Override root size per-axis. Zero means "keep the node's own style"
     // (content-sized). The storybook passes (panel_width, 0) so children
@@ -1533,6 +1568,7 @@ pub fn layout_and_render(
         draw_in_canvas: 0,
         mesh_slot_counter: 0,
         has_active: false,
+        now_unix_secs: ctx.now_unix_secs,
     };
 
     // Render main tree
@@ -1592,10 +1628,11 @@ pub fn layout_and_render(
     Ok((result, anim_ctx.has_active || modal_animating))
 }
 
-#[expect(clippy::too_many_lines, clippy::only_used_in_recursion)]
+#[expect(clippy::too_many_lines)]
 pub(crate) fn build_taffy_node(
     taffy: &mut TaffyTree<NodeContext>,
     node: &TreeNode,
+    now_unix_secs: i64,
     result: &mut TreeResult,
     modals: &mut Vec<ModalInfo>,
 ) -> Result<taffy::NodeId> {
@@ -1605,7 +1642,7 @@ pub(crate) fn build_taffy_node(
         | TreeNode::Center(props, children) => {
             let child_ids: Vec<_> = children
                 .iter()
-                .map(|c| build_taffy_node(taffy, c, result, modals))
+                .map(|c| build_taffy_node(taffy, c, now_unix_secs, result, modals))
                 .collect::<Result<_>>()?;
 
             let is_center = matches!(node, TreeNode::Center(_, _));
@@ -1733,6 +1770,38 @@ pub(crate) fn build_taffy_node(
             Ok(id)
         }
 
+        TreeNode::RelTime {
+            anchor,
+            format,
+            clamp,
+            style,
+        } => {
+            let delta = now_unix_secs - *anchor;
+            let text = crate::components::format_rel(delta, *format, *clamp);
+            let delay = crate::components::next_change_delay_ms(delta, *clamp);
+            result.next_frame_delay_ms =
+                Some(result.next_frame_delay_ms.map_or(delay, |d| d.min(delay)));
+            let id = taffy.new_leaf(Style::default())?;
+            taffy.set_node_context(
+                id,
+                Some(NodeContext {
+                    paragraph: Some(ParagraphData {
+                        base_style: *style,
+                        spans: vec![SpanData {
+                            text,
+                            weight: None,
+                            color: None,
+                            italic: false,
+                            underline: false,
+                            strikethrough: false,
+                        }],
+                    }),
+                    ..Default::default()
+                }),
+            )?;
+            Ok(id)
+        }
+
         TreeNode::Button {
             id: btn_id,
             label,
@@ -1836,7 +1905,7 @@ pub(crate) fn build_taffy_node(
         } => {
             let child_ids: Vec<_> = children
                 .iter()
-                .map(|c| build_taffy_node(taffy, c, result, modals))
+                .map(|c| build_taffy_node(taffy, c, now_unix_secs, result, modals))
                 .collect::<Result<_>>()?;
 
             // Extra right padding so content doesn't sit under the scrollbar

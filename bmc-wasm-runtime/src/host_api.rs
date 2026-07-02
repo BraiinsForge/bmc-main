@@ -427,6 +427,9 @@ pub(crate) struct FrameScheduleState {
     /// consuming the interaction.
     pub interaction_pending: bool,
 
+    /// Boundary-cadence wake for host-rendered time nodes; uncapped by animations.
+    pub host_frame_delay_ms: Option<u32>,
+
     /// Frame poll cadence (ms) capping the effective wake while animations
     /// are active. Set from `RuntimeConfig::animation_frame_delay_ms`.
     pub animation_frame_delay_ms: u32,
@@ -450,6 +453,7 @@ impl FrameScheduleState {
             widget_delay_ms: None,
             has_active_animations: false,
             interaction_pending: false,
+            host_frame_delay_ms: None,
             animation_frame_delay_ms: crate::RuntimeConfig::DEFAULT_ANIMATION_FRAME_DELAY_MS,
             deferred_wasm_render_at_ms: None,
             last_wasm_render_at_ms: 0,
@@ -461,18 +465,22 @@ impl FrameScheduleState {
         self.widget_delay_ms = None;
         self.has_active_animations = false;
         self.interaction_pending = false;
+        self.host_frame_delay_ms = None;
     }
 
     /// Whether anything wants the host to render a next frame.
     pub fn wants_next_frame(&self) -> bool {
-        self.widget_delay_ms.is_some() || self.has_active_animations || self.interaction_pending
+        self.widget_delay_ms.is_some()
+            || self.has_active_animations
+            || self.interaction_pending
+            || self.host_frame_delay_ms.is_some()
     }
 
-    /// Whether the next frame can replay the cached tree without running
-    /// WASM. Only when animations are active and neither the widget nor a
-    /// pending interaction needs WASM to run.
+    /// Whether the next frame can replay the cached tree without running WASM.
     pub fn is_animation_only_frame(&self) -> bool {
-        self.has_active_animations && !self.interaction_pending && self.widget_delay_ms.is_none()
+        (self.has_active_animations || self.host_frame_delay_ms.is_some())
+            && !self.interaction_pending
+            && self.widget_delay_ms.is_none()
     }
 
     /// Effective delay before the host should wake for the next render —
@@ -484,12 +492,10 @@ impl FrameScheduleState {
         let cap = self
             .has_active_animations
             .then_some(self.animation_frame_delay_ms);
-        match (self.widget_delay_ms, cap) {
-            (Some(d), Some(c)) => Some(d.min(c)),
-            (Some(d), None) => Some(d),
-            (None, Some(c)) => Some(c),
-            (None, None) => None,
-        }
+        [self.widget_delay_ms, cap, self.host_frame_delay_ms]
+            .into_iter()
+            .flatten()
+            .min()
     }
 }
 
@@ -1083,5 +1089,25 @@ mod tests {
             !s.is_animation_only_frame(),
             "no animations → not even animatable"
         );
+    }
+
+    #[test]
+    fn host_frame_delay_wakes_at_its_boundary_uncapped() {
+        let mut s = schedule(33);
+        s.host_frame_delay_ms = Some(1_000);
+        assert_eq!(s.effective_delay_ms(), Some(1_000));
+        assert!(s.wants_next_frame());
+        assert!(
+            s.is_animation_only_frame(),
+            "a time node replays the cached tree"
+        );
+    }
+
+    #[test]
+    fn animation_cadence_wins_over_host_frame_delay_when_both_present() {
+        let mut s = schedule(33);
+        s.host_frame_delay_ms = Some(1_000);
+        s.has_active_animations = true;
+        assert_eq!(s.effective_delay_ms(), Some(33));
     }
 }

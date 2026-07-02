@@ -69,6 +69,7 @@ impl TreeUi {
             taffy: &mut self.taffy,
             frame_counter,
             delta_ms,
+            now_unix_secs: 0,
         };
         #[expect(
             clippy::cast_precision_loss,

@@ -1670,6 +1670,7 @@ mod tests {
             draw_in_canvas: 0,
             mesh_slot_counter: 0,
             has_active: false,
+            now_unix_secs: 0,
         }
     }
 

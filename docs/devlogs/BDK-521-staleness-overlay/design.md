@@ -202,6 +202,10 @@ One commit per widget; **the last migration to stop using a shared banner delete
 - Capture / visual regression: a stale-state fixture per migrated widget — \`200 → advance
   > stale_factor × interval → 503 →
   > capture`— driving the overlay on. Deterministic via the replay   clock; bless with`just update-baselines <widget>\`.
+- **Self-tick perf + correctness (required gate, not just green unit tests):** measure the boundary-cadence self-tick on
+  a real Deck — actual extra frame wakes and GPU/CPU cost; confirm off-screen/neighbor slots truly do not wake and that
+  the cadence is the boundary cadence, not the animation cadence; confirm the label updates at the right instant with no
+  drift and capture stays deterministic under the injected clock.
 
 ## Deferred / reserved
 

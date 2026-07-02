@@ -14,6 +14,7 @@ pub const NODE_MODAL: u8 = 0x07;
 pub const NODE_NOTIFICATION: u8 = 0x08;
 pub const NODE_SCROLL: u8 = 0x09;
 pub const NODE_PROGRESS_BAR: u8 = 0x0A;
+pub const NODE_RELTIME: u8 = 0x0B;
 
 // Button size variants (wire value for NODE_BUTTON)
 pub const BUTTON_SIZE_SMALL: u8 = 0;

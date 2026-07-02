@@ -679,6 +679,7 @@ impl WasmWidgetRuntime {
         };
         let frame_counter = state.frame_counter;
         state.frame_counter += 1;
+        let now_unix_secs = state.system_time.timestamp();
         let mut timings = FrameTimings::default();
 
         let mut ptr = state
@@ -696,6 +697,7 @@ impl WasmWidgetRuntime {
             taffy: &mut state.taffy,
             frame_counter,
             delta_ms,
+            now_unix_secs,
         };
         match tree::layout_and_render(tree_node, width, height, renderer, &mut timings, &mut ctx) {
             Ok((result, has_active)) => {
@@ -706,6 +708,7 @@ impl WasmWidgetRuntime {
                 state.tree_drags = result.drags;
                 state.frame_schedule.has_active_animations = has_active;
                 state.frame_schedule.interaction_pending = had_interaction;
+                state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
             }
             Err(e) => {
                 tracing::error!("cached tree render failed: {e}");

@@ -163,6 +163,8 @@ pub struct DocumentRenderer {
     /// through.
     pub targets: Vec<FrameRenderTarget>,
     pub rendered_frames: Vec<RenderedFrame>,
+    /// Monotonic elapsed ms (sum of `delta_ms`) — the storybook's advancing clock.
+    elapsed_ms: u64,
 }
 
 impl DocumentRenderer {
@@ -171,6 +173,7 @@ impl DocumentRenderer {
             renderer,
             targets: Vec::new(),
             rendered_frames: Vec::new(),
+            elapsed_ms: 0,
         }
     }
 
@@ -198,6 +201,12 @@ impl DocumentRenderer {
         use eframe::glow::HasContext;
 
         self.rendered_frames.clear();
+
+        // Advance the storybook clock by this frame's delta (frozen while paused,
+        // when delta_ms is 0) so `RelativeTimeLive` labels tick like on-device.
+        self.elapsed_ms = self.elapsed_ms.saturating_add(u64::from(delta_ms));
+        #[expect(clippy::integer_division, reason = "ms to whole seconds")]
+        let now_unix_secs = i64::try_from(self.elapsed_ms / 1_000).unwrap_or(i64::MAX);
 
         // Collect frame sizes for FBO allocation (no mutable access needed).
         let frame_sizes: Vec<FrameSize> = collect_frame_sizes(blocks);
@@ -253,6 +262,7 @@ impl DocumentRenderer {
             &mut self.targets,
             &mut self.rendered_frames,
             delta_ms,
+            now_unix_secs,
         );
         // Catch tree-mutation drift between the immutable `collect_frame_sizes`
         // walk and the `&mut` render walk: every assignment must have been
@@ -303,6 +313,7 @@ fn collect_frame_sizes_rec(blocks: &[DocBlock], out: &mut Vec<FrameSize>) {
 }
 
 /// Render frames in tree order, matching the order of `collect_frame_sizes`.
+#[expect(clippy::too_many_arguments, reason = "recursive frame walk threads render state + clock")]
 fn render_frames_recursive(
     blocks: &mut [DocBlock],
     target_assignments: &[usize],
@@ -311,6 +322,7 @@ fn render_frames_recursive(
     targets: &mut [FrameRenderTarget],
     rendered_frames: &mut Vec<RenderedFrame>,
     delta_ms: u32,
+    now_unix_secs: i64,
 ) {
     for block in blocks {
         match block {
@@ -332,6 +344,7 @@ fn render_frames_recursive(
                     taffy: &mut target.state.taffy,
                     frame_counter: target.state.frame_counter,
                     delta_ms,
+                    now_unix_secs,
                 };
                 match bmc_render::process_tree(
                     &bytes,
@@ -390,6 +403,7 @@ fn render_frames_recursive(
                         targets,
                         rendered_frames,
                         delta_ms,
+                        now_unix_secs,
                     );
                 }
             }

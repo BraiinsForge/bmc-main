@@ -296,6 +296,7 @@ pub mod params;
 pub mod poll;
 pub mod profile;
 pub mod progress_bar;
+pub mod relative_time;
 #[cfg(target_arch = "wasm32")]
 pub mod slot;
 pub mod system;

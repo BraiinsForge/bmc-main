@@ -24,8 +24,9 @@ use bmc_wasm_protocol::{
     DRAW_CURVED_TEXT, DRAW_ICON, DRAW_MESH, DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH,
     DRAW_RECT, DRAW_ROTATED, DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Easing,
     Fill, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL,
-    NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_ROW, NODE_SCROLL, NODE_SPACER,
-    PathPaint, SvgId, encode_arc_cap, encode_arc_fill, encode_arc_segments, encode_fill,
+    NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_RELTIME, NODE_ROW, NODE_SCROLL,
+    NODE_SPACER, PathPaint, RelTimeClamp, RelTimeFormat, SvgId, encode_arc_cap, encode_arc_fill,
+    encode_arc_segments, encode_fill,
 };
 
 use crate::PropsFieldValue;
@@ -46,6 +47,7 @@ pub use crate::assets::*;
 pub use crate::modal::*;
 pub use crate::notification::*;
 pub use crate::progress_bar::*;
+pub use crate::relative_time::*;
 pub use crate::text::*;
 
 /// Tree buffer for serialization
@@ -91,6 +93,10 @@ impl TreeBuffer {
     }
 
     fn write_f32(&mut self, v: f32) {
+        self.data.extend_from_slice(&v.to_le_bytes());
+    }
+
+    fn write_i64(&mut self, v: i64) {
         self.data.extend_from_slice(&v.to_le_bytes());
     }
 
@@ -257,6 +263,25 @@ impl TreeBuffer {
         let subtitle_bytes = subtitle.as_bytes();
         self.write_u16(subtitle_bytes.len() as u16);
         self.write_bytes(subtitle_bytes);
+    }
+
+    /// Write a relative-time node.
+    ///
+    /// ```text
+    /// [NODE_RELTIME][anchor:i64][format:u8][clamp:u8][text_style bytes]
+    /// ```
+    pub fn write_relative_time(
+        &mut self,
+        anchor: i64,
+        format: RelTimeFormat,
+        clamp: RelTimeClamp,
+        style: &TextStyle,
+    ) {
+        self.write_u8(NODE_RELTIME);
+        self.write_i64(anchor);
+        self.write_u8(format as u8);
+        self.write_u8(clamp as u8);
+        self.write_bytes(&style.to_bytes());
     }
 
     /// Write a modal node.
@@ -1310,6 +1335,13 @@ pub enum Node {
         title: String,
         subtitle: String,
     },
+    /// Host-rendered relative-time label — self-updating "N ago" / "in N".
+    RelTime {
+        anchor: i64,
+        format: RelTimeFormat,
+        clamp: RelTimeClamp,
+        style: TextStyle,
+    },
     /// Scrollable container — clips children and allows vertical scrolling.
     Scroll {
         scroll_key: String,
@@ -1616,6 +1648,14 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             spans,
         } => {
             buf.write_paragraph(props, base_style, spans);
+        }
+        Node::RelTime {
+            anchor,
+            format,
+            clamp,
+            style,
+        } => {
+            buf.write_relative_time(*anchor, *format, *clamp, style);
         }
         Node::Button {
             id,

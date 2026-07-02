@@ -283,7 +283,13 @@ pub(crate) fn render_modal(
     };
     let mut dummy_modals: Vec<ModalInfo> = Vec::new();
     taffy.clear();
-    if let Ok(body_root) = build_taffy_node(taffy, &body_scroll, result, &mut dummy_modals) {
+    if let Ok(body_root) = build_taffy_node(
+        taffy,
+        &body_scroll,
+        anim_ctx.now_unix_secs,
+        result,
+        &mut dummy_modals,
+    ) {
         let _ = compute_taffy_layout(taffy, body_root, renderer);
         render_taffy_node(
             taffy,

@@ -209,6 +209,7 @@ fn register_tree_imports(linker: &mut Linker<HostState>) -> Result<()> {
                 let delta_ms = state.delta_ms;
                 let frame_counter = state.frame_counter;
                 state.frame_counter += 1;
+                let now_unix_secs = state.system_time.timestamp();
                 let mut ctx = bmc_render::ProcessContext {
                     interaction: &mut state.interaction,
                     modal_states: &mut state.modal_states,
@@ -218,6 +219,7 @@ fn register_tree_imports(linker: &mut Linker<HostState>) -> Result<()> {
                     taffy: &mut state.taffy,
                     frame_counter,
                     delta_ms,
+                    now_unix_secs,
                 };
                 match tree::process_tree(&data, w, h, renderer, &mut ctx) {
                     Ok((tree_node, result, has_active, timings)) => {
@@ -227,6 +229,7 @@ fn register_tree_imports(linker: &mut Linker<HostState>) -> Result<()> {
                         state.last_timings = timings;
                         state.frame_schedule.has_active_animations = has_active;
                         state.frame_schedule.interaction_pending = had_interaction;
+                        state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
                         state.cached_tree = Some((tree_node, w, h));
                     }
                     Err(e) => {

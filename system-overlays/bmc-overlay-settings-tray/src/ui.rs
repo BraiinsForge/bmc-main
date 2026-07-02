@@ -680,6 +680,7 @@ mod tests {
             | TreeNode::Spacer { .. }
             | TreeNode::Canvas { .. }
             | TreeNode::Notification { .. }
+            | TreeNode::RelTime { .. }
             | TreeNode::Modal { .. }
             | TreeNode::ProgressBar { .. } => None,
         }
