@@ -1551,93 +1551,12 @@ mod tests {
         assert_eq!(resolved.store_path, "/nix/store/custom-clock");
     }
 
-    #[test]
-    fn cli_mount_defaults() {
-        let cli = Cli::try_parse_from(["bmc-nix-cli", "mount"]).expect("BUG: parse");
-        let Commands::Mount { source, target } = cli.command else {
-            panic!("BUG: expected Mount");
-        };
-        assert_eq!(source, PathBuf::from("/mnt/data/nix"));
-        assert_eq!(target, PathBuf::from("/nix"));
-    }
-
-    #[test]
-    fn cli_mount_overrides() {
-        let cli = Cli::try_parse_from(["bmc-nix-cli", "mount", "--source", "/a", "--target", "/b"])
-            .expect("BUG: parse");
-        let Commands::Mount { source, target } = cli.command else {
-            panic!("BUG: expected Mount");
-        };
-        assert_eq!(source, PathBuf::from("/a"));
-        assert_eq!(target, PathBuf::from("/b"));
-    }
-
-    #[test]
-    fn cli_activate_default() {
-        let cli = Cli::try_parse_from(["bmc-nix-cli", "activate"]).expect("BUG: parse");
-        let Commands::Activate {
-            generation, next, ..
-        } = cli.command
-        else {
-            panic!("BUG: expected Activate");
-        };
-        assert_eq!(generation, None);
-        assert!(!next);
-    }
-
-    #[test]
-    fn cli_activate_generation_current() {
-        let cli = Cli::try_parse_from(["bmc-nix-cli", "activate", "--generation", "current"])
-            .expect("BUG: parse");
-        let Commands::Activate { generation, .. } = cli.command else {
-            panic!("BUG: expected Activate");
-        };
-        assert_eq!(generation, Some(GenerationSelector::Current));
-    }
-
-    #[test]
-    fn cli_activate_generation_latest() {
-        let cli = Cli::try_parse_from(["bmc-nix-cli", "activate", "--generation", "latest"])
-            .expect("BUG: parse");
-        let Commands::Activate { generation, .. } = cli.command else {
-            panic!("BUG: expected Activate");
-        };
-        assert_eq!(generation, Some(GenerationSelector::Latest));
-    }
-
-    #[test]
-    fn cli_activate_generation_number() {
-        let cli = Cli::try_parse_from(["bmc-nix-cli", "activate", "--generation", "5"])
-            .expect("BUG: parse");
-        let Commands::Activate { generation, .. } = cli.command else {
-            panic!("BUG: expected Activate");
-        };
-        assert_eq!(generation, Some(GenerationSelector::Number(5)));
-    }
-
-    #[test]
-    fn cli_activate_generation_zero_rejected() {
-        assert!(Cli::try_parse_from(["bmc-nix-cli", "activate", "--generation", "0"]).is_err());
-    }
-
-    #[test]
-    fn cli_activate_generation_negative_rejected() {
-        assert!(Cli::try_parse_from(["bmc-nix-cli", "activate", "--generation", "-1"]).is_err());
-    }
-
-    #[test]
-    fn cli_activate_generation_garbage_rejected() {
-        assert!(Cli::try_parse_from(["bmc-nix-cli", "activate", "--generation", "foo"]).is_err());
-    }
-
-    #[test]
-    fn cli_activate_next_alone_parses() {
-        let cli = Cli::try_parse_from(["bmc-nix-cli", "activate", "--next"]).expect("BUG: parse");
-        let Commands::Activate { next, .. } = cli.command else {
-            panic!("BUG: expected Activate");
-        };
-        assert!(next);
-    }
+    // The two `activate --next` conflict tests below exercise our custom
+    // `ArgGroup` workaround: `--generation` has a string default so a plain
+    // `conflicts_with` would spuriously trigger on `--next` alone. Runtime
+    // behavior, `GenerationSelector` parsing, and mount exit codes are
+    // covered by the subprocess-driven integration tests in
+    // `bmc-nix/tests/cli_activate.rs`.
 
     #[test]
     fn cli_activate_next_conflicts_with_explicit_generation() {
