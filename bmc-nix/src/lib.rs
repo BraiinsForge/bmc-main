@@ -6,6 +6,7 @@ pub mod generation_path;
 pub mod hooks;
 pub mod index;
 pub mod manifest;
+pub mod mount;
 pub mod partition;
 pub mod profile;
 pub mod service_orchestrator;
