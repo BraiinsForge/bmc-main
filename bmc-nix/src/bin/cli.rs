@@ -3,7 +3,9 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
+use bmc_nix::activation::{self, ActivationOutcome, GenerationSelector};
 use bmc_nix::manifest;
+use bmc_nix::mount::{self, MountOutcome};
 use bmc_nix::types::{
     BaseSelector, FetchedIndex, GcConfig, InstallResult, Manifest, MergedIndex, PackageChange,
     PackageVersion, ServerEntry, ServersConfig,
@@ -331,6 +333,43 @@ enum Commands {
         /// replaces the configured `protected_generations`.
         #[arg(long = "protected-generation")]
         protected_generations: Vec<usize>,
+    },
+
+    /// Bind-mount the persistent Nix store into `/nix`.
+    Mount {
+        /// Source directory (the persistent Nix store).
+        #[arg(long, default_value = "/mnt/data/nix")]
+        source: PathBuf,
+
+        /// Target mount point.
+        #[arg(long, default_value = "/nix")]
+        target: PathBuf,
+    },
+
+    /// Activate a profile generation.
+    ///
+    /// Default target is `--generation current`. `--next` runs the
+    /// boot-consume flow instead; `--next` and `--generation` are
+    /// mutually exclusive (see the `activate-target` ArgGroup).
+    #[command(group = clap::ArgGroup::new("activate-target").required(false).multiple(false))]
+    Activate {
+        /// Profile-generation directory.
+        #[arg(long, default_value = "/nix/var/nix/gcroots/profiles/bmc")]
+        profile_dir: PathBuf,
+
+        /// Which generation to activate: `current` (default), `latest`,
+        /// or a positive integer generation number.
+        #[arg(
+            long,
+            group = "activate-target",
+            value_parser = clap::value_parser!(GenerationSelector),
+        )]
+        generation: Option<GenerationSelector>,
+
+        /// Consume the staged `next` profile, backing up `current` as
+        /// `previous` first.
+        #[arg(long, action = clap::ArgAction::SetTrue, group = "activate-target")]
+        next: bool,
     },
 }
 
@@ -816,6 +855,51 @@ async fn cmd_gc(
     Ok(())
 }
 
+fn cmd_mount(source: &Path, target: &Path) -> anyhow::Result<()> {
+    match mount::bind_mount_nix(source, target) {
+        Ok(MountOutcome::Mounted) => {
+            eprintln!("mount: bound {} -> {}", source.display(), target.display());
+            Ok(())
+        }
+        Ok(MountOutcome::AlreadyMounted) => {
+            eprintln!("mount: {} already mounted", target.display());
+            Ok(())
+        }
+        Ok(MountOutcome::SourceMissing) => {
+            eprintln!("mount: source {} does not exist", source.display());
+            std::process::exit(1);
+        }
+        Err(err) => Err(anyhow::Error::new(err)),
+    }
+}
+
+async fn cmd_activate(
+    profile_dir: &Path,
+    generation: Option<GenerationSelector>,
+    next: bool,
+) -> anyhow::Result<()> {
+    let selector = if next {
+        GenerationSelector::Next
+    } else {
+        generation.unwrap_or(GenerationSelector::Current)
+    };
+    let outcome = activation::activate(profile_dir, selector).await;
+    match outcome {
+        Ok(ActivationOutcome::Activated { generation, path }) => {
+            eprintln!(
+                "activate: activated generation {generation} at {}",
+                path.display()
+            );
+            Ok(())
+        }
+        Ok(ActivationOutcome::Skipped) => {
+            eprintln!("activate: no current profile and no generation links, skipping activation");
+            Ok(())
+        }
+        Err(err) => Err(anyhow::Error::new(err)),
+    }
+}
+
 /// Install a stderr `tracing` subscriber so emitted events (e.g. gc
 /// generation removals) are visible. Stdout is reserved for command
 /// output, so logs go to stderr. The level defaults to `info` and is
@@ -978,6 +1062,14 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
         }
+
+        Commands::Mount { source, target } => cmd_mount(&source, &target),
+
+        Commands::Activate {
+            profile_dir,
+            generation,
+            next,
+        } => cmd_activate(&profile_dir, generation, next).await,
     }
 }
 
@@ -1478,5 +1570,123 @@ mod tests {
 
         assert_eq!(resolved.installed_from, "custom-0");
         assert_eq!(resolved.store_path, "/nix/store/custom-clock");
+    }
+
+    #[test]
+    fn cli_mount_defaults() {
+        let cli = Cli::try_parse_from(["bmc-nix-cli", "mount"]).expect("BUG: parse");
+        let Commands::Mount { source, target } = cli.command else {
+            panic!("BUG: expected Mount");
+        };
+        assert_eq!(source, PathBuf::from("/mnt/data/nix"));
+        assert_eq!(target, PathBuf::from("/nix"));
+    }
+
+    #[test]
+    fn cli_mount_overrides() {
+        let cli = Cli::try_parse_from(["bmc-nix-cli", "mount", "--source", "/a", "--target", "/b"])
+            .expect("BUG: parse");
+        let Commands::Mount { source, target } = cli.command else {
+            panic!("BUG: expected Mount");
+        };
+        assert_eq!(source, PathBuf::from("/a"));
+        assert_eq!(target, PathBuf::from("/b"));
+    }
+
+    #[test]
+    fn cli_activate_default() {
+        let cli = Cli::try_parse_from(["bmc-nix-cli", "activate"]).expect("BUG: parse");
+        let Commands::Activate {
+            generation, next, ..
+        } = cli.command
+        else {
+            panic!("BUG: expected Activate");
+        };
+        assert_eq!(generation, None);
+        assert!(!next);
+    }
+
+    #[test]
+    fn cli_activate_generation_current() {
+        let cli = Cli::try_parse_from(["bmc-nix-cli", "activate", "--generation", "current"])
+            .expect("BUG: parse");
+        let Commands::Activate { generation, .. } = cli.command else {
+            panic!("BUG: expected Activate");
+        };
+        assert_eq!(generation, Some(GenerationSelector::Current));
+    }
+
+    #[test]
+    fn cli_activate_generation_latest() {
+        let cli = Cli::try_parse_from(["bmc-nix-cli", "activate", "--generation", "latest"])
+            .expect("BUG: parse");
+        let Commands::Activate { generation, .. } = cli.command else {
+            panic!("BUG: expected Activate");
+        };
+        assert_eq!(generation, Some(GenerationSelector::Latest));
+    }
+
+    #[test]
+    fn cli_activate_generation_number() {
+        let cli = Cli::try_parse_from(["bmc-nix-cli", "activate", "--generation", "5"])
+            .expect("BUG: parse");
+        let Commands::Activate { generation, .. } = cli.command else {
+            panic!("BUG: expected Activate");
+        };
+        assert_eq!(generation, Some(GenerationSelector::Number(5)));
+    }
+
+    #[test]
+    fn cli_activate_generation_zero_rejected() {
+        assert!(Cli::try_parse_from(["bmc-nix-cli", "activate", "--generation", "0"]).is_err());
+    }
+
+    #[test]
+    fn cli_activate_generation_negative_rejected() {
+        assert!(Cli::try_parse_from(["bmc-nix-cli", "activate", "--generation", "-1"]).is_err());
+    }
+
+    #[test]
+    fn cli_activate_generation_garbage_rejected() {
+        assert!(Cli::try_parse_from(["bmc-nix-cli", "activate", "--generation", "foo"]).is_err());
+    }
+
+    #[test]
+    fn cli_activate_next_alone_parses() {
+        let cli = Cli::try_parse_from(["bmc-nix-cli", "activate", "--next"]).expect("BUG: parse");
+        let Commands::Activate { next, .. } = cli.command else {
+            panic!("BUG: expected Activate");
+        };
+        assert!(next);
+    }
+
+    #[test]
+    fn cli_activate_next_conflicts_with_explicit_generation() {
+        let err = Cli::try_parse_from([
+            "bmc-nix-cli",
+            "activate",
+            "--next",
+            "--generation",
+            "latest",
+        ])
+        .expect_err("BUG: expected clap conflict");
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::ArgumentConflict,
+            "unexpected clap error: {err}"
+        );
+    }
+
+    #[test]
+    fn cli_activate_next_conflicts_with_explicit_current() {
+        let err = Cli::try_parse_from([
+            "bmc-nix-cli",
+            "activate",
+            "--next",
+            "--generation",
+            "current",
+        ])
+        .expect_err("BUG: expected clap conflict on explicit current");
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 }
