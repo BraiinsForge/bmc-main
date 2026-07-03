@@ -26,6 +26,12 @@ How application and firmware upgrades are resolved and applied: package indexes 
 algorithm, the firmware-pinned index used during BOS upgrades, BOS downgrade on BMM101, rollback, garbage collection,
 and store initialization.
 
+### [Service Orchestrator](service-orchestrator.md)
+
+How OpenWrt services are reconciled after a profile activation: why the orchestrator runs as a detached transient procd
+service, how it synchronizes with the activation through the profile lock and verifies via `current` that activation was
+not reverted, and how per-service `etc/init.d.conf` configuration shapes the stop/start/upgrade action plan.
+
 ### [OpenWrt Firmware Tarball](openwrt-tarball.md)
 
 What the firmware sysupgrade tarball contains from the Nix upgrade point of view: the on-tarball `bmc-nix-cli` binary
