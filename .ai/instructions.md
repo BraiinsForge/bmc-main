@@ -349,3 +349,6 @@ When multiple valid approaches exist, choose based on:
 - Learn from existing implementations
 - Stop after 3 failed attempts and reassess
 - do not use unwrap() but use expect("BUG: $reason") with description why it is bug
+- prefer self-documenting code that runs over a comment: `assert!(cond, "why")`, `expect("BUG: …")`, and descriptive
+  names/consts beat cryptic code plus an explanatory comment — the intent can't drift and shows on failure. See the
+  `code-style` skill for the fuller rule.

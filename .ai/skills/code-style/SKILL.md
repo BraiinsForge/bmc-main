@@ -34,6 +34,33 @@ the code, the type name, or a doc that already carries the fact (an on-disk form
 not get re-documented at every call site). Cut comments that narrate the obvious: a `{}` borrow scope, a widening cast.
 When the same fact would live in two places, keep it in one and point to it.
 
+## Comments — prefer self-documenting code over a comment
+
+Before writing a comment that explains what a line *does*, make the code say it at runtime instead. Descriptive code
+that executes is strictly better than cryptic code plus a comment: it can't drift from the code, and it surfaces when
+things break rather than sitting silent above the line.
+
+- **Assertion messages, not inline comments.** Put the intent in the message so it prints on failure:
+
+  ```rust
+  // don't:
+  assert!(!reg.is_stale(h, 7)); // age 7s is within the 7.5s threshold
+  assert!(reg.is_stale(h, 8));  // age 8s exceeds it
+
+  // do:
+  assert!(!reg.is_stale(h, 7), "age 7 s is within the 7.5 s threshold");
+  assert!(reg.is_stale(h, 8), "age 8 s exceeds the 7.5 s threshold");
+  ```
+
+- **`expect("BUG: …")`, not `unwrap()` + a comment** — the reason rides the panic (already the repo default).
+
+- **Descriptive names, not explanatory comments** — a named binding, `const`, or test name
+  (`not_stale_without_prior_success`) that states the intent removes the comment that would have decoded a bare literal
+  or a terse body.
+
+This doesn't abolish comments — a genuinely non-obvious *why* still earns one (see the workaround rule below). It
+abolishes the comment that exists only because the code was left cryptic.
+
 ## Comments — workarounds must cite the cause
 
 Never paper over a mistake with vague rationale:
