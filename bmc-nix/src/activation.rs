@@ -46,6 +46,20 @@ pub enum ActivationError {
     },
     #[error("profile activation failed: {0}")]
     BuildProfile(#[source] Box<crate::profile::BuildProfileError>),
+    #[error("activation failed, reverted to generation {reverted_to}: {original}")]
+    RevertedAfterFailure {
+        original: Box<ActivationError>,
+        reverted_to: usize,
+    },
+    #[error(
+        "activation failed ({original}); revert to previous generation also failed: {revert_error}"
+    )]
+    RevertFailed {
+        original: Box<ActivationError>,
+        revert_error: Box<ActivationError>,
+    },
+    #[error("failed to acquire profile lock: {0}")]
+    Lock(#[source] Box<crate::profile::BuildProfileError>),
 }
 
 /// Which profile generation to activate.
@@ -146,15 +160,11 @@ pub fn backup_current_to_previous(profile_dir: &Path) -> io::Result<()> {
 }
 
 /// Move `previous` back on top of `current`.
+///
+/// A single `rename(2)`: it atomically replaces an existing `current`,
+/// so there is no window in which the profile has no `current` at all.
 pub fn restore_previous_as_current(profile_dir: &Path) -> io::Result<()> {
-    let current = profile_dir.join("current");
-    let previous = profile_dir.join("previous");
-    match std::fs::remove_file(&current) {
-        Ok(()) => {}
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-        Err(err) => return Err(err),
-    }
-    std::fs::rename(previous, current)
+    std::fs::rename(profile_dir.join("previous"), profile_dir.join("current"))
 }
 
 /// Remove the `next` symlink; `NotFound` is treated as success.
@@ -217,7 +227,7 @@ fn resolve_selector(
     }
 }
 
-fn resolve_current_link(profile_dir: &Path) -> Result<Option<PathBuf>, ActivationError> {
+pub(crate) fn resolve_current_link(profile_dir: &Path) -> Result<Option<PathBuf>, ActivationError> {
     let current = profile_dir.join("current");
     match std::fs::read_link(&current) {
         Ok(target) => {
@@ -236,7 +246,7 @@ fn resolve_current_link(profile_dir: &Path) -> Result<Option<PathBuf>, Activatio
     }
 }
 
-fn io_to_activation(profile_dir: &Path) -> impl Fn(io::Error) -> ActivationError + '_ {
+pub(crate) fn io_to_activation(profile_dir: &Path) -> impl Fn(io::Error) -> ActivationError + '_ {
     move |source| ActivationError::ResolveIo {
         path: profile_dir.display().to_string(),
         source,
@@ -308,19 +318,19 @@ async fn current_fallback_to_latest(
     })
 }
 
-fn canonicalize_pair(a: &Path, b: &Path) -> bool {
+pub(crate) fn canonicalize_pair(a: &Path, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(ap), Ok(bp)) => ap == bp,
         _ => a == b,
     }
 }
 
-fn generation_number_from_link(link: &Path) -> Option<usize> {
+pub(crate) fn generation_number_from_link(link: &Path) -> Option<usize> {
     let name = link.file_name()?.to_str()?;
     parse_generation_link_name(name)
 }
 
-fn is_executable(path: &Path) -> bool {
+pub(crate) fn is_executable(path: &Path) -> bool {
     std::fs::metadata(path)
         .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
         .unwrap_or(false)
