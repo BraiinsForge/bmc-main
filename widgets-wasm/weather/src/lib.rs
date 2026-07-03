@@ -124,10 +124,6 @@ mod wasm_glue {
     thread_local! {
         static STATE: RefCell<State> = const { RefCell::new(State::Loading) };
         static POLL: Cell<Option<PollHandle>> = const { Cell::new(None) };
-        // Set when a refresh fails while data is loaded; the last-good data stays
-        // on screen and the render path raises a "stale data" banner. Cleared on
-        // the next successful load and on a location change.
-        static STALE: Cell<bool> = const { Cell::new(false) };
     }
 
     #[unsafe(no_mangle)]
@@ -169,10 +165,8 @@ mod wasm_glue {
             super::FetchOutcome::Store => {
                 let weather = parsed.expect("BUG: Store outcome implies a parsed payload");
                 STATE.with(|s| *s.borrow_mut() = State::Loaded(weather));
-                STALE.with(|s| s.set(false));
             }
             super::FetchOutcome::Keep => {
-                STALE.with(|s| s.set(true));
                 // A 2xx whose body failed to parse is worth retrying sooner than
                 // the next poll; a transient/network failure waits for the engine.
                 if action == super::WeatherFetchAction::ReadPayload {
@@ -181,11 +175,9 @@ mod wasm_glue {
             }
             super::FetchOutcome::Fail => {
                 STATE.with(|s| *s.borrow_mut() = State::Error);
-                STALE.with(|s| s.set(false));
             }
             super::FetchOutcome::BadLocation => {
                 STATE.with(|s| *s.borrow_mut() = State::BadLocation);
-                STALE.with(|s| s.set(false));
                 handle.set_enabled(false);
             }
         }
@@ -198,7 +190,6 @@ mod wasm_glue {
         let cur = manifest_params::Params::current();
         if prev.as_ref().is_none_or(|p| p.location != cur.location) {
             STATE.with(|s| *s.borrow_mut() = State::Loading);
-            STALE.with(|s| s.set(false));
             // poll engine does not rebuild on param change; invalidate forces a fresh fetch
             POLL.with(|p| {
                 if let Some(handle) = p.get() {
@@ -215,6 +206,16 @@ mod wasm_glue {
         request_frame();
     }
 
+    // The stale overlay's anchor: the last good load, but only while stale.
+    fn stale_anchor() -> Option<SystemTime> {
+        let handle = POLL.with(Cell::get)?;
+        if handle.is_stale() {
+            handle.last_success_time()
+        } else {
+            None
+        }
+    }
+
     #[unsafe(no_mangle)]
     pub extern "C" fn render(_delta_ms: u32) {
         let size = widget_size();
@@ -225,10 +226,9 @@ mod wasm_glue {
             STATE.with(|s| match &*s.borrow() {
                 State::Loaded(weather) => {
                     let view = render::current_view(weather, &params, size);
-                    if STALE.with(Cell::get) {
-                        render::with_stale_banner(view)
-                    } else {
-                        view
+                    match stale_anchor() {
+                        Some(anchor) => with_stale_overlay(view, anchor, widget_viewport().shape),
+                        None => view,
                     }
                 }
                 State::BadLocation => render::message_view("Location not found", size),

@@ -53,11 +53,12 @@ fn stale_round(anchor: SystemTime) -> Node {
     )
 }
 
-/// Float a "Last refresh N ago" pill over `root`'s column — bottom-left on
-/// rectangular faces, centered and lifted on round ones. Root must be a Column.
+/// Float a "Last refresh N ago" pill over `root` — bottom-left on rectangular
+/// faces, centered and lifted on round ones. The pill is an absolute child, so
+/// it attaches to any flex root (Column or Row) without disturbing its layout.
 #[must_use]
 pub fn with_stale_overlay(mut root: Node, anchor: SystemTime, shape: ViewportShape) -> Node {
-    if let Node::Column(_, children) = &mut root {
+    if let Node::Column(_, children) | Node::Row(_, children) = &mut root {
         children.push(match shape {
             ViewportShape::Round => stale_round(anchor),
             ViewportShape::Rectangular => stale_rect(anchor),
@@ -69,7 +70,7 @@ pub fn with_stale_overlay(mut root: Node, anchor: SystemTime, shape: ViewportSha
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tree::col;
+    use crate::tree::{col, row};
 
     #[test]
     fn attaches_one_absolute_child_to_the_column() {
@@ -86,12 +87,28 @@ mod tests {
     }
 
     #[test]
-    fn non_column_root_is_returned_untouched() {
+    fn attaches_to_a_row_root_too() {
+        let out = with_stale_overlay(
+            row(PropsData::default(), Vec::new()),
+            SystemTime { unix_secs: 0 },
+            ViewportShape::Rectangular,
+        );
+        let Node::Row(_, children) = out else {
+            panic!("BUG: a Row root stays a Row");
+        };
+        assert_eq!(children.len(), 1, "a Row root gets the overlay too");
+    }
+
+    #[test]
+    fn non_container_root_is_returned_untouched() {
         let out = with_stale_overlay(
             Node::Spacer { flex: 1.0 },
             SystemTime { unix_secs: 0 },
             ViewportShape::Round,
         );
-        assert!(matches!(out, Node::Spacer { .. }), "no column, no overlay");
+        assert!(
+            matches!(out, Node::Spacer { .. }),
+            "no flex container, no overlay"
+        );
     }
 }

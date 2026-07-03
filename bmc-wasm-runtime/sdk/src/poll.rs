@@ -248,14 +248,15 @@ impl Registry {
         backend: &mut dyn FetchBackend,
     ) {
         let idx = handle.0;
-        // Record before the early returns so every delivered reply counts.
-        if ok {
+        let forced = std::mem::take(&mut self.polls[idx].force_retry);
+        // A forced retry means the handler rejected this reply, so it is no
+        // refresh however the HTTP call went.
+        if ok && forced.is_none() {
             self.polls[idx].last_success_secs = Some(now_secs);
             self.polls[idx].last_failed = false;
         } else {
             self.polls[idx].last_failed = true;
         }
-        let forced = std::mem::take(&mut self.polls[idx].force_retry);
         if !self.polls[idx].enabled || self.polls[idx].live.is_some() {
             return;
         }
@@ -897,6 +898,29 @@ mod tests {
         assert!(!reg.is_stale(h, 100), "a fresh success clears the failure");
         assert_eq!(reg.last_success_age(h, 25), Some(Duration::from_secs(5)));
         assert_eq!(reg.last_success_secs(h), Some(20));
+    }
+
+    #[test]
+    fn forced_retry_does_not_count_as_a_refresh() {
+        let mut reg = Registry::default();
+        let mut be = FakeBackend::new();
+        let h = reg.register(build_url, CFG);
+        reg.start(h, &mut be);
+        deliver_at(&mut reg, &mut be, 1, true, 0);
+        // A 2xx the handler rejected via retry(): no refresh despite ok=true.
+        let id = FetchRequestId::from_wire(2).expect("BUG: test id is nonzero");
+        assert_eq!(reg.begin_reply(id, &mut be), ReplyAction::Deliver(h));
+        reg.request_retry(h);
+        reg.reschedule(h, true, 100, &mut be);
+        assert_eq!(
+            reg.last_success_secs(h),
+            Some(0),
+            "a rejected reply keeps the previous anchor"
+        );
+        assert!(
+            reg.is_stale(h, 100),
+            "a rejected reply leaves the poll stale"
+        );
     }
 
     #[test]
