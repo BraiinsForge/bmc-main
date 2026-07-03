@@ -117,15 +117,28 @@ Every profile apply run removes a stale `next` symlink immediately after taking 
 run invalidates a pending deferred activation, including a no-op run that does not build a replacement generation. A
 second `--next-boot` run before reboot therefore replaces the pending target with the newly built generation.
 
-At boot, `nix-activator` checks for `next`. If it is present, the service:
+At boot, `nix-activator` runs `bmc-nix-cli activate --generation next`. If `next` is present, the command:
 
-1. Backs up `current` as `previous`.
+1. Remembers the generation `current` points to, in memory only; nothing is staged on disk.
 2. Runs the target generation's activation entrypoint; the generation already exists, so no boot-time promotion or
    renumbering happens.
 3. Removes `next` after a successful activation.
-4. Restores `previous` and re-activates it if the target activation fails.
+4. On failure, re-runs the remembered old generation's activation entrypoint, with `PROFILE_OLD_GENERATION` set to the
+   failed target generation, so diff-driven activation scripts can undo its side effects.
 
-If `next` is missing on boot, the service is a no-op — this is the common case on ordinary boots.
+If `next` is missing on boot, `--generation next` falls back to activating `current`, which is a no-op — this is the
+common case on ordinary boots.
+
+Activating any generation other than `current` follows this same revert rule, not just `next`: the whole sequence runs
+under the profile lock, and a failed entrypoint triggers automatic re-activation of the old generation. A reverted
+activation still reports an error — `RevertedAfterFailure`, carrying the original failure — so callers (including the
+boot service) see it as a failed run even though the device is left on a working generation. If the revert re-activation
+itself fails, the error is `RevertFailed`, carrying both the original and the revert failure.
+
+`bmc-nix` never writes the `current` symlink; only a generation's own activation scripts do. The core package's
+`050-write-boundary` activation script moves `current` atomically (a temporary symlink, then `mv -Tf`), and
+`095-link-current` derives `/run/current-profile` from it. Reverting to the old generation works by re-running its
+activation entrypoint, which moves `current` back through the same mechanism — never by editing symlinks directly.
 
 The design intent is:
 
