@@ -343,28 +343,18 @@ enum Commands {
 
     /// Activate a profile generation.
     ///
-    /// Default target is `--generation current`. `--next` runs the
-    /// boot-consume flow instead; `--next` and `--generation` are
-    /// mutually exclusive (see the `activate-target` ArgGroup).
-    #[command(group = clap::ArgGroup::new("activate-target").required(false).multiple(false))]
+    /// Default target is `--generation current`. A failed activation of
+    /// a non-current generation reverts to the current one.
     Activate {
         /// Profile-generation directory.
         #[arg(long, default_value = "/nix/var/nix/gcroots/profiles/bmc")]
         profile_dir: PathBuf,
 
         /// Which generation to activate: `current` (default), `latest`,
-        /// or a positive integer generation number.
-        #[arg(
-            long,
-            group = "activate-target",
-            value_parser = clap::value_parser!(GenerationSelector),
-        )]
+        /// `next` (consume the staged next profile), or a positive
+        /// integer generation number.
+        #[arg(long, value_parser = clap::value_parser!(GenerationSelector))]
         generation: Option<GenerationSelector>,
-
-        /// Consume the staged `next` profile, backing up `current` as
-        /// `previous` first.
-        #[arg(long, action = clap::ArgAction::SetTrue, group = "activate-target")]
-        next: bool,
     },
 }
 
@@ -871,14 +861,12 @@ fn cmd_mount(source: &Path, target: &Path) -> anyhow::Result<()> {
 async fn cmd_activate(
     profile_dir: &Path,
     generation: Option<GenerationSelector>,
-    next: bool,
 ) -> anyhow::Result<()> {
-    let selector = if next {
-        GenerationSelector::Next
-    } else {
-        generation.unwrap_or(GenerationSelector::Current)
-    };
-    let outcome = activation::activate(profile_dir, selector).await;
+    let outcome = activation::activate(
+        profile_dir,
+        generation.unwrap_or(GenerationSelector::Current),
+    )
+    .await;
     match outcome {
         Ok(ActivationOutcome::Activated { generation, path }) => {
             eprintln!(
@@ -1063,8 +1051,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Activate {
             profile_dir,
             generation,
-            next,
-        } => cmd_activate(&profile_dir, generation, next).await,
+        } => cmd_activate(&profile_dir, generation).await,
     }
 }
 
@@ -1551,40 +1538,13 @@ mod tests {
         assert_eq!(resolved.store_path, "/nix/store/custom-clock");
     }
 
-    // The two `activate --next` conflict tests below exercise our custom
-    // `ArgGroup` workaround: `--generation` has a string default so a plain
-    // `conflicts_with` would spuriously trigger on `--next` alone. Runtime
-    // behavior, `GenerationSelector` parsing, and mount exit codes are
-    // covered by the subprocess-driven integration tests in
-    // `bmc-nix/tests/cli_activate.rs`.
-
     #[test]
-    fn cli_activate_next_conflicts_with_explicit_generation() {
-        let err = Cli::try_parse_from([
-            "bmc-nix-cli",
-            "activate",
-            "--next",
-            "--generation",
-            "latest",
-        ])
-        .expect_err("BUG: expected clap conflict");
-        assert_eq!(
-            err.kind(),
-            clap::error::ErrorKind::ArgumentConflict,
-            "unexpected clap error: {err}"
-        );
-    }
-
-    #[test]
-    fn cli_activate_next_conflicts_with_explicit_current() {
-        let err = Cli::try_parse_from([
-            "bmc-nix-cli",
-            "activate",
-            "--next",
-            "--generation",
-            "current",
-        ])
-        .expect_err("BUG: expected clap conflict on explicit current");
-        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    fn cli_activate_generation_accepts_next() {
+        let cli = Cli::try_parse_from(["bmc-nix-cli", "activate", "--generation", "next"])
+            .expect("BUG: --generation next should parse");
+        let Commands::Activate { generation, .. } = cli.command else {
+            panic!("expected activate command");
+        };
+        assert!(matches!(generation, Some(GenerationSelector::Next)));
     }
 }
