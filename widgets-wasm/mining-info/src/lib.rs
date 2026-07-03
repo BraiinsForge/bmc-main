@@ -46,7 +46,7 @@ const MINER_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_LOGIN_RETRY_MS: u32 = 300_000;
 
 #[cfg(target_arch = "wasm32")]
-type MinerParser = fn(&JsonDoc, &mut MinerData);
+type MinerParser = fn(&JsonDoc, &mut MinerData) -> bool;
 #[cfg(target_arch = "wasm32")]
 type PublicUrl = fn(Currency) -> String;
 #[cfg(target_arch = "wasm32")]
@@ -198,28 +198,28 @@ fn public_endpoint_needed(idx: usize, view: View) -> bool {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn miner_details(json: &JsonDoc, data: &mut MinerData) {
-    miner_api::parse_details(json, data);
+fn miner_details(json: &JsonDoc, data: &mut MinerData) -> bool {
+    miner_api::parse_details(json, data)
 }
 #[cfg(target_arch = "wasm32")]
-fn miner_stats(json: &JsonDoc, data: &mut MinerData) {
-    miner_api::parse_stats(json, data);
+fn miner_stats(json: &JsonDoc, data: &mut MinerData) -> bool {
+    miner_api::parse_stats(json, data)
 }
 #[cfg(target_arch = "wasm32")]
-fn miner_hashboards(json: &JsonDoc, data: &mut MinerData) {
-    miner_api::parse_hashboards(json, data);
+fn miner_hashboards(json: &JsonDoc, data: &mut MinerData) -> bool {
+    miner_api::parse_hashboards(json, data)
 }
 #[cfg(target_arch = "wasm32")]
-fn miner_cooling(json: &JsonDoc, data: &mut MinerData) {
-    miner_api::parse_cooling(json, data);
+fn miner_cooling(json: &JsonDoc, data: &mut MinerData) -> bool {
+    miner_api::parse_cooling(json, data)
 }
 #[cfg(target_arch = "wasm32")]
-fn miner_network(json: &JsonDoc, data: &mut MinerData) {
-    miner_api::parse_network(json, data);
+fn miner_network(json: &JsonDoc, data: &mut MinerData) -> bool {
+    miner_api::parse_network(json, data)
 }
 #[cfg(target_arch = "wasm32")]
-fn miner_constraints(json: &JsonDoc, data: &mut MinerData) {
-    miner_api::parse_constraints(json, data);
+fn miner_constraints(json: &JsonDoc, data: &mut MinerData) -> bool {
+    miner_api::parse_constraints(json, data)
 }
 #[cfg(target_arch = "wasm32")]
 fn public_price(json: &JsonDoc, currency: Currency, data: &mut PublicData) {
@@ -248,12 +248,6 @@ struct State {
     miner: MinerData,
     public: PublicData,
     auth: AuthState,
-    // Per-endpoint flags set when a poll's last reply was a failure. The failed
-    // data is kept on screen (last-good) and the render path raises a "stale
-    // data" banner while any endpoint feeding the current view stays in this
-    // state.
-    miner_stale: [bool; MINER_ENDPOINTS.len()],
-    public_stale: [bool; PUBLIC_ENDPOINTS.len()],
     // Consecutive failed login replies, driving the retry backoff. Reset on a
     // successful login and on a credential change.
     login_failures: u32,
@@ -407,7 +401,6 @@ pub extern "C" fn on_params_update() {
                 STATE.with(|state| {
                     let mut state = state.borrow_mut();
                     miner_api::reset_all(&mut state.miner);
-                    state.miner_stale = [false; MINER_ENDPOINTS.len()];
                     state.login_failures = 0;
                     state.auth = if password_empty {
                         AuthState::NoToken
@@ -526,7 +519,6 @@ fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
         let delay = STATE.with(|state| {
             let mut state = state.borrow_mut();
             miner_api::reset_all(&mut state.miner);
-            state.miner_stale = [false; MINER_ENDPOINTS.len()];
             state.auth = AuthState::Failed;
             let delay = login_retry_delay(state.login_failures, RETRY_MS, MAX_LOGIN_RETRY_MS);
             state.login_failures = state.login_failures.saturating_add(1);
@@ -556,27 +548,37 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
     }
     let idx = miner_index(handle);
     if response.ok() {
-        STATE.with(|state| {
+        let stored = STATE.with(|state| {
             let mut state = state.borrow_mut();
-            (MINER_ENDPOINTS[idx].parse)(&response.json(), &mut state.miner);
-            state.miner_stale[idx] = false;
+            (MINER_ENDPOINTS[idx].parse)(&response.json(), &mut state.miner)
         });
+        // Empty 2xx (reachable, no data yet): flag stale,
+        // but re-poll at the endpoint's cadence, not the failure back-off.
+        if !stored {
+            log_warn!(
+                "mining-info: miner endpoint {} returned no usable data",
+                MINER_ENDPOINTS[idx].path
+            );
+            handle.retry_after(MINER_ENDPOINTS[idx].interval_ms.unwrap_or(RETRY_MS));
+        }
     } else {
         log_warn!(
             "mining-info: miner endpoint {} failed with status {}",
             MINER_ENDPOINTS[idx].path,
             response.status
         );
-        STATE.with(|state| state.borrow_mut().miner_stale[idx] = true);
     }
     request_frame();
 }
 
-// Fold a public response into state. A failed refresh keeps the last good data
-// rather than blanking the fields (matching the miner path); it only flags the
-// endpoint stale so the render path can surface a "stale data" banner. The flag
-// clears on the next success. The "this data is now wrong" case (a currency
-// change) is handled by the deliberate `reset` in `on_params_update`.
+// Fold a public response into state.
+// A failed refresh keeps the last good data rather than blanking
+// the fields (matching the miner path); it only flags the endpoint
+// stale so the render path can surface a "stale data" banner.
+//
+// The flag clears on the next success.
+// The "this data is now wrong" case (a currency change) is handled
+// by the deliberate `reset` in `on_params_update`.
 #[cfg(target_arch = "wasm32")]
 fn on_public_reply(handle: PollHandle, response: &FetchResponse) {
     let idx = public_index(handle);
@@ -585,7 +587,6 @@ fn on_public_reply(handle: PollHandle, response: &FetchResponse) {
         STATE.with(|state| {
             let mut state = state.borrow_mut();
             (PUBLIC_ENDPOINTS[idx].parse)(&response.json(), currency, &mut state.public);
-            state.public_stale[idx] = false;
         });
     } else {
         log_warn!(
@@ -593,7 +594,6 @@ fn on_public_reply(handle: PollHandle, response: &FetchResponse) {
             idx,
             response.status
         );
-        STATE.with(|state| state.borrow_mut().public_stale[idx] = true);
     }
     request_frame();
 }
@@ -607,14 +607,12 @@ pub extern "C" fn render(_delta_ms: u32) {
         width: viewport.width,
         height: viewport.height,
     };
-    let (miner, public, auth_failed, miner_stale, public_stale) = STATE.with(|state| {
+    let (miner, public, auth_failed) = STATE.with(|state| {
         let state = state.borrow();
         (
             state.miner.clone(),
             state.public.clone(),
             state.auth == AuthState::Failed,
-            state.miner_stale.iter().any(|&stale| stale),
-            state.public_stale.iter().any(|&stale| stale),
         )
     });
     let first_frame = FIRST_FRAME.replace(false);
@@ -632,18 +630,28 @@ pub extern "C" fn render(_delta_ms: u32) {
             View::InfoOverload => render::info_overload(size, &miner, &public),
         },
     };
-    // The auth-error overlay takes precedence: an unreachable miner is the larger
-    // problem, and both banners share the same corner. Either source going stale
-    // raises one shared "stale data" banner.
-    let stale = (miner_stale && view_needs_miner(params.view))
-        || (public_stale && view_needs_public(params.view));
-    if auth_failed && view_needs_miner(params.view) {
-        root =
-            mining::overlay::with_overlay(root, mining::overlay::AUTH_ERROR_TEXT, viewport.shape);
-    } else if stale {
-        root =
-            mining::overlay::with_overlay(root, mining::overlay::STALE_DATA_TEXT, viewport.shape);
-    }
+    // Auth error outranks stale (both share the corner). The stale pill anchors at
+    // the oldest last refresh among the view's stale endpoints.
+    let needs_miner = view_needs_miner(params.view);
+    let needs_public = view_needs_public(params.view);
+    let overlay = if auth_failed && needs_miner {
+        Some(mining::overlay::OverlayKind::Auth)
+    } else {
+        HANDLES.with(|handles| {
+            let handles = handles.borrow();
+            let handles = handles.as_ref()?;
+            handles
+                .miner
+                .iter()
+                .filter(|_| needs_miner)
+                .chain(handles.public.iter().filter(|_| needs_public))
+                .filter(|handle| handle.is_stale())
+                .filter_map(|handle| handle.last_success_time())
+                .min_by_key(|anchor| anchor.unix_secs)
+                .map(mining::overlay::OverlayKind::Stale)
+        })
+    };
+    root = mining::overlay::apply_overlay(root, overlay, viewport.shape);
     let _ = render_ui(viewport.width, viewport.height, root);
     // The seeded first frame shows one segment; schedule the real value so the
     // transition animates from it on the next tick.

@@ -128,7 +128,7 @@ pub(crate) fn render(
     palette: &ClockPalette,
     miner: &MinerData,
     seed_gauges: bool,
-    overlay: Option<&'static str>,
+    overlay: Option<mining::overlay::OverlayKind>,
 ) -> Node {
     let size = pick_size(variant);
     let viewport_w = f32_from_u32(w);
@@ -269,12 +269,12 @@ fn apply_overlay(
     dial: Node,
     viewport_w: f32,
     viewport_h: f32,
-    overlay: Option<&'static str>,
+    overlay: Option<mining::overlay::OverlayKind>,
 ) -> Node {
     match overlay {
-        Some(message) => mining::overlay::with_overlay(
+        Some(kind) => mining::overlay::apply_overlay(
             col(props!(width: viewport_w, height: viewport_h), [dial]),
-            message,
+            Some(kind),
             ViewportShape::Round,
         ),
         None => dial,

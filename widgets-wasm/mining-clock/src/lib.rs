@@ -37,6 +37,9 @@ use shared::clock_palette;
 
 #[cfg(target_arch = "wasm32")]
 const STATS_REFRESH_MS: u32 = 5_000;
+// One-shot constraints re-poll delay on an empty reply.
+#[cfg(target_arch = "wasm32")]
+const RETRY_MS: u32 = 10_000;
 // The miner lives on the local network, so an unreachable one should fail
 // fast instead of holding the SDK-default 10s timeout.
 #[cfg(target_arch = "wasm32")]
@@ -54,7 +57,6 @@ enum MinerSource {
 struct State {
     miner: MinerData,
     auth: AuthState,
-    stats_stale: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -188,53 +190,54 @@ fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
 
     let source = miner_source(handle);
     if response.ok() {
-        STATE.with(|state| {
+        let stored = STATE.with(|state| {
             let mut state = state.borrow_mut();
             match source {
-                MinerSource::Stats => {
-                    miner::parse_stats(&response.json(), &mut state.miner);
-                    state.stats_stale = false;
-                }
-                // Constraints are slow-changing config: parse on success, but
-                // keep the last good values on failure without a stale banner.
+                MinerSource::Stats => miner::parse_stats(&response.json(), &mut state.miner),
+                // Constraints are slow-changing config: parse on success,
+                // but keep the last good values on failure without a stale banner.
                 MinerSource::Constraints => {
-                    miner::parse_constraints(&response.json(), &mut state.miner);
+                    miner::parse_constraints(&response.json(), &mut state.miner)
                 }
             }
         });
+        // Empty 2xx (reachable, no data yet): flag stale,
+        // but re-poll at the source's cadence, not the failure back-off.
+        if !stored {
+            log_warn!("mining-clock: miner endpoint returned no usable data");
+            handle.retry_after(match source {
+                MinerSource::Stats => STATS_REFRESH_MS,
+                MinerSource::Constraints => RETRY_MS,
+            });
+        }
     } else {
         log_warn!(
             "mining-clock: miner endpoint failed with status {}",
             response.status
         );
-        // Keep the last good data and flag the source stale so the render path
-        // can surface a "stale data" banner; the flag clears on the next success.
-        STATE.with(|state| {
-            let mut state = state.borrow_mut();
-            match source {
-                MinerSource::Stats => {
-                    state.stats_stale = true;
-                }
-                // Keep the last good constraints; a re-tune is rare and a failed
-                // refresh should not blank the gauge scale or raise a banner.
-                MinerSource::Constraints => {}
-            }
-        });
+        // Keep the last good data; the poll engine tracks staleness now.
     }
 }
 
-// The auth-error banner takes precedence over stale data, matching mining-info.
-// Stale data only surfaces once some data has loaded, so a never-connected miner
-// reads as N/A on the gauge rather than raising a stale banner.
 #[cfg(any(target_arch = "wasm32", test))]
-fn overlay_message(auth_failed: bool, stale: bool, miner: &MinerData) -> Option<&'static str> {
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum OverlaySelect {
+    Auth,
+    Stale,
+    None,
+}
+
+// Auth error outranks stale; stale needs loaded data (a never-connected miner
+// reads as N/A, not stale). The render fills the stale anchor from the poll.
+#[cfg(any(target_arch = "wasm32", test))]
+fn select_overlay(auth_failed: bool, stale: bool, miner: &MinerData) -> OverlaySelect {
     let has_data = miner.hashrate_ths.is_some() || miner.power_w.is_some();
     if auth_failed {
-        Some(mining::overlay::AUTH_ERROR_TEXT)
+        OverlaySelect::Auth
     } else if stale && has_data {
-        Some(mining::overlay::STALE_DATA_TEXT)
+        OverlaySelect::Stale
     } else {
-        None
+        OverlaySelect::None
     }
 }
 
@@ -250,15 +253,20 @@ pub extern "C" fn render(_delta_ms: u32) {
     let params = Params::current();
     let effective_tz = params.timezone_override.as_deref().map(Tz::from_runtime);
     let palette = clock_palette(system::current().night_mode().unwrap_or(false));
-    let (miner, auth_failed, stale) = STATE.with(|state| {
+    let (miner, auth_failed) = STATE.with(|state| {
         let state = state.borrow();
-        (
-            state.miner.clone(),
-            matches!(state.auth, AuthState::Failed),
-            state.stats_stale,
-        )
+        (state.miner.clone(), matches!(state.auth, AuthState::Failed))
     });
-    let overlay = overlay_message(auth_failed, stale, &miner);
+    let (stale, anchor) = HANDLES.with(|handles| {
+        handles.borrow().as_ref().map_or((false, None), |handles| {
+            (handles.stats.is_stale(), handles.stats.last_success_time())
+        })
+    });
+    let overlay = match select_overlay(auth_failed, stale, &miner) {
+        OverlaySelect::Auth => Some(mining::overlay::OverlayKind::Auth),
+        OverlaySelect::Stale => anchor.map(mining::overlay::OverlayKind::Stale),
+        OverlaySelect::None => None,
+    };
 
     let first_frame = FIRST_FRAME.replace(false);
     let root = analog::round::render(
@@ -317,7 +325,7 @@ pub extern "C" fn on_params_update() {
 
 #[cfg(test)]
 mod tests {
-    use super::{miner::MinerData, overlay_message};
+    use super::{OverlaySelect, miner::MinerData, select_overlay};
 
     #[test]
     fn auth_overlay_takes_precedence_over_stale_data() {
@@ -326,24 +334,21 @@ mod tests {
             ..MinerData::default()
         };
 
-        assert_eq!(
-            overlay_message(true, true, &miner),
-            Some(mining::overlay::AUTH_ERROR_TEXT)
-        );
+        assert_eq!(select_overlay(true, true, &miner), OverlaySelect::Auth);
     }
 
     #[test]
     fn stale_overlay_requires_loaded_miner_data() {
-        assert_eq!(overlay_message(false, true, &MinerData::default()), None);
+        assert_eq!(
+            select_overlay(false, true, &MinerData::default()),
+            OverlaySelect::None
+        );
 
         let miner = MinerData {
             power_w: Some(41.0),
             ..MinerData::default()
         };
 
-        assert_eq!(
-            overlay_message(false, true, &miner),
-            Some(mining::overlay::STALE_DATA_TEXT)
-        );
+        assert_eq!(select_overlay(false, true, &miner), OverlaySelect::Stale);
     }
 }

@@ -51,22 +51,30 @@ pub(crate) struct Constraints {
     pub(crate) power: Option<TargetRange>,
 }
 
-pub(crate) fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) {
+// Each `parse_*` returns whether it stored any field, so a 2xx
+// that yields nothing (unparsable body / wrong shape) reads
+// as a failed refresh instead of banking fresh.
+pub(crate) fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+    let mut stored = false;
     if let Some(ghs) = json.f64("/miner_stats/real_hashrate/last_1m/gigahash_per_second") {
         data.hashrate_ths = Some(ths_from_ghs(ghs));
+        stored = true;
     }
     if let Some(power) = json.f64("/power_stats/approximated_consumption/watt") {
         data.power_w = Some(power);
+        stored = true;
     }
+    stored
 }
 
-pub(crate) fn parse_constraints(json: &impl JsonLookup, data: &mut MinerData) {
+pub(crate) fn parse_constraints(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     data.constraints.hashrate = target_range(
         json,
         "/tuner_constraints/hashrate_target",
         "terahash_per_second",
     );
     data.constraints.power = target_range(json, "/tuner_constraints/power_target", "watt");
+    data.constraints.hashrate.is_some() || data.constraints.power.is_some()
 }
 
 // Read a `{min,default,max}/<leaf>` target block, present only when all three
@@ -137,9 +145,17 @@ mod tests {
         json.floats
             .insert("/power_stats/approximated_consumption/watt", 41.0);
         let mut data = MinerData::default();
-        parse_stats(&json, &mut data);
+        assert!(parse_stats(&json, &mut data));
         assert_eq!(data.hashrate_ths, Some(122.48));
         assert_eq!(data.power_w, Some(41.0));
+    }
+
+    #[test]
+    fn parse_reports_no_stored_field_on_shapeless_reply() {
+        let empty = MapJson::default();
+        let mut data = MinerData::default();
+        assert!(!parse_stats(&empty, &mut data));
+        assert!(!parse_constraints(&empty, &mut data));
     }
 
     fn full_constraints_json() -> MapJson {

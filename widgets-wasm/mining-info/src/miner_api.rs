@@ -12,28 +12,40 @@ pub(crate) fn ths_from_ghs(value: f64) -> f64 {
     value / 1_000.0
 }
 
-pub(crate) fn parse_details(json: &impl JsonLookup, data: &mut MinerData) {
-    if let Some(uptime) = json
+// Each `parse_*` returns whether it stored any of its fields.
+// A 2xx that yields no field is an unusable reply (unparsable body,
+// or valid JSON of the wrong shape) the caller treats
+// as a failed refresh rather than banking it fresh.
+pub(crate) fn parse_details(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+    let Some(uptime) = json
         .i64("/bosminer_uptime_s")
         .and_then(|v| u64::try_from(v).ok())
-    {
-        data.uptime_s = Availability::Available(Seconds(uptime));
-    }
+    else {
+        return false;
+    };
+    data.uptime_s = Availability::Available(Seconds(uptime));
+    true
 }
 
-pub(crate) fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) {
+pub(crate) fn parse_stats(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+    let mut stored = false;
     if let Some(ghs) = json.f64("/miner_stats/real_hashrate/last_1m/gigahash_per_second") {
         data.hashrate_ths = Availability::Available(TeraHashPerSecond(ths_from_ghs(ghs)));
+        stored = true;
     }
     if let Some(power) = json.f64("/power_stats/approximated_consumption/watt") {
         data.power_w = Availability::Available(Watt(power));
+        stored = true;
     }
     if let Some(efficiency) = json.f64("/power_stats/efficiency/joule_per_terahash") {
         data.efficiency_j_th = Availability::Available(JoulePerTeraHash(efficiency));
+        stored = true;
     }
+    stored
 }
 
-pub(crate) fn parse_hashboards(json: &impl JsonLookup, data: &mut MinerData) {
+pub(crate) fn parse_hashboards(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+    let mut stored = false;
     let board = json.f64("/hashboards/0/board_temp/degree_c");
     let chip = json.f64("/hashboards/0/highest_chip_temp/temperature/degree_c");
     if let (Some(board_c), Some(chip_c)) = (board, chip) {
@@ -41,6 +53,7 @@ pub(crate) fn parse_hashboards(json: &impl JsonLookup, data: &mut MinerData) {
             board: DegreeCelsius(board_c),
             chip: DegreeCelsius(chip_c),
         });
+        stored = true;
     }
     let nominal = json.f64("/hashboards/0/stats/nominal_hashrate/gigahash_per_second");
     let real = json.f64("/hashboards/0/stats/real_hashrate/last_1m/gigahash_per_second");
@@ -48,35 +61,44 @@ pub(crate) fn parse_hashboards(json: &impl JsonLookup, data: &mut MinerData) {
         && nominal > 0.0
     {
         data.mcr_percent = Availability::Available(Percent(real / nominal * 100.0));
+        stored = true;
     }
     let summary = mining::hashboards::sum_chips(json);
     if let Some(model) = summary.model {
         data.chip_type = Availability::Available(model);
+        stored = true;
     }
     if let Some(count) = summary.count {
         data.chip_count = Availability::Available(count);
+        stored = true;
     }
+    stored
 }
 
-pub(crate) fn parse_cooling(json: &impl JsonLookup, data: &mut MinerData) {
-    if let Some(ratio) = json.f64("/fans/0/target_speed_ratio") {
-        data.fan_percent = Availability::Available(Percent(ratio * 100.0));
-    }
+pub(crate) fn parse_cooling(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+    let Some(ratio) = json.f64("/fans/0/target_speed_ratio") else {
+        return false;
+    };
+    data.fan_percent = Availability::Available(Percent(ratio * 100.0));
+    true
 }
 
-pub(crate) fn parse_network(json: &impl JsonLookup, data: &mut MinerData) {
-    if let Some(ip) = json.str("/networks/0/address") {
-        data.ip_address = Availability::Available(ip);
-    }
+pub(crate) fn parse_network(json: &impl JsonLookup, data: &mut MinerData) -> bool {
+    let Some(ip) = json.str("/networks/0/address") else {
+        return false;
+    };
+    data.ip_address = Availability::Available(ip);
+    true
 }
 
-pub(crate) fn parse_constraints(json: &impl JsonLookup, data: &mut MinerData) {
+pub(crate) fn parse_constraints(json: &impl JsonLookup, data: &mut MinerData) -> bool {
     data.constraints.hashrate = target_range(
         json,
         "/tuner_constraints/hashrate_target",
         "terahash_per_second",
     );
     data.constraints.power = target_range(json, "/tuner_constraints/power_target", "watt");
+    data.constraints.hashrate.is_some() || data.constraints.power.is_some()
 }
 
 // Read a `{min,default,max}/<leaf>` target block, present only when all three
@@ -198,6 +220,27 @@ mod tests {
         let mut data = MinerData::default();
         parse_stats(&json, &mut data);
         assert_eq!(data.efficiency_j_th, Availability::Unavailable);
+    }
+
+    #[test]
+    fn parse_reports_whether_it_stored_any_field() {
+        // A shapeless 2xx (empty / wrong-shape JSON) stores nothing → false, so
+        // the caller retries instead of banking it as a fresh success.
+        let empty = MapJson::default();
+        let mut data = MinerData::default();
+        assert!(!parse_details(&empty, &mut data));
+        assert!(!parse_stats(&empty, &mut data));
+        assert!(!parse_hashboards(&empty, &mut data));
+        assert!(!parse_cooling(&empty, &mut data));
+        assert!(!parse_network(&empty, &mut data));
+        assert!(!parse_constraints(&empty, &mut data));
+
+        let mut json = MapJson::default();
+        json.floats.insert(
+            "/miner_stats/real_hashrate/last_1m/gigahash_per_second",
+            122_480.0,
+        );
+        assert!(parse_stats(&json, &mut data));
     }
 
     #[test]
