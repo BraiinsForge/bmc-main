@@ -794,6 +794,7 @@ async fn cmd_gc(
     keep_days: Option<usize>,
     min_free_space: Option<String>,
     protected_generations: Vec<usize>,
+    log_format: LogFormat,
 ) -> anyhow::Result<()> {
     let config_path = gc_config.unwrap_or_else(|| PathBuf::from("/etc/nix-upgrade/gc.json"));
     let mut config = load_gc_config(&config_path)?;
@@ -810,7 +811,8 @@ async fn cmd_gc(
     // pruning generations or store paths a concurrent upgrade is realizing.
     let _lock = bmc_nix::profile::lock_profile(&profile_dir).await?;
     bmc_nix::gc::cleanup_generations(&profile_dir, &config, &[])?;
-    bmc_nix::gc::collect_garbage(&bmc_nix::store::TokioCommandRunner, None).await?;
+    let progress = progress::CliProgress::new(log_format);
+    bmc_nix::gc::collect_garbage(&bmc_nix::store::TokioCommandRunner, Some(&progress)).await?;
     Ok(())
 }
 
@@ -972,6 +974,7 @@ async fn main() -> anyhow::Result<()> {
                 keep_days,
                 min_free_space,
                 protected_generations,
+                log_format,
             )
             .await
         }
