@@ -83,6 +83,8 @@ pub struct Config {
     pub retry_ms: u32,
     pub debounce_ms: u32,
     pub enabled: bool,
+    /// `interval_ms` multiplier past which an outstanding failure reads as stale.
+    pub stale_factor: f32,
 }
 
 impl Default for Config {
@@ -93,6 +95,7 @@ impl Default for Config {
             retry_ms: 10_000,
             debounce_ms: 300,
             enabled: true,
+            stale_factor: 1.5,
         }
     }
 }
@@ -122,6 +125,10 @@ struct Poll {
     live: Option<FetchRequestId>,
     pending: bool,
     force_retry: Option<u32>,
+    /// Epoch secs of the last ok reply; `None` before the first success.
+    last_success_secs: Option<i64>,
+    /// The last delivered reply failed.
+    last_failed: bool,
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -142,6 +149,8 @@ impl Registry {
             live: None,
             pending: false,
             force_retry: None,
+            last_success_secs: None,
+            last_failed: false,
         });
         handle
     }
@@ -231,8 +240,21 @@ impl Registry {
         self.polls[handle.0].force_retry = Some(delay_ms);
     }
 
-    pub(crate) fn reschedule(&mut self, handle: Handle, ok: bool, backend: &mut dyn FetchBackend) {
+    pub(crate) fn reschedule(
+        &mut self,
+        handle: Handle,
+        ok: bool,
+        now_secs: i64,
+        backend: &mut dyn FetchBackend,
+    ) {
         let idx = handle.0;
+        // Record before the early returns so every delivered reply counts.
+        if ok {
+            self.polls[idx].last_success_secs = Some(now_secs);
+            self.polls[idx].last_failed = false;
+        } else {
+            self.polls[idx].last_failed = true;
+        }
         let forced = std::mem::take(&mut self.polls[idx].force_retry);
         if !self.polls[idx].enabled || self.polls[idx].live.is_some() {
             return;
@@ -284,6 +306,35 @@ impl Registry {
 
     pub(crate) fn enabled(&self, handle: Handle) -> bool {
         self.polls[handle.0].enabled
+    }
+
+    /// Age of the last successful reply; `None` before the first success.
+    pub(crate) fn last_success_age(&self, handle: Handle, now_secs: i64) -> Option<Duration> {
+        let last = self.polls[handle.0].last_success_secs?;
+        let secs = now_secs.saturating_sub(last).max(0);
+        #[expect(clippy::cast_sign_loss, reason = "secs is clamped to >= 0")]
+        Some(Duration::from_secs(secs as u64))
+    }
+
+    /// Epoch secs of the last successful reply — the relative-time anchor.
+    pub(crate) fn last_success_secs(&self, handle: Handle) -> Option<i64> {
+        self.polls[handle.0].last_success_secs
+    }
+
+    /// Failing, with the last good reply aged past `stale_factor × interval_ms`.
+    pub(crate) fn is_stale(&self, handle: Handle, now_secs: i64) -> bool {
+        let poll = &self.polls[handle.0];
+        if !poll.last_failed {
+            return false;
+        }
+        let (Some(interval_ms), Some(last)) = (poll.config.interval_ms, poll.last_success_secs)
+        else {
+            return false;
+        };
+        let age_ms = now_secs.saturating_sub(last).max(0).saturating_mul(1_000);
+        #[expect(clippy::cast_precision_loss, reason = "poll ages are small")]
+        let stale = age_ms as f64 > f64::from(interval_ms) * f64::from(poll.config.stale_factor);
+        stale
     }
 
     #[cfg(test)]
@@ -358,9 +409,10 @@ mod wasm {
         if let super::ReplyAction::Deliver(handle) = action {
             let on_reply = HANDLERS.with(|h| h.borrow()[handle.index()]);
             on_reply(handle, response);
+            let now = crate::host::SystemTime::now().unix_secs;
             REGISTRY.with(|r| {
                 r.borrow_mut()
-                    .reschedule(handle, response.ok(), &mut ProdBackend);
+                    .reschedule(handle, response.ok(), now, &mut ProdBackend);
             });
         }
     }
@@ -410,6 +462,30 @@ mod wasm {
         #[must_use]
         pub fn enabled(self) -> bool {
             REGISTRY.with(|r| r.borrow().enabled(self))
+        }
+
+        /// Whether the poll is failing with stale data.
+        #[must_use]
+        pub fn is_stale(self) -> bool {
+            let now = crate::host::SystemTime::now().unix_secs;
+            REGISTRY.with(|r| r.borrow().is_stale(self, now))
+        }
+
+        /// Age of the last successful reply, or `None` if it has never succeeded.
+        #[must_use]
+        pub fn last_success_age(self) -> Option<std::time::Duration> {
+            let now = crate::host::SystemTime::now().unix_secs;
+            REGISTRY.with(|r| r.borrow().last_success_age(self, now))
+        }
+
+        /// The last successful reply's instant — the relative-time anchor.
+        #[must_use]
+        pub fn last_success_time(self) -> Option<crate::host::SystemTime> {
+            REGISTRY.with(|r| {
+                r.borrow()
+                    .last_success_secs(self)
+                    .map(|unix_secs| crate::host::SystemTime { unix_secs })
+            })
         }
     }
 }
@@ -478,13 +554,23 @@ mod tests {
             .then(|| FetchSpec::get("http://x/data"))
     }
 
-    fn deliver(reg: &mut Registry, be: &mut FakeBackend, id: u32, ok: bool) -> ReplyAction {
+    fn deliver_at(
+        reg: &mut Registry,
+        be: &mut FakeBackend,
+        id: u32,
+        ok: bool,
+        now_secs: i64,
+    ) -> ReplyAction {
         let id = FetchRequestId::from_wire(id).expect("BUG: test id is nonzero");
         let action = reg.begin_reply(id, be);
         if let ReplyAction::Deliver(h) = action {
-            reg.reschedule(h, ok, be);
+            reg.reschedule(h, ok, now_secs, be);
         }
         action
+    }
+
+    fn deliver(reg: &mut Registry, be: &mut FakeBackend, id: u32, ok: bool) -> ReplyAction {
+        deliver_at(reg, be, id, ok, 0)
     }
 
     const CFG: Config = Config {
@@ -492,6 +578,7 @@ mod tests {
         retry_ms: 1_000,
         debounce_ms: 300,
         enabled: true,
+        stale_factor: 1.5,
     };
 
     // Poll fetches must inherit the SDK-wide default unless the builder opts
@@ -628,7 +715,7 @@ mod tests {
         let id = FetchRequestId::from_wire(1).expect("BUG: test id is nonzero");
         assert_eq!(reg.begin_reply(id, &mut be), ReplyAction::Deliver(h));
         reg.request_retry(h);
-        reg.reschedule(h, true, &mut be);
+        reg.reschedule(h, true, 0, &mut be);
         assert_eq!(be.sends.len(), 2);
         assert_eq!(be.sends[1].1, Some(1_000));
     }
@@ -644,7 +731,7 @@ mod tests {
         let id = FetchRequestId::from_wire(1).expect("BUG: test id is nonzero");
         assert_eq!(reg.begin_reply(id, &mut be), ReplyAction::Deliver(h));
         reg.request_retry_after(h, 42_000);
-        reg.reschedule(h, true, &mut be);
+        reg.reschedule(h, true, 0, &mut be);
         assert_eq!(be.sends.len(), 2);
         assert_eq!(be.sends[1].1, Some(42_000));
     }
@@ -770,5 +857,65 @@ mod tests {
         let action = deliver(&mut reg, &mut be, 1, true);
         assert_eq!(action, ReplyAction::Stopped);
         assert_eq!(be.sends.len(), 1);
+    }
+
+    #[test]
+    fn not_stale_while_replies_succeed() {
+        let mut reg = Registry::default();
+        let mut be = FakeBackend::new();
+        let h = reg.register(build_url, CFG);
+        reg.start(h, &mut be);
+        deliver_at(&mut reg, &mut be, 1, true, 0);
+        assert!(
+            !reg.is_stale(h, 1_000_000),
+            "no outstanding failure is never stale"
+        );
+    }
+
+    #[test]
+    fn is_stale_once_failure_ages_past_stale_factor() {
+        let mut reg = Registry::default();
+        let mut be = FakeBackend::new();
+        let h = reg.register(build_url, CFG);
+        reg.start(h, &mut be);
+        deliver_at(&mut reg, &mut be, 1, true, 0);
+        deliver_at(&mut reg, &mut be, 2, false, 8);
+        assert!(!reg.is_stale(h, 7), "age 7 s is within the 7.5 s threshold");
+        assert!(reg.is_stale(h, 8), "age 8 s exceeds the 7.5 s threshold");
+    }
+
+    #[test]
+    fn success_clears_staleness() {
+        let mut reg = Registry::default();
+        let mut be = FakeBackend::new();
+        let h = reg.register(build_url, CFG);
+        reg.start(h, &mut be);
+        deliver_at(&mut reg, &mut be, 1, true, 0);
+        deliver_at(&mut reg, &mut be, 2, false, 8);
+        assert!(reg.is_stale(h, 8), "stale once the failure ages out");
+        deliver_at(&mut reg, &mut be, 3, true, 20);
+        assert!(!reg.is_stale(h, 100), "a fresh success clears the failure");
+        assert_eq!(reg.last_success_age(h, 25), Some(Duration::from_secs(5)));
+        assert_eq!(reg.last_success_secs(h), Some(20));
+    }
+
+    #[test]
+    fn not_stale_without_prior_success_or_interval() {
+        let mut reg = Registry::default();
+        let mut be = FakeBackend::new();
+        let h = reg.register(
+            build_url,
+            Config {
+                interval_ms: None,
+                ..CFG
+            },
+        );
+        reg.start(h, &mut be);
+        deliver_at(&mut reg, &mut be, 1, false, 0);
+        assert!(
+            !reg.is_stale(h, 1_000_000),
+            "one-shot polls never stale on a cadence"
+        );
+        assert_eq!(reg.last_success_age(h, 5), None);
     }
 }

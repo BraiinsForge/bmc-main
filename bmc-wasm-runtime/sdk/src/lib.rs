@@ -299,6 +299,7 @@ pub mod progress_bar;
 pub mod relative_time;
 #[cfg(target_arch = "wasm32")]
 pub mod slot;
+pub mod stale_overlay;
 pub mod system;
 pub mod tag;
 // Snapshot-cache machinery is wasm32-only (consumed by the wasm-target public API)
