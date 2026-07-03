@@ -193,4 +193,9 @@ async fn full_profile_build() {
             .expect("BUG: current target path should be valid UTF-8"),
         "2-link"
     );
+
+    assert!(
+        profile_dir.join("previous").symlink_metadata().is_err(),
+        "bmc-nix must never write a previous symlink"
+    );
 }

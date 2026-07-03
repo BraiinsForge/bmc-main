@@ -44,8 +44,6 @@ pub enum ActivationError {
         #[source]
         source: io::Error,
     },
-    #[error("profile activation failed: {0}")]
-    BuildProfile(#[source] Box<crate::profile::BuildProfileError>),
     #[error("activation failed, reverted to generation {reverted_to}: {original}")]
     RevertedAfterFailure {
         original: Box<ActivationError>,
@@ -71,11 +69,16 @@ pub enum GenerationSelector {
     Latest,
     /// A specific `<N>-link` (positive integer).
     Number(usize),
+    /// The staged `<profile-dir>/next` symlink, consumed on success;
+    /// falls back to `Current` when absent.
+    Next,
 }
 
 /// Error returned by [`GenerationSelector::from_str`].
 #[derive(Debug, thiserror::Error)]
-#[error("invalid generation selector '{0}': expected 'current', 'latest', or a positive integer")]
+#[error(
+    "invalid generation selector '{0}': expected 'current', 'latest', 'next', or a positive integer"
+)]
 pub struct ParseSelectorError(String);
 
 impl std::str::FromStr for GenerationSelector {
@@ -85,6 +88,7 @@ impl std::str::FromStr for GenerationSelector {
         match s {
             "current" => Ok(Self::Current),
             "latest" => Ok(Self::Latest),
+            "next" => Ok(Self::Next),
             other => other
                 .parse::<usize>()
                 .ok()
@@ -95,7 +99,7 @@ impl std::str::FromStr for GenerationSelector {
     }
 }
 
-/// Outcome of a successful [`activate`] or [`activate_next`] call.
+/// Outcome of a successful [`activate`] call.
 #[derive(Debug)]
 pub enum ActivationOutcome {
     Activated { generation: usize, path: PathBuf },
@@ -140,39 +144,12 @@ pub fn find_latest_link(profile_dir: &Path) -> io::Result<Option<PathBuf>> {
     Ok(best.map(|(_, p)| p))
 }
 
-/// Back up `current` as `previous` using a one-hop `readlink`.
-///
-/// Mirrors the shell activator's `backup_current_profile`: `previous`
-/// ends up pointing at the same `<N>-link` name `current` had, so a
-/// later restore reconstructs the same symlink form.
-pub fn backup_current_to_previous(profile_dir: &Path) -> io::Result<()> {
-    let current = profile_dir.join("current");
-    let previous = profile_dir.join("previous");
-
-    let target = std::fs::read_link(&current)?;
-
-    match std::fs::remove_file(&previous) {
-        Ok(()) => {}
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-        Err(err) => return Err(err),
-    }
-    std::os::unix::fs::symlink(target, &previous)
-}
-
-/// Move `previous` back on top of `current`.
-///
-/// A single `rename(2)`: it atomically replaces an existing `current`,
-/// so there is no window in which the profile has no `current` at all.
-pub fn restore_previous_as_current(profile_dir: &Path) -> io::Result<()> {
-    std::fs::rename(profile_dir.join("previous"), profile_dir.join("current"))
-}
-
 /// Remove the `next` symlink; `NotFound` is treated as success.
 ///
 /// Distinct from [`crate::upgrade::remove_stale_next`], which invalidates
 /// a pre-existing `next` before *building* a new profile on the upgrade
-/// path. `remove_next` here consumes a `next` after a successful
-/// boot-time activation.
+/// path. `remove_next` here consumes a `next` after
+/// `GenerationSelector::Next` activates it successfully.
 pub fn remove_next(profile_dir: &Path) -> io::Result<()> {
     match std::fs::remove_file(profile_dir.join("next")) {
         Ok(()) => Ok(()),
@@ -181,21 +158,59 @@ pub fn remove_next(profile_dir: &Path) -> io::Result<()> {
     }
 }
 
-/// Resolve `selector` to a generation and run its activation entrypoint.
+/// Resolve `selector` to a generation and activate it via
+/// [`crate::profile::activate_profile`] (which reverts to `current` on
+/// failure).
 ///
-/// Implements the "Default and explicit selectors" section of the design
-/// spec: `Current` softly falls back to `find_latest_link` (both for a
+/// `Current` softly falls back to `find_latest_link` (both for a
 /// missing symlink and for a missing/non-executable entrypoint) and only
 /// returns [`ActivationOutcome::Skipped`] when nothing resolves; `Latest`
-/// and `Number(N)` never fall back.
+/// and `Number(N)` never fall back. `Next` activates the staged `next`
+/// symlink and removes it on success; when `next` is absent it behaves
+/// exactly like `Current`.
+///
+/// The profile lock is acquired up front and held across selector
+/// resolution, activation, and `next` removal, so a concurrent upgrade
+/// cannot re-stage or observe a stale `next` mid-sequence.
 pub async fn activate(
     profile_dir: &Path,
     selector: GenerationSelector,
 ) -> Result<ActivationOutcome, ActivationError> {
-    let Some(target) = resolve_selector(profile_dir, selector)? else {
+    let lock = crate::profile::lock_profile(profile_dir)
+        .await
+        .map_err(|err| ActivationError::Lock(Box::new(err)))?;
+    let effective = match selector {
+        GenerationSelector::Next => {
+            let next = profile_dir.join("next");
+            // `metadata` follows the symlink, so it fails when `next` is
+            // absent or dangling; only a `next` that resolves to a real
+            // generation is honored. A dangling marker (partial GC, manual
+            // cleanup) must fall back to `current` instead of failing every
+            // boot — the good `current` generation still boots.
+            if std::fs::metadata(&next).is_ok() {
+                GenerationSelector::Next
+            } else {
+                if next.symlink_metadata().is_ok() {
+                    tracing::warn!(
+                        "staged next generation {} is dangling; falling back to current",
+                        next.display()
+                    );
+                }
+                GenerationSelector::Current
+            }
+        }
+        GenerationSelector::Current
+        | GenerationSelector::Latest
+        | GenerationSelector::Number(_) => selector,
+    };
+    let Some(target) = resolve_selector(profile_dir, effective)? else {
         return Ok(ActivationOutcome::Skipped);
     };
-    activate_resolved(profile_dir, selector, target).await
+    let outcome = activate_resolved(profile_dir, effective, target, &lock).await?;
+    if matches!(effective, GenerationSelector::Next) {
+        remove_next(profile_dir).map_err(io_to_activation(profile_dir))?;
+    }
+    Ok(outcome)
 }
 
 fn resolve_selector(
@@ -223,6 +238,16 @@ fn resolve_selector(
                     profile_dir: profile_dir.display().to_string(),
                 }),
             }
+        }
+        GenerationSelector::Next => {
+            let next = profile_dir.join("next");
+            let target = std::fs::read_link(&next).map_err(io_to_activation(profile_dir))?;
+            let absolute = if target.is_absolute() {
+                target
+            } else {
+                profile_dir.join(target)
+            };
+            Ok(Some(absolute))
         }
     }
 }
@@ -257,22 +282,24 @@ async fn activate_resolved(
     profile_dir: &Path,
     selector: GenerationSelector,
     target: PathBuf,
+    lock: &crate::profile::ProfileLock,
 ) -> Result<ActivationOutcome, ActivationError> {
-    let generation = generation_number_from_link(&target).unwrap_or(0);
+    let generation =
+        generation_number_from_link(&target).ok_or_else(|| ActivationError::NoGeneration {
+            profile_dir: profile_dir.display().to_string(),
+        })?;
 
     let entrypoint = target.join("core/activation/entrypoint");
     if !is_executable(&entrypoint) {
         if matches!(selector, GenerationSelector::Current) {
-            return current_fallback_to_latest(profile_dir, &target).await;
+            return current_fallback_to_latest(profile_dir, &target, lock).await;
         }
         return Err(ActivationError::EntrypointNotFound {
             path: entrypoint.display().to_string(),
         });
     }
 
-    crate::profile::activate_profile(profile_dir, generation, &target, None)
-        .await
-        .map_err(|err| ActivationError::BuildProfile(Box::new(err)))?;
+    crate::profile::activate_profile(profile_dir, generation, &target, Some(lock)).await?;
 
     Ok(ActivationOutcome::Activated {
         generation,
@@ -283,6 +310,7 @@ async fn activate_resolved(
 async fn current_fallback_to_latest(
     profile_dir: &Path,
     failed_target: &Path,
+    lock: &crate::profile::ProfileLock,
 ) -> Result<ActivationOutcome, ActivationError> {
     let Some(latest) = find_latest_link(profile_dir).map_err(io_to_activation(profile_dir))? else {
         return Err(ActivationError::EntrypointNotFound {
@@ -302,16 +330,17 @@ async fn current_fallback_to_latest(
         });
     }
 
-    let generation = generation_number_from_link(&latest).unwrap_or(0);
+    let generation =
+        generation_number_from_link(&latest).ok_or_else(|| ActivationError::NoGeneration {
+            profile_dir: profile_dir.display().to_string(),
+        })?;
     let entrypoint = latest.join("core/activation/entrypoint");
     if !is_executable(&entrypoint) {
         return Err(ActivationError::EntrypointNotFound {
             path: entrypoint.display().to_string(),
         });
     }
-    crate::profile::activate_profile(profile_dir, generation, &latest, None)
-        .await
-        .map_err(|err| ActivationError::BuildProfile(Box::new(err)))?;
+    crate::profile::activate_profile(profile_dir, generation, &latest, Some(lock)).await?;
     Ok(ActivationOutcome::Activated {
         generation,
         path: latest,
@@ -334,68 +363,6 @@ pub(crate) fn is_executable(path: &Path) -> bool {
     std::fs::metadata(path)
         .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
         .unwrap_or(false)
-}
-
-/// Boot-time consume of a staged `next` profile.
-///
-/// If `next` is absent, delegates to [`activate`] with `Current`.
-/// Otherwise: back up `current` as `previous` (if any), try `next`, on
-/// success remove `next`, on failure restore `previous` (when we staged
-/// one) and delegate to `Current` — which itself may fall back to the
-/// latest generation.
-pub async fn activate_next(profile_dir: &Path) -> Result<ActivationOutcome, ActivationError> {
-    let next_path = profile_dir.join("next");
-    if next_path.symlink_metadata().is_err() {
-        return activate(profile_dir, GenerationSelector::Current).await;
-    }
-
-    let staged_previous = if profile_dir.join("current").symlink_metadata().is_ok() {
-        backup_current_to_previous(profile_dir).map_err(io_to_activation(profile_dir))?;
-        true
-    } else {
-        false
-    };
-
-    let next_target = std::fs::read_link(&next_path)
-        .map(|t| {
-            if t.is_absolute() {
-                t
-            } else {
-                profile_dir.join(t)
-            }
-        })
-        .map_err(io_to_activation(profile_dir))?;
-
-    let generation = generation_number_from_link(&next_target).unwrap_or(0);
-    let entrypoint = next_target.join("core/activation/entrypoint");
-    let attempted = if is_executable(&entrypoint) {
-        crate::profile::activate_profile(profile_dir, generation, &next_target, None)
-            .await
-            .map(|()| ActivationOutcome::Activated {
-                generation,
-                path: next_target.clone(),
-            })
-            .map_err(|err| ActivationError::BuildProfile(Box::new(err)))
-    } else {
-        Err(ActivationError::EntrypointNotFound {
-            path: entrypoint.display().to_string(),
-        })
-    };
-
-    match attempted {
-        Ok(outcome) => {
-            remove_next(profile_dir).map_err(io_to_activation(profile_dir))?;
-            Ok(outcome)
-        }
-        Err(err) => {
-            if staged_previous {
-                restore_previous_as_current(profile_dir).map_err(io_to_activation(profile_dir))?;
-                activate(profile_dir, GenerationSelector::Current).await
-            } else {
-                Err(err)
-            }
-        }
-    }
 }
 
 /// Discover activation scripts from a generation directory.
@@ -613,44 +580,6 @@ mod tests {
     }
 
     #[test]
-    fn backup_current_uses_one_hop_readlink() {
-        let dir = tempfile::tempdir().expect("BUG: tempdir");
-        touch_generation(dir.path(), 3);
-        symlink("3-link", dir.path().join("current")).expect("BUG: current");
-
-        backup_current_to_previous(dir.path()).expect("BUG: backup");
-
-        let previous = std::fs::read_link(dir.path().join("previous")).expect("BUG: readlink");
-        assert_eq!(previous, PathBuf::from("3-link"));
-    }
-
-    #[test]
-    fn backup_current_replaces_stale_previous() {
-        let dir = tempfile::tempdir().expect("BUG: tempdir");
-        touch_generation(dir.path(), 3);
-        symlink("3-link", dir.path().join("current")).expect("BUG: current");
-        symlink("stale", dir.path().join("previous")).expect("BUG: stale previous");
-
-        backup_current_to_previous(dir.path()).expect("BUG: backup");
-        let previous = std::fs::read_link(dir.path().join("previous")).expect("BUG: readlink");
-        assert_eq!(previous, PathBuf::from("3-link"));
-    }
-
-    #[test]
-    fn restore_previous_as_current_moves_symlink() {
-        let dir = tempfile::tempdir().expect("BUG: tempdir");
-        touch_generation(dir.path(), 3);
-        symlink("3-link", dir.path().join("previous")).expect("BUG: previous");
-        symlink("failed", dir.path().join("current")).expect("BUG: current");
-
-        restore_previous_as_current(dir.path()).expect("BUG: restore");
-
-        assert!(dir.path().join("previous").symlink_metadata().is_err());
-        let current = std::fs::read_link(dir.path().join("current")).expect("BUG: readlink");
-        assert_eq!(current, PathBuf::from("3-link"));
-    }
-
-    #[test]
     fn remove_next_is_idempotent_when_absent() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         remove_next(dir.path()).expect("BUG: remove_next on absent");
@@ -702,7 +631,7 @@ mod tests {
             .await
             .expect_err("BUG: expected error");
         assert!(
-            matches!(err, ActivationError::BuildProfile(_)),
+            matches!(err, ActivationError::EntrypointFailed { .. }),
             "got {err:?}"
         );
         assert!(dir.path().join("current").symlink_metadata().is_ok());
@@ -737,10 +666,7 @@ mod tests {
             .await
             .expect_err("BUG: expected error");
         assert!(
-            matches!(
-                err,
-                ActivationError::BuildProfile(_) | ActivationError::EntrypointNotFound { .. }
-            ),
+            matches!(err, ActivationError::EntrypointNotFound { .. }),
             "got {err:?}"
         );
     }
@@ -767,13 +693,15 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn activate_next_no_next_delegates_to_current() {
+    async fn activate_next_selector_no_next_delegates_to_current() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let g = touch_generation(dir.path(), 1);
         write_entrypoint(&g, ZERO_EXIT);
         symlink("1-link", dir.path().join("current")).expect("BUG: current");
 
-        let out = activate_next(dir.path()).await.expect("BUG: activate_next");
+        let out = activate(dir.path(), GenerationSelector::Next)
+            .await
+            .expect("BUG: activate next");
         assert!(matches!(
             out,
             ActivationOutcome::Activated { generation: 1, .. }
@@ -782,7 +710,48 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn activate_next_success_removes_next_and_backs_up_previous() {
+    async fn activate_next_selector_dangling_next_falls_back_to_current() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let g = touch_generation(dir.path(), 1);
+        write_entrypoint(&g, ZERO_EXIT);
+        symlink("1-link", dir.path().join("current")).expect("BUG: current");
+        // `next` points at a generation directory that does not exist.
+        symlink("9-link", dir.path().join("next")).expect("BUG: next");
+
+        let out = activate(dir.path(), GenerationSelector::Next)
+            .await
+            .expect("BUG: a dangling next must fall back to current, not error");
+        assert!(
+            matches!(out, ActivationOutcome::Activated { generation: 1, .. }),
+            "got {out:?}"
+        );
+        // The dangling marker is left in place for later cleanup, not removed.
+        assert!(dir.path().join("next").symlink_metadata().is_ok());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn activate_next_non_generation_target_is_hard_error() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        // `next` resolves to a real directory whose name is not `<N>-link`,
+        // so no generation number can be parsed from it.
+        let weird = dir.path().join("weird");
+        std::fs::create_dir_all(&weird).expect("BUG: mk weird dir");
+        write_entrypoint(&weird, ZERO_EXIT);
+        symlink("weird", dir.path().join("next")).expect("BUG: next");
+
+        let err = activate(dir.path(), GenerationSelector::Next)
+            .await
+            .expect_err("BUG: a next target that is not <N>-link must be a hard error");
+        assert!(
+            matches!(err, ActivationError::NoGeneration { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn activate_next_selector_success_removes_next() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let g1 = touch_generation(dir.path(), 1);
         let g2 = touch_generation(dir.path(), 2);
@@ -791,19 +760,19 @@ mod tests {
         symlink("1-link", dir.path().join("current")).expect("BUG: current");
         symlink("2-link", dir.path().join("next")).expect("BUG: next");
 
-        let out = activate_next(dir.path()).await.expect("BUG: activate_next");
+        let out = activate(dir.path(), GenerationSelector::Next)
+            .await
+            .expect("BUG: activate next");
         assert!(matches!(
             out,
             ActivationOutcome::Activated { generation: 2, .. }
         ));
         assert!(dir.path().join("next").symlink_metadata().is_err());
-        let previous = std::fs::read_link(dir.path().join("previous")).expect("BUG: previous");
-        assert_eq!(previous, PathBuf::from("1-link"));
     }
 
     #[tokio::test]
     #[serial]
-    async fn activate_next_failure_restores_previous_and_delegates_to_current() {
+    async fn activate_next_selector_failure_reverts_and_keeps_next() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let g1 = touch_generation(dir.path(), 1);
         let g2 = touch_generation(dir.path(), 2);
@@ -812,12 +781,20 @@ mod tests {
         symlink("1-link", dir.path().join("current")).expect("BUG: current");
         symlink("2-link", dir.path().join("next")).expect("BUG: next");
 
-        let out = activate_next(dir.path()).await.expect("BUG: activate_next");
-        assert!(matches!(
-            out,
-            ActivationOutcome::Activated { generation: 1, .. }
-        ));
-        assert!(dir.path().join("next").symlink_metadata().is_ok());
+        let err = activate(dir.path(), GenerationSelector::Next)
+            .await
+            .expect_err("BUG: expected revert error");
+        assert!(
+            matches!(
+                err,
+                ActivationError::RevertedAfterFailure { reverted_to: 1, .. }
+            ),
+            "got {err:?}"
+        );
+        assert!(
+            dir.path().join("next").symlink_metadata().is_ok(),
+            "failed next should stay put for inspection"
+        );
         assert!(dir.path().join("previous").symlink_metadata().is_err());
         let current = std::fs::read_link(dir.path().join("current")).expect("BUG: current");
         assert_eq!(current, PathBuf::from("1-link"));
@@ -825,38 +802,67 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn activate_next_failure_no_previous_propagates_error() {
+    async fn activate_next_selector_failure_no_current_propagates_error() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let g2 = touch_generation(dir.path(), 2);
         write_entrypoint(&g2, NONZERO_EXIT);
         symlink("2-link", dir.path().join("next")).expect("BUG: next");
 
-        let err = activate_next(dir.path())
+        let err = activate(dir.path(), GenerationSelector::Next)
             .await
             .expect_err("BUG: expected error");
         assert!(
-            matches!(err, ActivationError::BuildProfile(_)),
+            matches!(err, ActivationError::EntrypointFailed { .. }),
             "got {err:?}"
         );
     }
 
     #[tokio::test]
     #[serial]
-    async fn activate_next_restored_previous_with_gc_entrypoint_cascades_to_latest() {
+    async fn activate_next_selector_revert_onto_gc_entrypoint_is_revert_failed() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
-        // 1-link has no entrypoint (simulates GC); 2-link fails; 3-link healthy.
+        // 1-link has no entrypoint (simulates GC); 2-link fails.
         touch_generation(dir.path(), 1);
         let g2 = touch_generation(dir.path(), 2);
-        let g3 = touch_generation(dir.path(), 3);
         write_entrypoint(&g2, NONZERO_EXIT);
-        write_entrypoint(&g3, ZERO_EXIT);
         symlink("1-link", dir.path().join("current")).expect("BUG: current");
         symlink("2-link", dir.path().join("next")).expect("BUG: next");
 
-        let out = activate_next(dir.path()).await.expect("BUG: activate_next");
+        let err = activate(dir.path(), GenerationSelector::Next)
+            .await
+            .expect_err("BUG: expected revert failure");
+        assert!(
+            matches!(err, ActivationError::RevertFailed { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn activate_holds_profile_lock_and_leaves_lock_file() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let g = touch_generation(dir.path(), 1);
+        write_entrypoint(&g, ZERO_EXIT);
+        symlink("1-link", dir.path().join("current")).expect("BUG: current");
+
+        let out = activate(dir.path(), GenerationSelector::Current)
+            .await
+            .expect("BUG: activate");
         assert!(matches!(
             out,
-            ActivationOutcome::Activated { generation: 3, .. }
+            ActivationOutcome::Activated { generation: 1, .. }
+        ));
+        assert!(
+            dir.path().join(".lock").exists(),
+            "activate should create the profile lock file"
+        );
+    }
+
+    #[test]
+    fn selector_from_str_next() {
+        assert!(matches!(
+            "next".parse::<GenerationSelector>(),
+            Ok(GenerationSelector::Next)
         ));
     }
 }
