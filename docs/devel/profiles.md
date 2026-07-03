@@ -121,6 +121,15 @@ boundary managed by the activation sequence.
 Put live-system side effects in activation scripts, not hooks. Put profile-build computation in hooks, not activation
 scripts.
 
+## `current` Ownership
+
+The `current` symlink is written only by activation scripts, never by `bmc-nix` itself, in either the library or the
+CLI. The core package's `050-write-boundary` activation script moves `current` atomically, via a temporary symlink and
+`mv -Tf`. `095-link-current` then derives `/run/current-profile` from `current`.
+
+Rollback works by re-activating a generation, which runs its activation entrypoint and moves `current` back through the
+same mechanism. Nothing outside activation scripts edits `current` or `/run/current-profile` directly.
+
 ## Manifest
 
 The profile manifest is generated after hooks and written to `<generation>/manifest`. It records the packages used to
