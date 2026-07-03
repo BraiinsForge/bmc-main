@@ -15,6 +15,7 @@ pub const NODE_NOTIFICATION: u8 = 0x08;
 pub const NODE_SCROLL: u8 = 0x09;
 pub const NODE_PROGRESS_BAR: u8 = 0x0A;
 pub const NODE_RELTIME: u8 = 0x0B;
+pub const NODE_TAG: u8 = 0x0C;
 
 // Button size variants (wire value for NODE_BUTTON)
 pub const BUTTON_SIZE_SMALL: u8 = 0;
@@ -122,6 +123,31 @@ impl ButtonSize {
         }
     }
 }
+
+/// Tag severity kind (wire value after `NODE_TAG`). The host maps this to a
+/// Carbon color theme + default icon; see `bmc-render`'s `tag_theme`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TagKind {
+    Info = 0,
+    Warning = 1,
+    Error = 2,
+}
+
+impl From<u8> for TagKind {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => Self::Warning,
+            2 => Self::Error,
+            _ => Self::Info,
+        }
+    }
+}
+
+// Tag icon mode — wire byte following the kind.
+pub const TAG_ICON_DEFAULT: u8 = 0; // per-kind theme icon
+pub const TAG_ICON_HIDDEN: u8 = 1; // no icon
+pub const TAG_ICON_CUSTOM: u8 = 2; // explicit SvgId follows
 
 // Draw commands — shapes (0x40–0x5F)
 pub const DRAW_RECT: u8 = 0x40;

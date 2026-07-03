@@ -300,6 +300,7 @@ pub mod relative_time;
 #[cfg(target_arch = "wasm32")]
 pub mod slot;
 pub mod system;
+pub mod tag;
 // Snapshot-cache machinery is wasm32-only (consumed by the wasm-target public API)
 // plus pulled in under `cfg(test)` for the unit tests that exercise the generic with a mock host.
 // Native non-test builds don't use it — gate it so the dead-code lint stays happy.

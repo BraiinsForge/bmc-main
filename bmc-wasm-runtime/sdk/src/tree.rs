@@ -25,7 +25,8 @@ use bmc_wasm_protocol::{
     DRAW_RECT, DRAW_ROTATED, DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Easing,
     Fill, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL,
     NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_RELTIME, NODE_ROW, NODE_SCROLL,
-    NODE_SPACER, PathPaint, RelTimeClamp, RelTimeFormat, SvgId, encode_arc_cap, encode_arc_fill,
+    NODE_SPACER, NODE_TAG, PathPaint, RelTimeClamp, RelTimeFormat, SvgId, TAG_ICON_CUSTOM,
+    TAG_ICON_DEFAULT, TAG_ICON_HIDDEN, TagKind, encode_arc_cap, encode_arc_fill,
     encode_arc_segments, encode_fill,
 };
 
@@ -48,6 +49,7 @@ pub use crate::modal::*;
 pub use crate::notification::*;
 pub use crate::progress_bar::*;
 pub use crate::relative_time::*;
+pub use crate::tag::*;
 pub use crate::text::*;
 
 /// Tree buffer for serialization
@@ -282,6 +284,23 @@ impl TreeBuffer {
         self.write_u8(format as u8);
         self.write_u8(clamp as u8);
         self.write_bytes(&style.to_bytes());
+    }
+
+    /// Write a tag node's chrome; the content child is serialized after it.
+    ///
+    /// ```text
+    /// [NODE_TAG][kind:u8][icon_mode:u8][icon:u16][content node]
+    /// ```
+    pub fn write_tag(&mut self, kind: TagKind, icon: TagIcon) {
+        self.write_u8(NODE_TAG);
+        self.write_u8(kind as u8);
+        let (mode, icon_id) = match icon {
+            TagIcon::Default => (TAG_ICON_DEFAULT, None),
+            TagIcon::Hidden => (TAG_ICON_HIDDEN, None),
+            TagIcon::Custom(id) => (TAG_ICON_CUSTOM, Some(id)),
+        };
+        self.write_u8(mode);
+        self.write_icon_id(icon_id);
     }
 
     /// Write a modal node.
@@ -1342,6 +1361,12 @@ pub enum Node {
         clamp: RelTimeClamp,
         style: TextStyle,
     },
+    /// Carbon status pill — host-rendered chrome around an embedder content child.
+    Tag {
+        kind: TagKind,
+        icon: TagIcon,
+        content: Box<Node>,
+    },
     /// Scrollable container — clips children and allows vertical scrolling.
     Scroll {
         scroll_key: String,
@@ -1656,6 +1681,14 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             style,
         } => {
             buf.write_relative_time(*anchor, *format, *clamp, style);
+        }
+        Node::Tag {
+            kind,
+            icon,
+            content,
+        } => {
+            buf.write_tag(*kind, *icon);
+            serialize_node(buf, content);
         }
         Node::Button {
             id,

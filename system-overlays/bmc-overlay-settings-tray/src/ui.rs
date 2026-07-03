@@ -675,6 +675,7 @@ mod tests {
             | TreeNode::Row(_, kids)
             | TreeNode::Center(_, kids)
             | TreeNode::Scroll { children: kids, .. } => Some(kids),
+            TreeNode::Tag { content, .. } => Some(std::slice::from_ref(&**content)),
             TreeNode::Paragraph { .. }
             | TreeNode::Button { .. }
             | TreeNode::Spacer { .. }

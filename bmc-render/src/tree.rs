@@ -323,6 +323,13 @@ pub enum TreeNode {
         clamp: RelTimeClamp,
         style: TextStyle,
     },
+    /// Carbon status pill — themed chrome around a content child.
+    /// `icon` is resolved at decode (`None` = no icon).
+    Tag {
+        kind: TagKind,
+        icon: Option<SvgId>,
+        content: Box<TreeNode>,
+    },
     /// Modal dialog overlay
     Modal {
         modal_id: String,
@@ -778,6 +785,22 @@ impl<'a> TreeReader<'a> {
                     format,
                     clamp,
                     style,
+                })
+            }
+            NODE_TAG => {
+                let kind = TagKind::from(self.read_u8()?);
+                let icon_mode = self.read_u8()?;
+                let custom = self.read_icon_id()?;
+                let icon = match icon_mode {
+                    TAG_ICON_HIDDEN => None,
+                    TAG_ICON_CUSTOM => custom,
+                    _ => Some(tag_theme(kind).icon),
+                };
+                let content = Box::new(self.read_node()?);
+                Ok(TreeNode::Tag {
+                    kind,
+                    icon,
+                    content,
                 })
             }
             NODE_PROGRESS_BAR => {
@@ -1348,6 +1371,7 @@ use crate::components::notification::{
     NotificationData, measure_notification, render_notification,
 };
 use crate::components::progress_bar::{ProgressBarData, render_progress_bar};
+use crate::components::tag::{TAG_PAD_VERT, TagData, render_tag, tag_content_padding, tag_theme};
 use crate::components::{ButtonSize, ButtonStyle, draw_button};
 use crate::interaction::InteractionState;
 use crate::renderer::Renderer;
@@ -1454,6 +1478,7 @@ pub struct NodeContext {
     /// String key for scroll container state tracking and interaction targeting.
     scroll_key: Option<String>,
     progress_bar: Option<ProgressBarData>,
+    tag: Option<TagData>,
 }
 
 /// Per-frame mutable state passed through the render pipeline.
@@ -1795,6 +1820,43 @@ pub(crate) fn build_taffy_node(
                             underline: false,
                             strikethrough: false,
                         }],
+                    }),
+                    ..Default::default()
+                }),
+            )?;
+            Ok(id)
+        }
+
+        TreeNode::Tag {
+            kind,
+            icon,
+            content,
+        } => {
+            let content_id = build_taffy_node(taffy, content, now_unix_secs, result, modals)?;
+            let (pad_left, pad_right) = tag_content_padding(icon.is_some());
+            let style = Style {
+                flex_direction: FlexDirection::Row,
+                align_items: Some(AlignItems::Center),
+                justify_content: Some(JustifyContent::Center),
+                // Size to content, don't stretch in a column parent.
+                align_self: Some(AlignSelf::FlexStart),
+                flex_shrink: 0.0,
+                // Pill height = content + vertical padding; corners clamp to a stadium.
+                padding: taffy::Rect {
+                    left: length(pad_left),
+                    right: length(pad_right),
+                    top: length(TAG_PAD_VERT),
+                    bottom: length(TAG_PAD_VERT),
+                },
+                ..Default::default()
+            };
+            let id = taffy.new_with_children(style, &[content_id])?;
+            taffy.set_node_context(
+                id,
+                Some(NodeContext {
+                    tag: Some(TagData {
+                        kind: *kind,
+                        icon: *icon,
                     }),
                     ..Default::default()
                 }),
@@ -2181,6 +2243,11 @@ pub(crate) fn render_taffy_node(
             renderer.draw_nine_patch(x, y, w, h, bitmap_id, np.left, np.top, np.right, np.bottom);
         } else if ctx.background != Color::default() {
             renderer.fill_rect(x, y, w, h, ctx.background);
+        }
+
+        // Tag pill + leading icon, painted behind the content child.
+        if let Some(ref tag) = ctx.tag {
+            render_tag(tag, x, y, w, h, renderer);
         }
 
         if let Some(ref para) = ctx.paragraph {
