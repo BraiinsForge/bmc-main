@@ -19,6 +19,8 @@ A profile directory has numbered generation directories and a `current` symlink:
 `-- .lock
 ```
 
+`.lock` backs the [profile lock](#profile-lock) that serializes profile operations.
+
 Each `N-link` directory is complete enough to activate or roll back independently. It contains package-provided paths
 such as `bin/`, `lib/`, `etc/`, `core/activation/scripts/`, `hooks/`, `special/copy/`, plus generated files such as
 `manifest` and `core/activation/entrypoint`.
@@ -129,6 +131,38 @@ CLI. The core package's `050-write-boundary` activation script moves `current` a
 
 Rollback works by re-activating a generation, which runs its activation entrypoint and moves `current` back through the
 same mechanism. Nothing outside activation scripts edits `current` or `/run/current-profile` directly.
+
+## Profile Lock
+
+Concurrent profile operations are serialized by an exclusive advisory `flock(2)` on `<profile_dir>/.lock`. The lock
+lives on the open file description, not on the file: `.lock` is created on demand, is never deleted, and its presence on
+disk says nothing about whether the profile is locked. The kernel releases the lock when the holder drops it or exits,
+so a crashed holder cannot leave the profile permanently locked.
+
+The Rust API is in `bmc_nix::profile`: `lock_profile` (blocking), `try_lock_profile` (non-blocking), and
+`lock_profile_with_timeout`, all returning a `ProfileLock` RAII guard that unlocks on drop.
+
+The lock protects every mutation of the profile directory and every read that must be consistent with one:
+
+- `upgrade::apply_profile_change` holds one lock across the whole run: stale-`next` removal, manifest read, plan
+  computation, generation build (including the generation-number allocation), activation or `next` staging, and
+  generation GC.
+- `activation::activate` (the CLI/boot path) holds it across selector resolution, activation including a possible
+  revert, and `next` consumption, so a concurrent upgrade cannot re-stage or observe a stale `next` mid-sequence.
+- `bmc-nix-cli build-profile` holds it across generation-number allocation, build, and optional activation.
+- The service orchestrator acquires it with a timeout after activation, both as the "activation finished" handshake and
+  to keep generations stable during service reconciliation. See [Service Orchestrator](service-orchestrator.md).
+
+The generated activation entrypoint participates through the `ACTIVATION_HAS_PROFILE_LOCK` environment variable. When
+the Rust activation path runs the entrypoint it already holds the lock and sets `ACTIVATION_HAS_PROFILE_LOCK=1`; the
+entrypoint must not try to lock again, since `flock` is not reentrant across separate open file descriptions. When the
+entrypoint is run without that variable — a manual invocation — it takes the lock itself with a non-blocking `flock -n`
+on a shell file descriptor, failing fast if the profile is busy, and holds it for the lifetime of the activation
+scripts.
+
+The lock is advisory: nothing stops an unrelated process from mutating the profile directory directly. Any new code that
+mutates a profile, or reads state that a mutation could invalidate mid-read (generation numbers, `current`, `next`,
+manifests), must take the lock.
 
 ## Manifest
 
