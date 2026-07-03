@@ -245,6 +245,16 @@ enum Commands {
         #[arg(long, default_value = "current")]
         base: BaseSelector,
 
+        /// Build the new generation but defer activation to the next boot:
+        /// write the `next` marker consumed by the boot-time activator
+        /// instead of swapping `current`.
+        #[arg(
+            long,
+            action = clap::ArgAction::SetTrue,
+            conflicts_with = "no_activate"
+        )]
+        next_boot: bool,
+
         #[command(flatten)]
         common: ProfileCommonArgs,
     },
@@ -620,6 +630,7 @@ async fn cmd_upgrade(
     hooks_override_path: Option<PathBuf>,
     base: BaseSelector,
     no_activate: bool,
+    next_boot: bool,
     log_format: LogFormat,
 ) -> anyhow::Result<()> {
     let servers_path =
@@ -644,7 +655,11 @@ async fn cmd_upgrade(
         Some(&merged),
         &[],
         &[],
-        activation_mode_from_no_activate(no_activate),
+        if next_boot {
+            ActivationMode::NextBoot
+        } else {
+            activation_mode_from_no_activate(no_activate)
+        },
         None,
         Some(&progress),
         &hooks_dir,
@@ -857,6 +872,7 @@ async fn main() -> anyhow::Result<()> {
             servers_config,
             indexes,
             base,
+            next_boot,
             common,
         } => {
             cmd_upgrade(
@@ -867,6 +883,7 @@ async fn main() -> anyhow::Result<()> {
                 common.hooks_override_path,
                 base,
                 common.no_activate,
+                next_boot,
                 log_format,
             )
             .await
@@ -924,6 +941,45 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn upgrade_accepts_next_boot_flag() {
+        let cli = Cli::try_parse_from([
+            "bmc-nix-cli",
+            "upgrade",
+            "--index",
+            "file:///tmp/index.json",
+            "--next-boot",
+        ])
+        .expect("BUG: parse should succeed");
+
+        let Commands::Upgrade {
+            next_boot, common, ..
+        } = cli.command
+        else {
+            panic!("BUG: parsed command must be upgrade");
+        };
+        assert!(next_boot, "next-boot flag must be recorded");
+        assert!(
+            !common.no_activate,
+            "next-boot must not imply the no-activate flag"
+        );
+    }
+
+    #[test]
+    fn upgrade_rejects_next_boot_with_no_activate() {
+        let err = Cli::try_parse_from([
+            "bmc-nix-cli",
+            "upgrade",
+            "--index",
+            "file:///tmp/index.json",
+            "--next-boot",
+            "--no-activate",
+        ])
+        .expect_err("BUG: next-boot conflicts with no-activate");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
 
     #[test]
     fn init_download_dir_defaults_to_persistent_storage() {
