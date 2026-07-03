@@ -25,6 +25,18 @@ pub enum StorePathError {
         /// emits no error-level message a bounded raw-output snippet is used.
         messages: Vec<String>,
     },
+    #[error("nix-store --realise --dry-run failed to start: {0}")]
+    EstimateFailed(#[source] std::io::Error),
+    #[error("nix-store --realise --dry-run failed ({status}): {}", .messages.join("; "))]
+    EstimateExited {
+        status: std::process::ExitStatus,
+        /// Same construction as [`StorePathError::RealiseExited::messages`].
+        messages: Vec<String>,
+    },
+    #[error("could not parse dry-run fetch summary: {line}")]
+    EstimateSummaryUnparsed { line: String },
+    #[error("no substituter provides: {}", .paths.join(", "))]
+    UnsubstitutablePaths { paths: Vec<String> },
 }
 
 /// Upper bound on retained raw stderr from a streamed command.
@@ -238,6 +250,33 @@ pub trait RealizeProgress: Send + Sync {
     fn on_download_status(&self, snapshot: &progress::DownloadSnapshot);
 }
 
+/// Collect the unique store paths of `packages`, sorted.
+fn unique_store_paths(packages: &[ResolvedPackage]) -> std::collections::BTreeSet<&str> {
+    packages.iter().map(|p| p.store_path.as_str()).collect()
+}
+
+/// Failure messages for a non-zero `nix-store` exit: the collected
+/// error-level diagnostics, or — when nix emitted no error-level message we
+/// could parse — a bounded snippet of raw output so the failure is never
+/// silent.
+fn realise_failure_messages(
+    diagnostics: progress::RealizeDiagnostics,
+    output: &std::process::Output,
+    command: &str,
+) -> Vec<String> {
+    let mut messages = diagnostics.into_messages();
+    if messages.is_empty() {
+        let raw = String::from_utf8_lossy(&output.stderr);
+        let snippet: String = raw.trim().chars().take(500).collect();
+        messages.push(if snippet.is_empty() {
+            format!("{command} exited with {}", output.status)
+        } else {
+            snippet
+        });
+    }
+    messages
+}
+
 /// Realise store paths via `nix-store --realise`.
 ///
 /// Collects unique store paths from `packages`, deduplicates and sorts
@@ -251,9 +290,7 @@ pub async fn realize_store_paths(
     packages: &[ResolvedPackage],
     progress: Option<&dyn RealizeProgress>,
 ) -> Result<(), StorePathError> {
-    use std::collections::BTreeSet;
-
-    let paths: BTreeSet<&str> = packages.iter().map(|p| p.store_path.as_str()).collect();
+    let paths = unique_store_paths(packages);
     if paths.is_empty() {
         return Ok(());
     }
@@ -280,21 +317,9 @@ pub async fn realize_store_paths(
         .map_err(StorePathError::RealiseFailed)?;
 
     if !output.status.success() {
-        let mut messages = diagnostics.into_messages();
-        if messages.is_empty() {
-            // nix emitted no error-level message we could parse; fall back to
-            // a bounded snippet of raw output so the failure is never silent.
-            let raw = String::from_utf8_lossy(&output.stderr);
-            let snippet: String = raw.trim().chars().take(500).collect();
-            messages.push(if snippet.is_empty() {
-                format!("nix-store --realise exited with {}", output.status)
-            } else {
-                snippet
-            });
-        }
         return Err(StorePathError::RealiseExited {
             status: output.status,
-            messages,
+            messages: realise_failure_messages(diagnostics, &output, "nix-store --realise"),
         });
     }
 
@@ -303,6 +328,91 @@ pub async fn realize_store_paths(
     }
 
     Ok(())
+}
+
+/// What a realization of the given packages would download.
+///
+/// Sizes are parsed from nix's dry-run summary, which prints one decimal
+/// in binary units, so values carry a rounding error of up to ~0.05 of the
+/// printed unit (e.g. ±~50 KiB for a MiB-scale download).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RealizeEstimate {
+    /// Number of store paths that would be fetched from substituters.
+    pub fetch_paths: usize,
+    /// Compressed download size in bytes.
+    pub download_bytes: u64,
+    /// Unpacked (NAR) size in bytes.
+    pub unpacked_bytes: u64,
+}
+
+/// Estimate what realising the store paths of `packages` would download,
+/// via `nix-store --realise --dry-run`. Queries the configured
+/// substituters but fetches nothing.
+///
+/// Paths already present in the store contribute nothing; a fully present
+/// package set yields an all-zero estimate. A path that no substituter
+/// provides fails with [`StorePathError::UnsubstitutablePaths`] — the
+/// corresponding real realization would fail, so the estimate doubles as
+/// a pre-flight check.
+///
+/// Returns an all-zero estimate immediately for an empty package list
+/// without spawning any command.
+pub async fn estimate_realization(
+    runner: &impl CommandRunner,
+    packages: &[ResolvedPackage],
+) -> Result<RealizeEstimate, StorePathError> {
+    let paths = unique_store_paths(packages);
+    if paths.is_empty() {
+        return Ok(RealizeEstimate::default());
+    }
+
+    let mut args: Vec<&str> = vec![
+        "--log-format",
+        "internal-json",
+        "--realise",
+        "--dry-run",
+        "--",
+    ];
+    args.extend(paths.iter().copied());
+
+    let mut diagnostics = progress::RealizeDiagnostics::default();
+    let mut estimate = progress::DryRunEstimate::default();
+    let output = runner
+        .run_with_stderr_lines("nix-store", &args, |line| {
+            diagnostics.ingest_line(line);
+            estimate.ingest_line(line);
+        })
+        .await
+        .map_err(StorePathError::EstimateFailed)?;
+
+    if !output.status.success() {
+        return Err(StorePathError::EstimateExited {
+            status: output.status,
+            messages: realise_failure_messages(
+                diagnostics,
+                &output,
+                "nix-store --realise --dry-run",
+            ),
+        });
+    }
+
+    if let Some(line) = estimate.unparsed_summary() {
+        return Err(StorePathError::EstimateSummaryUnparsed {
+            line: line.to_owned(),
+        });
+    }
+
+    if estimate.has_unsubstitutable() {
+        return Err(StorePathError::UnsubstitutablePaths {
+            paths: estimate.into_unsubstitutable(),
+        });
+    }
+
+    Ok(RealizeEstimate {
+        fetch_paths: estimate.fetch_path_count(),
+        download_bytes: estimate.download_bytes(),
+        unpacked_bytes: estimate.unpacked_bytes(),
+    })
 }
 
 /// Errors that can occur during store initialization.
@@ -900,6 +1010,18 @@ mod tests {
             StorePathError::RealiseExited { status, messages } => {
                 panic!("expected MissingStorePath, got RealiseExited({status}): {messages:?}");
             }
+            StorePathError::EstimateFailed(source) => {
+                panic!("expected MissingStorePath, got EstimateFailed: {source}");
+            }
+            StorePathError::EstimateExited { status, messages } => {
+                panic!("expected MissingStorePath, got EstimateExited({status}): {messages:?}");
+            }
+            StorePathError::EstimateSummaryUnparsed { line } => {
+                panic!("expected MissingStorePath, got EstimateSummaryUnparsed: {line}");
+            }
+            StorePathError::UnsubstitutablePaths { paths } => {
+                panic!("expected MissingStorePath, got UnsubstitutablePaths: {paths:?}");
+            }
         }
     }
 
@@ -1164,6 +1286,127 @@ mod tests {
             panic!("expected RealiseExited, got: {err:?}");
         };
         assert_eq!(messages, &["something opaque went wrong".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn estimate_realization_parses_dry_run_summary() {
+        let runner = MockCommandRunner::new(vec![]).with_realise_stderr(vec![
+            r#"@nix {"action":"msg","level":3,"msg":"this path will be fetched (57.2 KiB download, 273.1 KiB unpacked):"}"#.to_owned(),
+            r#"@nix {"action":"msg","level":3,"msg":"  /nix/store/a"}"#.to_owned(),
+        ]);
+        let packages = vec![test_resolved("a", "/nix/store/a")];
+
+        let estimate = estimate_realization(&runner, &packages)
+            .await
+            .expect("BUG: dry run succeeded, should estimate");
+
+        assert_eq!(
+            estimate,
+            RealizeEstimate {
+                fetch_paths: 1,
+                download_bytes: 58573,
+                unpacked_bytes: 279654,
+            }
+        );
+
+        let invocations = runner.invocations.lock().expect("BUG: mutex poisoned");
+        let (program, args) = invocations
+            .first()
+            .expect("BUG: expected a nix-store invocation");
+        assert_eq!(program, "nix-store");
+        assert_eq!(
+            args,
+            &vec![
+                "--log-format".to_owned(),
+                "internal-json".to_owned(),
+                "--realise".to_owned(),
+                "--dry-run".to_owned(),
+                "--".to_owned(),
+                "/nix/store/a".to_owned(),
+            ],
+            "store paths must follow `--dry-run` and a `--` terminator"
+        );
+    }
+
+    #[tokio::test]
+    async fn estimate_realization_all_present_reports_zeros() {
+        let runner = MockCommandRunner::new(vec![]);
+        let packages = vec![test_resolved("a", "/nix/store/a")];
+
+        let estimate = estimate_realization(&runner, &packages)
+            .await
+            .expect("BUG: nothing to fetch, should estimate zeros");
+
+        assert_eq!(estimate, RealizeEstimate::default());
+    }
+
+    #[tokio::test]
+    async fn estimate_realization_empty_list_does_not_spawn_nix_store() {
+        let runner = MockCommandRunner::new(vec![]);
+
+        let estimate = estimate_realization(&runner, &[])
+            .await
+            .expect("BUG: empty list should always succeed");
+
+        assert_eq!(estimate, RealizeEstimate::default());
+        let invocations = runner.invocations.lock().expect("BUG: mutex poisoned");
+        assert!(
+            invocations.is_empty(),
+            "no command must be spawned for an empty package list"
+        );
+    }
+
+    #[tokio::test]
+    async fn estimate_realization_unsubstitutable_path_is_an_error() {
+        let runner = MockCommandRunner::new(vec![]).with_realise_stderr(vec![
+            r#"@nix {"action":"msg","level":3,"msg":"don't know how to build these paths:"}"#
+                .to_owned(),
+            r#"@nix {"action":"msg","level":3,"msg":"  /nix/store/a"}"#.to_owned(),
+        ]);
+        let packages = vec![test_resolved("a", "/nix/store/a")];
+
+        let err = estimate_realization(&runner, &packages)
+            .await
+            .expect_err("BUG: unsubstitutable path must fail the estimate");
+
+        let StorePathError::UnsubstitutablePaths { paths } = &err else {
+            panic!("expected UnsubstitutablePaths, got: {err:?}");
+        };
+        assert_eq!(paths, &["/nix/store/a".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn estimate_realization_unparsed_summary_is_an_error() {
+        let runner = MockCommandRunner::new(vec![]).with_realise_stderr(vec![
+            r#"@nix {"action":"msg","level":3,"msg":"these 3 paths will be fetched (sizes unknown):"}"#.to_owned(),
+        ]);
+        let packages = vec![test_resolved("a", "/nix/store/a")];
+
+        let err = estimate_realization(&runner, &packages)
+            .await
+            .expect_err("BUG: unparseable summary must not yield a zero estimate");
+
+        assert!(
+            matches!(err, StorePathError::EstimateSummaryUnparsed { .. }),
+            "expected EstimateSummaryUnparsed, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn estimate_realization_failure_reports_diagnostics() {
+        let runner = MockCommandRunner::new(vec![]).with_realise_failure(vec![
+            r#"@nix {"action":"msg","level":0,"msg":"error: cannot reach substituter"}"#.to_owned(),
+        ]);
+        let packages = vec![test_resolved("a", "/nix/store/a")];
+
+        let err = estimate_realization(&runner, &packages)
+            .await
+            .expect_err("BUG: dry run failed, should error");
+
+        let StorePathError::EstimateExited { messages, .. } = &err else {
+            panic!("expected EstimateExited, got: {err:?}");
+        };
+        assert_eq!(messages, &["error: cannot reach substituter".to_owned()]);
     }
 
     #[test]

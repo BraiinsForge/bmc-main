@@ -307,6 +307,166 @@ impl RealizeDiagnostics {
     }
 }
 
+/// Section of `nix-store --realise --dry-run` output currently being read.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum DryRunSection {
+    #[default]
+    None,
+    /// Paths listed under "… will be fetched (… download, … unpacked):".
+    Fetch,
+    /// Paths listed under "don't know how to build these paths:" or
+    /// "… will be built:". The device never builds locally, so both mean
+    /// the realization cannot be satisfied from substituters.
+    Unsubstitutable,
+}
+
+/// Parses the output of `nix-store --realise --dry-run` from nix
+/// `internal-json` message lines.
+///
+/// Byte totals are reconstructed from nix's human-readable summary line,
+/// which prints one decimal in binary units — accurate to ~0.05 of the
+/// printed unit (e.g. ±~50 KiB for a MiB-scale download).
+#[derive(Debug, Default)]
+pub struct DryRunEstimate {
+    section: DryRunSection,
+    fetch_path_count: usize,
+    download_bytes: u64,
+    unpacked_bytes: u64,
+    unparsed_summary: Option<String>,
+    unsubstitutable: Vec<String>,
+    unsubstitutable_omitted: usize,
+}
+
+impl DryRunEstimate {
+    /// Parse one line of nix internal-json output, recording the fetch
+    /// summary sizes, fetched-path count and unsubstitutable paths. Lines
+    /// that are not dry-run messages are ignored.
+    pub fn ingest_line(&mut self, line: &str) {
+        let Some(Actions::Message { msg, raw_msg, .. }) = cognos::internal::json::parse_line(line)
+        else {
+            return;
+        };
+        // Prefer `raw_msg` (no error trace) but strip either variant: Lix
+        // pre-strips ANSI from `raw_msg`, nix does not.
+        let text = strip_ansi(raw_msg.as_deref().unwrap_or(&msg));
+
+        // Section body lines are indented store paths.
+        if text.starts_with("  ") && text.trim_start().starts_with('/') {
+            match self.section {
+                DryRunSection::Fetch => self.fetch_path_count += 1,
+                DryRunSection::Unsubstitutable => {
+                    if self.unsubstitutable.len() >= MAX_DIAGNOSTIC_MESSAGES {
+                        self.unsubstitutable_omitted += 1;
+                    } else {
+                        self.unsubstitutable.push(text.trim().to_owned());
+                    }
+                }
+                DryRunSection::None => {}
+            }
+            return;
+        }
+
+        let trimmed = text.trim();
+        if trimmed.starts_with("this path will be fetched")
+            || (trimmed.starts_with("these ") && trimmed.contains("paths will be fetched"))
+        {
+            self.section = DryRunSection::Fetch;
+            match parse_fetch_summary(trimmed) {
+                Some((download_bytes, unpacked_bytes)) => {
+                    self.download_bytes = download_bytes;
+                    self.unpacked_bytes = unpacked_bytes;
+                }
+                None => self.unparsed_summary = Some(trimmed.to_owned()),
+            }
+        } else if trimmed == "don't know how to build these paths:"
+            || trimmed.ends_with("will be built:")
+        {
+            self.section = DryRunSection::Unsubstitutable;
+        } else {
+            self.section = DryRunSection::None;
+        }
+    }
+
+    /// Number of store paths nix reported it would fetch.
+    #[must_use]
+    pub fn fetch_path_count(&self) -> usize {
+        self.fetch_path_count
+    }
+
+    /// Total download size in bytes; zero when nothing would be fetched.
+    #[must_use]
+    pub fn download_bytes(&self) -> u64 {
+        self.download_bytes
+    }
+
+    /// Total unpacked (NAR) size in bytes; zero when nothing would be fetched.
+    #[must_use]
+    pub fn unpacked_bytes(&self) -> u64 {
+        self.unpacked_bytes
+    }
+
+    /// A fetch-summary line that was recognized but whose sizes could not
+    /// be parsed. The caller must treat this as an error rather than
+    /// report a zero-byte estimate.
+    #[must_use]
+    pub fn unparsed_summary(&self) -> Option<&str> {
+        self.unparsed_summary.as_deref()
+    }
+
+    /// Whether any path cannot be fetched from a substituter.
+    #[must_use]
+    pub fn has_unsubstitutable(&self) -> bool {
+        !self.unsubstitutable.is_empty()
+    }
+
+    /// Consume the collector, returning the unsubstitutable paths. When the
+    /// retained set was capped, a final note records how many further paths
+    /// were omitted.
+    #[must_use]
+    pub fn into_unsubstitutable(mut self) -> Vec<String> {
+        if self.unsubstitutable_omitted > 0 {
+            self.unsubstitutable.push(format!(
+                "… ({} additional paths omitted)",
+                self.unsubstitutable_omitted
+            ));
+        }
+        self.unsubstitutable
+    }
+}
+
+/// Parse the parenthesized sizes from a dry-run fetch summary line, e.g.
+/// `this path will be fetched (57.2 KiB download, 273.1 KiB unpacked):`.
+fn parse_fetch_summary(msg: &str) -> Option<(u64, u64)> {
+    let (_, rest) = msg.split_once('(')?;
+    let (inner, _) = rest.split_once(')')?;
+    let (download, unpacked) = inner.split_once(", ")?;
+    let download = download.strip_suffix(" download")?;
+    let unpacked = unpacked.strip_suffix(" unpacked")?;
+    Some((parse_binary_size(download)?, parse_binary_size(unpacked)?))
+}
+
+/// Parse a size like `57.2 KiB` into bytes.
+fn parse_binary_size(size: &str) -> Option<u64> {
+    let (value, unit) = size.split_once(' ')?;
+    let value: f64 = value.parse().ok()?;
+    if !value.is_finite() || value < 0.0 {
+        return None;
+    }
+    let factor: f64 = match unit {
+        "KiB" => 1024.0,
+        "MiB" => 1024.0 * 1024.0,
+        "GiB" => 1024.0 * 1024.0 * 1024.0,
+        "TiB" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "value is finite and non-negative; TiB-scale inputs stay far below u64::MAX"
+    )]
+    Some((value * factor).round() as u64)
+}
+
 /// Remove ANSI CSI escape sequences (color codes and cursor control) from a
 /// string.
 fn strip_ansi(input: &str) -> String {
@@ -811,5 +971,121 @@ mod tests {
         assert_eq!(tracker.snapshot().downloaded_bytes, 0);
         assert_eq!(tracker.snapshot().total_bytes, Some(0));
         assert_eq!(tracker.snapshot().remaining_bytes, Some(0));
+    }
+
+    // Real transcript captured from `nix-store -r --dry-run --log-format
+    // internal-json /nix/store/…-hello-2.12.3` against cache.nixos.org.
+    #[test]
+    fn dry_run_parses_singular_fetch_summary_from_real_transcript() {
+        let mut estimate = DryRunEstimate::default();
+        for line in [
+            r#"@nix {"action":"start","id":117175297769472,"level":6,"parent":0,"text":"querying info about missing paths","type":0}"#,
+            r#"@nix {"action":"result","fields":[600,600,0,0],"id":117175297769474,"type":105}"#,
+            r#"@nix {"action":"stop","id":117175297769472}"#,
+            r#"@nix {"action":"msg","level":3,"msg":"this path will be fetched (57.2 KiB download, 273.1 KiB unpacked):"}"#,
+            r#"@nix {"action":"msg","level":3,"msg":"  /nix/store/a58bx0sw2r7fhk4qyg7wvjdd81zw561h-hello-2.12.3"}"#,
+        ] {
+            estimate.ingest_line(line);
+        }
+
+        assert_eq!(estimate.fetch_path_count(), 1);
+        // 57.2 KiB and 273.1 KiB, rounded to whole bytes.
+        assert_eq!(estimate.download_bytes(), 58573);
+        assert_eq!(estimate.unpacked_bytes(), 279654);
+        assert_eq!(estimate.unparsed_summary(), None);
+        assert!(!estimate.has_unsubstitutable());
+    }
+
+    #[test]
+    fn dry_run_parses_plural_summary_and_counts_paths() {
+        let mut estimate = DryRunEstimate::default();
+        for line in [
+            r#"@nix {"action":"msg","level":3,"msg":"these 2 paths will be fetched (12.5 MiB download, 1.2 GiB unpacked):"}"#,
+            r#"@nix {"action":"msg","level":3,"msg":"  /nix/store/aaa-pkg-a"}"#,
+            r#"@nix {"action":"msg","level":3,"msg":"  /nix/store/bbb-pkg-b"}"#,
+        ] {
+            estimate.ingest_line(line);
+        }
+
+        assert_eq!(estimate.fetch_path_count(), 2);
+        assert_eq!(estimate.download_bytes(), 13_107_200);
+        assert_eq!(estimate.unpacked_bytes(), 1_288_490_189);
+    }
+
+    #[test]
+    fn dry_run_nothing_to_fetch_reports_zeros() {
+        let mut estimate = DryRunEstimate::default();
+        estimate.ingest_line(r#"@nix {"action":"stop","id":1}"#);
+
+        assert_eq!(estimate.fetch_path_count(), 0);
+        assert_eq!(estimate.download_bytes(), 0);
+        assert_eq!(estimate.unpacked_bytes(), 0);
+        assert_eq!(estimate.unparsed_summary(), None);
+        assert!(!estimate.has_unsubstitutable());
+    }
+
+    // Real transcript: dry run of a path no substituter provides.
+    #[test]
+    fn dry_run_collects_unsubstitutable_paths_from_real_transcript() {
+        let mut estimate = DryRunEstimate::default();
+        for line in [
+            r#"@nix {"action":"msg","level":3,"msg":"don't know how to build these paths:"}"#,
+            r#"@nix {"action":"msg","level":3,"msg":"  /nix/store/zzzbx0sw2r7fhk4qyg7wvjdd81zw561h-hello-2.12.3"}"#,
+        ] {
+            estimate.ingest_line(line);
+        }
+
+        assert!(estimate.has_unsubstitutable());
+        assert_eq!(
+            estimate.into_unsubstitutable(),
+            vec!["/nix/store/zzzbx0sw2r7fhk4qyg7wvjdd81zw561h-hello-2.12.3".to_owned()]
+        );
+    }
+
+    #[test]
+    fn dry_run_treats_will_be_built_as_unsubstitutable() {
+        let mut estimate = DryRunEstimate::default();
+        for line in [
+            r#"@nix {"action":"msg","level":3,"msg":"these 1 derivations will be built:"}"#,
+            r#"@nix {"action":"msg","level":3,"msg":"  /nix/store/ccc-pkg.drv"}"#,
+        ] {
+            estimate.ingest_line(line);
+        }
+
+        assert!(estimate.has_unsubstitutable());
+    }
+
+    #[test]
+    fn dry_run_flags_unparseable_summary_instead_of_reporting_zero() {
+        let mut estimate = DryRunEstimate::default();
+        estimate.ingest_line(
+            r#"@nix {"action":"msg","level":3,"msg":"these 3 paths will be fetched (sizes unknown):"}"#,
+        );
+
+        assert_eq!(
+            estimate.unparsed_summary(),
+            Some("these 3 paths will be fetched (sizes unknown):")
+        );
+    }
+
+    #[test]
+    fn dry_run_strips_ansi_from_summary_line() {
+        let mut estimate = DryRunEstimate::default();
+        estimate.ingest_line(
+            r#"@nix {"action":"msg","level":3,"msg":"\u001b[32mthis path will be fetched (1.0 KiB download, 2.0 KiB unpacked):\u001b[0m"}"#,
+        );
+
+        assert_eq!(estimate.download_bytes(), 1024);
+        assert_eq!(estimate.unpacked_bytes(), 2048);
+    }
+
+    #[test]
+    fn parse_binary_size_rejects_unknown_units_and_garbage() {
+        assert_eq!(parse_binary_size("1.0 KiB"), Some(1024));
+        assert_eq!(parse_binary_size("0.0 KiB"), Some(0));
+        assert_eq!(parse_binary_size("1.0 kB"), None);
+        assert_eq!(parse_binary_size("KiB"), None);
+        assert_eq!(parse_binary_size("-1.0 KiB"), None);
+        assert_eq!(parse_binary_size("NaN KiB"), None);
     }
 }
