@@ -249,7 +249,7 @@ fn activate_generation_number_missing_is_hard_error() {
 }
 
 // ---------------------------------------------------------------------------
-// activate --next
+// activate --generation next
 
 #[test]
 #[serial]
@@ -262,9 +262,10 @@ fn activate_next_no_next_delegates_to_current() {
         "activate",
         "--profile-dir",
         &dir.path().display().to_string(),
-        "--next",
+        "--generation",
+        "next",
     ]);
-    run.ok("activate --next with no next");
+    run.ok("activate --generation next with no next");
     assert_eq!(read_activation_log(dir.path()), vec![1]);
 }
 
@@ -281,9 +282,10 @@ fn activate_next_success_removes_next() {
         "activate",
         "--profile-dir",
         &dir.path().display().to_string(),
-        "--next",
+        "--generation",
+        "next",
     ]);
-    run.ok("activate --next success");
+    run.ok("activate --generation next success");
     assert_eq!(read_activation_log(dir.path()), vec![2]);
     assert!(
         dir.path().join("next").symlink_metadata().is_err(),
@@ -308,7 +310,8 @@ fn activate_next_failure_reverts_and_exits_nonzero() {
         "activate",
         "--profile-dir",
         &dir.path().display().to_string(),
-        "--next",
+        "--generation",
+        "next",
     ]);
     assert_eq!(
         run.exit_code(),
@@ -339,7 +342,8 @@ fn activate_next_failure_no_previous_propagates_error() {
         "activate",
         "--profile-dir",
         &dir.path().display().to_string(),
-        "--next",
+        "--generation",
+        "next",
     ]);
     assert_eq!(run.exit_code(), Some(1));
     assert!(
