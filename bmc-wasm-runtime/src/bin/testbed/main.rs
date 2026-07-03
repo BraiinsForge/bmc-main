@@ -1138,6 +1138,8 @@ pub(crate) struct TestbedApp {
     pub(crate) tiles: Vec<PreviewTile>,
     gpu_pool: Vec<TileGpu>,
     clock: Clock,
+    /// Offline toggle: seals every tile's live I/O so refreshes fail.
+    offline: bool,
     hot_reload: HotReload,
     perf: PerfState,
     pub(crate) recording_mode: RecordingMode,
@@ -1155,6 +1157,12 @@ pub(crate) struct TestbedApp {
 struct Clock {
     last_frame: std::time::Instant,
     start_instant: std::time::Instant,
+    /// Fast-forward offset (ms) for the displayed system time; "reset" zeroes it.
+    offset_ms: u64,
+    /// Fast-forward offset (ms) for the monotonic clock. Ratchets up with each
+    /// advance and never rewinds — "reset" leaves it, so pending poll/render
+    /// deadlines don't stall behind a rewound clock.
+    monotonic_offset_ms: u64,
 }
 
 /// Filesystem watcher + manual-reload signal. Drains as a single "rebuild every runtime"
@@ -1295,7 +1303,10 @@ impl TestbedApp {
             clock: Clock {
                 last_frame: now,
                 start_instant: now,
+                offset_ms: 0,
+                monotonic_offset_ms: 0,
             },
+            offline: false,
             hot_reload: HotReload {
                 _watcher: watcher,
                 watcher_rx,
@@ -1606,8 +1617,16 @@ impl TestbedApp {
             (prev_fbo, vp)
         };
 
-        let monotonic_ms = self.clock.start_instant.elapsed().as_millis() as u64;
-        let system_time = chrono::Local::now().fixed_offset();
+        // A fast-forward advances both clocks so a due poll fires as its data
+        // ages out; "reset" rewinds only the display clock, never the monotonic
+        // one (which uses its own ratcheting offset).
+        let offset_ms = self.clock.offset_ms;
+        let monotonic_ms =
+            self.clock.start_instant.elapsed().as_millis() as u64 + self.clock.monotonic_offset_ms;
+        let system_time = (chrono::Local::now()
+            + chrono::Duration::milliseconds(offset_ms.cast_signed()))
+        .fixed_offset();
+        let offline = self.offline;
         // In recording mode, only the active tile renders; the others are painted as blank
         // slabs in `App::ui`. Skipping the WASM render here both clarifies the visual focus
         // and keeps non-active runtimes from spending fuel on frames nobody will keep.
@@ -1617,6 +1636,7 @@ impl TestbedApp {
                 continue;
             }
             tile.drain_led_commands();
+            tile.runtime.set_hermetic(offline);
             tile.runtime.set_time(system_time, monotonic_ms);
             tile.renderer
                 .begin_frame(tile.gpu.width, tile.gpu.height, 1.0);

@@ -1008,6 +1008,17 @@ impl WasmWidgetRuntime {
         std::mem::take(&mut self.store.data_mut().profile_sections)
     }
 
+    /// Seal or unseal live I/O at runtime; while sealed every egress is refused
+    /// (a fetch returns the `status: 0` network error), simulating offline.
+    pub fn set_hermetic(&mut self, sealed: bool) {
+        let state = self.store.data_mut();
+        match (sealed, state.hermetic.is_some()) {
+            (true, false) => state.hermetic = Some(HermeticRun::default()),
+            (false, true) => state.hermetic = None,
+            _ => {}
+        }
+    }
+
     /// Breaches recorded during a hermetic run (empty otherwise).
     #[must_use]
     pub fn hermetic_breaches(&self) -> &[String] {
