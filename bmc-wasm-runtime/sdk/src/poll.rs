@@ -305,6 +305,11 @@ impl Registry {
         self.kick(idx, Some(delay_ms), backend);
     }
 
+    /// Retarget the poll cadence and `is_stale` threshold; reschedule to apply.
+    pub(crate) fn set_interval(&mut self, handle: Handle, interval_ms: u32) {
+        self.polls[handle.0].config.interval_ms = Some(interval_ms);
+    }
+
     pub(crate) fn enabled(&self, handle: Handle) -> bool {
         self.polls[handle.0].enabled
     }
@@ -441,6 +446,11 @@ mod wasm {
                 r.borrow_mut()
                     .set_enabled_after(self, delay_ms, &mut ProdBackend)
             });
+        }
+
+        /// Retarget the poll cadence and `is_stale` threshold; pair with `invalidate` to apply now.
+        pub fn set_interval(self, interval_ms: u32) {
+            REGISTRY.with(|r| r.borrow_mut().set_interval(self, interval_ms));
         }
 
         pub fn invalidate(self) {
@@ -675,6 +685,21 @@ mod tests {
         assert_eq!(action, ReplyAction::Deliver(h));
         assert_eq!(be.sends.len(), 2);
         assert_eq!(be.sends[1].1, Some(5_000));
+    }
+
+    #[test]
+    fn set_interval_retargets_the_reschedule_cadence() {
+        let mut reg = Registry::default();
+        let mut be = FakeBackend::new();
+        let h = reg.register(build_url, CFG); // interval 5_000
+        reg.start(h, &mut be);
+        reg.set_interval(h, 60_000);
+        deliver(&mut reg, &mut be, 1, true);
+        assert_eq!(
+            be.sends.last().expect("BUG: a fetch was scheduled").1,
+            Some(60_000),
+            "a success reschedules at the new interval"
+        );
     }
 
     #[test]

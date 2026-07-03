@@ -19,11 +19,9 @@ pub const TOO_LARGE: &str = "Image too large";
 pub const BAD_IMAGE: &str = "Unsupported image";
 
 const MESSAGE_TEXT_SIZE: u32 = 24;
-const STALE_DATA_TEXT: &str = "Stale data";
-const STALE_TEXT_SIZE: u32 = 14;
-const STALE_ICON_PX: f32 = 16.0;
-const STALE_INSET: f32 = 8.0;
 const UPDATING_TEXT: &str = "Updating";
+const UPDATING_TEXT_SIZE: u32 = 14;
+const UPDATING_INSET: f32 = 8.0;
 
 /// Aspect ratio (`w / h`) of an image, defaulting to square on a zero height.
 #[must_use]
@@ -88,55 +86,10 @@ pub fn message_view(message: &str, _size: WidgetSize) -> Node {
     )
 }
 
-fn stale_banner() -> Node {
-    row(
-        props!(inset_bottom: STALE_INSET, inset_left: STALE_INSET),
-        [row(
-            props!(
-                background: GRAY_100,
-                padding: 6.0,
-                gap: 6.0,
-                cross_align: CrossAlign::Center
-            ),
-            [
-                canvas(
-                    props!(width: STALE_ICON_PX, height: STALE_ICON_PX),
-                    vec![Draw::svg_builtin(
-                        0.0,
-                        0.0,
-                        STALE_ICON_PX,
-                        STALE_ICON_PX,
-                        ICON_WARN_FILLED,
-                        RED_50,
-                    )],
-                ),
-                text(
-                    STALE_DATA_TEXT.to_string(),
-                    style!(
-                        size: STALE_TEXT_SIZE,
-                        weight: FontWeight::BOLD,
-                        color: RED_50,
-                        line_height: 1.0
-                    ),
-                ),
-            ],
-        )],
-    )
-}
-
-/// Overlay a "stale data" banner onto a column/row root.
-#[must_use]
-pub fn with_stale_banner(mut root: Node) -> Node {
-    if let Node::Column(_, children) | Node::Row(_, children) = &mut root {
-        children.push(stale_banner());
-    }
-    root
-}
-
 /// Subtle "updating" pill over the cached image during a background refresh.
 fn updating_overlay() -> Node {
     row(
-        props!(inset_bottom: STALE_INSET, inset_left: STALE_INSET),
+        props!(inset_bottom: UPDATING_INSET, inset_left: UPDATING_INSET),
         [row(
             props!(
                 background: GRAY_100,
@@ -146,7 +99,7 @@ fn updating_overlay() -> Node {
             [text(
                 UPDATING_TEXT.to_string(),
                 style!(
-                    size: STALE_TEXT_SIZE,
+                    size: UPDATING_TEXT_SIZE,
                     weight: FontWeight::REGULAR,
                     color: GRAY_30,
                     line_height: 1.0

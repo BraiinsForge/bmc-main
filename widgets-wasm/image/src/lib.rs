@@ -181,6 +181,16 @@ mod wasm_glue {
     pub extern "C" fn on_params_update() {
         let prev = manifest_params::Params::previous();
         let cur = manifest_params::Params::current();
+        // Retarget the poll live on a refresh-period change; invalidate to apply now.
+        if prev
+            .as_ref()
+            .is_some_and(|p| p.refresh_seconds != cur.refresh_seconds)
+        {
+            with_poll(|handle| {
+                handle.set_interval(refresh_interval_ms());
+                handle.invalidate();
+            });
+        }
         if prev
             .as_ref()
             .is_none_or(|p| p.url != cur.url || p.sizing != cur.sizing)
@@ -289,7 +299,19 @@ mod wasm_glue {
                     let view = render::image_view(*bitmap, *aspect, size, params.sizing);
                     match badge {
                         Badge::Updating => render::with_updating_overlay(view),
-                        Badge::Stale => render::with_stale_banner(view),
+                        // is_stale adds the grace window, so the 10s retry heals a blip first.
+                        Badge::Stale => {
+                            match POLL
+                                .with(Cell::get)
+                                .filter(|handle| handle.is_stale())
+                                .and_then(PollHandle::last_success_time)
+                            {
+                                Some(anchor) => {
+                                    with_stale_overlay(view, anchor, widget_viewport().shape)
+                                }
+                                None => view,
+                            }
+                        }
                         Badge::Fresh => view,
                     }
                 }
