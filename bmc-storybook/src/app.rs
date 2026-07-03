@@ -1453,7 +1453,7 @@ impl StorybookApp {
     }
 
     /// Run the selected story's render function and produce FBO frames.
-    fn render_story_to_fbo(&mut self, frame: &mut eframe::Frame) {
+    fn render_story_to_fbo(&mut self, frame: &mut eframe::Frame, pixels_per_point: f32) {
         let Some(entry) = self.sidebar.selected() else {
             return;
         };
@@ -1494,7 +1494,13 @@ impl StorybookApp {
                     } else {
                         16
                     };
-                    dr.render_doc_blocks(&mut self.doc_blocks, &self.gl, frame, delta_ms);
+                    dr.render_doc_blocks(
+                        &mut self.doc_blocks,
+                        &self.gl,
+                        frame,
+                        delta_ms,
+                        pixels_per_point,
+                    );
 
                     // Aggregate interactions from all frame targets.
                     let matched: Vec<_> = {
@@ -1735,7 +1741,7 @@ impl eframe::App for StorybookApp {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.handle_keyboard(ctx);
         self.handle_hot_reload();
-        self.render_story_to_fbo(frame);
+        self.render_story_to_fbo(frame, ctx.pixels_per_point());
 
         // Keep repainting while animations run or a build is in progress.
         if self.sidebar.selected().is_some() || self.build_started.is_some() {

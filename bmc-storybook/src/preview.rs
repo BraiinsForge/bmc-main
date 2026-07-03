@@ -131,10 +131,13 @@ impl FrameState {
     }
 }
 
-/// A femtovg offscreen render target for one frame.
+/// A femtovg offscreen render target for one frame. `width`/`height` are logical;
+/// the image is `×pixels_per_point` denser for HiDPI sharpness.
 pub struct FrameRenderTarget {
     pub width: u32,
     pub height: u32,
+    /// Pixels-per-point the image was sized for; a change invalidates it.
+    pub pixels_per_point: f32,
     pub image_id: femtovg::ImageId,
     pub egui_texture_id: Option<egui::TextureId>,
     pub state: FrameState,
@@ -197,6 +200,7 @@ impl DocumentRenderer {
         gl: &eframe::glow::Context,
         egui_frame: &mut eframe::Frame,
         delta_ms: u32,
+        pixels_per_point: f32,
     ) {
         use eframe::glow::HasContext;
 
@@ -218,17 +222,22 @@ impl DocumentRenderer {
         for size in &frame_sizes {
             let w = size.width();
             let h = size.fbo_height();
-            let target_idx = self
-                .targets
-                .iter()
-                .enumerate()
-                .position(|(i, t)| !used[i] && t.width == w && t.height == h);
+            let target_idx = self.targets.iter().enumerate().position(|(i, t)| {
+                !used[i]
+                    && t.width == w
+                    && t.height == h
+                    && (t.pixels_per_point - pixels_per_point).abs() < 1e-3
+            });
             let target_idx = if let Some(idx) = target_idx {
                 used[idx] = true;
                 self.targets[idx].frame_size = *size;
                 idx
             } else {
-                let (image_id, gl_name) = self.renderer.create_render_target(w, h);
+                // Allocate at physical resolution so previews stay sharp on HiDPI.
+                let (image_id, gl_name) = self.renderer.create_render_target(
+                    phys_px(w, pixels_per_point),
+                    phys_px(h, pixels_per_point),
+                );
                 let native = eframe::glow::NativeTexture(
                     std::num::NonZeroU32::new(gl_name).expect("BUG: GL texture name is zero"),
                 );
@@ -237,6 +246,7 @@ impl DocumentRenderer {
                 self.targets.push(FrameRenderTarget {
                     width: w,
                     height: h,
+                    pixels_per_point,
                     image_id,
                     egui_texture_id: Some(tex_id),
                     state: FrameState::new(),
@@ -263,6 +273,7 @@ impl DocumentRenderer {
             &mut self.rendered_frames,
             delta_ms,
             now_unix_secs,
+            pixels_per_point,
         );
         // Catch tree-mutation drift between the immutable `collect_frame_sizes`
         // walk and the `&mut` render walk: every assignment must have been
@@ -312,8 +323,22 @@ fn collect_frame_sizes_rec(blocks: &[DocBlock], out: &mut Vec<FrameSize>) {
     }
 }
 
+/// Physical texel count for a logical dimension at the given pixels-per-point.
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "small preview dimensions, positive scale"
+)]
+fn phys_px(logical: u32, pixels_per_point: f32) -> u32 {
+    (logical as f32 * pixels_per_point).round() as u32
+}
+
 /// Render frames in tree order, matching the order of `collect_frame_sizes`.
-#[expect(clippy::too_many_arguments, reason = "recursive frame walk threads render state + clock")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "recursive frame walk threads render state + clock"
+)]
 fn render_frames_recursive(
     blocks: &mut [DocBlock],
     target_assignments: &[usize],
@@ -323,6 +348,7 @@ fn render_frames_recursive(
     rendered_frames: &mut Vec<RenderedFrame>,
     delta_ms: u32,
     now_unix_secs: i64,
+    pixels_per_point: f32,
 ) {
     for block in blocks {
         match block {
@@ -331,7 +357,12 @@ fn render_frames_recursive(
                 let target = &mut targets[target_idx];
                 let size = target.frame_size;
 
-                renderer.begin_frame_to_image(target.image_id, target.width, target.height, 1.0);
+                renderer.begin_frame_to_image(
+                    target.image_id,
+                    target.width,
+                    target.height,
+                    pixels_per_point,
+                );
                 target.state.interaction.begin_frame();
 
                 let bytes = bmc_wasm_sdk::tree::serialize_node_to_bytes(node);
@@ -375,7 +406,12 @@ fn render_frames_recursive(
                 let target = &mut targets[target_idx];
                 let size = target.frame_size;
 
-                renderer.begin_frame_to_image(target.image_id, target.width, target.height, 1.0);
+                renderer.begin_frame_to_image(
+                    target.image_id,
+                    target.width,
+                    target.height,
+                    pixels_per_point,
+                );
                 target.state.interaction.begin_frame();
 
                 #[expect(clippy::cast_precision_loss)]
@@ -404,6 +440,7 @@ fn render_frames_recursive(
                         rendered_frames,
                         delta_ms,
                         now_unix_secs,
+                        pixels_per_point,
                     );
                 }
             }

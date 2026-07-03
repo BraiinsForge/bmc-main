@@ -146,10 +146,9 @@ impl FemtoVgRenderer {
     /// Like [`Renderer::begin_frame`] but renders to the given Image instead of
     /// the screen FBO. femtovg manages its own FBO with stencil for the Image.
     ///
-    /// Both `set_render_target` and `clear_rect` are queued commands processed
-    /// during the next `flush()`. We intentionally skip `canvas.set_size()` here
-    /// because it queues `SetRenderTarget(Screen)` which would undo the Image
-    /// binding. For Image targets, femtovg derives dimensions from the image info.
+    /// `set_size` sets the canvas device-pixel ratio (logical → physical scaling,
+    /// canvas-level) but queues `SetRenderTarget(Screen)`, so bind the Image after
+    /// it. The image must be `width·dpi_scale × height·dpi_scale` texels.
     pub fn begin_frame_to_image(
         &mut self,
         image_id: femtovg::ImageId,
@@ -161,6 +160,7 @@ impl FemtoVgRenderer {
         self.height = height as f32;
         self.dpi_scale = dpi_scale;
         self.frame_counter += 1;
+        self.canvas.set_size(width, height, dpi_scale);
         self.canvas.set_render_target(RenderTarget::Image(image_id));
         #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let (pw, ph) = (
