@@ -68,12 +68,48 @@ find_latest_link() {
 }
 
 activate_profile() {
-	local profile_dir
-	local current
-	local entrypoint
+	local profile_dir current next entrypoint old_target old_generation
 
 	profile_dir="/nix/var/nix/gcroots/profiles/bmc"
 	current="$profile_dir/current"
+	next="$profile_dir/next"
+
+	# A staged 'next' generation takes precedence over 'current':
+	# promote it to 'current' before its entrypoint runs so the
+	# activated system and the profile agree, consume the symlink only
+	# on success, and restore 'current' on failure so the previous
+	# generation is activated below instead. A 'next' that does not
+	# resolve to a generation directory is ignored.
+	if [ -L "$next" ] && [ -d "$next" ]; then
+		entrypoint="$(readlink -f "$next")/core/activation/entrypoint"
+		if [ -x "$entrypoint" ]; then
+			old_target="$(readlink "$current" 2>/dev/null)"
+			# The entrypoint derives PROFILE_OLD_GENERATION from
+			# 'current', which is repointed at the new generation
+			# below before it runs; pass the pre-promotion
+			# generation explicitly so diff-driven activation
+			# scripts see the real old one.
+			case "$old_target" in
+				''|/*) old_generation="$old_target" ;;
+				*) old_generation="$profile_dir/$old_target" ;;
+			esac
+			[ -e "$old_generation" ] || old_generation=""
+			ln -sfn "$(readlink "$next")" "$current"
+			LOG "activating staged next generation"
+			if PROFILE_OLD_GENERATION="$old_generation" "$entrypoint"; then
+				rm -f "$next"
+				return 0
+			fi
+			LOG "next generation activation failed, reverting to previous"
+			if [ -n "$old_target" ]; then
+				ln -sfn "$old_target" "$current"
+			else
+				rm -f "$current"
+			fi
+		else
+			LOG "next generation entrypoint missing or not executable: $entrypoint"
+		fi
+	fi
 
 	# On initial Nix initialization there is no 'current' symlink yet:
 	# the old firmware upgrade script only downloads the Nix store, and
