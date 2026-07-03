@@ -3,8 +3,6 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use bmc_nix::types::*;
-
 pub fn create_activation_entrypoint(store_path: &Path) {
     let activation_dir = store_path.join("core/activation");
     std::fs::create_dir_all(&activation_dir).expect("BUG: create activation dir");
@@ -35,20 +33,5 @@ pub fn create_fake_store(base: &Path, files: &[&str]) {
         }
         std::fs::write(&full_path, format!("content of {file_path}"))
             .expect("BUG: should write fake file");
-    }
-}
-
-pub fn test_resolved_package(name: &str, version: &str, store_path: &str) -> ResolvedPackage {
-    ResolvedPackage {
-        name: name.into(),
-        version: version.into(),
-        store_path: store_path.into(),
-        category: None,
-        description: None,
-        upgrade_strategy: None,
-        install_strategy: None,
-        installed_by: InstalledBy::User,
-        installed_from: "local".into(),
-        pinned: None,
     }
 }
