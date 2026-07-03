@@ -23,22 +23,22 @@ pub type CustomRenderFn = Box<dyn FnMut(&mut dyn Renderer, &mut InteractionState
 // ── Document model types ────────────────────────────────────────────
 
 /// Device display dimensions (Braiins clock: 1280x480).
-pub const DEVICE_WIDTH: u32 = 1_280;
-pub const DEVICE_HEIGHT: u32 = 480;
+pub const DEVICE_WIDTH: usize = 1_280;
+pub const DEVICE_HEIGHT: usize = 480;
 
 /// Maximum FBO height for auto-height frames (content-driven layout).
-pub const AUTO_HEIGHT_MAX: u32 = 4_096;
+pub const AUTO_HEIGHT_MAX: usize = 4_096;
 
 /// Height dimension for a frame — fixed pixels or content-driven.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DivHeight {
-    Px(u32),
+    Px(usize),
     /// Content-driven: layout with height=0, clip to actual content size.
     Auto,
 }
 
-impl From<u32> for DivHeight {
-    fn from(v: u32) -> Self {
+impl From<usize> for DivHeight {
+    fn from(v: usize) -> Self {
         Self::Px(v)
     }
 }
@@ -59,19 +59,22 @@ pub enum FrameSize {
     Small,
     /// Fully content-driven (both width and height from layout).
     Auto,
+    /// Circular face inscribed in a `diameter × diameter` frame.
+    Round(usize),
     /// Arbitrary dimensions.
-    Custom(u32, DivHeight),
+    Custom(usize, DivHeight),
 }
 
 impl FrameSize {
     /// FBO width in pixels (`Auto` → `DEVICE_WIDTH` as upper bound).
     #[must_use]
-    pub fn width(self) -> u32 {
+    pub fn width(self) -> usize {
         match self {
             Self::Large => 480,
             Self::Medium => 320,
             Self::Small => 160,
             Self::Full | Self::Auto => DEVICE_WIDTH,
+            Self::Round(d) => d,
             Self::Custom(w, _) => w,
         }
     }
@@ -85,6 +88,7 @@ impl FrameSize {
             Self::Medium => DivHeight::Px(240),
             Self::Small => DivHeight::Px(120),
             Self::Auto => DivHeight::Auto,
+            Self::Round(d) => DivHeight::Px(d),
             Self::Custom(_, h) => h,
         }
     }
@@ -95,9 +99,16 @@ impl FrameSize {
         matches!(self, Self::Auto)
     }
 
+    /// Whether the frame is a circular face — the render is masked to the
+    /// inscribed circle.
+    #[must_use]
+    pub fn is_round(self) -> bool {
+        matches!(self, Self::Round(_))
+    }
+
     /// Resolved height in pixels (Auto → `AUTO_HEIGHT_MAX` for FBO allocation).
     #[must_use]
-    pub fn fbo_height(self) -> u32 {
+    pub fn fbo_height(self) -> usize {
         match self.div_height() {
             DivHeight::Px(h) => h,
             DivHeight::Auto => AUTO_HEIGHT_MAX,
@@ -128,19 +139,19 @@ impl FrameSize {
 
 impl From<(u32, u32)> for FrameSize {
     fn from((w, h): (u32, u32)) -> Self {
-        Self::Custom(w, DivHeight::Px(h))
+        Self::Custom(w as usize, DivHeight::Px(h as usize))
     }
 }
 
 impl From<(f32, f32)> for FrameSize {
     #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn from((w, h): (f32, f32)) -> Self {
-        Self::Custom(w as u32, DivHeight::Px(h as u32))
+        Self::Custom(w as usize, DivHeight::Px(h as usize))
     }
 }
 
-impl From<(u32, DivHeight)> for FrameSize {
-    fn from((w, h): (u32, DivHeight)) -> Self {
+impl From<(usize, DivHeight)> for FrameSize {
+    fn from((w, h): (usize, DivHeight)) -> Self {
         Self::Custom(w, h)
     }
 }

@@ -694,6 +694,7 @@ impl StorybookApp {
     ///
     /// Wrapped in `ui.vertical()` so the size label and frame image stay
     /// stacked vertically even when the parent uses horizontal layout.
+    #[expect(clippy::cast_precision_loss, reason = "preview dimensions are small")]
     fn render_doc_frame(
         ui: &mut Ui,
         dr: &mut DocumentRenderer,
@@ -708,11 +709,11 @@ impl StorybookApp {
         let display_w = if size.is_auto_width() {
             rf.content_size.0.max(1.0)
         } else {
-            px_f(size.width())
+            size.width() as f32
         };
         let display_h = match size.div_height() {
             bmc_storybook_api::DivHeight::Auto => rf.content_size.1.max(1.0),
-            bmc_storybook_api::DivHeight::Px(h) => px_f(h),
+            bmc_storybook_api::DivHeight::Px(h) => h as f32,
         };
 
         ui.vertical(|ui| {
@@ -768,13 +769,20 @@ impl StorybookApp {
 
             Self::paint_checkerboard(ui, rect);
 
-            // Frame texture (V-flipped for GL origin).
+            // Frame texture (V-flipped for GL origin); round faces mask to the
+            // inscribed circle.
             if let Some(tex_id) = target.egui_texture_id {
-                let u_right = display_w / px_f(target.width);
-                let v_bottom = 1.0 - display_h / px_f(target.height);
-                let uv =
-                    egui::Rect::from_min_max(egui::pos2(0.0, 1.0), egui::pos2(u_right, v_bottom));
-                ui.painter().image(tex_id, rect, uv, Color32::WHITE);
+                let u_right = display_w / target.width as f32;
+                let v_bottom = 1.0 - display_h / target.height as f32;
+                if size.is_round() {
+                    Self::paint_round_frame(ui, rect, tex_id, u_right, v_bottom);
+                } else {
+                    let uv = egui::Rect::from_min_max(
+                        egui::pos2(0.0, 1.0),
+                        egui::pos2(u_right, v_bottom),
+                    );
+                    ui.painter().image(tex_id, rect, uv, Color32::WHITE);
+                }
             }
 
             ui.add_space(12.0);
@@ -799,6 +807,73 @@ impl StorybookApp {
                 painter.rect_filled(tile, 0.0, color);
             }
         }
+    }
+
+    /// Draw the frame texture masked to a circle on the panel bg (round face),
+    /// with a bezel ring. `u_right`/`v_bottom` are the V-flipped uv extent.
+    #[expect(clippy::cast_precision_loss, reason = "segment count is tiny")]
+    fn paint_round_frame(
+        ui: &Ui,
+        rect: egui::Rect,
+        tex: egui::TextureId,
+        u_right: f32,
+        v_bottom: f32,
+    ) {
+        use egui::epaint::{Mesh, Vertex};
+        const SEGMENTS: u32 = 96;
+
+        let painter = ui.painter_at(rect);
+        let center = rect.center();
+        let radius = rect.width().min(rect.height()) / 2.0;
+        let uv_at = |p: egui::Pos2| {
+            let fx = (p.x - rect.min.x) / rect.width();
+            let fy = (p.y - rect.min.y) / rect.height();
+            egui::pos2(fx * u_right, 1.0 - fy * (1.0 - v_bottom))
+        };
+
+        let mut content = Mesh::with_texture(tex);
+        content.vertices.push(Vertex {
+            pos: center,
+            uv: uv_at(center),
+            color: Color32::WHITE,
+        });
+        for i in 0..=SEGMENTS {
+            let a = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+            let p = center + egui::vec2(a.cos(), a.sin()) * radius;
+            content.vertices.push(Vertex {
+                pos: p,
+                uv: uv_at(p),
+                color: Color32::WHITE,
+            });
+        }
+        for i in 1..=SEGMENTS {
+            content.indices.extend_from_slice(&[0, i, i + 1]);
+        }
+        painter.add(egui::Shape::mesh(content));
+
+        // Panel-bg annulus from the circle edge out past the corners masks the
+        // square checkerboard into a round face.
+        let mut mask = Mesh::default();
+        for i in 0..=SEGMENTS {
+            let a = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+            let dir = egui::vec2(a.cos(), a.sin());
+            mask.colored_vertex(center + dir * radius, PREVIEW_BG);
+            mask.colored_vertex(center + dir * (radius * 2.0), PREVIEW_BG);
+        }
+        for i in 0..SEGMENTS {
+            let b = i * 2;
+            mask.add_triangle(b, b + 1, b + 2);
+            mask.add_triangle(b + 1, b + 3, b + 2);
+        }
+        painter.add(egui::Shape::mesh(mask));
+
+        // Inset the bezel so its stroke stays inside the rect (the inscribed
+        // circle touches the edges, so a ring at `radius` clips at the tangents).
+        painter.circle_stroke(
+            center,
+            radius - 1.5,
+            egui::Stroke::new(1.5, Color32::from_gray(80)),
+        );
     }
 
     /// Render a section header with optional subtitle.

@@ -134,8 +134,8 @@ impl FrameState {
 /// A femtovg offscreen render target for one frame. `width`/`height` are logical;
 /// the image is `×pixels_per_point` denser for HiDPI sharpness.
 pub struct FrameRenderTarget {
-    pub width: u32,
-    pub height: u32,
+    pub width: usize,
+    pub height: usize,
     /// Pixels-per-point the image was sized for; a change invalidates it.
     pub pixels_per_point: f32,
     pub image_id: femtovg::ImageId,
@@ -330,14 +330,15 @@ fn collect_frame_sizes_rec(blocks: &[DocBlock], out: &mut Vec<FrameSize>) {
     clippy::cast_sign_loss,
     reason = "small preview dimensions, positive scale"
 )]
-fn phys_px(logical: u32, pixels_per_point: f32) -> u32 {
+fn phys_px(logical: usize, pixels_per_point: f32) -> u32 {
     (logical as f32 * pixels_per_point).round() as u32
 }
 
 /// Render frames in tree order, matching the order of `collect_frame_sizes`.
 #[expect(
     clippy::too_many_arguments,
-    reason = "recursive frame walk threads render state + clock"
+    clippy::cast_possible_truncation,
+    reason = "recursive frame walk threads render state + clock; preview dims fit u32 at the GL call"
 )]
 fn render_frames_recursive(
     blocks: &mut [DocBlock],
@@ -359,8 +360,8 @@ fn render_frames_recursive(
 
                 renderer.begin_frame_to_image(
                     target.image_id,
-                    target.width,
-                    target.height,
+                    target.width as u32,
+                    target.height as u32,
                     pixels_per_point,
                 );
                 target.state.interaction.begin_frame();
@@ -408,8 +409,8 @@ fn render_frames_recursive(
 
                 renderer.begin_frame_to_image(
                     target.image_id,
-                    target.width,
-                    target.height,
+                    target.width as u32,
+                    target.height as u32,
                     pixels_per_point,
                 );
                 target.state.interaction.begin_frame();
