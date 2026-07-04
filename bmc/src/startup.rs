@@ -19,7 +19,7 @@ use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
 use crate::system_upgrade::{NixUpgradeConfig, StateService, SystemUpgradeService};
 use crate::web::{ServerConfig, WebService};
-use crate::widget::{Coordinator, WidgetManager, WidgetRegistry};
+use crate::widget::{Coordinator, UpgradeWidgetLifecycle, WidgetManager, WidgetRegistry};
 use anyhow::Result;
 use bmc_button::Buttons;
 use bmc_led::led_driver::LedDriver;
@@ -109,6 +109,16 @@ where
         )
         .await;
 
+        let widget_manager =
+            WidgetManager::init(config.widgets_paths.clone(), config.capture_widget_output).await;
+        let widget_registry = widget_manager.registry();
+        let widget_coordinator = Arc::new(Coordinator::new(
+            widget_manager,
+            compositor.clone(),
+            widget_registry.clone(),
+            hardware_capabilities,
+        ));
+
         let system_upgrade_service = SystemUpgradeService::new(
             firmware_index,
             &config.upgrade_image_path,
@@ -121,6 +131,10 @@ where
                 hooks_dir: config.nix_hooks_dir.clone(),
                 hooks_override_path: config.nix_hooks_override_path.clone(),
             },
+            Arc::new(UpgradeWidgetLifecycle::new(
+                widget_coordinator.clone(),
+                config_handle.clone(),
+            )),
         );
 
         system_upgrade_service
@@ -201,16 +215,6 @@ where
                 }
             }
         });
-
-        let widget_manager =
-            WidgetManager::init(config.widgets_paths.clone(), config.capture_widget_output).await;
-        let widget_registry = widget_manager.registry();
-        let widget_coordinator = Arc::new(Coordinator::new(
-            widget_manager,
-            compositor.clone(),
-            widget_registry.clone(),
-            hardware_capabilities,
-        ));
 
         let compositor_for_wake = compositor.clone();
         tokio::spawn(async move {

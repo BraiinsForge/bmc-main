@@ -104,11 +104,27 @@ impl bmc::BmcManager for Manager {
         self.platform
     }
 
-    async fn upgrade(&self, keep_settings: bool, _upgrade_image_path: &Path) -> anyhow::Result<()> {
+    async fn upgrade(
+        &self,
+        keep_settings: bool,
+        _upgrade_image_path: &Path,
+        progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    ) -> anyhow::Result<()> {
         info!(
             "Performing system upgrade (keep_settings={})...",
             keep_settings
         );
+        if let Some(progress) = progress {
+            let lines = [
+                r#"@bmc {"type":"phase","phase":"realizing"}"#,
+                r#"@bmc {"type":"download","downloaded_bytes":1000000,"total_bytes":4000000,"remaining_bytes":3000000,"active":[]}"#,
+                r#"@bmc {"type":"phase","phase":"building"}"#,
+            ];
+            for line in lines {
+                _ = progress.send(line.to_owned());
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            }
+        }
         tokio::time::sleep(Duration::from_secs(10)).await;
         Ok(())
     }
