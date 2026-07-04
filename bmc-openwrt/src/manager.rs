@@ -25,13 +25,16 @@ use bmc_shared_ii_net_drv::{NetworkInterface, get_primary_interface};
 use bmc_shared_time::time::Timezone;
 use bmc_support::SupportArchiveFormat;
 use std::io;
+use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     net::{IpAddr, Ipv4Addr},
     path::Path,
 };
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::{fs, process::Command};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 #[derive(Debug)]
 #[expect(clippy::struct_field_names)]
@@ -46,6 +49,7 @@ pub struct Manager {
     wifi_event_sender: tokio::sync::broadcast::Sender<WifiEvent>,
     wifi_reconfig_sender: tokio::sync::watch::Sender<bool>,
     uboot_env_manager: UbootEnvManager,
+    upgrade_in_progress: AtomicBool,
 }
 
 impl Manager {
@@ -106,6 +110,7 @@ impl Manager {
             wifi_event_sender,
             wifi_reconfig_sender,
             uboot_env_manager: UbootEnvManager::new(),
+            upgrade_in_progress: AtomicBool::new(false),
         };
 
         // Seed the WiFi-reconfig watch from real state so the settings tray
@@ -118,6 +123,58 @@ impl Manager {
         let _ = manager.wifi_reconfig_sender.send(setup_ap_active);
 
         manager
+    }
+
+    async fn run_sysupgrade(
+        keep_settings: bool,
+        upgrade_image_path: &Path,
+        progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    ) -> anyhow::Result<()> {
+        let mut sysupgrade = Command::new(Self::SYSUPGRADE_BIN);
+        if !keep_settings {
+            sysupgrade.arg(Self::SYSUPGRADE_ARG_NO_SAVE);
+        }
+        sysupgrade.arg(upgrade_image_path.as_os_str());
+        sysupgrade.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut handle = sysupgrade.spawn()?;
+        let stdout = handle
+            .stdout
+            .take()
+            .expect("BUG: stdout was piped but is missing");
+        let stderr = handle
+            .stderr
+            .take()
+            .expect("BUG: stderr was piped but is missing");
+
+        // Drain both pipes concurrently with wait(): if either drain lagged
+        // behind, the 64 KB pipe buffer could fill and block sysupgrade.
+        let stdout_drain = drain_lines(stdout, |line| trace!(line, "sysupgrade stdout"));
+        let stderr_drain = drain_lines(stderr, |line| {
+            debug!(line, "sysupgrade stderr");
+            if let Some(progress) = &progress {
+                _ = progress.send(line.to_owned());
+            }
+        });
+        let (status, (), ()) = tokio::join!(handle.wait(), stdout_drain, stderr_drain);
+
+        let status = status
+            .inspect_err(|err| error!(error = %err, "Upgrade process wait failed"))
+            .map_err(|_| anyhow!("Invalid firmware image"))?;
+
+        if let Some(code) = status.code() {
+            // Error code "1" is returned on BCB when using incompatible image, unsigned image or wrong signature keys
+            if code == 1 {
+                error!(exit_code = code, "Upgrade failed: invalid firmware image");
+                Err(anyhow!("Invalid firmware image"))
+            } else {
+                info!("System upgrade completed successfully");
+                Ok(())
+            }
+        } else {
+            error!("Upgrade process terminated without exit code");
+            Err(anyhow!("Upgrade failed"))
+        }
     }
 
     async fn restart_system_service(&self) -> anyhow::Result<()> {
@@ -310,40 +367,24 @@ impl BmcManager for Manager {
             )
     }
 
-    async fn upgrade(&self, keep_settings: bool, upgrade_image_path: &Path) -> anyhow::Result<()> {
+    async fn upgrade(
+        &self,
+        keep_settings: bool,
+        upgrade_image_path: &Path,
+        progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    ) -> anyhow::Result<()> {
         info!(
             keep_settings = keep_settings,
             path = %upgrade_image_path.display(),
             "Starting system upgrade"
         );
 
-        let mut sysupgrade = Command::new(Self::SYSUPGRADE_BIN);
-        if !keep_settings {
-            sysupgrade.arg(Self::SYSUPGRADE_ARG_NO_SAVE);
+        self.upgrade_in_progress.store(true, Ordering::SeqCst);
+        let result = Self::run_sysupgrade(keep_settings, upgrade_image_path, progress).await;
+        if result.is_err() {
+            self.upgrade_in_progress.store(false, Ordering::SeqCst);
         }
-        sysupgrade.arg(upgrade_image_path.as_os_str());
-
-        let mut handle = sysupgrade.spawn()?;
-
-        let status = handle
-            .wait()
-            .await
-            .inspect_err(|err| error!(error = %err, "Upgrade process wait failed"))
-            .map_err(|_| anyhow!("Invalid firmware image"))?;
-
-        if let Some(code) = status.code() {
-            // Error code "1" is returned on BCB when using incompatible image, unsigned image or wrong signature keys
-            if code == 1 {
-                error!(exit_code = code, "Upgrade failed: invalid firmware image");
-                Err(anyhow!("Invalid firmware image"))
-            } else {
-                info!("System upgrade completed successfully");
-                Ok(())
-            }
-        } else {
-            error!("Upgrade process terminated without exit code");
-            Err(anyhow!("Upgrade failed"))
-        }
+        result
     }
 
     async fn check_and_remove_upgrade_marker(&self) -> bool {
@@ -796,10 +837,8 @@ impl BmcManager for Manager {
             .collect::<Vec<WifiStatus>>())
     }
 
-    // HACK: this function only delays the shutdown by sleeping
-    // It is necessary when doing a system upgrade to delay the shutdown of Axum web server.
     async fn handle_graceful_shutdown(&self) {
-        unix::handle_graceful_shutdown().await;
+        unix::handle_graceful_shutdown(&self.upgrade_in_progress).await;
     }
 
     async fn support_archive(&self, format: SupportArchiveFormat) -> Result<Vec<u8>, Error> {
@@ -811,6 +850,37 @@ impl BmcManager for Manager {
             .sync(config)
             .await
             .map_err(|e| Error::UbootEnv(e.to_string()))
+    }
+}
+
+/// Drain `reader` line-by-line, feeding each line to `on_line`.
+///
+/// Reads raw bytes and converts lossily: sysupgrade output is not
+/// guaranteed to be UTF-8, and the drain must survive every line until
+/// EOF — an early stop lets the pipe buffer fill and blocks sysupgrade
+/// mid-flash. An I/O error on the pipe ends the drain; `wait()` still
+/// decides the run's outcome.
+async fn drain_lines(reader: impl tokio::io::AsyncRead + Unpin, mut on_line: impl FnMut(&str)) {
+    let mut reader = BufReader::new(reader);
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        match reader.read_until(b'\n', &mut buf).await {
+            Ok(0) => break,
+            Ok(_) => {
+                if buf.last() == Some(&b'\n') {
+                    buf.pop();
+                    if buf.last() == Some(&b'\r') {
+                        buf.pop();
+                    }
+                }
+                on_line(&String::from_utf8_lossy(&buf));
+            }
+            Err(err) => {
+                debug!(error = %err, "draining sysupgrade output failed");
+                break;
+            }
+        }
     }
 }
 
@@ -855,4 +925,27 @@ pub enum Error {
     WifiError(String),
     #[error("U-Boot environment error: {0}")]
     UbootEnv(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::drain_lines;
+
+    #[tokio::test]
+    async fn drain_lines_survives_non_utf8_output() {
+        let mut lines: Vec<String> = Vec::new();
+        drain_lines(&b"ok\nbad \xff byte\nafter\n"[..], |line| {
+            lines.push(line.to_owned());
+        })
+        .await;
+        assert_eq!(
+            lines,
+            vec![
+                "ok".to_owned(),
+                "bad \u{FFFD} byte".to_owned(),
+                "after".to_owned(),
+            ],
+            "a non-UTF-8 byte must not stop the drain"
+        );
+    }
 }
