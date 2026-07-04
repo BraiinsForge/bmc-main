@@ -111,6 +111,10 @@ impl From<Config> for Configuration {
             crontab_path: value.crontab_path,
             widgets_paths: vec![value.widgets_path],
             capture_widget_output: false,
+            nix_servers_config_path: value.mockfs_path.join("etc/nix-upgrade/servers.json"),
+            nix_profile_dir: value.mockfs_path.join("nix/profiles/bmc"),
+            nix_hooks_dir: "hooks".to_owned(),
+            nix_hooks_override_path: None,
         }
     }
 }
