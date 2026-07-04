@@ -27,7 +27,16 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
 
     fn platform(&self) -> BosPlatform;
 
-    async fn upgrade(&self, keep_settings: bool, upgrade_image_path: &Path) -> anyhow::Result<()>;
+    /// Hand the image off to the platform upgrade mechanism. `Ok(())` means
+    /// the handoff was accepted, not that the upgrade completed. Progress
+    /// lines from the upgrade process are forwarded through `progress` when
+    /// provided.
+    async fn upgrade(
+        &self,
+        keep_settings: bool,
+        upgrade_image_path: &Path,
+        progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    ) -> anyhow::Result<()>;
 
     // Checks if a system upgrade was performed
     async fn check_and_remove_upgrade_marker(&self) -> bool;
