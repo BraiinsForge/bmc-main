@@ -75,6 +75,21 @@ impl UpgradePhase {
     }
 }
 
+impl TryFrom<&str> for UpgradePhase {
+    type Error = ();
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "realizing" => Ok(UpgradePhase::Realizing),
+            "verifying" => Ok(UpgradePhase::Verifying),
+            "building" => Ok(UpgradePhase::Building),
+            "activating" => Ok(UpgradePhase::Activating),
+            "cleaning" => Ok(UpgradePhase::Cleaning),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Progress callback for upgrade phases and store-path realization.
 pub trait UpgradeProgress: Send + Sync {
     fn on_phase(&self, phase: UpgradePhase);
@@ -714,6 +729,21 @@ mod tests {
             UpgradePhase::CollectingGarbage(gc::CollectGarbagePhase::DeterminingLiveness).as_str(),
             "determining_liveness"
         );
+    }
+
+    #[test]
+    fn upgrade_phase_str_roundtrip() {
+        for p in [
+            UpgradePhase::Realizing,
+            UpgradePhase::Verifying,
+            UpgradePhase::Building,
+            UpgradePhase::Activating,
+            UpgradePhase::Cleaning,
+        ] {
+            assert_eq!(UpgradePhase::try_from(p.as_str()), Ok(p));
+        }
+        assert!(UpgradePhase::try_from("collecting_garbage").is_err());
+        assert!(UpgradePhase::try_from("bogus").is_err());
     }
 
     #[test]

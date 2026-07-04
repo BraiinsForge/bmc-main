@@ -6,7 +6,6 @@ use bmc_nix::gc::{CollectGarbagePhase, CollectGarbageProgress};
 use bmc_nix::store::DownloadProgress;
 use bmc_nix::store::progress::DownloadSnapshot;
 use bmc_nix::upgrade::{UpgradePhase, UpgradeProgress};
-use serde::Serialize;
 
 use super::LogFormat;
 
@@ -55,90 +54,50 @@ fn format_bytes(bytes: u64) -> String {
     format!("{:.1}", bytes as f64 / ONE_MEGABYTE as f64)
 }
 
-/// Serializable mirror of a single active transfer (no `remaining_bytes`:
-/// the schema carries it only at the top level).
-#[derive(Serialize)]
-struct JsonActive<'a> {
-    store_path: Option<&'a str>,
-    source: Option<&'a str>,
-    downloaded_bytes: u64,
-    total_bytes: Option<u64>,
-}
-
-/// Serializable mirror of `ProgressEvent`. Internally tagged so the
-/// `type` key is emitted first and struct fields follow in declaration
-/// order, matching the documented schema byte-for-byte.
-#[derive(Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum JsonEvent<'a> {
-    Phase {
-        phase: &'a str,
-    },
-    RealizationStarted {
-        total_paths: usize,
-    },
-    Download {
-        downloaded_bytes: u64,
-        total_bytes: Option<u64>,
-        remaining_bytes: Option<u64>,
-        active: Vec<JsonActive<'a>>,
-    },
-    RealizationFinished,
-    GcPhase {
-        phase: &'a str,
-    },
-    GcProgress {
-        deleted_paths: usize,
-    },
-    GcFinished {
-        deleted_paths: usize,
-        freed_bytes: Option<u64>,
-    },
-}
-
 /// Render one `@bmc {…}` line for the `internal-json` format.
 fn internal_json_line(event: &ProgressEvent<'_>) -> String {
     let json = match event {
-        ProgressEvent::Phase(phase) => JsonEvent::Phase {
-            phase: phase.as_str(),
+        ProgressEvent::Phase(phase) => bmc_nix::progress::ProgressEvent::Phase {
+            phase: phase.as_str().to_owned(),
         },
-        ProgressEvent::RealizationStarted { total_paths } => JsonEvent::RealizationStarted {
-            total_paths: *total_paths,
-        },
-        ProgressEvent::RealizationFinished => JsonEvent::RealizationFinished,
-        ProgressEvent::Download(snapshot) => JsonEvent::Download {
+        ProgressEvent::RealizationStarted { total_paths } => {
+            bmc_nix::progress::ProgressEvent::RealizationStarted {
+                total_paths: *total_paths,
+            }
+        }
+        ProgressEvent::RealizationFinished => bmc_nix::progress::ProgressEvent::RealizationFinished,
+        ProgressEvent::Download(snapshot) => bmc_nix::progress::ProgressEvent::Download {
             downloaded_bytes: snapshot.downloaded_bytes,
             total_bytes: snapshot.total_bytes,
             remaining_bytes: snapshot.remaining_bytes,
             active: snapshot
                 .active
                 .iter()
-                .map(|s| JsonActive {
-                    store_path: s.store_path.as_deref(),
-                    source: s.source.as_deref(),
+                .map(|s| bmc_nix::progress::ActiveDownload {
+                    store_path: s.store_path.clone(),
+                    source: s.source.clone(),
                     downloaded_bytes: s.downloaded_bytes,
                     total_bytes: s.total_bytes,
                 })
                 .collect(),
         },
-        ProgressEvent::GcPhase(phase) => JsonEvent::GcPhase {
-            phase: phase.as_str(),
+        ProgressEvent::GcPhase(phase) => bmc_nix::progress::ProgressEvent::GcPhase {
+            phase: phase.as_str().to_owned(),
         },
-        ProgressEvent::GcDeleted { deleted_paths } => JsonEvent::GcProgress {
-            deleted_paths: *deleted_paths,
-        },
+        ProgressEvent::GcDeleted { deleted_paths } => {
+            bmc_nix::progress::ProgressEvent::GcProgress {
+                deleted_paths: *deleted_paths,
+            }
+        }
         ProgressEvent::GcFinished {
             deleted_paths,
             freed_bytes,
-        } => JsonEvent::GcFinished {
+        } => bmc_nix::progress::ProgressEvent::GcFinished {
             deleted_paths: *deleted_paths,
             freed_bytes: *freed_bytes,
         },
     };
-    format!(
-        "@bmc {}",
-        serde_json::to_string(&json).expect("BUG: progress event must serialize")
-    )
+    json.to_bmc_line()
 }
 
 /// Render one human line, or `None` when throttled away. Returns the
