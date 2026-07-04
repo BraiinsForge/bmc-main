@@ -174,7 +174,8 @@ where
                                 Some(LedEvent::DownloadOrUpgradeStarted)
                             }
                             SystemUpgradeState::DownloadProgress { .. } => None,
-                            SystemUpgradeState::DownloadFinished { .. } => {
+                            SystemUpgradeState::DownloadFinished { .. }
+                            | SystemUpgradeState::Finished => {
                                 Some(LedEvent::DownloadOrUpgradeSuccess)
                             }
                             SystemUpgradeState::Failed => Some(LedEvent::DownloadOrUpgradeError),

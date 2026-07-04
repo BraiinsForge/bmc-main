@@ -224,11 +224,14 @@ impl From<SystemUpgradeError> for Status {
             SystemUpgradeError::FailedToDetectCurrentVersion
             | SystemUpgradeError::DownloadedImageHashMismatch { .. }
             | SystemUpgradeError::VerifyFailed
-            | SystemUpgradeError::UpgradeInProgress
             | SystemUpgradeError::FailedToDownload(_)
             | SystemUpgradeError::UnableToCheckForUpgrade(_)
             | SystemUpgradeError::UpgradeFailed
-            | SystemUpgradeError::PackageUpgradeFailed(_) => Status::internal(value.to_string()),
+            | SystemUpgradeError::PackageUpgradeFailed(_)
+            | SystemUpgradeError::PackageIndexFetchFailed(_) => Status::internal(value.to_string()),
+            // Another run holds the gate; the condition clears by itself,
+            // so the client sees "try again", not a server fault.
+            SystemUpgradeError::UpgradeInProgress => Status::unavailable(value.to_string()),
             SystemUpgradeError::NotEnoughSpace | SystemUpgradeError::UpgradeExpired => {
                 Status::failed_precondition(value.to_string())
             }
