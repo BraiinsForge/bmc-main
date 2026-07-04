@@ -370,6 +370,10 @@ pub struct Configuration {
     pub crontab_path: Option<PathBuf>,
     pub widgets_paths: Vec<PathBuf>,
     pub capture_widget_output: bool,
+    pub nix_servers_config_path: PathBuf,
+    pub nix_profile_dir: PathBuf,
+    pub nix_hooks_dir: String,
+    pub nix_hooks_override_path: Option<PathBuf>,
 }
 
 impl Configuration {
@@ -381,6 +385,9 @@ impl Configuration {
     const DEFAULT_NIGHT_MODE_VOLUME_PCT: u8 = 40;
     const SOUNDS_DIR: &str = "/usr/share/bmc/sounds/";
     const CRONTAB_PATH: &str = "/etc/crontabs/root";
+    const NIX_SERVERS_CONFIG_PATH: &str = "/etc/nix-upgrade/servers.json";
+    const NIX_PROFILE_DIR: &str = "/nix/var/nix/gcroots/profiles/bmc";
+    const NIX_HOOKS_DIR: &str = "hooks";
 }
 
 impl Default for Configuration {
@@ -398,6 +405,10 @@ impl Default for Configuration {
             crontab_path: Some(Self::CRONTAB_PATH.into()),
             widgets_paths: vec![],
             capture_widget_output: false,
+            nix_servers_config_path: PathBuf::from(Self::NIX_SERVERS_CONFIG_PATH),
+            nix_profile_dir: PathBuf::from(Self::NIX_PROFILE_DIR),
+            nix_hooks_dir: Self::NIX_HOOKS_DIR.to_owned(),
+            nix_hooks_override_path: None,
         }
     }
 }
