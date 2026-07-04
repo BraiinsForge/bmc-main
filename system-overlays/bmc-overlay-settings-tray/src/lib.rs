@@ -116,11 +116,23 @@ struct TouchTrack {
 /// Duration of the reveal/dismiss slide ramp.
 const SLIDE_MS: u64 = 180;
 
-/// Which way the panel is sliding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// State of the panel's slide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum SlidePhase {
-    Revealing,
-    Dismissing,
+    /// No ramp active; the panel is settled (or was never revealed).
+    #[default]
+    Idle,
+    Revealing {
+        since: Instant,
+    },
+    /// The reveal ramp has elapsed but the settled frame (offset `0`) has not
+    /// been painted yet. The ramp only presents frames while a tick observes it
+    /// mid-flight, so a loop stall spanning the ramp end would otherwise freeze
+    /// the panel at the last presented offset.
+    RevealSettling,
+    Dismissing {
+        since: Instant,
+    },
 }
 
 /// Pure eased vertical slide for the panel band: the panel translates from
@@ -129,21 +141,44 @@ enum SlidePhase {
 /// unit-tested in isolation from the blit.
 #[derive(Debug, Clone, Copy, Default)]
 struct Slide {
-    phase: Option<(SlidePhase, Instant)>,
+    phase: SlidePhase,
 }
 
 impl Slide {
     fn start_reveal(&mut self, now: Instant) {
-        self.phase = Some((SlidePhase::Revealing, now));
+        self.phase = SlidePhase::Revealing { since: now };
     }
 
     fn start_dismiss(&mut self, now: Instant) {
-        self.phase = Some((SlidePhase::Dismissing, now));
+        self.phase = SlidePhase::Dismissing { since: now };
     }
 
     /// Whether a dismiss ramp has been started (regardless of completion).
     fn is_dismissing(&self) -> bool {
-        matches!(self.phase, Some((SlidePhase::Dismissing, _)))
+        matches!(self.phase, SlidePhase::Dismissing { .. })
+    }
+
+    /// Advance the time-driven transition: a reveal ramp that has elapsed moves
+    /// to `RevealSettling` until the settled frame is painted.
+    fn advance(&mut self, now: Instant) {
+        if let SlidePhase::Revealing { since } = self.phase
+            && Self::progress(since, now) >= 1.0
+        {
+            self.phase = SlidePhase::RevealSettling;
+        }
+    }
+
+    /// Whether the reveal ramp elapsed without the settled frame having been
+    /// painted; keeps the tray requesting a render for that one final frame.
+    fn needs_settle_frame(&self) -> bool {
+        matches!(self.phase, SlidePhase::RevealSettling)
+    }
+
+    /// The settled frame was painted; the reveal is done.
+    fn mark_settled(&mut self) {
+        if matches!(self.phase, SlidePhase::RevealSettling) {
+            self.phase = SlidePhase::Idle;
+        }
     }
 
     /// The blit-only decision the host obeys: blit the cached panel at the
@@ -172,25 +207,27 @@ impl Slide {
     /// `height`. `0` once settled (or when no slide is active).
     fn offset(&self, now: Instant, height: f32) -> f32 {
         match self.phase {
-            Some((SlidePhase::Revealing, start)) => -height * (1.0 - Self::progress(start, now)),
-            Some((SlidePhase::Dismissing, start)) => -height * Self::progress(start, now),
-            None => 0.0,
+            SlidePhase::Revealing { since } => -height * (1.0 - Self::progress(since, now)),
+            SlidePhase::Dismissing { since } => -height * Self::progress(since, now),
+            SlidePhase::RevealSettling | SlidePhase::Idle => 0.0,
         }
     }
 
     /// Whether a ramp is still in progress at `now`.
     fn animating(&self, now: Instant) -> bool {
         match self.phase {
-            Some((_, start)) => Self::progress(start, now) < 1.0,
-            None => false,
+            SlidePhase::Revealing { since } | SlidePhase::Dismissing { since } => {
+                Self::progress(since, now) < 1.0
+            }
+            SlidePhase::RevealSettling | SlidePhase::Idle => false,
         }
     }
 
     /// Whether a dismiss ramp has fully completed at `now`.
     fn dismiss_done(&self, now: Instant) -> bool {
         match self.phase {
-            Some((SlidePhase::Dismissing, start)) => Self::progress(start, now) >= 1.0,
-            Some((SlidePhase::Revealing, _)) | None => false,
+            SlidePhase::Dismissing { since } => Self::progress(since, now) >= 1.0,
+            SlidePhase::Revealing { .. } | SlidePhase::RevealSettling | SlidePhase::Idle => false,
         }
     }
 }
@@ -579,11 +616,13 @@ impl SystemOverlay for SettingsTrayOverlay {
         if self.dismissing && !self.slide.is_dismissing() {
             self.slide.start_dismiss(now);
         }
+        self.slide.advance(now);
 
         let sliding = self.slide.animating(now);
         let visible = !(self.dismissing && self.slide.dismiss_done(now));
         let animating = self.animating() || sliding;
-        let wants_render = visible && (was_dirty || self.content_dirty || animating);
+        let wants_render = visible
+            && (was_dirty || self.content_dirty || animating || self.slide.needs_settle_frame());
         // Fast-poll whenever we render this pass. `render` flips the tree's
         // `is_pressed` and advances a hold FSM only on the *next* tick, so a
         // finger-down on a hold-to-confirm button — still unpressed in this
@@ -626,6 +665,9 @@ impl SystemOverlay for SettingsTrayOverlay {
         let now = Instant::now();
         let view = self.view();
         let output = render_settings_tray(renderer, size, &mut self.render_state, &view, now);
+        // While the settle frame is pending, `wants_cached_blit` is `None`, so
+        // this full paint presented the panel at the settled offset.
+        self.slide.mark_settled();
 
         if let Some(b) = output.brightness_drag {
             self.slider_dragged = true;
@@ -852,6 +894,47 @@ mod slide_tests {
         assert!(!s.dismiss_done(t0 + Duration::from_millis(200)));
         assert!(s.offset(t0 + Duration::from_millis(400), 200.0) <= -199.0);
         assert!(s.dismiss_done(t0 + Duration::from_millis(400)));
+    }
+
+    // The host loop can stall past the end of the reveal ramp (GPU-lock
+    // contention, slow widget passes). The last presented frame is then
+    // mid-ramp, and without a final settle frame the panel freezes short of
+    // the settled position until an unrelated repaint.
+    #[test]
+    fn ramp_end_between_ticks_still_renders_the_settle_frame() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        overlay.on_reveal();
+        // Drop the reveal-time dirty flag the way the first paint would.
+        let _ = overlay.take_content_dirty();
+        assert!(overlay.tick(t0 + Duration::from_millis(90)).wants_render);
+
+        // No render ran before the next tick, which lands after the ramp end:
+        // the settled frame has not been presented, so one more render is due.
+        let outcome = overlay.tick(t0 + Duration::from_millis(400));
+        assert!(
+            outcome.wants_render,
+            "the settle frame at offset 0 must render even when the ramp ends between ticks"
+        );
+    }
+
+    #[test]
+    fn elapsed_reveal_settles_via_full_paint() {
+        let t0 = Instant::now();
+        let mut s = Slide::default();
+        s.start_reveal(t0);
+        s.advance(t0 + Duration::from_millis(90));
+        assert!(!s.needs_settle_frame(), "mid-ramp is not settling");
+
+        let after = t0 + Duration::from_millis(300);
+        s.advance(after);
+        assert!(s.needs_settle_frame());
+        // The settle frame must full-paint (no cached blit) at offset 0.
+        assert_eq!(s.cached_blit_offset(after, false, 200.0), None);
+        assert!(s.offset(after, 200.0).abs() < 1e-3);
+
+        s.mark_settled();
+        assert!(!s.needs_settle_frame());
     }
 
     #[test]
