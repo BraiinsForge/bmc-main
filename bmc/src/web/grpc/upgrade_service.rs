@@ -1,29 +1,31 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use bmc_grpc::web::{
-    AutoUpgradeFrequency as GrpcAutoUpgradeFrequency, CheckForUpgradeResponse, DownloadFinished,
-    DownloadFirmwareRequest, DownloadFirmwareResponse, GetAutoUpgradeResponse,
-    SetAutoUpgradeRequest, UpgradeRequest, download_firmware_response,
+    AutoUpgradeFrequency as GrpcAutoUpgradeFrequency, CheckForUpgradeResponse, FirmwareUpgrade,
+    FirmwareUpgradePhase, GetAutoUpgradeResponse, PackageChange, PackageUpgradePhase,
+    PackageUpgradePlan, SetAutoUpgradeRequest, StartUpgradeRequest, UpgradeDisruption,
+    UpgradeDownloadProgress, UpgradeProgress, upgrade_progress,
     upgrade_service_server::UpgradeService as GrpcUpgradeService,
 };
-use bmc_upgrade::firmware::{FirmwareIndex, ReleaseInfo, UpgradeDetail, UpgradeMetadata};
+use bmc_upgrade::firmware::{FirmwareIndex, ReleaseInfo, UpgradeDetail};
 use chrono::{NaiveTime, TimeDelta, Timelike};
 use futures::stream::{BoxStream, StreamExt};
 use prost_types::Timestamp;
 use std::ops::Add;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tonic::{Code, Request, Status};
-use tonic_types::{ErrorDetails, StatusExt};
+use tonic::{Request, Status};
 
-use super::{GrpcError, SystemUpgradeService};
+use super::SystemUpgradeService;
 use crate::config::ConfigHandle;
 use crate::{
     BmcManager,
-    system_upgrade::{DownloadState, SystemUpgradeError},
+    system_upgrade::{
+        CheckOutcome, Disruption, PackagesPreview, SystemPackageChange, SystemUpgradeError,
+        SystemUpgradePhase, UpgradeRunState,
+    },
 };
 use bmc_upgrade::autoupgrade::{AutoUpgradeConfig, AutoUpgradeFrequency};
-use tokio_stream::wrappers::UnboundedReceiverStream;
 
 pub(crate) struct UpgradeService<T, U>
 where
@@ -59,49 +61,32 @@ where
     T: BmcManager,
     U: FirmwareIndex,
 {
-    type DownloadFirmwareStream =
-        BoxStream<'static, Result<DownloadFirmwareResponse, tonic::Status>>;
+    type StartUpgradeStream = BoxStream<'static, Result<UpgradeProgress, tonic::Status>>;
 
     async fn check_for_upgrade(
         &self,
         _request: Request<()>,
     ) -> Result<tonic::Response<CheckForUpgradeResponse>, tonic::Status> {
-        let available_releases = self
+        let outcome = self
             .system_upgrade
-            .check_for_firmware_upgrade()
+            .check_for_upgrade()
             .await
             .map_err(Into::<tonic::Status>::into)?;
 
-        let result = map_available_releases(available_releases);
-
-        Ok(tonic::Response::new(result))
+        Ok(tonic::Response::new(outcome_to_response(outcome)))
     }
 
-    async fn download_firmware(
+    async fn start_upgrade(
         &self,
-        request: Request<DownloadFirmwareRequest>,
-    ) -> Result<tonic::Response<Self::DownloadFirmwareStream>, tonic::Status> {
+        request: Request<StartUpgradeRequest>,
+    ) -> Result<tonic::Response<Self::StartUpgradeStream>, tonic::Status> {
         let request = request.into_inner();
 
-        let rx = self.system_upgrade.download_firmware(request.hash);
+        let run = self.system_upgrade.start_upgrade(request.upgrade_id).await;
 
-        let stream = UnboundedReceiverStream::new(rx).map(map_download_state);
+        let stream = run.map(run_state_to_progress);
 
         Ok(tonic::Response::new(stream.boxed()))
-    }
-
-    async fn upgrade(
-        &self,
-        request: Request<UpgradeRequest>,
-    ) -> Result<tonic::Response<()>, tonic::Status> {
-        let request = request.into_inner();
-
-        self.system_upgrade
-            .verify_and_upgrade(&request.hash)
-            .await
-            .map_err(Into::<tonic::Status>::into)?;
-
-        Ok(tonic::Response::new(()))
     }
 
     async fn set_auto_upgrade(
@@ -157,30 +142,39 @@ where
     }
 }
 
-fn map_available_releases(upgrade_detail: Option<UpgradeDetail>) -> CheckForUpgradeResponse {
-    upgrade_detail
-        .map(|upgrade_detail| CheckForUpgradeResponse {
-            latest_release: Some(map_upgrade_metadata(upgrade_detail.latest_release)),
-            previous_releases: upgrade_detail
-                .previous_releases
-                .into_iter()
-                .map(map_release_info)
-                .collect(),
-        })
-        .unwrap_or_default()
+fn outcome_to_response(outcome: CheckOutcome) -> CheckForUpgradeResponse {
+    let disruption = match outcome.disruption {
+        Disruption::AppRestart => UpgradeDisruption::AppRestart,
+        Disruption::Reboot => UpgradeDisruption::Reboot,
+        Disruption::Unspecified => UpgradeDisruption::Unspecified,
+    };
+
+    CheckForUpgradeResponse {
+        upgrade_id: outcome.upgrade_id,
+        firmware: outcome.firmware.map(map_firmware_upgrade),
+        packages: outcome.packages.map(map_package_upgrade_plan),
+        disruption: disruption.into(),
+    }
 }
 
-fn map_upgrade_metadata(value: UpgradeMetadata) -> bmc_grpc::web::UpgradeMetadata {
-    let release_date = value.release_date.and_time(NaiveTime::MIN).and_utc();
+fn map_firmware_upgrade(detail: UpgradeDetail) -> FirmwareUpgrade {
+    let release = detail.latest_release;
+    let release_date = release.release_date.and_time(NaiveTime::MIN).and_utc();
 
-    bmc_grpc::web::UpgradeMetadata {
-        hash: value.hash,
-        version: value.version,
+    FirmwareUpgrade {
+        hash: release.hash,
+        version: release.version,
         release_date: Some(Timestamp {
             seconds: release_date.timestamp(),
             nanos: 0,
         }),
-        description: value.description,
+        description: release.description,
+        file_size_bytes: release.file_size as u64,
+        previous_releases: detail
+            .previous_releases
+            .into_iter()
+            .map(map_release_info)
+            .collect(),
     }
 }
 
@@ -191,36 +185,71 @@ fn map_release_info(value: ReleaseInfo) -> bmc_grpc::web::ReleaseInfo {
     }
 }
 
-fn map_download_state(state: DownloadState) -> Result<DownloadFirmwareResponse, tonic::Status> {
-    match state {
-        DownloadState::Progress {
-            downloaded_mb,
-            total_mb,
-        } => Ok(DownloadFirmwareResponse {
-            state: Some(download_firmware_response::State::DownloadProgress(
-                bmc_grpc::web::DownloadProgress {
-                    downloaded_mb,
-                    total_mb,
-                },
-            )),
-        }),
-        DownloadState::Finished { hash } => Ok(DownloadFirmwareResponse {
-            state: Some(download_firmware_response::State::DownloadFinished(
-                DownloadFinished { hash },
-            )),
-        }),
-        DownloadState::Failed(error) => Err(error.into()),
+fn map_package_upgrade_plan(preview: PackagesPreview) -> PackageUpgradePlan {
+    PackageUpgradePlan {
+        changes: preview
+            .changes
+            .into_iter()
+            .map(map_package_change)
+            .collect(),
+        download_size_bytes: preview.download_size_bytes,
+        bmc_version: preview.bmc_version,
+        bmc_changelog: preview.bmc_changelog,
     }
+}
+
+fn map_package_change(change: SystemPackageChange) -> PackageChange {
+    PackageChange {
+        name: change.name,
+        version_from: change.version_from,
+        version_to: change.version_to,
+        category: change.category,
+        changelog: change.changelog,
+    }
+}
+
+fn run_state_to_progress(state: UpgradeRunState) -> Result<UpgradeProgress, Status> {
+    let event = match state {
+        UpgradeRunState::Phase(phase) => match phase {
+            SystemUpgradePhase::FirmwareDownloading => {
+                upgrade_progress::Event::FirmwarePhase(FirmwareUpgradePhase::Downloading.into())
+            }
+            SystemUpgradePhase::FirmwareVerifying => {
+                upgrade_progress::Event::FirmwarePhase(FirmwareUpgradePhase::Verifying.into())
+            }
+            SystemUpgradePhase::FirmwareApplying => {
+                upgrade_progress::Event::FirmwarePhase(FirmwareUpgradePhase::Applying.into())
+            }
+            SystemUpgradePhase::PackageRealizing => {
+                upgrade_progress::Event::PackagePhase(PackageUpgradePhase::Realizing.into())
+            }
+            SystemUpgradePhase::PackageVerifying => {
+                upgrade_progress::Event::PackagePhase(PackageUpgradePhase::Verifying.into())
+            }
+            SystemUpgradePhase::PackageBuilding => {
+                upgrade_progress::Event::PackagePhase(PackageUpgradePhase::Building.into())
+            }
+            SystemUpgradePhase::PackageActivating => {
+                upgrade_progress::Event::PackagePhase(PackageUpgradePhase::Activating.into())
+            }
+        },
+        UpgradeRunState::Progress {
+            downloaded_bytes,
+            total_bytes,
+        } => upgrade_progress::Event::Download(UpgradeDownloadProgress {
+            downloaded_bytes,
+            total_bytes,
+        }),
+        UpgradeRunState::Finished => upgrade_progress::Event::Finished(()),
+        UpgradeRunState::Failed(err) => return Err(err.into()),
+    };
+
+    Ok(UpgradeProgress { event: Some(event) })
 }
 
 impl From<SystemUpgradeError> for Status {
     fn from(value: SystemUpgradeError) -> Self {
         match value {
-            SystemUpgradeError::NoImageWithHash => Status::with_error_details(
-                Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request_violation("hash", value.to_string()),
-            ),
             SystemUpgradeError::FailedToDetectCurrentVersion
             | SystemUpgradeError::DownloadedImageHashMismatch { .. }
             | SystemUpgradeError::VerifyFailed
@@ -250,4 +279,46 @@ fn map_datetime_to_hour_minute(value: chrono::DateTime<chrono::Utc>) -> (Option<
     let hour = naive_time.hour().into();
     let minute = naive_time.minute().into();
     (hour, minute)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_state_maps_to_wire_events() {
+        let phase =
+            run_state_to_progress(UpgradeRunState::Phase(SystemUpgradePhase::PackageRealizing))
+                .expect("BUG: phase maps");
+        assert!(matches!(
+            phase.event,
+            Some(upgrade_progress::Event::PackagePhase(p))
+                if p == PackageUpgradePhase::Realizing as i32
+        ));
+        let finished =
+            run_state_to_progress(UpgradeRunState::Finished).expect("BUG: finished maps");
+        assert!(matches!(
+            finished.event,
+            Some(upgrade_progress::Event::Finished(()))
+        ));
+        assert!(
+            run_state_to_progress(UpgradeRunState::Failed(SystemUpgradeError::UpgradeFailed))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn up_to_date_outcome_maps_to_empty_response() {
+        let response = outcome_to_response(CheckOutcome {
+            firmware: None,
+            packages: None,
+            upgrade_id: None,
+            disruption: Disruption::Unspecified,
+            package_fetch_transient: false,
+        });
+        assert!(response.upgrade_id.is_none());
+        assert!(response.firmware.is_none());
+        assert!(response.packages.is_none());
+        assert_eq!(response.disruption(), UpgradeDisruption::Unspecified);
+    }
 }
