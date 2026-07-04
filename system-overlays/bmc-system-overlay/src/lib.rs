@@ -12,7 +12,10 @@ mod surface;
 pub(crate) mod test_support;
 mod tree;
 
-pub use connectivity::{configured_station_ssid, primary_ipv4};
+pub use connectivity::{
+    Snapshot, SnapshotVersion, VersionedSnapshot, configured_station_ssid, primary_ipv4,
+    snapshot_if_changed,
+};
 pub use gpu::{OverlayRenderTarget, wait_for_gpu};
 pub use hosted::HostedOverlay;
 pub use overlay::{

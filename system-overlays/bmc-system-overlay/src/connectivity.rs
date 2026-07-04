@@ -7,13 +7,19 @@
 //! codebase exposes no separate ethernet carrier probe, so IPv4 presence is the
 //! single signal for "neither WiFi nor ethernet connected".
 //!
-//! The startup IP overlay also needs the saved station SSID for display text.
-//! It comes from OpenWrt's `uci` CLI (which normalizes quoting/comments), and is
-//! intentionally observational: this helper does not start, retry, repair, or
-//! reconfigure WiFi.
+//! A detached thread probes once per second — one `getifaddrs(3)` walk, one
+//! `uci -q show wireless` spawn (which normalizes quoting/comments), one
+//! `/proc/net/wireless` read — and publishes a [`Snapshot`]. Overlay ticks
+//! read it via [`snapshot_if_changed()`] and never block on the kernel's rtnl
+//! lock. The probe is intentionally observational: it does not start, retry,
+//! repair, or reconfigure WiFi.
 
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
+use std::num::NonZeroU64;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, Once};
+use std::time::Duration;
 
 use get_if_addrs::{IfAddr, Interface};
 
@@ -181,6 +187,191 @@ fn uci_show_wireless_sections() -> Vec<WifiIfaceSection> {
         return Vec::new();
     };
     wifi_iface_sections_from_uci_show(&text)
+}
+
+/// WiFi signal level (dBm) of the first wireless interface in
+/// `/proc/net/wireless` content. The "level" column may carry a trailing dot.
+#[must_use]
+fn wifi_signal_from_proc_net_wireless(content: &str) -> Option<i32> {
+    for line in content.lines().skip(2) {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() >= 4 {
+            let level = cols[3].trim_end_matches('.');
+            if let Ok(value) = level.parse::<i32>() {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+/// One probe pass's network readings. `ipv4: None` means genuinely offline;
+/// "not yet probed" is [`snapshot_if_changed()`] returning `None` instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Snapshot {
+    /// Primary routable IPv4, or `None` when offline (see `pick_ipv4`).
+    pub ipv4: Option<Ipv4Addr>,
+    /// First enabled station-mode SSID from the saved UCI wireless config.
+    pub station_ssid: Option<String>,
+    /// Signal level of the first interface in `/proc/net/wireless`.
+    pub wifi_signal_dbm: Option<i32>,
+}
+
+/// Opaque change marker of a published [`Snapshot`]. Returned by
+/// [`snapshot_if_changed`] and handed back as `seen` on the next poll;
+/// "different = changed" is the only semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapshotVersion(NonZeroU64);
+
+impl SnapshotVersion {
+    /// Version of the prober's first publish; a fixed point for test doubles
+    /// that fake a single published snapshot.
+    pub const FIRST: Self = Self(NonZeroU64::MIN);
+}
+
+/// A published [`Snapshot`] paired with its change marker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionedSnapshot {
+    /// Change marker to hand back as `seen` on the next poll.
+    pub version: SnapshotVersion,
+    /// The published readings.
+    pub snapshot: Snapshot,
+}
+
+/// Publisher/reader pair between the prober thread and overlay ticks. The
+/// mutex is held only to swap or clone the value, never across a probe.
+///
+/// The raw `version` counter is 0 until the first publish (readers see that
+/// as "no version yet") and bumps only when the published content differs
+/// from the previous snapshot. It is incremented exclusively while the mutex
+/// is held, so a (version, snapshot) pair read under the lock is always
+/// consistent; the lock-free load in [`Self::read_if_changed`] is only a
+/// cheap "anything new?" gate.
+#[derive(Default)]
+struct ProbeState {
+    version: AtomicU64,
+    snapshot: Mutex<Option<Snapshot>>,
+}
+
+impl ProbeState {
+    fn publish(&self, snapshot: Snapshot) {
+        let mut guard = self.lock();
+        if guard.as_ref() != Some(&snapshot) {
+            self.version.fetch_add(1, Ordering::Relaxed);
+            *guard = Some(snapshot);
+        }
+    }
+
+    /// Latest snapshot with its version, or `None` when the version still
+    /// equals `seen` (or nothing has been published yet). The unchanged case
+    /// is one atomic load — no lock, no allocation — so this is safe to poll
+    /// per frame.
+    fn read_if_changed(&self, seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
+        let seen = seen.map_or(0, |v| v.0.get());
+        // Relaxed suffices: this is only a gate. A reader that passes it
+        // synchronizes through the mutex acquire below and re-reads the
+        // version there; one that races a bump just catches up next poll.
+        if self.version.load(Ordering::Relaxed) == seen {
+            return None;
+        }
+        let guard = self.lock();
+        let version = NonZeroU64::new(self.version.load(Ordering::Relaxed)).map(SnapshotVersion)?;
+        guard
+            .clone()
+            .map(|snapshot| VersionedSnapshot { version, snapshot })
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Option<Snapshot>> {
+        // A panic can only poison a plain value swap or clone, so the inner
+        // value is always intact; recover it instead of propagating.
+        self.snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// Assemble a snapshot from one pass's raw inputs. Pure, for testing. This is
+/// the spec's "injectable probe cycle": the testable unit is this pure
+/// assembly over raw inputs; `probe_once` stays a thin I/O shim.
+#[must_use]
+fn snapshot_from(
+    interfaces: &[Interface],
+    sections: &[WifiIfaceSection],
+    proc_net_wireless: Option<&str>,
+) -> Snapshot {
+    let modes = modes_map_from_sections(sections);
+    Snapshot {
+        ipv4: pick_ipv4(interfaces, &modes),
+        station_ssid: station_ssid_from_sections(sections),
+        wifi_signal_dbm: proc_net_wireless.and_then(wifi_signal_from_proc_net_wireless),
+    }
+}
+
+/// One blocking probe pass: a `getifaddrs(3)` walk, one `uci -q show
+/// wireless` spawn, one `/proc/net/wireless` read. Runs only on the prober
+/// thread — it can block for seconds while the kernel holds rtnl. `None` when
+/// the interface walk itself errors, so a failed probe leaves the last-known
+/// snapshot in place instead of masquerading as "offline".
+fn probe_once() -> Option<Snapshot> {
+    let interfaces = get_if_addrs::get_if_addrs().ok()?;
+    let sections = uci_show_wireless_sections();
+    let proc_net_wireless = std::fs::read_to_string("/proc/net/wireless").ok();
+    Some(snapshot_from(
+        &interfaces,
+        &sections,
+        proc_net_wireless.as_deref(),
+    ))
+}
+
+/// Pause between probe passes.
+const PROBE_PERIOD: Duration = Duration::from_secs(1);
+
+/// Spawn the detached prober thread. The probe path only walks getifaddrs,
+/// spawns one subprocess, and parses small strings; 128 KiB of stack is
+/// plenty, and the 2 MiB Rust default would waste address space on 32-bit
+/// ARM. On spawn failure the snapshot stays `None` forever, which readers
+/// treat as "never probed".
+fn spawn_prober(state: &'static ProbeState) {
+    let spawned = std::thread::Builder::new()
+        .name("connectivity-prober".to_owned())
+        .stack_size(128 * 1024)
+        .spawn(move || {
+            loop {
+                // AssertUnwindSafe: the pass only produces a value; ProbeState
+                // recovers from poisoning, so no broken state can leak.
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(probe_once)) {
+                    Ok(Some(snapshot)) => state.publish(snapshot),
+                    Ok(None) => tracing::warn!("connectivity probe pass could not read interfaces"),
+                    Err(_) => tracing::error!("connectivity probe pass panicked"),
+                }
+                std::thread::sleep(PROBE_PERIOD);
+            }
+        });
+    if let Err(err) = spawned {
+        tracing::error!("failed to spawn connectivity prober thread: {err}");
+    }
+}
+
+/// Shared prober state; the first access spawns the prober thread.
+fn prober_state() -> &'static ProbeState {
+    static STATE: ProbeState = ProbeState {
+        version: AtomicU64::new(0),
+        snapshot: Mutex::new(None),
+    };
+    static SPAWN: Once = Once::new();
+    SPAWN.call_once(|| spawn_prober(&STATE));
+    &STATE
+}
+
+/// Latest connectivity snapshot and its version, or `None` while the content
+/// has not changed since `seen` (pass `None` initially, then the last
+/// returned version — `None` also covers "prober has not published yet",
+/// possibly forever if its thread failed to spawn). The unchanged case does
+/// no allocation, so this is safe to poll on a per-frame animation tick.
+/// Spawns the prober on first call; never blocks beyond a value-swap mutex.
+#[must_use]
+pub fn snapshot_if_changed(seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
+    prober_state().read_if_changed(seen)
 }
 
 /// The device's primary IPv4 address, or `None` when offline. This performs a
@@ -364,5 +555,138 @@ wireless.ap.ssid='Deck setup'
 ";
         let sections = wifi_iface_sections_from_uci_show(output);
         assert_eq!(station_ssid_from_sections(&sections), None);
+    }
+
+    #[test]
+    fn probe_state_read_returns_latest_publish() {
+        let state = ProbeState::default();
+        state.publish(Snapshot {
+            ipv4: None,
+            station_ssid: None,
+            wifi_signal_dbm: None,
+        });
+        state.publish(Snapshot {
+            ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
+            station_ssid: Some("Office WiFi".to_owned()),
+            wifi_signal_dbm: Some(-52),
+        });
+        assert_eq!(
+            state.read_if_changed(None).map(|update| update.snapshot),
+            Some(Snapshot {
+                ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
+                station_ssid: Some("Office WiFi".to_owned()),
+                wifi_signal_dbm: Some(-52),
+            })
+        );
+    }
+
+    #[test]
+    fn read_if_changed_returns_none_until_first_publish() {
+        let state = ProbeState::default();
+        assert_eq!(state.read_if_changed(None), None);
+    }
+
+    // The tray polls on a ~30 Hz animation tick; the version gate is what lets
+    // those ticks skip the snapshot clone, so an unchanged re-publish (the
+    // prober re-reads every second) must not look like a change.
+    #[test]
+    fn identical_republish_does_not_bump_version() {
+        let state = ProbeState::default();
+        let snapshot = Snapshot {
+            ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
+            station_ssid: Some("Office WiFi".to_owned()),
+            wifi_signal_dbm: Some(-52),
+        };
+        state.publish(snapshot.clone());
+        let first = state
+            .read_if_changed(None)
+            .expect("BUG: first publish must be visible");
+        assert_eq!(first.snapshot, snapshot);
+
+        state.publish(snapshot.clone());
+        assert_eq!(state.read_if_changed(Some(first.version)), None);
+    }
+
+    #[test]
+    fn changed_publish_bumps_version_and_returns_new_content() {
+        let state = ProbeState::default();
+        let offline = Snapshot {
+            ipv4: None,
+            station_ssid: None,
+            wifi_signal_dbm: None,
+        };
+        let online = Snapshot {
+            ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
+            station_ssid: Some("Office WiFi".to_owned()),
+            wifi_signal_dbm: Some(-52),
+        };
+        state.publish(offline);
+        let first = state
+            .read_if_changed(None)
+            .expect("BUG: first publish must be visible");
+
+        state.publish(online.clone());
+        assert_eq!(
+            state
+                .read_if_changed(Some(first.version))
+                .map(|update| update.snapshot),
+            Some(online)
+        );
+    }
+
+    #[test]
+    fn wifi_signal_parses_level_with_trailing_dot() {
+        let content = "\
+Inter-| sta-|   Quality        |   Discarded packets               | Missed | WE
+ face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon | 22
+ wlan0: 0000   70.  -52.  -256        0      0      0      0      0        0
+";
+        assert_eq!(wifi_signal_from_proc_net_wireless(content), Some(-52));
+    }
+
+    #[test]
+    fn wifi_signal_none_without_interface_lines() {
+        let content = "\
+Inter-| sta-|   Quality        |   Discarded packets               | Missed | WE
+ face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon | 22
+";
+        assert_eq!(wifi_signal_from_proc_net_wireless(content), None);
+    }
+
+    #[test]
+    fn snapshot_from_assembles_all_values_in_one_pass() {
+        let interfaces = vec![v4("wlan0", Ipv4Addr::new(10, 0, 0, 5))];
+        let uci = "\
+wireless.sta=wifi-iface
+wireless.sta.ifname='wlan0'
+wireless.sta.mode='sta'
+wireless.sta.ssid='Office WiFi'
+";
+        let sections = wifi_iface_sections_from_uci_show(uci);
+        let wireless = "\
+header
+header
+ wlan0: 0000   70.  -52.  -256        0      0      0      0      0        0
+";
+        assert_eq!(
+            snapshot_from(&interfaces, &sections, Some(wireless)),
+            Snapshot {
+                ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
+                station_ssid: Some("Office WiFi".to_owned()),
+                wifi_signal_dbm: Some(-52),
+            }
+        );
+    }
+
+    #[test]
+    fn snapshot_from_is_all_none_when_offline_and_unconfigured() {
+        assert_eq!(
+            snapshot_from(&[], &[], None),
+            Snapshot {
+                ipv4: None,
+                station_ssid: None,
+                wifi_signal_dbm: None,
+            }
+        );
     }
 }
