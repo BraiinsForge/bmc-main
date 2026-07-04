@@ -68,7 +68,7 @@ where
     ) -> Result<tonic::Response<CheckForUpgradeResponse>, tonic::Status> {
         let available_releases = self
             .system_upgrade
-            .check_for_upgrade()
+            .check_for_firmware_upgrade()
             .await
             .map_err(Into::<tonic::Status>::into)?;
 
@@ -227,8 +227,11 @@ impl From<SystemUpgradeError> for Status {
             | SystemUpgradeError::UpgradeInProgress
             | SystemUpgradeError::FailedToDownload(_)
             | SystemUpgradeError::UnableToCheckForUpgrade(_)
-            | SystemUpgradeError::UpgradeFailed => Status::internal(value.to_string()),
-            SystemUpgradeError::NotEnoughSpace => Status::failed_precondition(value.to_string()),
+            | SystemUpgradeError::UpgradeFailed
+            | SystemUpgradeError::PackageUpgradeFailed(_) => Status::internal(value.to_string()),
+            SystemUpgradeError::NotEnoughSpace | SystemUpgradeError::UpgradeExpired => {
+                Status::failed_precondition(value.to_string())
+            }
         }
     }
 }
