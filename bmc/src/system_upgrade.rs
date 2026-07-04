@@ -52,15 +52,7 @@ static INDEX_CLIENT: LazyLock<Client> = LazyLock::new(|| {
 pub(crate) struct NixUpgradeConfig {
     pub servers_config_path: PathBuf,
     pub profile_dir: PathBuf,
-    #[expect(
-        dead_code,
-        reason = "consumed when applying the package profile change"
-    )]
     pub hooks_dir: String,
-    #[expect(
-        dead_code,
-        reason = "consumed when applying the package profile change"
-    )]
     pub hooks_override_path: Option<PathBuf>,
 }
 
@@ -322,6 +314,119 @@ fn build_packages_preview(
     }
 }
 
+pub(crate) struct UpgradeRunStream {
+    rx: UnboundedReceiver<UpgradeRunState>,
+}
+
+impl futures::Stream for UpgradeRunStream {
+    type Item = UpgradeRunState;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.rx.poll_recv(cx)
+    }
+}
+
+fn one_shot(state: UpgradeRunState) -> UpgradeRunStream {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let _ = tx.send(state);
+    UpgradeRunStream { rx }
+}
+
+struct ChannelUpgradeProgress {
+    sender: tokio::sync::mpsc::UnboundedSender<UpgradeRunState>,
+}
+
+impl bmc_nix::upgrade::UpgradeProgress for ChannelUpgradeProgress {
+    fn on_phase(&self, phase: bmc_nix::upgrade::UpgradePhase) {
+        let phase = match phase {
+            bmc_nix::upgrade::UpgradePhase::Realizing => SystemUpgradePhase::PackageRealizing,
+            bmc_nix::upgrade::UpgradePhase::Verifying => SystemUpgradePhase::PackageVerifying,
+            bmc_nix::upgrade::UpgradePhase::Building => SystemUpgradePhase::PackageBuilding,
+            bmc_nix::upgrade::UpgradePhase::Activating => SystemUpgradePhase::PackageActivating,
+            bmc_nix::upgrade::UpgradePhase::Cleaning
+            | bmc_nix::upgrade::UpgradePhase::CollectingGarbage(_) => return,
+        };
+        _ = self.sender.send(UpgradeRunState::Phase(phase));
+    }
+
+    fn on_realization_started(&self, _total_paths: usize) {}
+
+    fn on_realization_finished(&self) {}
+
+    fn on_download_status(&self, snapshot: &bmc_nix::store::progress::DownloadSnapshot) {
+        _ = self.sender.send(UpgradeRunState::Progress {
+            downloaded_bytes: snapshot.downloaded_bytes,
+            total_bytes: snapshot.total_bytes,
+        });
+    }
+
+    fn on_gc_deleted(&self, _deleted_paths: usize) {}
+
+    fn on_gc_finished(&self, _deleted_paths: usize, _freed_bytes: Option<u64>) {}
+}
+
+async fn start_upgrade_run(
+    run_gate: Arc<Mutex<()>>,
+    system_upgrades: Arc<Mutex<HashMap<String, AvailableSystemUpgrade>>>,
+    nix_config: NixUpgradeConfig,
+    upgrade_id: String,
+) -> UpgradeRunStream {
+    let Ok(gate) = run_gate.try_lock_owned() else {
+        warn!("Upgrade already in progress");
+        return one_shot(UpgradeRunState::Failed(
+            SystemUpgradeError::UpgradeInProgress,
+        ));
+    };
+
+    let Some(upgrade) = system_upgrades.lock().await.remove(&upgrade_id) else {
+        warn!(upgrade_id, "Upgrade id is unknown or already consumed");
+        return one_shot(UpgradeRunState::Failed(SystemUpgradeError::UpgradeExpired));
+    };
+
+    match upgrade {
+        AvailableSystemUpgrade::Firmware { .. } => {
+            error!("Firmware runs are not routed through start_upgrade yet");
+            one_shot(UpgradeRunState::Failed(SystemUpgradeError::UpgradeFailed))
+        }
+        AvailableSystemUpgrade::Packages { merged, .. } => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            task::spawn(async move {
+                let _gate = gate;
+                let adapter = ChannelUpgradeProgress { sender: tx.clone() };
+                let result = bmc_nix::upgrade::apply_profile_change(
+                    &nix_config.profile_dir,
+                    None, // base manifest is re-read under the profile lock
+                    Some(&merged),
+                    &[],
+                    &[],
+                    bmc_nix::upgrade::ActivationMode::Activate,
+                    None, // GC is disabled on the packages path
+                    Some(&adapter),
+                    &nix_config.hooks_dir,
+                    nix_config.hooks_override_path.as_deref(),
+                )
+                .await;
+                match result {
+                    Ok(_) => {
+                        info!("Package upgrade finished");
+                        _ = tx.send(UpgradeRunState::Finished);
+                    }
+                    Err(err) => {
+                        error!(error = %err, "Package upgrade failed");
+                        _ = tx.send(UpgradeRunState::Failed(
+                            SystemUpgradeError::PackageUpgradeFailed(err.to_string()),
+                        ));
+                    }
+                }
+            });
+            UpgradeRunStream { rx }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct AvailableUpgrade {
     url: String,
@@ -507,6 +612,17 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         &self,
     ) -> Result<Option<UpgradeDetail>, SystemUpgradeError> {
         Ok(self.check_for_upgrade().await?.firmware)
+    }
+
+    #[expect(dead_code, reason = "consumed by the wire mapping of start_upgrade")]
+    pub(crate) async fn start_upgrade(&self, upgrade_id: String) -> UpgradeRunStream {
+        start_upgrade_run(
+            Arc::clone(&self.run_gate),
+            Arc::clone(&self.system_upgrades),
+            self.nix_config.clone(),
+            upgrade_id,
+        )
+        .await
     }
 
     async fn probe_firmware(&self) -> Result<Option<UpgradeDetail>, SystemUpgradeError> {
@@ -859,10 +975,8 @@ pub(crate) enum SystemUpgradeError {
     #[error("Upgrade failed")]
     UpgradeFailed,
     #[error("Upgrade id is unknown or already consumed")]
-    #[expect(dead_code, reason = "constructed by the unified start_upgrade")]
     UpgradeExpired,
     #[error("Package upgrade failed: {0}")]
-    #[expect(dead_code, reason = "constructed by the unified start_upgrade")]
     PackageUpgradeFailed(String),
 }
 
@@ -895,6 +1009,7 @@ impl SystemUpgradeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt;
     use std::path::Path;
 
     fn test_nix_config(root: &Path, servers: &Path) -> NixUpgradeConfig {
@@ -974,5 +1089,66 @@ mod tests {
     #[test]
     fn arbitrate_nothing_available_is_unspecified() {
         assert_eq!(arbitrate(None, None), Disruption::Unspecified);
+    }
+
+    #[tokio::test]
+    async fn start_upgrade_unknown_id_expires_and_frees_gate() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let run_gate = Arc::new(Mutex::new(()));
+        let system_upgrades = Arc::new(Mutex::new(HashMap::new()));
+        let config = test_nix_config(dir.path(), &dir.path().join("servers.json"));
+
+        let mut stream = start_upgrade_run(
+            Arc::clone(&run_gate),
+            system_upgrades,
+            config,
+            "unknown-id".to_owned(),
+        )
+        .await;
+
+        assert!(matches!(
+            stream.next().await,
+            Some(UpgradeRunState::Failed(SystemUpgradeError::UpgradeExpired))
+        ));
+        assert!(stream.next().await.is_none());
+        assert!(run_gate.try_lock().is_ok());
+    }
+
+    #[tokio::test]
+    async fn start_upgrade_while_gate_held_keeps_id_and_reports_in_progress() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let run_gate = Arc::new(Mutex::new(()));
+        let system_upgrades = Arc::new(Mutex::new(HashMap::new()));
+        system_upgrades.lock().await.insert(
+            "upgrade-0".to_owned(),
+            AvailableSystemUpgrade::Firmware {
+                upgrade_id: "upgrade-0".to_owned(),
+                detail: test_upgrade_detail(),
+            },
+        );
+        let config = test_nix_config(dir.path(), &dir.path().join("servers.json"));
+
+        let guard = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+
+        let mut stream = start_upgrade_run(
+            Arc::clone(&run_gate),
+            Arc::clone(&system_upgrades),
+            config,
+            "upgrade-0".to_owned(),
+        )
+        .await;
+
+        assert!(matches!(
+            stream.next().await,
+            Some(UpgradeRunState::Failed(
+                SystemUpgradeError::UpgradeInProgress
+            ))
+        ));
+        assert!(system_upgrades.lock().await.contains_key("upgrade-0"));
+
+        drop(guard);
+        assert!(run_gate.try_lock().is_ok());
     }
 }
