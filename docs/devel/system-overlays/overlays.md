@@ -12,8 +12,9 @@ purely observational — it watches saved WiFi config and IP state and never dri
 
 `LayerConfig::fullscreen` → `Layer::Top`, full input region. It blocks scene touch while shown.
 
-Its state is a four-phase machine driven by `tick`, with the IP read from `primary_ipv4()` and the SSID from
-`configured_station_ssid()` (polled at most once a second, `POLL = 1s`):
+Its state is a four-phase machine driven by `tick`, with the IP and SSID read from the connectivity prober's
+`snapshot_if_changed` (see [`framework.md`](framework.md)); ticks wake at `POLL = 1s`. Until the first snapshot is
+published the overlay treats the state as "no IP yet", so the `WAIT_FOR_IP` deadline keeps running:
 
 | Phase        | Shown                                 | Exit                                                                           |
 | ------------ | ------------------------------------- | ------------------------------------------------------------------------------ |
@@ -34,9 +35,10 @@ connectivity returns (and re-mapped if it drops again).
 its corner fall through to whatever is behind it. The `Bottom` layer means a full-screen `Top` or `Overlay` overlay
 occludes it.
 
-`tick` polls `primary_ipv4()` every `POLL` (2s); the overlay is visible exactly when there is no routable IPv4. It draws
-a content-tight box at the bottom-right corner (opaque black background, red label), with the rest of the surface
-transparent. It takes no touch input.
+`tick` polls the prober's `snapshot_if_changed` on every wake (`POLL` = 2s) and keeps the state derived from the last
+changed snapshot; the overlay is visible exactly when a published snapshot holds no routable IPv4 (before the first
+snapshot the chip stays hidden). It draws a content-tight box at the bottom-right corner (opaque black background, red
+label), with the rest of the surface transparent. It takes no touch input.
 
 ## Settings tray (`bmc-overlay-settings-tray`)
 
@@ -69,9 +71,10 @@ unmaps and re-arms the edge.
 - **Brightness slider** — a `ProgressBar` tree node with a `touch_key`; the drag fraction maps to a brightness value
   sent as `SettingsRequest::SetBrightness`, throttled to `BRIGHTNESS_SEND_INTERVAL` (80 ms) during a drag with a final
   value flushed on finger-up. The compositor's `brightness` event (`on_brightness`) updates the displayed value.
-- **WiFi info** — hostname (read once from `/proc/sys/kernel/hostname`), the configured SSID
-  (`configured_station_ssid()`), the current IP (`primary_ipv4()`), and a signal-strength icon chosen from
-  `/proc/net/wireless` dBm thresholds. Network state is re-read at most every `NETWORK_REFRESH` (2 s) while visible.
+- **WiFi info** — hostname (read once from `/proc/sys/kernel/hostname`) plus the configured SSID, current IP, and a
+  signal-strength icon, all from the connectivity prober's `snapshot_if_changed`; the signal icon is chosen from dBm
+  thresholds. The versioned read is polled on every tick (free while the snapshot is unchanged, even at the ~30 Hz
+  animation cadence); `NETWORK_REFRESH` (2 s) is the idle wake cadence.
 - **WiFi setup view** — when `on_wifi_ap` reports a non-empty setup-AP SSID, the panel replaces the station info and
   buttons with a setup badge and the AP SSID for the user to join from their phone.
 - **Reconfigure WiFi** — a hold-to-confirm button (`HOLD` = 3 s) that sends `SettingsRequest::ReconfigureWifi`; the FSM

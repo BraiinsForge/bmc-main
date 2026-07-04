@@ -1,8 +1,8 @@
 # System Overlay Framework
 
 The `bmc-system-overlay` crate is the shared plumbing every overlay builds on. It owns the layer-shell client, the
-double-buffered DMA-BUF render target, the GPU-fence handoff, the declarative tree UI, the connectivity helpers, and
-both run-mode entrypoints. A concrete overlay is a small crate that implements one trait and ships a `main.rs` calling
+double-buffered DMA-BUF render target, the GPU-fence handoff, the declarative tree UI, the connectivity prober, and both
+run-mode entrypoints. A concrete overlay is a small crate that implements one trait and ships a `main.rs` calling
 `run_standalone`.
 
 For where overlays sit in the system and how the two run modes differ, see [`README.md`](README.md).
@@ -136,15 +136,24 @@ The cache is re-rendered only when content changes (brightness value, WiFi-AP st
 state) and is freed on hide so no full-screen allocation survives an unmap. Overlays that never animate leave all three
 hooks at their defaults and always full-paint.
 
-## Connectivity helpers
+## Connectivity prober
 
-`connectivity.rs` is a synchronous, low-cadence probe shared by the OS-driven overlays, exported as `primary_ipv4()` and
-`configured_station_ssid()`. "Online" is defined as *at least one non-loopback interface holds a routable IPv4 address*
-(loopback, link-local `169.254/16`, and unspecified excluded); the device is WiFi-centric and there is no separate
-ethernet-carrier probe. `primary_ipv4` prefers WiFi station interfaces (kernel `wlan*` prefix, since the trailing index
-is not stable across boots), sorts AP-mode interfaces last so a coexisting setup AP does not shadow the real uplink,
-then falls back to lexicographic name order for determinism. `configured_station_ssid` reads the saved SSID from
-OpenWrt's `uci` CLI; it is purely observational and never starts, retries, or reconfigures WiFi.
+`connectivity.rs` runs one process-global background thread (`connectivity-prober`, 128 KiB stack, spawned on first use)
+that probes network state once per second — one `getifaddrs(3)` walk, one `uci -q show wireless` spawn, one
+`/proc/net/wireless` read — and publishes a `Snapshot { ipv4, station_ssid, wifi_signal_dbm }`. Overlays read it with
+`snapshot_if_changed(seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot>`: the prober bumps an internal version
+only when the published content actually differs, and a reader passing back the version it last folded in gets `None` —
+a single lock-free atomic load, no lock, no allocation — while nothing changed, so the read is safe on a per-frame
+animation tick. The changed case is a value-swap mutex read that never blocks, so a WiFi-driver stall holding the
+kernel's rtnl lock can no longer freeze the host render loop. `None` with `seen: None` means the prober has not
+published yet; `Snapshot { ipv4: None, .. }` means genuinely offline.
+
+"Online" is defined as *at least one non-loopback interface holds a routable IPv4 address* (loopback, link-local
+`169.254/16`, and unspecified excluded); the device is WiFi-centric and there is no separate ethernet-carrier probe. The
+IPv4 pick prefers WiFi station interfaces (kernel `wlan*` prefix, since the trailing index is not stable across boots),
+sorts AP-mode interfaces last so a coexisting setup AP does not shadow the real uplink, then falls back to lexicographic
+name order for determinism. The station SSID comes from OpenWrt's `uci` CLI; the probe is purely observational and never
+starts, retries, or reconfigures WiFi.
 
 ## Adding an overlay
 
