@@ -72,6 +72,18 @@ impl CollectGarbagePhase {
     }
 }
 
+impl TryFrom<&str> for CollectGarbagePhase {
+    type Error = ();
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "finding_roots" => Ok(CollectGarbagePhase::FindingRoots),
+            "determining_liveness" => Ok(CollectGarbagePhase::DeterminingLiveness),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Progress callback for a `nix-collect-garbage` sweep.
 ///
 /// nix does not stream the number of bytes freed; the only live signal is
