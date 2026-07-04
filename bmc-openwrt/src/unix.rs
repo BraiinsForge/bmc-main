@@ -3,6 +3,7 @@
 use std::{
     net::IpAddr,
     process::{Output, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 
@@ -88,10 +89,17 @@ pub async fn system_reboot() -> Result<(), Error> {
     call_command(REBOOT_COMMAND, &[]).await
 }
 
-// HACK: this function only delays the shutdown by sleeping
-// It is necessary when doing a system upgrade to delay the shutdown of Axum web server.
-pub async fn handle_graceful_shutdown() {
+// During a system upgrade the shutdown of the Axum web server is delayed by
+// sleeping, so the server survives sysupgrade's SIGTERM long enough to
+// deliver the last progress events to clients. Outside an upgrade the server
+// shuts down immediately.
+pub async fn handle_graceful_shutdown(upgrade_in_progress: &AtomicBool) {
     let signal = signal::wait_for_first_signal(signal::SHUTDOWN_SIGNALS).await;
+
+    if !upgrade_in_progress.load(Ordering::SeqCst) {
+        info!("{:?} signal received. Shutting down", signal);
+        return;
+    }
 
     info!(
         "{:?} signal received. Waiting for {:?}s, then shutting down",
