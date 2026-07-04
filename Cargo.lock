@@ -969,6 +969,7 @@ dependencies = [
  "bmc-ipc",
  "bmc-led",
  "bmc-log",
+ "bmc-nix",
  "bmc-platform",
  "bmc-scheduler",
  "bmc-shared-time",
