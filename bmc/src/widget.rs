@@ -11,6 +11,7 @@ mod manager;
 mod registry;
 mod spawner;
 
+pub(crate) use coordinator::UpgradeWidgetLifecycle;
 pub use coordinator::{Coordinator, WidgetEnv};
 pub use discovery::{PathDiscovery, WidgetDiscovery};
 pub use manager::WidgetManager;
