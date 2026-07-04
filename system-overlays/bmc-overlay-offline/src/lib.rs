@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 use bmc_render::colors::Color;
 use bmc_render::renderer::Renderer;
 use bmc_render::tree::{FontFamily, FontWeight, TextAlign, TextStyle, VerticalAlign};
-use bmc_system_overlay::{LayerConfig, SystemOverlay, TickOutcome, primary_ipv4};
+use bmc_system_overlay::{
+    LayerConfig, SnapshotVersion, SystemOverlay, TickOutcome, VersionedSnapshot,
+};
 
 /// Surface size in logical pixels. The visible indicator is a content-tight box
 /// drawn at the surface's bottom-right corner; the remainder stays transparent.
@@ -27,12 +29,14 @@ const PAD_Y: f32 = 8.0;
 const BACKGROUND_RGBA: (u8, u8, u8, u8) = (0, 0, 0, 0xC0);
 /// Red label text (palette red-50).
 const TEXT_RGBA: (u8, u8, u8, u8) = (249, 83, 85, 255);
-/// Connectivity re-check cadence.
+/// Snapshot re-read (wake) cadence.
 const POLL: Duration = Duration::from_secs(2);
 
 /// Injected connectivity source for testing.
 trait Env {
-    fn online(&self) -> bool;
+    /// Latest snapshot and its version when the content changed since `seen`
+    /// (`None` = nothing seen yet); `None` otherwise.
+    fn snapshot_if_changed(&self, seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -45,15 +49,25 @@ struct ChipRect {
 
 struct OsEnv;
 impl Env for OsEnv {
-    fn online(&self) -> bool {
-        primary_ipv4().is_some()
+    fn snapshot_if_changed(&self, seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
+        bmc_system_overlay::snapshot_if_changed(seen)
     }
 }
 
-/// Pure: given current online state and last-rendered visibility, decide the
-/// next `(visible, wants_render)`.
-fn decide(online: bool, was_visible: bool) -> (bool, bool) {
-    let visible = !online;
+/// Probed connectivity state driving the chip. `Unknown` is "not yet probed"
+/// and keeps the chip hidden so boot never flashes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Connectivity {
+    Unknown,
+    Online,
+    Offline,
+}
+
+/// Pure: given the probed connectivity state and last-rendered visibility,
+/// decide the next `(visible, wants_render)`. The chip shows only when
+/// `Offline`.
+fn decide(state: Connectivity, was_visible: bool) -> (bool, bool) {
+    let visible = matches!(state, Connectivity::Offline);
     let wants_render = visible && !was_visible;
     (visible, wants_render)
 }
@@ -95,8 +109,11 @@ pub struct OfflineView {
 
 pub struct OfflineOverlay {
     visible: bool,
-    online: bool,
-    last_probe: Option<Instant>,
+    /// Last probed connectivity; kept across polls where the snapshot is
+    /// unchanged (the versioned read returns nothing then).
+    state: Connectivity,
+    /// Version of the snapshot `state` was derived from (`None` = none yet).
+    snapshot_version: Option<SnapshotVersion>,
     env: Box<dyn Env>,
 }
 
@@ -104,7 +121,6 @@ impl std::fmt::Debug for OfflineOverlay {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OfflineOverlay")
             .field("visible", &self.visible)
-            .field("online", &self.online)
             .finish_non_exhaustive()
     }
 }
@@ -113,8 +129,8 @@ impl Default for OfflineOverlay {
     fn default() -> Self {
         Self {
             visible: false,
-            online: true,
-            last_probe: None,
+            state: Connectivity::Unknown,
+            snapshot_version: None,
             env: Box::new(OsEnv),
         }
     }
@@ -126,18 +142,6 @@ impl OfflineOverlay {
         OfflineView {
             visible: self.visible,
         }
-    }
-
-    fn probe_if_due(&mut self, now: Instant) {
-        if self
-            .last_probe
-            .is_some_and(|last| now.duration_since(last) < POLL)
-        {
-            return;
-        }
-
-        self.last_probe = Some(now);
-        self.online = self.env.online();
     }
 }
 
@@ -166,8 +170,17 @@ impl SystemOverlay for OfflineOverlay {
     }
 
     fn tick(&mut self, now: Instant) -> TickOutcome {
-        self.probe_if_due(now);
-        let (visible, wants_render) = decide(self.online, self.visible);
+        if let Some(VersionedSnapshot { version, snapshot }) =
+            self.env.snapshot_if_changed(self.snapshot_version)
+        {
+            self.snapshot_version = Some(version);
+            self.state = if snapshot.ipv4.is_some() {
+                Connectivity::Online
+            } else {
+                Connectivity::Offline
+            };
+        }
+        let (visible, wants_render) = decide(self.state, self.visible);
         self.visible = visible;
         TickOutcome {
             visible,
@@ -183,35 +196,47 @@ impl SystemOverlay for OfflineOverlay {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::cell::Cell;
-    use std::rc::Rc;
+    use bmc_system_overlay::Snapshot;
 
-    struct CountingEnv {
-        calls: Rc<Cell<usize>>,
-        online: bool,
+    use super::*;
+
+    struct StaticEnv {
+        snapshot: Option<Snapshot>,
     }
 
-    impl Env for CountingEnv {
-        fn online(&self) -> bool {
-            self.calls.set(self.calls.get() + 1);
-            self.online
+    impl Env for StaticEnv {
+        fn snapshot_if_changed(&self, seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
+            // Mimic the prober contract: the fixed snapshot is the first
+            // version, so a caller that has folded it in gets no re-read.
+            if seen.is_some() {
+                return None;
+            }
+            self.snapshot.clone().map(|snapshot| VersionedSnapshot {
+                version: SnapshotVersion::FIRST,
+                snapshot,
+            })
         }
     }
 
     #[test]
     fn offline_maps_and_renders_on_transition() {
-        assert_eq!(decide(false, false), (true, true));
+        assert_eq!(decide(Connectivity::Offline, false), (true, true));
     }
 
     #[test]
     fn offline_stays_mapped_without_extra_render() {
-        assert_eq!(decide(false, true), (true, false));
+        assert_eq!(decide(Connectivity::Offline, true), (true, false));
     }
 
     #[test]
     fn online_unmaps() {
-        assert_eq!(decide(true, true), (false, false));
+        assert_eq!(decide(Connectivity::Online, true), (false, false));
+    }
+
+    #[test]
+    fn unknown_keeps_chip_hidden() {
+        assert_eq!(decide(Connectivity::Unknown, false), (false, false));
+        assert_eq!(decide(Connectivity::Unknown, true), (false, false));
     }
 
     #[test]
@@ -249,13 +274,14 @@ mod tests {
     fn view_reflects_current_visibility_after_tick() {
         let start = Instant::now();
         let mut overlay = OfflineOverlay {
-            visible: false,
-            online: true,
-            last_probe: None,
-            env: Box::new(CountingEnv {
-                calls: Rc::new(Cell::new(0)),
-                online: false,
+            env: Box::new(StaticEnv {
+                snapshot: Some(Snapshot {
+                    ipv4: None,
+                    station_ssid: None,
+                    wifi_signal_dbm: None,
+                }),
             }),
+            ..OfflineOverlay::default()
         };
 
         let _ = overlay.tick(start);
@@ -263,23 +289,42 @@ mod tests {
         assert_eq!(overlay.view(), OfflineView { visible: true });
     }
 
+    // The versioned read returns nothing while the snapshot is unchanged, so
+    // the chip must keep showing the last derived state instead of falling
+    // back to Unknown (which would unmap it between probes).
     #[test]
-    fn tick_reuses_cached_probe_between_poll_intervals() {
+    fn chip_stays_mapped_across_unchanged_polls() {
         let start = Instant::now();
-        let calls = Rc::new(Cell::new(0));
         let mut overlay = OfflineOverlay {
-            visible: false,
-            online: true,
-            last_probe: None,
-            env: Box::new(CountingEnv {
-                calls: Rc::clone(&calls),
-                online: false,
+            env: Box::new(StaticEnv {
+                snapshot: Some(Snapshot {
+                    ipv4: None,
+                    station_ssid: None,
+                    wifi_signal_dbm: None,
+                }),
             }),
+            ..OfflineOverlay::default()
         };
 
         let _ = overlay.tick(start);
-        let _ = overlay.tick(start + Duration::from_millis(500));
+        let second = overlay.tick(start + POLL);
 
-        assert_eq!(calls.get(), 1);
+        assert!(second.visible);
+        assert!(!second.wants_render);
+    }
+
+    #[test]
+    fn tick_stays_hidden_until_first_snapshot() {
+        let start = Instant::now();
+        let mut overlay = OfflineOverlay {
+            env: Box::new(StaticEnv { snapshot: None }),
+            ..OfflineOverlay::default()
+        };
+
+        let tick = overlay.tick(start);
+
+        assert!(!tick.visible);
+        assert!(!tick.wants_render);
+        assert_eq!(tick.next_wake, Some(start + POLL));
     }
 }
