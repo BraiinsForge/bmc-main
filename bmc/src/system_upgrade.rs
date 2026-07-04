@@ -24,12 +24,16 @@ use tokio::sync::{Mutex, Notify};
 use tokio::task;
 use tracing::{debug, error, info, warn};
 
-const UPDATE_PROGRESS_INTERVAL: Duration = Duration::from_millis(300);
 const AUTOUPGRADE_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(30);
 const AUTOUPGRADE_RETRY_MAX_ATTEMPTS: u32 = 5;
 const AUTOUPGRADE_RETRY_DELAY_COEFF: u32 = 2;
 
 const INDEX_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Minimum spacing between forwarded intermediate download `Progress`
+/// events; without it every written chunk becomes an event on the run
+/// channel and the gRPC-web stream.
+const UPDATE_PROGRESS_INTERVAL: Duration = Duration::from_millis(300);
 
 pub static CLIENT: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
@@ -47,6 +51,17 @@ static INDEX_CLIENT: LazyLock<Client> = LazyLock::new(|| {
         .build()
         .expect("BUG: static client builder failed")
 });
+
+/// Widget lifecycle control around a disruptive firmware upgrade: stops all
+/// running widget processes before the flash hand-off so GPU resources are
+/// freed, and respawns them when the upgrade fails. The compositor keeps
+/// running throughout so the display stays alive if the upgrade fails and
+/// is retried.
+#[async_trait::async_trait]
+pub(crate) trait WidgetStopper: Send + Sync + std::fmt::Debug {
+    async fn stop_all_widgets(&self);
+    async fn restart_widgets(&self);
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct NixUpgradeConfig {
@@ -67,7 +82,6 @@ pub(crate) struct SystemPackageChange {
 }
 
 #[derive(Clone, Copy, Debug)]
-#[expect(dead_code, reason = "emitted by the unified start_upgrade run")]
 pub(crate) enum SystemUpgradePhase {
     FirmwareDownloading,
     FirmwareVerifying,
@@ -335,8 +349,37 @@ fn one_shot(state: UpgradeRunState) -> UpgradeRunStream {
     UpgradeRunStream { rx }
 }
 
+/// Admits the first download progress event immediately and later ones only
+/// after [`UPDATE_PROGRESS_INTERVAL`] since the last admitted one.
+#[derive(Debug, Default)]
+struct ProgressThrottle {
+    last_admitted: Option<Instant>,
+}
+
+impl ProgressThrottle {
+    fn admit(&mut self, now: Instant) -> bool {
+        let admitted = self
+            .last_admitted
+            .is_none_or(|last| now.duration_since(last) >= UPDATE_PROGRESS_INTERVAL);
+        if admitted {
+            self.last_admitted = Some(now);
+        }
+        admitted
+    }
+}
+
 struct ChannelUpgradeProgress {
     sender: tokio::sync::mpsc::UnboundedSender<UpgradeRunState>,
+    throttle: std::sync::Mutex<ProgressThrottle>,
+}
+
+impl ChannelUpgradeProgress {
+    fn new(sender: tokio::sync::mpsc::UnboundedSender<UpgradeRunState>) -> Self {
+        Self {
+            sender,
+            throttle: std::sync::Mutex::new(ProgressThrottle::default()),
+        }
+    }
 }
 
 impl bmc_nix::upgrade::UpgradeProgress for ChannelUpgradeProgress {
@@ -357,6 +400,14 @@ impl bmc_nix::upgrade::UpgradeProgress for ChannelUpgradeProgress {
     fn on_realization_finished(&self) {}
 
     fn on_download_status(&self, snapshot: &bmc_nix::store::progress::DownloadSnapshot) {
+        if !self
+            .throttle
+            .lock()
+            .expect("BUG: progress throttle mutex poisoned")
+            .admit(Instant::now())
+        {
+            return;
+        }
         _ = self.sender.send(UpgradeRunState::Progress {
             downloaded_bytes: snapshot.downloaded_bytes,
             total_bytes: snapshot.total_bytes,
@@ -368,63 +419,64 @@ impl bmc_nix::upgrade::UpgradeProgress for ChannelUpgradeProgress {
     fn on_gc_finished(&self, _deleted_paths: usize, _freed_bytes: Option<u64>) {}
 }
 
-async fn start_upgrade_run(
-    run_gate: Arc<Mutex<()>>,
-    system_upgrades: Arc<Mutex<HashMap<String, AvailableSystemUpgrade>>>,
-    nix_config: NixUpgradeConfig,
-    upgrade_id: String,
-) -> UpgradeRunStream {
-    let Ok(gate) = run_gate.try_lock_owned() else {
+async fn claim_upgrade(
+    run_gate: &Arc<Mutex<()>>,
+    system_upgrades: &Mutex<HashMap<String, AvailableSystemUpgrade>>,
+    upgrade_id: &str,
+) -> Result<(tokio::sync::OwnedMutexGuard<()>, AvailableSystemUpgrade), UpgradeRunStream> {
+    let Ok(gate) = Arc::clone(run_gate).try_lock_owned() else {
         warn!("Upgrade already in progress");
-        return one_shot(UpgradeRunState::Failed(
+        return Err(one_shot(UpgradeRunState::Failed(
             SystemUpgradeError::UpgradeInProgress,
-        ));
+        )));
     };
 
-    let Some(upgrade) = system_upgrades.lock().await.remove(&upgrade_id) else {
+    let Some(upgrade) = system_upgrades.lock().await.remove(upgrade_id) else {
         warn!(upgrade_id, "Upgrade id is unknown or already consumed");
-        return one_shot(UpgradeRunState::Failed(SystemUpgradeError::UpgradeExpired));
+        return Err(one_shot(UpgradeRunState::Failed(
+            SystemUpgradeError::UpgradeExpired,
+        )));
     };
 
-    match upgrade {
-        AvailableSystemUpgrade::Firmware { .. } => {
-            error!("Firmware runs are not routed through start_upgrade yet");
-            one_shot(UpgradeRunState::Failed(SystemUpgradeError::UpgradeFailed))
+    Ok((gate, upgrade))
+}
+
+fn spawn_packages_run(
+    gate: tokio::sync::OwnedMutexGuard<()>,
+    nix_config: NixUpgradeConfig,
+    merged: bmc_nix::types::MergedIndex,
+) -> UpgradeRunStream {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    task::spawn(async move {
+        let _gate = gate;
+        let adapter = ChannelUpgradeProgress::new(tx.clone());
+        let result = bmc_nix::upgrade::apply_profile_change(
+            &nix_config.profile_dir,
+            None, // base manifest is re-read under the profile lock
+            Some(&merged),
+            &[],
+            &[],
+            bmc_nix::upgrade::ActivationMode::Activate,
+            None, // GC is disabled on the packages path
+            Some(&adapter),
+            &nix_config.hooks_dir,
+            nix_config.hooks_override_path.as_deref(),
+        )
+        .await;
+        match result {
+            Ok(_) => {
+                info!("Package upgrade finished");
+                _ = tx.send(UpgradeRunState::Finished);
+            }
+            Err(err) => {
+                error!(error = %err, "Package upgrade failed");
+                _ = tx.send(UpgradeRunState::Failed(
+                    SystemUpgradeError::PackageUpgradeFailed(err.to_string()),
+                ));
+            }
         }
-        AvailableSystemUpgrade::Packages { merged, .. } => {
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-            task::spawn(async move {
-                let _gate = gate;
-                let adapter = ChannelUpgradeProgress { sender: tx.clone() };
-                let result = bmc_nix::upgrade::apply_profile_change(
-                    &nix_config.profile_dir,
-                    None, // base manifest is re-read under the profile lock
-                    Some(&merged),
-                    &[],
-                    &[],
-                    bmc_nix::upgrade::ActivationMode::Activate,
-                    None, // GC is disabled on the packages path
-                    Some(&adapter),
-                    &nix_config.hooks_dir,
-                    nix_config.hooks_override_path.as_deref(),
-                )
-                .await;
-                match result {
-                    Ok(_) => {
-                        info!("Package upgrade finished");
-                        _ = tx.send(UpgradeRunState::Finished);
-                    }
-                    Err(err) => {
-                        error!(error = %err, "Package upgrade failed");
-                        _ = tx.send(UpgradeRunState::Failed(
-                            SystemUpgradeError::PackageUpgradeFailed(err.to_string()),
-                        ));
-                    }
-                }
-            });
-            UpgradeRunStream { rx }
-        }
-    }
+    });
+    UpgradeRunStream { rx }
 }
 
 #[derive(Clone, Debug)]
@@ -475,6 +527,7 @@ pub(crate) struct SystemUpgradeService<T: FirmwareIndex, U: BmcManager> {
     upgrade_id_seq: Arc<AtomicUsize>,
     system_upgrades: Arc<Mutex<HashMap<String, AvailableSystemUpgrade>>>,
     nix_config: NixUpgradeConfig,
+    widget_stopper: Arc<dyn WidgetStopper>,
 }
 
 impl<T, U> Clone for SystemUpgradeService<T, U>
@@ -494,6 +547,7 @@ where
             upgrade_id_seq: self.upgrade_id_seq.clone(),
             system_upgrades: self.system_upgrades.clone(),
             nix_config: self.nix_config.clone(),
+            widget_stopper: self.widget_stopper.clone(),
         }
     }
 }
@@ -506,6 +560,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         state_service: StateService,
         scheduler: JobScheduler,
         nix_config: NixUpgradeConfig,
+        widget_stopper: Arc<dyn WidgetStopper>,
     ) -> Self {
         let autoupgrade = AutoUpgrade::new(Notify::new(), Instant::now());
         let firmware_upgrader = FirmwareUpgrader::new(
@@ -524,6 +579,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             upgrade_id_seq: Arc::new(AtomicUsize::new(0)),
             system_upgrades: Arc::new(Mutex::new(HashMap::new())),
             nix_config,
+            widget_stopper,
         }
     }
 
@@ -616,13 +672,120 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
 
     #[expect(dead_code, reason = "consumed by the wire mapping of start_upgrade")]
     pub(crate) async fn start_upgrade(&self, upgrade_id: String) -> UpgradeRunStream {
-        start_upgrade_run(
-            Arc::clone(&self.run_gate),
-            Arc::clone(&self.system_upgrades),
-            self.nix_config.clone(),
-            upgrade_id,
-        )
-        .await
+        let (gate, upgrade) =
+            match claim_upgrade(&self.run_gate, &self.system_upgrades, &upgrade_id).await {
+                Ok(claimed) => claimed,
+                Err(stream) => return stream,
+            };
+
+        match upgrade {
+            AvailableSystemUpgrade::Firmware { detail, .. } => {
+                self.spawn_firmware_run(gate, detail)
+            }
+            AvailableSystemUpgrade::Packages { merged, .. } => {
+                spawn_packages_run(gate, self.nix_config.clone(), merged)
+            }
+        }
+    }
+
+    fn spawn_firmware_run(
+        &self,
+        gate: tokio::sync::OwnedMutexGuard<()>,
+        detail: UpgradeDetail,
+    ) -> UpgradeRunStream {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let firmware_upgrader = Arc::clone(&self.firmware_upgrader);
+        let bmc_manager = Arc::clone(&self.bmc_manager);
+        let widget_stopper = Arc::clone(&self.widget_stopper);
+        task::spawn(async move {
+            let _gate = gate;
+            let upgrader = firmware_upgrader.lock().await;
+            let release = &detail.latest_release;
+            let total_bytes = release.file_size as u64;
+
+            _ = tx.send(UpgradeRunState::Phase(
+                SystemUpgradePhase::FirmwareDownloading,
+            ));
+            let mut download_rx =
+                upgrader.download_firmware(release.url.clone(), release.hash.clone(), total_bytes);
+            let mut download_finished = false;
+            let mut throttle = ProgressThrottle::default();
+            while let Some(event) = download_rx.recv().await {
+                match event {
+                    UpgraderDownloadState::Progress { downloaded_mb, .. } => {
+                        if !throttle.admit(Instant::now()) {
+                            continue;
+                        }
+                        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                        let downloaded_bytes = (f64::from(downloaded_mb) * 1_000_000.0) as u64;
+                        _ = tx.send(UpgradeRunState::Progress {
+                            downloaded_bytes,
+                            total_bytes: Some(total_bytes),
+                        });
+                    }
+                    UpgraderDownloadState::Finished { .. } => download_finished = true,
+                    UpgraderDownloadState::Failed(err) => {
+                        error!(error = %err, "Firmware download failed");
+                        _ = tx.send(UpgradeRunState::Failed(err.into()));
+                        return;
+                    }
+                }
+            }
+            if !download_finished {
+                error!("Firmware download ended without completing");
+                _ = tx.send(UpgradeRunState::Failed(
+                    SystemUpgradeError::FailedToDownload("download ended unexpectedly".to_owned()),
+                ));
+                return;
+            }
+
+            _ = tx.send(UpgradeRunState::Phase(
+                SystemUpgradePhase::FirmwareVerifying,
+            ));
+            if let Err(err) = upgrader.verify_firmware(&release.hash).await {
+                warn!(error = %err, "Failed to verify downloaded firmware");
+                _ = tx.send(UpgradeRunState::Failed(err.into()));
+                return;
+            }
+
+            widget_stopper.stop_all_widgets().await;
+
+            let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            let adapter = ChannelUpgradeProgress::new(tx.clone());
+            let reader = task::spawn(async move {
+                while let Some(line) = line_rx.recv().await {
+                    bmc_nix::progress::feed_line(&line, &adapter);
+                }
+            });
+
+            let result = bmc_manager
+                .upgrade(true, upgrader.upgrade_image_path(), Some(line_tx))
+                .await;
+            // `upgrade` consumed the only sender, so the reader drains its
+            // backlog and exits; awaiting it keeps every `Package*` event
+            // ahead of the terminal Phase/Failed event.
+            _ = reader.await;
+            match result {
+                Ok(()) => {
+                    // Ok means the handoff was accepted; sysupgrade terminates
+                    // this process only in stage2, so the event still reaches
+                    // the client and the stream then ends by process death.
+                    info!("Firmware upgrade handoff accepted");
+                    _ = tx.send(UpgradeRunState::Phase(SystemUpgradePhase::FirmwareApplying));
+                    // The process is now committed to die under sysupgrade;
+                    // keep the worker alive so the run gate stays held (no
+                    // second upgrade can start during teardown) and the
+                    // stream ends by process death, not by completing.
+                    std::future::pending::<()>().await;
+                }
+                Err(err) => {
+                    error!(error = %err, "Firmware upgrade failed");
+                    widget_stopper.restart_widgets().await;
+                    _ = tx.send(UpgradeRunState::Failed(SystemUpgradeError::UpgradeFailed));
+                }
+            }
+        });
+        UpgradeRunStream { rx }
     }
 
     async fn probe_firmware(&self) -> Result<Option<UpgradeDetail>, SystemUpgradeError> {
@@ -789,7 +952,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
 
         info!(hash, "Firmware verification successful, starting upgrade");
         self.bmc_manager
-            .upgrade(true, upgrader.upgrade_image_path())
+            .upgrade(true, upgrader.upgrade_image_path(), None)
             .await
             .map_err(|err| {
                 warn!(error = %err, "Upgrade failed");
@@ -1093,19 +1256,14 @@ mod tests {
 
     #[tokio::test]
     async fn start_upgrade_unknown_id_expires_and_frees_gate() {
-        let dir = tempfile::tempdir().expect("BUG: tempdir");
         let run_gate = Arc::new(Mutex::new(()));
-        let system_upgrades = Arc::new(Mutex::new(HashMap::new()));
-        let config = test_nix_config(dir.path(), &dir.path().join("servers.json"));
+        let system_upgrades = Mutex::new(HashMap::new());
 
-        let mut stream = start_upgrade_run(
-            Arc::clone(&run_gate),
-            system_upgrades,
-            config,
-            "unknown-id".to_owned(),
-        )
-        .await;
+        let claim = claim_upgrade(&run_gate, &system_upgrades, "unknown-id").await;
 
+        let Err(mut stream) = claim else {
+            panic!("BUG: unknown id must not claim an upgrade");
+        };
         assert!(matches!(
             stream.next().await,
             Some(UpgradeRunState::Failed(SystemUpgradeError::UpgradeExpired))
@@ -1116,9 +1274,8 @@ mod tests {
 
     #[tokio::test]
     async fn start_upgrade_while_gate_held_keeps_id_and_reports_in_progress() {
-        let dir = tempfile::tempdir().expect("BUG: tempdir");
         let run_gate = Arc::new(Mutex::new(()));
-        let system_upgrades = Arc::new(Mutex::new(HashMap::new()));
+        let system_upgrades = Mutex::new(HashMap::new());
         system_upgrades.lock().await.insert(
             "upgrade-0".to_owned(),
             AvailableSystemUpgrade::Firmware {
@@ -1126,20 +1283,16 @@ mod tests {
                 detail: test_upgrade_detail(),
             },
         );
-        let config = test_nix_config(dir.path(), &dir.path().join("servers.json"));
 
         let guard = Arc::clone(&run_gate)
             .try_lock_owned()
             .expect("BUG: fresh gate is lockable");
 
-        let mut stream = start_upgrade_run(
-            Arc::clone(&run_gate),
-            Arc::clone(&system_upgrades),
-            config,
-            "upgrade-0".to_owned(),
-        )
-        .await;
+        let claim = claim_upgrade(&run_gate, &system_upgrades, "upgrade-0").await;
 
+        let Err(mut stream) = claim else {
+            panic!("BUG: held gate must not claim an upgrade");
+        };
         assert!(matches!(
             stream.next().await,
             Some(UpgradeRunState::Failed(
@@ -1150,5 +1303,15 @@ mod tests {
 
         drop(guard);
         assert!(run_gate.try_lock().is_ok());
+    }
+
+    #[test]
+    fn progress_throttle_admits_first_then_only_after_interval() {
+        let mut throttle = ProgressThrottle::default();
+        let start = Instant::now();
+        assert!(throttle.admit(start));
+        assert!(!throttle.admit(start + Duration::from_millis(100)));
+        assert!(throttle.admit(start + UPDATE_PROGRESS_INTERVAL));
+        assert!(!throttle.admit(start + UPDATE_PROGRESS_INTERVAL + Duration::from_millis(100)));
     }
 }

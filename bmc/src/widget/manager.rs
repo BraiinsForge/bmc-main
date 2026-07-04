@@ -167,14 +167,17 @@ impl WidgetManager {
         }
     }
 
-    pub async fn stop_all(&self) {
+    /// Stop all widget processes and return the instance ids that were
+    /// stopped, so callers can run per-instance cleanup for each of them.
+    pub async fn stop_all(&self) -> Vec<String> {
         let mut children = self.children.write().await;
-        let futures: Vec<_> = children
+        let (ids, futures): (Vec<_>, Vec<_>) = children
             .drain()
-            .map(|(id, child)| graceful_stop(id, child))
-            .collect();
+            .map(|(id, child)| (id.clone(), graceful_stop(id, child)))
+            .unzip();
         futures::future::join_all(futures).await;
         info!("all widgets stopped");
+        ids
     }
 }
 
