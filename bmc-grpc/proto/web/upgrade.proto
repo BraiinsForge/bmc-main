@@ -5,13 +5,6 @@ package braiins.bmc.web;
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
-message UpgradeMetadata {
-  string hash = 1;
-  string version = 2;
-  google.protobuf.Timestamp release_date = 3;
-  string description = 4;
-}
-
 enum AutoUpgradeFrequency {
   AUTO_UPGRADE_FREQUENCY_UNSPECIFIED = 0;
   AUTO_UPGRADE_FREQUENCY_DAILY = 1;
@@ -25,33 +18,79 @@ message ReleaseInfo {
   string description = 2;
 }
 
+message FirmwareUpgrade {
+  string hash = 1;
+  string version = 2;
+  google.protobuf.Timestamp release_date = 3;
+  string description = 4;
+  uint64 file_size_bytes = 5;
+  repeated ReleaseInfo previous_releases = 6;
+}
+
+message PackageChange {
+  string name = 1;
+  optional string version_from = 2;
+  optional string version_to = 3;
+  optional string category = 4;
+  optional string changelog = 5;
+}
+
+message PackageUpgradePlan {
+  repeated PackageChange changes = 1;
+  optional uint64 download_size_bytes = 2;
+  optional string bmc_version = 3;
+  optional string bmc_changelog = 4;
+}
+
+enum UpgradeDisruption {
+  UPGRADE_DISRUPTION_UNSPECIFIED = 0;
+  UPGRADE_DISRUPTION_APP_RESTART = 1;
+  UPGRADE_DISRUPTION_REBOOT = 2;
+}
+
 message CheckForUpgradeResponse {
-  UpgradeMetadata latest_release = 1;
-  repeated ReleaseInfo previous_releases = 2;
+  optional string upgrade_id = 1;
+  optional FirmwareUpgrade firmware = 2;
+  optional PackageUpgradePlan packages = 3;
+  UpgradeDisruption disruption = 4;
 }
 
-message DownloadFirmwareRequest {
-  string hash = 1;
+message StartUpgradeRequest {
+  string upgrade_id = 1;
 }
 
-message DownloadProgress {
-  float downloaded_mb = 1;
-  float total_mb = 2;
+message UpgradeDownloadProgress {
+  uint64 downloaded_bytes = 1;
+  optional uint64 total_bytes = 2;
 }
 
-message DownloadFinished {
-  string hash = 1;
+enum PackageUpgradePhase {
+  PACKAGE_UPGRADE_PHASE_UNSPECIFIED = 0;
+  // Realizing is where the packages are downloaded (substituted from the servers).
+  PACKAGE_UPGRADE_PHASE_REALIZING = 1;
+  PACKAGE_UPGRADE_PHASE_VERIFYING = 2;
+  PACKAGE_UPGRADE_PHASE_BUILDING = 3;
+  PACKAGE_UPGRADE_PHASE_ACTIVATING = 4;
 }
 
-message DownloadFirmwareResponse {
-  oneof state {
-    DownloadProgress download_progress = 1;
-    DownloadFinished download_finished = 2;
+enum FirmwareUpgradePhase {
+  FIRMWARE_UPGRADE_PHASE_UNSPECIFIED = 0;
+  FIRMWARE_UPGRADE_PHASE_DOWNLOADING = 1;
+  FIRMWARE_UPGRADE_PHASE_VERIFYING = 2;
+  FIRMWARE_UPGRADE_PHASE_APPLYING = 3;
+}
+
+message UpgradeProgress {
+  oneof event {
+    UpgradeDownloadProgress download = 1;
+    PackageUpgradePhase package_phase = 2;
+    FirmwareUpgradePhase firmware_phase = 3;
+    // Only package upgrades emit `finished`. A firmware upgrade terminates by
+    // process death: the worker parks after FIRMWARE_UPGRADE_PHASE_APPLYING and
+    // sysupgrade kills the process, so the client sees the stream drop with no
+    // `finished`. Treat a post-APPLYING disconnect as success.
+    google.protobuf.Empty finished = 4;
   }
-}
-
-message UpgradeRequest {
-  string hash = 1;
 }
 
 message SetAutoUpgradeRequest {
@@ -70,10 +109,7 @@ message GetAutoUpgradeResponse {
 
 service UpgradeService {
   rpc CheckForUpgrade(google.protobuf.Empty) returns (CheckForUpgradeResponse);
-  // Call with a release hash to download data and provide user feedback about the progress
-  rpc DownloadFirmware(DownloadFirmwareRequest) returns (stream DownloadFirmwareResponse);
-  // Called when release has been downloaded
-  rpc Upgrade(UpgradeRequest) returns (google.protobuf.Empty);
+  rpc StartUpgrade(StartUpgradeRequest) returns (stream UpgradeProgress);
   // Allows en/disabling of AutoUpgrade feature
   rpc SetAutoUpgrade(SetAutoUpgradeRequest) returns (google.protobuf.Empty);
   // Returns the current AutoUpgrade configuration and status
