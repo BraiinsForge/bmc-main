@@ -357,6 +357,16 @@ impl Coordinator {
             let _ = self.compositor.broadcast_setting(setting);
         }
 
+        self.spawn_all_scene_widgets(scenes).await;
+
+        info!("all scene widgets spawned");
+    }
+
+    /// Spawn the widgets of every supported enabled scene, refresh drag
+    /// cycling and activate the first supported scene. Used at startup and
+    /// to bring widgets back after a failed firmware upgrade (whose
+    /// preparation stops them all).
+    pub async fn spawn_all_scene_widgets(&self, scenes: &IndexMap<SceneId, Scene>) {
         let supported =
             supported_scenes(&self.widget_registry, &self.hardware_capabilities, scenes);
         info!(
@@ -374,8 +384,6 @@ impl Coordinator {
         {
             self.set_active_scene(scene);
         }
-
-        info!("all scene widgets spawned");
     }
 
     /// Push the current enabled-scenes layout list to the compositor's
@@ -554,6 +562,15 @@ impl Coordinator {
         info!("shutdown complete");
     }
 
+    /// Stop all widget processes while keeping the compositor running,
+    /// applying the same per-instance cleanup as [`Self::stop_widget`] so
+    /// widgets respawned later do not see stale compositor registrations.
+    pub async fn stop_all_widgets(&self) {
+        for instance_id in self.widget_manager.stop_all().await {
+            let _ = self.compositor.unregister_widget(&instance_id);
+        }
+    }
+
     /// Sets the active scene layout on the compositor.
     pub fn set_active_scene(&self, scene: &Scene) {
         if !self.scene_supported(scene) {
@@ -658,6 +675,41 @@ impl Coordinator {
             first_day_of_week: config.first_day_of_week,
             unit_system: config.unit_system,
         }
+    }
+}
+
+/// Widget lifecycle handle for firmware upgrades: pairs the coordinator with
+/// the config so a failed upgrade can respawn the widgets of the currently
+/// configured scenes.
+#[derive(Debug)]
+pub(crate) struct UpgradeWidgetLifecycle {
+    coordinator: Arc<Coordinator>,
+    config_handle: Arc<RwLock<ConfigHandle>>,
+}
+
+impl UpgradeWidgetLifecycle {
+    pub(crate) fn new(
+        coordinator: Arc<Coordinator>,
+        config_handle: Arc<RwLock<ConfigHandle>>,
+    ) -> Self {
+        Self {
+            coordinator,
+            config_handle,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::system_upgrade::WidgetStopper for UpgradeWidgetLifecycle {
+    async fn stop_all_widgets(&self) {
+        self.coordinator.stop_all_widgets().await;
+    }
+
+    async fn restart_widgets(&self) {
+        let config = self.config_handle.read().await;
+        self.coordinator
+            .spawn_all_scene_widgets(config.scenes())
+            .await;
     }
 }
 
