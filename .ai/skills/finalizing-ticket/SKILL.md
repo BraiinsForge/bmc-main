@@ -1,6 +1,6 @@
 ---
 name: finalizing-ticket
-description: Use when wrapping up a ticket's work and getting it ready for review — the umbrella checklist that runs before a branch is offered for merge. Triggers on phrases like "finalize the ticket", "wrap this up", "ready for review", "submit for review", "prep the MR", "mark it done", or when the implementation is complete and the next step is review. For Story-type tickets this skill defers the user-facing documentation step to the `finalizing-story-ticket` skill.
+description: Use when wrapping up a ticket's work and getting it ready for review — the umbrella checklist that runs before a branch is offered for merge. Triggers on phrases like "finalize the ticket", "wrap this up", "ready for review", "submit for review", "prep the MR", "mark it done", "create an MR", "open an MR", "create a merge request", "open a merge request", or when the implementation is complete and the next step is review. Creating or opening an MR always runs through this skill. For Story-type tickets this skill defers the user-facing documentation step to the `finalizing-story-ticket` skill.
 ---
 
 # Finalizing a ticket
@@ -49,9 +49,27 @@ Pushing the branch and opening / updating the MR are deliberate, outward-facing 
 ready and you intend to publish it — not as a routine "make sure the remote is current" reflex. One authorization covers
 one push of the named branch, not a standing licence.
 
+When you do open the MR (with `glab`, run unsandboxed):
+
+- **Assignee is always the person who opened it.** Set the assignee to the authenticated GitLab user (`glab api user`
+  gives the current account; pass its `username` to `--assignee`). An MR is never left unassigned.
+- **A reviewer is optional.** If the user named a reviewer, set it. If they did not, open the MR without one — never
+  block MR creation on a reviewer and never guess one. After the MR exists, ask the user, as a friendly follow-up,
+  whether they'd like a reviewer; only add one if they say yes.
+- **When a reviewer is set, put it on the MR yourself and nudge the user to mirror it on the Jira ticket.** On the MR
+  use `--reviewer <username>` (find the account with `jira api "users?search=<name>"`). The Jira **Reviewers** field
+  (custom field `customfield_10118`, an array of user) cannot be written from the CLI — `jira issue edit --custom`
+  (jira-cli ≤ 1.7.0) only serializes array-of-`option` fields and returns `400 Invalid request payload` for it. So do
+  not try to set it; instead gently remind the user to add the reviewer to the ticket's Reviewers field in the Jira web
+  UI.
+
 ## Hard rules — never
 
 - Never offer a branch for review with the scratch devlog still committed.
 - Never skip `just validate` (the formatter step is load-bearing) before calling a ticket done.
 - Never finalize a Story ticket without the `docs/stories/` entry — route through `finalizing-story-ticket`.
 - Never treat push / MR creation as an automatic finalization step; it is a separate, explicit action.
+- Never open an MR with no assignee — the assignee is always the opener.
+- Never require a reviewer or block MR creation on one — asking whether the user wants a reviewer is a friendly
+  follow-up after the MR exists; a named reviewer goes on the MR, and for Jira just remind the user to set the
+  `customfield_10118` Reviewers field (the CLI cannot write it).
