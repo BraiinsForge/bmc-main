@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 use bmc_platform::{BmcInfo, DisplayShape, HardwareProfile, Product};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Anchor, InputRegion, Layer, LayerConfig, ScreenEdge, SettingsRequest, SystemOverlay,
-    TickOutcome, TouchEvent, TreeUi, primary_ipv4,
+    Anchor, InputRegion, Layer, LayerConfig, ScreenEdge, SettingsRequest, SnapshotVersion,
+    SystemOverlay, TickOutcome, TouchEvent, TreeUi, VersionedSnapshot,
 };
 
 use crate::dismiss::Pt;
@@ -31,7 +31,7 @@ use crate::ui::{Panel, WifiIcons, WifiView};
 /// Kernel hostname, exposed by procfs.
 const HOSTNAME_PATH: &str = "/proc/sys/kernel/hostname";
 
-/// How often network info (IP / WiFi signal / SSID) is re-read while up.
+/// Idle wake cadence for re-reading the connectivity snapshot while up.
 const NETWORK_REFRESH: Duration = Duration::from_millis(2000);
 
 /// Idle period after which the tray auto-dismisses.
@@ -85,24 +85,18 @@ fn read_hostname() -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
-/// WiFi signal level (dBm) of the first wireless interface in
-/// `/proc/net/wireless`. The "level" column may carry a trailing dot.
-fn read_wifi_signal_dbm() -> Option<i32> {
-    let content = std::fs::read_to_string("/proc/net/wireless").ok()?;
-    for line in content.lines().skip(2) {
-        let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() >= 4 {
-            let level = cols[3].trim_end_matches('.');
-            if let Ok(value) = level.parse::<f64>() {
-                #[expect(
-                    clippy::cast_possible_truncation,
-                    reason = "signal level in dBm is a small integer"
-                )]
-                return Some(value as i32);
-            }
-        }
+/// Injected connectivity source for testing.
+trait Env {
+    /// Latest snapshot and its version when the content changed since `seen`
+    /// (`None` = nothing seen yet); `None` — with no allocation — otherwise.
+    fn snapshot_if_changed(&self, seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot>;
+}
+
+struct OsEnv;
+impl Env for OsEnv {
+    fn snapshot_if_changed(&self, seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
+        bmc_system_overlay::snapshot_if_changed(seen)
     }
-    None
 }
 
 /// The active touch's start point and latest position, for the dismiss
@@ -347,6 +341,9 @@ pub struct SettingsTrayOverlay {
     ip: Option<String>,
     wifi_signal: Option<i32>,
     ssid: Option<String>,
+    /// Version of the last connectivity snapshot folded into the fields
+    /// above (`None` = none yet); lets `refresh_network` skip unchanged reads.
+    snapshot_version: Option<SnapshotVersion>,
     /// WiFi setup-AP SSID from `on_wifi_ap` (`None` = not in setup mode).
     setup_ssid: Option<String>,
 
@@ -358,7 +355,6 @@ pub struct SettingsTrayOverlay {
 
     touch_track: Option<TouchTrack>,
     last_interaction: Instant,
-    last_network_refresh: Instant,
     last_brightness_sent: Instant,
     /// Set on finger-up; consumed by the release flush, which sends the final
     /// brightness value once past the throttle.
@@ -376,6 +372,8 @@ pub struct SettingsTrayOverlay {
     slide: Slide,
 
     pending_requests: Vec<SettingsRequest>,
+
+    env: Box<dyn Env>,
 }
 
 impl Default for SettingsTrayOverlay {
@@ -406,6 +404,7 @@ impl SettingsTrayOverlay {
             ip: None,
             wifi_signal: None,
             ssid: None,
+            snapshot_version: None,
             setup_ssid: None,
             button: ButtonState::default(),
             reconnect: ReconnectState::default(),
@@ -413,7 +412,6 @@ impl SettingsTrayOverlay {
             render_state: SettingsTrayRenderState::new(now),
             touch_track: None,
             last_interaction: now,
-            last_network_refresh: now,
             last_brightness_sent: now,
             slider_released: false,
             slider_dragged: false,
@@ -421,6 +419,7 @@ impl SettingsTrayOverlay {
             content_dirty: true,
             slide: Slide::default(),
             pending_requests: Vec::new(),
+            env: Box::new(OsEnv),
         }
     }
 
@@ -454,25 +453,21 @@ fn panel_height_for(height: u32) -> f32 {
 }
 
 impl SettingsTrayOverlay {
-    /// Re-read IP / WiFi signal / SSID at most every `NETWORK_REFRESH`. Sets
-    /// `content_dirty` when the IP, SSID, or signal icon band changes. dBm
-    /// jitter inside one band does not trigger repaints, keeping hidden cache
-    /// refreshes rare.
-    fn refresh_network_if_due(&mut self, now: Instant) {
-        if now.duration_since(self.last_network_refresh) < NETWORK_REFRESH {
+    /// Fold a changed connectivity snapshot into the view fields and set
+    /// `content_dirty`. The version gate makes the unchanged case free of
+    /// allocations, so this is safe to run on every ~30 Hz animation tick; no
+    /// change yet (prober has not published) keeps the current placeholders.
+    fn refresh_network(&mut self) {
+        let Some(VersionedSnapshot { version, snapshot }) =
+            self.env.snapshot_if_changed(self.snapshot_version)
+        else {
             return;
-        }
-        self.last_network_refresh = now;
-        let ip = primary_ipv4().as_ref().map(Ipv4Addr::to_string);
-        let signal = read_wifi_signal_dbm();
-        let ssid = bmc_system_overlay::configured_station_ssid();
-        let band_changed = ui::signal_band(signal) != ui::signal_band(self.wifi_signal);
-        if ip != self.ip || band_changed || ssid != self.ssid {
-            self.ip = ip;
-            self.ssid = ssid;
-            self.content_dirty = true;
-        }
-        self.wifi_signal = signal;
+        };
+        self.snapshot_version = Some(version);
+        self.ip = snapshot.ipv4.as_ref().map(Ipv4Addr::to_string);
+        self.wifi_signal = snapshot.wifi_signal_dbm;
+        self.ssid = snapshot.station_ssid;
+        self.content_dirty = true;
     }
 
     /// Reap a finished reconnect child so the `sh` process does not zombie.
@@ -642,7 +637,7 @@ impl SystemOverlay for SettingsTrayOverlay {
     }
 
     fn tick(&mut self, now: Instant) -> TickOutcome {
-        self.refresh_network_if_due(now);
+        self.refresh_network();
         self.flush_brightness_on_release(now);
         let was_dirty = self.content_dirty;
         self.advance_buttons(now);
@@ -834,6 +829,8 @@ pub fn render_settings_tray(
 
 #[cfg(test)]
 mod view_tests {
+    use bmc_system_overlay::Snapshot;
+
     use super::*;
 
     #[test]
@@ -882,12 +879,109 @@ mod view_tests {
         assert_eq!(view.height, 320);
         assert!(!view.wifi_buttons);
     }
+
+    struct StaticEnv {
+        snapshot: Option<Snapshot>,
+    }
+
+    impl Env for StaticEnv {
+        fn snapshot_if_changed(&self, seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
+            // Mimic the prober contract: the fixed snapshot is the first
+            // version, so a caller that has folded it in gets no re-read.
+            if seen.is_some() {
+                return None;
+            }
+            self.snapshot.clone().map(|snapshot| VersionedSnapshot {
+                version: SnapshotVersion::FIRST,
+                snapshot,
+            })
+        }
+    }
+
+    #[test]
+    fn tick_reflects_snapshot_into_view() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        overlay.env = Box::new(StaticEnv {
+            snapshot: Some(Snapshot {
+                ipv4: Some(Ipv4Addr::new(192, 168, 1, 42)),
+                station_ssid: Some("Braiins-WiFi".to_owned()),
+                wifi_signal_dbm: Some(-52),
+            }),
+        });
+
+        let _ = overlay.tick(now);
+        let view = overlay.view();
+
+        assert_eq!(view.ip.as_deref(), Some("192.168.1.42"));
+        assert_eq!(view.ssid.as_deref(), Some("Braiins-WiFi"));
+        assert_eq!(view.wifi_signal, Some(-52));
+    }
+
+    // The versioned read only pays off if the ~30 Hz animation ticks stop
+    // re-reading an unchanged snapshot, and that requires the overlay to hand
+    // the version it last folded in back to the source.
+    #[test]
+    fn tick_passes_folded_version_back_to_the_source() {
+        struct VersionAssertEnv;
+        impl Env for VersionAssertEnv {
+            fn snapshot_if_changed(
+                &self,
+                seen: Option<SnapshotVersion>,
+            ) -> Option<VersionedSnapshot> {
+                let Some(seen) = seen else {
+                    return Some(VersionedSnapshot {
+                        version: SnapshotVersion::FIRST,
+                        snapshot: Snapshot {
+                            ipv4: None,
+                            station_ssid: Some("Braiins-WiFi".to_owned()),
+                            wifi_signal_dbm: None,
+                        },
+                    });
+                };
+                assert_eq!(
+                    seen,
+                    SnapshotVersion::FIRST,
+                    "the overlay must echo the version it folded in"
+                );
+                None
+            }
+        }
+
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        overlay.env = Box::new(VersionAssertEnv);
+
+        let _ = overlay.tick(now);
+        let _ = overlay.tick(now + FAST_WAKE);
+    }
+
+    #[test]
+    fn unknown_snapshot_keeps_placeholders() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        overlay.env = Box::new(StaticEnv { snapshot: None });
+
+        let _ = overlay.tick(now);
+        let view = overlay.view();
+
+        assert_eq!(view.ip, None);
+        assert_eq!(view.ssid, None);
+        assert_eq!(view.wifi_signal, None);
+    }
 }
 
 #[cfg(test)]
 mod wake_tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    struct StaticEnv;
+    impl Env for StaticEnv {
+        fn snapshot_if_changed(&self, _seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
+            None
+        }
+    }
 
     // A finger-down on a hold-to-confirm button only becomes `is_pressed` during
     // the next `render`, so the hold FSM advances a frame later. The tick that
@@ -898,6 +992,7 @@ mod wake_tests {
     fn finger_down_schedules_a_fast_wake() {
         let t0 = Instant::now();
         let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        overlay.env = Box::new(StaticEnv);
         // Drop the construction-time dirty flag the way a first render would.
         let _ = overlay.take_content_dirty();
 
