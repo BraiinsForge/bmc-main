@@ -1,6 +1,6 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! Synchronous, low-cadence connectivity probe shared by OS-driven overlays.
+//! Background connectivity prober shared by OS-driven overlays.
 //!
 //! "Online" means: at least one non-loopback interface holds a routable IPv4
 //! address (link-local 169.254/16 excluded). The device is WiFi-centric and the
@@ -372,27 +372,6 @@ fn prober_state() -> &'static ProbeState {
 #[must_use]
 pub fn snapshot_if_changed(seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
     prober_state().read_if_changed(seen)
-}
-
-/// The device's primary IPv4 address, or `None` when offline. This performs a
-/// `getifaddrs(3)` walk; overlays must call it behind their own poll cache, not
-/// once per host frame.
-#[must_use]
-pub fn primary_ipv4() -> Option<Ipv4Addr> {
-    let interfaces = get_if_addrs::get_if_addrs().ok()?;
-    let sections = uci_show_wireless_sections();
-    let modes = modes_map_from_sections(&sections);
-    pick_ipv4(&interfaces, &modes)
-}
-
-/// Saved station SSID via OpenWrt's `uci` (not by hand-parsing the config file):
-/// run `uci -q show wireless` and select the first enabled station section.
-/// Synchronous subprocess; safe for the startup overlay's low-cadence `tick`.
-/// Observational only — never starts, retries, or reconfigures WiFi.
-#[must_use]
-pub fn configured_station_ssid() -> Option<String> {
-    let sections = uci_show_wireless_sections();
-    station_ssid_from_sections(&sections)
 }
 
 #[cfg(test)]
