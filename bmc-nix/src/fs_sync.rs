@@ -1,0 +1,67 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+//! Durability helpers for rename-published names.
+//!
+//! The corruption-safety contract: make contents durable
+//! (`syncfs(2)` on the containing filesystem) *before* a publishing
+//! rename, and fsync the parent directory *after* it so the rename
+//! itself is durable before success is reported.
+
+use std::os::fd::AsRawFd;
+use std::path::Path;
+
+/// Flush the whole filesystem containing `path` to stable storage.
+///
+/// `syncfs(2)` is used instead of walking the tree with per-file
+/// `fsync`: store trees contain thousands of entries, symlinks cannot
+/// be fsynced individually, and the data partition is dedicated, so
+/// flushing it wholesale is exactly what is wanted. Blocking — callers
+/// on an async path must use [`tokio::task::spawn_blocking`].
+pub fn sync_filesystem_of(path: &Path) -> Result<(), std::io::Error> {
+    let dir = std::fs::File::open(path)?;
+    // SAFETY: `dir.as_raw_fd()` returns a valid, open file descriptor
+    // owned by `dir`, which is borrowed for the duration of the call.
+    let ret = unsafe { libc::syncfs(dir.as_raw_fd()) };
+    if ret != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Fsync a directory so a rename (or unlink) inside it is durable.
+pub fn fsync_dir(path: &Path) -> Result<(), std::io::Error> {
+    std::fs::File::open(path)?.sync_all()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_filesystem_of_succeeds_on_existing_dir() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        sync_filesystem_of(tmp.path()).expect("BUG: syncfs on a real directory must succeed");
+    }
+
+    #[test]
+    fn sync_filesystem_of_propagates_missing_path() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let err = sync_filesystem_of(&tmp.path().join("missing"))
+            .expect_err("BUG: syncfs on a missing path must fail");
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn fsync_dir_succeeds_on_existing_dir() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        fsync_dir(tmp.path()).expect("BUG: fsync on a real directory must succeed");
+    }
+
+    #[test]
+    fn fsync_dir_propagates_missing_path() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let err = fsync_dir(&tmp.path().join("missing"))
+            .expect_err("BUG: fsync on a missing path must fail");
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    }
+}
