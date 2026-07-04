@@ -17,7 +17,7 @@ use crate::led_coordinator::LedCoordinatorHandle;
 use crate::manager::BmcManager;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
-use crate::system_upgrade::{StateService, SystemUpgradeService};
+use crate::system_upgrade::{NixUpgradeConfig, StateService, SystemUpgradeService};
 use crate::web::{ServerConfig, WebService};
 use crate::widget::{Coordinator, WidgetManager, WidgetRegistry};
 use anyhow::Result;
@@ -115,6 +115,12 @@ where
             manager.clone(),
             state_service.clone(),
             scheduler.clone(),
+            NixUpgradeConfig {
+                servers_config_path: config.nix_servers_config_path.clone(),
+                profile_dir: config.nix_profile_dir.clone(),
+                hooks_dir: config.nix_hooks_dir.clone(),
+                hooks_override_path: config.nix_hooks_override_path.clone(),
+            },
         );
 
         system_upgrade_service

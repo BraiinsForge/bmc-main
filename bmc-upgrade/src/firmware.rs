@@ -135,13 +135,13 @@ impl UpgradeMetadata {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct UpgradeDetail {
     pub latest_release: UpgradeMetadata,
     pub previous_releases: Vec<ReleaseInfo>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ReleaseInfo {
     pub version: String,
     pub description: String,
