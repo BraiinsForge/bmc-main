@@ -35,6 +35,15 @@ pub static CLIENT: LazyLock<Client> = LazyLock::new(|| {
 });
 
 #[derive(Clone, Debug)]
+#[expect(dead_code, reason = "consumed in the package-check path")]
+pub(crate) struct NixUpgradeConfig {
+    pub servers_config_path: PathBuf,
+    pub profile_dir: PathBuf,
+    pub hooks_dir: String,
+    pub hooks_override_path: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug)]
 struct AvailableUpgrade {
     url: String,
     file_size: u64,
