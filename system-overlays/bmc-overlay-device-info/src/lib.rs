@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use bmc_render::colors::Color;
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    LayerConfig, SystemOverlay, TickOutcome, TouchEvent, configured_station_ssid, primary_ipv4,
+    LayerConfig, SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, VersionedSnapshot,
 };
 
 /// How long to wait for an IPv4 before showing the connection-failure state.
@@ -18,23 +18,20 @@ const WAIT_FOR_IP: Duration = Duration::from_secs(20);
 const SUCCESS_VISIBLE_FOR: Duration = Duration::from_secs(10);
 /// How long the failure state stays up before auto-dismiss.
 const FAILURE_VISIBLE_FOR: Duration = Duration::from_secs(5);
-/// Connectivity re-check cadence while waiting for an address.
+/// Snapshot re-read (wake) cadence while waiting for an address.
 const POLL: Duration = Duration::from_secs(1);
 
 /// Injected connectivity source so the state machine is unit-testable.
 trait Env {
-    fn ipv4(&self) -> Option<Ipv4Addr>;
-    fn station_ssid(&self) -> Option<String>;
+    /// Latest snapshot and its version when the content changed since `seen`
+    /// (`None` = nothing seen yet); `None` otherwise.
+    fn snapshot_if_changed(&self, seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot>;
 }
 
 struct OsEnv;
 impl Env for OsEnv {
-    fn ipv4(&self) -> Option<Ipv4Addr> {
-        primary_ipv4()
-    }
-
-    fn station_ssid(&self) -> Option<String> {
-        configured_station_ssid()
+    fn snapshot_if_changed(&self, seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
+        bmc_system_overlay::snapshot_if_changed(seen)
     }
 }
 
@@ -114,7 +111,9 @@ pub struct DeviceInfoOverlay {
     phase: Phase,
     ip: Option<Ipv4Addr>,
     ssid: Option<String>,
-    last_probe: Option<Instant>,
+    /// Version of the snapshot `ip`/`ssid` were read from (`None` = none
+    /// yet); lets `refresh_from_snapshot` skip unchanged reads.
+    snapshot_version: Option<SnapshotVersion>,
     env: Box<dyn Env>,
 }
 
@@ -136,7 +135,7 @@ impl Default for DeviceInfoOverlay {
             },
             ip: None,
             ssid: None,
-            last_probe: None,
+            snapshot_version: None,
             env: Box::new(OsEnv),
         }
     }
@@ -157,20 +156,21 @@ impl DeviceInfoOverlay {
         }
     }
 
-    fn probe_if_due(&mut self, now: Instant) -> bool {
-        if self
-            .last_probe
-            .is_some_and(|last| now.duration_since(last) < POLL)
-        {
+    /// Fold a changed snapshot into the displayed IP/SSID; returns whether
+    /// either changed. No change yet (prober has not published) keeps the
+    /// current values — unknown renders the same as "no IP yet". The inner
+    /// comparison stays because a signal-strength-only change bumps the
+    /// version without touching the fields shown here.
+    fn refresh_from_snapshot(&mut self) -> bool {
+        let Some(VersionedSnapshot { version, snapshot }) =
+            self.env.snapshot_if_changed(self.snapshot_version)
+        else {
             return false;
-        }
-
-        self.last_probe = Some(now);
-        let next_ip = self.env.ipv4();
-        let next_ssid = self.env.station_ssid();
-        let changed = self.ip != next_ip || self.ssid != next_ssid;
-        self.ip = next_ip;
-        self.ssid = next_ssid;
+        };
+        self.snapshot_version = Some(version);
+        let changed = self.ip != snapshot.ipv4 || self.ssid != snapshot.station_ssid;
+        self.ip = snapshot.ipv4;
+        self.ssid = snapshot.station_ssid;
         changed
     }
 }
@@ -194,7 +194,7 @@ impl SystemOverlay for DeviceInfoOverlay {
             };
         }
 
-        let probe_changed = self.probe_if_due(now);
+        let probe_changed = self.refresh_from_snapshot();
         let (next, phase_changed) = step(self.phase, now, self.ip);
         self.phase = next;
         let visible = phase_visible(self.phase);
@@ -270,42 +270,40 @@ fn draw_centered(r: &mut dyn Renderer, text: &str, width: f32, y: f32, font: f32
 
 #[cfg(test)]
 mod tests {
+    use bmc_system_overlay::Snapshot;
+
     use super::*;
-    use std::cell::Cell;
-    use std::rc::Rc;
 
     fn t0() -> Instant {
         Instant::now()
     }
 
     struct StaticEnv {
-        ip: Option<Ipv4Addr>,
+        snapshot: Option<Snapshot>,
     }
 
     impl Env for StaticEnv {
-        fn ipv4(&self) -> Option<Ipv4Addr> {
-            self.ip
-        }
-
-        fn station_ssid(&self) -> Option<String> {
-            None
+        fn snapshot_if_changed(&self, seen: Option<SnapshotVersion>) -> Option<VersionedSnapshot> {
+            // Mimic the prober contract: the fixed snapshot is the first
+            // version, so a caller that has folded it in gets no re-read.
+            if seen.is_some() {
+                return None;
+            }
+            self.snapshot.clone().map(|snapshot| VersionedSnapshot {
+                version: SnapshotVersion::FIRST,
+                snapshot,
+            })
         }
     }
 
-    struct CountingEnv {
-        calls: Rc<Cell<usize>>,
-        ip: Option<Ipv4Addr>,
-    }
-
-    impl Env for CountingEnv {
-        fn ipv4(&self) -> Option<Ipv4Addr> {
-            self.calls.set(self.calls.get() + 1);
-            self.ip
-        }
-
-        fn station_ssid(&self) -> Option<String> {
-            None
-        }
+    fn env_with_ip(ip: Option<Ipv4Addr>) -> Box<dyn Env> {
+        Box::new(StaticEnv {
+            snapshot: Some(Snapshot {
+                ipv4: ip,
+                station_ssid: None,
+                wifi_signal_dbm: None,
+            }),
+        })
     }
 
     #[test]
@@ -383,24 +381,36 @@ mod tests {
     }
 
     #[test]
-    fn tick_reuses_cached_probe_between_poll_intervals() {
+    fn unknown_snapshot_stays_connecting_before_deadline() {
         let start = t0();
-        let calls = Rc::new(Cell::new(0));
         let mut overlay = DeviceInfoOverlay {
             phase: Phase::Connecting { since: start },
             ip: None,
             ssid: None,
-            last_probe: None,
-            env: Box::new(CountingEnv {
-                calls: Rc::clone(&calls),
-                ip: None,
-            }),
+            snapshot_version: None,
+            env: Box::new(StaticEnv { snapshot: None }),
         };
 
-        let _ = overlay.tick(start);
-        let _ = overlay.tick(start + Duration::from_millis(500));
+        let tick = overlay.tick(start + POLL);
 
-        assert_eq!(calls.get(), 1);
+        assert_eq!(overlay.phase, Phase::Connecting { since: start });
+        assert!(tick.visible);
+    }
+
+    #[test]
+    fn offline_snapshot_fails_after_deadline() {
+        let start = t0();
+        let mut overlay = DeviceInfoOverlay {
+            phase: Phase::Connecting { since: start },
+            ip: None,
+            ssid: None,
+            snapshot_version: None,
+            env: env_with_ip(None),
+        };
+
+        let _ = overlay.tick(start + WAIT_FOR_IP);
+
+        assert!(matches!(overlay.phase, Phase::Failed { .. }));
     }
 
     #[test]
@@ -410,8 +420,8 @@ mod tests {
             phase: Phase::Connecting { since: start },
             ip: None,
             ssid: Some("Braiins-WiFi".to_owned()),
-            last_probe: None,
-            env: Box::new(StaticEnv { ip: None }),
+            snapshot_version: None,
+            env: Box::new(StaticEnv { snapshot: None }),
         };
 
         assert_eq!(
@@ -430,8 +440,8 @@ mod tests {
             phase: Phase::Success { since: start, ip },
             ip: Some(ip),
             ssid: None,
-            last_probe: None,
-            env: Box::new(StaticEnv { ip: Some(ip) }),
+            snapshot_version: None,
+            env: env_with_ip(Some(ip)),
         };
 
         assert_eq!(overlay.view(), DeviceInfoView::Success { ip });
@@ -444,8 +454,8 @@ mod tests {
             phase: Phase::Connecting { since: start },
             ip: None,
             ssid: None,
-            last_probe: None,
-            env: Box::new(StaticEnv { ip: None }),
+            snapshot_version: None,
+            env: Box::new(StaticEnv { snapshot: None }),
         };
 
         overlay.on_touch(TouchEvent::Down {
