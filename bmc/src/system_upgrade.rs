@@ -73,7 +73,6 @@ pub(crate) struct NixUpgradeConfig {
 }
 
 #[derive(Clone, Debug)]
-#[expect(dead_code, reason = "read when mapping the check result onto the wire")]
 pub(crate) struct SystemPackageChange {
     pub name: String,
     pub version_from: Option<String>,
@@ -105,19 +104,13 @@ pub(crate) enum UpgradeRunState {
 }
 
 #[derive(Clone, Debug)]
-#[expect(dead_code, reason = "consumed by start_upgrade and the wire mapping")]
 pub(crate) enum AvailableSystemUpgrade {
     Firmware {
-        upgrade_id: String,
         detail: UpgradeDetail,
     },
     Packages {
-        upgrade_id: String,
         merged: bmc_nix::types::MergedIndex,
-        changes: Vec<SystemPackageChange>,
         download_size_bytes: Option<u64>,
-        bmc_version: Option<String>,
-        bmc_changelog: Option<String>,
     },
 }
 
@@ -139,16 +132,8 @@ pub(crate) enum Disruption {
 #[derive(Debug)]
 pub(crate) struct CheckOutcome {
     pub firmware: Option<UpgradeDetail>,
-    #[expect(
-        dead_code,
-        reason = "consumed by the wire mapping of the unified check"
-    )]
     pub packages: Option<PackagesPreview>,
     pub upgrade_id: Option<String>,
-    #[expect(
-        dead_code,
-        reason = "consumed by the wire mapping of the unified check"
-    )]
     pub disruption: Disruption,
     pub package_fetch_transient: bool,
 }
@@ -533,12 +518,6 @@ fn spawn_packages_run(
 }
 
 #[derive(Clone, Debug)]
-struct AvailableUpgrade {
-    url: String,
-    file_size: u64,
-}
-
-#[derive(Clone, Debug)]
 pub(crate) struct StateService {
     sender: Arc<watch::Sender<Option<SystemUpgradeState>>>,
 }
@@ -572,7 +551,6 @@ impl StateService {
 pub(crate) struct SystemUpgradeService<T: FirmwareIndex, U: BmcManager> {
     state_service: StateService,
     firmware_upgrader: Arc<Mutex<FirmwareUpgrader<T>>>,
-    available_upgrades: Arc<Mutex<HashMap<String, AvailableUpgrade>>>,
     bmc_manager: Arc<U>,
     scheduler: JobScheduler,
     autoupgrade: Arc<AutoUpgrade>,
@@ -592,7 +570,6 @@ where
         Self {
             state_service: self.state_service.clone(),
             firmware_upgrader: self.firmware_upgrader.clone(),
-            available_upgrades: self.available_upgrades.clone(),
             bmc_manager: self.bmc_manager.clone(),
             scheduler: self.scheduler.clone(),
             autoupgrade: self.autoupgrade.clone(),
@@ -624,7 +601,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         Self {
             state_service,
             firmware_upgrader: Arc::new(Mutex::new(firmware_upgrader)),
-            available_upgrades: Arc::new(Mutex::new(HashMap::new())),
             bmc_manager,
             scheduler,
             autoupgrade: Arc::new(autoupgrade),
@@ -682,7 +658,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             );
             let upgrade = if let Some(detail) = &firmware {
                 AvailableSystemUpgrade::Firmware {
-                    upgrade_id: upgrade_id.clone(),
                     detail: detail.clone(),
                 }
             } else {
@@ -691,12 +666,8 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                     .as_ref()
                     .expect("BUG: merged index present without a preview");
                 AvailableSystemUpgrade::Packages {
-                    upgrade_id: upgrade_id.clone(),
                     merged,
-                    changes: preview.changes.clone(),
                     download_size_bytes: preview.download_size_bytes,
-                    bmc_version: preview.bmc_version.clone(),
-                    bmc_changelog: preview.bmc_changelog.clone(),
                 }
             };
             self.system_upgrades
@@ -717,12 +688,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         })
     }
 
-    pub(crate) async fn check_for_firmware_upgrade(
-        &self,
-    ) -> Result<Option<UpgradeDetail>, SystemUpgradeError> {
-        Ok(self.check_for_upgrade().await?.firmware)
-    }
-
     pub(crate) async fn start_upgrade(&self, upgrade_id: String) -> UpgradeRunStream {
         let (gate, upgrade) =
             match claim_upgrade(&self.run_gate, &self.system_upgrades, &upgrade_id).await {
@@ -731,13 +696,10 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             };
 
         let run = match upgrade {
-            AvailableSystemUpgrade::Firmware { detail, .. } => {
-                self.spawn_firmware_run(gate, detail)
-            }
+            AvailableSystemUpgrade::Firmware { detail } => self.spawn_firmware_run(gate, detail),
             AvailableSystemUpgrade::Packages {
                 merged,
                 download_size_bytes,
-                ..
             } => spawn_packages_run(
                 gate,
                 self.nix_config.clone(),
@@ -882,16 +844,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             return Ok(None);
         };
 
-        let available_upgrade = AvailableUpgrade {
-            file_size: release_info.latest_release.file_size as u64,
-            url: release_info.latest_release.url.clone(),
-        };
-
-        self.available_upgrades
-            .lock()
-            .await
-            .insert(release_info.latest_release.hash.clone(), available_upgrade);
-
         info!(
             hash = %release_info.latest_release.hash,
             version = %release_info.latest_release.version,
@@ -900,143 +852,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         );
 
         Ok(Some(release_info))
-    }
-
-    pub fn download_firmware(&self, hash: String) -> UnboundedReceiver<DownloadState> {
-        let (progress_sender, progress_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let available_upgrades = self.available_upgrades.clone();
-        let firmware_upgrader = self.firmware_upgrader.clone();
-        let state_service = self.state_service.clone();
-        let run_gate = self.run_gate.clone();
-
-        task::spawn(async move {
-            info!(hash = %hash, "Starting firmware download");
-
-            let Ok(_gate) = run_gate.try_lock_owned() else {
-                warn!("Upgrade already in progress");
-                _ = progress_sender
-                    .send(DownloadState::Failed(SystemUpgradeError::UpgradeInProgress));
-                return;
-            };
-
-            let Ok(upgrader) = firmware_upgrader.try_lock() else {
-                warn!("Upgrade already in progress");
-                _ = progress_sender
-                    .send(DownloadState::Failed(SystemUpgradeError::UpgradeInProgress));
-                return;
-            };
-
-            let firmware_info = {
-                let available_upgrades: tokio::sync::MutexGuard<
-                    '_,
-                    HashMap<String, AvailableUpgrade>,
-                > = available_upgrades.lock().await;
-                available_upgrades.get(&hash).cloned()
-            };
-
-            let Some(firmware_info) = firmware_info else {
-                warn!(hash = %hash, "Firmware with requested hash not found");
-                _ = progress_sender
-                    .send(DownloadState::Failed(SystemUpgradeError::NoImageWithHash));
-                return;
-            };
-
-            let mut rx = upgrader.download_firmware(
-                firmware_info.url.clone(),
-                hash.clone(),
-                firmware_info.file_size,
-            );
-
-            // We need to track total_mb for StateService notifications and throttling
-            #[expect(clippy::cast_precision_loss)]
-            let total_mb = firmware_info.file_size as f32 / 1_000_000.0;
-            let mut progress_updated_at = Instant::now();
-
-            state_service.notify(SystemUpgradeState::DownloadStarted {
-                total_mb: Some(total_mb),
-            });
-            while let Some(event) = rx.recv().await {
-                match event {
-                    UpgraderDownloadState::Progress {
-                        downloaded_mb,
-                        total_mb,
-                    } => {
-                        if progress_updated_at.elapsed() < UPDATE_PROGRESS_INTERVAL {
-                            continue;
-                        }
-                        progress_updated_at = Instant::now();
-
-                        state_service.notify(SystemUpgradeState::DownloadProgress {
-                            downloaded_mb,
-                            total_mb: Some(total_mb),
-                        });
-
-                        _ = progress_sender.send(DownloadState::Progress {
-                            downloaded_mb,
-                            total_mb,
-                        });
-                    }
-                    UpgraderDownloadState::Finished {
-                        hash: finished_hash,
-                    } => {
-                        info!(hash = %finished_hash, total_mb, "Firmware download finished successfully");
-                        state_service.notify(SystemUpgradeState::DownloadFinished {
-                            hash: Some(finished_hash.clone()),
-                            total_mb: Some(total_mb),
-                        });
-                        _ = progress_sender.send(DownloadState::Finished {
-                            hash: finished_hash,
-                        });
-                    }
-                    UpgraderDownloadState::Failed(err) => {
-                        warn!(error = %err, "Failed to download firmware");
-                        state_service.notify(SystemUpgradeState::Failed);
-                        _ = progress_sender.send(DownloadState::Failed(err.into()));
-                    }
-                }
-            }
-        });
-
-        progress_receiver
-    }
-
-    pub async fn verify_and_upgrade(&self, hash: &str) -> Result<(), SystemUpgradeError> {
-        info!(hash, "Starting firmware verification and upgrade");
-
-        let _gate = self
-            .run_gate
-            .try_lock()
-            .map_err(|_| SystemUpgradeError::UpgradeInProgress)?;
-
-        let upgrader = self
-            .firmware_upgrader
-            .try_lock()
-            .map_err(|_| SystemUpgradeError::UpgradeInProgress)?;
-
-        self.state_service
-            .notify(SystemUpgradeState::UpgradeStarted);
-
-        info!(hash, "Verifying firmware hash");
-        upgrader.verify_firmware(hash).await.map_err(|err| {
-            warn!(hash, error = %err, "Failed to verify downloaded firmware");
-            self.state_service.notify(SystemUpgradeState::Failed);
-            SystemUpgradeError::from(err)
-        })?;
-
-        info!(hash, "Firmware verification successful, starting upgrade");
-        self.bmc_manager
-            .upgrade(true, upgrader.upgrade_image_path(), None)
-            .await
-            .map_err(|err| {
-                warn!(error = %err, "Upgrade failed");
-                self.state_service.notify(SystemUpgradeState::Failed);
-                SystemUpgradeError::UpgradeFailed
-            })?;
-
-        drop(upgrader);
-
-        info!("Firmware upgrade completed successfully");
-        Ok(())
     }
 
     pub async fn autoupgrade_init(&self, config: AutoUpgradeConfig) {
@@ -1167,12 +982,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
     }
 }
 
-pub(crate) enum DownloadState {
-    Progress { downloaded_mb: f32, total_mb: f32 },
-    Finished { hash: String },
-    Failed(SystemUpgradeError),
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SystemUpgradeState {
     DownloadStarted {
@@ -1195,8 +1004,6 @@ pub(crate) enum SystemUpgradeState {
 pub(crate) enum SystemUpgradeError {
     #[error("Failed to detect current version")]
     FailedToDetectCurrentVersion,
-    #[error("Firmware with a given hash does not exist")]
-    NoImageWithHash,
     #[error("Firmware image checksum mismatch. Expected {expected}, downloaded {actual}")]
     DownloadedImageHashMismatch { expected: String, actual: String },
     #[error("Failed to verify downloaded firmware")]
@@ -1360,7 +1167,6 @@ mod tests {
         system_upgrades.lock().await.insert(
             "upgrade-0".to_owned(),
             AvailableSystemUpgrade::Firmware {
-                upgrade_id: "upgrade-0".to_owned(),
                 detail: test_upgrade_detail(),
             },
         );
