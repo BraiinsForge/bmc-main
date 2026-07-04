@@ -167,24 +167,12 @@ where
             loop {
                 if receiver.changed().await.is_ok() {
                     let state = (*receiver.borrow()).clone();
-                    if let Some(upgrade_status) = state {
-                        let led_event = match upgrade_status {
-                            SystemUpgradeState::DownloadStarted { .. }
-                            | SystemUpgradeState::UpgradeStarted => {
-                                Some(LedEvent::DownloadOrUpgradeStarted)
-                            }
-                            SystemUpgradeState::DownloadProgress { .. } => None,
-                            SystemUpgradeState::DownloadFinished { .. } => {
-                                Some(LedEvent::DownloadOrUpgradeSuccess)
-                            }
-                            SystemUpgradeState::Failed => Some(LedEvent::DownloadOrUpgradeError),
-                        };
-
-                        if let Some(led_event) = led_event {
-                            // Ignore the result, since we don't care if the send fails
-                            if let Err(e) = led_event_tx.send(led_event).await {
-                                error!("Failed to send command: {}", e);
-                            }
+                    if let Some(upgrade_status) = state
+                        && let Some(led_event) = upgrade_state_to_led(&upgrade_status)
+                    {
+                        // Ignore the result, since we don't care if the send fails
+                        if let Err(e) = led_event_tx.send(led_event).await {
+                            error!("Failed to send command: {}", e);
                         }
                     }
                 }
@@ -352,5 +340,59 @@ pub(crate) async fn run_led_state_task(
         if state_rx.changed().await.is_err() {
             break;
         }
+    }
+}
+
+fn upgrade_state_to_led(state: &SystemUpgradeState) -> Option<LedEvent> {
+    match state {
+        SystemUpgradeState::DownloadStarted { .. } | SystemUpgradeState::UpgradeStarted => {
+            Some(LedEvent::DownloadOrUpgradeStarted)
+        }
+        // A finished download is not a finished upgrade: the build and
+        // activation still run afterwards. Keep the in-progress animation
+        // going instead of flashing a premature success.
+        SystemUpgradeState::DownloadProgress { .. }
+        | SystemUpgradeState::DownloadFinished { .. } => None,
+        // Only package upgrades reach here: a firmware upgrade ends by rebooting
+        // into the new image, so it never emits `Finished` and its success is
+        // the reboot itself, not a terminal green. The applying phase keeps the
+        // in-progress animation running until the process dies.
+        SystemUpgradeState::Finished => Some(LedEvent::DownloadOrUpgradeSuccess),
+        SystemUpgradeState::Failed => Some(LedEvent::DownloadOrUpgradeError),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::upgrade_state_to_led;
+    use crate::system_upgrade::SystemUpgradeState;
+    use bmc_led::data::LedEvent;
+
+    #[test]
+    fn download_finished_keeps_the_in_progress_animation() {
+        assert_eq!(
+            upgrade_state_to_led(&SystemUpgradeState::DownloadFinished {
+                hash: None,
+                total_mb: None,
+            }),
+            None,
+            "a finished download must not flash success before build and activate run"
+        );
+    }
+
+    #[test]
+    fn only_finished_signals_success() {
+        assert_eq!(
+            upgrade_state_to_led(&SystemUpgradeState::Finished),
+            Some(LedEvent::DownloadOrUpgradeSuccess)
+        );
+    }
+
+    #[test]
+    fn failure_signals_error() {
+        assert_eq!(
+            upgrade_state_to_led(&SystemUpgradeState::Failed),
+            Some(LedEvent::DownloadOrUpgradeError)
+        );
     }
 }
