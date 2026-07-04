@@ -563,6 +563,16 @@ fn run_loop(
                 tracing::error!("overlay render error, dropping overlay: {e}");
                 overlay.mark_failed();
             }
+            if overlay.needs_cache_refresh()
+                && let Err(e) =
+                    crate::overlays::refresh_overlay_cache(overlay, renderer_ptr, shared)
+            {
+                if shared.is_context_lost() {
+                    return Err(FatalError::EglContextLost);
+                }
+                tracing::error!("overlay cache refresh error, dropping overlay: {e}");
+                overlay.mark_failed();
+            }
             overlay.forward_settings_requests();
         }
         // Drop overlays whose client closed or that hit a terminal error,

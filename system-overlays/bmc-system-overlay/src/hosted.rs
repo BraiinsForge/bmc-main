@@ -176,6 +176,19 @@ impl HostedOverlay {
         overlay_needs_hide(self.mapped, self.visible)
     }
 
+    /// Whether this hidden overlay wants its panel cache repainted: unmapped,
+    /// not on its way to being shown, healthy, and holding a content change.
+    /// Mapped overlays refresh through the normal render path instead.
+    #[must_use]
+    pub fn needs_cache_refresh(&self) -> bool {
+        !self.failed
+            && !self.visible
+            && !self.mapped
+            && self.client.running()
+            && self.overlay.content_dirty()
+            && self.overlay.uses_panel_cache()
+    }
+
     /// Unmap the surface and free export buffers. Called by the host when
     /// `needs_hide` is true.
     pub fn hide(&mut self, egl: &EglContext) -> anyhow::Result<()> {

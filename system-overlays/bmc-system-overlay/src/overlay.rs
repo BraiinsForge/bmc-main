@@ -316,6 +316,14 @@ pub trait SystemOverlay {
         false
     }
 
+    /// Whether the content-changed flag is currently set, without consuming
+    /// it. The host polls this to decide background cache refreshes while
+    /// hidden; polling never consumes the flag — only `take_content_dirty`
+    /// does. Default: `false` (overlays without a cache never report dirty).
+    fn content_dirty(&self) -> bool {
+        false
+    }
+
     /// Force the overlay's content-changed flag so the next full paint
     /// refreshes the cached panel. No-op default: overlays that never cache
     /// (offline, device-info) need not implement this.

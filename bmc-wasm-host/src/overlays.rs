@@ -91,13 +91,23 @@ pub fn prewarm_hosted_overlay(
     ptr: NonNull<dyn Renderer>,
     shared: &mut SharedHost,
 ) -> anyhow::Result<()> {
-    let (w, h) = shared.scratch.max_size();
+    // The layer surface is already configured (connect blocks on the initial
+    // configure), so paint and capture at the real overlay size — a cache
+    // captured at any other size fails `cached_ready`'s size check and the
+    // first reveal would fall back to a full paint.
+    let (w, h) = overlay.size();
+    anyhow::ensure!(
+        shared.scratch.supports_size(w, h),
+        "host scratch FBO {:?} cannot prewarm overlay {:?}",
+        shared.scratch.max_size(),
+        (w, h),
+    );
     crate::slot::stage_frame_under_gpu_lock(
         shared,
         "host_overlay_prewarm",
         w,
         h,
-        |_shared| {
+        |shared| {
             // SAFETY: same invariants as `render_hosted_overlay` — `ptr` is non-null
             // by construction and the renderer outlives this call; the prewarm pass
             // runs before the event loop, one overlay at a time, so no other `&mut
@@ -107,11 +117,56 @@ pub fn prewarm_hosted_overlay(
             renderer.begin_frame_with_clear(w, h, 1.0, FrameClear::TransparentBlack);
             overlay.overlay_mut().prewarm(renderer);
             renderer.flush();
+            if overlay.overlay_mut().uses_panel_cache() {
+                let _ = overlay.overlay_mut().take_content_dirty();
+                overlay
+                    .target_mut()
+                    .capture_panel(&shared.egl, &shared.scratch, w, h)?;
+            }
             Ok(())
         },
         || {},
     )?;
     Ok(())
+}
+
+/// Repaint a hidden overlay's panel cache: scratch paint + capture, no export
+/// buffer, no surface traffic. Keeps the cache fresh so the next reveal blits
+/// current content instead of full-painting.
+pub fn refresh_overlay_cache(
+    overlay: &mut HostedOverlay,
+    ptr: NonNull<dyn Renderer>,
+    shared: &mut SharedHost,
+) -> anyhow::Result<()> {
+    let size = overlay.size();
+    anyhow::ensure!(
+        shared.scratch.supports_size(size.0, size.1),
+        "host scratch FBO {:?} cannot refresh overlay cache {:?}",
+        shared.scratch.max_size(),
+        size,
+    );
+    crate::slot::stage_frame_under_gpu_lock(
+        shared,
+        "host_overlay_cache_refresh",
+        size.0,
+        size.1,
+        |shared| {
+            // SAFETY: same invariants as `render_hosted_overlay` — `ptr` is
+            // non-null by construction, the renderer outlives this call, and
+            // the host renders components one at a time so no other `&mut dyn
+            // Renderer` to this renderer is live.
+            let renderer = unsafe { ptr.as_ptr().as_mut() }
+                .expect("BUG: NonNull renderer is non-null by construction");
+            renderer.begin_frame_with_clear(size.0, size.1, 1.0, FrameClear::TransparentBlack);
+            overlay.overlay_mut().render(renderer, size);
+            renderer.flush();
+            let _ = overlay.overlay_mut().take_content_dirty();
+            overlay
+                .target_mut()
+                .capture_panel(&shared.egl, &shared.scratch, size.0, size.1)
+        },
+        || {},
+    )
 }
 
 /// Render one hosted overlay through the shared renderer, mirroring

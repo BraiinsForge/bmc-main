@@ -758,6 +758,10 @@ impl SystemOverlay for SettingsTrayOverlay {
         std::mem::take(&mut self.content_dirty)
     }
 
+    fn content_dirty(&self) -> bool {
+        self.content_dirty
+    }
+
     fn mark_content_dirty(&mut self) {
         self.content_dirty = true;
     }
@@ -1090,6 +1094,41 @@ mod slide_tests {
         assert_eq!(
             s.cached_blit_offset(t0 + Duration::from_millis(200), false, 200.0),
             None
+        );
+    }
+
+    #[test]
+    fn content_dirty_accessor_is_non_consuming() {
+        let mut overlay =
+            SettingsTrayOverlay::new_for_product(Product::Bmc100, None, Instant::now());
+        assert!(overlay.content_dirty(), "constructed dirty");
+        assert!(overlay.content_dirty(), "observing must not consume");
+        let _ = overlay.take_content_dirty();
+        assert!(!overlay.content_dirty());
+    }
+
+    // The panel cache survives hides, so a reveal blits whatever was captured
+    // before the previous unmap. When the reveal's state reset changes what
+    // the panel would show (a hold was mid-progress when the tray hid), the
+    // cache is stale and must be repainted, not blitted through the ramp.
+    #[test]
+    fn reveal_repaints_when_reset_discards_transient_ui() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        let _ = overlay.take_content_dirty();
+
+        // Clean hide/reveal: cache already matches the reset state, keep the blit.
+        overlay.on_reveal();
+        assert!(
+            !overlay.content_dirty(),
+            "a reveal from a clean dismiss must not force a repaint"
+        );
+
+        overlay.button = ButtonState::Holding { since: t0 };
+        overlay.on_reveal();
+        assert!(
+            overlay.content_dirty(),
+            "discarding mid-hold UI must repaint the stale panel cache"
         );
     }
 }
