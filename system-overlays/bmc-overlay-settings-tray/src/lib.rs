@@ -122,6 +122,11 @@ enum SlidePhase {
     /// No ramp active; the panel is settled (or was never revealed).
     #[default]
     Idle,
+    /// Reveal armed; the panel holds off-screen until the first frame of the
+    /// reveal is presented, which anchors the ramp clock. Anchoring at the
+    /// trigger instead would let the first frame's paint cost consume the
+    /// front of the ease-out ramp.
+    RevealPending,
     Revealing {
         since: Instant,
     },
@@ -130,6 +135,9 @@ enum SlidePhase {
     /// mid-flight, so a loop stall spanning the ramp end would otherwise freeze
     /// the panel at the last presented offset.
     RevealSettling,
+    /// Dismiss armed; the panel holds the settled position until the first
+    /// frame of the dismiss is presented, which anchors the ramp clock.
+    DismissPending,
     Dismissing {
         since: Instant,
     },
@@ -145,17 +153,34 @@ struct Slide {
 }
 
 impl Slide {
-    fn start_reveal(&mut self, now: Instant) {
-        self.phase = SlidePhase::Revealing { since: now };
+    fn start_reveal(&mut self) {
+        self.phase = SlidePhase::RevealPending;
     }
 
-    fn start_dismiss(&mut self, now: Instant) {
-        self.phase = SlidePhase::Dismissing { since: now };
+    fn start_dismiss(&mut self) {
+        self.phase = SlidePhase::DismissPending;
     }
 
-    /// Whether a dismiss ramp has been started (regardless of completion).
+    /// Whether a dismiss has been started (pending, mid-ramp, or completed).
     fn is_dismissing(&self) -> bool {
-        matches!(self.phase, SlidePhase::Dismissing { .. })
+        matches!(
+            self.phase,
+            SlidePhase::DismissPending | SlidePhase::Dismissing { .. }
+        )
+    }
+
+    /// Anchor a pending ramp at the moment its first frame was presented.
+    /// No-op in every other phase, so late or duplicate present notifications
+    /// cannot restart a running ramp.
+    fn anchor(&mut self, now: Instant) {
+        match self.phase {
+            SlidePhase::RevealPending => self.phase = SlidePhase::Revealing { since: now },
+            SlidePhase::DismissPending => self.phase = SlidePhase::Dismissing { since: now },
+            SlidePhase::Idle
+            | SlidePhase::Revealing { .. }
+            | SlidePhase::RevealSettling
+            | SlidePhase::Dismissing { .. } => {}
+        }
     }
 
     /// Advance the time-driven transition: a reveal ramp that has elapsed moves
@@ -207,9 +232,10 @@ impl Slide {
     /// `height`. `0` once settled (or when no slide is active).
     fn offset(&self, now: Instant, height: f32) -> f32 {
         match self.phase {
+            SlidePhase::RevealPending => -height,
             SlidePhase::Revealing { since } => -height * (1.0 - Self::progress(since, now)),
             SlidePhase::Dismissing { since } => -height * Self::progress(since, now),
-            SlidePhase::RevealSettling | SlidePhase::Idle => 0.0,
+            SlidePhase::DismissPending | SlidePhase::RevealSettling | SlidePhase::Idle => 0.0,
         }
     }
 
@@ -219,6 +245,7 @@ impl Slide {
             SlidePhase::Revealing { since } | SlidePhase::Dismissing { since } => {
                 Self::progress(since, now) < 1.0
             }
+            SlidePhase::RevealPending | SlidePhase::DismissPending => true,
             SlidePhase::RevealSettling | SlidePhase::Idle => false,
         }
     }
@@ -227,7 +254,11 @@ impl Slide {
     fn dismiss_done(&self, now: Instant) -> bool {
         match self.phase {
             SlidePhase::Dismissing { since } => Self::progress(since, now) >= 1.0,
-            SlidePhase::Revealing { .. } | SlidePhase::RevealSettling | SlidePhase::Idle => false,
+            SlidePhase::Revealing { .. }
+            | SlidePhase::RevealPending
+            | SlidePhase::RevealSettling
+            | SlidePhase::DismissPending
+            | SlidePhase::Idle => false,
         }
     }
 }
@@ -539,7 +570,7 @@ impl SystemOverlay for SettingsTrayOverlay {
         self.dismissing = false;
         self.last_interaction = now;
         self.content_dirty = true;
-        self.slide.start_reveal(now);
+        self.slide.start_reveal();
     }
 
     fn on_brightness(&mut self, value: u8) {
@@ -614,7 +645,7 @@ impl SystemOverlay for SettingsTrayOverlay {
         // not-visible only once it has fully slid off so the framework keeps the
         // surface mapped for the duration of the animation.
         if self.dismissing && !self.slide.is_dismissing() {
-            self.slide.start_dismiss(now);
+            self.slide.start_dismiss();
         }
         self.slide.advance(now);
 
@@ -705,6 +736,10 @@ impl SystemOverlay for SettingsTrayOverlay {
     fn wants_cached_blit(&self, now: Instant) -> Option<f32> {
         self.slide
             .cached_blit_offset(now, self.content_dirty, self.panel_height)
+    }
+
+    fn on_frame_submitted(&mut self, now: Instant) {
+        self.slide.anchor(now);
     }
 
     fn take_content_dirty(&mut self) -> bool {
@@ -875,21 +910,108 @@ mod slide_tests {
     use std::time::{Duration, Instant};
 
     #[test]
-    fn reveal_eases_from_offscreen_to_zero() {
+    fn reveal_holds_offscreen_until_anchored_then_eases_to_zero() {
         let t0 = Instant::now();
         let mut s = Slide::default();
-        s.start_reveal(t0);
-        assert!(s.offset(t0, 200.0) <= -199.0); // starts offscreen (height 200)
-        assert!(s.offset(t0 + Duration::from_millis(200), 200.0).abs() < 1e-3);
-        assert!(!s.animating(t0 + Duration::from_millis(200)));
+        s.start_reveal();
+        // Pending: the clock has not started, however much time passes.
+        assert!(s.offset(t0 + Duration::from_millis(500), 200.0) <= -199.0);
+        assert!(s.animating(t0 + Duration::from_millis(500)));
+        let t1 = t0 + Duration::from_millis(60);
+        s.anchor(t1);
+        assert!(s.offset(t1, 200.0) <= -199.0);
+        assert!(s.offset(t1 + Duration::from_millis(200), 200.0).abs() < 1e-3);
+        assert!(!s.animating(t1 + Duration::from_millis(200)));
+    }
+
+    #[test]
+    fn dismiss_holds_at_rest_until_anchored_then_eases_offscreen() {
+        let t0 = Instant::now();
+        let mut s = Slide::default();
+        s.start_reveal();
+        s.anchor(t0);
+        s.start_dismiss();
+        assert!(
+            s.is_dismissing(),
+            "pending dismiss must count as dismissing"
+        );
+        // Pending: panel rests at the settled position, clock not started.
+        assert!(s.offset(t0 + Duration::from_millis(500), 200.0).abs() < 1e-3);
+        assert!(!s.dismiss_done(t0 + Duration::from_millis(500)));
+        // A clean pending dismiss is blit-eligible at rest — an inactivity
+        // dismiss must not force a paint; a dirty one must (touch dismisses).
+        assert_eq!(
+            s.cached_blit_offset(t0 + Duration::from_millis(10), false, 200.0),
+            Some(0.0)
+        );
+        assert_eq!(
+            s.cached_blit_offset(t0 + Duration::from_millis(10), true, 200.0),
+            None
+        );
+        let t1 = t0 + Duration::from_millis(60);
+        s.anchor(t1);
+        assert!(s.offset(t1 + Duration::from_millis(400), 200.0) <= -199.0);
+        assert!(s.dismiss_done(t1 + Duration::from_millis(400)));
+    }
+
+    #[test]
+    fn anchor_is_a_noop_outside_pending_phases() {
+        let t0 = Instant::now();
+        let mut s = Slide::default();
+        s.anchor(t0);
+        assert_eq!(s.phase, SlidePhase::Idle);
+        s.start_reveal();
+        s.anchor(t0);
+        let mid = t0 + Duration::from_millis(90);
+        s.anchor(mid); // must not restart the running ramp
+        assert_eq!(s.phase, SlidePhase::Revealing { since: t0 });
+        assert!(
+            s.offset(mid, 200.0) > -199.0,
+            "ramp advanced from t0, not restarted"
+        );
+    }
+
+    #[test]
+    fn pending_reveal_keeps_requesting_frames_after_dirty_consumed() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        overlay.on_reveal();
+        let _ = overlay.take_content_dirty();
+        assert!(
+            overlay.tick(t0 + Duration::from_millis(5)).wants_render,
+            "a stall between reveal and first paint must not strand the pending phase"
+        );
+    }
+
+    #[test]
+    fn first_presented_frame_anchors_the_reveal_ramp() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        overlay.on_reveal();
+        let _ = overlay.take_content_dirty();
+        let t1 = t0 + Duration::from_millis(60);
+        overlay.on_frame_submitted(t1);
+        // Half-way through the ramp measured from t1, the eased offset is
+        // -0.125*height. A trigger-time anchor (t0) would be ~150/180 elapsed
+        // and nearly settled (~ -0.004*height), so demand a deep mid-flight
+        // offset to distinguish the two.
+        #[expect(clippy::cast_precision_loss, reason = "display height fits f32")]
+        let h = overlay.view().height as f32;
+        let mid = overlay.wants_cached_blit(t1 + Duration::from_millis(90));
+        assert!(
+            mid.is_some_and(|off| off < -h / 16.0),
+            "ramp must be anchored at t1, not the reveal trigger: {mid:?}"
+        );
     }
 
     #[test]
     fn dismiss_eases_back_offscreen_then_reports_done() {
         let t0 = Instant::now();
         let mut s = Slide::default();
-        s.start_reveal(t0);
-        s.start_dismiss(t0 + Duration::from_millis(200));
+        s.start_reveal();
+        s.anchor(t0);
+        s.start_dismiss();
+        s.anchor(t0 + Duration::from_millis(200));
         assert!(s.offset(t0 + Duration::from_millis(200), 200.0).abs() < 1e-3);
         assert!(!s.dismiss_done(t0 + Duration::from_millis(200)));
         assert!(s.offset(t0 + Duration::from_millis(400), 200.0) <= -199.0);
@@ -907,6 +1029,7 @@ mod slide_tests {
         overlay.on_reveal();
         // Drop the reveal-time dirty flag the way the first paint would.
         let _ = overlay.take_content_dirty();
+        overlay.on_frame_submitted(t0);
         assert!(overlay.tick(t0 + Duration::from_millis(90)).wants_render);
 
         // No render ran before the next tick, which lands after the ramp end:
@@ -922,7 +1045,8 @@ mod slide_tests {
     fn elapsed_reveal_settles_via_full_paint() {
         let t0 = Instant::now();
         let mut s = Slide::default();
-        s.start_reveal(t0);
+        s.start_reveal();
+        s.anchor(t0);
         s.advance(t0 + Duration::from_millis(90));
         assert!(!s.needs_settle_frame(), "mid-ramp is not settling");
 
@@ -941,7 +1065,8 @@ mod slide_tests {
     fn dirty_frame_full_paints_then_clean_frame_blits_cache() {
         let t0 = Instant::now();
         let mut s = Slide::default();
-        s.start_reveal(t0);
+        s.start_reveal();
+        s.anchor(t0);
         let mid = t0 + Duration::from_millis(90);
         // First reveal frame is content-dirty: the host must full-paint (None).
         assert_eq!(s.cached_blit_offset(mid, true, 200.0), None);

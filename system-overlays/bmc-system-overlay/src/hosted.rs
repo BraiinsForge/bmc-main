@@ -284,8 +284,11 @@ impl HostedOverlay {
         Ok(())
     }
 
-    /// Mark a render as completed at `now`; the surface is now mapped.
+    /// Mark a render as completed at `now`; the surface is now mapped. Also
+    /// notifies the overlay, so time-anchored animations can anchor at the
+    /// hand-off to the compositor.
     pub fn mark_rendered(&mut self, now: Instant) {
+        self.overlay.on_frame_submitted(now);
         self.last_render = Some(now);
         self.wants_render = false;
         self.mapped = true;

@@ -376,5 +376,6 @@ fn render_frame(
     client.submit_buffer_with_wl_buffer(&dmabuf, &wl_buffer)?;
     client.flush()?;
     target.mark_presented(slot);
+    overlay.on_frame_submitted(Instant::now());
     Ok(())
 }

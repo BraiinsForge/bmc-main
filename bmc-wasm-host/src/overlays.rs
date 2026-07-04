@@ -232,7 +232,10 @@ pub fn render_hosted_overlay(
     // Mint+attach the wl_buffer and mark the slot in-flight. Done inside one
     // HostedOverlay method so target and client are borrowed together legally.
     overlay.submit_exported(&dmabuf, slot)?;
-    overlay.mark_rendered(now);
+    // Fresh timestamp: the pass-level `now` predates this pass's widget
+    // renders, and anchoring a ramp that far back would replay the jitter
+    // this frame just paid.
+    overlay.mark_rendered(Instant::now());
     Ok(())
 }
 

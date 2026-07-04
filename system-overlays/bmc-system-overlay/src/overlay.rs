@@ -313,6 +313,12 @@ pub trait SystemOverlay {
     /// refreshes the cached panel. No-op default: overlays that never cache
     /// (offline, device-info) need not implement this.
     fn mark_content_dirty(&mut self) {}
+
+    /// A frame of this overlay was just submitted to the compositor. Called
+    /// with a timestamp taken after the submit, so time-anchored animations
+    /// anchor at the hand-off rather than at the trigger that requested the
+    /// frame. Default: no-op.
+    fn on_frame_submitted(&mut self, _now: Instant) {}
 }
 
 #[cfg(test)]
