@@ -49,6 +49,10 @@ time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+wayland-client.workspace = true
+wayland-protocols-wlr = { workspace = true, features = ["client"] }
+
 [features]
 profiling = ["ii-stopwatch/enabled"]
 

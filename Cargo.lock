@@ -1283,6 +1283,8 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
+ "wayland-client 0.31.14",
+ "wayland-protocols-wlr",
 ]
 
 [[package]]

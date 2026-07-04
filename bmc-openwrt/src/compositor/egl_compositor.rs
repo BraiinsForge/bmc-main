@@ -159,6 +159,21 @@ fn dispatch_timeout(redraw_state: RedrawState) -> Option<Duration> {
     }
 }
 
+/// Frame-callback timestamp for the current pass. Prefers the kernel-
+/// delivered vblank timestamp (`CLOCK_MONOTONIC`, the actual presentation
+/// time); falls back to a process-local monotonic reference for headless
+/// mode and the pre-first-vblank window on hardware — Wayland only requires
+/// monotonic ms from an unspecified epoch, and these two sources combined
+/// satisfy that without sampling `SystemTime` (not monotonic; can jump
+/// backwards on NTP adjustments).
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "wrapping at ~49.7 days is acceptable for frame-callback time"
+)]
+fn frame_callback_time_ms(vblank_ms: Option<u32>) -> u32 {
+    vblank_ms.unwrap_or_else(|| COMPOSITOR_BOOT.elapsed().as_millis() as u32)
+}
+
 pub struct EglCompositor {
     wayland_display: Mutex<Option<String>>,
     command_tx: calloop_channel::Sender<CompositorCommand>,
@@ -523,11 +538,15 @@ impl EglCompositor {
             }
         }
 
-        // Single always-on tick that evaluates pending frame callbacks and,
+        // Always-on tick that evaluates pending widget frame callbacks and,
         // in headless mode, also drives the redraw state machine in place
-        // of real DRM vblank events. Keeping a single chokepoint here —
-        // rather than one timer per mode plus post-render firing — avoids
-        // compounding call sites competing to fire the same callbacks.
+        // of real DRM vblank events. Keeping a single chokepoint here for
+        // the widget callback path — rather than one timer per mode plus
+        // post-render firing — avoids compounding call sites competing to
+        // fire the same callbacks. Layer-shell callbacks fire from the
+        // render path instead (see the `if rendered` block and the headless
+        // branch below), so they mean "consumed by a repaint", not "a timer
+        // tick elapsed".
         let callback_tick = Timer::from_duration(FRAME_CALLBACK_TICK);
         if let Err(e) = loop_handle.insert_source(callback_tick, |_, (), state| {
             if state.scene_renderer.is_none() {
@@ -539,26 +558,15 @@ impl EglCompositor {
                 }
             }
 
-            // Prefer the kernel-delivered vblank timestamp (CLOCK_MONOTONIC,
-            // the actual presentation time). Fall back to a process-local
-            // monotonic reference for headless mode and for the pre-first-
-            // vblank window on hardware — Wayland only requires monotonic
-            // ms from an unspecified epoch, and these two fallbacks combined
-            // satisfy that without sampling SystemTime (not monotonic; can
-            // jump backwards on NTP adjustments).
-            #[expect(
-                clippy::cast_possible_truncation,
-                reason = "wrapping at ~49.7 days is acceptable for frame-callback time"
-            )]
-            let time = state
-                .scene_renderer
-                .as_ref()
-                .and_then(|r| r.output().last_vblank_ms())
-                .unwrap_or_else(|| COMPOSITOR_BOOT.elapsed().as_millis() as u32);
+            let time = frame_callback_time_ms(
+                state
+                    .scene_renderer
+                    .as_ref()
+                    .and_then(|r| r.output().last_vblank_ms()),
+            );
             state
                 .compositor
                 .send_frame_callbacks_for_presented_widgets(time);
-            state.compositor.send_layer_frame_callbacks(time);
 
             TimeoutAction::ToDuration(FRAME_CALLBACK_TICK)
         }) {
@@ -753,12 +761,16 @@ impl EglCompositor {
                         .extend(unconsumed_captures);
                     ii_stopwatch::stopwatch_stop!(render_w);
 
-                    // Frame callbacks are fired from the always-on callback
-                    // tick — not from here — so pending callbacks are paced
-                    // by a single code path regardless of whether a render
-                    // just happened. Here we only advance the redraw state.
                     if rendered {
                         frame_handled = true;
+                        // A layer commit marks output damage, so a queued
+                        // callback always has a render coming; firing it
+                        // here means "this render sampled and submitted the
+                        // surface's buffer", matching core-protocol
+                        // `wl_surface.frame` semantics instead of an
+                        // unrelated timer tick.
+                        let time = frame_callback_time_ms(renderer.output().last_vblank_ms());
+                        app_state.compositor.send_layer_frame_callbacks(time);
                         app_state.compositor.clear_output_damage();
                         app_state.redraw_state = RedrawState::on_frame_submitted();
                     } else {
@@ -802,7 +814,12 @@ impl EglCompositor {
                 app_state.compositor.clear_output_damage();
                 app_state.redraw_state = RedrawState::Idle;
                 // No GPU handoff to wait for; the damage clear is the headless
-                // equivalent of handling the committed scene's frame.
+                // equivalent of handling the committed scene's frame, so
+                // layer callbacks fire here too — otherwise they would
+                // starve with no render path to drain them.
+                app_state
+                    .compositor
+                    .send_layer_frame_callbacks(frame_callback_time_ms(None));
                 frame_handled = true;
             }
 

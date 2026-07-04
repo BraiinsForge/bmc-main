@@ -1512,3 +1512,286 @@ mod tests {
         assert_eq!(widget_buffers[0].0.name, "survivor");
     }
 }
+
+/// Drives a real in-process Wayland client/server handshake over a
+/// `UnixStream::pair()` to lock in the invariant that keeps a callback-only
+/// layer-surface commit from starving its own callback: `commit_layer_surface`
+/// must mark full output damage whenever it drained any queued frame
+/// callbacks, even when the commit carried no buffer and no damage, because
+/// `send_layer_frame_callbacks` only ever runs after a render.
+#[cfg(test)]
+mod layer_frame_callback_damage_test {
+    use std::os::unix::net::UnixStream;
+    use std::sync::Arc;
+
+    use smithay::reexports::wayland_server::Display;
+    use wayland_client::protocol::{wl_callback, wl_compositor, wl_registry, wl_surface};
+    use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle};
+    use wayland_protocols_wlr::layer_shell::v1::client::{
+        zwlr_layer_shell_v1, zwlr_layer_surface_v1,
+    };
+
+    use super::{ClientState, CompositorState, OutputDamage};
+
+    #[derive(Default)]
+    struct TestClient {
+        compositor: Option<wl_compositor::WlCompositor>,
+        layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
+        configured: bool,
+        frame_done: bool,
+    }
+
+    impl Dispatch<wl_registry::WlRegistry, ()> for TestClient {
+        fn event(
+            state: &mut Self,
+            registry: &wl_registry::WlRegistry,
+            event: wl_registry::Event,
+            (): &(),
+            _: &Connection,
+            qh: &QueueHandle<Self>,
+        ) {
+            if let wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } = event
+            {
+                match interface.as_str() {
+                    "wl_compositor" => {
+                        state.compositor =
+                            Some(registry.bind::<wl_compositor::WlCompositor, _, _>(
+                                name,
+                                version.min(6),
+                                qh,
+                                (),
+                            ));
+                    }
+                    "zwlr_layer_shell_v1" => {
+                        state.layer_shell = Some(
+                            registry.bind::<zwlr_layer_shell_v1::ZwlrLayerShellV1, _, _>(
+                                name,
+                                version.min(4),
+                                qh,
+                                (),
+                            ),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    impl Dispatch<wl_compositor::WlCompositor, ()> for TestClient {
+        fn event(
+            _: &mut Self,
+            _: &wl_compositor::WlCompositor,
+            _: wl_compositor::Event,
+            (): &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for TestClient {
+        fn event(
+            _: &mut Self,
+            _: &zwlr_layer_shell_v1::ZwlrLayerShellV1,
+            _: zwlr_layer_shell_v1::Event,
+            (): &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    impl Dispatch<wl_surface::WlSurface, ()> for TestClient {
+        fn event(
+            _: &mut Self,
+            _: &wl_surface::WlSurface,
+            _: wl_surface::Event,
+            (): &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for TestClient {
+        fn event(
+            state: &mut Self,
+            layer_surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+            event: zwlr_layer_surface_v1::Event,
+            (): &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+            if let zwlr_layer_surface_v1::Event::Configure { serial, .. } = event {
+                layer_surface.ack_configure(serial);
+                state.configured = true;
+            }
+        }
+    }
+
+    impl Dispatch<wl_callback::WlCallback, ()> for TestClient {
+        fn event(
+            state: &mut Self,
+            _: &wl_callback::WlCallback,
+            event: wl_callback::Event,
+            (): &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+            if let wl_callback::Event::Done { .. } = event {
+                state.frame_done = true;
+            }
+        }
+    }
+
+    /// Flush the client's queued requests, let the server dispatch and flush
+    /// them, then dispatch the server's replies client-side. Only call this
+    /// where the preceding requests are guaranteed to produce at least one
+    /// server event (a fresh registry, a configure, a frame `done`) —
+    /// `blocking_dispatch` really does block if nothing is queued to read.
+    fn pump(
+        display: &mut Display<CompositorState>,
+        compositor: &mut CompositorState,
+        conn: &Connection,
+        queue: &mut EventQueue<TestClient>,
+        client: &mut TestClient,
+    ) {
+        pump_server_only(display, compositor, conn);
+        queue
+            .blocking_dispatch(client)
+            .expect("BUG: test client dispatch should succeed once the server has replied");
+    }
+
+    /// Flush the client's queued requests and let the server dispatch and
+    /// flush them, without a client-side dispatch. Used for requests that are
+    /// not expected to produce a reply (binds, acks, the callback-only probe
+    /// commit itself).
+    fn pump_server_only(
+        display: &mut Display<CompositorState>,
+        compositor: &mut CompositorState,
+        conn: &Connection,
+    ) {
+        conn.flush()
+            .expect("BUG: test client flush should succeed on a live socket pair");
+        display
+            .dispatch_clients(compositor)
+            .expect("BUG: test server dispatch should succeed on a live socket pair");
+        display
+            .flush_clients()
+            .expect("BUG: test server flush should succeed on a live socket pair");
+    }
+
+    #[test]
+    fn callback_only_layer_commit_marks_full_output_damage() {
+        let mut display: Display<CompositorState> =
+            Display::new().expect("BUG: test Wayland display should initialize");
+        let mut compositor =
+            CompositorState::new(&display, 480, 1280, 480, 1280, 60_000, "test-seat");
+
+        let (server_stream, client_stream) =
+            UnixStream::pair().expect("BUG: unix socket pair should be creatable");
+        display
+            .handle()
+            .insert_client(server_stream, Arc::new(ClientState::default()))
+            .expect("BUG: test client stream should be insertable into a fresh display");
+
+        let conn = Connection::from_socket(client_stream)
+            .expect("BUG: test client socket should form a valid connection");
+        let mut queue: EventQueue<TestClient> = conn.new_event_queue();
+        let qh = queue.handle();
+        let mut client = TestClient::default();
+
+        conn.display().get_registry(&qh, ());
+        pump(
+            &mut display,
+            &mut compositor,
+            &conn,
+            &mut queue,
+            &mut client,
+        );
+
+        let compositor_global = client
+            .compositor
+            .clone()
+            .expect("BUG: wl_compositor global should have been advertised");
+        let layer_shell = client
+            .layer_shell
+            .clone()
+            .expect("BUG: zwlr_layer_shell_v1 global should have been advertised");
+
+        let surface = compositor_global.create_surface(&qh, ());
+        let layer_surface = layer_shell.get_layer_surface(
+            &surface,
+            None,
+            zwlr_layer_shell_v1::Layer::Top,
+            "bdk-564-callback-only-commit-test".to_owned(),
+            &qh,
+            (),
+        );
+        // An explicit size is required: zero size on an axis is a protocol
+        // error unless that axis is anchored to both opposite edges.
+        layer_surface.set_size(480, 128);
+        // Initial commit with no buffer: this is what makes the compositor
+        // send the first Configure.
+        surface.commit();
+        pump(
+            &mut display,
+            &mut compositor,
+            &conn,
+            &mut queue,
+            &mut client,
+        );
+        assert!(
+            client.configured,
+            "BUG: initial commit should have produced a layer-surface configure"
+        );
+
+        pump_server_only(&mut display, &mut compositor, &conn);
+        compositor.clear_output_damage();
+        assert_eq!(
+            compositor.current_output_damage(),
+            OutputDamage::Widgets(std::collections::HashSet::new()),
+            "test setup should start from a clean damage state before the probe commit"
+        );
+
+        // The probe: request a frame callback and commit with no buffer
+        // attach and no damage, isolating the callback-only path.
+        let callback = surface.frame(&qh, ());
+        surface.commit();
+        pump_server_only(&mut display, &mut compositor, &conn);
+
+        assert_eq!(
+            compositor.pending_layer_frame_callbacks.len(),
+            1,
+            "callback-only commit should have queued the frame callback"
+        );
+        assert_eq!(
+            compositor.current_output_damage(),
+            OutputDamage::Full,
+            "callback-only commit must mark full output damage, or its callback \
+             would starve forever since send_layer_frame_callbacks only runs after a render"
+        );
+
+        // Bonus: firing the queued callback (as a render would) reaches the
+        // client as a wl_callback::Done.
+        compositor.send_layer_frame_callbacks(0);
+        display
+            .flush_clients()
+            .expect("BUG: test server flush should succeed on a live socket pair");
+        queue
+            .blocking_dispatch(&mut client)
+            .expect("BUG: test client dispatch should succeed once the server has replied");
+        assert!(
+            client.frame_done,
+            "BUG: a fired layer frame callback should reach the client as wl_callback::Done"
+        );
+
+        drop(callback);
+        drop(layer_surface);
+    }
+}
