@@ -11,6 +11,7 @@ use bmc_upgrade::upgrader::{
     DownloadState as UpgraderDownloadState, FirmwareUpgradeError, FirmwareUpgrader,
 };
 use chrono::{DateTime, Utc};
+use futures::StreamExt;
 use reqwest::Client;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -93,7 +94,6 @@ pub(crate) enum SystemUpgradePhase {
 }
 
 #[derive(Clone, Debug)]
-#[expect(dead_code, reason = "emitted by the unified start_upgrade run")]
 pub(crate) enum UpgradeRunState {
     Phase(SystemUpgradePhase),
     Progress {
@@ -144,17 +144,12 @@ pub(crate) struct CheckOutcome {
         reason = "consumed by the wire mapping of the unified check"
     )]
     pub packages: Option<PackagesPreview>,
-    #[expect(
-        dead_code,
-        reason = "consumed by the wire mapping of the unified check"
-    )]
     pub upgrade_id: Option<String>,
     #[expect(
         dead_code,
         reason = "consumed by the wire mapping of the unified check"
     )]
     pub disruption: Disruption,
-    #[expect(dead_code, reason = "consumed by autoupgrade retry classification")]
     pub package_fetch_transient: bool,
 }
 
@@ -349,6 +344,48 @@ fn one_shot(state: UpgradeRunState) -> UpgradeRunStream {
     UpgradeRunStream { rx }
 }
 
+#[expect(clippy::cast_precision_loss)]
+fn bytes_to_mb(bytes: u64) -> f32 {
+    bytes as f32 / 1_000_000.0
+}
+
+fn led_event(state: &UpgradeRunState) -> Option<SystemUpgradeState> {
+    match state {
+        UpgradeRunState::Phase(
+            SystemUpgradePhase::FirmwareApplying | SystemUpgradePhase::PackageActivating,
+        ) => Some(SystemUpgradeState::UpgradeStarted),
+        UpgradeRunState::Progress {
+            downloaded_bytes,
+            total_bytes,
+        } => Some(SystemUpgradeState::DownloadProgress {
+            downloaded_mb: bytes_to_mb(*downloaded_bytes),
+            total_mb: total_bytes.map(bytes_to_mb),
+        }),
+        UpgradeRunState::Failed(_) => Some(SystemUpgradeState::Failed),
+        UpgradeRunState::Finished => Some(SystemUpgradeState::Finished),
+        UpgradeRunState::Phase(
+            SystemUpgradePhase::FirmwareDownloading
+            | SystemUpgradePhase::FirmwareVerifying
+            | SystemUpgradePhase::PackageRealizing
+            | SystemUpgradePhase::PackageVerifying
+            | SystemUpgradePhase::PackageBuilding,
+        ) => None,
+    }
+}
+
+fn forward_led_events(state_service: StateService, mut run: UpgradeRunStream) -> UpgradeRunStream {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    task::spawn(async move {
+        while let Some(state) = run.rx.recv().await {
+            if let Some(event) = led_event(&state) {
+                state_service.notify(event);
+            }
+            _ = tx.send(state);
+        }
+    });
+    UpgradeRunStream { rx }
+}
+
 /// Admits the first download progress event immediately and later ones only
 /// after [`UPDATE_PROGRESS_INTERVAL`] since the last admitted one.
 #[derive(Debug, Default)]
@@ -370,13 +407,18 @@ impl ProgressThrottle {
 
 struct ChannelUpgradeProgress {
     sender: tokio::sync::mpsc::UnboundedSender<UpgradeRunState>,
+    state_service: StateService,
     throttle: std::sync::Mutex<ProgressThrottle>,
 }
 
 impl ChannelUpgradeProgress {
-    fn new(sender: tokio::sync::mpsc::UnboundedSender<UpgradeRunState>) -> Self {
+    fn new(
+        sender: tokio::sync::mpsc::UnboundedSender<UpgradeRunState>,
+        state_service: StateService,
+    ) -> Self {
         Self {
             sender,
+            state_service,
             throttle: std::sync::Mutex::new(ProgressThrottle::default()),
         }
     }
@@ -397,7 +439,13 @@ impl bmc_nix::upgrade::UpgradeProgress for ChannelUpgradeProgress {
 
     fn on_realization_started(&self, _total_paths: usize) {}
 
-    fn on_realization_finished(&self) {}
+    fn on_realization_finished(&self) {
+        self.state_service
+            .notify(SystemUpgradeState::DownloadFinished {
+                hash: None,
+                total_mb: None,
+            });
+    }
 
     fn on_download_status(&self, snapshot: &bmc_nix::store::progress::DownloadSnapshot) {
         if !self
@@ -445,11 +493,16 @@ fn spawn_packages_run(
     gate: tokio::sync::OwnedMutexGuard<()>,
     nix_config: NixUpgradeConfig,
     merged: bmc_nix::types::MergedIndex,
+    download_size_bytes: Option<u64>,
+    state_service: StateService,
 ) -> UpgradeRunStream {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     task::spawn(async move {
         let _gate = gate;
-        let adapter = ChannelUpgradeProgress::new(tx.clone());
+        state_service.notify(SystemUpgradeState::DownloadStarted {
+            total_mb: download_size_bytes.map(bytes_to_mb),
+        });
+        let adapter = ChannelUpgradeProgress::new(tx.clone(), state_service);
         let result = bmc_nix::upgrade::apply_profile_change(
             &nix_config.profile_dir,
             None, // base manifest is re-read under the profile lock
@@ -670,7 +723,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         Ok(self.check_for_upgrade().await?.firmware)
     }
 
-    #[expect(dead_code, reason = "consumed by the wire mapping of start_upgrade")]
     pub(crate) async fn start_upgrade(&self, upgrade_id: String) -> UpgradeRunStream {
         let (gate, upgrade) =
             match claim_upgrade(&self.run_gate, &self.system_upgrades, &upgrade_id).await {
@@ -678,14 +730,23 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 Err(stream) => return stream,
             };
 
-        match upgrade {
+        let run = match upgrade {
             AvailableSystemUpgrade::Firmware { detail, .. } => {
                 self.spawn_firmware_run(gate, detail)
             }
-            AvailableSystemUpgrade::Packages { merged, .. } => {
-                spawn_packages_run(gate, self.nix_config.clone(), merged)
-            }
-        }
+            AvailableSystemUpgrade::Packages {
+                merged,
+                download_size_bytes,
+                ..
+            } => spawn_packages_run(
+                gate,
+                self.nix_config.clone(),
+                merged,
+                download_size_bytes,
+                self.state_service.clone(),
+            ),
+        };
+        forward_led_events(self.state_service.clone(), run)
     }
 
     fn spawn_firmware_run(
@@ -697,6 +758,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         let firmware_upgrader = Arc::clone(&self.firmware_upgrader);
         let bmc_manager = Arc::clone(&self.bmc_manager);
         let widget_stopper = Arc::clone(&self.widget_stopper);
+        let state_service = self.state_service.clone();
         task::spawn(async move {
             let _gate = gate;
             let upgrader = firmware_upgrader.lock().await;
@@ -706,6 +768,9 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             _ = tx.send(UpgradeRunState::Phase(
                 SystemUpgradePhase::FirmwareDownloading,
             ));
+            state_service.notify(SystemUpgradeState::DownloadStarted {
+                total_mb: Some(bytes_to_mb(total_bytes)),
+            });
             let mut download_rx =
                 upgrader.download_firmware(release.url.clone(), release.hash.clone(), total_bytes);
             let mut download_finished = false;
@@ -723,7 +788,13 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                             total_bytes: Some(total_bytes),
                         });
                     }
-                    UpgraderDownloadState::Finished { .. } => download_finished = true,
+                    UpgraderDownloadState::Finished { hash } => {
+                        state_service.notify(SystemUpgradeState::DownloadFinished {
+                            hash: Some(hash),
+                            total_mb: Some(bytes_to_mb(total_bytes)),
+                        });
+                        download_finished = true;
+                    }
                     UpgraderDownloadState::Failed(err) => {
                         error!(error = %err, "Firmware download failed");
                         _ = tx.send(UpgradeRunState::Failed(err.into()));
@@ -751,7 +822,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             widget_stopper.stop_all_widgets().await;
 
             let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-            let adapter = ChannelUpgradeProgress::new(tx.clone());
+            let adapter = ChannelUpgradeProgress::new(tx.clone(), state_service);
             let reader = task::spawn(async move {
                 while let Some(line) = line_rx.recv().await {
                     bmc_nix::progress::feed_line(&line, &adapter);
@@ -881,7 +952,9 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             let total_mb = firmware_info.file_size as f32 / 1_000_000.0;
             let mut progress_updated_at = Instant::now();
 
-            state_service.notify(SystemUpgradeState::DownloadStarted { total_mb });
+            state_service.notify(SystemUpgradeState::DownloadStarted {
+                total_mb: Some(total_mb),
+            });
             while let Some(event) = rx.recv().await {
                 match event {
                     UpgraderDownloadState::Progress {
@@ -895,7 +968,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
 
                         state_service.notify(SystemUpgradeState::DownloadProgress {
                             downloaded_mb,
-                            total_mb,
+                            total_mb: Some(total_mb),
                         });
 
                         _ = progress_sender.send(DownloadState::Progress {
@@ -908,8 +981,8 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                     } => {
                         info!(hash = %finished_hash, total_mb, "Firmware download finished successfully");
                         state_service.notify(SystemUpgradeState::DownloadFinished {
-                            hash: finished_hash.clone(),
-                            total_mb,
+                            hash: Some(finished_hash.clone()),
+                            total_mb: Some(total_mb),
                         });
                         _ = progress_sender.send(DownloadState::Finished {
                             hash: finished_hash,
@@ -1025,22 +1098,35 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
 
     async fn autoupgrade_trigger(&self) -> Result<(), SystemUpgradeError> {
         debug!("Auto-upgrade triggered");
-        if let Some(upgrade) = self.check_for_firmware_upgrade().await? {
-            info!(hash = %upgrade.latest_release.hash, "Upgrade available");
-            let download_stream = self.download_firmware(upgrade.latest_release.hash.clone());
+        let outcome = self.check_for_upgrade().await?;
 
-            if let Some(upgrade_hash) = Self::wait_for_download(download_stream).await {
-                info!(hash = %upgrade_hash, "Firmware download completed");
-                self.verify_and_upgrade(&upgrade.latest_release.hash).await
-            } else {
-                Err(SystemUpgradeError::FailedToDownload(
-                    "Failed to download firmware".to_owned(),
-                ))
+        let Some(upgrade_id) = outcome.upgrade_id else {
+            if outcome.package_fetch_transient {
+                return Err(SystemUpgradeError::PackageIndexFetchFailed(
+                    "transient fetch failure during the auto-upgrade check".to_owned(),
+                ));
             }
-        } else {
             debug!("No upgrade available");
-            Ok(())
+            return Ok(());
+        };
+
+        info!(upgrade_id, "Auto-upgrade found an upgrade, starting");
+        let mut run = self.start_upgrade(upgrade_id).await;
+        while let Some(state) = run.next().await {
+            match state {
+                UpgradeRunState::Phase(phase) => debug!(?phase, "Auto-upgrade phase"),
+                UpgradeRunState::Progress {
+                    downloaded_bytes,
+                    total_bytes,
+                } => debug!(downloaded_bytes, total_bytes, "Auto-upgrade progress"),
+                UpgradeRunState::Finished => info!("Auto-upgrade finished"),
+                UpgradeRunState::Failed(err) => {
+                    error!(error = %err, "Auto-upgrade run failed");
+                    return Err(err);
+                }
+            }
         }
+        Ok(())
     }
 
     pub async fn autoupgrade_reschedule(
@@ -1079,27 +1165,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             None
         }
     }
-
-    async fn wait_for_download(mut receiver: UnboundedReceiver<DownloadState>) -> Option<String> {
-        while let Some(res) = receiver.recv().await {
-            match res {
-                DownloadState::Progress {
-                    downloaded_mb,
-                    total_mb,
-                } => {
-                    debug!(downloaded_mb, total_mb, "Firmware download progress");
-                }
-                DownloadState::Finished { hash } => {
-                    return Some(hash);
-                }
-                DownloadState::Failed(err) => {
-                    error!(error = ?err, "Failed to download firmware");
-                    return None;
-                }
-            }
-        }
-        None
-    }
 }
 
 pub(crate) enum DownloadState {
@@ -1110,10 +1175,19 @@ pub(crate) enum DownloadState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SystemUpgradeState {
-    DownloadStarted { total_mb: f32 },
-    DownloadProgress { downloaded_mb: f32, total_mb: f32 },
-    DownloadFinished { hash: String, total_mb: f32 },
+    DownloadStarted {
+        total_mb: Option<f32>,
+    },
+    DownloadProgress {
+        downloaded_mb: f32,
+        total_mb: Option<f32>,
+    },
+    DownloadFinished {
+        hash: Option<String>,
+        total_mb: Option<f32>,
+    },
     UpgradeStarted,
+    Finished,
     Failed,
 }
 
@@ -1141,6 +1215,8 @@ pub(crate) enum SystemUpgradeError {
     UpgradeExpired,
     #[error("Package upgrade failed: {0}")]
     PackageUpgradeFailed(String),
+    #[error("Package index fetch failed: {0}")]
+    PackageIndexFetchFailed(String),
 }
 
 impl From<FirmwareUpgradeError> for SystemUpgradeError {
@@ -1159,12 +1235,17 @@ impl From<FirmwareUpgradeError> for SystemUpgradeError {
 
 impl SystemUpgradeError {
     fn is_retriable(&self) -> bool {
+        // `UpgradeInProgress` is a transient collision with another run
+        // (e.g. a UI-driven check during the scheduled slot): the
+        // autoupgrade must back off and retry, not wait for the next
+        // cron slot.
         matches!(
             self,
             Self::UnableToCheckForUpgrade(
                 FirmwareDownloadError::IndexDownloadFailed
                     | FirmwareDownloadError::FetchUpgradeDetails
-            )
+            ) | Self::PackageIndexFetchFailed(_)
+                | Self::UpgradeInProgress
         )
     }
 }
@@ -1306,6 +1387,23 @@ mod tests {
     }
 
     #[test]
+    fn retriable_only_for_transient_causes() {
+        assert!(
+            SystemUpgradeError::UnableToCheckForUpgrade(FirmwareDownloadError::IndexDownloadFailed)
+                .is_retriable()
+        );
+        assert!(SystemUpgradeError::PackageIndexFetchFailed("timeout".to_owned()).is_retriable());
+        // A collision with a concurrent run resolves itself once the
+        // other run finishes; autoupgrade must retry it.
+        assert!(SystemUpgradeError::UpgradeInProgress.is_retriable());
+        assert!(
+            !SystemUpgradeError::PackageUpgradeFailed("realize failed".to_owned()).is_retriable()
+        );
+        assert!(!SystemUpgradeError::UpgradeExpired.is_retriable());
+        assert!(!SystemUpgradeError::UpgradeFailed.is_retriable());
+    }
+
+    #[test]
     fn progress_throttle_admits_first_then_only_after_interval() {
         let mut throttle = ProgressThrottle::default();
         let start = Instant::now();
@@ -1313,5 +1411,25 @@ mod tests {
         assert!(!throttle.admit(start + Duration::from_millis(100)));
         assert!(throttle.admit(start + UPDATE_PROGRESS_INTERVAL));
         assert!(!throttle.admit(start + UPDATE_PROGRESS_INTERVAL + Duration::from_millis(100)));
+    }
+
+    #[test]
+    fn led_maps_apply_and_activate_to_upgrade_started() {
+        assert!(matches!(
+            led_event(&UpgradeRunState::Phase(
+                SystemUpgradePhase::FirmwareApplying
+            )),
+            Some(SystemUpgradeState::UpgradeStarted)
+        ));
+        assert!(matches!(
+            led_event(&UpgradeRunState::Phase(
+                SystemUpgradePhase::PackageActivating
+            )),
+            Some(SystemUpgradeState::UpgradeStarted)
+        ));
+        assert!(matches!(
+            led_event(&UpgradeRunState::Finished),
+            Some(SystemUpgradeState::Finished)
+        ));
     }
 }
