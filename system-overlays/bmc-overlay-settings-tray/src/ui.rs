@@ -49,6 +49,28 @@ pub struct Panel {
     pub wifi_buttons: bool,
 }
 
+/// Presentation bucket of a Wi-Fi signal reading — which icon it selects.
+/// Content-change detection diffs at this granularity so dBm jitter inside a
+/// bucket does not count as a change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SignalBand {
+    Problem,
+    Strong,
+    Fair,
+    Low,
+}
+
+/// Band for a signal level in dBm (`None` = no reading).
+#[must_use]
+pub(crate) fn signal_band(dbm: Option<i32>) -> SignalBand {
+    match dbm {
+        None | Some(0) => SignalBand::Problem,
+        Some(level) if level >= -60 => SignalBand::Strong,
+        Some(level) if level >= -75 => SignalBand::Fair,
+        Some(_) => SignalBand::Low,
+    }
+}
+
 /// Registered icon ids for each Wi-Fi signal-strength state.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WifiIcons {
@@ -62,11 +84,11 @@ impl WifiIcons {
     /// Icon id for the given Wi-Fi signal level in dBm (`None` = no reading).
     #[must_use]
     pub fn for_signal(&self, dbm: Option<i32>) -> Option<SvgId> {
-        match dbm {
-            None | Some(0) => self.problem,
-            Some(level) if level >= -60 => self.strong,
-            Some(level) if level >= -75 => self.fair,
-            Some(_) => self.low,
+        match signal_band(dbm) {
+            SignalBand::Problem => self.problem,
+            SignalBand::Strong => self.strong,
+            SignalBand::Fair => self.fair,
+            SignalBand::Low => self.low,
         }
     }
 }
@@ -798,5 +820,29 @@ mod tests {
         assert_eq!(icons.for_signal(Some(-75)), icons.fair);
         assert_eq!(icons.for_signal(Some(-76)), icons.low);
         assert_eq!(icons.for_signal(Some(-90)), icons.low);
+    }
+
+    #[test]
+    fn signal_band_maps_dbm_to_icon_buckets() {
+        assert_eq!(signal_band(None), SignalBand::Problem);
+        assert_eq!(signal_band(Some(0)), SignalBand::Problem);
+        assert_eq!(signal_band(Some(-59)), SignalBand::Strong);
+        assert_eq!(signal_band(Some(-60)), SignalBand::Strong);
+        assert_eq!(signal_band(Some(-61)), SignalBand::Fair);
+        assert_eq!(signal_band(Some(-75)), SignalBand::Fair);
+        assert_eq!(signal_band(Some(-76)), SignalBand::Low);
+    }
+
+    // Locks the dirtying intent: jitter inside one bucket compares equal (no
+    // repaint), a bucket crossing compares unequal (repaint). This is the
+    // exact comparison refresh_network_if_due performs; the overlay-level
+    // path is not unit-tested because it walks getifaddrs and spawns uci.
+    #[test]
+    fn jitter_within_a_band_is_not_a_change_but_a_crossing_is() {
+        assert_eq!(signal_band(Some(-65)), signal_band(Some(-70)));
+        assert_eq!(signal_band(Some(-45)), signal_band(Some(-59)));
+        assert_ne!(signal_band(Some(-59)), signal_band(Some(-61)));
+        assert_ne!(signal_band(Some(-75)), signal_band(Some(-76)));
+        assert_ne!(signal_band(Some(-65)), signal_band(None));
     }
 }

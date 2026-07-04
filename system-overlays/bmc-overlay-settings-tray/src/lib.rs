@@ -454,7 +454,9 @@ fn panel_height_for(height: u32) -> f32 {
 
 impl SettingsTrayOverlay {
     /// Re-read IP / WiFi signal / SSID at most every `NETWORK_REFRESH`. Sets
-    /// `content_dirty` when anything changed.
+    /// `content_dirty` when the IP, SSID, or signal icon band changes. dBm
+    /// jitter inside one band does not trigger repaints, keeping hidden cache
+    /// refreshes rare.
     fn refresh_network_if_due(&mut self, now: Instant) {
         if now.duration_since(self.last_network_refresh) < NETWORK_REFRESH {
             return;
@@ -463,12 +465,13 @@ impl SettingsTrayOverlay {
         let ip = primary_ipv4().as_ref().map(Ipv4Addr::to_string);
         let signal = read_wifi_signal_dbm();
         let ssid = bmc_system_overlay::configured_station_ssid();
-        if ip != self.ip || signal != self.wifi_signal || ssid != self.ssid {
+        let band_changed = ui::signal_band(signal) != ui::signal_band(self.wifi_signal);
+        if ip != self.ip || band_changed || ssid != self.ssid {
             self.ip = ip;
-            self.wifi_signal = signal;
             self.ssid = ssid;
             self.content_dirty = true;
         }
+        self.wifi_signal = signal;
     }
 
     /// Reap a finished reconnect child so the `sh` process does not zombie.
