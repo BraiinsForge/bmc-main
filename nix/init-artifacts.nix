@@ -30,7 +30,8 @@ let
 
   # Select init packages and convert to the list format mkIndex/mkTarball expect
   initPackages = map
-    (name: packages.${name} // { inherit name; })
+    (name: packages.${name} // { inherit name; }
+      // lib.optionalAttrs (name == "core") { metadata = { bmc_version = bosVersion; }; })
     initPackageNames;
 
   index = mkIndex {
