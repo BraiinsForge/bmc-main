@@ -7,10 +7,18 @@ use bmc_widget::egl::{DmaBufInfo, EglContext};
 
 use crate::gpu::OverlayRenderTarget;
 use crate::overlay::{
-    MIN_INTER_FRAME, PollGate, RenderGate, SystemOverlay, overlay_needs_hide, overlay_needs_render,
-    overlay_poll_timeout, resize_transition, resolved_configured_size, screen_edge_visible,
+    FenceState, HideFenceAction, HideFenceGate, MIN_INTER_FRAME, PollGate, RenderGate,
+    SystemOverlay, hide_fence_action, hide_fence_after_tick, overlay_needs_hide,
+    overlay_needs_render, overlay_poll_timeout, resize_transition, resolved_configured_size,
+    screen_edge_visible,
 };
 use crate::surface::LayerSurfaceClient;
+
+/// Bound on how long `HostedOverlay::hide` waits for its presentation fence
+/// before unmapping anyway. Covers a repaint under cross-process GPU-lock
+/// contention (device traces showed ~112 ms worst-case frame gaps) while
+/// bounding how long a wedged compositor can defer the unmap.
+const UNMAP_FENCE_TIMEOUT: Duration = Duration::from_millis(150);
 
 /// A system overlay hosted inside another process (e.g. bmc-wasm-host). It owns
 /// its Wayland connection and export buffers but borrows the host's renderer
@@ -33,6 +41,9 @@ pub struct HostedOverlay {
     visible: bool,
     /// Whether the surface is currently mapped (has a live buffer attached).
     mapped: bool,
+    /// Deadline for the in-flight presentation fence armed by `hide`; `None`
+    /// when no fence is pending.
+    hide_fence: Option<Instant>,
     /// Set after a non-fatal render/export/attach error. A failed overlay is
     /// dropped from the host's list (terminal) — it must NOT keep `wants_render`
     /// latched, or it would busy-retry-and-log every pass.
@@ -70,6 +81,7 @@ impl HostedOverlay {
             wants_render,
             visible: false,
             mapped: false,
+            hide_fence: None,
             failed: false,
             screen_edge,
             revealed: false,
@@ -120,6 +132,11 @@ impl HostedOverlay {
             if self.size != size {
                 let transition = resize_transition(self.mapped);
                 if transition.unmap_before_resize {
+                    // This NULL-attaches directly, bypassing `hide`'s fence
+                    // machinery, so a fence armed just before the resize
+                    // must not dangle across the remap.
+                    self.hide_fence = None;
+                    self.client.cancel_presentation_fence();
                     self.client.attach_null_buffer()?;
                     self.client.roundtrip_after_resize_unmap(configured_size)?;
                     self.target.free_for_hide(egl, &mut self.client)?;
@@ -148,6 +165,16 @@ impl HostedOverlay {
         if self.visible {
             self.wants_render |= outcome.wants_render;
         }
+        // During a normal dismiss this never fires: the screen edge only
+        // re-arms after the unmap, so no re-reveal can arrive mid-fence.
+        // Kept so the state machine stays self-consistent if a visibility
+        // source ever behaves differently.
+        if self.visible && self.hide_fence.is_some() {
+            // Dropping the local deadline must abandon the client fence too,
+            // or its late callback would satisfy an unrelated future hide.
+            self.client.cancel_presentation_fence();
+        }
+        self.hide_fence = hide_fence_after_tick(self.visible, self.hide_fence);
         self.next_wake = outcome.next_wake;
     }
 
@@ -189,24 +216,60 @@ impl HostedOverlay {
             && self.overlay.uses_panel_cache()
     }
 
-    /// Unmap the surface and free export buffers. Called by the host when
-    /// `needs_hide` is true.
+    /// Unmap the surface and free export buffers. Called by the host every
+    /// pass while `needs_hide` is true. Non-blocking: the first call arms a
+    /// presentation fence and returns without unmapping; later calls unmap
+    /// once the fence resolves (compositor callback or deadline) or the
+    /// client is gone, so the compositor's last repaint is confirmed shown
+    /// before the NULL attach.
     pub fn hide(&mut self, egl: &EglContext) -> anyhow::Result<()> {
-        // Ordering is load-bearing: flush the NULL attach before destroying
-        // exported buffers so the compositor observes the unmap first.
-        self.client.attach_null_buffer()?;
-        self.client.roundtrip_after_hide_unmap()?;
-        self.target.free_for_hide(egl, &mut self.client)?;
-        self.mapped = false;
-        self.wants_render = false;
-        // Clear the frame-floor timestamp so a later re-show renders promptly
-        // and the hosted/standalone loops stay symmetric.
-        self.last_render = None;
-        if self.screen_edge.is_some() {
-            self.revealed = false;
-            self.client.rearm_screen_edge()?;
+        let frame_presented = self.client.take_frame_presented();
+        let now = Instant::now();
+        let action = hide_fence_action(HideFenceGate {
+            fence: match self.hide_fence {
+                None => FenceState::Unarmed,
+                Some(deadline) => FenceState::Armed {
+                    deadline_passed: now >= deadline,
+                },
+            },
+            frame_presented,
+            client_running: self.client.running(),
+        });
+
+        match action {
+            HideFenceAction::Arm => {
+                self.client.request_presentation_fence()?;
+                self.hide_fence = Some(now + UNMAP_FENCE_TIMEOUT);
+                Ok(())
+            }
+            HideFenceAction::Wait => Ok(()),
+            HideFenceAction::Unmap { timed_out } => {
+                if timed_out {
+                    tracing::warn!(
+                        "hide-fence deadline reached before a presented frame; unmapping anyway"
+                    );
+                }
+                // Ordering is load-bearing: flush the NULL attach before destroying
+                // exported buffers so the compositor observes the unmap first.
+                self.client.attach_null_buffer()?;
+                self.client.roundtrip_after_hide_unmap()?;
+                self.target.free_for_hide(egl, &mut self.client)?;
+                self.mapped = false;
+                self.wants_render = false;
+                // Clear the frame-floor timestamp so a later re-show renders promptly
+                // and the hosted/standalone loops stay symmetric.
+                self.last_render = None;
+                self.hide_fence = None;
+                // No-op after a normal fence resolve; drops the still-pending
+                // client fence when the deadline forced this unmap.
+                self.client.cancel_presentation_fence();
+                if self.screen_edge.is_some() {
+                    self.revealed = false;
+                    self.client.rearm_screen_edge()?;
+                }
+                Ok(())
+            }
         }
-        Ok(())
     }
 
     #[must_use]
@@ -242,7 +305,7 @@ impl HostedOverlay {
             .last_render
             .and_then(|t| MIN_INTER_FRAME.checked_sub(now.duration_since(t)))
             .filter(|d| !d.is_zero());
-        overlay_poll_timeout(
+        let gated = overlay_poll_timeout(
             PollGate {
                 failed: self.failed,
                 visible: self.visible,
@@ -252,7 +315,19 @@ impl HostedOverlay {
             },
             tick,
             inter_frame_remaining,
-        )
+        );
+        // A pending hide fence must still wake the loop at its deadline even
+        // if nothing else would — otherwise a silent compositor strands the
+        // unmap on the next unrelated event.
+        let fence_remaining = self
+            .hide_fence
+            .map(|deadline| deadline.saturating_duration_since(now));
+        match (gated, fence_remaining) {
+            (Some(g), Some(f)) => Some(g.min(f)),
+            (None, Some(f)) => Some(f),
+            (Some(g), None) => Some(g),
+            (None, None) => None,
+        }
     }
 
     #[must_use]

@@ -41,6 +41,58 @@ pub(crate) fn overlay_needs_hide(mapped: bool, visible: bool) -> bool {
     mapped && !visible
 }
 
+/// The presentation fence as `hide` sees it this pass: not yet requested,
+/// or armed with its deadline either still ahead or already behind now.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum FenceState {
+    Unarmed,
+    Armed { deadline_passed: bool },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HideFenceGate {
+    pub fence: FenceState,
+    pub frame_presented: bool,
+    pub client_running: bool,
+}
+
+/// What `HostedOverlay::hide` should do this pass for its non-blocking
+/// presentation fence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HideFenceAction {
+    /// No fence pending yet: request one and wait for a later pass.
+    Arm,
+    /// Fence pending, resolved by neither the callback nor the deadline:
+    /// keep waiting.
+    Wait,
+    /// Run the unmap sequence now. `timed_out` is true only when the
+    /// deadline forced it — worth a warning — as opposed to a presented
+    /// frame or a dead client resolving it normally.
+    Unmap { timed_out: bool },
+}
+
+#[must_use]
+pub(crate) fn hide_fence_action(gate: HideFenceGate) -> HideFenceAction {
+    let FenceState::Armed { deadline_passed } = gate.fence else {
+        return HideFenceAction::Arm;
+    };
+    if gate.frame_presented || !gate.client_running {
+        return HideFenceAction::Unmap { timed_out: false };
+    }
+    if deadline_passed {
+        return HideFenceAction::Unmap { timed_out: true };
+    }
+    HideFenceAction::Wait
+}
+
+/// Stale-fence guard for `tick`: a fence only makes sense while the overlay
+/// is on its way out, so a re-reveal drops it rather than letting a later
+/// callback or deadline resolve a hide that never happened.
+#[must_use]
+pub(crate) fn hide_fence_after_tick(visible: bool, hide_fence: Option<Instant>) -> Option<Instant> {
+    if visible { None } else { hide_fence }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ResizeTransition {
     pub unmap_before_resize: bool,
@@ -383,6 +435,67 @@ mod tests {
     #[test]
     fn mapped_but_invisible_needs_hide() {
         assert!(overlay_needs_hide(true, false));
+    }
+
+    fn armed_hide_fence_gate(
+        frame_presented: bool,
+        deadline_passed: bool,
+        client_running: bool,
+    ) -> HideFenceGate {
+        HideFenceGate {
+            fence: FenceState::Armed { deadline_passed },
+            frame_presented,
+            client_running,
+        }
+    }
+
+    #[test]
+    fn hide_fence_arms_when_unset() {
+        let gate = HideFenceGate {
+            fence: FenceState::Unarmed,
+            frame_presented: false,
+            client_running: true,
+        };
+        assert_eq!(hide_fence_action(gate), HideFenceAction::Arm);
+    }
+
+    #[test]
+    fn hide_fence_unmaps_on_presented_callback() {
+        assert_eq!(
+            hide_fence_action(armed_hide_fence_gate(true, false, true)),
+            HideFenceAction::Unmap { timed_out: false }
+        );
+    }
+
+    #[test]
+    fn hide_fence_unmaps_on_deadline() {
+        assert_eq!(
+            hide_fence_action(armed_hide_fence_gate(false, true, true)),
+            HideFenceAction::Unmap { timed_out: true }
+        );
+    }
+
+    #[test]
+    fn hide_fence_waits_while_unresolved() {
+        assert_eq!(
+            hide_fence_action(armed_hide_fence_gate(false, false, true)),
+            HideFenceAction::Wait
+        );
+    }
+
+    #[test]
+    fn hide_fence_unmaps_when_client_gone() {
+        assert_eq!(
+            hide_fence_action(armed_hide_fence_gate(false, false, false)),
+            HideFenceAction::Unmap { timed_out: false }
+        );
+    }
+
+    #[test]
+    fn visible_overlay_clears_stale_hide_fence() {
+        let deadline = Instant::now();
+        assert_eq!(hide_fence_after_tick(true, Some(deadline)), None);
+        assert_eq!(hide_fence_after_tick(false, Some(deadline)), Some(deadline));
     }
 
     #[test]

@@ -6,11 +6,15 @@
 //! `deck_widget_manager_v1` surface for a `zwlr_layer_shell_v1` layer
 //! surface. Overlays self-pace their redraws off the framework's
 //! tick/`next_wake` schedule, so this client never requests a
-//! `wl_surface.frame` callback.
+//! `wl_surface.frame` callback for redraw pacing. The one exception is a
+//! non-blocking presentation fence a hosted overlay requests just before its
+//! unmap, so the compositor's last repaint is confirmed shown before the
+//! NULL attach (see `request_presentation_fence`).
 
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use wayland_client::backend::ObjectId;
 use wayland_client::protocol::{
     wl_buffer, wl_callback, wl_compositor, wl_region, wl_registry, wl_seat, wl_surface, wl_touch,
 };
@@ -79,12 +83,23 @@ struct State {
     /// Compositor-suggested size from the latest Configure.
     configured_size: (u32, u32),
     pending_touch: Vec<crate::overlay::TouchEvent>,
-    /// Surface-dirty from a Configure/resize only. Overlays do not use
-    /// compositor frame callbacks; redraw pacing is the framework's
-    /// tick/next_wake job, so no wl_surface.frame is ever requested.
+    /// Surface-dirty from a Configure/resize only. Redraw pacing is the
+    /// framework's tick/next_wake job and never uses frame callbacks; the
+    /// only `wl_surface.frame` this client ever requests is the pre-unmap
+    /// presentation fence, tracked separately below.
     needs_render: bool,
     /// Latest post-connect compositor-suggested size, when it changed.
     pending_size_change: Option<(u32, u32)>,
+
+    /// `ObjectId` of the `wl_callback` from the most recent
+    /// `request_presentation_fence`, cleared when it resolves or is
+    /// cancelled. Matching on this id (rather than latching on any `Done`)
+    /// keeps a late callback from an abandoned fence from completing a
+    /// newer one early.
+    pending_fence: Option<ObjectId>,
+    /// Set on a `wl_callback::Event::Done` whose id matched `pending_fence`;
+    /// drained by `take_frame_presented`.
+    fence_done: bool,
 
     buffer_slots: BufferSlotMap,
     released_buffers: ReleasedBufferSet,
@@ -114,6 +129,8 @@ impl Default for State {
             pending_touch: Vec::new(),
             needs_render: false,
             pending_size_change: None,
+            pending_fence: None,
+            fence_done: false,
             buffer_slots: BufferSlotMap::new(),
             released_buffers: ReleasedBufferSet::new(),
         }
@@ -139,6 +156,13 @@ impl State {
 
     fn discard_resize_unmap_configure(&mut self, requested_size: (u32, u32)) {
         self.discard_unmap_configure(requested_size);
+    }
+
+    fn mark_fence_done(&mut self, callback_id: &ObjectId) {
+        if self.pending_fence.as_ref() == Some(callback_id) {
+            self.fence_done = true;
+            self.pending_fence = None;
+        }
     }
 }
 
@@ -323,6 +347,38 @@ impl LayerSurfaceClient {
         let surface = self.state.surface.as_ref().context("surface not created")?;
         submit_buffer_to_surface(surface, &qh, buffer, info, false);
         Ok(())
+    }
+
+    /// Request a `wl_surface.frame` callback as a non-blocking presentation
+    /// fence and commit with no attach/damage, replacing any previously
+    /// pending fence. A layer-shell commit drains queued frame callbacks
+    /// regardless of buffer assignment and marks full output damage when any
+    /// were present, so this commit both queues the callback and forces the
+    /// redraw whose completion fires it.
+    pub fn request_presentation_fence(&mut self) -> anyhow::Result<()> {
+        let qh = self.queue.handle();
+        let surface = self.state.surface.as_ref().context("surface not created")?;
+        let callback = surface.frame(&qh, ());
+        self.state.pending_fence = Some(callback.id());
+        self.state.fence_done = false;
+        surface.commit();
+        self.conn
+            .flush()
+            .map_err(|e| anyhow::anyhow!("wl flush on presentation fence: {e}"))?;
+        Ok(())
+    }
+
+    /// Drain whether the pending presentation fence has resolved.
+    pub fn take_frame_presented(&mut self) -> bool {
+        std::mem::take(&mut self.state.fence_done)
+    }
+
+    /// Abandon a pending presentation fence without waiting for its
+    /// callback. A late `Done` for it is then ignored, since it no longer
+    /// matches `pending_fence`.
+    pub fn cancel_presentation_fence(&mut self) {
+        self.state.pending_fence = None;
+        self.state.fence_done = false;
     }
 
     /// Unmap the surface: attach a NULL buffer and commit. The compositor
@@ -704,13 +760,16 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for State {
 
 impl Dispatch<wl_callback::WlCallback, ()> for State {
     fn event(
-        _: &mut Self,
-        _: &wl_callback::WlCallback,
-        _: wl_callback::Event,
+        state: &mut Self,
+        callback: &wl_callback::WlCallback,
+        event: wl_callback::Event,
         (): &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if let wl_callback::Event::Done { .. } = event {
+            state.mark_fence_done(&callback.id());
+        }
     }
 }
 
