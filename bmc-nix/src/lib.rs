@@ -9,6 +9,7 @@ pub mod manifest;
 pub mod mount;
 pub mod partition;
 pub mod profile;
+pub mod progress;
 pub mod registration;
 pub mod service_orchestrator;
 pub mod store;
