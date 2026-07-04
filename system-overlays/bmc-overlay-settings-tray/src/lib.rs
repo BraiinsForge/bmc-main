@@ -564,12 +564,17 @@ impl SystemOverlay for SettingsTrayOverlay {
 
     fn on_reveal(&mut self) {
         let now = Instant::now();
+        // The panel cache may still show pre-hide transient UI (hold progress,
+        // reconnect cooldown); when this reset changes content, repaint instead
+        // of blitting the stale cache through the reveal ramp.
+        if self.button != ButtonState::default() || self.reconnect != ReconnectState::default() {
+            self.content_dirty = true;
+        }
         self.button = ButtonState::default();
         self.reconnect = ReconnectState::default();
         self.touch_track = None;
         self.dismissing = false;
         self.last_interaction = now;
-        self.content_dirty = true;
         self.slide.start_reveal();
     }
 
@@ -736,6 +741,10 @@ impl SystemOverlay for SettingsTrayOverlay {
     fn wants_cached_blit(&self, now: Instant) -> Option<f32> {
         self.slide
             .cached_blit_offset(now, self.content_dirty, self.panel_height)
+    }
+
+    fn uses_panel_cache(&self) -> bool {
+        true
     }
 
     fn on_frame_submitted(&mut self, now: Instant) {

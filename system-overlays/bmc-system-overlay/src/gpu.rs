@@ -41,8 +41,9 @@ pub struct OverlayRenderTarget {
     /// Once-painted panel source for the blit-only slide: an overlay paints the
     /// panel band into this GL texture/FBO once (and again only when content
     /// changes), then each animation frame copies it into the export buffer at
-    /// the current slide offset. `None` until first captured; freed on hide so
-    /// no fullscreen allocation survives an unmap.
+    /// the current slide offset. `None` until first captured; retained across
+    /// hides so the next reveal can blit immediately, freed on resize (stale
+    /// size) and destroy.
     panel_cache: Option<WidgetExportBuffer>,
 }
 
@@ -120,10 +121,13 @@ impl OverlayRenderTarget {
         Ok(())
     }
 
-    /// Whether a panel source has been captured and can be blitted.
+    /// Whether a captured panel matching `size` is ready to blit. Size-checked:
+    /// a cache retained across hides may predate a surface resize.
     #[must_use]
-    pub fn is_cached(&self) -> bool {
-        self.panel_cache.is_some()
+    pub fn cached_ready(&self, size: (u32, u32)) -> bool {
+        self.panel_cache
+            .as_ref()
+            .is_some_and(|c| c.width == size.0 && c.height == size.1)
     }
 
     /// Present an animation frame by copying the cached panel into the current
@@ -156,6 +160,9 @@ impl OverlayRenderTarget {
     ) -> anyhow::Result<()> {
         if self.size() == (w, h) {
             return Ok(());
+        }
+        if let Some(cache) = self.panel_cache.take() {
+            egl.destroy_widget_export_buffer(cache);
         }
         for buffer in self.wl_buffers.take_all().into_iter().flatten() {
             client.destroy_minted_wl_buffer(buffer);
@@ -204,7 +211,9 @@ impl OverlayRenderTarget {
 
     /// Free the GBM/GL export buffers and cached `wl_buffer`s for a hide, but
     /// keep the target reusable: a later `ensure_current` reallocates lazily.
-    /// Distinct from [`Self::destroy`], which is terminal (shutdown only).
+    /// The panel cache is retained (not freed here) so the next reveal can
+    /// blit it instead of full-painting; [`Self::destroy`] is the terminal
+    /// cleanup that frees it.
     pub fn free_for_hide(
         &mut self,
         egl: &EglContext,
@@ -213,9 +222,6 @@ impl OverlayRenderTarget {
         let cached_wl_buffers = self.wl_buffers.cached_count();
         tracing::info!(cached_wl_buffers, "free_for_hide: freeing overlay buffers");
         self.buffers.destroy_all(egl);
-        if let Some(cache) = self.panel_cache.take() {
-            egl.destroy_widget_export_buffer(cache);
-        }
         for buffer in self.wl_buffers.take_all().into_iter().flatten() {
             client.destroy_minted_wl_buffer(buffer);
         }

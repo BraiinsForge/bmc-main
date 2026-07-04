@@ -301,6 +301,13 @@ pub trait SystemOverlay {
         None
     }
 
+    /// Whether this overlay presents slide frames through the panel cache.
+    /// Gates cache captures so overlays that never blit don't allocate one.
+    /// Default: `false`.
+    fn uses_panel_cache(&self) -> bool {
+        false
+    }
+
     /// Take and clear the overlay's content-changed flag. The host calls this
     /// after a full paint to learn whether the just-painted frame must refresh
     /// the cached panel source. Default: `false` (overlays without a cache never

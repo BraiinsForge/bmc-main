@@ -137,7 +137,7 @@ pub fn render_hosted_overlay(
     let cached_blit = overlay
         .overlay_mut()
         .wants_cached_blit(now)
-        .filter(|_| overlay.target_mut().is_cached());
+        .filter(|_| overlay.target_mut().cached_ready(size));
     let (dmabuf, slot) = if let Some(offset_y) = cached_blit {
         // Cached-blit branch: clear-transparent + shader-copy the cached panel
         // into the export buffer at the slide offset. No layout or paint.
@@ -191,7 +191,15 @@ pub fn render_hosted_overlay(
 
                 // Refresh the cache from this paint if the content changed, so a
                 // later animation frame can present it without repainting.
-                if overlay.overlay_mut().take_content_dirty() {
+                // Capture on a missing/stale cache too: a clean-but-cold
+                // pending frame would otherwise fall through to the staging
+                // blit below and present the panel at the settled offset.
+                // Gated on cache use so overlays that never blit (offline,
+                // device-info) do not allocate a cache on their first paint.
+                let dirty = overlay.overlay_mut().take_content_dirty();
+                if overlay.overlay_mut().uses_panel_cache()
+                    && (dirty || !overlay.target_mut().cached_ready(size))
+                {
                     overlay.target_mut().capture_panel(
                         &shared.egl,
                         &shared.scratch,
@@ -206,7 +214,7 @@ pub fn render_hosted_overlay(
                 // the offset iff a slide is still animating.
                 let fbo = overlay.target_mut().current_fbo();
                 match overlay.overlay_mut().wants_cached_blit(now) {
-                    Some(offset_y) if overlay.target_mut().is_cached() => {
+                    Some(offset_y) if overlay.target_mut().cached_ready(size) => {
                         #[expect(
                             clippy::cast_precision_loss,
                             reason = "overlay band height in pixels converts to NDC without meaningful loss"
