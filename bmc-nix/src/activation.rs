@@ -199,9 +199,11 @@ pub(crate) fn sweep_next_markers(profile_dir: &Path, keep: Option<&str>) -> io::
 /// pre-existing markers before *building* a new profile on the upgrade
 /// path. `remove_next` here consumes a marker after
 /// `GenerationSelector::Next` activates it successfully.
+/// The disappearance is fsynced so a crash after a successful boot activation
+/// cannot resurrect a consumed marker.
 pub fn remove_next(profile_dir: &Path, bos_version: &str) -> io::Result<()> {
     match std::fs::remove_file(profile_dir.join(next_marker_name(bos_version))) {
-        Ok(()) => Ok(()),
+        Ok(()) => crate::fs_sync::fsync_dir(profile_dir),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err),
     }

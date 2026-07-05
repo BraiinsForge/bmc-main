@@ -351,12 +351,22 @@ fn install_result_from_plan(
 }
 
 /// Remove stale deferred-activation markers superseded by this run.
+///
+/// The removal is a publication too: without the directory fsync an
+/// upgrade can report success while a superseded marker survives a
+/// crash and downgrades the device at the next boot.
 fn remove_stale_next(profile_dir: &Path) -> Result<(), InstallError> {
-    crate::activation::sweep_next_markers(profile_dir, None).map_err(InstallError::StageNext)
+    crate::activation::sweep_next_markers(profile_dir, None).map_err(InstallError::StageNext)?;
+    crate::fs_sync::fsync_dir(profile_dir).map_err(InstallError::StageNext)
 }
 
 /// Stage a built generation as `next.<bos-version>` for the boot-time
 /// activator of that firmware version, replacing any older marker.
+///
+/// The generation itself is already durable (build_profile syncs before
+/// publishing), and a symlink's only content is its target string, so
+/// only the directory fsync is needed to keep a reported staging from
+/// evaporating on power loss.
 fn stage_next_boot(
     profile_dir: &Path,
     generation: &ProfileGeneration,
@@ -372,11 +382,7 @@ fn stage_next_boot(
         profile_dir.join(crate::activation::next_marker_name(bos_version)),
     )
     .map_err(InstallError::StageNext)?;
-    // The marker only matters after a reboot, so the rename must survive
-    // a power cut: fsync the profile directory holding it.
-    std::fs::File::open(profile_dir)
-        .and_then(|dir| dir.sync_all())
-        .map_err(InstallError::StageNext)
+    crate::fs_sync::fsync_dir(profile_dir).map_err(InstallError::StageNext)
 }
 
 fn remove_file_if_present(path: &Path) -> Result<(), std::io::Error> {

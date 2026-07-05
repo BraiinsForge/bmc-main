@@ -56,6 +56,11 @@ pub enum BuildProfileError {
     Manifest(#[from] crate::manifest::WriteManifestError),
     #[error("failed to rename generation: {source}")]
     Rename { source: std::io::Error },
+    #[error("failed to sync '{path}': {source}")]
+    Sync {
+        path: String,
+        source: std::io::Error,
+    },
     #[error("failed to read profile directory: {source}")]
     ReadDir { source: std::io::Error },
     #[error("failed to acquire profile lock: {source}")]
@@ -233,8 +238,26 @@ pub async fn build_profile(
     let manifest = crate::manifest::build_manifest(packages);
     crate::manifest::write_manifest(&tmp_path, &manifest)?;
 
-    // Step 4: Rename tmp to final generation path
+    // Step 4: Make the generation contents (tree, hook outputs,
+    // manifest) durable before publishing the name. syncfs is
+    // unbounded work, so it runs on a blocking thread.
+    let sync_target = profile_dir.to_path_buf();
+    tokio::task::spawn_blocking(move || crate::fs_sync::sync_filesystem_of(&sync_target))
+        .await
+        .expect("BUG: sync task should not panic")
+        .map_err(|source| BuildProfileError::Sync {
+            path: profile_dir.display().to_string(),
+            source,
+        })?;
+
+    // Step 5: Rename tmp to final generation path
     std::fs::rename(&tmp_path, &gen_path).map_err(|source| BuildProfileError::Rename { source })?;
+
+    // Step 6: Make the publication durable before reporting success.
+    crate::fs_sync::fsync_dir(profile_dir).map_err(|source| BuildProfileError::Sync {
+        path: profile_dir.display().to_string(),
+        source,
+    })?;
 
     info!(%gen_name, "profile generation built successfully");
 
@@ -582,6 +605,7 @@ mod tests {
             | BuildProfileError::Hooks(_)
             | BuildProfileError::Manifest(_)
             | BuildProfileError::Rename { .. }
+            | BuildProfileError::Sync { .. }
             | BuildProfileError::ReadDir { .. }
             | BuildProfileError::Lock { .. }) => {
                 panic!("expected Conflict error, got: {other}")
@@ -676,6 +700,7 @@ mod tests {
             | BuildProfileError::Hooks(_)
             | BuildProfileError::Manifest(_)
             | BuildProfileError::Rename { .. }
+            | BuildProfileError::Sync { .. }
             | BuildProfileError::ReadDir { .. }
             | BuildProfileError::Lock { .. }) => {
                 panic!("expected Conflict error, got: {other}")
