@@ -147,6 +147,7 @@ let
       { prefix = "099"; bin = selectBmcNixBin "bmc-hook-activation-resolver"; }
     ];
     activation = mkPrioritizedEntries ./activation ++ [
+      { prefix = "050"; bin = profile.buildCrate crates.bmc-activation-write-boundary { }; }
       { prefix = "052"; bin = nixConfActivation; }
       { prefix = "055"; bin = selectBmcNixBin "bmc-activation-copy-files"; }
       { prefix = "060"; bin = firmware-init-services; }
