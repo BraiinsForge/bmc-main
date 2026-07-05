@@ -11,6 +11,7 @@ axum-extra.workspace = true
 bmc.workspace = true
 bmc-button.workspace = true
 bmc-led = { workspace = true, features = ["driver"] }
+bmc-nix.workspace = true
 bmc-platform = { workspace = true, features = ["backlight"] }
 bmc-shared-ii-net.workspace = true
 bmc-shared-time.workspace = true
