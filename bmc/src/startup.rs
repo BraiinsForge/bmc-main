@@ -17,7 +17,7 @@ use crate::led_coordinator::LedCoordinatorHandle;
 use crate::manager::BmcManager;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
-use crate::system_upgrade::{NixUpgradeConfig, StateService, SystemUpgradeService};
+use crate::system_upgrade::{StateService, SystemUpgradeService};
 use crate::web::{ServerConfig, WebService};
 use crate::widget::{Coordinator, UpgradeWidgetLifecycle, WidgetManager, WidgetRegistry};
 use anyhow::Result;
@@ -26,6 +26,7 @@ use bmc_led::led_driver::LedDriver;
 use bmc_platform::HardwareCapabilities;
 use bmc_scheduler::JobScheduler;
 use bmc_upgrade::firmware::FirmwareIndex;
+use bmc_upgrade::packages::{NixUpgradeConfig, PackageUpgrader};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, broadcast};
 use tokio::sync::{RwLock, watch};
@@ -125,12 +126,12 @@ where
             manager.clone(),
             state_service.clone(),
             scheduler.clone(),
-            NixUpgradeConfig {
+            Arc::new(PackageUpgrader::new(NixUpgradeConfig {
                 servers_config_path: config.nix_servers_config_path.clone(),
                 profile_dir: config.nix_profile_dir.clone(),
                 hooks_dir: config.nix_hooks_dir.clone(),
                 hooks_override_path: config.nix_hooks_override_path.clone(),
-            },
+            })),
             Arc::new(UpgradeWidgetLifecycle::new(
                 widget_coordinator.clone(),
                 config_handle.clone(),
