@@ -1,0 +1,103 @@
+# End-to-End Package Upgrade Harness
+
+`deck upgrade-e2e` drives a complete package upgrade cycle against a real Deck: it builds packages on the developer
+machine, serves them to the device as a signed binary cache plus package index, and then exercises the production
+upgrade path — `CheckForUpgrade` and `StartUpgrade` over the device's gRPC API — asserting that the bmc profile advanced
+to a new generation. It is a development harness; nothing here ships on the device.
+
+## Prerequisites
+
+- A Deck with a Nix-initialized store (`nix run .#deck -- init`, then `nix run .#deck -- deploy`), running a firmware
+  whose backend implements the `UpgradeService` RPCs (`CheckForUpgrade`, `StartUpgrade`).
+
+- A seeded `/etc/nix-upgrade/servers.json` on the device. `register-server` (the "Register server on device" stage)
+  requires this file and hard-fails when it is missing, because the `factory` entry is mandatory and it will not invent
+  one. Factory provisioning (`bmc-nix-init`) normally writes it; on a device that lacks it, seed a minimal registry
+  first:
+
+  ```json
+  {
+    "factory": {
+      "id": "braiins",
+      "base_url": "https://cache.braiins.com/v1",
+      "known_public_key": "cache.braiins.com:placeholder",
+      "priority": 1,
+      "enabled": true
+    },
+    "servers": []
+  }
+  ```
+
+- `grpcurl` on the developer machine's PATH (`nix shell .#pkgs.grpcurl`).
+
+- The device must be able to reach the developer machine over the network: the harness serves the binary cache on
+  `--port` (default 8080) and the package index on `--index-port` (default 8081), so those ports must not be firewalled.
+
+## Invocation
+
+```sh
+nix run .#deck -- upgrade-e2e --device DEVICE_IP
+```
+
+With no `--packages`, the harness builds and serves every deck package — a superset of `deck deploy`'s default set. Use
+the default set — a narrower `--packages` subset does not work today: the harness serves an index built solely from the
+`--package` entries it publishes, and any installed system package that is absent from every consulted index is a hard
+resolution failure, so `CheckForUpgrade` aborts. Serving a subset needs a baseline index carrying the rest of the
+installed profile, which the harness does not yet plumb (`upgrade-server` accepts `--base-index`, but the harness never
+passes it).
+
+`--password` passes the device's web password to the gRPC `Login` call; the default empty string matches a device with
+no password set. `--profile debug` serves the profiling build set, mirroring `deck deploy`.
+
+An upgrade is only offered when the served build differs from the installed profile — a version bump or a store-path
+change at the same version both count. Rebuilding from the same tree that deployed the device produces identical store
+paths, so make a code change (or serve a different profile) before running the harness, otherwise the
+`Check for upgrade` stage aborts with "no package upgrade offered".
+
+## What the Stages Do
+
+1. **grpcurl present / Device reachable / bmc-nix-cli present** — fail-fast preconditions; `bmc-nix-cli` is bootstrapped
+   onto the device when missing, as in `deck deploy`.
+2. **Resolve packages / Build packages** — the shared deploy stages; the closures are realized into the local
+   `/nix/store` but, unlike `deck deploy`, never copied to the device.
+3. **Snapshot current generation** — records the device's current profile generation number (from the `current` symlink
+   in `/nix/var/nix/gcroots/profiles/bmc`) for the final assertion.
+4. **Start upgrade server** — launches `nix run .#upgrade-server` in the background with one
+   `--package NAME=VERSION=STORE_PATH` per built package, waits until both the cache (`/nix-cache-info`) and the index
+   (`nix-package-index.v1.json`) answer HTTP, and reads the cache public key from the keypair directory
+   (`$XDG_STATE_HOME/bmc-upgrade-server`). Server output goes to `bmc-upgrade-server.log` in the system temp directory.
+   The advertised host address is autodetected from the route to the device.
+5. **Register server on device** — runs `bmc-nix-cli register-server` on the device with id `dev-upgrade`, pointing both
+   the index base URL and the cache substituter at the developer machine. The index is unsigned, so the index public key
+   mirrors the cache key, matching the command `upgrade-server` itself prints.
+6. **Authenticate** — `AuthenticationService/Login` via grpcurl (plaintext h2c on port 80); the returned token becomes
+   the `session_id` cookie for the authenticated `UpgradeService` calls.
+7. **Check for upgrade** — expects a populated `packages` plan, an `APP_RESTART` disruption, and an upgrade id.
+8. **Run upgrade** — `StartUpgrade` with the upgrade id, consuming the progress stream live; the stream must pass
+   through the `REALIZING` and `ACTIVATING` package phases and end with a `finished` event.
+9. **Profile advanced** — re-reads the current generation, requiring it to have incremented, and requires every served
+   package that was installed before the upgrade to appear in the new generation's manifest at its served store path.
+   Served packages absent from the pre-upgrade manifest are index-only — they are not auto-installed and not expected to
+   appear.
+
+The upgrade server is terminated when the procedure ends, whether it succeeded or aborted.
+
+## Cleanup
+
+**Remove the registration once you stop the harness, or the device's upgrade checks break.** The `dev-upgrade` server
+registration persists on the device after the run: its entry stays in `/etc/nix-upgrade/servers.json` and its
+substituter plus trusted key stay in `/etc/nix/nix.conf`. Index fetching aborts when any *required* top-level server
+fetch fails (`fetch_and_merge_indexes` in `bmc-nix/src/index.rs`; only servers registered as optional degrade to a
+warning), and `register-server` marks servers required by default, so while `dev-upgrade` is still registered and
+enabled but the developer machine's server is down, *every* `CheckForUpgrade` on the device fails entirely — not just
+for `dev-upgrade` — until the entry is removed or disabled. Re-running the harness against a live server heals it
+(`register-server` replaces the entry by id).
+
+To remove it, on the device:
+
+- delete the `dev-upgrade` object from the `servers` array in `/etc/nix-upgrade/servers.json`;
+- delete the `extra-substituters = <cache-url>` and `extra-trusted-public-keys = <key>` lines from `/etc/nix/nix.conf`.
+
+These undo exactly what the "Register server on device" stage wrote (`register-server` adds the `servers.json` entry and
+sets those two `extra-*` lines). Disabling the entry (`"enabled": false` in `servers.json`) instead of deleting it also
+stops the failing fetches while keeping the registration around for a later run.
