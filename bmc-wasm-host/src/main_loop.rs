@@ -14,15 +14,16 @@ use crate::control::{ListenSocket, accept_and_load};
 use crate::host::SharedHost;
 use crate::slot::WidgetSlot;
 
-const GRACE_DURATION: Duration = Duration::from_millis(100);
-
 /// Let a startup/scene burst settle before the next GC, per review.
 const GC_SETTLE_DELAY: Duration = Duration::from_secs(5);
 
+/// Exit as soon as the last connection is gone: bmc shuts down and restarts
+/// immediately, and a host that lingers past its last slot would adopt the
+/// new bmc instance's thins (stale code after a package upgrade) or hold the
+/// socket against the replacement host's bind.
 #[derive(Debug)]
 pub struct HostLifetime {
     ever_had_slot: bool,
-    last_disconnect: Option<Instant>,
 }
 
 impl HostLifetime {
@@ -30,43 +31,20 @@ impl HostLifetime {
     pub fn new() -> Self {
         Self {
             ever_had_slot: false,
-            last_disconnect: None,
         }
     }
 
     pub fn note_accept(&mut self) {
         self.ever_had_slot = true;
-        self.last_disconnect = None;
     }
 
-    pub fn note_disconnect(&mut self, now: Instant) {
+    pub fn note_failed_load(&mut self) {
         self.ever_had_slot = true;
-        self.last_disconnect = Some(now);
-    }
-
-    pub fn note_failed_load(&mut self, now: Instant) {
-        self.ever_had_slot = true;
-        self.last_disconnect = Some(now);
     }
 
     #[must_use]
-    pub fn should_continue(&self, slots_len: usize, overlays_active: bool, now: Instant) -> bool {
-        if slots_len > 0 || overlays_active {
-            return true;
-        }
-        if !self.ever_had_slot {
-            return true;
-        }
-        match self.last_disconnect {
-            None => true,
-            Some(t) => now.duration_since(t) < GRACE_DURATION,
-        }
-    }
-
-    #[must_use]
-    pub fn poll_timeout_contribution(&self, now: Instant) -> Option<Duration> {
-        let t = self.last_disconnect?;
-        Some(GRACE_DURATION.saturating_sub(now.duration_since(t)))
+    pub fn should_continue(&self, slots_len: usize, overlays_active: bool) -> bool {
+        slots_len > 0 || overlays_active || !self.ever_had_slot
     }
 }
 
@@ -99,14 +77,11 @@ pub struct SlotPollInputs {
     pub has_pending_io: bool,
 }
 
-/// Pure: fold per-slot inputs and the lifetime grace remainder into a single
-/// `poll(2)` timeout in milliseconds. `-1` is `poll(2)`'s indefinite-block sentinel,
-/// returned when nothing contributes a finite value.
+/// Pure: fold per-slot inputs into a single `poll(2)` timeout in milliseconds.
+/// `-1` is `poll(2)`'s indefinite-block sentinel, returned when nothing
+/// contributes a finite value.
 #[must_use]
-pub fn compute_poll_timeout_from_inputs(
-    slots: &[SlotPollInputs],
-    grace_remaining: Option<Duration>,
-) -> i32 {
+pub fn compute_poll_timeout_from_inputs(slots: &[SlotPollInputs]) -> i32 {
     let mut best: Option<Duration> = None;
     let push = |best: &mut Option<Duration>, candidate: Duration| {
         *best = match *best {
@@ -147,11 +122,6 @@ pub fn compute_poll_timeout_from_inputs(
     if slots.iter().any(|s| s.has_pending_io) {
         push(&mut best, Duration::from_millis(100));
     }
-    if slots.is_empty()
-        && let Some(d) = grace_remaining
-    {
-        push(&mut best, d);
-    }
     match best {
         None => -1,
         Some(d) => i32::try_from(d.as_millis()).unwrap_or(i32::MAX),
@@ -160,9 +130,9 @@ pub fn compute_poll_timeout_from_inputs(
 
 /// Production wrapper: gather every slot's inputs and forward to the pure core.
 #[must_use]
-pub fn compute_poll_timeout(slots: &SlotTable, lifetime: &HostLifetime, now: Instant) -> i32 {
+pub fn compute_poll_timeout(slots: &SlotTable, now: Instant) -> i32 {
     let inputs: Vec<SlotPollInputs> = slots.iter().map(|s| s.poll_inputs(now)).collect();
-    compute_poll_timeout_from_inputs(&inputs, lifetime.poll_timeout_contribution(now))
+    compute_poll_timeout_from_inputs(&inputs)
 }
 
 #[derive(Debug)]
@@ -372,13 +342,9 @@ fn run_loop(
     // the previous run's root protects them until the scheduled pass.
     let mut next_gc = Instant::now() + GC_SETTLE_DELAY;
 
-    while lifetime.should_continue(
-        slots.len(),
-        overlays.iter().any(HostedOverlay::running),
-        Instant::now(),
-    ) {
+    while lifetime.should_continue(slots.len(), overlays.iter().any(HostedOverlay::running)) {
         let poll_now = Instant::now();
-        let slot_ms = compute_poll_timeout(slots, &lifetime, poll_now);
+        let slot_ms = compute_poll_timeout(slots, poll_now);
         let mut wake = u64::try_from(slot_ms).ok().map(Duration::from_millis);
         for overlay in overlays.iter() {
             if let Some(d) = overlay.poll_timeout(poll_now) {
@@ -458,7 +424,7 @@ fn run_loop(
                     }
                     Err(e) => {
                         if slots.is_empty() {
-                            lifetime.note_failed_load(Instant::now());
+                            lifetime.note_failed_load();
                         }
                         tracing::warn!(?e, "load failed; slot rejected");
                     }
@@ -584,9 +550,6 @@ fn run_loop(
                     tracing::info!(peer_pid = slot.peer_pid, wasm = %slot.wasm_basename, "slot teardown");
                     slot.shutdown(shared, renderer);
                 }
-            }
-            if slots.is_empty() {
-                lifetime.note_disconnect(Instant::now());
             }
         }
 
