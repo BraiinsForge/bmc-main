@@ -10,6 +10,7 @@ pub mod mock_compositor;
 pub mod mock_index;
 pub mod mock_package_backend;
 pub mod mockfs;
+pub mod pacing;
 pub mod scenario;
 mod session;
 
