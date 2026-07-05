@@ -20,6 +20,7 @@ use bmc_platform::generic_backlight_driver::GenericBacklightDriver;
 use bmc_platform::{BmcInfo, BosPlatform, HardwareProfile, HardwareProfileSelection};
 use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_time::time::Timezone;
+use bmc_upgrade::packages::{NixUpgradeConfig, PackageUpgrader};
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
@@ -48,6 +49,7 @@ fn led_driver_for_profile(
 }
 
 #[tokio::main]
+#[expect(clippy::too_many_lines)]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -159,12 +161,20 @@ async fn main() -> Result<()> {
         .expect("BUG: failed to start EGL compositor");
     info!("Compositor started on {}", wayland_display);
 
+    let package_backend = Arc::new(PackageUpgrader::new(NixUpgradeConfig {
+        servers_config_path: config.nix_servers_config_path.clone(),
+        profile_dir: config.nix_profile_dir.clone(),
+        hooks_dir: config.nix_hooks_dir.clone(),
+        hooks_override_path: config.nix_hooks_override_path.clone(),
+    }));
+
     bmc::entry::main(
         manager,
         config,
         backlight_driver,
         led_driver,
         bmc_index,
+        package_backend,
         Arc::new(Box::new(UEventButtons)),
         compositor,
     )
