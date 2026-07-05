@@ -7,12 +7,19 @@ sysupgrade; this catalog only fails fast on the obvious local problems.
 """
 
 import difflib
+import json
 import shlex
+import shutil
+import socket
 import subprocess
+import tempfile
+import threading
 import time
+import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from bmc_tui import console
 from bmc_tui.device import Device
@@ -350,3 +357,413 @@ def _wait_reachable(
         if clock() >= deadline:
             return False
         sleep(2)
+
+
+# ── e2e upgrade cycle ─────────────────────────────────────────────────────────
+
+_UPGRADE_SERVER_ID = "dev-upgrade"
+_UPGRADE_SERVER_APP = ".#upgrade-server"
+# The device serves gRPC(-web) on the plain web port; grpcurl talks h2c to it.
+_GRPC_PORT = 80
+_GRPC_PACKAGE = "braiins.bmc.web"
+
+_PACKAGE_PHASE_PREFIX = "PACKAGE_UPGRADE_PHASE_"
+
+
+@dataclass
+class UpgradeCycle:
+    """Mutable carrier threaded through the e2e upgrade stages."""
+
+    password: str  # device web password; empty when none is set
+    port: int  # binary-cache port served on this machine
+    index_port: int  # package-index port served on this machine
+    key_dir: Path  # upgrade-server signing keypair location
+    host: str | None = None  # this machine's address as the device reaches it
+    log_path: Path | None = None  # upgrade-server output, for failure diagnosis
+    server: "subprocess.Popen[bytes] | None" = None
+    cache_public_key: str | None = None
+    cookie: str | None = None
+    upgrade_id: str | None = None
+    generation_before: int | None = None
+    installed_before: set[str] | None = None  # package names in the pre-upgrade manifest
+
+    @property
+    def index_url(self) -> str:
+        return f"http://{self.host}:{self.index_port}"
+
+    @property
+    def cache_url(self) -> str:
+        return f"http://{self.host}:{self.port}"
+
+
+@stage("grpcurl present")
+def ensure_grpcurl() -> None:
+    hint = console.lit("nix shell .#pkgs.grpcurl")
+    require(shutil.which("grpcurl") is not None, f"grpcurl is not on PATH — get it via {hint}")
+
+
+@stage("Snapshot current generation")
+def snapshot_profile(dev: Device, cycle: UpgradeCycle) -> str:
+    cycle.generation_before = _current_generation(dev)
+    cycle.installed_before = set(_read_manifest_packages(dev))
+    return (
+        f"generation {console.lit(cycle.generation_before)}, "
+        f"{console.lit(len(cycle.installed_before))} installed package(s)"
+    )
+
+
+@stage("Start upgrade server")
+def start_upgrade_server(dev: Device, plan: Deployment, cycle: UpgradeCycle) -> str:
+    cycle.host = _local_addr(dev.host)
+    cycle.log_path = Path(tempfile.gettempdir()) / "bmc-upgrade-server.log"
+    argv = [
+        "nix",
+        "run",
+        _UPGRADE_SERVER_APP,
+        "--",
+        "--host",
+        cycle.host,
+        "--port",
+        str(cycle.port),
+        "--index-port",
+        str(cycle.index_port),
+        "--key-dir",
+        str(cycle.key_dir),
+    ]
+    for built in plan.built:
+        argv += ["--package", f"{built.name}={built.version}={built.store_path}"]
+    with cycle.log_path.open("wb") as log:
+        cycle.server = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT)
+    _await_upgrade_server(cycle)
+    cycle.cache_public_key = (cycle.key_dir / "public").read_text().strip()
+    return f"index {console.lit(cycle.index_url)}, cache {console.lit(cycle.cache_url)}"
+
+
+def stop_upgrade_server(cycle: UpgradeCycle) -> None:
+    """Terminate the background upgrade server, if it is still running.
+
+    Not a stage — called from a ``finally`` so the server never outlives
+    the procedure, even when a stage aborts.
+    """
+    server = cycle.server
+    if server is None or server.poll() is not None:
+        return
+    server.terminate()
+    try:
+        server.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        server.kill()
+        server.wait()
+
+
+@stage("Register server on device")
+def register_upgrade_server(dev: Device, cycle: UpgradeCycle) -> str:
+    key = cycle.cache_public_key
+    if key is None:
+        msg = "BUG: the upgrade server was not started before registration"
+        raise RuntimeError(msg)
+    # The index is unsigned, so the index key mirrors the cache key —
+    # matches the register-server command upgrade-server itself prints.
+    args = [
+        _NIX_CLI,
+        "register-server",
+        "--id",
+        _UPGRADE_SERVER_ID,
+        "--base-url",
+        cycle.index_url,
+        "--index-public-key",
+        key,
+        "--cache-url",
+        cycle.cache_url,
+        "--cache-public-key",
+        key,
+    ]
+    inner = " ".join(shlex.quote(a) for a in args)
+    dev.run(f"PATH=/run/current-profile/bin:$PATH {inner}")
+    return f"{console.lit(_UPGRADE_SERVER_ID)} → {console.lit(cycle.index_url)}"
+
+
+@stage("Authenticate")
+def grpc_login(dev: Device, cycle: UpgradeCycle) -> str:
+    response = _grpcurl(dev, "AuthenticationService/Login", data={"password": cycle.password})
+    token = response.get("token")
+    require(
+        isinstance(token, str) and bool(token),
+        "login returned no session token — check --password",
+    )
+    cycle.cookie = f"session_id={token}"
+    return "session established"
+
+
+@stage("Check for upgrade")
+def check_for_upgrade(dev: Device, cycle: UpgradeCycle) -> str:
+    response = _grpcurl(dev, "UpgradeService/CheckForUpgrade", cookie=cycle.cookie)
+    packages = response.get("packages")
+    if not isinstance(packages, dict):
+        raise Abort(
+            "no package upgrade offered — either the served packages match the installed "
+            "profile, or they are unavailable (index fetch failed, or servers.json is missing "
+            "or unparsable); inspect the raw response below and the device's bmc log to tell "
+            f"which (response: {json.dumps(response)})"
+        )
+    disruption = response.get("disruption")
+    require(
+        disruption == "UPGRADE_DISRUPTION_APP_RESTART",
+        f"expected an APP_RESTART disruption, got {disruption}",
+    )
+    upgrade_id = response.get("upgradeId")
+    require(
+        isinstance(upgrade_id, str) and bool(upgrade_id),
+        "CheckForUpgrade offered packages but returned no upgrade id",
+    )
+    cycle.upgrade_id = upgrade_id
+    changes = packages.get("changes") or []
+    for change in changes:
+        version_from = change.get("versionFrom", "?")
+        version_to = change.get("versionTo", "?")
+        console.kv(change.get("name", "?"), f"{version_from} → {version_to}")
+    size = _grpc_mb(packages.get("downloadSizeBytes"))
+    console.kv("download size", "unknown" if size is None else f"{size:.1f} MB")
+    names = ", ".join(console.lit(change.get("name", "?")) for change in changes)
+    return f"{console.lit(len(changes))} change(s): {names}"
+
+
+@stage("Run upgrade")
+def run_upgrade(dev: Device, cycle: UpgradeCycle) -> str:
+    upgrade_id = cycle.upgrade_id
+    if upgrade_id is None:
+        msg = "BUG: CheckForUpgrade did not run before StartUpgrade"
+        raise RuntimeError(msg)
+    argv = _grpcurl_argv(
+        dev,
+        "UpgradeService/StartUpgrade",
+        data={"upgradeId": upgrade_id},
+        cookie=cycle.cookie,
+        max_time=None,
+    )
+    events = _stream_events(argv)
+    phases = [
+        event["packagePhase"] for event in events if isinstance(event.get("packagePhase"), str)
+    ]
+    for expected in ("REALIZING", "ACTIVATING"):
+        require(
+            f"{_PACKAGE_PHASE_PREFIX}{expected}" in phases,
+            f"the progress stream never reached {expected}; phases seen: {phases}",
+        )
+    require(
+        any("finished" in event for event in events),
+        "the progress stream ended without a finished event",
+    )
+    steps = [phase.removeprefix(_PACKAGE_PHASE_PREFIX) for phase in phases]
+    return " → ".join([*steps, "finished"])
+
+
+@stage("Profile advanced")
+def verify_profile_advanced(dev: Device, plan: Deployment, cycle: UpgradeCycle) -> str:
+    before = cycle.generation_before
+    installed = cycle.installed_before
+    if before is None or installed is None:
+        msg = "BUG: the profile was not snapshotted before the upgrade"
+        raise RuntimeError(msg)
+    after = _current_generation(dev)
+    require(after > before, f"current generation is still {after}")
+    entries = _read_manifest_packages(dev)
+    mismatched = []
+    for b in plan.built:
+        if b.name not in installed:
+            # Served but not installed — index-only packages are not
+            # auto-installed, so they are not expected to appear.
+            continue
+        entry = entries.get(b.name)
+        got = entry.get("store_path") if isinstance(entry, dict) else None
+        if got != b.store_path:
+            mismatched.append(f"{b.name} (want {b.store_path}, got {got or 'absent'})")
+    require(
+        not mismatched,
+        f"installed packages not replaced by their served store paths: {'; '.join(mismatched)}",
+    )
+    return f"generation {console.lit(before)} → {console.lit(after)}"
+
+
+def _current_generation(dev: Device) -> int:
+    link = dev.read(f"readlink {_PROFILE_DIR}/current")
+    number = link.rsplit("/", 1)[-1].removesuffix("-link")
+    require(
+        link.endswith("-link") and number.isdigit(),
+        f"unexpected current generation link: {link or '(missing)'}",
+    )
+    return int(number)
+
+
+def _read_manifest_packages(dev: Device) -> dict[str, Any]:
+    """The `packages` object of the current generation's manifest."""
+
+    raw = dev.read(f"cat {_PROFILE_DIR}/current/manifest")
+    try:
+        packages = json.loads(raw)["packages"]
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        raise Abort(f"the current manifest is not a package manifest: {e}") from None
+    if not isinstance(packages, dict):
+        raise Abort("the current manifest's packages entry is not an object")
+    return packages
+
+
+def _local_addr(remote_host: str) -> str:
+    """This machine's address on the route to the device — what the device
+    must dial to reach the served cache and index."""
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect((remote_host, 1))
+            return sock.getsockname()[0]
+    except OSError as e:
+        raise Abort(f"cannot determine the local address routing to {remote_host}: {e}") from None
+
+
+def _await_upgrade_server(cycle: UpgradeCycle, *, timeout: float = 300) -> None:
+    """Wait until both the cache and the index answer HTTP; the first run of
+    `nix run` may still be realizing the app, hence the generous timeout."""
+
+    deadline = time.monotonic() + timeout
+    log_hint = f"see {console.lit(cycle.log_path)}"
+    urls = (f"{cycle.cache_url}/nix-cache-info", f"{cycle.index_url}/nix-package-index.v1.json")
+    for url in urls:
+        while not _http_ok(url):
+            server = cycle.server
+            require(
+                server is not None and server.poll() is None,
+                f"upgrade-server exited early — {log_hint}",
+            )
+            require(
+                time.monotonic() < deadline,
+                f"upgrade-server did not serve {console.lit(url)} in {timeout:.0f}s — {log_hint}",
+            )
+            time.sleep(1)
+
+
+def _http_ok(url: str) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=5):
+            return True
+    except OSError:
+        return False
+
+
+def _grpcurl(
+    dev: Device,
+    method: str,
+    *,
+    data: dict[str, Any] | None = None,
+    cookie: str | None = None,
+) -> dict[str, Any]:
+    """Unary gRPC call via grpcurl; returns the decoded response message."""
+
+    argv = _grpcurl_argv(dev, method, data=data, cookie=cookie, max_time=120)
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        raise Abort(f"{method} failed: {e.stderr.strip()}") from None
+    try:
+        response = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as e:
+        raise Abort(f"{method} returned non-JSON output: {e}") from None
+    if not isinstance(response, dict):
+        msg = f"BUG: {method} returned a non-message JSON value"
+        raise RuntimeError(msg)
+    return response
+
+
+def _grpcurl_argv(
+    dev: Device,
+    method: str,
+    *,
+    data: dict[str, Any] | None,
+    cookie: str | None,
+    max_time: int | None,
+) -> list[str]:
+    argv = ["grpcurl", "-plaintext"]
+    if max_time is not None:
+        argv += ["-max-time", str(max_time)]
+    if cookie is not None:
+        argv += ["-H", f"cookie: {cookie}"]
+    argv += ["-d", json.dumps(data or {})]
+    return [*argv, f"{dev.host}:{_GRPC_PORT}", f"{_GRPC_PACKAGE}.{method}"]
+
+
+def _stream_events(argv: list[str]) -> list[dict[str, Any]]:
+    """Run a server-streaming grpcurl call, decoding the back-to-back JSON
+    messages as they arrive and echoing phase changes live."""
+
+    events: list[dict[str, Any]] = []
+    decoder = json.JSONDecoder()
+    with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as proc:
+        stdout = proc.stdout
+        if stdout is None:
+            msg = "BUG: Popen(stdout=PIPE) produced no stdout"
+            raise RuntimeError(msg)
+        # Drain stderr on a thread: with this loop blocked on stdout, a
+        # chatty stderr would fill its 64 KiB pipe and deadlock the child.
+        stderr_pipe = proc.stderr
+        stderr_chunks: list[str] = []
+        stderr_thread: threading.Thread | None = None
+        if stderr_pipe is not None:
+            stderr_thread = threading.Thread(
+                target=lambda: stderr_chunks.append(stderr_pipe.read()),
+                daemon=True,
+            )
+            stderr_thread.start()
+        buffer = ""
+        for line in stdout:
+            buffer = _drain_events(decoder, buffer + line, events)
+        if stderr_thread is not None:
+            stderr_thread.join()
+        stderr = "".join(stderr_chunks)
+    if proc.returncode:
+        raise Abort(f"StartUpgrade stream failed: {stderr.strip()}")
+    return events
+
+
+def _drain_events(
+    decoder: json.JSONDecoder,
+    buffer: str,
+    events: list[dict[str, Any]],
+) -> str:
+    """Decode every complete JSON message in `buffer`; return the remainder."""
+
+    while True:
+        stripped = buffer.lstrip()
+        if not stripped:
+            return ""
+        try:
+            event, end = decoder.raw_decode(stripped)
+        except json.JSONDecodeError:
+            return stripped
+        if isinstance(event, dict):
+            events.append(event)
+            _print_event(event)
+        buffer = stripped[end:]
+
+
+def _print_event(event: dict[str, Any]) -> None:
+    """Echo phase transitions and download progress live (the device
+    throttles progress events, so this stays one line per second)."""
+
+    phase = event.get("packagePhase")
+    download = event.get("download")
+    if isinstance(phase, str):
+        console.kv("phase", phase.removeprefix(_PACKAGE_PHASE_PREFIX))
+    elif isinstance(download, dict):
+        downloaded = _grpc_mb(download.get("downloadedBytes")) or 0.0
+        total = _grpc_mb(download.get("totalBytes"))
+        suffix = f" / {total:.1f}" if total is not None else ""
+        console.kv("download", f"{downloaded:.1f}{suffix} MB")
+    elif "finished" in event:
+        console.kv("phase", "finished")
+
+
+def _grpc_mb(value: Any) -> float | None:
+    """grpcurl serializes uint64 as a JSON string; None stays None."""
+
+    if value is None:
+        return None
+    return int(value) / 1_000_000
