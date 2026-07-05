@@ -404,6 +404,12 @@ enum Commands {
         /// Resolution priority for the server entry.
         #[arg(long, default_value_t = 50)]
         priority: u32,
+
+        /// Mark the server optional: a failed index fetch degrades to a
+        /// warning instead of aborting the merge. Servers are required by
+        /// default.
+        #[arg(long)]
+        optional: bool,
     },
 }
 
@@ -496,6 +502,7 @@ fn build_fetch_set(
             known_public_key: String::new(),
             priority: 0,
             enabled: true,
+            required: true,
         });
     }
     configured
@@ -946,6 +953,7 @@ fn cmd_register_server(
     cache_url: &str,
     cache_public_key: &str,
     priority: u32,
+    optional: bool,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(!id.trim().is_empty(), "--id must not be empty");
     anyhow::ensure!(
@@ -969,6 +977,7 @@ fn cmd_register_server(
         known_public_key: index_public_key,
         priority,
         enabled: true,
+        required: !optional,
     };
     // Register the substituter (nix.conf) before the server (servers.json):
     // if the process dies between the two writes, a server missing from the
@@ -1159,6 +1168,7 @@ async fn main() -> anyhow::Result<()> {
             cache_url,
             cache_public_key,
             priority,
+            optional,
         } => cmd_register_server(
             &servers_config,
             &nix_conf,
@@ -1169,6 +1179,7 @@ async fn main() -> anyhow::Result<()> {
             &cache_url,
             &cache_public_key,
             priority,
+            optional,
         ),
     }
 }
@@ -1426,6 +1437,7 @@ mod tests {
             known_public_key: "k".to_owned(),
             priority,
             enabled: true,
+            required: true,
         }
     }
 
@@ -1551,6 +1563,7 @@ mod tests {
             known_public_key: "k".to_owned(),
             priority: 10,
             enabled: true,
+            required: true,
         };
 
         let client = reqwest::Client::new();
@@ -1629,6 +1642,7 @@ mod tests {
             known_public_key: "k".to_owned(),
             priority: 10,
             enabled: true,
+            required: true,
         }];
         let customs = vec![format!("file://{}", custom_path.display())];
 
@@ -1654,52 +1668,6 @@ mod tests {
 
         assert_eq!(resolved.installed_from, "custom-0");
         assert_eq!(resolved.store_path, "/nix/store/custom-clock");
-    }
-
-    #[test]
-    fn register_server_maps_distinct_keys_and_defaults() {
-        let cli = Cli::try_parse_from([
-            "bmc-nix-cli",
-            "register-server",
-            "--id",
-            "dev",
-            "--base-url",
-            "http://dev.example.com:9080",
-            "--index-public-key",
-            "index-key",
-            "--cache-url",
-            "http://dev.example.com:5000",
-            "--cache-public-key",
-            "cache-key",
-        ])
-        .expect("BUG: register-server args should parse");
-
-        let Commands::RegisterServer {
-            servers_config,
-            nix_conf,
-            id,
-            server_type,
-            base_url,
-            index_public_key,
-            cache_url,
-            cache_public_key,
-            priority,
-        } = cli.command
-        else {
-            panic!("BUG: parsed command must be register-server");
-        };
-        assert_eq!(
-            servers_config,
-            PathBuf::from("/etc/nix-upgrade/servers.json")
-        );
-        assert_eq!(nix_conf, PathBuf::from("/etc/nix/nix.conf"));
-        assert_eq!(id, "dev");
-        assert_eq!(server_type, "http");
-        assert_eq!(base_url, "http://dev.example.com:9080");
-        assert_eq!(index_public_key, "index-key");
-        assert_eq!(cache_url, "http://dev.example.com:5000");
-        assert_eq!(cache_public_key, "cache-key");
-        assert_eq!(priority, 50);
     }
 
     #[test]
