@@ -51,6 +51,13 @@ A last-resort recovery component that runs on every boot. When the device has no
 a factory reset — it takes over the display, guides the user through WiFi setup via an open access point, downloads and
 activates the Nix store, and falls back to firmware upgrade if no matching bundle exists.
 
+### [Nix Store & Profile Power-Loss Safety](nix-store-durability.md)
+
+Durability guarantees for the on-device software store: losing power during first-time installation, an upgrade, or a
+recovery wipe never leaves the device trusting corrupt or incomplete software. Interrupted installs restart cleanly,
+interrupted upgrades fall back to the previous working version, and storage errors fail loudly instead of masquerading
+as success.
+
 ### [Touch & Gestures](touch-and-gestures.md)
 
 Swipe left/right to navigate between scenes and tap/drag to interact with widgets via touch events forwarded through the
