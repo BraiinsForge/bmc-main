@@ -879,6 +879,7 @@ async fn cmd_init(
         &bmc_nix::store::TokioCommandRunner,
         &data_partition,
         &data_dir,
+        &bmc_nix::partition::read_proc_mounts()?,
     )
     .await?;
 

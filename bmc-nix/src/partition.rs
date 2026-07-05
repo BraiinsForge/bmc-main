@@ -37,6 +37,13 @@ pub enum PreparePartitionError {
         requested: String,
         mounted: String,
     },
+    #[error("data partition {partition} is mounted; refusing to fsck or format it")]
+    PartitionMounted { partition: String },
+    #[error("failed to read /proc/self/mountinfo: {source}")]
+    ReadMountInfo {
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 async fn run_command(
@@ -95,9 +102,14 @@ fn is_mount_point(mounts: &str, mount_point: &Path) -> bool {
 /// Whether `mount_point` is an active mount according to
 /// `/proc/mounts`.
 pub fn is_path_mounted(mount_point: &Path) -> Result<bool, PreparePartitionError> {
-    let mounts = std::fs::read_to_string("/proc/mounts")
-        .map_err(|source| PreparePartitionError::ReadMounts { source })?;
+    let mounts = read_proc_mounts()?;
     Ok(is_mount_point(&mounts, mount_point))
+}
+
+/// The current mount table from `/proc/mounts`.
+pub fn read_proc_mounts() -> Result<String, PreparePartitionError> {
+    std::fs::read_to_string("/proc/mounts")
+        .map_err(|source| PreparePartitionError::ReadMounts { source })
 }
 
 /// Whether `mount_point` already carries the requested partition.
@@ -143,17 +155,73 @@ fn mount_state(
     Ok(MountState::Absent)
 }
 
+/// Mounted-device ids (`major:minor`, the third mountinfo field). Lines
+/// that do not parse are skipped: the guard acts only on entries it can
+/// positively identify.
+fn mountinfo_device_ids(mountinfo: &str) -> std::collections::HashSet<(u32, u32)> {
+    mountinfo
+        .lines()
+        .filter_map(|line| {
+            let field = line.split_whitespace().nth(2)?;
+            let (major, minor) = field.split_once(':')?;
+            Some((major.parse().ok()?, minor.parse().ok()?))
+        })
+        .collect()
+}
+
+/// Whether the block device `device_id` (`major:minor`) backs any mount
+/// listed in `mountinfo`.
+fn is_device_id_mounted(mountinfo: &str, device_id: (u32, u32)) -> bool {
+    mountinfo_device_ids(mountinfo).contains(&device_id)
+}
+
+/// Decode a Linux `dev_t` into `(major, minor)` (glibc encoding).
+/// Decoded locally because `libc::major`/`libc::minor` have
+/// platform-specific signatures that fail to compile on darwin, where
+/// this Linux-only guard is still type-checked as part of the
+/// workspace.
+fn decode_dev_t(rdev: u64) -> (u32, u32) {
+    let major = ((rdev >> 32) & 0xffff_f000) | ((rdev >> 8) & 0xfff);
+    let minor = ((rdev >> 12) & 0xffff_ff00) | (rdev & 0xff);
+    (
+        u32::try_from(major).expect("BUG: masked to fit u32"),
+        u32::try_from(minor).expect("BUG: masked to fit u32"),
+    )
+}
+
+/// Whether `partition` backs any active mount, compared by block
+/// identity (`major:minor`) so device aliases and bind mounts cannot
+/// slip past. A path that cannot be statted or is not a block device
+/// cannot be mounted and passes the guard; missing-device reporting
+/// belongs to the `test -b` step that runs before it.
+fn is_device_mounted(partition: &Path) -> Result<bool, PreparePartitionError> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+    let Ok(metadata) = std::fs::metadata(partition) else {
+        return Ok(false);
+    };
+    if !metadata.file_type().is_block_device() {
+        return Ok(false);
+    }
+    let device_id = decode_dev_t(metadata.rdev());
+    let mountinfo = std::fs::read_to_string("/proc/self/mountinfo")
+        .map_err(|source| PreparePartitionError::ReadMountInfo { source })?;
+    Ok(is_device_id_mounted(&mountinfo, device_id))
+}
+
+/// `mounts` is the mount table in `/proc/mounts` format (see
+/// [`read_proc_mounts`]), passed in so the mount-point inspection does
+/// not depend on the environment it runs in.
 pub async fn prepare_data_partition(
     runner: &impl CommandRunner,
     partition: &Path,
     mount_point: &Path,
+    mounts: &str,
 ) -> Result<(), PreparePartitionError> {
     let partition_arg = partition.to_string_lossy();
     let mount_point_arg = mount_point.to_string_lossy();
 
-    let mounts = std::fs::read_to_string("/proc/mounts")
-        .map_err(|source| PreparePartitionError::ReadMounts { source })?;
-    match mount_state(&mounts, mount_point, partition)? {
+    match mount_state(mounts, mount_point, partition)? {
         MountState::Prepared => return Ok(()),
         MountState::Absent => {}
     }
@@ -161,6 +229,12 @@ pub async fn prepare_data_partition(
     let block_device = run_command(runner, "test", &["-b", partition_arg.as_ref()]).await?;
     if !block_device.status.success() {
         return Err(PreparePartitionError::NoDataPartition {
+            partition: path_string(partition),
+        });
+    }
+
+    if is_device_mounted(partition)? {
+        return Err(PreparePartitionError::PartitionMounted {
             partition: path_string(partition),
         });
     }
@@ -365,7 +439,7 @@ mod tests {
             ScriptedRunner::success(b""),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point)
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
             .await
             .expect("BUG: unformatted partition should be prepared");
 
@@ -400,7 +474,7 @@ mod tests {
             ScriptedRunner::success(b""),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point)
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
             .await
             .expect("BUG: formatted partition should be prepared");
 
@@ -434,7 +508,7 @@ mod tests {
             ScriptedRunner::output_with_stderr(4, b"", b"blkid: /dev/mmcblk0p4: I/O error"),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point)
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
             .await
             .expect_err("BUG: a failed blkid probe must not format the partition");
 
@@ -462,7 +536,7 @@ mod tests {
             },
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point)
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
             .await
             .expect_err("BUG: a signal-killed blkid probe must not format the partition");
 
@@ -473,5 +547,96 @@ mod tests {
                 ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
             ],
         );
+    }
+
+    #[test]
+    fn mountinfo_device_ids_parses_and_skips_malformed_lines() {
+        let mountinfo = "36 35 179:4 / /mnt/data rw - ext4 /dev/mmcblk0p4 rw\n\
+                         37 35 0:25 / /tmp rw,nosuid - tmpfs tmpfs rw\n\
+                         truncated line\n\
+                         38 35 not-a-device-id / /x rw - ext4 /dev/foo rw\n\
+                         39 35 179:banana / /y rw - ext4 /dev/bar rw\n";
+        let ids = super::mountinfo_device_ids(mountinfo);
+        assert!(ids.contains(&(179, 4)));
+        assert!(ids.contains(&(0, 25)));
+        assert_eq!(ids.len(), 2);
+    }
+
+    #[test]
+    fn decode_dev_t_splits_major_minor() {
+        // Linux encodes major in bits 8-19 and 44-63, minor in bits 0-7
+        // and 20-43.
+        assert_eq!(super::decode_dev_t((179 << 8) | 4), (179, 4));
+        assert_eq!(super::decode_dev_t((179 << 8) | (1 << 20)), (179, 256));
+    }
+
+    #[test]
+    fn is_device_id_mounted_matches_by_block_identity() {
+        // A bind mount of a subdirectory reports the same major:minor as
+        // the origin mount, so identity comparison catches it while any
+        // source-string comparison could not.
+        let mountinfo = "40 30 179:4 /nix /nix rw - ext4 /dev/mmcblk0p4 rw\n";
+        assert!(super::is_device_id_mounted(mountinfo, (179, 4)));
+        assert!(!super::is_device_id_mounted(mountinfo, (179, 5)));
+    }
+
+    #[test]
+    fn is_device_mounted_passes_nonexistent_path() {
+        // A device that cannot be statted cannot be mounted; missing-
+        // device reporting belongs to the `test -b` step.
+        let mounted = super::is_device_mounted(Path::new("/nonexistent/device"))
+            .expect("BUG: nonexistent path must not error");
+        assert!(!mounted);
+    }
+
+    #[test]
+    fn is_device_mounted_passes_non_block_device() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let file = tmp.path().join("not-a-device");
+        std::fs::write(&file, b"").expect("BUG: write temp file");
+        let mounted = super::is_device_mounted(&file).expect("BUG: regular file must not error");
+        assert!(!mounted);
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_fast_paths_when_partition_already_mounted() {
+        // The requested partition already backs the mount point: the
+        // normal already-prepared case must not run any command.
+        let runner = ScriptedRunner::new(vec![]);
+        let mounts = "/dev/mmcblk0p4 /mnt/data ext4 rw 0 0\n";
+
+        prepare_data_partition(
+            &runner,
+            Path::new("/dev/mmcblk0p4"),
+            Path::new("/mnt/data"),
+            mounts,
+        )
+        .await
+        .expect("BUG: already-mounted partition should fast-path");
+
+        assert_invocations(&runner, &[]);
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_rejects_foreign_mount_before_any_command() {
+        // A different device at the mount point must abort before any
+        // command runs; reformatting would destroy a foreign filesystem.
+        let runner = ScriptedRunner::new(vec![]);
+        let mounts = "tmpfs /mnt/data tmpfs rw 0 0\n";
+
+        let err = prepare_data_partition(
+            &runner,
+            Path::new("/dev/mmcblk0p4"),
+            Path::new("/mnt/data"),
+            mounts,
+        )
+        .await
+        .expect_err("BUG: foreign mount must abort preparation");
+
+        assert!(matches!(
+            err,
+            super::PreparePartitionError::ForeignMount { .. }
+        ));
+        assert_invocations(&runner, &[]);
     }
 }
