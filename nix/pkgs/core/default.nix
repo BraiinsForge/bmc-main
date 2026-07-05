@@ -61,6 +61,9 @@ let
     args = [ "--log-to-file" ];
     env = {
       XDG_RUNTIME_DIR = "/tmp/runtime";
+      # The package upgrade path spawns nix-store; procd services don't get
+      # the login-shell PATH from files/profile, so mirror it here.
+      PATH = "/usr/sbin:/usr/bin:/sbin:/bin:/run/current-profile/bin:/nix/var/nix/profiles/per-user/root/profile/bin";
     };
     preStart = "mkdir -p /tmp/runtime";
   };
