@@ -257,6 +257,8 @@ fn activate_next_no_next_delegates_to_current() {
     let dir = tmp_profile();
     make_gen(dir.path(), 1, 0);
     symlink("1-link", dir.path().join("current")).expect("BUG: current");
+    let bos_version_file = dir.path().join("bos_version");
+    std::fs::write(&bos_version_file, "1.0\n").expect("BUG: write bos version");
 
     let run = run_cli(&[
         "activate",
@@ -264,9 +266,40 @@ fn activate_next_no_next_delegates_to_current() {
         &dir.path().display().to_string(),
         "--generation",
         "next",
+        "--bos-version-file",
+        &bos_version_file.display().to_string(),
     ]);
     run.ok("activate --generation next with no next");
     assert_eq!(read_activation_log(dir.path()), vec![1]);
+}
+
+#[test]
+#[serial]
+fn activate_next_empty_bos_version_activates_current_and_keeps_markers() {
+    let dir = tmp_profile();
+    make_gen(dir.path(), 1, 0);
+    make_gen(dir.path(), 2, 0);
+    symlink("1-link", dir.path().join("current")).expect("BUG: current");
+    symlink("2-link", dir.path().join("next.1.0")).expect("BUG: next.1.0");
+    symlink("2-link", dir.path().join("next")).expect("BUG: bare next");
+    // An empty version file means the version is unknown: staleness is
+    // undecidable, so no marker may be consumed or swept.
+    let bos_version_file = dir.path().join("bos_version");
+    std::fs::write(&bos_version_file, "\n").expect("BUG: write bos version");
+
+    let run = run_cli(&[
+        "activate",
+        "--profile-dir",
+        &dir.path().display().to_string(),
+        "--generation",
+        "next",
+        "--bos-version-file",
+        &bos_version_file.display().to_string(),
+    ]);
+    run.ok("activate --generation next with empty bos version");
+    assert_eq!(read_activation_log(dir.path()), vec![1]);
+    assert!(dir.path().join("next.1.0").symlink_metadata().is_ok());
+    assert!(dir.path().join("next").symlink_metadata().is_ok());
 }
 
 #[test]
@@ -276,7 +309,9 @@ fn activate_next_success_removes_next() {
     make_gen(dir.path(), 1, 0);
     make_gen(dir.path(), 2, 0);
     symlink("1-link", dir.path().join("current")).expect("BUG: current");
-    symlink("2-link", dir.path().join("next")).expect("BUG: next");
+    symlink("2-link", dir.path().join("next.1.0")).expect("BUG: next.1.0");
+    let bos_version_file = dir.path().join("bos_version");
+    std::fs::write(&bos_version_file, "1.0\n").expect("BUG: write bos version");
 
     let run = run_cli(&[
         "activate",
@@ -284,12 +319,14 @@ fn activate_next_success_removes_next() {
         &dir.path().display().to_string(),
         "--generation",
         "next",
+        "--bos-version-file",
+        &bos_version_file.display().to_string(),
     ]);
     run.ok("activate --generation next success");
     assert_eq!(read_activation_log(dir.path()), vec![2]);
     assert!(
-        dir.path().join("next").symlink_metadata().is_err(),
-        "next should be removed on success",
+        dir.path().join("next.1.0").symlink_metadata().is_err(),
+        "next.1.0 should be removed on success",
     );
     assert!(
         dir.path().join("previous").symlink_metadata().is_err(),
@@ -304,7 +341,9 @@ fn activate_next_failure_reverts_and_exits_nonzero() {
     make_gen(dir.path(), 1, 0);
     make_gen(dir.path(), 2, 42); // next fails
     symlink("1-link", dir.path().join("current")).expect("BUG: current");
-    symlink("2-link", dir.path().join("next")).expect("BUG: next");
+    symlink("2-link", dir.path().join("next.1.0")).expect("BUG: next.1.0");
+    let bos_version_file = dir.path().join("bos_version");
+    std::fs::write(&bos_version_file, "1.0\n").expect("BUG: write bos version");
 
     let run = run_cli(&[
         "activate",
@@ -312,6 +351,8 @@ fn activate_next_failure_reverts_and_exits_nonzero() {
         &dir.path().display().to_string(),
         "--generation",
         "next",
+        "--bos-version-file",
+        &bos_version_file.display().to_string(),
     ]);
     assert_eq!(
         run.exit_code(),
@@ -322,8 +363,8 @@ fn activate_next_failure_reverts_and_exits_nonzero() {
     // ran gen 1 (logged 1). Order matters — proves the sequence.
     assert_eq!(read_activation_log(dir.path()), vec![2, 1]);
     assert!(
-        dir.path().join("next").symlink_metadata().is_ok(),
-        "failed next should stay put for inspection",
+        dir.path().join("next.1.0").symlink_metadata().is_ok(),
+        "failed next.1.0 should stay put for inspection",
     );
     assert!(
         dir.path().join("previous").symlink_metadata().is_err(),
@@ -336,7 +377,9 @@ fn activate_next_failure_reverts_and_exits_nonzero() {
 fn activate_next_failure_no_previous_propagates_error() {
     let dir = tmp_profile();
     make_gen(dir.path(), 2, 42);
-    symlink("2-link", dir.path().join("next")).expect("BUG: next");
+    symlink("2-link", dir.path().join("next.1.0")).expect("BUG: next.1.0");
+    let bos_version_file = dir.path().join("bos_version");
+    std::fs::write(&bos_version_file, "1.0\n").expect("BUG: write bos version");
 
     let run = run_cli(&[
         "activate",
@@ -344,6 +387,8 @@ fn activate_next_failure_no_previous_propagates_error() {
         &dir.path().display().to_string(),
         "--generation",
         "next",
+        "--bos-version-file",
+        &bos_version_file.display().to_string(),
     ]);
     assert_eq!(run.exit_code(), Some(1));
     assert!(
