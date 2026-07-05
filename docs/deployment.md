@@ -69,7 +69,7 @@ overhead.
 nix run .#deck -- deploy --device 192.168.1.2 --profile debug
 ```
 
-Run `nix run .#deck -- <init|deploy|sysupgrade> --help` for the full option set of each procedure.
+Run `nix run .#deck -- <init|deploy|sysupgrade|upgrade-e2e> --help` for the full option set of each procedure.
 
 ## nix-cargo-deploy.sh — Fast impure deploy of cargo-built native binaries
 

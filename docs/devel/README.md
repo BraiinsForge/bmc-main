@@ -26,6 +26,12 @@ How application and firmware upgrades are resolved and applied: package indexes 
 algorithm, the firmware-pinned index used during BOS upgrades, BOS downgrade on BMM101, rollback, garbage collection,
 and store initialization.
 
+### [End-to-End Package Upgrade Harness](upgrade-e2e-harness.md)
+
+How `deck upgrade-e2e` drives a full package upgrade cycle against a real Deck: serving locally built packages from the
+developer machine via `nix run .#upgrade-server`, registering the server on the device, and exercising CheckForUpgrade
+and StartUpgrade over gRPC while asserting the bmc profile advanced.
+
 ### [Service Orchestrator](service-orchestrator.md)
 
 How OpenWrt services are reconciled after a profile activation: why the orchestrator runs as a detached transient procd
