@@ -3,6 +3,7 @@
 use std::sync::Mutex;
 
 use bmc_nix::gc::{CollectGarbagePhase, CollectGarbageProgress};
+use bmc_nix::store::DownloadProgress;
 use bmc_nix::store::progress::DownloadSnapshot;
 use bmc_nix::upgrade::{UpgradePhase, UpgradeProgress};
 use serde::Serialize;
@@ -316,6 +317,25 @@ impl UpgradeProgress for CliProgress {
             deleted_paths,
             freed_bytes,
         });
+    }
+}
+
+impl DownloadProgress for CliProgress {
+    fn on_bytes_downloaded(&self, downloaded: usize, total: Option<usize>) {
+        // The init tarball download has no per-path activity; render it
+        // as a whole-transfer snapshot so both formats reuse the realize
+        // download rendering.
+        let snapshot = DownloadSnapshot {
+            active: Vec::new(),
+            downloaded_bytes: downloaded as u64,
+            total_bytes: total.map(|t| t as u64),
+            remaining_bytes: total.map(|t| t.saturating_sub(downloaded) as u64),
+        };
+        self.emit(&ProgressEvent::Download(&snapshot));
+    }
+
+    fn on_extracting(&self) {
+        // No dedicated event: extraction is not rendered.
     }
 }
 
