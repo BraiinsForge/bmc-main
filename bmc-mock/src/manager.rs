@@ -1,5 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
+use crate::pacing::UpgradePacing;
 use crate::{MockSessionManager, mockfs::MockFs};
 use anyhow::anyhow;
 use bmc::bootloader_config::BootloaderConfig;
@@ -50,6 +51,7 @@ pub struct Manager {
     connected_wifi: Arc<tokio::sync::Mutex<Option<WifiNetworkConfig>>>,
     wifi_event_sender: tokio::sync::broadcast::Sender<WifiEvent>,
     wifi_reconfig_sender: tokio::sync::watch::Sender<bool>,
+    pacing: UpgradePacing,
 }
 
 impl Manager {
@@ -69,6 +71,7 @@ impl Manager {
         ip_address: IpAddr,
         port: u16,
         platform: BosPlatform,
+        pacing: UpgradePacing,
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(Timezone::default());
         let (wifi_event_sender, _) = tokio::sync::broadcast::channel(Self::WIFI_EVENTS_CAPACITY);
@@ -87,6 +90,7 @@ impl Manager {
             connected_wifi: Arc::new(tokio::sync::Mutex::new(None)),
             wifi_event_sender,
             wifi_reconfig_sender,
+            pacing,
         }
     }
 }
@@ -122,7 +126,7 @@ impl bmc::BmcManager for Manager {
             ];
             for line in lines {
                 _ = progress.send(line.to_owned());
-                tokio::time::sleep(Duration::from_millis(300)).await;
+                tokio::time::sleep(self.pacing.progress_step()).await;
             }
         }
         if crate::scenario::read(&self.mockfs.upgrade_scenario()).run
@@ -131,10 +135,11 @@ impl bmc::BmcManager for Manager {
             anyhow::bail!("mock: firmware apply failed");
         }
 
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(self.pacing.sysupgrade_duration()).await;
 
-        tokio::spawn(async {
-            tokio::time::sleep(Duration::from_secs(2)).await;
+        let reboot_delay = self.pacing.reboot_delay();
+        tokio::spawn(async move {
+            tokio::time::sleep(reboot_delay).await;
             info!("Mock sysupgrade: exiting to simulate the reboot");
             std::process::exit(0);
         });

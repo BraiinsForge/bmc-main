@@ -20,6 +20,10 @@ fn data_dir(subdir: impl AsRef<Path>) -> &'static str {
 
 #[derive(Parser, Debug, Clone)]
 #[clap(name = "BMC")]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "CLI switches are individual bool flags by design"
+)]
 pub struct Config {
     /// Set server address
     #[clap(long, default_value = "0.0.0.0:6060")]
@@ -85,6 +89,21 @@ pub struct Config {
     /// Defaults to `BMC100`.
     #[clap(long = "hardware-profile", default_value = "BMC100")]
     pub hardware_profile: String,
+
+    /// Run simulated upgrades without the realistic delays
+    #[clap(long)]
+    pub fast_upgrades: bool,
+}
+
+impl Config {
+    #[must_use]
+    pub fn upgrade_pacing(&self) -> crate::pacing::UpgradePacing {
+        if self.fast_upgrades {
+            crate::pacing::UpgradePacing::Instant
+        } else {
+            crate::pacing::UpgradePacing::Realistic
+        }
+    }
 }
 
 impl From<Config> for Configuration {

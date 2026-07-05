@@ -30,9 +30,11 @@ async fn main() -> Result<()> {
         config.setup_pending,
     )?;
 
-    let package_backend = Arc::new(MockPackageBackend::new(mockfs.upgrade_scenario()));
+    let pacing = config.upgrade_pacing();
 
-    let blob = bmc_mock::blob_server::spawn()
+    let package_backend = Arc::new(MockPackageBackend::new(mockfs.upgrade_scenario(), pacing));
+
+    let blob = bmc_mock::blob_server::spawn(pacing)
         .await
         .expect("BUG: blob server bind failed");
     let firmware_index = MockIndex::new(mockfs.upgrade_scenario(), blob);
@@ -57,6 +59,7 @@ async fn main() -> Result<()> {
         config.ip_address,
         config.address.port(),
         platform,
+        pacing,
     );
 
     let config: bmc::Configuration = config.into();
