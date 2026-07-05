@@ -32,6 +32,11 @@ async fn main() -> Result<()> {
 
     let package_backend = Arc::new(MockPackageBackend::new(mockfs.upgrade_scenario()));
 
+    let blob = bmc_mock::blob_server::spawn()
+        .await
+        .expect("BUG: blob server bind failed");
+    let firmware_index = MockIndex::new(mockfs.upgrade_scenario(), blob);
+
     let password = Arc::new(Mutex::new(system_password));
 
     let platform = match config.hardware_profile.parse::<HardwareProfileSelection>() {
@@ -68,7 +73,7 @@ async fn main() -> Result<()> {
         config,
         backlight_driver,
         led_driver.0,
-        MockIndex,
+        firmware_index,
         package_backend,
         build_buttons(),
         compositor,
