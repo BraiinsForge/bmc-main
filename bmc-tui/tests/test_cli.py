@@ -7,6 +7,7 @@ import tyro
 from bmc_tui.procedures.deploy import Deploy
 from bmc_tui.procedures.init import Init
 from bmc_tui.procedures.sysupgrade import Sysupgrade
+from bmc_tui.procedures.upgrade_e2e import UpgradeE2e
 
 
 def test_init_parses_args() -> None:
@@ -23,6 +24,15 @@ def test_deploy_parses_args() -> None:
 
 def test_deploy_defaults_to_empty_package_set() -> None:
     assert tyro.cli(Deploy, args=["--device", "h"]).packages == []
+
+
+def test_upgrade_e2e_parses_args() -> None:
+    cmd = tyro.cli(UpgradeE2e, args=["--device", "h"])
+    assert cmd.device == "h"
+    assert cmd.packages == []
+    assert cmd.password == ""
+    assert cmd.port == 8080
+    assert cmd.index_port == 8081
 
 
 def test_sysupgrade_parses_args() -> None:
