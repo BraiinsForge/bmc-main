@@ -386,6 +386,19 @@ fn remove_nonexistent_package_errors() {
 
 // ── reset-profile ────────────────────────────────────────────────────────────
 
+/// Write a `servers.json` with one enabled `file://` mirror pointing at
+/// `configured_index`. The mandatory `factory` entry is never fetched by
+/// `upgrade`, so it points at an inert path.
+fn write_servers_config(env: &TestEnv, name: &str, configured_index: &Path) -> PathBuf {
+    let config = format!(
+        r#"{{"factory":{{"id":"factory","base_url":"file:///dev/null","known_public_key":"k","priority":0,"enabled":true}},"servers":[{{"id":"braiins","type":"mirror","base_url":"file://{}","known_public_key":"k","priority":10,"enabled":true,"required":true}}]}}"#,
+        configured_index.display()
+    );
+    let path = env.tmp.path().join(name);
+    std::fs::write(&path, config).expect("BUG: write servers.json");
+    path
+}
+
 /// Write a minimal package index JSON listing the given packages.
 fn write_index(env: &TestEnv, name: &str, packages: &[(&str, &str, &Path)]) -> PathBuf {
     let entries: Vec<String> = packages
@@ -580,4 +593,113 @@ fn add_packages_default_base_falls_back_to_latest_when_current_missing() {
     let m = read_manifest(&gen_path).expect("BUG: read gen2 manifest");
     assert!(m.packages.contains_key("a"), "gen2 keeps pkg-a from latest");
     assert!(m.packages.contains_key("b"), "gen2 adds pkg-b");
+}
+
+// ── upgrade: servers.json + --index precedence and --next-boot staging ──────
+
+/// End-to-end `upgrade` through the real binary: a package present in both
+/// the configured `servers.json` mirror and a custom `--index` reference
+/// resolves to the `--index` store path (custom entries sit at priority 0,
+/// lowest wins the version tie). A follow-up `--next-boot` run stages the
+/// new generation via the `next` symlink and leaves `current` in place.
+#[test]
+#[serial]
+fn upgrade_custom_index_wins_precedence_then_next_boot_stages() {
+    let env = setup();
+
+    // Seed gen 1: clock 0.9.0 installed locally, so upgrade has a base to
+    // diff against.
+    let store_base = env.make_store("store-clock-0.9.0", &["bin/clock"]);
+    create_activation_entrypoint(&store_base);
+    env.add_packages(&[("clock", "0.9.0", &store_base)], &[])
+        .ok("seed gen 1 with clock 0.9.0");
+
+    // First upgrade: the configured mirror and the custom --index both list
+    // clock 1.0.0, but at *different* store paths. The custom entry must win.
+    let store_configured = env.make_store("store-clock-1.0.0-configured", &["bin/clock"]);
+    let store_custom = env.make_store("store-clock-1.0.0-custom", &["bin/clock"]);
+    create_activation_entrypoint(&store_custom);
+
+    let configured_index = write_index(
+        &env,
+        "configured.json",
+        &[("clock", "1.0.0", &store_configured)],
+    );
+    let custom_index = write_index(&env, "custom.json", &[("clock", "1.0.0", &store_custom)]);
+    let servers = write_servers_config(&env, "servers.json", &configured_index);
+
+    let profile = env.profile_dir_arg();
+    let servers_arg = servers.display().to_string();
+    let custom_ref = format!("file://{}", custom_index.display());
+    let run = env.run(&[
+        "upgrade",
+        "--servers-config",
+        &servers_arg,
+        "--index",
+        &custom_ref,
+        "--profile-dir",
+        &profile,
+    ]);
+    let gen_path = run.generation_path("first upgrade");
+
+    assert!(gen_path.ends_with("2-link"), "got {gen_path:?}");
+    assert_eq!(env.current_link_target(), PathBuf::from("2-link"));
+
+    let manifest = read_manifest(&gen_path).expect("BUG: read gen2 manifest");
+    assert_eq!(
+        manifest.packages["clock"].version, "1.0.0",
+        "clock should upgrade to the indexed 1.0.0"
+    );
+    assert_eq!(
+        manifest.packages["clock"].store_path,
+        store_custom.display().to_string(),
+        "custom --index store path must win the version tie over the configured mirror"
+    );
+
+    // Second upgrade with --next-boot: the custom --index bumps clock to
+    // 1.1.0, forcing a new generation. It must be staged (next -> 3-link),
+    // not activated: current stays at 2-link.
+    let store_custom_next = env.make_store("store-clock-1.1.0-custom", &["bin/clock"]);
+    create_activation_entrypoint(&store_custom_next);
+    let custom_index_next = write_index(
+        &env,
+        "custom-next.json",
+        &[("clock", "1.1.0", &store_custom_next)],
+    );
+    let custom_ref_next = format!("file://{}", custom_index_next.display());
+
+    let run = env.run(&[
+        "upgrade",
+        "--servers-config",
+        &servers_arg,
+        "--index",
+        &custom_ref_next,
+        "--profile-dir",
+        &profile,
+        "--next-boot",
+    ]);
+    let gen_path = run.generation_path("next-boot upgrade");
+
+    assert!(gen_path.ends_with("3-link"), "got {gen_path:?}");
+    assert_eq!(
+        std::fs::read_link(env.profile_dir.join("next")).expect("BUG: read next symlink"),
+        PathBuf::from("3-link"),
+        "next-boot must stage gen 3 in the next marker"
+    );
+    assert_eq!(
+        env.current_link_target(),
+        PathBuf::from("2-link"),
+        "next-boot must leave current pointing at gen 2"
+    );
+
+    let staged = read_manifest(&gen_path).expect("BUG: read gen3 manifest");
+    assert_eq!(
+        staged.packages["clock"].version, "1.1.0",
+        "staged generation should carry clock 1.1.0"
+    );
+    assert_eq!(
+        staged.packages["clock"].store_path,
+        store_custom_next.display().to_string(),
+        "staged clock should resolve to the custom 1.1.0 store path"
+    );
 }
