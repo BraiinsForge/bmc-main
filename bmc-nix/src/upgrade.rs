@@ -34,14 +34,15 @@ pub enum InstallError {
 }
 
 /// Activation behavior for a newly built profile generation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActivationMode {
     /// Swap `current` and run the generation's activation entrypoint now.
     Activate,
     /// Build the generation but leave `current` untouched.
     Skip,
-    /// Build the generation and stage it for the boot-time activator.
-    NextBoot,
+    /// Build the generation and stage it as `next.<bos-version>` for the
+    /// boot-time activator of that firmware version.
+    NextBoot { bos_version: String },
 }
 
 /// Coarse-grained phases reported during an upgrade run.
@@ -214,16 +215,20 @@ pub async fn apply_profile_change(
         realize_and_build_generation(profile_dir, &plan, progress, hooks_dir, hooks_override_path)
             .await?;
 
-    // 6. Apply the requested activation behavior.
+    // 6. Apply the requested activation behavior. Stale markers are
+    //    swept before activating: a sweep failure aborts the run while
+    //    nothing has applied yet, and no crash window is left in which
+    //    an already-activated profile still carries a stale marker the
+    //    boot activator would promote into a re-application.
+    remove_stale_next(profile_dir)?;
     match activation {
         ActivationMode::Activate => {
             activate_generation(profile_dir, &generation, &lock, progress).await?;
-            remove_stale_next(profile_dir)?;
         }
-        ActivationMode::Skip => {
-            remove_stale_next(profile_dir)?;
+        ActivationMode::Skip => {}
+        ActivationMode::NextBoot { ref bos_version } => {
+            stage_next_boot(profile_dir, &generation, bos_version)?;
         }
-        ActivationMode::NextBoot => stage_next_boot(profile_dir, &generation)?,
     }
 
     // 7. GC old generations (optional). Protect the pre-activation
@@ -364,23 +369,33 @@ fn install_result_from_plan(
     }
 }
 
-/// Remove a stale deferred-activation marker superseded by this run.
+/// Remove stale deferred-activation markers superseded by this run.
 fn remove_stale_next(profile_dir: &Path) -> Result<(), InstallError> {
-    let next = profile_dir.join("next");
-    match next.symlink_metadata() {
-        Ok(_) => std::fs::remove_file(&next).map_err(InstallError::StageNext),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(InstallError::StageNext(err)),
-    }
+    crate::activation::sweep_next_markers(profile_dir, None).map_err(InstallError::StageNext)
 }
 
-/// Stage a built generation for the boot-time activator.
-fn stage_next_boot(profile_dir: &Path, generation: &ProfileGeneration) -> Result<(), InstallError> {
+/// Stage a built generation as `next.<bos-version>` for the boot-time
+/// activator of that firmware version, replacing any older marker.
+fn stage_next_boot(
+    profile_dir: &Path,
+    generation: &ProfileGeneration,
+    bos_version: &str,
+) -> Result<(), InstallError> {
+    remove_stale_next(profile_dir)?;
     let link_name = profile::generation_link_name(generation.number);
-    let tmp = profile_dir.join("next.tmp");
+    let tmp = profile_dir.join(".next.tmp");
     remove_file_if_present(&tmp).map_err(InstallError::StageNext)?;
     std::os::unix::fs::symlink(&link_name, &tmp).map_err(InstallError::StageNext)?;
-    std::fs::rename(&tmp, profile_dir.join("next")).map_err(InstallError::StageNext)
+    std::fs::rename(
+        &tmp,
+        profile_dir.join(crate::activation::next_marker_name(bos_version)),
+    )
+    .map_err(InstallError::StageNext)?;
+    // The marker only matters after a reboot, so the rename must survive
+    // a power cut: fsync the profile directory holding it.
+    std::fs::File::open(profile_dir)
+        .and_then(|dir| dir.sync_all())
+        .map_err(InstallError::StageNext)
 }
 
 fn remove_file_if_present(path: &Path) -> Result<(), std::io::Error> {
@@ -556,6 +571,12 @@ mod tests {
         std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
         create_empty_generation(&profile_dir, 1);
         set_current(&profile_dir, 1);
+        // Markers from earlier staging runs, bare and for another
+        // firmware version, must be replaced by this run's marker.
+        std::os::unix::fs::symlink("1-link", profile_dir.join("next"))
+            .expect("BUG: symlink bare next");
+        std::os::unix::fs::symlink("1-link", profile_dir.join("next.0.9"))
+            .expect("BUG: symlink next.0.9");
 
         let result = apply_profile_change(
             &profile_dir,
@@ -563,7 +584,9 @@ mod tests {
             None,
             &[],
             &[],
-            ActivationMode::NextBoot,
+            ActivationMode::NextBoot {
+                bos_version: "1.0".to_owned(),
+            },
             None,
             None,
             "hooks",
@@ -575,13 +598,15 @@ mod tests {
         let generation = result
             .generation
             .expect("BUG: a built generation must be reported");
-        let target =
-            std::fs::read_link(profile_dir.join("next")).expect("BUG: next symlink must exist");
+        let target = std::fs::read_link(profile_dir.join("next.1.0"))
+            .expect("BUG: next.1.0 symlink must exist");
         assert_eq!(target, PathBuf::from(format!("{}-link", generation.number)));
         assert_eq!(
             std::fs::read_link(profile_dir.join("current")).expect("BUG: current must survive"),
             PathBuf::from("1-link"),
         );
+        assert!(profile_dir.join("next").symlink_metadata().is_err());
+        assert!(profile_dir.join("next.0.9").symlink_metadata().is_err());
     }
 
     #[tokio::test]
