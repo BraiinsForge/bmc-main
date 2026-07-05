@@ -94,21 +94,10 @@ fn run(gen_path: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Collect script names, validating they contain only safe characters
+    // Collect script names from the shared executable lister (already sorted),
+    // validating each contains only safe characters.
     let mut scripts: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(&scripts_dir)? {
-        let entry = entry?;
-        let name = entry
-            .file_name()
-            .to_str()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "activation script filename is not valid UTF-8: {}",
-                    entry.file_name().to_string_lossy()
-                )
-            })?
-            .to_owned();
-
+    for (name, _path) in bmc_nix::hooks::executable_entries(&scripts_dir)? {
         anyhow::ensure!(
             name.chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-'),
@@ -121,9 +110,6 @@ fn run(gen_path: &Path) -> anyhow::Result<()> {
     if scripts.is_empty() {
         return Ok(());
     }
-
-    // Sort alphanumerically (lexicographic)
-    scripts.sort();
 
     // Generate entrypoint script that calls each activation script in order.
     // The entrypoint defaults PROFILE_NEW_GENERATION from its own path when
