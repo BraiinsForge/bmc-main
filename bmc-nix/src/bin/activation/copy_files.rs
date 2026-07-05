@@ -42,24 +42,39 @@ fn main() -> anyhow::Result<()> {
     }
     debug!(path = %copy_dir.display(), "copy dir found");
 
-    info!("cleaning up stale files");
-    cleanup_stale_files(
-        old_gen_path.as_deref().map(|p| p.join(COPY_DIR)).as_deref(),
-        &copy_dir,
-        Path::new("/"),
-    );
-
-    info!("collecting files to copy");
-    let entries = collect_file_entries(&copy_dir)?;
-
-    info!("checking filesystem space");
     let free_bytes = statvfs_free_bytes(Path::new("/"))?;
-    check_space(&entries, Path::new("/"), free_bytes)?;
-
-    info!("copying files");
-    copy_files(&entries, Path::new("/"))?;
+    apply(
+        &copy_dir,
+        old_gen_path.as_deref().map(|p| p.join(COPY_DIR)).as_deref(),
+        Path::new("/"),
+        free_bytes,
+    )?;
 
     info!("all phases complete");
+    Ok(())
+}
+
+/// Run the phases in their load-bearing order: collect, then validate
+/// space, and only then mutate the rootfs; stale-file cleanup runs last so
+/// an aborted run never removes files the old generation still provides.
+fn apply(
+    copy_dir: &Path,
+    old_copy_dir: Option<&Path>,
+    target_root: &Path,
+    free_bytes: u64,
+) -> anyhow::Result<()> {
+    info!("collecting files to copy");
+    let entries = collect_file_entries(copy_dir)?;
+
+    info!("checking filesystem space");
+    check_space(&entries, target_root, free_bytes)?;
+
+    info!("copying files");
+    copy_files(&entries, target_root)?;
+
+    info!("cleaning up stale files");
+    cleanup_stale_files(old_copy_dir, copy_dir, target_root);
+
     Ok(())
 }
 
@@ -69,11 +84,14 @@ fn cleanup_stale_files(old_copy_dir: Option<&Path>, new_copy_dir: &Path, target_
         _ => return,
     };
 
-    for entry in walkdir::WalkDir::new(old_copy_dir)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
+    for entry in walkdir::WalkDir::new(old_copy_dir).follow_links(true) {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                tracing::warn!(%err, "skipping unreadable entry during stale cleanup");
+                continue;
+            }
+        };
         if !entry.file_type().is_file() {
             continue;
         }
@@ -99,11 +117,8 @@ fn cleanup_stale_files(old_copy_dir: Option<&Path>, new_copy_dir: &Path, target_
 
 fn collect_file_entries(copy_dir: &Path) -> anyhow::Result<Vec<FileEntry>> {
     let mut entries = Vec::new();
-    for entry in walkdir::WalkDir::new(copy_dir)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
+    for entry in walkdir::WalkDir::new(copy_dir).follow_links(true) {
+        let entry = entry?;
         if !entry.file_type().is_file() {
             continue;
         }
@@ -338,6 +353,67 @@ mod tests {
     }
 
     #[test]
+    fn collect_file_entries_errors_on_unreadable_subdir() {
+        let tmp = TempDir::new().expect("BUG: create temp dir");
+        let copy_dir = tmp.path().join(COPY_DIR);
+        create_file(&copy_dir, "etc/readable", "content");
+        let locked = copy_dir.join("etc/locked");
+        std::fs::create_dir_all(&locked).expect("BUG: create locked dir");
+        create_file(&locked, "secret", "content");
+
+        let mut perms = std::fs::metadata(&locked)
+            .expect("BUG: locked metadata")
+            .permissions();
+        perms.set_mode(0o000);
+        std::fs::set_permissions(&locked, perms).expect("BUG: set locked perms");
+
+        // Running as root ignores the mode bits and the walk would succeed;
+        // skip the assertion in that case. CI does not run as root.
+        let readable_as_root = std::fs::read_dir(&locked).is_ok();
+
+        let result = collect_file_entries(&copy_dir);
+
+        // Restore the mode so TempDir cleanup can recurse into the subdir.
+        let mut restore = std::fs::metadata(&locked)
+            .expect("BUG: locked metadata")
+            .permissions();
+        restore.set_mode(0o755);
+        std::fs::set_permissions(&locked, restore).expect("BUG: restore locked perms");
+
+        if !readable_as_root {
+            assert!(
+                result.is_err(),
+                "collection must propagate the walk error for an unreadable subdir"
+            );
+        }
+    }
+
+    #[test]
+    fn stale_files_survive_when_space_check_fails() {
+        let tmp = TempDir::new().expect("BUG: create temp dir");
+        let old_copy = tmp.path().join("old/special/copy");
+        create_file(&old_copy, "etc/foo", "foo-old");
+        let new_copy = tmp.path().join("new/special/copy");
+        create_file(&new_copy, "etc/bar", "bar-new");
+        let target_root = tmp.path().join("target");
+        create_file(&target_root, "etc/foo", "foo-old");
+
+        // A tiny free_bytes makes the space check fail, which must abort
+        // `apply` before any stale file is removed.
+        apply(&new_copy, Some(&old_copy), &target_root, 100)
+            .expect_err("space check must fail with 100 free bytes");
+
+        assert!(
+            target_root.join("etc/foo").exists(),
+            "stale file must survive when the space check fails before cleanup"
+        );
+        assert!(
+            !target_root.join("etc/bar").exists(),
+            "no file may be copied when the space check fails"
+        );
+    }
+
+    #[test]
     fn removes_stale_files_from_old_generation() {
         let tmp = TempDir::new().expect("BUG: create temp dir");
         let old_copy = tmp.path().join("old/special/copy");
@@ -538,10 +614,10 @@ mod tests {
             .collect();
 
         // Run the full main-flow with no old generation (boot scenario).
-        cleanup_stale_files(None, &new_copy, &target_root);
         let entries = collect_file_entries(&new_copy).expect("BUG: collect entries");
         check_space(&entries, &target_root, 1024 * 1024 * 1024).expect("BUG: space check");
         copy_files(&entries, &target_root).expect("BUG: copy");
+        cleanup_stale_files(None, &new_copy, &target_root);
 
         let post_inodes: Vec<u64> = paths
             .iter()
@@ -625,11 +701,11 @@ mod tests {
         create_file(&new_copy, "etc/init.d/nix-mounter", "new-mounter");
         create_file(&new_copy, "root/.profile", "old-profile");
 
-        cleanup_stale_files(Some(&old_copy), &new_copy, &target_root);
         let entries = collect_file_entries(&new_copy).expect("BUG: collect entries");
         check_space(&entries, &target_root, 1024 * 1024 * 1024)
             .expect("BUG: space check should pass");
         copy_files(&entries, &target_root).expect("BUG: copy should succeed");
+        cleanup_stale_files(Some(&old_copy), &new_copy, &target_root);
 
         assert!(!target_root.join("etc/init.d/removed-service").exists());
         assert_eq!(
