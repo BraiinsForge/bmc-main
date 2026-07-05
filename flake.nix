@@ -261,7 +261,13 @@
         # `nix run .#deck -- <sysupgrade|deploy> …`.
         apps.deck = {
           type = "app";
-          program = "${bmc-tui-venv}/bin/deck";
+          program = pkgs.lib.getExe (pkgs.writeShellApplication {
+            name = "deck";
+            runtimeInputs = [ pkgs.grpcurl ];
+            text = ''
+              exec ${bmc-tui-venv}/bin/deck "$@"
+            '';
+          });
         };
 
         # default: full local dev (Rust + frontend + GUI, both local and for Deck)
