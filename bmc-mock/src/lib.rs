@@ -1,6 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 pub mod backlight_driver;
+pub mod blob_server;
 pub mod button_driver;
 pub mod cli;
 pub mod led_driver;
