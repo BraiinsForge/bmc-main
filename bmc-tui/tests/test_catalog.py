@@ -248,7 +248,7 @@ class _Nix:
 def test_resolve_discovers_core_plus_widgets() -> None:
     plan = catalog.Deployment(attrs=[])
     catalog.resolve_packages(_Nix(widgets=("clock", "weather")), plan)
-    assert [p.name for p in plan.resolved] == ["core", "clock", "weather"]
+    assert [p.name for p in plan.resolved] == ["core", "bmc-nix-cli", "clock", "weather"]
     assert plan.attrs[0] == ".#deck-packages.core"
 
 
@@ -299,7 +299,11 @@ def test_package_prefix_maps_profile_to_attr_root() -> None:
 def test_resolve_uses_debug_prefix_for_discovery_and_bare_names() -> None:
     plan = catalog.Deployment(attrs=[], prefix=catalog.package_prefix("debug"))
     catalog.resolve_packages(_Nix(widgets=("clock",)), plan)
-    assert plan.attrs == [".#deck-packages-debug.core", ".#deck-packages-debug.clock"]
+    assert plan.attrs == [
+        ".#deck-packages-debug.core",
+        ".#deck-packages-debug.bmc-nix-cli",
+        ".#deck-packages-debug.clock",
+    ]
 
 
 def test_build_realises_each_resolved() -> None:
