@@ -37,6 +37,12 @@ pub enum ActivationError {
         #[source]
         source: io::Error,
     },
+    #[error("generation activated, but consuming its marker '{path}' failed: {source}")]
+    ConsumeMarker {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
     #[error("activation failed, reverted to generation {reverted_to}: {original}")]
     RevertedAfterFailure {
         original: Box<ActivationError>,
@@ -62,8 +68,9 @@ pub enum GenerationSelector {
     Latest,
     /// A specific `<N>-link` (positive integer).
     Number(usize),
-    /// The staged `<profile-dir>/next` symlink, consumed on success;
-    /// falls back to `Current` when absent.
+    /// The staged `<profile-dir>/next.<bos-version>` symlink for the
+    /// running firmware, consumed on success; falls back to `Current`
+    /// when absent.
     Next,
 }
 
@@ -137,14 +144,63 @@ pub fn find_latest_link(profile_dir: &Path) -> io::Result<Option<PathBuf>> {
     Ok(best.map(|(_, p)| p))
 }
 
-/// Remove the `next` symlink; `NotFound` is treated as success.
+/// Name of the deferred-activation marker staged for `bos_version`.
+///
+/// The version is part of the file name, so an activator only ever
+/// finds the marker staged for the firmware it runs on. Packages staged
+/// for another firmware — e.g. by a sysupgrade that failed before its
+/// reboot — are invisible to it and swept as stale instead.
+#[must_use]
+pub fn next_marker_name(bos_version: &str) -> String {
+    format!("next.{bos_version}")
+}
+
+/// Whether `name` is a deferred-activation marker: `next.<version>` or
+/// a bare `next`.
+pub(crate) fn is_next_marker_name(name: &str) -> bool {
+    name == "next" || name.starts_with("next.")
+}
+
+/// Remove every deferred-activation marker in `profile_dir` except the
+/// one named `keep`; a missing directory or entry is treated as done.
+pub(crate) fn sweep_next_markers(profile_dir: &Path, keep: Option<&str>) -> io::Result<()> {
+    let entries = match std::fs::read_dir(profile_dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
+        if !is_next_marker_name(name_str) || Some(name_str) == keep {
+            continue;
+        }
+        // Only symlinks are markers (mirrors the shell activator's
+        // `[ -L ]` guard): other entries must not fail boot activation.
+        if !entry.file_type()?.is_symlink() {
+            continue;
+        }
+        match std::fs::remove_file(entry.path()) {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(())
+}
+
+/// Remove the marker staged for `bos_version`; `NotFound` is treated as
+/// success.
 ///
 /// Distinct from [`crate::upgrade::remove_stale_next`], which invalidates
-/// a pre-existing `next` before *building* a new profile on the upgrade
-/// path. `remove_next` here consumes a `next` after
+/// pre-existing markers before *building* a new profile on the upgrade
+/// path. `remove_next` here consumes a marker after
 /// `GenerationSelector::Next` activates it successfully.
-pub fn remove_next(profile_dir: &Path) -> io::Result<()> {
-    match std::fs::remove_file(profile_dir.join("next")) {
+pub fn remove_next(profile_dir: &Path, bos_version: &str) -> io::Result<()> {
+    match std::fs::remove_file(profile_dir.join(next_marker_name(bos_version))) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err),
@@ -158,50 +214,81 @@ pub fn remove_next(profile_dir: &Path) -> io::Result<()> {
 /// `Current` softly falls back to `find_latest_link` (both for a
 /// missing symlink and for a missing/non-executable entrypoint) and only
 /// returns [`ActivationOutcome::Skipped`] when nothing resolves; `Latest`
-/// and `Number(N)` never fall back. `Next` activates the staged `next`
-/// symlink and removes it on success; when `next` is absent it behaves
-/// exactly like `Current`.
+/// and `Number(N)` never fall back. `Next` activates the
+/// `next.<bos-version>` marker matching `bos_version` (the running
+/// firmware's) and removes it on success; markers staged for other
+/// versions are removed as stale. When no marker for this version
+/// exists — including when `bos_version` is `None` — it behaves exactly
+/// like `Current` (an unknown version leaves all markers untouched).
 ///
 /// The profile lock is acquired up front and held across selector
-/// resolution, activation, and `next` removal, so a concurrent upgrade
-/// cannot re-stage or observe a stale `next` mid-sequence.
+/// resolution, activation, and marker removal, so a concurrent upgrade
+/// cannot re-stage or observe a stale marker mid-sequence.
 pub async fn activate(
     profile_dir: &Path,
     selector: GenerationSelector,
+    bos_version: Option<&str>,
 ) -> Result<ActivationOutcome, ActivationError> {
     let lock = crate::profile::lock_profile(profile_dir)
         .await
         .map_err(|err| ActivationError::Lock(Box::new(err)))?;
-    let effective = match selector {
-        GenerationSelector::Next => {
-            let next = profile_dir.join("next");
-            // `metadata` follows the symlink, so it fails when `next` is
-            // absent or dangling; only a `next` that resolves to a real
-            // generation is honored. A dangling marker (partial GC, manual
-            // cleanup) must fall back to `current` instead of failing every
-            // boot — the good `current` generation still boots.
-            if std::fs::metadata(&next).is_ok() {
-                GenerationSelector::Next
-            } else {
-                if next.symlink_metadata().is_ok() {
-                    tracing::warn!(
-                        "staged next generation {} is dangling; falling back to current",
-                        next.display()
-                    );
-                }
-                GenerationSelector::Current
-            }
+    let next_marker = match (selector, bos_version) {
+        (GenerationSelector::Next, Some(version)) => Some(next_marker_name(version)),
+        // Without a known BOS version no marker can be matched: leave
+        // all markers alone (staleness is undecidable) and boot current.
+        (GenerationSelector::Next, None) => {
+            tracing::warn!("BOS version unknown; ignoring any staged next generation");
+            None
         }
+        _ => None,
+    };
+    let effective = match selector {
+        GenerationSelector::Next => match next_marker.as_deref() {
+            None => GenerationSelector::Current,
+            Some(marker) => {
+                sweep_next_markers(profile_dir, Some(marker))
+                    .map_err(io_to_activation(profile_dir))?;
+                let next = profile_dir.join(marker);
+                // `metadata` follows the symlink, so `NotFound` covers both an
+                // absent and a dangling marker; only a marker that resolves to
+                // a real generation is honored. A dangling marker (partial GC,
+                // manual cleanup) must fall back to `current` instead of
+                // failing every boot — the good `current` generation still
+                // boots. Any other error (EACCES, ELOOP, …) says nothing
+                // about staleness and must surface rather than silently skip
+                // a genuinely staged generation.
+                match std::fs::metadata(&next) {
+                    Ok(_) => GenerationSelector::Next,
+                    Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                        if next.symlink_metadata().is_ok() {
+                            tracing::warn!(
+                                "staged next generation {} is dangling; falling back to current",
+                                next.display()
+                            );
+                        }
+                        GenerationSelector::Current
+                    }
+                    Err(err) => return Err(io_to_activation(profile_dir)(err)),
+                }
+            }
+        },
         GenerationSelector::Current
         | GenerationSelector::Latest
         | GenerationSelector::Number(_) => selector,
     };
-    let Some(target) = resolve_selector(profile_dir, effective)? else {
+    let Some(target) = resolve_selector(profile_dir, effective, next_marker.as_deref())? else {
         return Ok(ActivationOutcome::Skipped);
     };
     let outcome = activate_resolved(profile_dir, effective, target, &lock).await?;
     if matches!(effective, GenerationSelector::Next) {
-        remove_next(profile_dir).map_err(io_to_activation(profile_dir))?;
+        let version = bos_version.expect("BUG: Next is only effective with a version");
+        remove_next(profile_dir, version).map_err(|source| ActivationError::ConsumeMarker {
+            path: profile_dir
+                .join(next_marker_name(version))
+                .display()
+                .to_string(),
+            source,
+        })?;
     }
     Ok(outcome)
 }
@@ -209,6 +296,7 @@ pub async fn activate(
 fn resolve_selector(
     profile_dir: &Path,
     selector: GenerationSelector,
+    next_marker: Option<&str>,
 ) -> Result<Option<PathBuf>, ActivationError> {
     match selector {
         GenerationSelector::Current => match resolve_current_link(profile_dir)? {
@@ -233,7 +321,7 @@ fn resolve_selector(
             }
         }
         GenerationSelector::Next => {
-            let next = profile_dir.join("next");
+            let next = profile_dir.join(next_marker.expect("BUG: Next resolved without a marker"));
             let target = std::fs::read_link(&next).map_err(io_to_activation(profile_dir))?;
             let absolute = if target.is_absolute() {
                 target
@@ -469,23 +557,23 @@ mod tests {
     #[test]
     fn remove_next_is_idempotent_when_absent() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
-        remove_next(dir.path()).expect("BUG: remove_next on absent");
+        remove_next(dir.path(), "1.0").expect("BUG: remove_next on absent");
     }
 
     #[test]
     fn remove_next_deletes_symlink() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         touch_generation(dir.path(), 2);
-        symlink("2-link", dir.path().join("next")).expect("BUG: next");
-        remove_next(dir.path()).expect("BUG: remove_next");
-        assert!(dir.path().join("next").symlink_metadata().is_err());
+        symlink("2-link", dir.path().join("next.1.0")).expect("BUG: next");
+        remove_next(dir.path(), "1.0").expect("BUG: remove_next");
+        assert!(dir.path().join("next.1.0").symlink_metadata().is_err());
     }
 
     #[tokio::test]
     #[serial]
     async fn activate_current_no_current_and_no_generations_is_skipped() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
-        let out = activate(dir.path(), GenerationSelector::Current)
+        let out = activate(dir.path(), GenerationSelector::Current, None)
             .await
             .expect("BUG: soft skip");
         assert!(matches!(out, ActivationOutcome::Skipped));
@@ -497,7 +585,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let g = touch_generation(dir.path(), 4);
         write_entrypoint(&g, ZERO_EXIT);
-        let out = activate(dir.path(), GenerationSelector::Current)
+        let out = activate(dir.path(), GenerationSelector::Current, None)
             .await
             .expect("BUG: activate");
         assert!(matches!(
@@ -514,7 +602,7 @@ mod tests {
         write_entrypoint(&g, NONZERO_EXIT);
         symlink("1-link", dir.path().join("current")).expect("BUG: current");
 
-        let err = activate(dir.path(), GenerationSelector::Current)
+        let err = activate(dir.path(), GenerationSelector::Current, None)
             .await
             .expect_err("BUG: expected error");
         assert!(
@@ -533,7 +621,7 @@ mod tests {
         write_entrypoint(&g2, ZERO_EXIT);
         symlink("1-link", dir.path().join("current")).expect("BUG: current");
 
-        let out = activate(dir.path(), GenerationSelector::Current)
+        let out = activate(dir.path(), GenerationSelector::Current, None)
             .await
             .expect("BUG: activate");
         assert!(matches!(
@@ -549,7 +637,7 @@ mod tests {
         touch_generation(dir.path(), 1);
         symlink("1-link", dir.path().join("current")).expect("BUG: current");
 
-        let err = activate(dir.path(), GenerationSelector::Current)
+        let err = activate(dir.path(), GenerationSelector::Current, None)
             .await
             .expect_err("BUG: expected error");
         assert!(
@@ -562,7 +650,7 @@ mod tests {
     #[serial]
     async fn activate_latest_missing_is_hard_error() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
-        let err = activate(dir.path(), GenerationSelector::Latest)
+        let err = activate(dir.path(), GenerationSelector::Latest, None)
             .await
             .expect_err("BUG: expected error");
         assert!(matches!(err, ActivationError::NoGeneration { .. }));
@@ -572,7 +660,7 @@ mod tests {
     #[serial]
     async fn activate_number_missing_is_hard_error() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
-        let err = activate(dir.path(), GenerationSelector::Number(7))
+        let err = activate(dir.path(), GenerationSelector::Number(7), None)
             .await
             .expect_err("BUG: expected error");
         assert!(matches!(err, ActivationError::NoGeneration { .. }));
@@ -586,7 +674,7 @@ mod tests {
         write_entrypoint(&g, ZERO_EXIT);
         symlink("1-link", dir.path().join("current")).expect("BUG: current");
 
-        let out = activate(dir.path(), GenerationSelector::Next)
+        let out = activate(dir.path(), GenerationSelector::Next, Some("1.0"))
             .await
             .expect("BUG: activate next");
         assert!(matches!(
@@ -603,9 +691,9 @@ mod tests {
         write_entrypoint(&g, ZERO_EXIT);
         symlink("1-link", dir.path().join("current")).expect("BUG: current");
         // `next` points at a generation directory that does not exist.
-        symlink("9-link", dir.path().join("next")).expect("BUG: next");
+        symlink("9-link", dir.path().join("next.1.0")).expect("BUG: next");
 
-        let out = activate(dir.path(), GenerationSelector::Next)
+        let out = activate(dir.path(), GenerationSelector::Next, Some("1.0"))
             .await
             .expect("BUG: a dangling next must fall back to current, not error");
         assert!(
@@ -613,7 +701,7 @@ mod tests {
             "got {out:?}"
         );
         // The dangling marker is left in place for later cleanup, not removed.
-        assert!(dir.path().join("next").symlink_metadata().is_ok());
+        assert!(dir.path().join("next.1.0").symlink_metadata().is_ok());
     }
 
     #[tokio::test]
@@ -625,9 +713,9 @@ mod tests {
         let weird = dir.path().join("weird");
         std::fs::create_dir_all(&weird).expect("BUG: mk weird dir");
         write_entrypoint(&weird, ZERO_EXIT);
-        symlink("weird", dir.path().join("next")).expect("BUG: next");
+        symlink("weird", dir.path().join("next.1.0")).expect("BUG: next");
 
-        let err = activate(dir.path(), GenerationSelector::Next)
+        let err = activate(dir.path(), GenerationSelector::Next, Some("1.0"))
             .await
             .expect_err("BUG: a next target that is not <N>-link must be a hard error");
         assert!(
@@ -645,16 +733,89 @@ mod tests {
         write_entrypoint(&g1, ZERO_EXIT);
         write_entrypoint(&g2, ZERO_EXIT);
         symlink("1-link", dir.path().join("current")).expect("BUG: current");
-        symlink("2-link", dir.path().join("next")).expect("BUG: next");
+        symlink("2-link", dir.path().join("next.1.0")).expect("BUG: next");
 
-        let out = activate(dir.path(), GenerationSelector::Next)
+        let out = activate(dir.path(), GenerationSelector::Next, Some("1.0"))
             .await
             .expect("BUG: activate next");
         assert!(matches!(
             out,
             ActivationOutcome::Activated { generation: 2, .. }
         ));
+        assert!(dir.path().join("next.1.0").symlink_metadata().is_err());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn activate_next_sweeps_markers_staged_for_other_versions() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let g1 = touch_generation(dir.path(), 1);
+        let g2 = touch_generation(dir.path(), 2);
+        write_entrypoint(&g1, ZERO_EXIT);
+        write_entrypoint(&g2, ZERO_EXIT);
+        symlink("1-link", dir.path().join("current")).expect("BUG: current");
+        symlink("2-link", dir.path().join("next.1.0")).expect("BUG: next.1.0");
+        // Markers left behind by a sysupgrade that never rebooted into
+        // its firmware, and by pre-versioning staging.
+        symlink("2-link", dir.path().join("next.2.0")).expect("BUG: next.2.0");
+        symlink("2-link", dir.path().join("next")).expect("BUG: bare next");
+
+        let out = activate(dir.path(), GenerationSelector::Next, Some("1.0"))
+            .await
+            .expect("BUG: activate next");
+        assert!(matches!(
+            out,
+            ActivationOutcome::Activated { generation: 2, .. }
+        ));
+        assert!(dir.path().join("next.2.0").symlink_metadata().is_err());
         assert!(dir.path().join("next").symlink_metadata().is_err());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn activate_next_sweep_skips_non_symlink_entries() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let g1 = touch_generation(dir.path(), 1);
+        let g2 = touch_generation(dir.path(), 2);
+        write_entrypoint(&g1, ZERO_EXIT);
+        write_entrypoint(&g2, ZERO_EXIT);
+        symlink("1-link", dir.path().join("current")).expect("BUG: current");
+        symlink("2-link", dir.path().join("next.1.0")).expect("BUG: next.1.0");
+        // A directory squatting on a marker name must not fail boot
+        // activation; only symlinks are markers.
+        std::fs::create_dir(dir.path().join("next.junk")).expect("BUG: mk next.junk");
+
+        let out = activate(dir.path(), GenerationSelector::Next, Some("1.0"))
+            .await
+            .expect("BUG: junk in the profile dir must not fail activation");
+        assert!(matches!(
+            out,
+            ActivationOutcome::Activated { generation: 2, .. }
+        ));
+        assert!(dir.path().join("next.junk").is_dir());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn activate_next_without_version_activates_current_and_keeps_markers() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let g1 = touch_generation(dir.path(), 1);
+        let g2 = touch_generation(dir.path(), 2);
+        write_entrypoint(&g1, ZERO_EXIT);
+        write_entrypoint(&g2, ZERO_EXIT);
+        symlink("1-link", dir.path().join("current")).expect("BUG: current");
+        symlink("2-link", dir.path().join("next.2.0")).expect("BUG: next.2.0");
+
+        // Without a version, staleness is undecidable: no marker may be
+        // consumed or swept, and activation falls back to current.
+        let out = activate(dir.path(), GenerationSelector::Next, None)
+            .await
+            .expect("BUG: activate next without version");
+        assert!(matches!(
+            out,
+            ActivationOutcome::Activated { generation: 1, .. }
+        ));
+        assert!(dir.path().join("next.2.0").symlink_metadata().is_ok());
     }
 
     #[tokio::test]
@@ -666,9 +827,9 @@ mod tests {
         write_entrypoint(&g1, ZERO_EXIT);
         write_entrypoint(&g2, NONZERO_EXIT);
         symlink("1-link", dir.path().join("current")).expect("BUG: current");
-        symlink("2-link", dir.path().join("next")).expect("BUG: next");
+        symlink("2-link", dir.path().join("next.1.0")).expect("BUG: next");
 
-        let err = activate(dir.path(), GenerationSelector::Next)
+        let err = activate(dir.path(), GenerationSelector::Next, Some("1.0"))
             .await
             .expect_err("BUG: expected revert error");
         assert!(
@@ -679,7 +840,7 @@ mod tests {
             "got {err:?}"
         );
         assert!(
-            dir.path().join("next").symlink_metadata().is_ok(),
+            dir.path().join("next.1.0").symlink_metadata().is_ok(),
             "failed next should stay put for inspection"
         );
         assert!(dir.path().join("previous").symlink_metadata().is_err());
@@ -693,9 +854,9 @@ mod tests {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let g2 = touch_generation(dir.path(), 2);
         write_entrypoint(&g2, NONZERO_EXIT);
-        symlink("2-link", dir.path().join("next")).expect("BUG: next");
+        symlink("2-link", dir.path().join("next.1.0")).expect("BUG: next");
 
-        let err = activate(dir.path(), GenerationSelector::Next)
+        let err = activate(dir.path(), GenerationSelector::Next, Some("1.0"))
             .await
             .expect_err("BUG: expected error");
         assert!(
@@ -713,9 +874,9 @@ mod tests {
         let g2 = touch_generation(dir.path(), 2);
         write_entrypoint(&g2, NONZERO_EXIT);
         symlink("1-link", dir.path().join("current")).expect("BUG: current");
-        symlink("2-link", dir.path().join("next")).expect("BUG: next");
+        symlink("2-link", dir.path().join("next.1.0")).expect("BUG: next");
 
-        let err = activate(dir.path(), GenerationSelector::Next)
+        let err = activate(dir.path(), GenerationSelector::Next, Some("1.0"))
             .await
             .expect_err("BUG: expected revert failure");
         assert!(
@@ -732,7 +893,7 @@ mod tests {
         write_entrypoint(&g, ZERO_EXIT);
         symlink("1-link", dir.path().join("current")).expect("BUG: current");
 
-        let out = activate(dir.path(), GenerationSelector::Current)
+        let out = activate(dir.path(), GenerationSelector::Current, None)
             .await
             .expect("BUG: activate");
         assert!(matches!(

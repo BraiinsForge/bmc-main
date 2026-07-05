@@ -191,22 +191,50 @@ fn current_generation_number(profile_dir: &Path) -> Result<Option<usize>, std::i
     )
 }
 
-/// Read the `next` symlink in `profile_dir` and return the generation
-/// number it points to, with the same error semantics as
-/// [`current_generation_number`].
-fn next_generation_number(profile_dir: &Path) -> Result<Option<usize>, std::io::Error> {
-    match std::fs::read_link(profile_dir.join("next")) {
-        Ok(target) => Ok(generation_number_of(&target)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e),
+/// Generation numbers referenced by deferred-activation markers
+/// (`next.<bos-version>`, or a bare `next`) in `profile_dir`, with the
+/// same error semantics as [`current_generation_number`]. Markers for
+/// firmware versions other than the running one stay protected until an
+/// activator or staging run sweeps them.
+fn next_generation_numbers(profile_dir: &Path) -> Result<Vec<usize>, std::io::Error> {
+    let entries = match std::fs::read_dir(profile_dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut numbers = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
+        if !crate::activation::is_next_marker_name(name_str) {
+            continue;
+        }
+        match std::fs::read_link(entry.path()) {
+            Ok(target) => numbers.extend(generation_number_of(&target)),
+            // A marker-named entry that is not a symlink yields EINVAL
+            // (`InvalidInput`) from `read_link`. Treat it like an absent
+            // marker (`NotFound`) — a tolerated stray to skip, not a reason
+            // to abort every gc run. `sweep_next_markers` guards the same
+            // case with an `is_symlink` check.
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidInput
+                ) => {}
+            Err(e) => return Err(e),
+        }
     }
+    Ok(numbers)
 }
 
 /// Remove old profile generations according to GC policy.
 ///
 /// Keeps:
 /// - the current generation (pointed to by the `current` symlink);
-/// - the next-boot generation (pointed to by the `next` symlink);
+/// - next-boot generations (pointed to by deferred-activation markers);
 /// - the latest numbered generation, even when it is not current yet
 ///   (preserves generations built for deferred activation);
 /// - protected generations from `gc_config.protected_generations`;
@@ -253,11 +281,7 @@ pub fn cleanup_generations(
         keep.insert(current);
     }
 
-    if let Some(next) =
-        next_generation_number(profile_dir).map_err(CleanupGenerationsError::Cleanup)?
-    {
-        keep.insert(next);
-    }
+    keep.extend(next_generation_numbers(profile_dir).map_err(CleanupGenerationsError::Cleanup)?);
 
     if let Some(&latest) = generations.last() {
         keep.insert(latest);
@@ -631,6 +655,11 @@ mod tests {
         }
         set_current(&profile_dir, 5);
         set_next(&profile_dir, 3);
+        // A versioned marker — possibly staged for another firmware —
+        // protects its generation just like a bare one until an
+        // activator or staging run sweeps it.
+        std::os::unix::fs::symlink("2-link", profile_dir.join("next.9.9"))
+            .expect("BUG: symlink next.9.9");
 
         let gc_config = GcConfig {
             keep_generations: 1,
@@ -642,6 +671,10 @@ mod tests {
         assert!(
             generation_exists(&profile_dir, 3),
             "generation targeted by next must survive cleanup"
+        );
+        assert!(
+            generation_exists(&profile_dir, 2),
+            "generation targeted by a versioned marker must survive cleanup"
         );
         assert!(generation_exists(&profile_dir, 5), "current gen is kept");
     }
