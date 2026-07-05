@@ -8,11 +8,11 @@ use bmc_mock::MockSessionManager;
 use bmc_mock::backlight_driver::MockBacklightDriver;
 use bmc_mock::button_driver::build_buttons;
 use bmc_mock::led_driver::PlatformLedDriver;
+use bmc_mock::mock_package_backend::MockPackageBackend;
 use bmc_mock::{
     cli, manager::Manager, mock_compositor::MockCompositor, mock_index::MockIndex, mockfs,
 };
 use bmc_platform::{BosPlatform, HardwareProfileSelection};
-use bmc_upgrade::packages::{NixUpgradeConfig, PackageUpgrader};
 use clap::Parser;
 use std::sync::{Arc, Mutex};
 use tracing::error;
@@ -29,6 +29,8 @@ async fn main() -> Result<()> {
         config.factory_default,
         config.setup_pending,
     )?;
+
+    let package_backend = Arc::new(MockPackageBackend::new(mockfs.upgrade_scenario()));
 
     let password = Arc::new(Mutex::new(system_password));
 
@@ -53,13 +55,6 @@ async fn main() -> Result<()> {
     );
 
     let config: bmc::Configuration = config.into();
-
-    let package_backend = Arc::new(PackageUpgrader::new(NixUpgradeConfig {
-        servers_config_path: config.nix_servers_config_path.clone(),
-        profile_dir: config.nix_profile_dir.clone(),
-        hooks_dir: config.nix_hooks_dir.clone(),
-        hooks_override_path: config.nix_hooks_override_path.clone(),
-    }));
 
     let backlight_driver = MockBacklightDriver::new(true, 18, 20);
     let backlight_driver = Arc::new(tokio::sync::Mutex::new(backlight_driver));

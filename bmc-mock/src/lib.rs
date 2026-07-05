@@ -7,6 +7,7 @@ pub mod led_driver;
 pub mod manager;
 pub mod mock_compositor;
 pub mod mock_index;
+pub mod mock_package_backend;
 pub mod mockfs;
 pub mod scenario;
 mod session;
