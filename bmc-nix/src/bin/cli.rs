@@ -361,6 +361,50 @@ enum Commands {
         #[arg(long, value_parser = clap::value_parser!(GenerationSelector))]
         generation: Option<GenerationSelector>,
     },
+
+    /// Register a package server and its binary-cache substituter.
+    ///
+    /// Inserts (or replaces by `id`) a server entry in `servers.json` and
+    /// appends the substituter plus its trusted key to `nix.conf`. Points
+    /// a device at a developer machine for the upgrade test harness.
+    RegisterServer {
+        /// Path to the server registry.
+        #[arg(long, default_value = "/etc/nix-upgrade/servers.json")]
+        servers_config: PathBuf,
+
+        /// Path to the Nix configuration file.
+        #[arg(long, default_value = "/etc/nix/nix.conf")]
+        nix_conf: PathBuf,
+
+        /// Unique server id; an existing entry with this id is replaced.
+        #[arg(long)]
+        id: String,
+
+        /// Server type marker recorded in the registry.
+        #[arg(long = "type", default_value = "http")]
+        server_type: String,
+
+        /// Base URL of the package index server.
+        #[arg(long)]
+        base_url: String,
+
+        /// Public key stored for future index verification; the device
+        /// does not currently verify fetched indexes against it.
+        #[arg(long)]
+        index_public_key: String,
+
+        /// URL of the binary-cache substituter.
+        #[arg(long)]
+        cache_url: String,
+
+        /// Public key that signs the substituter's NARs.
+        #[arg(long)]
+        cache_public_key: String,
+
+        /// Resolution priority for the server entry.
+        #[arg(long, default_value_t = 50)]
+        priority: u32,
+    },
 }
 
 /// Resolve a `BaseSelector` into the optional `base_manifest` argument
@@ -888,6 +932,53 @@ async fn cmd_activate(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "CLI dispatch — all args are required"
+)]
+fn cmd_register_server(
+    servers_config: &Path,
+    nix_conf: &Path,
+    id: String,
+    server_type: String,
+    base_url: String,
+    index_public_key: String,
+    cache_url: &str,
+    cache_public_key: &str,
+    priority: u32,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(!id.trim().is_empty(), "--id must not be empty");
+    anyhow::ensure!(
+        base_url.starts_with("https://")
+            || base_url.starts_with("http://")
+            || base_url.starts_with("file://"),
+        "--base-url must be an http(s):// or file:// URL, got '{base_url}'"
+    );
+    anyhow::ensure!(
+        !index_public_key.trim().is_empty(),
+        "--index-public-key must not be empty"
+    );
+    anyhow::ensure!(
+        !cache_public_key.trim().is_empty(),
+        "--cache-public-key must not be empty"
+    );
+    let entry = ServerEntry {
+        id,
+        server_type,
+        base_url,
+        known_public_key: index_public_key,
+        priority,
+        enabled: true,
+    };
+    // Register the substituter (nix.conf) before the server (servers.json):
+    // if the process dies between the two writes, a server missing from the
+    // registry is more benign than a registered server whose binary cache is
+    // absent — the latter fetches an index it then cannot realize.
+    bmc_nix::registration::register_substituter(nix_conf, cache_url, cache_public_key)?;
+    bmc_nix::registration::register_server(servers_config, entry)?;
+    Ok(())
+}
+
 /// Install a stderr `tracing` subscriber so emitted events (e.g. gc
 /// generation removals) are visible. Stdout is reserved for command
 /// output, so logs go to stderr. The level defaults to `info` and is
@@ -1057,6 +1148,28 @@ async fn main() -> anyhow::Result<()> {
             profile_dir,
             generation,
         } => cmd_activate(&profile_dir, generation).await,
+
+        Commands::RegisterServer {
+            servers_config,
+            nix_conf,
+            id,
+            server_type,
+            base_url,
+            index_public_key,
+            cache_url,
+            cache_public_key,
+            priority,
+        } => cmd_register_server(
+            &servers_config,
+            &nix_conf,
+            id,
+            server_type,
+            base_url,
+            index_public_key,
+            &cache_url,
+            &cache_public_key,
+            priority,
+        ),
     }
 }
 
@@ -1541,6 +1654,52 @@ mod tests {
 
         assert_eq!(resolved.installed_from, "custom-0");
         assert_eq!(resolved.store_path, "/nix/store/custom-clock");
+    }
+
+    #[test]
+    fn register_server_maps_distinct_keys_and_defaults() {
+        let cli = Cli::try_parse_from([
+            "bmc-nix-cli",
+            "register-server",
+            "--id",
+            "dev",
+            "--base-url",
+            "http://dev.example.com:9080",
+            "--index-public-key",
+            "index-key",
+            "--cache-url",
+            "http://dev.example.com:5000",
+            "--cache-public-key",
+            "cache-key",
+        ])
+        .expect("BUG: register-server args should parse");
+
+        let Commands::RegisterServer {
+            servers_config,
+            nix_conf,
+            id,
+            server_type,
+            base_url,
+            index_public_key,
+            cache_url,
+            cache_public_key,
+            priority,
+        } = cli.command
+        else {
+            panic!("BUG: parsed command must be register-server");
+        };
+        assert_eq!(
+            servers_config,
+            PathBuf::from("/etc/nix-upgrade/servers.json")
+        );
+        assert_eq!(nix_conf, PathBuf::from("/etc/nix/nix.conf"));
+        assert_eq!(id, "dev");
+        assert_eq!(server_type, "http");
+        assert_eq!(base_url, "http://dev.example.com:9080");
+        assert_eq!(index_public_key, "index-key");
+        assert_eq!(cache_url, "http://dev.example.com:5000");
+        assert_eq!(cache_public_key, "cache-key");
+        assert_eq!(priority, 50);
     }
 
     #[test]
