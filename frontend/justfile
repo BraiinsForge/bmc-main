@@ -54,6 +54,10 @@ serve EXTRA_ARGS="":
 serve-factory:
     @just serve --factory-default
 
+# Like `serve`, but restart the mock after simulated firmware-upgrade reboots.
+serve-loop:
+    while true; do just serve; echo "mock exited - restarting (simulated reboot)"; sleep 2; done
+
 # Storybook (component sandbox).
 storybook-start:
     yarn run storybook dev \
