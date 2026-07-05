@@ -1,6 +1,7 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use std::path::Path;
+use std::os::unix::fs::PermissionsExt as _;
+use std::path::{Path, PathBuf};
 
 use tracing::{debug, info};
 
@@ -20,28 +21,73 @@ pub enum RunHooksError {
         hook: String,
         source: std::io::Error,
     },
-    #[error("failed to read hooks directory '{path}': {source}")]
+    #[error(transparent)]
+    ListEntries(#[from] ExecutableEntriesError),
+}
+
+/// Errors that can occur while listing the executable entries of a directory.
+#[derive(Debug, thiserror::Error)]
+pub enum ExecutableEntriesError {
+    #[error("failed to read directory '{path}': {source}")]
     ReadDir {
         path: String,
         source: std::io::Error,
     },
+    #[error("failed to stat entry '{path}': {source}")]
+    Stat {
+        path: String,
+        source: std::io::Error,
+    },
+    #[error("entry '{path}' is not a regular executable file")]
+    NotExecutable { path: String },
+    #[error("entry '{path}' has a non-UTF-8 filename")]
+    NonUtf8Name { path: String },
 }
 
-/// Read directory entries, filter to files only, and sort lexicographically by filename.
-fn sorted_dir_entries(dir: &Path) -> Result<Vec<std::fs::DirEntry>, std::io::Error> {
-    let mut entries: Vec<std::fs::DirEntry> = Vec::new();
+/// List a directory's entries as `(name, path)` pairs sorted by UTF-8 name,
+/// keeping only entries whose resolved metadata is a regular executable file.
+///
+/// Symlinks are followed via [`std::fs::metadata`] (unlike
+/// [`std::fs::DirEntry::metadata`], which stats the link itself), so a link
+/// to an executable is honored. Any entry that is not a regular executable
+/// file — a subdirectory, a non-executable file, or an entry whose name is
+/// not valid UTF-8 — is a hard error naming the offending path.
+pub fn executable_entries(dir: &Path) -> Result<Vec<(String, PathBuf)>, ExecutableEntriesError> {
+    let read_dir = std::fs::read_dir(dir).map_err(|source| ExecutableEntriesError::ReadDir {
+        path: dir.display().to_string(),
+        source,
+    })?;
 
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        // Follow symlinks: use std::fs::metadata which resolves symlinks,
-        // unlike DirEntry::file_type which returns the symlink type itself.
-        let metadata = std::fs::metadata(entry.path())?;
-        if metadata.is_file() {
-            entries.push(entry);
+    let mut entries: Vec<(String, PathBuf)> = Vec::new();
+    for entry in read_dir {
+        let entry = entry.map_err(|source| ExecutableEntriesError::ReadDir {
+            path: dir.display().to_string(),
+            source,
+        })?;
+        let path = entry.path();
+
+        let metadata = std::fs::metadata(&path).map_err(|source| ExecutableEntriesError::Stat {
+            path: path.display().to_string(),
+            source,
+        })?;
+        if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+            return Err(ExecutableEntriesError::NotExecutable {
+                path: path.display().to_string(),
+            });
         }
+
+        let name = entry
+            .file_name()
+            .to_str()
+            .ok_or_else(|| ExecutableEntriesError::NonUtf8Name {
+                path: path.display().to_string(),
+            })?
+            .to_owned();
+
+        entries.push((name, path));
     }
 
-    entries.sort_by_key(std::fs::DirEntry::file_name);
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(entries)
 }
 
@@ -55,8 +101,11 @@ fn sorted_dir_entries(dir: &Path) -> Result<Vec<std::fs::DirEntry>, std::io::Err
 /// tarball builds on x86_64, the profile contains ARM hooks that cannot run natively.
 ///
 /// If the hooks directory does not exist or is empty, this is a no-op and returns `Ok(())`.
-/// Hooks are executed in lexicographic order by filename. If any hook exits with a non-zero
-/// exit code, execution stops and an error is returned.
+/// Every entry in the hooks directory must be a regular executable file (symlinks are
+/// followed); a subdirectory, a non-executable file, or a non-UTF-8 name is a hard error
+/// naming the offending path before any hook runs. Hooks are executed in lexicographic
+/// order by filename. If any hook exits with a non-zero exit code, execution stops and an
+/// error is returned.
 pub async fn run_hooks(
     new_gen_path: &Path,
     hooks_dir_name: &str,
@@ -72,20 +121,14 @@ pub async fn run_hooks(
         return Ok(());
     }
 
-    let entries = sorted_dir_entries(&hooks_dir).map_err(|source| RunHooksError::ReadDir {
-        path: hooks_dir.display().to_string(),
-        source,
-    })?;
+    let entries = executable_entries(&hooks_dir)?;
 
     if entries.is_empty() {
         debug!(?hooks_dir, "hooks directory is empty, skipping");
         return Ok(());
     }
 
-    for entry in entries {
-        let hook_name = entry.file_name().to_string_lossy().to_string();
-        let hook_path = entry.path();
-
+    for (hook_name, hook_path) in entries {
         info!(?hook_path, "executing hook");
 
         let output = tokio::process::Command::new(&hook_path)
@@ -152,6 +195,71 @@ mod tests {
         file.sync_all().expect("BUG: sync hook script");
         // Explicit drop to ensure the fd is closed before exec
         drop(file);
+    }
+
+    fn create_file_with_mode(dir: &Path, name: &str, mode: u32) -> PathBuf {
+        use std::io::Write;
+
+        let path = dir.join(name);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(mode)
+            .open(&path)
+            .expect("BUG: create file");
+        file.write_all(b"#!/bin/sh\nexit 0\n")
+            .expect("BUG: write file");
+        drop(file);
+        path
+    }
+
+    #[test]
+    fn executable_entries_sorted_and_symlinks_followed() {
+        let tmp = tempfile::tempdir().expect("BUG: create tempdir");
+        let dir = tmp.path().join("scripts");
+        std::fs::create_dir_all(&dir).expect("BUG: create scripts dir");
+
+        // A plain executable file.
+        create_file_with_mode(&dir, "b-real", 0o755);
+
+        // An executable target reached through a symlink; std::fs::metadata
+        // follows the link, so it must be listed.
+        let target = tmp.path().join("target-exec");
+        create_file_with_mode(tmp.path(), "target-exec", 0o755);
+        std::os::unix::fs::symlink(&target, dir.join("a-link")).expect("BUG: symlink");
+
+        let entries = executable_entries(&dir).expect("BUG: listing should succeed");
+        let names: Vec<&str> = entries.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, vec!["a-link", "b-real"]);
+    }
+
+    #[test]
+    fn executable_entries_rejects_subdir() {
+        let tmp = tempfile::tempdir().expect("BUG: create tempdir");
+        let dir = tmp.path().join("scripts");
+        std::fs::create_dir_all(dir.join("nested")).expect("BUG: create nested dir");
+
+        let err = executable_entries(&dir).expect_err("BUG: subdir must be rejected");
+        assert!(
+            err.to_string().contains("nested"),
+            "error should name the offending entry, got: {err}"
+        );
+    }
+
+    #[test]
+    fn executable_entries_rejects_non_executable() {
+        let tmp = tempfile::tempdir().expect("BUG: create tempdir");
+        let dir = tmp.path().join("scripts");
+        std::fs::create_dir_all(&dir).expect("BUG: create scripts dir");
+
+        create_file_with_mode(&dir, "10-stray", 0o644);
+
+        let err = executable_entries(&dir).expect_err("BUG: non-executable must be rejected");
+        assert!(
+            err.to_string().contains("10-stray"),
+            "error should name the offending entry, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -231,7 +339,7 @@ mod tests {
             }
             other @ (RunHooksError::HookSignaled { .. }
             | RunHooksError::Execute { .. }
-            | RunHooksError::ReadDir { .. }) => {
+            | RunHooksError::ListEntries(..)) => {
                 panic!("expected HookFailed, got: {other}")
             }
         }
@@ -260,7 +368,7 @@ mod tests {
             }
             other @ (RunHooksError::HookSignaled { .. }
             | RunHooksError::Execute { .. }
-            | RunHooksError::ReadDir { .. }) => {
+            | RunHooksError::ListEntries(..)) => {
                 panic!("expected HookFailed, got: {other}")
             }
         }
@@ -293,7 +401,7 @@ mod tests {
             }
             other @ (RunHooksError::HookFailed { .. }
             | RunHooksError::Execute { .. }
-            | RunHooksError::ReadDir { .. }) => {
+            | RunHooksError::ListEntries(..)) => {
                 panic!("expected HookSignaled, got: {other}")
             }
         }
