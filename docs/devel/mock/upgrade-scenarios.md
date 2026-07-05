@@ -39,7 +39,10 @@ time, and `StartUpgrade` consumes that stored offer. To exercise a different sta
 
 Firmware downloads come from a local blob server that serves a deterministic 24 MB image in 256 KiB chunks every 100 ms
 (≈2.5 MB/s), so download progress is visible for a realistic stretch. The advertised sha256 matches the blob, and the
-real pipeline downloads and verifies it.
+real pipeline downloads and verifies it. All simulated delays — the download throttle, the package progress steps, and
+the sysupgrade wait — are the realistic default; `--fast-upgrades` drops them so the flows complete almost immediately.
+Only a small reboot delay always remains, so the Applying event reaches the client before the simulated reboot kills the
+process.
 
 - `download-fail`: the offer points at the blob server's fail URL, which closes the connection before sending any
   response, so the failure surfaces as a download error. (A mid-stream drop would surface as a hash mismatch instead —
@@ -80,4 +83,4 @@ the process exits after `FirmwareApplying`.
 cargo test -p bmc-mock --test upgrade_scenarios
 ```
 
-The suite is throttled-download slow by design (~25 s).
+The tests spawn the mock with `--fast-upgrades`, so the whole suite finishes in about a second.
