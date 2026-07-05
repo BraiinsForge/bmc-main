@@ -91,16 +91,21 @@ versions. A firmware upgrade will not roll an installed application backwards ev
 suggest a lower version.
 
 The CLI contract for the tarball path is
-`bmc-nix-cli upgrade --only-indexes --index file://<tarball>/nix-package-index.v1.json --next-boot`. `--only-indexes`
-makes the consulted index set exactly the explicit `--index` references: it does not read `servers.json`, and it does
-not follow federated `indexes[]` references inside those indexes.
+`bmc-nix-cli upgrade --only-indexes --index file://<tarball>/nix-package-index.v1.json --next-boot <bos-version>`, where
+`<bos-version>` is the incoming firmware's version read from the tarball's own version file — not the running
+`/etc/bos_version`, which still names the outgoing BOS. `--only-indexes` makes the consulted index set exactly the
+explicit `--index` references: it does not read `servers.json`, and it does not follow federated `indexes[]` references
+inside those indexes.
 
 **Activation is always deferred.** A firmware upgrade never activates the new profile in-place — the running BOS is on
 its way out, and its running services must not be reconfigured to match a generation built for the incoming BOS. The
-tarball command must invoke `bmc-nix-cli upgrade --next-boot`, which produces a `next` symlink to a built generation
-(see [Deferred Activation](#deferred-activation---next-boot)). After the reboot into the new BOS, `nix-activator`
-consumes that symlink and runs the target generation's activation against the previous `current`. Once the device is
-back to normal operation, subsequent upgrades resume the ordinary application-layer flow using remote indexes.
+tarball command must invoke `bmc-nix-cli upgrade --next-boot <bos-version>`, which produces a `next.<bos-version>`
+symlink to a built generation (see [Deferred Activation](#deferred-activation---next-boot)). After the reboot into the
+new BOS, `nix-activator` consumes that symlink and runs the target generation's activation against the previous
+`current`. Because the marker carries the incoming version in its name, an activator on any other firmware — in
+particular the old BOS after a sysupgrade that failed before flashing — never finds it and removes it as stale instead
+of activating packages resolved for a firmware it is not running. Once the device is back to normal operation,
+subsequent upgrades resume the ordinary application-layer flow using remote indexes.
 
 There is no code path in the firmware-upgrade flow that activates the profile immediately — treating `--next-boot` as
 optional here would risk activating a generation whose services expect kernel/userland facilities the current (about to
@@ -108,32 +113,38 @@ be replaced) BOS does not provide.
 
 ## Deferred Activation (`--next-boot`)
 
-`bmc-nix-cli upgrade --next-boot` is the same resolution and profile-build path as a normal upgrade, but it stops before
-activation. It still builds the next numbered generation directory (`<N>-link`) up front. Instead of swapping `current`,
-it atomically writes `next` as a symlink inside the profile directory (`/nix/var/nix/gcroots/profiles/bmc/next`)
-pointing at that freshly built `<N>-link`.
+`bmc-nix-cli upgrade --next-boot <bos-version>` is the same resolution and profile-build path as a normal upgrade, but
+it stops before activation. It still builds the next numbered generation directory (`<N>-link`) up front. Instead of
+swapping `current`, it atomically writes `next.<bos-version>` as a symlink inside the profile directory
+(`/nix/var/nix/gcroots/profiles/bmc/next.<bos-version>`) pointing at that freshly built `<N>-link`. The value of
+`--next-boot` is the BOS version whose boot may consume the staged generation — the version the resolved index belongs
+to. Encoding it in the marker name is what gates activation: an activator never checks a version, it simply cannot see a
+marker staged for a different firmware.
 
-Every profile apply run removes a stale `next` symlink immediately after taking the profile lock. This means any later
-run invalidates a pending deferred activation, including a no-op run that does not build a replacement generation. A
-second `--next-boot` run before reboot therefore replaces the pending target with the newly built generation.
+Every profile apply run removes stale deferred-activation markers (all `next.*`, and a bare legacy `next`) immediately
+after taking the profile lock. This means any later run invalidates a pending deferred activation, including a no-op run
+that does not build a replacement generation. A second `--next-boot` run before reboot therefore replaces the pending
+target with the newly built generation.
 
-At boot, `nix-activator` runs `bmc-nix-cli activate --generation next`. If `next` is present, the command:
+At boot, the `nix-activator` init script looks for `next.$(cat /etc/bos_version)`. When the marker for the running
+version is present and resolves to a generation directory, the script promotes it to `current`, runs the generation's
+activation entrypoint (with `PROFILE_OLD_GENERATION` naming the pre-promotion generation, so diff-driven activation
+scripts see the real old one), and consumes the marker only on success; on failure it restores `current` and falls
+through to activating the previous generation. Markers staged for other versions are removed as stale. When
+`/etc/bos_version` is missing or empty, staleness is undecidable: all markers are left alone and `current` is activated.
 
-1. Remembers the generation `current` points to, in memory only; nothing is staged on disk.
-2. Runs the target generation's activation entrypoint; the generation already exists, so no boot-time promotion or
-   renumbering happens.
-3. Removes `next` after a successful activation.
-4. On failure, re-runs the remembered old generation's activation entrypoint, with `PROFILE_OLD_GENERATION` set to the
-   failed target generation, so diff-driven activation scripts can undo its side effects.
+`bmc-nix-cli activate --generation next` implements the same contract in Rust (used by tests and the upgrade harness;
+the firmware boot path runs the shell script because the CLI ships as a package, not in the firmware image): it reads
+the running version from `--bos-version-file` (default `/etc/bos_version`), sweeps stale markers, activates the matching
+marker's generation with an in-memory revert to the old `current` on failure, and removes the marker on success. Without
+a marker for the running version it falls back to activating `current`, which is a no-op — the common case on ordinary
+boots.
 
-If `next` is missing on boot, `--generation next` falls back to activating `current`, which is a no-op — this is the
-common case on ordinary boots.
-
-Activating any generation other than `current` follows this same revert rule, not just `next`: the whole sequence runs
-under the profile lock, and a failed entrypoint triggers automatic re-activation of the old generation. A reverted
-activation still reports an error — `RevertedAfterFailure`, carrying the original failure — so callers (including the
-boot service) see it as a failed run even though the device is left on a working generation. If the revert re-activation
-itself fails, the error is `RevertFailed`, carrying both the original and the revert failure.
+Activating any generation other than `current` follows this same revert rule, not just the staged marker: the whole
+sequence runs under the profile lock, and a failed entrypoint triggers automatic re-activation of the old generation. A
+reverted activation still reports an error — `RevertedAfterFailure`, carrying the original failure — so callers
+(including the boot service) see it as a failed run even though the device is left on a working generation. If the
+revert re-activation itself fails, the error is `RevertFailed`, carrying both the original and the revert failure.
 
 `bmc-nix` never writes the `current` symlink; only a generation's own activation scripts do. The core package's
 `050-write-boundary` activation script moves `current` atomically (a temporary symlink, then `mv -Tf`), and
@@ -145,8 +156,8 @@ The design intent is:
 - The upgrade run does not have to defer any of its heavy work to boot; realisation, symlink-tree build, hooks, and
   manifest generation all happen up-front while the CLI is running normally. Only activation is delayed.
 - Failure modes are limited. If the reboot never happens or the device is powered off before `nix-activator` runs, the
-  `next` symlink simply sits until the next boot or until a later profile apply run invalidates it; nothing about the
-  current generation has been touched.
+  marker simply sits until a boot of its firmware version consumes it, an activator of another version sweeps it as
+  stale, or a later profile apply run invalidates it; nothing about the current generation has been touched.
 - If the boot-time activation fails, the previous generation is restored and re-activated — the same behaviour as any
   other failed activation.
 
@@ -184,8 +195,8 @@ The device must always have enough free space for the next upgrade, including th
 changes (glibc or compiler bumps). `bmc-nix::gc` reclaims space in two stages:
 
 - **Generation cleanup.** Old generation directories are removed according to `/etc/nix-upgrade/gc.json`
-  (`keep_generations`, `keep_days`, `protected_generations`, `min_free_space`). The current and the latest generations
-  are always kept, as is the generation pointed to by `next`; `protected_generations` is empty by default.
+  (`keep_generations`, `keep_days`, `protected_generations`). The current and the latest generations are always kept, as
+  is any generation pointed to by a deferred-activation marker; `protected_generations` is empty by default.
 - **Nix store GC.** `nix-collect-garbage` removes store paths no longer referenced by any surviving generation.
 
 GC runs via the `bmc-nix-cli gc` subcommand, intended for a periodic timer or for when disk space runs low — it is not
