@@ -41,8 +41,11 @@ During a firmware upgrade, the tarball `COMMAND` must invoke `bmc-nix-cli` from 
 index as input:
 
 ```sh
-bmc-nix-cli upgrade --only-indexes --index file://<tarball>/nix-package-index.v1.json --next-boot
+bmc-nix-cli upgrade --only-indexes --index file://<tarball>/nix-package-index.v1.json --next-boot <bos-version>
 ```
+
+`<bos-version>` is the incoming firmware's version, read from the tarball's own version file — the running
+`/etc/bos_version` still names the outgoing BOS.
 
 The CLI:
 
@@ -55,10 +58,11 @@ The CLI:
    was selected.
 5. Realises the resolved store paths from the substituters configured on the device.
 6. Builds a new profile generation.
-7. Leaves the new generation staged as a `next` symlink to the built `<N>-link`, via `bmc-nix-cli upgrade --next-boot`.
-   Firmware upgrades **always** take this deferred-activation path — the profile is never activated in-place against the
-   outgoing BOS. `nix-activator` consumes the symlink after the BOS partition swap; see
-   [Deferred Activation](upgrades.md#deferred-activation---next-boot).
+7. Leaves the new generation staged as a `next.<bos-version>` symlink to the built `<N>-link`, named for the incoming
+   firmware version. Firmware upgrades **always** take this deferred-activation path — the profile is never activated
+   in-place against the outgoing BOS. The incoming firmware's `nix-activator` consumes the marker after the BOS
+   partition swap; any other firmware's activator cannot see it and sweeps it as stale, so a failed sysupgrade never
+   activates the staged packages. See [Deferred Activation](upgrades.md#deferred-activation---next-boot).
 
 `bmc-nix-cli` inside the tarball is intentionally the same binary used for the offline build-time profile assembly
 (`build-profile`, factory-tarball construction). Reusing one CLI keeps the resolution and profile-build code paths
