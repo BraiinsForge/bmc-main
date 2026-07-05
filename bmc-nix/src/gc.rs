@@ -219,9 +219,6 @@ fn next_generation_number(profile_dir: &Path) -> Result<Option<usize>, std::io::
 ///
 /// Removes everything else by deleting the generation directory. Returns
 /// `Ok(())` when `profile_dir` does not exist.
-///
-/// `gc_config.min_free_space` is intentionally not consulted here; it drives
-/// store-GC pressure decisions outside generation-directory cleanup.
 pub fn cleanup_generations(
     profile_dir: &Path,
     gc_config: &GcConfig,
@@ -439,7 +436,6 @@ mod tests {
         let gc_config = GcConfig {
             keep_generations: 1,
             keep_days: None,
-            min_free_space: "0".into(),
             protected_generations: vec![],
         };
         let err = cleanup_generations(&profile_dir, &gc_config, &[])
@@ -470,7 +466,6 @@ mod tests {
         let gc_config = GcConfig {
             keep_generations: 1,
             keep_days: None,
-            min_free_space: "0".into(),
             protected_generations: vec![1],
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
@@ -495,7 +490,6 @@ mod tests {
         let gc_config = GcConfig {
             keep_generations: 2,
             keep_days: None,
-            min_free_space: "0".into(),
             protected_generations: vec![],
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
@@ -527,7 +521,6 @@ mod tests {
         let gc_config = GcConfig {
             keep_generations: 0,
             keep_days: Some(30),
-            min_free_space: "0".into(),
             protected_generations: vec![],
         };
         let err = cleanup_generations(&profile_dir, &gc_config, &[])
@@ -560,7 +553,6 @@ mod tests {
         let gc_config = GcConfig {
             keep_generations: 0,
             keep_days: Some(30),
-            min_free_space: "0".into(),
             protected_generations: vec![],
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
@@ -592,7 +584,6 @@ mod tests {
         let gc_config = GcConfig {
             keep_generations: 1,
             keep_days: None,
-            min_free_space: "0".into(),
             protected_generations: vec![],
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
@@ -618,7 +609,6 @@ mod tests {
         let gc_config = GcConfig {
             keep_generations: 0,
             keep_days: None,
-            min_free_space: "0".into(),
             protected_generations: vec![],
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
@@ -645,7 +635,6 @@ mod tests {
         let gc_config = GcConfig {
             keep_generations: 1,
             keep_days: None,
-            min_free_space: "0".into(),
             protected_generations: vec![],
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
@@ -676,7 +665,6 @@ mod tests {
         let gc_config = GcConfig {
             keep_generations: 0,
             keep_days: None,
-            min_free_space: "0".into(),
             protected_generations: vec![],
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
@@ -713,7 +701,6 @@ mod tests {
         let gc_config = GcConfig {
             keep_generations: 1,
             keep_days: None,
-            min_free_space: "0".into(),
             protected_generations: vec![],
         };
         cleanup_generations(&profile_dir, &gc_config, &[2]).expect("BUG: cleanup failed");
@@ -737,7 +724,6 @@ mod tests {
         let gc_config = GcConfig {
             keep_generations: 1,
             keep_days: None,
-            min_free_space: "0".into(),
             protected_generations: vec![],
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
@@ -771,7 +757,6 @@ mod tests {
         let gc_config = GcConfig {
             keep_generations: 1,
             keep_days: None,
-            min_free_space: "0".into(),
             protected_generations: vec![],
         };
         let result = cleanup_generations(&profile_dir, &gc_config, &[]);
@@ -809,7 +794,6 @@ mod tests {
         let gc_config = GcConfig {
             keep_generations: 1,
             keep_days: None,
-            min_free_space: "0".into(),
             protected_generations: vec![],
         };
         cleanup_generations(&profile_dir, &gc_config, &[2]).expect("BUG: cleanup failed");
