@@ -32,6 +32,12 @@ How `deck upgrade-e2e` drives a full package upgrade cycle against a real Deck: 
 developer machine via `nix run .#upgrade-server`, registering the server on the device, and exercising CheckForUpgrade
 and StartUpgrade over gRPC while asserting the bmc profile advanced.
 
+### [Mock Upgrade Scenarios](mock/upgrade-scenarios.md)
+
+How `bmc-mock` simulates every upgrade state offline: the runtime-editable `upgrade-scenario.json` state selector, the
+throttled local firmware blob server, how each failure surfaces on the gRPC stream, the simulated post-upgrade reboot
+(`just fe::serve-loop`), and the gRPC e2e suite covering the matrix.
+
 ### [Service Orchestrator](service-orchestrator.md)
 
 How OpenWrt services are reconciled after a profile activation: why the orchestrator runs as a detached transient procd
