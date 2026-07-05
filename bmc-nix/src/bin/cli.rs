@@ -325,10 +325,6 @@ enum Commands {
         #[arg(long)]
         keep_days: Option<usize>,
 
-        /// Override the minimum free space target.
-        #[arg(long)]
-        min_free_space: Option<String>,
-
         /// Generation number to protect (repeatable). A non-empty list
         /// replaces the configured `protected_generations`.
         #[arg(long = "protected-generation")]
@@ -466,7 +462,6 @@ fn apply_gc_overrides(
     config: &mut GcConfig,
     keep_generations: Option<usize>,
     keep_days: Option<usize>,
-    min_free_space: Option<String>,
     protected_generations: Vec<usize>,
 ) {
     if let Some(value) = keep_generations {
@@ -474,9 +469,6 @@ fn apply_gc_overrides(
     }
     if let Some(value) = keep_days {
         config.keep_days = Some(value);
-    }
-    if let Some(value) = min_free_space {
-        config.min_free_space = value;
     }
     if !protected_generations.is_empty() {
         config.protected_generations = protected_generations;
@@ -872,7 +864,6 @@ async fn cmd_gc(
     profile_dir: PathBuf,
     keep_generations: Option<usize>,
     keep_days: Option<usize>,
-    min_free_space: Option<String>,
     protected_generations: Vec<usize>,
     log_format: LogFormat,
 ) -> anyhow::Result<()> {
@@ -882,7 +873,6 @@ async fn cmd_gc(
         &mut config,
         keep_generations,
         keep_days,
-        min_free_space,
         protected_generations,
     );
 
@@ -1138,7 +1128,6 @@ async fn main() -> anyhow::Result<()> {
             profile_dir,
             keep_generations,
             keep_days,
-            min_free_space,
             protected_generations,
         } => {
             cmd_gc(
@@ -1146,7 +1135,6 @@ async fn main() -> anyhow::Result<()> {
                 profile_dir,
                 keep_generations,
                 keep_days,
-                min_free_space,
                 protected_generations,
                 log_format,
             )
@@ -1350,7 +1338,6 @@ mod tests {
         let default = GcConfig::default();
         assert_eq!(config.keep_generations, default.keep_generations);
         assert_eq!(config.keep_days, default.keep_days);
-        assert_eq!(config.min_free_space, default.min_free_space);
         assert_eq!(config.protected_generations, default.protected_generations);
     }
 
@@ -1360,14 +1347,13 @@ mod tests {
         let path = dir.path().join("gc.json");
         std::fs::write(
             &path,
-            r#"{"keep_generations":7,"keep_days":14,"min_free_space":"1G","protected_generations":[2,5]}"#,
+            r#"{"keep_generations":7,"keep_days":14,"protected_generations":[2,5]}"#,
         )
         .expect("BUG: write gc.json");
 
         let config = load_gc_config(&path).expect("BUG: valid config should load");
         assert_eq!(config.keep_generations, 7);
         assert_eq!(config.keep_days, Some(14));
-        assert_eq!(config.min_free_space, "1G");
         assert_eq!(config.protected_generations, vec![2, 5]);
     }
 
@@ -1380,7 +1366,6 @@ mod tests {
         let config = load_gc_config(&path).expect("BUG: partial config should load");
         let default = GcConfig::default();
         assert_eq!(config.keep_generations, 9);
-        assert_eq!(config.min_free_space, default.min_free_space);
         assert_eq!(config.protected_generations, default.protected_generations);
     }
 
@@ -1400,19 +1385,11 @@ mod tests {
         let mut config = GcConfig {
             keep_generations: 3,
             keep_days: None,
-            min_free_space: "0".to_owned(),
             protected_generations: vec![1],
         };
-        apply_gc_overrides(
-            &mut config,
-            Some(8),
-            Some(30),
-            Some("2G".to_owned()),
-            vec![4, 6],
-        );
+        apply_gc_overrides(&mut config, Some(8), Some(30), vec![4, 6]);
         assert_eq!(config.keep_generations, 8);
         assert_eq!(config.keep_days, Some(30));
-        assert_eq!(config.min_free_space, "2G");
         assert_eq!(config.protected_generations, vec![4, 6]);
     }
 
@@ -1421,13 +1398,11 @@ mod tests {
         let mut config = GcConfig {
             keep_generations: 3,
             keep_days: Some(10),
-            min_free_space: "1G".to_owned(),
             protected_generations: vec![1, 2],
         };
-        apply_gc_overrides(&mut config, None, None, None, Vec::new());
+        apply_gc_overrides(&mut config, None, None, Vec::new());
         assert_eq!(config.keep_generations, 3);
         assert_eq!(config.keep_days, Some(10));
-        assert_eq!(config.min_free_space, "1G");
         assert_eq!(config.protected_generations, vec![1, 2]);
     }
 
