@@ -10,23 +10,10 @@ to a new generation. It is a development harness; nothing here ships on the devi
 - A Deck with a Nix-initialized store (`nix run .#deck -- init`, then `nix run .#deck -- deploy`), running a firmware
   whose backend implements the `UpgradeService` RPCs (`CheckForUpgrade`, `StartUpgrade`).
 
-- A seeded `/etc/nix-upgrade/servers.json` on the device. `register-server` (the "Register server on device" stage)
-  requires this file and hard-fails when it is missing, because the `factory` entry is mandatory and it will not invent
-  one. Factory provisioning (`bmc-nix-init`) normally writes it; on a device that lacks it, seed a minimal registry
-  first:
-
-  ```json
-  {
-    "factory": {
-      "id": "braiins",
-      "base_url": "https://cache.braiins.com/v1",
-      "known_public_key": "cache.braiins.com:placeholder",
-      "priority": 1,
-      "enabled": true
-    },
-    "servers": []
-  }
-  ```
+- `/etc/nix-upgrade/servers.json` on the device — created automatically when missing. Factory provisioning normally
+  writes it; a `deck init` device lacks it, and `register-server` (the "Register server on device" stage) then
+  bootstraps the registry with the dev server doubling as the mandatory `factory` entry. Note the factory entry sticks
+  after cleanup, so a bootstrapped device's factory points at the developer machine until reprovisioned.
 
 - `grpcurl` on the developer machine's PATH (`nix shell .#pkgs.grpcurl`).
 
