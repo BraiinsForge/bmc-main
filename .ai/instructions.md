@@ -120,6 +120,8 @@ Workspace-level lints are defined in `Cargo.toml`:
 - Uses `rustfmt` for formatting (config in `rustfmt.toml`)
 - Rust toolchain version specified in `rust-toolchain.toml`
 - Prefer `usize` for counts and indices — avoid `u32`/`u16`/etc. unless required by an external API or wire format
+- Never use `#[serde(deny_unknown_fields)]` — it breaks backward compatibility: files written by a newer version (with
+  new fields) stop parsing in older code. Deserialized structs must tolerate unknown keys.
 
 **Module System**: This project uses Rust 2018 module style. Instead of `folder/mod.rs`, use a file named after the
 folder at the same level:
