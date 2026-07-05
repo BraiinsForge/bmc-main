@@ -1,7 +1,9 @@
 """Unit tests for the deploy stage catalog."""
 
 import io
+import json
 import subprocess
+import sys
 import tarfile
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -464,3 +466,110 @@ def test_activate_profile_runs_the_entrypoint() -> None:
     backend = _Exec(_routes({}))
     catalog.activate_profile(Device("h", backend=backend))
     assert backend.runs[-1][-1].endswith("/bmc/1-link/core/activation/entrypoint")
+
+
+# ── e2e upgrade cycle ─────────────────────────────────────────────────────────
+
+
+def _cycle(
+    *,
+    generation_before: int | None = None,
+    installed_before: set[str] | None = None,
+) -> catalog.UpgradeCycle:
+    cycle = catalog.UpgradeCycle(
+        password="", port=8080, index_port=8081, key_dir=Path("/nonexistent")
+    )
+    cycle.generation_before = generation_before
+    cycle.installed_before = installed_before
+    return cycle
+
+
+def test_snapshot_profile_reads_current_generation() -> None:
+    cycle = _cycle()
+    manifest = _manifest(core="/nix/store/abc-core")
+    backend = _Exec(_routes({"readlink": "5-link", "cat": manifest}))
+    catalog.snapshot_profile(Device("h", backend=backend), cycle)
+    assert cycle.generation_before == 5
+    assert cycle.installed_before == {"core"}
+
+
+def test_snapshot_profile_aborts_on_unexpected_link() -> None:
+    backend = _Exec(_routes({"readlink": "garbage"}))
+    with pytest.raises(Abort, match="unexpected current generation link"):
+        catalog.snapshot_profile(Device("h", backend=backend), _cycle())
+
+
+def _manifest(**paths: str) -> str:
+    return json.dumps({"packages": {name: {"store_path": p} for name, p in paths.items()}})
+
+
+def test_verify_profile_advanced_ok() -> None:
+    cycle = _cycle(generation_before=5, installed_before={"core"})
+    built = Built("core", "1.0", ".#x", store_path="/nix/store/abc-core")
+    manifest = _manifest(core="/nix/store/abc-core")
+    backend = _Exec(_routes({"readlink": "6-link", "cat": manifest}))
+    plan = catalog.Deployment(attrs=[], built=[built])
+    catalog.verify_profile_advanced(Device("h", backend=backend), plan, cycle)
+
+
+def test_verify_profile_advanced_aborts_when_generation_unchanged() -> None:
+    cycle = _cycle(generation_before=5, installed_before=set())
+    backend = _Exec(_routes({"readlink": "5-link"}))
+    with pytest.raises(Abort, match="still 5"):
+        catalog.verify_profile_advanced(
+            Device("h", backend=backend), catalog.Deployment(attrs=[]), cycle
+        )
+
+
+def test_verify_profile_advanced_aborts_on_missing_store_path() -> None:
+    cycle = _cycle(generation_before=5, installed_before={"core"})
+    built = Built("core", "1.0", ".#x", store_path="/nix/store/abc-core")
+    manifest = _manifest(core="/nix/store/other")
+    backend = _Exec(_routes({"readlink": "6-link", "cat": manifest}))
+    plan = catalog.Deployment(attrs=[], built=[built])
+    with pytest.raises(Abort, match="not replaced by their served store paths"):
+        catalog.verify_profile_advanced(Device("h", backend=backend), plan, cycle)
+
+
+def test_verify_profile_advanced_aborts_on_path_under_wrong_package() -> None:
+    cycle = _cycle(generation_before=5, installed_before={"core"})
+    built = Built("core", "1.0", ".#x", store_path="/nix/store/abc-core")
+    # The served path is present, but attached to a different package — a
+    # substring check would have wrongly passed.
+    manifest = _manifest(other="/nix/store/abc-core", core="/nix/store/stale-core")
+    backend = _Exec(_routes({"readlink": "6-link", "cat": manifest}))
+    plan = catalog.Deployment(attrs=[], built=[built])
+    with pytest.raises(Abort, match="not replaced by their served store paths"):
+        catalog.verify_profile_advanced(Device("h", backend=backend), plan, cycle)
+
+
+def test_verify_profile_advanced_aborts_on_non_json_manifest() -> None:
+    cycle = _cycle(generation_before=5, installed_before={"core"})
+    built = Built("core", "1.0", ".#x", store_path="/nix/store/abc-core")
+    backend = _Exec(_routes({"readlink": "6-link", "cat": "/nix/store/abc-core"}))
+    plan = catalog.Deployment(attrs=[], built=[built])
+    with pytest.raises(Abort, match="not a package manifest"):
+        catalog.verify_profile_advanced(Device("h", backend=backend), plan, cycle)
+
+
+def test_stop_upgrade_server_is_a_noop_without_a_server() -> None:
+    catalog.stop_upgrade_server(_cycle())
+
+
+def test_stream_events_decodes_back_to_back_messages() -> None:
+    script = (
+        "import sys;"
+        'sys.stdout.write(\'{\\n  "packagePhase": "PACKAGE_UPGRADE_PHASE_REALIZING"\\n}\\n\');'
+        "sys.stdout.write('{\\n  \"finished\": {}\\n}\\n')"
+    )
+    events = catalog._stream_events([sys.executable, "-c", script])
+    assert events == [
+        {"packagePhase": "PACKAGE_UPGRADE_PHASE_REALIZING"},
+        {"finished": {}},
+    ]
+
+
+def test_stream_events_aborts_on_stream_failure() -> None:
+    script = "import sys; sys.stderr.write('boom'); sys.exit(1)"
+    with pytest.raises(Abort, match="boom"):
+        catalog._stream_events([sys.executable, "-c", script])
