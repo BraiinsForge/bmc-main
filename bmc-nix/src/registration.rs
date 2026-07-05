@@ -190,6 +190,7 @@ mod tests {
             known_public_key: "cache.example.com:AAAA".to_owned(),
             priority: 10,
             enabled: true,
+            required: true,
         }
     }
 
