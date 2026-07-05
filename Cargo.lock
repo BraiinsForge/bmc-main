@@ -1121,6 +1121,7 @@ dependencies = [
  "bmc",
  "bmc-button",
  "bmc-led",
+ "bmc-nix",
  "bmc-platform",
  "bmc-shared-time",
  "bmc-support",
