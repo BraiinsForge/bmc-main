@@ -172,6 +172,9 @@
           runtimeEnv.FIRMWARE_INDEX_SERVE_CONFIG_DIR = ./scripts/firmware-index-serve;
           text = builtins.readFile ./scripts/firmware-index-serve/firmware-index-serve.sh;
         };
+
+        upgrade-server = import ./nix/upgrade-server { inherit pkgs; };
+
       in
       {
         formatter = nixlib.braiinsfmt.${localSystem} {
@@ -254,6 +257,11 @@
         apps.wasm-capture = {
           type = "app";
           program = pkgs.lib.getExe capture.package;
+        };
+
+        apps.upgrade-server = {
+          type = "app";
+          program = pkgs.lib.getExe upgrade-server;
         };
 
         # Single device-tooling entry point:
