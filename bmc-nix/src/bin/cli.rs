@@ -408,7 +408,7 @@ enum Commands {
         /// Mark the server optional: a failed index fetch degrades to a
         /// warning instead of aborting the merge. Servers are required by
         /// default.
-        #[arg(long)]
+        #[arg(long, action = clap::ArgAction::SetTrue)]
         optional: bool,
     },
 }
@@ -554,37 +554,35 @@ async fn cmd_build_profile(
     hooks_dir: String,
     hooks_override_path: Option<PathBuf>,
     no_activate: bool,
+    log_format: LogFormat,
 ) -> anyhow::Result<()> {
-    let activate = !no_activate;
-
     let index_content = std::fs::read_to_string(&index)?;
     let package_index: bmc_nix::types::PackageIndex = serde_json::from_str(&index_content)?;
     let packages = bmc_nix::index::resolve_all_from_index(&package_index);
 
     std::fs::create_dir_all(&profile_dir)?;
 
-    // Hold lock to prevent TOCTOU race on generation number
-    let lock = bmc_nix::profile::lock_profile(&profile_dir).await?;
-    let generation_number = bmc_nix::profile::max_generation(&profile_dir)?.unwrap_or(0) + 1;
-    let generation = bmc_nix::profile::build_profile(
+    // An empty base plus every package as an addition mints a generation
+    // holding exactly the index. The explicit base bypasses the no-op
+    // short-circuit, so a generation is always built.
+    let progress = progress::CliProgress::new(log_format);
+    let result = bmc_nix::upgrade::apply_profile_change(
         &profile_dir,
-        generation_number,
+        Some(Manifest::default()),
+        None,
         &packages,
+        &[],
+        activation_mode_from_no_activate(no_activate),
+        None,
+        Some(&progress),
         &hooks_dir,
         hooks_override_path.as_deref(),
     )
     .await?;
 
-    if activate {
-        bmc_nix::profile::activate_profile(
-            &profile_dir,
-            generation.number,
-            &generation.path,
-            Some(&lock),
-        )
-        .await?;
-    }
-
+    let generation = result
+        .generation
+        .expect("BUG: build-profile always produces a generation");
     println!("{}", generation.path.display());
     Ok(())
 }
@@ -827,6 +825,7 @@ async fn cmd_init(
     bos_version_file: PathBuf,
     download_dir: PathBuf,
     wipe: bool,
+    log_format: LogFormat,
 ) -> anyhow::Result<()> {
     // An active /nix means the system is running from the store this
     // wipe would delete out from under it.
@@ -852,6 +851,7 @@ async fn cmd_init(
     let servers = load_servers_config(&servers_config)?;
     let bos_version = read_bos_version(&bos_version_file)?;
     let client = build_init_http_client();
+    let progress = progress::CliProgress::new(log_format);
     let result = bmc_nix::store::init_store(
         &client,
         &servers.factory,
@@ -859,7 +859,7 @@ async fn cmd_init(
         &download_dir,
         &data_dir,
         wipe,
-        None,
+        Some(&progress),
     )
     .await?;
 
@@ -1034,6 +1034,7 @@ async fn main() -> anyhow::Result<()> {
                 hooks_dir,
                 hooks_override_path,
                 no_activate,
+                log_format,
             )
             .await
         }
@@ -1126,6 +1127,7 @@ async fn main() -> anyhow::Result<()> {
                 bos_version_file,
                 download_dir,
                 wipe,
+                log_format,
             )
             .await
         }
@@ -1698,7 +1700,7 @@ mod tests {
         let cli = Cli::try_parse_from(["bmc-nix-cli", "activate", "--generation", "next"])
             .expect("BUG: --generation next should parse");
         let Commands::Activate { generation, .. } = cli.command else {
-            panic!("expected activate command");
+            panic!("BUG: parsed command must be activate");
         };
         assert!(matches!(generation, Some(GenerationSelector::Next)));
     }
