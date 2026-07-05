@@ -13,6 +13,7 @@ pub struct MockFs {
 
 impl MockFs {
     const UPGRADE_RESULT_FILE: &str = "etc/upgrade_result";
+    const UPGRADE_SCENARIO_FILE: &str = "etc/upgrade-scenario.json";
     const FACTORY_DEFAULT_FILE: &str = "etc/factory-default";
     const DEVICE_SETUP_PENDING_FILE: &str = "etc/setup-pending";
     const WIFI_RECONFIG_FILE: &str = "etc/wifi-reconfig";
@@ -44,6 +45,11 @@ impl MockFs {
     #[must_use]
     pub fn upgrade_result(&self) -> PathBuf {
         self.build_mockfs_path(Self::UPGRADE_RESULT_FILE)
+    }
+
+    #[must_use]
+    pub fn upgrade_scenario(&self) -> PathBuf {
+        self.build_mockfs_path(Self::UPGRADE_SCENARIO_FILE)
     }
 
     #[must_use]

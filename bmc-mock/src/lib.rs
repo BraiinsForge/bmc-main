@@ -8,6 +8,7 @@ pub mod manager;
 pub mod mock_compositor;
 pub mod mock_index;
 pub mod mockfs;
+pub mod scenario;
 mod session;
 
 pub use mockfs::MockFs;
