@@ -268,7 +268,13 @@
         # `nix run .#deck -- <sysupgrade|deploy> …`.
         apps.deck = {
           type = "app";
-          program = "${bmc-tui-venv}/bin/deck";
+          program = pkgs.lib.getExe (pkgs.writeShellApplication {
+            name = "deck";
+            runtimeInputs = [ pkgs.grpcurl ];
+            text = ''
+              exec ${bmc-tui-venv}/bin/deck "$@"
+            '';
+          });
         };
 
         # Firmware release index test serving:
