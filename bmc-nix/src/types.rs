@@ -198,6 +198,13 @@ pub struct FactoryServerEntry {
     pub enabled: bool,
 }
 
+/// Serde default for [`ServerEntry::required`]: an entry that omits the
+/// field is treated as required, preserving the pre-flag fail-hard
+/// behavior for configs written before the flag existed.
+fn default_true() -> bool {
+    true
+}
+
 /// A configured package server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerEntry {
@@ -208,6 +215,11 @@ pub struct ServerEntry {
     pub known_public_key: String,
     pub priority: u32,
     pub enabled: bool,
+    /// When true, a failed index fetch from this server aborts the whole
+    /// merge. When false, the failure degrades to a warning and the merge
+    /// proceeds with the remaining servers.
+    #[serde(default = "default_true")]
+    pub required: bool,
 }
 
 /// Factory initialization index (`nix-factory.v1.json`).
@@ -614,6 +626,43 @@ mod tests {
         assert!(
             widget.install_strategy.is_none(),
             "widget install_strategy should be None"
+        );
+    }
+
+    #[test]
+    fn server_entry_omitting_required_defaults_to_true() {
+        let json = r#"{
+            "id": "dev",
+            "type": "http",
+            "base_url": "https://dev.example.com/v1",
+            "known_public_key": "k",
+            "priority": 50,
+            "enabled": true
+        }"#;
+        let entry: ServerEntry =
+            serde_json::from_str(json).expect("BUG: entry without `required` should deserialize");
+        assert!(
+            entry.required,
+            "an omitted `required` must default to true so existing configs stay fail-hard"
+        );
+    }
+
+    #[test]
+    fn server_entry_honours_explicit_required_false() {
+        let json = r#"{
+            "id": "dev",
+            "type": "http",
+            "base_url": "https://dev.example.com/v1",
+            "known_public_key": "k",
+            "priority": 50,
+            "enabled": true,
+            "required": false
+        }"#;
+        let entry: ServerEntry =
+            serde_json::from_str(json).expect("BUG: entry with `required` should deserialize");
+        assert!(
+            !entry.required,
+            "an explicit `required: false` must be honoured"
         );
     }
 
