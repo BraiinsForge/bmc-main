@@ -5,8 +5,12 @@ use anyhow::anyhow;
 use bmc_scheduler::JobScheduler;
 use bmc_scheduler::jobs::to_boxed;
 use bmc_scheduler::scheduler::{JobConfig, Schedule, Task};
+pub(crate) use bmc_upgrade::arbitration::Disruption;
+use bmc_upgrade::arbitration::arbitrate;
 use bmc_upgrade::autoupgrade::{AutoUpgrade, AutoUpgradeConfig};
 use bmc_upgrade::firmware::{FirmwareDownloadError, FirmwareIndex, UpgradeDetail};
+use bmc_upgrade::packages::{EstimateMode, PackageBackend, PackageProbe};
+pub(crate) use bmc_upgrade::packages::{PackagesPreview, SystemPackageChange};
 use bmc_upgrade::upgrader::{
     DownloadState as UpgraderDownloadState, FirmwareUpgradeError, FirmwareUpgrader,
 };
@@ -29,26 +33,14 @@ const AUTOUPGRADE_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(30);
 const AUTOUPGRADE_RETRY_MAX_ATTEMPTS: u32 = 5;
 const AUTOUPGRADE_RETRY_DELAY_COEFF: u32 = 2;
 
-const INDEX_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
-
 /// Minimum spacing between forwarded intermediate download `Progress`
 /// events; without it every written chunk becomes an event on the run
 /// channel and the gRPC-web stream.
 const UPDATE_PROGRESS_INTERVAL: Duration = Duration::from_millis(300);
 
+/// Deliberately timeout-free: it serves the long firmware image download.
 pub static CLIENT: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
-        .build()
-        .expect("BUG: static client builder failed")
-});
-
-/// Client for package-index fetches, which run under the upgrade run gate:
-/// a hung index server must time out instead of wedging every check/start
-/// in `UpgradeInProgress`. [`CLIENT`] stays timeout-free because it also
-/// serves the long firmware image download.
-static INDEX_CLIENT: LazyLock<Client> = LazyLock::new(|| {
-    Client::builder()
-        .timeout(INDEX_FETCH_TIMEOUT)
         .build()
         .expect("BUG: static client builder failed")
 });
@@ -62,23 +54,6 @@ static INDEX_CLIENT: LazyLock<Client> = LazyLock::new(|| {
 pub(crate) trait WidgetStopper: Send + Sync + std::fmt::Debug {
     async fn stop_all_widgets(&self);
     async fn restart_widgets(&self);
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct NixUpgradeConfig {
-    pub servers_config_path: PathBuf,
-    pub profile_dir: PathBuf,
-    pub hooks_dir: String,
-    pub hooks_override_path: Option<PathBuf>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct SystemPackageChange {
-    pub name: String,
-    pub version_from: Option<String>,
-    pub version_to: Option<String>,
-    pub category: Option<String>,
-    pub changelog: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -114,19 +89,26 @@ pub(crate) enum AvailableSystemUpgrade {
     },
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct PackagesPreview {
-    pub changes: Vec<SystemPackageChange>,
-    pub download_size_bytes: Option<u64>,
-    pub bmc_version: Option<String>,
-    pub bmc_changelog: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Disruption {
-    AppRestart,
-    Reboot,
-    Unspecified,
+/// Select the upgrade a check offers under its minted id. Firmware wins
+/// over packages: the new firmware ships its own package set, so applying
+/// packages first would be wasted work at best and an incompatible
+/// profile at worst.
+fn select_offer(
+    firmware: Option<&UpgradeDetail>,
+    merged: Option<bmc_nix::types::MergedIndex>,
+    packages: Option<&PackagesPreview>,
+) -> Option<AvailableSystemUpgrade> {
+    if let Some(detail) = firmware {
+        return Some(AvailableSystemUpgrade::Firmware {
+            detail: detail.clone(),
+        });
+    }
+    let preview = packages?;
+    let merged = merged.expect("BUG: packages preview present without a merged index");
+    Some(AvailableSystemUpgrade::Packages {
+        merged,
+        download_size_bytes: preview.download_size_bytes,
+    })
 }
 
 #[derive(Debug)]
@@ -136,176 +118,6 @@ pub(crate) struct CheckOutcome {
     pub upgrade_id: Option<String>,
     pub disruption: Disruption,
     pub package_fetch_transient: bool,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum EstimateMode {
-    Estimate,
-    Skip,
-}
-
-pub(crate) enum PackageProbe {
-    Available(bmc_nix::types::MergedIndex, PackagesPreview),
-    /// No servers, no plan, planning error — packages simply not offered.
-    Unavailable,
-    /// The index fetch itself failed transiently
-    /// (`FetchIndexesError::Fetch { .. }`) — still "unavailable" on the
-    /// wire, but autoupgrade may retry (Task 7).
-    FetchFailed(String),
-}
-
-fn arbitrate(firmware: Option<&UpgradeDetail>, packages: Option<&PackagesPreview>) -> Disruption {
-    match (firmware, packages) {
-        (Some(_), _) => Disruption::Reboot,
-        (None, Some(_)) => Disruption::AppRestart,
-        (None, None) => Disruption::Unspecified,
-    }
-}
-
-async fn probe_packages(
-    nix_config: &NixUpgradeConfig,
-    client: &reqwest::Client,
-    estimate: EstimateMode,
-) -> PackageProbe {
-    if let Some(parent) = nix_config.servers_config_path.parent()
-        && let Err(err) = std::fs::create_dir_all(parent)
-    {
-        warn!(error = %err, "Failed to create the servers config directory");
-    }
-
-    let servers = match std::fs::read_to_string(&nix_config.servers_config_path) {
-        Ok(contents) => match serde_json::from_str::<bmc_nix::types::ServersConfig>(&contents) {
-            Ok(config) => config.servers,
-            Err(err) => {
-                warn!(error = %err, "Servers config is unparseable, packages unavailable");
-                return PackageProbe::Unavailable;
-            }
-        },
-        Err(err) => {
-            warn!(error = %err, "Servers config is unreadable, packages unavailable");
-            return PackageProbe::Unavailable;
-        }
-    };
-
-    if !servers.iter().any(|server| server.enabled) {
-        warn!("No enabled package servers, packages unavailable");
-        return PackageProbe::Unavailable;
-    }
-
-    let merged = match bmc_nix::index::fetch_and_merge_indexes(client, &servers).await {
-        Ok(merged) => merged,
-        Err(err @ bmc_nix::index::FetchIndexesError::Fetch { .. }) => {
-            warn!(error = %err, "Package index fetch failed");
-            return PackageProbe::FetchFailed(err.to_string());
-        }
-        Err(err) => {
-            warn!(error = %err, "Package index unusable, packages unavailable");
-            return PackageProbe::Unavailable;
-        }
-    };
-
-    let base = match bmc_nix::manifest::read_current_manifest(&nix_config.profile_dir) {
-        Ok(manifest) => manifest,
-        Err(bmc_nix::manifest::ReadManifestError::CurrentNotFound { .. }) => {
-            match bmc_nix::manifest::read_latest_manifest(&nix_config.profile_dir) {
-                Ok(manifest) => manifest,
-                Err(err) => {
-                    warn!(error = %err, "Failed to read the profile manifest, packages unavailable");
-                    return PackageProbe::Unavailable;
-                }
-            }
-        }
-        Err(err) => {
-            warn!(error = %err, "Failed to read the profile manifest, packages unavailable");
-            return PackageProbe::Unavailable;
-        }
-    };
-
-    let plan = match bmc_nix::manifest::compute_upgrade_plan(&base, Some(&merged), &[], &[]) {
-        Ok(plan) => plan,
-        Err(err) => {
-            warn!(error = %err, "Failed to plan the package upgrade, packages unavailable");
-            return PackageProbe::Unavailable;
-        }
-    };
-
-    if plan.changed.is_empty() && plan.added.is_empty() && plan.removed.is_empty() {
-        info!("Packages are up to date");
-        return PackageProbe::Unavailable;
-    }
-
-    let download_size_bytes = match estimate {
-        EstimateMode::Estimate => {
-            match bmc_nix::store::estimate_realization(
-                &bmc_nix::store::TokioCommandRunner,
-                &plan.packages,
-            )
-            .await
-            {
-                Ok(realize_estimate) => Some(realize_estimate.download_bytes),
-                Err(err) => {
-                    warn!(error = %err, "Failed to estimate the package download size");
-                    None
-                }
-            }
-        }
-        EstimateMode::Skip => None,
-    };
-
-    PackageProbe::Available(merged, build_packages_preview(&plan, download_size_bytes))
-}
-
-fn build_packages_preview(
-    plan: &bmc_nix::types::UpgradePlan,
-    download_size_bytes: Option<u64>,
-) -> PackagesPreview {
-    let resolved_by_name: HashMap<&str, &bmc_nix::types::ResolvedPackage> = plan
-        .packages
-        .iter()
-        .map(|package| (package.name.as_str(), package))
-        .collect();
-
-    let mut changes = Vec::new();
-    for change in &plan.changed {
-        let resolved = resolved_by_name.get(change.name.as_str());
-        changes.push(SystemPackageChange {
-            name: change.name.clone(),
-            version_from: Some(change.from_version.clone()),
-            version_to: Some(change.to_version.clone()),
-            category: resolved.and_then(|package| package.category.clone()),
-            changelog: resolved.and_then(|package| package.metadata.get("changelog").cloned()),
-        });
-    }
-    for added in &plan.added {
-        let resolved = resolved_by_name.get(added.name.as_str());
-        changes.push(SystemPackageChange {
-            name: added.name.clone(),
-            version_from: None,
-            version_to: Some(added.version.clone()),
-            category: resolved.and_then(|package| package.category.clone()),
-            changelog: resolved.and_then(|package| package.metadata.get("changelog").cloned()),
-        });
-    }
-    for removed in &plan.removed {
-        changes.push(SystemPackageChange {
-            name: removed.name.clone(),
-            version_from: Some(removed.version.clone()),
-            version_to: None,
-            category: None,
-            changelog: None,
-        });
-    }
-
-    let core = resolved_by_name.get("core");
-    let bmc_version = core.and_then(|package| package.metadata.get("bmc_version").cloned());
-    let bmc_changelog = core.and_then(|package| package.metadata.get("changelog").cloned());
-
-    PackagesPreview {
-        changes,
-        download_size_bytes,
-        bmc_version,
-        bmc_changelog,
-    }
 }
 
 pub(crate) struct UpgradeRunStream {
@@ -476,7 +288,7 @@ async fn claim_upgrade(
 
 fn spawn_packages_run(
     gate: tokio::sync::OwnedMutexGuard<()>,
-    nix_config: NixUpgradeConfig,
+    package_backend: Arc<dyn PackageBackend>,
     merged: bmc_nix::types::MergedIndex,
     download_size_bytes: Option<u64>,
     state_service: StateService,
@@ -487,22 +299,10 @@ fn spawn_packages_run(
         state_service.notify(SystemUpgradeState::DownloadStarted {
             total_mb: download_size_bytes.map(bytes_to_mb),
         });
-        let adapter = ChannelUpgradeProgress::new(tx.clone(), state_service);
-        let result = bmc_nix::upgrade::apply_profile_change(
-            &nix_config.profile_dir,
-            None, // base manifest is re-read under the profile lock
-            Some(&merged),
-            &[],
-            &[],
-            bmc_nix::upgrade::ActivationMode::Activate,
-            None, // GC is disabled on the packages path
-            Some(&adapter),
-            &nix_config.hooks_dir,
-            nix_config.hooks_override_path.as_deref(),
-        )
-        .await;
-        match result {
-            Ok(_) => {
+        let adapter: Arc<dyn bmc_nix::upgrade::UpgradeProgress> =
+            Arc::new(ChannelUpgradeProgress::new(tx.clone(), state_service));
+        match package_backend.apply(merged, adapter).await {
+            Ok(()) => {
                 info!("Package upgrade finished");
                 _ = tx.send(UpgradeRunState::Finished);
             }
@@ -557,7 +357,7 @@ pub(crate) struct SystemUpgradeService<T: FirmwareIndex, U: BmcManager> {
     run_gate: Arc<Mutex<()>>,
     upgrade_id_seq: Arc<AtomicUsize>,
     system_upgrades: Arc<Mutex<HashMap<String, AvailableSystemUpgrade>>>,
-    nix_config: NixUpgradeConfig,
+    package_backend: Arc<dyn PackageBackend>,
     widget_stopper: Arc<dyn WidgetStopper>,
 }
 
@@ -576,7 +376,7 @@ where
             run_gate: self.run_gate.clone(),
             upgrade_id_seq: self.upgrade_id_seq.clone(),
             system_upgrades: self.system_upgrades.clone(),
-            nix_config: self.nix_config.clone(),
+            package_backend: self.package_backend.clone(),
             widget_stopper: self.widget_stopper.clone(),
         }
     }
@@ -589,7 +389,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         bmc_manager: Arc<U>,
         state_service: StateService,
         scheduler: JobScheduler,
-        nix_config: NixUpgradeConfig,
+        package_backend: Arc<dyn PackageBackend>,
         widget_stopper: Arc<dyn WidgetStopper>,
     ) -> Self {
         let autoupgrade = AutoUpgrade::new(Notify::new(), Instant::now());
@@ -607,7 +407,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             run_gate: Arc::new(Mutex::new(())),
             upgrade_id_seq: Arc::new(AtomicUsize::new(0)),
             system_upgrades: Arc::new(Mutex::new(HashMap::new())),
-            nix_config,
+            package_backend,
             widget_stopper,
         }
     }
@@ -622,16 +422,14 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
 
         let firmware = self.probe_firmware().await?;
 
-        let probe = probe_packages(
-            &self.nix_config,
-            &INDEX_CLIENT,
-            if firmware.is_some() {
+        let probe = self
+            .package_backend
+            .probe(if firmware.is_some() {
                 EstimateMode::Skip
             } else {
                 EstimateMode::Estimate
-            },
-        )
-        .await;
+            })
+            .await;
 
         let mut package_fetch_transient = false;
         let packages = match probe {
@@ -651,33 +449,20 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             None => (None, None),
         };
 
-        let upgrade_id = if firmware.is_some() || packages.is_some() {
-            let upgrade_id = format!(
-                "upgrade-{}",
-                self.upgrade_id_seq.fetch_add(1, Ordering::Relaxed)
-            );
-            let upgrade = if let Some(detail) = &firmware {
-                AvailableSystemUpgrade::Firmware {
-                    detail: detail.clone(),
-                }
+        let upgrade_id =
+            if let Some(upgrade) = select_offer(firmware.as_ref(), merged, packages.as_ref()) {
+                let upgrade_id = format!(
+                    "upgrade-{}",
+                    self.upgrade_id_seq.fetch_add(1, Ordering::Relaxed)
+                );
+                self.system_upgrades
+                    .lock()
+                    .await
+                    .insert(upgrade_id.clone(), upgrade);
+                Some(upgrade_id)
             } else {
-                let merged = merged.expect("BUG: upgrade id minted without firmware or packages");
-                let preview = packages
-                    .as_ref()
-                    .expect("BUG: merged index present without a preview");
-                AvailableSystemUpgrade::Packages {
-                    merged,
-                    download_size_bytes: preview.download_size_bytes,
-                }
+                None
             };
-            self.system_upgrades
-                .lock()
-                .await
-                .insert(upgrade_id.clone(), upgrade);
-            Some(upgrade_id)
-        } else {
-            None
-        };
 
         Ok(CheckOutcome {
             firmware,
@@ -702,7 +487,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 download_size_bytes,
             } => spawn_packages_run(
                 gate,
-                self.nix_config.clone(),
+                Arc::clone(&self.package_backend),
                 merged,
                 download_size_bytes,
                 self.state_service.clone(),
@@ -1061,42 +846,6 @@ impl SystemUpgradeError {
 mod tests {
     use super::*;
     use futures::StreamExt;
-    use std::path::Path;
-
-    fn test_nix_config(root: &Path, servers: &Path) -> NixUpgradeConfig {
-        NixUpgradeConfig {
-            servers_config_path: servers.to_path_buf(),
-            profile_dir: root.join("profile"),
-            hooks_dir: "hooks".to_owned(),
-            hooks_override_path: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn probe_reports_unavailable_when_no_enabled_servers() {
-        let dir = tempfile::tempdir().expect("BUG: tempdir");
-        let path = dir.path().join("servers.json");
-        std::fs::write(
-            &path,
-            r#"{"factory":{"id":"factory","base_url":"http://x","known_public_key":"k","priority":0,"enabled":false},"servers":[]}"#,
-        )
-        .expect("BUG: write servers.json");
-        let config = test_nix_config(dir.path(), &path);
-        assert!(matches!(
-            probe_packages(&config, &INDEX_CLIENT, EstimateMode::Skip).await,
-            PackageProbe::Unavailable
-        ));
-    }
-
-    #[tokio::test]
-    async fn probe_reports_unavailable_when_servers_json_missing() {
-        let dir = tempfile::tempdir().expect("BUG: tempdir");
-        let config = test_nix_config(dir.path(), &dir.path().join("absent.json"));
-        assert!(matches!(
-            probe_packages(&config, &INDEX_CLIENT, EstimateMode::Skip).await,
-            PackageProbe::Unavailable
-        ));
-    }
 
     fn test_upgrade_detail() -> UpgradeDetail {
         UpgradeDetail {
@@ -1110,36 +859,6 @@ mod tests {
             ),
             previous_releases: Vec::new(),
         }
-    }
-
-    fn test_packages_preview() -> PackagesPreview {
-        PackagesPreview {
-            changes: Vec::new(),
-            download_size_bytes: None,
-            bmc_version: None,
-            bmc_changelog: None,
-        }
-    }
-
-    #[test]
-    fn arbitrate_firmware_wins_over_packages() {
-        let firmware = test_upgrade_detail();
-        let packages = test_packages_preview();
-        assert_eq!(
-            arbitrate(Some(&firmware), Some(&packages)),
-            Disruption::Reboot
-        );
-    }
-
-    #[test]
-    fn arbitrate_packages_only_is_app_restart() {
-        let packages = test_packages_preview();
-        assert_eq!(arbitrate(None, Some(&packages)), Disruption::AppRestart);
-    }
-
-    #[test]
-    fn arbitrate_nothing_available_is_unspecified() {
-        assert_eq!(arbitrate(None, None), Disruption::Unspecified);
     }
 
     #[tokio::test]
@@ -1190,6 +909,136 @@ mod tests {
 
         drop(guard);
         assert!(run_gate.try_lock().is_ok());
+    }
+
+    #[tokio::test]
+    async fn claimed_upgrade_id_is_single_use() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let system_upgrades = Mutex::new(HashMap::new());
+        system_upgrades.lock().await.insert(
+            "upgrade-0".to_owned(),
+            AvailableSystemUpgrade::Firmware {
+                detail: test_upgrade_detail(),
+            },
+        );
+
+        let claim = claim_upgrade(&run_gate, &system_upgrades, "upgrade-0").await;
+        let Ok((gate, _upgrade)) = claim else {
+            panic!("BUG: a fresh id with a free gate must claim");
+        };
+        drop(gate);
+
+        // The first claim consumed the id: starting the same id again
+        // must expire even though the gate is free again.
+        let claim = claim_upgrade(&run_gate, &system_upgrades, "upgrade-0").await;
+        let Err(mut stream) = claim else {
+            panic!("BUG: a consumed id must not claim again");
+        };
+        assert!(matches!(
+            stream.next().await,
+            Some(UpgradeRunState::Failed(SystemUpgradeError::UpgradeExpired))
+        ));
+    }
+
+    fn empty_merged_index() -> bmc_nix::types::MergedIndex {
+        bmc_nix::types::MergedIndex {
+            packages: Vec::new(),
+            by_name: std::collections::BTreeMap::new(),
+        }
+    }
+
+    fn test_packages_preview() -> PackagesPreview {
+        PackagesPreview {
+            changes: Vec::new(),
+            download_size_bytes: Some(42),
+            bmc_version: None,
+            bmc_changelog: None,
+        }
+    }
+
+    #[test]
+    fn offer_prefers_firmware_over_packages() {
+        let detail = test_upgrade_detail();
+
+        let offer = select_offer(
+            Some(&detail),
+            Some(empty_merged_index()),
+            Some(&test_packages_preview()),
+        )
+        .expect("BUG: firmware present must mint an offer");
+
+        assert!(
+            matches!(offer, AvailableSystemUpgrade::Firmware { .. }),
+            "a pending firmware upgrade must win over packages"
+        );
+    }
+
+    #[test]
+    fn offer_falls_back_to_packages_without_firmware() {
+        let offer = select_offer(
+            None,
+            Some(empty_merged_index()),
+            Some(&test_packages_preview()),
+        )
+        .expect("BUG: available packages must mint an offer");
+
+        assert!(matches!(
+            offer,
+            AvailableSystemUpgrade::Packages {
+                download_size_bytes: Some(42),
+                ..
+            }
+        ));
+        assert!(select_offer(None, None, None).is_none());
+    }
+
+    #[derive(Debug)]
+    struct StubBackend;
+
+    #[async_trait::async_trait]
+    impl PackageBackend for StubBackend {
+        async fn probe(&self, _estimate: EstimateMode) -> PackageProbe {
+            PackageProbe::Unavailable
+        }
+
+        async fn apply(
+            &self,
+            _merged: bmc_nix::types::MergedIndex,
+            _progress: Arc<dyn bmc_nix::upgrade::UpgradeProgress>,
+        ) -> Result<(), bmc_upgrade::packages::ApplyError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn run_gate_is_free_after_a_packages_run_completes() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+
+        let mut run = spawn_packages_run(
+            gate,
+            Arc::new(StubBackend),
+            empty_merged_index(),
+            None,
+            StateService::new(),
+        );
+
+        let mut last = None;
+        while let Some(state) = run.next().await {
+            last = Some(state);
+        }
+        assert!(
+            matches!(last, Some(UpgradeRunState::Finished)),
+            "run must finish successfully, got {last:?}"
+        );
+        // The detached run task dropped its gate when it completed; a new
+        // run must be startable immediately.
+        assert!(
+            run_gate.try_lock().is_ok(),
+            "run gate must be free after the run completes"
+        );
     }
 
     #[test]
