@@ -162,18 +162,27 @@ impl Manager {
             .inspect_err(|err| error!(error = %err, "Upgrade process wait failed"))
             .map_err(|_| anyhow!("Invalid firmware image"))?;
 
-        if let Some(code) = status.code() {
-            // Error code "1" is returned on BCB when using incompatible image, unsigned image or wrong signature keys
-            if code == 1 {
-                error!(exit_code = code, "Upgrade failed: invalid firmware image");
-                Err(anyhow!("Invalid firmware image"))
-            } else {
+        match status.code() {
+            Some(0) => {
                 info!("System upgrade completed successfully");
                 Ok(())
             }
-        } else {
-            error!("Upgrade process terminated without exit code");
-            Err(anyhow!("Upgrade failed"))
+            // Error code "1" is returned on BCB when using incompatible image, unsigned image or wrong signature keys
+            Some(1) => {
+                error!(exit_code = 1, "Upgrade failed: invalid firmware image");
+                Err(anyhow!("Invalid firmware image"))
+            }
+            // procd rejections propagate through `ubus call system
+            // sysupgrade` as ubus status exit codes (2, 8, 9, ...); a
+            // successful flash never returns at all.
+            Some(code) => {
+                error!(exit_code = code, "Upgrade failed");
+                Err(anyhow!("Upgrade failed with exit code {code}"))
+            }
+            None => {
+                error!("Upgrade process terminated without exit code");
+                Err(anyhow!("Upgrade failed"))
+            }
         }
     }
 
