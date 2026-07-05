@@ -25,10 +25,14 @@ pub enum ActivationError {
         path: String,
         source: std::io::Error,
     },
-    #[error("activation entrypoint '{path}' failed with exit code {exit_code}")]
-    EntrypointFailed { path: String, exit_code: i32 },
-    #[error("activation entrypoint '{path}' was terminated by signal")]
-    EntrypointSignaled { path: String },
+    #[error("activation entrypoint '{path}' failed with exit code {exit_code}: {output}")]
+    EntrypointFailed {
+        path: String,
+        exit_code: i32,
+        output: String,
+    },
+    #[error("activation entrypoint '{path}' was terminated by signal: {output}")]
+    EntrypointSignaled { path: String, output: String },
     #[error("failed to execute activation entrypoint '{path}': {source}")]
     EntrypointExecute {
         path: String,
