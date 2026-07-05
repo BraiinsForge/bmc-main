@@ -125,7 +125,20 @@ impl bmc::BmcManager for Manager {
                 tokio::time::sleep(Duration::from_millis(300)).await;
             }
         }
+        if crate::scenario::read(&self.mockfs.upgrade_scenario()).run
+            == crate::scenario::RunScenario::ApplyFail
+        {
+            anyhow::bail!("mock: firmware apply failed");
+        }
+
         tokio::time::sleep(Duration::from_secs(10)).await;
+
+        tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            info!("Mock sysupgrade: exiting to simulate the reboot");
+            std::process::exit(0);
+        });
+
         Ok(())
     }
 
