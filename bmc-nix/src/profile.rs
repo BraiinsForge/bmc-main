@@ -1501,6 +1501,7 @@ mod tests {
             | crate::activation::ActivationError::ResolveIo { .. }
             | crate::activation::ActivationError::RevertedAfterFailure { .. }
             | crate::activation::ActivationError::RevertFailed { .. }
+            | crate::activation::ActivationError::ConsumeMarker { .. }
             | crate::activation::ActivationError::Lock(_)) => {
                 panic!("expected EntrypointFailed, got: {other}")
             }
@@ -1540,6 +1541,7 @@ mod tests {
             | crate::activation::ActivationError::ResolveIo { .. }
             | crate::activation::ActivationError::RevertedAfterFailure { .. }
             | crate::activation::ActivationError::RevertFailed { .. }
+            | crate::activation::ActivationError::ConsumeMarker { .. }
             | crate::activation::ActivationError::Lock(_)) => {
                 panic!("expected EntrypointSignaled, got: {other}")
             }
