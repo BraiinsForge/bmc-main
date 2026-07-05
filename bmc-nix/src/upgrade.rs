@@ -774,7 +774,6 @@ mod tests {
         let gc_config = GcConfig {
             keep_generations: 1,
             keep_days: None,
-            min_free_space: "0".into(),
             protected_generations: vec![],
         };
         // `keep_extra = [2]` is the pre-activation current that the
