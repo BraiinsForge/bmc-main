@@ -1,5 +1,13 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
+//! Merges fragment files staged under `merge-files/` into a single generated
+//! file per target path.
+//!
+//! Fragments are concatenated as raw bytes in sorted filename order. The merge
+//! is line-oriented: when a fragment does not end in a newline, a newline is
+//! inserted before the next fragment so successive fragments never run together
+//! on the same line.
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -48,17 +56,15 @@ fn run(gen_path: &Path) -> anyhow::Result<()> {
     for (target, mut files) in groups {
         files.sort();
 
-        let mut content = String::new();
+        let mut content: Vec<u8> = Vec::new();
         for file in &files {
-            content.push_str(&std::fs::read_to_string(file)?);
+            if !content.is_empty() && content.last() != Some(&b'\n') {
+                content.push(b'\n');
+            }
+            content.extend_from_slice(&std::fs::read(file)?);
         }
 
-        bmc_nix::generation_path::write_generated_file(
-            gen_path,
-            &target,
-            content.as_bytes(),
-            0o644,
-        )?;
+        bmc_nix::generation_path::write_generated_file(gen_path, &target, &content, 0o644)?;
     }
 
     Ok(())
@@ -161,6 +167,43 @@ mod tests {
                 .expect("BUG: read merged output"),
             "gamma\n",
             "a symlinked merge-files subdirectory must be traversed"
+        );
+    }
+
+    #[test]
+    fn merges_non_utf8_fragments() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let generation = tmp.path().join("generation");
+        let banner = generation.join("merge-files/etc/banner");
+        std::fs::create_dir_all(&banner).expect("BUG: create merge dirs");
+        std::fs::write(banner.join("10-a"), [0xFF, 0xFE]).expect("BUG: write fragment a");
+        std::fs::write(banner.join("20-b"), [0x00, 0xFF]).expect("BUG: write fragment b");
+
+        super::run(&generation).expect("BUG: merge-files hook should succeed");
+
+        assert_eq!(
+            std::fs::read(generation.join("etc/banner")).expect("BUG: read merged output"),
+            [0xFF, 0xFE, b'\n', 0x00, 0xFF],
+            "non-UTF-8 fragments must merge byte-for-byte"
+        );
+    }
+
+    #[test]
+    fn inserts_newline_between_unterminated_fragments() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let generation = tmp.path().join("generation");
+        let banner = generation.join("merge-files/etc/banner");
+        std::fs::create_dir_all(&banner).expect("BUG: create merge dirs");
+        std::fs::write(banner.join("10-a"), "a").expect("BUG: write fragment a");
+        std::fs::write(banner.join("20-b"), "b").expect("BUG: write fragment b");
+
+        super::run(&generation).expect("BUG: merge-files hook should succeed");
+
+        assert_eq!(
+            std::fs::read_to_string(generation.join("etc/banner"))
+                .expect("BUG: read merged output"),
+            "a\nb",
+            "unterminated fragments must be newline-separated"
         );
     }
 
