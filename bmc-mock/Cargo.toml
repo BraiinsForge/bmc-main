@@ -22,6 +22,7 @@ dirs.workspace = true
 futures = { workspace = true }
 rand = { workspace = true, features = ["thread_rng"] }
 reqwest.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
@@ -30,6 +31,9 @@ tooling-std.workspace = true
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 zip.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
