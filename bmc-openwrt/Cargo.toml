@@ -27,6 +27,7 @@ bmc-shared-ii-net.workspace = true
 bmc-shared-ii-net-drv.workspace = true
 bmc-shared-time.workspace = true
 bmc-support.workspace = true
+bmc-upgrade.workspace = true
 bmc-widget-protocol.workspace = true
 calloop.workspace = true
 clap.workspace = true
