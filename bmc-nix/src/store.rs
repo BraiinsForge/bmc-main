@@ -60,6 +60,71 @@ fn append_bounded_stderr(buf: &mut Vec<u8>, line: &str, cap: usize) {
     }
 }
 
+/// Run `command` to completion, retaining at most
+/// [`MAX_RETAINED_STDERR_BYTES`] of stdout and of stderr. Both pipes are
+/// drained concurrently and in full, so a child that dumps a large log on
+/// failure neither deadlocks on a filled pipe nor forces the parent to
+/// buffer the whole stream in RAM — only the bounded head of each is kept
+/// for a diagnostic snippet. This is the memory-bounded counterpart to
+/// [`tokio::process::Command::output`], for the memory-constrained device.
+pub(crate) async fn output_bounded(
+    mut command: tokio::process::Command,
+) -> Result<std::process::Output, std::io::Error> {
+    command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = command.spawn()?;
+    let stdout_handle = child
+        .stdout
+        .take()
+        .expect("BUG: stdout was piped but is missing");
+    let stderr_handle = child
+        .stderr
+        .take()
+        .expect("BUG: stderr was piped but is missing");
+
+    let stdout_task = tokio::task::spawn(drain_bounded(stdout_handle));
+    let stderr_bytes = drain_bounded(stderr_handle).await?;
+    let stdout_bytes = stdout_task
+        .await
+        .expect("BUG: stdout drain task panicked")?;
+    let status = child.wait().await?;
+
+    Ok(std::process::Output {
+        status,
+        stdout: stdout_bytes,
+        stderr: stderr_bytes,
+    })
+}
+
+/// Drain `handle` line-by-line to EOF, retaining only the bounded head.
+/// Reading every line keeps the pipe from filling while capping memory.
+async fn drain_bounded(
+    handle: impl tokio::io::AsyncRead + Unpin,
+) -> Result<Vec<u8>, std::io::Error> {
+    use tokio::io::AsyncBufReadExt as _;
+
+    let mut reader = tokio::io::BufReader::new(handle);
+    let mut retained: Vec<u8> = Vec::new();
+    let mut line_buf: Vec<u8> = Vec::new();
+    loop {
+        line_buf.clear();
+        if reader.read_until(b'\n', &mut line_buf).await? == 0 {
+            break;
+        }
+        if line_buf.last() == Some(&b'\n') {
+            line_buf.pop();
+            if line_buf.last() == Some(&b'\r') {
+                line_buf.pop();
+            }
+        }
+        let line = String::from_utf8_lossy(&line_buf);
+        append_bounded_stderr(&mut retained, &line, MAX_RETAINED_STDERR_BYTES);
+    }
+    Ok(retained)
+}
+
 /// Abstraction over command execution for testability.
 ///
 /// Uses native async fn (RPITIT), which means this trait is NOT
