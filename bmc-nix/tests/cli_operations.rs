@@ -657,8 +657,9 @@ fn upgrade_custom_index_wins_precedence_then_next_boot_stages() {
     );
 
     // Second upgrade with --next-boot: the custom --index bumps clock to
-    // 1.1.0, forcing a new generation. It must be staged (next -> 3-link),
-    // not activated: current stays at 2-link.
+    // 1.1.0, forcing a new generation. It must be staged for the target
+    // firmware (next.9.9 -> 3-link), not activated: current stays at
+    // 2-link.
     let store_custom_next = env.make_store("store-clock-1.1.0-custom", &["bin/clock"]);
     create_activation_entrypoint(&store_custom_next);
     let custom_index_next = write_index(
@@ -677,14 +678,15 @@ fn upgrade_custom_index_wins_precedence_then_next_boot_stages() {
         "--profile-dir",
         &profile,
         "--next-boot",
+        "9.9",
     ]);
     let gen_path = run.generation_path("next-boot upgrade");
 
     assert!(gen_path.ends_with("3-link"), "got {gen_path:?}");
     assert_eq!(
-        std::fs::read_link(env.profile_dir.join("next")).expect("BUG: read next symlink"),
+        std::fs::read_link(env.profile_dir.join("next.9.9")).expect("BUG: read next.9.9 symlink"),
         PathBuf::from("3-link"),
-        "next-boot must stage gen 3 in the next marker"
+        "next-boot must stage gen 3 in the next.9.9 marker"
     );
     assert_eq!(
         env.current_link_target(),
