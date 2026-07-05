@@ -73,7 +73,7 @@ fi"#
         .expect("BUG: write to String should never fail");
 
     for script in scripts {
-        writeln!(entrypoint, "\"$SCRIPTS_DIR/{script}\"")
+        writeln!(entrypoint, "\"$SCRIPTS_DIR/{script}\" 9>&-")
             .expect("BUG: write to String should never fail");
     }
 
@@ -436,6 +436,43 @@ mod tests {
 
         let status = child.wait().expect("BUG: should wait for entrypoint");
         assert!(status.success(), "entrypoint should exit successfully");
+    }
+
+    #[test]
+    #[serial]
+    fn entrypoint_lock_fd_not_inherited_by_backgrounded_children() {
+        let tempdir = tempfile::tempdir().expect("BUG: should create tempdir");
+        let profile_dir = tempdir.path().join("profile");
+        let new_generation = profile_dir.join("2-link");
+        let scripts_dir = new_generation.join("core/activation/scripts");
+        let entrypoint_path = new_generation.join("core/activation/entrypoint");
+        let started = tempdir.path().join("daemon-started");
+
+        std::fs::create_dir_all(&scripts_dir).expect("BUG: should create scripts dir");
+        let daemonizer = format!(
+            "#!/bin/sh\nset -e\n( touch '{}'; sleep 5 ) &\n",
+            started.display()
+        );
+        write_executable(&scripts_dir.join("10-daemonizer"), &daemonizer);
+        let entrypoint = super::write_entrypoint(&[String::from("10-daemonizer")]);
+        write_executable(&entrypoint_path, &entrypoint);
+
+        let test_env = TestEnv {
+            _tempdir: tempdir,
+            old_generation: profile_dir.join("1-link"),
+            new_generation: new_generation.clone(),
+            entrypoint_path,
+            output_path: started.clone(),
+        };
+        let mut child = spawn_entrypoint(&test_env, None, None, &[]);
+        wait_for_path(&started);
+        let status = child.wait().expect("BUG: should wait for entrypoint");
+        assert!(status.success());
+
+        assert!(
+            try_lock_profile(&profile_dir),
+            "backgrounded child of an activation script must not hold the profile lock"
+        );
     }
 
     #[test]
