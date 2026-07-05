@@ -128,7 +128,36 @@ fn resolve_node<'a>(
                 .expect("BUG: one provider should exist"),
         )),
         (0, _) => Ok(UnionNode::MergedDirectory(providers)),
+        _ if all_identical_symlink_targets(&providers) => {
+            Ok(allow_leaf_collision(rel_path, &providers))
+        }
         _ => conflict(rel_path, &providers),
+    }
+}
+
+/// Whether every provider is a symlink resolving to the same absolute target.
+///
+/// Two packages that both link the same absolute store path are not a real
+/// conflict: the resulting symlink is identical whichever provider wins, so the
+/// first may be kept. The shared target must be absolute — equal relative
+/// targets resolve differently per provider, so they stay a conflict.
+/// Regular-file content is not compared.
+fn all_identical_symlink_targets(providers: &[Provider<'_>]) -> bool {
+    let mut targets = providers.iter().map(symlink_target);
+    match targets.next() {
+        Some(Some(first)) => {
+            first.is_absolute() && targets.all(|target| target.as_ref() == Some(&first))
+        }
+        Some(None) | None => false,
+    }
+}
+
+fn symlink_target(provider: &Provider<'_>) -> Option<PathBuf> {
+    let metadata = std::fs::symlink_metadata(&provider.source_path).ok()?;
+    if metadata.is_symlink() {
+        std::fs::read_link(&provider.source_path).ok()
+    } else {
+        None
     }
 }
 
