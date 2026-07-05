@@ -257,15 +257,12 @@ enum Commands {
         #[arg(long, default_value = "current")]
         base: BaseSelector,
 
-        /// Build the new generation but defer activation to the next boot:
-        /// write the `next` marker consumed by the boot-time activator
-        /// instead of swapping `current`.
-        #[arg(
-            long,
-            action = clap::ArgAction::SetTrue,
-            conflicts_with = "no_activate"
-        )]
-        next_boot: bool,
+        /// Build the new generation but defer activation to the next boot
+        /// of the given BOS version: write the `next.<BOS_VERSION>` marker
+        /// consumed only by that firmware's boot-time activator instead of
+        /// swapping `current`.
+        #[arg(long, value_name = "BOS_VERSION", conflicts_with = "no_activate")]
+        next_boot: Option<String>,
 
         #[command(flatten)]
         common: ProfileCommonArgs,
@@ -356,6 +353,11 @@ enum Commands {
         /// integer generation number.
         #[arg(long, value_parser = clap::value_parser!(GenerationSelector))]
         generation: Option<GenerationSelector>,
+
+        /// File containing the running BOS version; selects the
+        /// `next.<version>` marker for `--generation next`.
+        #[arg(long, default_value = "/etc/bos_version")]
+        bos_version_file: PathBuf,
     },
 
     /// Register a package server and its binary-cache substituter.
@@ -732,9 +734,15 @@ async fn cmd_upgrade(
     hooks_override_path: Option<PathBuf>,
     base: BaseSelector,
     no_activate: bool,
-    next_boot: bool,
+    next_boot: Option<String>,
     log_format: LogFormat,
 ) -> anyhow::Result<()> {
+    if let Some(version) = &next_boot {
+        anyhow::ensure!(
+            !version.is_empty() && !version.contains('/') && !version.contains(char::is_whitespace),
+            "invalid --next-boot BOS version '{version}'"
+        );
+    }
     let fetch_set = if only_indexes {
         build_fetch_set(Vec::new(), &indexes)
     } else {
@@ -765,10 +773,9 @@ async fn cmd_upgrade(
         Some(&merged),
         &[],
         &[],
-        if next_boot {
-            ActivationMode::NextBoot
-        } else {
-            activation_mode_from_no_activate(no_activate)
+        match next_boot {
+            Some(bos_version) => ActivationMode::NextBoot { bos_version },
+            None => activation_mode_from_no_activate(no_activate),
         },
         None,
         Some(&progress),
@@ -908,12 +915,23 @@ fn cmd_mount(source: &Path, target: &Path) -> anyhow::Result<()> {
 async fn cmd_activate(
     profile_dir: &Path,
     generation: Option<GenerationSelector>,
+    bos_version_file: &Path,
 ) -> anyhow::Result<()> {
-    let outcome = activation::activate(
-        profile_dir,
-        generation.unwrap_or(GenerationSelector::Current),
-    )
-    .await;
+    let selector = generation.unwrap_or(GenerationSelector::Current);
+    // A missing, unreadable, or empty version file must not fail the
+    // boot path: without a version no marker can be matched and `next`
+    // degrades to `current` inside `activate`. An empty version must
+    // become `None` — as `Some("")` it would name the marker `next.`
+    // and sweep every other marker as stale.
+    let bos_version = if matches!(selector, GenerationSelector::Next) {
+        read_bos_version(bos_version_file)
+            .inspect_err(|err| eprintln!("activate: cannot read BOS version: {err:#}"))
+            .ok()
+            .filter(|version| !version.is_empty())
+    } else {
+        None
+    };
+    let outcome = activation::activate(profile_dir, selector, bos_version.as_deref()).await;
     match outcome {
         Ok(ActivationOutcome::Activated { generation, path }) => {
             eprintln!(
@@ -1147,7 +1165,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Activate {
             profile_dir,
             generation,
-        } => cmd_activate(&profile_dir, generation).await,
+            bos_version_file,
+        } => cmd_activate(&profile_dir, generation, &bos_version_file).await,
 
         Commands::RegisterServer {
             servers_config,
@@ -1188,6 +1207,7 @@ mod tests {
             "--index",
             "file:///tmp/index.json",
             "--next-boot",
+            "2026.07.1",
         ])
         .expect("BUG: parse should succeed");
 
@@ -1197,7 +1217,11 @@ mod tests {
         else {
             panic!("BUG: parsed command must be upgrade");
         };
-        assert!(next_boot, "next-boot flag must be recorded");
+        assert_eq!(
+            next_boot.as_deref(),
+            Some("2026.07.1"),
+            "next-boot target version must be recorded"
+        );
         assert!(
             !common.no_activate,
             "next-boot must not imply the no-activate flag"
@@ -1212,11 +1236,26 @@ mod tests {
             "--index",
             "file:///tmp/index.json",
             "--next-boot",
+            "2026.07.1",
             "--no-activate",
         ])
         .expect_err("BUG: next-boot conflicts with no-activate");
 
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn upgrade_rejects_next_boot_without_a_version() {
+        let err = Cli::try_parse_from([
+            "bmc-nix-cli",
+            "upgrade",
+            "--index",
+            "file:///tmp/index.json",
+            "--next-boot",
+        ])
+        .expect_err("BUG: --next-boot requires the target BOS version");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
     }
 
     #[test]
