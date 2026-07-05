@@ -8,6 +8,7 @@ edition = "2024"
 [features]
 default = ["server"]
 server = ["tonic"]
+client = ["tonic"]
 
 [dependencies]
 prost.workspace = true
