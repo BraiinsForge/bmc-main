@@ -289,7 +289,6 @@ pub struct GcConfig {
     /// age-based retention.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keep_days: Option<usize>,
-    pub min_free_space: String,
     pub protected_generations: Vec<usize>,
 }
 
@@ -298,7 +297,6 @@ impl Default for GcConfig {
         Self {
             keep_generations: 3,
             keep_days: None,
-            min_free_space: "0".to_owned(),
             protected_generations: Vec::new(),
         }
     }
