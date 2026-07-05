@@ -75,16 +75,44 @@ fn require_success(
     })
 }
 
-fn require_e2fsck_success(output: &std::process::Output) -> Result<(), PreparePartitionError> {
-    if matches!(output.status.code(), Some(0 | 1)) {
-        return Ok(());
-    }
+/// e2fsck's exit status interpreted per its bitmask contract: bit 1
+/// errors corrected, bit 2 reboot recommended, bit 4 errors left
+/// uncorrected, bits 8/16/32/128 operational, usage, cancel and library
+/// failures.
+enum E2fsckOutcome {
+    /// Bits within {1, 2}: clean or fully repaired. The reboot advice
+    /// behind bit 2 targets mounted filesystems; this partition is only
+    /// fscked while unmounted, so the kernel holds no stale metadata and
+    /// the filesystem is immediately safe to mount.
+    Clean,
+    /// Bit 4 with nothing above it: corruption this e2fsck mode could
+    /// not fix.
+    Corrupt,
+    /// Any higher or unknown bit, or death by signal: a tool or device
+    /// failure, not a filesystem verdict. Repairing or formatting on top
+    /// of one could destroy recoverable data.
+    Failed,
+}
 
-    Err(PreparePartitionError::CommandExited {
+fn classify_e2fsck(output: &std::process::Output) -> E2fsckOutcome {
+    let Some(code) = output.status.code() else {
+        return E2fsckOutcome::Failed;
+    };
+    if (code & !0b11) == 0 {
+        E2fsckOutcome::Clean
+    } else if (code & !0b111) == 0 {
+        E2fsckOutcome::Corrupt
+    } else {
+        E2fsckOutcome::Failed
+    }
+}
+
+fn e2fsck_exited(output: &std::process::Output) -> PreparePartitionError {
+    PreparePartitionError::CommandExited {
         program: "e2fsck".to_owned(),
         status: output.status,
         stderr: stderr_snippet(&output.stderr),
-    })
+    }
 }
 
 /// The deployed BusyBox does not ship `mountpoint(1)`, so the mount
@@ -265,8 +293,38 @@ pub async fn prepare_data_partition(
         require_success("mkfs.ext4", &mkfs)?;
     }
 
-    let e2fsck = run_command(runner, "e2fsck", &["-p", partition_arg.as_ref()]).await?;
-    require_e2fsck_success(&e2fsck)?;
+    let preen = run_command(runner, "e2fsck", &["-p", partition_arg.as_ref()]).await?;
+    match classify_e2fsck(&preen) {
+        E2fsckOutcome::Clean => {}
+        E2fsckOutcome::Corrupt => {
+            tracing::warn!(
+                partition = %partition_arg,
+                "preen fsck could not repair the filesystem, escalating to e2fsck -y",
+            );
+            let full = run_command(runner, "e2fsck", &["-y", partition_arg.as_ref()]).await?;
+            match classify_e2fsck(&full) {
+                E2fsckOutcome::Clean => {
+                    tracing::warn!(
+                        partition = %partition_arg,
+                        "filesystem needed non-preen repair; if the store misbehaves, \
+                         recover with `bmc-nix-cli init --wipe` while /nix is not an \
+                         active mount",
+                    );
+                }
+                E2fsckOutcome::Corrupt => {
+                    tracing::error!(
+                        partition = %partition_arg,
+                        "filesystem is unrecoverable even by e2fsck -y, reformatting",
+                    );
+                    let mkfs =
+                        run_command(runner, "mkfs.ext4", &["-F", partition_arg.as_ref()]).await?;
+                    require_success("mkfs.ext4", &mkfs)?;
+                }
+                E2fsckOutcome::Failed => return Err(e2fsck_exited(&full)),
+            }
+        }
+        E2fsckOutcome::Failed => return Err(e2fsck_exited(&preen)),
+    }
 
     std::fs::create_dir_all(mount_point).map_err(|source| {
         PreparePartitionError::CreateMountPoint {
@@ -328,6 +386,14 @@ mod tests {
                 status: std::process::ExitStatus::from_raw(code << 8),
                 stdout: stdout.to_vec(),
                 stderr: stderr.to_vec(),
+            }
+        }
+
+        fn signal(signal: i32) -> std::process::Output {
+            std::process::Output {
+                status: std::process::ExitStatus::from_raw(signal),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
             }
         }
 
@@ -638,5 +704,406 @@ mod tests {
             super::PreparePartitionError::ForeignMount { .. }
         ));
         assert_invocations(&runner, &[]);
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_accepts_preen_reboot_advice() {
+        // Exit 2 = corrected, reboot recommended. The partition is
+        // verified unmounted, so the advice does not apply and the fs is
+        // safe to mount without escalation.
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let mount_point = tmp.path().join("data");
+        let runner = ScriptedRunner::new(vec![
+            ScriptedRunner::success(b""),
+            ScriptedRunner::success(b"ext4\n"),
+            ScriptedRunner::output(2, b""),
+            ScriptedRunner::success(b""),
+        ]);
+
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+            .await
+            .expect("BUG: preen exit 2 should mount");
+
+        assert_invocations(
+            &runner,
+            &[
+                ("test", &["-b", "/dev/mmcblk0p4"]),
+                ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-p", "/dev/mmcblk0p4"]),
+                (
+                    "mount",
+                    &[
+                        "-t",
+                        "ext4",
+                        "/dev/mmcblk0p4",
+                        mount_point.to_str().expect("BUG: utf8 path"),
+                    ],
+                ),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_accepts_preen_exit_3() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let mount_point = tmp.path().join("data");
+        let runner = ScriptedRunner::new(vec![
+            ScriptedRunner::success(b""),
+            ScriptedRunner::success(b"ext4\n"),
+            ScriptedRunner::output(3, b""),
+            ScriptedRunner::success(b""),
+        ]);
+
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+            .await
+            .expect("BUG: preen exit 3 should mount");
+
+        assert_invocations(
+            &runner,
+            &[
+                ("test", &["-b", "/dev/mmcblk0p4"]),
+                ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-p", "/dev/mmcblk0p4"]),
+                (
+                    "mount",
+                    &[
+                        "-t",
+                        "ext4",
+                        "/dev/mmcblk0p4",
+                        mount_point.to_str().expect("BUG: utf8 path"),
+                    ],
+                ),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_escalates_when_preen_cannot_repair() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let mount_point = tmp.path().join("data");
+        let runner = ScriptedRunner::new(vec![
+            ScriptedRunner::success(b""),
+            ScriptedRunner::success(b"ext4\n"),
+            ScriptedRunner::output(6, b""),
+            ScriptedRunner::success(b""),
+            ScriptedRunner::success(b""),
+        ]);
+
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+            .await
+            .expect("BUG: escalated repair should mount");
+
+        assert_invocations(
+            &runner,
+            &[
+                ("test", &["-b", "/dev/mmcblk0p4"]),
+                ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-p", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-y", "/dev/mmcblk0p4"]),
+                (
+                    "mount",
+                    &[
+                        "-t",
+                        "ext4",
+                        "/dev/mmcblk0p4",
+                        mount_point.to_str().expect("BUG: utf8 path"),
+                    ],
+                ),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_escalated_repair_mounts() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let mount_point = tmp.path().join("data");
+        let runner = ScriptedRunner::new(vec![
+            ScriptedRunner::success(b""),
+            ScriptedRunner::success(b"ext4\n"),
+            ScriptedRunner::output(4, b""),
+            ScriptedRunner::output(1, b""),
+            ScriptedRunner::success(b""),
+        ]);
+
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+            .await
+            .expect("BUG: -y exit 1 should mount");
+
+        assert_invocations(
+            &runner,
+            &[
+                ("test", &["-b", "/dev/mmcblk0p4"]),
+                ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-p", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-y", "/dev/mmcblk0p4"]),
+                (
+                    "mount",
+                    &[
+                        "-t",
+                        "ext4",
+                        "/dev/mmcblk0p4",
+                        mount_point.to_str().expect("BUG: utf8 path"),
+                    ],
+                ),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_escalated_repair_with_reboot_advice_mounts() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let mount_point = tmp.path().join("data");
+        let runner = ScriptedRunner::new(vec![
+            ScriptedRunner::success(b""),
+            ScriptedRunner::success(b"ext4\n"),
+            ScriptedRunner::output(4, b""),
+            ScriptedRunner::output(3, b""),
+            ScriptedRunner::success(b""),
+        ]);
+
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+            .await
+            .expect("BUG: -y exit 3 should mount");
+
+        assert_invocations(
+            &runner,
+            &[
+                ("test", &["-b", "/dev/mmcblk0p4"]),
+                ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-p", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-y", "/dev/mmcblk0p4"]),
+                (
+                    "mount",
+                    &[
+                        "-t",
+                        "ext4",
+                        "/dev/mmcblk0p4",
+                        mount_point.to_str().expect("BUG: utf8 path"),
+                    ],
+                ),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_reformats_unrecoverable_filesystem() {
+        // -y exit 6 = corrected what it could (2) but errors remain (4):
+        // the fs is unrecoverable, rebuild it. A fresh fs needs no fsck,
+        // so mkfs goes straight to mount.
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let mount_point = tmp.path().join("data");
+        let runner = ScriptedRunner::new(vec![
+            ScriptedRunner::success(b""),
+            ScriptedRunner::success(b"ext4\n"),
+            ScriptedRunner::output(4, b""),
+            ScriptedRunner::output(6, b""),
+            ScriptedRunner::success(b""),
+            ScriptedRunner::success(b""),
+        ]);
+
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+            .await
+            .expect("BUG: unrecoverable fs should reformat and mount");
+
+        assert_invocations(
+            &runner,
+            &[
+                ("test", &["-b", "/dev/mmcblk0p4"]),
+                ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-p", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-y", "/dev/mmcblk0p4"]),
+                ("mkfs.ext4", &["-F", "/dev/mmcblk0p4"]),
+                (
+                    "mount",
+                    &[
+                        "-t",
+                        "ext4",
+                        "/dev/mmcblk0p4",
+                        mount_point.to_str().expect("BUG: utf8 path"),
+                    ],
+                ),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_preen_operational_error_does_not_escalate() {
+        // Bit 8 is a tool/device failure, not a filesystem verdict:
+        // answering yes to repairs on a device in that state could turn a
+        // transient problem into real damage.
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let mount_point = tmp.path().join("data");
+        let runner = ScriptedRunner::new(vec![
+            ScriptedRunner::success(b""),
+            ScriptedRunner::success(b"ext4\n"),
+            ScriptedRunner::output(8, b""),
+        ]);
+
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+            .await
+            .expect_err("BUG: operational preen failure must not escalate");
+
+        assert_invocations(
+            &runner,
+            &[
+                ("test", &["-b", "/dev/mmcblk0p4"]),
+                ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-p", "/dev/mmcblk0p4"]),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_preen_unknown_bit_does_not_escalate() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let mount_point = tmp.path().join("data");
+        let runner = ScriptedRunner::new(vec![
+            ScriptedRunner::success(b""),
+            ScriptedRunner::success(b"ext4\n"),
+            ScriptedRunner::output(64, b""),
+        ]);
+
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+            .await
+            .expect_err("BUG: unknown exit bit must not escalate");
+
+        assert_invocations(
+            &runner,
+            &[
+                ("test", &["-b", "/dev/mmcblk0p4"]),
+                ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-p", "/dev/mmcblk0p4"]),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_preen_signal_death_does_not_escalate() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let mount_point = tmp.path().join("data");
+        let runner = ScriptedRunner::new(vec![
+            ScriptedRunner::success(b""),
+            ScriptedRunner::success(b"ext4\n"),
+            ScriptedRunner::signal(9),
+        ]);
+
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+            .await
+            .expect_err("BUG: signal death must not escalate");
+
+        assert_invocations(
+            &runner,
+            &[
+                ("test", &["-b", "/dev/mmcblk0p4"]),
+                ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-p", "/dev/mmcblk0p4"]),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_preen_spawn_error_does_not_escalate() {
+        // The scripted queue runs dry at the -p invocation, which the
+        // runner surfaces as a spawn io::Error.
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let mount_point = tmp.path().join("data");
+        let runner = ScriptedRunner::new(vec![
+            ScriptedRunner::success(b""),
+            ScriptedRunner::success(b"ext4\n"),
+        ]);
+
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+            .await
+            .expect_err("BUG: preen spawn error must not escalate");
+
+        assert_invocations(
+            &runner,
+            &[
+                ("test", &["-b", "/dev/mmcblk0p4"]),
+                ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-p", "/dev/mmcblk0p4"]),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_full_fsck_operational_error_does_not_reformat() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let mount_point = tmp.path().join("data");
+        let runner = ScriptedRunner::new(vec![
+            ScriptedRunner::success(b""),
+            ScriptedRunner::success(b"ext4\n"),
+            ScriptedRunner::output(4, b""),
+            ScriptedRunner::output(8, b""),
+        ]);
+
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+            .await
+            .expect_err("BUG: -y operational failure must not reformat");
+
+        assert_invocations(
+            &runner,
+            &[
+                ("test", &["-b", "/dev/mmcblk0p4"]),
+                ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-p", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-y", "/dev/mmcblk0p4"]),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_combined_corruption_and_operational_bits_do_not_reformat() {
+        // 12 = 8 | 4: the corruption bit is meaningless when the run
+        // itself failed; formatting on it could wipe a recoverable fs.
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let mount_point = tmp.path().join("data");
+        let runner = ScriptedRunner::new(vec![
+            ScriptedRunner::success(b""),
+            ScriptedRunner::success(b"ext4\n"),
+            ScriptedRunner::output(4, b""),
+            ScriptedRunner::output(12, b""),
+        ]);
+
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+            .await
+            .expect_err("BUG: -y exit 12 must not reformat");
+
+        assert_invocations(
+            &runner,
+            &[
+                ("test", &["-b", "/dev/mmcblk0p4"]),
+                ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-p", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-y", "/dev/mmcblk0p4"]),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_data_partition_full_fsck_spawn_error_does_not_reformat() {
+        // The scripted queue runs dry at the -y invocation, which the
+        // runner surfaces as a spawn io::Error.
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let mount_point = tmp.path().join("data");
+        let runner = ScriptedRunner::new(vec![
+            ScriptedRunner::success(b""),
+            ScriptedRunner::success(b"ext4\n"),
+            ScriptedRunner::output(4, b""),
+        ]);
+
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+            .await
+            .expect_err("BUG: -y spawn error must not reformat");
+
+        assert_invocations(
+            &runner,
+            &[
+                ("test", &["-b", "/dev/mmcblk0p4"]),
+                ("blkid", &["-o", "value", "-s", "TYPE", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-p", "/dev/mmcblk0p4"]),
+                ("e2fsck", &["-y", "/dev/mmcblk0p4"]),
+            ],
+        );
     }
 }
