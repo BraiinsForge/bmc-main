@@ -1256,6 +1256,7 @@ dependencies = [
  "bmc-platform",
  "bmc-shared-time",
  "bmc-support",
+ "bmc-upgrade",
  "bmc-widget-protocol",
  "calloop 0.14.2",
  "clap",
