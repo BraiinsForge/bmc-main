@@ -8,6 +8,7 @@ authors = ["Braiins <braiins@braiins.com>"]
 anyhow.workspace = true
 async-trait.workspace = true
 bmc-grpc = { workspace = true, features = ["server"] }
+bmc-nix.workspace = true
 bmc-platform.workspace = true
 bmc-scheduler.workspace = true
 bmc-shared-time.workspace = true
@@ -23,11 +24,15 @@ rand.workspace = true
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 ring.workspace = true
 serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 sysinfo = { workspace = true, features = ["linux-tmpfs"], optional = true }
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [features]
 disk-check = ["sysinfo"]
