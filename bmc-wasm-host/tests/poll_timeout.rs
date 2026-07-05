@@ -5,8 +5,8 @@ use std::time::Duration;
 use bmc_wasm_host::main_loop::{SlotPollInputs, compute_poll_timeout_from_inputs};
 
 #[test]
-fn no_slots_and_no_grace_returns_indefinite() {
-    assert_eq!(compute_poll_timeout_from_inputs(&[], None), -1);
+fn no_slots_returns_indefinite() {
+    assert_eq!(compute_poll_timeout_from_inputs(&[]), -1);
 }
 
 #[test]
@@ -17,7 +17,7 @@ fn renderable_dirty_slot_with_elapsed_floor_returns_zero() {
         min_inter_frame_remaining: None,
         ..SlotPollInputs::default()
     };
-    assert_eq!(compute_poll_timeout_from_inputs(&[slot], None), 0);
+    assert_eq!(compute_poll_timeout_from_inputs(&[slot]), 0);
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn prepared_dirty_slot_without_frame_callbacks_returns_zero() {
         min_inter_frame_remaining: None,
         ..SlotPollInputs::default()
     };
-    assert_eq!(compute_poll_timeout_from_inputs(&[slot], None), 0);
+    assert_eq!(compute_poll_timeout_from_inputs(&[slot]), 0);
 }
 
 #[test]
@@ -40,7 +40,7 @@ fn renderable_dirty_slot_with_pending_floor_returns_remaining_ms() {
         min_inter_frame_remaining: Some(Duration::from_millis(5)),
         ..SlotPollInputs::default()
     };
-    assert_eq!(compute_poll_timeout_from_inputs(&[slot], None), 5);
+    assert_eq!(compute_poll_timeout_from_inputs(&[slot]), 5);
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn renderable_dirty_slot_just_rendered_returns_min_inter_frame() {
         min_inter_frame_remaining: Some(Duration::from_millis(8)),
         ..SlotPollInputs::default()
     };
-    assert_eq!(compute_poll_timeout_from_inputs(&[slot], None), 8);
+    assert_eq!(compute_poll_timeout_from_inputs(&[slot]), 8);
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn async_io_ceiling_clamps_lower_than_slot_delay() {
         has_pending_io: true,
         ..SlotPollInputs::default()
     };
-    assert_eq!(compute_poll_timeout_from_inputs(&[slot], None), 100);
+    assert_eq!(compute_poll_timeout_from_inputs(&[slot]), 100);
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn non_rendering_slot_with_pending_io_wakes_for_delivery_polling() {
         ..SlotPollInputs::default()
     };
 
-    assert_eq!(compute_poll_timeout_from_inputs(&[slot], None), 100);
+    assert_eq!(compute_poll_timeout_from_inputs(&[slot]), 100);
 }
 
 #[test]
@@ -97,7 +97,7 @@ fn entering_slot_wanting_next_frame_does_not_force_zero_timeout() {
         next_frame_delay: Some(0),
         ..SlotPollInputs::default()
     };
-    assert_eq!(compute_poll_timeout_from_inputs(&[slot], None), -1);
+    assert_eq!(compute_poll_timeout_from_inputs(&[slot]), -1);
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn prepared_slot_wanting_next_frame_without_dirty_surface_does_not_wake() {
         next_frame_delay: Some(0),
         ..SlotPollInputs::default()
     };
-    assert_eq!(compute_poll_timeout_from_inputs(&[slot], None), -1);
+    assert_eq!(compute_poll_timeout_from_inputs(&[slot]), -1);
 }
 
 #[test]
@@ -124,24 +124,7 @@ fn retry_timer_contributes_even_for_non_renderable_slot() {
         retry_in: Some(Duration::from_millis(750)),
         ..SlotPollInputs::default()
     };
-    assert_eq!(compute_poll_timeout_from_inputs(&[slot], None), 750);
-}
-
-#[test]
-fn grace_remainder_contributes_when_no_slots() {
-    assert_eq!(
-        compute_poll_timeout_from_inputs(&[], Some(Duration::from_millis(80))),
-        80,
-    );
-}
-
-#[test]
-fn grace_remainder_does_not_contribute_when_slot_is_active() {
-    let slot = SlotPollInputs::default();
-    assert_eq!(
-        compute_poll_timeout_from_inputs(&[slot], Some(Duration::ZERO)),
-        -1,
-    );
+    assert_eq!(compute_poll_timeout_from_inputs(&[slot]), 750);
 }
 
 #[test]
@@ -158,7 +141,7 @@ fn minimum_across_multiple_slot_contributions_wins() {
         min_inter_frame_remaining: Some(Duration::from_millis(3)),
         ..SlotPollInputs::default()
     };
-    assert_eq!(compute_poll_timeout_from_inputs(&[s1, s2], None), 3);
+    assert_eq!(compute_poll_timeout_from_inputs(&[s1, s2]), 3);
 }
 
 #[test]
@@ -174,7 +157,7 @@ fn blocked_renderable_slot_skips_frame_branches_but_contributes_retry() {
         ..SlotPollInputs::default()
     };
     // Only retry_in contributes; surface_needs_render is gated off by is_blocked.
-    assert_eq!(compute_poll_timeout_from_inputs(&[slot], None), 900);
+    assert_eq!(compute_poll_timeout_from_inputs(&[slot]), 900);
 }
 
 #[test]
@@ -191,5 +174,5 @@ fn buffer_blocked_dirty_slot_does_not_spin_without_retry_timer() {
         ..SlotPollInputs::default()
     };
 
-    assert_eq!(compute_poll_timeout_from_inputs(&[slot], None), -1);
+    assert_eq!(compute_poll_timeout_from_inputs(&[slot]), -1);
 }
