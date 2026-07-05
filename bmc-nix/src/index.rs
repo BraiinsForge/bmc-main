@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
 
-use futures::future::try_join_all;
+use futures::future::join_all;
 use semver::{Version, VersionReq};
 use tracing::{debug, warn};
 
@@ -286,6 +286,43 @@ pub async fn fetch_and_merge_indexes(
     fetch_and_merge_indexes_with_cap(client, servers, MAX_TOTAL_INDEXES).await
 }
 
+/// Reduce the per-server primary fetch results to the successful indexes.
+///
+/// A required server's fetch failure aborts the whole merge with its error.
+/// An optional server's failure degrades to a warning so the merge proceeds
+/// with the servers that did respond. The first optional failure is
+/// remembered so that an all-optional set where every fetch failed still
+/// surfaces an error rather than silently returning an empty index. The
+/// `fetch_results` are positionally aligned with `enabled_servers`.
+fn select_primary_indexes(
+    enabled_servers: &[&ServerEntry],
+    fetch_results: Vec<Result<FetchedIndex, FetchIndexesError>>,
+) -> Result<Vec<FetchedIndex>, FetchIndexesError> {
+    let mut primary_results: Vec<FetchedIndex> = Vec::new();
+    let mut first_optional_error: Option<FetchIndexesError> = None;
+    for (server, result) in enabled_servers.iter().zip(fetch_results) {
+        match result {
+            Ok(fetched) => primary_results.push(fetched),
+            Err(error) if server.required => return Err(error),
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    server_id = %server.id,
+                    "optional server index fetch failed, degrading"
+                );
+                first_optional_error.get_or_insert(error);
+            }
+        }
+    }
+
+    if primary_results.is_empty() && !enabled_servers.is_empty() {
+        return Err(first_optional_error
+            .expect("BUG: enabled servers with no successful fetch imply a recorded failure"));
+    }
+
+    Ok(primary_results)
+}
+
 /// [`fetch_and_merge_indexes`] with an explicit walk cap, so the federation
 /// bound can be exercised without building hundreds of fixtures.
 async fn fetch_and_merge_indexes_with_cap(
@@ -302,8 +339,8 @@ async fn fetch_and_merge_indexes_with_cap(
         });
     }
 
-    let primary_results: Vec<FetchedIndex> =
-        try_join_all(enabled_servers.iter().map(|server| async move {
+    let fetch_results: Vec<Result<FetchedIndex, FetchIndexesError>> =
+        join_all(enabled_servers.iter().map(|server| async move {
             let url = make_index_url(&server.base_url);
             let index = fetch_index(client, &server.base_url).await?;
             let commit = index
@@ -322,7 +359,9 @@ async fn fetch_and_merge_indexes_with_cap(
                 index,
             })
         }))
-        .await?;
+        .await;
+
+    let primary_results = select_primary_indexes(&enabled_servers, fetch_results)?;
 
     let mut all_fetched: Vec<FetchedIndex> = Vec::new();
     let mut visited: HashSet<String> = enabled_servers
@@ -1806,6 +1845,26 @@ mod tests {
             known_public_key: String::new(),
             priority: 10,
             enabled: true,
+            required: true,
+        }
+    }
+
+    fn required_server(id: &str, base_url: &str, priority: u32) -> ServerEntry {
+        ServerEntry {
+            id: id.to_owned(),
+            server_type: "package".to_owned(),
+            base_url: base_url.to_owned(),
+            known_public_key: String::new(),
+            priority,
+            enabled: true,
+            required: true,
+        }
+    }
+
+    fn optional_server(id: &str, base_url: &str, priority: u32) -> ServerEntry {
+        ServerEntry {
+            required: false,
+            ..required_server(id, base_url, priority)
         }
     }
 
@@ -2052,6 +2111,108 @@ mod tests {
         assert!(
             matches!(err, FetchIndexesError::IndexTooLarge { size, .. } if size > 4),
             "expected IndexTooLarge from the streaming ceiling, got {err:?}"
+        );
+    }
+
+    // ---- optional / required primary-server degradation tests ----
+
+    #[tokio::test]
+    async fn optional_server_failure_degrades() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let healthy = write_index(
+            dir.path(),
+            "healthy.json",
+            &[],
+            r#"{"name":"clock","version":"1.0.0","store_path":"/nix/store/clock"}"#,
+        );
+        let dead = dead_http_url().await;
+
+        let client = reqwest::Client::new();
+        let servers = vec![
+            required_server("healthy", &healthy, 10),
+            optional_server("dead", &dead, 20),
+        ];
+        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, 256)
+            .await
+            .expect("BUG: an unreachable optional server must not abort the merge");
+
+        assert_eq!(
+            merged.by_name.get("clock").map(Vec::len),
+            Some(1),
+            "the healthy server's package must survive"
+        );
+        assert_eq!(
+            merged.packages.len(),
+            1,
+            "only the healthy server contributes packages"
+        );
+    }
+
+    #[tokio::test]
+    async fn required_server_failure_aborts() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let healthy = write_index(
+            dir.path(),
+            "healthy.json",
+            &[],
+            r#"{"name":"clock","version":"1.0.0","store_path":"/nix/store/clock"}"#,
+        );
+        let dead = dead_http_url().await;
+
+        let client = reqwest::Client::new();
+        let servers = vec![
+            required_server("dead", &dead, 10),
+            required_server("healthy", &healthy, 20),
+        ];
+        let err = fetch_and_merge_indexes_with_cap(&client, &servers, 256)
+            .await
+            .expect_err(
+                "an unreachable required server must abort the merge \
+                 even when another server is healthy",
+            );
+
+        assert!(
+            matches!(err, FetchIndexesError::Fetch { .. }),
+            "expected the per-server fetch error, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn all_enabled_failing_is_an_error() {
+        let dead0 = dead_http_url().await;
+        let dead1 = dead_http_url().await;
+
+        let client = reqwest::Client::new();
+        let servers = vec![
+            optional_server("dead0", &dead0, 10),
+            optional_server("dead1", &dead1, 20),
+        ];
+        let err = fetch_and_merge_indexes_with_cap(&client, &servers, 256)
+            .await
+            .expect_err("every enabled server failing must error, not yield an empty index");
+
+        assert!(
+            matches!(err, FetchIndexesError::Fetch { .. }),
+            "expected the first per-server fetch error, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_enabled_servers_yields_empty_merge() {
+        let disabled = ServerEntry {
+            enabled: false,
+            ..required_server("off", "https://off.example.com/v1", 10)
+        };
+
+        let client = reqwest::Client::new();
+        let servers = vec![disabled];
+        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, 256)
+            .await
+            .expect("BUG: no enabled servers must yield an empty merge, not an error");
+
+        assert!(
+            merged.packages.is_empty(),
+            "a fetch set with no enabled server must merge to nothing"
         );
     }
 }
