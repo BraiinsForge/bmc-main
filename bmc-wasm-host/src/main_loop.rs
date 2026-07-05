@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::os::fd::AsRawFd;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::ptr::NonNull;
 use std::time::{Duration, Instant};
 
@@ -14,15 +15,16 @@ use crate::control::{ListenSocket, accept_and_load};
 use crate::host::SharedHost;
 use crate::slot::WidgetSlot;
 
-const GRACE_DURATION: Duration = Duration::from_millis(100);
-
 /// Let a startup/scene burst settle before the next GC, per review.
 const GC_SETTLE_DELAY: Duration = Duration::from_secs(5);
 
+/// Exit as soon as the last connection is gone: bmc shuts down and restarts
+/// immediately, and a host that lingers past its last slot would adopt the
+/// new bmc instance's thins (stale code after a package upgrade) or hold the
+/// socket against the replacement host's bind.
 #[derive(Debug)]
 pub struct HostLifetime {
     ever_had_slot: bool,
-    last_disconnect: Option<Instant>,
 }
 
 impl HostLifetime {
@@ -30,43 +32,27 @@ impl HostLifetime {
     pub fn new() -> Self {
         Self {
             ever_had_slot: false,
-            last_disconnect: None,
         }
     }
 
-    pub fn note_accept(&mut self) {
-        self.ever_had_slot = true;
-        self.last_disconnect = None;
-    }
-
-    pub fn note_disconnect(&mut self, now: Instant) {
-        self.ever_had_slot = true;
-        self.last_disconnect = Some(now);
-    }
-
-    pub fn note_failed_load(&mut self, now: Instant) {
-        self.ever_had_slot = true;
-        self.last_disconnect = Some(now);
-    }
-
-    #[must_use]
-    pub fn should_continue(&self, slots_len: usize, overlays_active: bool, now: Instant) -> bool {
-        if slots_len > 0 || overlays_active {
-            return true;
-        }
-        if !self.ever_had_slot {
-            return true;
-        }
-        match self.last_disconnect {
-            None => true,
-            Some(t) => now.duration_since(t) < GRACE_DURATION,
+    /// Record the outcome of draining one accept burst: `loaded` slots
+    /// inserted, `rejected` connections that failed to load, and `slots_len`
+    /// slots alive afterwards.
+    ///
+    /// A successful load, or a rejection that leaves no surviving slot (a lone
+    /// bad bootstrap widget), flips `ever_had_slot` so the host exits once idle
+    /// instead of lingering. A rejection among healthy siblings is ignored: the
+    /// siblings keep the host alive on their own and one bad widget must not
+    /// tear it down.
+    pub fn note_accept_burst(&mut self, loaded: usize, rejected: usize, slots_len: usize) {
+        if loaded > 0 || (rejected > 0 && slots_len == 0) {
+            self.ever_had_slot = true;
         }
     }
 
     #[must_use]
-    pub fn poll_timeout_contribution(&self, now: Instant) -> Option<Duration> {
-        let t = self.last_disconnect?;
-        Some(GRACE_DURATION.saturating_sub(now.duration_since(t)))
+    pub fn should_continue(&self, slots_len: usize, overlays_active: bool) -> bool {
+        slots_len > 0 || overlays_active || !self.ever_had_slot
     }
 }
 
@@ -99,14 +85,11 @@ pub struct SlotPollInputs {
     pub has_pending_io: bool,
 }
 
-/// Pure: fold per-slot inputs and the lifetime grace remainder into a single
-/// `poll(2)` timeout in milliseconds. `-1` is `poll(2)`'s indefinite-block sentinel,
-/// returned when nothing contributes a finite value.
+/// Pure: fold per-slot inputs into a single `poll(2)` timeout in milliseconds.
+/// `-1` is `poll(2)`'s indefinite-block sentinel, returned when nothing
+/// contributes a finite value.
 #[must_use]
-pub fn compute_poll_timeout_from_inputs(
-    slots: &[SlotPollInputs],
-    grace_remaining: Option<Duration>,
-) -> i32 {
+pub fn compute_poll_timeout_from_inputs(slots: &[SlotPollInputs]) -> i32 {
     let mut best: Option<Duration> = None;
     let push = |best: &mut Option<Duration>, candidate: Duration| {
         *best = match *best {
@@ -147,11 +130,6 @@ pub fn compute_poll_timeout_from_inputs(
     if slots.iter().any(|s| s.has_pending_io) {
         push(&mut best, Duration::from_millis(100));
     }
-    if slots.is_empty()
-        && let Some(d) = grace_remaining
-    {
-        push(&mut best, d);
-    }
     match best {
         None => -1,
         Some(d) => i32::try_from(d.as_millis()).unwrap_or(i32::MAX),
@@ -160,9 +138,9 @@ pub fn compute_poll_timeout_from_inputs(
 
 /// Production wrapper: gather every slot's inputs and forward to the pure core.
 #[must_use]
-pub fn compute_poll_timeout(slots: &SlotTable, lifetime: &HostLifetime, now: Instant) -> i32 {
+pub fn compute_poll_timeout(slots: &SlotTable, now: Instant) -> i32 {
     let inputs: Vec<SlotPollInputs> = slots.iter().map(|s| s.poll_inputs(now)).collect();
-    compute_poll_timeout_from_inputs(&inputs, lifetime.poll_timeout_contribution(now))
+    compute_poll_timeout_from_inputs(&inputs)
 }
 
 #[derive(Debug)]
@@ -338,6 +316,62 @@ fn publish_gc_root(slots: &SlotTable) {
     }
 }
 
+/// Accept every connection currently queued on the (non-blocking) listener.
+///
+/// One `POLLIN` can back several pending connections — a scene or post-upgrade
+/// restart reconnects every thin at once — so accepting one per wake would
+/// stall the rest behind the poll timeout. Draining to `WouldBlock` also lets
+/// the pre-exit sweep pick up a connection queued during the last slot's
+/// teardown, which the peer already saw `connect()` succeed for.
+pub fn accept_pending(listener: &UnixListener) -> Result<Vec<UnixStream>, FatalError> {
+    let mut pending = Vec::new();
+    loop {
+        match listener.accept() {
+            Ok((client, _)) => pending.push(client),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(e) if e.raw_os_error() == Some(libc::EINTR) => continue,
+            Err(e) => return Err(FatalError::AcceptFailed(e)),
+        }
+    }
+    Ok(pending)
+}
+
+/// Drain the accept backlog and load each connection into a slot, folding the
+/// burst's outcome into the lifetime. Shared by the poll-driven accept and the
+/// final pre-exit sweep so both paths tally slots the same way.
+fn drain_accept_burst(
+    listener: &ListenSocket,
+    slots: &mut SlotTable,
+    shared: &mut SharedHost,
+    lifetime: &mut HostLifetime,
+    next_gc: &mut Instant,
+) -> Result<(), FatalError> {
+    let mut loaded = 0_usize;
+    let mut rejected = 0_usize;
+    for client in accept_pending(listener.as_listener())? {
+        match accept_and_load(client, shared) {
+            Ok(slot) => {
+                let peer_pid = slot.peer_pid;
+                let wasm = slot.wasm_basename.clone();
+                let slot_id = slots.insert(slot);
+                tracing::info!(slot_id, peer_pid, wasm = %wasm, "slot inserted");
+                loaded += 1;
+            }
+            Err(e) => {
+                rejected += 1;
+                tracing::warn!(?e, "load failed; slot rejected");
+            }
+        }
+    }
+    if loaded > 0 {
+        // Pull the next GC in so the new tokens publish soon
+        // (a startup/scene burst coalesces into one).
+        *next_gc = (*next_gc).min(Instant::now() + GC_SETTLE_DELAY);
+    }
+    lifetime.note_accept_burst(loaded, rejected, slots.len());
+    Ok(())
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "the main loop body is a single coherent dispatch cycle; splitting would obscure the control flow"
@@ -372,13 +406,9 @@ fn run_loop(
     // the previous run's root protects them until the scheduled pass.
     let mut next_gc = Instant::now() + GC_SETTLE_DELAY;
 
-    while lifetime.should_continue(
-        slots.len(),
-        overlays.iter().any(HostedOverlay::running),
-        Instant::now(),
-    ) {
+    while lifetime.should_continue(slots.len(), overlays.iter().any(HostedOverlay::running)) {
         let poll_now = Instant::now();
-        let slot_ms = compute_poll_timeout(slots, &lifetime, poll_now);
+        let slot_ms = compute_poll_timeout(slots, poll_now);
         let mut wake = u64::try_from(slot_ms).ok().map(Duration::from_millis);
         for overlay in overlays.iter() {
             if let Some(d) = overlay.poll_timeout(poll_now) {
@@ -444,29 +474,7 @@ fn run_loop(
         classify_listener_revents(pollfds[LISTENER_INDEX].revents)?;
 
         if (pollfds[LISTENER_INDEX].revents & libc::POLLIN) != 0 {
-            match listener.as_listener().accept() {
-                Ok((client, _)) => match accept_and_load(client, shared) {
-                    Ok(slot) => {
-                        let peer_pid = slot.peer_pid;
-                        let wasm = slot.wasm_basename.clone();
-                        let slot_id = slots.insert(slot);
-                        tracing::info!(slot_id, peer_pid, wasm = %wasm, "slot inserted");
-                        lifetime.note_accept();
-                        // Pull the next GC in so the new token publishes soon
-                        // (a startup/scene burst coalesces into one).
-                        next_gc = next_gc.min(Instant::now() + GC_SETTLE_DELAY);
-                    }
-                    Err(e) => {
-                        if slots.is_empty() {
-                            lifetime.note_failed_load(Instant::now());
-                        }
-                        tracing::warn!(?e, "load failed; slot rejected");
-                    }
-                },
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(e) if e.raw_os_error() == Some(libc::EINTR) => {}
-                Err(e) => return Err(FatalError::AcceptFailed(e)),
-            }
+            drain_accept_burst(listener, slots, shared, &mut lifetime, &mut next_gc)?;
         }
 
         let mut to_teardown: Vec<SlotId> = Vec::new();
@@ -595,9 +603,16 @@ fn run_loop(
                     slot.shutdown(shared, renderer);
                 }
             }
-            if slots.is_empty() {
-                lifetime.note_disconnect(Instant::now());
-            }
+        }
+
+        // The loop-top exit check runs before the next poll()/accept(), so a
+        // thin that connected into the backlog while this iteration tore down
+        // the last slot would be orphaned: its connect() succeeded, but it is
+        // never accepted and the dropped listener resets it. Sweep the backlog
+        // once more before honoring a slots-driven exit — a queued connection
+        // revives the host instead of restarting it from scratch.
+        if !lifetime.should_continue(slots.len(), overlays.iter().any(HostedOverlay::running)) {
+            drain_accept_burst(listener, slots, shared, &mut lifetime, &mut next_gc)?;
         }
 
         // Heartbeat + sweep on the next_gc deadline; republishing also picks up
