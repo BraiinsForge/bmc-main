@@ -161,7 +161,11 @@ activate_profile() {
 	fi
 
 	LOG "running activation entrypoint"
-	"$entrypoint"
+	"$entrypoint" || {
+		rc=$?
+		LOG "activation failed with exit code $rc"
+		return "$rc"
+	}
 }
 
 boot() {
