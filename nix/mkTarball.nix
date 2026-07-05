@@ -4,7 +4,6 @@
 # - All Nix store paths (full closure)
 # - Nix SQLite database (populated via nix-store --load-db)
 # - A pre-built profile generation (symlink tree, manifest, hooks)
-# - Optional extra files (e.g. /etc/nix/nix.conf)
 #
 # The profile is NOT activated (no `current` symlink). Activation
 # happens on the device at first boot via bmc-nix-initializer.
@@ -14,7 +13,6 @@
 , bos_version # e.g. "26.02"
 , profile_path ? "/nix/var/nix/gcroots/profiles/bmc"
 , hooksOverridePath ? null # path to native hook executables for cross-compilation bootstrap
-, extraFiles ? null # optional derivation overlaid into tarball root
 }:
 let
   # Generate a temporary index for bmc-nix-cli to consume
@@ -62,12 +60,7 @@ pkgs.runCommand "nix-tarball-${bos_version}"
   export USER=nobody
   nix-store --load-db < ${closureInfo}/registration
 
-  # 4. Overlay extra files (e.g. /etc/nix/nix.conf)
-  ${lib.optionalString (extraFiles != null) ''
-    cp -a ${extraFiles}/* $rootDir/
-  ''}
-
-  # 5. Create tarball
+  # 4. Create tarball
   mkdir -p $out
   tar -czf $out/${tarballName} \
     -C $rootDir \
@@ -78,7 +71,7 @@ pkgs.runCommand "nix-tarball-${bos_version}"
     --exclude='.lock' \
     .
 
-  # 6. Write metadata
+  # 5. Write metadata
   cat > $out/metadata.json << 'METAEOF'
   ${builtins.toJSON {
     inherit bos_version profile_path;

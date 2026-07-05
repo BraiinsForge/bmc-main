@@ -43,23 +43,11 @@ let
     commit = self.rev or "dirty";
   };
 
-  nixConf = import ./nix-conf.nix { inherit pkgs; };
-
-  # Initial keep.d entry so sysupgrade preserves /etc/nix/nix.conf before
-  # the core package (which also lists it) has been activated.
-  nixKeepD = pkgs.writeText "nix.conffiles" ''
-    /etc/nix/nix.conf
-  '';
-
   tarball = mkTarball {
     packages = initPackages;
     inherit bmc-nix-cli hooksOverridePath;
     bos_version = bosVersion;
     profile_path = profilePath;
-    extraFiles = pkgs.runCommand "init-extra-files" { } ''
-      install -D -m 644 ${nixConf} $out/etc/nix/nix.conf
-      install -D -m 644 ${nixKeepD} $out/lib/upgrade/keep.d/nix.conffiles
-    '';
   };
 
   # Factory index — placeholder URL for local testing.
