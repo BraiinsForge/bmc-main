@@ -97,8 +97,10 @@ let
       commandLine = ''"${command}"''
         + lib.optionalString (args != [ ]) (" " + quotedArgs);
       envNames = builtins.attrNames env;
-      envLines = lib.concatMapStringsSep "\n"
-        (k: ''procd_set_param env "${k}=${env.${k}}"'')
+      # A single call: repeated `procd_set_param env` calls overwrite each
+      # other, keeping only the last variable.
+      envLines = "procd_set_param env " + lib.concatMapStringsSep " "
+        (k: ''"${k}=${env.${k}}"'')
         envNames;
       boolToInt = b: if b then "1" else "0";
       startBody = lib.concatStringsSep "\n" (
