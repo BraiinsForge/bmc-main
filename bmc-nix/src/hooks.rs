@@ -7,10 +7,14 @@ use tracing::{debug, info};
 /// Errors that can occur when running hook scripts.
 #[derive(Debug, thiserror::Error)]
 pub enum RunHooksError {
-    #[error("hook '{hook}' failed with exit code {exit_code}")]
-    HookFailed { hook: String, exit_code: i32 },
-    #[error("hook '{hook}' was terminated by signal")]
-    HookSignaled { hook: String },
+    #[error("hook '{hook}' failed with exit code {exit_code}: {output}")]
+    HookFailed {
+        hook: String,
+        exit_code: i32,
+        output: String,
+    },
+    #[error("hook '{hook}' was terminated by signal: {output}")]
+    HookSignaled { hook: String, output: String },
     #[error("failed to execute hook '{hook}': {source}")]
     Execute {
         hook: String,
@@ -93,21 +97,32 @@ pub async fn run_hooks(
                 source,
             })?;
 
+        let snippet = if output.stderr.is_empty() {
+            crate::store::stderr_snippet(&output.stdout)
+        } else {
+            crate::store::stderr_snippet(&output.stderr)
+        };
+
         if !output.status.success() {
+            tracing::warn!(?hook_path, status = ?output.status, output = %snippet, "hook failed");
             match output.status.code() {
                 Some(exit_code) => {
                     return Err(RunHooksError::HookFailed {
                         hook: hook_name,
                         exit_code,
+                        output: snippet,
                     });
                 }
                 None => {
-                    return Err(RunHooksError::HookSignaled { hook: hook_name });
+                    return Err(RunHooksError::HookSignaled {
+                        hook: hook_name,
+                        output: snippet,
+                    });
                 }
             }
         }
 
-        debug!(?hook_path, "hook completed successfully");
+        debug!(?hook_path, output = %snippet, "hook completed successfully");
     }
 
     Ok(())
@@ -208,7 +223,9 @@ mod tests {
 
         let err = result.expect_err("BUG: failing hook must produce an error");
         match err {
-            RunHooksError::HookFailed { hook, exit_code } => {
+            RunHooksError::HookFailed {
+                hook, exit_code, ..
+            } => {
                 assert_eq!(hook, "01-fail");
                 assert_eq!(exit_code, 42);
             }
@@ -216,6 +233,68 @@ mod tests {
             | RunHooksError::Execute { .. }
             | RunHooksError::ReadDir { .. }) => {
                 panic!("expected HookFailed, got: {other}")
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hook_failure_carries_stderr_snippet() {
+        let tmp = tempfile::tempdir().expect("BUG: create tempdir");
+        let gen_path = tmp.path().join("gen-1");
+        let hooks_dir = gen_path.join("hooks");
+        std::fs::create_dir_all(&hooks_dir).expect("BUG: create hooks dir");
+
+        create_hook_script(
+            &hooks_dir,
+            "01-fail",
+            "#!/bin/sh\necho broken manifest >&2\nexit 3\n",
+        );
+
+        let err = run_hooks(&gen_path, "hooks", None)
+            .await
+            .expect_err("BUG: failing hook must error");
+        match err {
+            RunHooksError::HookFailed { output, .. } => {
+                assert!(output.contains("broken manifest"), "got output: {output:?}");
+            }
+            other @ (RunHooksError::HookSignaled { .. }
+            | RunHooksError::Execute { .. }
+            | RunHooksError::ReadDir { .. }) => {
+                panic!("expected HookFailed, got: {other}")
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hook_signal_termination_is_captured() {
+        let tmp = tempfile::tempdir().expect("BUG: create tempdir");
+        let gen_path = tmp.path().join("gen-1");
+        let hooks_dir = gen_path.join("hooks");
+        std::fs::create_dir_all(&hooks_dir).expect("BUG: create hooks dir");
+
+        create_hook_script(
+            &hooks_dir,
+            "01-signal",
+            "#!/bin/sh\necho dying >&2\nkill -9 $$\n",
+        );
+
+        let err = run_hooks(&gen_path, "hooks", None)
+            .await
+            .expect_err("BUG: signaled hook must error");
+        assert!(
+            err.to_string().contains("dying"),
+            "display must carry the output, got: {err}"
+        );
+        match err {
+            RunHooksError::HookSignaled { output, .. } => {
+                assert!(output.contains("dying"), "got output: {output:?}");
+            }
+            other @ (RunHooksError::HookFailed { .. }
+            | RunHooksError::Execute { .. }
+            | RunHooksError::ReadDir { .. }) => {
+                panic!("expected HookSignaled, got: {other}")
             }
         }
     }
