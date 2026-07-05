@@ -140,7 +140,7 @@ def package_prefix(profile: str) -> str:
 class Deployment:
     """Mutable carrier threaded through the deploy stages."""
 
-    attrs: list[str]  # flake attrs to deploy; empty → discover core + all widgets
+    attrs: list[str]  # flake attrs to deploy; empty → discover core, bmc-nix-cli + all widgets
     prefix: str = _DECK_PACKAGES  # attr root for the build profile (see package_prefix)
     resolved: list[Pkg] = field(default_factory=list)
     built: list[Built] = field(default_factory=list)
@@ -180,7 +180,8 @@ def _qualify(attr: str, prefix: str) -> str:
 @stage("Resolve packages")
 def resolve_packages(nix: Nix, plan: Deployment) -> str:
     if not plan.attrs:
-        plan.attrs = [f"{plan.prefix}.{name}" for name in ["core", *nix.discover_widgets()]]
+        names = ["core", "bmc-nix-cli", *nix.discover_widgets()]
+        plan.attrs = [f"{plan.prefix}.{name}" for name in names]
     plan.attrs = [_qualify(a, plan.prefix) for a in plan.attrs]
     resolved: list[Pkg] = []
     for attr in plan.attrs:
