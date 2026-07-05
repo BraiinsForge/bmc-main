@@ -27,7 +27,25 @@ export PROFILE_NEW_GENERATION"#
     .expect("BUG: write to String should never fail");
     writeln!(
         entrypoint,
-        r#"if [ -z "$PROFILE_OLD_GENERATION" ]; then
+        r#"if [ "${{ACTIVATION_HAS_PROFILE_LOCK-}}" != "1" ]; then
+  mkdir -p "$PROFILE_DIR"
+  lock_file="$PROFILE_DIR/.lock"
+  : > "$lock_file"
+  exec 9>"$lock_file"
+  if ! flock -n 9; then
+    echo "profile is locked: $lock_file" >&2
+    exit 1
+  fi
+fi"#
+    )
+    .expect("BUG: write to String should never fail");
+    // The fallback derivation of PROFILE_OLD_GENERATION reads `current`,
+    // which only the profile lock holder may move: it must run after the
+    // lock is taken above. It runs only when the variable is unset — an
+    // explicitly empty value means "no old generation" and is respected.
+    writeln!(
+        entrypoint,
+        r#"if [ -z "${{PROFILE_OLD_GENERATION+x}}" ]; then
   current_link="$PROFILE_DIR/current"
   if [ -L "$current_link" ]; then
     current_target="$(readlink "$current_link")"
@@ -48,20 +66,6 @@ export PROFILE_NEW_GENERATION"#
     PROFILE_OLD_GENERATION=""
   fi
   export PROFILE_OLD_GENERATION
-fi"#
-    )
-    .expect("BUG: write to String should never fail");
-    writeln!(
-        entrypoint,
-        r#"if [ "${{ACTIVATION_HAS_PROFILE_LOCK-}}" != "1" ]; then
-  mkdir -p "$PROFILE_DIR"
-  lock_file="$PROFILE_DIR/.lock"
-  : > "$lock_file"
-  exec 9>"$lock_file"
-  if ! flock -n 9; then
-    echo "profile is locked: $lock_file" >&2
-    exit 1
-  fi
 fi"#
     )
     .expect("BUG: write to String should never fail");
@@ -538,6 +542,29 @@ mod tests {
             .expect("BUG: should recreate current symlink");
 
         run_entrypoint(&test_env, Some(&test_env.new_generation), None);
+
+        let captured = read_captured_env(&test_env.output_path);
+        assert_eq!(captured.get("PROFILE_OLD_GENERATION"), Some(&String::new()));
+    }
+
+    #[test]
+    #[serial]
+    fn entrypoint_preserves_explicitly_empty_old_generation() {
+        let test_env = prepare_test_env();
+        let profile_dir = test_env
+            .new_generation
+            .parent()
+            .expect("BUG: new generation should have a parent");
+        let current_link = profile_dir.join("current");
+        std::fs::remove_file(&current_link).expect("BUG: should remove current symlink");
+        std::os::unix::fs::symlink("2-link", &current_link)
+            .expect("BUG: should recreate current symlink");
+
+        run_entrypoint(
+            &test_env,
+            Some(&test_env.new_generation),
+            Some(Path::new("")),
+        );
 
         let captured = read_captured_env(&test_env.output_path);
         assert_eq!(captured.get("PROFILE_OLD_GENERATION"), Some(&String::new()));
