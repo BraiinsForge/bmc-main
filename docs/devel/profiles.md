@@ -144,11 +144,12 @@ The Rust API is in `bmc_nix::profile`: `lock_profile` (blocking), `try_lock_prof
 
 The lock protects every mutation of the profile directory and every read that must be consistent with one:
 
-- `upgrade::apply_profile_change` holds one lock across the whole run: stale-`next` removal, manifest read, plan
-  computation, generation build (including the generation-number allocation), activation or `next` staging, and
-  generation GC.
-- `activation::activate` (the CLI/boot path) holds it across selector resolution, activation including a possible
-  revert, and `next` consumption, so a concurrent upgrade cannot re-stage or observe a stale `next` mid-sequence.
+- `upgrade::apply_profile_change` holds one lock across the whole run: stale-marker removal, manifest read, plan
+  computation, generation build (including the generation-number allocation), activation or `next.<bos-version>`
+  staging, and generation GC.
+- `activation::activate` (the CLI/boot path) holds it across selector resolution, stale-marker sweep, activation
+  including a possible revert, and marker consumption, so a concurrent upgrade cannot re-stage or observe a stale marker
+  mid-sequence.
 - `bmc-nix-cli build-profile` holds it across generation-number allocation, build, and optional activation.
 - The service orchestrator acquires it with a timeout after activation, both as the "activation finished" handshake and
   to keep generations stable during service reconciliation. See [Service Orchestrator](service-orchestrator.md).
@@ -161,8 +162,8 @@ on a shell file descriptor, failing fast if the profile is busy, and holds it fo
 scripts.
 
 The lock is advisory: nothing stops an unrelated process from mutating the profile directory directly. Any new code that
-mutates a profile, or reads state that a mutation could invalidate mid-read (generation numbers, `current`, `next`,
-manifests), must take the lock.
+mutates a profile, or reads state that a mutation could invalidate mid-read (generation numbers, `current`,
+deferred-activation markers, manifests), must take the lock.
 
 ## Manifest
 
