@@ -628,6 +628,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn identical_symlink_target_collision_is_allowed() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        // A shared target both packages link to.
+        let shared_target = tmp.path().join("shared-target");
+        std::fs::write(&shared_target, "shared content").expect("BUG: write shared target");
+
+        // Two store paths each providing bin/tool as a symlink to shared_target.
+        let store_a = tmp.path().join("store-a");
+        std::fs::create_dir_all(store_a.join("bin")).expect("BUG: create store-a/bin");
+        std::os::unix::fs::symlink(&shared_target, store_a.join("bin/tool"))
+            .expect("BUG: symlink store-a/bin/tool");
+
+        let store_b = tmp.path().join("store-b");
+        std::fs::create_dir_all(store_b.join("bin")).expect("BUG: create store-b/bin");
+        std::os::unix::fs::symlink(&shared_target, store_b.join("bin/tool"))
+            .expect("BUG: symlink store-b/bin/tool");
+
+        let packages = vec![
+            test_resolved_package("pkg-a", store_a.to_str().expect("BUG: valid UTF-8")),
+            test_resolved_package("pkg-b", store_b.to_str().expect("BUG: valid UTF-8")),
+        ];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
+
+        build_symlink_tree(&output_dir, &packages)
+            .await
+            .expect("BUG: identical symlink targets should not conflict");
+
+        let tool = output_dir.join("bin/tool");
+        assert!(tool.is_symlink(), "bin/tool should be a symlink");
+        assert_eq!(
+            std::fs::canonicalize(&tool).expect("BUG: canonicalize tool"),
+            std::fs::canonicalize(&shared_target).expect("BUG: canonicalize target"),
+            "bin/tool should resolve to the shared target",
+        );
+    }
+
+    #[tokio::test]
+    async fn identical_relative_symlink_target_collision_is_error() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        // Two store paths each providing bin/tool as a symlink to the same
+        // relative target name. Equal relative targets resolve differently per
+        // store, so this is a real conflict rather than an allowed collision.
+        let store_a = tmp.path().join("store-a");
+        std::fs::create_dir_all(store_a.join("bin")).expect("BUG: create store-a/bin");
+        std::os::unix::fs::symlink("busybox", store_a.join("bin/tool"))
+            .expect("BUG: symlink store-a/bin/tool");
+
+        let store_b = tmp.path().join("store-b");
+        std::fs::create_dir_all(store_b.join("bin")).expect("BUG: create store-b/bin");
+        std::os::unix::fs::symlink("busybox", store_b.join("bin/tool"))
+            .expect("BUG: symlink store-b/bin/tool");
+
+        let packages = vec![
+            test_resolved_package("pkg-a", store_a.to_str().expect("BUG: valid UTF-8")),
+            test_resolved_package("pkg-b", store_b.to_str().expect("BUG: valid UTF-8")),
+        ];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
+
+        let result = build_symlink_tree(&output_dir, &packages).await;
+        assert!(
+            result.is_err(),
+            "identical relative symlink targets should conflict"
+        );
+
+        let err = result.expect_err("BUG: already checked is_err");
+        match err {
+            BuildProfileError::Conflict { path, pkg_a, pkg_b } => {
+                assert_eq!(path, "bin/tool");
+                assert_eq!(pkg_a, "pkg-a");
+                assert_eq!(pkg_b, "pkg-b");
+            }
+            other @ (BuildProfileError::CreateDir { .. }
+            | BuildProfileError::RemoveDir { .. }
+            | BuildProfileError::CreateSymlink { .. }
+            | BuildProfileError::ReadStorePath { .. }
+            | BuildProfileError::StatStorePath { .. }
+            | BuildProfileError::SymlinkCycle { .. }
+            | BuildProfileError::Hooks(_)
+            | BuildProfileError::Manifest(_)
+            | BuildProfileError::Rename { .. }
+            | BuildProfileError::ReadDir { .. }
+            | BuildProfileError::Lock { .. }) => {
+                panic!("expected Conflict error, got: {other}")
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn build_symlink_tree_allows_dir_path_collision() {
         let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
 
