@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crate::types::{ServerEntry, ServersConfig};
+use crate::types::{FactoryServerEntry, ServerEntry, ServersConfig};
 
 /// Errors returned when registering a server or substituter.
 #[derive(Debug, thiserror::Error)]
@@ -38,6 +38,9 @@ pub enum RegisterError {
 /// neither truncate the target nor lose the rename.
 fn write_persisted(path: &Path, tmp_path: &Path, contents: &str) -> Result<(), RegisterError> {
     (|| -> std::io::Result<()> {
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)?;
+        }
         let mut tmp = std::fs::File::create(tmp_path)?;
         std::io::Write::write_all(&mut tmp, contents.as_bytes())?;
         tmp.sync_all()?;
@@ -58,7 +61,10 @@ fn write_persisted(path: &Path, tmp_path: &Path, contents: &str) -> Result<(), R
 ///
 /// Reads the existing [`ServersConfig`], drops any entry sharing the new
 /// entry's `id`, appends the new entry, and writes the result back
-/// atomically via a temporary sibling file plus `rename`.
+/// atomically via a temporary sibling file plus `rename`. A missing
+/// config is bootstrapped with the registered server doubling as the
+/// mandatory `factory` entry, so a dev-provisioned device (`deck init`
+/// writes no registry) becomes usable without manual seeding.
 ///
 /// # Errors
 ///
@@ -70,16 +76,28 @@ pub fn register_server(
 ) -> Result<(), RegisterError> {
     let path_str = servers_config_path.display().to_string();
 
-    let raw =
-        std::fs::read_to_string(servers_config_path).map_err(|source| RegisterError::Read {
+    let mut config: ServersConfig = match std::fs::read_to_string(servers_config_path) {
+        Ok(raw) => serde_json::from_str(&raw).map_err(|source| RegisterError::Parse {
             path: path_str.clone(),
             source,
-        })?;
-    let mut config: ServersConfig =
-        serde_json::from_str(&raw).map_err(|source| RegisterError::Parse {
-            path: path_str.clone(),
-            source,
-        })?;
+        })?,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => ServersConfig {
+            factory: FactoryServerEntry {
+                id: entry.id.clone(),
+                base_url: entry.base_url.clone(),
+                known_public_key: entry.known_public_key.clone(),
+                priority: entry.priority,
+                enabled: entry.enabled,
+            },
+            servers: Vec::new(),
+        },
+        Err(source) => {
+            return Err(RegisterError::Read {
+                path: path_str,
+                source,
+            });
+        }
+    };
 
     config.servers.retain(|s| s.id != entry.id);
     config.servers.push(entry);
@@ -220,6 +238,41 @@ mod tests {
             "same id must replace, not duplicate"
         );
         assert_eq!(config.servers[0].base_url, "https://dev.example.com/v2");
+    }
+
+    #[test]
+    fn register_server_bootstraps_missing_config_with_entry_as_factory() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let path = tmp.path().join("servers.json");
+
+        register_server(&path, sample_entry("dev", "https://dev.example.com/v1"))
+            .expect("BUG: bootstrap register");
+
+        let config = read_config(&path);
+        assert_eq!(config.factory.id, "dev");
+        assert_eq!(config.factory.base_url, "https://dev.example.com/v1");
+        assert_eq!(config.factory.known_public_key, "cache.example.com:AAAA");
+        assert!(config.factory.enabled);
+        assert_eq!(config.servers.len(), 1);
+        assert_eq!(config.servers[0].id, "dev");
+    }
+
+    #[test]
+    fn register_server_creates_missing_parent_directory() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        // Mirror a device with no /etc/nix-upgrade yet: the config path's
+        // parent does not exist, so the write must create it rather than
+        // fail with ENOENT.
+        let path = tmp.path().join("nix-upgrade").join("servers.json");
+
+        register_server(&path, sample_entry("dev", "https://dev.example.com/v1"))
+            .expect("BUG: register into a missing directory");
+
+        assert!(
+            path.exists(),
+            "servers.json must be written under a created dir"
+        );
+        assert_eq!(read_config(&path).factory.id, "dev");
     }
 
     #[test]
