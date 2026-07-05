@@ -26,7 +26,7 @@ use bmc_led::led_driver::LedDriver;
 use bmc_platform::HardwareCapabilities;
 use bmc_scheduler::JobScheduler;
 use bmc_upgrade::firmware::FirmwareIndex;
-use bmc_upgrade::packages::{NixUpgradeConfig, PackageUpgrader};
+use bmc_upgrade::packages::PackageBackend;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, broadcast};
 use tokio::sync::{RwLock, watch};
@@ -80,6 +80,7 @@ where
         backlight_driver: Arc<Mutex<U>>,
         led_driver: LedDriver,
         firmware_index: V,
+        package_backend: Arc<dyn PackageBackend>,
         buttons: Arc<Box<dyn Buttons + Send + Sync>>,
         compositor: Arc<dyn Compositor>,
     ) -> Result<Self> {
@@ -126,12 +127,7 @@ where
             manager.clone(),
             state_service.clone(),
             scheduler.clone(),
-            Arc::new(PackageUpgrader::new(NixUpgradeConfig {
-                servers_config_path: config.nix_servers_config_path.clone(),
-                profile_dir: config.nix_profile_dir.clone(),
-                hooks_dir: config.nix_hooks_dir.clone(),
-                hooks_override_path: config.nix_hooks_override_path.clone(),
-            })),
+            package_backend,
             Arc::new(UpgradeWidgetLifecycle::new(
                 widget_coordinator.clone(),
                 config_handle.clone(),
