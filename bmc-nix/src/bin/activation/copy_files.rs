@@ -587,11 +587,13 @@ mod tests {
 
     #[test]
     fn boot_time_reactivation_is_idempotent() {
-        // Simulates the boot path in files/nix-activator: on every boot the
-        // activator runs with PROFILE_OLD_GENERATION="" (None) and an
-        // unchanged generation.  The target rootfs already has the right
-        // files from a previous activation, so re-running the full sequence
-        // must be a no-op at the inode level (no rewrites, no stale state).
+        // Simulates the steady-state boot path in files/nix-activator: the
+        // entrypoint derives PROFILE_OLD_GENERATION from 'current', which on
+        // a boot without a staged 'next' is the very generation being
+        // activated (approximated here as None — both make stale cleanup a
+        // no-op).  The target rootfs already has the right files from a
+        // previous activation, so re-running the full sequence must be a
+        // no-op at the inode level (no rewrites, no stale state).
         let tmp = TempDir::new().expect("BUG: create temp dir");
         let target_root = tmp.path().join("target");
 
