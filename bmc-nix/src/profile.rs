@@ -437,29 +437,48 @@ async fn run_activation_entrypoint(
         )
         .env("ACTIVATION_HAS_PROFILE_LOCK", "1");
 
-    let output = command
-        .output()
+    let output = crate::store::output_bounded(command)
         .await
         .map_err(|source| ActivationError::EntrypointExecute {
             path: entrypoint.display().to_string(),
             source,
         })?;
 
+    let snippet = if output.stderr.is_empty() {
+        crate::store::stderr_snippet(&output.stdout)
+    } else {
+        crate::store::stderr_snippet(&output.stderr)
+    };
+
     if !output.status.success() {
+        tracing::warn!(
+            entrypoint = %entrypoint.display(),
+            status = ?output.status,
+            output = %snippet,
+            "activation entrypoint failed"
+        );
         match output.status.code() {
             Some(exit_code) => {
                 return Err(ActivationError::EntrypointFailed {
                     path: entrypoint.display().to_string(),
                     exit_code,
+                    output: snippet,
                 });
             }
             None => {
                 return Err(ActivationError::EntrypointSignaled {
                     path: entrypoint.display().to_string(),
+                    output: snippet,
                 });
             }
         }
     }
+
+    tracing::debug!(
+        entrypoint = %entrypoint.display(),
+        output = %snippet,
+        "activation entrypoint completed successfully"
+    );
 
     info!(
         generation = generation_number,
@@ -1350,6 +1369,87 @@ mod tests {
             Vec::<usize>::new(),
             "current's entrypoint must not re-run"
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn entrypoint_failure_carries_stderr_snippet() {
+        let tmp = tempfile::tempdir().expect("BUG: create tempdir");
+        let gen_dir = tmp.path().join("1-link");
+        let dir = gen_dir.join("core/activation");
+        std::fs::create_dir_all(&dir).expect("BUG: mk core/activation");
+        std::fs::write(
+            dir.join("entrypoint"),
+            "#!/bin/sh\necho boundary check failed >&2\nexit 7\n",
+        )
+        .expect("BUG: write entrypoint");
+        std::fs::set_permissions(
+            dir.join("entrypoint"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .expect("BUG: chmod entrypoint");
+
+        let err = activate_profile(tmp.path(), 1, &gen_dir, None)
+            .await
+            .expect_err("BUG: failing entrypoint must error");
+        match err {
+            crate::activation::ActivationError::EntrypointFailed {
+                output, exit_code, ..
+            } => {
+                assert_eq!(exit_code, 7);
+                assert!(output.contains("boundary check failed"), "got: {output:?}");
+            }
+            other @ (crate::activation::ActivationError::ReadDir { .. }
+            | crate::activation::ActivationError::EntrypointSignaled { .. }
+            | crate::activation::ActivationError::EntrypointExecute { .. }
+            | crate::activation::ActivationError::EntrypointNotFound { .. }
+            | crate::activation::ActivationError::NoGeneration { .. }
+            | crate::activation::ActivationError::ResolveIo { .. }
+            | crate::activation::ActivationError::RevertedAfterFailure { .. }
+            | crate::activation::ActivationError::RevertFailed { .. }
+            | crate::activation::ActivationError::Lock(_)) => {
+                panic!("expected EntrypointFailed, got: {other}")
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn entrypoint_signal_termination_is_captured() {
+        let tmp = tempfile::tempdir().expect("BUG: create tempdir");
+        let gen_dir = tmp.path().join("1-link");
+        let dir = gen_dir.join("core/activation");
+        std::fs::create_dir_all(&dir).expect("BUG: mk core/activation");
+        std::fs::write(
+            dir.join("entrypoint"),
+            "#!/bin/sh\necho dying >&2\nkill -9 $$\n",
+        )
+        .expect("BUG: write entrypoint");
+        std::fs::set_permissions(
+            dir.join("entrypoint"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .expect("BUG: chmod entrypoint");
+
+        let err = activate_profile(tmp.path(), 1, &gen_dir, None)
+            .await
+            .expect_err("BUG: signaled entrypoint must error");
+        match err {
+            crate::activation::ActivationError::EntrypointSignaled { output, .. } => {
+                assert!(output.contains("dying"), "got: {output:?}");
+            }
+            other @ (crate::activation::ActivationError::ReadDir { .. }
+            | crate::activation::ActivationError::EntrypointFailed { .. }
+            | crate::activation::ActivationError::EntrypointExecute { .. }
+            | crate::activation::ActivationError::EntrypointNotFound { .. }
+            | crate::activation::ActivationError::NoGeneration { .. }
+            | crate::activation::ActivationError::ResolveIo { .. }
+            | crate::activation::ActivationError::RevertedAfterFailure { .. }
+            | crate::activation::ActivationError::RevertFailed { .. }
+            | crate::activation::ActivationError::Lock(_)) => {
+                panic!("expected EntrypointSignaled, got: {other}")
+            }
+        }
     }
 
     #[test]
