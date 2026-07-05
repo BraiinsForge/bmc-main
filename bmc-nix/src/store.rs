@@ -532,6 +532,12 @@ pub enum InitStoreError {
         #[source]
         source: std::io::Error,
     },
+    #[error("failed to sync {path} to stable storage: {source}")]
+    SyncFailed {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// If no bytes arrive for this duration, the download is considered stalled.
@@ -585,8 +591,27 @@ fn prepare_promoted_store_path(stage_dir: &Path, wipe_store: bool) -> Result<(),
         });
     }
 
-    remove_path_if_exists(&promoted_store).map_err(|source| InitStoreError::StagePrepareFailed {
-        path: path_string(&promoted_store),
+    // Never delete the promoted store in place: demote the trusted name
+    // first, make the demotion durable, and only then delete. A crash
+    // mid-delete then leaves garbage under `nix.wiped`, never a
+    // partially deleted tree under the trusted name `nix`.
+    let wiped = stage_dir.join("nix.wiped");
+    remove_path_if_exists(&wiped).map_err(|source| InitStoreError::StagePrepareFailed {
+        path: path_string(&wiped),
+        source,
+    })?;
+    std::fs::rename(&promoted_store, &wiped).map_err(|source| {
+        InitStoreError::StagePrepareFailed {
+            path: path_string(&promoted_store),
+            source,
+        }
+    })?;
+    crate::fs_sync::fsync_dir(stage_dir).map_err(|source| InitStoreError::SyncFailed {
+        path: path_string(stage_dir),
+        source,
+    })?;
+    remove_path_if_exists(&wiped).map_err(|source| InitStoreError::StagePrepareFailed {
+        path: path_string(&wiped),
         source,
     })
 }
@@ -636,6 +661,21 @@ async fn extract_staged(tarball_path: &Path, stage_dir: &Path) -> Result<(), Ini
             });
         }
 
+        // Durability contract: the extracted tree must be on
+        // stable storage before the promoting rename — any post-crash
+        // state in which `<stage_dir>/nix` is visible then implies its
+        // contents were already durable, which is what makes
+        // `is_initialized` sound. syncfs over a fresh store can take
+        // seconds, so it runs on a blocking thread.
+        let sync_target = stage_dir.to_path_buf();
+        tokio::task::spawn_blocking(move || crate::fs_sync::sync_filesystem_of(&sync_target))
+            .await
+            .expect("BUG: sync task should not panic")
+            .map_err(|source| InitStoreError::SyncFailed {
+                path: path_string(stage_dir),
+                source,
+            })?;
+
         let promoted_nix = stage_dir.join("nix");
         std::fs::rename(&staged_nix, &promoted_nix).map_err(|source| {
             InitStoreError::PromoteFailed {
@@ -643,6 +683,12 @@ async fn extract_staged(tarball_path: &Path, stage_dir: &Path) -> Result<(), Ini
                 to: path_string(&promoted_nix),
                 source,
             }
+        })?;
+
+        // The rename itself must be durable before init reports success.
+        crate::fs_sync::fsync_dir(stage_dir).map_err(|source| InitStoreError::SyncFailed {
+            path: path_string(stage_dir),
+            source,
         })?;
 
         Ok(())
@@ -716,6 +762,17 @@ pub async fn init_store(
 ) -> Result<InitStoreResult, InitStoreError> {
     use tokio::io::AsyncWriteExt;
 
+    // Clean up leftovers from previous interrupted runs first — before
+    // any download eats data-partition space: a stale staging tree, and
+    // a store demoted by an interrupted --wipe.
+    for leftover in ["nix.tmp", "nix.wiped"] {
+        let path = stage_dir.join(leftover);
+        remove_path_if_exists(&path).map_err(|source| InitStoreError::StagePrepareFailed {
+            path: path_string(&path),
+            source,
+        })?;
+    }
+
     // Step 1: Fetch factory index
     let factory_url = crate::index::make_factory_url(&factory_server.base_url);
     let factory_body = client
@@ -786,11 +843,6 @@ pub async fn init_store(
         p.on_extracting();
     }
 
-    let staging = stage_dir.join("nix.tmp");
-    remove_path_if_exists(&staging).map_err(|source| InitStoreError::StagePrepareFailed {
-        path: path_string(&staging),
-        source,
-    })?;
     prepare_promoted_store_path(stage_dir, wipe_store)?;
     extract_staged(&tarball_path, stage_dir).await?;
 
@@ -1476,6 +1528,50 @@ mod tests {
             .status()?;
         assert!(status.success(), "BUG: tarball fixture creation failed");
         Ok(tarball)
+    }
+
+    #[test]
+    fn wipe_demotes_the_store_and_removes_it() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let stage = tmp.path().join("stage");
+        std::fs::create_dir_all(stage.join("nix/store/foo")).expect("BUG: setup");
+
+        prepare_promoted_store_path(&stage, true).expect("BUG: wipe should succeed");
+
+        assert!(
+            !stage.join("nix").exists(),
+            "wipe must remove the trusted name"
+        );
+        assert!(
+            !stage.join("nix.wiped").exists(),
+            "wipe must collect the demoted tree"
+        );
+    }
+
+    #[test]
+    fn wipe_collects_a_leftover_demoted_tree() {
+        // A crash between the demote rename and the deletion leaves
+        // `nix.wiped` behind; the next wipe must not trip over it.
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let stage = tmp.path().join("stage");
+        std::fs::create_dir_all(stage.join("nix/store/foo")).expect("BUG: setup");
+        std::fs::create_dir_all(stage.join("nix.wiped/store/old")).expect("BUG: setup");
+
+        prepare_promoted_store_path(&stage, true).expect("BUG: wipe should succeed");
+
+        assert!(!stage.join("nix").exists());
+        assert!(!stage.join("nix.wiped").exists());
+    }
+
+    #[test]
+    fn without_wipe_an_existing_store_is_rejected() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let stage = tmp.path().join("stage");
+        std::fs::create_dir_all(stage.join("nix")).expect("BUG: setup");
+
+        let err = prepare_promoted_store_path(&stage, false)
+            .expect_err("BUG: existing store without --wipe must be rejected");
+        assert!(matches!(err, InitStoreError::StoreAlreadyExists { .. }));
     }
 
     #[tokio::test]
