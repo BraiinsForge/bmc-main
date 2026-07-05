@@ -39,6 +39,8 @@ conf="$root/etc/nix/nix.conf"
 test -f "$conf" || fail "nix.conf was not created"
 grep -F 'extra-experimental-features = nix-command flakes' "$conf" >/dev/null 2>&1 \
     || fail "restored nix.conf missing the default experimental-features line"
+grep -F 'fsync-store-paths = true' "$conf" >/dev/null 2>&1 \
+    || fail "restored nix.conf missing fsync-store-paths"
 
 # An existing (modified) nix.conf is left byte-for-byte untouched.
 root="$tmp/keep"
