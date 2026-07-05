@@ -6,7 +6,6 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use bmc_nix::store::progress::DownloadSnapshot;
 use bmc_nix::types::MergedIndex;
@@ -15,20 +14,24 @@ use bmc_upgrade::packages::{
     ApplyError, EstimateMode, PackageBackend, PackageProbe, PackagesPreview, SystemPackageChange,
 };
 
+use crate::pacing::UpgradePacing;
 use crate::scenario::{self, PackagesScenario, RunScenario};
 
-const STEP_DELAY: Duration = Duration::from_millis(300);
 const DOWNLOAD_TOTAL_BYTES: u64 = 4_000_000;
 
 #[derive(Debug)]
 pub struct MockPackageBackend {
     scenario_path: PathBuf,
+    pacing: UpgradePacing,
 }
 
 impl MockPackageBackend {
     #[must_use]
-    pub fn new(scenario_path: PathBuf) -> Self {
-        Self { scenario_path }
+    pub fn new(scenario_path: PathBuf, pacing: UpgradePacing) -> Self {
+        Self {
+            scenario_path,
+            pacing,
+        }
     }
 }
 
@@ -107,6 +110,7 @@ impl PackageBackend for MockPackageBackend {
         progress: Arc<dyn UpgradeProgress>,
     ) -> Result<(), ApplyError> {
         let run = scenario::read(&self.scenario_path).run;
+        let step_delay = self.pacing.progress_step();
 
         progress.on_phase(UpgradePhase::Realizing);
         for downloaded_bytes in [1_000_000, 2_500_000, DOWNLOAD_TOTAL_BYTES] {
@@ -116,7 +120,7 @@ impl PackageBackend for MockPackageBackend {
                 total_bytes: Some(DOWNLOAD_TOTAL_BYTES),
                 remaining_bytes: Some(DOWNLOAD_TOTAL_BYTES - downloaded_bytes),
             });
-            tokio::time::sleep(STEP_DELAY).await;
+            tokio::time::sleep(step_delay).await;
         }
 
         if run == RunScenario::ApplyFail {
@@ -129,7 +133,7 @@ impl PackageBackend for MockPackageBackend {
             UpgradePhase::Activating,
         ] {
             progress.on_phase(phase);
-            tokio::time::sleep(STEP_DELAY).await;
+            tokio::time::sleep(step_delay).await;
         }
 
         Ok(())
@@ -173,7 +177,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
 
         let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
-        let backend = MockPackageBackend::new(path);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
         let PackageProbe::Available(_, preview) = backend.probe(EstimateMode::Estimate).await
         else {
             panic!("BUG: expected Available");
@@ -183,14 +187,14 @@ mod tests {
         assert!(preview.download_size_bytes.is_some());
 
         let path = write_scenario(dir.path(), r#"{"packages": "unavailable"}"#);
-        let backend = MockPackageBackend::new(path);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
         assert!(matches!(
             backend.probe(EstimateMode::Estimate).await,
             PackageProbe::Unavailable
         ));
 
         let path = write_scenario(dir.path(), r#"{"packages": "fetch-failed"}"#);
-        let backend = MockPackageBackend::new(path);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
         assert!(matches!(
             backend.probe(EstimateMode::Estimate).await,
             PackageProbe::FetchFailed(_)
@@ -201,7 +205,7 @@ mod tests {
     async fn probe_skips_size_estimate_when_asked() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
-        let backend = MockPackageBackend::new(path);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
         let PackageProbe::Available(_, preview) = backend.probe(EstimateMode::Skip).await else {
             panic!("BUG: expected Available");
         };
@@ -212,7 +216,7 @@ mod tests {
     async fn apply_walks_all_phases_and_finishes() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let path = write_scenario(dir.path(), r#"{"run": "success"}"#);
-        let backend = MockPackageBackend::new(path);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
         let progress = std::sync::Arc::new(RecordingProgress::default());
         backend
             .apply(empty_merged_index(), progress.clone())
@@ -235,7 +239,7 @@ mod tests {
     async fn apply_fails_after_realizing_on_apply_fail() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let path = write_scenario(dir.path(), r#"{"run": "apply-fail"}"#);
-        let backend = MockPackageBackend::new(path);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
         let progress = std::sync::Arc::new(RecordingProgress::default());
         let result = backend.apply(empty_merged_index(), progress.clone()).await;
         assert!(result.is_err());

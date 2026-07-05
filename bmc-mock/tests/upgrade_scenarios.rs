@@ -62,6 +62,7 @@ fn spawn_child(
             format!("--sounds-dir={}", dir.path().join("sounds").display()),
             format!("--widgets-path={}", dir.path().join("widgets").display()),
             format!("--system-password={password}"),
+            "--fast-upgrades".to_owned(),
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())

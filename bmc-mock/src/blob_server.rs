@@ -12,12 +12,13 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::debug;
 
+use crate::pacing::UpgradePacing;
+
 const BLOB_SIZE: usize = 24_000_000;
 // Paired with blob(); the blob_hash_constant_matches_generator test
 // verifies the pair.
 const BLOB_SHA256: &str = "f828b304909d5afda58e678369cecb41e147c11b931723364bec5bc075aa4497";
 const CHUNK_SIZE: usize = 256 * 1024;
-const CHUNK_DELAY: Duration = Duration::from_millis(100);
 const FAIL_PATH: &str = "/firmware-fail.tar";
 
 fn blob() -> Vec<u8> {
@@ -33,16 +34,17 @@ pub struct BlobServer {
     pub size: usize,
 }
 
-pub async fn spawn() -> std::io::Result<BlobServer> {
+pub async fn spawn(pacing: UpgradePacing) -> std::io::Result<BlobServer> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
+    let chunk_delay = pacing.blob_chunk_delay();
 
     tokio::spawn(async move {
         loop {
             let Ok((stream, _)) = listener.accept().await else {
                 return;
             };
-            tokio::spawn(handle_connection(stream));
+            tokio::spawn(handle_connection(stream, chunk_delay));
         }
     });
 
@@ -54,7 +56,7 @@ pub async fn spawn() -> std::io::Result<BlobServer> {
     })
 }
 
-async fn handle_connection(mut stream: TcpStream) {
+async fn handle_connection(mut stream: TcpStream, chunk_delay: Duration) {
     let mut request = Vec::new();
     let mut buf = [0_u8; 1024];
     while !request.windows(4).any(|w| w == b"\r\n\r\n") {
@@ -85,7 +87,7 @@ async fn handle_connection(mut stream: TcpStream) {
         if stream.write_all(chunk).await.is_err() {
             return;
         }
-        tokio::time::sleep(CHUNK_DELAY).await;
+        tokio::time::sleep(chunk_delay).await;
     }
     _ = stream.shutdown().await;
 }
@@ -116,7 +118,9 @@ mod tests {
 
     #[tokio::test]
     async fn serves_full_blob_with_matching_hash() {
-        let server = spawn().await.expect("BUG: blob server spawn");
+        let server = spawn(UpgradePacing::Instant)
+            .await
+            .expect("BUG: blob server spawn");
         let body = reqwest::get(&server.url)
             .await
             .expect("BUG: request failed")
@@ -131,7 +135,9 @@ mod tests {
 
     #[tokio::test]
     async fn fail_url_errors_before_any_response() {
-        let server = spawn().await.expect("BUG: blob server spawn");
+        let server = spawn(UpgradePacing::Instant)
+            .await
+            .expect("BUG: blob server spawn");
         let result = reqwest::get(&server.fail_url).await;
         assert!(result.is_err(), "send() must fail, got {result:?}");
     }
