@@ -52,7 +52,6 @@ find_latest_link() {
 
 	for link in "$dir"/*-link; do
 		[ -d "$link" ] || continue
-		[ -e "$link" ] || continue
 		name="${link##*/}"
 		n="${name%-link}"
 		case "$n" in
