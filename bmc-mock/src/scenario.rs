@@ -6,10 +6,10 @@
 
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FirmwareScenario {
     #[default]
@@ -18,7 +18,7 @@ pub enum FirmwareScenario {
     CheckError,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PackagesScenario {
     #[default]
@@ -27,7 +27,7 @@ pub enum PackagesScenario {
     FetchFailed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RunScenario {
     #[default]
@@ -37,12 +37,13 @@ pub enum RunScenario {
     ApplyFail,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UpgradeScenario {
     pub firmware: FirmwareScenario,
     pub packages: PackagesScenario,
     pub run: RunScenario,
+    pub shadowed_packages: Vec<String>,
 }
 
 #[must_use]
@@ -88,6 +89,20 @@ mod tests {
         let path = dir.path().join("upgrade-scenario.json");
         std::fs::write(&path, "not json at all").expect("BUG: write scenario");
         assert_eq!(read(&path), UpgradeScenario::default());
+    }
+
+    #[test]
+    fn parses_shadowed_packages_and_defaults_empty() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("upgrade-scenario.json");
+        std::fs::write(&path, r#"{"shadowed_packages": ["widget-flip-clock"]}"#)
+            .expect("BUG: write scenario");
+        assert_eq!(
+            read(&path).shadowed_packages,
+            vec!["widget-flip-clock".to_owned()]
+        );
+        std::fs::write(&path, r#"{"packages": "available"}"#).expect("BUG: write scenario");
+        assert!(read(&path).shadowed_packages.is_empty());
     }
 
     #[test]
