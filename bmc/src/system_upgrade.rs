@@ -304,7 +304,7 @@ fn spawn_packages_run(
         });
         let adapter: Arc<dyn bmc_nix::upgrade::UpgradeProgress> =
             Arc::new(ChannelUpgradeProgress::new(tx.clone(), state_service));
-        match package_backend.apply(merged, adapter).await {
+        match package_backend.apply(merged, Vec::new(), adapter).await {
             Ok(()) => {
                 info!("Package upgrade finished");
                 _ = tx.send(UpgradeRunState::Finished);
@@ -427,11 +427,14 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
 
         let probe = self
             .package_backend
-            .probe(if firmware.is_some() {
-                EstimateMode::Skip
-            } else {
-                EstimateMode::Estimate
-            })
+            .probe(
+                if firmware.is_some() {
+                    EstimateMode::Skip
+                } else {
+                    EstimateMode::Estimate
+                },
+                &[],
+            )
             .await;
 
         let packages = match probe {
@@ -1033,13 +1036,14 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PackageBackend for StubBackend {
-        async fn probe(&self, _estimate: EstimateMode) -> PackageProbe {
+        async fn probe(&self, _estimate: EstimateMode, _install: &[String]) -> PackageProbe {
             PackageProbe::UpToDate
         }
 
         async fn apply(
             &self,
             _merged: bmc_nix::types::MergedIndex,
+            _install: Vec<String>,
             _progress: Arc<dyn bmc_nix::upgrade::UpgradeProgress>,
         ) -> Result<(), bmc_upgrade::packages::ApplyError> {
             Ok(())
