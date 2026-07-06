@@ -83,8 +83,10 @@ fn run(gen_path: &Path) -> anyhow::Result<()> {
             .or_insert(def);
     }
 
-    // Generate activation script under core/activation/scripts/
-    // Numbered 60- to run after write-boundary (50-)
+    // Generate the write-phase activation script under
+    // core/activation/scripts/. It links $PROFILE_NEW_GENERATION paths
+    // into place; the 060 prefix runs it in the write phase, before the
+    // final 'current' commit.
     let mut script = String::from("#!/bin/sh\nset -e\n");
     for def in by_target.values() {
         writeln!(
@@ -97,7 +99,7 @@ fn run(gen_path: &Path) -> anyhow::Result<()> {
 
     bmc_nix::generation_path::write_generated_file(
         gen_path,
-        Path::new("core/activation/scripts/60-file-symlinks"),
+        Path::new("core/activation/scripts/060-file-symlinks"),
         script.as_bytes(),
         0o755,
     )?;
@@ -127,7 +129,7 @@ mod tests {
 
         super::run(&generation).expect("BUG: file-symlinks hook should succeed");
 
-        let script = generation.join("core/activation/scripts/60-file-symlinks");
+        let script = generation.join("core/activation/scripts/060-file-symlinks");
         let meta = script
             .symlink_metadata()
             .expect("BUG: stat generated script");
@@ -138,7 +140,7 @@ mod tests {
         );
         assert!(
             !store_core
-                .join("activation/scripts/60-file-symlinks")
+                .join("activation/scripts/060-file-symlinks")
                 .exists(),
             "store-backed scripts directory must not be modified"
         );
