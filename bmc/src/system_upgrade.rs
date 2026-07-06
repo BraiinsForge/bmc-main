@@ -38,9 +38,13 @@ const AUTOUPGRADE_RETRY_DELAY_COEFF: u32 = 2;
 /// channel and the gRPC-web stream.
 const UPDATE_PROGRESS_INTERVAL: Duration = Duration::from_millis(300);
 
-/// Deliberately timeout-free: it serves the long firmware image download.
+/// No overall request timeout: it serves the long firmware image download,
+/// which is instead guarded by a per-chunk idle timeout in the downloader.
+/// The connect is still bounded so a dead host cannot wedge the run gate
+/// before a single byte flows.
 pub static CLIENT: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
+        .connect_timeout(Duration::from_secs(15))
         .build()
         .expect("BUG: static client builder failed")
 });
