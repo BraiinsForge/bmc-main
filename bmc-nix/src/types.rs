@@ -70,17 +70,29 @@ pub struct CacheEntry {
 }
 
 /// Upgrade strategy hints for UI and orchestration.
+///
+/// A newer server may publish strategy values this build does not know;
+/// they deserialize to [`Self::Unknown`] so one unrecognized hint cannot
+/// fail the entire index parse and hide every upgrade.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum UpgradeStrategy {
     Reboot,
+    #[serde(other)]
+    Unknown,
 }
 
 /// Install strategy hints for UI and orchestration.
+///
+/// A newer server may publish strategy values this build does not know;
+/// they deserialize to [`Self::Unknown`] so one unrecognized hint cannot
+/// fail the entire index parse and hide every upgrade.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InstallStrategy {
     Reboot,
+    #[serde(other)]
+    Unknown,
 }
 
 /// A package entry as it appears in the remote index
@@ -448,6 +460,25 @@ mod tests {
         assert_eq!(index.version, 1);
         assert_eq!(index.packages.len(), 1);
         assert_eq!(index.packages[0].name, "test-pkg");
+    }
+
+    #[test]
+    fn unknown_strategy_values_deserialize_to_fallback() {
+        // A newer server may serve strategy hints this build does not
+        // know. They must map to the Unknown fallback instead of failing
+        // the whole index parse, or fielded devices could never see the
+        // upgrade that understands the new value.
+        let json = r#"{
+            "name": "test-pkg",
+            "version": "2.0.0",
+            "store_path": "/nix/store/abc-test-pkg-2.0.0",
+            "upgrade_strategy": "hot-swap",
+            "install_strategy": "hot-swap"
+        }"#;
+        let entry: PackageEntry =
+            serde_json::from_str(json).expect("BUG: unknown strategies must not fail the parse");
+        assert_eq!(entry.upgrade_strategy, Some(UpgradeStrategy::Unknown));
+        assert_eq!(entry.install_strategy, Some(InstallStrategy::Unknown));
     }
 
     #[test]
