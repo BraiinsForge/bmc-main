@@ -9,6 +9,7 @@ pub mod index;
 pub mod manifest;
 pub mod mount;
 pub mod partition;
+pub mod pending_install;
 pub mod profile;
 pub mod progress;
 pub mod registration;
