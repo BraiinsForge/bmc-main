@@ -17,6 +17,12 @@ Widgets can drive the same LED strip. Effects are scene-scoped by default — on
 and widgets can opt into ambient effects that follow the user across scenes. System events always take priority so
 device-level alerts are never buried by a widget animation.
 
+### [Support Archive](support-archive.md)
+
+A one-click diagnostic bundle downloadable from the web UI. Collects system state, logs, network diagnostics, and Nix
+package state (profile generation manifests, profile state summary, Nix database) into a single timestamped file the
+user can attach to a support request. Collection is best-effort — one unavailable source never blocks the archive.
+
 ### [Support Archive Credential Censoring](support-archive-credential-censoring.md)
 
 The support archive automatically censors credentials (Braiins Pool API keys, Wi-Fi passwords) before bundling
