@@ -1,15 +1,20 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! Activation write boundary (prefix 050): durably flip the `current`
-//! symlink to the new generation.
+//! Activation `current` commit: durably flip the `current` symlink to
+//! the new generation.
 //!
-//! Replaces the former shell entry, which could not satisfy the
-//! fail-loud durability contract: `sync(1)` reports no per-filesystem
-//! writeback errors and POSIX sh cannot fsync a directory. Ordering:
-//! syncfs the profile filesystem (everything earlier activation steps
-//! and the generation build wrote), flip `current` via tmp + rename,
-//! fsync the profile dir so the flip survives a crash before success
-//! is reported. Every failure exits non-zero and fails the activation.
+//! Runs as the final activation step, after every other step has
+//! succeeded, so `current` advances to the new generation only once its
+//! activation is complete; a crash or failure before this step leaves
+//! `current` on the previous generation for the next boot to retry.
+//! Ordering within the step: syncfs the profile filesystem (all prior
+//! profile writes — the generation build and any store paths; rootfs
+//! activation writes flush in their own steps), flip `current` via tmp +
+//! rename, fsync the profile dir so the flip survives a crash before
+//! success is reported. Runs as a binary because the fail-loud
+//! durability contract needs per-filesystem writeback-error reporting and
+//! a directory fsync, neither of which POSIX sh can do. Every failure
+//! exits non-zero and fails the activation.
 
 use std::path::Path;
 
