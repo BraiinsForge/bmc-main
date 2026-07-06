@@ -272,6 +272,12 @@ impl Slide {
 pub use bmc_platform::Product as SettingsTrayProduct;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NightModeView {
+    pub active: bool,
+    pub until: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsTrayView {
     pub shape: DisplayShape,
     pub width: u32,
@@ -279,6 +285,7 @@ pub struct SettingsTrayView {
     pub brightness: u8,
     pub volume: u8,
     pub show_volume: bool,
+    pub night_mode: Option<NightModeView>,
     pub hostname: Option<String>,
     pub ip: Option<String>,
     pub wifi_signal: Option<i32>,
@@ -301,6 +308,10 @@ impl SettingsTrayView {
             brightness: 50,
             volume: 50,
             show_volume: matches!(product, SettingsTrayProduct::Bmc100),
+            night_mode: Some(NightModeView {
+                active: false,
+                until: String::new(),
+            }),
             hostname: None,
             ip: None,
             wifi_signal: None,
@@ -336,6 +347,7 @@ pub struct SettingsTrayRenderOutput {
     pub brightness_release: Option<u8>,
     pub volume_drag: Option<u8>,
     pub volume_release: Option<u8>,
+    pub night_mode_tapped: bool,
 }
 
 #[expect(missing_debug_implementations, reason = "TreeUi is not Debug")]
@@ -359,6 +371,10 @@ pub struct SettingsTrayOverlay {
     last_volume_sent: Instant,
     /// End of the post-release echo settle window.
     volume_settle_until: Option<Instant>,
+    /// Latest night-mode state from the `night_mode` event. No local prediction.
+    night_active: bool,
+    /// "HH:MM" boundary from the `night_mode` event (empty = unknown).
+    night_until: String,
     hostname: Option<String>,
     ip: Option<String>,
     wifi_signal: Option<i32>,
@@ -419,6 +435,8 @@ impl SettingsTrayOverlay {
             volume_dragged: false,
             last_volume_sent: now,
             volume_settle_until: None,
+            night_active: false,
+            night_until: String::new(),
             hostname,
             ip: None,
             wifi_signal: None,
@@ -448,6 +466,10 @@ impl SettingsTrayOverlay {
         view.height = self.height;
         view.brightness = self.brightness;
         view.volume = self.volume;
+        view.night_mode = Some(NightModeView {
+            active: self.night_active,
+            until: self.night_until.clone(),
+        });
         view.hostname.clone_from(&self.hostname);
         view.ip.clone_from(&self.ip);
         view.wifi_signal = self.wifi_signal;
@@ -599,6 +621,14 @@ impl SystemOverlay for SettingsTrayOverlay {
         }
         if value != self.volume {
             self.volume = value;
+            self.content_dirty = true;
+        }
+    }
+
+    fn on_night_mode(&mut self, active: bool, until: &str) {
+        if active != self.night_active || until != self.night_until {
+            self.night_active = active;
+            until.clone_into(&mut self.night_until);
             self.content_dirty = true;
         }
     }
@@ -774,6 +804,10 @@ impl SystemOverlay for SettingsTrayOverlay {
             self.pending_requests.push(SettingsRequest::SetVolume(v));
             self.last_volume_sent = now;
         }
+
+        if output.night_mode_tapped {
+            self.pending_requests.push(SettingsRequest::ToggleNightMode);
+        }
     }
 
     fn drain_settings_requests(&mut self) -> Vec<SettingsRequest> {
@@ -834,6 +868,10 @@ pub fn render_settings_tray(
     };
     let controls = ui::Controls {
         volume: view.show_volume.then_some(view.volume),
+        night_mode: view
+            .night_mode
+            .as_ref()
+            .map(|n| (n.active, n.until.as_str())),
         ..ui::Controls::default()
     };
     let node = ui::build_tree(
@@ -887,6 +925,7 @@ pub fn render_settings_tray(
         brightness_release,
         volume_drag,
         volume_release,
+        night_mode_tapped: result.clicks.contains_key(ui::NIGHT_MODE_KEY),
     }
 }
 
@@ -920,6 +959,21 @@ mod view_tests {
         assert_eq!(view.setup_ssid.as_deref(), Some("Deck setup"));
         assert!(view.wifi_buttons);
         assert_eq!(view.wifi_label, ButtonState::Active.label());
+    }
+
+    #[test]
+    fn night_mode_event_reflects_into_view() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        overlay.on_night_mode(true, "06:30");
+        assert_eq!(
+            overlay.view().night_mode,
+            Some(NightModeView {
+                active: true,
+                until: "06:30".to_owned(),
+            }),
+            "the night_mode event must reflect verbatim into the view"
+        );
     }
 
     #[test]

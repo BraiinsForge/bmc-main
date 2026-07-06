@@ -9,7 +9,9 @@ use bmc_render::tree::{
     DrawCommand, PropsData, SpanData, TextStyle, TreeNode, col, make_button, row, spacer, text,
 };
 use bmc_wasm_protocol::colors::{GRAY_50, GRAY_80, GREEN_50, TRANSPARENT, WHITE};
-use bmc_wasm_protocol::{ButtonSize, ButtonStyle, Color, CrossAlign, FontWeight, SvgId, TextAlign};
+use bmc_wasm_protocol::{
+    ButtonSize, ButtonStyle, Color, CrossAlign, Fill, FontWeight, SvgId, TextAlign,
+};
 
 /// Stable touch key for the brightness slider drag.
 pub const BRIGHTNESS_SLIDER_KEY: &str = "brightness";
@@ -22,6 +24,9 @@ pub const WIFI_RECONFIG_KEY: &str = "wifi_reconfig";
 
 /// Stable touch key for the bare WiFi reconnect hold button.
 pub const WIFI_RECONNECT_KEY: &str = "wifi_reconnect";
+
+/// Stable touch key for the night-mode tap toggle.
+pub const NIGHT_MODE_KEY: &str = "night_mode";
 
 /// Panel scrim: the tray composites over the live scene, so its background is a
 /// near-opaque black that lets the scene faintly show through. Matches the
@@ -415,15 +420,89 @@ fn volume_section(volume: u8, with_label: bool, icons: ControlIcons) -> TreeNode
     )
 }
 
+/// Fixed height of the night-mode pill and restart button.
+const CONTROL_BUTTON_H: f32 = 48.0;
+
+/// Night-mode active/inactive control colors, matching the stable tray
+/// (Palette.blue-70 active, white at 30% inactive).
+const NIGHT_ACTIVE: Color = Color::from_rgba(0x10, 0x43, 0xCD, 0xFF);
+const NIGHT_INACTIVE: Color = Color::from_rgba(0xFF, 0xFF, 0xFF, 0x4D);
+
+/// Tap-toggle for night mode: an icon + label pill whose background color
+/// indicates the active state, with the "Until HH:MM" status line below when
+/// known. State comes exclusively from the night_mode event — no local
+/// prediction. `width` is the fixed pill width so the tap region and fill are
+/// bounded (Canvas rects are not auto-clipped to a flex width).
+fn night_mode_section(active: bool, until: &str, width: f32, icons: ControlIcons) -> TreeNode {
+    let label = if active {
+        "Night Mode: On"
+    } else {
+        "Night Mode: Off"
+    };
+    let pill = TreeNode::Canvas {
+        props: PropsData {
+            width,
+            height: CONTROL_BUTTON_H,
+            ..PropsData::default()
+        },
+        touch_key: Some(NIGHT_MODE_KEY.to_owned()),
+        draws: vec![
+            DrawCommand::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: width,
+                h: CONTROL_BUTTON_H,
+                fill: Fill::Solid(if active { NIGHT_ACTIVE } else { NIGHT_INACTIVE }),
+            },
+            DrawCommand::Svg {
+                x: 12.0,
+                y: (CONTROL_BUTTON_H - 24.0) / 2.0,
+                w: 24.0,
+                h: 24.0,
+                color: TRANSPARENT,
+                icon_id: icons.nightmode,
+                anti_alias: true,
+                fills: Vec::new(),
+            },
+            DrawCommand::Centered {
+                inner: Box::new(DrawCommand::Text {
+                    x: 0.0,
+                    y: 0.0,
+                    text: label.to_owned(),
+                    style: TextStyle {
+                        size: 20,
+                        weight: FontWeight::BOLD,
+                        color: WHITE,
+                        ..TextStyle::default()
+                    },
+                }),
+            },
+        ],
+    };
+    let mut children = vec![pill];
+    if !until.is_empty() {
+        children.push(text(format!("Until {until}"), text_style(16, GRAY_50)));
+    }
+    col(
+        PropsData {
+            cross_align: CrossAlign::Center,
+            gap: 6.0,
+            ..PropsData::default()
+        },
+        children,
+    )
+}
+
 /// Rectangular overlay column: hostname header, brightness, optional volume,
-/// then the Wi-Fi `info` block pushed to the bottom edge. `with_brightness_label`
-/// is dropped on short panels to reclaim the vertical space, and doubles as the
-/// volume label flag.
+/// optional night-mode toggle, then the Wi-Fi `info` block pushed to the bottom
+/// edge. `with_brightness_label` is dropped on short panels to reclaim the
+/// vertical space, and doubles as the volume label flag.
 fn rect_overlay(
     hostname_str: &str,
     brightness: u8,
     with_brightness_label: bool,
     volume: Option<u8>,
+    night_mode: Option<(bool, &str)>,
     info: TreeNode,
     icons: ControlIcons,
 ) -> TreeNode {
@@ -433,6 +512,14 @@ fn rect_overlay(
     ];
     if let Some(v) = volume {
         children.push(volume_section(v, with_brightness_label, icons));
+    }
+    if let Some((active, until)) = night_mode {
+        children.push(night_mode_section(
+            active,
+            until,
+            BUTTON_ROW_WIDTH / 2.0 - 8.0,
+            icons,
+        ));
     }
     children.push(spacer(1.0));
     children.push(info);
@@ -633,6 +720,12 @@ pub fn build_tree(
                     ROUND_H_PAD,
                 ));
             }
+            if let Some((active, until)) = controls.night_mode {
+                children.push(pad_horizontal(
+                    night_mode_section(active, until, BUTTON_ROW_WIDTH / 2.0 - 8.0, controls_icons),
+                    ROUND_H_PAD,
+                ));
+            }
             children.push(spacer(1.0));
             children.push(pad_horizontal(
                 wifi_section(info, icons, wifi_view, wifi_buttons),
@@ -655,6 +748,7 @@ pub fn build_tree(
                 brightness,
                 true,
                 controls.volume,
+                controls.night_mode,
                 wifi_section(info, icons, wifi_view, wifi_buttons),
                 controls_icons,
             )
@@ -662,12 +756,14 @@ pub fn build_tree(
         DisplayShape::Rectangular => {
             let info = narrow_info(icons, wifi_signal, ssid_str, &ip_str);
             // Narrow panel: drop the "Brightness" label so the Wi-Fi info and IP
-            // are not pushed off the bottom edge.
+            // are not pushed off the bottom edge. The night-mode status line is
+            // dropped first on tight layouts, so pass an empty `until`.
             rect_overlay(
                 &hostname_str,
                 brightness,
                 false,
                 controls.volume,
+                controls.night_mode.map(|(active, _)| (active, "")),
                 wifi_section(info, icons, wifi_view, wifi_buttons),
                 controls_icons,
             )
@@ -843,6 +939,26 @@ mod tests {
         }
     }
 
+    /// Recursively collect every Canvas rect fill color in the tree.
+    fn canvas_rect_fills(node: &TreeNode, out: &mut Vec<Color>) {
+        if let TreeNode::Canvas { draws, .. } = node {
+            for d in draws {
+                if let DrawCommand::Rect {
+                    fill: Fill::Solid(c),
+                    ..
+                } = d
+                {
+                    out.push(*c);
+                }
+            }
+        }
+        if let Some(kids) = children(node) {
+            for k in kids {
+                canvas_rect_fills(k, out);
+            }
+        }
+    }
+
     /// Recursively collect every `Button` id in the tree.
     fn button_ids(node: &TreeNode, out: &mut Vec<String>) {
         if let TreeNode::Button { id, .. } = node {
@@ -880,6 +996,27 @@ mod tests {
             (fracs[1] - 0.3).abs() < 1e-6,
             "volume is an identity mapping: got {}",
             fracs[1]
+        );
+    }
+
+    #[test]
+    fn night_mode_active_state_is_color_indicated() {
+        let build_night = |active| {
+            let controls = Controls {
+                night_mode: Some((active, "06:30")),
+                ..Controls::default()
+            };
+            let mut fills = Vec::new();
+            canvas_rect_fills(&build_with_controls(wide_panel(), controls), &mut fills);
+            fills
+        };
+        assert!(
+            build_night(true).contains(&Color::from_rgba(0x10, 0x43, 0xCD, 0xFF)),
+            "active night mode must show the stable tray's blue"
+        );
+        assert!(
+            build_night(false).contains(&Color::from_rgba(0xFF, 0xFF, 0xFF, 0x4D)),
+            "inactive night mode must show white at 30%"
         );
     }
 
