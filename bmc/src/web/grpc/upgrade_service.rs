@@ -1,10 +1,11 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
 use bmc_grpc::web::{
-    AutoUpgradeFrequency as GrpcAutoUpgradeFrequency, CheckForUpgradeResponse, FirmwareUpgrade,
-    FirmwareUpgradePhase, GetAutoUpgradeResponse, PackageChange, PackageUpgradePhase,
-    PackageUpgradePlan, SetAutoUpgradeRequest, StartUpgradeRequest, UpgradeDisruption,
-    UpgradeDownloadProgress, UpgradeProgress, upgrade_progress,
+    AutoUpgradeFrequency as GrpcAutoUpgradeFrequency, CheckForUpgradeRequest,
+    CheckForUpgradeResponse, FirmwareUpgrade, FirmwareUpgradePhase, GetAutoUpgradeResponse,
+    InstallablePreview, InstallableWidget, ListInstallableWidgetsResponse, PackageChange,
+    PackageUpgradePhase, PackageUpgradePlan, SetAutoUpgradeRequest, StartUpgradeRequest,
+    UpgradeDisruption, UpgradeDownloadProgress, UpgradeProgress, upgrade_progress,
     upgrade_service_server::UpgradeService as GrpcUpgradeService,
 };
 use bmc_upgrade::firmware::{FirmwareIndex, ReleaseInfo, UpgradeDetail};
@@ -65,15 +66,30 @@ where
 
     async fn check_for_upgrade(
         &self,
-        _request: Request<()>,
+        request: Request<CheckForUpgradeRequest>,
     ) -> Result<tonic::Response<CheckForUpgradeResponse>, tonic::Status> {
+        let install = request.into_inner().install_packages;
         let outcome = self
             .system_upgrade
-            .check_for_upgrade()
+            .check_for_upgrade(install)
             .await
             .map_err(Into::<tonic::Status>::into)?;
 
         Ok(tonic::Response::new(outcome_to_response(outcome)))
+    }
+
+    async fn list_installable_widgets(
+        &self,
+        _request: Request<()>,
+    ) -> Result<tonic::Response<ListInstallableWidgetsResponse>, tonic::Status> {
+        let widgets = self
+            .system_upgrade
+            .list_installable_widgets()
+            .await
+            .map_err(Into::<tonic::Status>::into)?;
+        Ok(tonic::Response::new(ListInstallableWidgetsResponse {
+            widgets: widgets.into_iter().map(map_installable_widget).collect(),
+        }))
     }
 
     async fn start_upgrade(
@@ -195,6 +211,24 @@ fn map_package_upgrade_plan(preview: PackagesPreview) -> PackageUpgradePlan {
         download_size_bytes: preview.download_size_bytes,
         bmc_version: preview.bmc_version,
         bmc_changelog: preview.bmc_changelog,
+    }
+}
+
+fn map_installable_widget(w: bmc_upgrade::packages::InstallableWidget) -> InstallableWidget {
+    InstallableWidget {
+        package_name: w.package_name,
+        uid: w.uid,
+        version: w.version,
+        display_name: w.display_name,
+        subname: w.subname,
+        category: w.category,
+        description: w.description,
+        icon: w.icon,
+        previews: w
+            .previews
+            .into_iter()
+            .map(|p| InstallablePreview { image: p.image })
+            .collect(),
     }
 }
 

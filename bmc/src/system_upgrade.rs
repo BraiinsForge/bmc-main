@@ -89,6 +89,7 @@ pub(crate) enum AvailableSystemUpgrade {
     },
     Packages {
         merged: bmc_nix::types::MergedIndex,
+        install: Vec<String>,
         download_size_bytes: Option<u64>,
     },
 }
@@ -101,6 +102,7 @@ fn select_offer(
     firmware: Option<&UpgradeDetail>,
     merged: Option<bmc_nix::types::MergedIndex>,
     packages: Option<&PackagesPreview>,
+    install: &[String],
 ) -> Option<AvailableSystemUpgrade> {
     if let Some(detail) = firmware {
         return Some(AvailableSystemUpgrade::Firmware {
@@ -111,6 +113,7 @@ fn select_offer(
     let merged = merged.expect("BUG: packages preview present without a merged index");
     Some(AvailableSystemUpgrade::Packages {
         merged,
+        install: install.to_vec(),
         download_size_bytes: preview.download_size_bytes,
     })
 }
@@ -293,6 +296,7 @@ fn spawn_packages_run(
     gate: tokio::sync::OwnedMutexGuard<()>,
     package_backend: Arc<dyn PackageBackend>,
     merged: bmc_nix::types::MergedIndex,
+    install: Vec<String>,
     download_size_bytes: Option<u64>,
     state_service: StateService,
 ) -> UpgradeRunStream {
@@ -304,7 +308,7 @@ fn spawn_packages_run(
         });
         let adapter: Arc<dyn bmc_nix::upgrade::UpgradeProgress> =
             Arc::new(ChannelUpgradeProgress::new(tx.clone(), state_service));
-        match package_backend.apply(merged, Vec::new(), adapter).await {
+        match package_backend.apply(merged, install, adapter).await {
             Ok(()) => {
                 info!("Package upgrade finished");
                 _ = tx.send(UpgradeRunState::Finished);
@@ -415,7 +419,10 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         }
     }
 
-    pub(crate) async fn check_for_upgrade(&self) -> Result<CheckOutcome, SystemUpgradeError> {
+    pub(crate) async fn check_for_upgrade(
+        &self,
+        install: Vec<String>,
+    ) -> Result<CheckOutcome, SystemUpgradeError> {
         let _gate = self
             .run_gate
             .try_lock()
@@ -433,7 +440,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 } else {
                     EstimateMode::Estimate
                 },
-                &[],
+                &install,
             )
             .await;
 
@@ -450,20 +457,21 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             None => (None, None),
         };
 
-        let upgrade_id =
-            if let Some(upgrade) = select_offer(firmware.as_ref(), merged, packages.as_ref()) {
-                let upgrade_id = format!(
-                    "upgrade-{}",
-                    self.upgrade_id_seq.fetch_add(1, Ordering::Relaxed)
-                );
-                self.system_upgrades
-                    .lock()
-                    .await
-                    .insert(upgrade_id.clone(), upgrade);
-                Some(upgrade_id)
-            } else {
-                None
-            };
+        let upgrade_id = if let Some(upgrade) =
+            select_offer(firmware.as_ref(), merged, packages.as_ref(), &install)
+        {
+            let upgrade_id = format!(
+                "upgrade-{}",
+                self.upgrade_id_seq.fetch_add(1, Ordering::Relaxed)
+            );
+            self.system_upgrades
+                .lock()
+                .await
+                .insert(upgrade_id.clone(), upgrade);
+            Some(upgrade_id)
+        } else {
+            None
+        };
 
         Ok(CheckOutcome {
             firmware,
@@ -471,6 +479,15 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             upgrade_id,
             disruption,
         })
+    }
+
+    pub(crate) async fn list_installable_widgets(
+        &self,
+    ) -> Result<Vec<bmc_upgrade::packages::InstallableWidget>, SystemUpgradeError> {
+        self.package_backend
+            .list_installable_widgets()
+            .await
+            .map_err(SystemUpgradeError::PackageCheckFailed)
     }
 
     pub(crate) async fn start_upgrade(&self, upgrade_id: String) -> UpgradeRunStream {
@@ -484,11 +501,13 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             AvailableSystemUpgrade::Firmware { detail } => self.spawn_firmware_run(gate, detail),
             AvailableSystemUpgrade::Packages {
                 merged,
+                install,
                 download_size_bytes,
             } => spawn_packages_run(
                 gate,
                 Arc::clone(&self.package_backend),
                 merged,
+                install,
                 download_size_bytes,
                 self.state_service.clone(),
             ),
@@ -702,7 +721,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
 
     async fn autoupgrade_trigger(&self) -> Result<(), SystemUpgradeError> {
         debug!("Auto-upgrade triggered");
-        let outcome = self.check_for_upgrade().await?;
+        let outcome = self.check_for_upgrade(Vec::new()).await?;
 
         let Some(upgrade_id) = outcome.upgrade_id else {
             debug!("No upgrade available");
@@ -967,6 +986,7 @@ mod tests {
             Some(&detail),
             Some(empty_merged_index()),
             Some(&test_packages_preview()),
+            &[],
         )
         .expect("BUG: firmware present must mint an offer");
 
@@ -977,11 +997,28 @@ mod tests {
     }
 
     #[test]
+    fn firmware_wins_even_with_pending_install() {
+        let firmware = test_upgrade_detail();
+        let preview = test_packages_preview();
+        let offer = select_offer(
+            Some(&firmware),
+            Some(empty_merged_index()),
+            Some(&preview),
+            &["widget-weather".to_owned()],
+        );
+        assert!(matches!(
+            offer,
+            Some(AvailableSystemUpgrade::Firmware { .. })
+        ));
+    }
+
+    #[test]
     fn offer_falls_back_to_packages_without_firmware() {
         let offer = select_offer(
             None,
             Some(empty_merged_index()),
             Some(&test_packages_preview()),
+            &[],
         )
         .expect("BUG: available packages must mint an offer");
 
@@ -992,7 +1029,7 @@ mod tests {
                 ..
             }
         ));
-        assert!(select_offer(None, None, None).is_none());
+        assert!(select_offer(None, None, None, &[]).is_none());
     }
 
     #[derive(Debug)]
@@ -1034,6 +1071,7 @@ mod tests {
             gate,
             Arc::new(StubBackend),
             empty_merged_index(),
+            Vec::new(),
             None,
             StateService::new(),
         );
