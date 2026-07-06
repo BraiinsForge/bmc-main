@@ -11,8 +11,8 @@ use bmc_nix::store::progress::DownloadSnapshot;
 use bmc_nix::types::MergedIndex;
 use bmc_nix::upgrade::{UpgradePhase, UpgradeProgress};
 use bmc_upgrade::packages::{
-    ApplyError, EstimateMode, PackageBackend, PackageProbe, PackageProbeError, PackagesPreview,
-    SystemPackageChange,
+    ApplyError, EstimateMode, InstallablePreview, InstallableWidget, PackageBackend, PackageProbe,
+    PackageProbeError, PackagesPreview, SystemPackageChange,
 };
 
 use crate::pacing::UpgradePacing;
@@ -91,6 +91,63 @@ fn static_preview(estimate: EstimateMode) -> PackagesPreview {
     }
 }
 
+/// A tiny inline SVG served as a `data:` icon so the picker renders
+/// something without an on-disk asset.
+fn swatch_icon(fill: &str) -> String {
+    format!(
+        "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='4' fill='{fill}'/></svg>"
+    )
+}
+
+/// The built-in set of widgets the mock can offer. `widget-flip-clock`
+/// ships in the init image; the rest exist only to populate the picker.
+fn widget_catalog() -> Vec<InstallableWidget> {
+    vec![
+        InstallableWidget {
+            package_name: "widget-flip-clock".to_owned(),
+            uid: "flip-clock".to_owned(),
+            version: "1.0.0".to_owned(),
+            display_name: "Flip Clock".to_owned(),
+            subname: None,
+            category: Some("clock".to_owned()),
+            description: Some("A retro split-flap clock face.".to_owned()),
+            icon: Some(swatch_icon("%23f2a900")),
+            previews: vec![InstallablePreview {
+                image: swatch_icon("%23222222"),
+            }],
+        },
+        InstallableWidget {
+            package_name: "widget-weather".to_owned(),
+            uid: "weather".to_owned(),
+            version: "1.3.0".to_owned(),
+            display_name: "Weather".to_owned(),
+            subname: Some("Local forecast".to_owned()),
+            category: Some("info".to_owned()),
+            description: Some("Current conditions and a short forecast.".to_owned()),
+            icon: Some(swatch_icon("%234a90d9")),
+            previews: vec![
+                InstallablePreview {
+                    image: swatch_icon("%23a0d8ef"),
+                },
+                InstallablePreview {
+                    image: swatch_icon("%23557799"),
+                },
+            ],
+        },
+        InstallableWidget {
+            package_name: "widget-mining-clock".to_owned(),
+            uid: "mining-clock".to_owned(),
+            version: "0.9.0".to_owned(),
+            display_name: "Mining Clock".to_owned(),
+            subname: None,
+            category: Some("mining".to_owned()),
+            description: Some("Hashrate and power at a glance.".to_owned()),
+            icon: Some(swatch_icon("%2300a86b")),
+            previews: Vec::new(),
+        },
+    ]
+}
+
 #[async_trait::async_trait]
 impl PackageBackend for MockPackageBackend {
     async fn probe(&self, estimate: EstimateMode) -> PackageProbe {
@@ -141,6 +198,19 @@ impl PackageBackend for MockPackageBackend {
         }
 
         Ok(())
+    }
+
+    async fn list_installable_widgets(&self) -> Result<Vec<InstallableWidget>, PackageProbeError> {
+        let scenario = scenario::read(&self.scenario_path);
+        if scenario.packages == PackagesScenario::FetchFailed {
+            return Err(PackageProbeError::IndexFetchFailed(
+                "mock: index fetch failed".to_owned(),
+            ));
+        }
+        Ok(widget_catalog()
+            .into_iter()
+            .filter(|w| scenario.shadowed_packages.contains(&w.package_name))
+            .collect())
     }
 }
 
@@ -244,6 +314,37 @@ mod tests {
             ]
         );
         assert!(*progress.downloads.lock().expect("BUG: downloads mutex") > 0);
+    }
+
+    #[tokio::test]
+    async fn lists_shadowed_widgets_as_installable() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = write_scenario(
+            dir.path(),
+            r#"{"packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#,
+        );
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
+        let widgets = backend
+            .list_installable_widgets()
+            .await
+            .expect("BUG: list failed");
+        assert_eq!(widgets.len(), 1);
+        assert_eq!(widgets[0].package_name, "widget-flip-clock");
+        assert!(!widgets[0].uid.is_empty());
+    }
+
+    #[tokio::test]
+    async fn lists_nothing_when_no_packages_shadowed() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
+        assert!(
+            backend
+                .list_installable_widgets()
+                .await
+                .expect("BUG: list failed")
+                .is_empty()
+        );
     }
 
     #[tokio::test]
