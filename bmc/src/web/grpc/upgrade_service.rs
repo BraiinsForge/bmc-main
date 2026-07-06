@@ -261,9 +261,12 @@ impl From<SystemUpgradeError> for Status {
             // Another run holds the gate; the condition clears by itself,
             // so the client sees "try again", not a server fault.
             SystemUpgradeError::UpgradeInProgress => Status::unavailable(value.to_string()),
-            SystemUpgradeError::NotEnoughSpace | SystemUpgradeError::UpgradeExpired => {
-                Status::failed_precondition(value.to_string())
-            }
+            // The image is incompatible/unsigned/wrong-key: retrying the
+            // same image will not help, so signal a precondition failure
+            // the client can surface as "pick a different image".
+            SystemUpgradeError::NotEnoughSpace
+            | SystemUpgradeError::UpgradeExpired
+            | SystemUpgradeError::InvalidImage => Status::failed_precondition(value.to_string()),
         }
     }
 }
