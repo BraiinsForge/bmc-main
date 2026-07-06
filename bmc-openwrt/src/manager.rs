@@ -11,7 +11,7 @@ use crate::{ROOT_USERNAME, pwd, unix};
 use anyhow::{anyhow, bail};
 use bmc::bootloader_config::BootloaderConfig;
 use bmc::manager::{
-    BmcState, IfaceData, InitialSetupError, WifiData, WifiEvent, WifiNetworkConfig,
+    BmcState, IfaceData, InitialSetupError, UpgradeError, WifiData, WifiEvent, WifiNetworkConfig,
 };
 use bmc::{
     BmcManager,
@@ -129,7 +129,7 @@ impl Manager {
         keep_settings: bool,
         upgrade_image_path: &Path,
         progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), UpgradeError> {
         let mut sysupgrade = Command::new(Self::SYSUPGRADE_BIN);
         if !keep_settings {
             sysupgrade.arg(Self::SYSUPGRADE_ARG_NO_SAVE);
@@ -137,7 +137,9 @@ impl Manager {
         sysupgrade.arg(upgrade_image_path.as_os_str());
         sysupgrade.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        let mut handle = sysupgrade.spawn()?;
+        let mut handle = sysupgrade
+            .spawn()
+            .map_err(|e| UpgradeError::Failed(format!("failed to spawn sysupgrade: {e}")))?;
         let stdout = handle
             .stdout
             .take()
@@ -160,7 +162,7 @@ impl Manager {
 
         let status = status
             .inspect_err(|err| error!(error = %err, "Upgrade process wait failed"))
-            .map_err(|_| anyhow!("Invalid firmware image"))?;
+            .map_err(|e| UpgradeError::Failed(format!("upgrade process wait failed: {e}")))?;
 
         match status.code() {
             Some(0) => {
@@ -170,18 +172,22 @@ impl Manager {
             // Error code "1" is returned on BCB when using incompatible image, unsigned image or wrong signature keys
             Some(1) => {
                 error!(exit_code = 1, "Upgrade failed: invalid firmware image");
-                Err(anyhow!("Invalid firmware image"))
+                Err(UpgradeError::InvalidImage)
             }
             // procd rejections propagate through `ubus call system
             // sysupgrade` as ubus status exit codes (2, 8, 9, ...); a
             // successful flash never returns at all.
             Some(code) => {
                 error!(exit_code = code, "Upgrade failed");
-                Err(anyhow!("Upgrade failed with exit code {code}"))
+                Err(UpgradeError::Failed(format!(
+                    "upgrade failed with exit code {code}"
+                )))
             }
             None => {
                 error!("Upgrade process terminated without exit code");
-                Err(anyhow!("Upgrade failed"))
+                Err(UpgradeError::Failed(
+                    "upgrade process terminated without exit code".to_owned(),
+                ))
             }
         }
     }
@@ -381,7 +387,7 @@ impl BmcManager for Manager {
         keep_settings: bool,
         upgrade_image_path: &Path,
         progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), UpgradeError> {
         info!(
             keep_settings = keep_settings,
             path = %upgrade_image_path.display(),
