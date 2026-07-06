@@ -227,6 +227,7 @@ pub fn manifest_package_to_resolved(name: &str, mp: &ManifestPackage) -> Resolve
         installed_by: mp.installed_by.clone(),
         installed_from: mp.installed_from.clone(),
         pinned: mp.pinned.clone(),
+        metadata: std::collections::BTreeMap::new(),
     }
 }
 
@@ -468,6 +469,7 @@ mod tests {
             install_strategy: None,
             server_id: "forge".into(),
             server_priority: priority,
+            metadata: BTreeMap::new(),
         }
     }
 
@@ -483,6 +485,7 @@ mod tests {
             installed_by: InstalledBy::System,
             installed_from: "local".into(),
             pinned: None,
+            metadata: BTreeMap::new(),
         }
     }
 
