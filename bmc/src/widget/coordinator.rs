@@ -192,6 +192,76 @@ pub fn start_brightness_listener(
     });
 }
 
+/// Broadcast the effective sound volume to the settings-tray overlay whenever
+/// it changes (a manual change, a gRPC write, or a night-mode transition).
+/// Effective volume is the night-mode percentage while night mode is active,
+/// else the configured percentage.
+pub fn start_volume_listener(
+    compositor: Arc<dyn Compositor>,
+    config_handle: Arc<RwLock<ConfigHandle>>,
+    mut sound_change_rx: broadcast::Receiver<()>,
+    mut night_mode_active_rx: watch::Receiver<bool>,
+) {
+    tokio::spawn(async move {
+        loop {
+            let night_active = *night_mode_active_rx.borrow_and_update();
+            let volume = {
+                let cfg = config_handle.read().await;
+                if night_active {
+                    cfg.night_mode().sound_volume_pct
+                } else {
+                    cfg.sound_volume_pct()
+                }
+            };
+            if let Err(e) = compositor.broadcast_volume(volume) {
+                warn!("broadcast_volume failed: {e}");
+            }
+            tokio::select! {
+                r = sound_change_rx.recv() => match r {
+                    // Lagged is recoverable (we just missed some notifications);
+                    // re-broadcast the current value rather than killing the
+                    // listener. Only Closed is terminal.
+                    Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
+                r = night_mode_active_rx.changed() => if r.is_err() { break },
+            }
+        }
+    });
+}
+
+/// Broadcast the night-mode state and its "HH:MM" boundary to the settings-tray
+/// overlay. Recomputes on EVERY watch notification, not only on active-state
+/// flips: the controller's set_enabled/set_interval send_replace the watch
+/// unconditionally, so schedule edits refresh the boundary too.
+pub fn start_night_mode_listener<U>(
+    compositor: Arc<dyn Compositor>,
+    system_manager: crate::system_manager::SystemManager<U>,
+) where
+    U: crate::backlight::DisplayBacklightDriver,
+{
+    let mut night_mode_rx = system_manager.subscribe_night_mode();
+    tokio::spawn(async move {
+        loop {
+            let active = *night_mode_rx.borrow_and_update();
+            let config = system_manager.night_mode_config().await;
+            let until = if active {
+                config.to.format("%H:%M").to_string()
+            } else if config.enabled {
+                config.from.format("%H:%M").to_string()
+            } else {
+                String::new()
+            };
+            if let Err(e) = compositor.broadcast_night_mode(active, &until) {
+                warn!("broadcast_night_mode failed: {e}");
+            }
+            if night_mode_rx.changed().await.is_err() {
+                break;
+            }
+        }
+    });
+}
+
 /// Broadcast the WiFi setup-AP SSID to the settings-tray overlay on every
 /// setup-mode transition. Resolves the SSID via the manager while in setup mode;
 /// `None` clears the overlay back to idle.

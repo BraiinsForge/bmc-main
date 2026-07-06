@@ -304,6 +304,16 @@ where
                 .subscribe_brightness_settings_change(),
             system_manager.subscribe_night_mode(),
         );
+        crate::widget::coordinator::start_volume_listener(
+            compositor.clone(),
+            config_handle.clone(),
+            config_handle.read().await.subscribe_sound_settings_change(),
+            system_manager.subscribe_night_mode(),
+        );
+        crate::widget::coordinator::start_night_mode_listener(
+            compositor.clone(),
+            system_manager.clone(),
+        );
         crate::widget::coordinator::start_wifi_reconfig_listener(
             compositor.clone(),
             manager.clone(),

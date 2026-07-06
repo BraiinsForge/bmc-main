@@ -392,7 +392,6 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         self.night_mode_controller.subscribe()
     }
 
-    #[expect(dead_code, reason = "reserved for the display-overlay channel")]
     pub(crate) async fn night_mode_config(&self) -> crate::config::NightModeConfig {
         self.night_mode_controller.config().await
     }
