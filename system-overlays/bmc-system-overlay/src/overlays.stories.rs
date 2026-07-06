@@ -17,7 +17,8 @@ use crate::prelude::*;
 use bmc_overlay_device_info::{DeviceInfoView, render_device_info};
 use bmc_overlay_offline::{OfflineView, render_offline};
 use bmc_overlay_settings_tray::{
-    SettingsTrayProduct, SettingsTrayRenderState, SettingsTrayView, render_settings_tray,
+    NightModeView, RestartView, SettingsTrayProduct, SettingsTrayRenderState, SettingsTrayView,
+    render_settings_tray,
 };
 use bmc_render::colors::Color;
 use bmc_render::renderer::Renderer;
@@ -67,6 +68,14 @@ fn tray_view(
     view.ip = Some(ip.to_owned());
     view.wifi_signal = Some(-52);
     view.ssid = Some(ssid.to_owned());
+    view.volume = 40;
+    view.night_mode = Some(NightModeView {
+        active: false,
+        until: "22:00".to_owned(),
+    });
+    view.restart = Some(RestartView {
+        label: "Restart".to_owned(),
+    });
     view
 }
 
@@ -87,6 +96,16 @@ fn bmm101_tray_view() -> SettingsTrayView {
         "10.0.0.42",
         "Workshop-WiFi",
         55,
+    )
+}
+
+fn bfm100_tray_view() -> SettingsTrayView {
+    tray_view(
+        SettingsTrayProduct::Bfm100,
+        "braiins-frame",
+        "10.0.0.7",
+        "Studio-WiFi",
+        60,
     )
 }
 
@@ -118,6 +137,20 @@ thread_local! {
     static BMC100_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
         RefCell::new(SettingsTrayRenderState::new(Instant::now()));
     static BMM101_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
+        RefCell::new(SettingsTrayRenderState::new(Instant::now()));
+    static BFM100_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
+        RefCell::new(SettingsTrayRenderState::new(Instant::now()));
+    static NIGHT_MODE_ACTIVE_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
+        RefCell::new(SettingsTrayRenderState::new(Instant::now()));
+    static NIGHT_MODE_INACTIVE_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
+        RefCell::new(SettingsTrayRenderState::new(Instant::now()));
+    static VOLUME_LOW_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
+        RefCell::new(SettingsTrayRenderState::new(Instant::now()));
+    static VOLUME_HIGH_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
+        RefCell::new(SettingsTrayRenderState::new(Instant::now()));
+    static RESTART_HOLDING_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
+        RefCell::new(SettingsTrayRenderState::new(Instant::now()));
+    static RESTART_DECLINED_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
         RefCell::new(SettingsTrayRenderState::new(Instant::now()));
 }
 
@@ -194,6 +227,10 @@ fn device_info(ctx: &mut StoryCtx) {
 }
 
 #[story]
+#[expect(
+    clippy::too_many_lines,
+    reason = "flat list of one tray cell per capability and per new state"
+)]
 fn settings_tray(ctx: &mut StoryCtx) {
     let checker = ctx.toggle("Backdrop", true).get();
     ctx.ui.grid(1, 16.0, |grid| {
@@ -211,6 +248,90 @@ fn settings_tray(ctx: &mut StoryCtx) {
             ui.div_custom(
                 (bmm101.width, bmm101.height),
                 settings_tray_cell(bmm101, &BMM101_TRAY_RENDER_STATE, checker),
+            );
+        });
+        let bfm100 = bfm100_tray_view();
+        grid.cell(|ui| {
+            ui.header("Settings tray", "BFM100");
+            ui.div_custom(
+                (bfm100.width, bfm100.height),
+                settings_tray_cell(bfm100, &BFM100_TRAY_RENDER_STATE, checker),
+            );
+        });
+        let mut night_mode_active = bmc100_tray_view();
+        night_mode_active.night_mode = Some(NightModeView {
+            active: true,
+            until: "06:30".to_owned(),
+        });
+        grid.cell(|ui| {
+            ui.header("Settings tray", "Night mode active");
+            ui.div_custom(
+                (night_mode_active.width, night_mode_active.height),
+                settings_tray_cell(
+                    night_mode_active,
+                    &NIGHT_MODE_ACTIVE_TRAY_RENDER_STATE,
+                    checker,
+                ),
+            );
+        });
+        let mut night_mode_inactive = bmc100_tray_view();
+        night_mode_inactive.night_mode = Some(NightModeView {
+            active: false,
+            until: String::new(),
+        });
+        grid.cell(|ui| {
+            ui.header("Settings tray", "Night mode inactive, no schedule");
+            ui.div_custom(
+                (night_mode_inactive.width, night_mode_inactive.height),
+                settings_tray_cell(
+                    night_mode_inactive,
+                    &NIGHT_MODE_INACTIVE_TRAY_RENDER_STATE,
+                    checker,
+                ),
+            );
+        });
+        let mut volume_low = bmc100_tray_view();
+        volume_low.volume = 0;
+        grid.cell(|ui| {
+            ui.header("Settings tray", "Volume low");
+            ui.div_custom(
+                (volume_low.width, volume_low.height),
+                settings_tray_cell(volume_low, &VOLUME_LOW_TRAY_RENDER_STATE, checker),
+            );
+        });
+        let mut volume_high = bmc100_tray_view();
+        volume_high.volume = 100;
+        grid.cell(|ui| {
+            ui.header("Settings tray", "Volume high");
+            ui.div_custom(
+                (volume_high.width, volume_high.height),
+                settings_tray_cell(volume_high, &VOLUME_HIGH_TRAY_RENDER_STATE, checker),
+            );
+        });
+        let mut restart_holding = bmc100_tray_view();
+        restart_holding.restart = Some(RestartView {
+            label: "Keep holding…".to_owned(),
+        });
+        grid.cell(|ui| {
+            ui.header("Settings tray", "Restart holding");
+            ui.div_custom(
+                (restart_holding.width, restart_holding.height),
+                settings_tray_cell(restart_holding, &RESTART_HOLDING_TRAY_RENDER_STATE, checker),
+            );
+        });
+        let mut restart_declined = bmc100_tray_view();
+        restart_declined.restart = Some(RestartView {
+            label: "upgrade in progress".to_owned(),
+        });
+        grid.cell(|ui| {
+            ui.header("Settings tray", "Restart declined");
+            ui.div_custom(
+                (restart_declined.width, restart_declined.height),
+                settings_tray_cell(
+                    restart_declined,
+                    &RESTART_DECLINED_TRAY_RENDER_STATE,
+                    checker,
+                ),
             );
         });
     });
