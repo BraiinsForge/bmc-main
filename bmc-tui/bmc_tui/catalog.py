@@ -548,6 +548,67 @@ def check_for_upgrade(dev: Device, cycle: UpgradeCycle) -> str:
     return f"{console.lit(len(changes))} change(s): {names}"
 
 
+def _installable_widget_names(response: dict[str, Any]) -> list[str]:
+    """Package names from a ListInstallableWidgets response."""
+    return [w["packageName"] for w in response.get("widgets", [])]
+
+
+def _installed_package_names(list_packages_json: dict[str, Any]) -> list[str]:
+    """Package names from `bmc-nix-cli list-packages --json`."""
+    return [p["name"] for p in list_packages_json.get("packages", [])]
+
+
+@stage("Remove widget for reinstall")
+def remove_package(dev: Device, cycle: UpgradeCycle, widget: str) -> str:
+    dev.run(
+        f"PATH=/run/current-profile/bin:$PATH {shlex.quote(_NIX_CLI)} "
+        f"remove-packages --name {shlex.quote(widget)}"
+    )
+    return f"removed {widget}"
+
+
+@stage("List installable widgets")
+def list_installable_widgets(dev: Device, cycle: UpgradeCycle, widget: str) -> str:
+    response = _grpcurl(dev, "UpgradeService/ListInstallableWidgets", cookie=cycle.cookie)
+    names = _installable_widget_names(response)
+    if widget not in names:
+        raise Abort(f"{widget} not offered as installable; got {names}")
+    entry = next(w for w in response["widgets"] if w["packageName"] == widget)
+    for key in ("uid", "displayName", "category", "icon"):
+        if not entry.get(key):
+            raise Abort(f"{widget} missing {key} in discovery: {entry}")
+    return f"{widget} installable (uid {entry['uid']})"
+
+
+@stage("Check for install")
+def check_for_install(dev: Device, cycle: UpgradeCycle, widget: str) -> str:
+    response = _grpcurl(
+        dev,
+        "UpgradeService/CheckForUpgrade",
+        data={"installPackages": [widget]},
+        cookie=cycle.cookie,
+    )
+    changes = response.get("packages", {}).get("changes", [])
+    added = [c for c in changes if c.get("name") == widget and "versionFrom" not in c]
+    if not added:
+        raise Abort(f"{widget} not an added change in the plan: {changes}")
+    cycle.upgrade_id = response.get("upgradeId")
+    if not cycle.upgrade_id:
+        raise Abort("check returned no upgradeId")
+    return f"{widget} planned as install ({cycle.upgrade_id})"
+
+
+@stage("Verify widget installed")
+def verify_widget_installed(dev: Device, widget: str) -> str:
+    raw = dev.read(
+        f"PATH=/run/current-profile/bin:$PATH {shlex.quote(_NIX_CLI)} list-packages --json"
+    )
+    installed = _installed_package_names(json.loads(raw))
+    if widget not in installed:
+        raise Abort(f"{widget} not in list-packages after install: {installed}")
+    return f"{widget} present in profile"
+
+
 @stage("Run upgrade")
 def run_upgrade(dev: Device, cycle: UpgradeCycle) -> str:
     upgrade_id = cycle.upgrade_id
