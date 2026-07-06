@@ -881,14 +881,14 @@ mod tests {
     #[test]
     fn merge_indexes_ignores_cache_metadata() {
         let merged = merge_indexes(vec![fetched(
-            "braiins",
+            "forge",
             10,
             vec![versioned_package("clock", "1.0.0", "/nix/store/clock")],
         )]);
 
         let pkg = &merged.packages[0];
         assert_eq!(pkg.name, "clock");
-        assert_eq!(pkg.server_id, "braiins");
+        assert_eq!(pkg.server_id, "forge");
         assert_eq!(pkg.store_path, "/nix/store/clock");
     }
 
@@ -898,7 +898,7 @@ mod tests {
             versioned_package("good", "1.0.0", "/nix/store/good"),
             versioned_package("bad", "not-semver", "/nix/store/bad"),
         ];
-        let merged = merge_indexes(vec![fetched("braiins", 10, packages)]);
+        let merged = merge_indexes(vec![fetched("forge", 10, packages)]);
 
         assert_eq!(
             merged.packages.len(),
@@ -951,7 +951,7 @@ mod tests {
     #[test]
     fn merge_indexes_includes_two_component_version() {
         let merged = merge_indexes(vec![fetched(
-            "braiins",
+            "forge",
             10,
             vec![versioned_package("bos-avahi", "0.8", "/nix/store/avahi")],
         )]);
@@ -1225,7 +1225,7 @@ mod tests {
     fn resolve_installed_package_prefers_same_server_when_allowed_by_pin() {
         let merged = merge_indexes(vec![
             fetched(
-                "braiins",
+                "forge",
                 20,
                 vec![versioned_package("clock", "1.2.0", "/nix/store/same")],
             ),
@@ -1243,14 +1243,14 @@ mod tests {
             upgrade_strategy: None,
             install_strategy: None,
             installed_by: InstalledBy::System,
-            installed_from: "braiins".into(),
+            installed_from: "forge".into(),
             pinned: Some("^1.0.0".to_owned()),
         };
 
         let resolved = resolve_installed_package(&merged, "clock", &current)
             .expect("BUG: package should resolve");
 
-        assert_eq!(resolved.installed_from, "braiins");
+        assert_eq!(resolved.installed_from, "forge");
         assert_eq!(resolved.version, "1.2.0");
     }
 
@@ -1291,7 +1291,7 @@ mod tests {
     #[test]
     fn resolve_installed_package_respects_patch_pin() {
         let merged = merge_indexes(vec![fetched(
-            "braiins",
+            "forge",
             10,
             vec![
                 versioned_package("clock", "1.0.0", "/nix/store/exact"),
@@ -1306,7 +1306,7 @@ mod tests {
             upgrade_strategy: None,
             install_strategy: None,
             installed_by: InstalledBy::System,
-            installed_from: "braiins".into(),
+            installed_from: "forge".into(),
             pinned: Some("1.0.0".to_owned()),
         };
 
@@ -1319,7 +1319,7 @@ mod tests {
     #[test]
     fn resolve_installed_package_unpinned_resolves_latest() {
         let merged = merge_indexes(vec![fetched(
-            "braiins",
+            "forge",
             10,
             vec![
                 versioned_package("clock", "1.2.0", "/nix/store/v120"),
@@ -1334,7 +1334,7 @@ mod tests {
             upgrade_strategy: None,
             install_strategy: None,
             installed_by: InstalledBy::System,
-            installed_from: "braiins".into(),
+            installed_from: "forge".into(),
             pinned: None,
         };
 
@@ -1347,7 +1347,7 @@ mod tests {
     #[test]
     fn resolve_installed_package_range_pin_limits_upgrade() {
         let merged = merge_indexes(vec![fetched(
-            "braiins",
+            "forge",
             10,
             vec![
                 versioned_package("clock", "1.2.5", "/nix/store/v125"),
@@ -1362,7 +1362,7 @@ mod tests {
             upgrade_strategy: None,
             install_strategy: None,
             installed_by: InstalledBy::System,
-            installed_from: "braiins".into(),
+            installed_from: "forge".into(),
             pinned: Some("~1.2".to_owned()),
         };
 
@@ -1375,7 +1375,7 @@ mod tests {
     #[test]
     fn resolve_installed_package_refuses_downgrade_when_index_only_older() {
         let merged = merge_indexes(vec![fetched(
-            "braiins",
+            "forge",
             10,
             vec![versioned_package("clock", "1.4.0", "/nix/store/v140")],
         )]);
@@ -1387,7 +1387,7 @@ mod tests {
             upgrade_strategy: None,
             install_strategy: None,
             installed_by: InstalledBy::System,
-            installed_from: "braiins".into(),
+            installed_from: "forge".into(),
             pinned: Some("^1.0.0".to_owned()),
         };
 
@@ -1403,7 +1403,7 @@ mod tests {
     #[test]
     fn resolve_installed_package_upgrades_to_newer_in_pin() {
         let merged = merge_indexes(vec![fetched(
-            "braiins",
+            "forge",
             10,
             vec![versioned_package("clock", "1.1.0", "/nix/store/v110")],
         )]);
@@ -1415,7 +1415,7 @@ mod tests {
             upgrade_strategy: None,
             install_strategy: None,
             installed_by: InstalledBy::System,
-            installed_from: "braiins".into(),
+            installed_from: "forge".into(),
             pinned: Some("^1.0.0".to_owned()),
         };
 
@@ -1429,7 +1429,7 @@ mod tests {
     #[test]
     fn resolve_installed_package_allows_same_version_store_path_rebuild() {
         let merged = merge_indexes(vec![fetched(
-            "braiins",
+            "forge",
             10,
             vec![versioned_package("clock", "1.0.0", "/nix/store/rebuilt")],
         )]);
@@ -1441,7 +1441,7 @@ mod tests {
             upgrade_strategy: None,
             install_strategy: None,
             installed_by: InstalledBy::System,
-            installed_from: "braiins".into(),
+            installed_from: "forge".into(),
             pinned: None,
         };
 
@@ -1455,7 +1455,7 @@ mod tests {
     #[test]
     fn resolve_installed_two_component_current_upgrades_to_newer() {
         let merged = merge_indexes(vec![fetched(
-            "braiins",
+            "forge",
             10,
             vec![
                 versioned_package("avahi", "0.8", "/nix/store/v08"),
@@ -1470,7 +1470,7 @@ mod tests {
             upgrade_strategy: None,
             install_strategy: None,
             installed_by: InstalledBy::System,
-            installed_from: "braiins".into(),
+            installed_from: "forge".into(),
             pinned: None,
         };
 
@@ -1483,7 +1483,7 @@ mod tests {
     #[test]
     fn resolve_installed_two_component_current_resolves_same_version() {
         let merged = merge_indexes(vec![fetched(
-            "braiins",
+            "forge",
             10,
             vec![versioned_package("avahi", "0.8", "/nix/store/v08")],
         )]);
@@ -1495,7 +1495,7 @@ mod tests {
             upgrade_strategy: None,
             install_strategy: None,
             installed_by: InstalledBy::System,
-            installed_from: "braiins".into(),
+            installed_from: "forge".into(),
             pinned: None,
         };
 
@@ -1581,7 +1581,7 @@ mod tests {
     #[test]
     fn resolve_installed_two_component_current_refuses_downgrade() {
         let merged = merge_indexes(vec![fetched(
-            "braiins",
+            "forge",
             10,
             vec![versioned_package("avahi", "0.7", "/nix/store/v07")],
         )]);
@@ -1593,7 +1593,7 @@ mod tests {
             upgrade_strategy: None,
             install_strategy: None,
             installed_by: InstalledBy::System,
-            installed_from: "braiins".into(),
+            installed_from: "forge".into(),
             pinned: None,
         };
 
