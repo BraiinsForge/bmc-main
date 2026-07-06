@@ -4,7 +4,11 @@
 # and produces a JSON index file that bmc-nix-cli can consume.
 { pkgs, lib }:
 { packages # [ { pkg; name; version; category; description;
-  #     upgrade_strategy; install_strategy; cache ? null; } ]
+  #     upgrade_strategy; install_strategy; cache ? null;
+  #     metadata ? { } } ]
+  #   metadata is a free-form JSON map; the core entry carries
+  #   bmc_version and optionally changelog, and widget entries carry
+  #   nested `widget` picker fields and an `assets` map.
 , caches ? [ ] # [ { name; cache_url; cache_key; } ]
 , indexes ? [ ] # [ "https://..." ] — federated index URLs
 , commit ? "" # git commit hash for provenance field
@@ -17,6 +21,8 @@ let
     description = p.description or null;
     upgrade_strategy = p.upgrade_strategy or null;
     install_strategy = p.install_strategy or null;
+  } // lib.optionalAttrs (p ? metadata && p.metadata != null) {
+    inherit (p) metadata;
   } // lib.optionalAttrs (p ? cache && p.cache != null) {
     inherit (p) cache;
   };
