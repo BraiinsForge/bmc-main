@@ -290,7 +290,8 @@ impl From<SystemUpgradeError> for Status {
             | SystemUpgradeError::FailedToDownload(_)
             | SystemUpgradeError::UnableToCheckForUpgrade(_)
             | SystemUpgradeError::UpgradeFailed
-            | SystemUpgradeError::PackageUpgradeFailed(_) => Status::internal(value.to_string()),
+            | SystemUpgradeError::PackageUpgradeFailed(_)
+            | SystemUpgradeError::PendingInstallWriteFailed(_) => Status::internal(value.to_string()),
             // Configuration/manifest/index-shape/plan failures cannot proceed
             // until the package source or profile is corrected; a transient
             // fetch is a server-side transport fault.

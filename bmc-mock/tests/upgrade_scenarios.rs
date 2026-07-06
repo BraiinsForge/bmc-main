@@ -610,6 +610,55 @@ async fn firmware_apply_fail_errors_after_verify() {
 }
 
 #[tokio::test]
+async fn failed_firmware_apply_leaves_no_pending_install_handoff() {
+    let mut mock = spawn_mock(
+        r#"{"firmware": "available", "packages": "unavailable", "run": "apply-fail", "shadowed_packages": ["widget-flip-clock"]}"#,
+    );
+    let mut client = upgrade_client(&mut mock).await;
+    let response = client
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec!["widget-flip-clock".to_owned()],
+        })
+        .await
+        .expect("BUG: check failed")
+        .into_inner();
+    let upgrade_id = response.upgrade_id.expect("BUG: upgrade id");
+
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest { upgrade_id })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+
+    let (_, error) = drain_until_error(&mut stream).await;
+    assert_eq!(error.code(), tonic::Code::Internal);
+
+    // The failed firmware run must not leave a pending-install handoff on
+    // disk. A later, unrelated successful firmware upgrade that requested no
+    // install would otherwise consume it and install widgets nobody asked for.
+    let handoff = mock.mockfs.join("tmp/bmc-nix-pending-install.json");
+    assert!(
+        !handoff.exists(),
+        "stale pending-install handoff left after a failed firmware upgrade: {}",
+        handoff.display()
+    );
+
+    // The requested widget stays shadowed (uninstalled) after the failed run.
+    let after = client
+        .get_installable_widgets(())
+        .await
+        .expect("BUG: list failed")
+        .into_inner();
+    assert!(
+        after
+            .widgets
+            .iter()
+            .any(|w| w.package_name == "widget-flip-clock"),
+        "flip-clock must remain installable after a failed firmware upgrade"
+    );
+}
+
+#[tokio::test]
 async fn unknown_upgrade_id_expires() {
     let mut mock = spawn_mock(r#"{"firmware": "available"}"#);
     let mut client = upgrade_client(&mut mock).await;

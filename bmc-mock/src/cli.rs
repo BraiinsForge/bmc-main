@@ -132,6 +132,7 @@ impl From<Config> for Configuration {
             capture_widget_output: false,
             nix_servers_config_path: value.mockfs_path.join("etc/nix-upgrade/servers.json"),
             nix_profile_dir: value.mockfs_path.join("nix/profiles/bmc"),
+            pending_install_path: value.mockfs_path.join("tmp/bmc-nix-pending-install.json"),
             nix_hooks_dir: "hooks".to_owned(),
             nix_hooks_override_path: None,
         }
