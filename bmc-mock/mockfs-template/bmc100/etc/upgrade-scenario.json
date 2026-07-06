@@ -2,5 +2,10 @@
   "firmware": "available",
   "packages": "available",
   "run": "success",
-  "package_action": "nothing"
+  "package_action": "nothing",
+  "shadowed_packages": [
+    "widget-flip-clock",
+    "widget-weather",
+    "widget-mining-clock"
+  ]
 }

@@ -1042,6 +1042,15 @@ mod tests {
         ) -> Result<(), bmc_upgrade::packages::ApplyError> {
             Ok(())
         }
+
+        async fn list_installable_widgets(
+            &self,
+        ) -> Result<
+            Vec<bmc_upgrade::packages::InstallableWidget>,
+            bmc_upgrade::packages::PackageProbeError,
+        > {
+            Ok(Vec::new())
+        }
     }
 
     #[tokio::test]
