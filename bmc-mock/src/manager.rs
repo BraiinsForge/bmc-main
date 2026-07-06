@@ -177,6 +177,11 @@ impl bmc::BmcManager for Manager {
 
         tokio::time::sleep(self.pacing.sysupgrade_duration()).await;
 
+        crate::scenario::consume_pending_install(
+            &self.mockfs.pending_install(),
+            &self.mockfs.upgrade_scenario(),
+        );
+
         let reboot_delay = self.pacing.shutdown_delay();
         tokio::spawn(async move {
             tokio::time::sleep(reboot_delay).await;
