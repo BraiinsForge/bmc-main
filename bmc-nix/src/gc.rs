@@ -15,13 +15,13 @@ pub enum CleanupGenerationsError {
     #[error("generation cleanup failed: {0}")]
     Cleanup(#[source] std::io::Error),
     #[error(
-        "failed to remove {failed} of {attempted} generation(s); \
-         first failure was generation {first_gen}: {first_error}"
+        "failed to remove {failed} of {attempted} profile entries; \
+         first failure was {first_entry}: {first_error}"
     )]
     RemovalFailures {
         attempted: usize,
         failed: usize,
-        first_gen: usize,
+        first_entry: String,
         #[source]
         first_error: std::io::Error,
     },
@@ -172,6 +172,30 @@ fn parse_binary_size(s: &str) -> Option<u64> {
     Some((value * multiplier) as u64)
 }
 
+/// Leftover temp entry in a profile directory: any `*.tmp`. The
+/// atomic-swap idioms stage `<N>-link.tmp` (build), `.next.tmp` (staging),
+/// and `current.tmp` (activation repoint), then rename them into place; a
+/// crash between create and rename orphans the temp, and because it sits
+/// under the gcroots profile directory every symlink inside pins its store
+/// path until the entry is removed. The sweep holds the profile lock, so
+/// any `*.tmp` present is necessarily orphaned — an in-flight swap would
+/// hold the lock itself.
+fn is_leftover_tmp_name(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("tmp"))
+}
+
+/// Remove a leftover temp entry, which may be a directory tree
+/// (`<N>-link.tmp`) or a bare symlink (`.next.tmp`).
+fn remove_leftover_tmp(path: &Path) -> Result<(), std::io::Error> {
+    if std::fs::symlink_metadata(path)?.is_dir() {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    }
+}
+
 /// Generation number named by a `<N>-link` symlink target, if any.
 fn generation_number_of(target: &Path) -> Option<usize> {
     let name = target.file_name()?.to_str()?;
@@ -236,8 +260,9 @@ fn next_generation_numbers(profile_dir: &Path) -> Result<Vec<usize>, std::io::Er
 ///   e.g. the previous generation the orchestration layer still needs to
 ///   read after activation).
 ///
-/// Removes everything else by deleting the generation directory. Returns
-/// `Ok(())` when `profile_dir` does not exist.
+/// Removes everything else by deleting the generation directory, along
+/// with any leftover `*.tmp` entries orphaned by a failed build, staging,
+/// or activation swap. Returns `Ok(())` when `profile_dir` does not exist.
 pub fn cleanup_generations(
     profile_dir: &Path,
     gc_config: &GcConfig,
@@ -250,15 +275,19 @@ pub fn cleanup_generations(
     let entries = std::fs::read_dir(profile_dir).map_err(CleanupGenerationsError::Cleanup)?;
 
     let mut generations: Vec<usize> = Vec::new();
+    let mut leftover_tmp: Vec<String> = Vec::new();
     for entry in entries {
         let entry = entry.map_err(CleanupGenerationsError::Cleanup)?;
         let name = entry.file_name();
-        if let Some(num) = crate::profile::parse_generation_link_name(&name.to_string_lossy()) {
+        let name = name.to_string_lossy();
+        if let Some(num) = crate::profile::parse_generation_link_name(&name) {
             generations.push(num);
+        } else if is_leftover_tmp_name(&name) {
+            leftover_tmp.push(name.into_owned());
         }
     }
 
-    if generations.is_empty() {
+    if generations.is_empty() && leftover_tmp.is_empty() {
         return Ok(());
     }
 
@@ -311,7 +340,7 @@ pub fn cleanup_generations(
     // permissions glitch on one generation must not leave later
     // generations un-attempted).
     let mut attempted: usize = 0;
-    let mut first_failure: Option<(usize, std::io::Error)> = None;
+    let mut first_failure: Option<(String, std::io::Error)> = None;
     let mut failed: usize = 0;
     for &gen_num in &generations {
         if keep.contains(&gen_num) {
@@ -319,7 +348,8 @@ pub fn cleanup_generations(
         }
 
         attempted += 1;
-        let gen_dir = profile_dir.join(crate::profile::generation_link_name(gen_num));
+        let gen_name = crate::profile::generation_link_name(gen_num);
+        let gen_dir = profile_dir.join(&gen_name);
         info!(generation = gen_num, path = %gen_dir.display(), "removing old generation");
         if let Err(e) = std::fs::remove_dir_all(&gen_dir) {
             warn!(
@@ -329,16 +359,33 @@ pub fn cleanup_generations(
             );
             failed += 1;
             if first_failure.is_none() {
-                first_failure = Some((gen_num, e));
+                first_failure = Some((gen_name, e));
             }
         }
     }
 
-    if let Some((first_gen, first_error)) = first_failure {
+    // Sweep leftover temp entries orphaned by failed builds or staging.
+    // The caller holds the profile lock for the whole cleanup, and builds
+    // and staging run under that same lock, so no concurrent build can be
+    // using these entries here.
+    for name in &leftover_tmp {
+        attempted += 1;
+        let path = profile_dir.join(name);
+        info!(path = %path.display(), "removing leftover temp entry");
+        if let Err(e) = remove_leftover_tmp(&path) {
+            warn!(path = %path.display(), "failed to remove leftover temp entry: {e}");
+            failed += 1;
+            if first_failure.is_none() {
+                first_failure = Some((name.clone(), e));
+            }
+        }
+    }
+
+    if let Some((first_entry, first_error)) = first_failure {
         return Err(CleanupGenerationsError::RemovalFailures {
             attempted,
             failed,
-            first_gen,
+            first_entry,
             first_error,
         });
     }
@@ -739,6 +786,66 @@ mod tests {
             "gen 2 must be kept because it is in keep_extra"
         );
         assert!(generation_exists(&profile_dir, 3), "gen 3 is current");
+    }
+
+    #[test]
+    fn cleanup_removes_leftover_tmp_entries() {
+        // A crashed atomic swap can orphan any `*.tmp` under the gcroots
+        // profile directory — `<N>-link.tmp` from a build, `.next.tmp` from
+        // staging, `current.tmp` from an activation repoint — where every
+        // symlink inside keeps store paths alive. GC sweeps every `*.tmp`
+        // regardless of prefix while leaving real generations and `current`
+        // untouched.
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+
+        for n in 1..=2 {
+            create_generation(&profile_dir, n);
+        }
+        set_current(&profile_dir, 2);
+
+        let stray_build = profile_dir.join("7-link.tmp");
+        std::fs::create_dir_all(&stray_build).expect("BUG: mkdir stray build");
+        std::os::unix::fs::symlink("/nix/store/fake-pkg", stray_build.join("pkg"))
+            .expect("BUG: symlink in stray build");
+        std::os::unix::fs::symlink("7-link", profile_dir.join(".next.tmp"))
+            .expect("BUG: symlink stray next");
+        std::os::unix::fs::symlink("2-link", profile_dir.join("current.tmp"))
+            .expect("BUG: symlink stray current");
+        std::os::unix::fs::symlink("1-link", profile_dir.join("orphan.tmp"))
+            .expect("BUG: symlink arbitrary stray");
+
+        let gc_config = GcConfig {
+            keep_generations: 2,
+            keep_days: None,
+            protected_generations: vec![],
+        };
+        cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
+
+        assert!(
+            profile_dir.join("7-link.tmp").symlink_metadata().is_err(),
+            "leftover build tmp dir must be removed"
+        );
+        assert!(
+            profile_dir.join(".next.tmp").symlink_metadata().is_err(),
+            "leftover staging tmp symlink must be removed"
+        );
+        assert!(
+            profile_dir.join("current.tmp").symlink_metadata().is_err(),
+            "leftover activation swap tmp must be removed"
+        );
+        assert!(
+            profile_dir.join("orphan.tmp").symlink_metadata().is_err(),
+            "any *.tmp must be removed regardless of prefix"
+        );
+        assert!(generation_exists(&profile_dir, 1));
+        assert!(generation_exists(&profile_dir, 2));
+        assert_eq!(
+            std::fs::read_link(profile_dir.join("current")).expect("BUG: read current"),
+            Path::new("2-link"),
+            "current must be left intact"
+        );
     }
 
     #[test]
