@@ -994,6 +994,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn nested_widget_metadata_survives_merge_and_resolve() {
+        let json = r#"{"version":1,"provenance":null,"indexes":[],"caches":[],"packages":[
+          {"name":"widget-weather","version":"1.3.0","store_path":"/nix/store/w",
+           "category":"widget",
+           "metadata":{"widget":{"uid":"uid-weather","display_name":"Weather","category":"info"},
+                       "assets":{"icon":"/nix/store/w/lib/bmc-widgets/weather/icon.svg"}}}
+        ]}"#;
+        let raw: PackageIndex = serde_json::from_str(json).expect("BUG: parse");
+        let merged = merge_indexes(vec![FetchedIndex {
+            server_id: "srv".to_owned(),
+            server_priority: 10,
+            index: raw,
+        }]);
+        let resolved = resolve_new_package(&merged, "widget-weather", None, InstalledBy::User)
+            .expect("BUG: resolve failed");
+        assert_eq!(
+            resolved.metadata["widget"]["uid"].as_str(),
+            Some("uid-weather")
+        );
+        assert_eq!(
+            resolved.metadata["assets"]["icon"].as_str(),
+            Some("/nix/store/w/lib/bmc-widgets/weather/icon.svg")
+        );
+    }
+
     // ---- resolve_new_package tests ----
 
     #[test]
