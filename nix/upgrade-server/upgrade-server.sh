@@ -16,6 +16,11 @@ Options:
   --package NAME=VERSION=STORE_PATH
                      Index entry (repeatable). Overrides a same-name
                      entry from --base-index.
+  --widget NAME=VERSION=STORE_PATH
+                     Widget index entry (repeatable). Reads the widget's
+                     bundled manifest.json and attaches picker metadata
+                     (uid, name, category) and an icon asset so the
+                     frontend add-a-widget menu can list it.
   --base-index FILE  Existing nix-package-index.v1.json used as the
                      baseline. The served index must contain every
                      installed system package (at minimum core), or the
@@ -41,6 +46,7 @@ host=""
 key_dir="${XDG_STATE_HOME:-$HOME/.local/state}/bmc-upgrade-server"
 base_index=""
 packages=()
+widgets=()
 
 while [ $# -gt 0 ]; do
     arg="$1"
@@ -49,12 +55,13 @@ while [ $# -gt 0 ]; do
         usage
         exit 0
         ;;
-    --package | --base-index | --port | --index-port | --host | --key-dir)
+    --package | --widget | --base-index | --port | --index-port | --host | --key-dir)
         [ $# -ge 2 ] || die "missing value for $arg"
         value="$2"
         shift 2
         case "$arg" in
         --package) packages+=("$value") ;;
+        --widget) widgets+=("$value") ;;
         --base-index) base_index="$value" ;;
         --port) port="$value" ;;
         --index-port) index_port="$value" ;;
@@ -69,9 +76,9 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-if [ "${#packages[@]}" -eq 0 ]; then
+if [ "${#packages[@]}" -eq 0 ] && [ "${#widgets[@]}" -eq 0 ]; then
     usage >&2
-    die "at least one --package NAME=VERSION=STORE_PATH is required"
+    die "at least one --package or --widget NAME=VERSION=STORE_PATH is required"
 fi
 [ -n "$index_port" ] || index_port=$((port + 1))
 
@@ -123,6 +130,49 @@ for spec in "${packages[@]}"; do
        upgrade_strategy: null,
        install_strategy: null
      }]' "$index_file" >"$index_file.tmp"
+    mv "$index_file.tmp" "$index_file"
+done
+
+# A widget package bundles its manifest.json next to the icon under
+# lib/bmc-widgets/<name>/. Synthesize the same picker metadata the nix
+# index tooling emits (uid, display name, category, and an icon asset
+# pointing into the store), so the frontend add-a-widget menu can list
+# the widget. metadata.assets store paths are rewritten to URLs below.
+for spec in "${widgets[@]}"; do
+    IFS='=' read -r name version store_path <<<"$spec"
+    if [ -z "$name" ] || [ -z "$version" ] || [ -z "$store_path" ]; then
+        die "invalid --widget '$spec', expected NAME=VERSION=STORE_PATH"
+    fi
+    [ -e "$store_path" ] || die "store path does not exist: $store_path"
+    manifest=""
+    for m in "$store_path"/lib/bmc-widgets/*/manifest.json; do
+        [ -e "$m" ] || continue
+        [ -z "$manifest" ] || die "widget '$name' bundles more than one manifest"
+        manifest="$m"
+    done
+    [ -n "$manifest" ] \
+        || die "no widget manifest under $store_path/lib/bmc-widgets"
+    widget_dir=$(dirname "$manifest")
+    entry=$(jq --arg name "$name" --arg version "$version" \
+        --arg store_path "$store_path" --arg dir "$widget_dir" '{
+       name: $name,
+       version: $version,
+       store_path: $store_path,
+       category: "widget",
+       description: .description,
+       upgrade_strategy: null,
+       install_strategy: null,
+       metadata: (
+         { widget: (
+             { uid: .uid, display_name: .name, category: .category }
+             + (if .subname then { subname: .subname } else {} end)
+           ) }
+         + (if .icon then { assets: { icon: ($dir + "/" + .icon) } } else {} end)
+       )
+     }' "$manifest")
+    jq --argjson entry "$entry" \
+        '.packages = [.packages[] | select(.name != $entry.name)] + [$entry]' \
+        "$index_file" >"$index_file.tmp"
     mv "$index_file.tmp" "$index_file"
 done
 

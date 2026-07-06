@@ -412,26 +412,46 @@ def snapshot_profile(dev: Device, cycle: UpgradeCycle) -> str:
     )
 
 
-@stage("Start upgrade server")
-def start_upgrade_server(dev: Device, plan: Deployment, cycle: UpgradeCycle) -> str:
-    cycle.host = _local_addr(dev.host)
-    cycle.log_path = Path(tempfile.gettempdir()) / "bmc-upgrade-server.log"
+def _upgrade_server_argv(
+    *, host: str, port: int, index_port: int, key_dir: Path, built: list[Built]
+) -> list[str]:
+    """The ``nix run .#upgrade-server`` command for the built package set.
+
+    Widget packages (named ``widget-*``) go in as ``--widget`` so the server
+    reads their bundled manifest and attaches the picker metadata the frontend
+    add-a-widget menu needs; everything else is a plain ``--package`` entry.
+    """
     argv = [
         "nix",
         "run",
         _UPGRADE_SERVER_APP,
         "--",
         "--host",
-        cycle.host,
+        host,
         "--port",
-        str(cycle.port),
+        str(port),
         "--index-port",
-        str(cycle.index_port),
+        str(index_port),
         "--key-dir",
-        str(cycle.key_dir),
+        str(key_dir),
     ]
-    for built in plan.built:
-        argv += ["--package", f"{built.name}={built.version}={built.store_path}"]
+    for b in built:
+        flag = "--widget" if b.name.startswith("widget-") else "--package"
+        argv += [flag, f"{b.name}={b.version}={b.store_path}"]
+    return argv
+
+
+@stage("Start upgrade server")
+def start_upgrade_server(dev: Device, plan: Deployment, cycle: UpgradeCycle) -> str:
+    cycle.host = _local_addr(dev.host)
+    cycle.log_path = Path(tempfile.gettempdir()) / "bmc-upgrade-server.log"
+    argv = _upgrade_server_argv(
+        host=cycle.host,
+        port=cycle.port,
+        index_port=cycle.index_port,
+        key_dir=cycle.key_dir,
+        built=plan.built,
+    )
     with cycle.log_path.open("wb") as log:
         cycle.server = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT)
     _await_upgrade_server(cycle)
