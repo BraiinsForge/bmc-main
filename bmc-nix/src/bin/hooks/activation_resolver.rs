@@ -130,7 +130,6 @@ fn run(gen_path: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::os::fd::AsRawFd as _;
     use std::os::unix::fs::PermissionsExt as _;
     use std::path::{Path, PathBuf};
     use std::process::{Child, Command, Output};
@@ -563,19 +562,14 @@ mod tests {
         );
     }
 
-    fn lock_profile(profile_dir: &Path) -> std::fs::File {
+    fn lock_profile(profile_dir: &Path) -> bmc_log::flock::FileLock {
         std::fs::create_dir_all(profile_dir).expect("BUG: should create profile dir");
         let lock_path = profile_dir.join(".lock");
         let file = std::fs::File::create(&lock_path).expect("BUG: should create lock file");
 
-        // SAFETY: file owns a valid open fd for the duration of the call.
-        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        assert_eq!(
-            result, 0,
-            "BUG: test should acquire the profile lock before running entrypoint"
-        );
-
-        file
+        bmc_log::flock::try_lock_file(file)
+            .expect("BUG: flock probe should not error")
+            .expect("BUG: test should acquire the profile lock before running entrypoint")
     }
 
     fn try_lock_profile(profile_dir: &Path) -> bool {
@@ -583,9 +577,9 @@ mod tests {
         let lock_path = profile_dir.join(".lock");
         let file = std::fs::File::create(&lock_path).expect("BUG: should create lock file");
 
-        // SAFETY: file owns a valid open fd for the duration of the call.
-        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        result == 0
+        bmc_log::flock::try_lock_file(file)
+            .expect("BUG: flock probe should not error")
+            .is_some()
     }
 
     fn wait_for_path(path: &Path) {

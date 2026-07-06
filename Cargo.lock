@@ -1105,6 +1105,7 @@ name = "bmc-log"
 version = "0.1.0"
 dependencies = [
  "file-rotate",
+ "libc",
  "tempfile",
  "tracing",
  "tracing-subscriber",

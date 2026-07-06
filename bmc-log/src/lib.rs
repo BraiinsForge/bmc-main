@@ -4,9 +4,12 @@
 //!
 //! Every rotated log file has exactly one writer process: `file-rotate`
 //! is not multi-process safe, so a log path must never be opened by two
-//! processes at once. Binaries either own a rotated file ([`init_file`])
-//! or log to stderr ([`init_console`]).
+//! processes at once. Binaries either own a rotated file ([`init_file`]),
+//! log to stderr ([`init_console`]), or combine both behind a sidecar
+//! flock ([`init_file_and_console`]), which falls back to stderr only
+//! when the file is contended.
 
+use std::ffi::OsString;
 use std::io;
 use std::path::Path;
 use std::sync::Mutex;
@@ -18,6 +21,8 @@ use tracing_subscriber::filter::{FilterExt, LevelFilter, Targets};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, fmt};
 
+pub mod flock;
+
 /// Event target that routes captured widget output into the widget log
 /// file instead of the main one.
 pub const WIDGET_OUTPUT_TARGET: &str = "widget_output";
@@ -27,6 +32,66 @@ const LOG_ROTATE_THRESHOLD: usize = 512 * 1024;
 
 /// Number of rotated (compressed) files to keep.
 const LOG_ROTATE_FILES_KEEP: usize = 9;
+
+/// Result of [`init_file_and_console`]: keeps the sidecar log lock alive
+/// for the logging lifetime.
+#[derive(Debug)]
+pub struct FileConsoleGuard {
+    _lock: Option<flock::FileLock>,
+}
+
+fn lock_path_for(log_path: &Path) -> io::Result<std::path::PathBuf> {
+    let file_name = log_path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "log path has no file name"))?;
+    let mut lock_name = OsString::from(file_name);
+    lock_name.push(".lock");
+    Ok(log_path.with_file_name(lock_name))
+}
+
+fn try_lock_log_file(log_path: &Path) -> io::Result<Option<flock::FileLock>> {
+    let lock_path = lock_path_for(log_path)?;
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_path)?;
+
+    flock::try_lock_file(file)
+}
+
+fn open_locked_log_file(path: &Path) -> Result<(flock::FileLock, FileRotate<AppendCount>), String> {
+    let Some(lock) =
+        try_lock_log_file(path).map_err(|err| format!("failed to acquire log lock: {err}"))?
+    else {
+        return Err("log lock is already held by another process".to_owned());
+    };
+
+    let log_file = open_log_file(path).map_err(|err| format!("failed to open log file: {err}"))?;
+    Ok((lock, log_file))
+}
+
+/// Message-only stderr layer for events with target `console_target`,
+/// plus warnings and errors from any target.
+fn console_layer<S>(console_target: &'static str) -> impl tracing_subscriber::Layer<S>
+where
+    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+{
+    fmt::layer()
+        .with_ansi(false)
+        .without_time()
+        .with_level(false)
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .with_filter(
+            Targets::new()
+                .with_default(LevelFilter::WARN)
+                .with_target(console_target, LevelFilter::TRACE),
+        )
+}
 
 /// Open `path` as a size-rotated log writer, creating parent directories.
 fn open_log_file(path: &Path) -> io::Result<FileRotate<AppendCount>> {
@@ -62,6 +127,49 @@ pub fn init_file(path: &Path) -> io::Result<()> {
     tracing_subscriber::registry().with(file_layer).init();
     tracing::info!(log_path = %path.display(), "file logging initialized");
     Ok(())
+}
+
+/// Initialize tracing to a rotated log file at `path` plus a
+/// message-only stderr echo of events with target `console_target`.
+///
+/// The rotated file is guarded by a non-blocking sidecar flock so a
+/// concurrent process never opens the same rotated log. On lock
+/// contention (or any file setup failure) logging falls back to the
+/// console layer only and the returned guard carries the reason.
+///
+/// The console layer prints `console_target` events plus every `WARN`+
+/// event from any target to stderr. Stderr is therefore the human
+/// diagnostic channel and may carry library warnings; stdout stays
+/// reserved for machine-readable command output. Callers that pipe stdout
+/// are unaffected by this stderr noise.
+pub fn init_file_and_console(path: &Path, console_target: &'static str) -> FileConsoleGuard {
+    match open_locked_log_file(path) {
+        Ok((lock, log_file)) => {
+            // The console target is always kept, even when `RUST_LOG`
+            // would otherwise filter it out, so CLI diagnostics always
+            // reach the persisted log.
+            let file_layer = fmt::layer()
+                .with_ansi(false)
+                .with_writer(Mutex::new(log_file))
+                .with_filter(
+                    env_filter().or(Targets::new().with_target(console_target, LevelFilter::TRACE)),
+                );
+
+            tracing_subscriber::registry()
+                .with(file_layer)
+                .with(console_layer(console_target))
+                .init();
+            tracing::info!(log_path = %path.display(), "file logging initialized");
+            FileConsoleGuard { _lock: Some(lock) }
+        }
+        Err(reason) => {
+            tracing_subscriber::registry()
+                .with(console_layer(console_target))
+                .init();
+            eprintln!("file logging disabled: {reason}");
+            FileConsoleGuard { _lock: None }
+        }
+    }
 }
 
 /// Initialize tracing for a process that owns two rotated log files:

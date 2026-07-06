@@ -1,12 +1,15 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-use std::os::unix::io::AsRawFd as _;
 use std::path::{Path, PathBuf};
 
 use tracing::info;
 
 use crate::activation::ActivationError;
 use crate::types::{ProfileGeneration, ResolvedPackage};
+
+/// RAII guard holding an exclusive `flock` on a profile directory's
+/// `.lock` file, released on drop.
+pub use bmc_log::flock::FileLock as ProfileLock;
 
 mod collisions;
 mod union;
@@ -75,23 +78,6 @@ pub fn parse_generation_link_name(name: &str) -> Option<usize> {
     name.strip_suffix("-link")?.parse::<usize>().ok()
 }
 
-/// RAII guard that holds an exclusive `flock` on a profile directory.
-///
-/// The lock is explicitly released via `LOCK_UN` on drop, then the file
-/// descriptor is closed. This avoids a race where `close()` alone may
-/// not release the lock atomically with respect to concurrent openers.
-#[derive(Debug)]
-pub struct ProfileLock {
-    file: std::fs::File,
-}
-
-impl Drop for ProfileLock {
-    fn drop(&mut self) {
-        // Explicitly unlock before close — ignore errors since we're in Drop
-        let _ = flock(&self.file, libc::LOCK_UN);
-    }
-}
-
 /// Open and prepare the lock file, returning the file handle.
 fn open_lock_file(profile_dir: &Path) -> Result<std::fs::File, BuildProfileError> {
     std::fs::create_dir_all(profile_dir).map_err(|source| BuildProfileError::CreateDir {
@@ -108,23 +94,6 @@ fn open_lock_file(profile_dir: &Path) -> Result<std::fs::File, BuildProfileError
         .map_err(|source| BuildProfileError::Lock { source })
 }
 
-/// Call `flock(2)` with the given flags.
-///
-/// # Safety
-///
-/// `file` must be an open file with a valid file descriptor.
-fn flock(file: &std::fs::File, flags: libc::c_int) -> Result<(), std::io::Error> {
-    // SAFETY: `file.as_raw_fd()` returns a valid, open file descriptor owned
-    // by `file`. The fd remains valid for the duration of the call because
-    // `file` is borrowed, preventing it from being dropped.
-    let ret = unsafe { libc::flock(file.as_raw_fd(), flags) };
-    if ret == 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
-}
-
 /// Acquire an exclusive lock on a profile directory.
 ///
 /// Creates `<profile_dir>/.lock` and holds an exclusive `flock(2)` on it.
@@ -135,8 +104,7 @@ pub async fn lock_profile(profile_dir: &Path) -> Result<ProfileLock, BuildProfil
     let file = open_lock_file(profile_dir)?;
 
     tokio::task::spawn_blocking(move || {
-        flock(&file, libc::LOCK_EX).map_err(|source| BuildProfileError::Lock { source })?;
-        Ok(ProfileLock { file })
+        bmc_log::flock::lock_file(file).map_err(|source| BuildProfileError::Lock { source })
     })
     .await
     .expect("BUG: lock task should not panic")
@@ -148,11 +116,7 @@ pub async fn lock_profile(profile_dir: &Path) -> Result<ProfileLock, BuildProfil
 pub fn try_lock_profile(profile_dir: &Path) -> Result<Option<ProfileLock>, BuildProfileError> {
     let file = open_lock_file(profile_dir)?;
 
-    match flock(&file, libc::LOCK_EX | libc::LOCK_NB) {
-        Ok(()) => Ok(Some(ProfileLock { file })),
-        Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
-        Err(source) => Err(BuildProfileError::Lock { source }),
-    }
+    bmc_log::flock::try_lock_file(file).map_err(|source| BuildProfileError::Lock { source })
 }
 
 /// Try to acquire an exclusive lock on a profile directory within a timeout.
@@ -177,8 +141,7 @@ pub async fn lock_profile_with_timeout(
     let file = open_lock_file(profile_dir)?;
 
     let handle = tokio::task::spawn_blocking(move || {
-        flock(&file, libc::LOCK_EX).map_err(|source| BuildProfileError::Lock { source })?;
-        Ok::<ProfileLock, BuildProfileError>(ProfileLock { file })
+        bmc_log::flock::lock_file(file).map_err(|source| BuildProfileError::Lock { source })
     });
 
     match tokio::time::timeout(timeout, handle).await {
