@@ -6,8 +6,9 @@
 { packages # [ { pkg; name; version; category; description;
   #     upgrade_strategy; install_strategy; cache ? null;
   #     metadata ? { } } ]
-  #   metadata is a free-form string map; the core entry carries
-  #   bmc_version and optionally changelog.
+  #   metadata is a free-form JSON map; the core entry carries
+  #   bmc_version and optionally changelog, and widget entries carry
+  #   nested `widget` picker fields and an `assets` map.
 , caches ? [ ] # [ { name; cache_url; cache_key; } ]
 , indexes ? [ ] # [ "https://..." ] — federated index URLs
 , commit ? "" # git commit hash for provenance field
