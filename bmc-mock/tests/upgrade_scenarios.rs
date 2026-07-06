@@ -234,17 +234,15 @@ async fn up_to_date_returns_empty_response() {
 }
 
 #[tokio::test]
-async fn up_to_date_with_fetch_failed_returns_empty_response() {
+async fn fetch_failed_surfaces_grpc_error() {
     let mut mock = spawn_mock(r#"{"firmware": "up-to-date", "packages": "fetch-failed"}"#);
     let mut client = upgrade_client(&mut mock).await;
-    let response = client
+    let status = client
         .check_for_upgrade(())
         .await
-        .expect("BUG: check failed")
-        .into_inner();
-    assert!(response.upgrade_id.is_none());
-    assert!(response.firmware.is_none());
-    assert!(response.packages.is_none());
+        .expect_err("package fetch failure must surface as a gRPC error");
+    assert_eq!(status.code(), tonic::Code::Internal);
+    assert!(status.message().starts_with("Cannot check for upgrade:"));
 }
 
 #[tokio::test]
@@ -259,17 +257,15 @@ async fn check_error_surfaces_grpc_error() {
 }
 
 #[tokio::test]
-async fn fetch_failed_drops_packages_keeps_firmware() {
+async fn package_failure_is_not_masked_by_available_firmware() {
     let mut mock = spawn_mock(r#"{"firmware": "available", "packages": "fetch-failed"}"#);
     let mut client = upgrade_client(&mut mock).await;
-    let response = client
+    let status = client
         .check_for_upgrade(())
         .await
-        .expect("BUG: check failed")
-        .into_inner();
-    assert!(response.firmware.is_some());
-    assert!(response.packages.is_none());
-    assert!(response.upgrade_id.is_some());
+        .expect_err("package failure must not be masked by firmware availability");
+    assert_eq!(status.code(), tonic::Code::Internal);
+    assert!(status.message().starts_with("Cannot check for upgrade:"));
 }
 
 #[tokio::test]
