@@ -86,6 +86,7 @@ pub(crate) enum UpgradeRunState {
 pub(crate) enum AvailableSystemUpgrade {
     Firmware {
         detail: UpgradeDetail,
+        install: Vec<String>,
     },
     Packages {
         merged: bmc_nix::types::MergedIndex,
@@ -107,6 +108,7 @@ fn select_offer(
     if let Some(detail) = firmware {
         return Some(AvailableSystemUpgrade::Firmware {
             detail: detail.clone(),
+            install: install.to_vec(),
         });
     }
     let preview = packages?;
@@ -145,6 +147,31 @@ fn one_shot(state: UpgradeRunState) -> UpgradeRunStream {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let _ = tx.send(state);
     UpgradeRunStream { rx }
+}
+
+fn record_pending_install(
+    install: &[String],
+    path: &std::path::Path,
+) -> Result<(), SystemUpgradeError> {
+    let pending = bmc_nix::pending_install::PendingInstall {
+        install: install.to_vec(),
+    };
+    bmc_nix::pending_install::write_pending_install(path, &pending)
+        .map_err(|err| SystemUpgradeError::PackageUpgradeFailed(err.to_string()))
+}
+
+/// Best-effort removal of a pending-install handoff after a firmware run that
+/// wrote one then failed to apply, so a later unrelated successful firmware
+/// upgrade cannot consume it and install widgets nobody requested. A missing
+/// file is the normal case when no install was pending, hence `debug`.
+fn clear_pending_install(install: &[String], path: &std::path::Path) {
+    if install.is_empty() {
+        return;
+    }
+    if let Err(err) = std::fs::remove_file(path) {
+        debug!(error = %err, path = %path.display(),
+            "No pending-install handoff to clear after failed firmware upgrade");
+    }
 }
 
 #[expect(clippy::cast_precision_loss)]
@@ -366,6 +393,7 @@ pub(crate) struct SystemUpgradeService<T: FirmwareIndex, U: BmcManager> {
     system_upgrades: Arc<Mutex<HashMap<String, AvailableSystemUpgrade>>>,
     package_backend: Arc<dyn PackageBackend>,
     widget_stopper: Arc<dyn WidgetStopper>,
+    pending_install_path: PathBuf,
 }
 
 impl<T, U> Clone for SystemUpgradeService<T, U>
@@ -385,11 +413,13 @@ where
             system_upgrades: self.system_upgrades.clone(),
             package_backend: self.package_backend.clone(),
             widget_stopper: self.widget_stopper.clone(),
+            pending_install_path: self.pending_install_path.clone(),
         }
     }
 }
 
 impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         firmware_index: T,
         upgrade_image_path: &PathBuf,
@@ -398,6 +428,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         scheduler: JobScheduler,
         package_backend: Arc<dyn PackageBackend>,
         widget_stopper: Arc<dyn WidgetStopper>,
+        pending_install_path: PathBuf,
     ) -> Self {
         let autoupgrade = AutoUpgrade::new(Notify::new(), Instant::now());
         let firmware_upgrader = FirmwareUpgrader::new(
@@ -416,6 +447,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             system_upgrades: Arc::new(Mutex::new(HashMap::new())),
             package_backend,
             widget_stopper,
+            pending_install_path,
         }
     }
 
@@ -498,7 +530,9 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             };
 
         let run = match upgrade {
-            AvailableSystemUpgrade::Firmware { detail } => self.spawn_firmware_run(gate, detail),
+            AvailableSystemUpgrade::Firmware { detail, install } => {
+                self.spawn_firmware_run(gate, detail, install)
+            }
             AvailableSystemUpgrade::Packages {
                 merged,
                 install,
@@ -519,12 +553,14 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         &self,
         gate: tokio::sync::OwnedMutexGuard<()>,
         detail: UpgradeDetail,
+        install: Vec<String>,
     ) -> UpgradeRunStream {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let firmware_upgrader = Arc::clone(&self.firmware_upgrader);
         let bmc_manager = Arc::clone(&self.bmc_manager);
         let widget_stopper = Arc::clone(&self.widget_stopper);
         let state_service = self.state_service.clone();
+        let pending_install_path = self.pending_install_path.clone();
         task::spawn(async move {
             let _gate = gate;
             let upgrader = firmware_upgrader.lock().await;
@@ -587,6 +623,17 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
 
             widget_stopper.stop_all_widgets().await;
 
+            // Written here, immediately before the flash hand-off, so the
+            // earlier download/verify failure returns can never leave a stale
+            // handoff behind; a successful upgrade writes-then-consumes it
+            // within the `bmc_manager.upgrade` call below.
+            if !install.is_empty()
+                && let Err(err) = record_pending_install(&install, &pending_install_path)
+            {
+                _ = tx.send(UpgradeRunState::Failed(err));
+                return;
+            }
+
             let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
             let adapter = ChannelUpgradeProgress::new(tx.clone(), state_service);
             let reader = task::spawn(async move {
@@ -618,6 +665,8 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 Err(err) => {
                     error!(error = %err, "Firmware upgrade failed");
                     widget_stopper.restart_widgets().await;
+                    // The only failure point after the handoff was written.
+                    clear_pending_install(&install, &pending_install_path);
                     let failure = match err {
                         crate::UpgradeError::InvalidImage => SystemUpgradeError::InvalidImage,
                         crate::UpgradeError::Failed(_) => SystemUpgradeError::UpgradeFailed,
@@ -909,6 +958,7 @@ mod tests {
             "upgrade-0".to_owned(),
             AvailableSystemUpgrade::Firmware {
                 detail: test_upgrade_detail(),
+                install: Vec::new(),
             },
         );
 
@@ -941,6 +991,7 @@ mod tests {
             "upgrade-0".to_owned(),
             AvailableSystemUpgrade::Firmware {
                 detail: test_upgrade_detail(),
+                install: Vec::new(),
             },
         );
 
@@ -1160,5 +1211,14 @@ mod tests {
             led_event(&UpgradeRunState::Finished),
             Some(SystemUpgradeState::Finished)
         ));
+    }
+
+    #[test]
+    fn records_pending_install_names_to_the_handoff() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("pending.json");
+        record_pending_install(&["widget-flip-clock".to_owned()], &path).expect("BUG: write");
+        let read = bmc_nix::pending_install::read_pending_install(&path).expect("BUG: read");
+        assert_eq!(read.install, vec!["widget-flip-clock".to_owned()]);
     }
 }
