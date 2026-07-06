@@ -132,6 +132,7 @@ where
                 widget_coordinator.clone(),
                 config_handle.clone(),
             )),
+            config.pending_install_path.clone(),
         );
 
         system_upgrade_service
@@ -379,6 +380,7 @@ pub struct Configuration {
     pub capture_widget_output: bool,
     pub nix_servers_config_path: PathBuf,
     pub nix_profile_dir: PathBuf,
+    pub pending_install_path: PathBuf,
     pub nix_hooks_dir: String,
     pub nix_hooks_override_path: Option<PathBuf>,
 }
@@ -394,6 +396,7 @@ impl Configuration {
     const CRONTAB_PATH: &str = "/etc/crontabs/root";
     const NIX_SERVERS_CONFIG_PATH: &str = "/etc/nix-upgrade/servers.json";
     const NIX_PROFILE_DIR: &str = "/nix/var/nix/gcroots/profiles/bmc";
+    const PENDING_INSTALL_PATH: &str = "/tmp/bmc-nix-pending-install.json";
     const NIX_HOOKS_DIR: &str = "hooks";
 }
 
@@ -414,6 +417,7 @@ impl Default for Configuration {
             capture_widget_output: false,
             nix_servers_config_path: PathBuf::from(Self::NIX_SERVERS_CONFIG_PATH),
             nix_profile_dir: PathBuf::from(Self::NIX_PROFILE_DIR),
+            pending_install_path: PathBuf::from(Self::PENDING_INSTALL_PATH),
             nix_hooks_dir: Self::NIX_HOOKS_DIR.to_owned(),
             nix_hooks_override_path: None,
         }
