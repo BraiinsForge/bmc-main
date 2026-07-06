@@ -3,10 +3,18 @@
 use chrono::NaiveDate;
 use reqwest::Client;
 use std::fmt::Debug;
+use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::downloader::Downloader;
+
+/// Maximum time the download may make no progress — no response headers
+/// after the request is sent, or no further body bytes mid-stream — before
+/// it is abandoned. A stalled TCP connection (alive but silent) would
+/// otherwise hold the upgrade run gate open forever. The timer resets on
+/// every received chunk, so a slow-but-progressing link is never penalised.
+const DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[async_trait::async_trait]
 pub trait FirmwareIndex: Send + Sync + Debug + 'static {
@@ -47,12 +55,23 @@ where
         let url = url.to_owned();
         let client = client.clone();
         _ = tokio::spawn(async move {
-            let Ok(mut response) = client.get(url).send().await else {
+            let send = tokio::time::timeout(DOWNLOAD_IDLE_TIMEOUT, client.get(url).send());
+            let Ok(Ok(mut response)) = send.await else {
                 _ = tx.send(Err(anyhow::anyhow!("Failed to get firmware")));
                 return;
             };
 
-            while let Ok(Some(chunk)) = response.chunk().await {
+            loop {
+                let chunk =
+                    match tokio::time::timeout(DOWNLOAD_IDLE_TIMEOUT, response.chunk()).await {
+                        Ok(Ok(Some(chunk))) => chunk,
+                        Ok(Ok(None)) => break,
+                        Ok(Err(_)) | Err(_) => {
+                            _ = tx.send(Err(anyhow::anyhow!("Failed to download firmware")));
+                            return;
+                        }
+                    };
+
                 let chunk_length = chunk.len();
                 if downloader.write_chunk(chunk).await.is_err() {
                     _ = tx.send(Err(anyhow::anyhow!("Failed to download firmware")));
