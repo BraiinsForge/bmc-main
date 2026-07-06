@@ -129,6 +129,28 @@ done
 base_url="http://$host:$index_port"
 cache_url="http://$host:$port"
 
+# Materialize widget assets referenced by store path in each package's
+# metadata.assets map and rewrite those paths to URLs this static server
+# hosts, so the frontend can fetch icons (and future previews) without
+# realizing a package. The store is world-readable; the symlink lives in
+# the ephemeral work_dir and is removed with it. store_path and other
+# metadata (bmc_version, widget picker fields) are left untouched.
+if jq -e '[.packages[].metadata.assets? // empty] | length > 0' "$index_file" >/dev/null; then
+    ln -s /nix/store "$work_dir/store"
+    jq --arg base "$base_url" '
+        .packages |= map(
+            if .metadata.assets? then
+                .metadata.assets |= walk(
+                    if type == "string" and startswith("/nix/store/")
+                    then $base + "/store/" + ltrimstr("/nix/store/")
+                    else . end
+                )
+            else . end
+        )
+    ' "$index_file" >"$index_file.tmp"
+    mv "$index_file.tmp" "$index_file"
+fi
+
 jq -n --arg base_url "$base_url" --arg key "$cache_public_key" \
     '{id: "dev-upgrade", type: "http", base_url: $base_url, known_public_key: $key, priority: 50, enabled: true}' \
     >"$work_dir/servers.json"
