@@ -418,6 +418,12 @@ pub struct SettingsTrayOverlay {
     /// cached panel without re-laying-out the tree.
     slide: Slide,
 
+    /// Capability set from the compositor. `None` until the first (v2-only)
+    /// capabilities event — and forever against a v1 compositor, which is the
+    /// centralized v1-fallback signal: hide every v2 control and fall back to
+    /// the locally derived product gates.
+    caps: Option<bmc_system_overlay::SettingsCaps>,
+
     pending_requests: Vec<SettingsRequest>,
 
     env: Box<dyn Env>,
@@ -471,6 +477,7 @@ impl SettingsTrayOverlay {
             dismissing: false,
             content_dirty: true,
             slide: Slide::default(),
+            caps: None,
             pending_requests: Vec::new(),
             env: Box::new(OsEnv),
         }
@@ -505,6 +512,19 @@ impl SettingsTrayOverlay {
         view.setup_ssid.clone_from(&self.setup_ssid);
         view.wifi_buttons = wifi_reconfig_supported(self.product);
         view.wifi_label = self.button.label();
+        if let Some(caps) = self.caps {
+            view.show_volume = caps.sound;
+            view.wifi_buttons = caps.wifi_setup;
+        } else {
+            // v1 compositor: exactly today's tray. Brightness + the
+            // product-gated WiFi buttons; every v2 control is hidden (its
+            // requests would be protocol violations and its events never
+            // arrive).
+            view.show_volume = false;
+            view.night_mode = None;
+            view.restart = None;
+            view.wifi_buttons = wifi_reconfig_supported(self.product);
+        }
         view
     }
 }
@@ -652,6 +672,13 @@ impl SystemOverlay for SettingsTrayOverlay {
         self.slide.start_reveal();
     }
 
+    fn on_capabilities(&mut self, caps: bmc_system_overlay::SettingsCaps) {
+        if self.caps != Some(caps) {
+            self.caps = Some(caps);
+            self.content_dirty = true;
+        }
+    }
+
     fn on_brightness(&mut self, value: u8) {
         if value != self.brightness {
             self.brightness = value;
@@ -791,7 +818,16 @@ impl SystemOverlay for SettingsTrayOverlay {
         // three; the painted pixels are discarded (the host exports no prewarm
         // buffer).
         let now = Instant::now();
-        let view = self.view();
+        let mut view = self.view();
+        view.show_volume = true;
+        view.wifi_buttons = true;
+        view.night_mode = Some(NightModeView {
+            active: false,
+            until: "06:30".to_owned(),
+        });
+        view.restart = Some(RestartView {
+            label: "Restart".to_owned(),
+        });
         let _ = render_settings_tray(
             renderer,
             (self.width, self.height),
@@ -1012,6 +1048,13 @@ mod view_tests {
     fn night_mode_event_reflects_into_view() {
         let now = Instant::now();
         let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        // Night mode shows only on a v2 compositor; establish one so the event
+        // is not gated off by the v1 fallback.
+        overlay.on_capabilities(bmc_system_overlay::SettingsCaps {
+            brightness: true,
+            sound: true,
+            wifi_setup: true,
+        });
         overlay.on_night_mode(true, "06:30");
         assert_eq!(
             overlay.view().night_mode,
@@ -1032,6 +1075,46 @@ mod view_tests {
             overlay.view().setup_ssid,
             None,
             "an empty AP SSID means setup inactive — the setup view must not show"
+        );
+    }
+
+    #[test]
+    fn v1_compositor_falls_back_to_product_gates_and_hides_v2_controls() {
+        let now = Instant::now();
+        let overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        // No capabilities event ever arrived (v1 compositor).
+        let view = overlay.view();
+        assert!(!view.show_volume, "volume is v2-only");
+        assert!(view.night_mode.is_none(), "night mode is v2-only");
+        assert!(view.restart.is_none(), "restart is v2-only");
+        assert!(
+            view.wifi_buttons,
+            "BMC100 keeps its product-gated WiFi buttons"
+        );
+    }
+
+    #[test]
+    fn capabilities_event_supersedes_the_local_product_gate() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        overlay.on_capabilities(bmc_system_overlay::SettingsCaps {
+            brightness: true,
+            sound: false,
+            wifi_setup: false,
+        });
+        let view = overlay.view();
+        assert!(!view.show_volume);
+        assert!(
+            !view.wifi_buttons,
+            "the compositor's word beats wifi_reconfig_supported(product)"
+        );
+        assert!(
+            view.night_mode.is_some(),
+            "night mode shows on every v2 compositor"
+        );
+        assert!(
+            view.restart.is_some(),
+            "restart shows on every v2 compositor"
         );
     }
 
