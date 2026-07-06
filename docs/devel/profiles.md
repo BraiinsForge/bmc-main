@@ -126,8 +126,10 @@ scripts.
 ## `current` Ownership
 
 The `current` symlink is written only by activation scripts, never by `bmc-nix` itself, in either the library or the
-CLI. The core package's `050-write-boundary` activation script moves `current` atomically, via a temporary symlink and
-`mv -Tf`. `095-link-current` then derives `/run/current-profile` from `current`.
+CLI. The core package's `998-write-boundary` activation script moves `current` atomically, via a temporary symlink and
+`mv -Tf`. It runs as the final activation step, so `current` advances to the new generation only after every other
+activation step has succeeded; a crash or failure before it leaves `current` on the previous generation.
+`095-link-current` derives `/run/current-profile` from the `current` path (not its target), so it tracks the later flip.
 
 Rollback works by re-activating a generation, which runs its activation entrypoint and moves `current` back through the
 same mechanism. Nothing outside activation scripts edits `current` or `/run/current-profile` directly.

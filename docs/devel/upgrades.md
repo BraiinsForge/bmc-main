@@ -69,7 +69,7 @@ An application-layer upgrade — the common case, no firmware change — runs en
    configured substituters. Missing store paths abort the upgrade.
 3. Build a new profile generation from the resolved package set (`bmc-nix` profile builder — symlink tree, hooks,
    manifest; see [`profiles.md`](profiles.md)).
-4. Run the generation's activation entrypoint, which atomically swaps `current` at the write boundary.
+4. Run the generation's activation entrypoint, which atomically swaps `current` as its final activation step.
 
 The previous generation stays on disk and remains the rollback target.
 
@@ -127,10 +127,12 @@ that does not build a replacement generation. A second `--next-boot` run before 
 target with the newly built generation.
 
 At boot, the `nix-activator` init script looks for `next.$(cat /etc/bos_version)`. When the marker for the running
-version is present and resolves to a generation directory, the script promotes it to `current`, runs the generation's
-activation entrypoint (with `PROFILE_OLD_GENERATION` naming the pre-promotion generation, so diff-driven activation
-scripts see the real old one), and consumes the marker only on success; on failure it restores `current` and falls
-through to activating the previous generation. Markers staged for other versions are removed as stale. When
+version is present and resolves to a generation directory, the script runs that generation's activation entrypoint with
+`current` still naming the previous generation — the entrypoint's final `write-boundary` step is the only thing that
+moves `current`, so a crash or failure before it leaves `current` on the previous generation. The entrypoint derives
+`PROFILE_OLD_GENERATION` from `current` itself, so diff-driven scripts see the real old generation without it being
+passed in. The marker is consumed only on success; on failure the script falls through to re-activating `current`
+(unchanged) to reconcile the live system. Markers staged for other versions are removed as stale. When
 `/etc/bos_version` is missing or empty, staleness is undecidable: all markers are left alone and `current` is activated.
 
 `bmc-nix-cli activate --generation next` implements the same contract in Rust (used by tests and the upgrade harness;
@@ -147,9 +149,10 @@ reverted activation still reports an error — `RevertedAfterFailure`, carrying 
 revert re-activation itself fails, the error is `RevertFailed`, carrying both the original and the revert failure.
 
 `bmc-nix` never writes the `current` symlink; only a generation's own activation scripts do. The core package's
-`050-write-boundary` activation script moves `current` atomically (a temporary symlink, then `mv -Tf`), and
-`095-link-current` derives `/run/current-profile` from it. Reverting to the old generation works by re-running its
-activation entrypoint, which moves `current` back through the same mechanism — never by editing symlinks directly.
+`998-write-boundary` activation script moves `current` atomically (a temporary symlink, then `mv -Tf`) as the final
+activation step, so `current` advances only after every other step has succeeded; `095-link-current` derives
+`/run/current-profile` from it. Reverting to the old generation works by re-running its activation entrypoint, which
+moves `current` back through the same mechanism — never by editing symlinks directly.
 
 The design intent is:
 
