@@ -85,6 +85,7 @@ pub enum PackageProbeError {
     ManifestReadFailed(String),
     PlanFailed(PackagePlanFailure),
     Unrealizable(String),
+    InstallTargetUnavailable(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +118,9 @@ impl std::fmt::Display for PackageProbeError {
                     f,
                     "package upgrade cannot be realized; no substituter provides: {paths}"
                 )
+            }
+            Self::InstallTargetUnavailable(detail) => {
+                write!(f, "requested package to install is unavailable: {detail}")
             }
         }
     }
@@ -175,10 +179,11 @@ pub struct ApplyError(pub String);
 /// available package changes and applying them.
 #[async_trait::async_trait]
 pub trait PackageBackend: Send + Sync + std::fmt::Debug + 'static {
-    async fn probe(&self, estimate: EstimateMode) -> PackageProbe;
+    async fn probe(&self, estimate: EstimateMode, install: &[String]) -> PackageProbe;
     async fn apply(
         &self,
         merged: bmc_nix::types::MergedIndex,
+        install: Vec<String>,
         progress: Arc<dyn bmc_nix::upgrade::UpgradeProgress>,
     ) -> Result<(), ApplyError>;
     async fn list_installable_widgets(&self) -> Result<Vec<InstallableWidget>, PackageProbeError>;
@@ -216,79 +221,93 @@ impl<N> PackageUpgrader<N> {
             nix,
         }
     }
-}
 
-#[async_trait::async_trait]
-impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
-    async fn probe(&self, estimate: EstimateMode) -> PackageProbe {
-        let config =
-            match bmc_nix::servers_config::load_servers_config(&self.config.servers_config_path) {
-                Ok(config) => config,
-                Err(err) => {
-                    warn!(error = %err, "Servers config unavailable");
-                    return PackageProbe::Failed(PackageProbeError::ServersConfigUnavailable(
-                        err.to_string(),
-                    ));
-                }
-            };
+    /// Shared prelude for `probe` and `list_installable_widgets`: load the
+    /// servers config, require an enabled server, fetch and merge the package
+    /// indexes, and read the profile manifest (current, falling back to
+    /// latest). Errors are mapped to `PackageProbeError`; each caller adapts
+    /// them to its own return shape.
+    async fn fetch_index_and_manifest(
+        &self,
+    ) -> Result<(bmc_nix::types::MergedIndex, bmc_nix::types::Manifest), PackageProbeError> {
+        let config = bmc_nix::servers_config::load_servers_config(&self.config.servers_config_path)
+            .map_err(|err| {
+                warn!(error = %err, "Servers config unavailable");
+                PackageProbeError::ServersConfigUnavailable(err.to_string())
+            })?;
         let servers = config.servers;
 
         if !servers.iter().any(|server| server.enabled) {
             warn!("No enabled package servers");
-            return PackageProbe::Failed(PackageProbeError::NoEnabledServers);
+            return Err(PackageProbeError::NoEnabledServers);
         }
 
         let merged = match bmc_nix::index::fetch_and_merge_indexes(&self.client, &servers).await {
             Ok(merged) => merged,
             Err(err @ bmc_nix::index::FetchIndexesError::Fetch { .. }) => {
                 warn!(error = %err, "Package index fetch failed");
-                return PackageProbe::Failed(PackageProbeError::IndexFetchFailed(err.to_string()));
+                return Err(PackageProbeError::IndexFetchFailed(err.to_string()));
             }
             Err(err) => {
                 warn!(error = %err, "Package index unusable");
-                return PackageProbe::Failed(PackageProbeError::IndexUnusable(err.to_string()));
+                return Err(PackageProbeError::IndexUnusable(err.to_string()));
             }
         };
 
         let base = match bmc_nix::manifest::read_current_manifest(&self.config.profile_dir) {
             Ok(manifest) => manifest,
             Err(bmc_nix::manifest::ReadManifestError::CurrentNotFound { .. }) => {
-                match bmc_nix::manifest::read_latest_manifest(&self.config.profile_dir) {
-                    Ok(manifest) => manifest,
-                    Err(err) => {
+                bmc_nix::manifest::read_latest_manifest(&self.config.profile_dir).map_err(
+                    |err| {
                         warn!(error = %err, "Failed to read the profile manifest");
-                        return PackageProbe::Failed(PackageProbeError::ManifestReadFailed(
-                            err.to_string(),
-                        ));
-                    }
-                }
+                        PackageProbeError::ManifestReadFailed(err.to_string())
+                    },
+                )?
             }
             Err(err) => {
                 warn!(error = %err, "Failed to read the profile manifest");
-                return PackageProbe::Failed(PackageProbeError::ManifestReadFailed(
-                    err.to_string(),
-                ));
+                return Err(PackageProbeError::ManifestReadFailed(err.to_string()));
             }
         };
 
-        let plan = match bmc_nix::manifest::compute_upgrade_plan(&base, Some(&merged), &[], &[]) {
-            Ok(plan) => plan,
-            Err(bmc_nix::manifest::ComputeUpgradePlanError::MissingSystemPackages { names }) => {
-                warn!(
-                    ?names,
-                    "Package plan failed: missing required system packages"
-                );
-                return PackageProbe::Failed(PackageProbeError::PlanFailed(
-                    PackagePlanFailure::MissingSystemPackages { names },
-                ));
-            }
-            Err(err) => {
-                warn!(error = %err, "Failed to plan the package upgrade");
-                return PackageProbe::Failed(PackageProbeError::PlanFailed(
-                    PackagePlanFailure::Other(err.to_string()),
-                ));
-            }
+        Ok((merged, base))
+    }
+}
+
+#[async_trait::async_trait]
+impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
+    async fn probe(&self, estimate: EstimateMode, install: &[String]) -> PackageProbe {
+        let (merged, base) = match self.fetch_index_and_manifest().await {
+            Ok(pair) => pair,
+            Err(err) => return PackageProbe::Failed(err),
         };
+
+        let installs = match resolve_installs(&merged, install) {
+            Ok(installs) => installs,
+            Err(err) => return PackageProbe::Failed(err),
+        };
+
+        let plan =
+            match bmc_nix::manifest::compute_upgrade_plan(&base, Some(&merged), &installs, &[]) {
+                Ok(plan) => plan,
+                Err(bmc_nix::manifest::ComputeUpgradePlanError::MissingSystemPackages {
+                    names,
+                }) => {
+                    warn!(
+                        ?names,
+                        "Package plan failed: missing required system packages"
+                    );
+                    return PackageProbe::Failed(PackageProbeError::PlanFailed(
+                        PackagePlanFailure::MissingSystemPackages { names },
+                    ));
+                }
+                Err(err) => {
+                    warn!(error = %err, "Failed to plan the package upgrade");
+                    return PackageProbe::Failed(PackageProbeError::PlanFailed(
+                        PackagePlanFailure::Other(err.to_string()),
+                    ));
+                }
+            };
 
         if plan.changed.is_empty() && plan.added.is_empty() && plan.removed.is_empty() {
             info!("Packages are up to date");
@@ -333,6 +352,7 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
     async fn apply(
         &self,
         merged: bmc_nix::types::MergedIndex,
+        install: Vec<String>,
         progress: Arc<dyn bmc_nix::upgrade::UpgradeProgress>,
     ) -> Result<(), ApplyError> {
         // Unlike the probe estimate (ESTIMATE_TIMEOUT) and the firmware path
@@ -340,12 +360,14 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
         // by design: a slow substituter on a large upgrade is legitimate and a
         // wall-clock cap would kill it. nix's own `stalled-download-timeout`
         // plus `kill_on_drop(true)` on the child bound a genuinely stuck fetch.
+        let installs =
+            resolve_installs(&merged, &install).map_err(|err| ApplyError(err.to_string()))?;
         bmc_nix::upgrade::apply_profile_change(
             &self.nix,
             &self.config.profile_dir,
             None, // base manifest is re-read under the profile lock
             Some(&merged),
-            &[],
+            &installs,
             &[],
             bmc_nix::upgrade::ActivationMode::Activate,
             None, // GC is disabled on the packages path
@@ -359,50 +381,7 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
     }
 
     async fn list_installable_widgets(&self) -> Result<Vec<InstallableWidget>, PackageProbeError> {
-        let config =
-            match bmc_nix::servers_config::load_servers_config(&self.config.servers_config_path) {
-                Ok(config) => config,
-                Err(err) => {
-                    warn!(error = %err, "Servers config unavailable");
-                    return Err(PackageProbeError::ServersConfigUnavailable(err.to_string()));
-                }
-            };
-        let servers = config.servers;
-
-        if !servers.iter().any(|server| server.enabled) {
-            warn!("No enabled package servers");
-            return Err(PackageProbeError::NoEnabledServers);
-        }
-
-        let merged = match bmc_nix::index::fetch_and_merge_indexes(&self.client, &servers).await {
-            Ok(merged) => merged,
-            Err(err @ bmc_nix::index::FetchIndexesError::Fetch { .. }) => {
-                warn!(error = %err, "Package index fetch failed");
-                return Err(PackageProbeError::IndexFetchFailed(err.to_string()));
-            }
-            Err(err) => {
-                warn!(error = %err, "Package index unusable");
-                return Err(PackageProbeError::IndexUnusable(err.to_string()));
-            }
-        };
-
-        let base = match bmc_nix::manifest::read_current_manifest(&self.config.profile_dir) {
-            Ok(manifest) => manifest,
-            Err(bmc_nix::manifest::ReadManifestError::CurrentNotFound { .. }) => {
-                match bmc_nix::manifest::read_latest_manifest(&self.config.profile_dir) {
-                    Ok(manifest) => manifest,
-                    Err(err) => {
-                        warn!(error = %err, "Failed to read the profile manifest");
-                        return Err(PackageProbeError::ManifestReadFailed(err.to_string()));
-                    }
-                }
-            }
-            Err(err) => {
-                warn!(error = %err, "Failed to read the profile manifest");
-                return Err(PackageProbeError::ManifestReadFailed(err.to_string()));
-            }
-        };
-
+        let (merged, base) = self.fetch_index_and_manifest().await?;
         let installed = base.packages.keys().cloned().collect();
         Ok(installable_widgets_from(&merged, &installed))
     }
@@ -462,6 +441,33 @@ pub fn installable_widgets_from(
                 description: resolved.description,
                 previews: Vec::new(),
             })
+        })
+        .collect()
+}
+
+/// Resolve requested install names against the merged index into
+/// user-installed [`ResolvedPackage`]s for the plan/apply add-set.
+///
+/// Any package name resolves here, not only `category == "widget"`:
+/// installing arbitrary packages is a supported capability of the backend.
+/// The widget-only restriction is a presentation concern — the picker
+/// surfaces just widgets via [`installable_widgets_from`] — so today users
+/// can only reach widget installs, but the plan/apply path deliberately
+/// imposes no such limit.
+pub fn resolve_installs(
+    merged: &bmc_nix::types::MergedIndex,
+    names: &[String],
+) -> Result<Vec<bmc_nix::types::ResolvedPackage>, PackageProbeError> {
+    names
+        .iter()
+        .map(|name| {
+            bmc_nix::index::resolve_new_package(
+                merged,
+                name,
+                None,
+                bmc_nix::types::InstalledBy::User,
+            )
+            .map_err(|err| PackageProbeError::InstallTargetUnavailable(err.to_string()))
         })
         .collect()
 }
@@ -712,6 +718,27 @@ mod tests {
     }
 
     #[test]
+    fn resolve_installs_maps_names_to_resolved_packages() {
+        let merged = merged_with(&[("widget-weather", "widget", None)]);
+        let resolved =
+            resolve_installs(&merged, &["widget-weather".to_owned()]).expect("BUG: resolve failed");
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].name, "widget-weather");
+        assert_eq!(resolved[0].installed_by, bmc_nix::types::InstalledBy::User);
+    }
+
+    #[test]
+    fn resolve_installs_reports_unknown_target() {
+        let merged = merged_with(&[("widget-weather", "widget", None)]);
+        let err = resolve_installs(&merged, &["widget-nope".to_owned()])
+            .expect_err("BUG: unknown install target must fail");
+        assert!(
+            matches!(err, PackageProbeError::InstallTargetUnavailable(_)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
     fn installable_widgets_keeps_uninstalled_widget_category_only() {
         let merged = merged_with(&[
             (
@@ -776,7 +803,7 @@ mod tests {
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
         assert!(matches!(
-            upgrader.probe(EstimateMode::Skip).await,
+            upgrader.probe(EstimateMode::Skip, &[]).await,
             PackageProbe::Failed(PackageProbeError::NoEnabledServers)
         ));
     }
@@ -788,7 +815,7 @@ mod tests {
 
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
-        let probe = upgrader.probe(EstimateMode::Skip).await;
+        let probe = upgrader.probe(EstimateMode::Skip, &[]).await;
         assert!(
             matches!(
                 probe,
@@ -812,7 +839,7 @@ mod tests {
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
         assert!(matches!(
-            upgrader.probe(EstimateMode::Skip).await,
+            upgrader.probe(EstimateMode::Skip, &[]).await,
             PackageProbe::Failed(PackageProbeError::NoEnabledServers)
         ));
         assert!(
@@ -833,7 +860,7 @@ mod tests {
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
         assert!(matches!(
-            upgrader.probe(EstimateMode::Skip).await,
+            upgrader.probe(EstimateMode::Skip, &[]).await,
             PackageProbe::Failed(PackageProbeError::NoEnabledServers)
         ));
         assert!(
@@ -850,7 +877,7 @@ mod tests {
 
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
-        let probe = upgrader.probe(EstimateMode::Skip).await;
+        let probe = upgrader.probe(EstimateMode::Skip, &[]).await;
         assert!(
             matches!(
                 probe,
@@ -879,7 +906,7 @@ mod tests {
 
         let PackageProbe::Failed(PackageProbeError::PlanFailed(
             PackagePlanFailure::MissingSystemPackages { names },
-        )) = upgrader.probe(EstimateMode::Skip).await
+        )) = upgrader.probe(EstimateMode::Skip, &[]).await
         else {
             panic!("expected a missing-system-package failure");
         };
@@ -908,7 +935,7 @@ mod tests {
 
         let PackageProbe::Failed(PackageProbeError::PlanFailed(
             PackagePlanFailure::MissingSystemPackages { names },
-        )) = upgrader.probe(EstimateMode::Skip).await
+        )) = upgrader.probe(EstimateMode::Skip, &[]).await
         else {
             panic!("expected a missing-system-package failure");
         };
@@ -931,7 +958,7 @@ mod tests {
 
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
-        let probe = upgrader.probe(EstimateMode::Skip).await;
+        let probe = upgrader.probe(EstimateMode::Skip, &[]).await;
         assert!(
             matches!(
                 probe,
@@ -955,7 +982,7 @@ mod tests {
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
         assert!(matches!(
-            upgrader.probe(EstimateMode::Skip).await,
+            upgrader.probe(EstimateMode::Skip, &[]).await,
             PackageProbe::UpToDate
         ));
     }

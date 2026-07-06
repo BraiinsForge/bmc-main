@@ -150,10 +150,20 @@ fn widget_catalog() -> Vec<InstallableWidget> {
 
 #[async_trait::async_trait]
 impl PackageBackend for MockPackageBackend {
-    async fn probe(&self, estimate: EstimateMode) -> PackageProbe {
+    async fn probe(&self, estimate: EstimateMode, install: &[String]) -> PackageProbe {
         match scenario::read(&self.scenario_path).packages {
             PackagesScenario::Available => {
-                PackageProbe::Available(empty_merged_index(), static_preview(estimate))
+                let mut preview = static_preview(estimate);
+                for name in install {
+                    preview.changes.push(SystemPackageChange {
+                        name: name.clone(),
+                        version_from: None,
+                        version_to: Some("1.0.0".to_owned()),
+                        category: Some("widget".to_owned()),
+                        changelog: None,
+                    });
+                }
+                PackageProbe::Available(empty_merged_index(), preview)
             }
             PackagesScenario::Unavailable => PackageProbe::UpToDate,
             PackagesScenario::FetchFailed => PackageProbe::Failed(
@@ -168,6 +178,7 @@ impl PackageBackend for MockPackageBackend {
     async fn apply(
         &self,
         _merged: MergedIndex,
+        install: Vec<String>,
         progress: Arc<dyn UpgradeProgress>,
     ) -> Result<(), ApplyError> {
         let run = scenario::read(&self.scenario_path).run;
@@ -197,6 +208,7 @@ impl PackageBackend for MockPackageBackend {
             tokio::time::sleep(step_delay).await;
         }
 
+        scenario::unshadow(&self.scenario_path, &install).map_err(ApplyError)?;
         Ok(())
     }
 
@@ -252,7 +264,7 @@ mod tests {
 
         let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
-        let PackageProbe::Available(_, preview) = backend.probe(EstimateMode::Estimate).await
+        let PackageProbe::Available(_, preview) = backend.probe(EstimateMode::Estimate, &[]).await
         else {
             panic!("BUG: expected Available");
         };
@@ -263,21 +275,21 @@ mod tests {
         let path = write_scenario(dir.path(), r#"{"packages": "unavailable"}"#);
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
         assert!(matches!(
-            backend.probe(EstimateMode::Estimate).await,
+            backend.probe(EstimateMode::Estimate, &[]).await,
             PackageProbe::UpToDate
         ));
 
         let path = write_scenario(dir.path(), r#"{"packages": "fetch-failed"}"#);
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
         assert!(matches!(
-            backend.probe(EstimateMode::Estimate).await,
+            backend.probe(EstimateMode::Estimate, &[]).await,
             PackageProbe::Failed(PackageProbeError::IndexFetchFailed(_))
         ));
 
         let path = write_scenario(dir.path(), r#"{"packages": "precondition-failed"}"#);
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
         assert!(matches!(
-            backend.probe(EstimateMode::Estimate).await,
+            backend.probe(EstimateMode::Estimate, &[]).await,
             PackageProbe::Failed(PackageProbeError::NoEnabledServers)
         ));
     }
@@ -287,10 +299,30 @@ mod tests {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
-        let PackageProbe::Available(_, preview) = backend.probe(EstimateMode::Skip).await else {
+        let PackageProbe::Available(_, preview) = backend.probe(EstimateMode::Skip, &[]).await
+        else {
             panic!("BUG: expected Available");
         };
         assert!(preview.download_size_bytes.is_none());
+    }
+
+    #[tokio::test]
+    async fn probe_surfaces_requested_installs_as_added() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
+        let PackageProbe::Available(_, preview) = backend
+            .probe(EstimateMode::Skip, &["widget-flip-clock".to_owned()])
+            .await
+        else {
+            panic!("BUG: expected an available probe");
+        };
+        let added = preview
+            .changes
+            .iter()
+            .find(|c| c.name == "widget-flip-clock")
+            .expect("BUG: install not in preview");
+        assert_eq!(added.version_from, None);
     }
 
     #[tokio::test]
@@ -300,7 +332,7 @@ mod tests {
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
         let progress = std::sync::Arc::new(RecordingProgress::default());
         backend
-            .apply(empty_merged_index(), progress.clone())
+            .apply(empty_merged_index(), Vec::new(), progress.clone())
             .await
             .expect("BUG: apply should succeed");
         let phases = progress.phases.lock().expect("BUG: phases mutex").clone();
@@ -353,7 +385,9 @@ mod tests {
         let path = write_scenario(dir.path(), r#"{"run": "apply-fail"}"#);
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
         let progress = std::sync::Arc::new(RecordingProgress::default());
-        let result = backend.apply(empty_merged_index(), progress.clone()).await;
+        let result = backend
+            .apply(empty_merged_index(), Vec::new(), progress.clone())
+            .await;
         assert!(result.is_err());
         let phases = progress.phases.lock().expect("BUG: phases mutex").clone();
         assert_eq!(phases, vec![UpgradePhase::Realizing]);
