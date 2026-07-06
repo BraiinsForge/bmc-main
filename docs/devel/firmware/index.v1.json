@@ -1,0 +1,47 @@
+{
+  "type": "bmc",
+  "status": "Active",
+  "title": "BMC Mock Releases",
+  "version": "v1",
+  "releases": [
+    {
+      "uuid": "f4a9f0a4-4f69-4b9f-8a7a-9e0d5e0c2d11",
+      "metadata_version": "v1",
+      "metadata": {
+        "bmc_version": "2025-06-15-0-acde0123-25.06-plus",
+        "is_major": true,
+        "release_date": "2025-06-15",
+        "description": "Adds release index testing fixtures and upgrade flow validation.",
+        "assets": {
+          "sysupgrade_emmc_stm32mp157c_ii3_bmc1": "https://example.com/firmware_2025-06-15-0-acde0123-25.06-plus.tar"
+        }
+      }
+    },
+    {
+      "uuid": "5c5f08a0-8d9f-4bd8-9a21-1c57a5a6f133",
+      "metadata_version": "v1",
+      "metadata": {
+        "bmc_version": "2025-05-20-0-deadbeef-25.05-plus",
+        "is_major": false,
+        "release_date": "2025-05-20",
+        "description": "Performance improvements in upgrade sequencing and downloads.",
+        "assets": {
+          "sysupgrade_emmc_stm32mp157c_ii3_bmc1": "https://example.com/firmware_2025-05-20-0-deadbeef-25.05-plus.tar"
+        }
+      }
+    },
+    {
+      "uuid": "a8b7b466-8e69-4f1b-8f62-71a7188c4b72",
+      "metadata_version": "v1",
+      "metadata": {
+        "bmc_version": "2025-04-10-0-1a2b3c4d-25.04-plus",
+        "is_major": false,
+        "release_date": "2025-04-10",
+        "description": "Initial test release for index-driven upgrades.",
+        "assets": {
+          "sysupgrade_emmc_stm32mp157c_ii3_bmc1": "https://example.com/firmware_2025-04-10-0-1a2b3c4d-25.04-plus.tar"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+	auto_https off
+}
+
+:{$BMC_FIRMWARE_INDEX_PORT:8080} {
+	# Proxies all requests (including /braiins-deck/index.v1.json) to upstream.
+	reverse_proxy {$BMC_FIRMWARE_INDEX_UPSTREAM:https://downloads.braiins.com.ii.zone} {
+		header_up Host {upstream_hostport}
+	}
+}

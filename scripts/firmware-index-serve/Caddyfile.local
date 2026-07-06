@@ -1,0 +1,13 @@
+{
+	auto_https off
+}
+
+:{$BMC_FIRMWARE_INDEX_PORT:8080} {
+	# Serves files in docs/devel/firmware under the /braiins-deck prefix.
+	handle_path /braiins-deck/* {
+		root * {$BMC_FIRMWARE_INDEX_ROOT:./docs/devel/firmware}
+		file_server browse
+	}
+
+	respond "Use /braiins-deck/index.v1.json" 404
+}

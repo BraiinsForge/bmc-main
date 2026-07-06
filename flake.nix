@@ -166,6 +166,12 @@
           '';
         };
 
+        firmware-index-serve = pkgs.writeShellApplication {
+          name = "firmware-index-serve";
+          runtimeInputs = with pkgs; [ caddy ];
+          runtimeEnv.FIRMWARE_INDEX_SERVE_CONFIG_DIR = ./scripts/firmware-index-serve;
+          text = builtins.readFile ./scripts/firmware-index-serve/firmware-index-serve.sh;
+        };
       in
       {
         formatter = nixlib.braiinsfmt.${localSystem} {
@@ -255,6 +261,13 @@
         apps.deck = {
           type = "app";
           program = "${bmc-tui-venv}/bin/deck";
+        };
+
+        # Firmware release index test serving:
+        # `nix run .#firmware-index-serve -- <proxy|local>`.
+        apps.firmware-index-serve = {
+          type = "app";
+          program = pkgs.lib.getExe firmware-index-serve;
         };
 
         # default: full local dev (Rust + frontend + GUI, both local and for Deck)

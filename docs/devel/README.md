@@ -32,6 +32,11 @@ What the firmware sysupgrade tarball contains from the Nix upgrade point of view
 and the pinned firmware index, why the firmware ships its own index instead of consulting remote servers, and the
 release-blocking invariants a firmware build must satisfy.
 
+### [Firmware Index Test Serving](firmware/README.md)
+
+How to test firmware upgrades against a locally served release index: the `firmware-index-serve` flake app's local and
+proxy modes, the `BMC_INDEX_URL` device override, and the example `index.v1.json`.
+
 ### [Widget Runtime Configuration](widget-runtime-configuration.md)
 
 How a widget process receives its geometry, per-instance params, and current system settings over the `deck_widget_v1`
