@@ -3,10 +3,18 @@
 use chrono::NaiveDate;
 use reqwest::Client;
 use std::fmt::Debug;
+use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::downloader::Downloader;
+
+/// Maximum time the download may make no progress — no response headers
+/// after the request is sent, or no further body bytes mid-stream — before
+/// it is abandoned. A stalled TCP connection (alive but silent) would
+/// otherwise hold the upgrade run gate open forever. The timer resets on
+/// every received chunk, so a slow-but-progressing link is never penalised.
+const DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[async_trait::async_trait]
 pub trait FirmwareIndex: Send + Sync + Debug + 'static {
@@ -47,12 +55,23 @@ where
         let url = url.to_owned();
         let client = client.clone();
         _ = tokio::spawn(async move {
-            let Ok(mut response) = client.get(url).send().await else {
+            let send = tokio::time::timeout(DOWNLOAD_IDLE_TIMEOUT, client.get(url).send());
+            let Ok(Ok(mut response)) = send.await else {
                 _ = tx.send(Err(anyhow::anyhow!("Failed to get firmware")));
                 return;
             };
 
-            while let Ok(Some(chunk)) = response.chunk().await {
+            loop {
+                let chunk =
+                    match tokio::time::timeout(DOWNLOAD_IDLE_TIMEOUT, response.chunk()).await {
+                        Ok(Ok(Some(chunk))) => chunk,
+                        Ok(Ok(None)) => break,
+                        Ok(Err(_)) | Err(_) => {
+                            _ = tx.send(Err(anyhow::anyhow!("Failed to download firmware")));
+                            return;
+                        }
+                    };
+
                 let chunk_length = chunk.len();
                 if downloader.write_chunk(chunk).await.is_err() {
                     _ = tx.send(Err(anyhow::anyhow!("Failed to download firmware")));
@@ -157,4 +176,65 @@ pub enum FirmwareDownloadError {
     InvalidVersion,
     #[error("platform has no upgrade asset")]
     UnsupportedPlatform,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+
+    #[derive(Debug)]
+    struct StubIndex;
+
+    #[async_trait::async_trait]
+    impl FirmwareIndex for StubIndex {
+        async fn get_available_releases(
+            &self,
+            _client: &Client,
+            _platform: bmc_platform::BosPlatform,
+            _version: String,
+        ) -> Result<Option<Vec<UpgradeMetadata>>, FirmwareDownloadError> {
+            Ok(None)
+        }
+    }
+
+    struct NullDownloader;
+
+    #[async_trait::async_trait]
+    impl Downloader for NullDownloader {
+        type Error = std::io::Error;
+
+        async fn write_chunk(&mut self, _chunk: Bytes) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        async fn finish(self) -> std::io::Result<String> {
+            Ok(String::new())
+        }
+    }
+
+    // A TCP peer that accepts the connection but never sends a byte back,
+    // modelling a stalled-but-alive link. `start_paused` lets the idle-timeout
+    // timer fire in virtual time, so the guard is exercised in ~0 real seconds.
+    // Deleting the `tokio::time::timeout` around the request would hang here.
+    #[tokio::test(start_paused = true)]
+    async fn download_aborts_when_the_server_never_responds() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("BUG: bind loopback listener");
+        let addr = listener.local_addr().expect("BUG: read listener addr");
+        tokio::spawn(async move {
+            let _conn = listener.accept().await.expect("BUG: accept connection");
+            std::future::pending::<()>().await;
+        });
+
+        let resolver = FirmwareResolver::new(StubIndex);
+        let url = format!("http://{addr}/firmware.bin");
+        let mut rx = resolver.download_firmware(&Client::new(), &url, NullDownloader);
+
+        assert!(
+            matches!(rx.recv().await, Some(Err(_))),
+            "a silent server must abort via the idle timeout, not hang forever"
+        );
+    }
 }
