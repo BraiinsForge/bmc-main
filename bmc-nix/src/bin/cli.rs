@@ -641,6 +641,7 @@ async fn cmd_add_packages(
             installed_by: bmc_nix::types::InstalledBy::User,
             installed_from: "local".into(),
             pinned: None,
+            metadata: std::collections::BTreeMap::new(),
         })
         .collect();
 

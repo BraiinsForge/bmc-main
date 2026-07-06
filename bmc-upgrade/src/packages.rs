@@ -347,7 +347,13 @@ pub fn build_packages_preview(
             version_from: Some(change.from_version.clone()),
             version_to: Some(change.to_version.clone()),
             category: resolved.and_then(|package| package.category.clone()),
-            changelog: None,
+            changelog: resolved.and_then(|package| {
+                package
+                    .metadata
+                    .get("changelog")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned)
+            }),
         });
     }
     for added in &plan.added {
@@ -357,7 +363,13 @@ pub fn build_packages_preview(
             version_from: None,
             version_to: Some(added.version.clone()),
             category: resolved.and_then(|package| package.category.clone()),
-            changelog: None,
+            changelog: resolved.and_then(|package| {
+                package
+                    .metadata
+                    .get("changelog")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned)
+            }),
         });
     }
     for removed in &plan.removed {
@@ -370,11 +382,27 @@ pub fn build_packages_preview(
         });
     }
 
+    let core = resolved_by_name.get("core");
+    let bmc_version = core.and_then(|package| {
+        package
+            .metadata
+            .get("bmc_version")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned)
+    });
+    let bmc_changelog = core.and_then(|package| {
+        package
+            .metadata
+            .get("changelog")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned)
+    });
+
     PackagesPreview {
         changes,
         download_size_bytes,
-        bmc_version: None,
-        bmc_changelog: None,
+        bmc_version,
+        bmc_changelog,
     }
 }
 

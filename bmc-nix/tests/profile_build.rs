@@ -98,6 +98,7 @@ async fn full_profile_build() {
                 upgrade_strategy: None,
                 install_strategy: None,
                 server_id: String::new(),
+                metadata: std::collections::BTreeMap::new(),
             },
             PackageEntry {
                 name: "widget-clock".into(),
@@ -112,6 +113,7 @@ async fn full_profile_build() {
                 upgrade_strategy: None,
                 install_strategy: None,
                 server_id: String::new(),
+                metadata: std::collections::BTreeMap::new(),
             },
         ],
     };
