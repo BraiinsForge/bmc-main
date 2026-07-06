@@ -73,6 +73,23 @@ pub fn unshadow(path: &Path, installed: &[String]) -> Result<(), String> {
         .map_err(|err| format!("persist unshadow to {}: {err}", path.display()))
 }
 
+/// Consume a pending-install handoff written by bmc: unshadow the named
+/// packages in the scenario (modelling their install) and remove the file.
+/// Called on a successful firmware upgrade before the mock exits to reboot.
+pub fn consume_pending_install(handoff_path: &Path, scenario_path: &Path) {
+    let Ok(pending) = bmc_nix::pending_install::read_pending_install(handoff_path) else {
+        return;
+    };
+    // Best-effort: this runs at exit-time before the simulated reboot, so
+    // there is no run stream left to fail into — log and continue.
+    if let Err(err) = unshadow(scenario_path, &pending.install) {
+        warn!(error = %err, "Failed to unshadow consumed pending install");
+    }
+    if let Err(err) = std::fs::remove_file(handoff_path) {
+        warn!(error = %err, path = %handoff_path.display(), "Failed to remove consumed handoff");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,6 +149,28 @@ mod tests {
             read(&path).shadowed_packages,
             vec!["widget-weather".to_owned()]
         );
+    }
+
+    #[test]
+    fn consume_pending_install_unshadows_and_clears() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let scenario_path = dir.path().join("upgrade-scenario.json");
+        std::fs::write(
+            &scenario_path,
+            r#"{"shadowed_packages": ["widget-flip-clock", "widget-weather"]}"#,
+        )
+        .expect("BUG: write scenario");
+        let handoff = dir.path().join("pending.json");
+        std::fs::write(&handoff, r#"{"install": ["widget-flip-clock"]}"#)
+            .expect("BUG: write handoff");
+
+        consume_pending_install(&handoff, &scenario_path);
+
+        assert_eq!(
+            read(&scenario_path).shadowed_packages,
+            vec!["widget-weather".to_owned()]
+        );
+        assert!(!handoff.exists(), "handoff should be deleted after consume");
     }
 
     #[test]

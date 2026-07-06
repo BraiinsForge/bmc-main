@@ -18,6 +18,7 @@ impl MockFs {
     const DEVICE_SETUP_PENDING_FILE: &str = "etc/setup-pending";
     const WIFI_RECONFIG_FILE: &str = "etc/wifi-reconfig";
     const WIFI_STATUS_FILE: &str = "etc/is_wifi_enabled";
+    const PENDING_INSTALL_FILE: &str = "tmp/bmc-nix-pending-install.json";
 
     pub fn new(template_dir: impl AsRef<Path>, runtime_dir: impl AsRef<Path>) -> Self {
         Self {
@@ -50,6 +51,11 @@ impl MockFs {
     #[must_use]
     pub fn upgrade_scenario(&self) -> PathBuf {
         self.build_mockfs_path(Self::UPGRADE_SCENARIO_FILE)
+    }
+
+    #[must_use]
+    pub fn pending_install(&self) -> PathBuf {
+        self.build_mockfs_path(Self::PENDING_INSTALL_FILE)
     }
 
     #[must_use]
