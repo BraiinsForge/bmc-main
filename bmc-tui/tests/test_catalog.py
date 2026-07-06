@@ -552,6 +552,23 @@ def test_verify_profile_advanced_aborts_on_non_json_manifest() -> None:
         catalog.verify_profile_advanced(Device("h", backend=backend), plan, cycle)
 
 
+def test_upgrade_server_argv_serves_widgets_with_metadata() -> None:
+    # widget-* packages must go in as --widget so the server attaches picker
+    # metadata; other packages stay plain --package entries.
+    argv = catalog._upgrade_server_argv(
+        host="10.0.0.1",
+        port=8080,
+        index_port=8081,
+        key_dir=Path("/k"),
+        built=[
+            Built("core", "1.0", ".#core^out", store_path="/nix/store/core"),
+            Built("widget-weather", "0.1.0", ".#w^out", store_path="/nix/store/weather"),
+        ],
+    )
+    assert argv[argv.index("--package") + 1] == "core=1.0=/nix/store/core"
+    assert argv[argv.index("--widget") + 1] == "widget-weather=0.1.0=/nix/store/weather"
+
+
 def test_stop_upgrade_server_is_a_noop_without_a_server() -> None:
     catalog.stop_upgrade_server(_cycle())
 
