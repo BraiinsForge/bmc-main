@@ -261,6 +261,16 @@ enum Commands {
         #[arg(long, value_name = "BOS_VERSION", conflicts_with = "no_activate")]
         next_boot: Option<String>,
 
+        /// Package name to install during this upgrade (repeatable).
+        /// Resolved against the same indexes as the upgrade.
+        #[arg(long = "install")]
+        install: Vec<String>,
+
+        /// Read additional install package names from a pending-install
+        /// handoff file (JSON `{"install": [..]}`), merged with --install.
+        #[arg(long = "install-from")]
+        install_from: Option<PathBuf>,
+
         #[command(flatten)]
         common: ProfileCommonArgs,
     },
@@ -751,6 +761,8 @@ async fn cmd_upgrade(
     base: BaseSelector,
     no_activate: bool,
     next_boot: Option<String>,
+    install: Vec<String>,
+    install_from: Option<PathBuf>,
     log_format: LogFormat,
 ) -> anyhow::Result<()> {
     if let Some(version) = &next_boot {
@@ -779,6 +791,23 @@ async fn cmd_upgrade(
         bmc_nix::index::fetch_and_merge_indexes(&client, &fetch_set).await?
     };
 
+    let mut install_names = install;
+    if let Some(path) = install_from {
+        let pending = bmc_nix::pending_install::read_pending_install(&path)?;
+        install_names.extend(pending.install);
+    }
+    let install_packages: Vec<bmc_nix::types::ResolvedPackage> = install_names
+        .iter()
+        .map(|name| {
+            bmc_nix::index::resolve_new_package(
+                &merged,
+                name,
+                None,
+                bmc_nix::types::InstalledBy::User,
+            )
+        })
+        .collect::<Result<_, _>>()?;
+
     std::fs::create_dir_all(&profile_dir)?;
     let base_manifest = resolve_base(&profile_dir, &base)?;
 
@@ -787,7 +816,7 @@ async fn cmd_upgrade(
         &profile_dir,
         base_manifest,
         Some(&merged),
-        &[],
+        &install_packages,
         &[],
         match next_boot {
             Some(bos_version) => ActivationMode::NextBoot { bos_version },
@@ -1094,6 +1123,8 @@ async fn main() -> anyhow::Result<()> {
             only_indexes,
             base,
             next_boot,
+            install,
+            install_from,
             common,
         } => {
             cmd_upgrade(
@@ -1106,6 +1137,8 @@ async fn main() -> anyhow::Result<()> {
                 base,
                 common.no_activate,
                 next_boot,
+                install,
+                install_from,
                 log_format,
             )
             .await
@@ -1222,6 +1255,37 @@ mod tests {
         assert!(
             !common.no_activate,
             "next-boot must not imply the no-activate flag"
+        );
+    }
+
+    #[test]
+    fn upgrade_accepts_install_flags() {
+        let cli = Cli::try_parse_from([
+            "bmc-nix-cli",
+            "upgrade",
+            "--install",
+            "widget-weather",
+            "--install",
+            "widget-ticker",
+            "--install-from",
+            "/tmp/pending.json",
+        ])
+        .expect("BUG: parse");
+        let Commands::Upgrade {
+            install,
+            install_from,
+            ..
+        } = cli.command
+        else {
+            panic!("BUG: expected upgrade");
+        };
+        assert_eq!(
+            install,
+            vec!["widget-weather".to_owned(), "widget-ticker".to_owned()]
+        );
+        assert_eq!(
+            install_from.as_deref(),
+            Some(std::path::Path::new("/tmp/pending.json"))
         );
     }
 
