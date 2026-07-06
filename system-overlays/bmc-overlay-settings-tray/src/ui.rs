@@ -93,6 +93,17 @@ impl WifiIcons {
     }
 }
 
+/// Registered icon ids for the control icons vendored from the stable tray.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ControlIcons {
+    pub sound_low: Option<SvgId>,
+    pub sound_high: Option<SvgId>,
+    pub brightness_low: Option<SvgId>,
+    pub brightness_high: Option<SvgId>,
+    pub nightmode: Option<SvgId>,
+    pub restart: Option<SvgId>,
+}
+
 const MIN_BRIGHTNESS: u8 = 10;
 const MAX_BRIGHTNESS: u8 = 100;
 
@@ -256,10 +267,32 @@ fn wifi_icon(icons: WifiIcons, wifi_signal: Option<i32>) -> TreeNode {
     }
 }
 
+/// A fixed-size icon canvas for a registered SVG (control glyphs).
+pub(crate) fn control_icon(icon_id: Option<SvgId>, size: f32) -> TreeNode {
+    TreeNode::Canvas {
+        props: PropsData {
+            width: size,
+            height: size,
+            ..PropsData::default()
+        },
+        touch_key: None,
+        draws: vec![DrawCommand::Svg {
+            x: 0.0,
+            y: 0.0,
+            w: size,
+            h: size,
+            color: TRANSPARENT,
+            icon_id,
+            anti_alias: true,
+            fills: Vec::new(),
+        }],
+    }
+}
+
 /// Brightness section: an optional "Brightness" label above a draggable slider
 /// and its percentage readout. The label is dropped on short panels (narrow
 /// rectangular) where the extra row would push the Wi-Fi info off the bottom.
-fn brightness_section(brightness: u8, with_label: bool) -> TreeNode {
+fn brightness_section(brightness: u8, with_label: bool, icons: ControlIcons) -> TreeNode {
     let frac = f32::from(brightness.saturating_sub(MIN_BRIGHTNESS))
         / f32::from(MAX_BRIGHTNESS - MIN_BRIGHTNESS);
     let slider = row(
@@ -269,6 +302,7 @@ fn brightness_section(brightness: u8, with_label: bool) -> TreeNode {
             ..PropsData::default()
         },
         vec![
+            control_icon(icons.brightness_low, 24.0),
             col(
                 PropsData {
                     flex: 1.0,
@@ -286,6 +320,7 @@ fn brightness_section(brightness: u8, with_label: bool) -> TreeNode {
                     skin: None,
                 }],
             ),
+            control_icon(icons.brightness_high, 24.0),
             text(
                 format!("{brightness}%"),
                 TextStyle {
@@ -319,6 +354,7 @@ fn rect_overlay(
     brightness: u8,
     with_brightness_label: bool,
     info: TreeNode,
+    icons: ControlIcons,
 ) -> TreeNode {
     col(
         PropsData {
@@ -329,7 +365,7 @@ fn rect_overlay(
         },
         vec![
             hostname_row(hostname_str),
-            brightness_section(brightness, with_brightness_label),
+            brightness_section(brightness, with_brightness_label, icons),
             spacer(1.0),
             info,
         ],
@@ -477,6 +513,7 @@ pub fn build_tree(
     icons: WifiIcons,
     panel: Panel,
     wifi_view: WifiView<'_>,
+    controls_icons: ControlIcons,
 ) -> TreeNode {
     let Panel {
         shape,
@@ -515,7 +552,10 @@ pub fn build_tree(
                     fixed_height(ROUND_TOP_GAP),
                     hostname_row(&hostname_str),
                     spacer(1.0),
-                    pad_horizontal(brightness_section(brightness, true), ROUND_H_PAD),
+                    pad_horizontal(
+                        brightness_section(brightness, true, controls_icons),
+                        ROUND_H_PAD,
+                    ),
                     spacer(1.0),
                     pad_horizontal(
                         wifi_section(info, icons, wifi_view, wifi_buttons),
@@ -532,6 +572,7 @@ pub fn build_tree(
                 brightness,
                 true,
                 wifi_section(info, icons, wifi_view, wifi_buttons),
+                controls_icons,
             )
         }
         DisplayShape::Rectangular => {
@@ -543,6 +584,7 @@ pub fn build_tree(
                 brightness,
                 false,
                 wifi_section(info, icons, wifi_view, wifi_buttons),
+                controls_icons,
             )
         }
     }
@@ -665,6 +707,7 @@ mod tests {
             WifiIcons::default(),
             panel,
             view,
+            ControlIcons::default(),
         )
     }
 

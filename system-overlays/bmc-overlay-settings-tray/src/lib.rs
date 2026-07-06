@@ -26,7 +26,7 @@ use bmc_system_overlay::{
 
 use crate::dismiss::Pt;
 use crate::fsm::{ButtonState, FsmAction, ReconnectAction, ReconnectState};
-use crate::ui::{Panel, WifiIcons, WifiView};
+use crate::ui::{Panel, WifiView};
 
 /// Kernel hostname, exposed by procfs.
 const HOSTNAME_PATH: &str = "/proc/sys/kernel/hostname";
@@ -302,7 +302,7 @@ impl SettingsTrayView {
 #[expect(missing_debug_implementations, reason = "TreeUi is not Debug")]
 pub struct SettingsTrayRenderState {
     tree: TreeUi,
-    icons: Option<WifiIcons>,
+    icons: Option<icons::TrayIcons>,
     last_render: Instant,
 }
 
@@ -773,7 +773,7 @@ pub fn render_settings_tray(
 ) -> SettingsTrayRenderOutput {
     let icons = *state
         .icons
-        .get_or_insert_with(|| icons::register_wifi_icons(renderer));
+        .get_or_insert_with(|| icons::register_icons(renderer));
 
     let delta_ms =
         u32::try_from(now.duration_since(state.last_render).as_millis()).unwrap_or(u32::MAX);
@@ -792,7 +792,7 @@ pub fn render_settings_tray(
         view.ip.as_deref(),
         view.wifi_signal,
         view.ssid.as_deref(),
-        icons,
+        icons.wifi,
         Panel {
             shape: view.shape,
             width: view.width,
@@ -800,6 +800,7 @@ pub fn render_settings_tray(
             wifi_buttons: view.wifi_buttons,
         },
         wifi_view,
+        icons.controls,
     );
 
     let result = match state.tree.render(&node, size, delta_ms, renderer) {
