@@ -197,7 +197,7 @@ mod tests {
     fn write_base_config(path: &Path) {
         let json = r#"{
   "factory": {
-    "id": "braiins",
+    "id": "forge",
     "base_url": "https://cache.braiins.com/v1",
     "known_public_key": "cache.braiins.com:placeholder",
     "priority": 1,
