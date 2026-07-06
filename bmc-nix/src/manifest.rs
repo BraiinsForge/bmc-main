@@ -461,7 +461,7 @@ mod tests {
             description: None,
             upgrade_strategy: None,
             install_strategy: None,
-            server_id: "braiins".into(),
+            server_id: "forge".into(),
             server_priority: priority,
         }
     }
@@ -995,7 +995,7 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "clock".to_owned(),
-                test_manifest_package_installed_by("1.0.0", "braiins", None, InstalledBy::User),
+                test_manifest_package_installed_by("1.0.0", "forge", None, InstalledBy::User),
             )]),
         };
         let merged = empty_merged_index();
@@ -1013,7 +1013,7 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "core-pkg".to_owned(),
-                test_manifest_package_installed_by("1.0.0", "braiins", None, InstalledBy::System),
+                test_manifest_package_installed_by("1.0.0", "forge", None, InstalledBy::System),
             )]),
         };
         let merged = empty_merged_index();
@@ -1035,7 +1035,7 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "widget".to_owned(),
-                test_manifest_package_installed_by("1.0.0", "braiins", None, InstalledBy::User),
+                test_manifest_package_installed_by("1.0.0", "forge", None, InstalledBy::User),
             )]),
         };
         let merged = empty_merged_index();
@@ -1052,7 +1052,7 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "core-pkg".to_owned(),
-                test_manifest_package_installed_by("2.0.0", "braiins", None, InstalledBy::System),
+                test_manifest_package_installed_by("2.0.0", "forge", None, InstalledBy::System),
             )]),
         };
         let merged = merged_index_with(vec![merged_entry("core-pkg", "1.0.0", 0)]);
@@ -1069,7 +1069,7 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "clock".to_owned(),
-                test_manifest_package("1.0.0", "braiins", None),
+                test_manifest_package("1.0.0", "forge", None),
             )]),
         };
         let merged = merged_index_with(vec![merged_entry("clock", "1.1.0", 0)]);
@@ -1090,7 +1090,7 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "clock".to_owned(),
-                test_manifest_package("1.0.0", "braiins", None),
+                test_manifest_package("1.0.0", "forge", None),
             )]),
         };
         // Two entries at the same version and priority with different
@@ -1124,7 +1124,7 @@ mod tests {
                     "version": "1.0.0",
                     "store_path": "/nix/store/hash-clock-1.0.0",
                     "installed_by": "system",
-                    "installed_from": "braiins",
+                    "installed_from": "forge",
                     "pinned": "none"
                 }
             }
@@ -1150,7 +1150,7 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "clock".to_owned(),
-                test_manifest_package("1.5.0", "braiins", Some("^1.0.0".to_owned())),
+                test_manifest_package("1.5.0", "forge", Some("^1.0.0".to_owned())),
             )]),
         };
         let merged = merged_index_with(vec![merged_entry("clock", "1.4.0", 0)]);
@@ -1171,7 +1171,7 @@ mod tests {
         let current = Manifest {
             packages: BTreeMap::from([(
                 "clock".to_owned(),
-                test_manifest_package("1.0.0", "braiins", Some("not-a-version".to_owned())),
+                test_manifest_package("1.0.0", "forge", Some("not-a-version".to_owned())),
             )]),
         };
         let merged = merged_index_with(vec![merged_entry("clock", "1.0.0", 0)]);
@@ -1199,7 +1199,7 @@ mod tests {
                 "widget".to_owned(),
                 test_manifest_package_installed_by(
                     "1.0.0",
-                    "braiins",
+                    "forge",
                     Some("not-a-version".to_owned()),
                     InstalledBy::User,
                 ),
@@ -1221,7 +1221,7 @@ mod tests {
         // The resolver renders "0.8" as "0.8.0"; with an identical store
         // path that rendering difference is not a package change.
         let entry = merged_entry("clock", "0.8.0", 0);
-        let mut manifest_pkg = test_manifest_package("0.8", "braiins", None);
+        let mut manifest_pkg = test_manifest_package("0.8", "forge", None);
         manifest_pkg.store_path.clone_from(&entry.store_path);
         let current = Manifest {
             packages: BTreeMap::from([("clock".to_owned(), manifest_pkg)]),
