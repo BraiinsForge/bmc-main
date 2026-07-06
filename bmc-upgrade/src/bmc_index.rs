@@ -42,9 +42,12 @@ impl FirmwareIndex for BmcIndex {
         let version = version
             .parse::<BosVersion>()
             .map_err(|_| FirmwareDownloadError::InvalidVersion)?;
+        let env_index_url = std::env::var("BMC_INDEX_URL")
+            .ok()
+            .and_then(|value| Url::parse(&value).ok());
         let downloaded = index_bmc::download(
             client,
-            self.override_index_url.as_ref(),
+            env_index_url.as_ref().or(self.override_index_url.as_ref()),
             INDEX_DOWNLOAD_TIMEOUT,
         )
         .await
