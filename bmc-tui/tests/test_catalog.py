@@ -590,3 +590,44 @@ def test_stream_events_aborts_on_stream_failure() -> None:
     script = "import sys; sys.stderr.write('boom'); sys.exit(1)"
     with pytest.raises(Abort, match="boom"):
         catalog._stream_events([sys.executable, "-c", script])
+
+
+# ── install e2e parsers ───────────────────────────────────────────────────────
+
+
+def test_installable_widget_names_extracts_package_names() -> None:
+    response = {
+        "widgets": [
+            {"packageName": "widget-weather", "uid": "u1", "displayName": "Weather"},
+            {"packageName": "widget-ticker", "uid": "u2", "displayName": "Ticker"},
+        ]
+    }
+    assert catalog._installable_widget_names(response) == ["widget-weather", "widget-ticker"]
+
+
+def test_installed_package_names_from_list_packages_json() -> None:
+    payload = {
+        "packages": [
+            {"name": "core", "version": "2.0.0"},
+            {"name": "widget-weather", "version": "1.3.0"},
+        ]
+    }
+    assert catalog._installed_package_names(payload) == ["core", "widget-weather"]
+
+
+def _list_packages(*names: str) -> str:
+    return json.dumps({"packages": [{"name": name} for name in names]})
+
+
+def test_remove_package_removes_when_present() -> None:
+    backend = _Exec(_routes({"list-packages": _list_packages("core", "widget-blockheight")}))
+    catalog.remove_package(Device("h", backend=backend), _cycle(), "widget-blockheight")
+    assert any("remove-packages --name widget-blockheight" in run[-1] for run in backend.runs)
+
+
+def test_remove_package_skips_when_absent() -> None:
+    # A prior run that removed the widget but aborted before reinstalling leaves it
+    # absent; the re-run must skip rather than error on remove-packages.
+    backend = _Exec(_routes({"list-packages": _list_packages("core")}))
+    catalog.remove_package(Device("h", backend=backend), _cycle(), "widget-blockheight")
+    assert all("remove-packages" not in run[-1] for run in backend.runs)
