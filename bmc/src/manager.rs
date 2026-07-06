@@ -18,6 +18,19 @@ use thiserror::Error;
 use tokio::sync::watch;
 use tracing::info;
 
+/// Failure handing a firmware image off to the platform upgrade
+/// mechanism. `InvalidImage` is permanent — the image is incompatible,
+/// unsigned, or signed with the wrong key — so the UI can tell the user
+/// to pick a different image instead of retrying the same one; every other
+/// handoff failure is transient-ish and carries its own detail.
+#[derive(Debug, Error)]
+pub enum UpgradeError {
+    #[error("Invalid firmware image")]
+    InvalidImage,
+    #[error("{0}")]
+    Failed(String),
+}
+
 #[async_trait::async_trait]
 pub trait BmcManager: Sync + Send + 'static + Debug {
     type SessionManager: crate::session::Manager;
@@ -36,7 +49,7 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
         keep_settings: bool,
         upgrade_image_path: &Path,
         progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
-    ) -> anyhow::Result<()>;
+    ) -> Result<(), UpgradeError>;
 
     // Checks if a system upgrade was performed
     async fn check_and_remove_upgrade_marker(&self) -> bool;
