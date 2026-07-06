@@ -139,3 +139,28 @@ NOTE: any subsequent `deck deploy` will override the effect of `nix-cargo-deploy
 
 **Wasm widgets are never deployed through `nix-cargo-deploy.sh`** — that script handles native binaries only. For wasm
 widgets, re-run `deck deploy`.
+
+## Verifying emitted metadata
+
+The widget picker fields (`uid`, `display_name`, `category`) and the installed icon path are read from each widget's
+`manifest.json` at eval time and surfaced under the package entry's nested `metadata`. To confirm a widget's metadata
+actually round-trips into the built init package index, build the index and inspect it with `jq`.
+
+```bash
+jq '.packages[] | select(.category=="widget") | {name, uid: .metadata.widget.uid, icon: .metadata.assets.icon}' \
+  "$(nix build .#init-index-armv7 --no-link --print-out-paths)/nix-package-index.v1.json"
+```
+
+Each widget entry should show a non-null `uid` and an `icon` path pointing under
+`/nix/store/…/lib/bmc-widgets/<name>/…`.
+
+```json
+{
+  "name": "widget-flip-clock",
+  "uid": "550e8400-e29b-41d4-a716-446655440002",
+  "icon": "/nix/store/…-bmc-widget-flip-clock/lib/bmc-widgets/flip-clock/assets/icon.svg"
+}
+```
+
+A `null` `uid` or a missing `icon` means the manifest field never reached the index — recheck the widget's
+`manifest.json` and its `nix/packages.nix` entry.
