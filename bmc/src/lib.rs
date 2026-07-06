@@ -26,6 +26,6 @@ mod web;
 pub mod widget;
 
 pub use led_coordinator::{Layer, LedCoordinatorHandle, spawn_led_coordinator};
-pub use manager::BmcManager;
+pub use manager::{BmcManager, UpgradeError};
 pub use startup::{App, Configuration};
 pub use web::ServerConfig;
