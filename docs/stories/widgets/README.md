@@ -55,6 +55,13 @@ as a large headline, and an optional date readout. Reads the day's names from th
 follows the device timezone to pick the correct local day, refreshes at local midnight, and truncates long name lists
 with an ellipsis. Renders at all four widget sizes on rectangular viewports.
 
+### [Random Facts Widget](random-facts.md)
+
+A widget that shows a single random factoid, large and centered on the tile, under a fixed "Random Facts" header. Pulls
+a fresh fact from the public `api.viewbits.com` useless-facts API every few minutes, auto-fits the text to the available
+area, and keeps the last shown fact on screen when a refresh fails. Has no parameters and renders at all four widget
+sizes on rectangular viewports.
+
 ### [Weather Widget](weather.md)
 
 A widget that shows current weather and forecast data for a chosen location, with hourly and daily forecast layouts
