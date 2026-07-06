@@ -5,8 +5,8 @@ use crate::{MockSessionManager, mockfs::MockFs};
 use anyhow::anyhow;
 use bmc::bootloader_config::BootloaderConfig;
 use bmc::manager::{
-    BmcState, IfaceData, InitialSetupError, NetworkProtocolConfig, WifiData, WifiEvent,
-    WifiNetworkConfig,
+    BmcState, IfaceData, InitialSetupError, NetworkProtocolConfig, UpgradeError, WifiData,
+    WifiEvent, WifiNetworkConfig,
 };
 use bmc_platform::{BosPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
@@ -113,7 +113,7 @@ impl bmc::BmcManager for Manager {
         keep_settings: bool,
         _upgrade_image_path: &Path,
         progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), UpgradeError> {
         info!(
             "Performing system upgrade (keep_settings={})...",
             keep_settings
@@ -132,7 +132,9 @@ impl bmc::BmcManager for Manager {
         if crate::scenario::read(&self.mockfs.upgrade_scenario()).run
             == crate::scenario::RunScenario::ApplyFail
         {
-            anyhow::bail!("mock: firmware apply failed");
+            return Err(UpgradeError::Failed(
+                "mock: firmware apply failed".to_owned(),
+            ));
         }
 
         tokio::time::sleep(self.pacing.sysupgrade_duration()).await;

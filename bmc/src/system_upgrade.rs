@@ -597,7 +597,11 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 Err(err) => {
                     error!(error = %err, "Firmware upgrade failed");
                     widget_stopper.restart_widgets().await;
-                    _ = tx.send(UpgradeRunState::Failed(SystemUpgradeError::UpgradeFailed));
+                    let failure = match err {
+                        crate::UpgradeError::InvalidImage => SystemUpgradeError::InvalidImage,
+                        crate::UpgradeError::Failed(_) => SystemUpgradeError::UpgradeFailed,
+                    };
+                    _ = tx.send(UpgradeRunState::Failed(failure));
                 }
             }
         });
@@ -801,6 +805,8 @@ pub(crate) enum SystemUpgradeError {
     UnableToCheckForUpgrade(#[from] FirmwareDownloadError),
     #[error("Upgrade failed")]
     UpgradeFailed,
+    #[error("Invalid firmware image")]
+    InvalidImage,
     #[error("Upgrade id is unknown or already consumed")]
     UpgradeExpired,
     #[error("Package upgrade failed: {0}")]
@@ -1054,6 +1060,8 @@ mod tests {
         );
         assert!(!SystemUpgradeError::UpgradeExpired.is_retriable());
         assert!(!SystemUpgradeError::UpgradeFailed.is_retriable());
+        // A rejected image is permanent: retrying the same one is futile.
+        assert!(!SystemUpgradeError::InvalidImage.is_retriable());
     }
 
     #[test]
