@@ -12,11 +12,14 @@ use tracing::{info, warn};
 
 use super::led_state::LedSceneManager;
 use crate::backlight::MIN_BRIGHTNESS_PCT;
-use crate::compositor::{ActiveScene, LedRequestStatusEvent, SettingsCommand, WidgetAction};
+use crate::compositor::{
+    ActiveScene, Compositor, LedRequestStatusEvent, SettingsCommand, WidgetAction,
+};
 use crate::led_coordinator::LedCoordinatorHandle;
 use crate::manager::BmcManager;
 use crate::sound::{SoundController, Sounds};
 use crate::system_manager::SystemManager;
+use crate::system_upgrade::SystemUpgradeState;
 
 /// Compositor-facing channels the action handler owns for its lifetime.
 pub(crate) struct CompositorIo {
@@ -26,6 +29,7 @@ pub(crate) struct CompositorIo {
     pub connected_widgets_rx: watch::Receiver<BTreeSet<crate::compositor::InstanceId>>,
     pub status_tx: mpsc::UnboundedSender<LedRequestStatusEvent>,
     pub night_mode_active_rx: watch::Receiver<bool>,
+    pub upgrade_state_rx: watch::Receiver<Option<SystemUpgradeState>>,
 }
 
 /// Spawn a task that receives widget actions from the compositor and
@@ -33,6 +37,11 @@ pub(crate) struct CompositorIo {
 ///
 /// Sound playback runs on a dedicated task — `play_sound` blocks until
 /// the clip ends, and we don't want that to stall LED processing.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the handler collects independent subsystem handles; bundling them \
+              into a wrapper struct just to satisfy the lint would hurt clarity"
+)]
 pub(crate) fn spawn_action_handler<T, U>(
     io: CompositorIo,
     sound_controller: SoundController,
@@ -41,6 +50,7 @@ pub(crate) fn spawn_action_handler<T, U>(
     mut scenes_rx: broadcast::Receiver<crate::config::WidgetSceneMap>,
     system_manager: SystemManager<U>,
     manager: std::sync::Arc<T>,
+    compositor: std::sync::Arc<dyn Compositor>,
 ) where
     T: BmcManager,
     U: crate::backlight::DisplayBacklightDriver,
@@ -52,6 +62,7 @@ pub(crate) fn spawn_action_handler<T, U>(
         mut connected_widgets_rx,
         status_tx,
         night_mode_active_rx,
+        upgrade_state_rx,
     } = io;
 
     // Unbounded so a StopSound is never dropped under backpressure — the
@@ -96,7 +107,15 @@ pub(crate) fn spawn_action_handler<T, U>(
                     let Some(cmd) = cmd else {
                         break;
                     };
-                    dispatch_settings_command(cmd, &system_manager, &manager, &night_mode_active_rx).await;
+                    dispatch_settings_command(
+                        cmd,
+                        &system_manager,
+                        &manager,
+                        &night_mode_active_rx,
+                        &upgrade_state_rx,
+                        &compositor,
+                    )
+                    .await;
                 }
                 changed = active_scene_rx.changed() => {
                     if changed.is_err() {
@@ -138,12 +157,15 @@ pub(crate) fn spawn_action_handler<T, U>(
 ///
 /// When night mode is active the tray shows the night brightness, so a write
 /// must persist to the night config via `set_night_mode_brightness`; otherwise
-/// it persists to the day config via `set_brightness`.
+/// it persists to the day config via `set_brightness`. The same day/night split
+/// applies to volume via `set_sound_volume_night_mode` / `set_sound_volume`.
 async fn dispatch_settings_command<T, U>(
     cmd: SettingsCommand,
     system_manager: &SystemManager<U>,
     manager: &std::sync::Arc<T>,
     night_mode_active_rx: &watch::Receiver<bool>,
+    upgrade_state_rx: &watch::Receiver<Option<SystemUpgradeState>>,
+    compositor: &std::sync::Arc<dyn Compositor>,
 ) where
     T: BmcManager,
     U: crate::backlight::DisplayBacklightDriver,
@@ -158,6 +180,41 @@ async fn dispatch_settings_command<T, U>(
             };
             if let Err(e) = result {
                 warn!("settings overlay set_brightness failed: {e}");
+            }
+        }
+        SettingsCommand::SetVolume(value) => {
+            let v = value.min(100);
+            let result = if *night_mode_active_rx.borrow() {
+                system_manager.set_sound_volume_night_mode(v).await
+            } else {
+                system_manager.set_sound_volume(v).await
+            };
+            if let Err(e) = result {
+                warn!("settings overlay set_volume failed: {e}");
+            }
+        }
+        SettingsCommand::ToggleNightMode => {
+            if let Err(e) = system_manager.toggle_night_mode().await {
+                warn!("settings overlay toggle_night_mode failed: {e}");
+            }
+        }
+        SettingsCommand::Restart => {
+            let blocked = upgrade_state_rx
+                .borrow()
+                .as_ref()
+                .is_some_and(SystemUpgradeState::blocks_restart);
+            if blocked {
+                info!("settings overlay restart declined: upgrade in progress");
+                if let Err(e) = compositor.broadcast_restart_declined("upgrade in progress") {
+                    warn!("broadcast_restart_declined failed: {e}");
+                }
+            } else if let Err(e) = manager.reboot().await {
+                // Never leave the overlay hanging in its pending state: a
+                // failed reboot call must surface as a decline.
+                warn!("settings overlay restart failed: {e:#}");
+                if let Err(e) = compositor.broadcast_restart_declined("restart failed") {
+                    warn!("broadcast_restart_declined failed: {e}");
+                }
             }
         }
         SettingsCommand::ReconfigureWifi => {

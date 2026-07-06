@@ -85,6 +85,12 @@ pub enum CompositorEvent {
 pub enum SettingsCommand {
     /// Display-brightness change requested by the settings-tray overlay (0-100).
     SetBrightness(u8),
+    /// Sound-volume change requested by the settings-tray overlay (0-100).
+    SetVolume(u8),
+    /// Night-mode toggle requested by the settings-tray overlay.
+    ToggleNightMode,
+    /// Device restart requested by the settings-tray overlay; bmc may decline.
+    Restart,
     /// WiFi-reconfiguration entry requested by the settings-tray overlay.
     ReconfigureWifi,
 }
@@ -181,6 +187,25 @@ pub trait Compositor: Send + Sync {
     /// overlay via the `deck_settings_v1` `brightness` event. Default: no-op
     /// (only the real compositor drives an overlay).
     fn broadcast_brightness(&self, _value: u8) -> Result<(), CompositorError> {
+        Ok(())
+    }
+
+    /// Report the effective sound volume (0-100) to the settings-tray overlay
+    /// via the `deck_settings_v1` `volume` event. Default: no-op.
+    fn broadcast_volume(&self, _value: u8) -> Result<(), CompositorError> {
+        Ok(())
+    }
+
+    /// Report the night-mode state and its "HH:MM" boundary to the
+    /// settings-tray overlay via the `deck_settings_v1` `night_mode` event.
+    /// `until` is empty while night mode is disabled. Default: no-op.
+    fn broadcast_night_mode(&self, _active: bool, _until: &str) -> Result<(), CompositorError> {
+        Ok(())
+    }
+
+    /// Report a declined restart request to the settings-tray overlay via the
+    /// one-shot `deck_settings_v1` `restart_declined` event. Default: no-op.
+    fn broadcast_restart_declined(&self, _reason: &str) -> Result<(), CompositorError> {
         Ok(())
     }
 

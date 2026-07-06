@@ -260,6 +260,7 @@ where
                 connected_widgets_rx: compositor.connected_widgets_watch(),
                 status_tx: compositor.request_status_sender(),
                 night_mode_active_rx: system_manager.subscribe_night_mode(),
+                upgrade_state_rx: state_service.subscribe(),
             },
             sound_controller.clone(),
             led_coordinator.clone(),
@@ -267,6 +268,7 @@ where
             scenes_rx,
             system_manager.clone(),
             manager.clone(),
+            compositor.clone(),
         );
 
         {

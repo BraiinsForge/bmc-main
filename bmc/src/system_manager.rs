@@ -397,7 +397,6 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         self.night_mode_controller.config().await
     }
 
-    #[expect(dead_code, reason = "reserved for the display-overlay channel")]
     pub(crate) async fn toggle_night_mode(&self) -> anyhow::Result<()> {
         self.night_mode_controller.toggle().await
     }
