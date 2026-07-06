@@ -25,7 +25,7 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use crate::overlay::{InputRegion, LayerConfig, ScreenEdge};
-use ::deck_settings_v1::client::deck_settings_v1::{self, DeckSettingsV1};
+use ::deck_settings_v1::client::deck_settings_v1::{self, Capability, DeckSettingsV1};
 use bmc_widget::egl::DmaBufInfo;
 use bmc_widget::surface::{
     BufferSlotMap, PollOutcome, ReleasedBuffer, ReleasedBufferSet, create_buffer_from_dmabuf,
@@ -70,6 +70,14 @@ struct State {
     settings: Option<DeckSettingsV1>,
     /// Set on a `brightness` event; drained by the framework into on_brightness.
     pending_brightness: Option<u8>,
+    /// Set on a `volume` event; drained by the framework into on_volume.
+    pending_volume: Option<u8>,
+    /// Set on a `capabilities` event (first event after a v2 bind).
+    pending_capabilities: Option<crate::overlay::SettingsCaps>,
+    /// Set on a `night_mode` event.
+    pending_night_mode: Option<(bool, String)>,
+    /// Set on a one-shot `restart_declined` event.
+    pending_restart_declined: Option<String>,
     /// Set on a `wifi_ap` event; `Some(Some(ssid))`/`Some(None)` distinguishes a
     /// fresh event (active/inactive) from "no event this pass".
     #[expect(
@@ -123,6 +131,10 @@ impl Default for State {
             wants_settings: false,
             settings: None,
             pending_brightness: None,
+            pending_volume: None,
+            pending_capabilities: None,
+            pending_night_mode: None,
+            pending_restart_declined: None,
             pending_wifi_ap: None,
             configured: false,
             configured_size: (0, 0),
@@ -506,6 +518,22 @@ impl LayerSurfaceClient {
         self.state.pending_brightness.take()
     }
 
+    pub fn take_volume(&mut self) -> Option<u8> {
+        self.state.pending_volume.take()
+    }
+
+    pub fn take_capabilities(&mut self) -> Option<crate::overlay::SettingsCaps> {
+        self.state.pending_capabilities.take()
+    }
+
+    pub fn take_night_mode(&mut self) -> Option<(bool, String)> {
+        self.state.pending_night_mode.take()
+    }
+
+    pub fn take_restart_declined(&mut self) -> Option<String> {
+        self.state.pending_restart_declined.take()
+    }
+
     pub fn take_wifi_ap(&mut self) -> Option<Option<String>> {
         self.state.pending_wifi_ap.take()
     }
@@ -520,8 +548,17 @@ impl LayerSurfaceClient {
             .settings
             .as_ref()
             .context("deck_settings_v1 not bound")?;
+        let v2 = settings.version() >= 2;
         match req {
             SettingsRequest::SetBrightness(v) => settings.set_brightness(u32::from(v)),
+            SettingsRequest::SetVolume(v) if v2 => settings.set_volume(u32::from(v)),
+            SettingsRequest::ToggleNightMode if v2 => settings.toggle_night_mode(),
+            SettingsRequest::Restart if v2 => settings.restart(),
+            SettingsRequest::SetVolume(_)
+            | SettingsRequest::ToggleNightMode
+            | SettingsRequest::Restart => {
+                tracing::warn!(?req, "dropping v2 settings request on a v1 compositor");
+            }
             SettingsRequest::ReconfigureWifi => settings.reconfigure_wifi(),
         }
         self.flush()
@@ -641,7 +678,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 }
                 "deck_settings_v1" if state.wants_settings => {
                     let settings =
-                        registry.bind::<DeckSettingsV1, _, _>(name, version.min(1), qh, ());
+                        registry.bind::<DeckSettingsV1, _, _>(name, version.min(2), qh, ());
                     state.settings = Some(settings);
                 }
                 _ => {}
@@ -733,6 +770,28 @@ impl Dispatch<DeckSettingsV1, ()> for State {
             deck_settings_v1::Event::WifiAp { ssid } => {
                 let v = if ssid.is_empty() { None } else { Some(ssid) };
                 state.pending_wifi_ap = Some(v);
+            }
+            deck_settings_v1::Event::Volume { value } => {
+                state.pending_volume = Some(u8::try_from(value.min(100)).unwrap_or(100));
+            }
+            deck_settings_v1::Event::Capabilities { capabilities } => {
+                let caps = match capabilities {
+                    WEnum::Value(c) => c,
+                    // An unknown bit from a newer compositor must not drop the
+                    // known bits with it.
+                    WEnum::Unknown(raw) => Capability::from_bits_truncate(raw),
+                };
+                state.pending_capabilities = Some(crate::overlay::SettingsCaps {
+                    brightness: caps.contains(Capability::Brightness),
+                    sound: caps.contains(Capability::Sound),
+                    wifi_setup: caps.contains(Capability::WifiSetup),
+                });
+            }
+            deck_settings_v1::Event::NightMode { active, until } => {
+                state.pending_night_mode = Some((active != 0, until));
+            }
+            deck_settings_v1::Event::RestartDeclined { reason } => {
+                state.pending_restart_declined = Some(reason);
             }
             other => tracing::debug!(?other, "unhandled deck_settings_v1 event"),
         }

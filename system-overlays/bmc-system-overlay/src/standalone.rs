@@ -161,11 +161,25 @@ fn deliver_settings_events(client: &mut LayerSurfaceClient, overlay: &mut dyn Sy
     if !overlay.uses_settings() {
         return;
     }
+    // Capabilities go first: the wire sends them first on bind, and the
+    // trait promises them before any other settings event.
+    if let Some(caps) = client.take_capabilities() {
+        overlay.on_capabilities(caps);
+    }
     if let Some(v) = client.take_brightness() {
         overlay.on_brightness(v);
     }
     if let Some(ap) = client.take_wifi_ap() {
         overlay.on_wifi_ap(ap.as_deref());
+    }
+    if let Some(v) = client.take_volume() {
+        overlay.on_volume(v);
+    }
+    if let Some((active, until)) = client.take_night_mode() {
+        overlay.on_night_mode(active, &until);
+    }
+    if let Some(reason) = client.take_restart_declined() {
+        overlay.on_restart_declined(&reason);
     }
 }
 

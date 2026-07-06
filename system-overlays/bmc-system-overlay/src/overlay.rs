@@ -186,7 +186,20 @@ pub enum ScreenEdge {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsRequest {
     SetBrightness(u8),
+    SetVolume(u8),
+    ToggleNightMode,
+    Restart,
     ReconfigureWifi,
+}
+
+/// Decoded `deck_settings_v1` capability set: which optional controls this
+/// compositor supports. Plain bools so overlays never touch the raw protocol
+/// bitfield.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SettingsCaps {
+    pub brightness: bool,
+    pub sound: bool,
+    pub wifi_setup: bool,
 }
 
 /// Static layer-surface configuration, applied once at map time.
@@ -330,6 +343,24 @@ pub trait SystemOverlay {
     /// Effective display brightness (0-100) reported by the compositor. Called
     /// before `tick` when a `brightness` event arrived. Default: no-op.
     fn on_brightness(&mut self, _value: u8) {}
+
+    /// Effective sound volume (0-100) reported by the compositor. Called
+    /// before `tick` when a `volume` event arrived. Default: no-op.
+    fn on_volume(&mut self, _value: u8) {}
+
+    /// Capability set reported by a v2 compositor, first event after bind.
+    /// Never called against a v1 compositor. Called before `tick`. Default:
+    /// no-op.
+    fn on_capabilities(&mut self, _caps: SettingsCaps) {}
+
+    /// Night-mode state reported by the compositor. `until` is the "HH:MM"
+    /// boundary of the current state, empty while night mode is disabled.
+    /// Called before `tick`. Default: no-op.
+    fn on_night_mode(&mut self, _active: bool, _until: &str) {}
+
+    /// One-shot notification that a restart request was declined. Called
+    /// before `tick`. Default: no-op.
+    fn on_restart_declined(&mut self, _reason: &str) {}
 
     /// WiFi setup-AP SSID reported by the compositor: `Some(ssid)` while setup
     /// mode is active, `None` when inactive. Called before `tick`. Default:

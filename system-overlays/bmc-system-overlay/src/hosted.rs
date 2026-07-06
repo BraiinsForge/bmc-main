@@ -117,11 +117,25 @@ impl HostedOverlay {
             }
         }
         if self.overlay.uses_settings() {
+            // Capabilities go first: the wire sends them first on bind, and
+            // the trait promises them before any other settings event.
+            if let Some(caps) = self.client.take_capabilities() {
+                self.overlay.on_capabilities(caps);
+            }
             if let Some(v) = self.client.take_brightness() {
                 self.overlay.on_brightness(v);
             }
             if let Some(ap) = self.client.take_wifi_ap() {
                 self.overlay.on_wifi_ap(ap.as_deref());
+            }
+            if let Some(v) = self.client.take_volume() {
+                self.overlay.on_volume(v);
+            }
+            if let Some((active, until)) = self.client.take_night_mode() {
+                self.overlay.on_night_mode(active, &until);
+            }
+            if let Some(reason) = self.client.take_restart_declined() {
+                self.overlay.on_restart_declined(&reason);
             }
         }
         for released in self.client.drain_released_buffers() {
