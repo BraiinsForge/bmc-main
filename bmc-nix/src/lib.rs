@@ -12,6 +12,7 @@ pub mod partition;
 pub mod profile;
 pub mod progress;
 pub mod registration;
+pub mod servers_config;
 pub mod service_orchestrator;
 pub mod store;
 pub mod types;

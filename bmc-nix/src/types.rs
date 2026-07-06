@@ -74,6 +74,11 @@ pub struct CacheEntry {
 /// A newer server may publish strategy values this build does not know;
 /// they deserialize to [`Self::Unknown`] so one unrecognized hint cannot
 /// fail the entire index parse and hide every upgrade.
+///
+/// Invariant: display-only. Never branch on a strategy value for control flow
+/// (resolution or the reboot/apply decision). [`Self::Unknown`] round-trips
+/// lossily, and a package dropped from every index carries its old strategy
+/// forward across upgrades — both are safe only while nothing reads it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum UpgradeStrategy {
@@ -87,6 +92,11 @@ pub enum UpgradeStrategy {
 /// A newer server may publish strategy values this build does not know;
 /// they deserialize to [`Self::Unknown`] so one unrecognized hint cannot
 /// fail the entire index parse and hide every upgrade.
+///
+/// Invariant: display-only. Never branch on a strategy value for control flow
+/// (resolution or the reboot/apply decision). [`Self::Unknown`] round-trips
+/// lossily, and a package dropped from every index carries its old strategy
+/// forward across upgrades — both are safe only while nothing reads it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InstallStrategy {
@@ -693,17 +703,6 @@ mod tests {
             !entry.required,
             "an explicit `required: false` must be honoured"
         );
-    }
-
-    #[test]
-    fn deserialize_production_servers_config() {
-        let json = include_str!("../../bmc-nix-init/servers.json");
-        let config: ServersConfig =
-            serde_json::from_str(json).expect("BUG: production servers.json should be valid");
-        assert_eq!(config.factory.id, "forge");
-        assert_eq!(config.factory.base_url, "https://cache.braiins.com/v1");
-        assert!(config.factory.enabled);
-        assert!(config.servers.is_empty());
     }
 
     #[test]
