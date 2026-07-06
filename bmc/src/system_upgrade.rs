@@ -905,6 +905,24 @@ pub(crate) enum SystemUpgradeState {
     Failed,
 }
 
+impl SystemUpgradeState {
+    /// Whether a device restart must be declined in this state. Only the
+    /// transient states block: an active download would be wasted and an
+    /// active upgrade (flashing) is genuinely dangerous. `DownloadFinished`,
+    /// `Finished`, and `Failed` are resting states that persist indefinitely,
+    /// and rebooting outside an active operation is safe.
+    pub(crate) fn blocks_restart(&self) -> bool {
+        match self {
+            SystemUpgradeState::DownloadStarted { .. }
+            | SystemUpgradeState::DownloadProgress { .. }
+            | SystemUpgradeState::UpgradeStarted => true,
+            SystemUpgradeState::DownloadFinished { .. }
+            | SystemUpgradeState::Finished
+            | SystemUpgradeState::Failed => false,
+        }
+    }
+}
+
 #[derive(Debug, Error, Clone, PartialEq)]
 pub(crate) enum SystemUpgradeError {
     #[error("Failed to detect current version")]
@@ -1483,5 +1501,36 @@ mod tests {
         record_pending_install(&["widget-flip-clock".to_owned()], &path).expect("BUG: write");
         let read = bmc_nix::pending_install::read_pending_install(&path).expect("BUG: read");
         assert_eq!(read.install, vec!["widget-flip-clock".to_owned()]);
+    }
+
+    // DownloadFinished, Finished, and Failed are resting states the watch can sit in
+    // forever (download and upgrade are two separate gRPC calls, and the watch
+    // never resets to None), so they must not block restart; only the
+    // transient states do.
+    #[test]
+    fn blocks_restart_only_during_transient_upgrade_states() {
+        assert!(
+            SystemUpgradeState::DownloadStarted {
+                total_mb: Some(1.0)
+            }
+            .blocks_restart()
+        );
+        assert!(
+            SystemUpgradeState::DownloadProgress {
+                downloaded_mb: 0.5,
+                total_mb: Some(1.0)
+            }
+            .blocks_restart()
+        );
+        assert!(SystemUpgradeState::UpgradeStarted.blocks_restart());
+        assert!(
+            !SystemUpgradeState::DownloadFinished {
+                hash: Some("h".to_owned()),
+                total_mb: Some(1.0)
+            }
+            .blocks_restart()
+        );
+        assert!(!SystemUpgradeState::Finished.blocks_restart());
+        assert!(!SystemUpgradeState::Failed.blocks_restart());
     }
 }
