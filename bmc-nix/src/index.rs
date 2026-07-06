@@ -57,6 +57,7 @@ pub fn resolve_all_from_index(index: &PackageIndex) -> Vec<ResolvedPackage> {
             installed_by: InstalledBy::System,
             installed_from: "local".into(),
             pinned: None,
+            metadata: entry.metadata.clone(),
         })
         .collect()
 }
@@ -499,6 +500,7 @@ pub fn merge_indexes(fetched: Vec<FetchedIndex>) -> MergedIndex {
                 install_strategy: entry.install_strategy.clone(),
                 server_id: server_id.clone(),
                 server_priority,
+                metadata: entry.metadata.clone(),
             });
 
             by_name.entry(entry.name.clone()).or_default().push(idx);
@@ -685,6 +687,7 @@ fn merged_entry_to_resolved(
         installed_by,
         installed_from: entry.server_id.clone(),
         pinned,
+        metadata: entry.metadata.clone(),
     }
 }
 
@@ -787,6 +790,7 @@ mod tests {
             upgrade_strategy: None,
             install_strategy: None,
             server_id: String::new(),
+            metadata: BTreeMap::new(),
         }
     }
 
@@ -873,6 +877,7 @@ mod tests {
             upgrade_strategy: None,
             install_strategy: None,
             server_id: String::new(),
+            metadata: BTreeMap::new(),
         }
     }
 
@@ -962,6 +967,31 @@ mod tests {
             .expect("BUG: a two-component nix version must survive the merge");
         assert_eq!(indices.len(), 1);
         assert_eq!(merged.packages[indices[0]].version, Version::new(0, 8, 0));
+    }
+
+    #[test]
+    fn metadata_survives_merge_and_resolve() {
+        let mut entry = versioned_package("core", "1.0.0", "/nix/store/core");
+        entry
+            .metadata
+            .insert("bmc_version".to_owned(), "2.4.0".into());
+        let merged = merge_indexes(vec![fetched("forge", 10, vec![entry])]);
+        let m = &merged.packages[0];
+        assert_eq!(
+            m.metadata
+                .get("bmc_version")
+                .and_then(serde_json::Value::as_str),
+            Some("2.4.0")
+        );
+
+        let resolved = merged_entry_to_resolved(m, InstalledBy::System, None);
+        assert_eq!(
+            resolved
+                .metadata
+                .get("bmc_version")
+                .and_then(serde_json::Value::as_str),
+            Some("2.4.0")
+        );
     }
 
     // ---- resolve_new_package tests ----

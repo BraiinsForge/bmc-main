@@ -124,6 +124,8 @@ pub struct PackageEntry {
     /// Populated during index merging, not in JSON
     #[serde(skip)]
     pub server_id: String,
+    #[serde(default)]
+    pub metadata: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// A fully resolved package ready for installation.
@@ -144,6 +146,8 @@ pub struct ResolvedPackage {
     pub installed_from: String,
     #[serde(default)]
     pub pinned: Option<String>,
+    #[serde(default)]
+    pub metadata: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// What initiated the installation of a package
@@ -297,6 +301,7 @@ pub struct MergedPackageEntry {
     pub install_strategy: Option<InstallStrategy>,
     pub server_id: String,
     pub server_priority: u32,
+    pub metadata: BTreeMap<String, serde_json::Value>,
 }
 
 /// GC configuration (`/etc/nix-upgrade/gc.json`).
@@ -508,6 +513,27 @@ mod tests {
         let parsed: Manifest = serde_json::from_str(&json).expect("BUG: round-trip should succeed");
         assert_eq!(parsed.packages.len(), 1);
         assert!(parsed.packages.contains_key("test-pkg"));
+    }
+
+    #[test]
+    fn package_entry_metadata_defaults_empty_and_deserializes() {
+        let without: PackageEntry = serde_json::from_str(
+            r#"{"name":"core","version":"1.0.0","store_path":"/nix/store/x"}"#,
+        )
+        .expect("BUG: entry without metadata parses");
+        assert!(without.metadata.is_empty());
+
+        let with: PackageEntry = serde_json::from_str(
+            r#"{"name":"core","version":"1.0.0","store_path":"/nix/store/x",
+                "metadata":{"bmc_version":"2.4.0","changelog":"fixes"}}"#,
+        )
+        .expect("BUG: entry with metadata parses");
+        assert_eq!(
+            with.metadata
+                .get("bmc_version")
+                .and_then(serde_json::Value::as_str),
+            Some("2.4.0")
+        );
     }
 
     #[test]
@@ -763,6 +789,7 @@ mod tests {
                 installed_by: InstalledBy::System,
                 installed_from: "local".into(),
                 pinned: None,
+                metadata: BTreeMap::new(),
             },
             ResolvedPackage {
                 name: "b".into(),
@@ -775,6 +802,7 @@ mod tests {
                 installed_by: InstalledBy::System,
                 installed_from: "local".into(),
                 pinned: None,
+                metadata: BTreeMap::new(),
             },
         ];
         let summary = StrategySummary::from_packages(&packages);

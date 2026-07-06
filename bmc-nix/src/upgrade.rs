@@ -694,6 +694,7 @@ mod tests {
             installed_by: crate::types::InstalledBy::System,
             installed_from: "local".into(),
             pinned: None,
+            metadata: std::collections::BTreeMap::new(),
         };
 
         let store = FakeStore {

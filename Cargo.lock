@@ -1588,6 +1588,7 @@ dependencies = [
  "reqwest",
  "ring",
  "serde",
+ "serde_json",
  "sysinfo",
  "tempfile",
  "thiserror 1.0.69",

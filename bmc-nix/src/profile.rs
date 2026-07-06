@@ -493,6 +493,7 @@ mod tests {
             installed_by: InstalledBy::System,
             installed_from: "local".into(),
             pinned: None,
+            metadata: std::collections::BTreeMap::new(),
         }
     }
 
