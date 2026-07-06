@@ -88,7 +88,7 @@ wasmWidgetPackages // {
     upgrade_strategy = "reboot";
     install_strategy = null;
   };
-  flip-clock =
+  widget-flip-clock =
     let
       pkg = mkWidgetPackage {
         name = "flip-clock";
