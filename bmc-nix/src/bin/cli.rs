@@ -236,9 +236,11 @@ enum Commands {
         #[arg(long)]
         servers_config: Option<PathBuf>,
 
-        /// Ad-hoc index reference (repeatable): an http(s) base URL, or a
-        /// `file://` path to an index JSON. Highest precedence; a fetch
-        /// failure aborts the run.
+        /// Ad-hoc index reference (repeatable), optionally `ID=`-prefixed
+        /// (e.g. `forge=https://…`): an http(s) base URL, or a `file://`
+        /// path to an index JSON. The id attributes installed packages
+        /// (default `custom-<n>`). Highest precedence; a fetch failure
+        /// aborts the run.
         #[arg(long = "index")]
         indexes: Vec<String>,
 
@@ -477,22 +479,41 @@ fn apply_gc_overrides(
     }
 }
 
+/// Split an `--index` value into `(id, reference)`. An `ID=REFERENCE`
+/// prefix names the entry explicitly — used so a firmware upgrade can
+/// attribute packages to the same id as the configured server (e.g.
+/// `forge`) and keep origin affinity across the flash. A bare reference
+/// falls back to `custom-<n>` by flag order. The `=` is only an id
+/// delimiter when the left side is a bare token (no `/` or `:`), so a URL
+/// with a query string is never misread as `id=ref`.
+fn parse_index_ref(value: &str, index: usize) -> (String, String) {
+    if let Some((id, reference)) = value.split_once('=')
+        && !id.is_empty()
+        && !id.contains(['/', ':'])
+    {
+        return (id.to_owned(), reference.to_owned());
+    }
+    (format!("custom-{index}"), value.to_owned())
+}
+
 /// Build the fetch set: the configured servers plus one synthetic
 /// entry per `--index` reference.
 ///
 /// Custom entries sit at priority 0 (highest precedence), so a custom
-/// index wins a version tie against any configured server. Ids are
-/// `custom-<n>` by flag order; the `custom` type is a stable marker and
-/// is not consulted during resolution.
+/// index wins a version tie against any configured server. Ids come from
+/// each reference's optional `ID=` prefix, defaulting to `custom-<n>` by
+/// flag order; the `custom` type is a stable marker and is not consulted
+/// during resolution.
 fn build_fetch_set(
     mut configured: Vec<ServerEntry>,
     custom_indexes: &[String],
 ) -> Vec<ServerEntry> {
     for (i, reference) in custom_indexes.iter().enumerate() {
+        let (id, base_url) = parse_index_ref(reference, i);
         configured.push(ServerEntry {
-            id: format!("custom-{i}"),
+            id,
             server_type: "custom".to_owned(),
-            base_url: reference.clone(),
+            base_url,
             known_public_key: String::new(),
             priority: 0,
             enabled: true,
@@ -1357,7 +1378,7 @@ mod tests {
         std::fs::write(
             &path,
             r#"{
-                "factory": {"id":"braiins","base_url":"https://cache.braiins.com/v1","known_public_key":"k","priority":0,"enabled":true},
+                "factory": {"id":"forge","base_url":"https://cache.braiins.com/v1","known_public_key":"k","priority":0,"enabled":true},
                 "servers": [
                     {"id":"s1","type":"mirror","base_url":"https://s1.example.com/v1","known_public_key":"k","priority":10,"enabled":true}
                 ]
@@ -1505,6 +1526,25 @@ mod tests {
     }
 
     #[test]
+    fn build_fetch_set_honors_explicit_index_ids() {
+        let customs = vec![
+            "forge=https://cache.example.com/v1".to_owned(),
+            "https://cache.example.com/v2?a=b".to_owned(),
+        ];
+
+        let set = build_fetch_set(Vec::new(), &customs);
+
+        // An `ID=` prefix names the entry, so a firmware upgrade can
+        // attribute packages to the configured server's id.
+        assert_eq!(set[0].id, "forge");
+        assert_eq!(set[0].base_url, "https://cache.example.com/v1");
+        // A bare reference keeps the `custom-<n>` fallback by flag order, and
+        // an `=` inside the URL is not mistaken for an id delimiter.
+        assert_eq!(set[1].id, "custom-1");
+        assert_eq!(set[1].base_url, "https://cache.example.com/v2?a=b");
+    }
+
+    #[test]
     fn ensure_fetchable_errors_when_no_enabled_entries() {
         assert!(
             ensure_fetchable(&[]).is_err(),
@@ -1596,7 +1636,7 @@ mod tests {
         .expect("BUG: write index");
 
         let file_server = ServerEntry {
-            id: "braiins".to_owned(),
+            id: "forge".to_owned(),
             server_type: "mirror".to_owned(),
             base_url: format!("file://{}", index_path.display()),
             known_public_key: "k".to_owned(),
@@ -1621,7 +1661,7 @@ mod tests {
                 upgrade_strategy: None,
                 install_strategy: None,
                 installed_by: bmc_nix::types::InstalledBy::System,
-                installed_from: "braiins".to_owned(),
+                installed_from: "forge".to_owned(),
                 pinned: Some("^1.0.0".to_owned()),
             },
         );
@@ -1637,7 +1677,7 @@ mod tests {
                 // A missing system package is a hard error; only user
                 // packages go stale when absent from every index.
                 installed_by: bmc_nix::types::InstalledBy::User,
-                installed_from: "braiins".to_owned(),
+                installed_from: "forge".to_owned(),
                 pinned: None,
             },
         );
@@ -1675,7 +1715,7 @@ mod tests {
         .expect("BUG: write custom index");
 
         let configured = vec![ServerEntry {
-            id: "braiins".to_owned(),
+            id: "forge".to_owned(),
             server_type: "mirror".to_owned(),
             base_url: format!("file://{}", configured_path.display()),
             known_public_key: "k".to_owned(),
