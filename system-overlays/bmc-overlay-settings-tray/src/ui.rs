@@ -9,9 +9,7 @@ use bmc_render::tree::{
     DrawCommand, PropsData, SpanData, TextStyle, TreeNode, col, make_button, row, spacer, text,
 };
 use bmc_wasm_protocol::colors::{GRAY_50, GRAY_80, GREEN_50, TRANSPARENT, WHITE};
-use bmc_wasm_protocol::{
-    ButtonSize, ButtonStyle, Color, CrossAlign, Fill, FontWeight, SvgId, TextAlign,
-};
+use bmc_wasm_protocol::{ButtonSize, ButtonStyle, Color, CrossAlign, FontWeight, SvgId, TextAlign};
 
 /// Stable touch key for the brightness slider drag.
 pub const BRIGHTNESS_SLIDER_KEY: &str = "brightness";
@@ -27,6 +25,9 @@ pub const WIFI_RECONNECT_KEY: &str = "wifi_reconnect";
 
 /// Stable touch key for the night-mode tap toggle.
 pub const NIGHT_MODE_KEY: &str = "night_mode";
+
+/// Stable touch key for the restart hold button.
+pub const RESTART_KEY: &str = "restart";
 
 /// Panel scrim: the tray composites over the live scene, so its background is a
 /// near-opaque black that lets the scene faintly show through. Matches the
@@ -108,18 +109,17 @@ pub struct ControlIcons {
     pub sound_high: Option<SvgId>,
     pub brightness_low: Option<SvgId>,
     pub brightness_high: Option<SvgId>,
-    pub nightmode: Option<SvgId>,
-    pub restart: Option<SvgId>,
 }
 
 /// The v2 control surfaces to render. `None` fields are hidden — either the
 /// capability is missing (volume) or the compositor is v1 (night mode,
-/// restart). `restart` carries (label, fill percentage 0-100).
+/// restart). `night_mode` carries the active state; `restart` carries the
+/// button caption (swapped to convey hold progress).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Controls<'a> {
     pub volume: Option<u8>,
-    pub night_mode: Option<(bool, &'a str)>,
-    pub restart: Option<(&'a str, u8)>,
+    pub night_mode: Option<bool>,
+    pub restart: Option<&'a str>,
 }
 
 const MIN_BRIGHTNESS: u8 = 10;
@@ -143,11 +143,6 @@ const ROUND_H_PAD: f32 = 48.0;
 
 /// Symmetric padding inside rectangular panels.
 const RECT_PADDING: f32 = 24.0;
-
-/// Fixed width of the reconfigure + reconnect button row. Capped so the row
-/// fits the round panel's usable chord (~384px inside the inscribed circle)
-/// while keeping the two buttons compact instead of stretching the full panel.
-const BUTTON_ROW_WIDTH: f32 = 360.0;
 
 /// Usable hostname width (px) on round panels. Near the top curve the
 /// inscribed circle's chord is narrower than the full width, so the centered
@@ -180,15 +175,13 @@ fn fit_hostname(hostname: &str, width_px: f32) -> String {
 
 /// A `Secondary`/`Normal` hold-to-confirm button keyed by `key`.
 fn button(key: &str, label: impl Into<String>) -> TreeNode {
-    make_button(
-        key,
-        label,
-        ButtonStyle::Secondary,
-        ButtonSize::Normal,
-        None,
-        false,
-        None,
-    )
+    button_styled(key, label, ButtonStyle::Secondary)
+}
+
+/// Like [`button`] but with an explicit style — night mode uses `Primary` to
+/// signal its active state.
+fn button_styled(key: &str, label: impl Into<String>, style: ButtonStyle) -> TreeNode {
+    make_button(key, label, style, ButtonSize::Normal, None, false, None)
 }
 
 fn text_style(size: u32, color: Color) -> TextStyle {
@@ -420,89 +413,85 @@ fn volume_section(volume: u8, with_label: bool, icons: ControlIcons) -> TreeNode
     )
 }
 
-/// Fixed height of the night-mode pill and restart button.
-const CONTROL_BUTTON_H: f32 = 48.0;
+/// Advisory per-button width. The panel's usable width caps the row below this
+/// when the buttons cannot all fit (round and narrow panels).
+const CONTROL_BUTTON_W: f32 = 220.0;
 
-/// Night-mode active/inactive control colors, matching the stable tray
-/// (Palette.blue-70 active, white at 30% inactive).
-const NIGHT_ACTIVE: Color = Color::from_rgba(0x10, 0x43, 0xCD, 0xFF);
-const NIGHT_INACTIVE: Color = Color::from_rgba(0xFF, 0xFF, 0xFF, 0x4D);
-
-/// Tap-toggle for night mode: an icon + label pill whose background color
-/// indicates the active state, with the "Until HH:MM" status line below when
-/// known. State comes exclusively from the night_mode event — no local
-/// prediction. `width` is the fixed pill width so the tap region and fill are
-/// bounded (Canvas rects are not auto-clipped to a flex width).
-fn night_mode_section(active: bool, until: &str, width: f32, icons: ControlIcons) -> TreeNode {
-    let label = if active {
-        "Night Mode: On"
-    } else {
-        "Night Mode: Off"
-    };
-    let pill = TreeNode::Canvas {
-        props: PropsData {
-            width,
-            height: CONTROL_BUTTON_H,
-            ..PropsData::default()
-        },
-        touch_key: Some(NIGHT_MODE_KEY.to_owned()),
-        draws: vec![
-            DrawCommand::Rect {
-                x: 0.0,
-                y: 0.0,
-                w: width,
-                h: CONTROL_BUTTON_H,
-                fill: Fill::Solid(if active { NIGHT_ACTIVE } else { NIGHT_INACTIVE }),
-            },
-            DrawCommand::Svg {
-                x: 12.0,
-                y: (CONTROL_BUTTON_H - 24.0) / 2.0,
-                w: 24.0,
-                h: 24.0,
-                color: TRANSPARENT,
-                icon_id: icons.nightmode,
-                anti_alias: true,
-                fills: Vec::new(),
-            },
-            DrawCommand::Centered {
-                inner: Box::new(DrawCommand::Text {
-                    x: 0.0,
-                    y: 0.0,
-                    text: label.to_owned(),
-                    style: TextStyle {
-                        size: 20,
-                        weight: FontWeight::BOLD,
-                        color: WHITE,
-                        ..TextStyle::default()
-                    },
-                }),
-            },
-        ],
-    };
-    let mut children = vec![pill];
-    if !until.is_empty() {
-        children.push(text(format!("Until {until}"), text_style(16, GRAY_50)));
+/// Every present control — WiFi reconfigure/reconnect, night-mode, restart — on
+/// a single centered row of equal, label-independent halves. Each is a plain
+/// `Button` (no icons) so the row reads as one uniform control set;
+/// hold-to-confirm shows only as a swapped caption. `wifi_label` is `Some` only
+/// when the WiFi buttons apply (the product supports reconfigure and it is not
+/// in setup mode). `usable` bounds the row width so it never overruns the
+/// panel; `None` when no control is present.
+fn controls_bar(
+    wifi_label: Option<&str>,
+    night_mode: Option<bool>,
+    restart: Option<&str>,
+    usable: f32,
+) -> Option<TreeNode> {
+    let mut buttons: Vec<TreeNode> = Vec::new();
+    if let Some(label) = wifi_label {
+        buttons.push(button(WIFI_RECONFIG_KEY, label));
+        buttons.push(button(WIFI_RECONNECT_KEY, "Reconnect WiFi"));
     }
-    col(
+    if let Some(active) = night_mode {
+        buttons.push(button_styled(
+            NIGHT_MODE_KEY,
+            "Night Mode",
+            if active {
+                ButtonStyle::Primary
+            } else {
+                ButtonStyle::Secondary
+            },
+        ));
+    }
+    if let Some(label) = restart {
+        buttons.push(button(RESTART_KEY, label));
+    }
+    let count = u16::try_from(buttons.len()).unwrap_or(u16::MAX);
+    if count == 0 {
+        return None;
+    }
+    let width = (f32::from(count) * CONTROL_BUTTON_W).min(usable);
+    let halves: Vec<TreeNode> = buttons
+        .into_iter()
+        .map(|node| {
+            col(
+                PropsData {
+                    flex: 1.0,
+                    ..PropsData::default()
+                },
+                vec![node],
+            )
+        })
+        .collect();
+    Some(col(
         PropsData {
             cross_align: CrossAlign::Center,
-            gap: 6.0,
             ..PropsData::default()
         },
-        children,
-    )
+        vec![row(
+            PropsData {
+                gap: 16.0,
+                width,
+                ..PropsData::default()
+            },
+            halves,
+        )],
+    ))
 }
 
 /// Rectangular overlay column: hostname header, brightness, optional volume,
-/// optional night-mode toggle, then the Wi-Fi `info` block pushed to the bottom
-/// edge. `with_brightness_label` is dropped on short panels to reclaim the
-/// vertical space, and doubles as the volume label flag.
+/// optional night-mode/restart controls, then the Wi-Fi `info` block pushed to
+/// the bottom edge. `with_brightness_label` is dropped on short panels to
+/// reclaim the vertical space, and doubles as the volume label flag.
 fn rect_overlay(
     hostname_str: &str,
     brightness: u8,
     with_brightness_label: bool,
     volume: Option<u8>,
-    night_mode: Option<(bool, &str)>,
+    controls_extra: Option<TreeNode>,
     info: TreeNode,
     icons: ControlIcons,
 ) -> TreeNode {
@@ -513,13 +502,8 @@ fn rect_overlay(
     if let Some(v) = volume {
         children.push(volume_section(v, with_brightness_label, icons));
     }
-    if let Some((active, until)) = night_mode {
-        children.push(night_mode_section(
-            active,
-            until,
-            BUTTON_ROW_WIDTH / 2.0 - 8.0,
-            icons,
-        ));
+    if let Some(node) = controls_extra {
+        children.push(node);
     }
     children.push(spacer(1.0));
     children.push(info);
@@ -531,55 +515,6 @@ fn rect_overlay(
             ..PropsData::default()
         },
         children,
-    )
-}
-
-/// Hold-to-confirm WiFi reconfigure button. The caller swaps `label` to convey
-/// hold progress; the press is detected via the `WIFI_RECONFIG_KEY` hit region.
-fn reconfig_button(label: &str) -> TreeNode {
-    button(WIFI_RECONFIG_KEY, label)
-}
-
-/// Hold-to-confirm bare WiFi reconnect button. Its press is detected via the
-/// `WIFI_RECONNECT_KEY` hit region; the caller spawns the reconnect sequence
-/// once the hold completes. The label is static — hold progress shows only as
-/// the pressed background.
-fn reconnect_button() -> TreeNode {
-    button(WIFI_RECONNECT_KEY, "Reconnect WiFi")
-}
-
-/// Side-by-side hold buttons: reconfigure (left) and reconnect (right). Each is
-/// wrapped in a `flex: 1.0` column so they split the fixed-width row into equal,
-/// label-independent halves. The row is centered and capped at
-/// [`BUTTON_ROW_WIDTH`] rather than stretching the full panel, so the buttons
-/// stay compact on wide displays and still fit the round panel's narrower
-/// usable width.
-fn button_row(reconfig_label: &str) -> TreeNode {
-    let half = |node: TreeNode| {
-        col(
-            PropsData {
-                flex: 1.0,
-                ..PropsData::default()
-            },
-            vec![node],
-        )
-    };
-    col(
-        PropsData {
-            cross_align: CrossAlign::Center,
-            ..PropsData::default()
-        },
-        vec![row(
-            PropsData {
-                gap: 16.0,
-                width: BUTTON_ROW_WIDTH,
-                ..PropsData::default()
-            },
-            vec![
-                half(reconfig_button(reconfig_label)),
-                half(reconnect_button()),
-            ],
-        )],
     )
 }
 
@@ -619,18 +554,12 @@ fn setup_row(icons: WifiIcons, ap_ssid: &str) -> TreeNode {
     )
 }
 
-/// The trailing WiFi/reconfig section used by every layout branch. `info` is the
-/// existing station icon+SSID+IP node for normal mode.
-fn wifi_section(info: TreeNode, icons: WifiIcons, view: WifiView<'_>, buttons: bool) -> TreeNode {
+/// The trailing WiFi section used by every layout branch. `info` is the station
+/// icon+SSID+IP node for normal mode; the reconfigure/reconnect buttons live in
+/// [`controls_bar`], not here.
+fn wifi_section(info: TreeNode, icons: WifiIcons, view: WifiView<'_>) -> TreeNode {
     match view {
         WifiView::Setup { ap_ssid } => setup_row(icons, ap_ssid),
-        WifiView::Idle { label } if buttons => col(
-            PropsData {
-                gap: 16.0,
-                ..PropsData::default()
-            },
-            vec![button_row(label), info],
-        ),
         WifiView::Idle { .. } => info,
     }
 }
@@ -699,6 +628,14 @@ pub fn build_tree(
     let wide = matches!(shape, DisplayShape::Rectangular)
         && (width as f32) / (height as f32) >= WIDE_ASPECT;
 
+    // The WiFi reconfigure/reconnect buttons join the single control row, but
+    // only in normal (non-setup) mode and only when the product supports
+    // reconfiguration; the setup badge still renders via wifi_section.
+    let wifi_label = match wifi_view {
+        WifiView::Idle { label } if wifi_buttons => Some(label),
+        WifiView::Idle { .. } | WifiView::Setup { .. } => None,
+    };
+
     match shape {
         // Round panels clip the corners: inset content horizontally, drop the
         // brightness into the wide middle band, center the Wi-Fi rows, and keep
@@ -720,15 +657,15 @@ pub fn build_tree(
                     ROUND_H_PAD,
                 ));
             }
-            if let Some((active, until)) = controls.night_mode {
-                children.push(pad_horizontal(
-                    night_mode_section(active, until, BUTTON_ROW_WIDTH / 2.0 - 8.0, controls_icons),
-                    ROUND_H_PAD,
-                ));
+            let usable = (width as f32) - 2.0 * ROUND_H_PAD;
+            if let Some(node) =
+                controls_bar(wifi_label, controls.night_mode, controls.restart, usable)
+            {
+                children.push(pad_horizontal(node, ROUND_H_PAD));
             }
             children.push(spacer(1.0));
             children.push(pad_horizontal(
-                wifi_section(info, icons, wifi_view, wifi_buttons),
+                wifi_section(info, icons, wifi_view),
                 ROUND_H_PAD,
             ));
             children.push(fixed_height(ROUND_BOTTOM_GAP));
@@ -743,28 +680,29 @@ pub fn build_tree(
         }
         DisplayShape::Rectangular if wide => {
             let info = wide_info(icons, wifi_signal, ssid_str, &ip_str);
+            let usable = (width as f32) - 2.0 * RECT_PADDING;
             rect_overlay(
                 &hostname_str,
                 brightness,
                 true,
                 controls.volume,
-                controls.night_mode,
-                wifi_section(info, icons, wifi_view, wifi_buttons),
+                controls_bar(wifi_label, controls.night_mode, controls.restart, usable),
+                wifi_section(info, icons, wifi_view),
                 controls_icons,
             )
         }
         DisplayShape::Rectangular => {
             let info = narrow_info(icons, wifi_signal, ssid_str, &ip_str);
             // Narrow panel: drop the "Brightness" label so the Wi-Fi info and IP
-            // are not pushed off the bottom edge. The night-mode status line is
-            // dropped first on tight layouts, so pass an empty `until`.
+            // are not pushed off the bottom edge.
+            let usable = (width as f32) - 2.0 * RECT_PADDING;
             rect_overlay(
                 &hostname_str,
                 brightness,
                 false,
                 controls.volume,
-                controls.night_mode.map(|(active, _)| (active, "")),
-                wifi_section(info, icons, wifi_view, wifi_buttons),
+                controls_bar(wifi_label, controls.night_mode, controls.restart, usable),
+                wifi_section(info, icons, wifi_view),
                 controls_icons,
             )
         }
@@ -939,24 +877,14 @@ mod tests {
         }
     }
 
-    /// Recursively collect every Canvas rect fill color in the tree.
-    fn canvas_rect_fills(node: &TreeNode, out: &mut Vec<Color>) {
-        if let TreeNode::Canvas { draws, .. } = node {
-            for d in draws {
-                if let DrawCommand::Rect {
-                    fill: Fill::Solid(c),
-                    ..
-                } = d
-                {
-                    out.push(*c);
-                }
-            }
+    /// The `style` byte of the first `Button` with the given id, if present.
+    fn button_style(node: &TreeNode, key: &str) -> Option<u8> {
+        if let TreeNode::Button { id, style, .. } = node
+            && id == key
+        {
+            return Some(*style);
         }
-        if let Some(kids) = children(node) {
-            for k in kids {
-                canvas_rect_fills(k, out);
-            }
-        }
+        children(node)?.iter().find_map(|k| button_style(k, key))
     }
 
     /// Recursively collect every `Button` id in the tree.
@@ -1000,23 +928,24 @@ mod tests {
     }
 
     #[test]
-    fn night_mode_active_state_is_color_indicated() {
-        let build_night = |active| {
+    fn night_mode_active_state_is_style_indicated() {
+        let style = |active| {
             let controls = Controls {
-                night_mode: Some((active, "06:30")),
+                night_mode: Some(active),
                 ..Controls::default()
             };
-            let mut fills = Vec::new();
-            canvas_rect_fills(&build_with_controls(wide_panel(), controls), &mut fills);
-            fills
+            button_style(&build_with_controls(wide_panel(), controls), NIGHT_MODE_KEY)
+                .expect("BUG: the night-mode button must be present when night_mode is Some")
         };
-        assert!(
-            build_night(true).contains(&Color::from_rgba(0x10, 0x43, 0xCD, 0xFF)),
-            "active night mode must show the stable tray's blue"
+        assert_eq!(
+            style(true),
+            ButtonStyle::Primary as u8,
+            "active night mode must use the highlighted Primary button style"
         );
-        assert!(
-            build_night(false).contains(&Color::from_rgba(0xFF, 0xFF, 0xFF, 0x4D)),
-            "inactive night mode must show white at 30%"
+        assert_eq!(
+            style(false),
+            ButtonStyle::Secondary as u8,
+            "inactive night mode must use the Secondary button style"
         );
     }
 
@@ -1041,7 +970,7 @@ mod tests {
     }
 
     #[test]
-    fn wifi_buttons_flag_gates_the_button_row() {
+    fn wifi_buttons_flag_gates_the_wifi_controls() {
         let with = |wifi_buttons| {
             let mut panel = wide_panel();
             panel.wifi_buttons = wifi_buttons;

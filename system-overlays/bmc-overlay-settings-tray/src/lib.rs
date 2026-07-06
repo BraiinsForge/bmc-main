@@ -25,7 +25,9 @@ use bmc_system_overlay::{
 };
 
 use crate::dismiss::Pt;
-use crate::fsm::{ButtonState, FsmAction, ReconnectAction, ReconnectState};
+use crate::fsm::{
+    ButtonState, FsmAction, ReconnectAction, ReconnectState, RestartAction, RestartState,
+};
 use crate::ui::{Panel, WifiView};
 
 /// Kernel hostname, exposed by procfs.
@@ -278,6 +280,11 @@ pub struct NightModeView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestartView {
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsTrayView {
     pub shape: DisplayShape,
     pub width: u32,
@@ -286,6 +293,7 @@ pub struct SettingsTrayView {
     pub volume: u8,
     pub show_volume: bool,
     pub night_mode: Option<NightModeView>,
+    pub restart: Option<RestartView>,
     pub hostname: Option<String>,
     pub ip: Option<String>,
     pub wifi_signal: Option<i32>,
@@ -311,6 +319,9 @@ impl SettingsTrayView {
             night_mode: Some(NightModeView {
                 active: false,
                 until: String::new(),
+            }),
+            restart: Some(RestartView {
+                label: "Restart".to_owned(),
             }),
             hostname: None,
             ip: None,
@@ -389,6 +400,11 @@ pub struct SettingsTrayOverlay {
     reconnect: ReconnectState,
     reconnect_child: Option<Child>,
 
+    restart: RestartState,
+    /// Reason from the last `restart_declined` event, shown in place of the
+    /// generic message while the restart FSM surfaces one.
+    declined_reason: Option<String>,
+
     render_state: SettingsTrayRenderState,
 
     touch_track: Option<TouchTrack>,
@@ -446,6 +462,8 @@ impl SettingsTrayOverlay {
             button: ButtonState::default(),
             reconnect: ReconnectState::default(),
             reconnect_child: None,
+            restart: RestartState::default(),
+            declined_reason: None,
             render_state: SettingsTrayRenderState::new(now),
             touch_track: None,
             last_interaction: now,
@@ -469,6 +487,16 @@ impl SettingsTrayOverlay {
         view.night_mode = Some(NightModeView {
             active: self.night_active,
             until: self.night_until.clone(),
+        });
+        let restart_label = if self.restart.shows_message() {
+            self.declined_reason
+                .clone()
+                .unwrap_or_else(|| self.restart.label().to_owned())
+        } else {
+            self.restart.label().to_owned()
+        };
+        view.restart = Some(RestartView {
+            label: restart_label,
         });
         view.hostname.clone_from(&self.hostname);
         view.ip.clone_from(&self.ip);
@@ -546,6 +574,18 @@ impl SettingsTrayOverlay {
         if self.reconnect != prev_reconnect {
             self.content_dirty = true;
         }
+
+        let restart_pressed = self.render_state.tree.is_pressed(ui::RESTART_KEY);
+        let prev_restart = self.restart;
+        if self.restart.tick(restart_pressed, now) == RestartAction::SendRestart {
+            self.pending_requests.push(SettingsRequest::Restart);
+        }
+        if self.restart != prev_restart {
+            self.content_dirty = true;
+        }
+        if !self.restart.shows_message() {
+            self.declined_reason = None;
+        }
     }
 
     /// Whether an incoming volume event must be dropped: the finger owns the
@@ -560,8 +600,10 @@ impl SettingsTrayOverlay {
     fn animating(&self) -> bool {
         self.button.is_animating()
             || self.reconnect.is_animating()
+            || self.restart.is_animating()
             || self.render_state.tree.is_pressed(ui::WIFI_RECONFIG_KEY)
             || self.render_state.tree.is_pressed(ui::WIFI_RECONNECT_KEY)
+            || self.render_state.tree.is_pressed(ui::RESTART_KEY)
     }
 }
 
@@ -602,6 +644,8 @@ impl SystemOverlay for SettingsTrayOverlay {
         }
         self.button = ButtonState::default();
         self.reconnect = ReconnectState::default();
+        self.restart = RestartState::default();
+        self.declined_reason = None;
         self.touch_track = None;
         self.dismissing = false;
         self.last_interaction = now;
@@ -631,6 +675,12 @@ impl SystemOverlay for SettingsTrayOverlay {
             until.clone_into(&mut self.night_until);
             self.content_dirty = true;
         }
+    }
+
+    fn on_restart_declined(&mut self, reason: &str) {
+        self.declined_reason = Some(reason.to_owned());
+        self.restart.on_declined(Instant::now());
+        self.content_dirty = true;
     }
 
     fn on_wifi_ap(&mut self, ssid: Option<&str>) {
@@ -868,11 +918,8 @@ pub fn render_settings_tray(
     };
     let controls = ui::Controls {
         volume: view.show_volume.then_some(view.volume),
-        night_mode: view
-            .night_mode
-            .as_ref()
-            .map(|n| (n.active, n.until.as_str())),
-        ..ui::Controls::default()
+        night_mode: view.night_mode.as_ref().map(|n| n.active),
+        restart: view.restart.as_ref().map(|r| r.label.as_str()),
     };
     let node = ui::build_tree(
         view.brightness,
