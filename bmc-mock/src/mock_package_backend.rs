@@ -330,7 +330,7 @@ mod tests {
     async fn probe_surfaces_requested_installs_as_added() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
-        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         let PackageProbe::Available(_, preview) = backend
             .probe(EstimateMode::Skip, &["widget-flip-clock".to_owned()])
             .await
@@ -375,7 +375,7 @@ mod tests {
             dir.path(),
             r#"{"packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#,
         );
-        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         let widgets = backend
             .list_installable_widgets()
             .await
@@ -389,7 +389,7 @@ mod tests {
     async fn lists_nothing_when_no_packages_shadowed() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
-        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         assert!(
             backend
                 .list_installable_widgets()
@@ -424,7 +424,11 @@ mod tests {
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, Arc::clone(&stop));
 
         backend
-            .apply(empty_merged_index(), Arc::new(RecordingProgress::default()))
+            .apply(
+                empty_merged_index(),
+                Vec::new(),
+                Arc::new(RecordingProgress::default()),
+            )
             .await
             .expect("BUG: package apply should succeed");
 
@@ -444,7 +448,11 @@ mod tests {
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, Arc::clone(&stop));
 
         let result = backend
-            .apply(empty_merged_index(), Arc::new(RecordingProgress::default()))
+            .apply(
+                empty_merged_index(),
+                Vec::new(),
+                Arc::new(RecordingProgress::default()),
+            )
             .await;
         assert!(result.is_err());
 

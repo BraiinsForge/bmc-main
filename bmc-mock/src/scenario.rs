@@ -41,7 +41,7 @@ pub enum RunScenario {
     ApplyFail,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PackageUpgradeAction {
     #[default]
@@ -49,7 +49,7 @@ pub enum PackageUpgradeAction {
     Restart,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UpgradeScenario {
     pub firmware: FirmwareScenario,

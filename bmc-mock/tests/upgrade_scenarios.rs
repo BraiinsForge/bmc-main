@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use bmc_grpc::web::upgrade_service_client::UpgradeServiceClient;
 use bmc_grpc::web::{
-    FirmwareUpgradePhase, PackageUpgradePhase, StartUpgradeRequest, UpgradeDisruption,
-    UpgradeProgress, upgrade_progress,
+    CheckForUpgradeRequest, FirmwareUpgradePhase, PackageUpgradePhase, StartUpgradeRequest,
+    UpgradeDisruption, UpgradeProgress, upgrade_progress,
 };
 use tonic::Request;
 use tonic::metadata::MetadataValue;
@@ -62,7 +62,9 @@ async fn default_scenario_offers_firmware_and_packages() {
     let mut mock = spawn_mock(r#"{"firmware": "available", "packages": "available"}"#);
     let mut client = upgrade_client(&mut mock).await;
     let response = client
-        .check_for_upgrade(())
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
         .await
         .expect("BUG: check failed")
         .into_inner();
@@ -85,7 +87,9 @@ async fn up_to_date_returns_empty_response() {
     let mut mock = spawn_mock(r#"{"firmware": "up-to-date", "packages": "unavailable"}"#);
     let mut client = upgrade_client(&mut mock).await;
     let response = client
-        .check_for_upgrade(())
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
         .await
         .expect("BUG: check failed")
         .into_inner();
@@ -99,7 +103,9 @@ async fn fetch_failed_surfaces_grpc_error() {
     let mut mock = spawn_mock(r#"{"firmware": "up-to-date", "packages": "fetch-failed"}"#);
     let mut client = upgrade_client(&mut mock).await;
     let status = client
-        .check_for_upgrade(())
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
         .await
         .expect_err("package fetch failure must surface as a gRPC error");
     assert_eq!(status.code(), tonic::Code::Internal);
@@ -111,7 +117,9 @@ async fn precondition_failure_surfaces_failed_precondition() {
     let mut mock = spawn_mock(r#"{"firmware": "up-to-date", "packages": "precondition-failed"}"#);
     let mut client = upgrade_client(&mut mock).await;
     let status = client
-        .check_for_upgrade(())
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
         .await
         .expect_err("a non-transient package precondition must surface as a gRPC error");
     assert_eq!(status.code(), tonic::Code::FailedPrecondition);
@@ -123,7 +131,9 @@ async fn check_error_surfaces_grpc_error() {
     let mut mock = spawn_mock(r#"{"firmware": "check-error"}"#);
     let mut client = upgrade_client(&mut mock).await;
     let status = client
-        .check_for_upgrade(())
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
         .await
         .expect_err("check must fail");
     assert_eq!(status.code(), tonic::Code::Internal);
@@ -134,7 +144,9 @@ async fn package_failure_is_not_masked_by_available_firmware() {
     let mut mock = spawn_mock(r#"{"firmware": "available", "packages": "fetch-failed"}"#);
     let mut client = upgrade_client(&mut mock).await;
     let status = client
-        .check_for_upgrade(())
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
         .await
         .expect_err("package failure must not be masked by firmware availability");
     assert_eq!(status.code(), tonic::Code::Internal);
@@ -146,7 +158,9 @@ async fn packages_only_run_completes_all_phases() {
     let mut mock = spawn_mock(r#"{"firmware": "up-to-date", "packages": "available"}"#);
     let mut client = upgrade_client(&mut mock).await;
     let response = client
-        .check_for_upgrade(())
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
         .await
         .expect("BUG: check failed")
         .into_inner();
@@ -213,7 +227,9 @@ async fn packages_restart_action_stops_the_app_after_activation() {
     );
     let mut client = upgrade_client(&mut mock).await;
     let response = client
-        .check_for_upgrade(())
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
         .await
         .expect("BUG: check failed")
         .into_inner();
@@ -266,7 +282,9 @@ async fn firmware_with_packages_streams_nested_package_stages() {
     let mut mock = spawn_mock(r#"{"firmware": "available", "packages": "available"}"#);
     let mut client = upgrade_client(&mut mock).await;
     let response = client
-        .check_for_upgrade(())
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
         .await
         .expect("BUG: check failed")
         .into_inner();
@@ -329,7 +347,9 @@ async fn packages_apply_fail_errors_the_stream() {
         spawn_mock(r#"{"firmware": "up-to-date", "packages": "available", "run": "apply-fail"}"#);
     let mut client = upgrade_client(&mut mock).await;
     let response = client
-        .check_for_upgrade(())
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
         .await
         .expect("BUG: check failed")
         .into_inner();
@@ -360,7 +380,9 @@ async fn firmware_success_closes_the_stream_cleanly_then_reboots() {
     );
     let mut client = upgrade_client(&mut mock).await;
     let response = client
-        .check_for_upgrade(())
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
         .await
         .expect("BUG: check failed")
         .into_inner();
@@ -425,7 +447,9 @@ async fn firmware_download_fail_errors_the_stream() {
     );
     let mut client = upgrade_client(&mut mock).await;
     let response = client
-        .check_for_upgrade(())
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
         .await
         .expect("BUG: check failed")
         .into_inner();
@@ -456,7 +480,9 @@ async fn firmware_hash_mismatch_errors_the_stream() {
     );
     let mut client = upgrade_client(&mut mock).await;
     let response = client
-        .check_for_upgrade(())
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
         .await
         .expect("BUG: check failed")
         .into_inner();
@@ -484,7 +510,9 @@ async fn firmware_apply_fail_errors_after_verify() {
         spawn_mock(r#"{"firmware": "available", "packages": "unavailable", "run": "apply-fail"}"#);
     let mut client = upgrade_client(&mut mock).await;
     let response = client
-        .check_for_upgrade(())
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
         .await
         .expect("BUG: check failed")
         .into_inner();
@@ -534,7 +562,9 @@ async fn scenario_flip_changes_next_check() {
     let mut mock = spawn_mock(r#"{"firmware": "available", "packages": "unavailable"}"#);
     let mut client = upgrade_client(&mut mock).await;
     let response = client
-        .check_for_upgrade(())
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
         .await
         .expect("BUG: check failed")
         .into_inner();
@@ -547,10 +577,127 @@ async fn scenario_flip_changes_next_check() {
     .expect("BUG: rewrite scenario");
 
     let response = client
-        .check_for_upgrade(())
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
         .await
         .expect("BUG: check failed")
         .into_inner();
     assert!(response.firmware.is_none());
     assert!(response.upgrade_id.is_none());
+}
+
+const SHADOWED_SCENARIO: &str = r#"{"firmware": "up-to-date", "packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#;
+
+#[tokio::test]
+async fn lists_shadowed_widget_as_installable_over_grpc() {
+    let mut mock = spawn_mock(SHADOWED_SCENARIO);
+    let mut client = upgrade_client(&mut mock).await;
+    let response = client
+        .get_installable_widgets(())
+        .await
+        .expect("BUG: list failed")
+        .into_inner();
+    let widget = response
+        .widgets
+        .iter()
+        .find(|w| w.package_name == "widget-flip-clock")
+        .expect("BUG: flip-clock not offered as installable");
+    assert!(!widget.uid.is_empty());
+    assert!(!widget.display_name.is_empty());
+    assert!(widget.icon.is_some());
+}
+
+#[tokio::test]
+async fn check_surfaces_requested_install_over_grpc() {
+    let mut mock = spawn_mock(SHADOWED_SCENARIO);
+    let mut client = upgrade_client(&mut mock).await;
+    let response = client
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec!["widget-flip-clock".to_owned()],
+        })
+        .await
+        .expect("BUG: check failed")
+        .into_inner();
+    let packages = response.packages.expect("BUG: packages offered");
+    assert!(
+        packages
+            .changes
+            .iter()
+            .any(|c| c.name == "widget-flip-clock"),
+        "requested install missing from plan: {:?}",
+        packages.changes
+    );
+}
+
+#[tokio::test]
+async fn install_run_marks_widget_installed_over_grpc() {
+    let mut mock = spawn_mock(SHADOWED_SCENARIO);
+    let mut client = upgrade_client(&mut mock).await;
+
+    let before = client
+        .get_installable_widgets(())
+        .await
+        .expect("BUG: list failed")
+        .into_inner();
+    assert!(
+        before
+            .widgets
+            .iter()
+            .any(|w| w.package_name == "widget-flip-clock"),
+        "flip-clock should be installable before the run"
+    );
+
+    let response = client
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec!["widget-flip-clock".to_owned()],
+        })
+        .await
+        .expect("BUG: check failed")
+        .into_inner();
+    let upgrade_id = response.upgrade_id.expect("BUG: upgrade id");
+
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest { upgrade_id })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+
+    let mut phases = Vec::new();
+    let mut finished = false;
+    tokio::time::timeout(STREAM_TIMEOUT, async {
+        while let Some(progress) = stream.message().await.expect("BUG: stream errored") {
+            match progress.event.expect("BUG: event set") {
+                upgrade_progress::Event::PackagePhase(phase) => phases.push(phase),
+                upgrade_progress::Event::Finished(()) => finished = true,
+                upgrade_progress::Event::Download(_)
+                | upgrade_progress::Event::FirmwarePhase(_) => {}
+            }
+        }
+    })
+    .await
+    .expect("stream did not finish within the timeout");
+    assert!(finished, "install run did not finish");
+    assert_eq!(
+        phases,
+        vec![
+            PackageUpgradePhase::Realizing as i32,
+            PackageUpgradePhase::Verifying as i32,
+            PackageUpgradePhase::Building as i32,
+            PackageUpgradePhase::Activating as i32,
+        ]
+    );
+
+    let after = client
+        .get_installable_widgets(())
+        .await
+        .expect("BUG: list failed")
+        .into_inner();
+    assert!(
+        !after
+            .widgets
+            .iter()
+            .any(|w| w.package_name == "widget-flip-clock"),
+        "flip-clock should be unshadowed (installed) and no longer offered after the run"
+    );
 }

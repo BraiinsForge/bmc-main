@@ -1073,7 +1073,7 @@ mod tests {
         ]));
         let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &path), store);
 
-        let probe = upgrader.probe(EstimateMode::Estimate).await;
+        let probe = upgrader.probe(EstimateMode::Estimate, &[]).await;
         let PackageProbe::Failed(PackageProbeError::Unrealizable(paths)) = probe else {
             panic!("an unsubstitutable estimate must fail the probe, got {probe:?}");
         };
@@ -1089,7 +1089,7 @@ mod tests {
         let store = StubStore(StubEstimate::Transient);
         let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &path), store);
 
-        let probe = upgrader.probe(EstimateMode::Estimate).await;
+        let probe = upgrader.probe(EstimateMode::Estimate, &[]).await;
         let PackageProbe::Available(_, preview) = probe else {
             panic!("a transient estimate error must still offer the upgrade, got {probe:?}");
         };
@@ -1112,7 +1112,7 @@ mod tests {
         let store = StubStore(StubEstimate::Downloads(4096));
         let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &path), store);
 
-        let probe = upgrader.probe(EstimateMode::Estimate).await;
+        let probe = upgrader.probe(EstimateMode::Estimate, &[]).await;
         let PackageProbe::Available(_, preview) = probe else {
             panic!("a successful estimate must offer the upgrade, got {probe:?}");
         };
