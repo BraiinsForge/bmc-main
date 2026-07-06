@@ -48,7 +48,9 @@ The profile tree is optimized for a small number of symlinks:
 - if multiple packages provide the same directory, the profile materializes that directory and resolves its children
   recursively;
 - leaf entries, including regular files, file symlinks, and dangling symlinks, are symlinked into the store;
-- a file-vs-file or file-vs-directory collision at the same relative path is a profile build conflict.
+- a file-vs-file or file-vs-directory collision at the same relative path is a profile build conflict, unless the path
+  is on the collision allowlist (documentation-like paths such as `share/doc`, `share/man`, or `__pycache__`) or all
+  providers are symlinks resolving to the same absolute target — in both cases the first provider wins.
 
 Do not assume a profile path component is a real directory. For example, `bin` might be a symlink when one package owns
 all binaries, while `etc` might be a real directory when several packages contribute service files.
