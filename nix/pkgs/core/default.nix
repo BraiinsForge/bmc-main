@@ -94,10 +94,21 @@ let
           chmod 755 "$target.tmp"
           mv -Tf "$target.tmp" "$target"
       fi
-      ln -sf ../init.d/nix-activator /etc/rc.d/S91nix-activator
+      # Recreate the rc.d symlink atomically: `ln -sf` unlinks before it
+      # symlinks, and a power loss in that window would leave no
+      # S91nix-activator at all — the activator would never run again.
+      # The dot prefix keeps the temp name out of rc.d's S*/K* globbing.
+      ln -sfn ../init.d/nix-activator /etc/rc.d/.S91nix-activator.tmp
+      mv -Tf /etc/rc.d/.S91nix-activator.tmp /etc/rc.d/S91nix-activator
 
       rm -f /etc/init.d/nix-mounter
       rm -f /etc/rc.d/S*nix-mounter /etc/rc.d/K*nix-mounter
+
+      # These are rootfs writes, outside the profile filesystem that the
+      # 998 write-boundary syncfs covers; flush them before it durably
+      # flips current. A lost S91nix-activator does not self-heal —
+      # nothing would re-run the activator.
+      sync
     '';
   };
 
