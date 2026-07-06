@@ -115,7 +115,7 @@ pub struct PackageEntry {
     #[serde(skip)]
     pub server_id: String,
     #[serde(default)]
-    pub metadata: std::collections::BTreeMap<String, String>,
+    pub metadata: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// A fully resolved package ready for installation.
@@ -137,7 +137,7 @@ pub struct ResolvedPackage {
     #[serde(default)]
     pub pinned: Option<String>,
     #[serde(default)]
-    pub metadata: std::collections::BTreeMap<String, String>,
+    pub metadata: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// What initiated the installation of a package
@@ -291,7 +291,7 @@ pub struct MergedPackageEntry {
     pub install_strategy: Option<InstallStrategy>,
     pub server_id: String,
     pub server_priority: u32,
-    pub metadata: BTreeMap<String, String>,
+    pub metadata: BTreeMap<String, serde_json::Value>,
 }
 
 /// GC configuration (`/etc/nix-upgrade/gc.json`).
@@ -519,7 +519,9 @@ mod tests {
         )
         .expect("BUG: entry with metadata parses");
         assert_eq!(
-            with.metadata.get("bmc_version").map(String::as_str),
+            with.metadata
+                .get("bmc_version")
+                .and_then(serde_json::Value::as_str),
             Some("2.4.0")
         );
     }

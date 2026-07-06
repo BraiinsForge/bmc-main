@@ -974,17 +974,22 @@ mod tests {
         let mut entry = versioned_package("core", "1.0.0", "/nix/store/core");
         entry
             .metadata
-            .insert("bmc_version".to_owned(), "2.4.0".to_owned());
+            .insert("bmc_version".to_owned(), "2.4.0".into());
         let merged = merge_indexes(vec![fetched("forge", 10, vec![entry])]);
         let m = &merged.packages[0];
         assert_eq!(
-            m.metadata.get("bmc_version").map(String::as_str),
+            m.metadata
+                .get("bmc_version")
+                .and_then(serde_json::Value::as_str),
             Some("2.4.0")
         );
 
         let resolved = merged_entry_to_resolved(m, InstalledBy::System, None);
         assert_eq!(
-            resolved.metadata.get("bmc_version").map(String::as_str),
+            resolved
+                .metadata
+                .get("bmc_version")
+                .and_then(serde_json::Value::as_str),
             Some("2.4.0")
         );
     }
