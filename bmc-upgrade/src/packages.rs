@@ -43,6 +43,24 @@ pub struct PackagesPreview {
     pub bmc_changelog: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstallablePreview {
+    pub image: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstallableWidget {
+    pub package_name: String,
+    pub uid: String,
+    pub version: String,
+    pub display_name: String,
+    pub subname: Option<String>,
+    pub category: Option<String>,
+    pub description: Option<String>,
+    pub icon: Option<String>,
+    pub previews: Vec<InstallablePreview>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum EstimateMode {
     Estimate,
@@ -163,6 +181,7 @@ pub trait PackageBackend: Send + Sync + std::fmt::Debug + 'static {
         merged: bmc_nix::types::MergedIndex,
         progress: Arc<dyn bmc_nix::upgrade::UpgradeProgress>,
     ) -> Result<(), ApplyError>;
+    async fn list_installable_widgets(&self) -> Result<Vec<InstallableWidget>, PackageProbeError>;
 }
 
 /// The nix-backed [`PackageBackend`]: fetches package indexes over HTTP,
@@ -326,6 +345,113 @@ impl PackageBackend for PackageUpgrader {
         .map(|_| ())
         .map_err(|err| ApplyError(err.to_string()))
     }
+
+    async fn list_installable_widgets(&self) -> Result<Vec<InstallableWidget>, PackageProbeError> {
+        let config =
+            match bmc_nix::servers_config::load_servers_config(&self.config.servers_config_path) {
+                Ok(config) => config,
+                Err(err) => {
+                    warn!(error = %err, "Servers config unavailable");
+                    return Err(PackageProbeError::ServersConfigUnavailable(err.to_string()));
+                }
+            };
+        let servers = config.servers;
+
+        if !servers.iter().any(|server| server.enabled) {
+            warn!("No enabled package servers");
+            return Err(PackageProbeError::NoEnabledServers);
+        }
+
+        let merged = match bmc_nix::index::fetch_and_merge_indexes(&self.client, &servers).await {
+            Ok(merged) => merged,
+            Err(err @ bmc_nix::index::FetchIndexesError::Fetch { .. }) => {
+                warn!(error = %err, "Package index fetch failed");
+                return Err(PackageProbeError::IndexFetchFailed(err.to_string()));
+            }
+            Err(err) => {
+                warn!(error = %err, "Package index unusable");
+                return Err(PackageProbeError::IndexUnusable(err.to_string()));
+            }
+        };
+
+        let base = match bmc_nix::manifest::read_current_manifest(&self.config.profile_dir) {
+            Ok(manifest) => manifest,
+            Err(bmc_nix::manifest::ReadManifestError::CurrentNotFound { .. }) => {
+                match bmc_nix::manifest::read_latest_manifest(&self.config.profile_dir) {
+                    Ok(manifest) => manifest,
+                    Err(err) => {
+                        warn!(error = %err, "Failed to read the profile manifest");
+                        return Err(PackageProbeError::ManifestReadFailed(err.to_string()));
+                    }
+                }
+            }
+            Err(err) => {
+                warn!(error = %err, "Failed to read the profile manifest");
+                return Err(PackageProbeError::ManifestReadFailed(err.to_string()));
+            }
+        };
+
+        let installed = base.packages.keys().cloned().collect();
+        Ok(installable_widgets_from(&merged, &installed))
+    }
+}
+
+/// Discover installable widgets from a merged index: every name not
+/// already in the profile that resolves to a `category == "widget"`
+/// package, mapped from the resolved entry's `metadata` picker fields.
+/// Resolving (rather than reading a raw entry) makes the listed version
+/// and metadata match exactly what installing the name would land.
+#[must_use]
+pub fn installable_widgets_from(
+    merged: &bmc_nix::types::MergedIndex,
+    installed: &std::collections::BTreeSet<String>,
+) -> Vec<InstallableWidget> {
+    let widget_str = |resolved: &bmc_nix::types::ResolvedPackage, key: &str| {
+        resolved
+            .metadata
+            .get("widget")
+            .and_then(|w| w.get(key))
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned)
+    };
+    merged
+        .by_name
+        .keys()
+        .filter(|name| !installed.contains(*name))
+        .filter_map(|name| {
+            let resolved = bmc_nix::index::resolve_new_package(
+                merged,
+                name,
+                None,
+                bmc_nix::types::InstalledBy::User,
+            )
+            .ok()?;
+            if resolved.category.as_deref() != Some("widget") {
+                return None;
+            }
+            // `uid` is load-bearing (the frontend places the widget into a
+            // scene by it); a widget missing it is useless, so drop it rather
+            // than publish an empty uid.
+            let uid = widget_str(&resolved, "uid")?;
+            Some(InstallableWidget {
+                uid,
+                display_name: widget_str(&resolved, "display_name")
+                    .unwrap_or_else(|| resolved.name.clone()),
+                subname: widget_str(&resolved, "subname"),
+                category: widget_str(&resolved, "category"),
+                icon: resolved
+                    .metadata
+                    .get("assets")
+                    .and_then(|a| a.get("icon"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                package_name: resolved.name,
+                version: resolved.version,
+                description: resolved.description,
+                previews: Vec::new(),
+            })
+        })
+        .collect()
 }
 
 #[must_use]
@@ -544,6 +670,89 @@ mod tests {
         std::fs::create_dir_all(&generation_dir).expect("BUG: create generation dir");
         bmc_nix::manifest::write_manifest(&generation_dir, &Manifest { packages: map })
             .expect("BUG: write base manifest");
+    }
+
+    fn merged_with(
+        entries: &[(&str, &str, Option<serde_json::Value>)],
+    ) -> bmc_nix::types::MergedIndex {
+        let packages: Vec<String> = entries
+            .iter()
+            .map(|(name, category, metadata)| {
+                let meta = metadata
+                    .clone()
+                    .map_or_else(|| "{}".to_owned(), |m| m.to_string());
+                format!(
+                    r#"{{"name":"{name}","version":"1.0.0","store_path":"/nix/store/{name}","category":"{category}","metadata":{meta}}}"#
+                )
+            })
+            .collect();
+        let json = format!(
+            r#"{{"version":1,"provenance":null,"indexes":[],"caches":[],"packages":[{}]}}"#,
+            packages.join(",")
+        );
+        let raw: bmc_nix::types::PackageIndex =
+            serde_json::from_str(&json).expect("BUG: parse index");
+        bmc_nix::index::merge_indexes(vec![bmc_nix::types::FetchedIndex {
+            server_id: "srv".to_owned(),
+            server_priority: 10,
+            index: raw,
+        }])
+    }
+
+    #[test]
+    fn installable_widgets_keeps_uninstalled_widget_category_only() {
+        let merged = merged_with(&[
+            (
+                "widget-weather",
+                "widget",
+                Some(serde_json::json!({
+                    "widget": {"uid": "uid-weather", "display_name": "Weather", "subname": "Forecast", "category": "info"},
+                    "assets": {"icon": "/nix/store/widget-weather/lib/bmc-widgets/weather/icon.svg"}
+                })),
+            ),
+            (
+                "widget-clock",
+                "widget",
+                Some(serde_json::json!({
+                    "widget": {"uid": "uid-clock", "display_name": "Clock", "category": "clock"}
+                })),
+            ),
+            ("core", "system", None),
+        ]);
+        let installed: std::collections::BTreeSet<String> =
+            ["widget-clock".to_owned(), "core".to_owned()]
+                .into_iter()
+                .collect();
+
+        let widgets = installable_widgets_from(&merged, &installed);
+
+        assert_eq!(widgets.len(), 1, "only the uninstalled widget survives");
+        let w = &widgets[0];
+        assert_eq!(w.package_name, "widget-weather");
+        assert_eq!(w.uid, "uid-weather");
+        assert_eq!(w.display_name, "Weather");
+        assert_eq!(w.subname.as_deref(), Some("Forecast"));
+        assert_eq!(w.category.as_deref(), Some("info"));
+        assert_eq!(
+            w.icon.as_deref(),
+            Some("/nix/store/widget-weather/lib/bmc-widgets/weather/icon.svg")
+        );
+        assert!(w.previews.is_empty());
+    }
+
+    #[test]
+    fn installable_widgets_drops_widget_without_uid() {
+        // `uid` is load-bearing; a widget package whose metadata lacks it must
+        // not be offered, rather than surfacing with an empty uid.
+        let merged = merged_with(&[(
+            "widget-broken",
+            "widget",
+            Some(serde_json::json!({
+                "widget": {"display_name": "Broken", "category": "info"}
+            })),
+        )]);
+        let widgets = installable_widgets_from(&merged, &std::collections::BTreeSet::new());
+        assert!(widgets.is_empty(), "a widget without a uid must be dropped");
     }
 
     #[tokio::test]

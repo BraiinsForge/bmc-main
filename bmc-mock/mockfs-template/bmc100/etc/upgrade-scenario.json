@@ -1,5 +1,10 @@
 {
   "firmware": "available",
   "packages": "available",
-  "run": "success"
+  "run": "success",
+  "shadowed_packages": [
+    "widget-flip-clock",
+    "widget-weather",
+    "widget-mining-clock"
+  ]
 }
