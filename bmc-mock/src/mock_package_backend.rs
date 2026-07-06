@@ -11,7 +11,8 @@ use bmc_nix::store::progress::DownloadSnapshot;
 use bmc_nix::types::MergedIndex;
 use bmc_nix::upgrade::{UpgradePhase, UpgradeProgress};
 use bmc_upgrade::packages::{
-    ApplyError, EstimateMode, PackageBackend, PackageProbe, PackagesPreview, SystemPackageChange,
+    ApplyError, EstimateMode, PackageBackend, PackageProbe, PackageProbeError, PackagesPreview,
+    SystemPackageChange,
 };
 
 use crate::pacing::UpgradePacing;
@@ -97,10 +98,10 @@ impl PackageBackend for MockPackageBackend {
             PackagesScenario::Available => {
                 PackageProbe::Available(empty_merged_index(), static_preview(estimate))
             }
-            PackagesScenario::Unavailable => PackageProbe::Unavailable,
-            PackagesScenario::FetchFailed => {
-                PackageProbe::FetchFailed("mock: index fetch failed".to_owned())
-            }
+            PackagesScenario::Unavailable => PackageProbe::UpToDate,
+            PackagesScenario::FetchFailed => PackageProbe::Failed(
+                PackageProbeError::IndexFetchFailed("mock: index fetch failed".to_owned()),
+            ),
         }
     }
 
@@ -190,14 +191,14 @@ mod tests {
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
         assert!(matches!(
             backend.probe(EstimateMode::Estimate).await,
-            PackageProbe::Unavailable
+            PackageProbe::UpToDate
         ));
 
         let path = write_scenario(dir.path(), r#"{"packages": "fetch-failed"}"#);
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
         assert!(matches!(
             backend.probe(EstimateMode::Estimate).await,
-            PackageProbe::FetchFailed(_)
+            PackageProbe::Failed(PackageProbeError::IndexFetchFailed(_))
         ));
     }
 
