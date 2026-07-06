@@ -100,6 +100,37 @@ fn format_stale_warning(stale: &[PackageVersion]) -> Option<String> {
     Some(out)
 }
 
+/// Render a profile's installed packages, sorted by name.
+///
+/// With `json`, emits `{"packages":[{"name","version","category"}]}`
+/// for machine consumers; otherwise a `name  version` table per line.
+fn render_package_list(manifest: &Manifest, json: bool) -> String {
+    use std::fmt::Write as _;
+    let mut names: Vec<&String> = manifest.packages.keys().collect();
+    names.sort();
+    if json {
+        let entries: Vec<serde_json::Value> = names
+            .iter()
+            .map(|name| {
+                let pkg = &manifest.packages[*name];
+                serde_json::json!({
+                    "name": name,
+                    "version": pkg.version,
+                    "category": pkg.category,
+                })
+            })
+            .collect();
+        return serde_json::to_string_pretty(&serde_json::json!({ "packages": entries }))
+            .expect("BUG: package list serializes");
+    }
+    let mut out = String::new();
+    for name in names {
+        let pkg = &manifest.packages[name];
+        let _ = writeln!(out, "{name}  {}", pkg.version);
+    }
+    out
+}
+
 /// Output format for realization progress (on stderr).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum LogFormat {
@@ -365,6 +396,17 @@ enum Commands {
         /// `next.<version>` marker for `--generation next`.
         #[arg(long, default_value = "/etc/bos_version")]
         bos_version_file: PathBuf,
+    },
+
+    /// List packages installed in the current profile
+    ListPackages {
+        /// Directory for the profile generations
+        #[arg(long)]
+        profile_dir: Option<PathBuf>,
+
+        /// Emit JSON instead of a human table
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        json: bool,
     },
 
     /// Register a package server and its binary-cache substituter.
@@ -1023,6 +1065,14 @@ fn cmd_register_server(
     Ok(())
 }
 
+fn cmd_list_packages(profile_dir: Option<PathBuf>, json: bool) -> anyhow::Result<()> {
+    let profile_dir =
+        profile_dir.unwrap_or_else(|| PathBuf::from("/nix/var/nix/gcroots/profiles/bmc"));
+    let manifest = manifest::read_current_manifest(&profile_dir)?;
+    print!("{}", render_package_list(&manifest, json));
+    Ok(())
+}
+
 /// Install a stderr `tracing` subscriber so emitted events (e.g. gc
 /// generation removals) are visible. Stdout is reserved for command
 /// output, so logs go to stderr. The level defaults to `info` and is
@@ -1197,6 +1247,8 @@ async fn main() -> anyhow::Result<()> {
             generation,
             bos_version_file,
         } => cmd_activate(&profile_dir, generation, &bos_version_file).await,
+
+        Commands::ListPackages { profile_dir, json } => cmd_list_packages(profile_dir, json),
 
         Commands::RegisterServer {
             servers_config,
@@ -1765,6 +1817,38 @@ mod tests {
 
         assert_eq!(resolved.installed_from, "custom-0");
         assert_eq!(resolved.store_path, "/nix/store/custom-clock");
+    }
+
+    #[test]
+    fn renders_package_list_as_json_sorted() {
+        // `ManifestPackage.installed_by`/`installed_from` have no serde
+        // default, so a fixture omitting them panics.
+        let manifest: Manifest = serde_json::from_str(
+            r#"{"packages":{
+                "widget-weather":{"version":"1.3.0","store_path":"/nix/store/w","category":"widget","installed_by":"user","installed_from":"srv"},
+                "core":{"version":"2.0.0","store_path":"/nix/store/c","category":"system","installed_by":"system","installed_from":"srv"}
+            }}"#,
+        )
+        .expect("BUG: parse manifest");
+        let out = render_package_list(&manifest, true);
+        let value: serde_json::Value = serde_json::from_str(&out).expect("BUG: json");
+        let names: Vec<&str> = value["packages"]
+            .as_array()
+            .expect("BUG: array")
+            .iter()
+            .map(|p| p["name"].as_str().expect("BUG: name"))
+            .collect();
+        assert_eq!(names, vec!["core", "widget-weather"], "sorted by name");
+    }
+
+    #[test]
+    fn list_packages_accepts_json_flag() {
+        let cli =
+            Cli::try_parse_from(["bmc-nix-cli", "list-packages", "--json"]).expect("BUG: parse");
+        assert!(matches!(
+            cli.command,
+            Commands::ListPackages { json: true, .. }
+        ));
     }
 
     #[test]
