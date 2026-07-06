@@ -123,10 +123,11 @@ shown.
 The initializer resolves its download server in order of preference:
 
 1. `/etc/nix-upgrade/servers.json` — user or system override.
-2. `/etc/nix-upgrade/servers.json.default` — shipped with firmware.
-3. Compiled-in default — the Braiins cache URL embedded in the binary.
+2. `/etc/nix-upgrade/servers.json.default` — shipped with the firmware image.
 
-Invalid config files are backed up to `.bcp` and the next source is tried.
+Invalid config files are backed up to `.bcp` and the next source is tried. If neither source yields a usable
+configuration, initialization fails loudly rather than proceeding without a servers configuration; the firmware image is
+responsible for providing `servers.json.default`.
 
 ## Platform variants
 
