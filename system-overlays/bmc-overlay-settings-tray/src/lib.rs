@@ -38,10 +38,19 @@ const NETWORK_REFRESH: Duration = Duration::from_millis(2000);
 const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Minimum spacing between brightness writes while dragging, so a drag does not
-/// drive ~90 per-frame `set_brightness` config writes. A separate
-/// release flush (see `flush_brightness_on_release`) guarantees the value the
-/// finger lifted at is delivered past the throttle.
+/// drive ~90 per-frame `set_brightness` config writes. The finger-up value is
+/// always delivered by the release branch in `render`, independent of this
+/// throttle.
 const BRIGHTNESS_SEND_INTERVAL: Duration = Duration::from_millis(80);
+
+/// Same drag throttle for the volume slider.
+const VOLUME_SEND_INTERVAL: Duration = Duration::from_millis(80);
+
+/// After a volume drag ends, incoming volume events stay dropped for this
+/// settle window so a late in-flight echo of our own throttled write cannot
+/// snap the knob back. External changes landing inside the window are lost
+/// until the next broadcast — accepted, same as the brightness fix upstream.
+const VOLUME_ECHO_SETTLE: Duration = Duration::from_millis(300);
 
 /// Fast wake cadence while a hold FSM is animating, so the hold/timeout edges
 /// fire without a touch/network event to wake the loop.
@@ -268,6 +277,8 @@ pub struct SettingsTrayView {
     pub width: u32,
     pub height: u32,
     pub brightness: u8,
+    pub volume: u8,
+    pub show_volume: bool,
     pub hostname: Option<String>,
     pub ip: Option<String>,
     pub wifi_signal: Option<i32>,
@@ -288,6 +299,8 @@ impl SettingsTrayView {
             width: profile.display.logical_width,
             height: profile.display.logical_height,
             brightness: 50,
+            volume: 50,
+            show_volume: matches!(product, SettingsTrayProduct::Bmc100),
             hostname: None,
             ip: None,
             wifi_signal: None,
@@ -321,6 +334,8 @@ impl SettingsTrayRenderState {
 pub struct SettingsTrayRenderOutput {
     pub brightness_drag: Option<u8>,
     pub brightness_release: Option<u8>,
+    pub volume_drag: Option<u8>,
+    pub volume_release: Option<u8>,
 }
 
 #[expect(missing_debug_implementations, reason = "TreeUi is not Debug")]
@@ -337,6 +352,13 @@ pub struct SettingsTrayOverlay {
     panel_height: f32,
 
     brightness: u8,
+    volume: u8,
+    /// Set when the volume slider moved during this touch sequence; gates echo
+    /// suppression and the post-release settle window.
+    volume_dragged: bool,
+    last_volume_sent: Instant,
+    /// End of the post-release echo settle window.
+    volume_settle_until: Option<Instant>,
     hostname: Option<String>,
     ip: Option<String>,
     wifi_signal: Option<i32>,
@@ -356,13 +378,6 @@ pub struct SettingsTrayOverlay {
     touch_track: Option<TouchTrack>,
     last_interaction: Instant,
     last_brightness_sent: Instant,
-    /// Set on finger-up; consumed by the release flush, which sends the final
-    /// brightness value once past the throttle.
-    slider_released: bool,
-    /// Set by the adapter render when `brightness_drag` is returned (the slider
-    /// moved during this touch sequence); cleared on every finger-down so a
-    /// fresh sequence starts unlocked.
-    slider_dragged: bool,
 
     dismissing: bool,
     /// Set on any content change; drives the Task-9 panel cache.
@@ -400,6 +415,10 @@ impl SettingsTrayOverlay {
             height,
             panel_height,
             brightness: 50,
+            volume: 50,
+            volume_dragged: false,
+            last_volume_sent: now,
+            volume_settle_until: None,
             hostname,
             ip: None,
             wifi_signal: None,
@@ -413,8 +432,6 @@ impl SettingsTrayOverlay {
             touch_track: None,
             last_interaction: now,
             last_brightness_sent: now,
-            slider_released: false,
-            slider_dragged: false,
             dismissing: false,
             content_dirty: true,
             slide: Slide::default(),
@@ -430,6 +447,7 @@ impl SettingsTrayOverlay {
         view.width = self.width;
         view.height = self.height;
         view.brightness = self.brightness;
+        view.volume = self.volume;
         view.hostname.clone_from(&self.hostname);
         view.ip.clone_from(&self.ip);
         view.wifi_signal = self.wifi_signal;
@@ -508,20 +526,11 @@ impl SettingsTrayOverlay {
         }
     }
 
-    /// Flush the final brightness when the finger lifts after a drag that ran at
-    /// least one render frame, so `self.brightness` already tracks the drag. The
-    /// throttle can otherwise drop the last sub-`BRIGHTNESS_SEND_INTERVAL` of
-    /// movement; this guarantees the value the finger lifted at is delivered. A
-    /// fully-coalesced down-move-up never sets `slider_dragged`, so its release
-    /// is delivered from the click position in `render` instead.
-    fn flush_brightness_on_release(&mut self, now: Instant) {
-        if !self.slider_released {
-            return;
-        }
-        self.slider_released = false;
-        self.pending_requests
-            .push(SettingsRequest::SetBrightness(self.brightness));
-        self.last_brightness_sent = now;
+    /// Whether an incoming volume event must be dropped: the finger owns the
+    /// slider mid-drag, or a just-released drag's settle window is open.
+    fn volume_echo_blocked(&self, now: Instant) -> bool {
+        (self.volume_dragged && self.touch_track.is_some())
+            || self.volume_settle_until.is_some_and(|t| now < t)
     }
 
     /// Whether a hold FSM is mid-animation or a hold button is pressed this
@@ -584,6 +593,16 @@ impl SystemOverlay for SettingsTrayOverlay {
         }
     }
 
+    fn on_volume(&mut self, value: u8) {
+        if self.volume_echo_blocked(Instant::now()) {
+            return;
+        }
+        if value != self.volume {
+            self.volume = value;
+            self.content_dirty = true;
+        }
+    }
+
     fn on_wifi_ap(&mut self, ssid: Option<&str>) {
         // An empty SSID means setup is inactive; treat it as `None` so the setup
         // view shows only for a real AP, independent of upstream filtering.
@@ -606,7 +625,7 @@ impl SystemOverlay for SettingsTrayOverlay {
         )]
         match event {
             TouchEvent::Down { x, y, .. } => {
-                self.slider_dragged = false;
+                self.volume_dragged = false;
                 let pt = Pt {
                     x: x as f32,
                     y: y as f32,
@@ -625,20 +644,26 @@ impl SystemOverlay for SettingsTrayOverlay {
                 }
             }
             TouchEvent::Up { .. } => {
-                self.slider_released = self.slider_dragged;
+                if self.volume_dragged {
+                    self.volume_settle_until = Some(Instant::now() + VOLUME_ECHO_SETTLE);
+                }
                 if let Some(track) = self.touch_track.take()
                     && dismiss::classify(track.start, track.latest)
                 {
                     self.dismissing = true;
                 }
             }
-            TouchEvent::Cancel => self.touch_track = None,
+            TouchEvent::Cancel => {
+                if self.volume_dragged {
+                    self.volume_settle_until = Some(Instant::now() + VOLUME_ECHO_SETTLE);
+                }
+                self.touch_track = None;
+            }
         }
     }
 
     fn tick(&mut self, now: Instant) -> TickOutcome {
         self.refresh_network();
-        self.flush_brightness_on_release(now);
         let was_dirty = self.content_dirty;
         self.advance_buttons(now);
 
@@ -702,7 +727,6 @@ impl SystemOverlay for SettingsTrayOverlay {
         let output = render_settings_tray(renderer, size, &mut self.render_state, &view, now);
 
         if let Some(b) = output.brightness_drag {
-            self.slider_dragged = true;
             if b != self.brightness {
                 self.brightness = b;
                 self.content_dirty = true;
@@ -713,13 +737,11 @@ impl SystemOverlay for SettingsTrayOverlay {
                 self.last_brightness_sent = now;
             }
         }
-        // A fully-coalesced down-move-up (or a tap) sets no `slider_dragged`, so
-        // `flush_brightness_on_release` has no drag value to send. The release
-        // click still carries the finger-up position — deliver that final
-        // brightness here. A multi-pass drag's release is left to the flush.
-        if let Some(b) = output.brightness_release
-            && !self.slider_dragged
-        {
+        // The release click carries the authoritative finger-up position on
+        // every lift (multi-frame drag, coalesced drag, or tap); deliver it
+        // unconditionally so the value the finger lifted at is what bmc applies,
+        // independent of the mid-drag throttle.
+        if let Some(b) = output.brightness_release {
             if b != self.brightness {
                 self.brightness = b;
                 self.content_dirty = true;
@@ -727,6 +749,30 @@ impl SystemOverlay for SettingsTrayOverlay {
             self.pending_requests
                 .push(SettingsRequest::SetBrightness(b));
             self.last_brightness_sent = now;
+        }
+
+        if let Some(v) = output.volume_drag {
+            self.volume_dragged = true;
+            if v != self.volume {
+                self.volume = v;
+                self.content_dirty = true;
+            }
+            if now.duration_since(self.last_volume_sent) >= VOLUME_SEND_INTERVAL {
+                self.pending_requests.push(SettingsRequest::SetVolume(v));
+                self.last_volume_sent = now;
+            }
+        }
+        // The release click carries the authoritative finger-up position on
+        // every lift (multi-frame drag, coalesced drag, or tap); deliver it
+        // unconditionally so the value the finger lifted at is what bmc applies,
+        // independent of the mid-drag throttle.
+        if let Some(v) = output.volume_release {
+            if v != self.volume {
+                self.volume = v;
+                self.content_dirty = true;
+            }
+            self.pending_requests.push(SettingsRequest::SetVolume(v));
+            self.last_volume_sent = now;
         }
     }
 
@@ -786,6 +832,10 @@ pub fn render_settings_tray(
             label: view.wifi_label,
         }
     };
+    let controls = ui::Controls {
+        volume: view.show_volume.then_some(view.volume),
+        ..ui::Controls::default()
+    };
     let node = ui::build_tree(
         view.brightness,
         view.hostname.as_deref(),
@@ -801,6 +851,7 @@ pub fn render_settings_tray(
         },
         wifi_view,
         icons.controls,
+        controls,
     );
 
     let result = match state.tree.render(&node, size, delta_ms, renderer) {
@@ -822,9 +873,20 @@ pub fn render_settings_tray(
         dismiss::brightness_from_fraction(frac)
     });
 
+    let volume_drag = result.drags.get(ui::VOLUME_SLIDER_KEY).map(|hit| {
+        let frac = (hit.x / hit.width).clamp(0.0, 1.0);
+        dismiss::volume_from_fraction(frac)
+    });
+    let volume_release = result.clicks.get(ui::VOLUME_SLIDER_KEY).map(|hit| {
+        let frac = (hit.x / hit.width).clamp(0.0, 1.0);
+        dismiss::volume_from_fraction(frac)
+    });
+
     SettingsTrayRenderOutput {
         brightness_drag,
         brightness_release,
+        volume_drag,
+        volume_release,
     }
 }
 
@@ -1015,6 +1077,62 @@ mod wake_tests {
                 .is_some_and(|w| w <= t2 + FAST_WAKE),
             "a touch-down must fast-poll so the hold FSM picks up the press promptly"
         );
+    }
+}
+
+#[cfg(test)]
+mod volume_echo_tests {
+    use super::*;
+
+    fn overlay() -> SettingsTrayOverlay {
+        SettingsTrayOverlay::new_for_product(Product::Bmc100, None, Instant::now())
+    }
+
+    #[test]
+    fn echo_is_dropped_while_finger_owns_the_slider() {
+        let mut o = overlay();
+        o.volume = 40;
+        o.on_touch(TouchEvent::Down {
+            id: 0,
+            x: 100.0,
+            y: 100.0,
+        });
+        o.volume_dragged = true; // the adapter render sets this on a drag hit
+        o.on_volume(70);
+        assert_eq!(o.volume, 40, "mid-drag echo must not move the knob");
+    }
+
+    #[test]
+    fn echo_is_dropped_within_the_settle_window_and_honored_after() {
+        let mut o = overlay();
+        o.volume = 40;
+        o.on_touch(TouchEvent::Down {
+            id: 0,
+            x: 100.0,
+            y: 100.0,
+        });
+        o.volume_dragged = true;
+        o.on_touch(TouchEvent::Up { id: 0 });
+        o.on_volume(70);
+        assert_eq!(
+            o.volume, 40,
+            "echo within the settle window must be dropped"
+        );
+
+        o.volume_settle_until = Some(
+            Instant::now()
+                .checked_sub(Duration::from_millis(1))
+                .expect("BUG: instant underflow computing an already-elapsed settle window"),
+        );
+        o.on_volume(70);
+        assert_eq!(o.volume, 70, "external changes resume after the window");
+    }
+
+    #[test]
+    fn idle_event_moves_the_knob() {
+        let mut o = overlay();
+        o.on_volume(15);
+        assert_eq!(o.volume, 15);
     }
 }
 

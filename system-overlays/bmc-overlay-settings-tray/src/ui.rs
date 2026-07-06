@@ -14,6 +14,9 @@ use bmc_wasm_protocol::{ButtonSize, ButtonStyle, Color, CrossAlign, FontWeight, 
 /// Stable touch key for the brightness slider drag.
 pub const BRIGHTNESS_SLIDER_KEY: &str = "brightness";
 
+/// Stable touch key for the volume slider drag.
+pub const VOLUME_SLIDER_KEY: &str = "volume";
+
 /// Stable touch key for the WiFi reconfiguration hold button.
 pub const WIFI_RECONFIG_KEY: &str = "wifi_reconfig";
 
@@ -102,6 +105,16 @@ pub struct ControlIcons {
     pub brightness_high: Option<SvgId>,
     pub nightmode: Option<SvgId>,
     pub restart: Option<SvgId>,
+}
+
+/// The v2 control surfaces to render. `None` fields are hidden — either the
+/// capability is missing (volume) or the compositor is v1 (night mode,
+/// restart). `restart` carries (label, fill percentage 0-100).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Controls<'a> {
+    pub volume: Option<u8>,
+    pub night_mode: Option<(bool, &'a str)>,
+    pub restart: Option<(&'a str, u8)>,
 }
 
 const MIN_BRIGHTNESS: u8 = 10;
@@ -346,16 +359,83 @@ fn brightness_section(brightness: u8, with_label: bool, icons: ControlIcons) -> 
     )
 }
 
-/// Rectangular overlay column: hostname header, brightness, then the Wi-Fi
-/// `info` block pushed to the bottom edge. `with_brightness_label` is dropped on
-/// short panels to reclaim the vertical space.
+/// Volume section: a draggable slider flanked by the sound low/high icons and
+/// its percentage readout. Full 0-100 range, no floor. The label is dropped on
+/// short panels like the brightness label.
+fn volume_section(volume: u8, with_label: bool, icons: ControlIcons) -> TreeNode {
+    let frac = f32::from(volume) / 100.0;
+    let slider = row(
+        PropsData {
+            cross_align: CrossAlign::Center,
+            gap: 16.0,
+            ..PropsData::default()
+        },
+        vec![
+            control_icon(icons.sound_low, 24.0),
+            col(
+                PropsData {
+                    flex: 1.0,
+                    ..PropsData::default()
+                },
+                vec![TreeNode::ProgressBar {
+                    touch_key: Some(VOLUME_SLIDER_KEY.to_owned()),
+                    track_h: 8.0,
+                    mode: 0,
+                    fraction: frac,
+                    active: false,
+                    fill_color: GREEN_50,
+                    track_color: GRAY_80,
+                    bg_color: TRANSPARENT,
+                    skin: None,
+                }],
+            ),
+            control_icon(icons.sound_high, 24.0),
+            text(
+                format!("{volume}%"),
+                TextStyle {
+                    size: 24,
+                    weight: FontWeight::BOLD,
+                    color: WHITE,
+                    ..TextStyle::default()
+                },
+            ),
+        ],
+    );
+    let mut children = Vec::with_capacity(2);
+    if with_label {
+        children.push(text("Volume", text_style(24, WHITE)));
+    }
+    children.push(slider);
+    col(
+        PropsData {
+            gap: 8.0,
+            ..PropsData::default()
+        },
+        children,
+    )
+}
+
+/// Rectangular overlay column: hostname header, brightness, optional volume,
+/// then the Wi-Fi `info` block pushed to the bottom edge. `with_brightness_label`
+/// is dropped on short panels to reclaim the vertical space, and doubles as the
+/// volume label flag.
 fn rect_overlay(
     hostname_str: &str,
     brightness: u8,
     with_brightness_label: bool,
+    volume: Option<u8>,
     info: TreeNode,
     icons: ControlIcons,
 ) -> TreeNode {
+    let mut children = vec![
+        hostname_row(hostname_str),
+        brightness_section(brightness, with_brightness_label, icons),
+    ];
+    if let Some(v) = volume {
+        children.push(volume_section(v, with_brightness_label, icons));
+    }
+    children.push(spacer(1.0));
+    children.push(info);
     col(
         PropsData {
             background: SCRIM,
@@ -363,12 +443,7 @@ fn rect_overlay(
             gap: 16.0,
             ..PropsData::default()
         },
-        vec![
-            hostname_row(hostname_str),
-            brightness_section(brightness, with_brightness_label, icons),
-            spacer(1.0),
-            info,
-        ],
+        children,
     )
 }
 
@@ -514,6 +589,7 @@ pub fn build_tree(
     panel: Panel,
     wifi_view: WifiView<'_>,
     controls_icons: ControlIcons,
+    controls: Controls<'_>,
 ) -> TreeNode {
     let Panel {
         shape,
@@ -542,27 +618,34 @@ pub fn build_tree(
         // the hostname and Wi-Fi clear of the curved top and bottom edges.
         DisplayShape::Round => {
             let info = round_info(icons, wifi_signal, ssid_str, &ip_str);
+            let mut children = vec![
+                fixed_height(ROUND_TOP_GAP),
+                hostname_row(&hostname_str),
+                spacer(1.0),
+                pad_horizontal(
+                    brightness_section(brightness, true, controls_icons),
+                    ROUND_H_PAD,
+                ),
+            ];
+            if let Some(v) = controls.volume {
+                children.push(pad_horizontal(
+                    volume_section(v, true, controls_icons),
+                    ROUND_H_PAD,
+                ));
+            }
+            children.push(spacer(1.0));
+            children.push(pad_horizontal(
+                wifi_section(info, icons, wifi_view, wifi_buttons),
+                ROUND_H_PAD,
+            ));
+            children.push(fixed_height(ROUND_BOTTOM_GAP));
             col(
                 PropsData {
                     background: SCRIM,
                     gap: 16.0,
                     ..PropsData::default()
                 },
-                vec![
-                    fixed_height(ROUND_TOP_GAP),
-                    hostname_row(&hostname_str),
-                    spacer(1.0),
-                    pad_horizontal(
-                        brightness_section(brightness, true, controls_icons),
-                        ROUND_H_PAD,
-                    ),
-                    spacer(1.0),
-                    pad_horizontal(
-                        wifi_section(info, icons, wifi_view, wifi_buttons),
-                        ROUND_H_PAD,
-                    ),
-                    fixed_height(ROUND_BOTTOM_GAP),
-                ],
+                children,
             )
         }
         DisplayShape::Rectangular if wide => {
@@ -571,6 +654,7 @@ pub fn build_tree(
                 &hostname_str,
                 brightness,
                 true,
+                controls.volume,
                 wifi_section(info, icons, wifi_view, wifi_buttons),
                 controls_icons,
             )
@@ -583,6 +667,7 @@ pub fn build_tree(
                 &hostname_str,
                 brightness,
                 false,
+                controls.volume,
                 wifi_section(info, icons, wifi_view, wifi_buttons),
                 controls_icons,
             )
@@ -708,6 +793,22 @@ mod tests {
             panel,
             view,
             ControlIcons::default(),
+            Controls::default(),
+        )
+    }
+
+    fn build_with_controls(panel: Panel, controls: Controls<'_>) -> TreeNode {
+        build_tree(
+            55,
+            Some("braiins-deck"),
+            Some("10.0.0.2"),
+            Some(-55),
+            Some("MyWifi"),
+            WifiIcons::default(),
+            panel,
+            WifiView::Idle { label: "x" },
+            ControlIcons::default(),
+            controls,
         )
     }
 
@@ -764,6 +865,22 @@ mod tests {
         );
         assert_eq!(fracs.len(), 1, "exactly one brightness slider");
         assert!((fracs[0] - 0.5).abs() < 1e-6, "got {}", fracs[0]);
+    }
+
+    #[test]
+    fn volume_section_renders_when_requested() {
+        let mut fracs = Vec::new();
+        let controls = Controls {
+            volume: Some(30),
+            ..Controls::default()
+        };
+        slider_fractions(&build_with_controls(wide_panel(), controls), &mut fracs);
+        assert_eq!(fracs.len(), 2, "brightness and volume sliders");
+        assert!(
+            (fracs[1] - 0.3).abs() < 1e-6,
+            "volume is an identity mapping: got {}",
+            fracs[1]
+        );
     }
 
     #[test]

@@ -36,6 +36,18 @@ pub fn brightness_from_fraction(frac: f32) -> u8 {
     pct.clamp(10.0, 100.0) as u8
 }
 
+/// Map a slider drag fraction (0.0..1.0) to a volume percentage in 0..100.
+/// Unlike brightness there is no floor: 0 = mute is legitimate.
+#[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "clamped to 0.0..=100.0 before the cast; there is no TryFrom<f32> for u8"
+)]
+pub fn volume_from_fraction(frac: f32) -> u8 {
+    (frac.clamp(0.0, 1.0) * 100.0).round() as u8
+}
+
 /// Map a brightness percentage (0..100, possibly a sub-floor night-mode value)
 /// to the slider's display fraction, clamped to 0.0..1.0 so a value below the
 /// 10 floor renders at 0 rather than underflowing (`(b-10)/90` would go
@@ -90,6 +102,14 @@ mod tests {
         assert_eq!(brightness_from_fraction(0.5), 55);
         assert_eq!(brightness_from_fraction(1.0), 100);
         assert_eq!(brightness_from_fraction(2.0), 100, "clamped");
+    }
+
+    #[test]
+    fn volume_maps_fraction_to_full_range() {
+        assert_eq!(volume_from_fraction(0.0), 0);
+        assert_eq!(volume_from_fraction(0.5), 50);
+        assert_eq!(volume_from_fraction(1.0), 100);
+        assert_eq!(volume_from_fraction(2.0), 100, "clamped");
     }
 
     #[test]
