@@ -4,7 +4,7 @@
 
 import type { GenEnum, GenFile, GenMessage, GenService } from '@bufbuild/protobuf/codegenv2';
 import { enumDesc, fileDesc, messageDesc, serviceDesc } from '@bufbuild/protobuf/codegenv2';
-import type { EmptySchema, Timestamp } from '@bufbuild/protobuf/wkt';
+import type { Empty, EmptySchema, Timestamp } from '@bufbuild/protobuf/wkt';
 import { file_google_protobuf_empty, file_google_protobuf_timestamp } from '@bufbuild/protobuf/wkt';
 import type { Message } from '@bufbuild/protobuf';
 
@@ -14,40 +14,9 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_upgrade: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'ChF3ZWIvdXBncmFkZS5wcm90bxIPYnJhaWlucy5ibWMud2ViIncKD1VwZ3JhZGVNZXRhZGF0YRIMCgRoYXNoGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSMAoMcmVsZWFzZV9kYXRlGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBITCgtkZXNjcmlwdGlvbhgEIAEoCSIzCgtSZWxlYXNlSW5mbxIPCgd2ZXJzaW9uGAEgASgJEhMKC2Rlc2NyaXB0aW9uGAIgASgJIowBChdDaGVja0ZvclVwZ3JhZGVSZXNwb25zZRI4Cg5sYXRlc3RfcmVsZWFzZRgBIAEoCzIgLmJyYWlpbnMuYm1jLndlYi5VcGdyYWRlTWV0YWRhdGESNwoRcHJldmlvdXNfcmVsZWFzZXMYAiADKAsyHC5icmFpaW5zLmJtYy53ZWIuUmVsZWFzZUluZm8iJwoXRG93bmxvYWRGaXJtd2FyZVJlcXVlc3QSDAoEaGFzaBgBIAEoCSI7ChBEb3dubG9hZFByb2dyZXNzEhUKDWRvd25sb2FkZWRfbWIYASABKAISEAoIdG90YWxfbWIYAiABKAIiIAoQRG93bmxvYWRGaW5pc2hlZBIMCgRoYXNoGAEgASgJIqMBChhEb3dubG9hZEZpcm13YXJlUmVzcG9uc2USPgoRZG93bmxvYWRfcHJvZ3Jlc3MYASABKAsyIS5icmFpaW5zLmJtYy53ZWIuRG93bmxvYWRQcm9ncmVzc0gAEj4KEWRvd25sb2FkX2ZpbmlzaGVkGAIgASgLMiEuYnJhaWlucy5ibWMud2ViLkRvd25sb2FkRmluaXNoZWRIAEIHCgVzdGF0ZSIeCg5VcGdyYWRlUmVxdWVzdBIMCgRoYXNoGAEgASgJIrEBChVTZXRBdXRvVXBncmFkZVJlcXVlc3QSDwoHZW5hYmxlZBgBIAEoCBI9CglmcmVxdWVuY3kYAiABKA4yJS5icmFpaW5zLmJtYy53ZWIuQXV0b1VwZ3JhZGVGcmVxdWVuY3lIAIgBARIRCgRob3VyGAMgASgNSAGIAQESEwoGbWludXRlGAQgASgNSAKIAQFCDAoKX2ZyZXF1ZW5jeUIHCgVfaG91ckIJCgdfbWludXRlIrIBChZHZXRBdXRvVXBncmFkZVJlc3BvbnNlEg8KB2VuYWJsZWQYASABKAgSPQoJZnJlcXVlbmN5GAIgASgOMiUuYnJhaWlucy5ibWMud2ViLkF1dG9VcGdyYWRlRnJlcXVlbmN5SACIAQESEQoEaG91chgDIAEoDUgBiAEBEhMKBm1pbnV0ZRgEIAEoDUgCiAEBQgwKCl9mcmVxdWVuY3lCBwoFX2hvdXJCCQoHX21pbnV0ZSrNAQoUQXV0b1VwZ3JhZGVGcmVxdWVuY3kSJgoiQVVUT19VUEdSQURFX0ZSRVFVRU5DWV9VTlNQRUNJRklFRBAAEiAKHEFVVE9fVVBHUkFERV9GUkVRVUVOQ1lfREFJTFkQARIhCh1BVVRPX1VQR1JBREVfRlJFUVVFTkNZX1dFRUtMWRACEiQKIEFVVE9fVVBHUkFERV9GUkVRVUVOQ1lfQklfV0VFS0xZEAMSIgoeQVVUT19VUEdSQURFX0ZSRVFVRU5DWV9NT05USExZEAQyuQMKDlVwZ3JhZGVTZXJ2aWNlElMKD0NoZWNrRm9yVXBncmFkZRIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRooLmJyYWlpbnMuYm1jLndlYi5DaGVja0ZvclVwZ3JhZGVSZXNwb25zZRJpChBEb3dubG9hZEZpcm13YXJlEiguYnJhaWlucy5ibWMud2ViLkRvd25sb2FkRmlybXdhcmVSZXF1ZXN0GikuYnJhaWlucy5ibWMud2ViLkRvd25sb2FkRmlybXdhcmVSZXNwb25zZTABEkIKB1VwZ3JhZGUSHy5icmFpaW5zLmJtYy53ZWIuVXBncmFkZVJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSUAoOU2V0QXV0b1VwZ3JhZGUSJi5icmFpaW5zLmJtYy53ZWIuU2V0QXV0b1VwZ3JhZGVSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5ElEKDkdldEF1dG9VcGdyYWRlEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GicuYnJhaWlucy5ibWMud2ViLkdldEF1dG9VcGdyYWRlUmVzcG9uc2ViBnByb3RvMw',
+        'ChF3ZWIvdXBncmFkZS5wcm90bxIPYnJhaWlucy5ibWMud2ViIjMKC1JlbGVhc2VJbmZvEg8KB3ZlcnNpb24YASABKAkSEwoLZGVzY3JpcHRpb24YAiABKAkiyQEKD0Zpcm13YXJlVXBncmFkZRIMCgRoYXNoGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSMAoMcmVsZWFzZV9kYXRlGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBITCgtkZXNjcmlwdGlvbhgEIAEoCRIXCg9maWxlX3NpemVfYnl0ZXMYBSABKAQSNwoRcHJldmlvdXNfcmVsZWFzZXMYBiADKAsyHC5icmFpaW5zLmJtYy53ZWIuUmVsZWFzZUluZm8iuwEKDVBhY2thZ2VDaGFuZ2USDAoEbmFtZRgBIAEoCRIZCgx2ZXJzaW9uX2Zyb20YAiABKAlIAIgBARIXCgp2ZXJzaW9uX3RvGAMgASgJSAGIAQESFQoIY2F0ZWdvcnkYBCABKAlIAogBARIWCgljaGFuZ2Vsb2cYBSABKAlIA4gBAUIPCg1fdmVyc2lvbl9mcm9tQg0KC192ZXJzaW9uX3RvQgsKCV9jYXRlZ29yeUIMCgpfY2hhbmdlbG9nItcBChJQYWNrYWdlVXBncmFkZVBsYW4SLwoHY2hhbmdlcxgBIAMoCzIeLmJyYWlpbnMuYm1jLndlYi5QYWNrYWdlQ2hhbmdlEiAKE2Rvd25sb2FkX3NpemVfYnl0ZXMYAiABKARIAIgBARIYCgtibWNfdmVyc2lvbhgDIAEoCUgBiAEBEhoKDWJtY19jaGFuZ2Vsb2cYBCABKAlIAogBAUIWChRfZG93bmxvYWRfc2l6ZV9ieXRlc0IOCgxfYm1jX3ZlcnNpb25CEAoOX2JtY19jaGFuZ2Vsb2ciiAIKF0NoZWNrRm9yVXBncmFkZVJlc3BvbnNlEhcKCnVwZ3JhZGVfaWQYASABKAlIAIgBARI3CghmaXJtd2FyZRgCIAEoCzIgLmJyYWlpbnMuYm1jLndlYi5GaXJtd2FyZVVwZ3JhZGVIAYgBARI6CghwYWNrYWdlcxgDIAEoCzIjLmJyYWlpbnMuYm1jLndlYi5QYWNrYWdlVXBncmFkZVBsYW5IAogBARI2CgpkaXNydXB0aW9uGAQgASgOMiIuYnJhaWlucy5ibWMud2ViLlVwZ3JhZGVEaXNydXB0aW9uQg0KC191cGdyYWRlX2lkQgsKCV9maXJtd2FyZUILCglfcGFja2FnZXMiMgoWQ2hlY2tGb3JVcGdyYWRlUmVxdWVzdBIYChBpbnN0YWxsX3BhY2thZ2VzGAEgAygJIiMKEkluc3RhbGxhYmxlUHJldmlldxINCgVpbWFnZRgBIAEoCSKgAgoRSW5zdGFsbGFibGVXaWRnZXQSFAoMcGFja2FnZV9uYW1lGAEgASgJEgsKA3VpZBgCIAEoCRIPCgd2ZXJzaW9uGAMgASgJEhQKDGRpc3BsYXlfbmFtZRgEIAEoCRIUCgdzdWJuYW1lGAUgASgJSACIAQESFQoIY2F0ZWdvcnkYBiABKAlIAYgBARIYCgtkZXNjcmlwdGlvbhgHIAEoCUgCiAEBEhEKBGljb24YCCABKAlIA4gBARI1CghwcmV2aWV3cxgJIAMoCzIjLmJyYWlpbnMuYm1jLndlYi5JbnN0YWxsYWJsZVByZXZpZXdCCgoIX3N1Ym5hbWVCCwoJX2NhdGVnb3J5Qg4KDF9kZXNjcmlwdGlvbkIHCgVfaWNvbiJVCh5MaXN0SW5zdGFsbGFibGVXaWRnZXRzUmVzcG9uc2USMwoHd2lkZ2V0cxgBIAMoCzIiLmJyYWlpbnMuYm1jLndlYi5JbnN0YWxsYWJsZVdpZGdldCIpChNTdGFydFVwZ3JhZGVSZXF1ZXN0EhIKCnVwZ3JhZGVfaWQYASABKAkiXQoXVXBncmFkZURvd25sb2FkUHJvZ3Jlc3MSGAoQZG93bmxvYWRlZF9ieXRlcxgBIAEoBBIYCgt0b3RhbF9ieXRlcxgCIAEoBEgAiAEBQg4KDF90b3RhbF9ieXRlcyKEAgoPVXBncmFkZVByb2dyZXNzEjwKCGRvd25sb2FkGAEgASgLMiguYnJhaWlucy5ibWMud2ViLlVwZ3JhZGVEb3dubG9hZFByb2dyZXNzSAASPQoNcGFja2FnZV9waGFzZRgCIAEoDjIkLmJyYWlpbnMuYm1jLndlYi5QYWNrYWdlVXBncmFkZVBoYXNlSAASPwoOZmlybXdhcmVfcGhhc2UYAyABKA4yJS5icmFpaW5zLmJtYy53ZWIuRmlybXdhcmVVcGdyYWRlUGhhc2VIABIqCghmaW5pc2hlZBgEIAEoCzIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eUgAQgcKBWV2ZW50IrEBChVTZXRBdXRvVXBncmFkZVJlcXVlc3QSDwoHZW5hYmxlZBgBIAEoCBI9CglmcmVxdWVuY3kYAiABKA4yJS5icmFpaW5zLmJtYy53ZWIuQXV0b1VwZ3JhZGVGcmVxdWVuY3lIAIgBARIRCgRob3VyGAMgASgNSAGIAQESEwoGbWludXRlGAQgASgNSAKIAQFCDAoKX2ZyZXF1ZW5jeUIHCgVfaG91ckIJCgdfbWludXRlIrIBChZHZXRBdXRvVXBncmFkZVJlc3BvbnNlEg8KB2VuYWJsZWQYASABKAgSPQoJZnJlcXVlbmN5GAIgASgOMiUuYnJhaWlucy5ibWMud2ViLkF1dG9VcGdyYWRlRnJlcXVlbmN5SACIAQESEQoEaG91chgDIAEoDUgBiAEBEhMKBm1pbnV0ZRgEIAEoDUgCiAEBQgwKCl9mcmVxdWVuY3lCBwoFX2hvdXJCCQoHX21pbnV0ZSrNAQoUQXV0b1VwZ3JhZGVGcmVxdWVuY3kSJgoiQVVUT19VUEdSQURFX0ZSRVFVRU5DWV9VTlNQRUNJRklFRBAAEiAKHEFVVE9fVVBHUkFERV9GUkVRVUVOQ1lfREFJTFkQARIhCh1BVVRPX1VQR1JBREVfRlJFUVVFTkNZX1dFRUtMWRACEiQKIEFVVE9fVVBHUkFERV9GUkVRVUVOQ1lfQklfV0VFS0xZEAMSIgoeQVVUT19VUEdSQURFX0ZSRVFVRU5DWV9NT05USExZEAQqegoRVXBncmFkZURpc3J1cHRpb24SIgoeVVBHUkFERV9ESVNSVVBUSU9OX1VOU1BFQ0lGSUVEEAASIgoeVVBHUkFERV9ESVNSVVBUSU9OX0FQUF9SRVNUQVJUEAESHQoZVVBHUkFERV9ESVNSVVBUSU9OX1JFQk9PVBACKtABChNQYWNrYWdlVXBncmFkZVBoYXNlEiUKIVBBQ0tBR0VfVVBHUkFERV9QSEFTRV9VTlNQRUNJRklFRBAAEiMKH1BBQ0tBR0VfVVBHUkFERV9QSEFTRV9SRUFMSVpJTkcQARIjCh9QQUNLQUdFX1VQR1JBREVfUEhBU0VfVkVSSUZZSU5HEAISIgoeUEFDS0FHRV9VUEdSQURFX1BIQVNFX0JVSUxESU5HEAMSJAogUEFDS0FHRV9VUEdSQURFX1BIQVNFX0FDVElWQVRJTkcQBCqxAQoURmlybXdhcmVVcGdyYWRlUGhhc2USJgoiRklSTVdBUkVfVVBHUkFERV9QSEFTRV9VTlNQRUNJRklFRBAAEiYKIkZJUk1XQVJFX1VQR1JBREVfUEhBU0VfRE9XTkxPQURJTkcQARIkCiBGSVJNV0FSRV9VUEdSQURFX1BIQVNFX1ZFUklGWUlORxACEiMKH0ZJUk1XQVJFX1VQR1JBREVfUEhBU0VfQVBQTFlJTkcQAzLYAwoOVXBncmFkZVNlcnZpY2USZAoPQ2hlY2tGb3JVcGdyYWRlEicuYnJhaWlucy5ibWMud2ViLkNoZWNrRm9yVXBncmFkZVJlcXVlc3QaKC5icmFpaW5zLmJtYy53ZWIuQ2hlY2tGb3JVcGdyYWRlUmVzcG9uc2USYQoWTGlzdEluc3RhbGxhYmxlV2lkZ2V0cxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRovLmJyYWlpbnMuYm1jLndlYi5MaXN0SW5zdGFsbGFibGVXaWRnZXRzUmVzcG9uc2USWAoMU3RhcnRVcGdyYWRlEiQuYnJhaWlucy5ibWMud2ViLlN0YXJ0VXBncmFkZVJlcXVlc3QaIC5icmFpaW5zLmJtYy53ZWIuVXBncmFkZVByb2dyZXNzMAESUAoOU2V0QXV0b1VwZ3JhZGUSJi5icmFpaW5zLmJtYy53ZWIuU2V0QXV0b1VwZ3JhZGVSZXF1ZXN0GhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5ElEKDkdldEF1dG9VcGdyYWRlEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GicuYnJhaWlucy5ibWMud2ViLkdldEF1dG9VcGdyYWRlUmVzcG9uc2ViBnByb3RvMw',
         [file_google_protobuf_empty, file_google_protobuf_timestamp],
     );
-
-/**
- * @generated from message braiins.bmc.web.UpgradeMetadata
- */
-export type UpgradeMetadata = Message<'braiins.bmc.web.UpgradeMetadata'> & {
-    /**
-     * @generated from field: string hash = 1;
-     */
-    hash: string;
-
-    /**
-     * @generated from field: string version = 2;
-     */
-    version: string;
-
-    /**
-     * @generated from field: google.protobuf.Timestamp release_date = 3;
-     */
-    releaseDate?: Timestamp | undefined;
-
-    /**
-     * @generated from field: string description = 4;
-     */
-    description: string;
-};
-
-/**
- * Describes the message braiins.bmc.web.UpgradeMetadata.
- * Use `create(UpgradeMetadataSchema)` to create a new message.
- */
-export const UpgradeMetadataSchema: GenMessage<UpgradeMetadata> = /*@__PURE__*/ messageDesc(file_web_upgrade, 0);
 
 /**
  * @generated from message braiins.bmc.web.ReleaseInfo
@@ -68,21 +37,139 @@ export type ReleaseInfo = Message<'braiins.bmc.web.ReleaseInfo'> & {
  * Describes the message braiins.bmc.web.ReleaseInfo.
  * Use `create(ReleaseInfoSchema)` to create a new message.
  */
-export const ReleaseInfoSchema: GenMessage<ReleaseInfo> = /*@__PURE__*/ messageDesc(file_web_upgrade, 1);
+export const ReleaseInfoSchema: GenMessage<ReleaseInfo> = /*@__PURE__*/ messageDesc(file_web_upgrade, 0);
+
+/**
+ * @generated from message braiins.bmc.web.FirmwareUpgrade
+ */
+export type FirmwareUpgrade = Message<'braiins.bmc.web.FirmwareUpgrade'> & {
+    /**
+     * @generated from field: string hash = 1;
+     */
+    hash: string;
+
+    /**
+     * @generated from field: string version = 2;
+     */
+    version: string;
+
+    /**
+     * @generated from field: google.protobuf.Timestamp release_date = 3;
+     */
+    releaseDate?: Timestamp | undefined;
+
+    /**
+     * @generated from field: string description = 4;
+     */
+    description: string;
+
+    /**
+     * @generated from field: uint64 file_size_bytes = 5;
+     */
+    fileSizeBytes: bigint;
+
+    /**
+     * @generated from field: repeated braiins.bmc.web.ReleaseInfo previous_releases = 6;
+     */
+    previousReleases: ReleaseInfo[];
+};
+
+/**
+ * Describes the message braiins.bmc.web.FirmwareUpgrade.
+ * Use `create(FirmwareUpgradeSchema)` to create a new message.
+ */
+export const FirmwareUpgradeSchema: GenMessage<FirmwareUpgrade> = /*@__PURE__*/ messageDesc(file_web_upgrade, 1);
+
+/**
+ * @generated from message braiins.bmc.web.PackageChange
+ */
+export type PackageChange = Message<'braiins.bmc.web.PackageChange'> & {
+    /**
+     * @generated from field: string name = 1;
+     */
+    name: string;
+
+    /**
+     * @generated from field: optional string version_from = 2;
+     */
+    versionFrom?: string | undefined;
+
+    /**
+     * @generated from field: optional string version_to = 3;
+     */
+    versionTo?: string | undefined;
+
+    /**
+     * @generated from field: optional string category = 4;
+     */
+    category?: string | undefined;
+
+    /**
+     * @generated from field: optional string changelog = 5;
+     */
+    changelog?: string | undefined;
+};
+
+/**
+ * Describes the message braiins.bmc.web.PackageChange.
+ * Use `create(PackageChangeSchema)` to create a new message.
+ */
+export const PackageChangeSchema: GenMessage<PackageChange> = /*@__PURE__*/ messageDesc(file_web_upgrade, 2);
+
+/**
+ * @generated from message braiins.bmc.web.PackageUpgradePlan
+ */
+export type PackageUpgradePlan = Message<'braiins.bmc.web.PackageUpgradePlan'> & {
+    /**
+     * @generated from field: repeated braiins.bmc.web.PackageChange changes = 1;
+     */
+    changes: PackageChange[];
+
+    /**
+     * @generated from field: optional uint64 download_size_bytes = 2;
+     */
+    downloadSizeBytes?: bigint | undefined;
+
+    /**
+     * @generated from field: optional string bmc_version = 3;
+     */
+    bmcVersion?: string | undefined;
+
+    /**
+     * @generated from field: optional string bmc_changelog = 4;
+     */
+    bmcChangelog?: string | undefined;
+};
+
+/**
+ * Describes the message braiins.bmc.web.PackageUpgradePlan.
+ * Use `create(PackageUpgradePlanSchema)` to create a new message.
+ */
+export const PackageUpgradePlanSchema: GenMessage<PackageUpgradePlan> = /*@__PURE__*/ messageDesc(file_web_upgrade, 3);
 
 /**
  * @generated from message braiins.bmc.web.CheckForUpgradeResponse
  */
 export type CheckForUpgradeResponse = Message<'braiins.bmc.web.CheckForUpgradeResponse'> & {
     /**
-     * @generated from field: braiins.bmc.web.UpgradeMetadata latest_release = 1;
+     * @generated from field: optional string upgrade_id = 1;
      */
-    latestRelease?: UpgradeMetadata | undefined;
+    upgradeId?: string | undefined;
 
     /**
-     * @generated from field: repeated braiins.bmc.web.ReleaseInfo previous_releases = 2;
+     * @generated from field: optional braiins.bmc.web.FirmwareUpgrade firmware = 2;
      */
-    previousReleases: ReleaseInfo[];
+    firmware?: FirmwareUpgrade | undefined;
+
+    /**
+     * @generated from field: optional braiins.bmc.web.PackageUpgradePlan packages = 3;
+     */
+    packages?: PackageUpgradePlan | undefined;
+
+    /**
+     * @generated from field: braiins.bmc.web.UpgradeDisruption disruption = 4;
+     */
+    disruption: UpgradeDisruption;
 };
 
 /**
@@ -91,111 +178,201 @@ export type CheckForUpgradeResponse = Message<'braiins.bmc.web.CheckForUpgradeRe
  */
 export const CheckForUpgradeResponseSchema: GenMessage<CheckForUpgradeResponse> =
     /*@__PURE__*/
-    messageDesc(file_web_upgrade, 2);
+    messageDesc(file_web_upgrade, 4);
 
 /**
- * @generated from message braiins.bmc.web.DownloadFirmwareRequest
+ * @generated from message braiins.bmc.web.CheckForUpgradeRequest
  */
-export type DownloadFirmwareRequest = Message<'braiins.bmc.web.DownloadFirmwareRequest'> & {
+export type CheckForUpgradeRequest = Message<'braiins.bmc.web.CheckForUpgradeRequest'> & {
     /**
-     * @generated from field: string hash = 1;
+     * @generated from field: repeated string install_packages = 1;
      */
-    hash: string;
+    installPackages: string[];
 };
 
 /**
- * Describes the message braiins.bmc.web.DownloadFirmwareRequest.
- * Use `create(DownloadFirmwareRequestSchema)` to create a new message.
+ * Describes the message braiins.bmc.web.CheckForUpgradeRequest.
+ * Use `create(CheckForUpgradeRequestSchema)` to create a new message.
  */
-export const DownloadFirmwareRequestSchema: GenMessage<DownloadFirmwareRequest> =
+export const CheckForUpgradeRequestSchema: GenMessage<CheckForUpgradeRequest> =
     /*@__PURE__*/
-    messageDesc(file_web_upgrade, 3);
+    messageDesc(file_web_upgrade, 5);
 
 /**
- * @generated from message braiins.bmc.web.DownloadProgress
+ * @generated from message braiins.bmc.web.InstallablePreview
  */
-export type DownloadProgress = Message<'braiins.bmc.web.DownloadProgress'> & {
+export type InstallablePreview = Message<'braiins.bmc.web.InstallablePreview'> & {
     /**
-     * @generated from field: float downloaded_mb = 1;
+     * @generated from field: string image = 1;
      */
-    downloadedMb: number;
-
-    /**
-     * @generated from field: float total_mb = 2;
-     */
-    totalMb: number;
+    image: string;
 };
 
 /**
- * Describes the message braiins.bmc.web.DownloadProgress.
- * Use `create(DownloadProgressSchema)` to create a new message.
+ * Describes the message braiins.bmc.web.InstallablePreview.
+ * Use `create(InstallablePreviewSchema)` to create a new message.
  */
-export const DownloadProgressSchema: GenMessage<DownloadProgress> = /*@__PURE__*/ messageDesc(file_web_upgrade, 4);
+export const InstallablePreviewSchema: GenMessage<InstallablePreview> = /*@__PURE__*/ messageDesc(file_web_upgrade, 6);
 
 /**
- * @generated from message braiins.bmc.web.DownloadFinished
+ * @generated from message braiins.bmc.web.InstallableWidget
  */
-export type DownloadFinished = Message<'braiins.bmc.web.DownloadFinished'> & {
+export type InstallableWidget = Message<'braiins.bmc.web.InstallableWidget'> & {
     /**
-     * @generated from field: string hash = 1;
+     * @generated from field: string package_name = 1;
      */
-    hash: string;
+    packageName: string;
+
+    /**
+     * @generated from field: string uid = 2;
+     */
+    uid: string;
+
+    /**
+     * @generated from field: string version = 3;
+     */
+    version: string;
+
+    /**
+     * @generated from field: string display_name = 4;
+     */
+    displayName: string;
+
+    /**
+     * @generated from field: optional string subname = 5;
+     */
+    subname?: string | undefined;
+
+    /**
+     * @generated from field: optional string category = 6;
+     */
+    category?: string | undefined;
+
+    /**
+     * @generated from field: optional string description = 7;
+     */
+    description?: string | undefined;
+
+    /**
+     * @generated from field: optional string icon = 8;
+     */
+    icon?: string | undefined;
+
+    /**
+     * @generated from field: repeated braiins.bmc.web.InstallablePreview previews = 9;
+     */
+    previews: InstallablePreview[];
 };
 
 /**
- * Describes the message braiins.bmc.web.DownloadFinished.
- * Use `create(DownloadFinishedSchema)` to create a new message.
+ * Describes the message braiins.bmc.web.InstallableWidget.
+ * Use `create(InstallableWidgetSchema)` to create a new message.
  */
-export const DownloadFinishedSchema: GenMessage<DownloadFinished> = /*@__PURE__*/ messageDesc(file_web_upgrade, 5);
+export const InstallableWidgetSchema: GenMessage<InstallableWidget> = /*@__PURE__*/ messageDesc(file_web_upgrade, 7);
 
 /**
- * @generated from message braiins.bmc.web.DownloadFirmwareResponse
+ * @generated from message braiins.bmc.web.ListInstallableWidgetsResponse
  */
-export type DownloadFirmwareResponse = Message<'braiins.bmc.web.DownloadFirmwareResponse'> & {
+export type ListInstallableWidgetsResponse = Message<'braiins.bmc.web.ListInstallableWidgetsResponse'> & {
     /**
-     * @generated from oneof braiins.bmc.web.DownloadFirmwareResponse.state
+     * @generated from field: repeated braiins.bmc.web.InstallableWidget widgets = 1;
      */
-    state:
+    widgets: InstallableWidget[];
+};
+
+/**
+ * Describes the message braiins.bmc.web.ListInstallableWidgetsResponse.
+ * Use `create(ListInstallableWidgetsResponseSchema)` to create a new message.
+ */
+export const ListInstallableWidgetsResponseSchema: GenMessage<ListInstallableWidgetsResponse> =
+    /*@__PURE__*/
+    messageDesc(file_web_upgrade, 8);
+
+/**
+ * @generated from message braiins.bmc.web.StartUpgradeRequest
+ */
+export type StartUpgradeRequest = Message<'braiins.bmc.web.StartUpgradeRequest'> & {
+    /**
+     * @generated from field: string upgrade_id = 1;
+     */
+    upgradeId: string;
+};
+
+/**
+ * Describes the message braiins.bmc.web.StartUpgradeRequest.
+ * Use `create(StartUpgradeRequestSchema)` to create a new message.
+ */
+export const StartUpgradeRequestSchema: GenMessage<StartUpgradeRequest> =
+    /*@__PURE__*/
+    messageDesc(file_web_upgrade, 9);
+
+/**
+ * @generated from message braiins.bmc.web.UpgradeDownloadProgress
+ */
+export type UpgradeDownloadProgress = Message<'braiins.bmc.web.UpgradeDownloadProgress'> & {
+    /**
+     * @generated from field: uint64 downloaded_bytes = 1;
+     */
+    downloadedBytes: bigint;
+
+    /**
+     * @generated from field: optional uint64 total_bytes = 2;
+     */
+    totalBytes?: bigint | undefined;
+};
+
+/**
+ * Describes the message braiins.bmc.web.UpgradeDownloadProgress.
+ * Use `create(UpgradeDownloadProgressSchema)` to create a new message.
+ */
+export const UpgradeDownloadProgressSchema: GenMessage<UpgradeDownloadProgress> =
+    /*@__PURE__*/
+    messageDesc(file_web_upgrade, 10);
+
+/**
+ * @generated from message braiins.bmc.web.UpgradeProgress
+ */
+export type UpgradeProgress = Message<'braiins.bmc.web.UpgradeProgress'> & {
+    /**
+     * @generated from oneof braiins.bmc.web.UpgradeProgress.event
+     */
+    event:
         | {
               /**
-               * @generated from field: braiins.bmc.web.DownloadProgress download_progress = 1;
+               * @generated from field: braiins.bmc.web.UpgradeDownloadProgress download = 1;
                */
-              value: DownloadProgress;
-              case: 'downloadProgress';
+              value: UpgradeDownloadProgress;
+              case: 'download';
           }
         | {
               /**
-               * @generated from field: braiins.bmc.web.DownloadFinished download_finished = 2;
+               * @generated from field: braiins.bmc.web.PackageUpgradePhase package_phase = 2;
                */
-              value: DownloadFinished;
-              case: 'downloadFinished';
+              value: PackageUpgradePhase;
+              case: 'packagePhase';
+          }
+        | {
+              /**
+               * @generated from field: braiins.bmc.web.FirmwareUpgradePhase firmware_phase = 3;
+               */
+              value: FirmwareUpgradePhase;
+              case: 'firmwarePhase';
+          }
+        | {
+              /**
+               * @generated from field: google.protobuf.Empty finished = 4;
+               */
+              value: Empty;
+              case: 'finished';
           }
         | { case: undefined; value?: undefined };
 };
 
 /**
- * Describes the message braiins.bmc.web.DownloadFirmwareResponse.
- * Use `create(DownloadFirmwareResponseSchema)` to create a new message.
+ * Describes the message braiins.bmc.web.UpgradeProgress.
+ * Use `create(UpgradeProgressSchema)` to create a new message.
  */
-export const DownloadFirmwareResponseSchema: GenMessage<DownloadFirmwareResponse> =
-    /*@__PURE__*/
-    messageDesc(file_web_upgrade, 6);
-
-/**
- * @generated from message braiins.bmc.web.UpgradeRequest
- */
-export type UpgradeRequest = Message<'braiins.bmc.web.UpgradeRequest'> & {
-    /**
-     * @generated from field: string hash = 1;
-     */
-    hash: string;
-};
-
-/**
- * Describes the message braiins.bmc.web.UpgradeRequest.
- * Use `create(UpgradeRequestSchema)` to create a new message.
- */
-export const UpgradeRequestSchema: GenMessage<UpgradeRequest> = /*@__PURE__*/ messageDesc(file_web_upgrade, 7);
+export const UpgradeProgressSchema: GenMessage<UpgradeProgress> = /*@__PURE__*/ messageDesc(file_web_upgrade, 11);
 
 /**
  * @generated from message braiins.bmc.web.SetAutoUpgradeRequest
@@ -228,7 +405,7 @@ export type SetAutoUpgradeRequest = Message<'braiins.bmc.web.SetAutoUpgradeReque
  */
 export const SetAutoUpgradeRequestSchema: GenMessage<SetAutoUpgradeRequest> =
     /*@__PURE__*/
-    messageDesc(file_web_upgrade, 8);
+    messageDesc(file_web_upgrade, 12);
 
 /**
  * @generated from message braiins.bmc.web.GetAutoUpgradeResponse
@@ -261,7 +438,7 @@ export type GetAutoUpgradeResponse = Message<'braiins.bmc.web.GetAutoUpgradeResp
  */
 export const GetAutoUpgradeResponseSchema: GenMessage<GetAutoUpgradeResponse> =
     /*@__PURE__*/
-    messageDesc(file_web_upgrade, 9);
+    messageDesc(file_web_upgrade, 13);
 
 /**
  * @generated from enum braiins.bmc.web.AutoUpgradeFrequency
@@ -299,6 +476,98 @@ export enum AutoUpgradeFrequency {
 export const AutoUpgradeFrequencySchema: GenEnum<AutoUpgradeFrequency> = /*@__PURE__*/ enumDesc(file_web_upgrade, 0);
 
 /**
+ * @generated from enum braiins.bmc.web.UpgradeDisruption
+ */
+export enum UpgradeDisruption {
+    /**
+     * @generated from enum value: UPGRADE_DISRUPTION_UNSPECIFIED = 0;
+     */
+    UNSPECIFIED = 0,
+
+    /**
+     * @generated from enum value: UPGRADE_DISRUPTION_APP_RESTART = 1;
+     */
+    APP_RESTART = 1,
+
+    /**
+     * @generated from enum value: UPGRADE_DISRUPTION_REBOOT = 2;
+     */
+    REBOOT = 2,
+}
+
+/**
+ * Describes the enum braiins.bmc.web.UpgradeDisruption.
+ */
+export const UpgradeDisruptionSchema: GenEnum<UpgradeDisruption> = /*@__PURE__*/ enumDesc(file_web_upgrade, 1);
+
+/**
+ * @generated from enum braiins.bmc.web.PackageUpgradePhase
+ */
+export enum PackageUpgradePhase {
+    /**
+     * @generated from enum value: PACKAGE_UPGRADE_PHASE_UNSPECIFIED = 0;
+     */
+    UNSPECIFIED = 0,
+
+    /**
+     * Realizing is where the packages are downloaded (substituted from the servers).
+     *
+     * @generated from enum value: PACKAGE_UPGRADE_PHASE_REALIZING = 1;
+     */
+    REALIZING = 1,
+
+    /**
+     * @generated from enum value: PACKAGE_UPGRADE_PHASE_VERIFYING = 2;
+     */
+    VERIFYING = 2,
+
+    /**
+     * @generated from enum value: PACKAGE_UPGRADE_PHASE_BUILDING = 3;
+     */
+    BUILDING = 3,
+
+    /**
+     * @generated from enum value: PACKAGE_UPGRADE_PHASE_ACTIVATING = 4;
+     */
+    ACTIVATING = 4,
+}
+
+/**
+ * Describes the enum braiins.bmc.web.PackageUpgradePhase.
+ */
+export const PackageUpgradePhaseSchema: GenEnum<PackageUpgradePhase> = /*@__PURE__*/ enumDesc(file_web_upgrade, 2);
+
+/**
+ * @generated from enum braiins.bmc.web.FirmwareUpgradePhase
+ */
+export enum FirmwareUpgradePhase {
+    /**
+     * @generated from enum value: FIRMWARE_UPGRADE_PHASE_UNSPECIFIED = 0;
+     */
+    UNSPECIFIED = 0,
+
+    /**
+     * @generated from enum value: FIRMWARE_UPGRADE_PHASE_DOWNLOADING = 1;
+     */
+    DOWNLOADING = 1,
+
+    /**
+     * @generated from enum value: FIRMWARE_UPGRADE_PHASE_VERIFYING = 2;
+     */
+    VERIFYING = 2,
+
+    /**
+     * @generated from enum value: FIRMWARE_UPGRADE_PHASE_APPLYING = 3;
+     */
+    APPLYING = 3,
+}
+
+/**
+ * Describes the enum braiins.bmc.web.FirmwareUpgradePhase.
+ */
+export const FirmwareUpgradePhaseSchema: GenEnum<FirmwareUpgradePhase> = /*@__PURE__*/ enumDesc(file_web_upgrade, 3);
+
+/**
  * @generated from service braiins.bmc.web.UpgradeService
  */
 export const UpgradeService: GenService<{
@@ -307,28 +576,24 @@ export const UpgradeService: GenService<{
      */
     checkForUpgrade: {
         methodKind: 'unary';
-        input: typeof EmptySchema;
+        input: typeof CheckForUpgradeRequestSchema;
         output: typeof CheckForUpgradeResponseSchema;
     };
     /**
-     * Call with a release hash to download data and provide user feedback about the progress
-     *
-     * @generated from rpc braiins.bmc.web.UpgradeService.DownloadFirmware
+     * @generated from rpc braiins.bmc.web.UpgradeService.ListInstallableWidgets
      */
-    downloadFirmware: {
-        methodKind: 'server_streaming';
-        input: typeof DownloadFirmwareRequestSchema;
-        output: typeof DownloadFirmwareResponseSchema;
+    listInstallableWidgets: {
+        methodKind: 'unary';
+        input: typeof EmptySchema;
+        output: typeof ListInstallableWidgetsResponseSchema;
     };
     /**
-     * Called when release has been downloaded
-     *
-     * @generated from rpc braiins.bmc.web.UpgradeService.Upgrade
+     * @generated from rpc braiins.bmc.web.UpgradeService.StartUpgrade
      */
-    upgrade: {
-        methodKind: 'unary';
-        input: typeof UpgradeRequestSchema;
-        output: typeof EmptySchema;
+    startUpgrade: {
+        methodKind: 'server_streaming';
+        input: typeof StartUpgradeRequestSchema;
+        output: typeof UpgradeProgressSchema;
     };
     /**
      * Allows en/disabling of AutoUpgrade feature
