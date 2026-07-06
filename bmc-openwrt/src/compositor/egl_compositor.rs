@@ -382,6 +382,7 @@ impl EglCompositor {
             physical_height,
             refresh_mhz,
             seat_name,
+            super::settings::caps_for_product(profile.product),
         );
         let listening_socket = try_init!(
             ListeningSocket::bind_auto("wayland", 0..33),
@@ -1972,6 +1973,15 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
         CompositorCommand::SetWifiAp { ssid } => {
             state.compositor.settings.set_wifi_ap(ssid);
         }
+        CompositorCommand::SetVolume { value } => {
+            state.compositor.settings.set_volume(value);
+        }
+        CompositorCommand::SetNightMode { active, until } => {
+            state.compositor.settings.set_night_mode(active, until);
+        }
+        CompositorCommand::RestartDeclined { reason } => {
+            state.compositor.settings.restart_declined(&reason);
+        }
         CompositorCommand::UpdateWidgetParams {
             instance_id,
             params,
@@ -2087,6 +2097,9 @@ fn process_protocol_events(state: &mut AppState) {
         use crate::compositor::settings::SettingsAction;
         let cmd = match action {
             SettingsAction::SetBrightness(value) => SettingsCommand::SetBrightness(value),
+            SettingsAction::SetVolume(value) => SettingsCommand::SetVolume(value),
+            SettingsAction::ToggleNightMode => SettingsCommand::ToggleNightMode,
+            SettingsAction::Restart => SettingsCommand::Restart,
             SettingsAction::ReconfigureWifi => SettingsCommand::ReconfigureWifi,
         };
         if let Err(e) = state.settings_tx.send(cmd) {
@@ -2316,6 +2329,29 @@ impl Compositor for EglCompositor {
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 
+    fn broadcast_volume(&self, value: u8) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::SetVolume { value })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn broadcast_night_mode(&self, active: bool, until: &str) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::SetNightMode {
+                active,
+                until: until.to_owned(),
+            })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn broadcast_restart_declined(&self, reason: &str) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::RestartDeclined {
+                reason: reason.to_owned(),
+            })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
     fn broadcast_wifi_ap(&self, ssid: Option<String>) -> Result<(), CompositorError> {
         self.command_tx
             .send(CompositorCommand::SetWifiAp { ssid })
@@ -2442,7 +2478,16 @@ mod tests {
             EventLoop::try_new().expect("BUG: test event loop should initialize");
         let display: Display<CompositorState> =
             Display::new().expect("BUG: test Wayland display should initialize");
-        let compositor = CompositorState::new(&display, 480, 1280, 480, 1280, 60_000, "test-seat");
+        let compositor = CompositorState::new(
+            &display,
+            480,
+            1280,
+            480,
+            1280,
+            60_000,
+            "test-seat",
+            crate::compositor::settings::caps_for_product(bmc_platform::Product::Bmc100),
+        );
         let listening_socket = ListeningSocket::bind_absolute(make_test_socket_path())
             .expect("BUG: test Wayland socket should bind");
         let (action_tx, _) = mpsc::unbounded_channel();

@@ -48,6 +48,16 @@ pub enum CompositorCommand {
     SetWifiAp {
         ssid: Option<String>,
     },
+    SetVolume {
+        value: u8,
+    },
+    SetNightMode {
+        active: bool,
+        until: String,
+    },
+    RestartDeclined {
+        reason: String,
+    },
     /// Push fresh params to a running widget without respawning it.
     /// Only valid when geometry (size) is unchanged; the widget keeps
     /// its EGL surface and Slint scene and re-reads its manifest

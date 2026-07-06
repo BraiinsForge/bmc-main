@@ -15,6 +15,7 @@ use bmc_widget_protocol::server::{
     deck_widget_manager_v1::DeckWidgetManagerV1, deck_widget_surface_v1::DeckWidgetSurfaceV1,
 };
 use deck_screen_edge_v1::server::deck_screen_edge_manager_v1::Border;
+use deck_settings_v1::server::deck_settings_v1::Capability;
 use smithay::{
     backend::allocator::{Buffer, Format, Fourcc, Modifier, dmabuf::Dmabuf},
     delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_image_capture_source,
@@ -286,6 +287,10 @@ fn should_complete_frame_callback(
 
 impl CompositorState {
     #[must_use]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "compositor construction threads display geometry, seat, and the settings capability set"
+    )]
     pub fn new(
         display: &Display<Self>,
         width: u32,
@@ -294,6 +299,7 @@ impl CompositorState {
         physical_height: u32,
         refresh_mhz: i32,
         seat_name: &str,
+        settings_caps: Capability,
     ) -> Self {
         let display_handle = display.handle();
 
@@ -359,7 +365,7 @@ impl CompositorState {
             layer_shell_state,
             layer_surfaces: Vec::new(),
             screen_edge_sessions: Vec::new(),
-            settings: crate::compositor::settings::SettingsState::default(),
+            settings: crate::compositor::settings::SettingsState::new(settings_caps),
             seat_state,
             data_device_state,
             deck_widget_state,
@@ -1690,8 +1696,16 @@ mod layer_frame_callback_damage_test {
     fn callback_only_layer_commit_marks_full_output_damage() {
         let mut display: Display<CompositorState> =
             Display::new().expect("BUG: test Wayland display should initialize");
-        let mut compositor =
-            CompositorState::new(&display, 480, 1280, 480, 1280, 60_000, "test-seat");
+        let mut compositor = CompositorState::new(
+            &display,
+            480,
+            1280,
+            480,
+            1280,
+            60_000,
+            "test-seat",
+            crate::compositor::settings::caps_for_product(bmc_platform::Product::Bmc100),
+        );
 
         let (server_stream, client_stream) =
             UnixStream::pair().expect("BUG: unix socket pair should be creatable");
