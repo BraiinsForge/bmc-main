@@ -83,8 +83,8 @@ pub enum PlanConflict {
 pub enum ComputeUpgradePlanError {
     #[error(transparent)]
     Conflict(#[from] PlanConflict),
-    #[error("system package {name} missing from every index")]
-    MissingSystemPackage { name: String },
+    #[error("system packages missing from every index: {}", names.join(", "))]
+    MissingSystemPackages { names: Vec<String> },
     #[error("failed to resolve package `{name}`: {source}")]
     Resolve {
         name: String,
@@ -251,7 +251,7 @@ pub fn manifest_package_to_resolved(name: &str, mp: &ManifestPackage) -> Resolve
 /// (e.g. removing a package that is not installed). Conflicts are checked
 /// in a deterministic order: add/remove overlap, duplicate add, duplicate
 /// remove, remove of a not-installed package. Returns
-/// [`ComputeUpgradePlanError::MissingSystemPackage`] when a system package is
+/// [`ComputeUpgradePlanError::MissingSystemPackages`] when a system package is
 /// absent from every merged index. Returns [`ComputeUpgradePlanError::Resolve`]
 /// when a kept package has an invalid version constraint or resolves
 /// ambiguously against the merged index.
@@ -319,6 +319,7 @@ pub fn compute_upgrade_plan(
     let mut removed = Vec::new();
     let mut changed = Vec::new();
     let mut stale = Vec::new();
+    let mut missing_system: BTreeSet<String> = BTreeSet::new();
 
     for (name, pkg) in &current.packages {
         if remove_set.contains(name.as_str()) {
@@ -366,9 +367,7 @@ pub fn compute_upgrade_plan(
                 Err(ResolvePackageError::PackageNotFound(_))
                     if pkg.installed_by == InstalledBy::System =>
                 {
-                    return Err(ComputeUpgradePlanError::MissingSystemPackage {
-                        name: name.clone(),
-                    });
+                    missing_system.insert(name.clone());
                 }
                 Err(
                     ResolvePackageError::PackageNotFound(_)
@@ -409,6 +408,12 @@ pub fn compute_upgrade_plan(
         }
 
         packages.push(manifest_package_to_resolved(name, pkg));
+    }
+
+    if !missing_system.is_empty() {
+        return Err(ComputeUpgradePlanError::MissingSystemPackages {
+            names: missing_system.into_iter().collect(),
+        });
     }
 
     // Add new packages that aren't replacing existing ones. Iterate
@@ -1027,10 +1032,36 @@ mod tests {
         assert!(
             matches!(
                 err,
-                ComputeUpgradePlanError::MissingSystemPackage { ref name } if name == "core-pkg"
+                ComputeUpgradePlanError::MissingSystemPackages { ref names }
+                    if names == &["core-pkg".to_owned()]
             ),
             "got unexpected error: {err:?}"
         );
+    }
+
+    #[test]
+    fn compute_upgrade_plan_reports_all_missing_system_packages_sorted() {
+        let current = Manifest {
+            packages: BTreeMap::from([
+                (
+                    "nix".to_owned(),
+                    test_manifest_package_installed_by("1.0.0", "forge", None, InstalledBy::System),
+                ),
+                (
+                    "core".to_owned(),
+                    test_manifest_package_installed_by("1.0.0", "forge", None, InstalledBy::System),
+                ),
+            ]),
+        };
+        let merged = empty_merged_index();
+
+        let err = compute_upgrade_plan(&current, Some(&merged), &[], &[])
+            .expect_err("missing system packages must fail");
+
+        let ComputeUpgradePlanError::MissingSystemPackages { names } = err else {
+            panic!("expected MissingSystemPackages, got: {err:?}");
+        };
+        assert_eq!(names, vec!["core".to_owned(), "nix".to_owned()]);
     }
 
     #[test]
