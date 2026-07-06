@@ -4,7 +4,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use bmc_nix::store;
-use bmc_nix::types::ServersConfig;
 pub use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem};
 
 use bmc_led::data::LedEvent;
@@ -148,92 +147,6 @@ pub(crate) const WIFI_CONNECT_POLL: std::time::Duration = std::time::Duration::f
 async fn send_led_event<P: InitPlatform>(platform: &P, event: LedEvent) {
     if let Some(tx) = platform.led_event_sender() {
         let _ = tx.send(event).await;
-    }
-}
-
-/// Load and parse the servers configuration.
-///
-/// Resolution order:
-/// 1. Read `servers_config_path` — if it exists and parses, use it.
-/// 2. If missing or unparseable, restore from `servers_config_path.default`
-///    (shipped by firmware) or fall back to the compiled-in default.
-/// 3. An unparseable file is backed up to `.bcp` before being replaced.
-fn load_servers_config(servers_config_path: &std::path::Path) -> Result<ServersConfig, InitError> {
-    // 1. Try servers.json
-    match try_load_servers_from(servers_config_path) {
-        Ok(config) => return Ok(config),
-        Err(e) => {
-            tracing::warn!("{}: {e}", servers_config_path.display());
-            backup_corrupt_config(servers_config_path);
-        }
-    }
-
-    // 2. Try servers.json.default
-    let default_path = servers_config_path.with_extension("json.default");
-    match try_load_servers_from(&default_path) {
-        Ok(config) => {
-            write_servers_config(servers_config_path, &default_path)?;
-            return Ok(config);
-        }
-        Err(e) => tracing::warn!("{}: {e}", default_path.display()),
-    }
-
-    // 3. Use compiled-in servers.json
-    tracing::info!("using compiled-in default servers.json");
-    let content = include_str!("../servers.json");
-    write_servers_config_content(servers_config_path, content)?;
-    serde_json::from_str(content)
-        .map_err(|e| InitError::config(format!("compiled-in servers.json is invalid: {e}")))
-}
-
-fn try_load_servers_from(
-    path: &std::path::Path,
-) -> Result<ServersConfig, Box<dyn std::error::Error>> {
-    let contents = std::fs::read_to_string(path)?;
-    let config = serde_json::from_str(&contents)?;
-    Ok(config)
-}
-
-/// Copy a source file to the servers.json path.
-fn write_servers_config(dest: &std::path::Path, src: &std::path::Path) -> Result<(), InitError> {
-    std::fs::copy(src, dest).map_err(|e| {
-        InitError::config(format!(
-            "failed to copy {} to {}: {e}",
-            src.display(),
-            dest.display()
-        ))
-    })?;
-    Ok(())
-}
-
-/// Write content to the servers.json path.
-fn write_servers_config_content(dest: &std::path::Path, content: &str) -> Result<(), InitError> {
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            InitError::config(format!("failed to create {}: {e}", parent.display()))
-        })?;
-    }
-    std::fs::write(dest, content)
-        .map_err(|e| InitError::config(format!("failed to write {}: {e}", dest.display())))
-}
-
-/// Back up a corrupt config file to `{path}.bcp` so it can be inspected later.
-/// Only acts when the file actually exists on disk (i.e. it was present but
-/// unparseable, not simply missing).
-fn backup_corrupt_config(path: &std::path::Path) {
-    if !path.exists() {
-        return;
-    }
-    let mut backup = path.as_os_str().to_owned();
-    backup.push(".bcp");
-    let backup = std::path::PathBuf::from(backup);
-    match std::fs::rename(path, &backup) {
-        Ok(()) => tracing::info!("backed up corrupt config to {}", backup.display()),
-        Err(e) => tracing::warn!(
-            "failed to back up {} to {}: {e}",
-            path.display(),
-            backup.display()
-        ),
     }
 }
 
@@ -430,7 +343,8 @@ async fn init_store_and_activate<P: InitPlatform + 'static>(
     client: &reqwest::Client,
     wipe_store: bool,
 ) -> Result<(), InitError> {
-    let servers_config = load_servers_config(&config.servers_config_path)?;
+    let servers_config = bmc_nix::servers_config::load_servers_config(&config.servers_config_path)
+        .map_err(|err| InitError::config(err.to_string()))?;
     let bos_version = config
         .read_bos_version()
         .map_err(|e| InitError::config(format!("failed to read BOS version: {e}")))?;
