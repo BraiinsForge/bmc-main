@@ -20,22 +20,46 @@ let
   inherit (deps) widgetRuntimeDeps frontend;
   lib = armv7Pkgs.lib;
 
-  # Per-wasm-widget package def, generated from the filesystem-derived catalog.
-  # Description + version are read from each widget's `manifest.json` at eval time
-  # (read-only file read, no IFD).
-  mkWasmWidgetEntry = name: entry:
+  # Widget release metadata surfaced into the package index so the frontend
+  # add-a-widget menu can discover installable widgets. Version, description and
+  # picker fields are read from the widget's `manifest.json` at eval time
+  # (read-only file read, no IFD). The icon path points into the built package's
+  # installed assets so upstream index tooling can collect and translate it.
+  mkWidgetMetadata = { name, pkg, manifest }:
     let
-      manifestJson = builtins.fromJSON (builtins.readFile entry.manifest);
+      m = builtins.fromJSON (builtins.readFile manifest);
+      icon = m.icon or null;
     in
     {
+      version = m.version;
+      description = m.description;
+      metadata = {
+        widget = {
+          uid = m.uid;
+          display_name = m.name;
+          category = m.category;
+        } // lib.optionalAttrs (m ? subname && m.subname != null) {
+          subname = m.subname;
+        };
+      } // lib.optionalAttrs (icon != null) {
+        assets.icon = "${pkg}/lib/bmc-widgets/${name}/${icon}";
+      };
+    };
+
+  # Per-wasm-widget package def, generated from the filesystem-derived catalog.
+  mkWasmWidgetEntry = name: entry:
+    let
       pkg = mkWasmWidget {
         inherit name thin host;
         wasmDir = wasmWidgets.${name};
         inherit (entry) wasmFile manifest;
       };
-      version = manifestJson.version;
+      meta = mkWidgetMetadata { inherit name pkg; inherit (entry) manifest; };
+    in
+    {
+      inherit pkg;
+      inherit (meta) version description metadata;
       category = "widget";
-      description = manifestJson.description;
       upgrade_strategy = null;
       install_strategy = null;
     };
@@ -64,21 +88,28 @@ wasmWidgetPackages // {
     upgrade_strategy = "reboot";
     install_strategy = null;
   };
-  flip-clock = {
-    pkg = mkWidgetPackage {
-      name = "flip-clock";
-      crate = crates.widget-flip-clock;
-      inherit profile;
-      runtimeDeps = widgetRuntimeDeps.native;
-
-      features = [ "standalone" ];
+  flip-clock =
+    let
+      pkg = mkWidgetPackage {
+        name = "flip-clock";
+        crate = crates.widget-flip-clock;
+        inherit profile;
+        runtimeDeps = widgetRuntimeDeps.native;
+        features = [ "standalone" ];
+      };
+      meta = mkWidgetMetadata {
+        name = "flip-clock";
+        inherit pkg;
+        manifest = ../widgets/flip-clock/manifest.json;
+      };
+    in
+    {
+      inherit pkg;
+      inherit (meta) version description metadata;
+      category = "widget";
+      upgrade_strategy = null;
+      install_strategy = null;
     };
-    version = "1.0.0";
-    category = "widget";
-    description = "Flip clock widget";
-    upgrade_strategy = null;
-    install_strategy = null;
-  };
   bmc-frontend = {
     pkg = armv7Pkgs.runCommand "bmc-frontend-profile" { } ''
       mkdir -p $out/www
