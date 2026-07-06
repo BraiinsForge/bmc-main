@@ -11,6 +11,7 @@ description = "Vendored deck_settings_v1 Wayland protocol (overlay system-contro
 include = ["protocol/deck-settings-v1.xml"]
 
 [dependencies]
+bitflags.workspace = true
 wayland-backend.workspace = true
 wayland-client.workspace = true
 wayland-scanner.workspace = true

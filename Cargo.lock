@@ -2749,6 +2749,7 @@ dependencies = [
 name = "deck-settings-v1"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.11.0",
  "wayland-backend",
  "wayland-client 0.31.14",
  "wayland-scanner 0.31.10",

@@ -155,6 +155,7 @@ axum-extra = "0.10.1"
 backon = { version = "1.5.2", default-features = false, features = ["std"] }
 base64 = "0.22.1"
 bincode = "2.0.0" # NOTE: check https://docs.rs/bincode/latest/bincode/serde/index.html#known-issues before enabling `serde` feature
+bitflags = "2.11.0"
 bmc = { path = "bmc" }
 bmc-audio = { path = "bmc-audio" }
 bmc-button = { path = "bmc-button" }

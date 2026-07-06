@@ -10,7 +10,7 @@
     dismiss request is dropped: hide is owned by deck_screen_edge_v1.
   </copyright>
 
-  <interface name="deck_settings_v1" version="1">
+  <interface name="deck_settings_v1" version="2">
     <description summary="Deck settings control interface">
       Lightweight compositor-relayed IPC for the settings-tray overlay to control
       system state it must not touch directly. The target platform (OpenWrt/ARMv7)
@@ -57,6 +57,81 @@
         whenever the setup state changes.
       </description>
       <arg name="ssid" type="string" summary="setup AP SSID, empty when inactive"/>
+    </event>
+
+    <enum name="capability" bitfield="true" since="2">
+      <description summary="optional control surfaces this compositor supports">
+        Which controls the overlay should offer. Computed statically from the
+        hardware product; a control whose bit is unset has no backing hardware
+        or firmware path on this device.
+      </description>
+      <entry name="brightness" value="1" summary="display brightness slider"/>
+      <entry name="sound" value="2" summary="sound volume slider"/>
+      <entry name="wifi_setup" value="4" summary="WiFi reconfigure/reconnect"/>
+    </enum>
+
+    <request name="set_volume" since="2">
+      <description summary="set sound volume">
+        Request a sound volume change. Value is 0-100; 0 is mute. bmc applies it
+        night-mode-aware (to the night config while night mode is active, else
+        the day config) and reports the effective value back via volume.
+      </description>
+      <arg name="value" type="uint" summary="volume percentage 0-100"/>
+    </request>
+
+    <request name="toggle_night_mode" since="2">
+      <description summary="toggle night mode">
+        Toggle night mode with override semantics: outside the scheduled window
+        the toggle forces night mode on/off until the next schedule boundary.
+        The resulting state is reported via night_mode.
+      </description>
+    </request>
+
+    <request name="restart" since="2">
+      <description summary="request a device reboot">
+        Request a device reboot. bmc may decline (e.g. while a firmware upgrade
+        is in progress), reported via restart_declined. On success no event
+        arrives; the device reboots.
+      </description>
+    </request>
+
+    <event name="capabilities" since="2">
+      <description summary="supported control surfaces">
+        Which optional controls this compositor supports. Emitted exactly once
+        per resource, as the first event on bind, and static for the
+        compositor's lifetime.
+      </description>
+      <arg name="capabilities" type="uint" enum="capability" summary="bitfield of capability"/>
+    </event>
+
+    <event name="volume" since="2">
+      <description summary="current sound volume">
+        Report the effective sound volume. Emitted once when the overlay binds
+        (only on compositors with the sound capability, once bmc has reported a
+        real value) and again whenever the effective volume changes, including
+        the night-mode value while night mode is active. Value is 0-100.
+      </description>
+      <arg name="value" type="uint" summary="volume percentage 0-100"/>
+    </event>
+
+    <event name="night_mode" since="2">
+      <description summary="current night mode state">
+        Report the night mode state. active is 1 while night mode is active,
+        else 0. until is the "HH:MM" boundary the current state lasts to (the
+        schedule end while active, the schedule start while enabled but
+        inactive), or the empty string while night mode is disabled. Emitted on
+        bind once known and again on every change, including schedule edits.
+      </description>
+      <arg name="active" type="uint" summary="1 = active, 0 = inactive"/>
+      <arg name="until" type="string" summary="HH:MM boundary, empty when disabled"/>
+    </event>
+
+    <event name="restart_declined" since="2">
+      <description summary="a restart request was declined">
+        One-shot notification that a restart request was not honored, with a
+        short human-readable reason. Not state: never replayed on bind.
+      </description>
+      <arg name="reason" type="string" summary="why the restart was declined"/>
     </event>
   </interface>
 </protocol>
