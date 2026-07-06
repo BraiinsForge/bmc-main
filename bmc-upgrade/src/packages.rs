@@ -84,6 +84,7 @@ pub enum PackageProbeError {
     IndexUnusable(String),
     ManifestReadFailed(String),
     PlanFailed(PackagePlanFailure),
+    InstallTargetUnavailable(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +112,9 @@ impl std::fmt::Display for PackageProbeError {
             Self::IndexUnusable(msg) => write!(f, "package index is unusable: {msg}"),
             Self::ManifestReadFailed(msg) => write!(f, "package manifest could not be read: {msg}"),
             Self::PlanFailed(failure) => write!(f, "{failure}"),
+            Self::InstallTargetUnavailable(detail) => {
+                write!(f, "requested package to install is unavailable: {detail}")
+            }
         }
     }
 }
@@ -150,10 +154,11 @@ pub struct ApplyError(pub String);
 /// available package changes and applying them.
 #[async_trait::async_trait]
 pub trait PackageBackend: Send + Sync + std::fmt::Debug + 'static {
-    async fn probe(&self, estimate: EstimateMode) -> PackageProbe;
+    async fn probe(&self, estimate: EstimateMode, install: &[String]) -> PackageProbe;
     async fn apply(
         &self,
         merged: bmc_nix::types::MergedIndex,
+        install: Vec<String>,
         progress: Arc<dyn bmc_nix::upgrade::UpgradeProgress>,
     ) -> Result<(), ApplyError>;
     async fn list_installable_widgets(&self) -> Result<Vec<InstallableWidget>, PackageProbeError>;
@@ -181,7 +186,11 @@ impl PackageUpgrader {
 
 #[async_trait::async_trait]
 impl PackageBackend for PackageUpgrader {
-    async fn probe(&self, estimate: EstimateMode) -> PackageProbe {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "sequential probe stages: load config, fetch index, read manifest, resolve installs, plan"
+    )]
+    async fn probe(&self, estimate: EstimateMode, install: &[String]) -> PackageProbe {
         let config =
             match bmc_nix::servers_config::load_servers_config(&self.config.servers_config_path) {
                 Ok(config) => config,
@@ -232,24 +241,32 @@ impl PackageBackend for PackageUpgrader {
             }
         };
 
-        let plan = match bmc_nix::manifest::compute_upgrade_plan(&base, Some(&merged), &[], &[]) {
-            Ok(plan) => plan,
-            Err(bmc_nix::manifest::ComputeUpgradePlanError::MissingSystemPackages { names }) => {
-                warn!(
-                    ?names,
-                    "Package plan failed: missing required system packages"
-                );
-                return PackageProbe::Failed(PackageProbeError::PlanFailed(
-                    PackagePlanFailure::MissingSystemPackages { names },
-                ));
-            }
-            Err(err) => {
-                warn!(error = %err, "Failed to plan the package upgrade");
-                return PackageProbe::Failed(PackageProbeError::PlanFailed(
-                    PackagePlanFailure::Other(err.to_string()),
-                ));
-            }
+        let installs = match resolve_installs(&merged, install) {
+            Ok(installs) => installs,
+            Err(err) => return PackageProbe::Failed(err),
         };
+
+        let plan =
+            match bmc_nix::manifest::compute_upgrade_plan(&base, Some(&merged), &installs, &[]) {
+                Ok(plan) => plan,
+                Err(bmc_nix::manifest::ComputeUpgradePlanError::MissingSystemPackages {
+                    names,
+                }) => {
+                    warn!(
+                        ?names,
+                        "Package plan failed: missing required system packages"
+                    );
+                    return PackageProbe::Failed(PackageProbeError::PlanFailed(
+                        PackagePlanFailure::MissingSystemPackages { names },
+                    ));
+                }
+                Err(err) => {
+                    warn!(error = %err, "Failed to plan the package upgrade");
+                    return PackageProbe::Failed(PackageProbeError::PlanFailed(
+                        PackagePlanFailure::Other(err.to_string()),
+                    ));
+                }
+            };
 
         if plan.changed.is_empty() && plan.added.is_empty() && plan.removed.is_empty() {
             info!("Packages are up to date");
@@ -292,13 +309,16 @@ impl PackageBackend for PackageUpgrader {
     async fn apply(
         &self,
         merged: bmc_nix::types::MergedIndex,
+        install: Vec<String>,
         progress: Arc<dyn bmc_nix::upgrade::UpgradeProgress>,
     ) -> Result<(), ApplyError> {
+        let installs =
+            resolve_installs(&merged, &install).map_err(|err| ApplyError(err.to_string()))?;
         bmc_nix::upgrade::apply_profile_change(
             &self.config.profile_dir,
             None, // base manifest is re-read under the profile lock
             Some(&merged),
-            &[],
+            &installs,
             &[],
             bmc_nix::upgrade::ActivationMode::Activate,
             None, // GC is disabled on the packages path
@@ -415,6 +435,26 @@ pub fn installable_widgets_from(
                 description: resolved.description,
                 previews: Vec::new(),
             })
+        })
+        .collect()
+}
+
+/// Resolve requested install names against the merged index into
+/// user-installed [`ResolvedPackage`]s for the plan/apply add-set.
+pub fn resolve_installs(
+    merged: &bmc_nix::types::MergedIndex,
+    names: &[String],
+) -> Result<Vec<bmc_nix::types::ResolvedPackage>, PackageProbeError> {
+    names
+        .iter()
+        .map(|name| {
+            bmc_nix::index::resolve_new_package(
+                merged,
+                name,
+                None,
+                bmc_nix::types::InstalledBy::User,
+            )
+            .map_err(|err| PackageProbeError::InstallTargetUnavailable(err.to_string()))
         })
         .collect()
 }
@@ -640,6 +680,27 @@ mod tests {
     }
 
     #[test]
+    fn resolve_installs_maps_names_to_resolved_packages() {
+        let merged = merged_with(&[("widget-weather", "widget", None)]);
+        let resolved =
+            resolve_installs(&merged, &["widget-weather".to_owned()]).expect("BUG: resolve failed");
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].name, "widget-weather");
+        assert_eq!(resolved[0].installed_by, bmc_nix::types::InstalledBy::User);
+    }
+
+    #[test]
+    fn resolve_installs_reports_unknown_target() {
+        let merged = merged_with(&[("widget-weather", "widget", None)]);
+        let err = resolve_installs(&merged, &["widget-nope".to_owned()])
+            .expect_err("BUG: unknown install target must fail");
+        assert!(
+            matches!(err, PackageProbeError::InstallTargetUnavailable(_)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
     fn installable_widgets_keeps_uninstalled_widget_category_only() {
         let merged = merged_with(&[
             (
@@ -704,7 +765,7 @@ mod tests {
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
         assert!(matches!(
-            upgrader.probe(EstimateMode::Skip).await,
+            upgrader.probe(EstimateMode::Skip, &[]).await,
             PackageProbe::Failed(PackageProbeError::NoEnabledServers)
         ));
     }
@@ -716,7 +777,7 @@ mod tests {
 
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
-        let probe = upgrader.probe(EstimateMode::Skip).await;
+        let probe = upgrader.probe(EstimateMode::Skip, &[]).await;
         assert!(
             matches!(
                 probe,
@@ -740,7 +801,7 @@ mod tests {
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
         assert!(matches!(
-            upgrader.probe(EstimateMode::Skip).await,
+            upgrader.probe(EstimateMode::Skip, &[]).await,
             PackageProbe::Failed(PackageProbeError::NoEnabledServers)
         ));
         assert!(
@@ -761,7 +822,7 @@ mod tests {
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
         assert!(matches!(
-            upgrader.probe(EstimateMode::Skip).await,
+            upgrader.probe(EstimateMode::Skip, &[]).await,
             PackageProbe::Failed(PackageProbeError::NoEnabledServers)
         ));
         assert!(
@@ -778,7 +839,7 @@ mod tests {
 
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
-        let probe = upgrader.probe(EstimateMode::Skip).await;
+        let probe = upgrader.probe(EstimateMode::Skip, &[]).await;
         assert!(
             matches!(
                 probe,
@@ -807,7 +868,7 @@ mod tests {
 
         let PackageProbe::Failed(PackageProbeError::PlanFailed(
             PackagePlanFailure::MissingSystemPackages { names },
-        )) = upgrader.probe(EstimateMode::Skip).await
+        )) = upgrader.probe(EstimateMode::Skip, &[]).await
         else {
             panic!("expected a missing-system-package failure");
         };
@@ -836,7 +897,7 @@ mod tests {
 
         let PackageProbe::Failed(PackageProbeError::PlanFailed(
             PackagePlanFailure::MissingSystemPackages { names },
-        )) = upgrader.probe(EstimateMode::Skip).await
+        )) = upgrader.probe(EstimateMode::Skip, &[]).await
         else {
             panic!("expected a missing-system-package failure");
         };
@@ -859,7 +920,7 @@ mod tests {
 
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
-        let probe = upgrader.probe(EstimateMode::Skip).await;
+        let probe = upgrader.probe(EstimateMode::Skip, &[]).await;
         assert!(
             matches!(
                 probe,
@@ -883,7 +944,7 @@ mod tests {
         let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
 
         assert!(matches!(
-            upgrader.probe(EstimateMode::Skip).await,
+            upgrader.probe(EstimateMode::Skip, &[]).await,
             PackageProbe::UpToDate
         ));
     }

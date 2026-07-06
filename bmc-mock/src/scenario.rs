@@ -60,6 +60,19 @@ pub fn read(path: &Path) -> UpgradeScenario {
     }
 }
 
+/// Rewrite the scenario file with `installed` removed from the shadow list,
+/// modelling a completed install so discovery no longer offers them.
+pub fn unshadow(path: &Path, installed: &[String]) -> Result<(), String> {
+    let mut scenario = read(path);
+    scenario
+        .shadowed_packages
+        .retain(|pkg| !installed.contains(pkg));
+    let json = serde_json::to_string_pretty(&scenario)
+        .map_err(|err| format!("serialize scenario: {err}"))?;
+    std::fs::write(path, json)
+        .map_err(|err| format!("persist unshadow to {}: {err}", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,6 +116,22 @@ mod tests {
         );
         std::fs::write(&path, r#"{"packages": "available"}"#).expect("BUG: write scenario");
         assert!(read(&path).shadowed_packages.is_empty());
+    }
+
+    #[test]
+    fn unshadow_removes_only_named_packages() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("upgrade-scenario.json");
+        std::fs::write(
+            &path,
+            r#"{"shadowed_packages": ["widget-flip-clock", "widget-weather"]}"#,
+        )
+        .expect("BUG: write scenario");
+        unshadow(&path, &["widget-flip-clock".to_owned()]).expect("BUG: unshadow failed");
+        assert_eq!(
+            read(&path).shadowed_packages,
+            vec!["widget-weather".to_owned()]
+        );
     }
 
     #[test]
