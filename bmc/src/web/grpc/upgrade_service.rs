@@ -256,8 +256,17 @@ impl From<SystemUpgradeError> for Status {
             | SystemUpgradeError::FailedToDownload(_)
             | SystemUpgradeError::UnableToCheckForUpgrade(_)
             | SystemUpgradeError::UpgradeFailed
-            | SystemUpgradeError::PackageUpgradeFailed(_)
-            | SystemUpgradeError::PackageIndexFetchFailed(_) => Status::internal(value.to_string()),
+            | SystemUpgradeError::PackageUpgradeFailed(_) => Status::internal(value.to_string()),
+            // Configuration/manifest/index-shape/plan failures cannot proceed
+            // until the package source or profile is corrected; a transient
+            // fetch is a server-side transport fault.
+            SystemUpgradeError::PackageCheckFailed(ref err) => {
+                if err.is_transient() {
+                    Status::internal(value.to_string())
+                } else {
+                    Status::failed_precondition(value.to_string())
+                }
+            }
             // Another run holds the gate; the condition clears by itself,
             // so the client sees "try again", not a server fault.
             SystemUpgradeError::UpgradeInProgress => Status::unavailable(value.to_string()),
@@ -317,11 +326,68 @@ mod tests {
             packages: None,
             upgrade_id: None,
             disruption: Disruption::Unspecified,
-            package_fetch_transient: false,
         });
         assert!(response.upgrade_id.is_none());
         assert!(response.firmware.is_none());
         assert!(response.packages.is_none());
         assert_eq!(response.disruption(), UpgradeDisruption::Unspecified);
+    }
+
+    #[test]
+    fn package_plan_failure_maps_to_failed_precondition_with_message() {
+        let status: Status = SystemUpgradeError::PackageCheckFailed(
+            bmc_upgrade::packages::PackageProbeError::PlanFailed(
+                bmc_upgrade::packages::PackagePlanFailure::MissingSystemPackages {
+                    names: vec!["nix".to_owned()],
+                },
+            ),
+        )
+        .into();
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(
+            status.message(),
+            "Cannot check for upgrade: package source is incomplete; \
+             required system package \"nix\" is missing."
+        );
+    }
+
+    #[test]
+    fn no_enabled_servers_maps_to_failed_precondition() {
+        let status: Status = SystemUpgradeError::PackageCheckFailed(
+            bmc_upgrade::packages::PackageProbeError::NoEnabledServers,
+        )
+        .into();
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(
+            status.message(),
+            "Cannot check for upgrade: no enabled package servers are configured."
+        );
+    }
+
+    #[test]
+    fn transient_index_fetch_maps_to_internal() {
+        let status: Status = SystemUpgradeError::PackageCheckFailed(
+            bmc_upgrade::packages::PackageProbeError::IndexFetchFailed("boom".to_owned()),
+        )
+        .into();
+        assert_eq!(status.code(), tonic::Code::Internal);
+    }
+
+    #[test]
+    fn manifest_read_failure_maps_to_failed_precondition() {
+        let status: Status = SystemUpgradeError::PackageCheckFailed(
+            bmc_upgrade::packages::PackageProbeError::ManifestReadFailed("io".to_owned()),
+        )
+        .into();
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+    }
+
+    #[test]
+    fn unusable_index_maps_to_failed_precondition() {
+        let status: Status = SystemUpgradeError::PackageCheckFailed(
+            bmc_upgrade::packages::PackageProbeError::IndexUnusable("bad shape".to_owned()),
+        )
+        .into();
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
     }
 }

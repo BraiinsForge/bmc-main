@@ -9,7 +9,7 @@ pub(crate) use bmc_upgrade::arbitration::Disruption;
 use bmc_upgrade::arbitration::arbitrate;
 use bmc_upgrade::autoupgrade::{AutoUpgrade, AutoUpgradeConfig};
 use bmc_upgrade::firmware::{FirmwareDownloadError, FirmwareIndex, UpgradeDetail};
-use bmc_upgrade::packages::{EstimateMode, PackageBackend, PackageProbe};
+use bmc_upgrade::packages::{EstimateMode, PackageBackend, PackageProbe, PackageProbeError};
 pub(crate) use bmc_upgrade::packages::{PackagesPreview, SystemPackageChange};
 use bmc_upgrade::upgrader::{
     DownloadState as UpgraderDownloadState, FirmwareUpgradeError, FirmwareUpgrader,
@@ -121,7 +121,6 @@ pub(crate) struct CheckOutcome {
     pub packages: Option<PackagesPreview>,
     pub upgrade_id: Option<String>,
     pub disruption: Disruption,
-    pub package_fetch_transient: bool,
 }
 
 pub(crate) struct UpgradeRunStream {
@@ -435,15 +434,10 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             })
             .await;
 
-        let mut package_fetch_transient = false;
         let packages = match probe {
             PackageProbe::Available(merged, preview) => Some((merged, preview)),
-            PackageProbe::Unavailable => None,
-            PackageProbe::FetchFailed(message) => {
-                debug!(message, "Package index fetch failed, not offering packages");
-                package_fetch_transient = true;
-                None
-            }
+            PackageProbe::UpToDate => None,
+            PackageProbe::Failed(err) => return Err(SystemUpgradeError::PackageCheckFailed(err)),
         };
 
         let disruption = arbitrate(firmware.as_ref(), packages.as_ref().map(|(_, p)| p));
@@ -473,7 +467,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             packages,
             upgrade_id,
             disruption,
-            package_fetch_transient,
         })
     }
 
@@ -709,11 +702,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         let outcome = self.check_for_upgrade().await?;
 
         let Some(upgrade_id) = outcome.upgrade_id else {
-            if outcome.package_fetch_transient {
-                return Err(SystemUpgradeError::PackageIndexFetchFailed(
-                    "transient fetch failure during the auto-upgrade check".to_owned(),
-                ));
-            }
             debug!("No upgrade available");
             return Ok(());
         };
@@ -817,8 +805,8 @@ pub(crate) enum SystemUpgradeError {
     UpgradeExpired,
     #[error("Package upgrade failed: {0}")]
     PackageUpgradeFailed(String),
-    #[error("Package index fetch failed: {0}")]
-    PackageIndexFetchFailed(String),
+    #[error("Cannot check for upgrade: {0}.")]
+    PackageCheckFailed(PackageProbeError),
 }
 
 impl From<FirmwareUpgradeError> for SystemUpgradeError {
@@ -837,6 +825,9 @@ impl From<FirmwareUpgradeError> for SystemUpgradeError {
 
 impl SystemUpgradeError {
     fn is_retriable(&self) -> bool {
+        if let Self::PackageCheckFailed(err) = self {
+            return err.is_transient();
+        }
         // `UpgradeInProgress` is a transient collision with another run
         // (e.g. a UI-driven check during the scheduled slot): the
         // autoupgrade must back off and retry, not wait for the next
@@ -846,8 +837,7 @@ impl SystemUpgradeError {
             Self::UnableToCheckForUpgrade(
                 FirmwareDownloadError::IndexDownloadFailed
                     | FirmwareDownloadError::FetchUpgradeDetails
-            ) | Self::PackageIndexFetchFailed(_)
-                | Self::UpgradeInProgress
+            ) | Self::UpgradeInProgress
         )
     }
 }
@@ -1008,7 +998,7 @@ mod tests {
     #[async_trait::async_trait]
     impl PackageBackend for StubBackend {
         async fn probe(&self, _estimate: EstimateMode) -> PackageProbe {
-            PackageProbe::Unavailable
+            PackageProbe::UpToDate
         }
 
         async fn apply(
@@ -1057,7 +1047,28 @@ mod tests {
             SystemUpgradeError::UnableToCheckForUpgrade(FirmwareDownloadError::IndexDownloadFailed)
                 .is_retriable()
         );
-        assert!(SystemUpgradeError::PackageIndexFetchFailed("timeout".to_owned()).is_retriable());
+        assert!(
+            SystemUpgradeError::PackageCheckFailed(
+                bmc_upgrade::packages::PackageProbeError::IndexFetchFailed("timeout".to_owned())
+            )
+            .is_retriable()
+        );
+        assert!(
+            !SystemUpgradeError::PackageCheckFailed(
+                bmc_upgrade::packages::PackageProbeError::NoEnabledServers
+            )
+            .is_retriable()
+        );
+        assert!(
+            !SystemUpgradeError::PackageCheckFailed(
+                bmc_upgrade::packages::PackageProbeError::PlanFailed(
+                    bmc_upgrade::packages::PackagePlanFailure::MissingSystemPackages {
+                        names: vec!["nix".to_owned()],
+                    }
+                )
+            )
+            .is_retriable()
+        );
         // A collision with a concurrent run resolves itself once the
         // other run finishes; autoupgrade must retry it.
         assert!(SystemUpgradeError::UpgradeInProgress.is_retriable());
