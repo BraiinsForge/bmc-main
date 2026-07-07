@@ -11,9 +11,11 @@ use bmc_mock::led_driver::PlatformLedDriver;
 use bmc_mock::mock_package_backend::MockPackageBackend;
 use bmc_mock::{
     cli, manager::Manager, mock_compositor::MockCompositor, mock_index::MockIndex, mockfs,
+    scenario, widget_staging,
 };
 use bmc_platform::{BosPlatform, HardwareProfileSelection};
 use clap::Parser;
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 use tracing::error;
 
@@ -32,10 +34,23 @@ async fn main() -> Result<()> {
 
     let pacing = config.upgrade_pacing();
 
+    // The registry discovers from a staging tree holding only the widgets that
+    // are not still shadowed, so mock-installable widgets stay out of the
+    // Add-a-widget list until installed. Installing one re-stages the tree.
+    let bundle = config.widgets_path.clone();
+    let staging = config.mockfs_path.join("tmp/staged-widgets");
+    let scenario_path = mockfs.upgrade_scenario();
+    let shadowed: BTreeSet<String> = scenario::read(&scenario_path)
+        .shadowed_packages
+        .into_iter()
+        .collect();
+    widget_staging::stage_installed_widgets(&bundle, &staging, &shadowed)?;
+
     let package_backend = Arc::new(
-        MockPackageBackend::new(mockfs.upgrade_scenario(), pacing)
+        MockPackageBackend::new(scenario_path, pacing)
             .with_package_index(config.package_index.clone())
-            .with_widgets_path(Some(config.widgets_path.clone())),
+            .with_widgets_path(Some(bundle))
+            .with_staging_path(Some(staging.clone())),
     );
 
     let blob = bmc_mock::blob_server::spawn(pacing)
@@ -66,7 +81,8 @@ async fn main() -> Result<()> {
         pacing,
     );
 
-    let config: bmc::Configuration = config.into();
+    let mut config: bmc::Configuration = config.into();
+    config.widgets_paths = vec![staging];
 
     let backlight_driver = MockBacklightDriver::new(true, 18, 20);
     let backlight_driver = Arc::new(tokio::sync::Mutex::new(backlight_driver));
