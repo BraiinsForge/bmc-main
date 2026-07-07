@@ -4,12 +4,34 @@
 
 use core::fmt;
 
-/// How a relative-time duration is spelled out. No `Default` — always explicit.
+/// Whether the unit label is abbreviated or spelled out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
-pub enum RelTimeFormat {
-    /// Abbreviated single unit with a direction affix: `7m ago` / `in 7m`.
+pub enum RelTimeLength {
+    /// Abbreviated: `7m`, `2h`, `3d`.
     Short = 0,
+    /// Full words, pluralized: `7 minutes`, `2 hours`, `1 day`.
+    Long = 1,
+}
+
+/// How many whole units the label carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RelTimeSegments {
+    /// The largest unit only (`7m`); ticks at that unit's boundary.
+    Single = 0,
+    /// The two largest units (`7m 30s`, smaller dropped when zero); ticks at
+    /// the smaller unit.
+    Double = 1,
+}
+
+/// How a `RelativeTimeLive` label is spelled — label width and unit count picked
+/// independently. No `Default` — always explicit. `{ Short, Single }` → `7m`;
+/// `{ Long, Double }` → `7 minutes 30 seconds`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RelTimeFormat {
+    pub length: RelTimeLength,
+    pub segments: RelTimeSegments,
 }
 
 /// Invalid [`RelTimeFormat`] wire discriminant.
@@ -25,8 +47,9 @@ impl fmt::Display for InvalidRelTimeFormat {
 impl std::error::Error for InvalidRelTimeFormat {}
 
 impl From<RelTimeFormat> for u8 {
+    /// Packed: bit 0 = length, bit 1 = segments.
     fn from(format: RelTimeFormat) -> Self {
-        format as Self
+        (format.length as Self) | ((format.segments as Self) << 1)
     }
 }
 
@@ -34,10 +57,20 @@ impl TryFrom<u8> for RelTimeFormat {
     type Error = InvalidRelTimeFormat;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(Self::Short),
-            _ => Err(InvalidRelTimeFormat(value)),
+        if value & !0b11 != 0 {
+            return Err(InvalidRelTimeFormat(value));
         }
+        let length = if value & 0b01 == 0 {
+            RelTimeLength::Short
+        } else {
+            RelTimeLength::Long
+        };
+        let segments = if value & 0b10 == 0 {
+            RelTimeSegments::Single
+        } else {
+            RelTimeSegments::Double
+        };
+        Ok(Self { length, segments })
     }
 }
 

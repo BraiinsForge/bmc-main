@@ -21,34 +21,38 @@ pub fn relative_time_live(anchor: SystemTime, format: RelTimeFormat, style: Text
 
 #[cfg(test)]
 mod tests {
-    use bmc_wasm_protocol::{NODE_RELTIME, RelTimeClamp, RelTimeFormat};
+    use bmc_wasm_protocol::{
+        NODE_RELTIME, RelTimeClamp, RelTimeFormat, RelTimeLength, RelTimeSegments,
+    };
 
     use crate::host::SystemTime;
     use crate::tree::{TextStyle, TreeBuffer};
+
+    const FMT: RelTimeFormat = RelTimeFormat {
+        length: RelTimeLength::Short,
+        segments: RelTimeSegments::Single,
+    };
 
     #[test]
     fn wire_leads_with_type_anchor_format_clamp() {
         let mut buf = TreeBuffer::new();
         buf.write_relative_time(
             1_700_000_000,
-            RelTimeFormat::Short,
+            FMT,
             RelTimeClamp::Auto,
             &TextStyle::default(),
         );
         let bytes = buf.into_bytes();
         assert_eq!(bytes[0], NODE_RELTIME);
         assert_eq!(&bytes[1..9], &1_700_000_000_i64.to_le_bytes());
-        assert_eq!(bytes[9], u8::from(RelTimeFormat::Short));
+        assert_eq!(bytes[9], u8::from(FMT));
         assert_eq!(bytes[10], u8::from(RelTimeClamp::Auto));
     }
 
     #[test]
     fn builder_carries_anchor_seconds_and_auto_clamp() {
-        let node = super::relative_time_live(
-            SystemTime { unix_secs: 42 },
-            RelTimeFormat::Short,
-            TextStyle::default(),
-        );
+        let node =
+            super::relative_time_live(SystemTime { unix_secs: 42 }, FMT, TextStyle::default());
         assert!(matches!(
             node,
             crate::tree::Node::RelTime {

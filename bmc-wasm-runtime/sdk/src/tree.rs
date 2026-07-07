@@ -282,7 +282,7 @@ impl TreeBuffer {
     ) {
         self.write_u8(NODE_RELTIME);
         self.write_i64(anchor);
-        self.write_u8(format as u8);
+        self.write_u8(u8::from(format));
         self.write_u8(clamp as u8);
         self.write_bytes(&style.to_bytes());
     }

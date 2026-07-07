@@ -2,7 +2,9 @@
 
 //! Shared stale-data overlay — a Warning tag showing when data last refreshed.
 
-use bmc_wasm_protocol::{CrossAlign, ORANGE_40, RelTimeFormat, TagKind};
+use bmc_wasm_protocol::{
+    CrossAlign, ORANGE_40, RelTimeFormat, RelTimeLength, RelTimeSegments, TagKind,
+};
 
 use crate::host::{SystemTime, ViewportShape};
 use crate::props;
@@ -33,7 +35,14 @@ fn stale_pill(anchor: SystemTime) -> Node {
                     "Last refresh ",
                     StyleResult(label_style(), PropsData::default()),
                 ),
-                relative_time_live(anchor, RelTimeFormat::Short, label_style()),
+                relative_time_live(
+                    anchor,
+                    RelTimeFormat {
+                        length: RelTimeLength::Short,
+                        segments: RelTimeSegments::Single,
+                    },
+                    label_style(),
+                ),
             ],
         ),
     )

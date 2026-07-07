@@ -1803,7 +1803,7 @@ pub(crate) fn build_taffy_node(
         } => {
             let delta = now_unix_secs - *anchor;
             let text = crate::components::format_rel(delta, *format, *clamp);
-            let delay = crate::components::next_change_delay_ms(delta, *clamp);
+            let delay = crate::components::next_change_delay_ms(delta, *format, *clamp);
             result.next_frame_delay_ms =
                 Some(result.next_frame_delay_ms.map_or(delay, |d| d.min(delay)));
             let id = taffy.new_leaf(Style::default())?;

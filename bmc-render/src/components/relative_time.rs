@@ -2,7 +2,7 @@
 
 //! `RelativeTimeLive` — host-formatted, self-updating relative-time label.
 
-use bmc_wasm_protocol::{RelTimeClamp, RelTimeFormat};
+use bmc_wasm_protocol::{RelTimeClamp, RelTimeFormat, RelTimeLength, RelTimeSegments};
 
 const MINUTE: u64 = 60;
 const HOUR: u64 = 60 * MINUTE;
@@ -16,22 +16,36 @@ fn magnitude_and_future(delta_secs: i64, clamp: RelTimeClamp) -> (u64, bool) {
     }
 }
 
-/// Primary unit `(secs, label)` and the next-smaller unit shown alongside it,
-/// e.g. days band → `d` primary + `h` secondary. Seconds band has no secondary.
-fn bands(mag: u64) -> ((u64, &'static str), Option<(u64, &'static str)>) {
+/// A unit shown in a label: size in seconds, abbreviation, and full (singular) word.
+type Unit = (u64, &'static str, &'static str);
+
+/// The largest unit for `mag` and the next-smaller one shown alongside it (the
+/// seconds band has no secondary), e.g. days band → `d` primary + `h` secondary.
+fn bands(mag: u64) -> (Unit, Option<Unit>) {
     if mag < MINUTE {
-        ((1, "s"), None)
+        ((1, "s", "second"), None)
     } else if mag < HOUR {
-        ((MINUTE, "m"), Some((1, "s")))
+        ((MINUTE, "m", "minute"), Some((1, "s", "second")))
     } else if mag < DAY {
-        ((HOUR, "h"), Some((MINUTE, "m")))
+        ((HOUR, "h", "hour"), Some((MINUTE, "m", "minute")))
     } else {
-        ((DAY, "d"), Some((HOUR, "h")))
+        ((DAY, "d", "day"), Some((HOUR, "h", "hour")))
     }
 }
 
-/// Format `now - anchor` (seconds) as two segments, e.g. `2d 7h ago` / `in 3m 5s`;
-/// the smaller segment is dropped when zero (`2m ago`). `clamp` pins direction.
+/// Render one segment, e.g. `7m` / `7 minutes` / `1 minute`.
+fn segment(count: u64, unit: Unit, length: RelTimeLength) -> String {
+    let (_, abbrev, long) = unit;
+    match length {
+        RelTimeLength::Short => format!("{count}{abbrev}"),
+        RelTimeLength::Long if count == 1 => format!("{count} {long}"),
+        RelTimeLength::Long => format!("{count} {long}s"),
+    }
+}
+
+/// Format `now - anchor` (seconds) per `format`: `length` picks abbreviation vs
+/// full words, `segments` picks one unit (`7m`) or two (`7m 30s`, smaller dropped
+/// when zero). `clamp` pins direction.
 #[must_use]
 #[expect(
     clippy::integer_division,
@@ -42,28 +56,36 @@ pub fn format_rel(delta_secs: i64, format: RelTimeFormat, clamp: RelTimeClamp) -
     if mag == 0 {
         return "now".to_owned();
     }
-    let ((p_secs, p_label), secondary) = bands(mag);
-    let primary = mag / p_secs;
-    let core = match secondary {
-        Some((s_secs, s_label)) if (mag % p_secs) / s_secs > 0 => {
-            let s = (mag % p_secs) / s_secs;
-            format!("{primary}{p_label} {s}{s_label}")
+    let (primary, secondary) = bands(mag);
+    let (p_secs, ..) = primary;
+    let mut core = segment(mag / p_secs, primary, format.length);
+    if let (RelTimeSegments::Double, Some(unit)) = (format.segments, secondary) {
+        let (s_secs, ..) = unit;
+        let s = (mag % p_secs) / s_secs;
+        if s > 0 {
+            core.push(' ');
+            core.push_str(&segment(s, unit, format.length));
         }
-        _ => format!("{primary}{p_label}"),
-    };
-    match format {
-        RelTimeFormat::Short if future => format!("in {core}"),
-        RelTimeFormat::Short => format!("{core} ago"),
+    }
+    if future {
+        format!("in {core}")
+    } else {
+        format!("{core} ago")
     }
 }
 
 /// Milliseconds until the label next changes — aligned to the smallest shown
-/// unit (the secondary, or seconds), so the host wakes at that boundary. ≥ 1 s.
+/// unit's boundary, so the host wakes only when the text ticks. `Single` tracks
+/// the primary (a minute in the minutes band); `Double` tracks the secondary
+/// (seconds), so it wakes far more often. ≥ 1 s.
 #[must_use]
-pub fn next_change_delay_ms(delta_secs: i64, clamp: RelTimeClamp) -> u32 {
+pub fn next_change_delay_ms(delta_secs: i64, format: RelTimeFormat, clamp: RelTimeClamp) -> u32 {
     let (mag, future) = magnitude_and_future(delta_secs, clamp);
-    let ((p_secs, _), secondary) = bands(mag);
-    let tick = secondary.map_or(p_secs, |(s, _)| s);
+    let ((p_secs, ..), secondary) = bands(mag);
+    let tick = match format.segments {
+        RelTimeSegments::Single => p_secs,
+        RelTimeSegments::Double => secondary.map_or(p_secs, |(s, ..)| s),
+    };
     let delay_secs = if future {
         (mag % tick) + 1
     } else {
@@ -75,61 +97,111 @@ pub fn next_change_delay_ms(delta_secs: i64, clamp: RelTimeClamp) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{format_rel, next_change_delay_ms};
-    use bmc_wasm_protocol::{RelTimeClamp, RelTimeFormat};
+    use bmc_wasm_protocol::{RelTimeClamp, RelTimeFormat, RelTimeLength, RelTimeSegments};
 
-    const SHORT: RelTimeFormat = RelTimeFormat::Short;
+    const fn fmt(length: RelTimeLength, segments: RelTimeSegments) -> RelTimeFormat {
+        RelTimeFormat { length, segments }
+    }
+    const SHORT_SINGLE: RelTimeFormat = fmt(RelTimeLength::Short, RelTimeSegments::Single);
+    const SHORT_DOUBLE: RelTimeFormat = fmt(RelTimeLength::Short, RelTimeSegments::Double);
+    const LONG_SINGLE: RelTimeFormat = fmt(RelTimeLength::Long, RelTimeSegments::Single);
+    const LONG_DOUBLE: RelTimeFormat = fmt(RelTimeLength::Long, RelTimeSegments::Double);
     const AUTO: RelTimeClamp = RelTimeClamp::Auto;
 
     #[test]
     fn zero_is_now() {
-        assert_eq!(format_rel(0, SHORT, AUTO), "now");
+        assert_eq!(format_rel(0, SHORT_SINGLE, AUTO), "now");
     }
 
     #[test]
-    fn seconds_band_is_single_segment() {
-        assert_eq!(format_rel(5, SHORT, AUTO), "5s ago");
-        assert_eq!(format_rel(-5, SHORT, AUTO), "in 5s");
-        assert_eq!(format_rel(59, SHORT, AUTO), "59s ago");
+    fn seconds_band_has_no_secondary() {
+        assert_eq!(format_rel(5, SHORT_DOUBLE, AUTO), "5s ago");
+        assert_eq!(format_rel(-5, SHORT_DOUBLE, AUTO), "in 5s");
+        assert_eq!(format_rel(59, SHORT_DOUBLE, AUTO), "59s ago");
     }
 
     #[test]
-    fn two_segments_per_band() {
-        assert_eq!(format_rel(90, SHORT, AUTO), "1m 30s ago");
-        assert_eq!(format_rel(3_660, SHORT, AUTO), "1h 1m ago");
-        assert_eq!(format_rel(200_000, SHORT, AUTO), "2d 7h ago");
-        assert_eq!(format_rel(-90, SHORT, AUTO), "in 1m 30s");
+    fn short_double_shows_two_segments() {
+        assert_eq!(format_rel(90, SHORT_DOUBLE, AUTO), "1m 30s ago");
+        assert_eq!(format_rel(3_660, SHORT_DOUBLE, AUTO), "1h 1m ago");
+        assert_eq!(format_rel(200_000, SHORT_DOUBLE, AUTO), "2d 7h ago");
+        assert_eq!(format_rel(-90, SHORT_DOUBLE, AUTO), "in 1m 30s");
     }
 
     #[test]
-    fn drops_the_smaller_segment_when_zero() {
-        assert_eq!(format_rel(120, SHORT, AUTO), "2m ago");
-        assert_eq!(format_rel(3_600, SHORT, AUTO), "1h ago");
-        assert_eq!(format_rel(86_400, SHORT, AUTO), "1d ago");
-        assert_eq!(format_rel(172_800, SHORT, AUTO), "2d ago");
+    fn double_drops_the_smaller_segment_when_zero() {
+        assert_eq!(format_rel(120, SHORT_DOUBLE, AUTO), "2m ago");
+        assert_eq!(format_rel(3_600, SHORT_DOUBLE, AUTO), "1h ago");
+        assert_eq!(format_rel(86_400, SHORT_DOUBLE, AUTO), "1d ago");
+    }
+
+    #[test]
+    fn single_shows_only_the_largest_unit() {
+        assert_eq!(format_rel(90, SHORT_SINGLE, AUTO), "1m ago");
+        assert_eq!(format_rel(3_660, SHORT_SINGLE, AUTO), "1h ago");
+        assert_eq!(format_rel(200_000, SHORT_SINGLE, AUTO), "2d ago");
+        assert_eq!(format_rel(-90, SHORT_SINGLE, AUTO), "in 1m");
+    }
+
+    #[test]
+    fn long_spells_out_and_pluralizes() {
+        assert_eq!(format_rel(1, LONG_SINGLE, AUTO), "1 second ago");
+        assert_eq!(format_rel(5, LONG_SINGLE, AUTO), "5 seconds ago");
+        assert_eq!(format_rel(60, LONG_SINGLE, AUTO), "1 minute ago");
+        assert_eq!(format_rel(120, LONG_SINGLE, AUTO), "2 minutes ago");
+        assert_eq!(format_rel(200_000, LONG_SINGLE, AUTO), "2 days ago");
+        assert_eq!(format_rel(-90, LONG_SINGLE, AUTO), "in 1 minute");
+    }
+
+    #[test]
+    fn long_double_spells_out_both_segments() {
+        assert_eq!(format_rel(90, LONG_DOUBLE, AUTO), "1 minute 30 seconds ago");
+        assert_eq!(format_rel(3_660, LONG_DOUBLE, AUTO), "1 hour 1 minute ago");
     }
 
     #[test]
     fn clamp_pins_direction() {
-        assert_eq!(format_rel(-5, SHORT, RelTimeClamp::ElapsedOnly), "now");
-        assert_eq!(format_rel(5, SHORT, RelTimeClamp::RemainingOnly), "now");
-        assert_eq!(format_rel(-5, SHORT, RelTimeClamp::RemainingOnly), "in 5s");
+        assert_eq!(
+            format_rel(-5, SHORT_SINGLE, RelTimeClamp::ElapsedOnly),
+            "now"
+        );
+        assert_eq!(
+            format_rel(5, SHORT_SINGLE, RelTimeClamp::RemainingOnly),
+            "now"
+        );
+        assert_eq!(
+            format_rel(-5, SHORT_SINGLE, RelTimeClamp::RemainingOnly),
+            "in 5s"
+        );
     }
 
     #[test]
-    fn delay_aligns_to_the_smaller_segment() {
+    fn double_delay_aligns_to_the_smaller_segment() {
         // seconds band and minutes-band (secondary = seconds) both tick each second.
-        assert_eq!(next_change_delay_ms(5, AUTO), 1_000);
-        assert_eq!(next_change_delay_ms(90, AUTO), 1_000);
+        assert_eq!(next_change_delay_ms(5, SHORT_DOUBLE, AUTO), 1_000);
+        assert_eq!(next_change_delay_ms(90, SHORT_DOUBLE, AUTO), 1_000);
         // hours band → secondary minutes; days band → secondary hours.
-        assert_eq!(next_change_delay_ms(3_600, AUTO), 60_000);
-        assert_eq!(next_change_delay_ms(200_000, AUTO), 1_600_000);
+        assert_eq!(next_change_delay_ms(3_600, SHORT_DOUBLE, AUTO), 60_000);
+        assert_eq!(next_change_delay_ms(200_000, SHORT_DOUBLE, AUTO), 1_600_000);
+    }
+
+    #[test]
+    fn single_delay_aligns_to_the_largest_unit() {
+        // Cadence follows segments, not length — LONG_SINGLE would match.
+        assert_eq!(next_change_delay_ms(5, SHORT_SINGLE, AUTO), 1_000); // seconds band → 1s
+        assert_eq!(next_change_delay_ms(90, SHORT_SINGLE, AUTO), 30_000); // 1m30s → next minute
+        assert_eq!(next_change_delay_ms(3_600, SHORT_SINGLE, AUTO), 3_600_000); // → next hour
+        assert_eq!(
+            next_change_delay_ms(200_000, SHORT_SINGLE, AUTO),
+            59_200_000
+        ); // → next day
     }
 
     #[test]
     fn delay_counts_down_toward_the_boundary() {
-        assert_eq!(next_change_delay_ms(-5, AUTO), 1_000);
+        assert_eq!(next_change_delay_ms(-5, SHORT_DOUBLE, AUTO), 1_000);
         // "in 1h" one second past the hour edge → 2 s until it drops to "59m 59s".
-        assert_eq!(next_change_delay_ms(-3_601, AUTO), 2_000);
+        assert_eq!(next_change_delay_ms(-3_601, SHORT_DOUBLE, AUTO), 2_000);
     }
 
     #[test]
@@ -140,7 +212,7 @@ mod tests {
 
         let mut bytes = vec![NODE_RELTIME];
         bytes.extend_from_slice(&1_700_000_000_i64.to_le_bytes());
-        bytes.push(u8::from(RelTimeFormat::Short));
+        bytes.push(u8::from(SHORT_SINGLE));
         bytes.push(u8::from(RelTimeClamp::ElapsedOnly));
         bytes.extend_from_slice(&TextStyle::default().to_bytes());
 
@@ -149,7 +221,10 @@ mod tests {
             node,
             TreeNode::RelTime {
                 anchor: 1_700_000_000,
-                format: RelTimeFormat::Short,
+                format: RelTimeFormat {
+                    length: RelTimeLength::Short,
+                    segments: RelTimeSegments::Single,
+                },
                 clamp: RelTimeClamp::ElapsedOnly,
                 ..
             }
