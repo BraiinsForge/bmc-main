@@ -38,6 +38,9 @@ pub enum RegisterError {
 /// neither truncate the target nor lose the rename.
 fn write_persisted(path: &Path, tmp_path: &Path, contents: &str) -> Result<(), RegisterError> {
     (|| -> std::io::Result<()> {
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)?;
+        }
         let mut tmp = std::fs::File::create(tmp_path)?;
         std::io::Write::write_all(&mut tmp, contents.as_bytes())?;
         tmp.sync_all()?;
@@ -253,6 +256,21 @@ mod tests {
         assert!(config.factory.enabled);
         assert_eq!(config.servers.len(), 1);
         assert_eq!(config.servers[0].id, "dev");
+    }
+
+    #[test]
+    fn register_server_creates_missing_parent_directory() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        // Mirror a device with no /etc/nix-upgrade yet: the config path's
+        // parent does not exist, so the write must create it rather than
+        // fail with ENOENT.
+        let path = tmp.path().join("nix-upgrade").join("servers.json");
+
+        register_server(&path, sample_entry("dev", "https://dev.example.com/v1"))
+            .expect("BUG: register into a missing directory");
+
+        assert!(path.exists(), "servers.json must be written under a created dir");
+        assert_eq!(read_config(&path).factory.id, "dev");
     }
 
     #[test]
