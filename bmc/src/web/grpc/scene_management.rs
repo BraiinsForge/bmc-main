@@ -919,9 +919,9 @@ impl GrpcSceneManagementService for SceneManagementService {
         _request: Request<()>,
     ) -> Result<Response<web::GetAvailableWidgetsResponse>, Status> {
         let platform = PlatformDescriptor::from(&self.capabilities);
-        let widgets = self
-            .widget_registry
-            .list()
+        let available = self.widget_registry.list();
+        let widgets = available
+            .iter()
             .map(|info| widget_info_to_proto(info, &platform))
             .collect();
 
@@ -942,7 +942,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             .ok_or_else(|| Status::not_found(format!("widget not found: {uid}")))?;
 
         let platform = PlatformDescriptor::from(&self.capabilities);
-        Ok(Response::new(widget_info_to_proto(info, &platform)))
+        Ok(Response::new(widget_info_to_proto(&info, &platform)))
     }
 
     // ── Scene read RPCs (from config) ──────────────────────────────────

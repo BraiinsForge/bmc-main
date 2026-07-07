@@ -42,7 +42,7 @@ const SUPPORT_ARCHIVE_FORMAT: SupportArchiveFormat = SupportArchiveFormat::ZipEn
 /// unknown widget, or no icon. A missing file 404s later when the handler opens it.
 fn widget_icon_path(registry: &WidgetRegistry, uid: &str) -> Option<PathBuf> {
     let uid = Uuid::parse_str(uid).ok()?;
-    registry.get(&uid).and_then(|info| info.icon_path.clone())
+    registry.get(&uid).and_then(|info| info.icon_path)
 }
 
 pub(crate) struct HttpServer<T: BmcManager> {
