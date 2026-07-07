@@ -19,7 +19,14 @@ mod progress;
 /// Per-request timeout for fetching upgrade indexes over HTTP.
 const INDEX_FETCH_TIMEOUT_SECS: u64 = 30;
 
-/// Print a human-readable diff of an `InstallResult` on stderr.
+const LOG_FILE: &str = "/var/log/bmc/bmc-nix-cli.log";
+const CLI_DIAGNOSTIC_TARGET: &str = "bmc_nix_cli_diagnostic";
+
+/// File present only on a real device. Its absence marks a build-sandbox or
+/// host invocation, where writing under `/var/log/bmc` would be an impurity.
+const DEVICE_MARKER: &str = "/etc/bos_version";
+
+/// Log a human-readable diff of an `InstallResult` to the CLI diagnostic target.
 ///
 /// Format (matches spec §4):
 ///
@@ -33,22 +40,26 @@ const INDEX_FETCH_TIMEOUT_SECS: u64 = 30;
 /// When only a store path changed (same version), the change line is
 /// rendered as `~ pkg: version (store path changed)`.
 ///
-/// Prints `Profile unchanged.` when the diff is empty.
+/// Logs `Profile unchanged.` when the diff is empty.
 ///
 /// A garbage-collection failure is reported as a warning: the profile
 /// change itself already succeeded, only the post-activation cleanup did
 /// not.
 fn print_profile_diff(result: &InstallResult) {
     if let Err(err) = &result.gc {
-        eprintln!("Warning: profile updated but garbage collection failed: {err}");
+        tracing::warn!(
+            target: CLI_DIAGNOSTIC_TARGET,
+            "profile updated but garbage collection failed: {err}"
+        );
     }
 
     if result.added.is_empty() && result.removed.is_empty() && result.changed.is_empty() {
-        eprintln!("Profile unchanged.");
+        tracing::info!(target: CLI_DIAGNOSTIC_TARGET, "Profile unchanged.");
         return;
     }
 
-    eprintln!(
+    tracing::info!(
+        target: CLI_DIAGNOSTIC_TARGET,
         "Profile change: +{} added, -{} removed, {} changed",
         result.added.len(),
         result.removed.len(),
@@ -58,22 +69,33 @@ fn print_profile_diff(result: &InstallResult) {
     let mut added: Vec<&PackageVersion> = result.added.iter().collect();
     added.sort_by(|a, b| a.name.cmp(&b.name));
     for pv in added {
-        eprintln!("  + {} {}", pv.name, pv.version);
+        tracing::info!(target: CLI_DIAGNOSTIC_TARGET, "  + {} {}", pv.name, pv.version);
     }
 
     let mut removed: Vec<&PackageVersion> = result.removed.iter().collect();
     removed.sort_by(|a, b| a.name.cmp(&b.name));
     for pv in removed {
-        eprintln!("  - {} {}", pv.name, pv.version);
+        tracing::info!(target: CLI_DIAGNOSTIC_TARGET, "  - {} {}", pv.name, pv.version);
     }
 
     let mut changed: Vec<&PackageChange> = result.changed.iter().collect();
     changed.sort_by(|a, b| a.name.cmp(&b.name));
     for ch in changed {
         if ch.from_version == ch.to_version {
-            eprintln!("  ~ {}: {} (store path changed)", ch.name, ch.from_version);
+            tracing::info!(
+                target: CLI_DIAGNOSTIC_TARGET,
+                "  ~ {}: {} (store path changed)",
+                ch.name,
+                ch.from_version
+            );
         } else {
-            eprintln!("  ~ {}: {} -> {}", ch.name, ch.from_version, ch.to_version);
+            tracing::info!(
+                target: CLI_DIAGNOSTIC_TARGET,
+                "  ~ {}: {} -> {}",
+                ch.name,
+                ch.from_version,
+                ch.to_version
+            );
         }
     }
 }
@@ -1024,30 +1046,30 @@ fn cmd_register_server(
     Ok(())
 }
 
-/// Install a stderr `tracing` subscriber so emitted events (e.g. gc
-/// generation removals) are visible. Stdout is reserved for command
-/// output, so logs go to stderr. The level defaults to `info` and is
-/// overridable via `RUST_LOG`.
-fn init_logging() {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt()
-        .with_ansi(false)
-        .with_writer(std::io::stderr)
-        .with_env_filter(filter)
-        .init();
-}
-
 #[expect(
     clippy::too_many_lines,
     reason = "CLI dispatch — one match arm per subcommand"
 )]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_logging();
-
     let cli = Cli::parse();
     let log_format = cli.log_format;
+
+    // File logging writes under `/var/log/bmc` and takes a sidecar lock —
+    // an on-device side effect. Off-device invocations (notably the
+    // `build-profile` step in the Nix tarball build) log to the console
+    // only, so the pure build stays free of filesystem side effects. The
+    // device is identified by `DEVICE_MARKER`. `--help`/`--version` exit
+    // inside `Cli::parse()` above and reach neither init.
+    let _log_guard = if Path::new(DEVICE_MARKER).exists() {
+        Some(bmc_log::init_file_and_console(
+            Path::new(LOG_FILE),
+            CLI_DIAGNOSTIC_TARGET,
+        ))
+    } else {
+        bmc_log::init_console();
+        None
+    };
 
     match cli.command {
         Commands::BuildProfile {

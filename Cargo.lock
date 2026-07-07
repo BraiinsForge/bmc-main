@@ -1147,6 +1147,7 @@ name = "bmc-nix"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bmc-log",
  "clap",
  "cognos",
  "file-rotate",
