@@ -598,8 +598,20 @@ in
     bmc-hook-activation-resolver = bmc.profiles.fast.buildCrate bmc.crates.bmc-hook-activation-resolver { };
     bmc-activation-copy-files-armv7-glibc-release = bmc.profiles.armv7-glibc-release.buildCrate bmc.crates.bmc-activation-copy-files { };
 
-    # Native widgets combined - use with bmc-mock --widgets-path ./result/lib/bmc-widgets
-    widgets = bmc.lib.mkAllWidgets { inherit widgets; profile = bmc.profiles.fast; };
+    # Native widgets joined with wasm widgets whose host is built natively,
+    # so bmc-mock sees the full catalog under lib/bmc-widgets/<name>/.
+    # Use with bmc-mock --widgets-path ./result/lib/bmc-widgets.
+    widgets = pkgs.symlinkJoin {
+      name = "bmc-widgets-native";
+      paths = [
+        (bmc.lib.mkAllWidgets {
+          inherit widgets;
+          runtimeDeps = deps.widgetRuntimeDeps.native;
+          profile = bmc.profiles.fast;
+        })
+        (mkAllWasmWidgets { profile = bmc.profiles.fast; })
+      ];
+    };
 
     frontend = frontend.build;
     yarnFiles = frontend.yarnFiles;
