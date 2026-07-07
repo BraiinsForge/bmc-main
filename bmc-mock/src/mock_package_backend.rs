@@ -17,7 +17,6 @@ use bmc_upgrade::packages::{
     PackageProbeError, PackagesPreview, SystemPackageChange, installable_widgets_from,
 };
 use bmc_widget_manifest::Manifest;
-use walkdir::WalkDir;
 
 use crate::pacing::UpgradePacing;
 use crate::scenario::{self, PackagesScenario, RunScenario};
@@ -35,6 +34,7 @@ pub struct MockPackageBackend {
     pacing: UpgradePacing,
     index_path: Option<PathBuf>,
     widgets_path: Option<PathBuf>,
+    staging_path: Option<PathBuf>,
 }
 
 impl MockPackageBackend {
@@ -45,6 +45,7 @@ impl MockPackageBackend {
             pacing,
             index_path: None,
             widgets_path: None,
+            staging_path: None,
         }
     }
 
@@ -60,6 +61,15 @@ impl MockPackageBackend {
     #[must_use]
     pub fn with_widgets_path(mut self, widgets_path: Option<PathBuf>) -> Self {
         self.widgets_path = widgets_path;
+        self
+    }
+
+    /// Point at the staging directory the registry discovers from, so a
+    /// completed install re-stages the widget tree and the newly-installed
+    /// widget becomes discoverable on the next registry refresh.
+    #[must_use]
+    pub fn with_staging_path(mut self, staging_path: Option<PathBuf>) -> Self {
+        self.staging_path = staging_path;
         self
     }
 }
@@ -120,18 +130,17 @@ fn static_preview(estimate: EstimateMode) -> PackagesPreview {
 }
 
 /// Derive the fallback installable catalog from the widget tree the mock
-/// renders from (its `--widgets-path`). Each `<name>/manifest.json` becomes
-/// an [`InstallableWidget`] named `widget-<name>`, mirroring the nix package
-/// convention; the shadow gate then decides which are offered. Manifests
-/// carry no previews, so those stay empty.
+/// renders from (its `--widgets-path`). Each widget directory (enumerated with
+/// the same depth-1..=3 directory walk as production discovery, so the offered
+/// set and the staged set partition the same widgets) becomes an
+/// [`InstallableWidget`] named `widget-<name>`, mirroring the nix package
+/// convention; the shadow gate then decides which are offered. Manifests carry
+/// no previews, so those stay empty.
 fn installable_widgets_from_dir(root: &Path) -> Vec<InstallableWidget> {
-    WalkDir::new(root)
-        .max_depth(3)
-        .follow_links(true)
+    crate::widget_staging::widget_dirs(root)
         .into_iter()
         .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_file() && entry.file_name() == "manifest.json")
-        .filter_map(|entry| widget_from_manifest(entry.path()))
+        .filter_map(|dir| widget_from_manifest(&dir.join("manifest.json")))
         .collect()
 }
 
@@ -237,6 +246,21 @@ impl PackageBackend for MockPackageBackend {
         ] {
             progress.on_phase(phase);
             tokio::time::sleep(step_delay).await;
+        }
+
+        // Re-stage before persisting the unshadow: a staging failure aborts
+        // the install with the scenario file untouched, and only once the
+        // widget tree the registry re-scans reflects the install do we record
+        // it. The shadow set the mock stages against is the post-install one,
+        // so the just-installed widget appears in the staged tree.
+        if let (Some(bundle), Some(staging)) = (&self.widgets_path, &self.staging_path) {
+            let shadowed: BTreeSet<String> = scenario::read(&self.scenario_path)
+                .shadowed_packages
+                .into_iter()
+                .filter(|pkg| !install.contains(pkg))
+                .collect();
+            crate::widget_staging::stage_installed_widgets(bundle, staging, &shadowed)
+                .map_err(|err| ApplyError(format!("mock: stage installed widgets: {err}")))?;
         }
 
         scenario::unshadow(&self.scenario_path, &install).map_err(ApplyError)?;
@@ -662,6 +686,82 @@ mod tests {
         assert_eq!(widgets.len(), 1);
         assert_eq!(widgets[0].package_name, "widget-flip-clock");
         assert_eq!(widgets[0].icon, None);
+    }
+
+    #[tokio::test]
+    async fn apply_stages_the_installed_widget() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let widgets = write_widget_tree(dir.path(), &["flip-clock", "weather"]);
+        let path = write_scenario(
+            dir.path(),
+            r#"{"run": "success", "shadowed_packages": ["widget-flip-clock", "widget-weather"]}"#,
+        );
+        let staging = dir.path().join("staged");
+        // Startup staging leaves both out: they are still shadowed.
+        crate::widget_staging::stage_installed_widgets(
+            &widgets,
+            &staging,
+            &BTreeSet::from(["widget-flip-clock".to_owned(), "widget-weather".to_owned()]),
+        )
+        .expect("BUG: initial staging");
+        assert!(!staging.join("flip-clock").exists());
+
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant)
+            .with_widgets_path(Some(widgets))
+            .with_staging_path(Some(staging.clone()));
+        backend
+            .apply(
+                empty_merged_index(),
+                vec!["widget-flip-clock".to_owned()],
+                std::sync::Arc::new(RecordingProgress::default()),
+            )
+            .await
+            .expect("BUG: apply should succeed");
+
+        // The installed widget is now staged for discovery; the widget still
+        // shadowed is not.
+        assert!(
+            staging.join("flip-clock").join("manifest.json").exists(),
+            "installed widget must be staged after apply"
+        );
+        assert!(
+            !staging.join("weather").exists(),
+            "still-shadowed widget must stay out of the staged tree"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_staging_failure_leaves_shadow_set_intact() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let widgets = write_widget_tree(dir.path(), &["flip-clock"]);
+        let path = write_scenario(
+            dir.path(),
+            r#"{"run": "success", "shadowed_packages": ["widget-flip-clock"]}"#,
+        );
+        // A regular file where a staging parent directory must be, so
+        // create_dir_all fails and staging aborts the apply.
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "not a directory").expect("BUG: write blocker");
+        let staging = blocker.join("staged");
+
+        let backend = MockPackageBackend::new(path.clone(), UpgradePacing::Instant)
+            .with_widgets_path(Some(widgets))
+            .with_staging_path(Some(staging));
+        let result = backend
+            .apply(
+                empty_merged_index(),
+                vec!["widget-flip-clock".to_owned()],
+                std::sync::Arc::new(RecordingProgress::default()),
+            )
+            .await;
+
+        assert!(result.is_err(), "staging failure must fail the apply");
+        // The unshadow never ran: the scenario file still shadows the widget,
+        // so a retry offers it again rather than losing it.
+        assert_eq!(
+            scenario::read(&path).shadowed_packages,
+            vec!["widget-flip-clock".to_owned()]
+        );
     }
 
     #[tokio::test]
