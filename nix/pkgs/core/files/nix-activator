@@ -70,9 +70,11 @@ find_latest_link() {
 activate_profile() {
 	local profile_dir current bos_version next marker entrypoint failed_generation
 
-	profile_dir="/nix/var/nix/gcroots/profiles/bmc"
+	# NIX_ACTIVATOR_PROFILE_DIR and NIX_ACTIVATOR_BOS_VERSION_FILE
+	# relocate the inputs for tests.
+	profile_dir="${NIX_ACTIVATOR_PROFILE_DIR:-/nix/var/nix/gcroots/profiles/bmc}"
 	current="$profile_dir/current"
-	bos_version="$(cat /etc/bos_version 2>/dev/null | tr -d '[:space:]')"
+	bos_version="$(cat "${NIX_ACTIVATOR_BOS_VERSION_FILE:-/etc/bos_version}" 2>/dev/null | tr -d '[:space:]')"
 
 	# The deferred-activation marker carries the BOS version it was
 	# staged for in its name: this activator only looks for the marker
