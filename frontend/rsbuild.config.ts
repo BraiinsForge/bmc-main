@@ -128,6 +128,8 @@ export default defineConfig({
             '/braiins.bmc': proxyConf,
             // REST API endpoints
             '/api': proxyConf,
+            // Widget icons served by the BMC HTTP server
+            '/widgets': proxyConf,
         },
     },
 });
