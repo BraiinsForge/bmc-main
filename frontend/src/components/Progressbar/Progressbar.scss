@@ -51,6 +51,9 @@
     width: auto;
     background-color: $braiins-accent-purple;
 
+    // Ease the width so streamed progress glides to each new value, not snaps.
+    transition: width 0.3s ease-out;
+
     // Animated overlay effect
     @keyframes move {
         0% {

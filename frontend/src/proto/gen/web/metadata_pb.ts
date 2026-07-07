@@ -12,7 +12,7 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_metadata: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'ChJ3ZWIvbWV0YWRhdGEucHJvdG8SD2JyYWlpbnMuYm1jLndlYiIbCghNZXRhZGF0YRIPCgd2ZXJzaW9uGAEgASgJIhQKEkdldE1ldGFkYXRhUmVxdWVzdDJgCg9NZXRhZGF0YVNlcnZpY2USTQoLR2V0TWV0YWRhdGESIy5icmFpaW5zLmJtYy53ZWIuR2V0TWV0YWRhdGFSZXF1ZXN0GhkuYnJhaWlucy5ibWMud2ViLk1ldGFkYXRhYgZwcm90bzM',
+        'ChJ3ZWIvbWV0YWRhdGEucHJvdG8SD2JyYWlpbnMuYm1jLndlYiIbCghNZXRhZGF0YRIPCgd2ZXJzaW9uGAEgASgJIhQKEkdldE1ldGFkYXRhUmVxdWVzdCIaChhHZXRTZXJ2ZXJJbnN0YW5jZVJlcXVlc3QiNwoZR2V0U2VydmVySW5zdGFuY2VSZXNwb25zZRIaChJzZXJ2ZXJfaW5zdGFuY2VfaWQYASABKAkyzAEKD01ldGFkYXRhU2VydmljZRJNCgtHZXRNZXRhZGF0YRIjLmJyYWlpbnMuYm1jLndlYi5HZXRNZXRhZGF0YVJlcXVlc3QaGS5icmFpaW5zLmJtYy53ZWIuTWV0YWRhdGESagoRR2V0U2VydmVySW5zdGFuY2USKS5icmFpaW5zLmJtYy53ZWIuR2V0U2VydmVySW5zdGFuY2VSZXF1ZXN0GiouYnJhaWlucy5ibWMud2ViLkdldFNlcnZlckluc3RhbmNlUmVzcG9uc2ViBnByb3RvMw',
     );
 
 /**
@@ -47,6 +47,40 @@ export type GetMetadataRequest = Message<'braiins.bmc.web.GetMetadataRequest'> &
 export const GetMetadataRequestSchema: GenMessage<GetMetadataRequest> = /*@__PURE__*/ messageDesc(file_web_metadata, 1);
 
 /**
+ * @generated from message braiins.bmc.web.GetServerInstanceRequest
+ */
+export type GetServerInstanceRequest = Message<'braiins.bmc.web.GetServerInstanceRequest'> & {};
+
+/**
+ * Describes the message braiins.bmc.web.GetServerInstanceRequest.
+ * Use `create(GetServerInstanceRequestSchema)` to create a new message.
+ */
+export const GetServerInstanceRequestSchema: GenMessage<GetServerInstanceRequest> =
+    /*@__PURE__*/
+    messageDesc(file_web_metadata, 2);
+
+/**
+ * @generated from message braiins.bmc.web.GetServerInstanceResponse
+ */
+export type GetServerInstanceResponse = Message<'braiins.bmc.web.GetServerInstanceResponse'> & {
+    /**
+     * Opaque identifier generated once per BMC application process. A changed
+     * value between polls proves the application restarted.
+     *
+     * @generated from field: string server_instance_id = 1;
+     */
+    serverInstanceId: string;
+};
+
+/**
+ * Describes the message braiins.bmc.web.GetServerInstanceResponse.
+ * Use `create(GetServerInstanceResponseSchema)` to create a new message.
+ */
+export const GetServerInstanceResponseSchema: GenMessage<GetServerInstanceResponse> =
+    /*@__PURE__*/
+    messageDesc(file_web_metadata, 3);
+
+/**
  * Service to provide information about system
  *
  * @generated from service braiins.bmc.web.MetadataService
@@ -61,5 +95,15 @@ export const MetadataService: GenService<{
         methodKind: 'unary';
         input: typeof GetMetadataRequestSchema;
         output: typeof MetadataSchema;
+    };
+    /**
+     * Get the identifier of the running BMC application process
+     *
+     * @generated from rpc braiins.bmc.web.MetadataService.GetServerInstance
+     */
+    getServerInstance: {
+        methodKind: 'unary';
+        input: typeof GetServerInstanceRequestSchema;
+        output: typeof GetServerInstanceResponseSchema;
     };
 }> = /*@__PURE__*/ serviceDesc(file_web_metadata, 0);

@@ -40,12 +40,12 @@
         width: auto;
     }
 
-    table {
+    > table {
         width: 100%;
 
         th,
         td {
-            height: mini-units(4);
+            height: 1.5rem;
             vertical-align: middle;
         }
 

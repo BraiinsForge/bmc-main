@@ -10,7 +10,8 @@ import type { iField } from '@/lib/form';
 import { toast } from '@/lib/toast';
 import { assertUnreachable } from '@/lib/ts';
 import { getTimestamp, validateTime24 } from '@/lib/time';
-import { unloadGuard, Ping, type PingCallback, downloadURL } from '@/lib/dom';
+import { unloadGuard, downloadURL } from '@/lib/dom';
+import { delay } from '@/lib/async';
 
 // App
 import * as pb from '@/proto';
@@ -27,6 +28,7 @@ import {
     SectionSoundAndLight,
     type UpgradeFromFeedStatus,
 } from './components';
+import type { UpgradeShape, UpgradeStepperProps } from './components/SectionUpgrade/UpgradeStepper';
 import { InlineNotificationsGroup, Tabs, type TabsProps } from '@/components';
 
 // Styles
@@ -177,37 +179,40 @@ const getInitialState = (): State => ({
 
 const noop = (): void => {};
 
+// Exhaustive so a new proto phase forces a terminal/not-terminal decision here,
+// rather than silently mis-classifying the "stream closed = success" path.
+function isTerminalFirmwarePhase(phase: pb.FirmwareUpgradePhase): boolean {
+    switch (phase) {
+        case pb.FirmwareUpgradePhase.APPLYING:
+            return true;
+        case pb.FirmwareUpgradePhase.UNSPECIFIED:
+        case pb.FirmwareUpgradePhase.DOWNLOADING:
+        case pb.FirmwareUpgradePhase.VERIFYING:
+            return false;
+        default:
+            return assertUnreachable(phase, 'firmware upgrade phase');
+    }
+}
+
 class View extends Component<Props, State> {
     static contextType = AppContext;
     declare context: AppContextType;
 
-    #ping: Ping;
-    #handlePong: PingCallback = (isOnline, wasOnline) => {
-        if (
-            // Checking that we actually were offline before coming back
-            // avoids potential race-condition with catching pongs
-            // of server that did not go down yet.
-            //
-            // The strict comparison is required because
-            // the initial value of `wasOffline` is `null`.
-            wasOnline === false &&
-            isOnline === true
-        ) {
-            this.#ping.stop();
-            unloadGuard.disable();
-            window.location.reload();
-        }
-    };
+    // Restart = a change in the per-process server instance id (metadata.proto),
+    // not an offline→online ping that a fast restart can outrun.
+    readonly #reconcilePollMs = 500;
+
+    // Generous ceiling for a firmware reboot, so a slow-but-successful one
+    // is never reported as a failure.
+    readonly #restartTimeoutMs = 5 * 60 * 1_000;
+
+    // How long to watch for an orchestrator-driven service cycle after a package
+    // `finished` before settling — erring long so a real restart isn't settled past.
+    readonly #packageReconcileMs = 10 * 1_000;
 
     constructor(props: Props) {
         super(props);
         this.state = getInitialState();
-        this.#ping = new Ping({
-            url: window.location.origin,
-            method: 'xhr',
-            onPong: this.#handlePong,
-            interval: 500,
-        });
     }
 
     componentDidMount = () => this.#mount();
@@ -1228,7 +1233,7 @@ class View extends Component<Props, State> {
             const upgradeInfo = await pb.rpc.upgrade.checkForUpgrade({}, { signal });
 
             // Upgrade available
-            if (upgradeInfo.latestRelease) {
+            if (upgradeInfo.firmware || upgradeInfo.packages) {
                 this.setState(s => ({
                     data: { ...s.data, upgradeInfo },
                     upgradeFromFeedStatus: {
@@ -1260,8 +1265,26 @@ class View extends Component<Props, State> {
         }
     };
 
-    private upgradesFeedDownloadAbort = pb.abort.get();
-    #upgradesFeedDownload = async (hash: string): Promise<void> => {
+    // Guards `#upgradesFeedStart` against re-entry from a double click.
+    #committing = false;
+    private upgradesFeedStartAbort = pb.abort.get();
+
+    #upgradesFeedStart = async (upgradeId: string): Promise<void> => {
+        // Re-entry guard: a double click must not stack a second confirm or launch a
+        // second run (the second would abort the first via `replace()`).
+        if (this.#committing) return;
+        this.#committing = true;
+        try {
+            await this.#confirmAndRunUpgrade(upgradeId);
+        } finally {
+            this.#committing = false;
+        }
+    };
+
+    // Firmware download + apply used to be two RPCs;
+    // the backend now drives the whole thing through a single `StartUpgrade` progress stream
+    // (download → phases → done), arbitrating firmware vs. packages behind one upgrade id.
+    #confirmAndRunUpgrade = async (upgradeId: string): Promise<void> => {
         const { formatMessage } = this.props.intl;
         const { upgradeInfo } = this.state.data;
 
@@ -1276,107 +1299,213 @@ class View extends Component<Props, State> {
             );
         };
         if (!upgradeInfo) return setBackWithError([formatMessage({ defaultMessage: 'Upgrade info not available!' })]);
+
+        // Confirm before committing — copy, action label and danger styling all
+        // reflect firmware (a full reboot) vs packages-only (an app restart).
+        const rebooting = upgradeInfo.firmware != null;
+        const confirmed = await this.context.confirm({
+            danger: rebooting,
+            title: formatMessage({ defaultMessage: 'Start the upgrade?' }),
+            message: rebooting
+                ? formatMessage({
+                      defaultMessage: 'The Braiins Deck will reboot to finish, and be unavailable for a few minutes.',
+                  })
+                : formatMessage({ defaultMessage: 'The app may restart to finish the upgrade.' }),
+            confirmLabel: rebooting
+                ? formatMessage({ defaultMessage: 'Upgrade & reboot' })
+                : formatMessage({ defaultMessage: 'Upgrade' }),
+            cancelLabel: formatMessage({ defaultMessage: 'Cancel' }),
+        });
+        if (!confirmed) return;
+
+        // The upgrade ends in either an error or a device restart;
+        // block navigation away for the whole duration.
         unloadGuard.enable();
 
+        // Firmware reboots by process death after `FirmwareApplying` (no `finished`);
+        // packages settle via an explicit `finished` while the server stays up.
+        const startTime = getTimestamp();
+        let firmwareRebooting = false;
+        let download: null | pb.UpgradeDownloadProgress = null;
+        let firmwarePhase: null | pb.FirmwareUpgradePhase = null;
+        let packagePhase: null | pb.PackageUpgradePhase = null;
+
+        // Shape comes from the offer; both tracks stay separate so the stepper,
+        // not this fold, decides the current step.
+        const shape: UpgradeShape =
+            upgradeInfo.firmware != null && upgradeInfo.packages != null
+                ? 'combined'
+                : upgradeInfo.firmware != null
+                  ? 'firmware'
+                  : 'package';
+
+        const showProgress = (finalizing = false) => {
+            const progress: UpgradeStepperProps = {
+                shape,
+                firmwarePhase,
+                packagePhase,
+                download,
+                startTime,
+                finalizing,
+            };
+            this.setState({ upgradeFromFeedStatus: { kind: 'upgrading', upgradeInfo, progress } });
+        };
+
+        const { signal } = this.upgradesFeedStartAbort.replace();
+
+        // Pre-upgrade server identity; a change afterwards proves a restart (null ⇒ no-detect).
+        let baselineInstanceId: string | null = null;
+
         try {
-            const { signal } = this.upgradesFeedDownloadAbort.replace();
+            baselineInstanceId = await this.#serverInstanceId(signal);
+            const stream = pb.rpc.upgrade.startUpgrade({ upgradeId }, { signal });
 
-            const stream = pb.rpc.upgrade.downloadFirmware({ hash }, { signal });
             for await (const msg of stream) {
-                const data = msg.state;
-                if (!data.case) {
-                    return setBackWithError([formatMessage({ defaultMessage: 'Invalid system upgrade response!' })]);
-                }
-
-                switch (data.case) {
-                    case 'downloadProgress':
-                        this.setState({
-                            upgradeFromFeedStatus: {
-                                kind: 'downloading',
-                                upgradeInfo,
-                                downloadProgress: data.value,
-                            },
-                        });
+                const { event } = msg;
+                switch (event.case) {
+                    case 'download':
+                        download = event.value;
+                        showProgress();
                         break;
 
-                    case 'downloadFinished':
-                        unloadGuard.disable();
-                        await setState(this, {
-                            upgradeFromFeedStatus: {
-                                kind: 'installing',
-                                upgradeInfo,
-                                startTime: getTimestamp(),
+                    case 'firmwarePhase':
+                        firmwareRebooting ||= isTerminalFirmwarePhase(event.value);
+                        firmwarePhase = event.value;
+                        // New phase drops the previous phase's bytes.
+                        download = null;
+                        showProgress();
+                        break;
+
+                    case 'packagePhase':
+                        // No terminal phase: `ACTIVATING` precedes the fallible activation,
+                        // so a later error is a real failure; success comes via `finished`.
+                        packagePhase = event.value;
+                        download = null;
+                        showProgress();
+                        break;
+
+                    case 'finished':
+                        // Activation done: mark every step done and show "finishing up"
+                        // while we reconcile whether a service cycled — reload if the id
+                        // changed, else settle. No restart overlay unless it restarts.
+                        showProgress(true);
+                        return this.#reconcileRestart(baselineInstanceId, signal, {
+                            timeoutMs: this.#packageReconcileMs,
+                            overlay: false,
+                            onSettled: () => {
+                                toast.success(formatMessage({ defaultMessage: 'Packages updated' }));
+                                this.#upgradesFeedCheck();
                             },
                         });
-                        this.#upgradesFeedConfirm(data.value.hash);
+
+                    case undefined:
                         break;
 
                     default:
-                        assertUnreachable(data, 'upgrade download progress');
+                        assertUnreachable(event, 'upgrade progress event');
                 }
             }
+
+            // Clean close is firmware's success path — the reboot dropped the connection
+            // after `FirmwareApplying`; a close before it (or without `finished`) is not.
+            if (firmwareRebooting)
+                return this.#reconcileRestart(baselineInstanceId, signal, {
+                    timeoutMs: this.#restartTimeoutMs,
+                    overlay: true,
+                    onSettled: this.#reportDeviceDidNotReturn,
+                });
+            setBackWithError([formatMessage({ defaultMessage: 'The upgrade ended unexpectedly.' })]);
         } catch ($) {
-            unloadGuard.disable();
-            if (pb.abort.is($)) return;
-            const error = pb.collectAllErrorsAsFormattedList($);
-            const message = formatMessage({ defaultMessage: 'Unexpected error: {error}' }, { error });
-            toast.error(message);
+            if (pb.abort.is($)) {
+                unloadGuard.disable();
+                return;
+            }
+
+            // A disconnect past `FirmwareApplying` is the reboot, not a failure; any
+            // error before it — including during package `ACTIVATING` — is a real failure.
+            if (firmwareRebooting)
+                return this.#reconcileRestart(baselineInstanceId, signal, {
+                    timeoutMs: this.#restartTimeoutMs,
+                    overlay: true,
+                    onSettled: this.#reportDeviceDidNotReturn,
+                });
+            setBackWithError(
+                pb.collectAllErrors($) ?? [formatMessage({ defaultMessage: 'Failed to upgrade the system!' })],
+            );
         }
     };
 
-    private abortFeedUpgrade = pb.abort.get();
-    #upgradesFeedConfirm = async (hash: string): Promise<void> => {
-        const { formatMessage } = this.props.intl;
-        const { upgradeInfo } = this.state.data;
-
-        const setBackWithError = (error: string[]) => {
-            this.setState(
-                s => ({
-                    data: { ...s.data, upgradeInfo: null },
-                    upgradeFromFeedErrors: error,
-                    upgradeFromFeedStatus: { kind: 'idle', upgradeInfo: null },
-                }),
-                this.#upgradesFeedCheck,
-            );
-        };
-        if (!upgradeInfo) return setBackWithError([formatMessage({ defaultMessage: 'Upgrade info not available!' })]);
-
-        // When the installation starts, the process leads to either
-        //  - an error
-        //  - a success with a server restart
-        //
-        // This means that this one needs to be removed either on the error
-        // or when reloading the page after the server restart
-        unloadGuard.enable();
-
+    // Server instance id, or `null` if unreachable. Aborts propagate to the run's catch.
+    #serverInstanceId = async (signal: AbortSignal): Promise<string | null> => {
         try {
-            await setState(this, {
-                upgradeFromFeedStatus: {
-                    kind: 'installing',
-                    upgradeInfo,
-                    startTime: getTimestamp(),
-                },
-            });
+            return (await pb.rpc.meta.getServerInstance({}, { signal })).serverInstanceId;
+        } catch ($) {
+            if (pb.abort.is($)) throw $;
+            return null;
+        }
+    };
 
-            const { signal } = this.abortFeedUpgrade.replace();
-            await pb.rpc.upgrade.upgrade({ hash }, { signal });
-
+    // After a run that may restart the server: reload once the id changes, else run
+    // `onSettled` at the window. `overlay` shows the restart screen — firmware surely
+    // reboots; a package run keeps its progress view until a restart actually shows.
+    #reconcileRestart = async (
+        baselineInstanceId: string | null,
+        signal: AbortSignal,
+        opts: { timeoutMs: number; overlay: boolean; onSettled: () => void },
+    ): Promise<void> => {
+        if (opts.overlay) {
+            const disruption = this.state.data.upgradeInfo?.disruption ?? pb.UpgradeDisruption.UNSPECIFIED;
             await setState(this, {
                 upgradeFromFeedErrors: null,
                 upgradeFromFeedStatus: {
                     kind: 'restarting',
                     upgradeInfo: null,
+                    disruption,
                     startTime: Math.floor(Date.now() / 1e3),
                 },
             });
-            this.#ping.start();
-        } catch ($) {
-            unloadGuard.disable();
-            if (pb.abort.is($)) return;
-            setBackWithError(
-                pb.collectAllErrors($) ?? [formatMessage({ defaultMessage: 'Failed to upgrade the system!' })],
-            );
         }
+
+        const outcome = await this.#awaitRestart(baselineInstanceId, signal, opts.timeoutMs);
+        if (outcome === 'aborted') return; // unmounted mid-wait
+
+        unloadGuard.disable();
+        if (outcome === 'restarted') return window.location.reload();
+        opts.onSettled();
+    };
+
+    // Poll the id until it changes ('restarted'), the window elapses ('settled'), or the
+    // run aborts. Errors mid-restart (cycling / device down) are expected — keep polling.
+    #awaitRestart = async (
+        baselineInstanceId: string | null,
+        signal: AbortSignal,
+        timeoutMs: number,
+    ): Promise<'restarted' | 'settled' | 'aborted'> => {
+        const deadline = Date.now() + timeoutMs;
+        while (!signal.aborted && Date.now() < deadline) {
+            try {
+                const { serverInstanceId } = await pb.rpc.meta.getServerInstance({}, { signal });
+                if (baselineInstanceId != null && serverInstanceId !== baselineInstanceId) return 'restarted';
+            } catch ($) {
+                if (pb.abort.is($)) return 'aborted';
+            }
+            await delay(this.#reconcilePollMs);
+        }
+        return signal.aborted ? 'aborted' : 'settled';
+    };
+
+    // Firmware reboot that never returned within the ceiling — tell the user to reload.
+    #reportDeviceDidNotReturn = (): void => {
+        const { formatMessage } = this.props.intl;
+        this.setState({
+            upgradeFromFeedStatus: { kind: 'idle', upgradeInfo: null },
+            upgradeFromFeedErrors: [
+                formatMessage({
+                    defaultMessage:
+                        'The device did not come back online after the upgrade. It may still be restarting — reload the page to check.',
+                }),
+            ],
+        });
     };
 
     #updatesToggle = (enabled: boolean): void => console.log(enabled);
@@ -1389,7 +1518,7 @@ class View extends Component<Props, State> {
                 status={upgradeFromFeedStatus}
                 errors={upgradeFromFeedErrors}
                 onCheckUpdates={this.#upgradesFeedCheck}
-                onDownload={this.#upgradesFeedDownload}
+                onStartUpgrade={this.#upgradesFeedStart}
             />
         );
     };

@@ -1,0 +1,114 @@
+@use 'styles/carbon' as *;
+
+.table {
+    border-collapse: collapse;
+    margin-block-start: mini-units(1);
+
+    .changeRow {
+        $subtle: color-mix(in srgb, currentcolor 15%, transparent);
+
+        &:not(:first-of-type) {
+            border-top: 1px solid $subtle;
+        }
+
+        &.expandable {
+            cursor: pointer;
+            &:hover {
+                background: $subtle;
+            }
+        }
+    }
+
+    th,
+    td {
+        text-align: start;
+        padding-block: 4px;
+        vertical-align: middle;
+    }
+
+    th {
+        font-weight: bold;
+        padding-inline-end: mini-units(3);
+    }
+
+    .from {
+        text-align: end;
+    }
+    .arrow {
+        padding-inline: mini-units(1);
+    }
+    .into {
+        text-align: start;
+    }
+    .tag {
+        margin-inline-start: mini-units(1);
+    }
+}
+
+// New-install / removal marker — italic and secondary so it reads as an
+// operation, not a version and not muted "missing data".
+.operation {
+    font-style: italic;
+    color: $text-secondary;
+}
+
+.expandCell {
+    // Fixed width so uncategorized/changelog-less rows keep a spacer here and
+    // the package names stay column-aligned.
+    width: to-rem(24px);
+
+    .expandButton {
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-start;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: inherit;
+        cursor: pointer;
+
+        &:focus-visible {
+            outline: 1px solid currentcolor;
+            outline-offset: 2px;
+        }
+    }
+}
+
+.changelogCell {
+    padding-block: 0 mini-units(3);
+    font-size: to-rem(13px);
+    text-align: start;
+
+    // Sit flush under the package row — no leading gap above the first line.
+    :first-child {
+        margin-top: 0;
+    }
+
+    p {
+        margin: 0 0 0.25em;
+        font-size: inherit;
+    }
+
+    ul {
+        margin: 0.25em 0;
+        padding-inline-start: 1.2em;
+
+        li {
+            list-style: disc;
+            line-height: 1.5;
+        }
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6 {
+        margin: 0.4em 0 0.2em;
+        font-size: to-rem(13px);
+        font-weight: bold;
+        line-height: 1.2;
+    }
+}

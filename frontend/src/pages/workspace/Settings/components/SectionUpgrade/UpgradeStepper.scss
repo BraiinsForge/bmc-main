@@ -1,0 +1,71 @@
+@use 'styles/carbon' as *;
+
+.steps {
+    inline-size: 100%;
+    min-inline-size: to-rem(256px);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    text-align: start;
+}
+
+// Indeterminate "finishing up" row shown after the last step
+// while the restart reconcile runs.
+.finishing {
+    margin-block-start: mini-units(2);
+}
+
+.step {
+    composes: horizontal from 'styles/layout.scss';
+    gap: mini-units(1);
+
+    &:last-child {
+        .rail::after {
+            display: none;
+        }
+
+        .body {
+            padding-block-end: 0;
+        }
+    }
+}
+
+.rail {
+    composes: vertical center from 'styles/layout.scss';
+    flex: none;
+
+    .marker {
+        flex: none;
+        color: $text-secondary;
+    }
+
+    // Connector fills the gap down to the next marker.
+    // A flex sibling, so it shares the marker's centring;
+    // -1px margins tuck it under each glyph's arc.
+    // 2px (even) lands crisp on the glyph's 8px centre
+    // — 1px would straddle and snap off-axis on HiDPI.
+    &::after {
+        content: '';
+        flex: 1 1 auto;
+        inline-size: to-rem(2px);
+        margin-block: to-rem(-1px);
+        background-color: $border-subtle;
+    }
+}
+
+.body {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    padding-block-end: mini-units(2);
+}
+
+.detail {
+    composes: vertical from 'styles/layout.scss';
+    gap: mini-units(1);
+    margin-block-start: mini-units(2);
+
+    .sub {
+        color: $text-secondary;
+        font-size: to-rem(12px);
+    }
+}

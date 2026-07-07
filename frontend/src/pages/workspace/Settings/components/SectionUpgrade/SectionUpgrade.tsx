@@ -18,27 +18,19 @@ import {
     InlineNotification,
     InlineNotificationsGroup,
     Html,
-    Progressbar,
     Overlay,
-    Percentage,
     Tick,
 } from '@/components';
 import { InlineLoading, Toggle } from '@carbon/react';
-import {
-    Upgrade as IconUpgrade,
-    ChevronDown,
-    ChevronUp,
-    Error as IconError,
-    Checkmark as IconCheckmark,
-    Restart as IconRestart,
-} from '@carbon/react/icons';
+import { Upgrade as IconUpgrade, ChevronDown, ChevronUp, Restart as IconRestart } from '@carbon/react/icons';
 
 // Styles
-import cn from 'clsx';
-import C from '@/styles/colors';
 import css from './SectionUpgrade.scss';
 import { assertUnreachable } from '@/lib/ts';
 import { getTimestamp } from '@/lib/time';
+import { formatBytes } from '@/lib/format';
+import { PackageChanges } from './PackageChanges';
+import { UpgradeStepper, type UpgradeStepperProps } from './UpgradeStepper';
 
 export type UpgradeFromFeedStatus =
     | {
@@ -58,18 +50,14 @@ export type UpgradeFromFeedStatus =
           upgradeInfo: pb.CheckForUpgradeResponse;
       }
     | {
-          kind: 'downloading';
+          kind: 'upgrading';
           upgradeInfo: pb.CheckForUpgradeResponse;
-          downloadProgress: pb.DownloadProgress;
-      }
-    | {
-          kind: 'installing';
-          upgradeInfo: pb.CheckForUpgradeResponse;
-          startTime: Timestamp;
+          progress: UpgradeStepperProps;
       }
     | {
           kind: 'restarting';
           upgradeInfo: null;
+          disruption: pb.UpgradeDisruption;
           startTime: Timestamp;
       };
 
@@ -81,7 +69,7 @@ export interface SectionUpgradeProps {
     errors?: Maybe<string[]>;
 
     onCheckUpdates(): void;
-    onDownload(hash: string): void;
+    onStartUpgrade(upgradeId: string): void;
 }
 interface Props extends SectionUpgradeProps {
     intl: IntlShape;
@@ -95,9 +83,9 @@ const getInitialState = (): State => ({
 });
 
 const $ = getID('updates').get;
+
 class View extends Component<Props, State> {
     #milis = {
-        installingTick: 150,
         restartingTick: 1e3,
     };
     #NA = <span className={css.placeholder} children="N/A" />;
@@ -108,62 +96,12 @@ class View extends Component<Props, State> {
         const { status } = this.props;
         if (
             status?.kind !== prevProps.status?.kind ||
-            status?.upgradeInfo?.latestRelease?.hash !== prevProps.status?.upgradeInfo?.latestRelease?.hash
+            status?.upgradeInfo?.upgradeId !== prevProps.status?.upgradeInfo?.upgradeId
         ) {
             this.setState({ isChangelogExpanded: false });
         }
     }
 
-    #renderProgressBar(
-        percentage: number,
-        label: ReactNode,
-        color: string,
-        extra?: {
-            footer?: ReactNode;
-            error?: ReactNode;
-            errorTitle?: ReactNode;
-        },
-    ): ReactElement {
-        const value = {
-            value: percentage,
-            color: color,
-            animate: true,
-        };
-        let title: ReactNode = label;
-        let icon: ReactNode;
-        let footerContent: ReactNode;
-        const classNames: string[] = [css.progressbar];
-
-        if (extra?.error) {
-            title = extra.errorTitle ?? title;
-            icon = <IconError fill={C.alertRed} />;
-            footerContent = extra.error;
-            value.color = C.alertRed;
-            value.animate = false;
-            classNames.push(css.invalid);
-        } else {
-            footerContent = extra?.footer;
-        }
-        if (percentage === 100) icon ??= <IconCheckmark fill={C.alertGreen} />;
-
-        return (
-            <div className={cn(classNames)}>
-                {icon ? <div className={css.icon} children={icon} /> : null}
-                <Progressbar label={title} labelPosition="top-left" valueUpperBound={100} values={[value]} />
-                {footerContent != null ? <div className={css.footer} children={footerContent} /> : null}
-            </div>
-        );
-    }
-
-    #txt = {
-        estDuration: (
-            <div
-                role="presentation"
-                className={css.estimatedDuration}
-                children={this.props.intl.formatMessage({ defaultMessage: 'Est. upgrade time: 1 minute' })}
-            />
-        ),
-    };
     #md = Markdown('default', {
         html: false,
         breaks: false,
@@ -184,17 +122,26 @@ class View extends Component<Props, State> {
         const { status, intl } = this.props;
         const { isChangelogExpanded } = this.state;
 
-        const upgradeInfo = status?.upgradeInfo;
-        if (!upgradeInfo) return null;
-        const { previousReleases, latestRelease } = upgradeInfo;
-        if (!latestRelease) return null;
+        const firmware = status?.upgradeInfo?.firmware;
+        const packages = status?.upgradeInfo?.packages;
 
-        let expandedConent: ReactNode;
+        // Firmware release notes headline the changelog;
+        // A packages-only upgrade falls back to the bundle's bmc changelog.
+        // Older-release history is firmware-only.
+        const primary = firmware
+            ? { version: firmware.version, description: firmware.description }
+            : packages?.bmcChangelog
+              ? { version: packages.bmcVersion ?? '', description: packages.bmcChangelog }
+              : null;
+        if (!primary) return null;
+
+        const previousReleases = firmware?.previousReleases ?? [];
+
+        let expandedContent: ReactNode;
         let expanderButton: ReactNode;
         if (previousReleases.length) {
-            if (isChangelogExpanded) {
-                expandedConent = previousReleases.map(x => this.#renderDescription(x.version, x.description));
-            }
+            if (isChangelogExpanded)
+                expandedContent = previousReleases.map(x => this.#renderDescription(x.version, x.description));
 
             expanderButton = (
                 <Button
@@ -221,9 +168,9 @@ class View extends Component<Props, State> {
                     children={intl.formatMessage({ defaultMessage: 'Whats new in this Upgrade?' })}
                 />
 
-                {this.#renderDescription(latestRelease.version, latestRelease.description)}
+                {this.#renderDescription(primary.version, primary.description)}
 
-                {expandedConent}
+                {expandedContent}
                 {expanderButton}
             </div>
         );
@@ -236,7 +183,12 @@ class View extends Component<Props, State> {
             <InlineNotification stretch key={key} kind="error" theme="inverse" hideCloseButton title={error} />
         );
     };
-    #renderFacts = (versionCurrent: Maybe<ReactNode>, versionLatest: Maybe<ReactNode>, statusMessage: ReactNode) => {
+    #renderFacts = (
+        versionCurrent: Maybe<ReactNode>,
+        versionLatest: Maybe<ReactNode>,
+        statusMessage: ReactNode,
+        downloadSize?: Maybe<ReactNode>,
+    ) => {
         const { formatMessage } = this.props.intl;
 
         return (
@@ -251,6 +203,12 @@ class View extends Component<Props, State> {
                             <th scope="row" children={formatMessage({ defaultMessage: 'Latest available version:' })} />
                             <td children={versionLatest ?? 'N/A'} />
                         </tr>
+                        {downloadSize != null ? (
+                            <tr>
+                                <th scope="row" children={formatMessage({ defaultMessage: 'Download size:' })} />
+                                <td children={downloadSize} />
+                            </tr>
+                        ) : null}
                     </tbody>
                 </table>
 
@@ -261,10 +219,6 @@ class View extends Component<Props, State> {
     #renderInterval = (seconds: number): ReactNode => {
         return formatDuration({ seconds: Math.abs(seconds) }, { zero: true, format: ['minutes', 'seconds'] });
     };
-    #renderSizeMB = (size: number): string => {
-        return `${Number(size).toFixed(2)} MB`;
-    };
-
     #renderUpgradeBox(): ReactNode {
         const {
             intl: { formatMessage },
@@ -274,10 +228,14 @@ class View extends Component<Props, State> {
             versionCurrent,
 
             onCheckUpdates,
-            onDownload,
+            onStartUpgrade,
         } = this.props;
 
-        const versionLatest: ReactNode = status?.upgradeInfo?.latestRelease?.version ?? versionCurrent ?? this.#NA;
+        const versionLatest: ReactNode =
+            status?.upgradeInfo?.firmware?.version ??
+            status?.upgradeInfo?.packages?.bmcVersion ??
+            versionCurrent ??
+            this.#NA;
 
         // Shis one is defined as static because it is used in both overlay and base
         // layers and the only status dependent part is the loading spinner
@@ -291,6 +249,12 @@ class View extends Component<Props, State> {
                 (versionLatest ?? 'N/A')
             );
         const changelog = this.#renderChangelog();
+
+        // Total bytes this upgrade fetches — firmware image plus package downloads —
+        // surfaced on the offer so the size is known before committing.
+        const offer = status?.kind === 'upgrade-available' ? status.upgradeInfo : null;
+        const downloadBytes = (offer?.firmware?.fileSizeBytes ?? 0n) + (offer?.packages?.downloadSizeBytes ?? 0n);
+        const downloadSize = downloadBytes > 0n ? formatBytes(downloadBytes) : null;
 
         let statusMessage: ReactNode;
         let control: ReactNode;
@@ -328,16 +292,36 @@ class View extends Component<Props, State> {
             }
 
             case 'upgrade-available': {
-                const hash = status.upgradeInfo.latestRelease?.hash as string;
+                const { upgradeId, firmware, packages } = status.upgradeInfo;
                 statusMessage = [
-                    <InlineNotification
-                        key="info"
-                        stretch
-                        kind="info"
-                        theme="inverse"
-                        hideCloseButton
-                        title={formatMessage({ defaultMessage: 'New version available' })}
-                    />,
+                    firmware ? (
+                        <InlineNotification
+                            key="info-firmware"
+                            stretch
+                            kind="info"
+                            theme="inverse"
+                            hideCloseButton
+                            title={formatMessage({ defaultMessage: 'New firmware version available' })}
+                        />
+                    ) : null,
+                    packages ? (
+                        <InlineNotification
+                            key="info-packages"
+                            stretch
+                            kind="info"
+                            theme="inverse"
+                            hideCloseButton
+                            title={formatMessage(
+                                {
+                                    defaultMessage:
+                                        '{count, plural, one {# package update available} other {# package updates available}}',
+                                },
+                                { count: packages.changes.length },
+                            )}
+                        >
+                            <PackageChanges changes={packages.changes} />
+                        </InlineNotification>
+                    ) : null,
                     errors?.length ? this.#renderInlineNotificationError(errors, 'error-upgrade-available') : null,
                 ];
                 control = (
@@ -345,97 +329,28 @@ class View extends Component<Props, State> {
                         <Button
                             id={$('download-and-upgrade')}
                             kind="primary"
-                            onClick={() => onDownload(hash)}
-                            children={formatMessage({ defaultMessage: 'Download & Upgrade firmware' })}
+                            disabled={!upgradeId}
+                            onClick={() => upgradeId && onStartUpgrade(upgradeId)}
+                            children={formatMessage({ defaultMessage: 'Download & Upgrade' })}
                             renderIcon={IconUpgrade}
                         />
-                        {this.#txt.estDuration}
                     </div>
                 );
                 break;
             }
 
-            case 'downloading': {
-                const { totalMb, downloadedMb } = status.downloadProgress;
-                const percentage = (downloadedMb / totalMb) * 100;
+            case 'upgrading': {
+                statusMessage = <UpgradeStepper {...status.progress} />;
 
-                statusMessage = this.#renderProgressBar(
-                    percentage,
-                    formatMessage(
-                        { defaultMessage: 'Downloading {progress}…' },
-                        {
-                            progress: <Percentage value={percentage} upperValueBound={100} round={0} />,
-                        },
-                    ),
-                    C.accentViolet,
-                    {
-                        footer: formatMessage(
-                            { defaultMessage: '{done} of {total}' },
-                            {
-                                done: this.#renderSizeMB(downloadedMb),
-                                total: this.#renderSizeMB(totalMb),
-                            },
-                        ),
-                        error: pb.renderFieldErrorsAsList(errors),
-                        errorTitle: formatMessage({ defaultMessage: 'Download failed' }),
-                    },
-                );
-                break;
-            }
-
-            case 'installing': {
-                statusMessage = (
-                    <Tick
-                        intervalMs={this.#milis.installingTick}
-                        render={() => {
-                            const now = Math.floor(Date.now() / 1e3);
-                            const secondsTotal: number = 60;
-
-                            const secondsPassed: number = now - status.startTime;
-                            const secondsRemaining: number = Math.max(0, secondsTotal - secondsPassed);
-
-                            const percentage = Math.min((secondsPassed / secondsTotal) * 100, 100);
-                            const errorTitle: string = formatMessage({ defaultMessage: 'Installation failed' });
-
-                            if (percentage === 100) {
-                                return this.#renderProgressBar(
-                                    100,
-                                    formatMessage({ defaultMessage: 'Installation Finished' }),
-                                    C.alertGreen,
-                                    {
-                                        footer: formatMessage({ defaultMessage: 'Upgrade Successfull' }),
-                                        error: pb.renderFieldErrorsAsList(errors),
-                                        errorTitle,
-                                    },
-                                );
-                            }
-
-                            return this.#renderProgressBar(
-                                percentage,
-                                formatMessage({ defaultMessage: 'Installing…' }),
-                                C.alertGreen,
-                                {
-                                    footer: formatMessage(
-                                        { defaultMessage: '{time} remaining' },
-                                        { time: this.#renderInterval(secondsRemaining) },
-                                    ),
-                                    error: pb.renderFieldErrorsAsList(errors),
-                                    errorTitle,
-                                },
-                            );
-                        }}
-                    />
-                );
-
-                // All of constructed content is shown in the base,
-                // but also in an overlay that blocks the rest of the UI
+                // Once started, the upgrade is committed — show it in a blocking overlay.
                 overlayContent = (
                     <div className={css.overlayContent}>
-                        <h1 className={css.title} children={formatMessage({ defaultMessage: 'Installing Upgrade' })} />
+                        <h1
+                            className={css.title}
+                            children={formatMessage({ defaultMessage: 'Upgrading the system' })}
+                        />
 
                         {this.#renderFacts(versionCurrent, latestVersionCellContent, statusMessage)}
-
-                        <div className={css.control} children={control} />
 
                         {changelog}
                     </div>
@@ -445,15 +360,34 @@ class View extends Component<Props, State> {
             }
 
             case 'restarting': {
+                let title: string;
+                let body: ReactNode;
+                switch (status.disruption) {
+                    // Only firmware reboots reach this overlay, so an unset (UNSPECIFIED)
+                    // disruption defaults to the full-reboot warning rather than
+                    // under-warning as an app restart.
+                    case pb.UpgradeDisruption.REBOOT:
+                    case pb.UpgradeDisruption.UNSPECIFIED:
+                        title = formatMessage({ defaultMessage: 'Braiins Deck is restarting…' });
+                        body = <FormattedMessage defaultMessage="Please wait for the device to restart." />;
+                        break;
+                    case pb.UpgradeDisruption.APP_RESTART:
+                        title = formatMessage({ defaultMessage: 'Restarting…' });
+                        body = <FormattedMessage defaultMessage="Please wait for the app to restart." />;
+                        break;
+                    default:
+                        return assertUnreachable(status.disruption, 'upgrade disruption');
+                }
+
                 overlayContent = (
                     <div className={css.overlayRestart}>
                         <h1 className={css.title}>
                             <IconRestart className={css.icon} />
-                            <span children={formatMessage({ defaultMessage: 'Braiins Deck installion…' })} />
+                            <span children={title} />
                         </h1>
 
                         <p>
-                            <FormattedMessage defaultMessage="Please wait for the device restart to complete." />
+                            {body}
                             <br />
                             <Tick
                                 intervalMs={this.#milis.restartingTick}
@@ -476,7 +410,7 @@ class View extends Component<Props, State> {
 
         return (
             <div className={css.updateContainer}>
-                {this.#renderFacts(versionCurrent, latestVersionCellContent, statusMessage)}
+                {this.#renderFacts(versionCurrent, latestVersionCellContent, statusMessage, downloadSize)}
 
                 <div className={css.control} children={control} />
 
