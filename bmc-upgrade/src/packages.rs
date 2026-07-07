@@ -312,7 +312,7 @@ pub fn build_packages_preview(
             version_from: Some(change.from_version.clone()),
             version_to: Some(change.to_version.clone()),
             category: resolved.and_then(|package| package.category.clone()),
-            changelog: resolved.and_then(|package| package.metadata.get("changelog").cloned()),
+            changelog: None,
         });
     }
     for added in &plan.added {
@@ -322,7 +322,7 @@ pub fn build_packages_preview(
             version_from: None,
             version_to: Some(added.version.clone()),
             category: resolved.and_then(|package| package.category.clone()),
-            changelog: resolved.and_then(|package| package.metadata.get("changelog").cloned()),
+            changelog: None,
         });
     }
     for removed in &plan.removed {
@@ -335,15 +335,11 @@ pub fn build_packages_preview(
         });
     }
 
-    let core = resolved_by_name.get("core");
-    let bmc_version = core.and_then(|package| package.metadata.get("bmc_version").cloned());
-    let bmc_changelog = core.and_then(|package| package.metadata.get("changelog").cloned());
-
     PackagesPreview {
         changes,
         download_size_bytes,
-        bmc_version,
-        bmc_changelog,
+        bmc_version: None,
+        bmc_changelog: None,
     }
 }
 
