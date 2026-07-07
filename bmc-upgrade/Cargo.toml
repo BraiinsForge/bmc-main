@@ -12,6 +12,7 @@ bmc-nix.workspace = true
 bmc-platform.workspace = true
 bmc-scheduler.workspace = true
 bmc-shared-time.workspace = true
+bmc-widget-manifest.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true

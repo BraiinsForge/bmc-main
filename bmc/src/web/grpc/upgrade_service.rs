@@ -214,6 +214,15 @@ fn map_package_upgrade_plan(preview: PackagesPreview) -> PackageUpgradePlan {
     }
 }
 
+fn installable_category_to_proto(c: bmc_upgrade::packages::InstallableCategory) -> i32 {
+    use bmc_upgrade::packages::InstallableCategory as Cat;
+    let proto = match c {
+        Cat::Known(k) => super::scene_management::category_to_proto(k),
+        Cat::Unknown => bmc_grpc::web::WidgetCategory::Unspecified,
+    };
+    proto as i32
+}
+
 fn map_installable_widget(w: bmc_upgrade::packages::InstallableWidget) -> InstallableWidget {
     InstallableWidget {
         package_name: w.package_name,
@@ -221,7 +230,7 @@ fn map_installable_widget(w: bmc_upgrade::packages::InstallableWidget) -> Instal
         version: w.version,
         display_name: w.display_name,
         subname: w.subname,
-        category: w.category,
+        category: installable_category_to_proto(w.category),
         description: w.description,
         icon: w.icon,
         previews: w
