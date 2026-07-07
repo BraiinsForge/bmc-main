@@ -214,22 +214,11 @@ pub async fn apply_profile_change(
     // 7. GC old generations (optional). Protect the pre-activation
     //    generation from this run's cleanup so the caller can still
     //    diff against it; persistent protection lives in `GcConfig`.
-    //    The newly built generation is also passed explicitly as
-    //    belt-and-suspenders — `cleanup_generations` already keeps it
-    //    as `current`/latest, but an explicit entry survives any future
-    //    refactor of those defaults.
     //
     //    The generation is already built and activated or staged, so a
     //    GC failure is captured into the result rather than aborting
     //    the run.
-    let gc = run_gc_if_configured(
-        profile_dir,
-        gc_config,
-        previous_generation,
-        generation.number,
-        progress,
-    )
-    .await;
+    let gc = run_gc_if_configured(profile_dir, gc_config, previous_generation, progress).await;
 
     Ok(install_result_from_plan(plan, Some(generation), gc))
 }
@@ -314,7 +303,6 @@ async fn run_gc_if_configured(
     profile_dir: &Path,
     gc_config: Option<&GcConfig>,
     previous_generation: Option<usize>,
-    new_generation: usize,
     progress: Option<&dyn UpgradeProgress>,
 ) -> Result<(), gc::GcError> {
     let Some(gc_config) = gc_config else {
@@ -323,14 +311,7 @@ async fn run_gc_if_configured(
     if let Some(p) = progress {
         p.on_phase(UpgradePhase::Cleaning);
     }
-    run_gc(
-        profile_dir,
-        gc_config,
-        previous_generation,
-        new_generation,
-        progress,
-    )
-    .await
+    run_gc(profile_dir, gc_config, previous_generation, progress).await
 }
 
 fn install_result_from_plan(
@@ -398,13 +379,13 @@ async fn run_gc(
     profile_dir: &Path,
     gc_config: &GcConfig,
     previous_generation: Option<usize>,
-    new_generation: usize,
     progress: Option<&dyn UpgradeProgress>,
 ) -> Result<(), gc::GcError> {
-    // Protect both the pre-activation generation and the freshly built
-    // one from cleanup, regardless of current/latest defaults.
-    let mut keep_extra: Vec<usize> = previous_generation.into_iter().collect();
-    keep_extra.push(new_generation);
+    // Protect the pre-activation generation: after activation it is
+    // neither `current` nor the latest, so cleanup would otherwise prune
+    // it. The freshly built generation is the latest and is already
+    // retained by `cleanup_generations`.
+    let keep_extra: Vec<usize> = previous_generation.into_iter().collect();
     gc::cleanup_generations(profile_dir, gc_config, &keep_extra)?;
     let gc_progress = progress.map(UpgradeCollectGarbageProgress);
     gc::collect_garbage(

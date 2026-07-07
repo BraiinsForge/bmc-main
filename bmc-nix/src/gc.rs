@@ -646,6 +646,44 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_keeps_freshly_built_generation_staged_for_next_boot() {
+        // A --next-boot upgrade builds the highest-numbered generation and
+        // stages it as `next`, while `current` still points at the
+        // pre-upgrade generation. The freshly built generation must survive
+        // cleanup on its own, with no explicit `keep_extra` entry.
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+
+        for n in 1..=3 {
+            create_generation(&profile_dir, n);
+        }
+        set_current(&profile_dir, 1);
+        set_next(&profile_dir, 3);
+
+        let gc_config = GcConfig {
+            keep_generations: 0,
+            keep_days: None,
+            min_free_space: "0".into(),
+            protected_generations: vec![],
+        };
+        cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
+
+        assert!(
+            generation_exists(&profile_dir, 3),
+            "freshly built generation staged for next boot must survive cleanup"
+        );
+        assert!(
+            !generation_exists(&profile_dir, 2),
+            "an unprotected intermediate generation is still collected"
+        );
+        assert!(
+            generation_exists(&profile_dir, 1),
+            "pre-upgrade current gen is kept"
+        );
+    }
+
+    #[test]
     fn cleanup_keeps_transient_extra_generation() {
         // Post-activation case: current=3 (newly activated), latest=3, but
         // the orchestrator still needs gen 2 (the pre-activation current).
