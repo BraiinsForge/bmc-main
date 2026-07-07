@@ -86,7 +86,8 @@ pub struct Config {
     pub widgets_path: PathBuf,
 
     /// Path to a real nix-package-index.v1.json. When set, the installable
-    /// widget catalog is read from it instead of the built-in fabricated set.
+    /// widget catalog is read from it instead of the widget tree under
+    /// `--widgets-path`.
     #[clap(long)]
     pub package_index: Option<PathBuf>,
 
