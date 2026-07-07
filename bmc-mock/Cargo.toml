@@ -8,6 +8,7 @@ authors = ["Braiins <braiins@braiins.com>"]
 anyhow.workspace = true
 async-trait.workspace = true
 axum-extra.workspace = true
+base64.workspace = true
 bmc.workspace = true
 bmc-button.workspace = true
 bmc-led = { workspace = true, features = ["driver"] }
