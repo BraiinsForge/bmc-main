@@ -9,6 +9,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use bmc_grpc::web::authentication_service_client::AuthenticationServiceClient;
+use bmc_grpc::web::scene_management_service_client::SceneManagementServiceClient;
 use bmc_grpc::web::upgrade_service_client::UpgradeServiceClient;
 use bmc_grpc::web::{
     CheckForUpgradeRequest, FirmwareUpgradePhase, LoginRequest, PackageUpgradePhase,
@@ -103,6 +104,14 @@ fn spawn_mock_inner(scenario_json: &str, index_json: Option<&str>) -> MockInstan
     let widget_dir = dir.path().join("widgets/flip-clock");
     std::fs::create_dir_all(&widget_dir).expect("BUG: create widget dir");
     std::fs::write(widget_dir.join("icon.svg"), "<svg/>").expect("BUG: write icon");
+    // Registry discovery requires an executable binary at the manifest's
+    // `binary` path, so the staged widget is discoverable once installed.
+    let bin_dir = widget_dir.join("bin");
+    std::fs::create_dir_all(&bin_dir).expect("BUG: create bin dir");
+    let binary = bin_dir.join("flip-clock");
+    std::fs::write(&binary, "#!/bin/sh\n").expect("BUG: write binary");
+    std::fs::set_permissions(&binary, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+        .expect("BUG: chmod binary");
     std::fs::write(
         widget_dir.join("manifest.json"),
         r#"{"uid":"7cb584a8-1f26-42a0-867e-955aadd2391c","version":"1.0.0",
@@ -203,16 +212,12 @@ impl tonic::service::Interceptor for CookieAuth {
 // port, and the loser dies only after we already connected to the winner.
 // The per-instance password makes login fail on a foreign mock; retrying
 // the whole connect+login on a fresh port then recovers.
-async fn upgrade_client(
-    mock: &mut MockInstance,
-) -> UpgradeServiceClient<tonic::service::interceptor::InterceptedService<Channel, CookieAuth>> {
+async fn authenticated(mock: &mut MockInstance) -> (Channel, CookieAuth) {
     let mut last_err = None;
     for _ in 0..4 {
         let channel = connect(mock).await;
         match login(channel.clone(), &mock.password).await {
-            Ok(cookie) => {
-                return UpgradeServiceClient::with_interceptor(channel, CookieAuth(cookie));
-            }
+            Ok(cookie) => return (channel, CookieAuth(cookie)),
             Err(err) => {
                 last_err = Some(err);
                 _ = mock.child.kill();
@@ -229,6 +234,22 @@ async fn upgrade_client(
         }
     }
     panic!("BUG: login kept failing after respawns: {last_err:?}");
+}
+
+async fn upgrade_client(
+    mock: &mut MockInstance,
+) -> UpgradeServiceClient<tonic::service::interceptor::InterceptedService<Channel, CookieAuth>> {
+    let (channel, auth) = authenticated(mock).await;
+    UpgradeServiceClient::with_interceptor(channel, auth)
+}
+
+async fn scene_client(
+    mock: &mut MockInstance,
+) -> SceneManagementServiceClient<
+    tonic::service::interceptor::InterceptedService<Channel, CookieAuth>,
+> {
+    let (channel, auth) = authenticated(mock).await;
+    SceneManagementServiceClient::with_interceptor(channel, auth)
 }
 
 // Bounded drain so a regression that leaves the stream open fails the
@@ -949,5 +970,65 @@ async fn install_run_marks_widget_installed_over_grpc() {
             .iter()
             .any(|w| w.package_name == "widget-flip-clock"),
         "flip-clock should be unshadowed (installed) and no longer offered after the run"
+    );
+}
+
+#[tokio::test]
+async fn installed_widget_becomes_available_without_restart() {
+    let mut mock = spawn_mock(SHADOWED_SCENARIO);
+    let mut scenes = scene_client(&mut mock).await;
+
+    // A shadowed widget is offered as installable but is not yet in the
+    // Add-a-widget list: the registry discovers only the staged, non-shadowed
+    // widgets.
+    let before = scenes
+        .get_available_widgets(())
+        .await
+        .expect("BUG: list available failed")
+        .into_inner();
+    assert!(
+        !before.widgets.iter().any(|w| w.name == "Flip Clock"),
+        "shadowed widget must not be available before install: {:?}",
+        before.widgets
+    );
+
+    let mut client = upgrade_client(&mut mock).await;
+    let response = client
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec!["widget-flip-clock".to_owned()],
+        })
+        .await
+        .expect("BUG: check failed")
+        .into_inner();
+    let upgrade_id = response.upgrade_id.expect("BUG: upgrade id");
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest { upgrade_id })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+    let mut finished = false;
+    tokio::time::timeout(STREAM_TIMEOUT, async {
+        while let Some(progress) = stream.message().await.expect("BUG: stream errored") {
+            if matches!(progress.event, Some(upgrade_progress::Event::Finished(()))) {
+                finished = true;
+            }
+        }
+    })
+    .await
+    .expect("stream did not finish within the timeout");
+    assert!(finished, "install run did not finish");
+
+    // Without restarting the mock, the just-installed widget appears in the
+    // Add-a-widget list: the completed run re-staged the tree and refreshed
+    // the registry in-process.
+    let after = scenes
+        .get_available_widgets(())
+        .await
+        .expect("BUG: list available failed")
+        .into_inner();
+    assert!(
+        after.widgets.iter().any(|w| w.name == "Flip Clock"),
+        "installed widget must become available without a restart: {:?}",
+        after.widgets
     );
 }
