@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use base64::Engine as _;
 use bmc_nix::index::merge_indexes;
@@ -13,8 +13,9 @@ use bmc_nix::store::progress::DownloadSnapshot;
 use bmc_nix::types::{FetchedIndex, MergedIndex, PackageIndex};
 use bmc_nix::upgrade::{UpgradePhase, UpgradeProgress};
 use bmc_upgrade::packages::{
-    ApplyError, EstimateMode, InstallableCategory, InstallableWidget, PackageBackend, PackageProbe,
-    PackageProbeError, PackagesPreview, SystemPackageChange, installable_widgets_from,
+    ApplyError, EstimateMode, InstallableCategory, InstallablePreview, InstallableWidget,
+    PackageBackend, PackageProbe, PackageProbeError, PackagesPreview, SystemPackageChange,
+    installable_widgets_from,
 };
 use bmc_widget_manifest::Manifest;
 
@@ -22,6 +23,47 @@ use crate::pacing::UpgradePacing;
 use crate::scenario::{self, PackagesScenario, RunScenario};
 
 const DOWNLOAD_TOTAL_BYTES: u64 = 4_000_000;
+
+/// One hardcoded preview-image set the mock serves for every installable
+/// widget. Widget manifests carry no preview art, and previews do not yet
+/// flow through the package index, so the mock ships a single stand-in set
+/// (the weather widget's images from widgets.braiinsforge.com, one per scene
+/// size) purely so the frontend preview panel has real images to render.
+/// Encoded as `data:` URIs so no separate asset endpoint is needed.
+static PLACEHOLDER_PREVIEWS: LazyLock<Vec<InstallablePreview>> = LazyLock::new(|| {
+    const IMAGES: [(&str, &[u8]); 5] = [
+        (
+            "full",
+            include_bytes!("../../assets/mock-widget-previews/weather-full.png"),
+        ),
+        (
+            "large",
+            include_bytes!("../../assets/mock-widget-previews/weather-large.png"),
+        ),
+        (
+            "medium",
+            include_bytes!("../../assets/mock-widget-previews/weather-medium.png"),
+        ),
+        (
+            "small_left",
+            include_bytes!("../../assets/mock-widget-previews/weather-small_left.png"),
+        ),
+        (
+            "small_right",
+            include_bytes!("../../assets/mock-widget-previews/weather-small_right.png"),
+        ),
+    ];
+    IMAGES
+        .iter()
+        .map(|(size, bytes)| InstallablePreview {
+            image: format!(
+                "data:image/png;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(bytes)
+            ),
+            size: (*size).to_owned(),
+        })
+        .collect()
+});
 
 /// Cap on a package-index file the mock will read, mirroring bmc-nix's
 /// index fetch. A package index is small; this bounds memory on a stray or
@@ -135,7 +177,8 @@ fn static_preview(estimate: EstimateMode) -> PackagesPreview {
 /// set and the staged set partition the same widgets) becomes an
 /// [`InstallableWidget`] named `widget-<name>`, mirroring the nix package
 /// convention; the shadow gate then decides which are offered. Manifests carry
-/// no previews, so those stay empty.
+/// no preview art; `list_installable_widgets` attaches the shared placeholder
+/// set.
 fn installable_widgets_from_dir(root: &Path) -> Vec<InstallableWidget> {
     crate::widget_staging::widget_dirs(root)
         .into_iter()
@@ -335,6 +378,17 @@ impl PackageBackend for MockPackageBackend {
                     .collect()
             }
         };
+        // Neither the widget tree nor the mock index carries preview art, so
+        // stand in the shared placeholder set for any widget still missing one.
+        let widgets = widgets
+            .into_iter()
+            .map(|mut widget| {
+                if widget.previews.is_empty() {
+                    widget.previews.clone_from(&PLACEHOLDER_PREVIEWS);
+                }
+                widget
+            })
+            .collect();
         Ok(widgets)
     }
 }
@@ -500,6 +554,15 @@ mod tests {
         assert_eq!(widgets.len(), 1);
         assert_eq!(widgets[0].package_name, "widget-flip-clock");
         assert!(!widgets[0].uid.is_empty());
+        // Manifests carry no preview art, so the mock stands in its shared
+        // placeholder set — the frontend preview panel always has an image.
+        assert!(!widgets[0].previews.is_empty());
+        assert!(
+            widgets[0]
+                .previews
+                .iter()
+                .all(|p| p.image.starts_with("data:image/png;base64,") && !p.size.is_empty())
+        );
     }
 
     #[tokio::test]
@@ -550,6 +613,9 @@ mod tests {
         assert_eq!(widgets[0].package_name, "widget-flip-clock");
         assert_eq!(widgets[0].uid, "flip-clock");
         assert!(!widgets.iter().any(|w| w.package_name == "widget-weather"));
+        // The index carries no preview art either, so the placeholder set
+        // still stands in on the real-index path.
+        assert!(!widgets[0].previews.is_empty());
     }
 
     #[tokio::test]
