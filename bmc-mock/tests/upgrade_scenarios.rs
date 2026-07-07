@@ -97,6 +97,21 @@ fn spawn_mock_inner(scenario_json: &str, index_json: Option<&str>) -> MockInstan
         std::fs::write(&path, json).expect("BUG: write index");
         path
     });
+    // The fallback catalog is derived from the --widgets-path tree, so give
+    // the mock one widget (widget-flip-clock) with a renderable icon for the
+    // shadowed-scenario tests to discover.
+    let widget_dir = dir.path().join("widgets/flip-clock");
+    std::fs::create_dir_all(&widget_dir).expect("BUG: create widget dir");
+    std::fs::write(widget_dir.join("icon.svg"), "<svg/>").expect("BUG: write icon");
+    std::fs::write(
+        widget_dir.join("manifest.json"),
+        r#"{"uid":"7cb584a8-1f26-42a0-867e-955aadd2391c","version":"1.0.0",
+           "name":"Flip Clock","description":"A retro split-flap clock face.",
+           "binary":"bin/flip-clock","icon":"icon.svg","category":"clock",
+           "supported_viewports":[{"type":"rectangular","min_width":100,
+           "max_width":200,"min_height":100,"max_height":200}]}"#,
+    )
+    .expect("BUG: write manifest");
     let mockfs = dir.path().join("mockfs");
     let port = free_port();
     // Per-instance password (the unique tempdir name), so logging in on a
@@ -692,6 +707,41 @@ async fn serves_real_package_index_over_grpc() {
     // The index's "clock" string is mapped to the known enum value over the wire.
     assert_eq!(widget.category, i32::from(WidgetCategory::Clock));
     assert!(widget.icon.is_none());
+}
+
+// An index category this build does not recognize must not break discovery.
+// A newer release may add categories; the tolerant deserializer folds the
+// unknown string to Unknown, which crosses the wire as UNSPECIFIED.
+const UNKNOWN_CATEGORY_INDEX_JSON: &str = r#"{
+  "version": 1,
+  "provenance": null,
+  "indexes": [],
+  "caches": [],
+  "packages": [
+    {"name": "widget-flip-clock", "version": "2.5.0", "store_path": "/nix/store/x",
+     "category": "widget",
+     "metadata": {"widget": {"uid": "u", "display_name": "Flip", "category": "teleportation"}}}
+  ]
+}"#;
+
+#[tokio::test]
+async fn unknown_index_category_serves_as_unspecified_over_grpc() {
+    let scenario = r#"{"firmware": "up-to-date", "packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#;
+    let mut mock = spawn_mock_with_index(scenario, UNKNOWN_CATEGORY_INDEX_JSON);
+    let mut client = upgrade_client(&mut mock).await;
+    let response = client
+        .list_installable_widgets(())
+        .await
+        .expect("BUG: list failed")
+        .into_inner();
+    assert_eq!(response.widgets.len(), 1, "widgets: {:?}", response.widgets);
+    // The unrecognized "teleportation" category folds to UNSPECIFIED rather
+    // than failing the listing — one new category cannot break discovery.
+    assert_eq!(
+        response.widgets[0].category,
+        i32::from(WidgetCategory::Unspecified),
+        "unknown index category must serve as UNSPECIFIED"
+    );
 }
 
 #[tokio::test]
