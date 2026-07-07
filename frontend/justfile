@@ -40,14 +40,20 @@ build:
 dev:
     yarn run rsbuild dev
 
+# Build the native widget bundle bmc-mock serves as installable widgets.
+[private]
+build-widgets:
+    cd {{dir}}/.. && nix build .#widgets --out-link result-widgets
+
 # Run mock backend against this frontend's built dist (`build` first).
-serve EXTRA_ARGS="":
+serve EXTRA_ARGS="": build-widgets
     cd {{dir}}/.. && cargo run \
         --package bmc-mock -- \
         --address="0.0.0.0:6070" \
         --system-password="root" \
         --www-path="{{dir}}/dist" \
         --sounds-dir="{{dir}}/@data/sounds" \
+        --widgets-path="{{dir}}/../result-widgets/lib/bmc-widgets" \
         --mockfs-path="{{dir}}/@data/mockfs" {{EXTRA_ARGS}}
 
 # Same as `serve`, but force factory defaults on boot.
