@@ -131,8 +131,9 @@ version is present and resolves to a generation directory, the script runs that 
 `current` still naming the previous generation — the entrypoint's final `write-boundary` step is the only thing that
 moves `current`, so a crash or failure before it leaves `current` on the previous generation. The entrypoint derives
 `PROFILE_OLD_GENERATION` from `current` itself, so diff-driven scripts see the real old generation without it being
-passed in. The marker is consumed only on success; on failure the script falls through to re-activating `current`
-(unchanged) to reconcile the live system. Markers staged for other versions are removed as stale. When
+passed in. The marker is consumed only on success; on failure the script restores `current` to the target it snapshotted
+before the entrypoint ran (removing it when none existed), then falls through to re-activating `current` to reconcile
+the live system back onto the previous generation. Markers staged for other versions are removed as stale. When
 `/etc/bos_version` is missing or empty, staleness is undecidable: all markers are left alone and `current` is activated.
 
 `bmc-nix-cli activate --generation next` implements the same contract in Rust (used by tests and the upgrade harness;
@@ -148,13 +149,15 @@ reverted activation still reports an error — `RevertedAfterFailure`, carrying 
 (including the boot service) see it as a failed run even though the device is left on a working generation. If the
 revert re-activation itself fails, the error is `RevertFailed`, carrying both the original and the revert failure.
 
-`bmc-nix` never writes the `current` symlink; a generation's own activation scripts do, as does the boot-time
-activator when it restores the previous `current` after a failed staged activation. The core package's
-final activation step (`998`, the `bmc-activation-write-boundary` binary) moves `current` atomically (a temporary
-symlink, then a rename) and durably (a filesystem sync before the flip, a directory fsync after it), so `current`
-advances only after every other step has succeeded; `095-link-current` derives
-`/run/current-profile` from it. Reverting to the old generation works by re-running its activation entrypoint, which
-moves `current` back through the same mechanism — never by editing symlinks directly.
+`bmc-nix` never writes the `current` symlink; a generation's own activation scripts do, as does the boot-time activator
+when it restores the previous `current` after a failed staged activation. The core package's final activation step
+(`998`, the `bmc-activation-write-boundary` binary) moves `current` atomically (a temporary symlink, then a rename) and
+durably (a filesystem sync before the flip, a directory fsync after it), so `current` advances only after every other
+step has succeeded; `095-link-current` derives `/run/current-profile` from it. Reverting to the old generation works by
+re-running its activation entrypoint, which moves `current` back through the same mechanism. The one exception is the
+boot-time activator: when a staged entrypoint fails after advancing `current`, the activator restores the snapshotted
+target through the same tmp-symlink-and-rename pattern, so its fallback resolves to the previous generation instead of
+the failed one.
 
 The design intent is:
 
