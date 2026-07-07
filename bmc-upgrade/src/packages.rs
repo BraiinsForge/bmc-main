@@ -47,6 +47,9 @@ pub struct PackagesPreview {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InstallablePreview {
     pub image: String,
+    /// Scene size the preview depicts (the `assets.previews` map key). Kept as
+    /// a free-form string so a size a newer index introduces still round-trips.
+    pub size: String,
 }
 
 /// Re-exported so consumers can name the known categories without depending
@@ -460,10 +463,26 @@ pub fn installable_widgets_from(
                     .and_then(|a| a.get("icon"))
                     .and_then(serde_json::Value::as_str)
                     .map(ToOwned::to_owned),
+                previews: resolved
+                    .metadata
+                    .get("assets")
+                    .and_then(|a| a.get("previews"))
+                    .and_then(serde_json::Value::as_object)
+                    .map(|by_size| {
+                        by_size
+                            .iter()
+                            .filter_map(|(size, image)| {
+                                image.as_str().map(|image| InstallablePreview {
+                                    image: image.to_owned(),
+                                    size: size.clone(),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 package_name: resolved.name,
                 version: resolved.version,
                 description: resolved.description,
-                previews: Vec::new(),
             })
         })
         .collect()
@@ -802,7 +821,45 @@ mod tests {
             w.icon.as_deref(),
             Some("/nix/store/widget-weather/lib/bmc-widgets/weather/icon.svg")
         );
+        // No `assets.previews` in the index, so the preview list defaults empty.
         assert!(w.previews.is_empty());
+    }
+
+    #[test]
+    fn installable_widgets_reads_previews_from_index() {
+        // Preview art lives under `assets.previews` in the index (a not-yet
+        // installed widget has no parsed manifest to read it from), keyed by the
+        // scene size it depicts; each entry becomes one `InstallablePreview`.
+        let merged = merged_with(&[(
+            "widget-weather",
+            "widget",
+            Some(serde_json::json!({
+                "widget": {"uid": "uid-weather", "display_name": "Weather", "category": "weather"},
+                "assets": {
+                    "icon": "/nix/store/w/icon.svg",
+                    "previews": {
+                        "full": "https://example.test/weather-full.png",
+                        "medium": "https://example.test/weather-medium.png"
+                    }
+                }
+            })),
+        )]);
+
+        let widgets = installable_widgets_from(&merged, &std::collections::BTreeSet::new());
+
+        assert_eq!(widgets.len(), 1);
+        let by_size: std::collections::BTreeMap<&str, &str> = widgets[0]
+            .previews
+            .iter()
+            .map(|p| (p.size.as_str(), p.image.as_str()))
+            .collect();
+        assert_eq!(
+            by_size,
+            std::collections::BTreeMap::from([
+                ("full", "https://example.test/weather-full.png"),
+                ("medium", "https://example.test/weather-medium.png"),
+            ])
+        );
     }
 
     #[test]

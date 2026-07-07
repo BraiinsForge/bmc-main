@@ -62,6 +62,9 @@ message CheckForUpgradeRequest {
 
 message InstallablePreview {
   string image = 1;
+  // Scene size the preview depicts (e.g. "full", "medium", "small_left").
+  // Free-form so future sizes this build does not know still round-trip.
+  string size = 2;
 }
 
 message InstallableWidget {

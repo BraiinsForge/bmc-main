@@ -236,7 +236,10 @@ fn map_installable_widget(w: bmc_upgrade::packages::InstallableWidget) -> Instal
         previews: w
             .previews
             .into_iter()
-            .map(|p| InstallablePreview { image: p.image })
+            .map(|p| InstallablePreview {
+                image: p.image,
+                size: p.size,
+            })
             .collect(),
     }
 }
