@@ -125,15 +125,17 @@ scripts.
 
 ## `current` Ownership
 
-The `current` symlink is written only by activation scripts, never by `bmc-nix` itself, in either the library or the
-CLI. The core package's final activation step (`998`, the `bmc-activation-write-boundary` binary) moves `current`
-atomically, via a temporary symlink and a rename, and durably, syncing the profile filesystem before the flip and
-fsyncing the profile directory after it, so `current` advances to the new generation only after every other
-activation step has succeeded; a crash or failure before it leaves `current` on the previous generation.
-`095-link-current` derives `/run/current-profile` from the `current` path (not its target), so it tracks the later flip.
+The `current` symlink is written by activation scripts, never by `bmc-nix` itself in either the library or the CLI, and
+by the boot-time activator only when it restores the previous `current` after a failed staged activation. The core
+package's final activation step (`998`, the `bmc-activation-write-boundary` binary) moves `current` atomically, via a
+temporary symlink and a rename, and durably, syncing the profile filesystem before the flip and fsyncing the profile
+directory after it, so `current` advances to the new generation only after every other activation step has succeeded; a
+crash or failure before it leaves `current` on the previous generation. `095-link-current` derives
+`/run/current-profile` from the `current` path (not its target), so it tracks the later flip.
 
 Rollback works by re-activating a generation, which runs its activation entrypoint and moves `current` back through the
-same mechanism. Nothing outside activation scripts edits `current` or `/run/current-profile` directly.
+same mechanism. Nothing outside activation scripts edits `/run/current-profile` directly, and the only writer of
+`current` outside them is the boot-time activator, restoring the previous target after a failed staged activation.
 
 ## Profile Lock
 

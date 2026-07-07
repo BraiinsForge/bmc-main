@@ -68,7 +68,7 @@ find_latest_link() {
 }
 
 activate_profile() {
-	local profile_dir current bos_version next marker entrypoint failed_generation
+	local profile_dir current bos_version next marker entrypoint failed_generation old_target
 
 	# NIX_ACTIVATOR_PROFILE_DIR and NIX_ACTIVATOR_BOS_VERSION_FILE
 	# relocate the inputs for tests.
@@ -103,19 +103,43 @@ activate_profile() {
 		if [ -L "$next" ] && [ -d "$next" ]; then
 			entrypoint="$(readlink -f "$next")/core/activation/entrypoint"
 			if [ -x "$entrypoint" ]; then
+				old_target="$(readlink "$current" 2>/dev/null)"
 				LOG "activating staged next generation"
 				if "$entrypoint"; then
 					rm -f "$next"
 					return 0
 				fi
 				# The staged entrypoint may have written partial state
-				# before failing. Fall through to reactivate 'current'
-				# (unchanged) with the failed generation passed in as
-				# PROFILE_OLD_GENERATION, so diff-driven activation
+				# before failing, including advancing 'current' to the
+				# failed generation (its final step is the durable
+				# 'current' flip, which can fail after the rename; old
+				# generation formats flip 'current' early). Put 'current'
+				# back on the snapshotted target so the fallback below
+				# re-runs the known-good generation, and remember the
+				# failed generation so that fallback passes it as
+				# PROFILE_OLD_GENERATION and diff-driven activation
 				# scripts undo the side effects it wrote before aborting.
-				# Keep the marker for a later retry.
+				# Keep the marker for a later retry. The restore needs no
+				# directory fsync: a successful fallback re-commits
+				# 'current' durably via its own write-boundary step, and
+				# after a power loss the kept marker retries the staged
+				# generation anyway; the 'sync' is insurance should the
+				# fallback also fail.
 				failed_generation="$(readlink -f "$next")"
 				LOG "next generation activation failed, falling back to current"
+				if [ "$(readlink "$current" 2>/dev/null)" != "$old_target" ]; then
+					if [ -n "$old_target" ]; then
+						LOG "restoring current to $old_target"
+						rm -f "$current.tmp" \
+							&& ln -s "$old_target" "$current.tmp" \
+							&& mv -Tf "$current.tmp" "$current" \
+							|| LOG "failed to restore current to $old_target"
+					else
+						LOG "removing current left by the failed activation"
+						rm -f "$current" || LOG "failed to remove current"
+					fi
+					sync
+				fi
 			else
 				LOG "next generation entrypoint missing or not executable: $entrypoint"
 			fi

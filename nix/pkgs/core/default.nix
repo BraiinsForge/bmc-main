@@ -21,6 +21,14 @@ let
         ${nixConfActivation}/bin/nix-conf-activation
     ${testBusybox}/bin/touch $out
   '';
+  nixActivatorTest = armv7Pkgs.runCommand "nix-activator-test" { } ''
+    PATH=${testBusybox}/bin \
+    NIX_ACTIVATOR_TEST_SHELL=${testBusybox}/bin/ash \
+      ${testBusybox}/bin/ash \
+        ${./tests/nix-activator.sh} \
+        ${./files/nix-activator}
+    ${testBusybox}/bin/touch $out
+  '';
 
   bmcNix = profile.buildCrate crates.bmc-nix { };
   selectBmcNixBin = bmc.lib.selectBmcNixBin { pkgs = armv7Pkgs; inherit bmcNix; };
@@ -186,6 +194,7 @@ let
   packageWithTests = package.overrideAttrs (old: {
     passthru = (old.passthru or { }) // {
       tests.activation = nixConfActivationTest;
+      tests.activator = nixActivatorTest;
     };
   });
 in

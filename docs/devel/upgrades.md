@@ -148,7 +148,8 @@ reverted activation still reports an error — `RevertedAfterFailure`, carrying 
 (including the boot service) see it as a failed run even though the device is left on a working generation. If the
 revert re-activation itself fails, the error is `RevertFailed`, carrying both the original and the revert failure.
 
-`bmc-nix` never writes the `current` symlink; only a generation's own activation scripts do. The core package's
+`bmc-nix` never writes the `current` symlink; a generation's own activation scripts do, as does the boot-time
+activator when it restores the previous `current` after a failed staged activation. The core package's
 final activation step (`998`, the `bmc-activation-write-boundary` binary) moves `current` atomically (a temporary
 symlink, then a rename) and durably (a filesystem sync before the flip, a directory fsync after it), so `current`
 advances only after every other step has succeeded; `095-link-current` derives
