@@ -1326,7 +1326,6 @@ dependencies = [
  "bmc-platform",
  "bmc-render",
  "bmc-render-macros",
- "bmc-svg-compiler",
  "bmc-system-overlay",
  "bmc-wasm-protocol",
  "bmc-wasm-sdk",
