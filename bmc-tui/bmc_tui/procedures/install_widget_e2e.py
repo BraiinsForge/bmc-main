@@ -1,0 +1,81 @@
+"""Install a widget on a Deck end to end via remove-then-reinstall.
+
+The plain upgrade e2e serves the full package set, so nothing is
+installable by construction. This procedure creates the gap on purpose:
+remove a widget, then discover + install it back over gRPC. Self-cleaning
+— the reinstall returns the device to its baseline. Dev-only harness: the
+served build must contain the removed widget for the install to be offered.
+The server registration persists on the device after the run.
+"""
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal
+
+from bmc_tui import catalog, console, nix
+from bmc_tui.device import Device
+from bmc_tui.stage import entrypoint
+
+
+def _default_key_dir() -> Path:
+    """The upgrade-server script's own default keypair location."""
+    state_home = os.environ.get("XDG_STATE_HOME", "")
+    base = Path(state_home) if state_home else Path.home() / ".local" / "state"
+    return base / "bmc-upgrade-server"
+
+
+@dataclass
+class InstallWidgetE2e:
+    device: str  # IP or host of the target Deck
+    widget: str = "widget-blockheight"  # leaf widget to remove then reinstall
+    packages: list[str] = field(default_factory=list)  # flake attrs; empty → every deck package
+    profile: Literal["release", "debug"] = "release"  # debug → profiling build (mesh::profile)
+    password: str = ""  # device web password; empty when none is set
+    port: int = 8080  # binary-cache port served on this machine
+    index_port: int = 8081  # package-index port served on this machine
+    max_jobs: int | None = None  # nix --max-jobs for the build; None → use nix's own config
+
+    def run(self) -> None:
+        dev = Device(self.device)
+        backend = nix.real(max_jobs=self.max_jobs)
+        # Serve the full package set by default: any system-installed package
+        # absent from every consulted index aborts the device's upgrade check.
+        attrs = self.packages or backend.list_packages()
+        plan = catalog.Deployment(attrs=attrs, prefix=catalog.package_prefix(self.profile))
+        cycle = catalog.UpgradeCycle(
+            password=self.password,
+            port=self.port,
+            index_port=self.index_port,
+            key_dir=_default_key_dir(),
+        )
+
+        console.header("End-to-end widget install")
+        dev.print()
+
+        catalog.ensure_grpcurl()
+        catalog.ensure_device_reachable(dev)
+        catalog.ensure_nix_cli(backend, dev)
+        catalog.resolve_packages(backend, plan)
+        catalog.build_packages(backend, plan)
+        catalog.snapshot_profile(dev, cycle)
+        try:
+            catalog.start_upgrade_server(dev, plan, cycle)
+            catalog.register_upgrade_server(dev, cycle)
+            catalog.grpc_login(dev, cycle)
+            catalog.remove_package(dev, cycle, self.widget)
+            catalog.list_installable_widgets(dev, cycle, self.widget)
+            catalog.check_for_install(dev, cycle, self.widget)
+            catalog.run_upgrade(dev, cycle)
+            catalog.verify_widget_installed(dev, self.widget)
+        finally:
+            catalog.stop_upgrade_server(cycle)
+
+
+@entrypoint
+def main(args: InstallWidgetE2e) -> None:
+    args.run()
+
+
+if __name__ == "__main__":
+    main()
