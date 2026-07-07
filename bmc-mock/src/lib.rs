@@ -13,6 +13,7 @@ pub mod mockfs;
 pub mod pacing;
 pub mod scenario;
 mod session;
+pub mod widget_staging;
 
 pub use mockfs::MockFs;
 pub use session::MockSessionManager;
