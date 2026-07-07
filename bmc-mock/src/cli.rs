@@ -85,6 +85,12 @@ pub struct Config {
     #[clap(long, default_value = "./result-widgets")]
     pub widgets_path: PathBuf,
 
+    /// Path to a real nix-package-index.v1.json. When set, the installable
+    /// widget catalog is read from it instead of the widget tree under
+    /// `--widgets-path`.
+    #[clap(long)]
+    pub package_index: Option<PathBuf>,
+
     /// Hardware profile to use: BMC100|BMM100|BMM101|BFM100.
     /// Defaults to `BMC100`.
     #[clap(long = "hardware-profile", default_value = "BMC100")]

@@ -4,6 +4,7 @@ package braiins.bmc.web;
 
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
+import "web/scene_management.proto";
 
 enum AutoUpgradeFrequency {
   AUTO_UPGRADE_FREQUENCY_UNSPECIFIED = 0;
@@ -69,7 +70,8 @@ message InstallableWidget {
   string version = 3;
   string display_name = 4;
   optional string subname = 5;
-  optional string category = 6;
+  // Unknown/unrecognized index categories arrive as WIDGET_CATEGORY_UNSPECIFIED.
+  WidgetCategory category = 6;
   optional string description = 7;
   optional string icon = 8;
   repeated InstallablePreview previews = 9;

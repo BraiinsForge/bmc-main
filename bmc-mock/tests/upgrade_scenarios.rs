@@ -11,13 +11,13 @@ use std::time::Duration;
 use bmc_grpc::web::upgrade_service_client::UpgradeServiceClient;
 use bmc_grpc::web::{
     CheckForUpgradeRequest, FirmwareUpgradePhase, PackageUpgradePhase, StartUpgradeRequest,
-    UpgradeDisruption, UpgradeProgress, upgrade_progress,
+    UpgradeDisruption, UpgradeProgress, WidgetCategory, upgrade_progress,
 };
 use tonic::Request;
 use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 
-use common::{MockInstance, spawn_mock};
+use common::{MockInstance, spawn_mock, spawn_mock_with_index};
 
 const STREAM_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -655,6 +655,64 @@ async fn lists_shadowed_widget_as_installable_over_grpc() {
     assert!(!widget.uid.is_empty());
     assert!(!widget.display_name.is_empty());
     assert!(widget.icon.is_some());
+}
+
+const REAL_INDEX_JSON: &str = r#"{
+  "version": 1, "provenance": null, "indexes": [], "caches": [],
+  "packages": [
+    {"name": "widget-flip-clock", "version": "2.5.0", "store_path": "/nix/store/x",
+     "category": "widget", "metadata": {"widget": {"uid": "real-flip-uid",
+     "display_name": "Real Flip Clock", "category": "clock"},
+     "assets": {"icon": "/nonexistent/icon.svg"}}},
+    {"name": "widget-weather", "version": "1.9.0", "store_path": "/nix/store/y",
+     "category": "widget", "metadata": {"widget": {"uid": "real-weather-uid",
+     "display_name": "Real Weather"}}}
+  ]
+}"#;
+
+#[tokio::test]
+async fn serves_real_package_index_over_grpc() {
+    let scenario = r#"{"firmware": "up-to-date", "packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#;
+    let mut mock = spawn_mock_with_index(scenario, REAL_INDEX_JSON);
+    let mut client = upgrade_client(&mut mock).await;
+    let response = client
+        .get_installable_widgets(())
+        .await
+        .expect("BUG: list failed")
+        .into_inner();
+    assert_eq!(response.widgets.len(), 1, "widgets: {:?}", response.widgets);
+    let widget = &response.widgets[0];
+    assert_eq!(widget.package_name, "widget-flip-clock");
+    assert_eq!(widget.uid, "real-flip-uid");
+    assert_eq!(widget.display_name, "Real Flip Clock");
+    assert_eq!(widget.category, i32::from(WidgetCategory::Clock));
+    assert!(widget.icon.is_none());
+}
+
+const UNKNOWN_CATEGORY_INDEX_JSON: &str = r#"{
+  "version": 1, "provenance": null, "indexes": [], "caches": [],
+  "packages": [{"name": "widget-flip-clock", "version": "2.5.0",
+    "store_path": "/nix/store/x", "category": "widget",
+    "metadata": {"widget": {"uid": "u", "display_name": "Flip",
+    "category": "teleportation"}}}]
+}"#;
+
+#[tokio::test]
+async fn unknown_index_category_serves_as_unspecified_over_grpc() {
+    let scenario = r#"{"firmware": "up-to-date", "packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#;
+    let mut mock = spawn_mock_with_index(scenario, UNKNOWN_CATEGORY_INDEX_JSON);
+    let mut client = upgrade_client(&mut mock).await;
+    let response = client
+        .get_installable_widgets(())
+        .await
+        .expect("BUG: list failed")
+        .into_inner();
+    assert_eq!(response.widgets.len(), 1, "widgets: {:?}", response.widgets);
+    assert_eq!(
+        response.widgets[0].category,
+        i32::from(WidgetCategory::Unspecified),
+        "unknown index category must serve as UNSPECIFIED"
+    );
 }
 
 #[tokio::test]

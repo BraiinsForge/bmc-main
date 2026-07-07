@@ -41,7 +41,9 @@ async fn main() -> Result<()> {
         mockfs.upgrade_scenario(),
         pacing,
         Arc::clone(&stop),
-    ));
+    )
+    .with_package_index(config.package_index.clone())
+    .with_widgets_path(Some(config.widgets_path.clone())));
 
     let blob = bmc_mock::blob_server::spawn(pacing)
         .await

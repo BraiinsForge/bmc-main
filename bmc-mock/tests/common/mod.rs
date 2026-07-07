@@ -19,6 +19,7 @@ pub struct MockInstance {
     pub mockfs: PathBuf,
     pub dir: tempfile::TempDir,
     pub password: String,
+    index_path: Option<PathBuf>,
 }
 
 impl Drop for MockInstance {
@@ -41,21 +42,26 @@ fn spawn_child(
     mockfs: &std::path::Path,
     port: u16,
     password: &str,
+    index_path: Option<&std::path::Path>,
 ) -> Child {
+    let mut args = vec![
+        format!("--address=127.0.0.1:{port}"),
+        format!("--mockfs-path={}", mockfs.display()),
+        format!(
+            "--mockfs-template={}",
+            dir.path().join("template").display()
+        ),
+        format!("--www-path={}", dir.path().join("www").display()),
+        format!("--sounds-dir={}", dir.path().join("sounds").display()),
+        format!("--widgets-path={}", dir.path().join("widgets").display()),
+        format!("--system-password={password}"),
+        "--fast-upgrades".to_owned(),
+    ];
+    if let Some(index) = index_path {
+        args.push(format!("--package-index={}", index.display()));
+    }
     Command::new(env!("CARGO_BIN_EXE_bmc-mock"))
-        .args([
-            format!("--address=127.0.0.1:{port}"),
-            format!("--mockfs-path={}", mockfs.display()),
-            format!(
-                "--mockfs-template={}",
-                dir.path().join("template").display()
-            ),
-            format!("--www-path={}", dir.path().join("www").display()),
-            format!("--sounds-dir={}", dir.path().join("sounds").display()),
-            format!("--widgets-path={}", dir.path().join("widgets").display()),
-            format!("--system-password={password}"),
-            "--fast-upgrades".to_owned(),
-        ])
+        .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -63,11 +69,40 @@ fn spawn_child(
 }
 
 pub fn spawn_mock(scenario_json: &str) -> MockInstance {
+    spawn_mock_inner(scenario_json, None)
+}
+
+#[expect(
+    dead_code,
+    reason = "the shared harness is compiled into tests that do not need a package index"
+)]
+pub fn spawn_mock_with_index(scenario_json: &str, index_json: &str) -> MockInstance {
+    spawn_mock_inner(scenario_json, Some(index_json))
+}
+
+fn spawn_mock_inner(scenario_json: &str, index_json: Option<&str>) -> MockInstance {
     let dir = tempfile::tempdir().expect("BUG: tempdir");
     let template = dir.path().join("template/etc");
     std::fs::create_dir_all(&template).expect("BUG: create template");
     std::fs::write(template.join("upgrade-scenario.json"), scenario_json)
         .expect("BUG: write scenario");
+    let index_path = index_json.map(|json| {
+        let path = dir.path().join("package-index.json");
+        std::fs::write(&path, json).expect("BUG: write index");
+        path
+    });
+    let widget_dir = dir.path().join("widgets/flip-clock");
+    std::fs::create_dir_all(&widget_dir).expect("BUG: create widget dir");
+    std::fs::write(widget_dir.join("icon.svg"), "<svg/>").expect("BUG: write icon");
+    std::fs::write(
+        widget_dir.join("manifest.json"),
+        r#"{"uid":"7cb584a8-1f26-42a0-867e-955aadd2391c","version":"1.0.0",
+           "name":"Flip Clock","description":"A retro split-flap clock face.",
+           "binary":"bin/flip-clock","icon":"icon.svg","category":"clock",
+           "supported_viewports":[{"type":"rectangular","min_width":100,
+           "max_width":200,"min_height":100,"max_height":200}]}"#,
+    )
+    .expect("BUG: write manifest");
     let mockfs = dir.path().join("mockfs");
     let port = free_port();
     // Per-instance password (the unique tempdir name), so logging in on a
@@ -79,7 +114,7 @@ pub fn spawn_mock(scenario_json: &str) -> MockInstance {
             .expect("BUG: tempdir has a name")
             .to_string_lossy()
     );
-    let child = spawn_child(&dir, &mockfs, port, &password);
+    let child = spawn_child(&dir, &mockfs, port, &password, index_path.as_deref());
 
     MockInstance {
         child,
@@ -87,6 +122,7 @@ pub fn spawn_mock(scenario_json: &str) -> MockInstance {
         mockfs,
         dir,
         password,
+        index_path,
     }
 }
 
@@ -101,7 +137,13 @@ async fn connect(mock: &mut MockInstance) -> Channel {
             assert!(respawns < 3, "mock kept dying at startup: {status}");
             respawns += 1;
             mock.port = free_port();
-            mock.child = spawn_child(&mock.dir, &mock.mockfs, mock.port, &mock.password);
+            mock.child = spawn_child(
+                &mock.dir,
+                &mock.mockfs,
+                mock.port,
+                &mock.password,
+                mock.index_path.as_deref(),
+            );
         }
         let endpoint = format!("http://127.0.0.1:{}", mock.port);
         match Channel::from_shared(endpoint)
@@ -155,7 +197,13 @@ pub async fn authenticated_channel(
                 _ = mock.child.kill();
                 _ = mock.child.wait();
                 mock.port = free_port();
-                mock.child = spawn_child(&mock.dir, &mock.mockfs, mock.port, &mock.password);
+                mock.child = spawn_child(
+                    &mock.dir,
+                    &mock.mockfs,
+                    mock.port,
+                    &mock.password,
+                    mock.index_path.as_deref(),
+                );
             }
         }
     }

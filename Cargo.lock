@@ -1119,6 +1119,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum-extra",
+ "base64 0.22.1",
  "bmc",
  "bmc-button",
  "bmc-grpc",
@@ -1128,6 +1129,7 @@ dependencies = [
  "bmc-shared-time",
  "bmc-support",
  "bmc-upgrade",
+ "bmc-widget-manifest",
  "chrono",
  "clap",
  "dirs",
@@ -1146,6 +1148,7 @@ dependencies = [
  "tooling-std",
  "tracing",
  "uuid",
+ "walkdir",
  "zip",
 ]
 
@@ -1576,6 +1579,7 @@ dependencies = [
  "bmc-platform",
  "bmc-scheduler",
  "bmc-shared-time",
+ "bmc-widget-manifest",
  "bytes",
  "chrono",
  "chrono-tz",
