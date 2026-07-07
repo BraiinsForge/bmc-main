@@ -8,6 +8,7 @@ mod common;
 
 use std::time::Duration;
 
+use bmc_grpc::web::scene_management_service_client::SceneManagementServiceClient;
 use bmc_grpc::web::upgrade_service_client::UpgradeServiceClient;
 use bmc_grpc::web::{
     CheckForUpgradeRequest, FirmwareUpgradePhase, PackageUpgradePhase, StartUpgradeRequest,
@@ -17,9 +18,13 @@ use tonic::Request;
 use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 
-use common::{MockInstance, spawn_mock, spawn_mock_with_index};
+use common::{MockInstance, spawn_mock};
 
 const STREAM_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn spawn_mock_with_index(scenario_json: &str, index_json: &str) -> MockInstance {
+    common::spawn_mock_inner(scenario_json, Some(index_json))
+}
 
 #[derive(Clone)]
 struct CookieAuth(MetadataValue<tonic::metadata::Ascii>);
@@ -36,6 +41,15 @@ async fn upgrade_client(
 ) -> UpgradeServiceClient<tonic::service::interceptor::InterceptedService<Channel, CookieAuth>> {
     let (channel, cookie) = common::authenticated_channel(mock).await;
     UpgradeServiceClient::with_interceptor(channel, CookieAuth(cookie))
+}
+
+async fn scene_client(
+    mock: &mut MockInstance,
+) -> SceneManagementServiceClient<
+    tonic::service::interceptor::InterceptedService<Channel, CookieAuth>,
+> {
+    let (channel, cookie) = common::authenticated_channel(mock).await;
+    SceneManagementServiceClient::with_interceptor(channel, CookieAuth(cookie))
 }
 
 // Bounded drain so a regression that leaves the stream open fails the
@@ -806,5 +820,59 @@ async fn install_run_marks_widget_installed_over_grpc() {
             .iter()
             .any(|w| w.package_name == "widget-flip-clock"),
         "flip-clock should be unshadowed (installed) and no longer offered after the run"
+    );
+}
+
+#[tokio::test]
+async fn installed_widget_becomes_available_without_restart() {
+    let mut mock = spawn_mock(SHADOWED_SCENARIO);
+    let mut scenes = scene_client(&mut mock).await;
+
+    let before = scenes
+        .get_available_widgets(())
+        .await
+        .expect("BUG: list available failed")
+        .into_inner();
+    assert!(
+        !before.widgets.iter().any(|w| w.name == "Flip Clock"),
+        "shadowed widget must not be available before install: {:?}",
+        before.widgets
+    );
+
+    let mut client = upgrade_client(&mut mock).await;
+    let response = client
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec!["widget-flip-clock".to_owned()],
+        })
+        .await
+        .expect("BUG: check failed")
+        .into_inner();
+    let upgrade_id = response.upgrade_id.expect("BUG: upgrade id");
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest { upgrade_id })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+    let mut finished = false;
+    tokio::time::timeout(STREAM_TIMEOUT, async {
+        while let Some(progress) = stream.message().await.expect("BUG: stream errored") {
+            if matches!(progress.event, Some(upgrade_progress::Event::Finished(()))) {
+                finished = true;
+            }
+        }
+    })
+    .await
+    .expect("stream did not finish within the timeout");
+    assert!(finished, "install run did not finish");
+
+    let after = scenes
+        .get_available_widgets(())
+        .await
+        .expect("BUG: list available failed")
+        .into_inner();
+    assert!(
+        after.widgets.iter().any(|w| w.name == "Flip Clock"),
+        "installed widget must become available without a restart: {:?}",
+        after.widgets
     );
 }

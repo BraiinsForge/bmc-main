@@ -72,15 +72,7 @@ pub fn spawn_mock(scenario_json: &str) -> MockInstance {
     spawn_mock_inner(scenario_json, None)
 }
 
-#[expect(
-    dead_code,
-    reason = "the shared harness is compiled into tests that do not need a package index"
-)]
-pub fn spawn_mock_with_index(scenario_json: &str, index_json: &str) -> MockInstance {
-    spawn_mock_inner(scenario_json, Some(index_json))
-}
-
-fn spawn_mock_inner(scenario_json: &str, index_json: Option<&str>) -> MockInstance {
+pub fn spawn_mock_inner(scenario_json: &str, index_json: Option<&str>) -> MockInstance {
     let dir = tempfile::tempdir().expect("BUG: tempdir");
     let template = dir.path().join("template/etc");
     std::fs::create_dir_all(&template).expect("BUG: create template");
@@ -94,6 +86,12 @@ fn spawn_mock_inner(scenario_json: &str, index_json: Option<&str>) -> MockInstan
     let widget_dir = dir.path().join("widgets/flip-clock");
     std::fs::create_dir_all(&widget_dir).expect("BUG: create widget dir");
     std::fs::write(widget_dir.join("icon.svg"), "<svg/>").expect("BUG: write icon");
+    let bin_dir = widget_dir.join("bin");
+    std::fs::create_dir_all(&bin_dir).expect("BUG: create bin dir");
+    let binary = bin_dir.join("flip-clock");
+    std::fs::write(&binary, "#!/bin/sh\n").expect("BUG: write binary");
+    std::fs::set_permissions(&binary, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+        .expect("BUG: chmod binary");
     std::fs::write(
         widget_dir.join("manifest.json"),
         r#"{"uid":"7cb584a8-1f26-42a0-867e-955aadd2391c","version":"1.0.0",
