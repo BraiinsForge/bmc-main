@@ -826,16 +826,17 @@ impl SystemUpgradeError {
         if let Self::PackageCheckFailed(err) = self {
             return err.is_transient();
         }
-        // `UpgradeInProgress` is a transient collision with another run
-        // (e.g. a UI-driven check during the scheduled slot): the
-        // autoupgrade must back off and retry, not wait for the next
-        // cron slot.
+        // `UpgradeInProgress` and `UpgradeExpired` are transient collisions
+        // with another run (e.g. a UI-driven check during the scheduled slot
+        // evicting the id the autoupgrade just minted): the autoupgrade must
+        // back off and retry, not wait for the next cron slot.
         matches!(
             self,
             Self::UnableToCheckForUpgrade(
                 FirmwareDownloadError::IndexDownloadFailed
                     | FirmwareDownloadError::FetchUpgradeDetails
             ) | Self::UpgradeInProgress
+                | Self::UpgradeExpired
         )
     }
 }
@@ -936,6 +937,41 @@ mod tests {
             stream.next().await,
             Some(UpgradeRunState::Failed(SystemUpgradeError::UpgradeExpired))
         ));
+    }
+
+    #[tokio::test]
+    async fn expired_upgrade_after_racing_claim_is_retriable() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let system_upgrades = Mutex::new(HashMap::new());
+        system_upgrades.lock().await.insert(
+            "upgrade-0".to_owned(),
+            AvailableSystemUpgrade::Firmware {
+                detail: test_upgrade_detail(),
+            },
+        );
+
+        // A racing UI-driven start consumes the id the autoupgrade just
+        // minted; the autoupgrade's own claim then expires.
+        let winner = claim_upgrade(&run_gate, &system_upgrades, "upgrade-0").await;
+        let Ok((gate, _upgrade)) = winner else {
+            panic!("BUG: the racing claim must win the fresh id");
+        };
+        drop(gate);
+
+        let Err(mut stream) = claim_upgrade(&run_gate, &system_upgrades, "upgrade-0").await else {
+            panic!("BUG: the evicted id must not claim");
+        };
+        let Some(UpgradeRunState::Failed(err)) = stream.next().await else {
+            panic!("BUG: the evicted id must fail with an error");
+        };
+        assert!(
+            matches!(err, SystemUpgradeError::UpgradeExpired),
+            "expected UpgradeExpired, got {err:?}"
+        );
+        assert!(
+            err.is_retriable(),
+            "a racing claim evicting the autoupgrade's id must be retriable"
+        );
     }
 
     fn empty_merged_index() -> bmc_nix::types::MergedIndex {
@@ -1067,13 +1103,13 @@ mod tests {
             )
             .is_retriable()
         );
-        // A collision with a concurrent run resolves itself once the
-        // other run finishes; autoupgrade must retry it.
+        // Both collide with a concurrent run and resolve themselves once the
+        // other run finishes; autoupgrade must retry them.
         assert!(SystemUpgradeError::UpgradeInProgress.is_retriable());
+        assert!(SystemUpgradeError::UpgradeExpired.is_retriable());
         assert!(
             !SystemUpgradeError::PackageUpgradeFailed("realize failed".to_owned()).is_retriable()
         );
-        assert!(!SystemUpgradeError::UpgradeExpired.is_retriable());
         assert!(!SystemUpgradeError::UpgradeFailed.is_retriable());
         // A rejected image is permanent: retrying the same one is futile.
         assert!(!SystemUpgradeError::InvalidImage.is_retriable());
