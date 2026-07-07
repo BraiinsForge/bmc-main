@@ -2,7 +2,7 @@ For building, linting, testing we use justfile.
 
 ### Frontend Development
 
-The frontend uses Yarn 4.x and requires Node.js 24.6.0 (managed by Volta):
+The frontend uses Yarn 4.x and requires Node.js 24 (managed by Volta; the exact version is pinned in `package.json`):
 
 ```bash
 cd frontend/

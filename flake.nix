@@ -47,8 +47,8 @@
             })
             # Overlay yarn & nodejs
             (final: prev: {
-              nodejs = prev.nodejs_22;
-              yarn = prev.yarn.override { nodejs = prev.nodejs_22; };
+              nodejs = prev.nodejs_24;
+              yarn = prev.yarn.override { nodejs = prev.nodejs_24; };
             })
           ];
         };

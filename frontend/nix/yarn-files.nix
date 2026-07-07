@@ -64,10 +64,10 @@ pkgs.stdenv.mkDerivation {
       # To get the hash for a new platform, set it to pkgs.lib.fakeHash
       # and run `nix build .#yarnFiles` - nix will tell you the expected hash
       {
-        "x86_64-linux" = "sha256-b9OunIAh3MG5Cy2PQe6Cehk4f6bVGGISDNiqVckERtY=";
-        "aarch64-linux" = "sha256-b9OunIAh3MG5Cy2PQe6Cehk4f6bVGGISDNiqVckERtY=";
-        "x86_64-darwin" = "sha256-NC/+0RGy1iUL0nzjaMNF0/8TPKKKT/PM2d4afg5sc0Y=";
-        "aarch64-darwin" = "sha256-NC/+0RGy1iUL0nzjaMNF0/8TPKKKT/PM2d4afg5sc0Y=";
+        "x86_64-linux" = "sha256-vh2Bo+/AvHWP03miyNCwktHvIYldurpZW0zNuW7TrMU=";
+        "aarch64-linux" = "sha256-vh2Bo+/AvHWP03miyNCwktHvIYldurpZW0zNuW7TrMU=";
+        "x86_64-darwin" = "sha256-EpYwye7XrL9YnWgmhri3rXsvSo7lYUeZoBst57dPiRA=";
+        "aarch64-darwin" = "sha256-EpYwye7XrL9YnWgmhri3rXsvSo7lYUeZoBst57dPiRA=";
       }.${pkgs.stdenv.hostPlatform.system} or (throw "Unsupported platform: ${pkgs.stdenv.hostPlatform.system}");
   };
 }
