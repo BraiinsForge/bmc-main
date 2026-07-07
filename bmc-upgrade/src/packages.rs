@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde::Deserialize;
 use tracing::{info, warn};
 
 /// Package-index fetches run under the upgrade run gate: a hung index
@@ -48,6 +49,36 @@ pub struct InstallablePreview {
     pub image: String,
 }
 
+/// Re-exported so consumers can name the known categories without depending
+/// on `bmc-widget-manifest` directly.
+pub use bmc_widget_manifest::WidgetCategory;
+
+/// Catalog category of an installable widget, read from a package index.
+///
+/// Locally-authored manifests only ever carry the known [`WidgetCategory`]
+/// values, but an index produced by a newer release may list a category this
+/// build does not recognize. Unrecognized (or absent) values become
+/// [`Self::Unknown`] so one new category cannot break listing the rest of the
+/// catalog — mirroring how the index's strategy hints tolerate unknown values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstallableCategory {
+    Known(WidgetCategory),
+    Unknown,
+}
+
+impl<'de> Deserialize<'de> for InstallableCategory {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Ok(WidgetCategory::deserialize(
+            serde::de::value::StrDeserializer::<serde::de::value::Error>::new(&raw),
+        )
+        .map_or(Self::Unknown, Self::Known))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InstallableWidget {
     pub package_name: String,
@@ -55,7 +86,7 @@ pub struct InstallableWidget {
     pub version: String,
     pub display_name: String,
     pub subname: Option<String>,
-    pub category: Option<String>,
+    pub category: InstallableCategory,
     pub description: Option<String>,
     pub icon: Option<String>,
     pub previews: Vec<InstallablePreview>,
@@ -458,7 +489,12 @@ pub fn installable_widgets_from(
                 display_name: widget_str(&resolved, "display_name")
                     .unwrap_or_else(|| resolved.name.clone()),
                 subname: widget_str(&resolved, "subname"),
-                category: widget_str(&resolved, "category"),
+                category: resolved
+                    .metadata
+                    .get("widget")
+                    .and_then(|w| w.get("category"))
+                    .and_then(|c| InstallableCategory::deserialize(c).ok())
+                    .unwrap_or(InstallableCategory::Unknown),
                 icon: resolved
                     .metadata
                     .get("assets")
@@ -793,12 +829,26 @@ mod tests {
         assert_eq!(w.uid, "uid-weather");
         assert_eq!(w.display_name, "Weather");
         assert_eq!(w.subname.as_deref(), Some("Forecast"));
-        assert_eq!(w.category.as_deref(), Some("info"));
+        // "info" is not a category this build knows, so it folds to Unknown
+        // rather than dropping the widget from the catalog.
+        assert_eq!(w.category, InstallableCategory::Unknown);
         assert_eq!(
             w.icon.as_deref(),
             Some("/nix/store/widget-weather/lib/bmc-widgets/weather/icon.svg")
         );
         assert!(w.previews.is_empty());
+    }
+
+    #[test]
+    fn installable_category_deserializes_known_and_unknown() {
+        let known: InstallableCategory =
+            serde_json::from_value(serde_json::json!("weather")).expect("BUG: known category");
+        assert_eq!(known, InstallableCategory::Known(WidgetCategory::Weather));
+
+        // A category value a newer index might carry that this build predates.
+        let unknown: InstallableCategory =
+            serde_json::from_value(serde_json::json!("teleportation")).expect("BUG: unknown ok");
+        assert_eq!(unknown, InstallableCategory::Unknown);
     }
 
     #[test]
