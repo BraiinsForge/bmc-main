@@ -2,10 +2,13 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::RwLock;
 
 use bmc_widget_manifest::{Manifest, ManifestError, ViewportShape, WidgetViewportConstraint};
 use tracing::warn;
 use uuid::Uuid;
+
+use super::{PathDiscovery, WidgetDiscovery};
 
 /// Information about a discovered widget.
 #[derive(Debug, Clone)]
@@ -105,16 +108,59 @@ pub fn slot_span_descriptor(columns: u32, rows: u32) -> Option<ViewportDescripto
 }
 
 /// Registry of available widgets discovered on the system.
+///
+/// The widget map is interior-mutable so [`WidgetRegistry::refresh`] can
+/// re-scan the discovery paths at runtime (e.g. after a widget package is
+/// installed) and swap in the new set without rebuilding the shared handle.
 #[derive(Debug)]
 pub struct WidgetRegistry {
-    widgets: HashMap<Uuid, WidgetInfo>,
+    widgets: RwLock<HashMap<Uuid, WidgetInfo>>,
+    /// Discovery paths to re-scan on `refresh`. `None` marks a static
+    /// registry built from an explicit widget set (tests); its `refresh`
+    /// is a no-op so it is never wiped.
+    paths: Option<Vec<PathBuf>>,
 }
 
 impl WidgetRegistry {
-    /// Create a new widget registry from the provided widgets.
+    /// Create a static widget registry from the provided widgets.
     ///
     /// Duplicate UIDs are handled by keeping the first widget and logging a warning.
+    /// The result is not refreshable ([`WidgetRegistry::refresh`] is a no-op).
     pub fn new(widgets: impl IntoIterator<Item = WidgetInfo>) -> Self {
+        Self {
+            widgets: RwLock::new(Self::build_map(widgets)),
+            paths: None,
+        }
+    }
+
+    /// Discover widgets under `paths` and build a refreshable registry that
+    /// remembers those paths for later [`WidgetRegistry::refresh`] calls.
+    pub async fn discover(paths: Vec<PathBuf>) -> Self {
+        let widgets = PathDiscovery::new(paths.clone()).discover().await;
+        Self {
+            widgets: RwLock::new(Self::build_map(widgets)),
+            paths: Some(paths),
+        }
+    }
+
+    /// Re-scan the discovery paths and replace the widget set with the result.
+    ///
+    /// A no-op for a static (`new`-built) registry. Discovery runs without the
+    /// lock held; the write lock is taken only for the final swap, so no
+    /// `.await` ever happens while holding it.
+    pub async fn refresh(&self) {
+        let Some(paths) = self.paths.clone() else {
+            return;
+        };
+        let widgets = PathDiscovery::new(paths).discover().await;
+        let map = Self::build_map(widgets);
+        *self
+            .widgets
+            .write()
+            .expect("BUG: widget registry lock poisoned") = map;
+    }
+
+    fn build_map(widgets: impl IntoIterator<Item = WidgetInfo>) -> HashMap<Uuid, WidgetInfo> {
         let mut map = HashMap::new();
 
         for widget_info in widgets {
@@ -133,42 +179,62 @@ impl WidgetRegistry {
             }
         }
 
-        Self { widgets: map }
+        map
     }
 
     /// Get a widget by its UID.
     #[must_use]
-    pub fn get(&self, uid: &Uuid) -> Option<&WidgetInfo> {
-        self.widgets.get(uid)
+    pub fn get(&self, uid: &Uuid) -> Option<WidgetInfo> {
+        self.widgets
+            .read()
+            .expect("BUG: widget registry lock poisoned")
+            .get(uid)
+            .cloned()
     }
 
     /// List all available widgets.
-    pub fn list(&self) -> impl Iterator<Item = &WidgetInfo> {
-        self.widgets.values()
+    #[must_use]
+    pub fn list(&self) -> Vec<WidgetInfo> {
+        self.widgets
+            .read()
+            .expect("BUG: widget registry lock poisoned")
+            .values()
+            .cloned()
+            .collect()
     }
 
     /// True when the widget's manifest declares at least one viewport
     /// constraint covering `descriptor`.
     #[must_use]
     pub fn supports_viewport(&self, uid: &Uuid, descriptor: &ViewportDescriptor) -> bool {
-        self.widgets.get(uid).is_some_and(|w| {
-            w.manifest
-                .supported_viewports
-                .iter()
-                .any(|c| descriptor.matched_by(c))
-        })
+        self.widgets
+            .read()
+            .expect("BUG: widget registry lock poisoned")
+            .get(uid)
+            .is_some_and(|w| {
+                w.manifest
+                    .supported_viewports
+                    .iter()
+                    .any(|c| descriptor.matched_by(c))
+            })
     }
 
     /// Returns the number of registered widgets.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.widgets.len()
+        self.widgets
+            .read()
+            .expect("BUG: widget registry lock poisoned")
+            .len()
     }
 
     /// Returns true if no widgets are registered.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.widgets.is_empty()
+        self.widgets
+            .read()
+            .expect("BUG: widget registry lock poisoned")
+            .is_empty()
     }
 }
 
@@ -332,7 +398,8 @@ mod tests {
         );
 
         let registry = WidgetRegistry::new(vec![widget_a, widget_b]);
-        let names: Vec<_> = registry.list().map(|w| w.manifest.name.as_str()).collect();
+        let widgets = registry.list();
+        let names: Vec<_> = widgets.iter().map(|w| w.manifest.name.as_str()).collect();
 
         assert_eq!(names.len(), 2);
         assert!(names.contains(&"widget-a"));
@@ -455,5 +522,76 @@ mod tests {
             ..desc
         };
         assert!(!registry.supports_viewport(&uid, &other));
+    }
+
+    fn write_widget(base_dir: &std::path::Path, name: &str, uid: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let widget_dir = base_dir.join(name);
+        std::fs::create_dir_all(&widget_dir).expect("BUG: create widget dir");
+        let manifest = format!(
+            r#"{{"uid":"{uid}","version":"1.0.0","name":"{name}","description":"t","binary":"widget","sizes":["small"]}}"#
+        );
+        std::fs::write(widget_dir.join("manifest.json"), manifest).expect("BUG: write manifest");
+        let binary_path = widget_dir.join("widget");
+        std::fs::write(&binary_path, "#!/bin/sh\n").expect("BUG: write binary");
+        std::fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(0o755))
+            .expect("BUG: chmod binary");
+    }
+
+    #[tokio::test]
+    async fn refresh_picks_up_newly_added_widget() {
+        let temp_dir = tempfile::TempDir::new().expect("BUG: tempdir");
+        write_widget(
+            temp_dir.path(),
+            "first",
+            "550e8400-e29b-41d4-a716-446655440000",
+        );
+
+        let registry = WidgetRegistry::discover(vec![temp_dir.path().to_path_buf()]).await;
+        assert_eq!(registry.len(), 1);
+
+        write_widget(
+            temp_dir.path(),
+            "second",
+            "550e8400-e29b-41d4-a716-446655440001",
+        );
+        registry.refresh().await;
+
+        assert_eq!(registry.len(), 2);
+        let second = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440001").expect("BUG: uid");
+        assert!(registry.get(&second).is_some());
+    }
+
+    #[tokio::test]
+    async fn refresh_drops_removed_widget() {
+        let temp_dir = tempfile::TempDir::new().expect("BUG: tempdir");
+        write_widget(
+            temp_dir.path(),
+            "gone",
+            "550e8400-e29b-41d4-a716-446655440000",
+        );
+
+        let registry = WidgetRegistry::discover(vec![temp_dir.path().to_path_buf()]).await;
+        assert_eq!(registry.len(), 1);
+
+        std::fs::remove_dir_all(temp_dir.path().join("gone")).expect("BUG: remove widget");
+        registry.refresh().await;
+
+        assert!(registry.is_empty());
+    }
+
+    #[tokio::test]
+    async fn refresh_is_a_noop_for_static_registry() {
+        let widget = make_widget_info(
+            "550e8400-e29b-41d4-a716-446655440000",
+            "static-widget",
+            vec![],
+        );
+        let registry = WidgetRegistry::new(vec![widget]);
+        assert_eq!(registry.len(), 1);
+
+        registry.refresh().await;
+
+        assert_eq!(registry.len(), 1, "static registry must not be wiped");
     }
 }

@@ -49,15 +49,18 @@ pub static CLIENT: LazyLock<Client> = LazyLock::new(|| {
         .expect("BUG: static client builder failed")
 });
 
-/// Widget lifecycle control around a disruptive firmware upgrade: stops all
-/// running widget processes before the flash hand-off so GPU resources are
-/// freed, and respawns them when the upgrade fails. The compositor keeps
-/// running throughout so the display stays alive if the upgrade fails and
-/// is retried.
+/// Widget lifecycle control around a system upgrade. Around a disruptive
+/// firmware upgrade it stops all running widget processes before the flash
+/// hand-off so GPU resources are freed, and respawns them when the upgrade
+/// fails (the compositor keeps running throughout so the display stays alive
+/// on a retried failure). After a widget-package install it re-scans the
+/// widget registry so the newly-installed widget is available without a
+/// restart.
 #[async_trait::async_trait]
-pub(crate) trait WidgetStopper: Send + Sync + std::fmt::Debug {
+pub(crate) trait WidgetLifecycle: Send + Sync + std::fmt::Debug {
     async fn stop_all_widgets(&self);
     async fn restart_widgets(&self);
+    async fn refresh_widgets(&self);
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -322,6 +325,7 @@ async fn claim_upgrade(
 fn spawn_packages_run(
     gate: tokio::sync::OwnedMutexGuard<()>,
     package_backend: Arc<dyn PackageBackend>,
+    widget_lifecycle: Arc<dyn WidgetLifecycle>,
     merged: bmc_nix::types::MergedIndex,
     install: Vec<String>,
     download_size_bytes: Option<u64>,
@@ -338,6 +342,9 @@ fn spawn_packages_run(
         match package_backend.apply(merged, install, adapter).await {
             Ok(()) => {
                 info!("Package upgrade finished");
+                // Re-scan so the just-installed widget is available without a
+                // restart; the install already wrote it into the widgets path.
+                widget_lifecycle.refresh_widgets().await;
                 _ = tx.send(UpgradeRunState::Finished);
             }
             Err(err) => {
@@ -392,7 +399,7 @@ pub(crate) struct SystemUpgradeService<T: FirmwareIndex, U: BmcManager> {
     upgrade_id_seq: Arc<AtomicUsize>,
     system_upgrades: Arc<Mutex<HashMap<String, AvailableSystemUpgrade>>>,
     package_backend: Arc<dyn PackageBackend>,
-    widget_stopper: Arc<dyn WidgetStopper>,
+    widget_lifecycle: Arc<dyn WidgetLifecycle>,
     pending_install_path: PathBuf,
 }
 
@@ -412,7 +419,7 @@ where
             upgrade_id_seq: self.upgrade_id_seq.clone(),
             system_upgrades: self.system_upgrades.clone(),
             package_backend: self.package_backend.clone(),
-            widget_stopper: self.widget_stopper.clone(),
+            widget_lifecycle: self.widget_lifecycle.clone(),
             pending_install_path: self.pending_install_path.clone(),
         }
     }
@@ -427,7 +434,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         state_service: StateService,
         scheduler: JobScheduler,
         package_backend: Arc<dyn PackageBackend>,
-        widget_stopper: Arc<dyn WidgetStopper>,
+        widget_lifecycle: Arc<dyn WidgetLifecycle>,
         pending_install_path: PathBuf,
     ) -> Self {
         let autoupgrade = AutoUpgrade::new(Notify::new(), Instant::now());
@@ -446,7 +453,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             upgrade_id_seq: Arc::new(AtomicUsize::new(0)),
             system_upgrades: Arc::new(Mutex::new(HashMap::new())),
             package_backend,
-            widget_stopper,
+            widget_lifecycle,
             pending_install_path,
         }
     }
@@ -540,6 +547,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             } => spawn_packages_run(
                 gate,
                 Arc::clone(&self.package_backend),
+                Arc::clone(&self.widget_lifecycle),
                 merged,
                 install,
                 download_size_bytes,
@@ -558,7 +566,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let firmware_upgrader = Arc::clone(&self.firmware_upgrader);
         let bmc_manager = Arc::clone(&self.bmc_manager);
-        let widget_stopper = Arc::clone(&self.widget_stopper);
+        let widget_lifecycle = Arc::clone(&self.widget_lifecycle);
         let state_service = self.state_service.clone();
         let pending_install_path = self.pending_install_path.clone();
         task::spawn(async move {
@@ -621,7 +629,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 return;
             }
 
-            widget_stopper.stop_all_widgets().await;
+            widget_lifecycle.stop_all_widgets().await;
 
             // Written here, immediately before the flash hand-off, so the
             // earlier download/verify failure returns can never leave a stale
@@ -664,7 +672,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 }
                 Err(err) => {
                     error!(error = %err, "Firmware upgrade failed");
-                    widget_stopper.restart_widgets().await;
+                    widget_lifecycle.restart_widgets().await;
                     // The only failure point after the handoff was written.
                     clear_pending_install(&install, &pending_install_path);
                     let failure = match err {
@@ -1148,26 +1156,76 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct FailingBackend;
+
+    #[async_trait::async_trait]
+    impl PackageBackend for FailingBackend {
+        async fn probe(&self, _estimate: EstimateMode, _install: &[String]) -> PackageProbe {
+            PackageProbe::UpToDate
+        }
+
+        async fn apply(
+            &self,
+            _merged: bmc_nix::types::MergedIndex,
+            _install: Vec<String>,
+            _progress: Arc<dyn bmc_nix::upgrade::UpgradeProgress>,
+        ) -> Result<(), bmc_upgrade::packages::ApplyError> {
+            Err(bmc_upgrade::packages::ApplyError("boom".to_owned()))
+        }
+
+        async fn list_installable_widgets(
+            &self,
+        ) -> Result<
+            Vec<bmc_upgrade::packages::InstallableWidget>,
+            bmc_upgrade::packages::PackageProbeError,
+        > {
+            Ok(Vec::new())
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingLifecycle {
+        refreshed: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl WidgetLifecycle for RecordingLifecycle {
+        async fn stop_all_widgets(&self) {}
+        async fn restart_widgets(&self) {}
+        async fn refresh_widgets(&self) {
+            self.refreshed
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    async fn drain(mut run: UpgradeRunStream) -> Option<UpgradeRunState> {
+        let mut last = None;
+        while let Some(state) = run.next().await {
+            last = Some(state);
+        }
+        last
+    }
+
     #[tokio::test]
     async fn run_gate_is_free_after_a_packages_run_completes() {
         let run_gate = Arc::new(Mutex::new(()));
         let gate = Arc::clone(&run_gate)
             .try_lock_owned()
             .expect("BUG: fresh gate is lockable");
+        let lifecycle = Arc::new(RecordingLifecycle::default());
 
-        let mut run = spawn_packages_run(
+        let run = spawn_packages_run(
             gate,
             Arc::new(StubBackend),
+            Arc::clone(&lifecycle) as Arc<dyn WidgetLifecycle>,
             empty_merged_index(),
             Vec::new(),
             None,
             StateService::new(),
         );
 
-        let mut last = None;
-        while let Some(state) = run.next().await {
-            last = Some(state);
-        }
+        let last = drain(run).await;
         assert!(
             matches!(last, Some(UpgradeRunState::Finished)),
             "run must finish successfully, got {last:?}"
@@ -1177,6 +1235,127 @@ mod tests {
         assert!(
             run_gate.try_lock().is_ok(),
             "run gate must be free after the run completes"
+        );
+    }
+
+    #[tokio::test]
+    async fn successful_packages_run_refreshes_widgets_once() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let lifecycle = Arc::new(RecordingLifecycle::default());
+
+        let run = spawn_packages_run(
+            gate,
+            Arc::new(StubBackend),
+            Arc::clone(&lifecycle) as Arc<dyn WidgetLifecycle>,
+            empty_merged_index(),
+            vec!["widget-flip-clock".to_owned()],
+            None,
+            StateService::new(),
+        );
+
+        assert!(matches!(drain(run).await, Some(UpgradeRunState::Finished)));
+        // A completed install must re-scan exactly once so the newly-installed
+        // widget becomes available without a restart.
+        assert_eq!(
+            lifecycle
+                .refreshed
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[derive(Debug)]
+    struct GatedLifecycle {
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl WidgetLifecycle for GatedLifecycle {
+        async fn stop_all_widgets(&self) {}
+        async fn restart_widgets(&self) {}
+        async fn refresh_widgets(&self) {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn packages_run_refreshes_widgets_before_finishing() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let lifecycle = Arc::new(GatedLifecycle {
+            entered: Arc::clone(&entered),
+            release: Arc::clone(&release),
+        });
+
+        let mut run = spawn_packages_run(
+            gate,
+            Arc::new(StubBackend),
+            Arc::clone(&lifecycle) as Arc<dyn WidgetLifecycle>,
+            empty_merged_index(),
+            vec!["widget-flip-clock".to_owned()],
+            None,
+            StateService::new(),
+        );
+
+        // apply() has returned Ok and refresh_widgets() is now in flight,
+        // parked on the release gate.
+        entered.notified().await;
+
+        // Finished must not reach the stream while the refresh is still
+        // running: a newly-installed widget would otherwise be reported
+        // available to the FE before the registry actually knows about it.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), run.next())
+                .await
+                .is_err(),
+            "Finished must not be observable until the widget refresh completes"
+        );
+
+        // Let the refresh finish; only then does the run signal Finished.
+        release.notify_one();
+        assert!(matches!(drain(run).await, Some(UpgradeRunState::Finished)));
+    }
+
+    #[tokio::test]
+    async fn failed_packages_run_does_not_refresh_widgets() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let lifecycle = Arc::new(RecordingLifecycle::default());
+
+        let run = spawn_packages_run(
+            gate,
+            Arc::new(FailingBackend),
+            Arc::clone(&lifecycle) as Arc<dyn WidgetLifecycle>,
+            empty_merged_index(),
+            vec!["widget-flip-clock".to_owned()],
+            None,
+            StateService::new(),
+        );
+
+        assert!(matches!(
+            drain(run).await,
+            Some(UpgradeRunState::Failed(
+                SystemUpgradeError::PackageUpgradeFailed(_)
+            ))
+        ));
+        // A failed apply installed nothing: refreshing would only churn the
+        // registry, so it must not fire.
+        assert_eq!(
+            lifecycle
+                .refreshed
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
         );
     }
 
