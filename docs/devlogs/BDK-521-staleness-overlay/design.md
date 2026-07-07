@@ -66,8 +66,9 @@ Spec crossing the FFI:
 ```rust
 RelTimeSpec {
     anchor:  SystemTime,     // reference epoch-second (unix_secs, i64 on the wire)
-    format:  RelTimeFormat,  // REQUIRED (no default). Short now; Long reserved sibling;
-                             //   Custom(String) tag reserved on the wire, not implemented.
+    format:  RelTimeFormat,  // REQUIRED (no default). Two independent axes, packed into one
+                             //   wire byte: length = Short (`7m`) | Long (`7 minutes`);
+                             //   segments = Single (`7m`) | Double (`7m 30s`).
     clamp:   Clamp,          // Auto (sign-flip, default) | ElapsedOnly | RemainingOnly
 }
 ```
@@ -81,7 +82,8 @@ RelTimeSpec {
   `animation_wants_immediate` / `next_frame_delay`), so `bmc-render`'s cached-tree replay
   (`host_api.rs::is_animation_only_frame`) refreshes it with no WASM rerun. Wakes are gated to the **Visible** lifecycle
   (`bmc-wasm-host/src/main_loop.rs:124-133`): off-screen, neighbor, and transitioning widgets do not tick. Next-boundary
-  delay is 1s / 60s / 3600s / 86400s by band.
+  delay follows the `segments` axis: `Single` wakes at the largest shown unit's boundary (1s / 60s / 3600s / 86400s by
+  band), `Double` at the smaller segment's — so a `Single` pill wakes at most once a minute once past the seconds band.
 - **Determinism.** The host formatter reads the same replay clock the animation system advances, so capture baselines
   stay deterministic.
 
@@ -147,7 +149,7 @@ Homes: `protocol/src/nodes.rs` (`NODE_TAG`); `bmc-wasm-runtime/sdk/src/tag.rs` (
 let s = tag_theme(TagKind::Warning).content;                 // ORANGE_40
 let label = row(cross_align: Center, gap: 0, [
     text("Last refresh ", style(size: 12, color: s)),
-    relative_time_live(anchor = poll.last_success_epoch(), RelTimeFormat::Short, style: (12, s)),
+    relative_time_live(anchor = poll.last_success_epoch(), RelTimeFormat { Short, Single }, style: (12, s)),
 ]);
 with_placement(tag(Warning, /*default icon*/ None, label), placement)
 ```
@@ -173,6 +175,25 @@ Three options were weighed for refreshing "N ago":
    Visible-gated so off-screen cost is zero, and cheaper per tick than a WASM rerun. For the real widgets it is also
    lower-cadence in practice: weather goes stale only at `1.5 × 300 s = 450 s`, already the minutes band (60 s ticks);
    mining-clock already re-renders per second for its clock.
+
+## Measured self-tick perf (on-device)
+
+Measured on a real Deck (ARMv7, debug profile) with per-frame profiling — `RUST_LOG=info,bmc_wasm_host=debug` on the
+compositor, reading `delta_ms` / `total_us` from the wasm-host render-frame log while the image widget was driven stale
+(network offline-sealed via `ip route del default`).
+
+- **Pre-fix** (a single `Short` format spelling `7m 30s`) — `next_change_delay_ms` aligned to the *seconds* boundary, so
+  the host repainted the full 1280×480 frame **every 1 s** (~85 ms each) → **~8.5% core, continuous**, with no deep
+  idle.
+- **Post-fix** (`{ Short, Single }`, spelling `7m`) — cadence derives from `segments`, so `Single` aligns to the
+  *minute* boundary. Over 170 s stale, 34 frames: `delta_ms` clustered at ~10 s (offline poll-retry), ~20 s (the image
+  widget's own image-cycling), and ~50–60 s (minute-boundary tick) — **no sustained 1 s run**. ≈ **1.9% core**, and
+  nearly all of that is the image widget's own repainting, not the pill.
+
+Net: the stale-overlay self-tick drops from ~8.5% to a pill contribution near zero — **1 s → 60 s** once past the
+seconds band. A residual ~0.8 s double-render appears ~once per 80 s (a settle/immediate frame paired with a retry, not
+the old sustained repaint); negligible. The underlying full-frame repaint cost — any widget re-render paints the whole
+frame on the 2-slot swapchain — is tracked separately as a dirty-region optimization, out of scope here.
 
 ## Migration
 
@@ -202,14 +223,13 @@ One commit per widget; **the last migration to stop using a shared banner delete
 - Capture / visual regression: a stale-state fixture per migrated widget — \`200 → advance
   > stale_factor × interval → 503 →
   > capture`— driving the overlay on. Deterministic via the replay   clock; bless with`just update-baselines <widget>\`.
-- **Self-tick perf + correctness (required gate, not just green unit tests):** measure the boundary-cadence self-tick on
-  a real Deck — actual extra frame wakes and GPU/CPU cost; confirm off-screen/neighbor slots truly do not wake and that
-  the cadence is the boundary cadence, not the animation cadence; confirm the label updates at the right instant with no
-  drift and capture stays deterministic under the injected clock.
+- **Self-tick perf + correctness (required gate, not just green unit tests):** measured on a real Deck — see **Measured
+  self-tick perf (on-device)** above: the minute-boundary cadence holds and the pill's continuous 1 s repaint is gone
+  (~8.5% → ~1.9% core). Off-screen/neighbor no-wake and no-drift updates rest on the Visible-gated animation path (§1)
+  and the injected replay clock; not separately re-measured in that run.
 
 ## Deferred / reserved
 
-- `RelTimeFormat::Long` ("7 minutes ago") — sibling of `Short`, added when a consumer needs it.
 - `RelTimeFormat::Custom(String)` — a duration/relative-time mini-language (d3-format and Python's format spec are
   *number* grammars and don't apply); the wire reserves the tag, implementation deferred until there's a real need.
 - Live paragraph span (true inline flow mixing static + live text) — deferred; `row` composition covers the single-line
