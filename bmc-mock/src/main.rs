@@ -32,7 +32,11 @@ async fn main() -> Result<()> {
 
     let pacing = config.upgrade_pacing();
 
-    let package_backend = Arc::new(MockPackageBackend::new(mockfs.upgrade_scenario(), pacing));
+    let package_backend = Arc::new(
+        MockPackageBackend::new(mockfs.upgrade_scenario(), pacing)
+            .with_package_index(config.package_index.clone())
+            .with_widgets_path(Some(config.widgets_path.clone())),
+    );
 
     let blob = bmc_mock::blob_server::spawn(pacing)
         .await
