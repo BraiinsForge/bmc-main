@@ -161,8 +161,13 @@ let
     ];
     conffiles = [
       "/root/.profile"
-      "/var/log/bmc"
+      "/var/log/bmc/bmc.log"
+      "/var/log/bmc/widgets.log"
+      "/var/log/bmc/bmc-nix-cli.log"
+      "/var/log/nix-orchestrator/nix-orchestrator.log"
       "/etc/nix/nix.conf"
+      "/etc/nix-upgrade/servers.json"
+      "/etc/nix-upgrade/gc.json"
       "/etc/init.d/nix-activator"
       "/etc/rc.d/S91nix-activator"
     ];
