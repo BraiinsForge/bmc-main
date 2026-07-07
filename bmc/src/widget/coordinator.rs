@@ -6,10 +6,11 @@ use bmc_widget_protocol::{
     Localization, NextAlarm, SettingUpdate, ViewportShape, WidgetInitialConfig,
 };
 use indexmap::IndexMap;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast, watch};
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 use crate::BmcManager;
 use crate::compositor::{
@@ -330,6 +331,12 @@ impl Coordinator {
     #[must_use]
     pub fn compositor(&self) -> Arc<dyn Compositor> {
         Arc::clone(&self.compositor)
+    }
+
+    /// Re-scan the widget registry so a widget installed at runtime becomes
+    /// available without a restart, returning the uids now discoverable.
+    pub async fn refresh_widgets(&self) -> HashSet<Uuid> {
+        self.widget_manager.refresh().await
     }
 
     pub async fn spawn_initial_widgets(
@@ -700,7 +707,7 @@ impl UpgradeWidgetLifecycle {
 }
 
 #[async_trait::async_trait]
-impl crate::system_upgrade::WidgetStopper for UpgradeWidgetLifecycle {
+impl crate::system_upgrade::WidgetLifecycle for UpgradeWidgetLifecycle {
     async fn stop_all_widgets(&self) {
         self.coordinator.stop_all_widgets().await;
     }
@@ -710,6 +717,10 @@ impl crate::system_upgrade::WidgetStopper for UpgradeWidgetLifecycle {
         self.coordinator
             .spawn_all_scene_widgets(config.scenes())
             .await;
+    }
+
+    async fn refresh_widgets(&self) -> HashSet<Uuid> {
+        self.coordinator.refresh_widgets().await
     }
 }
 

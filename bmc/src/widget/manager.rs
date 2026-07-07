@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Error, ErrorKind};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use super::coordinator::WidgetEnv;
-use super::{PathDiscovery, SpawnError, WaylandSpawner, WidgetDiscovery, WidgetRegistry};
+use super::{SpawnError, WaylandSpawner, WidgetRegistry};
 
 const DEFAULT_XDG_RUNTIME_DIR: &str = "/tmp/run";
 
@@ -35,10 +35,7 @@ impl WidgetManager {
             info!(path = %path.display(), "scanning widget directory");
         }
 
-        let discovery = PathDiscovery::new(widgets_paths);
-        let widgets = discovery.discover().await;
-
-        let registry = Arc::new(WidgetRegistry::new(widgets));
+        let registry = Arc::new(WidgetRegistry::discover(widgets_paths).await);
         info!(count = registry.len(), "widget discovery complete");
 
         for widget in registry.list() {
@@ -63,6 +60,13 @@ impl WidgetManager {
     #[must_use]
     pub fn registry(&self) -> Arc<WidgetRegistry> {
         self.registry.clone()
+    }
+
+    /// Re-scan the widget discovery paths so newly-installed widgets become
+    /// available without a restart, returning the uids now known to the
+    /// registry. A no-op if the registry is static.
+    pub async fn refresh(&self) -> HashSet<Uuid> {
+        self.registry.refresh().await
     }
 
     /// Spawn a widget process and return its OS pid. The compositor needs
@@ -92,7 +96,7 @@ impl WidgetManager {
         let xdg_runtime_dir =
             std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| DEFAULT_XDG_RUNTIME_DIR.to_owned());
 
-        let mut child = self.spawner.spawn(widget, &env, &xdg_runtime_dir)?;
+        let mut child = self.spawner.spawn(&widget, &env, &xdg_runtime_dir)?;
         let pid = child.id().ok_or_else(|| {
             SpawnError::SpawnProcess(Error::other("spawned child has no pid (already exited?)"))
         })?;
