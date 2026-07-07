@@ -540,7 +540,7 @@ fn string_format_to_proto(f: bmc_widget_manifest::StringFormat) -> web::StringFo
     }
 }
 
-fn category_to_proto(c: bmc_widget_manifest::WidgetCategory) -> web::WidgetCategory {
+pub(crate) fn category_to_proto(c: bmc_widget_manifest::WidgetCategory) -> web::WidgetCategory {
     use bmc_widget_manifest::WidgetCategory as C;
     match c {
         C::Mining => web::WidgetCategory::Mining,

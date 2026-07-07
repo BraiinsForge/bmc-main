@@ -12,7 +12,7 @@ use bmc_grpc::web::authentication_service_client::AuthenticationServiceClient;
 use bmc_grpc::web::upgrade_service_client::UpgradeServiceClient;
 use bmc_grpc::web::{
     CheckForUpgradeRequest, FirmwareUpgradePhase, LoginRequest, PackageUpgradePhase,
-    StartUpgradeRequest, UpgradeDisruption, UpgradeProgress, upgrade_progress,
+    StartUpgradeRequest, UpgradeDisruption, UpgradeProgress, WidgetCategory, upgrade_progress,
 };
 use tonic::Request;
 use tonic::metadata::MetadataValue;
@@ -27,6 +27,7 @@ struct MockInstance {
     mockfs: PathBuf,
     dir: tempfile::TempDir,
     password: String,
+    index_path: Option<PathBuf>,
 }
 
 impl Drop for MockInstance {
@@ -49,21 +50,26 @@ fn spawn_child(
     mockfs: &std::path::Path,
     port: u16,
     password: &str,
+    index_path: Option<&std::path::Path>,
 ) -> Child {
+    let mut args = vec![
+        format!("--address=127.0.0.1:{port}"),
+        format!("--mockfs-path={}", mockfs.display()),
+        format!(
+            "--mockfs-template={}",
+            dir.path().join("template").display()
+        ),
+        format!("--www-path={}", dir.path().join("www").display()),
+        format!("--sounds-dir={}", dir.path().join("sounds").display()),
+        format!("--widgets-path={}", dir.path().join("widgets").display()),
+        format!("--system-password={password}"),
+        "--fast-upgrades".to_owned(),
+    ];
+    if let Some(index) = index_path {
+        args.push(format!("--package-index={}", index.display()));
+    }
     Command::new(env!("CARGO_BIN_EXE_bmc-mock"))
-        .args([
-            format!("--address=127.0.0.1:{port}"),
-            format!("--mockfs-path={}", mockfs.display()),
-            format!(
-                "--mockfs-template={}",
-                dir.path().join("template").display()
-            ),
-            format!("--www-path={}", dir.path().join("www").display()),
-            format!("--sounds-dir={}", dir.path().join("sounds").display()),
-            format!("--widgets-path={}", dir.path().join("widgets").display()),
-            format!("--system-password={password}"),
-            "--fast-upgrades".to_owned(),
-        ])
+        .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -71,11 +77,41 @@ fn spawn_child(
 }
 
 fn spawn_mock(scenario_json: &str) -> MockInstance {
+    spawn_mock_inner(scenario_json, None)
+}
+
+/// Spawn a mock whose installable catalog is served from a real package
+/// index file (the `--package-index` path), not the fabricated fallback.
+fn spawn_mock_with_index(scenario_json: &str, index_json: &str) -> MockInstance {
+    spawn_mock_inner(scenario_json, Some(index_json))
+}
+
+fn spawn_mock_inner(scenario_json: &str, index_json: Option<&str>) -> MockInstance {
     let dir = tempfile::tempdir().expect("BUG: tempdir");
     let template = dir.path().join("template/etc");
     std::fs::create_dir_all(&template).expect("BUG: create template");
     std::fs::write(template.join("upgrade-scenario.json"), scenario_json)
         .expect("BUG: write scenario");
+    let index_path = index_json.map(|json| {
+        let path = dir.path().join("package-index.json");
+        std::fs::write(&path, json).expect("BUG: write index");
+        path
+    });
+    // The fallback catalog is derived from the --widgets-path tree, so give
+    // the mock one widget (widget-flip-clock) with a renderable icon for the
+    // shadowed-scenario tests to discover.
+    let widget_dir = dir.path().join("widgets/flip-clock");
+    std::fs::create_dir_all(&widget_dir).expect("BUG: create widget dir");
+    std::fs::write(widget_dir.join("icon.svg"), "<svg/>").expect("BUG: write icon");
+    std::fs::write(
+        widget_dir.join("manifest.json"),
+        r#"{"uid":"7cb584a8-1f26-42a0-867e-955aadd2391c","version":"1.0.0",
+           "name":"Flip Clock","description":"A retro split-flap clock face.",
+           "binary":"bin/flip-clock","icon":"icon.svg","category":"clock",
+           "supported_viewports":[{"type":"rectangular","min_width":100,
+           "max_width":200,"min_height":100,"max_height":200}]}"#,
+    )
+    .expect("BUG: write manifest");
     let mockfs = dir.path().join("mockfs");
     let port = free_port();
     // Per-instance password (the unique tempdir name), so logging in on a
@@ -87,7 +123,7 @@ fn spawn_mock(scenario_json: &str) -> MockInstance {
             .expect("BUG: tempdir has a name")
             .to_string_lossy()
     );
-    let child = spawn_child(&dir, &mockfs, port, &password);
+    let child = spawn_child(&dir, &mockfs, port, &password, index_path.as_deref());
 
     MockInstance {
         child,
@@ -95,6 +131,7 @@ fn spawn_mock(scenario_json: &str) -> MockInstance {
         mockfs,
         dir,
         password,
+        index_path,
     }
 }
 
@@ -109,7 +146,13 @@ async fn connect(mock: &mut MockInstance) -> Channel {
             assert!(respawns < 3, "mock kept dying at startup: {status}");
             respawns += 1;
             mock.port = free_port();
-            mock.child = spawn_child(&mock.dir, &mock.mockfs, mock.port, &mock.password);
+            mock.child = spawn_child(
+                &mock.dir,
+                &mock.mockfs,
+                mock.port,
+                &mock.password,
+                mock.index_path.as_deref(),
+            );
         }
         let endpoint = format!("http://127.0.0.1:{}", mock.port);
         match Channel::from_shared(endpoint)
@@ -175,7 +218,13 @@ async fn upgrade_client(
                 _ = mock.child.kill();
                 _ = mock.child.wait();
                 mock.port = free_port();
-                mock.child = spawn_child(&mock.dir, &mock.mockfs, mock.port, &mock.password);
+                mock.child = spawn_child(
+                    &mock.dir,
+                    &mock.mockfs,
+                    mock.port,
+                    &mock.password,
+                    mock.index_path.as_deref(),
+                );
             }
         }
     }
@@ -728,6 +777,85 @@ async fn lists_shadowed_widget_as_installable_over_grpc() {
     assert!(!widget.uid.is_empty());
     assert!(!widget.display_name.is_empty());
     assert!(widget.icon.is_some());
+}
+
+// A real index carrying two widgets; only the shadowed one is installable.
+// The uids are distinct from the fabricated fallback's ("flip-clock"), so a
+// regression that ignored --package-index would surface the wrong uid. The
+// icon path does not exist, so it drops to None rather than failing the call.
+const REAL_INDEX_JSON: &str = r#"{
+  "version": 1,
+  "provenance": null,
+  "indexes": [],
+  "caches": [],
+  "packages": [
+    {"name": "widget-flip-clock", "version": "2.5.0", "store_path": "/nix/store/x",
+     "category": "widget",
+     "metadata": {"widget": {"uid": "real-flip-uid", "display_name": "Real Flip Clock", "category": "clock"},
+                  "assets": {"icon": "/nonexistent/icon.svg"}}},
+    {"name": "widget-weather", "version": "1.9.0", "store_path": "/nix/store/y",
+     "category": "widget",
+     "metadata": {"widget": {"uid": "real-weather-uid", "display_name": "Real Weather"}}}
+  ]
+}"#;
+
+#[tokio::test]
+async fn serves_real_package_index_over_grpc() {
+    let scenario = r#"{"firmware": "up-to-date", "packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#;
+    let mut mock = spawn_mock_with_index(scenario, REAL_INDEX_JSON);
+    let mut client = upgrade_client(&mut mock).await;
+    let response = client
+        .get_installable_widgets(())
+        .await
+        .expect("BUG: list failed")
+        .into_inner();
+    // Only the shadowed widget, carrying the REAL uid from the index — proving
+    // the index-backed path served it (not the fabricated fallback), that the
+    // shadow filter excluded the non-shadowed weather, and that an unreadable
+    // icon drops to None instead of failing discovery.
+    assert_eq!(response.widgets.len(), 1, "widgets: {:?}", response.widgets);
+    let widget = &response.widgets[0];
+    assert_eq!(widget.package_name, "widget-flip-clock");
+    assert_eq!(widget.uid, "real-flip-uid");
+    assert_eq!(widget.display_name, "Real Flip Clock");
+    // The index's "clock" string is mapped to the known enum value over the wire.
+    assert_eq!(widget.category, i32::from(WidgetCategory::Clock));
+    assert!(widget.icon.is_none());
+}
+
+// An index category this build does not recognize must not break discovery.
+// A newer release may add categories; the tolerant deserializer folds the
+// unknown string to Unknown, which crosses the wire as UNSPECIFIED.
+const UNKNOWN_CATEGORY_INDEX_JSON: &str = r#"{
+  "version": 1,
+  "provenance": null,
+  "indexes": [],
+  "caches": [],
+  "packages": [
+    {"name": "widget-flip-clock", "version": "2.5.0", "store_path": "/nix/store/x",
+     "category": "widget",
+     "metadata": {"widget": {"uid": "u", "display_name": "Flip", "category": "teleportation"}}}
+  ]
+}"#;
+
+#[tokio::test]
+async fn unknown_index_category_serves_as_unspecified_over_grpc() {
+    let scenario = r#"{"firmware": "up-to-date", "packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#;
+    let mut mock = spawn_mock_with_index(scenario, UNKNOWN_CATEGORY_INDEX_JSON);
+    let mut client = upgrade_client(&mut mock).await;
+    let response = client
+        .get_installable_widgets(())
+        .await
+        .expect("BUG: list failed")
+        .into_inner();
+    assert_eq!(response.widgets.len(), 1, "widgets: {:?}", response.widgets);
+    // The unrecognized "teleportation" category folds to UNSPECIFIED rather
+    // than failing the listing — one new category cannot break discovery.
+    assert_eq!(
+        response.widgets[0].category,
+        i32::from(WidgetCategory::Unspecified),
+        "unknown index category must serve as UNSPECIFIED"
+    );
 }
 
 #[tokio::test]
