@@ -12,7 +12,8 @@
             "!**/.vscode",
             "!**/.yarn",
             "!**/.yarnrc.yml",
-            "!**/.claude"
+            "!**/.claude",
+            "!**/result"
         ]
     },
 
