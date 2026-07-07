@@ -40,6 +40,11 @@ const COMMANDS: &[&[&str]] = &[
     &["killall", "-SIGUSR1", "dnsmasq"],
 ];
 
+/// Captured after every other diagnostic (see [`collect`]) so syslog that
+/// they trigger — e.g. dnsmasq reacting to the reachability probe — is
+/// included in the snapshot.
+const LOGREAD_COMMAND: &[&str] = &["logread"];
+
 /// All contents of these paths will be included in the support archive.
 const FS_PATHS: &[&str] = &[
     // files
@@ -60,6 +65,7 @@ const FS_PATHS: &[&str] = &[
     // additional procfs items
     PROC_MTD,
     PROC_CPUINFO,
+    "/proc/mounts",
     "/proc/loadavg",
     "/proc/cmdline",
     "/proc/crypto",
@@ -83,6 +89,7 @@ pub const PING_HOSTS: &[&str] = &[
     "8.8.8.8",
     "google.com",
     "downloads.braiins.com",
+    "downloads.braiinsforge.com",
     "public-api.braiins.com",
 ];
 
@@ -100,7 +107,7 @@ pub fn collect(
     let mut archive = SupportZipWriter::new(writer, format, compress);
 
     // include outputs of commands
-    // Commands must run before logs are collected since some of them can print something to the syslog (e.g. dnsmasq)
+    // These run before the log capture below since some of them emit syslog (e.g. dnsmasq).
     for &cmdline in COMMANDS {
         match archive.add_cmd_output(cmdline) {
             Ok(()) => info!("Added output of '{}'", cmdline.join(" ")),
@@ -171,6 +178,13 @@ pub fn collect(
             Ok(interface_name) => info!("Added pcap of interface '{}'", interface_name),
             Err(err) => error!("Error adding pcap: {:#}", err),
         }
+    }
+
+    // Capture the system log last, so syslog emitted by every diagnostic above
+    // (e.g. a DNS error during the reachability probe) is present in the dump.
+    match archive.add_cmd_output(LOGREAD_COMMAND) {
+        Ok(()) => info!("Added output of '{}'", LOGREAD_COMMAND.join(" ")),
+        Err(err) => error!("{}: '{}'", err, LOGREAD_COMMAND.join(" ")),
     }
 
     archive.finish()?;
