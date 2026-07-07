@@ -11,8 +11,8 @@ use std::time::Duration;
 use bmc_grpc::web::authentication_service_client::AuthenticationServiceClient;
 use bmc_grpc::web::upgrade_service_client::UpgradeServiceClient;
 use bmc_grpc::web::{
-    FirmwareUpgradePhase, LoginRequest, PackageUpgradePhase, StartUpgradeRequest, UpgradeProgress,
-    upgrade_progress,
+    FirmwareUpgradePhase, LoginRequest, PackageUpgradePhase, StartUpgradeRequest,
+    UpgradeDisruption, UpgradeProgress, upgrade_progress,
 };
 use tonic::Request;
 use tonic::metadata::MetadataValue;
@@ -211,6 +211,11 @@ async fn default_scenario_offers_firmware_and_packages() {
         .expect("BUG: check failed")
         .into_inner();
     assert!(response.upgrade_id.is_some());
+    assert_eq!(
+        response.disruption,
+        UpgradeDisruption::Reboot as i32,
+        "an available firmware upgrade reboots the device"
+    );
     let firmware = response.firmware.expect("firmware offered");
     assert!(!firmware.version.is_empty());
     assert!(!firmware.previous_releases.is_empty());
@@ -277,6 +282,11 @@ async fn packages_only_run_completes_all_phases() {
         .await
         .expect("BUG: check failed")
         .into_inner();
+    assert_eq!(
+        response.disruption,
+        UpgradeDisruption::AppRestart as i32,
+        "a packages-only upgrade only restarts the app"
+    );
     let upgrade_id = response.upgrade_id.expect("upgrade id");
 
     let mut stream = client
@@ -286,20 +296,25 @@ async fn packages_only_run_completes_all_phases() {
         .into_inner();
 
     let mut phases = Vec::new();
+    let mut downloads = 0;
     let mut finished = false;
     tokio::time::timeout(STREAM_TIMEOUT, async {
         while let Some(progress) = stream.message().await.expect("BUG: stream errored") {
             match progress.event.expect("BUG: event set") {
                 upgrade_progress::Event::PackagePhase(phase) => phases.push(phase),
+                upgrade_progress::Event::Download(_) => downloads += 1,
                 upgrade_progress::Event::Finished(()) => finished = true,
-                upgrade_progress::Event::Download(_)
-                | upgrade_progress::Event::FirmwarePhase(_) => {}
+                upgrade_progress::Event::FirmwarePhase(_) => {}
             }
         }
     })
     .await
     .expect("stream did not finish within the timeout");
     assert!(finished);
+    assert!(
+        downloads > 0,
+        "the client must receive package download progress"
+    );
     assert_eq!(
         phases,
         vec![
@@ -308,6 +323,53 @@ async fn packages_only_run_completes_all_phases() {
             PackageUpgradePhase::Building as i32,
             PackageUpgradePhase::Activating as i32,
         ]
+    );
+}
+
+#[tokio::test]
+async fn firmware_wins_at_start_when_both_are_available() {
+    let mut mock = spawn_mock(r#"{"firmware": "available", "packages": "available"}"#);
+    let mut client = upgrade_client(&mut mock).await;
+    let response = client
+        .check_for_upgrade(())
+        .await
+        .expect("BUG: check failed")
+        .into_inner();
+    let upgrade_id = response.upgrade_id.expect("upgrade id");
+
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest { upgrade_id })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+
+    // The firmware pipeline is identified by its FirmwarePhase events, which
+    // the packages-only path never emits; the shared apply stage also emits
+    // PackagePhase lines, so their presence is not a discriminator. Draining to
+    // FirmwareApplying (the firmware run's terminal event before it goes dark)
+    // confirms firmware, not packages, won the start.
+    let mut firmware_phases = Vec::new();
+    tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            let progress = stream
+                .message()
+                .await
+                .expect("BUG: stream errored before FirmwareApplying")
+                .expect("BUG: stream ended before FirmwareApplying");
+            if let Some(upgrade_progress::Event::FirmwarePhase(p)) = progress.event {
+                firmware_phases.push(p);
+                if p == FirmwareUpgradePhase::Applying as i32 {
+                    return;
+                }
+            }
+        }
+    })
+    .await
+    .expect("timed out before FirmwareApplying");
+
+    assert!(
+        firmware_phases.contains(&(FirmwareUpgradePhase::Downloading as i32)),
+        "the firmware pipeline must run its download phase"
     );
 }
 
@@ -329,7 +391,15 @@ async fn packages_apply_fail_errors_the_stream() {
         .expect("BUG: start failed")
         .into_inner();
 
-    let (_, error) = drain_until_error(&mut stream).await;
+    let (events, error) = drain_until_error(&mut stream).await;
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            upgrade_progress::Event::PackagePhase(p)
+                if *p == PackageUpgradePhase::Realizing as i32
+        )),
+        "apply failure must come after the realizing phase"
+    );
     assert_eq!(error.code(), tonic::Code::Internal);
 }
 
@@ -415,7 +485,15 @@ async fn firmware_download_fail_errors_the_stream() {
         .expect("BUG: start failed")
         .into_inner();
 
-    let (_, error) = drain_until_error(&mut stream).await;
+    let (events, error) = drain_until_error(&mut stream).await;
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            upgrade_progress::Event::FirmwarePhase(p)
+                if *p == FirmwareUpgradePhase::Downloading as i32
+        )),
+        "a download failure must come after the downloading phase"
+    );
     assert_eq!(error.code(), tonic::Code::Internal);
 }
 
@@ -491,7 +569,11 @@ async fn unknown_upgrade_id_expires() {
         .expect("BUG: start failed")
         .into_inner();
 
-    let (_, error) = drain_until_error(&mut stream).await;
+    let (events, error) = drain_until_error(&mut stream).await;
+    assert!(
+        events.is_empty(),
+        "an unknown id must fail before any progress event"
+    );
     assert_eq!(error.code(), tonic::Code::FailedPrecondition);
 }
 
