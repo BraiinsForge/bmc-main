@@ -99,7 +99,7 @@ the file is written.
 `<target>`, concatenating fragments in lexicographic order.
 
 `bmc-hook-file-symlinks` reads JSON definitions from `file-symlinks/` and generates
-`core/activation/scripts/60-file-symlinks`, which creates live filesystem symlinks during activation.
+`core/activation/scripts/060-file-symlinks`, which creates live filesystem symlinks during activation.
 
 `bmc-hook-activation-resolver` reads `core/activation/scripts/` and generates `core/activation/entrypoint`, the script
 that runs activation scripts in sorted order.
