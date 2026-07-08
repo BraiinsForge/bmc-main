@@ -8,6 +8,7 @@ use bmc::manager::{
     BmcState, IfaceData, InitialSetupError, NetworkProtocolConfig, UpgradeError, WifiData,
     WifiEvent, WifiNetworkConfig,
 };
+use bmc_nix::progress::{ActiveDownload, ProgressEvent};
 use bmc_platform::{BosPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
 use bmc_shared_ii_net::wifi::{
@@ -119,13 +120,41 @@ impl bmc::BmcManager for Manager {
             keep_settings
         );
         if let Some(progress) = progress {
+            let total_bytes = 4_000_000;
             let lines = [
-                r#"@bmc {"type":"phase","phase":"realizing"}"#,
-                r#"@bmc {"type":"download","downloaded_bytes":1000000,"total_bytes":4000000,"remaining_bytes":3000000,"active":[]}"#,
-                r#"@bmc {"type":"phase","phase":"building"}"#,
+                ProgressEvent::Phase {
+                    phase: "realizing".to_owned(),
+                }
+                .to_bmc_line(),
+                ProgressEvent::RealizationStarted { total_paths: 3 }.to_bmc_line(),
+                ProgressEvent::Download {
+                    downloaded_bytes: 1_000_000,
+                    total_bytes: Some(total_bytes),
+                    remaining_bytes: Some(3_000_000),
+                    active: vec![ActiveDownload {
+                        store_path: Some("/nix/store/mock-core".to_owned()),
+                        source: Some("mock://packages/core".to_owned()),
+                        downloaded_bytes: 1_000_000,
+                        total_bytes: Some(total_bytes),
+                    }],
+                }
+                .to_bmc_line(),
+                ProgressEvent::RealizationFinished.to_bmc_line(),
+                ProgressEvent::Phase {
+                    phase: "verifying".to_owned(),
+                }
+                .to_bmc_line(),
+                ProgressEvent::Phase {
+                    phase: "building".to_owned(),
+                }
+                .to_bmc_line(),
+                ProgressEvent::Phase {
+                    phase: "activating".to_owned(),
+                }
+                .to_bmc_line(),
             ];
             for line in lines {
-                _ = progress.send(line.to_owned());
+                _ = progress.send(line);
                 tokio::time::sleep(self.pacing.progress_step()).await;
             }
         }
