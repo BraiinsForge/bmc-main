@@ -75,6 +75,11 @@ config forms are manifest-driven — any installed widget (including out-of-tree
 rebuild. The catalog groups widgets into labeled category sections (with "Other" last) and offers category filter pills
 with per-category counts.
 
+### [Widget Installation](widget-installation.md)
+
+The backend can discover available-but-not-installed widget packages and install them through the shared upgrade flow.
+The frontend picker integration and interactive installation experience will be delivered in a future change.
+
 ### [Widgets](widgets/README.md)
 
 Information about all implemented official widgets.
