@@ -241,63 +241,65 @@ impl PackageUpgrader {
             .expect("BUG: client builder failed");
         Self { config, client }
     }
-}
 
-#[async_trait::async_trait]
-impl PackageBackend for PackageUpgrader {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "sequential probe stages: load config, fetch index, read manifest, resolve installs, plan"
-    )]
-    async fn probe(&self, estimate: EstimateMode, install: &[String]) -> PackageProbe {
-        let config =
-            match bmc_nix::servers_config::load_servers_config(&self.config.servers_config_path) {
-                Ok(config) => config,
-                Err(err) => {
-                    warn!(error = %err, "Servers config unavailable");
-                    return PackageProbe::Failed(PackageProbeError::ServersConfigUnavailable(
-                        err.to_string(),
-                    ));
-                }
-            };
+    /// Shared prelude for `probe` and `list_installable_widgets`: load the
+    /// servers config, require an enabled server, fetch and merge the package
+    /// indexes, and read the profile manifest (current, falling back to
+    /// latest). Errors are mapped to `PackageProbeError`; each caller adapts
+    /// them to its own return shape.
+    async fn fetch_index_and_manifest(
+        &self,
+    ) -> Result<(bmc_nix::types::MergedIndex, bmc_nix::types::Manifest), PackageProbeError> {
+        let config = bmc_nix::servers_config::load_servers_config(&self.config.servers_config_path)
+            .map_err(|err| {
+                warn!(error = %err, "Servers config unavailable");
+                PackageProbeError::ServersConfigUnavailable(err.to_string())
+            })?;
         let servers = config.servers;
 
         if !servers.iter().any(|server| server.enabled) {
             warn!("No enabled package servers");
-            return PackageProbe::Failed(PackageProbeError::NoEnabledServers);
+            return Err(PackageProbeError::NoEnabledServers);
         }
 
         let merged = match bmc_nix::index::fetch_and_merge_indexes(&self.client, &servers).await {
             Ok(merged) => merged,
             Err(err @ bmc_nix::index::FetchIndexesError::Fetch { .. }) => {
                 warn!(error = %err, "Package index fetch failed");
-                return PackageProbe::Failed(PackageProbeError::IndexFetchFailed(err.to_string()));
+                return Err(PackageProbeError::IndexFetchFailed(err.to_string()));
             }
             Err(err) => {
                 warn!(error = %err, "Package index unusable");
-                return PackageProbe::Failed(PackageProbeError::IndexUnusable(err.to_string()));
+                return Err(PackageProbeError::IndexUnusable(err.to_string()));
             }
         };
 
         let base = match bmc_nix::manifest::read_current_manifest(&self.config.profile_dir) {
             Ok(manifest) => manifest,
             Err(bmc_nix::manifest::ReadManifestError::CurrentNotFound { .. }) => {
-                match bmc_nix::manifest::read_latest_manifest(&self.config.profile_dir) {
-                    Ok(manifest) => manifest,
-                    Err(err) => {
+                bmc_nix::manifest::read_latest_manifest(&self.config.profile_dir).map_err(
+                    |err| {
                         warn!(error = %err, "Failed to read the profile manifest");
-                        return PackageProbe::Failed(PackageProbeError::ManifestReadFailed(
-                            err.to_string(),
-                        ));
-                    }
-                }
+                        PackageProbeError::ManifestReadFailed(err.to_string())
+                    },
+                )?
             }
             Err(err) => {
                 warn!(error = %err, "Failed to read the profile manifest");
-                return PackageProbe::Failed(PackageProbeError::ManifestReadFailed(
-                    err.to_string(),
-                ));
+                return Err(PackageProbeError::ManifestReadFailed(err.to_string()));
             }
+        };
+
+        Ok((merged, base))
+    }
+}
+
+#[async_trait::async_trait]
+impl PackageBackend for PackageUpgrader {
+    async fn probe(&self, estimate: EstimateMode, install: &[String]) -> PackageProbe {
+        let (merged, base) = match self.fetch_index_and_manifest().await {
+            Ok(pair) => pair,
+            Err(err) => return PackageProbe::Failed(err),
         };
 
         let installs = match resolve_installs(&merged, install) {
@@ -401,50 +403,7 @@ impl PackageBackend for PackageUpgrader {
     }
 
     async fn list_installable_widgets(&self) -> Result<Vec<InstallableWidget>, PackageProbeError> {
-        let config =
-            match bmc_nix::servers_config::load_servers_config(&self.config.servers_config_path) {
-                Ok(config) => config,
-                Err(err) => {
-                    warn!(error = %err, "Servers config unavailable");
-                    return Err(PackageProbeError::ServersConfigUnavailable(err.to_string()));
-                }
-            };
-        let servers = config.servers;
-
-        if !servers.iter().any(|server| server.enabled) {
-            warn!("No enabled package servers");
-            return Err(PackageProbeError::NoEnabledServers);
-        }
-
-        let merged = match bmc_nix::index::fetch_and_merge_indexes(&self.client, &servers).await {
-            Ok(merged) => merged,
-            Err(err @ bmc_nix::index::FetchIndexesError::Fetch { .. }) => {
-                warn!(error = %err, "Package index fetch failed");
-                return Err(PackageProbeError::IndexFetchFailed(err.to_string()));
-            }
-            Err(err) => {
-                warn!(error = %err, "Package index unusable");
-                return Err(PackageProbeError::IndexUnusable(err.to_string()));
-            }
-        };
-
-        let base = match bmc_nix::manifest::read_current_manifest(&self.config.profile_dir) {
-            Ok(manifest) => manifest,
-            Err(bmc_nix::manifest::ReadManifestError::CurrentNotFound { .. }) => {
-                match bmc_nix::manifest::read_latest_manifest(&self.config.profile_dir) {
-                    Ok(manifest) => manifest,
-                    Err(err) => {
-                        warn!(error = %err, "Failed to read the profile manifest");
-                        return Err(PackageProbeError::ManifestReadFailed(err.to_string()));
-                    }
-                }
-            }
-            Err(err) => {
-                warn!(error = %err, "Failed to read the profile manifest");
-                return Err(PackageProbeError::ManifestReadFailed(err.to_string()));
-            }
-        };
-
+        let (merged, base) = self.fetch_index_and_manifest().await?;
         let installed = base.packages.keys().cloned().collect();
         Ok(installable_widgets_from(&merged, &installed))
     }
