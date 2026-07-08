@@ -106,7 +106,15 @@ activate_profile() {
 				old_target="$(readlink "$current" 2>/dev/null)"
 				LOG "activating staged next generation"
 				if "$entrypoint"; then
+					# The consumption must survive a power cut so a
+					# consumed marker cannot resurrect and re-run this
+					# activation (the same contract bmc-nix's
+					# remove_next enforces with a directory fsync).
+					# BusyBox has no directory-fsync tool, so settle
+					# for a whole-system sync; it is cheap here, right
+					# after the entrypoint's own syncfs of /nix.
 					rm -f "$next"
+					sync
 					return 0
 				fi
 				# The staged entrypoint may have written partial state
