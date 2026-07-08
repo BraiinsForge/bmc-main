@@ -582,6 +582,7 @@ async fn cmd_build_profile(
     // short-circuit, so a generation is always built.
     let progress = progress::CliProgress::new(log_format);
     let result = bmc_nix::upgrade::apply_profile_change(
+        &bmc_nix::store::Nix,
         &profile_dir,
         Some(Manifest::default()),
         None,
@@ -650,6 +651,7 @@ async fn cmd_add_packages(
 
     let progress = progress::CliProgress::new(log_format);
     let result = bmc_nix::upgrade::apply_profile_change(
+        &bmc_nix::store::Nix,
         &profile_dir,
         base_manifest,
         None,
@@ -685,6 +687,7 @@ async fn cmd_remove_packages(
 
     let progress = progress::CliProgress::new(log_format);
     let result = bmc_nix::upgrade::apply_profile_change(
+        &bmc_nix::store::Nix,
         &profile_dir,
         base_manifest,
         None,
@@ -721,6 +724,7 @@ async fn cmd_reset_profile(
 
     let progress = progress::CliProgress::new(log_format);
     let result = bmc_nix::upgrade::apply_profile_change(
+        &bmc_nix::store::Nix,
         &profile_dir,
         Some(Manifest::default()),
         None,
@@ -788,6 +792,7 @@ async fn cmd_upgrade(
 
     let progress = progress::CliProgress::new(log_format);
     let result = bmc_nix::upgrade::apply_profile_change(
+        &bmc_nix::store::Nix,
         &profile_dir,
         base_manifest,
         Some(&merged),

@@ -480,9 +480,11 @@ pub async fn estimate_realization(
     })
 }
 
-/// The nix-store operations a caller depends on, behind a trait so its
-/// result-routing can be tested without spawning nix or knowing nix's
-/// `internal-json` wire format — a stub returns the typed outcomes directly.
+/// The nix operations an upgrade depends on, behind a trait so the
+/// orchestration around them can be tested without spawning nix or knowing
+/// its `internal-json` wire format — a stub returns the typed outcomes
+/// directly. This is the single seam through which the codebase reaches nix;
+/// [`Nix`] is the only implementation that shells out.
 ///
 /// Native async fn (RPITIT): NOT object-safe. Use generics
 /// (`impl StoreOperations` or `<N: StoreOperations>`), not `&dyn`.
@@ -492,9 +494,28 @@ pub trait StoreOperations: Send + Sync + std::fmt::Debug + 'static {
         &self,
         packages: &[ResolvedPackage],
     ) -> impl std::future::Future<Output = Result<RealizeEstimate, StorePathError>> + Send;
+
+    /// See [`realize_store_paths`].
+    fn realize_store_paths(
+        &self,
+        packages: &[ResolvedPackage],
+        progress: Option<&dyn RealizeProgress>,
+    ) -> impl std::future::Future<Output = Result<(), StorePathError>> + Send;
+
+    /// See [`verify_store_paths`].
+    fn verify_store_paths(
+        &self,
+        packages: &[ResolvedPackage],
+    ) -> impl std::future::Future<Output = Result<(), StorePathError>> + Send;
+
+    /// See [`collect_garbage`](crate::gc::collect_garbage).
+    fn collect_garbage(
+        &self,
+        progress: Option<&dyn crate::gc::CollectGarbageProgress>,
+    ) -> impl std::future::Future<Output = Result<(), crate::gc::CollectGarbageError>> + Send;
 }
 
-/// Production [`StoreOperations`], backed by the real `nix-store` CLI.
+/// Production [`StoreOperations`], backed by the real nix CLI.
 #[derive(Debug, Default)]
 pub struct Nix;
 
@@ -504,6 +525,28 @@ impl StoreOperations for Nix {
         packages: &[ResolvedPackage],
     ) -> impl std::future::Future<Output = Result<RealizeEstimate, StorePathError>> + Send {
         estimate_realization(&TokioCommandRunner, packages)
+    }
+
+    fn realize_store_paths(
+        &self,
+        packages: &[ResolvedPackage],
+        progress: Option<&dyn RealizeProgress>,
+    ) -> impl std::future::Future<Output = Result<(), StorePathError>> + Send {
+        realize_store_paths(&TokioCommandRunner, packages, progress)
+    }
+
+    fn verify_store_paths(
+        &self,
+        packages: &[ResolvedPackage],
+    ) -> impl std::future::Future<Output = Result<(), StorePathError>> + Send {
+        verify_store_paths(&TokioCommandRunner, packages)
+    }
+
+    fn collect_garbage(
+        &self,
+        progress: Option<&dyn crate::gc::CollectGarbageProgress>,
+    ) -> impl std::future::Future<Output = Result<(), crate::gc::CollectGarbageError>> + Send {
+        crate::gc::collect_garbage(&TokioCommandRunner, progress)
     }
 }
 
