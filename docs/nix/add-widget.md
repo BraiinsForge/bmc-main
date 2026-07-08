@@ -84,6 +84,13 @@ my-widget = {
 | `upgrade_strategy` | How the device handles upgrades (`null` for widgets)             |
 | `install_strategy` | How the device handles installation (`null` for widgets)         |
 
+> **Renaming is not free.** The attribute name here (e.g. `my-widget`) is the package's identity in the index —
+> `nix/init-artifacts.nix` copies it verbatim as the package `name`. There is no in-index rename migration. Renaming a
+> widget that devices already carry as a system package (listed in `initPackageNames`) breaks upgrades on those devices:
+> a device provisioned before the rename still lists the old name, `CheckForUpgrade` resolves it to `PackageNotFound` →
+> `MissingSystemPackages`, and because a firmware upgrade also upgrades packages, that blocks firmware upgrades too.
+> Rename such a widget only together with a fleet re-provision from a post-rename init tarball.
+
 ## 4. `nix/init-artifacts.nix` — Include in default device image (optional)
 
 If the widget should be present on the Deck out of the box (i.e. included in the init tarball), add its name to the
