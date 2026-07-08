@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Error, ErrorKind};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -63,9 +63,10 @@ impl WidgetManager {
     }
 
     /// Re-scan the widget discovery paths so newly-installed widgets become
-    /// available without a restart. A no-op if the registry is static.
-    pub async fn refresh(&self) {
-        self.registry.refresh().await;
+    /// available without a restart, returning the uids now known to the
+    /// registry. A no-op if the registry is static.
+    pub async fn refresh(&self) -> HashSet<Uuid> {
+        self.registry.refresh().await
     }
 
     /// Spawn a widget process and return its OS pid. The compositor needs

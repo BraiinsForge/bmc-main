@@ -21,13 +21,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
-use std::{collections::HashMap, sync::LazyLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::LazyLock,
+};
 use thiserror::Error;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::watch::{self, Receiver};
 use tokio::sync::{Mutex, Notify};
 use tokio::task;
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 const AUTOUPGRADE_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(30);
 const AUTOUPGRADE_RETRY_MAX_ATTEMPTS: u32 = 5;
@@ -60,7 +64,9 @@ pub static CLIENT: LazyLock<Client> = LazyLock::new(|| {
 pub(crate) trait WidgetLifecycle: Send + Sync + std::fmt::Debug {
     async fn stop_all_widgets(&self);
     async fn restart_widgets(&self);
-    async fn refresh_widgets(&self);
+    /// Re-scan for widgets and return the uids now discoverable, so a caller
+    /// can confirm a just-installed widget actually became available.
+    async fn refresh_widgets(&self) -> HashSet<Uuid>;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -339,13 +345,39 @@ fn spawn_packages_run(
         });
         let adapter: Arc<dyn bmc_nix::upgrade::UpgradeProgress> =
             Arc::new(ChannelUpgradeProgress::new(tx.clone(), state_service));
+        // Resolved before `apply` consumes the index: the uids the requested
+        // widget packages are expected to expose once installed.
+        let expected_widgets: HashSet<Uuid> =
+            bmc_upgrade::packages::resolve_installs(&merged, &install)
+                .into_iter()
+                .flatten()
+                .filter_map(|resolved| widget_uid(&resolved))
+                .collect();
         match package_backend.apply(merged, install, adapter).await {
             Ok(()) => {
                 info!("Package upgrade finished");
                 // Re-scan so the just-installed widget is available without a
                 // restart; the install already wrote it into the widgets path.
-                widget_lifecycle.refresh_widgets().await;
-                _ = tx.send(UpgradeRunState::Finished);
+                let discovered = widget_lifecycle.refresh_widgets().await;
+                // A widget whose manifest points at a missing or unrunnable
+                // binary is silently skipped by discovery, so confirm every
+                // expected widget actually landed before reporting success —
+                // otherwise the FE resumes on a widget it can never place.
+                let missing: Vec<Uuid> =
+                    expected_widgets.difference(&discovered).copied().collect();
+                if missing.is_empty() {
+                    _ = tx.send(UpgradeRunState::Finished);
+                } else {
+                    let names = missing
+                        .iter()
+                        .map(Uuid::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    error!(missing = %names, "Installed widget did not become discoverable");
+                    _ = tx.send(UpgradeRunState::Failed(
+                        SystemUpgradeError::WidgetNotDiscoverable(names),
+                    ));
+                }
             }
             Err(err) => {
                 error!(error = %err, "Package upgrade failed");
@@ -356,6 +388,21 @@ fn spawn_packages_run(
         }
     });
     UpgradeRunStream { rx }
+}
+
+/// The widget uid a resolved package exposes, if it is a widget package that
+/// carries one. Non-widget packages (which install fine but present no widget
+/// to verify) and widgets without a parseable uid yield `None`.
+fn widget_uid(resolved: &bmc_nix::types::ResolvedPackage) -> Option<Uuid> {
+    if resolved.category.as_deref() != Some("widget") {
+        return None;
+    }
+    resolved
+        .metadata
+        .get("widget")
+        .and_then(|widget| widget.get("uid"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|uid| uid.parse().ok())
 }
 
 #[derive(Clone, Debug)]
@@ -887,6 +934,8 @@ pub(crate) enum SystemUpgradeError {
     PackageUpgradeFailed(String),
     #[error("Cannot check for upgrade: {0}.")]
     PackageCheckFailed(PackageProbeError),
+    #[error("Installed widget did not become available: {0}")]
+    WidgetNotDiscoverable(String),
 }
 
 impl From<FirmwareUpgradeError> for SystemUpgradeError {
@@ -1066,6 +1115,23 @@ mod tests {
         }
     }
 
+    fn merged_index_with_widget(name: &str, uid: Uuid) -> bmc_nix::types::MergedIndex {
+        let json = format!(
+            r#"{{"version":1,"provenance":null,"indexes":[],"caches":[],"packages":[
+              {{"name":"{name}","version":"1.0.0","store_path":"/nix/store/w",
+               "category":"widget",
+               "metadata":{{"widget":{{"uid":"{uid}","display_name":"W","category":"info"}}}}}}
+            ]}}"#
+        );
+        let raw: bmc_nix::types::PackageIndex =
+            serde_json::from_str(&json).expect("BUG: parse widget fixture");
+        bmc_nix::index::merge_indexes(vec![bmc_nix::types::FetchedIndex {
+            server_id: "srv".to_owned(),
+            server_priority: 10,
+            index: raw,
+        }])
+    }
+
     fn test_packages_preview() -> PackagesPreview {
         PackagesPreview {
             changes: Vec::new(),
@@ -1188,15 +1254,17 @@ mod tests {
     #[derive(Debug, Default)]
     struct RecordingLifecycle {
         refreshed: std::sync::atomic::AtomicUsize,
+        discovered: HashSet<Uuid>,
     }
 
     #[async_trait::async_trait]
     impl WidgetLifecycle for RecordingLifecycle {
         async fn stop_all_widgets(&self) {}
         async fn restart_widgets(&self) {}
-        async fn refresh_widgets(&self) {
+        async fn refresh_widgets(&self) -> HashSet<Uuid> {
             self.refreshed
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.discovered.clone()
         }
     }
 
@@ -1268,6 +1336,63 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn install_fails_when_widget_stays_undiscoverable() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let uid = Uuid::from_u128(0x0bad_f00d);
+        let merged = merged_index_with_widget("widget-x", uid);
+        // The install succeeds but discovery never surfaces the widget (e.g. a
+        // manifest pointing at a missing binary): the run must fail, not claim
+        // Finished on a widget the FE can never place.
+        let lifecycle = Arc::new(RecordingLifecycle::default());
+
+        let run = spawn_packages_run(
+            gate,
+            Arc::new(StubBackend),
+            Arc::clone(&lifecycle) as Arc<dyn WidgetLifecycle>,
+            merged,
+            vec!["widget-x".to_owned()],
+            None,
+            StateService::new(),
+        );
+
+        assert!(matches!(
+            drain(run).await,
+            Some(UpgradeRunState::Failed(
+                SystemUpgradeError::WidgetNotDiscoverable(_)
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn install_finishes_when_widget_becomes_discoverable() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let uid = Uuid::from_u128(0x0bad_f00d);
+        let merged = merged_index_with_widget("widget-x", uid);
+        let lifecycle = Arc::new(RecordingLifecycle {
+            discovered: HashSet::from([uid]),
+            ..Default::default()
+        });
+
+        let run = spawn_packages_run(
+            gate,
+            Arc::new(StubBackend),
+            Arc::clone(&lifecycle) as Arc<dyn WidgetLifecycle>,
+            merged,
+            vec!["widget-x".to_owned()],
+            None,
+            StateService::new(),
+        );
+
+        assert!(matches!(drain(run).await, Some(UpgradeRunState::Finished)));
+    }
+
     #[derive(Debug)]
     struct GatedLifecycle {
         entered: Arc<tokio::sync::Notify>,
@@ -1278,9 +1403,10 @@ mod tests {
     impl WidgetLifecycle for GatedLifecycle {
         async fn stop_all_widgets(&self) {}
         async fn restart_widgets(&self) {}
-        async fn refresh_widgets(&self) {
+        async fn refresh_widgets(&self) -> HashSet<Uuid> {
             self.entered.notify_one();
             self.release.notified().await;
+            HashSet::new()
         }
     }
 

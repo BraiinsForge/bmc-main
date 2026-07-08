@@ -6,10 +6,11 @@ use bmc_widget_protocol::{
     Localization, NextAlarm, SettingUpdate, ViewportShape, WidgetInitialConfig,
 };
 use indexmap::IndexMap;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast, watch};
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 use crate::BmcManager;
 use crate::compositor::{
@@ -333,9 +334,9 @@ impl Coordinator {
     }
 
     /// Re-scan the widget registry so a widget installed at runtime becomes
-    /// available without a restart.
-    pub async fn refresh_widgets(&self) {
-        self.widget_manager.refresh().await;
+    /// available without a restart, returning the uids now discoverable.
+    pub async fn refresh_widgets(&self) -> HashSet<Uuid> {
+        self.widget_manager.refresh().await
     }
 
     pub async fn spawn_initial_widgets(
@@ -718,8 +719,8 @@ impl crate::system_upgrade::WidgetLifecycle for UpgradeWidgetLifecycle {
             .await;
     }
 
-    async fn refresh_widgets(&self) {
-        self.coordinator.refresh_widgets().await;
+    async fn refresh_widgets(&self) -> HashSet<Uuid> {
+        self.coordinator.refresh_widgets().await
     }
 }
 

@@ -1,6 +1,6 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::RwLock;
 
@@ -143,21 +143,32 @@ impl WidgetRegistry {
         }
     }
 
-    /// Re-scan the discovery paths and replace the widget set with the result.
+    /// Re-scan the discovery paths and replace the widget set with the result,
+    /// returning the uids now in the registry so a caller can confirm an
+    /// expected widget actually became discoverable.
     ///
-    /// A no-op for a static (`new`-built) registry. Discovery runs without the
-    /// lock held; the write lock is taken only for the final swap, so no
-    /// `.await` ever happens while holding it.
-    pub async fn refresh(&self) {
+    /// A no-op for a static (`new`-built) registry (it returns its current
+    /// uids unchanged). Discovery runs without the lock held; the write lock is
+    /// taken only for the final swap, so no `.await` ever happens while holding
+    /// it.
+    pub async fn refresh(&self) -> HashSet<Uuid> {
         let Some(paths) = self.paths.clone() else {
-            return;
+            return self
+                .widgets
+                .read()
+                .expect("BUG: widget registry lock poisoned")
+                .keys()
+                .copied()
+                .collect();
         };
         let widgets = PathDiscovery::new(paths).discover().await;
         let map = Self::build_map(widgets);
+        let uids = map.keys().copied().collect();
         *self
             .widgets
             .write()
             .expect("BUG: widget registry lock poisoned") = map;
+        uids
     }
 
     fn build_map(widgets: impl IntoIterator<Item = WidgetInfo>) -> HashMap<Uuid, WidgetInfo> {
