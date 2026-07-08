@@ -1301,4 +1301,20 @@ mod tests {
             "got {probe:?}"
         );
     }
+
+    #[tokio::test]
+    async fn list_installable_widgets_reports_no_enabled_servers() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("servers.json");
+        std::fs::write(&path, FACTORY_ONLY).expect("BUG: write servers.json");
+
+        let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
+
+        // list_installable_widgets duplicates probe's server-config prologue,
+        // so it must reject a config with no enabled servers the same way.
+        assert!(matches!(
+            upgrader.list_installable_widgets().await,
+            Err(PackageProbeError::NoEnabledServers)
+        ));
+    }
 }
