@@ -121,6 +121,29 @@ fn spawn_mock_inner(scenario_json: &str, index_json: Option<&str>) -> MockInstan
            "max_width":200,"min_height":100,"max_height":200}]}"#,
     )
     .expect("BUG: write manifest");
+    // A second widget (widget-weather) so multi-package install can be
+    // exercised; scenarios that shadow it offer it, others stage it.
+    let weather_dir = dir.path().join("widgets/weather");
+    std::fs::create_dir_all(&weather_dir).expect("BUG: create weather dir");
+    std::fs::write(weather_dir.join("icon.svg"), "<svg/>").expect("BUG: write weather icon");
+    let weather_bin = weather_dir.join("bin");
+    std::fs::create_dir_all(&weather_bin).expect("BUG: create weather bin dir");
+    let weather_binary = weather_bin.join("weather");
+    std::fs::write(&weather_binary, "#!/bin/sh\n").expect("BUG: write weather binary");
+    std::fs::set_permissions(
+        &weather_binary,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .expect("BUG: chmod weather binary");
+    std::fs::write(
+        weather_dir.join("manifest.json"),
+        r#"{"uid":"2b1e7a6c-9d84-4f11-bb0e-3c7a1e6f92da","version":"1.0.0",
+           "name":"Weather","description":"A local weather widget.",
+           "binary":"bin/weather","icon":"icon.svg","category":"clock",
+           "supported_viewports":[{"type":"rectangular","min_width":100,
+           "max_width":200,"min_height":100,"max_height":200}]}"#,
+    )
+    .expect("BUG: write weather manifest");
     let mockfs = dir.path().join("mockfs");
     let port = free_port();
     // Per-instance password (the unique tempdir name), so logging in on a
@@ -1082,6 +1105,79 @@ async fn install_when_up_to_date_offers_the_widget() {
         packages.changes
     );
     assert_eq!(packages.changes[0].name, "widget-flip-clock");
+}
+
+const MULTI_SHADOWED_SCENARIO: &str = r#"{"firmware": "up-to-date", "packages": "available", "shadowed_packages": ["widget-flip-clock", "widget-weather"]}"#;
+
+#[tokio::test]
+async fn multi_package_install_marks_all_installed_over_grpc() {
+    let mut mock = spawn_mock(MULTI_SHADOWED_SCENARIO);
+    let mut client = upgrade_client(&mut mock).await;
+
+    let before = client
+        .get_installable_widgets(())
+        .await
+        .expect("BUG: list failed")
+        .into_inner();
+    assert!(
+        before
+            .widgets
+            .iter()
+            .any(|w| w.package_name == "widget-flip-clock")
+    );
+    assert!(
+        before
+            .widgets
+            .iter()
+            .any(|w| w.package_name == "widget-weather")
+    );
+
+    let response = client
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec!["widget-flip-clock".to_owned(), "widget-weather".to_owned()],
+        })
+        .await
+        .expect("BUG: check failed")
+        .into_inner();
+    let upgrade_id = response.upgrade_id.expect("BUG: upgrade id");
+
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest { upgrade_id })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+    let mut finished = false;
+    tokio::time::timeout(STREAM_TIMEOUT, async {
+        while let Some(progress) = stream.message().await.expect("BUG: stream errored") {
+            if matches!(progress.event, Some(upgrade_progress::Event::Finished(()))) {
+                finished = true;
+            }
+        }
+    })
+    .await
+    .expect("stream did not finish within the timeout");
+    assert!(finished, "multi-install run did not finish");
+
+    // Both installed widgets are unshadowed and no longer offered.
+    let after = client
+        .get_installable_widgets(())
+        .await
+        .expect("BUG: list failed")
+        .into_inner();
+    assert!(
+        !after
+            .widgets
+            .iter()
+            .any(|w| w.package_name == "widget-flip-clock"),
+        "flip-clock must be installed and no longer offered"
+    );
+    assert!(
+        !after
+            .widgets
+            .iter()
+            .any(|w| w.package_name == "widget-weather"),
+        "weather must be installed and no longer offered"
+    );
 }
 
 #[tokio::test]
