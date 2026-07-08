@@ -1275,6 +1275,20 @@ mod tests {
         assert!(matches!(err, ResolvePackageError::VersionNotFound { .. }));
     }
 
+    #[test]
+    fn resolve_new_package_unknown_name_returns_package_not_found() {
+        let merged = merge_indexes(vec![fetched(
+            "a",
+            10,
+            vec![versioned_package("clock", "1.2.0", "/nix/store/v120")],
+        )]);
+
+        let err = resolve_new_package(&merged, "widget-nope", None, InstalledBy::User)
+            .expect_err("an unknown package name should error");
+
+        assert!(matches!(err, ResolvePackageError::PackageNotFound(name) if name == "widget-nope"));
+    }
+
     // ---- resolve_installed_package tests ----
 
     #[test]
