@@ -169,24 +169,38 @@ pub trait PackageBackend: Send + Sync + std::fmt::Debug + 'static {
 /// reads the profile manifest, and applies profile changes through
 /// `bmc-nix`.
 #[derive(Debug)]
-pub struct PackageUpgrader {
+pub struct PackageUpgrader<N = bmc_nix::store::Nix> {
     config: NixUpgradeConfig,
     client: reqwest::Client,
+    /// Estimates dry-run realization. The default shells out to `nix-store`;
+    /// tests inject a stub to drive the probe's estimate-routing branches
+    /// (transient error keeps offering, unsubstitutable paths fail the probe).
+    nix: N,
 }
 
 impl PackageUpgrader {
     #[must_use]
     pub fn new(config: NixUpgradeConfig) -> Self {
+        Self::with_store(config, bmc_nix::store::Nix)
+    }
+}
+
+impl<N> PackageUpgrader<N> {
+    fn with_store(config: NixUpgradeConfig, nix: N) -> Self {
         let client = reqwest::Client::builder()
             .timeout(INDEX_FETCH_TIMEOUT)
             .build()
             .expect("BUG: client builder failed");
-        Self { config, client }
+        Self {
+            config,
+            client,
+            nix,
+        }
     }
 }
 
 #[async_trait::async_trait]
-impl PackageBackend for PackageUpgrader {
+impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
     async fn probe(&self, estimate: EstimateMode) -> PackageProbe {
         let config =
             match bmc_nix::servers_config::load_servers_config(&self.config.servers_config_path) {
@@ -269,10 +283,7 @@ impl PackageBackend for PackageUpgrader {
                 // `kill_on_drop(true)`, so dropping the child reaps it.
                 match tokio::time::timeout(
                     ESTIMATE_TIMEOUT,
-                    bmc_nix::store::estimate_realization(
-                        &bmc_nix::store::TokioCommandRunner,
-                        &plan.packages,
-                    ),
+                    self.nix.estimate_realization(&plan.packages),
                 )
                 .await
                 {
@@ -709,5 +720,115 @@ mod tests {
             upgrader.probe(EstimateMode::Skip).await,
             PackageProbe::UpToDate
         ));
+    }
+
+    /// Which typed estimate outcome the stubbed store returns, so a probe test
+    /// can drive each routing branch without nix or its `internal-json` format.
+    #[derive(Debug)]
+    enum StubEstimate {
+        Downloads(u64),
+        Unrealizable(Vec<String>),
+        Transient,
+    }
+
+    /// A [`StoreOperations`](bmc_nix::store::StoreOperations) that returns a
+    /// fixed dry-run estimate outcome.
+    #[derive(Debug)]
+    struct StubStore(StubEstimate);
+
+    impl bmc_nix::store::StoreOperations for StubStore {
+        fn estimate_realization(
+            &self,
+            _packages: &[bmc_nix::types::ResolvedPackage],
+        ) -> impl std::future::Future<
+            Output = Result<bmc_nix::store::RealizeEstimate, bmc_nix::store::StorePathError>,
+        > + Send {
+            use std::os::unix::process::ExitStatusExt as _;
+            let result = match &self.0 {
+                StubEstimate::Downloads(bytes) => Ok(bmc_nix::store::RealizeEstimate {
+                    fetch_paths: 1,
+                    download_bytes: *bytes,
+                    unpacked_bytes: *bytes,
+                }),
+                StubEstimate::Unrealizable(paths) => {
+                    Err(bmc_nix::store::StorePathError::UnsubstitutablePaths {
+                        paths: paths.clone(),
+                    })
+                }
+                // A non-zero dry-run exit — dead substituter, inconclusive not
+                // doomed — is the transient class that keeps offering the upgrade.
+                StubEstimate::Transient => Err(bmc_nix::store::StorePathError::EstimateExited {
+                    status: std::process::ExitStatus::from_raw(1 << 8),
+                    messages: vec!["error: cannot reach substituter".to_owned()],
+                }),
+            };
+            async move { result }
+        }
+    }
+
+    /// Base `nix@1.0.0` with an index offering `nix@1.1.0` yields a non-empty
+    /// changed plan, so `EstimateMode::Estimate` actually runs the estimate.
+    async fn write_pending_upgrade(dir: &Path, path: &Path) {
+        write_base_manifest(&dir.join("profile"), &[("nix", "1.0.0", "/nix/store/nix")]);
+        let base_url =
+            spawn_index_server(index_json(&[("nix", "1.1.0", "/nix/store/nix-new")])).await;
+        write_enabled_server(path, &base_url);
+    }
+
+    #[tokio::test]
+    async fn probe_fails_unrealizable_when_estimate_needs_unsubstitutable_paths() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("servers.json");
+        write_pending_upgrade(dir.path(), &path).await;
+
+        let store = StubStore(StubEstimate::Unrealizable(vec![
+            "/nix/store/nix-new".to_owned(),
+        ]));
+        let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &path), store);
+
+        let probe = upgrader.probe(EstimateMode::Estimate).await;
+        let PackageProbe::Failed(PackageProbeError::Unrealizable(paths)) = probe else {
+            panic!("an unsubstitutable estimate must fail the probe, got {probe:?}");
+        };
+        assert_eq!(paths, "/nix/store/nix-new");
+    }
+
+    #[tokio::test]
+    async fn probe_offers_upgrade_without_size_on_transient_estimate_error() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("servers.json");
+        write_pending_upgrade(dir.path(), &path).await;
+
+        let store = StubStore(StubEstimate::Transient);
+        let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &path), store);
+
+        let probe = upgrader.probe(EstimateMode::Estimate).await;
+        let PackageProbe::Available(_, preview) = probe else {
+            panic!("a transient estimate error must still offer the upgrade, got {probe:?}");
+        };
+        assert!(
+            preview.download_size_bytes.is_none(),
+            "a transient estimate error must omit the download size"
+        );
+        assert!(
+            !preview.changes.is_empty(),
+            "the offered upgrade must still carry the changed package"
+        );
+    }
+
+    #[tokio::test]
+    async fn probe_reports_download_size_from_a_successful_estimate() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("servers.json");
+        write_pending_upgrade(dir.path(), &path).await;
+
+        let store = StubStore(StubEstimate::Downloads(4096));
+        let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &path), store);
+
+        let probe = upgrader.probe(EstimateMode::Estimate).await;
+        let PackageProbe::Available(_, preview) = probe else {
+            panic!("a successful estimate must offer the upgrade, got {probe:?}");
+        };
+        assert_eq!(preview.download_size_bytes, Some(4096));
     }
 }

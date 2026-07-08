@@ -480,6 +480,33 @@ pub async fn estimate_realization(
     })
 }
 
+/// The nix-store operations a caller depends on, behind a trait so its
+/// result-routing can be tested without spawning nix or knowing nix's
+/// `internal-json` wire format — a stub returns the typed outcomes directly.
+///
+/// Native async fn (RPITIT): NOT object-safe. Use generics
+/// (`impl StoreOperations` or `<N: StoreOperations>`), not `&dyn`.
+pub trait StoreOperations: Send + Sync + std::fmt::Debug + 'static {
+    /// See [`estimate_realization`].
+    fn estimate_realization(
+        &self,
+        packages: &[ResolvedPackage],
+    ) -> impl std::future::Future<Output = Result<RealizeEstimate, StorePathError>> + Send;
+}
+
+/// Production [`StoreOperations`], backed by the real `nix-store` CLI.
+#[derive(Debug, Default)]
+pub struct Nix;
+
+impl StoreOperations for Nix {
+    fn estimate_realization(
+        &self,
+        packages: &[ResolvedPackage],
+    ) -> impl std::future::Future<Output = Result<RealizeEstimate, StorePathError>> + Send {
+        estimate_realization(&TokioCommandRunner, packages)
+    }
+}
+
 /// Errors that can occur during store initialization.
 #[derive(Debug, thiserror::Error)]
 pub enum InitStoreError {
