@@ -251,6 +251,18 @@ async fn fetch_failed_surfaces_grpc_error() {
 }
 
 #[tokio::test]
+async fn precondition_failure_surfaces_failed_precondition() {
+    let mut mock = spawn_mock(r#"{"firmware": "up-to-date", "packages": "precondition-failed"}"#);
+    let mut client = upgrade_client(&mut mock).await;
+    let status = client
+        .check_for_upgrade(())
+        .await
+        .expect_err("a non-transient package precondition must surface as a gRPC error");
+    assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+    assert!(status.message().starts_with("Cannot check for upgrade:"));
+}
+
+#[tokio::test]
 async fn check_error_surfaces_grpc_error() {
     let mut mock = spawn_mock(r#"{"firmware": "check-error"}"#);
     let mut client = upgrade_client(&mut mock).await;

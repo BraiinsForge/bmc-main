@@ -24,7 +24,11 @@ pub enum PackagesScenario {
     #[default]
     Available,
     Unavailable,
+    /// Transient probe failure (index fetch) — surfaces as `Internal`.
     FetchFailed,
+    /// Non-transient probe failure (no enabled servers) — surfaces as
+    /// `FailedPrecondition`.
+    PreconditionFailed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
