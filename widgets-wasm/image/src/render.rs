@@ -8,6 +8,7 @@
 )]
 use bmc_wasm_sdk::*;
 
+use crate::machine::ErrorKind;
 use crate::manifest_params::Sizing;
 
 const ICON_RENEW: Svg = include_svg!("assets/renew.svg");
@@ -17,6 +18,16 @@ pub const LOADING: &str = "Loading image";
 pub const LOAD_FAILED: &str = "Failed to load image";
 pub const TOO_LARGE: &str = "Image too large";
 pub const BAD_IMAGE: &str = "Unsupported image";
+
+/// Text for a load error — centered when no image is up, else in the overlay.
+#[must_use]
+pub fn error_message(kind: ErrorKind) -> &'static str {
+    match kind {
+        ErrorKind::LoadFailed => LOAD_FAILED,
+        ErrorKind::TooLarge => TOO_LARGE,
+        ErrorKind::BadImage => BAD_IMAGE,
+    }
+}
 
 const MESSAGE_TEXT_SIZE: u32 = 24;
 const UPDATING_TEXT: &str = "Updating";

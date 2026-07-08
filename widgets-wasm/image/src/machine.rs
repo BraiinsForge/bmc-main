@@ -19,7 +19,10 @@ pub struct Decode {
 pub enum Badge {
     Fresh,
     Updating,
+    /// Can't reach the source; the shown image is old but still valid data.
     Stale,
+    /// The source answered with an unusable payload (broken / oversized image).
+    Error(ErrorKind),
 }
 
 /// Why no image is shown.
@@ -84,6 +87,10 @@ pub enum Action {
     ResumePoll,
     DisablePoll,
     Retry,
+    /// Reject a broken 2xx body: mark failing, keep the anchor, retry sooner.
+    DeferPoll,
+    /// Flag stale after a reply was banked ok (a late decode failure).
+    MarkStale,
     RequestFrame,
     EvictBitmap,
 }
@@ -120,6 +127,8 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
             },
             vec![A::ResumePoll, A::RequestFrame],
         ),
+        // A URL/sizing change drops the shown image (Loading, not stale-over-wrong);
+        // evict stays out of here — it needs render scope (host import traps otherwise).
         E::RestoreMiss | E::ParamsChanged => (
             View::Loading { decode: None },
             vec![A::ResumePoll, A::RequestFrame],
@@ -165,6 +174,7 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
             View::Loading { decode: Some(d) } if d.job == job => {
                 (View::Failed(ErrorKind::BadImage), vec![A::RequestFrame])
             }
+            // Fetch banked ok; flag the image + mark stale so is_stale matches.
             View::Shown {
                 bitmap,
                 aspect,
@@ -174,30 +184,31 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
                 View::Shown {
                     bitmap,
                     aspect,
-                    badge: Badge::Stale,
+                    badge: Badge::Error(ErrorKind::BadImage),
                     decode: None,
                 },
-                vec![A::RequestFrame],
+                vec![A::RequestFrame, A::MarkStale],
             ),
             other => (other, vec![]),
         },
         E::FetchError { kind, transient } => match view {
-            // Keep the last good image, mark it stale; retry sooner if transient.
+            // Keep the last image: unreachable → Stale (fast retry), bad body → Error.
             View::Shown {
                 bitmap,
                 aspect,
                 decode,
                 ..
             } => {
-                let mut actions = vec![A::RequestFrame];
-                if transient {
-                    actions.push(A::Retry);
-                }
+                let (badge, actions) = if transient {
+                    (Badge::Stale, vec![A::RequestFrame, A::Retry])
+                } else {
+                    (Badge::Error(kind), vec![A::RequestFrame, A::DeferPoll])
+                };
                 (
                     View::Shown {
                         bitmap,
                         aspect,
-                        badge: Badge::Stale,
+                        badge,
                         decode,
                     },
                     actions,
@@ -396,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_refresh_keeps_last_good_stale() {
+    fn failed_refresh_flags_last_good_as_error() {
         let v = shown(
             Badge::Fresh,
             Some(Decode {
@@ -404,15 +415,51 @@ mod tests {
                 aspect: 1.0,
             }),
         );
-        let (next, _) = step(v, Event::DecodeFailed { job: job(1) });
+        let (next, actions) = step(v, Event::DecodeFailed { job: job(1) });
         assert!(matches!(
             next,
             View::Shown {
-                badge: Badge::Stale,
+                badge: Badge::Error(ErrorKind::BadImage),
                 decode: None,
                 ..
             }
         ));
+        assert!(
+            actions.contains(&Action::MarkStale),
+            "a failed decode flags the poll stale so is_stale reflects it"
+        );
+    }
+
+    #[test]
+    fn broken_body_flags_error_and_defers_not_fast_retries() {
+        let (next, actions) = step(
+            shown(Badge::Fresh, None),
+            Event::FetchError {
+                kind: ErrorKind::TooLarge,
+                transient: false,
+            },
+        );
+        assert!(matches!(
+            next,
+            View::Shown {
+                badge: Badge::Error(ErrorKind::TooLarge),
+                ..
+            }
+        ));
+        assert!(actions.contains(&Action::DeferPoll));
+        assert!(
+            !actions.contains(&Action::Retry),
+            "a broken body waits the interval, not a fast retry"
+        );
+    }
+
+    #[test]
+    fn params_change_reloads_without_evicting() {
+        let (next, actions) = step(shown(Badge::Fresh, None), Event::ParamsChanged);
+        assert!(matches!(next, View::Loading { decode: None }));
+        assert_eq!(actions, vec![Action::ResumePoll, Action::RequestFrame]);
+        // evict() is a renderer host import; from on_params_update it traps.
+        assert!(!actions.contains(&Action::EvictBitmap));
     }
 
     #[test]

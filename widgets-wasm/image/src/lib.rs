@@ -67,6 +67,8 @@ mod wasm_glue {
                 }),
                 Action::DisablePoll => with_poll(|h| h.set_enabled(false)),
                 Action::Retry => with_poll(PollHandle::retry),
+                Action::DeferPoll => with_poll(|h| h.retry_after(refresh_interval_ms())),
+                Action::MarkStale => with_poll(PollHandle::mark_stale),
                 Action::RequestFrame => request_frame(),
                 Action::EvictBitmap => IMAGE.evict(),
             }
@@ -300,27 +302,27 @@ mod wasm_glue {
                     match badge {
                         Badge::Updating => render::with_updating_overlay(view),
                         // is_stale adds the grace window, so the 10s retry heals a blip first.
-                        Badge::Stale => {
-                            match POLL
-                                .with(Cell::get)
-                                .filter(|handle| handle.is_stale())
-                                .and_then(PollHandle::last_success_time)
-                            {
-                                Some(anchor) => {
-                                    with_stale_overlay(view, anchor, widget_viewport().shape)
-                                }
-                                None => view,
+                        Badge::Stale => match POLL
+                            .with(Cell::get)
+                            .filter(|handle| handle.is_stale())
+                            .and_then(PollHandle::last_success_time)
+                        {
+                            Some(anchor) => {
+                                with_stale_overlay(view, anchor, widget_viewport().shape)
                             }
-                        }
+                            None => view,
+                        },
+                        // A broken payload states its specific reason at once.
+                        Badge::Error(kind) => with_error_overlay(
+                            view,
+                            render::error_message(*kind),
+                            widget_viewport().shape,
+                        ),
                         Badge::Fresh => view,
                     }
                 }
                 View::Loading { .. } => render::message_view(render::LOADING, size),
-                View::Failed(ErrorKind::LoadFailed) => {
-                    render::message_view(render::LOAD_FAILED, size)
-                }
-                View::Failed(ErrorKind::TooLarge) => render::message_view(render::TOO_LARGE, size),
-                View::Failed(ErrorKind::BadImage) => render::message_view(render::BAD_IMAGE, size),
+                View::Failed(kind) => render::message_view(render::error_message(*kind), size),
             })
         };
 
