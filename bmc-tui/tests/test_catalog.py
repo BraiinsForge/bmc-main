@@ -336,6 +336,33 @@ def test_register_packages_builds_cli_command() -> None:
     assert "--name core --version 1.0 --store-path /nix/store/core" in cmd
 
 
+def _flip_clock_plan() -> catalog.Deployment:
+    built = Built("widget-flip-clock", "1.0", ".#x^out", store_path="/nix/store/wfc")
+    return catalog.Deployment(attrs=[], built=[built])
+
+
+def test_remove_legacy_flip_clock_issues_remove_command() -> None:
+    backend = _Exec(_routes({}))
+    catalog.remove_legacy_flip_clock(Device("h", backend=backend), _flip_clock_plan())
+    assert "remove-packages --name flip-clock" in backend.runs[-1][-1]
+
+
+def test_remove_legacy_flip_clock_skips_without_successor() -> None:
+    # No widget-flip-clock in the deploy → no conflict → nothing to remove.
+    backend = _Exec(_routes({}))
+    plan = catalog.Deployment(
+        attrs=[], built=[Built("core", "1.0", ".#x^out", store_path="/nix/store/core")]
+    )
+    catalog.remove_legacy_flip_clock(Device("h", backend=backend), plan)
+    assert backend.runs == []
+
+
+def test_remove_legacy_flip_clock_tolerates_failure() -> None:
+    # A device that never had the legacy package makes remove-packages exit
+    # non-zero; the deploy must swallow it rather than abort.
+    catalog.remove_legacy_flip_clock(Device("h", backend=_Exec(_unreachable)), _flip_clock_plan())
+
+
 def test_restart_compositor_runs_on_confirm(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("bmc_tui.console.confirm", lambda _q: True)
     backend = _Exec(_routes({}))

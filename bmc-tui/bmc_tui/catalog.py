@@ -215,6 +215,29 @@ def copy_closures(nix: Nix, dev: Device, plan: Deployment) -> str:
     return f"{console.lit(len(plan.built))} closure(s) → {console.lit(dev.host)}"
 
 
+# Developers carry the pre-rename `flip-clock` package, which shares store
+# paths with `widget-flip-clock`; left in place it makes add-packages fail on a
+# symlink conflict. Drop it only when its successor is in this deploy, and treat
+# it as advisory — a device without it is already fine — so a failure here (e.g.
+# it was never installed) never blocks a deploy.
+_LEGACY_FLIP_CLOCK = "flip-clock"
+_WIDGET_FLIP_CLOCK = "widget-flip-clock"
+
+
+@stage("Drop legacy flip-clock")
+def remove_legacy_flip_clock(dev: Device, plan: Deployment) -> str:
+    done_if(all(b.name != _WIDGET_FLIP_CLOCK for b in plan.built))
+    cmd = (
+        f"PATH=/run/current-profile/bin:$PATH {shlex.quote(_NIX_CLI)} "
+        f"remove-packages --name {shlex.quote(_LEGACY_FLIP_CLOCK)}"
+    )
+    try:
+        dev.run(cmd)
+    except subprocess.SubprocessError:
+        return f"{_LEGACY_FLIP_CLOCK} not present (ignored)"
+    return f"{_LEGACY_FLIP_CLOCK} removed"
+
+
 @stage("Register in bmc profile")
 def register_packages(dev: Device, plan: Deployment) -> str:
     out = dev.run(_register_cmd(plan.built))
