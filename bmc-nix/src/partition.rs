@@ -217,34 +217,40 @@ fn decode_dev_t(rdev: u64) -> (u32, u32) {
     )
 }
 
-/// Whether `partition` backs any active mount, compared by block
-/// identity (`major:minor`) so device aliases and bind mounts cannot
-/// slip past. A path that cannot be statted or is not a block device
-/// cannot be mounted and passes the guard; missing-device reporting
-/// belongs to the `test -b` step that runs before it.
-fn is_device_mounted(partition: &Path) -> Result<bool, PreparePartitionError> {
+/// Whether `partition` backs any active mount listed in `mountinfo`,
+/// compared by block identity (`major:minor`) so device aliases and
+/// bind mounts cannot slip past. A path that cannot be statted or is
+/// not a block device cannot be mounted and passes the guard;
+/// missing-device reporting belongs to the `test -b` step that runs
+/// before it.
+fn is_device_mounted(partition: &Path, mountinfo: &str) -> bool {
     use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
     let Ok(metadata) = std::fs::metadata(partition) else {
-        return Ok(false);
+        return false;
     };
     if !metadata.file_type().is_block_device() {
-        return Ok(false);
+        return false;
     }
-    let device_id = decode_dev_t(metadata.rdev());
-    let mountinfo = std::fs::read_to_string("/proc/self/mountinfo")
-        .map_err(|source| PreparePartitionError::ReadMountInfo { source })?;
-    Ok(is_device_id_mounted(&mountinfo, device_id))
+    is_device_id_mounted(mountinfo, decode_dev_t(metadata.rdev()))
 }
 
-/// `mounts` is the mount table in `/proc/mounts` format (see
-/// [`read_proc_mounts`]), passed in so the mount-point inspection does
-/// not depend on the environment it runs in.
+/// The current mount table from `/proc/self/mountinfo`.
+pub fn read_proc_self_mountinfo() -> Result<String, PreparePartitionError> {
+    std::fs::read_to_string("/proc/self/mountinfo")
+        .map_err(|source| PreparePartitionError::ReadMountInfo { source })
+}
+
+/// `mounts` and `mountinfo` are the mount tables in `/proc/mounts` and
+/// `/proc/self/mountinfo` format (see [`read_proc_mounts`] and
+/// [`read_proc_self_mountinfo`]), passed in so the mount inspection
+/// does not depend on the environment it runs in.
 pub async fn prepare_data_partition(
     runner: &impl CommandRunner,
     partition: &Path,
     mount_point: &Path,
     mounts: &str,
+    mountinfo: &str,
 ) -> Result<(), PreparePartitionError> {
     let partition_arg = partition.to_string_lossy();
     let mount_point_arg = mount_point.to_string_lossy();
@@ -261,7 +267,7 @@ pub async fn prepare_data_partition(
         });
     }
 
-    if is_device_mounted(partition)? {
+    if is_device_mounted(partition, mountinfo) {
         return Err(PreparePartitionError::PartitionMounted {
             partition: path_string(partition),
         });
@@ -505,7 +511,7 @@ mod tests {
             ScriptedRunner::success(b""),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect("BUG: unformatted partition should be prepared");
 
@@ -540,7 +546,7 @@ mod tests {
             ScriptedRunner::success(b""),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect("BUG: formatted partition should be prepared");
 
@@ -574,7 +580,7 @@ mod tests {
             ScriptedRunner::output_with_stderr(4, b"", b"blkid: /dev/mmcblk0p4: I/O error"),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect_err("BUG: a failed blkid probe must not format the partition");
 
@@ -602,7 +608,7 @@ mod tests {
             },
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect_err("BUG: a signal-killed blkid probe must not format the partition");
 
@@ -650,9 +656,11 @@ mod tests {
     fn is_device_mounted_passes_nonexistent_path() {
         // A device that cannot be statted cannot be mounted; missing-
         // device reporting belongs to the `test -b` step.
-        let mounted = super::is_device_mounted(Path::new("/nonexistent/device"))
-            .expect("BUG: nonexistent path must not error");
-        assert!(!mounted);
+        let mountinfo = "40 30 179:4 / /mnt/data rw - ext4 /dev/mmcblk0p4 rw\n";
+        assert!(!super::is_device_mounted(
+            Path::new("/nonexistent/device"),
+            mountinfo
+        ));
     }
 
     #[test]
@@ -660,8 +668,8 @@ mod tests {
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let file = tmp.path().join("not-a-device");
         std::fs::write(&file, b"").expect("BUG: write temp file");
-        let mounted = super::is_device_mounted(&file).expect("BUG: regular file must not error");
-        assert!(!mounted);
+        let mountinfo = "40 30 179:4 / /mnt/data rw - ext4 /dev/mmcblk0p4 rw\n";
+        assert!(!super::is_device_mounted(&file, mountinfo));
     }
 
     #[tokio::test]
@@ -676,6 +684,7 @@ mod tests {
             Path::new("/dev/mmcblk0p4"),
             Path::new("/mnt/data"),
             mounts,
+            "",
         )
         .await
         .expect("BUG: already-mounted partition should fast-path");
@@ -695,6 +704,7 @@ mod tests {
             Path::new("/dev/mmcblk0p4"),
             Path::new("/mnt/data"),
             mounts,
+            "",
         )
         .await
         .expect_err("BUG: foreign mount must abort preparation");
@@ -720,7 +730,7 @@ mod tests {
             ScriptedRunner::success(b""),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect("BUG: preen exit 2 should mount");
 
@@ -754,7 +764,7 @@ mod tests {
             ScriptedRunner::success(b""),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect("BUG: preen exit 3 should mount");
 
@@ -789,7 +799,7 @@ mod tests {
             ScriptedRunner::success(b""),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect("BUG: escalated repair should mount");
 
@@ -825,7 +835,7 @@ mod tests {
             ScriptedRunner::success(b""),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect("BUG: -y exit 1 should mount");
 
@@ -861,7 +871,7 @@ mod tests {
             ScriptedRunner::success(b""),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect("BUG: -y exit 3 should mount");
 
@@ -901,7 +911,7 @@ mod tests {
             ScriptedRunner::success(b""),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect("BUG: unrecoverable fs should reformat and mount");
 
@@ -939,7 +949,7 @@ mod tests {
             ScriptedRunner::output(8, b""),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect_err("BUG: operational preen failure must not escalate");
 
@@ -963,7 +973,7 @@ mod tests {
             ScriptedRunner::output(64, b""),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect_err("BUG: unknown exit bit must not escalate");
 
@@ -987,7 +997,7 @@ mod tests {
             ScriptedRunner::signal(9),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect_err("BUG: signal death must not escalate");
 
@@ -1012,7 +1022,7 @@ mod tests {
             ScriptedRunner::success(b"ext4\n"),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect_err("BUG: preen spawn error must not escalate");
 
@@ -1037,7 +1047,7 @@ mod tests {
             ScriptedRunner::output(8, b""),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect_err("BUG: -y operational failure must not reformat");
 
@@ -1065,7 +1075,7 @@ mod tests {
             ScriptedRunner::output(12, b""),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect_err("BUG: -y exit 12 must not reformat");
 
@@ -1092,7 +1102,7 @@ mod tests {
             ScriptedRunner::output(4, b""),
         ]);
 
-        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "")
+        prepare_data_partition(&runner, Path::new("/dev/mmcblk0p4"), &mount_point, "", "")
             .await
             .expect_err("BUG: -y spawn error must not reformat");
 

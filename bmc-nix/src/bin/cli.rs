@@ -880,6 +880,7 @@ async fn cmd_init(
         &data_partition,
         &data_dir,
         &bmc_nix::partition::read_proc_mounts()?,
+        &bmc_nix::partition::read_proc_self_mountinfo()?,
     )
     .await?;
 
