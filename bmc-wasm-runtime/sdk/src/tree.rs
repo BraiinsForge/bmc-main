@@ -49,7 +49,7 @@ pub use crate::modal::*;
 pub use crate::notification::*;
 pub use crate::progress_bar::*;
 pub use crate::relative_time::*;
-pub use crate::stale_overlay::*;
+pub use crate::status_overlay::*;
 pub use crate::tag::*;
 pub use crate::text::*;
 

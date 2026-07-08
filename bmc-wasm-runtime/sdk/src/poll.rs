@@ -240,6 +240,11 @@ impl Registry {
         self.polls[handle.0].force_retry = Some(delay_ms);
     }
 
+    /// Flag failing after a reply was banked ok (a late decode failure).
+    pub(crate) fn mark_stale(&mut self, handle: Handle) {
+        self.polls[handle.0].last_failed = true;
+    }
+
     pub(crate) fn reschedule(
         &mut self,
         handle: Handle,
@@ -468,6 +473,11 @@ mod wasm {
         /// `retry_ms` — for a reply handler applying its own backoff.
         pub fn retry_after(self, delay_ms: u32) {
             REGISTRY.with(|r| r.borrow_mut().request_retry_after(self, delay_ms));
+        }
+
+        /// Flag stale after a reply was banked ok (e.g. a late decode failure).
+        pub fn mark_stale(self) {
+            REGISTRY.with(|r| r.borrow_mut().mark_stale(self));
         }
 
         #[must_use]
@@ -945,6 +955,24 @@ mod tests {
         assert!(
             reg.is_stale(h, 100),
             "a rejected reply leaves the poll stale"
+        );
+    }
+
+    #[test]
+    fn mark_stale_flags_a_banked_reply_as_failing() {
+        let mut reg = Registry::default();
+        let mut be = FakeBackend::new();
+        let h = reg.register(build_url, CFG);
+        reg.start(h, &mut be);
+        deliver_at(&mut reg, &mut be, 1, true, 0); // banked ok at t=0
+        assert!(!reg.is_stale(h, 100), "a banked ok reply is not stale");
+        // Its payload later proved unusable (e.g. a decode failed).
+        reg.mark_stale(h);
+        assert!(reg.is_stale(h, 100), "mark_stale flags it failing");
+        assert_eq!(
+            reg.last_success_secs(h),
+            Some(0),
+            "the last-good anchor is unchanged"
         );
     }
 

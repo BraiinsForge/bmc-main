@@ -2,12 +2,33 @@
 
 use crate::prelude::*;
 
-story_meta! { title: "StaleOverlay" }
+story_meta! { title: "StatusOverlay" }
 
 #[story(default)]
-fn stale_overlay(ctx: &mut StoryCtx) {
+fn status_overlay(ctx: &mut StoryCtx) {
+    let error = ctx
+        .radio("Variant", &["Stale (age)", "Error (reason)"], 0)
+        .get()
+        == 1;
     let age = ctx.slider("Last refresh age (s)", 120.0, 0.0, 200_000.0);
+    let reason = match ctx
+        .radio(
+            "Error reason",
+            &[
+                "Image too large",
+                "Unsupported image",
+                "Failed to load image",
+            ],
+            0,
+        )
+        .get()
+    {
+        1 => "Unsupported image",
+        2 => "Failed to load image",
+        _ => "Image too large",
+    };
     let round = ctx.toggle("Round face", false);
+
     #[expect(
         clippy::cast_possible_truncation,
         reason = "slider seconds are small whole numbers"
@@ -29,5 +50,10 @@ fn stale_overlay(ctx: &mut StoryCtx) {
         props!(width: 480, height: tile_h, padding: 24, cross_align: CrossAlign::Center),
         [text("Weather · 21°C", style!(size: 22, color: WHITE))],
     );
-    ctx.ui.div(frame, with_stale_overlay(tile, anchor, shape));
+    let overlaid = if error {
+        with_error_overlay(tile, reason, shape)
+    } else {
+        with_stale_overlay(tile, anchor, shape)
+    };
+    ctx.ui.div(frame, overlaid);
 }
