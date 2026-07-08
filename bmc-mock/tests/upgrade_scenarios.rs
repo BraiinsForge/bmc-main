@@ -774,6 +774,40 @@ async fn unknown_install_target_is_rejected_over_grpc() {
 }
 
 #[tokio::test]
+async fn install_when_up_to_date_offers_the_widget() {
+    // Firmware and packages are both up to date; only the explicit install
+    // drives the plan.
+    let mut mock = spawn_mock(
+        r#"{"firmware": "up-to-date", "packages": "unavailable", "shadowed_packages": ["widget-flip-clock"]}"#,
+    );
+    let mut client = upgrade_client(&mut mock).await;
+    let response = client
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec!["widget-flip-clock".to_owned()],
+        })
+        .await
+        .expect("BUG: check failed")
+        .into_inner();
+    assert!(
+        response.upgrade_id.is_some(),
+        "an install request must yield an upgrade id even when up to date"
+    );
+    assert_eq!(
+        response.disruption,
+        UpgradeDisruption::AppRestart as i32,
+        "an install-only upgrade only restarts the app"
+    );
+    let packages = response.packages.expect("BUG: packages offered");
+    assert_eq!(
+        packages.changes.len(),
+        1,
+        "the plan must be exactly the installed widget: {:?}",
+        packages.changes
+    );
+    assert_eq!(packages.changes[0].name, "widget-flip-clock");
+}
+
+#[tokio::test]
 async fn install_run_marks_widget_installed_over_grpc() {
     let mut mock = spawn_mock(SHADOWED_SCENARIO);
     let mut client = upgrade_client(&mut mock).await;
