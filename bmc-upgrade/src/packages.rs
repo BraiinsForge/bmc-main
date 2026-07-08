@@ -1225,4 +1225,31 @@ mod tests {
         };
         assert_eq!(preview.download_size_bytes, Some(4096));
     }
+    #[tokio::test]
+    async fn probe_reports_install_target_unavailable() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("servers.json");
+        let base_url = spawn_index_server(index_json(&[("nix", "1.0.0", "/nix/store/nix")])).await;
+        write_enabled_server(&path, &base_url);
+        write_base_manifest(
+            &dir.path().join("profile"),
+            &[("nix", "1.0.0", "/nix/store/nix")],
+        );
+
+        let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
+
+        // The index carries only "nix"; a requested install the index does not
+        // list fails the whole probe at the resolve stage.
+        let probe = upgrader
+            .probe(EstimateMode::Skip, &["widget-nope".to_owned()])
+            .await;
+        assert!(
+            matches!(
+                probe,
+                PackageProbe::Failed(PackageProbeError::InstallTargetUnavailable(_))
+            ),
+            "got {probe:?}"
+        );
+    }
+
 }
