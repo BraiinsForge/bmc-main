@@ -31,14 +31,20 @@ pkgs.writeTextFile {
         # operand was rejected -> fall back to cp + sync. A failed
         # probe that DID create the probe file is a real write/fsync
         # error -> abort; and a failure of the real dd write below
-        # aborts too (set -e), never retrying through the degraded
-        # path. The rename itself is deliberately not fsynced: losing
-        # it degrades to "file absent", which self-heals.
+        # aborts too, reporting dd's diagnostic, never retrying
+        # through the degraded path. The rename itself is deliberately
+        # not fsynced: losing it degrades to "file absent", which
+        # self-heals.
         probe="$target.probe"
         rm -f "$probe"
         if dd if=/dev/null of="$probe" conv=fsync 2>/dev/null; then
             rm -f "$probe"
-            dd if="${nixConf}" of="$target.tmp" conv=fsync 2>/dev/null
+            # dd chats on stderr even on success: capture it, and
+            # surface it only when the write actually failed.
+            if ! dd_err="$(dd if="${nixConf}" of="$target.tmp" conv=fsync 2>&1)"; then
+                echo "nix-conf-activation: durable nix.conf write failed: $dd_err" >&2
+                exit 1
+            fi
         elif [ ! -e "$probe" ]; then
             cp "${nixConf}" "$target.tmp"
             sync
