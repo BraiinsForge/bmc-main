@@ -149,8 +149,9 @@ reverted activation still reports an error — `RevertedAfterFailure`, carrying 
 revert re-activation itself fails, the error is `RevertFailed`, carrying both the original and the revert failure.
 
 `bmc-nix` never writes the `current` symlink; only a generation's own activation scripts do. The core package's
-`998-write-boundary` activation script moves `current` atomically (a temporary symlink, then `mv -Tf`) as the final
-activation step, so `current` advances only after every other step has succeeded; `095-link-current` derives
+final activation step (`998`, the `bmc-activation-write-boundary` binary) moves `current` atomically (a temporary
+symlink, then a rename) and durably (a filesystem sync before the flip, a directory fsync after it), so `current`
+advances only after every other step has succeeded; `095-link-current` derives
 `/run/current-profile` from it. Reverting to the old generation works by re-running its activation entrypoint, which
 moves `current` back through the same mechanism — never by editing symlinks directly.
 

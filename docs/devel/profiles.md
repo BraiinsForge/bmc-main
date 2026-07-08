@@ -126,8 +126,9 @@ scripts.
 ## `current` Ownership
 
 The `current` symlink is written only by activation scripts, never by `bmc-nix` itself, in either the library or the
-CLI. The core package's `998-write-boundary` activation script moves `current` atomically, via a temporary symlink and
-`mv -Tf`. It runs as the final activation step, so `current` advances to the new generation only after every other
+CLI. The core package's final activation step (`998`, the `bmc-activation-write-boundary` binary) moves `current`
+atomically, via a temporary symlink and a rename, and durably, syncing the profile filesystem before the flip and
+fsyncing the profile directory after it, so `current` advances to the new generation only after every other
 activation step has succeeded; a crash or failure before it leaves `current` on the previous generation.
 `095-link-current` derives `/run/current-profile` from the `current` path (not its target), so it tracks the later flip.
 
