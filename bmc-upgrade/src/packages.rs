@@ -1252,4 +1252,53 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn probe_reports_index_unusable_on_garbage_json() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("servers.json");
+        // The fetch succeeds (HTTP 200) but the body is not a valid index: a
+        // parse failure is an unusable index, not a transient fetch failure.
+        let base_url = spawn_index_server("{ not an index".to_owned()).await;
+        write_enabled_server(&path, &base_url);
+        write_base_manifest(
+            &dir.path().join("profile"),
+            &[("nix", "1.0.0", "/nix/store/nix")],
+        );
+
+        let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
+
+        let probe = upgrader.probe(EstimateMode::Skip, &[]).await;
+        assert!(
+            matches!(
+                probe,
+                PackageProbe::Failed(PackageProbeError::IndexUnusable(_))
+            ),
+            "got {probe:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn probe_reports_manifest_read_failed_when_manifest_malformed() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("servers.json");
+        let base_url = spawn_index_server(index_json(&[("nix", "1.0.0", "/nix/store/nix")])).await;
+        write_enabled_server(&path, &base_url);
+        // A present but unparseable current manifest is a read failure. An
+        // absent profile is not: read_latest_manifest falls back to an empty
+        // manifest, so the probe would report UpToDate instead.
+        let current = dir.path().join("profile/current");
+        std::fs::create_dir_all(&current).expect("BUG: create current dir");
+        std::fs::write(current.join("manifest"), "{ not a manifest").expect("BUG: write manifest");
+
+        let upgrader = PackageUpgrader::new(test_nix_config(dir.path(), &path));
+
+        let probe = upgrader.probe(EstimateMode::Skip, &[]).await;
+        assert!(
+            matches!(
+                probe,
+                PackageProbe::Failed(PackageProbeError::ManifestReadFailed(_))
+            ),
+            "got {probe:?}"
+        );
+    }
 }
