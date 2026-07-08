@@ -752,6 +752,28 @@ async fn check_surfaces_requested_install_over_grpc() {
 }
 
 #[tokio::test]
+async fn unknown_install_target_is_rejected_over_grpc() {
+    let mut mock = spawn_mock(SHADOWED_SCENARIO);
+    let mut client = upgrade_client(&mut mock).await;
+    // widget-nope is not in the catalog (only widget-flip-clock is shadowed),
+    // so the check must fail loud rather than silently offer a doomed install.
+    let status = client
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec!["widget-nope".to_owned()],
+        })
+        .await
+        .expect_err("an unknown install target must surface as a gRPC error");
+    assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+    assert!(
+        status
+            .message()
+            .contains("requested package to install is unavailable"),
+        "unexpected message: {}",
+        status.message()
+    );
+}
+
+#[tokio::test]
 async fn install_run_marks_widget_installed_over_grpc() {
     let mut mock = spawn_mock(SHADOWED_SCENARIO);
     let mut client = upgrade_client(&mut mock).await;
