@@ -102,6 +102,9 @@ impl PackageBackend for MockPackageBackend {
             PackagesScenario::FetchFailed => PackageProbe::Failed(
                 PackageProbeError::IndexFetchFailed("mock: index fetch failed".to_owned()),
             ),
+            PackagesScenario::PreconditionFailed => {
+                PackageProbe::Failed(PackageProbeError::NoEnabledServers)
+            }
         }
     }
 
@@ -199,6 +202,13 @@ mod tests {
         assert!(matches!(
             backend.probe(EstimateMode::Estimate).await,
             PackageProbe::Failed(PackageProbeError::IndexFetchFailed(_))
+        ));
+
+        let path = write_scenario(dir.path(), r#"{"packages": "precondition-failed"}"#);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
+        assert!(matches!(
+            backend.probe(EstimateMode::Estimate).await,
+            PackageProbe::Failed(PackageProbeError::NoEnabledServers)
         ));
     }
 
