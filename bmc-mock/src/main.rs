@@ -17,7 +17,7 @@ use bmc_platform::{BosPlatform, HardwareProfileSelection};
 use clap::Parser;
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
-use tracing::error;
+use tracing::{error, warn};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -44,7 +44,22 @@ async fn main() -> Result<()> {
         .shadowed_packages
         .into_iter()
         .collect();
-    widget_staging::stage_installed_widgets(&bundle, &staging, &shadowed)?;
+    // A missing bundle root means the mock was started without building the
+    // widget bundle (`nix build .#widgets`); stage an empty set and warn rather
+    // than aborting. A present-but-unreadable bundle still fails loud, so an
+    // install never persists against a silently-empty tree.
+    match bundle.try_exists() {
+        Ok(true) => widget_staging::stage_installed_widgets(&bundle, &staging, &shadowed)?,
+        Ok(false) => {
+            warn!(bundle = %bundle.display(),
+                "widget bundle not found; starting with no widgets (build it with `nix build .#widgets`)");
+            if staging.exists() {
+                std::fs::remove_dir_all(&staging)?;
+            }
+            std::fs::create_dir_all(&staging)?;
+        }
+        Err(err) => return Err(err.into()),
+    }
 
     let package_backend = Arc::new(
         MockPackageBackend::new(scenario_path, pacing)
