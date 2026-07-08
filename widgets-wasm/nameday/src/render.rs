@@ -187,42 +187,4 @@ pub(super) fn date_draw(ws: WidgetSize, date_str: &str) -> Node {
     )
 }
 
-pub const STALE_DATA_TEXT: &str = "Stale data";
-
-const STALE_TEXT_SIZE: u32 = 14;
-const STALE_ICON_PX: f32 = 16.0;
-const STALE_INSET: f32 = 8.0;
-
-// A warning icon and the message on a panel, pinned to the bottom-left corner.
-// The insets make the node absolutely positioned, so it floats over the view
-// without taking part in its layout.
-pub fn stale_banner() -> Node {
-    row(
-        props!(inset_bottom: STALE_INSET, inset_left: STALE_INSET),
-        [row(
-            props!(
-                background: GRAY_100,
-                padding: 6.0,
-                gap: 6.0,
-                cross_align: CrossAlign::Center
-            ),
-            [
-                canvas(
-                    props!(width: STALE_ICON_PX, height: STALE_ICON_PX),
-                    [Draw::svg_builtin(
-                        0.0,
-                        0.0,
-                        STALE_ICON_PX,
-                        STALE_ICON_PX,
-                        ICON_WARN_FILLED,
-                        RED_50,
-                    )],
-                ),
-                text(
-                    STALE_DATA_TEXT,
-                    style!(size: STALE_TEXT_SIZE, weight: FontWeight::BOLD, color: RED_50, line_height: 1.0),
-                ),
-            ],
-        )],
-    )
-}
+// The stale indicator now uses the shared `with_stale_overlay` (SDK).

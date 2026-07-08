@@ -20,7 +20,7 @@ mod wasm_glue {
     use bmc_wasm_sdk::*;
 
     use crate::manifest_params::Country;
-    use crate::render::{country_draw, date_draw, stale_banner};
+    use crate::render::{country_draw, date_draw};
 
     const NAMEDAY_API_URL_TEMPLATE: &str =
         "https://nameday.abalin.net/api/V2/date?day={DAY_PLACEHOLDER}&month={MONTH_PLACEHOLDER}";
@@ -195,6 +195,7 @@ mod wasm_glue {
         let ws = widget_size();
         let params = manifest_params::Params::current();
         let mut root_children: Vec<Node> = vec![country_draw(ws, params.country)];
+        let mut stale_anchor: Option<SystemTime> = None;
 
         NAMEDAY_DATA.with(|d| {
             let data = d.borrow();
@@ -221,8 +222,9 @@ mod wasm_glue {
 
                         root_children.push(date_draw(ws, &date_string));
 
+                        // Names for a past day are stale; flag with the shared pill.
                         if !is_today(&data.fetched_at) {
-                            root_children.push(stale_banner());
+                            stale_anchor = Some(data.fetched_at.time);
                         }
                     }
                     None => {
@@ -232,7 +234,10 @@ mod wasm_glue {
             }
         });
 
-        let root = col(props!(background: BLACK), root_children);
+        let mut root = col(props!(background: BLACK), root_children);
+        if let Some(anchor) = stale_anchor {
+            root = with_stale_overlay(root, anchor, widget_viewport().shape);
+        }
 
         let _ = render_ui(ws.width, ws.height, root);
 
