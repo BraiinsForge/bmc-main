@@ -20,6 +20,7 @@ pub struct MockInstance {
     pub dir: tempfile::TempDir,
     pub password: String,
     index_path: Option<PathBuf>,
+    fast_upgrades: bool,
 }
 
 impl Drop for MockInstance {
@@ -43,6 +44,7 @@ fn spawn_child(
     port: u16,
     password: &str,
     index_path: Option<&std::path::Path>,
+    fast_upgrades: bool,
 ) -> Child {
     let mut args = vec![
         format!("--address=127.0.0.1:{port}"),
@@ -55,8 +57,10 @@ fn spawn_child(
         format!("--sounds-dir={}", dir.path().join("sounds").display()),
         format!("--widgets-path={}", dir.path().join("widgets").display()),
         format!("--system-password={password}"),
-        "--fast-upgrades".to_owned(),
     ];
+    if fast_upgrades {
+        args.push("--fast-upgrades".to_owned());
+    }
     if let Some(index) = index_path {
         args.push(format!("--package-index={}", index.display()));
     }
@@ -69,10 +73,14 @@ fn spawn_child(
 }
 
 pub fn spawn_mock(scenario_json: &str) -> MockInstance {
-    spawn_mock_inner(scenario_json, None)
+    spawn_mock_inner(scenario_json, None, true)
 }
 
-pub fn spawn_mock_inner(scenario_json: &str, index_json: Option<&str>) -> MockInstance {
+pub fn spawn_mock_inner(
+    scenario_json: &str,
+    index_json: Option<&str>,
+    fast_upgrades: bool,
+) -> MockInstance {
     let dir = tempfile::tempdir().expect("BUG: tempdir");
     let template = dir.path().join("template/etc");
     std::fs::create_dir_all(&template).expect("BUG: create template");
@@ -133,7 +141,14 @@ pub fn spawn_mock_inner(scenario_json: &str, index_json: Option<&str>) -> MockIn
             .expect("BUG: tempdir has a name")
             .to_string_lossy()
     );
-    let child = spawn_child(&dir, &mockfs, port, &password, index_path.as_deref());
+    let child = spawn_child(
+        &dir,
+        &mockfs,
+        port,
+        &password,
+        index_path.as_deref(),
+        fast_upgrades,
+    );
 
     MockInstance {
         child,
@@ -142,6 +157,7 @@ pub fn spawn_mock_inner(scenario_json: &str, index_json: Option<&str>) -> MockIn
         dir,
         password,
         index_path,
+        fast_upgrades,
     }
 }
 
@@ -162,6 +178,7 @@ async fn connect(mock: &mut MockInstance) -> Channel {
                 mock.port,
                 &mock.password,
                 mock.index_path.as_deref(),
+                mock.fast_upgrades,
             );
         }
         let endpoint = format!("http://127.0.0.1:{}", mock.port);
@@ -222,6 +239,7 @@ pub async fn authenticated_channel(
                     mock.port,
                     &mock.password,
                     mock.index_path.as_deref(),
+                    mock.fast_upgrades,
                 );
             }
         }

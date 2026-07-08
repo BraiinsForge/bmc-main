@@ -23,7 +23,11 @@ use common::{MockInstance, spawn_mock};
 const STREAM_TIMEOUT: Duration = Duration::from_secs(60);
 
 fn spawn_mock_with_index(scenario_json: &str, index_json: &str) -> MockInstance {
-    common::spawn_mock_inner(scenario_json, Some(index_json))
+    common::spawn_mock_inner(scenario_json, Some(index_json), true)
+}
+
+fn spawn_mock_realistic(scenario_json: &str) -> MockInstance {
+    common::spawn_mock_inner(scenario_json, None, false)
 }
 
 #[derive(Clone)]
@@ -734,6 +738,42 @@ async fn second_check_evicts_the_first_upgrade_id() {
         "an evicted id must fail before any progress event"
     );
     assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+}
+
+#[tokio::test]
+async fn check_during_a_running_upgrade_reports_in_progress() {
+    let mut mock = spawn_mock_realistic(r#"{"firmware": "up-to-date", "packages": "available"}"#);
+    let mut client = upgrade_client(&mut mock).await;
+    let mut concurrent = client.clone();
+
+    let upgrade_id = client
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
+        .await
+        .expect("BUG: check failed")
+        .into_inner()
+        .upgrade_id
+        .expect("BUG: upgrade id");
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest { upgrade_id })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+    let first = stream
+        .message()
+        .await
+        .expect("BUG: stream errored before first event")
+        .expect("BUG: stream ended before first event");
+    assert!(first.event.is_some(), "expected a progress event");
+
+    let status = concurrent
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
+        .await
+        .expect_err("a check during a running upgrade must be refused");
+    assert_eq!(status.code(), tonic::Code::Unavailable);
 }
 
 #[tokio::test]
