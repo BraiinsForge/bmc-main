@@ -6,7 +6,7 @@
 { pkgs, lib }:
 let
   # mkPrioritizedEntries: Scan a directory for files with numeric prefixes
-  # (e.g. "050-write-boundary") and produce a list of { prefix, bin } attrsets.
+  # (e.g. "095-link-current") and produce a list of { prefix, bin } attrsets.
   mkPrioritizedEntries = dir:
     let
       entries = builtins.attrNames (builtins.readDir dir);
