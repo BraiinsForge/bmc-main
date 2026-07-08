@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="deck_alarm_v1">
+  <copyright>
+    Copyright (C) 2026 Braiins Systems s.r.o.
+    SPDX-License-Identifier: MIT
+
+    New protocol for BDK-452; the alarm overlay's ring event and its dismiss/snooze return path
+  </copyright>
+
+  <interface name="deck_alarm_v1" version="1">
+    <description summary="Deck alarm control interface">
+      Lightweight compositor-relayed IPC for the alarm overlay to show firing
+      alarm and allow to dismiss or snooze it.
+    </description>
+
+    <request name="snooze_alarm">
+      <description summary="snooze the alarm">
+        Request the compositor to snooze the alarm.
+      </description>
+    </request>
+
+    <request name="dismiss_alarm">
+      <description summary="dismiss the alarm">
+        Request the compositor to dismiss the alarm.
+      </description>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the alarm interface"/>
+    </request>
+
+    <event name="ring_alarm">
+      <description summary="ring the alarm">
+        Sent when an alarm fires. Carries what the overlay renders: the alarm's
+        scheduled time and its label. The overlay maps its full-screen surface on
+        this event and unmaps after the user dismisses or snoozes.
+      </description>
+      <arg name="time" type="string" summary="scheduled alarm time, e.g. 07:30"/>
+      <arg name="label" type="string" summary="alarm label, empty if unset"/>
+    </event>
+
+    <event name="stop_alarm">
+      <description summary="the alarm stopped ringing">
+        Sent when the alarm is no longer ringing for a reason this overlay did
+        not initiate (timeout, dismissal from another surface, or bmc fallback).
+        The overlay unmaps its surface.
+      </description>
+    </event>
+
+  </interface>
+</protocol>

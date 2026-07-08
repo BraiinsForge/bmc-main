@@ -46,6 +46,7 @@ members = [
     "bmc-widget-codegen",
     "bmc-widget-manifest",
     "bmc-widget-protocol",
+    "deck-alarm-v1",
     "deck-screen-edge-v1",
     "deck-settings-v1",
     "system-overlays/bmc-overlay-device-info",
@@ -201,6 +202,7 @@ cognos = "1.0.1"
 cosmic-text = { version = "0.18", default-features = false, features = ["std", "swash"] }
 croner = "3.0.0"
 data-encoding = "2.6.0"
+deck-alarm-v1 = { path = "deck-alarm-v1" }
 deck-screen-edge-v1 = { path = "deck-screen-edge-v1" }
 deck-settings-v1 = { path = "deck-settings-v1" }
 dialoguer = "0.11.0"

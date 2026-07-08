@@ -1,0 +1,20 @@
+[package]
+name = "deck-alarm-v1"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins Systems s.r.o."]
+description = "Vendored deck_alarm_v1 Wayland protocol (overlay system-control IPC)"
+
+# Wayland protocol XML read by wayland_scanner proc macros; the nix source
+# filter keeps only rust/toml/lock unless a crate opts extra files in here.
+[package.metadata.nix]
+include = ["protocol/deck-alarm-v1.xml"]
+
+[dependencies]
+wayland-backend.workspace = true
+wayland-client.workspace = true
+wayland-scanner.workspace = true
+wayland-server.workspace = true
+
+[lints]
+workspace = true
