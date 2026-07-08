@@ -331,16 +331,50 @@ pub fn compute_upgrade_plan(
         }
 
         if let Some(&new_pkg) = add_by_name.get(name.as_str()) {
-            if new_pkg.version != pkg.version || new_pkg.store_path != pkg.store_path {
+            // An explicit install always requests "latest" (version: None),
+            // so a resolved version strictly older than the installed one can
+            // only be an accidental rollback (e.g. the origin server rolled
+            // back). Keep the installed package rather than silently
+            // downgrading it. A newer or sideways move (different server,
+            // same-or-higher version) still applies. A malformed version on
+            // either side disables the guard rather than blocking the move.
+            let is_downgrade = matches!(
+                (
+                    index::parse_package_version(&pkg.version),
+                    index::parse_package_version(&new_pkg.version),
+                ),
+                (Some(installed), Some(resolved)) if resolved < installed
+            );
+            if is_downgrade {
+                tracing::warn!(
+                    package = name,
+                    installed = pkg.version,
+                    resolved = new_pkg.version,
+                    "refusing to downgrade an explicitly installed package; keeping installed version"
+                );
+                packages.push(manifest_package_to_resolved(name, pkg));
+                continue;
+            }
+
+            // An explicit install may move the version/server, but must not
+            // change the package's ownership class or category: demoting a
+            // System package to User would turn a later index missing that
+            // package into a silent stale carry instead of the loud
+            // `MissingSystemPackages` error that a broken image demands.
+            let mut replacement = new_pkg.clone();
+            replacement.installed_by = pkg.installed_by.clone();
+            replacement.category.clone_from(&pkg.category);
+
+            if replacement.version != pkg.version || replacement.store_path != pkg.store_path {
                 changed.push(PackageChange {
                     name: name.clone(),
                     from_version: pkg.version.clone(),
-                    to_version: new_pkg.version.clone(),
+                    to_version: replacement.version.clone(),
                     from_store_path: pkg.store_path.clone(),
-                    to_store_path: new_pkg.store_path.clone(),
+                    to_store_path: replacement.store_path.clone(),
                 });
             }
-            packages.push(new_pkg.clone());
+            packages.push(replacement);
             continue;
         }
 
@@ -786,6 +820,99 @@ mod tests {
         assert_eq!(plan.changed.len(), 1);
         assert!(plan.added.is_empty());
         assert_eq!(plan.packages.len(), 1);
+    }
+
+    #[test]
+    fn install_keeps_installed_when_resolved_is_older() {
+        // A server rollback can make "latest available" older than what is
+        // installed. An install request (always "latest") must not become a
+        // silent downgrade: keep the installed version, record no change.
+        let current = Manifest {
+            packages: BTreeMap::from([(
+                "widget".into(),
+                test_manifest_package("2.0.0", "server_a", None),
+            )]),
+        };
+        let mut older = test_package("widget", "/nix/store/widget-1");
+        older.version = "1.0.0".into();
+        older.installed_by = InstalledBy::User;
+
+        let plan =
+            compute_upgrade_plan(&current, None, &[older], &[]).expect("BUG: plan should succeed");
+
+        assert!(
+            plan.changed.is_empty(),
+            "downgrade must not record a change"
+        );
+        assert_eq!(plan.packages.len(), 1);
+        let kept = &plan.packages[0];
+        assert_eq!(kept.version, "2.0.0", "installed version must be kept");
+        assert_eq!(kept.store_path, "/nix/store/hash-pkg-2.0.0");
+    }
+
+    #[test]
+    fn install_applies_sideways_move_at_same_version() {
+        // Installing a name already present at the same version but a
+        // different store path (e.g. a rebuild or a different server) is not a
+        // downgrade and must still apply — the relaxed install path is intact.
+        let current = Manifest {
+            packages: BTreeMap::from([(
+                "widget".into(),
+                test_manifest_package("1.0.0", "server_a", None),
+            )]),
+        };
+        let mut sideways = test_package("widget", "/nix/store/widget-from-server-b");
+        sideways.version = "1.0.0".into();
+
+        let plan = compute_upgrade_plan(&current, None, &[sideways], &[])
+            .expect("BUG: plan should succeed");
+
+        assert_eq!(plan.changed.len(), 1, "store-path move is a change");
+        assert_eq!(
+            plan.packages[0].store_path,
+            "/nix/store/widget-from-server-b"
+        );
+    }
+
+    #[test]
+    fn install_preserves_system_ownership_so_later_missing_stays_loud() {
+        // Re-installing a name that is present as a System package must not
+        // demote it to User: a later index missing it must still raise the
+        // loud `MissingSystemPackages` error, not a silent stale carry.
+        let mut system_pkg =
+            test_manifest_package_installed_by("1.0.0", "server_a", None, InstalledBy::System);
+        system_pkg.category = Some("system".into());
+        let current = Manifest {
+            packages: BTreeMap::from([("core".into(), system_pkg)]),
+        };
+        let mut user_install = test_package("core", "/nix/store/core-2");
+        user_install.version = "2.0.0".into();
+        user_install.installed_by = InstalledBy::User;
+        user_install.category = Some("widget".into());
+
+        let plan = compute_upgrade_plan(&current, None, &[user_install], &[])
+            .expect("BUG: plan should succeed");
+
+        assert_eq!(plan.packages.len(), 1);
+        let replaced = &plan.packages[0];
+        assert_eq!(replaced.version, "2.0.0", "version move still applies");
+        assert_eq!(
+            replaced.installed_by,
+            InstalledBy::System,
+            "ownership class must be preserved"
+        );
+        assert_eq!(replaced.category.as_deref(), Some("system"));
+
+        // Feed the replaced package back as a manifest and resolve it against
+        // an index that no longer lists it: it must fail loud as a missing
+        // system package, proving ownership survived the install.
+        let after = build_manifest(&plan.packages);
+        let err = compute_upgrade_plan(&after, Some(&empty_merged_index()), &[], &[])
+            .expect_err("BUG: missing system package must error");
+        assert!(matches!(
+            err,
+            ComputeUpgradePlanError::MissingSystemPackages { names } if names == vec!["core".to_owned()]
+        ));
     }
 
     #[test]
