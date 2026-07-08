@@ -934,6 +934,77 @@ async fn install_when_up_to_date_offers_the_widget() {
     assert_eq!(packages.changes[0].name, "widget-flip-clock");
 }
 
+const MULTI_SHADOWED_SCENARIO: &str = r#"{"firmware": "up-to-date", "packages": "available", "shadowed_packages": ["widget-flip-clock", "widget-weather"]}"#;
+
+#[tokio::test]
+async fn multi_package_install_marks_all_installed_over_grpc() {
+    let mut mock = spawn_mock(MULTI_SHADOWED_SCENARIO);
+    let mut client = upgrade_client(&mut mock).await;
+
+    let before = client
+        .get_installable_widgets(())
+        .await
+        .expect("BUG: list failed")
+        .into_inner();
+    assert!(
+        before
+            .widgets
+            .iter()
+            .any(|w| w.package_name == "widget-flip-clock")
+    );
+    assert!(
+        before
+            .widgets
+            .iter()
+            .any(|w| w.package_name == "widget-weather")
+    );
+
+    let response = client
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec!["widget-flip-clock".to_owned(), "widget-weather".to_owned()],
+        })
+        .await
+        .expect("BUG: check failed")
+        .into_inner();
+    let upgrade_id = response.upgrade_id.expect("BUG: upgrade id");
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest { upgrade_id })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+    let mut finished = false;
+    tokio::time::timeout(STREAM_TIMEOUT, async {
+        while let Some(progress) = stream.message().await.expect("BUG: stream errored") {
+            if matches!(progress.event, Some(upgrade_progress::Event::Finished(()))) {
+                finished = true;
+            }
+        }
+    })
+    .await
+    .expect("stream did not finish within the timeout");
+    assert!(finished, "multi-install run did not finish");
+
+    let after = client
+        .get_installable_widgets(())
+        .await
+        .expect("BUG: list failed")
+        .into_inner();
+    assert!(
+        !after
+            .widgets
+            .iter()
+            .any(|w| w.package_name == "widget-flip-clock"),
+        "flip-clock must be installed and no longer offered"
+    );
+    assert!(
+        !after
+            .widgets
+            .iter()
+            .any(|w| w.package_name == "widget-weather"),
+        "weather must be installed and no longer offered"
+    );
+}
+
 #[tokio::test]
 async fn install_run_marks_widget_installed_over_grpc() {
     let mut mock = spawn_mock(SHADOWED_SCENARIO);

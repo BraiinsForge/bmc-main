@@ -101,6 +101,27 @@ pub fn spawn_mock_inner(scenario_json: &str, index_json: Option<&str>) -> MockIn
            "max_width":200,"min_height":100,"max_height":200}]}"#,
     )
     .expect("BUG: write manifest");
+    let weather_dir = dir.path().join("widgets/weather");
+    std::fs::create_dir_all(&weather_dir).expect("BUG: create weather dir");
+    std::fs::write(weather_dir.join("icon.svg"), "<svg/>").expect("BUG: write weather icon");
+    let weather_bin = weather_dir.join("bin");
+    std::fs::create_dir_all(&weather_bin).expect("BUG: create weather bin dir");
+    let weather_binary = weather_bin.join("weather");
+    std::fs::write(&weather_binary, "#!/bin/sh\n").expect("BUG: write weather binary");
+    std::fs::set_permissions(
+        &weather_binary,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .expect("BUG: chmod weather binary");
+    std::fs::write(
+        weather_dir.join("manifest.json"),
+        r#"{"uid":"2b1e7a6c-9d84-4f11-bb0e-3c7a1e6f92da","version":"1.0.0",
+           "name":"Weather","description":"A local weather widget.",
+           "binary":"bin/weather","icon":"icon.svg","category":"clock",
+           "supported_viewports":[{"type":"rectangular","min_width":100,
+           "max_width":200,"min_height":100,"max_height":200}]}"#,
+    )
+    .expect("BUG: write weather manifest");
     let mockfs = dir.path().join("mockfs");
     let port = free_port();
     // Per-instance password (the unique tempdir name), so logging in on a
