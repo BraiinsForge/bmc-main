@@ -62,6 +62,12 @@ config forms are manifest-driven — any installed widget (including out-of-tree
 rebuild. The catalog groups widgets into labeled category sections (with "Other" last) and offers category filter pills
 with per-category counts.
 
+### [Widget Installation](widget-installation.md)
+
+Available-but-not-installed widget packages are offered directly in the "Add a widget" picker. Installing rides the same
+check → plan → run machinery as a system upgrade and can carry an application or firmware upgrade with it. This story
+covers the device-side capability; the interactive picker flow ships in a follow-up.
+
 ### [Widgets](widgets/README.md)
 
 Information about all implemented official widgets.
