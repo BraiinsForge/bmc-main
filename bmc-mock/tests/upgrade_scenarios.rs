@@ -29,6 +29,7 @@ struct MockInstance {
     dir: tempfile::TempDir,
     password: String,
     index_path: Option<PathBuf>,
+    fast_upgrades: bool,
 }
 
 impl Drop for MockInstance {
@@ -52,6 +53,7 @@ fn spawn_child(
     port: u16,
     password: &str,
     index_path: Option<&std::path::Path>,
+    fast_upgrades: bool,
 ) -> Child {
     let mut args = vec![
         format!("--address=127.0.0.1:{port}"),
@@ -64,8 +66,13 @@ fn spawn_child(
         format!("--sounds-dir={}", dir.path().join("sounds").display()),
         format!("--widgets-path={}", dir.path().join("widgets").display()),
         format!("--system-password={password}"),
-        "--fast-upgrades".to_owned(),
     ];
+    // Realistic pacing (no --fast-upgrades) is used when a test needs a run
+    // to stay in flight long enough to observe the gate; every other test
+    // wants instant runs.
+    if fast_upgrades {
+        args.push("--fast-upgrades".to_owned());
+    }
     if let Some(index) = index_path {
         args.push(format!("--package-index={}", index.display()));
     }
@@ -78,16 +85,27 @@ fn spawn_child(
 }
 
 fn spawn_mock(scenario_json: &str) -> MockInstance {
-    spawn_mock_inner(scenario_json, None)
+    spawn_mock_inner(scenario_json, None, true)
 }
 
 /// Spawn a mock whose installable catalog is served from a real package
 /// index file (the `--package-index` path), not the fabricated fallback.
 fn spawn_mock_with_index(scenario_json: &str, index_json: &str) -> MockInstance {
-    spawn_mock_inner(scenario_json, Some(index_json))
+    spawn_mock_inner(scenario_json, Some(index_json), true)
 }
 
-fn spawn_mock_inner(scenario_json: &str, index_json: Option<&str>) -> MockInstance {
+/// Spawn a mock that paces its runs realistically (300 ms per progress step)
+/// instead of instantly, so a run stays in flight long enough for a
+/// concurrent RPC to observe that the run gate is held.
+fn spawn_mock_realistic(scenario_json: &str) -> MockInstance {
+    spawn_mock_inner(scenario_json, None, false)
+}
+
+fn spawn_mock_inner(
+    scenario_json: &str,
+    index_json: Option<&str>,
+    fast_upgrades: bool,
+) -> MockInstance {
     let dir = tempfile::tempdir().expect("BUG: tempdir");
     let template = dir.path().join("template/etc");
     std::fs::create_dir_all(&template).expect("BUG: create template");
@@ -155,7 +173,14 @@ fn spawn_mock_inner(scenario_json: &str, index_json: Option<&str>) -> MockInstan
             .expect("BUG: tempdir has a name")
             .to_string_lossy()
     );
-    let child = spawn_child(&dir, &mockfs, port, &password, index_path.as_deref());
+    let child = spawn_child(
+        &dir,
+        &mockfs,
+        port,
+        &password,
+        index_path.as_deref(),
+        fast_upgrades,
+    );
 
     MockInstance {
         child,
@@ -164,6 +189,7 @@ fn spawn_mock_inner(scenario_json: &str, index_json: Option<&str>) -> MockInstan
         dir,
         password,
         index_path,
+        fast_upgrades,
     }
 }
 
@@ -184,6 +210,7 @@ async fn connect(mock: &mut MockInstance) -> Channel {
                 mock.port,
                 &mock.password,
                 mock.index_path.as_deref(),
+                mock.fast_upgrades,
             );
         }
         let endpoint = format!("http://127.0.0.1:{}", mock.port);
@@ -252,6 +279,7 @@ async fn authenticated(mock: &mut MockInstance) -> (Channel, CookieAuth) {
                     mock.port,
                     &mock.password,
                     mock.index_path.as_deref(),
+                    mock.fast_upgrades,
                 );
             }
         }
@@ -856,6 +884,52 @@ async fn second_check_evicts_the_first_upgrade_id() {
         "an evicted id must fail before any progress event"
     );
     assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+}
+
+#[tokio::test]
+async fn check_during_a_running_upgrade_reports_in_progress() {
+    // A realistically paced packages run holds the run gate for ~1.8 s. While
+    // it is in flight, a concurrent check_for_upgrade must be turned away with
+    // Unavailable (the run-gate try_lock at the top of check_for_upgrade),
+    // rather than being allowed to race a second run onto the device.
+    let mut mock = spawn_mock_realistic(r#"{"firmware": "up-to-date", "packages": "available"}"#);
+    let mut client = upgrade_client(&mut mock).await;
+    let mut concurrent = client.clone();
+
+    let upgrade_id = client
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
+        .await
+        .expect("BUG: check failed")
+        .into_inner()
+        .upgrade_id
+        .expect("BUG: upgrade id");
+
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest { upgrade_id })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+
+    // The first progress event proves the run has claimed the gate and is
+    // actively streaming, so the gate stays held across the remaining steps.
+    let first = stream
+        .message()
+        .await
+        .expect("BUG: stream errored before first event")
+        .expect("BUG: stream ended before first event");
+    assert!(first.event.is_some(), "expected a progress event");
+
+    // The concurrent check is refused while the run holds the gate. Removing
+    // the try_lock in check_for_upgrade would let this check succeed.
+    let status = concurrent
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
+        .await
+        .expect_err("a check during a running upgrade must be refused");
+    assert_eq!(status.code(), tonic::Code::Unavailable);
 }
 
 #[tokio::test]
