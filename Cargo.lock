@@ -938,6 +938,7 @@ dependencies = [
  "bmc-widget-protocol",
  "calloop 0.14.2",
  "clap",
+ "deck-alarm-v1",
  "deck-screen-edge-v1",
  "deck-settings-v1",
  "drm",

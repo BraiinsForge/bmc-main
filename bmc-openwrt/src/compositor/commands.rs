@@ -67,6 +67,11 @@ pub enum CompositorCommand {
         params: serde_json::Map<String, serde_json::Value>,
     },
     Shutdown,
+    RingAlarm {
+        time: String,
+        label: String,
+    },
+    StopAlarm,
 }
 
 #[derive(Debug)]

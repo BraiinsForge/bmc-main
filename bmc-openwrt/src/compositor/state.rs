@@ -146,6 +146,7 @@ pub struct CompositorState {
     pub layer_surfaces: Vec<crate::compositor::layer_surface::LayerEntry>,
     pub screen_edge_sessions: Vec<crate::compositor::screen_edge::ScreenEdgeSession>,
     pub settings: crate::compositor::settings::SettingsState,
+    pub alarm: crate::compositor::alarm::AlarmState,
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
     pub deck_widget_state: DeckWidgetProtocolState,
@@ -330,6 +331,7 @@ impl CompositorState {
         let deck_widget_state = DeckWidgetProtocolState::new();
         super::protocol::create_global::<Self>(&display_handle);
         super::screen_edge::create_global(&display_handle);
+        super::alarm::create_global(&display_handle);
         super::settings::create_global(&display_handle);
 
         // Advertise the display as a wl_output so capture clients can reference it.
@@ -366,6 +368,7 @@ impl CompositorState {
             layer_surfaces: Vec::new(),
             screen_edge_sessions: Vec::new(),
             settings: crate::compositor::settings::SettingsState::new(settings_caps),
+            alarm: crate::compositor::alarm::AlarmState::default(),
             seat_state,
             data_device_state,
             deck_widget_state,

@@ -18,8 +18,8 @@ use super::{
     widget_tracker::{LifecycleState, SceneTransitionTarget},
 };
 use bmc::compositor::{
-    ActiveScene, Compositor, CompositorError, CompositorEvent, InstanceId, LedRequestStatusEvent,
-    Position, SceneLayout, SettingsCommand, Size, WidgetAction,
+    ActiveScene, AlarmCommand, Compositor, CompositorError, CompositorEvent, InstanceId,
+    LedRequestStatusEvent, Position, SceneLayout, SettingsCommand, Size, WidgetAction,
 };
 use bmc_platform::TouchTransform;
 use bmc_platform::linux_input::discover_touch_node;
@@ -193,6 +193,8 @@ pub struct EglCompositor {
     action_rx: Mutex<Option<mpsc::UnboundedReceiver<WidgetAction>>>,
     settings_tx: mpsc::UnboundedSender<SettingsCommand>,
     settings_rx: Mutex<Option<mpsc::UnboundedReceiver<SettingsCommand>>>,
+    alarm_tx: mpsc::UnboundedSender<AlarmCommand>,
+    alarm_rx: Mutex<Option<mpsc::UnboundedReceiver<AlarmCommand>>>,
     thread_handle: Mutex<Option<JoinHandle<()>>>,
     device_access: DeviceAccessConfig,
     profile: bmc_platform::HardwareProfile,
@@ -258,6 +260,7 @@ impl EglCompositor {
         let (active_scene_tx, _) = watch::channel(None);
         let (connected_widgets_tx, _) = watch::channel(BTreeSet::new());
         let (settings_tx, settings_rx) = mpsc::unbounded_channel();
+        let (alarm_tx, alarm_rx) = mpsc::unbounded_channel();
 
         Self {
             wayland_display: Mutex::new(None),
@@ -272,6 +275,8 @@ impl EglCompositor {
             action_rx: Mutex::new(Some(action_rx)),
             settings_tx,
             settings_rx: Mutex::new(Some(settings_rx)),
+            alarm_tx,
+            alarm_rx: Mutex::new(Some(alarm_rx)),
             thread_handle: Mutex::new(None),
             device_access,
             profile,
@@ -297,6 +302,7 @@ impl EglCompositor {
         action_tx: mpsc::UnboundedSender<WidgetAction>,
         event_tx: broadcast::Sender<CompositorEvent>,
         settings_tx: mpsc::UnboundedSender<SettingsCommand>,
+        alarm_tx: mpsc::UnboundedSender<AlarmCommand>,
         status_rx: mpsc::UnboundedReceiver<LedRequestStatusEvent>,
         active_scene_tx: watch::Sender<Option<ActiveScene>>,
         connected_widgets_tx: watch::Sender<BTreeSet<InstanceId>>,
@@ -441,6 +447,7 @@ impl EglCompositor {
             action_tx,
             event_tx,
             settings_tx,
+            alarm_tx,
             status_rx,
             active_scene_tx,
             connected_widgets_tx,
@@ -879,6 +886,7 @@ struct AppState {
     action_tx: mpsc::UnboundedSender<WidgetAction>,
     event_tx: broadcast::Sender<CompositorEvent>,
     settings_tx: mpsc::UnboundedSender<SettingsCommand>,
+    alarm_tx: mpsc::UnboundedSender<AlarmCommand>,
     status_rx: mpsc::UnboundedReceiver<LedRequestStatusEvent>,
     /// Latest active scene, published to consumers via a `watch` channel.
     active_scene_tx: watch::Sender<Option<ActiveScene>>,
@@ -1997,6 +2005,12 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             state.compositor.deck_widget_state.broadcast_shutdown();
             state.should_exit = true;
         }
+        CompositorCommand::RingAlarm { time, label } => {
+            state.compositor.alarm.ring(&time, &label);
+        }
+        CompositorCommand::StopAlarm => {
+            state.compositor.alarm.stop();
+        }
     }
 }
 
@@ -2021,6 +2035,11 @@ fn emit_active_scene_changed_if_changed(
     let _ = state.active_scene_tx.send(value);
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "linear drain-and-forward dispatcher; one independent block per \
+              compositor subsystem (widgets, actions, settings, alarm, status)"
+)]
 fn process_protocol_events(state: &mut AppState) {
     let mut connected_set_changed = false;
     let connected = state.compositor.deck_widget_state.drain_connected();
@@ -2110,6 +2129,17 @@ fn process_protocol_events(state: &mut AppState) {
         }
     }
 
+    for action in state.compositor.alarm.drain_actions() {
+        use crate::compositor::alarm::AlarmAction;
+        let cmd = match action {
+            AlarmAction::Dismiss => AlarmCommand::Dismiss,
+            AlarmAction::Snooze => AlarmCommand::Snooze,
+        };
+        if let Err(e) = state.alarm_tx.send(cmd) {
+            tracing::error!(?e, "dropped alarm command: action handler receiver closed");
+        }
+    }
+
     // Status acks come from the tokio side, so they have no calloop wake
     // source of their own — they are drained here every loop iteration. The
     // loop iterates at least every `FRAME_CALLBACK_TICK` (the tick is
@@ -2167,6 +2197,7 @@ impl Compositor for EglCompositor {
         let action_tx = self.action_tx.clone();
         let event_tx = self.event_tx.clone();
         let settings_tx = self.settings_tx.clone();
+        let alarm_tx = self.alarm_tx.clone();
         let status_rx = self
             .status_rx
             .lock()
@@ -2191,6 +2222,7 @@ impl Compositor for EglCompositor {
                     action_tx,
                     event_tx,
                     settings_tx,
+                    alarm_tx,
                     status_rx,
                     active_scene_tx,
                     connected_widgets_tx,
@@ -2391,6 +2423,14 @@ impl Compositor for EglCompositor {
             .expect("BUG: settings_receiver already taken")
     }
 
+    fn alarm_receiver(&self) -> mpsc::UnboundedReceiver<AlarmCommand> {
+        self.alarm_rx
+            .lock()
+            .expect("BUG: alarm_rx lock poisoned")
+            .take()
+            .expect("BUG: alarm_receiver already taken")
+    }
+
     fn request_status_sender(&self) -> mpsc::UnboundedSender<LedRequestStatusEvent> {
         self.status_tx.clone()
     }
@@ -2497,6 +2537,7 @@ mod tests {
         let (action_tx, _) = mpsc::unbounded_channel();
         let (event_tx, _) = tokio::sync::broadcast::channel(64);
         let (settings_tx, _) = mpsc::unbounded_channel();
+        let (alarm_tx, _) = mpsc::unbounded_channel();
         let (_status_tx, status_rx) = mpsc::unbounded_channel();
         let (active_scene_tx, _) = tokio::sync::watch::channel(None);
         let (connected_widgets_tx, _) =
@@ -2510,6 +2551,7 @@ mod tests {
             action_tx,
             event_tx,
             settings_tx,
+            alarm_tx,
             status_rx,
             active_scene_tx,
             connected_widgets_tx,

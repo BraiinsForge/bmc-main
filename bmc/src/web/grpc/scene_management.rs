@@ -1713,6 +1713,13 @@ mod tests {
             rx
         }
 
+        fn alarm_receiver(
+            &self,
+        ) -> tokio::sync::mpsc::UnboundedReceiver<crate::compositor::AlarmCommand> {
+            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            rx
+        }
+
         fn request_status_sender(
             &self,
         ) -> tokio::sync::mpsc::UnboundedSender<crate::compositor::LedRequestStatusEvent> {

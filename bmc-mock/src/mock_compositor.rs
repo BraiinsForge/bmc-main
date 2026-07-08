@@ -7,9 +7,9 @@
 use std::collections::BTreeSet;
 
 use bmc::compositor::{
-    ActiveScene, Compositor, CompositorError, CompositorEvent, HardwareCapabilities, InstanceId,
-    LedRequestStatusEvent, Position, SceneCycling, SceneLayout, SettingUpdate, SettingsCommand,
-    Size, WidgetAction, WidgetInitialConfig,
+    ActiveScene, AlarmCommand, Compositor, CompositorError, CompositorEvent, HardwareCapabilities,
+    InstanceId, LedRequestStatusEvent, Position, SceneCycling, SceneLayout, SettingUpdate,
+    SettingsCommand, Size, WidgetAction, WidgetInitialConfig,
 };
 use bmc_platform::{HardwareProfile, Product};
 use tokio::sync::{broadcast, mpsc, watch};
@@ -80,6 +80,7 @@ impl MockSceneState {
 pub struct MockCompositor {
     action_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<WidgetAction>>>,
     settings_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<SettingsCommand>>>,
+    alarm_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<AlarmCommand>>>,
     event_tx: broadcast::Sender<CompositorEvent>,
     status_tx: mpsc::UnboundedSender<LedRequestStatusEvent>,
     active_scene_tx: watch::Sender<Option<ActiveScene>>,
@@ -94,6 +95,7 @@ impl MockCompositor {
     pub fn new(product: Product) -> Self {
         let (_action_tx, action_rx) = mpsc::unbounded_channel();
         let (_settings_tx, settings_rx) = mpsc::unbounded_channel();
+        let (_alarm_tx, alarm_rx) = mpsc::unbounded_channel();
         let (event_tx, _) = broadcast::channel(64);
         let (status_tx, mut status_rx) = mpsc::unbounded_channel::<LedRequestStatusEvent>();
         tokio::spawn(async move {
@@ -111,6 +113,7 @@ impl MockCompositor {
         Self {
             action_rx: std::sync::Mutex::new(Some(action_rx)),
             settings_rx: std::sync::Mutex::new(Some(settings_rx)),
+            alarm_rx: std::sync::Mutex::new(Some(alarm_rx)),
             event_tx,
             status_tx,
             active_scene_tx,
@@ -300,6 +303,14 @@ impl Compositor for MockCompositor {
             .expect("BUG: settings_rx lock poisoned")
             .take()
             .expect("BUG: settings_receiver already taken")
+    }
+
+    fn alarm_receiver(&self) -> mpsc::UnboundedReceiver<AlarmCommand> {
+        self.alarm_rx
+            .lock()
+            .expect("BUG: alarm_rx lock poisoned")
+            .take()
+            .expect("BUG: alarm_receiver already taken")
     }
 
     fn request_status_sender(&self) -> mpsc::UnboundedSender<LedRequestStatusEvent> {

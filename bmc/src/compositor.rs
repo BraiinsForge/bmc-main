@@ -95,6 +95,16 @@ pub enum SettingsCommand {
     ReconfigureWifi,
 }
 
+/// Lossless alarm commands routed through the compositor-owned mpsc channel
+/// instead of the lossy broadcast stream.
+#[derive(Debug)]
+pub enum AlarmCommand {
+    /// Alarm dismissal requested by the alarm overlay.
+    Dismiss,
+    /// Alarm snooze requested by the alarm overlay.
+    Snooze,
+}
+
 #[derive(Debug, Error)]
 pub enum CompositorError {
     #[error("compositor not started")]
@@ -236,6 +246,10 @@ pub trait Compositor: Send + Sync {
 
     /// Get a receiver for one-shot settings commands (brightness, WiFi reconfigure).
     fn settings_receiver(&self) -> mpsc::UnboundedReceiver<SettingsCommand>;
+
+    /// Get a receiver for one-shot alarm commands (dismiss, snooze) sent by the
+    /// alarm overlay over `deck_alarm_v1`.
+    fn alarm_receiver(&self) -> mpsc::UnboundedReceiver<AlarmCommand>;
 
     /// Get a sender for LED request status updates flowing back to the
     /// originating widget. The compositor owns the receiver and emits

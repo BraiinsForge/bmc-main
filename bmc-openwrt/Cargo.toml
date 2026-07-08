@@ -31,6 +31,7 @@ bmc-upgrade.workspace = true
 bmc-widget-protocol.workspace = true
 calloop.workspace = true
 clap.workspace = true
+deck-alarm-v1 = { workspace = true }
 deck-screen-edge-v1 = { workspace = true }
 deck-settings-v1 = { workspace = true }
 drm.workspace = true
