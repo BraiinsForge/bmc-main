@@ -303,6 +303,7 @@ impl From<SystemUpgradeError> for Status {
             | SystemUpgradeError::UnableToCheckForUpgrade(_)
             | SystemUpgradeError::UpgradeFailed
             | SystemUpgradeError::PackageUpgradeFailed(_)
+            | SystemUpgradeError::PendingInstallWriteFailed(_)
             | SystemUpgradeError::WidgetNotDiscoverable(_) => Status::internal(value.to_string()),
             // Configuration/manifest/index-shape/plan failures cannot proceed
             // until the package source or profile is corrected; a transient

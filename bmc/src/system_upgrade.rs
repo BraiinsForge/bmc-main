@@ -166,7 +166,7 @@ fn record_pending_install(
         install: install.to_vec(),
     };
     bmc_nix::pending_install::write_pending_install(path, &pending)
-        .map_err(|err| SystemUpgradeError::PackageUpgradeFailed(err.to_string()))
+        .map_err(|err| SystemUpgradeError::PendingInstallWriteFailed(err.to_string()))
 }
 
 /// Best-effort removal of a pending-install handoff after a firmware run that
@@ -178,8 +178,13 @@ fn clear_pending_install(install: &[String], path: &std::path::Path) {
         return;
     }
     if let Err(err) = std::fs::remove_file(path) {
-        debug!(error = %err, path = %path.display(),
-            "No pending-install handoff to clear after failed firmware upgrade");
+        if err.kind() == std::io::ErrorKind::NotFound {
+            debug!(path = %path.display(),
+                "No pending-install handoff to clear after failed firmware upgrade");
+        } else {
+            warn!(error = %err, path = %path.display(),
+                "Failed to clear pending-install handoff after failed firmware upgrade");
+        }
     }
 }
 
@@ -932,6 +937,8 @@ pub(crate) enum SystemUpgradeError {
     UpgradeExpired,
     #[error("Package upgrade failed: {0}")]
     PackageUpgradeFailed(String),
+    #[error("Failed to record the pending widget install: {0}")]
+    PendingInstallWriteFailed(String),
     #[error("Cannot check for upgrade: {0}.")]
     PackageCheckFailed(PackageProbeError),
     #[error("Installed widget did not become available: {0}")]

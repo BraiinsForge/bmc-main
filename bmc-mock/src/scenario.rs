@@ -77,8 +77,26 @@ pub fn unshadow(path: &Path, installed: &[String]) -> Result<(), String> {
 /// packages in the scenario (modelling their install) and remove the file.
 /// Called on a successful firmware upgrade before the mock exits to reboot.
 pub fn consume_pending_install(handoff_path: &Path, scenario_path: &Path) {
-    let Ok(pending) = bmc_nix::pending_install::read_pending_install(handoff_path) else {
-        return;
+    let pending = match bmc_nix::pending_install::read_pending_install(handoff_path) {
+        Ok(pending) => pending,
+        // No handoff pending — the normal case for a firmware-only upgrade.
+        Err(bmc_nix::pending_install::PendingInstallError::Io(err))
+            if err.kind() == std::io::ErrorKind::NotFound =>
+        {
+            return;
+        }
+        // A present-but-unreadable/corrupt handoff is a dropped install, not
+        // the normal absent case: surface it and remove the bad file so a
+        // later run cannot consume the same broken handoff.
+        Err(err) => {
+            warn!(error = %err, path = %handoff_path.display(),
+                "Discarding unreadable pending-install handoff");
+            if let Err(err) = std::fs::remove_file(handoff_path) {
+                warn!(error = %err, path = %handoff_path.display(),
+                    "Failed to remove unreadable handoff");
+            }
+            return;
+        }
     };
     // Best-effort: this runs at exit-time before the simulated reboot, so
     // there is no run stream left to fail into — log and continue.
