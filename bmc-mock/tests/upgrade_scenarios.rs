@@ -339,7 +339,7 @@ async fn packages_only_run_completes_all_phases() {
 }
 
 #[tokio::test]
-async fn firmware_wins_at_start_when_both_are_available() {
+async fn firmware_with_packages_streams_nested_package_stages() {
     let mut mock = spawn_mock(r#"{"firmware": "available", "packages": "available"}"#);
     let mut client = upgrade_client(&mut mock).await;
     let response = client
@@ -355,12 +355,9 @@ async fn firmware_wins_at_start_when_both_are_available() {
         .expect("BUG: start failed")
         .into_inner();
 
-    // The firmware pipeline is identified by its FirmwarePhase events, which
-    // the packages-only path never emits; the shared apply stage also emits
-    // PackagePhase lines, so their presence is not a discriminator. Draining to
-    // FirmwareApplying (the firmware run's terminal event before it goes dark)
-    // confirms firmware, not packages, won the start.
     let mut firmware_phases = Vec::new();
+    let mut package_phases = Vec::new();
+    let mut downloads = 0;
     tokio::time::timeout(Duration::from_secs(120), async {
         loop {
             let progress = stream
@@ -368,11 +365,16 @@ async fn firmware_wins_at_start_when_both_are_available() {
                 .await
                 .expect("BUG: stream errored before FirmwareApplying")
                 .expect("BUG: stream ended before FirmwareApplying");
-            if let Some(upgrade_progress::Event::FirmwarePhase(p)) = progress.event {
-                firmware_phases.push(p);
-                if p == FirmwareUpgradePhase::Applying as i32 {
-                    return;
+            match progress.event.expect("BUG: event set") {
+                upgrade_progress::Event::FirmwarePhase(phase) => {
+                    firmware_phases.push(phase);
+                    if phase == FirmwareUpgradePhase::Applying as i32 {
+                        return;
+                    }
                 }
+                upgrade_progress::Event::PackagePhase(phase) => package_phases.push(phase),
+                upgrade_progress::Event::Download(_) => downloads += 1,
+                upgrade_progress::Event::Finished(()) => {}
             }
         }
     })
@@ -382,6 +384,19 @@ async fn firmware_wins_at_start_when_both_are_available() {
     assert!(
         firmware_phases.contains(&(FirmwareUpgradePhase::Downloading as i32)),
         "the firmware pipeline must run its download phase"
+    );
+    assert!(
+        downloads >= 2,
+        "the client must receive firmware and package download progress"
+    );
+    assert_eq!(
+        package_phases,
+        vec![
+            PackageUpgradePhase::Realizing as i32,
+            PackageUpgradePhase::Verifying as i32,
+            PackageUpgradePhase::Building as i32,
+        ],
+        "firmware sysupgrade must surface the nested package upgrade stages"
     );
 }
 

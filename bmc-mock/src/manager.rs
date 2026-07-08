@@ -8,6 +8,7 @@ use bmc::manager::{
     BmcState, IfaceData, InitialSetupError, NetworkProtocolConfig, UpgradeError, WifiData,
     WifiEvent, WifiNetworkConfig,
 };
+use bmc_nix::progress::{ActiveDownload, ProgressEvent};
 use bmc_platform::{BosPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
 use bmc_shared_ii_net::wifi::{
@@ -119,13 +120,47 @@ impl bmc::BmcManager for Manager {
             keep_settings
         );
         if let Some(progress) = progress {
-            let lines = [
-                r#"@bmc {"type":"phase","phase":"realizing"}"#,
-                r#"@bmc {"type":"download","downloaded_bytes":1000000,"total_bytes":4000000,"remaining_bytes":3000000,"active":[]}"#,
-                r#"@bmc {"type":"phase","phase":"building"}"#,
+            let total_bytes = 4_000_000;
+            let mut lines = vec![
+                ProgressEvent::Phase {
+                    phase: "realizing".to_owned(),
+                }
+                .to_bmc_line(),
+                ProgressEvent::RealizationStarted { total_paths: 3 }.to_bmc_line(),
             ];
+            // Walk the download across chunks so the client sees real
+            // progression toward total_bytes, not a single frozen frame.
+            for downloaded_bytes in (1_000_000..=total_bytes).step_by(1_000_000) {
+                lines.push(
+                    ProgressEvent::Download {
+                        downloaded_bytes,
+                        total_bytes: Some(total_bytes),
+                        remaining_bytes: Some(total_bytes - downloaded_bytes),
+                        active: vec![ActiveDownload {
+                            store_path: Some("/nix/store/mock-core".to_owned()),
+                            source: Some("mock://packages/core".to_owned()),
+                            downloaded_bytes,
+                            total_bytes: Some(total_bytes),
+                        }],
+                    }
+                    .to_bmc_line(),
+                );
+            }
+            // The firmware-time package run stages next-boot activation, so it
+            // stops at building; activation happens after the reboot.
+            lines.extend([
+                ProgressEvent::RealizationFinished.to_bmc_line(),
+                ProgressEvent::Phase {
+                    phase: "verifying".to_owned(),
+                }
+                .to_bmc_line(),
+                ProgressEvent::Phase {
+                    phase: "building".to_owned(),
+                }
+                .to_bmc_line(),
+            ]);
             for line in lines {
-                _ = progress.send(line.to_owned());
+                _ = progress.send(line);
                 tokio::time::sleep(self.pacing.progress_step()).await;
             }
         }
