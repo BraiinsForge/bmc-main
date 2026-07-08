@@ -67,7 +67,7 @@ class InstallWidgetE2e:
             catalog.list_installable_widgets(dev, cycle, self.widget)
             catalog.check_for_install(dev, cycle, self.widget)
             catalog.run_upgrade(dev, cycle)
-            catalog.verify_widget_installed(dev, self.widget)
+            catalog.verify_widget_installed(dev, cycle, self.widget)
         finally:
             catalog.stop_upgrade_server(cycle)
 
