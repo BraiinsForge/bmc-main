@@ -322,6 +322,7 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
         // wall-clock cap would kill it. nix's own `stalled-download-timeout`
         // plus `kill_on_drop(true)` on the child bound a genuinely stuck fetch.
         bmc_nix::upgrade::apply_profile_change(
+            &self.nix,
             &self.config.profile_dir,
             None, // base manifest is re-read under the profile lock
             Some(&merged),
@@ -763,6 +764,28 @@ mod tests {
                 }),
             };
             async move { result }
+        }
+
+        async fn realize_store_paths(
+            &self,
+            _packages: &[bmc_nix::types::ResolvedPackage],
+            _progress: Option<&dyn bmc_nix::store::RealizeProgress>,
+        ) -> Result<(), bmc_nix::store::StorePathError> {
+            unreachable!("BUG: StubStore serves probe estimates only")
+        }
+
+        async fn verify_store_paths(
+            &self,
+            _packages: &[bmc_nix::types::ResolvedPackage],
+        ) -> Result<(), bmc_nix::store::StorePathError> {
+            unreachable!("BUG: StubStore serves probe estimates only")
+        }
+
+        async fn collect_garbage(
+            &self,
+            _progress: Option<&dyn bmc_nix::gc::CollectGarbageProgress>,
+        ) -> Result<(), bmc_nix::gc::CollectGarbageError> {
+            unreachable!("BUG: StubStore serves probe estimates only")
         }
     }
 

@@ -178,6 +178,7 @@ impl gc::CollectGarbageProgress for UpgradeCollectGarbageProgress<'_> {
     reason = "orchestration entrypoint - every parameter is required"
 )]
 pub async fn apply_profile_change(
+    store: &impl store::StoreOperations,
     profile_dir: &Path,
     base_manifest: Option<Manifest>,
     merged: Option<&MergedIndex>,
@@ -211,9 +212,15 @@ pub async fn apply_profile_change(
         return Ok(install_result_from_plan(plan, generation, Ok(())));
     }
 
-    let generation =
-        realize_and_build_generation(profile_dir, &plan, progress, hooks_dir, hooks_override_path)
-            .await?;
+    let generation = realize_and_build_generation(
+        store,
+        profile_dir,
+        &plan,
+        progress,
+        hooks_dir,
+        hooks_override_path,
+    )
+    .await?;
 
     // 6. Apply the requested activation behavior. Stale markers are
     //    swept before activating: a sweep failure aborts the run while
@@ -238,7 +245,8 @@ pub async fn apply_profile_change(
     //    The generation is already built and activated or staged, so a
     //    GC failure is captured into the result rather than aborting
     //    the run.
-    let gc = run_gc_if_configured(profile_dir, gc_config, previous_generation, progress).await;
+    let gc =
+        run_gc_if_configured(store, profile_dir, gc_config, previous_generation, progress).await;
 
     Ok(install_result_from_plan(plan, Some(generation), gc))
 }
@@ -280,6 +288,7 @@ fn should_skip_rebuild(explicit_base: bool, plan: &UpgradePlan) -> bool {
 }
 
 async fn realize_and_build_generation(
+    store: &impl store::StoreOperations,
     profile_dir: &Path,
     plan: &UpgradePlan,
     progress: Option<&dyn UpgradeProgress>,
@@ -290,19 +299,19 @@ async fn realize_and_build_generation(
         p.on_phase(UpgradePhase::Realizing);
     }
     let realize_progress = progress.map(UpgradeRealizeProgress);
-    store::realize_store_paths(
-        &store::TokioCommandRunner,
-        &plan.packages,
-        realize_progress
-            .as_ref()
-            .map(|p| p as &dyn store::RealizeProgress),
-    )
-    .await?;
+    store
+        .realize_store_paths(
+            &plan.packages,
+            realize_progress
+                .as_ref()
+                .map(|p| p as &dyn store::RealizeProgress),
+        )
+        .await?;
 
     if let Some(p) = progress {
         p.on_phase(UpgradePhase::Verifying);
     }
-    store::verify_store_paths(&store::TokioCommandRunner, &plan.packages).await?;
+    store.verify_store_paths(&plan.packages).await?;
 
     if let Some(p) = progress {
         p.on_phase(UpgradePhase::Building);
@@ -320,6 +329,7 @@ async fn realize_and_build_generation(
 }
 
 async fn run_gc_if_configured(
+    store: &impl store::StoreOperations,
     profile_dir: &Path,
     gc_config: Option<&GcConfig>,
     previous_generation: Option<usize>,
@@ -331,7 +341,7 @@ async fn run_gc_if_configured(
     if let Some(p) = progress {
         p.on_phase(UpgradePhase::Cleaning);
     }
-    run_gc(profile_dir, gc_config, previous_generation, progress).await
+    run_gc(store, profile_dir, gc_config, previous_generation, progress).await
 }
 
 fn install_result_from_plan(
@@ -412,6 +422,7 @@ async fn activate_generation(
 /// the heavier collection, since a broken cleanup suggests the profile
 /// directory is in a bad state.
 async fn run_gc(
+    store: &impl store::StoreOperations,
     profile_dir: &Path,
     gc_config: &GcConfig,
     previous_generation: Option<usize>,
@@ -424,13 +435,13 @@ async fn run_gc(
     let keep_extra: Vec<usize> = previous_generation.into_iter().collect();
     gc::cleanup_generations(profile_dir, gc_config, &keep_extra)?;
     let gc_progress = progress.map(UpgradeCollectGarbageProgress);
-    gc::collect_garbage(
-        &store::TokioCommandRunner,
-        gc_progress
-            .as_ref()
-            .map(|p| p as &dyn gc::CollectGarbageProgress),
-    )
-    .await?;
+    store
+        .collect_garbage(
+            gc_progress
+                .as_ref()
+                .map(|p| p as &dyn gc::CollectGarbageProgress),
+        )
+        .await?;
     Ok(())
 }
 
@@ -537,6 +548,71 @@ mod tests {
         }
     }
 
+    /// A [`StoreOperations`] that never touches nix: it records which store
+    /// operations the orchestration invoked and returns typed outcomes, so
+    /// `apply_profile_change` can be driven end-to-end without a live store.
+    #[derive(Debug, Default)]
+    struct FakeStore {
+        calls: std::sync::Arc<Mutex<Vec<&'static str>>>,
+        realize_fails: bool,
+    }
+
+    impl FakeStore {
+        fn record(&self, op: &'static str) {
+            self.calls.lock().expect("BUG: store calls lock").push(op);
+        }
+
+        fn calls(&self) -> Vec<&'static str> {
+            self.calls.lock().expect("BUG: store calls lock").clone()
+        }
+    }
+
+    impl store::StoreOperations for FakeStore {
+        fn estimate_realization(
+            &self,
+            _packages: &[ResolvedPackage],
+        ) -> impl std::future::Future<
+            Output = Result<store::RealizeEstimate, store::StorePathError>,
+        > + Send {
+            self.record("estimate");
+            std::future::ready(Ok(store::RealizeEstimate::default()))
+        }
+
+        fn realize_store_paths(
+            &self,
+            _packages: &[ResolvedPackage],
+            _progress: Option<&dyn store::RealizeProgress>,
+        ) -> impl std::future::Future<Output = Result<(), store::StorePathError>> + Send {
+            self.record("realize");
+            let result = if self.realize_fails {
+                use std::os::unix::process::ExitStatusExt as _;
+                Err(store::StorePathError::RealiseExited {
+                    status: std::process::ExitStatus::from_raw(1 << 8),
+                    messages: vec!["fake realize failure".to_owned()],
+                })
+            } else {
+                Ok(())
+            };
+            std::future::ready(result)
+        }
+
+        fn verify_store_paths(
+            &self,
+            _packages: &[ResolvedPackage],
+        ) -> impl std::future::Future<Output = Result<(), store::StorePathError>> + Send {
+            self.record("verify");
+            std::future::ready(Ok(()))
+        }
+
+        fn collect_garbage(
+            &self,
+            _progress: Option<&dyn gc::CollectGarbageProgress>,
+        ) -> impl std::future::Future<Output = Result<(), gc::CollectGarbageError>> + Send {
+            self.record("gc");
+            std::future::ready(Ok(()))
+        }
+    }
+
     fn create_empty_generation(profile_dir: &Path, number: usize) {
         let gen_dir = profile_dir.join(format!("{number}-link"));
         std::fs::create_dir_all(&gen_dir).expect("BUG: mkdir generation");
@@ -566,6 +642,7 @@ mod tests {
             .expect("BUG: symlink next.0.9");
 
         let result = apply_profile_change(
+            &FakeStore::default(),
             &profile_dir,
             Some(Manifest::default()),
             None,
@@ -606,10 +683,10 @@ mod tests {
         std::os::unix::fs::symlink("2-link", profile_dir.join("next"))
             .expect("BUG: symlink staged next");
 
-        let unrealizable_pkg = ResolvedPackage {
-            name: "bogus".into(),
+        let package = ResolvedPackage {
+            name: "pkg".into(),
             version: "1.0.0".into(),
-            store_path: "/nix/store/00000000000000000000000000000000-does-not-exist".into(),
+            store_path: "/nix/store/00000000000000000000000000000000-pkg".into(),
             category: None,
             description: None,
             upgrade_strategy: None,
@@ -619,11 +696,16 @@ mod tests {
             pinned: None,
         };
 
+        let store = FakeStore {
+            realize_fails: true,
+            ..Default::default()
+        };
         let result = apply_profile_change(
+            &store,
             &profile_dir,
             Some(Manifest::default()),
             None,
-            &[unrealizable_pkg],
+            &[package],
             &[],
             ActivationMode::Skip,
             None,
@@ -656,6 +738,7 @@ mod tests {
             .expect("BUG: symlink stale next");
 
         let result = apply_profile_change(
+            &FakeStore::default(),
             &profile_dir,
             None,
             None,
@@ -693,9 +776,8 @@ mod tests {
 
         // An explicit (empty) base disables the no-op short-circuit, so a
         // generation is built and the realize/verify phases are reported.
-        // An empty package set keeps the store steps as in-process no-ops,
-        // so the test does not depend on a live Nix store.
         apply_profile_change(
+            &FakeStore::default(),
             &profile_dir,
             Some(Manifest::default()),
             None,
@@ -723,6 +805,49 @@ mod tests {
         assert!(
             phases.contains(&UpgradePhase::Building),
             "build phase must follow verification, got {phases:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_profile_change_runs_the_full_store_sequence_without_nix() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+        create_empty_generation(&profile_dir, 1);
+        set_current(&profile_dir, 1);
+
+        // Explicit base builds a generation; GC is enabled so the sweep runs
+        // after the build. Every nix step is served by the fake store, so the
+        // orchestration is exercised end-to-end with no live store.
+        let store = FakeStore::default();
+        let result = apply_profile_change(
+            &store,
+            &profile_dir,
+            Some(Manifest::default()),
+            None,
+            &[],
+            &[],
+            ActivationMode::Skip,
+            Some(&GcConfig::default()),
+            None,
+            "hooks",
+            None,
+        )
+        .await
+        .expect("BUG: profile change should succeed");
+
+        assert_eq!(
+            result
+                .generation
+                .expect("BUG: a built generation must be reported")
+                .number,
+            2,
+        );
+        assert!(result.gc.is_ok(), "gc must succeed, got {:?}", result.gc);
+        assert_eq!(
+            store.calls(),
+            vec!["realize", "verify", "gc"],
+            "the orchestration must realize, verify, then collect garbage in order"
         );
     }
 
