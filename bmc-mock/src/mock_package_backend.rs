@@ -245,24 +245,67 @@ fn inline_widget_icon(mut widget: InstallableWidget) -> InstallableWidget {
 #[async_trait::async_trait]
 impl PackageBackend for MockPackageBackend {
     async fn probe(&self, estimate: EstimateMode, install: &[String]) -> PackageProbe {
-        match scenario::read(&self.scenario_path).packages {
+        let scenario = scenario::read(&self.scenario_path);
+        if scenario.packages == PackagesScenario::FetchFailed {
+            return PackageProbe::Failed(PackageProbeError::IndexFetchFailed(
+                "mock: index fetch failed".to_owned(),
+            ));
+        }
+
+        // Mirror the real backend's resolve step: an install name the catalog
+        // (the shadow set) does not offer fails the whole check, so the mock
+        // can produce InstallTargetUnavailable the way the device does.
+        let installable: BTreeSet<&str> = scenario
+            .shadowed_packages
+            .iter()
+            .map(String::as_str)
+            .collect();
+        if let Some(unknown) = install
+            .iter()
+            .find(|name| !installable.contains(name.as_str()))
+        {
+            return PackageProbe::Failed(PackageProbeError::InstallTargetUnavailable(format!(
+                "package '{unknown}' not found in any index"
+            )));
+        }
+        let installs = install.iter().map(|name| SystemPackageChange {
+            name: name.clone(),
+            version_from: None,
+            version_to: Some("1.0.0".to_owned()),
+            category: Some("widget".to_owned()),
+            changelog: None,
+        });
+
+        match scenario.packages {
             PackagesScenario::Available => {
                 let mut preview = static_preview(estimate);
-                for name in install {
-                    preview.changes.push(SystemPackageChange {
-                        name: name.clone(),
-                        version_from: None,
-                        version_to: Some("1.0.0".to_owned()),
-                        category: Some("widget".to_owned()),
-                        changelog: None,
-                    });
-                }
+                preview.changes.extend(installs);
                 PackageProbe::Available(empty_merged_index(), preview)
             }
-            PackagesScenario::Unavailable => PackageProbe::UpToDate,
-            PackagesScenario::FetchFailed => PackageProbe::Failed(
-                PackageProbeError::IndexFetchFailed("mock: index fetch failed".to_owned()),
-            ),
+            // Nothing else changed, but an explicit install still yields a plan
+            // of just the added widgets so the install path never dead-ends.
+            PackagesScenario::Unavailable => {
+                let changes: Vec<SystemPackageChange> = installs.collect();
+                if changes.is_empty() {
+                    PackageProbe::UpToDate
+                } else {
+                    PackageProbe::Available(
+                        empty_merged_index(),
+                        PackagesPreview {
+                            changes,
+                            download_size_bytes: match estimate {
+                                EstimateMode::Estimate => Some(DOWNLOAD_TOTAL_BYTES),
+                                EstimateMode::Skip => None,
+                            },
+                            bmc_version: None,
+                            bmc_changelog: None,
+                        },
+                    )
+                }
+            }
+            PackagesScenario::FetchFailed => {
+                unreachable!("BUG: fetch-failed is handled before install validation")
+            }
             PackagesScenario::PreconditionFailed => {
                 PackageProbe::Failed(PackageProbeError::NoEnabledServers)
             }
@@ -531,7 +574,10 @@ mod tests {
     #[tokio::test]
     async fn probe_surfaces_requested_installs_as_added() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
-        let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
+        let path = write_scenario(
+            dir.path(),
+            r#"{"packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#,
+        );
         let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         let PackageProbe::Available(_, preview) = backend
             .probe(EstimateMode::Skip, &["widget-flip-clock".to_owned()])
@@ -550,6 +596,56 @@ mod tests {
             added.version_from.is_none() && added.version_to.is_some(),
             "requested install must appear as added: {added:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn probe_rejects_install_not_in_catalog() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        // The catalog is the shadow set; widget-nope is not offered, so the
+        // check must fail the way the real backend's resolve step does.
+        let path = write_scenario(
+            dir.path(),
+            r#"{"packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#,
+        );
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
+        assert!(matches!(
+            backend
+                .probe(EstimateMode::Skip, &["widget-nope".to_owned()])
+                .await,
+            PackageProbe::Failed(PackageProbeError::InstallTargetUnavailable(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn probe_offers_install_when_everything_else_up_to_date() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        // "unavailable" means no routine upgrade, but an explicit install must
+        // still produce a plan of exactly the added widget.
+        let path = write_scenario(
+            dir.path(),
+            r#"{"packages": "unavailable", "shadowed_packages": ["widget-flip-clock"]}"#,
+        );
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
+        let PackageProbe::Available(_, preview) = backend
+            .probe(EstimateMode::Estimate, &["widget-flip-clock".to_owned()])
+            .await
+        else {
+            panic!("BUG: an install request must produce an available plan");
+        };
+        assert_eq!(preview.changes.len(), 1);
+        assert_eq!(preview.changes[0].name, "widget-flip-clock");
+        assert!(preview.bmc_version.is_none());
+    }
+
+    #[tokio::test]
+    async fn probe_unavailable_without_install_stays_up_to_date() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = write_scenario(dir.path(), r#"{"packages": "unavailable"}"#);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
+        assert!(matches!(
+            backend.probe(EstimateMode::Skip, &[]).await,
+            PackageProbe::UpToDate
+        ));
     }
 
     #[tokio::test]
