@@ -70,6 +70,11 @@ static PLACEHOLDER_PREVIEWS: LazyLock<Vec<InstallablePreview>> = LazyLock::new(|
 /// oversized path.
 const MAX_INDEX_BYTES: u64 = 16 * 1024 * 1024;
 
+/// Cap on a single widget icon inlined as a `data:` URI in a
+/// `ListInstallableWidgets` response. An icon is a small SVG/PNG; this keeps
+/// one oversized file from bloating the response far beyond the index cap.
+const MAX_ICON_BYTES: u64 = 512 * 1024;
+
 #[derive(Debug)]
 pub struct MockPackageBackend {
     scenario_path: PathBuf,
@@ -216,7 +221,7 @@ fn widget_from_manifest(manifest_path: &Path) -> Option<InstallableWidget> {
 fn inline_widget_icon(mut widget: InstallableWidget) -> InstallableWidget {
     widget.icon = widget.icon.and_then(|path| {
         let meta = std::fs::metadata(&path).ok()?;
-        if !meta.is_file() || meta.len() > MAX_INDEX_BYTES {
+        if !meta.is_file() || meta.len() > MAX_ICON_BYTES {
             return None;
         }
         let bytes = std::fs::read(&path).ok()?;
@@ -509,7 +514,12 @@ mod tests {
             .iter()
             .find(|c| c.name == "widget-flip-clock")
             .expect("BUG: install not in preview");
-        assert_eq!(added.version_from, None);
+        // A requested install must surface as an addition: no prior version,
+        // a target version to install.
+        assert!(
+            added.version_from.is_none() && added.version_to.is_some(),
+            "requested install must appear as added: {added:?}"
+        );
     }
 
     #[tokio::test]
