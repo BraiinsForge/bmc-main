@@ -50,12 +50,12 @@ pub static CLIENT: LazyLock<Client> = LazyLock::new(|| {
 });
 
 /// Widget lifecycle control around a system upgrade. Around a disruptive
-/// firmware upgrade it stops all running widget processes before the flash
-/// hand-off so GPU resources are freed, and respawns them when the upgrade
-/// fails (the compositor keeps running throughout so the display stays alive
-/// on a retried failure). After a widget-package install it re-scans the
-/// widget registry so the newly-installed widget is available without a
-/// restart.
+/// firmware upgrade it stops all running widget processes before the image
+/// download, freeing RAM (the image lands on tmpfs) and GPU resources, and
+/// respawns them when the upgrade fails (the compositor keeps running
+/// throughout so the display stays alive on a retried failure). After a
+/// widget-package install it re-scans the widget registry so the
+/// newly-installed widget is available without a restart.
 #[async_trait::async_trait]
 pub(crate) trait WidgetLifecycle: Send + Sync + std::fmt::Debug {
     async fn stop_all_widgets(&self);
@@ -180,6 +180,38 @@ fn clear_pending_install(install: &[String], path: &std::path::Path) {
         } else {
             warn!(error = %err, path = %path.display(),
                 "Failed to clear pending-install handoff after failed firmware upgrade");
+        }
+    }
+}
+
+/// Restarts the widgets when dropped, unless disarmed. A firmware run stops
+/// them before downloading the image (which lands on tmpfs) to free RAM, so
+/// every failure path from that point must bring them back; running the
+/// restart on drop covers each early return without repeating the call. The
+/// success path disarms the guard, since the reboot starts widgets fresh.
+struct WidgetRestartGuard {
+    widget_lifecycle: Option<Arc<dyn WidgetLifecycle>>,
+}
+
+impl WidgetRestartGuard {
+    fn new(widget_lifecycle: Arc<dyn WidgetLifecycle>) -> Self {
+        Self {
+            widget_lifecycle: Some(widget_lifecycle),
+        }
+    }
+
+    fn disarm(mut self) {
+        self.widget_lifecycle = None;
+    }
+}
+
+impl Drop for WidgetRestartGuard {
+    fn drop(&mut self) {
+        if let Some(widget_lifecycle) = self.widget_lifecycle.take() {
+            // `restart_widgets` is async and `drop` is not, so spawn it.
+            task::spawn(async move {
+                widget_lifecycle.restart_widgets().await;
+            });
         }
     }
 }
@@ -566,6 +598,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         forward_led_events(self.state_service.clone(), run)
     }
 
+    #[expect(clippy::too_many_lines)]
     fn spawn_firmware_run(
         &self,
         gate: tokio::sync::OwnedMutexGuard<()>,
@@ -590,6 +623,11 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             state_service.notify(SystemUpgradeState::DownloadStarted {
                 total_mb: Some(bytes_to_mb(total_bytes)),
             });
+            // Stop widgets before the download starts: the image lands on tmpfs
+            // (RAM), so freeing their memory first leaves room for it. The guard
+            // restarts them on any failure return below.
+            widget_lifecycle.stop_all_widgets().await;
+            let widget_guard = WidgetRestartGuard::new(widget_lifecycle);
             let mut download_rx =
                 upgrader.download_firmware(release.url.clone(), release.hash.clone(), total_bytes);
             let mut download_finished = false;
@@ -638,19 +676,16 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 return;
             }
 
-            // Written here — after verify, before any teardown — so an earlier
-            // download/verify failure can never leave a stale handoff behind,
-            // and a write failure aborts before widgets are stopped, leaving
-            // nothing to restart. A successful upgrade writes-then-consumes it
-            // within the `bmc_manager.upgrade` call below.
+            // Written after verify so an earlier download/verify failure can
+            // never leave a stale handoff behind. A successful upgrade
+            // writes-then-consumes it within the `bmc_manager.upgrade` call
+            // below; a write failure here aborts and the guard restarts widgets.
             if !install.is_empty()
                 && let Err(err) = record_pending_install(&install, &pending_install_path)
             {
                 _ = tx.send(UpgradeRunState::Failed(err));
                 return;
             }
-
-            widget_lifecycle.stop_all_widgets().await;
 
             let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
             let adapter = ChannelUpgradeProgress::new(tx.clone(), state_service);
@@ -670,8 +705,10 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             match result {
                 Ok(()) => {
                     // Handoff accepted; sysupgrade has staged the image and the
-                    // reboot follows within the shutdown-grace window.
+                    // reboot follows within the shutdown-grace window. The
+                    // reboot starts widgets fresh, so cancel the restart.
                     info!("Firmware upgrade handoff accepted");
+                    widget_guard.disarm();
                     _ = tx.send(UpgradeRunState::Phase(SystemUpgradePhase::FirmwareApplying));
                     // Drop the sender to end the stream with a clean OK trailer,
                     // then park so the run gate stays held until the reboot.
@@ -679,8 +716,8 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                     std::future::pending::<()>().await;
                 }
                 Err(err) => {
+                    // `widget_guard` restarts the widgets when this arm returns.
                     error!(error = %err, "Firmware upgrade failed");
-                    widget_lifecycle.restart_widgets().await;
                     // The only failure point after the handoff was written.
                     clear_pending_install(&install, &pending_install_path);
                     let failure = match err {
