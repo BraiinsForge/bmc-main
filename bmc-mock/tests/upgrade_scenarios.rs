@@ -694,6 +694,42 @@ async fn unknown_upgrade_id_expires() {
 }
 
 #[tokio::test]
+async fn second_check_evicts_the_first_upgrade_id() {
+    let mut mock = spawn_mock(r#"{"firmware": "up-to-date", "packages": "available"}"#);
+    let mut client = upgrade_client(&mut mock).await;
+
+    let first = client
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
+        .await
+        .expect("BUG: first check failed")
+        .into_inner()
+        .upgrade_id
+        .expect("BUG: first check must offer an id");
+
+    // A second check clears the prior offer set, so the first id is gone.
+    client
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec![],
+        })
+        .await
+        .expect("BUG: second check failed");
+
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest { upgrade_id: first })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+    let (events, error) = drain_until_error(&mut stream).await;
+    assert!(
+        events.is_empty(),
+        "an evicted id must fail before any progress event"
+    );
+    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+}
+
+#[tokio::test]
 async fn scenario_flip_changes_next_check() {
     let mut mock = spawn_mock(r#"{"firmware": "available", "packages": "unavailable"}"#);
     let mut client = upgrade_client(&mut mock).await;
