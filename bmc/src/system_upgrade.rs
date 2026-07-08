@@ -629,11 +629,10 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 return;
             }
 
-            widget_lifecycle.stop_all_widgets().await;
-
-            // Written here, immediately before the flash hand-off, so the
-            // earlier download/verify failure returns can never leave a stale
-            // handoff behind; a successful upgrade writes-then-consumes it
+            // Written here — after verify, before any teardown — so an earlier
+            // download/verify failure can never leave a stale handoff behind,
+            // and a write failure aborts before widgets are stopped, leaving
+            // nothing to restart. A successful upgrade writes-then-consumes it
             // within the `bmc_manager.upgrade` call below.
             if !install.is_empty()
                 && let Err(err) = record_pending_install(&install, &pending_install_path)
@@ -641,6 +640,8 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 _ = tx.send(UpgradeRunState::Failed(err));
                 return;
             }
+
+            widget_lifecycle.stop_all_widgets().await;
 
             let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
             let adapter = ChannelUpgradeProgress::new(tx.clone(), state_service);
