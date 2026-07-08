@@ -386,6 +386,7 @@ class UpgradeCycle:
     upgrade_id: str | None = None
     generation_before: int | None = None
     installed_before: set[str] | None = None  # package names in the pre-upgrade manifest
+    widget_uid: str | None = None  # uid of the widget under install, for the registry check
 
     @property
     def index_url(self) -> str:
@@ -554,7 +555,7 @@ def _installable_widget_names(response: dict[str, Any]) -> list[str]:
 
 
 def _installed_package_names(list_packages_json: dict[str, Any]) -> list[str]:
-    """Package names from `bmc-nix-cli list-packages --json`."""
+    """Package names from `bmc-nix-cli list-packages --format json`."""
     return [p["name"] for p in list_packages_json.get("packages", [])]
 
 
@@ -577,6 +578,7 @@ def list_installable_widgets(dev: Device, cycle: UpgradeCycle, widget: str) -> s
     for key in ("uid", "displayName", "category", "icon"):
         if not entry.get(key):
             raise Abort(f"{widget} missing {key} in discovery: {entry}")
+    cycle.widget_uid = entry["uid"]
     return f"{widget} installable (uid {entry['uid']})"
 
 
@@ -599,14 +601,26 @@ def check_for_install(dev: Device, cycle: UpgradeCycle, widget: str) -> str:
 
 
 @stage("Verify widget installed")
-def verify_widget_installed(dev: Device, widget: str) -> str:
+def verify_widget_installed(dev: Device, cycle: UpgradeCycle, widget: str) -> str:
     raw = dev.read(
-        f"PATH=/run/current-profile/bin:$PATH {shlex.quote(_NIX_CLI)} list-packages --json"
+        f"PATH=/run/current-profile/bin:$PATH {shlex.quote(_NIX_CLI)} list-packages --format json"
     )
     installed = _installed_package_names(json.loads(raw))
     if widget not in installed:
         raise Abort(f"{widget} not in list-packages after install: {installed}")
-    return f"{widget} present in profile"
+
+    # list-packages only proves the profile carries the package; confirm the
+    # running registry actually exposes the widget by uid, so a broken
+    # post-install refresh (e.g. a manifest pointing at a missing binary)
+    # fails here instead of passing silently.
+    uid = cycle.widget_uid
+    if not uid:
+        raise Abort("widget uid not captured from ListInstallableWidgets")
+    response = _grpcurl(dev, "SceneManagementService/GetAvailableWidgets", cookie=cycle.cookie)
+    available = {w.get("uid") for w in response.get("widgets", [])}
+    if uid not in available:
+        raise Abort(f"{widget} (uid {uid}) not exposed by the registry after install: {available}")
+    return f"{widget} present in profile and registry (uid {uid})"
 
 
 @stage("Run upgrade")
