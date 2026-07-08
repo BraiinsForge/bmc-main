@@ -182,11 +182,19 @@ cache_url="http://$host:$port"
 # Materialize widget assets referenced by store path in each package's
 # metadata.assets map and rewrite those paths to URLs this static server
 # hosts, so the frontend can fetch icons (and future previews) without
-# realizing a package. The store is world-readable; the symlink lives in
-# the ephemeral work_dir and is removed with it. store_path and other
-# metadata (bmc_version, widget picker fields) are left untouched.
+# realizing a package. Only the referenced store paths are linked into the
+# ephemeral work_dir (never the whole store), and are removed with it.
+# store_path and other metadata (bmc_version, widget picker fields) are left
+# untouched.
 if jq -e '[.packages[].metadata.assets? // empty] | length > 0' "$index_file" >/dev/null; then
-    ln -s /nix/store "$work_dir/store"
+    mkdir -p "$work_dir/store"
+    jq -r '[.packages[].metadata.assets? // empty] | .. | strings
+            | select(startswith("/nix/store/"))
+            | ltrimstr("/nix/store/") | split("/")[0]' "$index_file" \
+        | sort -u \
+        | while IFS= read -r item; do
+            [ -n "$item" ] && ln -sfn "/nix/store/$item" "$work_dir/store/$item"
+        done
     jq --arg base "$base_url" '
         .packages |= map(
             if .metadata.assets? then
