@@ -884,6 +884,17 @@ async fn lists_shadowed_widget_as_installable_over_grpc() {
     assert!(!widget.uid.is_empty());
     assert!(!widget.display_name.is_empty());
     assert!(widget.icon.is_some());
+    // The preview set crosses the wire intact: each entry carries a scene
+    // size and a renderable image.
+    assert!(!widget.previews.is_empty(), "previews must cross the wire");
+    assert!(
+        widget
+            .previews
+            .iter()
+            .all(|p| !p.size.is_empty() && !p.image.is_empty()),
+        "each preview needs a size and image: {:?}",
+        widget.previews
+    );
 }
 
 // A real index carrying two widgets; only the shadowed one is installable.
