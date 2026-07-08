@@ -531,6 +531,13 @@ pub fn installable_widgets_from(
 
 /// Resolve requested install names against the merged index into
 /// user-installed [`ResolvedPackage`]s for the plan/apply add-set.
+///
+/// Any package name resolves here, not only `category == "widget"`:
+/// installing arbitrary packages is a supported capability of the backend.
+/// The widget-only restriction is a presentation concern — the picker
+/// surfaces just widgets via [`installable_widgets_from`] — so today users
+/// can only reach widget installs, but the plan/apply path deliberately
+/// imposes no such limit.
 pub fn resolve_installs(
     merged: &bmc_nix::types::MergedIndex,
     names: &[String],
