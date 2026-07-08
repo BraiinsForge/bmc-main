@@ -8,6 +8,6 @@ pkgs.writeText "nix.conf" ''
   # trusted-public-keys = cache.braiins.com:placeholder
   extra-experimental-features = nix-command flakes
   # nix-store --realise must fsync realized store path contents (the
-  # SQLite DB is fsynced by default, contents are not);
+  # SQLite DB is fsynced by default, contents are not).
   fsync-store-paths = true
 ''
