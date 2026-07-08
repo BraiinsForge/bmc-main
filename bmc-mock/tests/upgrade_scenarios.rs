@@ -94,6 +94,9 @@ async fn default_scenario_offers_firmware_and_packages() {
     let packages = response.packages.expect("packages offered");
     assert!(!packages.changes.is_empty());
     assert!(packages.bmc_version.is_some());
+    // Firmware is available, so the check skips the size estimate: the
+    // packages preview carries no download size.
+    assert!(packages.download_size_bytes.is_none());
 }
 
 #[tokio::test]
@@ -183,6 +186,10 @@ async fn packages_only_run_completes_all_phases() {
         UpgradeDisruption::AppRestart as i32,
         "a packages-only upgrade only restarts the app"
     );
+    // Packages-only: the check runs the size estimate, so the preview carries
+    // a download size.
+    let packages = response.packages.expect("BUG: packages offered");
+    assert!(packages.download_size_bytes.is_some());
     let upgrade_id = response.upgrade_id.expect("upgrade id");
 
     let mut stream = client
