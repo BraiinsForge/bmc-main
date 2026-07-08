@@ -439,4 +439,56 @@ mod tests {
         .into();
         assert_eq!(status.code(), tonic::Code::FailedPrecondition);
     }
+
+    #[test]
+    fn install_target_unavailable_maps_to_failed_precondition() {
+        let status: Status = SystemUpgradeError::PackageCheckFailed(
+            bmc_upgrade::packages::PackageProbeError::InstallTargetUnavailable(
+                "package 'widget-nope' not found in any index".to_owned(),
+            ),
+        )
+        .into();
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(
+            status.message(),
+            "Cannot check for upgrade: requested package to install is unavailable: \
+             package 'widget-nope' not found in any index."
+        );
+    }
+
+    #[test]
+    fn servers_config_unavailable_maps_to_failed_precondition() {
+        let status: Status = SystemUpgradeError::PackageCheckFailed(
+            bmc_upgrade::packages::PackageProbeError::ServersConfigUnavailable("io".to_owned()),
+        )
+        .into();
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+    }
+
+    #[test]
+    fn unrealizable_maps_to_failed_precondition() {
+        let status: Status = SystemUpgradeError::PackageCheckFailed(
+            bmc_upgrade::packages::PackageProbeError::Unrealizable("/nix/store/x".to_owned()),
+        )
+        .into();
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+    }
+
+    #[test]
+    fn upgrade_in_progress_maps_to_unavailable() {
+        let status: Status = SystemUpgradeError::UpgradeInProgress.into();
+        assert_eq!(status.code(), tonic::Code::Unavailable);
+    }
+
+    #[test]
+    fn not_enough_space_maps_to_failed_precondition() {
+        let status: Status = SystemUpgradeError::NotEnoughSpace.into();
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+    }
+
+    #[test]
+    fn invalid_image_maps_to_failed_precondition() {
+        let status: Status = SystemUpgradeError::InvalidImage.into();
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+    }
 }
