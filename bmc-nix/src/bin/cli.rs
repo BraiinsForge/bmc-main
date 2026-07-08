@@ -100,15 +100,25 @@ fn format_stale_warning(stale: &[PackageVersion]) -> Option<String> {
     Some(out)
 }
 
+/// Output format for a command's stdout result.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum OutputFormat {
+    /// Human-readable `name  version` table.
+    #[default]
+    Human,
+    /// Machine-readable JSON.
+    Json,
+}
+
 /// Render a profile's installed packages, sorted by name.
 ///
-/// With `json`, emits `{"packages":[{"name","version","category"}]}`
+/// With [`OutputFormat::Json`], emits `{"packages":[{"name","version","category"}]}`
 /// for machine consumers; otherwise a `name  version` table per line.
-fn render_package_list(manifest: &Manifest, json: bool) -> String {
+fn render_package_list(manifest: &Manifest, format: OutputFormat) -> String {
     use std::fmt::Write as _;
     let mut names: Vec<&String> = manifest.packages.keys().collect();
     names.sort();
-    if json {
+    if matches!(format, OutputFormat::Json) {
         let entries: Vec<serde_json::Value> = names
             .iter()
             .map(|name| {
@@ -409,9 +419,9 @@ enum Commands {
         #[arg(long)]
         profile_dir: Option<PathBuf>,
 
-        /// Emit JSON instead of a human table
-        #[arg(long, action = clap::ArgAction::SetTrue)]
-        json: bool,
+        /// Output format
+        #[arg(long, default_value_t = OutputFormat::Human, value_enum)]
+        format: OutputFormat,
     },
 
     /// Register a package server and its binary-cache substituter.
@@ -1089,11 +1099,11 @@ fn cmd_register_server(
     Ok(())
 }
 
-fn cmd_list_packages(profile_dir: Option<PathBuf>, json: bool) -> anyhow::Result<()> {
+fn cmd_list_packages(profile_dir: Option<PathBuf>, format: OutputFormat) -> anyhow::Result<()> {
     let profile_dir =
         profile_dir.unwrap_or_else(|| PathBuf::from("/nix/var/nix/gcroots/profiles/bmc"));
     let manifest = manifest::read_current_manifest(&profile_dir)?;
-    print!("{}", render_package_list(&manifest, json));
+    print!("{}", render_package_list(&manifest, format));
     Ok(())
 }
 
@@ -1272,7 +1282,10 @@ async fn main() -> anyhow::Result<()> {
             bos_version_file,
         } => cmd_activate(&profile_dir, generation, &bos_version_file).await,
 
-        Commands::ListPackages { profile_dir, json } => cmd_list_packages(profile_dir, json),
+        Commands::ListPackages {
+            profile_dir,
+            format,
+        } => cmd_list_packages(profile_dir, format),
 
         Commands::RegisterServer {
             servers_config,
@@ -1854,7 +1867,7 @@ mod tests {
             }}"#,
         )
         .expect("BUG: parse manifest");
-        let out = render_package_list(&manifest, true);
+        let out = render_package_list(&manifest, OutputFormat::Json);
         let value: serde_json::Value = serde_json::from_str(&out).expect("BUG: json");
         let names: Vec<&str> = value["packages"]
             .as_array()
@@ -1866,12 +1879,15 @@ mod tests {
     }
 
     #[test]
-    fn list_packages_accepts_json_flag() {
-        let cli =
-            Cli::try_parse_from(["bmc-nix-cli", "list-packages", "--json"]).expect("BUG: parse");
+    fn list_packages_accepts_format_flag() {
+        let cli = Cli::try_parse_from(["bmc-nix-cli", "list-packages", "--format", "json"])
+            .expect("BUG: parse");
         assert!(matches!(
             cli.command,
-            Commands::ListPackages { json: true, .. }
+            Commands::ListPackages {
+                format: OutputFormat::Json,
+                ..
+            }
         ));
     }
 
