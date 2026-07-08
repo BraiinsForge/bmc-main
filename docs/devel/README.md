@@ -26,6 +26,12 @@ How application and firmware upgrades are resolved and applied: package indexes 
 algorithm, the firmware-pinned index used during BOS upgrades, BOS downgrade on BMM101, rollback, garbage collection,
 and store initialization.
 
+### [Firmware and Package Upgrade Interlinking](firmware-package-interlinking.md)
+
+Why a single `CheckForUpgrade` can offer both a firmware and a package upgrade, how the firmware upgrade re-resolves
+packages in the target firmware's index context before the flash, and why a package-probe failure stays fatal even when
+firmware is available — the probe is a pre-flight of the firmware run's package step, not a bypass.
+
 ### [End-to-End Package Upgrade Harness](upgrade-e2e-harness.md)
 
 How `deck upgrade-e2e` drives a full package upgrade cycle against a real Deck: serving locally built packages from the
