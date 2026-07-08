@@ -584,6 +584,79 @@ async fn firmware_success_goes_dark_after_applying() {
 }
 
 #[tokio::test]
+async fn firmware_success_with_install_consumes_the_handoff() {
+    // A firmware upgrade that also installs a widget: the run writes a
+    // pending-install handoff, and the simulated sysupgrade consumes it
+    // (unshadowing the widget) before the reboot-exit.
+    let mut mock = spawn_mock(
+        r#"{"firmware": "available", "packages": "unavailable", "shadowed_packages": ["widget-flip-clock"]}"#,
+    );
+    let mut client = upgrade_client(&mut mock).await;
+    let response = client
+        .check_for_upgrade(CheckForUpgradeRequest {
+            install_packages: vec!["widget-flip-clock".to_owned()],
+        })
+        .await
+        .expect("BUG: check failed")
+        .into_inner();
+    let upgrade_id = response.upgrade_id.expect("BUG: upgrade id");
+
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest { upgrade_id })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+
+    tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            let progress = stream
+                .message()
+                .await
+                .expect("BUG: stream errored before FirmwareApplying")
+                .expect("BUG: stream ended before FirmwareApplying");
+            if matches!(
+                progress.event,
+                Some(upgrade_progress::Event::FirmwarePhase(p))
+                    if p == FirmwareUpgradePhase::Applying as i32
+            ) {
+                return;
+            }
+        }
+    })
+    .await
+    .expect("timed out before FirmwareApplying");
+
+    // Wait for the simulated reboot (process exit).
+    let exit_deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = mock.child.try_wait().expect("BUG: try_wait failed") {
+            assert!(status.success(), "mock exited with failure: {status}");
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < exit_deadline,
+            "mock process did not exit after simulated reboot"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    // The handoff was consumed, not left behind.
+    let handoff = mock.mockfs.join("tmp/bmc-nix-pending-install.json");
+    assert!(
+        !handoff.exists(),
+        "consumed handoff must be removed: {}",
+        handoff.display()
+    );
+    // Consuming the handoff unshadowed (installed) the widget.
+    let scenario = std::fs::read_to_string(mock.mockfs.join("etc/upgrade-scenario.json"))
+        .expect("BUG: read scenario");
+    assert!(
+        !scenario.contains("widget-flip-clock"),
+        "installed widget must be unshadowed after the reboot: {scenario}"
+    );
+}
+
+#[tokio::test]
 async fn firmware_download_fail_errors_the_stream() {
     let mut mock = spawn_mock(
         r#"{"firmware": "available", "packages": "unavailable", "run": "download-fail"}"#,
