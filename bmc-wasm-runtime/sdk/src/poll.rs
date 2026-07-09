@@ -20,8 +20,8 @@ pub struct FetchSpec {
     pub url: String,
     pub headers: Option<String>,
     pub body: Option<Vec<u8>>,
-    /// Per-call timeout; `None` defers to the SDK-wide default applied by
-    /// `FetchRequest`.
+    /// Per-call timeout; `None` defers to the SDK-wide
+    /// default applied by `FetchRequest`.
     pub timeout: Option<Duration>,
 }
 
@@ -68,8 +68,8 @@ impl FetchSpec {
         self
     }
 
-    /// Override the per-call timeout (DNS, connect, send, recv). Defaults to
-    /// the SDK-wide `DEFAULT_FETCH_TIMEOUT` when unset.
+    /// Override the per-call timeout (DNS, connect, send, recv).
+    /// Defaults to the SDK-wide `DEFAULT_FETCH_TIMEOUT` when unset.
     #[must_use]
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
@@ -163,10 +163,10 @@ impl Registry {
         let Some(spec) = (poll.build)(Handle(idx)) else {
             return;
         };
-        // Single-flight per poll keeps the in-flight count well under the host
-        // budget, so a send should not be rejected; treat an unexpected
-        // rejection as a transient failure and re-attempt after retry_ms so a
-        // budget hiccup self-heals instead of leaving the poll dormant forever.
+        // Single-flight per poll keeps the in-flight count well under the host budget,
+        // so a send should not be rejected; treat an unexpected rejection as a transient
+        // failure and re-attempt after retry_ms so a budget hiccup self-heals instead
+        // of leaving the poll dormant forever.
         let id = match backend.send(&spec, delay_ms) {
             Some(id) => Some(id),
             None => backend.send(&spec, Some(self.polls[idx].config.retry_ms)),
@@ -243,6 +243,15 @@ impl Registry {
     /// Flag failing after a reply was banked ok (a late decode failure).
     pub(crate) fn mark_stale(&mut self, handle: Handle) {
         self.polls[handle.0].last_failed = true;
+    }
+
+    /// Seed the last-success anchor from persisted state;
+    /// a no-op once a live reply has banked one.
+    pub(crate) fn restore_anchor(&mut self, handle: Handle, secs: i64) {
+        let poll = &mut self.polls[handle.0];
+        if poll.last_success_secs.is_none() {
+            poll.last_success_secs = Some(secs);
+        }
     }
 
     pub(crate) fn reschedule(
@@ -478,6 +487,12 @@ mod wasm {
         /// Flag stale after a reply was banked ok (e.g. a late decode failure).
         pub fn mark_stale(self) {
             REGISTRY.with(|r| r.borrow_mut().mark_stale(self));
+        }
+
+        /// Seed the last-success anchor from a restored cache entry
+        /// so staleness reads the true age across a reboot.
+        pub fn restore_anchor(self, unix_secs: i64) {
+            REGISTRY.with(|r| r.borrow_mut().restore_anchor(self, unix_secs));
         }
 
         #[must_use]
@@ -973,6 +988,30 @@ mod tests {
             reg.last_success_secs(h),
             Some(0),
             "the last-good anchor is unchanged"
+        );
+    }
+
+    #[test]
+    fn restore_anchor_seeds_only_before_the_first_success() {
+        let mut reg = Registry::default();
+        let mut be = FakeBackend::new();
+        let h = reg.register(build_url, CFG);
+        reg.start(h, &mut be);
+        // A restored anchor lets a later failed refresh read stale.
+        reg.restore_anchor(h, 100);
+        assert_eq!(reg.last_success_secs(h), Some(100));
+        deliver_at(&mut reg, &mut be, 1, false, 200);
+        assert!(
+            reg.is_stale(h, 200),
+            "failure over a restored anchor is stale"
+        );
+        // A live success wins; a later restore can't drag the anchor back.
+        deliver_at(&mut reg, &mut be, 2, true, 300);
+        reg.restore_anchor(h, 100);
+        assert_eq!(
+            reg.last_success_secs(h),
+            Some(300),
+            "a live success is never clobbered"
         );
     }
 

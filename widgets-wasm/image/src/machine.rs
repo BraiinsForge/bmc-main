@@ -54,10 +54,12 @@ pub enum Event {
         bitmap: BitmapId,
         aspect: f32,
         remaining_ms: u32,
+        saved_at_secs: i64,
     },
     RestoredStale {
         bitmap: BitmapId,
         aspect: f32,
+        saved_at_secs: i64,
     },
     RestoreMiss,
     DecodeStarted {
@@ -91,6 +93,8 @@ pub enum Action {
     DeferPoll,
     /// Flag stale after a reply was banked ok (a late decode failure).
     MarkStale,
+    /// Seed the staleness anchor from a restored cache timestamp.
+    SeedAnchor(i64),
     RequestFrame,
     EvictBitmap,
 }
@@ -109,6 +113,7 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
             bitmap,
             aspect,
             remaining_ms,
+            saved_at_secs,
         } => (
             View::Shown {
                 bitmap,
@@ -116,16 +121,24 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
                 badge: Badge::Fresh,
                 decode: None,
             },
-            vec![A::EnablePollAfter(remaining_ms), A::RequestFrame],
+            vec![
+                A::SeedAnchor(saved_at_secs),
+                A::EnablePollAfter(remaining_ms),
+                A::RequestFrame,
+            ],
         ),
-        E::RestoredStale { bitmap, aspect } => (
+        E::RestoredStale {
+            bitmap,
+            aspect,
+            saved_at_secs,
+        } => (
             View::Shown {
                 bitmap,
                 aspect,
                 badge: Badge::Updating,
                 decode: None,
             },
-            vec![A::ResumePoll, A::RequestFrame],
+            vec![A::SeedAnchor(saved_at_secs), A::ResumePoll, A::RequestFrame],
         ),
         // A URL/sizing change drops the shown image (Loading, not stale-over-wrong);
         // evict stays out of here — it needs render scope (host import traps otherwise).
@@ -349,6 +362,7 @@ mod tests {
                 bitmap: bmp(1),
                 aspect: 2.0,
                 remaining_ms: 4_000,
+                saved_at_secs: 900,
             },
         );
         assert!(matches!(
@@ -359,6 +373,7 @@ mod tests {
             }
         ));
         assert!(actions.contains(&Action::EnablePollAfter(4_000)));
+        assert!(actions.contains(&Action::SeedAnchor(900)));
     }
 
     #[test]
@@ -368,6 +383,7 @@ mod tests {
             Event::RestoredStale {
                 bitmap: bmp(1),
                 aspect: 1.0,
+                saved_at_secs: 900,
             },
         );
         assert!(matches!(
@@ -378,6 +394,7 @@ mod tests {
             }
         ));
         assert!(actions.contains(&Action::ResumePoll));
+        assert!(actions.contains(&Action::SeedAnchor(900)));
     }
 
     #[test]
@@ -524,6 +541,7 @@ mod tests {
                 bitmap: bmp(1),
                 aspect: 2.0,
                 remaining_ms: 4_000,
+                saved_at_secs: 900,
             },
         );
         assert!(matches!(woken, View::Shown { .. }));

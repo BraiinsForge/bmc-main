@@ -69,6 +69,7 @@ mod wasm_glue {
                 Action::Retry => with_poll(PollHandle::retry),
                 Action::DeferPoll => with_poll(|h| h.retry_after(refresh_interval_ms())),
                 Action::MarkStale => with_poll(PollHandle::mark_stale),
+                Action::SeedAnchor(secs) => with_poll(|h| h.restore_anchor(secs)),
                 Action::RequestFrame => request_frame(),
                 Action::EvictBitmap => IMAGE.evict(),
             }
@@ -244,14 +245,20 @@ mod wasm_glue {
         };
         let aspect = render::aspect_of(w, h);
         let remaining = remaining_ttl_ms(stat.saved_at);
+        let saved_at_secs = i64::try_from(stat.saved_at / 1000).unwrap_or(i64::MAX);
         if remaining > 0 {
             Event::Restored {
                 bitmap,
                 aspect,
                 remaining_ms: remaining,
+                saved_at_secs,
             }
         } else {
-            Event::RestoredStale { bitmap, aspect }
+            Event::RestoredStale {
+                bitmap,
+                aspect,
+                saved_at_secs,
+            }
         }
     }
 
