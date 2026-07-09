@@ -665,12 +665,9 @@ async fn extract_staged(tarball_path: &Path, stage_dir: &Path) -> Result<(), Ini
         // stable storage before the promoting rename — any post-crash
         // state in which `<stage_dir>/nix` is visible then implies its
         // contents were already durable, which is what makes
-        // `is_initialized` sound. syncfs over a fresh store can take
-        // seconds, so it runs on a blocking thread.
-        let sync_target = stage_dir.to_path_buf();
-        tokio::task::spawn_blocking(move || crate::fs_sync::sync_filesystem_of(&sync_target))
+        // `is_initialized` sound.
+        crate::fs_sync::sync_filesystem_of_blocking(stage_dir)
             .await
-            .expect("BUG: sync task should not panic")
             .map_err(|source| InitStoreError::SyncFailed {
                 path: path_string(stage_dir),
                 source,

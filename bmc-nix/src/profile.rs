@@ -239,12 +239,9 @@ pub async fn build_profile(
     crate::manifest::write_manifest(&tmp_path, &manifest)?;
 
     // Step 4: Make the generation contents (tree, hook outputs,
-    // manifest) durable before publishing the name. syncfs is
-    // unbounded work, so it runs on a blocking thread.
-    let sync_target = profile_dir.to_path_buf();
-    tokio::task::spawn_blocking(move || crate::fs_sync::sync_filesystem_of(&sync_target))
+    // manifest) durable before publishing the name.
+    crate::fs_sync::sync_filesystem_of_blocking(profile_dir)
         .await
-        .expect("BUG: sync task should not panic")
         .map_err(|source| BuildProfileError::Sync {
             path: profile_dir.display().to_string(),
             source,

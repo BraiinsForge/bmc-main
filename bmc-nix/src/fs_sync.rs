@@ -14,8 +14,8 @@ use std::path::Path;
 /// `syncfs(2)` is used instead of walking the tree with per-file
 /// `fsync`: store trees contain thousands of entries, symlinks cannot
 /// be fsynced individually, and the data partition is dedicated, so
-/// flushing it wholesale is exactly what is wanted. Blocking — callers
-/// on an async path must use [`tokio::task::spawn_blocking`].
+/// flushing it wholesale is exactly what is wanted. Blocking — async
+/// callers must use [`sync_filesystem_of_blocking`].
 #[cfg(target_os = "linux")]
 pub fn sync_filesystem_of(path: &Path) -> Result<(), std::io::Error> {
     use std::os::fd::AsRawFd;
@@ -41,6 +41,19 @@ pub fn sync_filesystem_of(_path: &Path) -> Result<(), std::io::Error> {
         std::io::ErrorKind::Unsupported,
         "syncfs is only available on Linux",
     ))
+}
+
+/// Run [`sync_filesystem_of`] on a blocking thread, for async callers.
+///
+/// `syncfs` over a fresh store can take seconds, so it must not run on a
+/// runtime worker. This is the only supported way to call it from an
+/// async context.
+pub async fn sync_filesystem_of_blocking(path: &Path) -> Result<(), std::io::Error> {
+    let path = path.to_path_buf();
+
+    tokio::task::spawn_blocking(move || sync_filesystem_of(&path))
+        .await
+        .expect("BUG: sync task should not panic")
 }
 
 /// Fsync a directory so a rename (or unlink) inside it is durable.
