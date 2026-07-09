@@ -44,6 +44,12 @@ pub enum PreparePartitionError {
         #[source]
         source: std::io::Error,
     },
+    #[error("failed to stat data partition {partition}: {source}")]
+    StatDataPartition {
+        partition: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 async fn run_command(
@@ -219,20 +225,34 @@ fn decode_dev_t(rdev: u64) -> (u32, u32) {
 
 /// Whether `partition` backs any active mount listed in `mountinfo`,
 /// compared by block identity (`major:minor`) so device aliases and
-/// bind mounts cannot slip past. A path that cannot be statted or is
-/// not a block device cannot be mounted and passes the guard;
-/// missing-device reporting belongs to the `test -b` step that runs
-/// before it.
-fn is_device_mounted(partition: &Path, mountinfo: &str) -> bool {
+/// bind mounts cannot slip past. A missing node or a non-block-device
+/// path cannot be mounted and passes the guard; missing-device
+/// reporting belongs to the `test -b` step that runs before it. Any
+/// other stat failure is propagated rather than silently read as "not
+/// mounted", so a transient error on a device that does back a live
+/// mount cannot let preparation fsck or reformat it.
+fn is_device_mounted(partition: &Path, mountinfo: &str) -> Result<bool, PreparePartitionError> {
     use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
-    let Ok(metadata) = std::fs::metadata(partition) else {
-        return false;
+    let metadata = match std::fs::metadata(partition) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(source) => {
+            return Err(PreparePartitionError::StatDataPartition {
+                partition: path_string(partition),
+                source,
+            });
+        }
     };
+
     if !metadata.file_type().is_block_device() {
-        return false;
+        return Ok(false);
     }
-    is_device_id_mounted(mountinfo, decode_dev_t(metadata.rdev()))
+
+    Ok(is_device_id_mounted(
+        mountinfo,
+        decode_dev_t(metadata.rdev()),
+    ))
 }
 
 /// The current mount table from `/proc/self/mountinfo`.
@@ -267,7 +287,7 @@ pub async fn prepare_data_partition(
         });
     }
 
-    if is_device_mounted(partition, mountinfo) {
+    if is_device_mounted(partition, mountinfo)? {
         return Err(PreparePartitionError::PartitionMounted {
             partition: path_string(partition),
         });
@@ -654,13 +674,13 @@ mod tests {
 
     #[test]
     fn is_device_mounted_passes_nonexistent_path() {
-        // A device that cannot be statted cannot be mounted; missing-
-        // device reporting belongs to the `test -b` step.
+        // A missing node cannot be mounted; missing-device reporting
+        // belongs to the `test -b` step.
         let mountinfo = "40 30 179:4 / /mnt/data rw - ext4 /dev/mmcblk0p4 rw\n";
-        assert!(!super::is_device_mounted(
-            Path::new("/nonexistent/device"),
-            mountinfo
-        ));
+        assert!(
+            !super::is_device_mounted(Path::new("/nonexistent/device"), mountinfo)
+                .expect("BUG: a missing node must read as not mounted")
+        );
     }
 
     #[test]
@@ -669,7 +689,10 @@ mod tests {
         let file = tmp.path().join("not-a-device");
         std::fs::write(&file, b"").expect("BUG: write temp file");
         let mountinfo = "40 30 179:4 / /mnt/data rw - ext4 /dev/mmcblk0p4 rw\n";
-        assert!(!super::is_device_mounted(&file, mountinfo));
+        assert!(
+            !super::is_device_mounted(&file, mountinfo)
+                .expect("BUG: a non-block-device path must read as not mounted")
+        );
     }
 
     #[tokio::test]
