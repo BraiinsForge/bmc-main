@@ -534,7 +534,7 @@ fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
 // hit the same wall, then let this poll go dormant (its builder yields `None`
 // without a token) until the fresh login reinvalidates it. Any other failure
 // keeps the last good data and flags the endpoint stale so the render path can
-// surface a "stale data" banner; the flag clears on the next success.
+// surface the stale overlay; the flag clears on the next success.
 #[cfg(target_arch = "wasm32")]
 fn on_miner_reply(handle: PollHandle, response: &FetchResponse) {
     if response.status == 401 {

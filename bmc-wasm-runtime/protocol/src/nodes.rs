@@ -2,6 +2,8 @@
 
 //! Node type and draw command constants for tree serialization.
 
+use core::fmt;
+
 // Node types (0x00–0x3F)
 pub const NODE_COLUMN: u8 = 0x00;
 pub const NODE_ROW: u8 = 0x01;
@@ -134,20 +136,66 @@ pub enum TagKind {
     Error = 2,
 }
 
-impl From<u8> for TagKind {
-    fn from(value: u8) -> Self {
+/// Invalid [`TagKind`] wire discriminant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidTagKind(pub u8);
+
+impl fmt::Display for InvalidTagKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid TagKind wire discriminant: {}", self.0)
+    }
+}
+
+impl std::error::Error for InvalidTagKind {}
+
+impl TryFrom<u8> for TagKind {
+    type Error = InvalidTagKind;
+
+    // `Self::Error` would be ambiguous with the `Error` variant, so name the
+    // concrete error type here and reach the variants through `TagKind`.
+    fn try_from(value: u8) -> Result<Self, InvalidTagKind> {
         match value {
-            1 => Self::Warning,
-            2 => Self::Error,
-            _ => Self::Info,
+            0 => Ok(TagKind::Info),
+            1 => Ok(TagKind::Warning),
+            2 => Ok(TagKind::Error),
+            other => Err(InvalidTagKind(other)),
         }
     }
 }
 
-// Tag icon mode — wire byte following the kind.
-pub const TAG_ICON_DEFAULT: u8 = 0; // per-kind theme icon
-pub const TAG_ICON_HIDDEN: u8 = 1; // no icon
-pub const TAG_ICON_CUSTOM: u8 = 2; // explicit SvgId follows
+/// Tag icon mode (wire byte after the kind). `Custom` is followed by an `SvgId`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TagIconMode {
+    Default = 0, // per-kind theme icon
+    Hidden = 1,  // no icon
+    Custom = 2,  // explicit SvgId follows
+}
+
+/// Invalid [`TagIconMode`] wire discriminant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidTagIconMode(pub u8);
+
+impl fmt::Display for InvalidTagIconMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid TagIconMode wire discriminant: {}", self.0)
+    }
+}
+
+impl std::error::Error for InvalidTagIconMode {}
+
+impl TryFrom<u8> for TagIconMode {
+    type Error = InvalidTagIconMode;
+
+    fn try_from(value: u8) -> Result<Self, InvalidTagIconMode> {
+        match value {
+            0 => Ok(TagIconMode::Default),
+            1 => Ok(TagIconMode::Hidden),
+            2 => Ok(TagIconMode::Custom),
+            other => Err(InvalidTagIconMode(other)),
+        }
+    }
+}
 
 // Draw commands — shapes (0x40–0x5F)
 pub const DRAW_RECT: u8 = 0x40;

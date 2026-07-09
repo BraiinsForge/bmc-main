@@ -60,6 +60,11 @@ impl TreeUi {
         let frame_counter = self.frame_counter;
         self.frame_counter = self.frame_counter.wrapping_add(1);
         let mut timings = FrameTimings::default();
+        // Host-side and not capture-replayed, so the real wall clock
+        // is correct for any RelativeTimeLive the system overlay renders.
+        let now_unix_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs().cast_signed());
         let mut ctx = ProcessContext {
             interaction: &mut self.interaction,
             modal_states: &mut self.modal_states,
@@ -69,7 +74,7 @@ impl TreeUi {
             taffy: &mut self.taffy,
             frame_counter,
             delta_ms,
-            now_unix_secs: 0,
+            now_unix_secs,
         };
         #[expect(
             clippy::cast_precision_loss,

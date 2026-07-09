@@ -788,13 +788,13 @@ impl<'a> TreeReader<'a> {
                 })
             }
             NODE_TAG => {
-                let kind = TagKind::from(self.read_u8()?);
-                let icon_mode = self.read_u8()?;
+                let kind = TagKind::try_from(self.read_u8()?)?;
+                let icon_mode = TagIconMode::try_from(self.read_u8()?)?;
                 let custom = self.read_icon_id()?;
                 let icon = match icon_mode {
-                    TAG_ICON_HIDDEN => None,
-                    TAG_ICON_CUSTOM => custom,
-                    _ => Some(tag_theme(kind).icon),
+                    TagIconMode::Hidden => None,
+                    TagIconMode::Custom => custom,
+                    TagIconMode::Default => Some(tag_theme(kind).icon),
                 };
                 let content = Box::new(self.read_node()?);
                 Ok(TreeNode::Tag {

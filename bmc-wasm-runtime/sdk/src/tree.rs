@@ -25,9 +25,8 @@ use bmc_wasm_protocol::{
     DRAW_RECT, DRAW_ROTATED, DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Easing,
     Fill, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL,
     NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_RELTIME, NODE_ROW, NODE_SCROLL,
-    NODE_SPACER, NODE_TAG, PathPaint, RelTimeClamp, RelTimeFormat, SvgId, TAG_ICON_CUSTOM,
-    TAG_ICON_DEFAULT, TAG_ICON_HIDDEN, TagKind, encode_arc_cap, encode_arc_fill,
-    encode_arc_segments, encode_fill,
+    NODE_SPACER, NODE_TAG, PathPaint, RelTimeClamp, RelTimeFormat, SvgId, TagIconMode, TagKind,
+    encode_arc_cap, encode_arc_fill, encode_arc_segments, encode_fill,
 };
 
 use crate::PropsFieldValue;
@@ -296,11 +295,11 @@ impl TreeBuffer {
         self.write_u8(NODE_TAG);
         self.write_u8(kind as u8);
         let (mode, icon_id) = match icon {
-            TagIcon::Default => (TAG_ICON_DEFAULT, None),
-            TagIcon::Hidden => (TAG_ICON_HIDDEN, None),
-            TagIcon::Custom(id) => (TAG_ICON_CUSTOM, Some(id)),
+            TagIcon::Default => (TagIconMode::Default, None),
+            TagIcon::Hidden => (TagIconMode::Hidden, None),
+            TagIcon::Custom(id) => (TagIconMode::Custom, Some(id)),
         };
-        self.write_u8(mode);
+        self.write_u8(mode as u8);
         self.write_icon_id(icon_id);
     }
 

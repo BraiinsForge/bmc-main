@@ -28,9 +28,7 @@ pub fn tag(kind: TagKind, icon: TagIcon, content: Node) -> Node {
 
 #[cfg(test)]
 mod tests {
-    use bmc_wasm_protocol::{
-        ICON_WARN_FILLED, NODE_TAG, TAG_ICON_CUSTOM, TAG_ICON_DEFAULT, TAG_ICON_HIDDEN, TagKind,
-    };
+    use bmc_wasm_protocol::{ICON_WARN_FILLED, NODE_TAG, TagIconMode, TagKind};
 
     use super::TagIcon;
     use crate::tree::{Node, TreeBuffer};
@@ -46,22 +44,22 @@ mod tests {
         let bytes = chrome_bytes(TagKind::Warning, TagIcon::Default);
         assert_eq!(bytes[0], NODE_TAG);
         assert_eq!(bytes[1], TagKind::Warning as u8);
-        assert_eq!(bytes[2], TAG_ICON_DEFAULT);
+        assert_eq!(bytes[2], TagIconMode::Default as u8);
     }
 
     #[test]
     fn icon_mode_encodes_all_three_states() {
         assert_eq!(
             chrome_bytes(TagKind::Info, TagIcon::Default)[2],
-            TAG_ICON_DEFAULT
+            TagIconMode::Default as u8
         );
         assert_eq!(
             chrome_bytes(TagKind::Info, TagIcon::Hidden)[2],
-            TAG_ICON_HIDDEN
+            TagIconMode::Hidden as u8
         );
 
         let custom = chrome_bytes(TagKind::Info, TagIcon::Custom(ICON_WARN_FILLED));
-        assert_eq!(custom[2], TAG_ICON_CUSTOM);
+        assert_eq!(custom[2], TagIconMode::Custom as u8);
         assert_eq!(&custom[3..5], &ICON_WARN_FILLED.to_wire().to_le_bytes());
     }
 

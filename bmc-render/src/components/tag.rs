@@ -91,9 +91,7 @@ pub(crate) fn render_tag(
 
 #[cfg(test)]
 mod tests {
-    use bmc_wasm_protocol::{
-        ICON_WARNING, NODE_SPACER, NODE_TAG, ORANGE_40, TAG_ICON_DEFAULT, TAG_ICON_HIDDEN, TagKind,
-    };
+    use bmc_wasm_protocol::{ICON_WARNING, NODE_SPACER, NODE_TAG, ORANGE_40, TagIconMode, TagKind};
 
     use super::tag_theme;
     use crate::tree::{TreeNode, deserialize_tree};
@@ -109,7 +107,7 @@ mod tests {
 
     #[test]
     fn default_icon_mode_resolves_to_theme() {
-        let node = deserialize_tree(&tag_wire(TagKind::Warning, TAG_ICON_DEFAULT, 0))
+        let node = deserialize_tree(&tag_wire(TagKind::Warning, TagIconMode::Default as u8, 0))
             .expect("BUG: Tag should deserialize");
         assert!(matches!(
             node,
@@ -123,9 +121,15 @@ mod tests {
 
     #[test]
     fn hidden_icon_mode_resolves_to_none() {
-        let node = deserialize_tree(&tag_wire(TagKind::Error, TAG_ICON_HIDDEN, 0))
+        let node = deserialize_tree(&tag_wire(TagKind::Error, TagIconMode::Hidden as u8, 0))
             .expect("BUG: Tag should deserialize");
         assert!(matches!(node, TreeNode::Tag { icon: None, .. }));
+    }
+
+    #[test]
+    fn unknown_icon_mode_is_rejected() {
+        // Strict TryFrom: an unknown mode fails deserialization, never silently defaults.
+        assert!(deserialize_tree(&tag_wire(TagKind::Info, 99, 0)).is_err());
     }
 
     #[test]
