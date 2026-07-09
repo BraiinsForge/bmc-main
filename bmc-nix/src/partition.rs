@@ -189,24 +189,26 @@ fn mount_state(
     Ok(MountState::Absent)
 }
 
-/// Mounted-device ids (`major:minor`, the third mountinfo field). Lines
-/// that do not parse are skipped: the guard acts only on entries it can
-/// positively identify.
-fn mountinfo_device_ids(mountinfo: &str) -> std::collections::HashSet<(u32, u32)> {
-    mountinfo
-        .lines()
-        .filter_map(|line| {
-            let field = line.split_whitespace().nth(2)?;
-            let (major, minor) = field.split_once(':')?;
-            Some((major.parse().ok()?, minor.parse().ok()?))
-        })
-        .collect()
-}
-
 /// Whether the block device `device_id` (`major:minor`) backs any mount
-/// listed in `mountinfo`.
+/// listed in `mountinfo`, comparing against the `major:minor` in each
+/// line's third field. Lines that do not parse are skipped: the guard
+/// acts only on entries it can positively identify.
 fn is_device_id_mounted(mountinfo: &str, device_id: (u32, u32)) -> bool {
-    mountinfo_device_ids(mountinfo).contains(&device_id)
+    mountinfo.lines().any(|line| {
+        let Some(field) = line.split_whitespace().nth(2) else {
+            return false;
+        };
+
+        let Some((major, minor)) = field.split_once(':') else {
+            return false;
+        };
+
+        let (Ok(major), Ok(minor)) = (major.parse::<u32>(), minor.parse::<u32>()) else {
+            return false;
+        };
+
+        (major, minor) == device_id
+    })
 }
 
 /// Decode a Linux `dev_t` into `(major, minor)` (glibc encoding).
@@ -642,16 +644,18 @@ mod tests {
     }
 
     #[test]
-    fn mountinfo_device_ids_parses_and_skips_malformed_lines() {
+    fn is_device_id_mounted_parses_and_skips_malformed_lines() {
         let mountinfo = "36 35 179:4 / /mnt/data rw - ext4 /dev/mmcblk0p4 rw\n\
                          37 35 0:25 / /tmp rw,nosuid - tmpfs tmpfs rw\n\
                          truncated line\n\
                          38 35 not-a-device-id / /x rw - ext4 /dev/foo rw\n\
                          39 35 179:banana / /y rw - ext4 /dev/bar rw\n";
-        let ids = super::mountinfo_device_ids(mountinfo);
-        assert!(ids.contains(&(179, 4)));
-        assert!(ids.contains(&(0, 25)));
-        assert_eq!(ids.len(), 2);
+        // Both well-formed lines match despite the malformed lines
+        // interleaved; a device id absent from every parsable line does
+        // not.
+        assert!(super::is_device_id_mounted(mountinfo, (179, 4)));
+        assert!(super::is_device_id_mounted(mountinfo, (0, 25)));
+        assert!(!super::is_device_id_mounted(mountinfo, (179, 5)));
     }
 
     #[test]
