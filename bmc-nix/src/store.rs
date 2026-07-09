@@ -538,6 +538,14 @@ pub enum InitStoreError {
         #[source]
         source: std::io::Error,
     },
+    #[error("refusing to wipe the store: {path} is an active mount")]
+    StoreMounted { path: String },
+    #[error("failed to check whether {path} is mounted: {source}")]
+    MountCheckFailed {
+        path: String,
+        #[source]
+        source: crate::partition::PreparePartitionError,
+    },
 }
 
 /// If no bytes arrive for this duration, the download is considered stalled.
@@ -758,6 +766,23 @@ pub async fn init_store(
     progress: Option<&dyn DownloadProgress>,
 ) -> Result<InitStoreResult, InitStoreError> {
     use tokio::io::AsyncWriteExt;
+
+    // Defense in depth: never wipe the store while /nix is the active
+    // mount backed by it. cmd_init checks this first for a fast failure,
+    // but enforcing it here protects any future library caller too.
+    let nix = Path::new("/nix");
+    if wipe_store
+        && crate::partition::is_path_mounted(nix).map_err(|source| {
+            InitStoreError::MountCheckFailed {
+                path: path_string(nix),
+                source,
+            }
+        })?
+    {
+        return Err(InitStoreError::StoreMounted {
+            path: path_string(nix),
+        });
+    }
 
     // Clean up leftovers from previous interrupted runs first — before
     // any download eats data-partition space: a stale staging tree, and
