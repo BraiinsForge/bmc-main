@@ -46,11 +46,13 @@ fn main() -> anyhow::Result<()> {
 /// `current.tmp` symlink and rename, removing a stale tmp link first.
 fn flip_current(profile_dir: &Path, gen_dir_name: &Path) -> std::io::Result<()> {
     let tmp_link = profile_dir.join("current.tmp");
+
     match std::fs::remove_file(&tmp_link) {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(err) => return Err(err),
     }
+
     std::os::unix::fs::symlink(gen_dir_name, &tmp_link)?;
     std::fs::rename(&tmp_link, profile_dir.join("current"))
 }

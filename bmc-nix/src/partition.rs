@@ -83,8 +83,8 @@ fn require_success(
 
 /// e2fsck's exit status interpreted per its bitmask contract: bit 1
 /// errors corrected, bit 2 reboot recommended, bit 4 errors left
-/// uncorrected, bits 8/16/32/128 operational, usage, cancel and library
-/// failures.
+/// uncorrected, bits 8/16/32/128 operational, usage, cancel, and
+/// library failures.
 enum E2fsckOutcome {
     /// Bits within {1, 2}: clean or fully repaired. The reboot advice
     /// behind bit 2 targets mounted filesystems; this partition is only
