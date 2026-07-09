@@ -272,7 +272,7 @@ fn copy_file_atomic(
         std::fs::set_permissions(&temp_path, permissions.clone())?;
         std::fs::rename(&temp_path, target)?;
 
-        File::open(parent)?.sync_all()?;
+        bmc_nix::fs_sync::fsync_dir(parent)?;
         Ok(())
     })();
 

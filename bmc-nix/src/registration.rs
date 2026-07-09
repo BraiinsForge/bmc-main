@@ -47,7 +47,7 @@ fn write_persisted(path: &Path, tmp_path: &Path, contents: &str) -> Result<(), R
         drop(tmp);
         std::fs::rename(tmp_path, path)?;
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-            std::fs::File::open(parent)?.sync_all()?;
+            crate::fs_sync::fsync_dir(parent)?;
         }
         Ok(())
     })()
