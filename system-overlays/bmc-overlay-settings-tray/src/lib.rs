@@ -131,9 +131,9 @@ enum SlidePhase {
         since: Instant,
     },
     /// The reveal ramp has elapsed but the settled frame (offset `0`) has not
-    /// been painted yet. The ramp only presents frames while a tick observes it
-    /// mid-flight, so a loop stall spanning the ramp end would otherwise freeze
-    /// the panel at the last presented offset.
+    /// been presented yet. The ramp only presents frames while a tick observes
+    /// it mid-flight, so a loop stall spanning the ramp end would otherwise
+    /// freeze the panel at the last presented offset.
     RevealSettling,
     /// Dismiss armed; the panel holds the settled position until the first
     /// frame of the dismiss is presented, which anchors the ramp clock.
@@ -184,7 +184,7 @@ impl Slide {
     }
 
     /// Advance the time-driven transition: a reveal ramp that has elapsed moves
-    /// to `RevealSettling` until the settled frame is painted.
+    /// to `RevealSettling` until the settled frame is presented.
     fn advance(&mut self, now: Instant) {
         if let SlidePhase::Revealing { since } = self.phase
             && Self::progress(since, now) >= 1.0
@@ -194,12 +194,12 @@ impl Slide {
     }
 
     /// Whether the reveal ramp elapsed without the settled frame having been
-    /// painted; keeps the tray requesting a render for that one final frame.
+    /// presented; keeps the tray requesting a render for that one final frame.
     fn needs_settle_frame(&self) -> bool {
         matches!(self.phase, SlidePhase::RevealSettling)
     }
 
-    /// The settled frame was painted; the reveal is done.
+    /// The settled frame was presented; the reveal is done.
     fn mark_settled(&mut self) {
         if matches!(self.phase, SlidePhase::RevealSettling) {
             self.phase = SlidePhase::Idle;
@@ -207,12 +207,13 @@ impl Slide {
     }
 
     /// The blit-only decision the host obeys: blit the cached panel at the
-    /// current offset only while a slide is running *and* the content has not
-    /// changed this frame; otherwise (`None`) the host full-paints. Keeping it a
-    /// method on `Slide` lets the invariant be unit-tested without a
-    /// platform-detected `SettingsTrayOverlay`.
+    /// current offset only while a slide is running (or for the final settle
+    /// frame) *and* the content has not changed this frame; otherwise (`None`)
+    /// the host full-paints. Keeping it a method on `Slide` lets the invariant
+    /// be unit-tested without a platform-detected `SettingsTrayOverlay`.
     fn cached_blit_offset(&self, now: Instant, content_dirty: bool, height: f32) -> Option<f32> {
-        (self.animating(now) && !content_dirty).then(|| self.offset(now, height))
+        ((self.animating(now) || self.needs_settle_frame()) && !content_dirty)
+            .then(|| self.offset(now, height))
     }
 
     /// Eased progress (0→1) of the active ramp at `now`. `ease-out` cubic so the
@@ -704,9 +705,6 @@ impl SystemOverlay for SettingsTrayOverlay {
         let now = Instant::now();
         let view = self.view();
         let output = render_settings_tray(renderer, size, &mut self.render_state, &view, now);
-        // While the settle frame is pending, `wants_cached_blit` is `None`, so
-        // this full paint presented the panel at the settled offset.
-        self.slide.mark_settled();
 
         if let Some(b) = output.brightness_drag {
             self.slider_dragged = true;
@@ -752,6 +750,10 @@ impl SystemOverlay for SettingsTrayOverlay {
 
     fn on_frame_submitted(&mut self, now: Instant) {
         self.slide.anchor(now);
+        // A frame submitted while settling presented the settled offset (blit
+        // or full paint), so the reveal is done. `anchor` and `mark_settled`
+        // act on disjoint phases, so their order is irrelevant.
+        self.slide.mark_settled();
     }
 
     fn take_content_dirty(&mut self) -> bool {
@@ -1058,7 +1060,34 @@ mod slide_tests {
     }
 
     #[test]
-    fn elapsed_reveal_settles_via_full_paint() {
+    fn settle_frame_blits_the_cache_then_a_submit_finishes_the_reveal() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        overlay.on_reveal();
+        let _ = overlay.take_content_dirty();
+        overlay.on_frame_submitted(t0);
+        // A tick after the ramp end moves the slide into the settling phase.
+        let after = t0 + Duration::from_millis(400);
+        assert!(overlay.tick(after).wants_render);
+        // The settle frame is a cached blit at offset 0, not a full paint.
+        assert!(
+            overlay
+                .wants_cached_blit(after)
+                .is_some_and(|off| off.abs() < 1e-3),
+            "settle frame must blit at offset 0"
+        );
+        // Submitting that frame completes the reveal: no further render is due.
+        overlay.on_frame_submitted(after);
+        assert!(!overlay.tick(after + Duration::from_millis(50)).wants_render);
+        assert!(
+            overlay
+                .wants_cached_blit(after + Duration::from_millis(50))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn elapsed_reveal_settles_via_cached_blit() {
         let t0 = Instant::now();
         let mut s = Slide::default();
         s.start_reveal();
@@ -1069,8 +1098,15 @@ mod slide_tests {
         let after = t0 + Duration::from_millis(300);
         s.advance(after);
         assert!(s.needs_settle_frame());
-        // The settle frame must full-paint (no cached blit) at offset 0.
-        assert_eq!(s.cached_blit_offset(after, false, 200.0), None);
+        // The settle frame blits the warm cache at the settled offset (0)
+        // rather than full-painting.
+        assert!(
+            s.cached_blit_offset(after, false, 200.0)
+                .is_some_and(|off| off.abs() < 1e-3),
+            "settle frame must blit the cache at offset 0"
+        );
+        // A content-dirty settle frame still full-paints.
+        assert_eq!(s.cached_blit_offset(after, true, 200.0), None);
         assert!(s.offset(after, 200.0).abs() < 1e-3);
 
         s.mark_settled();
