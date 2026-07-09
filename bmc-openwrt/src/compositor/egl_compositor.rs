@@ -2394,6 +2394,18 @@ impl Compositor for EglCompositor {
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 
+    fn broadcast_alarm_ring(&self, time: String, label: String) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::RingAlarm { time, label })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn broadcast_alarm_stop(&self) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::StopAlarm)
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
     fn update_widget_params(
         &self,
         instance_id: &InstanceId,

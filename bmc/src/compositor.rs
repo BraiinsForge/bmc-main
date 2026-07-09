@@ -230,6 +230,20 @@ pub trait Compositor: Send + Sync {
         Ok(())
     }
 
+    /// Broadcast that the alarm is ringing to the alarm-overlay via `deck_alarm_v1`
+    /// `ring_alarm` event.
+    /// Default: no-op.
+    fn broadcast_alarm_ring(&self, _time: String, _label: String) -> Result<(), CompositorError> {
+        Ok(())
+    }
+
+    /// Broadcast that the alarm stopped to the alarm-overlay via `deck_alarm_v1`
+    /// `stop_alarm` event.
+    /// Default: no-op.
+    fn broadcast_alarm_stop(&self) -> Result<(), CompositorError> {
+        Ok(())
+    }
+
     /// Push fresh params to a single running widget without stopping
     /// its process. Only valid when geometry (size) is unchanged —
     /// callers route through `unregister_widget` + `register_widget`

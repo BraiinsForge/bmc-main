@@ -188,21 +188,20 @@ impl SnoozeDuration {
 
 #[derive(Clone, Debug)]
 pub enum AlarmCmd {
-    StopAll,
-    Stop { id: AlarmId },
+    /// Stop only the alarm currently ringing (the single `current_alarm`
+    /// slot). Other alarms' pending snoozes are left untouched.
+    StopCurrent,
+    Stop {
+        id: AlarmId,
+    },
     Snooze,
 }
 
 #[derive(Clone, Debug)]
 pub enum AlarmEvent {
-    Stopped {
-        id: AlarmId,
-    },
+    Stopped { id: AlarmId },
     Snoozed,
-    Started {
-        #[expect(dead_code, reason = "consumed by future display-overlay channel")]
-        alarm: ActiveAlarm,
-    },
+    Started { alarm: ActiveAlarm },
 }
 
 #[derive(Clone, Debug)]
@@ -221,10 +220,13 @@ impl AlarmBus {
         }
     }
 
-    #[expect(dead_code, reason = "consumed by future display-overlay channel")]
-    pub fn stop_all(&self) {
-        if let Err(err) = self.tx_commands.send(AlarmCmd::StopAll) {
-            warn!(error = %err, "Failed to send StopAll command, no active receivers");
+    /// Dismiss the currently ringing alarm without disturbing other alarms'
+    /// pending snoozes. Only one alarm rings at a time (`current_alarm` is a
+    /// single slot, replaced on each new fire), so no id is needed to target
+    /// it — and a ringing alarm is never itself snooze-pending.
+    pub fn stop_current(&self) {
+        if let Err(err) = self.tx_commands.send(AlarmCmd::StopCurrent) {
+            warn!(error = %err, "Failed to send StopCurrent command, no active receivers");
         }
     }
 
@@ -234,7 +236,6 @@ impl AlarmBus {
         }
     }
 
-    #[expect(dead_code, reason = "consumed by future display-overlay channel")]
     pub fn snooze(&self) {
         if let Err(err) = self.tx_commands.send(AlarmCmd::Snooze) {
             warn!(error = %err, "Failed to send Snooze command, no active receivers");
@@ -516,16 +517,13 @@ impl AlarmScheduler {
             async move {
                 while let Ok(cmd) = rx.recv().await {
                     match cmd {
-                        AlarmCmd::StopAll => {
-                            info!("Received StopAll command");
-                            let drained: Vec<(AlarmId, PendingSnooze)> =
-                                self_.pending_snoozes.lock().await.drain().collect();
-                            if !drained.is_empty() {
-                                for (_, snooze) in drained {
-                                    snooze.cancel.cancel();
-                                }
-                                self_.recompute_next_alarm_time().await;
-                            }
+                        AlarmCmd::StopCurrent => {
+                            info!("Received StopCurrent command");
+                            // Dismiss stops only the alarm on screen. Other
+                            // alarms' pending snoozes are left to re-fire, and
+                            // the ringing alarm is never itself snooze-pending
+                            // (a snooze re-fire clears its entry before it
+                            // rings), so there is nothing of its own to drop.
                             self_.cancel_current_alarm().await;
                         }
                         AlarmCmd::Stop { id } => {

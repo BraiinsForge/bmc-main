@@ -6,10 +6,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use crate::alarm::{AlarmBus, AlarmController};
+use crate::alarm::{AlarmBus, AlarmController, AlarmEvent};
 use crate::backlight::DisplayBacklightDriver;
 use crate::button_manager::ButtonManager;
-use crate::compositor::{Compositor, CompositorEvent};
+use crate::compositor::{AlarmCommand, Compositor, CompositorEvent};
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::led::{LedController, run_led_state_task};
@@ -31,6 +31,46 @@ use tokio::net::TcpListener;
 use tokio::sync::{Mutex, broadcast};
 use tokio::sync::{RwLock, watch};
 use tracing::info;
+
+/// Bridge the alarm domain and the alarm overlay through the compositor.
+///
+/// Outbound: `AlarmBus` events become `deck_alarm_v1` ring/stop signals on the
+/// overlay. Inbound: the overlay's dismiss/snooze requests (relayed by the
+/// compositor over `alarm_receiver`) become `AlarmBus` commands the
+/// `AlarmController` acts on. `AlarmController` itself never learns the
+/// compositor exists — this listener is the only translator between them.
+fn spawn_alarm_overlay_listener(compositor: Arc<dyn Compositor>, alarm_bus: AlarmBus) {
+    let mut events = alarm_bus.subscribe_events();
+    let mut commands = compositor.alarm_receiver();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                event = events.recv() => match event {
+                    Ok(AlarmEvent::Started { alarm }) => {
+                        let time = alarm.data.time.format("%H:%M").to_string();
+                        if let Err(err) = compositor.broadcast_alarm_ring(time, alarm.data.name) {
+                            tracing::warn!(error = %err, "failed to signal alarm ring to overlay");
+                        }
+                    }
+                    Ok(AlarmEvent::Stopped { .. } | AlarmEvent::Snoozed) => {
+                        if let Err(err) = compositor.broadcast_alarm_stop() {
+                            tracing::warn!(error = %err, "failed to signal alarm stop to overlay");
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(skipped = n, "alarm event receiver lagged");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
+                command = commands.recv() => match command {
+                    Some(AlarmCommand::Dismiss) => alarm_bus.stop_current(),
+                    Some(AlarmCommand::Snooze) => alarm_bus.snooze(),
+                    None => break,
+                },
+            }
+        }
+    });
+}
 
 #[derive(Debug)]
 pub struct App<T, U, V>
@@ -151,6 +191,11 @@ where
 
         let alarm_bus = AlarmBus::new();
 
+        // Subscribe the overlay listener before the controller inits: it calls
+        // `subscribe_events()` synchronously, so the receiver exists before the
+        // controller can emit a `Started` event a fresh subscriber would miss.
+        spawn_alarm_overlay_listener(compositor.clone(), alarm_bus.clone());
+
         let alarm_controller = AlarmController::init(
             config_handle.clone(),
             scheduler.clone(),
@@ -166,7 +211,7 @@ where
             manager.clone(),
             last_price_change_24h_receiver,
             led_enabled,
-            alarm_bus,
+            alarm_bus.clone(),
         );
 
         let led_coordinator =
