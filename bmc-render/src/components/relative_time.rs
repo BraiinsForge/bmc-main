@@ -77,9 +77,25 @@ pub fn format_rel(delta_secs: i64, format: RelTimeFormat, clamp: RelTimeClamp) -
 /// Milliseconds until the label next changes — aligned to the smallest shown
 /// unit's boundary, so the host wakes only when the text ticks. `Single` tracks
 /// the primary (a minute in the minutes band); `Double` tracks the secondary
-/// (seconds), so it wakes far more often. ≥ 1 s.
+/// (seconds), so it wakes far more often. ≥ 1 s. `None` only when the label is
+/// pinned at "now" forever (`RemainingOnly` past its anchor); an `ElapsedOnly`
+/// label before its anchor wakes once at the un-pin, then ticks normally.
 #[must_use]
-pub fn next_change_delay_ms(delta_secs: i64, format: RelTimeFormat, clamp: RelTimeClamp) -> u32 {
+pub fn next_change_delay_ms(
+    delta_secs: i64,
+    format: RelTimeFormat,
+    clamp: RelTimeClamp,
+) -> Option<u32> {
+    // Past anchor: remaining stays 0 → pinned at "now" forever, no self-tick.
+    if matches!(clamp, RelTimeClamp::RemainingOnly) && delta_secs > 0 {
+        return None;
+    }
+    // Future anchor: pinned at "now" until the clock reaches it, then it un-pins
+    // to "1s ago". Wake once at that instant, not every second.
+    if matches!(clamp, RelTimeClamp::ElapsedOnly) && delta_secs < 0 {
+        let un_pin_secs = 1_i64.saturating_sub(delta_secs);
+        return Some(u32::try_from(un_pin_secs.saturating_mul(1_000)).unwrap_or(u32::MAX));
+    }
     let (mag, future) = magnitude_and_future(delta_secs, clamp);
     let ((p_secs, ..), secondary) = bands(mag);
     let tick = match format.segments {
@@ -91,7 +107,7 @@ pub fn next_change_delay_ms(delta_secs: i64, format: RelTimeFormat, clamp: RelTi
     } else {
         tick - (mag % tick)
     };
-    u32::try_from(delay_secs.saturating_mul(1_000)).unwrap_or(u32::MAX)
+    Some(u32::try_from(delay_secs.saturating_mul(1_000)).unwrap_or(u32::MAX))
 }
 
 #[cfg(test)]
@@ -178,30 +194,62 @@ mod tests {
     #[test]
     fn double_delay_aligns_to_the_smaller_segment() {
         // seconds band and minutes-band (secondary = seconds) both tick each second.
-        assert_eq!(next_change_delay_ms(5, SHORT_DOUBLE, AUTO), 1_000);
-        assert_eq!(next_change_delay_ms(90, SHORT_DOUBLE, AUTO), 1_000);
+        assert_eq!(next_change_delay_ms(5, SHORT_DOUBLE, AUTO), Some(1_000));
+        assert_eq!(next_change_delay_ms(90, SHORT_DOUBLE, AUTO), Some(1_000));
         // hours band → secondary minutes; days band → secondary hours.
-        assert_eq!(next_change_delay_ms(3_600, SHORT_DOUBLE, AUTO), 60_000);
-        assert_eq!(next_change_delay_ms(200_000, SHORT_DOUBLE, AUTO), 1_600_000);
+        assert_eq!(
+            next_change_delay_ms(3_600, SHORT_DOUBLE, AUTO),
+            Some(60_000)
+        );
+        assert_eq!(
+            next_change_delay_ms(200_000, SHORT_DOUBLE, AUTO),
+            Some(1_600_000)
+        );
     }
 
     #[test]
     fn single_delay_aligns_to_the_largest_unit() {
         // Cadence follows segments, not length — LONG_SINGLE would match.
-        assert_eq!(next_change_delay_ms(5, SHORT_SINGLE, AUTO), 1_000); // seconds band → 1s
-        assert_eq!(next_change_delay_ms(90, SHORT_SINGLE, AUTO), 30_000); // 1m30s → next minute
-        assert_eq!(next_change_delay_ms(3_600, SHORT_SINGLE, AUTO), 3_600_000); // → next hour
+        assert_eq!(next_change_delay_ms(5, SHORT_SINGLE, AUTO), Some(1_000)); // seconds band → 1s
+        assert_eq!(next_change_delay_ms(90, SHORT_SINGLE, AUTO), Some(30_000)); // 1m30s → next minute
+        assert_eq!(
+            next_change_delay_ms(3_600, SHORT_SINGLE, AUTO),
+            Some(3_600_000)
+        ); // → next hour
         assert_eq!(
             next_change_delay_ms(200_000, SHORT_SINGLE, AUTO),
-            59_200_000
+            Some(59_200_000)
         ); // → next day
     }
 
     #[test]
     fn delay_counts_down_toward_the_boundary() {
-        assert_eq!(next_change_delay_ms(-5, SHORT_DOUBLE, AUTO), 1_000);
+        assert_eq!(next_change_delay_ms(-5, SHORT_DOUBLE, AUTO), Some(1_000));
         // "in 1h" one second past the hour edge → 2 s until it drops to "59m 59s".
-        assert_eq!(next_change_delay_ms(-3_601, SHORT_DOUBLE, AUTO), 2_000);
+        assert_eq!(
+            next_change_delay_ms(-3_601, SHORT_DOUBLE, AUTO),
+            Some(2_000)
+        );
+    }
+
+    #[test]
+    fn pinned_now_label_ticks_per_clamp() {
+        // RemainingOnly past its anchor is pinned at "now" forever → no wake.
+        assert_eq!(
+            next_change_delay_ms(5, SHORT_SINGLE, RelTimeClamp::RemainingOnly),
+            None
+        );
+        // ElapsedOnly before its anchor un-pins at the anchor: one wake at the
+        // un-pin instant (delta == 1 → "1s ago"), here 6 s out.
+        assert_eq!(
+            next_change_delay_ms(-5, SHORT_SINGLE, RelTimeClamp::ElapsedOnly),
+            Some(6_000)
+        );
+        // The un-pinned direction ticks normally.
+        assert_eq!(
+            next_change_delay_ms(5, SHORT_SINGLE, RelTimeClamp::ElapsedOnly),
+            Some(1_000)
+        );
     }
 
     #[test]
