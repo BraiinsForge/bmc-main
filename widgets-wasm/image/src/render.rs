@@ -32,7 +32,6 @@ pub fn error_message(kind: ErrorKind) -> &'static str {
 const MESSAGE_TEXT_SIZE: u32 = 24;
 const UPDATING_TEXT: &str = "Updating";
 const UPDATING_TEXT_SIZE: u32 = 14;
-const UPDATING_INSET: f32 = 8.0;
 
 /// Aspect ratio (`w / h`) of an image, defaulting to square on a zero height.
 #[must_use]
@@ -97,36 +96,25 @@ pub fn message_view(message: &str, _size: WidgetSize) -> Node {
     )
 }
 
-/// Subtle "updating" pill over the cached image during a background refresh.
-fn updating_overlay() -> Node {
+/// The "updating" pill for a background refresh; the SDK `with_overlay` places it.
+#[must_use]
+pub fn updating_pill() -> Node {
     row(
-        props!(inset_bottom: UPDATING_INSET, inset_left: UPDATING_INSET),
-        [row(
-            props!(
-                background: GRAY_100,
-                padding: 6.0,
-                cross_align: CrossAlign::Center
+        props!(
+            background: GRAY_100,
+            padding: 6.0,
+            cross_align: CrossAlign::Center
+        ),
+        [text(
+            UPDATING_TEXT.to_string(),
+            style!(
+                size: UPDATING_TEXT_SIZE,
+                weight: FontWeight::REGULAR,
+                color: GRAY_30,
+                line_height: 1.0
             ),
-            [text(
-                UPDATING_TEXT.to_string(),
-                style!(
-                    size: UPDATING_TEXT_SIZE,
-                    weight: FontWeight::REGULAR,
-                    color: GRAY_30,
-                    line_height: 1.0
-                ),
-            )],
         )],
     )
-}
-
-/// Overlay an "updating" pill onto a column/row root.
-#[must_use]
-pub fn with_updating_overlay(mut root: Node) -> Node {
-    if let Node::Column(_, children) | Node::Row(_, children) = &mut root {
-        children.push(updating_overlay());
-    }
-    root
 }
 
 // ── Tap-to-reveal menu ───────────────────────────────────────────────

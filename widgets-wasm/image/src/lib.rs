@@ -307,7 +307,9 @@ mod wasm_glue {
                 } => {
                     let view = render::image_view(*bitmap, *aspect, size, params.sizing);
                     match badge {
-                        Badge::Updating => render::with_updating_overlay(view),
+                        Badge::Updating => {
+                            with_overlay(view, render::updating_pill(), widget_viewport().shape)
+                        }
                         // is_stale adds the grace window, so the 10s retry heals a blip first.
                         Badge::Stale => match POLL
                             .with(Cell::get)
