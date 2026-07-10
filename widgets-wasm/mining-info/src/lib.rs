@@ -186,6 +186,17 @@ fn endpoint_enabled(
     views.contains(&view) && (!round_only || shape == bmc_wasm_sdk::ViewportShape::Round)
 }
 
+// "Failed to load" text for the two offline groups (miner, network) → 3 labels.
+#[cfg(any(target_arch = "wasm32", test))]
+fn offline_label(miner: bool, public: bool) -> Option<&'static str> {
+    match (miner, public) {
+        (true, true) => Some("Failed to load: Miner, Network"),
+        (true, false) => Some("Failed to load: Miner"),
+        (false, true) => Some("Failed to load: Network"),
+        (false, false) => None,
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 fn miner_endpoint_needed(idx: usize, view: View, shape: ViewportShape) -> bool {
     let endpoint = &MINER_ENDPOINTS[idx];
@@ -300,20 +311,11 @@ thread_local! {
 }
 
 // Whether any miner endpoint feeds the current view. The login serves every miner
-// endpoint, so it is driven at this source granularity, while the individual
-// endpoints are gated per-view by `miner_endpoint_needed`.
+// endpoint, so it is driven at this source granularity (and gates the auth banner),
+// while the individual endpoints are gated per-view by `miner_endpoint_needed`.
 #[cfg(target_arch = "wasm32")]
 fn view_needs_miner(view: View) -> bool {
     MINER_ENDPOINTS
-        .iter()
-        .any(|endpoint| endpoint.views.contains(&view))
-}
-
-// Whether the current view renders any public Bitcoin field. Gates the
-// "stale data" banner so it never shows on the miner-only Mining view.
-#[cfg(target_arch = "wasm32")]
-fn view_needs_public(view: View) -> bool {
-    PUBLIC_ENDPOINTS
         .iter()
         .any(|endpoint| endpoint.views.contains(&view))
 }
@@ -630,25 +632,44 @@ pub extern "C" fn render(_delta_ms: u32) {
             View::InfoOverload => render::info_overload(size, &miner, &public),
         },
     };
-    // Auth error outranks stale (both share the corner). The stale pill anchors at
-    // the oldest last refresh among the view's stale endpoints.
+    // Auth error outranks stale (both share the corner). Both scans consider only
+    // endpoints enabled for the current view: a disabled endpoint keeps its
+    // stale/offline history, which would otherwise leak across a view switch.
     let needs_miner = view_needs_miner(params.view);
-    let needs_public = view_needs_public(params.view);
     let overlay = if auth_failed && needs_miner {
         Some(mining::overlay::OverlayKind::Auth)
     } else {
         HANDLES.with(|handles| {
             let handles = handles.borrow();
             let handles = handles.as_ref()?;
-            handles
+            // Age-stale pill: oldest anchor among the enabled endpoints that
+            // loaded once and are now failing.
+            let stale = handles
                 .miner
                 .iter()
-                .filter(|_| needs_miner)
-                .chain(handles.public.iter().filter(|_| needs_public))
+                .chain(handles.public.iter())
+                .filter(|handle| handle.enabled())
                 .filter(|handle| handle.is_stale())
                 .filter_map(|handle| handle.last_success_time())
                 .min_by_key(|anchor| anchor.unix_secs)
-                .map(mining::overlay::OverlayKind::Stale)
+                .map(mining::overlay::OverlayKind::Stale);
+            if stale.is_some() {
+                return stale;
+            }
+            // Offline banner: an enabled source that never loaded and is failing.
+            let miner_offline = handles
+                .miner
+                .iter()
+                .copied()
+                .filter(|handle| handle.enabled())
+                .any(PollHandle::is_offline);
+            let public_offline = handles
+                .public
+                .iter()
+                .copied()
+                .filter(|handle| handle.enabled())
+                .any(PollHandle::is_offline);
+            offline_label(miner_offline, public_offline).map(mining::overlay::OverlayKind::Failed)
         })
     };
     root = mining::overlay::apply_overlay(root, overlay, viewport.shape);
@@ -662,9 +683,20 @@ pub extern "C" fn render(_delta_ms: u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{endpoint_enabled, login_retry_delay};
+    use super::{endpoint_enabled, login_retry_delay, offline_label};
     use crate::manifest_params::View;
     use bmc_wasm_sdk::ViewportShape;
+
+    #[test]
+    fn offline_label_names_only_the_failing_groups() {
+        assert_eq!(offline_label(false, false), None);
+        assert_eq!(offline_label(true, false), Some("Failed to load: Miner"));
+        assert_eq!(offline_label(false, true), Some("Failed to load: Network"));
+        assert_eq!(
+            offline_label(true, true),
+            Some("Failed to load: Miner, Network")
+        );
+    }
 
     #[test]
     fn round_only_endpoint_gated_to_round_mining_and_geek() {

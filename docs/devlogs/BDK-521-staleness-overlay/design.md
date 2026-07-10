@@ -136,9 +136,13 @@ Homes: `protocol/src/nodes.rs` (`NODE_TAG`); `bmc-wasm-runtime/sdk/src/tag.rs` (
   `reschedule(handle, ok, now_secs, backend)` records `last_success_secs = now` on success and `last_failed = !ok`. The
   wasm trampoline passes `SystemTime::now().unix_secs`; tests pass a fake.
 - `is_stale(now) = last_success_secs.is_some() && last_failed && age > stale_factor × interval_ms`. Requiring a prior
-  success means a widget that never loaded doesn't flash "stale" (matches today). `last_success_epoch()` feeds the
-  overlay's anchor.
-- `Handle::is_stale()` / `Handle::last_success_epoch()` call `SystemTime::now()` internally.
+  success means a widget that never loaded doesn't flash "stale"; `last_success_epoch()` feeds the overlay's anchor.
+- `is_offline(now)` is the never-loaded counterpart —
+  `last_success_secs.is_none() && last_failed && failing longer than stale_factor × interval_ms` — carrying the same
+  grace so a transient boot failure doesn't cry wolf. It lets a widget surface a "failed to load" banner for a source
+  that has never come up (mining-info's Network view on an outage), while weather/mining-clock keep the plain
+  loading/N/A state.
+- `Handle::is_stale()` / `Handle::is_offline()` / `Handle::last_success_epoch()` call `SystemTime::now()` internally.
 
 ### 4. Staleness overlay — feature layer
 

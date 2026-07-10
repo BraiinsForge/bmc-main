@@ -129,6 +129,8 @@ struct Poll {
     last_success_secs: Option<i64>,
     /// The last delivered reply failed.
     last_failed: bool,
+    /// Epoch secs the failing streak began; anchors the offline grace.
+    failing_since_secs: Option<i64>,
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -151,6 +153,7 @@ impl Registry {
             force_retry: None,
             last_success_secs: None,
             last_failed: false,
+            failing_since_secs: None,
         });
         handle
     }
@@ -268,8 +271,10 @@ impl Registry {
         if ok && forced.is_none() {
             self.polls[idx].last_success_secs = Some(now_secs);
             self.polls[idx].last_failed = false;
+            self.polls[idx].failing_since_secs = None;
         } else {
             self.polls[idx].last_failed = true;
+            self.polls[idx].failing_since_secs.get_or_insert(now_secs);
         }
         if !self.polls[idx].enabled || self.polls[idx].live.is_some() {
             return;
@@ -355,6 +360,23 @@ impl Registry {
         #[expect(clippy::cast_precision_loss, reason = "poll ages are small")]
         let stale = age_ms as f64 > f64::from(interval_ms) * f64::from(poll.config.stale_factor);
         stale
+    }
+
+    /// Never loaded and failing past `stale_factor × interval_ms` —
+    /// the never-loaded counterpart to `is_stale`.
+    pub(crate) fn is_offline(&self, handle: Handle, now_secs: i64) -> bool {
+        let poll = &self.polls[handle.0];
+        if poll.last_success_secs.is_some() {
+            return false;
+        }
+        let (Some(interval_ms), Some(since)) = (poll.config.interval_ms, poll.failing_since_secs)
+        else {
+            return false;
+        };
+        let age_ms = now_secs.saturating_sub(since).max(0).saturating_mul(1_000);
+        #[expect(clippy::cast_precision_loss, reason = "poll ages are small")]
+        let offline = age_ms as f64 > f64::from(interval_ms) * f64::from(poll.config.stale_factor);
+        offline
     }
 
     #[cfg(test)]
@@ -505,6 +527,13 @@ mod wasm {
         pub fn is_stale(self) -> bool {
             let now = crate::host::SystemTime::now().unix_secs;
             REGISTRY.with(|r| r.borrow().is_stale(self, now))
+        }
+
+        /// Never loaded and failing past the stale grace.
+        #[must_use]
+        pub fn is_offline(self) -> bool {
+            let now = crate::host::SystemTime::now().unix_secs;
+            REGISTRY.with(|r| r.borrow().is_offline(self, now))
         }
 
         /// Age of the last successful reply, or `None` if it has never succeeded.
@@ -1012,6 +1041,30 @@ mod tests {
             reg.last_success_secs(h),
             Some(300),
             "a live success is never clobbered"
+        );
+    }
+
+    #[test]
+    fn is_offline_after_failing_past_grace_without_ever_loading() {
+        let mut reg = Registry::default();
+        let mut be = FakeBackend::new();
+        let h = reg.register(build_url, CFG); // interval 5s, stale_factor 1.5 → 7.5s grace
+        reg.start(h, &mut be);
+        assert!(
+            !reg.is_offline(h, 100),
+            "a still-loading poll is not offline"
+        );
+        deliver_at(&mut reg, &mut be, 1, false, 0);
+        assert!(!reg.is_offline(h, 7), "within the grace, not yet offline");
+        assert!(
+            reg.is_offline(h, 8),
+            "past the grace, a never-loaded failure is offline"
+        );
+        // Once it loads it is never offline again — that is is_stale's domain.
+        deliver_at(&mut reg, &mut be, 2, true, 10);
+        assert!(
+            !reg.is_offline(h, 1_000_000),
+            "a source that has loaded is not offline"
         );
     }
 
