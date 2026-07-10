@@ -8,13 +8,19 @@ use crate::host::SystemTime;
 use crate::tree::{Node, TextStyle};
 
 /// Self-updating relative-time label anchored at `anchor`; the host formats
-/// `now - anchor` against its clock. `clamp` defaults to sign-based direction.
+/// `now - anchor` against its clock. `clamp` pins the direction (e.g.
+/// `ElapsedOnly` keeps a "last refresh" pill from ever reading "in …").
 #[must_use]
-pub fn relative_time_live(anchor: SystemTime, format: RelTimeFormat, style: TextStyle) -> Node {
+pub fn relative_time_live(
+    anchor: SystemTime,
+    format: RelTimeFormat,
+    clamp: RelTimeClamp,
+    style: TextStyle,
+) -> Node {
     Node::RelTime {
         anchor: anchor.unix_secs,
         format,
-        clamp: RelTimeClamp::Auto,
+        clamp,
         style,
     }
 }
@@ -50,14 +56,18 @@ mod tests {
     }
 
     #[test]
-    fn builder_carries_anchor_seconds_and_auto_clamp() {
-        let node =
-            super::relative_time_live(SystemTime { unix_secs: 42 }, FMT, TextStyle::default());
+    fn builder_carries_anchor_seconds_and_requested_clamp() {
+        let node = super::relative_time_live(
+            SystemTime { unix_secs: 42 },
+            FMT,
+            RelTimeClamp::ElapsedOnly,
+            TextStyle::default(),
+        );
         assert!(matches!(
             node,
             crate::tree::Node::RelTime {
                 anchor: 42,
-                clamp: RelTimeClamp::Auto,
+                clamp: RelTimeClamp::ElapsedOnly,
                 ..
             }
         ));

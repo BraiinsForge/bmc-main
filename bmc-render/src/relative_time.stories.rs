@@ -38,6 +38,7 @@ fn relative_time(ctx: &mut StoryCtx) {
             [relative_time_live(
                 anchor,
                 format,
+                RelTimeClamp::Auto,
                 TextStyle {
                     size: 24,
                     color: ORANGE_40,

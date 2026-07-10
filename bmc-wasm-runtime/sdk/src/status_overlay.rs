@@ -5,7 +5,8 @@
 //! `Tag` for a bespoke one.
 
 use bmc_wasm_protocol::{
-    Color, CrossAlign, ORANGE_40, RED_50, RelTimeFormat, RelTimeLength, RelTimeSegments, TagKind,
+    Color, CrossAlign, ORANGE_40, RED_50, RelTimeClamp, RelTimeFormat, RelTimeLength,
+    RelTimeSegments, TagKind,
 };
 
 use crate::host::{SystemTime, ViewportShape};
@@ -46,6 +47,8 @@ pub fn stale_tag(anchor: SystemTime) -> Node {
                         length: RelTimeLength::Short,
                         segments: RelTimeSegments::Single,
                     },
+                    // A last-refresh pill only counts up; never "in …" on a clock step back.
+                    RelTimeClamp::ElapsedOnly,
                     label_style(ORANGE_40),
                 ),
             ],
