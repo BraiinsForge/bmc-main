@@ -115,6 +115,13 @@ cargo-machete: (_cargo-tool "machete")
 # Suggest version pins that collapse duplicate dependency versions.
 cargo-dedupe: (_cargo-tool "dedupe")
 
+# Recreate/repair the per-skill symlinks from .ai/skills into both tool dirs.
+link-skills:
+    cd "{{ justfile_directory() }}" && for s in .ai/skills/*/; do n="$(basename "$s")"; \
+      ln -sfn "../../.ai/skills/$n" ".claude/skills/$n"; \
+      ln -sfn "../../.ai/skills/$n" ".agents/skills/$n"; \
+    done
+
 _cargo-tool tool:
     @command -v cargo-{{ tool }} >/dev/null 2>&1 || { \
       printf 'cargo-{{ tool }} is not installed. Install with `cargo install cargo-{{ tool }}`? [y/N] '; \
