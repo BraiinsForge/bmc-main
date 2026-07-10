@@ -192,6 +192,18 @@ async fn packages_only_run_completes_all_phases() {
             PackageUpgradePhase::Activating as i32,
         ]
     );
+
+    // The default action is a no-op: without `package_action: restart` the mock
+    // must keep running. Wait well past the 200ms instant shutdown delay so a
+    // regression that started exiting on the default action would be caught.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(
+        mock.child
+            .try_wait()
+            .expect("BUG: try_wait failed")
+            .is_none(),
+        "the default package action must not stop the app"
+    );
 }
 
 #[tokio::test]
@@ -343,7 +355,9 @@ async fn packages_apply_fail_errors_the_stream() {
 
 #[tokio::test]
 async fn firmware_success_closes_the_stream_cleanly_then_reboots() {
-    let mut mock = spawn_mock(r#"{"firmware": "available", "packages": "unavailable"}"#);
+    let mut mock = spawn_mock(
+        r#"{"firmware": "available", "packages": "available", "package_action": "restart"}"#,
+    );
     let mut client = upgrade_client(&mut mock).await;
     let response = client
         .check_for_upgrade(())
