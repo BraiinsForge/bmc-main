@@ -1,5 +1,6 @@
 {
   "firmware": "available",
   "packages": "available",
-  "run": "success"
+  "run": "success",
+  "package_action": "nothing"
 }

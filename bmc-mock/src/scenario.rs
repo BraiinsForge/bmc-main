@@ -42,11 +42,20 @@ pub enum RunScenario {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PackageUpgradeAction {
+    #[default]
+    Nothing,
+    Restart,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(default)]
 pub struct UpgradeScenario {
     pub firmware: FirmwareScenario,
     pub packages: PackagesScenario,
     pub run: RunScenario,
+    pub package_action: PackageUpgradeAction,
 }
 
 #[must_use]
@@ -73,6 +82,7 @@ mod tests {
         assert_eq!(scenario.firmware, FirmwareScenario::Available);
         assert_eq!(scenario.packages, PackagesScenario::Available);
         assert_eq!(scenario.run, RunScenario::Success);
+        assert_eq!(scenario.package_action, PackageUpgradeAction::Nothing);
     }
 
     #[test]
@@ -84,6 +94,7 @@ mod tests {
         assert_eq!(scenario.firmware, FirmwareScenario::Available);
         assert_eq!(scenario.packages, PackagesScenario::FetchFailed);
         assert_eq!(scenario.run, RunScenario::Success);
+        assert_eq!(scenario.package_action, PackageUpgradeAction::Nothing);
     }
 
     #[test]
@@ -107,5 +118,20 @@ mod tests {
         assert_eq!(scenario.firmware, FirmwareScenario::CheckError);
         assert_eq!(scenario.packages, PackagesScenario::Unavailable);
         assert_eq!(scenario.run, RunScenario::HashMismatch);
+        assert_eq!(scenario.package_action, PackageUpgradeAction::Nothing);
+    }
+
+    #[test]
+    fn package_action_values_parse() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("upgrade-scenario.json");
+
+        std::fs::write(&path, r#"{"package_action":"restart"}"#)
+            .expect("BUG: write restart scenario");
+        assert_eq!(read(&path).package_action, PackageUpgradeAction::Restart);
+
+        std::fs::write(&path, r#"{"package_action":"nothing"}"#)
+            .expect("BUG: write nothing scenario");
+        assert_eq!(read(&path).package_action, PackageUpgradeAction::Nothing);
     }
 }
