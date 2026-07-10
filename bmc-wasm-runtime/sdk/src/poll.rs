@@ -127,6 +127,8 @@ struct Poll {
     force_retry: Option<u32>,
     /// Epoch secs of the last ok reply; `None` before the first success.
     last_success_secs: Option<i64>,
+    /// The anchor before the last ok reply; `mark_stale` reverts to it.
+    prev_success_secs: Option<i64>,
     /// The last delivered reply failed.
     last_failed: bool,
     /// Epoch secs the failing streak began; anchors the offline grace.
@@ -152,6 +154,7 @@ impl Registry {
             pending: false,
             force_retry: None,
             last_success_secs: None,
+            prev_success_secs: None,
             last_failed: false,
             failing_since_secs: None,
         });
@@ -243,9 +246,12 @@ impl Registry {
         self.polls[handle.0].force_retry = Some(delay_ms);
     }
 
-    /// Flag failing after a reply was banked ok (a late decode failure).
+    /// A just-banked reply proved bad (a late decode failure):
+    /// flag failing and revert the anchor it displaced.
     pub(crate) fn mark_stale(&mut self, handle: Handle) {
-        self.polls[handle.0].last_failed = true;
+        let poll = &mut self.polls[handle.0];
+        poll.last_failed = true;
+        poll.last_success_secs = poll.prev_success_secs;
     }
 
     /// Seed the last-success anchor from persisted state;
@@ -261,6 +267,7 @@ impl Registry {
     pub(crate) fn reset_staleness(&mut self, handle: Handle) {
         let poll = &mut self.polls[handle.0];
         poll.last_success_secs = None;
+        poll.prev_success_secs = None;
         poll.last_failed = false;
         poll.failing_since_secs = None;
     }
@@ -277,6 +284,7 @@ impl Registry {
         // A forced retry means the handler rejected this reply, so it is no
         // refresh however the HTTP call went.
         if ok && forced.is_none() {
+            self.polls[idx].prev_success_secs = self.polls[idx].last_success_secs;
             self.polls[idx].last_success_secs = Some(now_secs);
             self.polls[idx].last_failed = false;
             self.polls[idx].failing_since_secs = None;
@@ -1016,20 +1024,24 @@ mod tests {
     }
 
     #[test]
-    fn mark_stale_flags_a_banked_reply_as_failing() {
+    fn mark_stale_reverts_the_corrupt_reply_to_the_last_good_anchor() {
         let mut reg = Registry::default();
         let mut be = FakeBackend::new();
         let h = reg.register(build_url, CFG);
         reg.start(h, &mut be);
-        deliver_at(&mut reg, &mut be, 1, true, 0); // banked ok at t=0
-        assert!(!reg.is_stale(h, 100), "a banked ok reply is not stale");
-        // Its payload later proved unusable (e.g. a decode failed).
+        deliver_at(&mut reg, &mut be, 1, true, 0); // good image banked at t=0
+        // A later 2xx banks ok (header passed) but its decode fails async.
+        deliver_at(&mut reg, &mut be, 2, true, 100);
+        assert_eq!(reg.last_success_secs(h), Some(100), "the reply banked ok");
         reg.mark_stale(h);
-        assert!(reg.is_stale(h, 100), "mark_stale flags it failing");
         assert_eq!(
             reg.last_success_secs(h),
             Some(0),
-            "the last-good anchor is unchanged"
+            "the anchor reverts to the last good reply, not the corrupt one"
+        );
+        assert!(
+            reg.is_stale(h, 100),
+            "and it reads stale from the good anchor"
         );
     }
 
