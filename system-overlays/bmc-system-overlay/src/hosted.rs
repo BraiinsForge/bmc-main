@@ -7,7 +7,7 @@ use bmc_widget::egl::{DmaBufInfo, EglContext};
 
 use crate::gpu::OverlayRenderTarget;
 use crate::overlay::{
-    FenceState, HideFenceAction, HideFenceGate, MIN_INTER_FRAME, PollGate, RenderGate,
+    AlarmEvent, FenceState, HideFenceAction, HideFenceGate, MIN_INTER_FRAME, PollGate, RenderGate,
     SystemOverlay, hide_fence_action, hide_fence_after_tick, overlay_needs_hide,
     overlay_needs_render, overlay_poll_timeout, resize_transition, resolved_configured_size,
     screen_edge_visible,
@@ -61,7 +61,8 @@ impl HostedOverlay {
     pub fn connect(mut overlay: Box<dyn SystemOverlay>, egl: &EglContext) -> anyhow::Result<Self> {
         let config = overlay.layer_config();
         let config_size = config.size;
-        let mut client = LayerSurfaceClient::connect(&config, overlay.uses_settings())?;
+        let mut client =
+            LayerSurfaceClient::connect(&config, overlay.uses_settings(), overlay.uses_alarm())?;
         let size = resolved_configured_size(config_size, client.size());
         let target = OverlayRenderTarget::new(egl, size.0, size.1)?;
         let wants_render = client.take_needs_render();
@@ -136,6 +137,19 @@ impl HostedOverlay {
             }
             if let Some(reason) = self.client.take_restart_declined() {
                 self.overlay.on_restart_declined(&reason);
+            }
+        }
+        if self.overlay.uses_alarm() {
+            // One latest-wins slot, so a stop-then-ring within a single dispatch
+            // round applies the ring (not the trailing stop) and vice versa.
+            match self.client.take_alarm_event() {
+                Some(AlarmEvent::Ring {
+                    time,
+                    label,
+                    snooze_allowed,
+                }) => self.overlay.on_alarm_ring(&time, &label, snooze_allowed),
+                Some(AlarmEvent::Stop) => self.overlay.on_alarm_stop(),
+                None => {}
             }
         }
         for released in self.client.drain_released_buffers() {
@@ -408,6 +422,20 @@ impl HostedOverlay {
         for req in self.overlay.drain_settings_requests() {
             if let Err(e) = self.client.send_settings_request(req) {
                 tracing::warn!("settings request failed: {e}");
+            }
+        }
+    }
+
+    /// Forward the overlay's accumulated alarm requests (dismiss/snooze) to the
+    /// compositor. Runs after render, same pass as they were produced. No-op
+    /// unless the overlay opted into `deck_alarm_v1`.
+    pub fn forward_alarm_requests(&mut self) {
+        if !self.overlay.uses_alarm() {
+            return;
+        }
+        for req in self.overlay.drain_alarm_requests() {
+            if let Err(e) = self.client.send_alarm_request(req) {
+                tracing::warn!("alarm request failed: {e}");
             }
         }
     }

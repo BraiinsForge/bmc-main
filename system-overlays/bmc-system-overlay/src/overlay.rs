@@ -202,6 +202,28 @@ pub struct SettingsCaps {
     pub wifi_setup: bool,
 }
 
+/// A control request an overlay wants to send over `deck_alarm_v1`. The
+/// framework drains these after `tick` and forwards them to the compositor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+
+pub enum AlarmRequest {
+    Dismiss,
+    Snooze,
+}
+
+/// An incoming `deck_alarm_v1` event. The client collapses ring/stop into a
+/// single latest-wins slot so a `stop` then `ring` arriving in one dispatch
+/// round keeps the ring rather than losing it to the trailing stop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AlarmEvent {
+    Ring {
+        time: String,
+        label: String,
+        snooze_allowed: bool,
+    },
+    Stop,
+}
+
 /// Static layer-surface configuration, applied once at map time.
 #[derive(Debug, Clone)]
 pub struct LayerConfig {
@@ -370,6 +392,25 @@ pub trait SystemOverlay {
     /// Drain control requests the overlay wants to send this pass. Called after
     /// `tick`. Default: none.
     fn drain_settings_requests(&mut self) -> Vec<SettingsRequest> {
+        Vec::new()
+    }
+
+    /// Whether this overlay binds the `deck_alarm_v1` control channel.  `false`
+    /// (default) means the framework neither binds it nor delivers alarm
+    /// events to this overlay.
+    fn uses_alarm(&self) -> bool {
+        false
+    }
+
+    /// Active alarm reported by the compositor.
+    fn on_alarm_ring(&mut self, _time: &str, _label: &str) {}
+
+    /// Compositor requested to stop the alarm.
+    fn on_alarm_stop(&mut self) {}
+
+    /// Drain alarm control requests the overlay wants to send this pass. Called
+    /// after `tick`. Default: none.
+    fn drain_alarm_requests(&mut self) -> Vec<AlarmRequest> {
         Vec::new()
     }
 

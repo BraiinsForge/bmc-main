@@ -13,6 +13,7 @@
 
 use std::time::{Duration, Instant};
 
+use ::deck_alarm_v1::client::deck_alarm_v1::{self, DeckAlarmV1};
 use anyhow::Context;
 use wayland_client::backend::ObjectId;
 use wayland_client::protocol::{
@@ -24,7 +25,7 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
-use crate::overlay::{InputRegion, LayerConfig, ScreenEdge};
+use crate::overlay::{AlarmEvent, InputRegion, LayerConfig, ScreenEdge};
 use ::deck_settings_v1::client::deck_settings_v1::{self, Capability, DeckSettingsV1};
 use bmc_widget::egl::DmaBufInfo;
 use bmc_widget::surface::{
@@ -86,6 +87,15 @@ struct State {
     )]
     pending_wifi_ap: Option<Option<String>>,
 
+    /// Whether this overlay opted into `deck_alarm_v1` (its
+    /// `SystemOverlay::uses_alarm`).
+    wants_alarm: bool,
+    alarm: Option<DeckAlarmV1>,
+    /// Latest `deck_alarm_v1` event seen this dispatch round. A single slot
+    /// (not separate ring/stop flags) so a `stop` then `ring` arriving in one
+    /// round keeps the ring — the trailing event wins, preserving wire order.
+    pending_alarm_event: Option<AlarmEvent>,
+
     /// Set true on the first layer-surface Configure (after which we may map).
     configured: bool,
     /// Compositor-suggested size from the latest Configure.
@@ -136,6 +146,9 @@ impl Default for State {
             pending_night_mode: None,
             pending_restart_declined: None,
             pending_wifi_ap: None,
+            wants_alarm: false,
+            alarm: None,
+            pending_alarm_event: None,
             configured: false,
             configured_size: (0, 0),
             pending_touch: Vec::new(),
@@ -158,6 +171,20 @@ impl State {
     fn mark_screen_edge_hidden(&mut self) {
         self.pending_reveal = false;
         self.pending_hidden = true;
+    }
+
+    /// Record a `ring_alarm` into the single latest-wins alarm slot.
+    fn note_alarm_ring(&mut self, time: String, label: String, snooze_allowed: bool) {
+        self.pending_alarm_event = Some(AlarmEvent::Ring {
+            time,
+            label,
+            snooze_allowed,
+        });
+    }
+
+    /// Record a `stop_alarm` into the single latest-wins alarm slot.
+    fn note_alarm_stop(&mut self) {
+        self.pending_alarm_event = Some(AlarmEvent::Stop);
     }
 
     fn discard_unmap_configure(&mut self, previous_size: (u32, u32)) {
@@ -266,6 +293,7 @@ impl LayerSurfaceClient {
     pub fn connect(
         config: &crate::overlay::LayerConfig,
         wants_settings: bool,
+        wants_alarm: bool,
     ) -> anyhow::Result<Self> {
         let conn =
             Connection::connect_to_env().map_err(|e| anyhow::anyhow!("wayland connect: {e}"))?;
@@ -275,6 +303,7 @@ impl LayerSurfaceClient {
 
         let mut state = State {
             wants_settings,
+            wants_alarm,
             ..State::default()
         };
         queue
@@ -538,6 +567,10 @@ impl LayerSurfaceClient {
         self.state.pending_wifi_ap.take()
     }
 
+    pub fn take_alarm_event(&mut self) -> Option<AlarmEvent> {
+        self.state.pending_alarm_event.take()
+    }
+
     pub fn send_settings_request(
         &self,
         req: crate::overlay::SettingsRequest,
@@ -560,6 +593,20 @@ impl LayerSurfaceClient {
                 tracing::warn!(?req, "dropping v2 settings request on a v1 compositor");
             }
             SettingsRequest::ReconfigureWifi => settings.reconfigure_wifi(),
+        }
+        self.flush()
+    }
+
+    pub fn send_alarm_request(&self, req: crate::overlay::AlarmRequest) -> anyhow::Result<()> {
+        use crate::overlay::AlarmRequest;
+        let alarm = self
+            .state
+            .alarm
+            .as_ref()
+            .context("deck_alarm_v1 not bound")?;
+        match req {
+            AlarmRequest::Dismiss => alarm.dismiss_alarm(),
+            AlarmRequest::Snooze => alarm.snooze_alarm(),
         }
         self.flush()
     }
@@ -681,6 +728,10 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                         registry.bind::<DeckSettingsV1, _, _>(name, version.min(2), qh, ());
                     state.settings = Some(settings);
                 }
+                "deck_alarm_v1" if state.wants_alarm => {
+                    let alarm = registry.bind::<DeckAlarmV1, _, _>(name, version.min(1), qh, ());
+                    state.alarm = Some(alarm);
+                }
                 _ => {}
             }
         }
@@ -794,6 +845,31 @@ impl Dispatch<DeckSettingsV1, ()> for State {
                 state.pending_restart_declined = Some(reason);
             }
             other => tracing::debug!(?other, "unhandled deck_settings_v1 event"),
+        }
+    }
+}
+
+impl Dispatch<DeckAlarmV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &DeckAlarmV1,
+        event: deck_alarm_v1::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            deck_alarm_v1::Event::RingAlarm {
+                time,
+                label,
+                snooze_allowed,
+            } => {
+                state.note_alarm_ring(time, label, snooze_allowed != 0);
+            }
+            deck_alarm_v1::Event::StopAlarm => {
+                state.note_alarm_stop();
+            }
+            other => tracing::debug!(?other, "unhandled deck_alarm_v1 event"),
         }
     }
 }
@@ -1012,5 +1088,32 @@ mod tests {
         assert_eq!(state.configured_size, (1280, 240));
         assert_eq!(state.pending_size_change, None);
         assert!(!state.needs_render);
+    }
+
+    #[test]
+    fn stop_then_ring_in_one_round_keeps_the_ring() {
+        let mut state = State::default();
+
+        state.note_alarm_stop();
+        state.note_alarm_ring("07:30".to_owned(), "Wake up".to_owned(), true);
+
+        assert_eq!(
+            state.pending_alarm_event,
+            Some(AlarmEvent::Ring {
+                time: "07:30".to_owned(),
+                label: "Wake up".to_owned(),
+                snooze_allowed: true,
+            })
+        );
+    }
+
+    #[test]
+    fn ring_then_stop_in_one_round_keeps_the_stop() {
+        let mut state = State::default();
+
+        state.note_alarm_ring("07:30".to_owned(), "Wake up".to_owned(), true);
+        state.note_alarm_stop();
+
+        assert_eq!(state.pending_alarm_event, Some(AlarmEvent::Stop));
     }
 }

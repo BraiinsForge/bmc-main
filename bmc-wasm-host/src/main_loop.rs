@@ -582,6 +582,7 @@ fn run_loop(
                 overlay.mark_failed();
             }
             overlay.forward_settings_requests();
+            overlay.forward_alarm_requests();
         }
         // Drop overlays whose client closed or that hit a terminal error,
         // shutting down each first so its GPU resources are freed. A plain

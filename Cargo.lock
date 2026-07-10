@@ -1224,6 +1224,7 @@ dependencies = [
  "bmc-render",
  "bmc-wasm-protocol",
  "bmc-widget",
+ "deck-alarm-v1",
  "deck-screen-edge-v1",
  "deck-settings-v1",
  "get_if_addrs",

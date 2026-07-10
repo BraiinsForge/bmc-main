@@ -11,16 +11,22 @@ use bmc_widget::egl::{EglContext, SharedRenderScratch};
 
 use crate::gpu::{OverlayRenderTarget, wait_for_gpu};
 use crate::overlay::{
-    LayerConfig, MIN_INTER_FRAME, SystemOverlay, resize_transition, resolved_configured_size,
-    screen_edge_visible,
+    AlarmEvent, LayerConfig, MIN_INTER_FRAME, SystemOverlay, resize_transition,
+    resolved_configured_size, screen_edge_visible,
 };
 use crate::surface::LayerSurfaceClient;
 
 /// Run an overlay as its own process: own connection, renderer, and loop.
+#[expect(
+    clippy::too_many_lines,
+    reason = "single linear per-pass driver loop; each control protocol adds a \
+              deliver/forward pair that reads clearest inline with the loop"
+)]
 pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()> {
     let config: LayerConfig = overlay.layer_config();
 
-    let mut client = LayerSurfaceClient::connect(&config, overlay.uses_settings())?;
+    let mut client =
+        LayerSurfaceClient::connect(&config, overlay.uses_settings(), overlay.uses_alarm())?;
     let mut size = resolved_configured_size(config.size, client.size());
 
     let egl = EglContext::new()?;
@@ -76,6 +82,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
         );
 
         deliver_settings_events(&mut client, &mut *overlay);
+        deliver_alarm_events(&mut client, &mut *overlay);
 
         let now = Instant::now();
         let tick = overlay.tick(now);
@@ -125,6 +132,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
         )?;
 
         forward_settings_requests(&mut client, &mut *overlay);
+        forward_alarm_requests(&mut client, &mut *overlay);
 
         client.poll_dispatch(poll_timeout_ms(
             pending_render,
@@ -190,6 +198,34 @@ fn forward_settings_requests(client: &mut LayerSurfaceClient, overlay: &mut dyn 
     for req in overlay.drain_settings_requests() {
         if let Err(e) = client.send_settings_request(req) {
             tracing::warn!("settings request failed: {e}");
+        }
+    }
+}
+
+fn deliver_alarm_events(client: &mut LayerSurfaceClient, overlay: &mut dyn SystemOverlay) {
+    if !overlay.uses_alarm() {
+        return;
+    }
+    // One latest-wins slot, so a stop-then-ring within a single dispatch round
+    // applies the ring (not the trailing stop) and vice versa.
+    match client.take_alarm_event() {
+        Some(AlarmEvent::Ring {
+            time,
+            label,
+            snooze_allowed,
+        }) => overlay.on_alarm_ring(&time, &label, snooze_allowed),
+        Some(AlarmEvent::Stop) => overlay.on_alarm_stop(),
+        None => {}
+    }
+}
+
+fn forward_alarm_requests(client: &mut LayerSurfaceClient, overlay: &mut dyn SystemOverlay) {
+    if !overlay.uses_alarm() {
+        return;
+    }
+    for req in overlay.drain_alarm_requests() {
+        if let Err(e) = client.send_alarm_request(req) {
+            tracing::warn!("alarm request failed: {e}");
         }
     }
 }
