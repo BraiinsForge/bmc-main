@@ -32,7 +32,16 @@ async fn main() -> Result<()> {
 
     let pacing = config.upgrade_pacing();
 
-    let package_backend = Arc::new(MockPackageBackend::new(mockfs.upgrade_scenario(), pacing));
+    // Shared between the package backend (which requests the stop after a
+    // packages-only activation) and the manager (which runs the graceful
+    // Axum shutdown when notified).
+    let stop = Arc::new(tokio::sync::Notify::new());
+
+    let package_backend = Arc::new(MockPackageBackend::new(
+        mockfs.upgrade_scenario(),
+        pacing,
+        Arc::clone(&stop),
+    ));
 
     let blob = bmc_mock::blob_server::spawn(pacing)
         .await
@@ -60,6 +69,7 @@ async fn main() -> Result<()> {
         config.address.port(),
         platform,
         pacing,
+        stop,
     );
 
     let config: bmc::Configuration = config.into();

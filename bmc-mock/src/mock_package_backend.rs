@@ -14,9 +14,10 @@ use bmc_upgrade::packages::{
     ApplyError, EstimateMode, PackageBackend, PackageProbe, PackageProbeError, PackagesPreview,
     SystemPackageChange,
 };
+use tokio::sync::Notify;
 
 use crate::pacing::UpgradePacing;
-use crate::scenario::{self, PackagesScenario, RunScenario};
+use crate::scenario::{self, PackageUpgradeAction, PackagesScenario, RunScenario};
 
 const DOWNLOAD_TOTAL_BYTES: u64 = 4_000_000;
 
@@ -24,14 +25,16 @@ const DOWNLOAD_TOTAL_BYTES: u64 = 4_000_000;
 pub struct MockPackageBackend {
     scenario_path: PathBuf,
     pacing: UpgradePacing,
+    stop: Arc<Notify>,
 }
 
 impl MockPackageBackend {
     #[must_use]
-    pub fn new(scenario_path: PathBuf, pacing: UpgradePacing) -> Self {
+    pub fn new(scenario_path: PathBuf, pacing: UpgradePacing, stop: Arc<Notify>) -> Self {
         Self {
             scenario_path,
             pacing,
+            stop,
         }
     }
 }
@@ -113,7 +116,7 @@ impl PackageBackend for MockPackageBackend {
         _merged: MergedIndex,
         progress: Arc<dyn UpgradeProgress>,
     ) -> Result<(), ApplyError> {
-        let run = scenario::read(&self.scenario_path).run;
+        let scenario = scenario::read(&self.scenario_path);
         let step_delay = self.pacing.progress_step();
 
         progress.on_phase(UpgradePhase::Realizing);
@@ -127,7 +130,7 @@ impl PackageBackend for MockPackageBackend {
             tokio::time::sleep(step_delay).await;
         }
 
-        if run == RunScenario::ApplyFail {
+        if scenario.run == RunScenario::ApplyFail {
             return Err(ApplyError("mock: package apply failed".to_owned()));
         }
 
@@ -140,6 +143,18 @@ impl PackageBackend for MockPackageBackend {
             tokio::time::sleep(step_delay).await;
         }
 
+        if scenario.package_action == PackageUpgradeAction::Restart {
+            // The notifier models bmc-openwrt receiving procd's SIGTERM from
+            // the external service orchestrator once a packages-only
+            // activation lands; the mock never signals itself.
+            let stop = Arc::clone(&self.stop);
+            let delay = self.pacing.shutdown_delay();
+            tokio::spawn(async move {
+                tokio::time::sleep(delay).await;
+                stop.notify_one();
+            });
+        }
+
         Ok(())
     }
 }
@@ -150,6 +165,11 @@ mod tests {
     use bmc_nix::store::progress::DownloadSnapshot;
     use bmc_nix::upgrade::UpgradePhase;
     use std::sync::Mutex;
+    use std::time::Duration;
+
+    fn notifier() -> Arc<Notify> {
+        Arc::new(Notify::new())
+    }
 
     #[derive(Debug, Default)]
     struct RecordingProgress {
@@ -181,7 +201,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
 
         let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
-        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         let PackageProbe::Available(_, preview) = backend.probe(EstimateMode::Estimate).await
         else {
             panic!("BUG: expected Available");
@@ -191,21 +211,21 @@ mod tests {
         assert!(preview.download_size_bytes.is_some());
 
         let path = write_scenario(dir.path(), r#"{"packages": "unavailable"}"#);
-        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         assert!(matches!(
             backend.probe(EstimateMode::Estimate).await,
             PackageProbe::UpToDate
         ));
 
         let path = write_scenario(dir.path(), r#"{"packages": "fetch-failed"}"#);
-        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         assert!(matches!(
             backend.probe(EstimateMode::Estimate).await,
             PackageProbe::Failed(PackageProbeError::IndexFetchFailed(_))
         ));
 
         let path = write_scenario(dir.path(), r#"{"packages": "precondition-failed"}"#);
-        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         assert!(matches!(
             backend.probe(EstimateMode::Estimate).await,
             PackageProbe::Failed(PackageProbeError::NoEnabledServers)
@@ -216,7 +236,7 @@ mod tests {
     async fn probe_skips_size_estimate_when_asked() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
-        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         let PackageProbe::Available(_, preview) = backend.probe(EstimateMode::Skip).await else {
             panic!("BUG: expected Available");
         };
@@ -227,7 +247,7 @@ mod tests {
     async fn apply_walks_all_phases_and_finishes() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let path = write_scenario(dir.path(), r#"{"run": "success"}"#);
-        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         let progress = std::sync::Arc::new(RecordingProgress::default());
         backend
             .apply(empty_merged_index(), progress.clone())
@@ -250,11 +270,51 @@ mod tests {
     async fn apply_fails_after_realizing_on_apply_fail() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let path = write_scenario(dir.path(), r#"{"run": "apply-fail"}"#);
-        let backend = MockPackageBackend::new(path, UpgradePacing::Instant);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
         let progress = std::sync::Arc::new(RecordingProgress::default());
         let result = backend.apply(empty_merged_index(), progress.clone()).await;
         assert!(result.is_err());
         let phases = progress.phases.lock().expect("BUG: phases mutex").clone();
         assert_eq!(phases, vec![UpgradePhase::Realizing]);
+    }
+
+    #[tokio::test]
+    async fn successful_restart_action_notifies_application_stop() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = write_scenario(
+            dir.path(),
+            r#"{"run":"success","package_action":"restart"}"#,
+        );
+        let stop = Arc::new(Notify::new());
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, Arc::clone(&stop));
+
+        backend
+            .apply(empty_merged_index(), Arc::new(RecordingProgress::default()))
+            .await
+            .expect("BUG: package apply should succeed");
+
+        tokio::time::timeout(Duration::from_secs(1), stop.notified())
+            .await
+            .expect("restart action did not notify application stop");
+    }
+
+    #[tokio::test]
+    async fn apply_failure_does_not_notify_application_stop() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = write_scenario(
+            dir.path(),
+            r#"{"run":"apply-fail","package_action":"restart"}"#,
+        );
+        let stop = Arc::new(Notify::new());
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, Arc::clone(&stop));
+
+        let result = backend
+            .apply(empty_merged_index(), Arc::new(RecordingProgress::default()))
+            .await;
+        assert!(result.is_err());
+
+        tokio::time::timeout(Duration::from_millis(200), stop.notified())
+            .await
+            .expect_err("apply failure must not notify application stop");
     }
 }

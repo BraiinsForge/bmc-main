@@ -195,6 +195,61 @@ async fn packages_only_run_completes_all_phases() {
 }
 
 #[tokio::test]
+async fn packages_restart_action_stops_the_app_after_activation() {
+    let mut mock = spawn_mock(
+        r#"{"firmware": "up-to-date", "packages": "available", "package_action": "restart"}"#,
+    );
+    let mut client = upgrade_client(&mut mock).await;
+    let response = client
+        .check_for_upgrade(())
+        .await
+        .expect("BUG: check failed")
+        .into_inner();
+    let upgrade_id = response.upgrade_id.expect("upgrade id");
+
+    let mut stream = client
+        .start_upgrade(StartUpgradeRequest { upgrade_id })
+        .await
+        .expect("BUG: start failed")
+        .into_inner();
+
+    let mut phases = Vec::new();
+    let mut finished = false;
+    tokio::time::timeout(STREAM_TIMEOUT, async {
+        while let Some(progress) = stream.message().await.expect("BUG: stream errored") {
+            match progress.event.expect("BUG: event set") {
+                upgrade_progress::Event::PackagePhase(phase) => phases.push(phase),
+                upgrade_progress::Event::Finished(()) => finished = true,
+                upgrade_progress::Event::Download(_)
+                | upgrade_progress::Event::FirmwarePhase(_) => {}
+            }
+        }
+    })
+    .await
+    .expect("stream did not finish within the timeout");
+    assert!(finished, "the packages-only run must finish cleanly");
+    assert!(
+        phases.contains(&(PackageUpgradePhase::Activating as i32)),
+        "the restart action must follow a completed activation"
+    );
+
+    // The restart action schedules an asynchronous application stop, so the
+    // mock runs its graceful shutdown and exits successfully on its own.
+    let exit_deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = mock.child.try_wait().expect("BUG: try_wait failed") {
+            assert!(status.success(), "mock exited with failure: {status}");
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < exit_deadline,
+            "mock process did not exit after the restart action"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+#[tokio::test]
 async fn firmware_with_packages_streams_nested_package_stages() {
     let mut mock = spawn_mock(r#"{"firmware": "available", "packages": "available"}"#);
     let mut client = upgrade_client(&mut mock).await;

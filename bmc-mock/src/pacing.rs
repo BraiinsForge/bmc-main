@@ -37,10 +37,11 @@ impl UpgradePacing {
         }
     }
 
-    // Instant keeps a small delay so the Applying event reaches the
-    // client before the simulated reboot kills the process.
+    // Instant keeps a small delay so the last progress event reaches the
+    // client before the simulated reboot or application stop tears the
+    // process down.
     #[must_use]
-    pub fn reboot_delay(self) -> Duration {
+    pub fn shutdown_delay(self) -> Duration {
         match self {
             Self::Realistic => Duration::from_secs(2),
             Self::Instant => Duration::from_millis(200),

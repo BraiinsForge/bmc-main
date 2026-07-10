@@ -53,6 +53,7 @@ pub struct Manager {
     wifi_event_sender: tokio::sync::broadcast::Sender<WifiEvent>,
     wifi_reconfig_sender: tokio::sync::watch::Sender<bool>,
     pacing: UpgradePacing,
+    stop: Arc<tokio::sync::Notify>,
 }
 
 impl Manager {
@@ -73,6 +74,7 @@ impl Manager {
         port: u16,
         platform: BosPlatform,
         pacing: UpgradePacing,
+        stop: Arc<tokio::sync::Notify>,
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(Timezone::default());
         let (wifi_event_sender, _) = tokio::sync::broadcast::channel(Self::WIFI_EVENTS_CAPACITY);
@@ -92,6 +94,7 @@ impl Manager {
             wifi_event_sender,
             wifi_reconfig_sender,
             pacing,
+            stop,
         }
     }
 }
@@ -174,7 +177,7 @@ impl bmc::BmcManager for Manager {
 
         tokio::time::sleep(self.pacing.sysupgrade_duration()).await;
 
-        let reboot_delay = self.pacing.reboot_delay();
+        let reboot_delay = self.pacing.shutdown_delay();
         tokio::spawn(async move {
             tokio::time::sleep(reboot_delay).await;
             info!("Mock sysupgrade: exiting to simulate the reboot");
@@ -489,8 +492,18 @@ impl bmc::BmcManager for Manager {
     }
 
     async fn handle_graceful_shutdown(&self) {
-        _ = signal::ctrl_c().await;
-        info!("Shutdown signal received");
+        // The notifier models the point where bmc-openwrt receives procd's
+        // SIGTERM from the external service orchestrator; the mock never
+        // signals itself, it just runs the same graceful Axum shutdown path.
+        tokio::select! {
+            result = signal::ctrl_c() => {
+                _ = result;
+                info!("Shutdown signal received");
+            }
+            () = self.stop.notified() => {
+                info!("Mock application stop requested");
+            }
+        }
     }
 
     async fn support_archive(&self, _format: SupportArchiveFormat) -> Result<Vec<u8>, Error> {
