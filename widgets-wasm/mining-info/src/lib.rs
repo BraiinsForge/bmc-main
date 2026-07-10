@@ -410,6 +410,10 @@ pub extern "C" fn on_params_update() {
                         AuthState::LoggingIn
                     };
                 });
+                // Blanked data drops its staleness — no pill over the new miner's N/A.
+                for miner in &handles.miner {
+                    miner.reset_staleness();
+                }
                 handles.login.invalidate();
             }
             for (idx, miner) in handles.miner.iter().enumerate() {
@@ -525,6 +529,14 @@ fn on_login_reply(handle: PollHandle, response: &FetchResponse) {
             let delay = login_retry_delay(state.login_failures, RETRY_MS, MAX_LOGIN_RETRY_MS);
             state.login_failures = state.login_failures.saturating_add(1);
             delay
+        });
+        // Blanked data drops its staleness — auth banner over N/A, not a stale pill.
+        HANDLES.with(|handles| {
+            if let Some(handles) = handles.borrow().as_ref() {
+                for miner in &handles.miner {
+                    miner.reset_staleness();
+                }
+            }
         });
         handle.retry_after(delay);
     }

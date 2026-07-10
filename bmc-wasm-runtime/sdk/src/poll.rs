@@ -257,6 +257,14 @@ impl Registry {
         }
     }
 
+    /// Forget all staleness history, as if the poll had never run.
+    pub(crate) fn reset_staleness(&mut self, handle: Handle) {
+        let poll = &mut self.polls[handle.0];
+        poll.last_success_secs = None;
+        poll.last_failed = false;
+        poll.failing_since_secs = None;
+    }
+
     pub(crate) fn reschedule(
         &mut self,
         handle: Handle,
@@ -515,6 +523,11 @@ mod wasm {
         /// so staleness reads the true age across a reboot.
         pub fn restore_anchor(self, unix_secs: i64) {
             REGISTRY.with(|r| r.borrow_mut().restore_anchor(self, unix_secs));
+        }
+
+        /// Forget all staleness history — for when the widget blanks its data.
+        pub fn reset_staleness(self) {
+            REGISTRY.with(|r| r.borrow_mut().reset_staleness(self));
         }
 
         #[must_use]
@@ -1041,6 +1054,24 @@ mod tests {
             reg.last_success_secs(h),
             Some(300),
             "a live success is never clobbered"
+        );
+    }
+
+    #[test]
+    fn reset_staleness_forgets_all_history() {
+        let mut reg = Registry::default();
+        let mut be = FakeBackend::new();
+        let h = reg.register(build_url, CFG);
+        reg.start(h, &mut be);
+        deliver_at(&mut reg, &mut be, 1, true, 0); // loaded
+        deliver_at(&mut reg, &mut be, 2, false, 100); // then failing → stale
+        assert!(reg.is_stale(h, 100));
+        reg.reset_staleness(h);
+        assert_eq!(reg.last_success_secs(h), None, "anchor cleared");
+        assert!(!reg.is_stale(h, 1_000_000), "no failure survives the reset");
+        assert!(
+            !reg.is_offline(h, 1_000_000),
+            "no offline state survives it"
         );
     }
 
