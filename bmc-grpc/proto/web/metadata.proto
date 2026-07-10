@@ -10,8 +10,18 @@ message Metadata {
 
 message GetMetadataRequest {}
 
+message GetServerInstanceRequest {}
+
+message GetServerInstanceResponse {
+  // Opaque identifier generated once per BMC application process. A changed
+  // value between polls proves the application restarted.
+  string server_instance_id = 1;
+}
+
 // Service to provide information about system
 service MetadataService {
   // Get detailed information about the system
   rpc GetMetadata(GetMetadataRequest) returns (Metadata);
+  // Get the identifier of the running BMC application process
+  rpc GetServerInstance(GetServerInstanceRequest) returns (GetServerInstanceResponse);
 }
