@@ -109,6 +109,9 @@ pub struct ControlIcons {
     pub sound_high: Option<SvgId>,
     pub brightness_low: Option<SvgId>,
     pub brightness_high: Option<SvgId>,
+    pub night_mode: Option<SvgId>,
+    pub restart: Option<SvgId>,
+    pub close: Option<SvgId>,
 }
 
 /// The v2 control surfaces to render. `None` fields are hidden — either the
