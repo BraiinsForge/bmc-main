@@ -96,7 +96,9 @@ impl PreparedRegistration {
 /// dev-provisioned device becomes usable without manual seeding.
 /// Registering an id equal to the loaded factory id is rejected unless
 /// the config is marker-bootstrapped, in which case the factory and the
-/// matching server entry are updated in sync.
+/// matching server entry are updated in sync. `factory_base_url`, when
+/// given, supplies the factory entry's base URL on bootstrap and on the
+/// bootstrapped same-id resync instead of deriving it from the entry.
 ///
 /// # Errors
 ///
@@ -106,14 +108,16 @@ pub fn prepare_registration(
     runtime_path: &Path,
     default_path: &Path,
     entry: ServerEntry,
+    factory_base_url: Option<&str>,
 ) -> Result<PreparedRegistration, RegisterError> {
+    let factory_base_url = factory_base_url.unwrap_or(&entry.base_url);
     let mut config =
         match crate::servers_config::load_servers_config_opt(runtime_path, default_path)? {
             Some(config) => config,
             None => ServersConfig {
                 factory: FactoryServerEntry {
                     id: entry.id.clone(),
-                    base_url: entry.base_url.clone(),
+                    base_url: factory_base_url.to_owned(),
                     known_public_key: entry.known_public_key.clone(),
                     priority: entry.priority,
                     enabled: entry.enabled,
@@ -127,7 +131,7 @@ pub fn prepare_registration(
         if !config.bootstrapped_factory {
             return Err(RegisterError::FactoryIdCollision { id: entry.id });
         }
-        config.factory.base_url.clone_from(&entry.base_url);
+        factory_base_url.clone_into(&mut config.factory.base_url);
         config
             .factory
             .known_public_key
@@ -258,7 +262,7 @@ mod tests {
     fn register(path: &Path, entry: ServerEntry) -> Result<(), RegisterError> {
         let mut default = path.as_os_str().to_owned();
         default.push(".default");
-        prepare_registration(path, Path::new(&default), entry)?.persist()
+        prepare_registration(path, Path::new(&default), entry, None)?.persist()
     }
 
     #[test]

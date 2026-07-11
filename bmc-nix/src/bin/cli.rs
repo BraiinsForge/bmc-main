@@ -1148,6 +1148,7 @@ fn cmd_register_server(
         !cache_public_key.trim().is_empty(),
         "--cache-public-key must not be empty"
     );
+    let factory_base_url = base_url.clone();
     let entry = ServerEntry {
         id,
         server_type,
@@ -1157,8 +1158,12 @@ fn cmd_register_server(
         enabled: true,
         required: !optional,
     };
-    let prepared =
-        bmc_nix::registration::prepare_registration(servers_config, default_servers_config, entry)?;
+    let prepared = bmc_nix::registration::prepare_registration(
+        servers_config,
+        default_servers_config,
+        entry,
+        Some(&factory_base_url),
+    )?;
     // Register the substituter (nix.conf) before persisting the server
     // registry: if the process dies between the two writes, a server
     // missing from the registry is more benign than a registered server
