@@ -14,6 +14,11 @@ const PENDING_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long the transient failure message stays up.
 const ERROR_DISPLAY: Duration = Duration::from_secs(3);
 
+/// Fraction of `hold` elapsed since `since`, clamped to 0..=1.
+fn hold_fraction(since: Instant, now: Instant, hold: Duration) -> f32 {
+    (now.duration_since(since).as_secs_f32() / hold.as_secs_f32()).clamp(0.0, 1.0)
+}
+
 /// Hold-to-confirm button state machine for WiFi reconfiguration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonState {
@@ -119,6 +124,29 @@ impl ButtonState {
             ButtonState::Active => "",
         }
     }
+
+    /// Hold fraction for the progress ring; nonzero only while holding.
+    #[must_use]
+    pub fn progress(self, now: Instant) -> f32 {
+        match self {
+            ButtonState::Holding { since } => hold_fraction(since, now, HOLD),
+            ButtonState::Idle { .. } | ButtonState::Pending { .. } | ButtonState::Active => 0.0,
+        }
+    }
+
+    /// Dynamic caption for the shared caption line; `None` when resting idle
+    /// or hidden behind an active setup AP.
+    #[must_use]
+    pub fn caption(self) -> Option<&'static str> {
+        match self {
+            ButtonState::Idle { error_since: None } | ButtonState::Active => None,
+            ButtonState::Idle {
+                error_since: Some(_),
+            }
+            | ButtonState::Holding { .. }
+            | ButtonState::Pending { .. } => Some(self.label()),
+        }
+    }
 }
 
 /// Hold-to-confirm state machine for the bare WiFi reconnect button. Unlike the
@@ -182,6 +210,25 @@ impl ReconnectState {
     #[must_use]
     pub fn is_animating(self) -> bool {
         matches!(self, ReconnectState::Holding { .. })
+    }
+
+    /// Hold fraction for the progress ring; nonzero only while holding.
+    #[must_use]
+    pub fn progress(self, now: Instant) -> f32 {
+        match self {
+            ReconnectState::Holding { since } => hold_fraction(since, now, HOLD),
+            ReconnectState::Idle | ReconnectState::Cooldown => 0.0,
+        }
+    }
+
+    /// Dynamic caption for the shared caption line; `None` when idle.
+    #[must_use]
+    pub fn caption(self) -> Option<&'static str> {
+        match self {
+            ReconnectState::Idle => None,
+            ReconnectState::Holding { .. } => Some("Keep holding…"),
+            ReconnectState::Cooldown => Some("Reconnecting…"),
+        }
     }
 }
 
@@ -331,6 +378,34 @@ impl RestartState {
             } => "Restart",
             RestartState::Holding { .. } => "Keep holding…",
             RestartState::Pending { .. } => "Restarting…",
+        }
+    }
+
+    /// Hold fraction for the progress ring; nonzero only while holding.
+    #[must_use]
+    pub fn progress(self, now: Instant) -> f32 {
+        match self {
+            RestartState::Holding { since } => hold_fraction(since, now, RESTART_HOLD),
+            RestartState::Idle { .. }
+            | RestartState::Pending { .. }
+            | RestartState::Cooldown { .. } => 0.0,
+        }
+    }
+
+    /// Dynamic caption for the shared caption line; `None` when resting idle.
+    /// The overlay substitutes a decline reason while `shows_message()`.
+    #[must_use]
+    pub fn caption(self) -> Option<&'static str> {
+        match self {
+            RestartState::Idle {
+                message_since: None,
+            } => None,
+            RestartState::Idle {
+                message_since: Some(_),
+            }
+            | RestartState::Holding { .. }
+            | RestartState::Pending { .. }
+            | RestartState::Cooldown { .. } => Some(self.label()),
         }
     }
 }
@@ -509,6 +584,81 @@ mod tests {
                 message_since: None
             }
         ));
+    }
+
+    /// Abs-diff float assertion (`float_cmp` is denied by the workspace lints).
+    fn assert_close(actual: f32, expected: f32, what: &str) {
+        assert!(
+            (actual - expected).abs() < 1e-3,
+            "{what}: expected ~{expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn progress_is_zero_when_idle_and_grows_while_holding() {
+        let t0 = Instant::now();
+        let mut b = ButtonState::default();
+        assert_close(b.progress(t0), 0.0, "idle");
+        b.tick(true, t0);
+        assert_close(
+            b.progress(t0 + Duration::from_millis(1500)),
+            0.5,
+            "half of 3s hold",
+        );
+        assert_close(b.progress(t0 + Duration::from_secs(10)), 1.0, "clamped");
+
+        let mut r = RestartState::default();
+        r.tick(true, t0);
+        assert_close(
+            r.progress(t0 + Duration::from_millis(2500)),
+            0.5,
+            "restart holds for 5s, so 2.5s is half",
+        );
+
+        let mut c = ReconnectState::default();
+        c.tick(true, t0);
+        assert_close(
+            c.progress(t0 + Duration::from_millis(1500)),
+            0.5,
+            "half of 3s hold",
+        );
+        c.tick(true, t0 + Duration::from_secs(3));
+        assert_close(
+            c.progress(t0 + Duration::from_secs(3)),
+            0.0,
+            "cooldown is not a hold",
+        );
+    }
+
+    #[test]
+    fn captions_are_none_only_for_resting_idle() {
+        let t0 = Instant::now();
+        let mut b = ButtonState::default();
+        assert_eq!(b.caption(), None);
+        b.tick(true, t0);
+        assert_eq!(b.caption(), Some("Keep holding…"));
+        b.tick(true, t0 + Duration::from_secs(3));
+        assert_eq!(b.caption(), Some("Starting WiFi setup…"));
+        b.tick(true, t0 + Duration::from_secs(13));
+        assert_eq!(
+            b.caption(),
+            Some("Couldn't start WiFi setup"),
+            "transient error idle still captions"
+        );
+        b.on_wifi_ap(true);
+        assert_eq!(b.caption(), None, "setup-active hides the control entirely");
+
+        let mut c = ReconnectState::default();
+        assert_eq!(c.caption(), None);
+        c.tick(true, t0);
+        assert_eq!(c.caption(), Some("Keep holding…"));
+        c.tick(true, t0 + Duration::from_secs(3));
+        assert_eq!(c.caption(), Some("Reconnecting…"));
+
+        let mut r = RestartState::default();
+        assert_eq!(r.caption(), None);
+        r.tick(true, t0);
+        assert_eq!(r.caption(), Some("Keep holding…"));
     }
 
     #[test]
