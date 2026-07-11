@@ -25,7 +25,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::JoinHandle;
 
 use bmc_nix::feed::{PackageFeed, PackageFeedEntry};
@@ -71,6 +71,8 @@ impl PendingServer {
     fn serve(self, routes: Vec<Route>) -> TestHttpServer {
         let shutdown = Arc::new(AtomicBool::new(false));
         let thread_shutdown = Arc::clone(&shutdown);
+        let hits = Arc::new(AtomicUsize::new(0));
+        let thread_hits = Arc::clone(&hits);
         let listener = self.listener;
 
         let handle = std::thread::spawn(move || {
@@ -85,13 +87,14 @@ impl PendingServer {
                 let Ok(stream) = stream else {
                     continue;
                 };
-                serve_one(&stream, &routes);
+                serve_one(&stream, &routes, &thread_hits);
             }
         });
 
         TestHttpServer {
             addr: self.addr,
             shutdown,
+            hits,
             handle: Some(handle),
         }
     }
@@ -104,7 +107,16 @@ impl PendingServer {
 struct TestHttpServer {
     addr: SocketAddr,
     shutdown: Arc<AtomicBool>,
+    hits: Arc<AtomicUsize>,
     handle: Option<JoinHandle<()>>,
+}
+
+impl TestHttpServer {
+    /// Number of requests served so far (the drop-time nudge connection
+    /// sends no request line and is never counted).
+    fn hits(&self) -> usize {
+        self.hits.load(Ordering::SeqCst)
+    }
 }
 
 impl Drop for TestHttpServer {
@@ -120,7 +132,7 @@ impl Drop for TestHttpServer {
 /// Read the request line and headers (the body, if any, is never read —
 /// `init` only ever sends GETs), then respond with the matching route's
 /// body or a 404.
-fn serve_one(stream: &TcpStream, routes: &[Route]) {
+fn serve_one(stream: &TcpStream, routes: &[Route], hits: &AtomicUsize) {
     let mut reader = BufReader::new(stream.try_clone().expect("BUG: clone stream for reading"));
     let mut request_line = String::new();
     if reader
@@ -130,6 +142,7 @@ fn serve_one(stream: &TcpStream, routes: &[Route]) {
     {
         return;
     }
+    hits.fetch_add(1, Ordering::SeqCst);
     let path = request_line
         .split_whitespace()
         .nth(1)
@@ -650,5 +663,111 @@ async fn init_store_wipe_replaces_existing_store() {
     assert!(
         !stage_dir.join("nix.wiped").exists(),
         "the demoted store must be fully collected, not just renamed"
+    );
+}
+
+/// The network init path must acquire `<stage_dir>/.init.lock` BEFORE
+/// creating the fixed-name download: with the lock held by a foreign
+/// initializer, a concurrent `init_store` must not have touched
+/// `<download_dir>/init-tarball.tar.gz`; once released, it completes.
+#[tokio::test]
+#[serial]
+async fn init_store_blocks_on_held_init_lock() {
+    use std::os::fd::AsRawFd;
+
+    let tmp = TempDir::new().expect("BUG: tempdir");
+    let stage_dir = tmp.path().join("stage");
+    let download_dir = tmp.path().join("download");
+    std::fs::create_dir_all(&stage_dir).expect("BUG: mkdir stage");
+
+    let bos_version = "2026-test-1";
+    let pending = bind_server();
+    let base_url = pending.base_url();
+    let tarball_route_path = format!("/nix-{bos_version}.tar.gz");
+    let tarball_bytes = build_tarball(tmp.path(), &[("nix/store/lockpkg/marker", b"locked")]);
+    let feed_bytes = package_feed_bytes(vec![PackageFeedEntry {
+        bos_version: bos_version.to_owned(),
+        download_url: format!("{base_url}{tarball_route_path}"),
+        profile_path: PROFILE_PATH.to_owned(),
+        index_url: None,
+    }]);
+    let server = pending.serve(vec![
+        Route {
+            path: "/nix-package-feed.v1.json".to_owned(),
+            body: feed_bytes,
+        },
+        Route {
+            path: tarball_route_path,
+            body: tarball_bytes,
+        },
+    ]);
+
+    let lock_file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(stage_dir.join(".init.lock"))
+        .expect("BUG: open .init.lock");
+    // SAFETY: `lock_file` is a valid open descriptor for the whole call.
+    let ret = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX) };
+    assert_eq!(ret, 0, "BUG: test could not take the init lock");
+
+    let factory_server = FactoryServerEntry {
+        id: "test".to_owned(),
+        base_url,
+        known_public_key: String::new(),
+        priority: 0,
+        enabled: true,
+    };
+    let task_download_dir = download_dir.clone();
+    let task_stage_dir = stage_dir.clone();
+    let task = tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        bmc_nix::store::init_store(
+            &client,
+            &factory_server,
+            bos_version,
+            &task_download_dir,
+            &task_stage_dir,
+            false,
+            None,
+        )
+        .await
+    });
+
+    // Poll for a full second: the blocked init must never reach the
+    // network (the feed GET happens only after the lock) nor create
+    // the fixed-name download. Request-count zero is the ordering
+    // proof; the file check is belt and braces.
+    for _ in 0..10 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert_eq!(
+            server.hits(),
+            0,
+            "a lock-blocked init must not have fetched anything"
+        );
+        assert!(
+            !download_dir.join("init-tarball.tar.gz").exists(),
+            "a lock-blocked init must not have created the download"
+        );
+    }
+    assert!(
+        !task.is_finished(),
+        "init must block while the lock is held"
+    );
+
+    // SAFETY: same still-open descriptor as above.
+    let ret = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_UN) };
+    assert_eq!(ret, 0, "BUG: test could not release the init lock");
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(30), task)
+        .await
+        .expect("init must finish once the lock is released")
+        .expect("BUG: init task panicked")
+        .expect("init should succeed once the lock is released");
+    assert_eq!(result.profile_path, PathBuf::from(PROFILE_PATH));
+    assert!(
+        stage_dir.join("nix/store/lockpkg/marker").exists(),
+        "the store must be promoted after the lock is released"
     );
 }

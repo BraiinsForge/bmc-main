@@ -590,6 +590,12 @@ pub enum InitStoreError {
         #[source]
         source: std::io::Error,
     },
+    #[error("failed to lock {path} for store initialization: {source}")]
+    LockFailed {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("tarball extraction failed: {0}")]
     ExtractionFailed(#[source] std::io::Error),
     #[error("tar exited with {status}: {stderr}")]
@@ -789,8 +795,38 @@ async fn extract_staged(tarball_path: &Path, stage_dir: &Path) -> Result<(), Ini
     Ok(())
 }
 
+/// Take the exclusive flock on `<stage_dir>/.init.lock`.
+///
+/// Serializes store initializations so concurrent runs cannot interfere
+/// with the fixed download and `nix.tmp`/`nix.wiped` staging names. The
+/// returned guard releases the lock on drop.
+async fn acquire_init_lock(stage_dir: &Path) -> Result<bmc_log::flock::FileLock, InitStoreError> {
+    std::fs::create_dir_all(stage_dir).map_err(|source| InitStoreError::LockFailed {
+        path: path_string(stage_dir),
+        source,
+    })?;
+    let lock_path = stage_dir.join(".init.lock");
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|source| InitStoreError::LockFailed {
+            path: path_string(&lock_path),
+            source,
+        })?;
+    let path = path_string(&lock_path);
+    tokio::task::spawn_blocking(move || {
+        bmc_log::flock::lock_file(file)
+            .map_err(|source| InitStoreError::LockFailed { path, source })
+    })
+    .await
+    .expect("BUG: lock task should not panic")
+}
+
 /// Initialize the Nix store from a factory tarball.
 ///
+/// 0. Take the exclusive init lock on `<stage_dir>/.init.lock`
 /// 1. Fetch the package feed from the factory server
 /// 2. Find the feed entry matching current BOS version
 /// 3. Download tarball to `download_dir` (streaming to disk)
@@ -808,6 +844,11 @@ pub async fn init_store(
     progress: Option<&dyn DownloadProgress>,
 ) -> Result<InitStoreResult, InitStoreError> {
     use tokio::io::AsyncWriteExt;
+
+    // Serialize against any other initializer before the fixed-name
+    // download or staging paths are touched. Held until return, so the
+    // post-promotion download cleanup is covered too.
+    let _lock = acquire_init_lock(stage_dir).await?;
 
     // Defense in depth: never wipe the store while /nix is the active
     // mount backed by it. cmd_init checks this first for a fast failure,
