@@ -17,7 +17,7 @@ use crate::prelude::*;
 use bmc_overlay_device_info::{DeviceInfoView, render_device_info};
 use bmc_overlay_offline::{OfflineView, render_offline};
 use bmc_overlay_settings_tray::{
-    NightModeView, RestartView, SettingsTrayProduct, SettingsTrayRenderState, SettingsTrayView,
+    NightModeView, SettingsTrayProduct, SettingsTrayRenderState, SettingsTrayView,
     render_settings_tray,
 };
 use bmc_render::colors::Color;
@@ -73,9 +73,7 @@ fn tray_view(
         active: false,
         until: "22:00".to_owned(),
     });
-    view.restart = Some(RestartView {
-        label: "Restart".to_owned(),
-    });
+    view.show_restart = true;
     view
 }
 
@@ -99,6 +97,16 @@ fn bmm101_tray_view() -> SettingsTrayView {
     )
 }
 
+fn bmm100_tray_view() -> SettingsTrayView {
+    tray_view(
+        SettingsTrayProduct::Bmm100,
+        "braiins-micro",
+        "10.0.0.99",
+        "Garage-WiFi",
+        45,
+    )
+}
+
 fn bfm100_tray_view() -> SettingsTrayView {
     tray_view(
         SettingsTrayProduct::Bfm100,
@@ -107,6 +115,23 @@ fn bfm100_tray_view() -> SettingsTrayView {
         "Studio-WiFi",
         60,
     )
+}
+
+/// Worst-case view: every control group visible at once (volume, brightness,
+/// night mode, restart, both WiFi holds) on the given product.
+fn all_groups_view(base: SettingsTrayView) -> SettingsTrayView {
+    let mut view = base;
+    view.show_volume = true;
+    view.wifi_buttons = true;
+    view.show_restart = true;
+    view.night_mode = Some(NightModeView {
+        active: true,
+        until: "06:30".to_owned(),
+    });
+    view.restart_caption = None;
+    view.reconfig_caption = None;
+    view.reconnect_caption = None;
+    view
 }
 
 #[expect(
@@ -138,19 +163,31 @@ thread_local! {
         RefCell::new(SettingsTrayRenderState::new(Instant::now()));
     static BMM101_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
         RefCell::new(SettingsTrayRenderState::new(Instant::now()));
+    static BMM100_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
+        RefCell::new(SettingsTrayRenderState::new(Instant::now()));
     static BFM100_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
         RefCell::new(SettingsTrayRenderState::new(Instant::now()));
     static NIGHT_MODE_ACTIVE_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
         RefCell::new(SettingsTrayRenderState::new(Instant::now()));
     static NIGHT_MODE_INACTIVE_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
         RefCell::new(SettingsTrayRenderState::new(Instant::now()));
+    static NIGHT_MODE_BMM101_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
+        RefCell::new(SettingsTrayRenderState::new(Instant::now()));
     static VOLUME_LOW_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
         RefCell::new(SettingsTrayRenderState::new(Instant::now()));
     static VOLUME_HIGH_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
         RefCell::new(SettingsTrayRenderState::new(Instant::now()));
+    static PRESSED_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
+        RefCell::new(SettingsTrayRenderState::new(Instant::now()));
     static RESTART_HOLDING_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
         RefCell::new(SettingsTrayRenderState::new(Instant::now()));
     static RESTART_DECLINED_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
+        RefCell::new(SettingsTrayRenderState::new(Instant::now()));
+    static ALL_GROUPS_BFM100_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
+        RefCell::new(SettingsTrayRenderState::new(Instant::now()));
+    static ALL_GROUPS_BMM100_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
+        RefCell::new(SettingsTrayRenderState::new(Instant::now()));
+    static SETUP_BMM100_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
         RefCell::new(SettingsTrayRenderState::new(Instant::now()));
 }
 
@@ -250,6 +287,14 @@ fn settings_tray(ctx: &mut StoryCtx) {
                 settings_tray_cell(bmm101, &BMM101_TRAY_RENDER_STATE, checker),
             );
         });
+        let bmm100 = bmm100_tray_view();
+        grid.cell(|ui| {
+            ui.header("Settings tray", "BMM100");
+            ui.div_custom(
+                (bmm100.width, bmm100.height),
+                settings_tray_cell(bmm100, &BMM100_TRAY_RENDER_STATE, checker),
+            );
+        });
         let bfm100 = bfm100_tray_view();
         grid.cell(|ui| {
             ui.header("Settings tray", "BFM100");
@@ -290,6 +335,18 @@ fn settings_tray(ctx: &mut StoryCtx) {
                 ),
             );
         });
+        let mut night_bmm101 = bmm101_tray_view();
+        night_bmm101.night_mode = Some(NightModeView {
+            active: true,
+            until: "06:30".to_owned(),
+        });
+        grid.cell(|ui| {
+            ui.header("Settings tray", "Night mode active, BMM101 caption line");
+            ui.div_custom(
+                (night_bmm101.width, night_bmm101.height),
+                settings_tray_cell(night_bmm101, &NIGHT_MODE_BMM101_TRAY_RENDER_STATE, checker),
+            );
+        });
         let mut volume_low = bmc100_tray_view();
         volume_low.volume = 0;
         grid.cell(|ui| {
@@ -308,23 +365,29 @@ fn settings_tray(ctx: &mut StoryCtx) {
                 settings_tray_cell(volume_high, &VOLUME_HIGH_TRAY_RENDER_STATE, checker),
             );
         });
-        let mut restart_holding = bmc100_tray_view();
-        restart_holding.restart = Some(RestartView {
-            label: "Keep holding…".to_owned(),
-        });
+        let mut pressed = bmc100_tray_view();
+        pressed.pressed_key = Some("volume_up".to_owned());
         grid.cell(|ui| {
-            ui.header("Settings tray", "Restart holding");
+            ui.header("Settings tray", "Pressed volume-up (inverted disc)");
+            ui.div_custom(
+                (pressed.width, pressed.height),
+                settings_tray_cell(pressed, &PRESSED_TRAY_RENDER_STATE, checker),
+            );
+        });
+        let mut restart_holding = bmc100_tray_view();
+        restart_holding.restart_progress = 0.6;
+        restart_holding.restart_caption = Some("Keep holding…".to_owned());
+        grid.cell(|ui| {
+            ui.header("Settings tray", "Restart holding, 60% ring");
             ui.div_custom(
                 (restart_holding.width, restart_holding.height),
                 settings_tray_cell(restart_holding, &RESTART_HOLDING_TRAY_RENDER_STATE, checker),
             );
         });
-        let mut restart_declined = bmc100_tray_view();
-        restart_declined.restart = Some(RestartView {
-            label: "upgrade in progress".to_owned(),
-        });
+        let mut restart_declined = bmm100_tray_view();
+        restart_declined.restart_caption = Some("upgrade in progress".to_owned());
         grid.cell(|ui| {
-            ui.header("Settings tray", "Restart declined");
+            ui.header("Settings tray", "Restart declined, BMM100 caption fit");
             ui.div_custom(
                 (restart_declined.width, restart_declined.height),
                 settings_tray_cell(
@@ -332,6 +395,39 @@ fn settings_tray(ctx: &mut StoryCtx) {
                     &RESTART_DECLINED_TRAY_RENDER_STATE,
                     checker,
                 ),
+            );
+        });
+        let all_groups_bfm100 = all_groups_view(bfm100_tray_view());
+        grid.cell(|ui| {
+            ui.header("Settings tray", "All groups, BFM100 round");
+            ui.div_custom(
+                (all_groups_bfm100.width, all_groups_bfm100.height),
+                settings_tray_cell(
+                    all_groups_bfm100,
+                    &ALL_GROUPS_BFM100_TRAY_RENDER_STATE,
+                    checker,
+                ),
+            );
+        });
+        let all_groups_bmm100 = all_groups_view(bmm100_tray_view());
+        grid.cell(|ui| {
+            ui.header("Settings tray", "All groups, BMM100 tight budget");
+            ui.div_custom(
+                (all_groups_bmm100.width, all_groups_bmm100.height),
+                settings_tray_cell(
+                    all_groups_bmm100,
+                    &ALL_GROUPS_BMM100_TRAY_RENDER_STATE,
+                    checker,
+                ),
+            );
+        });
+        let mut setup_bmm100 = bmm100_tray_view();
+        setup_bmm100.setup_ssid = Some("Braiins-Deck-Setup-A1B2C3".to_owned());
+        grid.cell(|ui| {
+            ui.header("Settings tray", "Setup mode, BMM100 compact row");
+            ui.div_custom(
+                (setup_bmm100.width, setup_bmm100.height),
+                settings_tray_cell(setup_bmm100, &SETUP_BMM100_TRAY_RENDER_STATE, checker),
             );
         });
     });
