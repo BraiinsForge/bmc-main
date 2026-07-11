@@ -14,6 +14,7 @@ from bmc_tui import catalog
 from bmc_tui.device import Device
 from bmc_tui.image import Image
 from bmc_tui.nix import Built, Pkg
+from bmc_tui.procedures.init import Init
 from bmc_tui.stage import Abort, dry_run
 
 _TARGET = "stm32mp15/ii3"
@@ -66,6 +67,72 @@ def _image(tmp_path: Path, *, top: str = _TOP, extra: tuple[str, ...] = ("rootfs
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
     return Image(fw)
+
+
+_TARBALL_ATTR = ".#init-tarball-armv7"
+_CLI_ATTR = ".#bmc-nix-cli-armv7-release"
+
+
+class _FakeNix:
+    """Attribute-aware fake Nix backend: build_out maps flake attrs to
+    prepared output directories. Implements the full Nix protocol so ty
+    accepts it wherever a Nix is annotated; the package-oriented methods
+    are unused by the init stages."""
+
+    def __init__(self, outs: dict[str, Path]) -> None:
+        self._outs = outs
+
+    def discover_widgets(self) -> list[str]:
+        return []
+
+    def list_packages(self) -> list[str]:
+        return []
+
+    def resolve(self, attr: str) -> Pkg:
+        raise NotImplementedError
+
+    def build(self, pkgs: list[Pkg]) -> list[Built]:
+        return []
+
+    def build_out(self, attr: str) -> str:
+        return str(self._outs[attr])
+
+    def copy(self, store_paths: list[str], dest: str) -> None:
+        return None
+
+
+def _cli_out(tmp_path: Path) -> Path:
+    out = tmp_path / "cli-out"
+    (out / "bin").mkdir(parents=True, exist_ok=True)
+    (out / "bin" / "bmc-nix-cli").write_bytes(b"elf")
+    return out
+
+
+def _fake_nix(tmp_path: Path, tarball_out: Path | None = None) -> _FakeNix:
+    tarball = tarball_out if tarball_out is not None else _tarball_out(tmp_path)
+    return _FakeNix({_TARBALL_ATTR: tarball, _CLI_ATTR: _cli_out(tmp_path)})
+
+
+def _tarball_out(
+    tmp_path: Path,
+    *,
+    overrides: dict[str, str] | None = None,
+    write_archive: bool = True,
+    meta: bool = True,
+) -> Path:
+    out = tmp_path / "tarball-out"
+    out.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "bos_version": "2026-06-14-x",
+        "profile_path": "/nix/var/nix/gcroots/profiles/bmc",
+        "tarball_name": "nix-2026-06-14-x.tar.gz",
+        **(overrides or {}),
+    }
+    if meta:
+        (out / "metadata.json").write_text(json.dumps(payload))
+    if write_archive and "/" not in payload["tarball_name"]:
+        (out / payload["tarball_name"]).write_bytes(b"tarball-bytes")
+    return out
 
 
 # ── ensure_device_reachable ───────────────────────────────────────────────────
@@ -423,76 +490,283 @@ def test_ensure_nix_cli_bootstraps_when_absent() -> None:
     assert nix.copied  # the closure was shipped
 
 
-# ── device init ───────────────────────────────────────────────────────────────
+# ── build_init_tarball metadata validation ────────────────────────────────────
 
 
-def test_store_absent_passes_when_clean() -> None:
-    # Probe returns nothing — neither store dir exists or both are empty.
-    catalog.ensure_store_absent(Device("h", backend=_Exec(_routes({}))))
-
-
-def test_store_absent_aborts_when_populated() -> None:
-    backend = _Exec(_routes({"for d in": "core\nbmc-nix-cli"}))
-    with pytest.raises(Abort, match="already populated"):
-        catalog.ensure_store_absent(Device("h", backend=backend))
-
-
-def test_mount_nix_store_skips_when_already_mounted() -> None:
-    backend = _Exec(_routes({"/proc/mounts": "/mnt/data/nix /nix none bind 0 0"}))
-    catalog.mount_nix_store(Device("h", backend=backend))
-    assert not any("mount --bind" in argv[-1] for argv in backend.runs)
-
-
-def test_mount_nix_store_binds_when_absent() -> None:
-    backend = _Exec(_routes({}))  # /proc/mounts probe is empty → not mounted
-    catalog.mount_nix_store(Device("h", backend=backend))
-    assert any("mount --bind /mnt/data/nix /nix" in argv[-1] for argv in backend.runs)
-
-
-def test_build_init_tarball_locates_the_archive(tmp_path: Path) -> None:
-    (tmp_path / "nix-2026.tar.gz").write_bytes(b"x")
+def test_build_tarball_reads_metadata(tmp_path: Path) -> None:
     plan = catalog.Provisioning()
-    catalog.build_init_tarball(_Nix(out_dir=str(tmp_path)), plan)
-    assert plan.tarball == tmp_path / "nix-2026.tar.gz"
+    catalog.build_init_tarball(_fake_nix(tmp_path), plan)
+    assert plan.tarball is not None
+    assert plan.tarball.name == "nix-2026-06-14-x.tar.gz"
+    assert plan.profile_path == "/nix/var/nix/gcroots/profiles/bmc"
 
 
-def test_build_init_tarball_aborts_when_archive_missing(tmp_path: Path) -> None:
+def test_build_tarball_aborts_without_metadata(tmp_path: Path) -> None:
+    nix = _fake_nix(tmp_path, _tarball_out(tmp_path, meta=False))
+    with pytest.raises(Abort, match=r"metadata\.json"):
+        catalog.build_init_tarball(nix, catalog.Provisioning())
+
+
+def test_build_tarball_aborts_on_missing_field(tmp_path: Path) -> None:
+    nix = _fake_nix(tmp_path, _tarball_out(tmp_path, overrides={"bos_version": ""}))
+    with pytest.raises(Abort, match="bos_version"):
+        catalog.build_init_tarball(nix, catalog.Provisioning())
+
+
+def test_build_tarball_aborts_on_non_basename(tmp_path: Path) -> None:
+    nix = _fake_nix(tmp_path, _tarball_out(tmp_path, overrides={"tarball_name": "../evil.tar.gz"}))
+    with pytest.raises(Abort, match="basename"):
+        catalog.build_init_tarball(nix, catalog.Provisioning())
+
+
+def test_build_tarball_aborts_on_missing_archive(tmp_path: Path) -> None:
+    nix = _fake_nix(tmp_path, _tarball_out(tmp_path, write_archive=False))
+    with pytest.raises(Abort, match="missing archive"):
+        catalog.build_init_tarball(nix, catalog.Provisioning())
+
+
+def test_build_tarball_aborts_on_relative_profile_path(tmp_path: Path) -> None:
+    out = _tarball_out(tmp_path, overrides={"profile_path": "var/profiles/bmc"})
+    nix = _fake_nix(tmp_path, out)
+    with pytest.raises(Abort, match="under /nix"):
+        catalog.build_init_tarball(nix, catalog.Provisioning())
+
+
+def test_build_tarball_aborts_on_traversal_profile_path(tmp_path: Path) -> None:
+    # startswith("/nix/") alone would let this escape to /tmp.
+    out = _tarball_out(tmp_path, overrides={"profile_path": "/nix/../tmp/profile"})
+    nix = _fake_nix(tmp_path, out)
+    with pytest.raises(Abort, match="under /nix"):
+        catalog.build_init_tarball(nix, catalog.Provisioning())
+
+
+# ── ensure_store_absent ───────────────────────────────────────────────────────
+
+
+def _store_state(
+    *,
+    mounted: bool = False,
+    identical: bool = False,
+    backing_exists: bool = False,
+    backing_listing: str = "",
+    rootfs_listing: str = "",
+) -> _Respond:
+    return _routes(
+        {
+            "/proc/mounts": "nix-line" if mounted else "",
+            "-ef": "yes" if identical else "",
+            "ls -A /mnt/data/nix": backing_listing,
+            "[ -d /mnt/data/nix ] && echo yes": "yes" if backing_exists else "",
+            "ls -A /nix": rootfs_listing,
+        }
+    )
+
+
+def test_store_absent_passes_when_nothing_exists() -> None:
+    dev = Device("h", backend=_Exec(_store_state()))
+    catalog.ensure_store_absent(dev)
+
+
+def test_store_absent_removes_empty_unmounted_backing_dir() -> None:
+    exec_ = _Exec(_store_state(backing_exists=True))
+    catalog.ensure_store_absent(Device("h", backend=exec_))
+    joined = [" ".join(argv) for argv in exec_.runs]
+    assert any("rmdir /mnt/data/nix" in c for c in joined)
+    assert not any("umount" in c for c in joined)
+
+
+def test_store_absent_unmounts_identical_bind_before_removal() -> None:
+    exec_ = _Exec(_store_state(mounted=True, identical=True, backing_exists=True))
+    catalog.ensure_store_absent(Device("h", backend=exec_))
+    joined = [" ".join(argv) for argv in exec_.runs]
+    umount = next(i for i, c in enumerate(joined) if "umount /nix" in c)
+    rmdir = next(i for i, c in enumerate(joined) if "rmdir /mnt/data/nix" in c)
+    assert umount < rmdir, "the bind mount must be released before its backing dir is removed"
+
+
+def test_store_absent_refuses_populated_backing_dir() -> None:
+    dev = Device("h", backend=_Exec(_store_state(backing_exists=True, backing_listing="store")))
+    with pytest.raises(Abort, match="populated"):
+        catalog.ensure_store_absent(dev)
+
+
+def test_store_absent_refuses_foreign_mount_without_backing_dir() -> None:
+    dev = Device("h", backend=_Exec(_store_state(mounted=True, identical=False)))
+    with pytest.raises(Abort, match="foreign"):
+        catalog.ensure_store_absent(dev)
+
+
+def test_store_absent_refuses_rootfs_nix_content() -> None:
+    dev = Device("h", backend=_Exec(_store_state(rootfs_listing="store")))
+    with pytest.raises(Abort, match="rootfs"):
+        catalog.ensure_store_absent(dev)
+
+
+class _BindMountedEmptyStore:
+    """Stateful responder: an empty /mnt/data/nix already bind-mounted at
+    /nix. umount/rmdir/`cli mount`/`cli init` flip the tracked state;
+    reads answer from it, so the whole procedure can run against it."""
+
+    def __init__(self, profile_path: str, *, fail_umount: bool = False) -> None:
+        self.profile_path = profile_path
+        self.fail_umount = fail_umount
+        self.mounted = True
+        self.backing_exists = True
+
+    def __call__(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":  # noqa: PLR0911  one return per probe reads clearest
+        cmd = argv[-1] if argv and argv[0] == "ssh" else " ".join(argv)
+        if "umount /nix" in cmd:
+            if self.fail_umount:
+                raise subprocess.CalledProcessError(32, argv)
+            self.mounted = False
+            return _cp(argv)
+        if "rmdir /mnt/data/nix" in cmd:
+            self.backing_exists = False
+            return _cp(argv)
+        if "bmc-nix-cli" in cmd and cmd.rstrip().endswith(" mount"):
+            self.mounted = True
+            self.backing_exists = True
+            return _cp(argv)
+        if " init " in cmd and "--tarball" in cmd:
+            self.backing_exists = True
+            return _cp(argv, self.profile_path)
+        if "grep ' /nix ' /proc/mounts" in cmd:
+            return _cp(argv, "nix-line" if self.mounted else "")
+        if "grep ' /mnt/data ' /proc/mounts" in cmd:
+            return _cp(argv, "data-line")
+        if "-ef" in cmd:
+            return _cp(argv, "yes" if self.mounted else "")
+        if "ls -A /mnt/data/nix" in cmd:
+            return _cp(argv, "")
+        if "[ -d /mnt/data/nix ] && echo yes" in cmd:
+            return _cp(argv, "yes" if self.backing_exists else "")
+        return _cp(argv)
+
+
+def test_store_absent_aborts_when_umount_fails() -> None:
+    responder = _BindMountedEmptyStore("/nix/var/nix/gcroots/profiles/bmc", fail_umount=True)
+    dev = Device("h", backend=_Exec(responder))
+    with pytest.raises(subprocess.CalledProcessError):
+        catalog.ensure_store_absent(dev)
+
+
+# ── run_cli_init / activate_profile / cleanup ────────────────────────────────
+
+
+def _pushed_plan(tmp_path: Path) -> catalog.Provisioning:
     plan = catalog.Provisioning()
-    with pytest.raises(Abort, match=r"expected one \.tar\.gz"):
-        catalog.build_init_tarball(_Nix(out_dir=str(tmp_path)), plan)
+    plan.profile_path = "/nix/var/nix/gcroots/profiles/bmc"
+    plan.remote_tarball = "/mnt/data/nix-x.tar.gz.deck-init.1"
+    plan.tarball = tmp_path / "t.tar.gz"
+    return plan
 
 
-def test_stream_init_tarball_streams_into_tar(tmp_path: Path) -> None:
-    tarball = tmp_path / "nix.tar.gz"
-    tarball.write_bytes(b"init-bytes")
-    backend = _Exec(_routes({}))
-    catalog.stream_init_tarball(Device("h", backend=backend), catalog.Provisioning(tarball))
-    argv, data = backend.streams[0]
-    assert argv[-1] == "tar xzf - -C /"
-    assert data == b"init-bytes"
+def test_run_cli_init_accepts_exact_profile_path(tmp_path: Path) -> None:
+    plan = _pushed_plan(tmp_path)
+    dev = Device("h", backend=_Exec(_routes({" init ": plan.profile_path or ""})))
+    catalog.run_cli_init(dev, plan)
 
 
-def test_stream_init_tarball_skips_under_dry_run(tmp_path: Path) -> None:
-    tarball = tmp_path / "nix.tar.gz"
-    tarball.write_bytes(b"x")
-    backend = _Exec(_routes({}))
+def test_run_cli_init_aborts_on_stdout_mismatch(tmp_path: Path) -> None:
+    plan = _pushed_plan(tmp_path)
+    dev = Device("h", backend=_Exec(_routes({" init ": "/nix/somewhere/else"})))
+    with pytest.raises(Abort, match="expected"):
+        catalog.run_cli_init(dev, plan)
+
+
+def test_activate_aborts_when_mount_identity_fails(tmp_path: Path) -> None:
+    plan = _pushed_plan(tmp_path)
+    dev = Device("h", backend=_Exec(_routes({"-ef": ""})))
+    with pytest.raises(Abort, match="not backed by"):
+        catalog.activate_profile(dev, plan)
+
+
+def test_cleanup_removes_pushed_files(tmp_path: Path) -> None:
+    plan = _pushed_plan(tmp_path)
+    exec_ = _Exec(_routes({}))
+    catalog.cleanup_remote_artifacts(Device("h", backend=exec_), plan)
+    joined = [" ".join(argv) for argv in exec_.runs]
+    assert any("rm -f" in c and "/mnt/data/nix-x.tar.gz.deck-init.1" in c for c in joined)
+
+
+# ── init procedure ────────────────────────────────────────────────────────────
+
+
+def test_init_procedure_dry_run_asserts_nothing(tmp_path: Path) -> None:
+    exec_ = _Exec(_store_state())
     token = dry_run.set(True)
     try:
-        catalog.stream_init_tarball(Device("h", backend=backend), catalog.Provisioning(tarball))
+        Init(device="h", dry_run=True).run(
+            dev=Device("h", backend=exec_),
+            backend=_fake_nix(tmp_path),
+        )
     finally:
         dry_run.reset(token)
-    assert backend.streams == []
+    assert exec_.streams == [], "dry-run must not push anything"
 
 
-def test_stream_init_tarball_raises_without_built_tarball() -> None:
-    with pytest.raises(RuntimeError, match="BUG"):
-        catalog.stream_init_tarball(Device("h", backend=_Exec(_routes({}))), catalog.Provisioning())
+def test_init_procedure_succeeds_over_identical_empty_bind(tmp_path: Path) -> None:
+    responder = _BindMountedEmptyStore("/nix/var/nix/gcroots/profiles/bmc")
+    exec_ = _Exec(responder)
+    Init(device="h").run(dev=Device("h", backend=exec_), backend=_fake_nix(tmp_path))
+    joined = [" ".join(argv) for argv in exec_.runs]
+    umount = next(i for i, c in enumerate(joined) if "umount /nix" in c)
+    rmdir = next(i for i, c in enumerate(joined) if "rmdir /mnt/data/nix" in c)
+    assert umount < rmdir, "the stale bind must be released before its backing dir is removed"
+    assert any("entrypoint" in c for c in joined), "activation must run after the re-init"
 
 
-def test_activate_profile_runs_the_entrypoint() -> None:
-    backend = _Exec(_routes({}))
-    catalog.activate_profile(Device("h", backend=backend))
-    assert backend.runs[-1][-1].endswith("/bmc/1-link/core/activation/entrypoint")
+def test_init_procedure_cleans_up_on_stage_failure(tmp_path: Path) -> None:
+    # A populated backing store makes ensure_store_absent abort after the
+    # CLI push; cleanup must still remove the pushed CLI.
+    exec_ = _Exec(_store_state(backing_exists=True, backing_listing="store"))
+    with pytest.raises(Abort):
+        Init(device="h").run(
+            dev=Device("h", backend=exec_),
+            backend=_fake_nix(tmp_path),
+        )
+    joined = [" ".join(argv) for argv in exec_.runs]
+    assert any("rm -f" in c and "bmc-nix-cli.deck-init" in c for c in joined)
+
+
+def test_init_procedure_cleans_up_pushed_tarball_on_init_failure(tmp_path: Path) -> None:
+    # init printing the wrong path aborts run_cli_init AFTER the tarball
+    # push; cleanup must remove the pushed tarball too, so the remote
+    # path is recorded before the (possibly failing) upload starts.
+    exec_ = _Exec(_routes({" init ": "/nix/somewhere/else"}))
+    with pytest.raises(Abort):
+        Init(device="h").run(
+            dev=Device("h", backend=exec_),
+            backend=_fake_nix(tmp_path),
+        )
+    joined = [" ".join(argv) for argv in exec_.runs]
+    cleanup = next(c for c in joined if "rm -f" in c)
+    assert "bmc-nix-cli.deck-init" in cleanup
+    assert ".tar.gz.deck-init." in cleanup
+
+
+def test_init_procedure_cleans_up_when_tarball_push_fails(tmp_path: Path) -> None:
+    # The upload itself dying must still leave cleanup with both remote
+    # paths — this is what pins remote_tarball being recorded BEFORE the
+    # stream starts (a record-after-push regression makes it fail).
+    class _TarballPushExplodes(_Exec):
+        def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
+            if any(".tar.gz.deck-init." in part for part in argv):
+                raise subprocess.CalledProcessError(1, argv)
+            super().stream(argv, chunks)
+
+    exec_ = _TarballPushExplodes(_routes({}))
+    # Stages don't catch subprocess errors; the raw failure propagates,
+    # but Init.run's finally must still sweep both pushed files.
+    with pytest.raises(subprocess.CalledProcessError):
+        Init(device="h").run(
+            dev=Device("h", backend=exec_),
+            backend=_fake_nix(tmp_path),
+        )
+    joined = [" ".join(argv) for argv in exec_.runs]
+    cleanup = next(c for c in joined if "rm -f" in c)
+    assert "bmc-nix-cli.deck-init" in cleanup
+    assert ".tar.gz.deck-init." in cleanup
 
 
 # ── e2e upgrade cycle ─────────────────────────────────────────────────────────

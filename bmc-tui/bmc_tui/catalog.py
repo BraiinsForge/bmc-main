@@ -8,6 +8,7 @@ sysupgrade; this catalog only fails fast on the obvious local problems.
 
 import difflib
 import json
+import os
 import shlex
 import shutil
 import socket
@@ -41,6 +42,11 @@ _NIX_CONF = "/etc/nix/nix.conf"
 _NIX_STORE = "/nix"
 _NIX_BACKING = "/mnt/data/nix"
 _INIT_TARBALL = ".#init-tarball-armv7"
+_NIX_CLI_ATTR = ".#bmc-nix-cli-armv7-release"
+# Run-unique device paths for the pushed CLI and tarball: Device.push
+# truncates via `cat >`, so a constant name would let concurrent
+# harness runs upload, read, and clean up the same file.
+_REMOTE_CLI = f"/tmp/bmc-nix-cli.deck-init.{os.getpid()}"
 
 
 @stage("Device reachable")
@@ -283,74 +289,175 @@ class Provisioning:
     """Mutable carrier threaded through the init stages."""
 
     tarball: Path | None = None  # the built init tarball, located by build_init_tarball
-
-
-@stage("Nix store absent")
-def ensure_store_absent(dev: Device) -> str:
-    """Refuse to reinitialise over a populated store; hand back the clear-down."""
-
-    remedy = f"ssh {dev.login} 'umount /nix 2>/dev/null; rm -rf /mnt/data/nix /nix'"
-    require(
-        not _store_populated(dev),
-        f"{console.lit(_NIX_STORE)} or {console.lit(_NIX_BACKING)} already populated — "
-        f"to reinitialise, first clear them: {console.lit(remedy)}",
-    )
-    return "store is clean"
-
-
-@stage("Bind-mount /nix")
-def mount_nix_store(dev: Device) -> str:
-    done_if(_nix_mounted(dev))
-    dev.run(f"mkdir -p {_NIX_BACKING} {_NIX_STORE} && mount --bind {_NIX_BACKING} {_NIX_STORE}")
-    return f"{console.lit(_NIX_BACKING)} → {console.lit(_NIX_STORE)}"
+    profile_path: str | None = None  # promoted profile path, from the tarball's metadata.json
+    cli: Path | None = None  # host path of the built bmc-nix-cli
+    remote_tarball: str | None = None  # device path of the pushed tarball
 
 
 @stage("Build init tarball")
 def build_init_tarball(nix: Nix, plan: Provisioning) -> str:
-    """Build the init tarball and locate its single `.tar.gz`."""
+    """Build the init tarball and validate its metadata.json contract."""
 
-    out = nix.build_out(_INIT_TARBALL)
-    tarballs = sorted(Path(out).glob("*.tar.gz"))
+    out = Path(nix.build_out(_INIT_TARBALL))
+    meta_path = out / "metadata.json"
+    require(meta_path.is_file(), f"no metadata.json in {console.lit(out)}")
+    meta = json.loads(meta_path.read_text())
+    missing = [k for k in ("bos_version", "profile_path", "tarball_name") if not meta.get(k)]
+    require(not missing, f"metadata.json misses: {', '.join(missing)}")
+    name = meta["tarball_name"]
+    require("/" not in name, f"tarball_name is not a basename: {console.lit(name)}")
+    tarball = out / name
+    require(tarball.is_file(), f"metadata.json names a missing archive: {console.lit(name)}")
+    profile_path = meta["profile_path"]
+    # normpath equality rejects "..", ".", doubled and trailing slashes,
+    # so the prefix check can't be escaped via /nix/../elsewhere.
     require(
-        len(tarballs) == 1,
-        f"expected one .tar.gz in {console.lit(out)}, found {len(tarballs)}",
+        profile_path == os.path.normpath(profile_path) and profile_path.startswith("/nix/"),
+        f"profile_path is not a normalized path under /nix: {console.lit(profile_path)}",
     )
-    plan.tarball = tarballs[0]
-    size = console.human_size(plan.tarball.stat().st_size)
-    return f"{console.lit(plan.tarball.name)} ({console.lit(size)})"
+    plan.tarball = tarball
+    plan.profile_path = profile_path
+    size = console.human_size(tarball.stat().st_size)
+    return f"{console.lit(name)} ({console.lit(size)})"
 
 
-@stage("Stream init tarball")
-def stream_init_tarball(dev: Device, plan: Provisioning) -> str:
+@stage("Build bmc-nix-cli")
+def build_nix_cli(nix: Nix, plan: Provisioning) -> str:
+    out = Path(nix.build_out(_NIX_CLI_ATTR))
+    cli = out / "bin/bmc-nix-cli"
+    require(cli.is_file(), f"no bin/bmc-nix-cli in {console.lit(out)}")
+    plan.cli = cli
+    return console.lit(cli.name)
+
+
+@stage("Push bmc-nix-cli")
+def push_nix_cli(dev: Device, plan: Provisioning) -> str:
+    cli = plan.cli
+    if cli is None:
+        msg = "BUG: bmc-nix-cli was not built before the push stage"
+        raise RuntimeError(msg)
+    dev.push(cli, _REMOTE_CLI)
+    dev.run(f"chmod +x {shlex.quote(_REMOTE_CLI)}")
+    return f"→ {console.lit(_REMOTE_CLI)}"
+
+
+@stage("Prepare data partition")
+def prepare_data_partition(dev: Device) -> str:
+    """Fsck/format/mount /mnt/data via the pushed CLI; a healthy running
+    Deck makes this a mount-state no-op."""
+
+    dev.run(f"{shlex.quote(_REMOTE_CLI)} prepare-data-partition")
+    return f"{console.lit('/mnt/data')} ready"
+
+
+@stage("Nix store absent")
+def ensure_store_absent(dev: Device) -> str:
+    """Refuse to reinitialise over a populated store; clear empty leftovers.
+
+    Runs after prepare_data_partition, so the verdict is about the real
+    data partition, and matches the CLI's is_initialized "any directory
+    counts" semantics — the CLI can never turn this stage's "absent"
+    verdict into a silent no-op.
+    """
+
+    if dry_run.get() and not dev.read("grep ' /mnt/data ' /proc/mounts || true"):
+        return "store absence not verified (partition not prepared under dry-run)"
+
+    remedy = f"ssh {dev.login} 'umount /nix 2>/dev/null; rm -rf /mnt/data/nix /nix'"
+    mounted = bool(dev.read(f"grep ' {_NIX_STORE} ' /proc/mounts || true"))
+    identical = bool(dev.read(f"[ {_NIX_STORE} -ef {_NIX_BACKING} ] && echo yes || true"))
+    require(
+        not mounted or identical,
+        f"{console.lit(_NIX_STORE)} is mounted from a foreign source — clear it first: "
+        f"{console.lit(remedy)}",
+    )
+    if not mounted:
+        rootfs_listing = dev.read(f"[ -d {_NIX_STORE} ] && ls -A {_NIX_STORE} 2>/dev/null || true")
+        require(
+            not rootfs_listing,
+            f"{console.lit(_NIX_STORE)} has rootfs content — clear it first: {console.lit(remedy)}",
+        )
+    backing_listing = dev.read(f"[ -d {_NIX_BACKING} ] && ls -A {_NIX_BACKING} 2>/dev/null || true")
+    require(
+        not backing_listing,
+        f"{console.lit(_NIX_BACKING)} already populated — to reinitialise, first clear it: "
+        f"{console.lit(remedy)}",
+    )
+    if dev.read(f"[ -d {_NIX_BACKING} ] && echo yes || true"):
+        if mounted:
+            # A bind mount would keep referencing the unlinked directory
+            # inode after rmdir, so the post-init mount identity check
+            # could never pass again.
+            dev.run(f"umount {_NIX_STORE}")
+        dev.run(f"rmdir {_NIX_BACKING}")
+        return "removed an empty leftover store dir"
+    return "store is clean"
+
+
+@stage("Push init tarball")
+def push_init_tarball(dev: Device, plan: Provisioning) -> str:
     tarball = plan.tarball
     if tarball is None:
-        msg = "BUG: init tarball was not built before the stream stage"
+        msg = "BUG: init tarball was not built before the push stage"
         raise RuntimeError(msg)
-    dev.extract_tar(tarball)
-    return f"extracted {console.lit(tarball.name)} → {console.lit('/')}"
+    # Recorded before the upload starts so a failed stream still leaves
+    # the path known to the cleanup stage.
+    remote = f"/mnt/data/{tarball.name}.deck-init.{os.getpid()}"
+    plan.remote_tarball = remote
+    dev.push(tarball, remote)
+    return f"→ {console.lit(remote)}"
+
+
+@stage("Initialise store")
+def run_cli_init(dev: Device, plan: Provisioning) -> str:
+    remote, profile_path = plan.remote_tarball, plan.profile_path
+    if remote is None or profile_path is None:
+        msg = "BUG: tarball was not pushed before the init stage"
+        raise RuntimeError(msg)
+    out = dev.run(
+        f"{shlex.quote(_REMOTE_CLI)} init --tarball {shlex.quote(remote)} "
+        f"--profile-path {shlex.quote(profile_path)}"
+    )
+    if out is not None:  # dry-run logs the command and returns None
+        # A fresh init prints exactly the promoted profile path; a no-op
+        # prints nothing. Both would be a bug here — the store was just
+        # verified absent — so demand the exact fresh-init contract.
+        require(
+            out == profile_path,
+            f"init printed {console.lit(out or '<nothing>')}, expected {console.lit(profile_path)}",
+        )
+    return f"promoted {console.lit(profile_path)}"
 
 
 @stage("Activate profile")
-def activate_profile(dev: Device) -> str:
-    """Activate generation 1 via its entrypoint, wiring up the device store."""
+def activate_profile(dev: Device, plan: Provisioning) -> str:
+    """Bind /nix from the data partition and run generation 1's entrypoint."""
 
-    dev.run(f"{_PROFILE_DIR}/1-link/core/activation/entrypoint")
+    profile_path = plan.profile_path
+    if profile_path is None:
+        msg = "BUG: tarball metadata was not read before activation"
+        raise RuntimeError(msg)
+    dev.run(f"{shlex.quote(_REMOTE_CLI)} mount")
+    if not dry_run.get():
+        # `mount` reports AlreadyMounted for ANY /nix mount without
+        # checking the source; verify the identity ourselves, like the
+        # firmware COMMAND does.
+        require(
+            bool(dev.read(f"[ {_NIX_STORE} -ef {_NIX_BACKING} ] && echo yes || true")),
+            f"{console.lit(_NIX_STORE)} is not backed by {console.lit(_NIX_BACKING)} after mount",
+        )
+    entrypoint = f"{profile_path}/1-link/core/activation/entrypoint"
+    dev.run(shlex.quote(entrypoint))
     return f"activated {console.lit('generation 1')}"
 
 
-def _store_populated(dev: Device) -> bool:
-    """True if either store dir has contents; absent or empty both pass."""
+@stage("Clean up pushed files")
+def cleanup_remote_artifacts(dev: Device, plan: Provisioning) -> str:
+    """Remove the pushed CLI and tarball; runs also after a failed stage."""
 
-    listing = dev.read(
-        f'for d in {_NIX_STORE} {_NIX_BACKING}; do [ -d "$d" ] && ls -A "$d" 2>/dev/null; done'
-    )
-    return bool(listing)
-
-
-def _nix_mounted(dev: Device) -> bool:
-    """True if /nix is mounted, per /proc/mounts."""
-
-    return bool(dev.read("grep ' /nix ' /proc/mounts || true"))
+    paths = [p for p in (plan.remote_tarball, _REMOTE_CLI) if p]
+    dev.run(f"rm -f {' '.join(shlex.quote(p) for p in paths)}")
+    return ", ".join(console.lit(p) for p in paths)
 
 
 def _mem_available(dev: Device) -> int:

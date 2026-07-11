@@ -10,6 +10,7 @@ All subprocess work goes through an injected `Exec` backend (`run` captures,
 """
 
 import json
+import shlex
 import subprocess
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -126,7 +127,7 @@ class Device:
         if dry_run.get():
             console.kv("would upload", f"{local.name} -> {remote}")
             return
-        argv = ["ssh", *_SSH_OPTS, f"{self._user}@{self._host}", f"cat > {remote}"]
+        argv = ["ssh", *_SSH_OPTS, f"{self._user}@{self._host}", f"cat > {shlex.quote(remote)}"]
         self._exec.stream(argv, _chunks(local))
 
     def extract_tar(self, local: Path) -> None:

@@ -66,6 +66,16 @@ def test_push_streams_file_over_ssh(tmp_path: Path) -> None:
     assert data == b"firmware-bytes"
 
 
+def test_push_quotes_remote_path(tmp_path: Path) -> None:
+    local = tmp_path / "f.bin"
+    local.write_bytes(b"x")
+    backend = _FakeExec()
+    dev = Device("h", backend=backend)
+    dev.push(local, "/mnt/data/odd name.tar.gz")
+    argv, _ = backend.streams[0]
+    assert argv[-1] == "cat > '/mnt/data/odd name.tar.gz'"
+
+
 def test_push_skips_under_dry_run(tmp_path: Path) -> None:
     fw = tmp_path / "fw.tar"
     fw.write_bytes(b"x")
