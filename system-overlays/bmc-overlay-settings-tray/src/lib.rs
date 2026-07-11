@@ -167,6 +167,11 @@ impl Slide {
         )
     }
 
+    /// Input is accepted only while the panel is fully settled.
+    fn accepts_input(&self) -> bool {
+        matches!(self.phase, SlidePhase::Idle)
+    }
+
     /// Anchor a pending ramp at the moment its first frame was presented.
     /// No-op in every other phase, so late or duplicate present notifications
     /// cannot restart a running ramp.
@@ -701,13 +706,23 @@ impl SettingsTrayOverlay {
             self.pending_requests.push(SettingsRequest::ToggleNightMode);
         }
         if output.close_tapped {
-            // No repaint needed: `dismissing` starts the slide on the next
-            // tick and the slide animation drives renders.
-            self.dismissing = true;
+            self.begin_dismiss();
         }
-        if output.pressed_changed {
+        if output.pressed_changed && self.slide.accepts_input() {
             self.repaint_queued = true;
         }
+    }
+
+    /// Arm the dismiss ramp and freeze interaction state before its first blit.
+    fn begin_dismiss(&mut self) {
+        if self.slide.is_dismissing() {
+            return;
+        }
+        self.dismissing = true;
+        self.slide.start_dismiss();
+        self.render_state.tree.cancel_touch();
+        self.touch_track = None;
+        self.repaint_queued = false;
     }
 
     /// Whether a hold FSM is mid-animation or a hold button is pressed this
@@ -810,10 +825,21 @@ impl SystemOverlay for SettingsTrayOverlay {
     }
 
     fn on_touch(&mut self, event: TouchEvent) {
+        if !self.slide.accepts_input() {
+            return;
+        }
+        if matches!(event, TouchEvent::Up { .. })
+            && self
+                .touch_track
+                .is_some_and(|track| dismiss::classify(track.start, track.latest))
+        {
+            self.begin_dismiss();
+            return;
+        }
         self.render_state.tree.push_touch(event);
         self.last_interaction = Instant::now();
         // Force a render so the interaction state processes the queued event and
-        // runs its hit-test; without a paint frame the slider/buttons never see
+        // runs its hit-test; without a paint frame the controls never see
         // the touch (the dismiss path below works off raw deltas, not hit-tests).
         self.content_dirty = true;
         #[expect(
@@ -839,14 +865,7 @@ impl SystemOverlay for SettingsTrayOverlay {
                     };
                 }
             }
-            TouchEvent::Up { .. } => {
-                if let Some(track) = self.touch_track.take()
-                    && dismiss::classify(track.start, track.latest)
-                {
-                    self.dismissing = true;
-                }
-            }
-            TouchEvent::Cancel => {
+            TouchEvent::Up { .. } | TouchEvent::Cancel => {
                 self.touch_track = None;
             }
         }
@@ -861,17 +880,15 @@ impl SystemOverlay for SettingsTrayOverlay {
             self.content_dirty = true;
         }
         let was_dirty = self.content_dirty;
-        self.advance_buttons(now);
+        if self.slide.accepts_input() {
+            self.advance_buttons(now);
+        }
 
         if now.duration_since(self.last_interaction) >= INACTIVITY_TIMEOUT {
-            self.dismissing = true;
+            self.begin_dismiss();
         }
-        // Begin the slide-out the first tick a dismiss is decided; report
-        // not-visible only once it has fully slid off so the framework keeps the
-        // surface mapped for the duration of the animation.
-        if self.dismissing && !self.slide.is_dismissing() {
-            self.slide.start_dismiss();
-        }
+        // Report not-visible only once the panel has fully slid off, keeping
+        // the surface mapped for the duration of the animation.
         self.slide.advance(now);
 
         let sliding = self.slide.animating(now);
@@ -1558,7 +1575,7 @@ mod slide_tests {
         assert!(s.offset(t0 + Duration::from_millis(500), 200.0).abs() < 1e-3);
         assert!(!s.dismiss_done(t0 + Duration::from_millis(500)));
         // A clean pending dismiss is blit-eligible at rest — an inactivity
-        // dismiss must not force a paint; a dirty one must (touch dismisses).
+        // dismiss must not force a paint; a real content change still must.
         assert_eq!(
             s.cached_blit_offset(t0 + Duration::from_millis(10), false, 200.0),
             Some(0.0)
@@ -1599,6 +1616,63 @@ mod slide_tests {
         assert!(
             overlay.tick(t0 + Duration::from_millis(5)).wants_render,
             "a stall between reveal and first paint must not strand the pending phase"
+        );
+    }
+
+    #[test]
+    fn transition_phases_discard_touch_without_dirtying_content() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+
+        overlay.on_reveal();
+        let _ = overlay.take_content_dirty();
+        overlay.on_touch(TouchEvent::Down {
+            id: 0,
+            x: 120.0,
+            y: 100.0,
+        });
+        assert!(
+            !overlay.content_dirty(),
+            "reveal-pending input must not invalidate the cached panel"
+        );
+
+        overlay.slide.start_dismiss();
+        overlay.on_touch(TouchEvent::Motion {
+            id: 0,
+            x: 120.0,
+            y: 40.0,
+        });
+        assert!(
+            !overlay.content_dirty(),
+            "dismiss-pending input must not invalidate the cached panel"
+        );
+    }
+
+    #[test]
+    fn dismiss_swipe_arms_pending_phase_without_dirtying_release() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        let _ = overlay.take_content_dirty();
+
+        overlay.on_touch(TouchEvent::Down {
+            id: 0,
+            x: 120.0,
+            y: 150.0,
+        });
+        let _ = overlay.take_content_dirty();
+        overlay.on_touch(TouchEvent::Motion {
+            id: 0,
+            x: 120.0,
+            y: 60.0,
+        });
+        let _ = overlay.take_content_dirty();
+
+        overlay.on_touch(TouchEvent::Up { id: 0 });
+
+        assert_eq!(overlay.slide.phase, SlidePhase::DismissPending);
+        assert!(
+            !overlay.content_dirty(),
+            "the release that starts dismissal must preserve the cached panel"
         );
     }
 

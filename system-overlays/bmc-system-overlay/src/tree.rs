@@ -109,6 +109,11 @@ impl TreeUi {
         self.interaction.push_event(mapped);
     }
 
+    /// Cancel the active touch without discarding the last rendered hit regions.
+    pub fn cancel_touch(&mut self) {
+        self.interaction.cancel_touch();
+    }
+
     /// Whether an element with `key` is currently pressed (one-frame latency,
     /// matching the WASM host). Backs the hold-to-confirm buttons.
     #[must_use]

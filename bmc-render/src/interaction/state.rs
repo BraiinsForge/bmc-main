@@ -127,6 +127,18 @@ impl InteractionState {
         self.event_queue.push_back(event);
     }
 
+    /// Cancel the active gesture and discard input that has not been processed.
+    pub fn cancel_touch(&mut self) {
+        self.event_queue.clear();
+        self.touch_down_key = None;
+        self.pending_click = None;
+        self.pending_click_pos = None;
+        self.last_touch_pos = None;
+        self.drag_delta_y = 0.0;
+        self.scroll_pos = None;
+        self.action_log.clear();
+    }
+
     /// Check if there are pending touch events to process.
     #[must_use]
     pub fn has_pending_events(&self) -> bool {
@@ -402,6 +414,28 @@ mod tests {
         let (clicked, pos) = state.button_with_pos("btn", bounds);
         assert!(!clicked);
         assert_eq!(pos, None);
+    }
+
+    #[test]
+    fn cancel_touch_immediately_drops_active_and_queued_input() {
+        let bounds = Rect::new(50.0, 20.0, 100.0, 40.0);
+        let mut state = InteractionState::new();
+
+        assert!(!state.button("btn", bounds));
+        state.push_event(TouchEvent::Down { x: 80.0, y: 35.0 });
+        state.begin_frame();
+        assert!(state.is_pressed("btn"));
+
+        state.push_event(TouchEvent::Up);
+        state.cancel_touch();
+
+        assert!(!state.is_pressed("btn"));
+        assert!(!state.has_pending_events());
+        state.begin_frame();
+        assert!(
+            !state.button("btn", bounds),
+            "cancelled input must not click"
+        );
     }
 
     #[test]
