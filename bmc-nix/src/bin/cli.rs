@@ -380,6 +380,17 @@ enum Commands {
         wipe: bool,
     },
 
+    /// Fsck, format, and mount the data partition when needed
+    PrepareDataPartition {
+        /// Data partition device to format and mount when needed.
+        #[arg(long, default_value = "/dev/mmcblk0p4")]
+        data_partition: PathBuf,
+
+        /// Data partition mount point.
+        #[arg(long, default_value = "/mnt/data")]
+        data_dir: PathBuf,
+    },
+
     /// Check whether the promoted Nix store exists
     IsInitialized {
         /// Data partition mount point.
@@ -1312,6 +1323,21 @@ async fn main() -> anyhow::Result<()> {
             .await
         }
 
+        Commands::PrepareDataPartition {
+            data_partition,
+            data_dir,
+        } => {
+            bmc_nix::partition::prepare_data_partition(
+                &bmc_nix::store::TokioCommandRunner,
+                &data_partition,
+                &data_dir,
+                &bmc_nix::partition::read_proc_mounts()?,
+                &bmc_nix::partition::read_proc_self_mountinfo()?,
+            )
+            .await?;
+            Ok(())
+        }
+
         Commands::IsInitialized { data_dir } => {
             if is_initialized(&data_dir) {
                 Ok(())
@@ -1607,6 +1633,22 @@ mod tests {
         // The factory closure is too large for the /tmp tmpfs; it must land
         // on persistent storage.
         assert_eq!(download_dir, PathBuf::from("/mnt/data"));
+    }
+
+    #[test]
+    fn prepare_data_partition_parses_with_defaults() {
+        let cli = Cli::try_parse_from(["bmc-nix-cli", "prepare-data-partition"])
+            .expect("BUG: prepare-data-partition should parse with defaults");
+
+        let Commands::PrepareDataPartition {
+            data_partition,
+            data_dir,
+        } = cli.command
+        else {
+            panic!("BUG: parsed command must be prepare-data-partition");
+        };
+        assert_eq!(data_partition, PathBuf::from("/dev/mmcblk0p4"));
+        assert_eq!(data_dir, PathBuf::from("/mnt/data"));
     }
 
     #[test]
