@@ -174,9 +174,13 @@ def human_size(num_bytes: int) -> str:
 
 
 def cmd_output(text: str) -> None:
-    """Print command output (indented, dimmed)."""
+    """Print command output (indented, dimmed) to stderr, keeping it on the
+    same stream as the error header it explains — a redirect must not split
+    them. The output is arbitrary text, so it is escaped — brackets in it must
+    not parse as rich markup — and auto-highlighting is off so lines stay
+    uniform dim, not piecemeal-styled."""
     for line in text.rstrip().splitlines():
-        _print(f" [dim]{line}[/dim]")
+        console.print(f" [dim]{escape(line)}[/dim]", highlight=False)
 
 
 def spinner(msg: str) -> Status:

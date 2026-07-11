@@ -1,5 +1,6 @@
 """Unit tests for the staged-procedure engine."""
 
+import subprocess
 from dataclasses import dataclass
 
 import pytest
@@ -111,6 +112,60 @@ def test_entrypoint_bad_args_exits_nonzero() -> None:
     with pytest.raises(SystemExit) as exc:
         main([])  # missing required --device
     assert exc.value.code != 0
+
+
+def test_entrypoint_renders_captured_output_on_command_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    @entrypoint
+    def main(args: _Args) -> None:
+        raise subprocess.CalledProcessError(
+            1,
+            ["ssh", "root@device", "bmc-nix-cli add-packages"],
+            output="conflicting symlink /profile/bin/flip-clock\n",
+            stderr="Error: profile activation failed\n",
+        )
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--device", "x"])
+    assert exc.value.code == 1
+    # Header and captured output must share stderr — a redirect like
+    # `2>err.log` must not split the error from the output explaining it.
+    err = capsys.readouterr().err
+    assert "conflicting symlink /profile/bin/flip-clock" in err
+    assert "Error: profile activation failed" in err
+    assert "exit 1" in err
+
+
+def test_entrypoint_renders_bytes_stderr_on_command_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    @entrypoint
+    def main(args: _Args) -> None:
+        raise subprocess.CalledProcessError(
+            1, ["ssh", "root@device", "cat > /tmp/fw.tar"], stderr=b"dd: no space left\n"
+        )
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--device", "x"])
+    assert exc.value.code == 1
+    assert "dd: no space left" in capsys.readouterr().err
+
+
+def test_entrypoint_renders_signal_death_on_command_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    @entrypoint
+    def main(args: _Args) -> None:
+        # Negative returncode is subprocess's encoding for "killed by signal".
+        raise subprocess.CalledProcessError(-15, ["ssh", "root@device", "sleep 100"])
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--device", "x"])
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "killed by signal 15" in err
+    assert "exit -15" not in err
 
 
 def test_dry_run_defaults_false() -> None:

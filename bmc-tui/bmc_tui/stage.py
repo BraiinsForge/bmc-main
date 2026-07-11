@@ -8,6 +8,8 @@ clean error plus a non-zero exit.
 
 import functools
 import inspect
+import shlex
+import subprocess
 from collections.abc import Callable
 from contextvars import ContextVar
 from typing import ParamSpec, get_type_hints
@@ -95,7 +97,9 @@ def stage(
 def entrypoint(main: Callable[..., None]) -> Callable[..., None]:
     """Wrap a script's `main`: parse CLI args from its dataclass parameter via
     tyro (auto `--help`, usage-on-error), run it, turn an `Abort` into a rendered
-    error plus `exit 1`, and Ctrl-C into a clean exit. Anything unexpected gets a
+    error plus `exit 1`, and Ctrl-C into a clean exit. A failed subprocess is
+    rendered with its captured stdout/stderr — that output is the actual error,
+    and the default exception message drops it. Anything unexpected gets a
     readable rich traceback rather than a raw dump. Call-sites stay bare
     top-to-bottom statements.
     """
@@ -114,8 +118,30 @@ def entrypoint(main: Callable[..., None]) -> Callable[..., None]:
         except Abort as e:
             console.error(e.hint)
             raise SystemExit(1) from e
+        except subprocess.CalledProcessError as e:
+            cmd = e.cmd if isinstance(e.cmd, str) else shlex.join(e.cmd)
+            # Negative returncode is how subprocess reports a signal death.
+            status = (
+                f"killed by signal {-e.returncode}" if e.returncode < 0 else f"exit {e.returncode}"
+            )
+            console.error(f"{status}: {console.lit(cmd)}")
+            for captured in (e.stdout, e.stderr):
+                text = _output_text(captured)
+                if text.strip():
+                    console.cmd_output(text)
+            raise SystemExit(1) from e
         except KeyboardInterrupt:
             console.warn("interrupted")
             raise SystemExit(130) from None
 
     return wrapped
+
+
+def _output_text(captured: str | bytes | None) -> str:
+    """Captured process output as text — `run` captures str, `stream` bytes,
+    and either stream may not have been captured at all."""
+    if captured is None:
+        return ""
+    if isinstance(captured, bytes):
+        return captured.decode(errors="replace")
+    return captured
