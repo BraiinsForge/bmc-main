@@ -110,9 +110,11 @@ in the tarball.
 `bmc-nix-cli init` performs the following, in order:
 
 1. **Prepare the data partition.** The default device is `/dev/mmcblk0p4` and the default mount point is `/mnt/data`.
-   The CLI verifies the block device, uses `blkid` to detect an existing filesystem, runs `mkfs.ext4` when the partition
-   is blank, checks it with `e2fsck`, creates the mount point, and mounts it as ext4. If `/mnt/data` is already mounted,
-   this step is a no-op.
+   The CLI verifies the block device, refuses to touch a partition that backs an active mount, uses `blkid` to detect an
+   existing filesystem, and runs `mkfs.ext4` when the partition is blank. It then checks the filesystem with
+   `e2fsck -p`, escalating to `e2fsck -y` when preen cannot repair it and reformatting with `mkfs.ext4` when errors
+   remain even after that, before creating the mount point and mounting it as ext4. If the partition is already mounted
+   at `/mnt/data`, this step is a no-op.
 2. **Short-circuit when the store is already promoted.** If `<data-dir>/nix` exists, `init` exits 0 without changing it
    unless `--wipe` is passed. `--wipe` refuses to run while `/nix` is an active mount — the running system would be
    using the very store it deletes.
@@ -125,9 +127,10 @@ in the tarball.
    `<download_url>.sig`, verifies the tarball against `known_public_key`, and aborts on a missing, malformed, or
    rejected signature. If `require_signature` is absent or false, verification is skipped and a warning is logged.
 5. **Unpack the tarball into `/mnt/data/nix.tmp` and atomically promote `nix.tmp/nix` to `nix`.** The tarball extracts
-   into a staging directory inside `/mnt/data`. Root overlay entries from the tarball are copied to `/`, then the
-   extracted `nix.tmp/nix` subtree is renamed to `<data-dir>/nix`. This gives the boot-time services a single check —
-   "does `/mnt/data/nix` exist?" — that cannot observe a half-extracted store. A crash or power loss mid-extract leaves
+   into a staging directory inside `/mnt/data`. Only the extracted `nix.tmp/nix` subtree is renamed to `<data-dir>/nix`;
+   entries outside `nix/` are ignored and removed with the staging directory — live rootfs files such as
+   `/etc/nix/nix.conf` come from activation on first boot. This gives the boot-time services a single check — "does
+   `/mnt/data/nix` exist?" — that cannot observe a half-extracted store. A crash or power loss mid-extract leaves
    `nix.tmp` behind, which the next `init` run wipes and re-extracts.
 
 Once `nix` is in place, the initial profile shipped inside the tarball is available and can be activated on next boot.
