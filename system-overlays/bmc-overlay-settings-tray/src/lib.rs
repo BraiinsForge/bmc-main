@@ -592,10 +592,15 @@ impl SettingsTrayOverlay {
             return;
         };
         self.snapshot_version = Some(version);
-        self.ip = snapshot.ipv4.as_ref().map(Ipv4Addr::to_string);
+        let ip = snapshot.ipv4.as_ref().map(Ipv4Addr::to_string);
+        let signal_band_changed =
+            ui::signal_band(snapshot.wifi_signal_dbm) != ui::signal_band(self.wifi_signal);
+        let content_changed =
+            ip != self.ip || snapshot.station_ssid != self.ssid || signal_band_changed;
+        self.ip = ip;
         self.wifi_signal = snapshot.wifi_signal_dbm;
         self.ssid = snapshot.station_ssid;
-        self.content_dirty = true;
+        self.content_dirty |= content_changed;
     }
 
     /// Reap a finished reconnect child so the `sh` process does not zombie.
@@ -1289,6 +1294,53 @@ mod view_tests {
         assert_eq!(view.ip, None);
         assert_eq!(view.ssid, None);
         assert_eq!(view.wifi_signal, None);
+    }
+
+    #[test]
+    fn signal_jitter_within_one_icon_band_does_not_dirty_content() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        overlay.ip = Some("192.168.1.42".to_owned());
+        overlay.ssid = Some("Braiins-WiFi".to_owned());
+        overlay.wifi_signal = Some(-52);
+        overlay.env = Box::new(StaticEnv {
+            snapshot: Some(Snapshot {
+                ipv4: Some(Ipv4Addr::new(192, 168, 1, 42)),
+                station_ssid: Some("Braiins-WiFi".to_owned()),
+                wifi_signal_dbm: Some(-57),
+            }),
+        });
+        let _ = overlay.take_content_dirty();
+
+        let _ = overlay.tick(now);
+
+        assert_eq!(overlay.wifi_signal, Some(-57), "retain the latest reading");
+        assert!(
+            !overlay.content_dirty(),
+            "unchanged rendered signal band must keep the panel cache clean"
+        );
+    }
+
+    #[test]
+    fn signal_crossing_into_another_icon_band_dirties_content() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        overlay.wifi_signal = Some(-52);
+        overlay.env = Box::new(StaticEnv {
+            snapshot: Some(Snapshot {
+                ipv4: None,
+                station_ssid: None,
+                wifi_signal_dbm: Some(-76),
+            }),
+        });
+        let _ = overlay.take_content_dirty();
+
+        let _ = overlay.tick(now);
+
+        assert!(
+            overlay.content_dirty(),
+            "a different rendered signal band must refresh the panel cache"
+        );
     }
 }
 
