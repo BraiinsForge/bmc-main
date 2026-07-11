@@ -254,21 +254,6 @@ pub struct ServerEntry {
     pub required: bool,
 }
 
-/// Factory initialization index (`nix-factory.v1.json`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FactoryIndex {
-    pub version: u32,
-    pub tarballs: Vec<FactoryTarball>,
-}
-
-/// A single factory tarball entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FactoryTarball {
-    pub bos_version: String,
-    pub download_url: String,
-    pub profile_path: String,
-}
-
 /// A single fetched index bundled with its source-server metadata.
 ///
 /// Built by [`crate::index::fetch_and_merge_indexes`] from `ServerEntry`
@@ -735,23 +720,6 @@ mod tests {
             !entry.required,
             "an explicit `required: false` must be honoured"
         );
-    }
-
-    #[test]
-    fn deserialize_factory_index() {
-        let json = r#"{
-            "version": 1,
-            "tarballs": [{
-                "bos_version": "1.0.0",
-                "download_url": "https://example.com/tarball.tar.gz",
-                "profile_path": "/nix/var/nix/gcroots/profiles/bmc"
-            }]
-        }"#;
-        let factory: FactoryIndex =
-            serde_json::from_str(json).expect("BUG: test JSON should be valid");
-        assert_eq!(factory.version, 1);
-        assert_eq!(factory.tarballs.len(), 1);
-        assert_eq!(factory.tarballs[0].bos_version, "1.0.0");
     }
 
     #[test]

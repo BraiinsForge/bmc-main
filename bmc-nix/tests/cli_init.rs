@@ -4,7 +4,7 @@
 //!
 //! These invoke the actual compiled binary against a real loopback HTTP
 //! server (a minimal `std::net::TcpListener` server, no new deps) serving
-//! the factory index and tarball `init` fetches over real HTTP, with
+//! the package feed and tarball `init` fetches over real HTTP, with
 //! `prepare_data_partition`'s shell-outs neutralized via PATH stubs (same
 //! mechanism as the `nix-store` stub in `cli_operations.rs`). This covers
 //! CLI dispatch, servers-config loading, real tar extraction, and durable
@@ -28,7 +28,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
-use bmc_nix::types::{FactoryIndex, FactoryServerEntry, FactoryTarball, ServersConfig};
+use bmc_nix::feed::{PackageFeed, PackageFeedEntry};
+use bmc_nix::types::{FactoryServerEntry, ServersConfig};
 use serial_test::serial;
 use tempfile::TempDir;
 
@@ -45,8 +46,8 @@ struct Route {
 }
 
 /// A bound-but-not-yet-serving listener. Split from [`TestHttpServer`] so
-/// callers can learn the kernel-assigned port (needed to build a factory
-/// index whose `download_url` points back at this same server) before the
+/// callers can learn the kernel-assigned port (needed to build a package
+/// feed whose `download_url` points back at this same server) before the
 /// route table — which references that port — is known.
 struct PendingServer {
     listener: TcpListener,
@@ -328,12 +329,12 @@ fn build_tarball(root: &Path, entries: &[(&str, &[u8])]) -> Vec<u8> {
     std::fs::read(&tarball_path).expect("BUG: read tarball fixture bytes")
 }
 
-fn factory_index_bytes(tarballs: Vec<FactoryTarball>) -> Vec<u8> {
-    serde_json::to_vec(&FactoryIndex {
+fn package_feed_bytes(entries: Vec<PackageFeedEntry>) -> Vec<u8> {
+    serde_json::to_vec(&PackageFeed {
         version: 1,
-        tarballs,
+        entries,
     })
-    .expect("BUG: serialize factory index")
+    .expect("BUG: serialize package feed")
 }
 
 const PROFILE_PATH: &str = "/nix/var/nix/gcroots/profiles/bmc";
@@ -350,15 +351,16 @@ fn init_downloads_extracts_and_promotes() {
     let base_url = pending.base_url();
     let tarball_route_path = format!("/nix-{bos_version}.tar.gz");
     let tarball_bytes = build_tarball(env.tmp.path(), &[("nix/store/testpkg/marker", b"hello")]);
-    let factory_bytes = factory_index_bytes(vec![FactoryTarball {
+    let feed_bytes = package_feed_bytes(vec![PackageFeedEntry {
         bos_version: bos_version.to_owned(),
         download_url: format!("{base_url}{tarball_route_path}"),
         profile_path: PROFILE_PATH.to_owned(),
+        index_url: None,
     }]);
     let _server = pending.serve(vec![
         Route {
-            path: "/nix-factory.v1.json".to_owned(),
-            body: factory_bytes,
+            path: "/nix-package-feed.v1.json".to_owned(),
+            body: feed_bytes,
         },
         Route {
             path: tarball_route_path,
@@ -435,15 +437,16 @@ fn init_rejects_tarball_without_nix_subtree() {
     let base_url = pending.base_url();
     let tarball_route_path = format!("/nix-{bos_version}.tar.gz");
     let tarball_bytes = build_tarball(env.tmp.path(), &[("etc/marker", b"not a store")]);
-    let factory_bytes = factory_index_bytes(vec![FactoryTarball {
+    let feed_bytes = package_feed_bytes(vec![PackageFeedEntry {
         bos_version: bos_version.to_owned(),
         download_url: format!("{base_url}{tarball_route_path}"),
         profile_path: PROFILE_PATH.to_owned(),
+        index_url: None,
     }]);
     let _server = pending.serve(vec![
         Route {
-            path: "/nix-factory.v1.json".to_owned(),
-            body: factory_bytes,
+            path: "/nix-package-feed.v1.json".to_owned(),
+            body: feed_bytes,
         },
         Route {
             path: tarball_route_path,
@@ -492,15 +495,16 @@ fn init_collects_stale_leftovers() {
     let base_url = pending.base_url();
     let tarball_route_path = format!("/nix-{bos_version}.tar.gz");
     let tarball_bytes = build_tarball(env.tmp.path(), &[("nix/store/freshpkg/marker", b"fresh")]);
-    let factory_bytes = factory_index_bytes(vec![FactoryTarball {
+    let feed_bytes = package_feed_bytes(vec![PackageFeedEntry {
         bos_version: bos_version.to_owned(),
         download_url: format!("{base_url}{tarball_route_path}"),
         profile_path: PROFILE_PATH.to_owned(),
+        index_url: None,
     }]);
     let _server = pending.serve(vec![
         Route {
-            path: "/nix-factory.v1.json".to_owned(),
-            body: factory_bytes,
+            path: "/nix-package-feed.v1.json".to_owned(),
+            body: feed_bytes,
         },
         Route {
             path: tarball_route_path,
@@ -543,14 +547,15 @@ fn init_fails_when_bos_version_not_in_index() {
 
     let pending = bind_server();
     let base_url = pending.base_url();
-    let factory_bytes = factory_index_bytes(vec![FactoryTarball {
+    let feed_bytes = package_feed_bytes(vec![PackageFeedEntry {
         bos_version: indexed_version.to_owned(),
         download_url: format!("{base_url}/nix-{indexed_version}.tar.gz"),
         profile_path: PROFILE_PATH.to_owned(),
+        index_url: None,
     }]);
     let _server = pending.serve(vec![Route {
-        path: "/nix-factory.v1.json".to_owned(),
-        body: factory_bytes,
+        path: "/nix-package-feed.v1.json".to_owned(),
+        body: feed_bytes,
     }]);
 
     env.write_servers_config(&base_url);
@@ -563,7 +568,7 @@ fn init_fails_when_bos_version_not_in_index() {
         "an unindexed BOS version must not exit 0"
     );
     assert!(
-        run.stderr.contains("no factory tarball for BOS version"),
+        run.stderr.contains("no package feed entry for BOS version"),
         "stderr should name the missing-version error: {}",
         run.stderr,
     );
@@ -595,15 +600,16 @@ async fn init_store_wipe_replaces_existing_store() {
     let base_url = pending.base_url();
     let tarball_route_path = format!("/nix-{bos_version}.tar.gz");
     let tarball_bytes = build_tarball(tmp.path(), &[("nix/store/newpkg/marker", b"new")]);
-    let factory_bytes = factory_index_bytes(vec![FactoryTarball {
+    let feed_bytes = package_feed_bytes(vec![PackageFeedEntry {
         bos_version: bos_version.to_owned(),
         download_url: format!("{base_url}{tarball_route_path}"),
         profile_path: PROFILE_PATH.to_owned(),
+        index_url: None,
     }]);
     let _server = pending.serve(vec![
         Route {
-            path: "/nix-factory.v1.json".to_owned(),
-            body: factory_bytes,
+            path: "/nix-package-feed.v1.json".to_owned(),
+            body: feed_bytes,
         },
         Route {
             path: tarball_route_path,

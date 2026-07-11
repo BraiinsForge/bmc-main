@@ -1,13 +1,13 @@
-# init-artifacts: Produces the initialization index, tarball, and factory index for ARM.
+# init-artifacts: Produces the initialization index, tarball, and package feed for ARM.
 #
 # Selects init packages from the full packages attrset and produces
-# the init-index, init-tarball, and init-factory-index for device provisioning.
+# the init-index, init-tarball, and init-package-feed for device provisioning.
 { self
 , pkgs
 , lib
 , mkIndex
 , mkTarball
-, mkFactoryIndex
+, mkPackageFeed
 , bmc-nix-cli
 , packages
 , hooksOverridePath ? null # native hooks for cross-compilation bootstrap
@@ -51,10 +51,9 @@ let
     profile_path = profilePath;
   };
 
-  # Factory index — placeholder URL for local testing.
-  # CI replaces this with the real URL via scripts/build-factory-index.sh.
-  factoryIndex = mkFactoryIndex {
-    tarballs = [{
+  # Package feed — placeholder URL for local testing.
+  packageFeed = mkPackageFeed {
+    entries = [{
       bos_version = bosVersion;
       download_url = "https://cache.braiins.com/v1/nix-${bosVersion}.tar.gz";
       profile_path = profilePath;
@@ -64,5 +63,5 @@ in
 {
   init-index-armv7 = index;
   init-tarball-armv7 = tarball;
-  init-factory-index = factoryIndex;
+  init-package-feed = packageFeed;
 }

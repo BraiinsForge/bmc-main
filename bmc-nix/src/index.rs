@@ -12,7 +12,6 @@ use crate::types::{
 };
 
 pub const PACKAGE_INDEX_VERSION: u32 = 1;
-pub const FACTORY_INDEX_VERSION: u32 = 1;
 
 #[must_use]
 pub fn make_index_url(base_url: &str) -> String {
@@ -24,11 +23,11 @@ pub fn make_index_url(base_url: &str) -> String {
 }
 
 #[must_use]
-pub fn make_factory_url(base_url: &str) -> String {
+pub fn make_package_feed_url(base_url: &str) -> String {
     format!(
-        "{}/nix-factory.v{}.json",
+        "{}/nix-package-feed.v{}.json",
         base_url.trim_end_matches('/'),
-        FACTORY_INDEX_VERSION,
+        crate::feed::PACKAGE_FEED_VERSION,
     )
 }
 
@@ -735,10 +734,10 @@ mod tests {
     }
 
     #[test]
-    fn make_factory_url_normalizes_configured_base_url() {
+    fn make_package_feed_url_normalizes_configured_base_url() {
         assert_eq!(
-            make_factory_url("https://cache.braiins.com/v1"),
-            "https://cache.braiins.com/v1/nix-factory.v1.json"
+            make_package_feed_url("https://cache.braiins.com/v1"),
+            "https://cache.braiins.com/v1/nix-package-feed.v1.json"
         );
     }
 
@@ -751,10 +750,10 @@ mod tests {
     }
 
     #[test]
-    fn make_factory_url_trims_trailing_slashes() {
+    fn make_package_feed_url_trims_trailing_slashes() {
         assert_eq!(
-            make_factory_url("https://cache.braiins.com/v1/"),
-            "https://cache.braiins.com/v1/nix-factory.v1.json"
+            make_package_feed_url("https://cache.braiins.com/v1/"),
+            "https://cache.braiins.com/v1/nix-package-feed.v1.json"
         );
     }
 

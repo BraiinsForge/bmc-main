@@ -5,7 +5,7 @@ pub mod progress;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::types::{FactoryServerEntry, FactoryTarball, ResolvedPackage};
+use crate::types::{FactoryServerEntry, ResolvedPackage};
 
 /// Errors that can occur when verifying or realising store paths.
 #[derive(Debug, thiserror::Error)]
@@ -553,22 +553,26 @@ impl StoreOperations for Nix {
 /// Errors that can occur during store initialization.
 #[derive(Debug, thiserror::Error)]
 pub enum InitStoreError {
-    #[error("failed to fetch factory index from {url}: {source}")]
-    FactoryIndexFetch {
+    #[error("failed to fetch package feed from {url}: {source}")]
+    PackageFeedFetch {
         url: String,
         #[source]
         source: reqwest::Error,
     },
-    #[error("invalid factory index JSON from {url}: {source}")]
-    FactoryIndexParse {
+    #[error("invalid package feed JSON from {url}: {source}")]
+    PackageFeedParse {
         url: String,
         #[source]
         source: serde_json::Error,
     },
-    #[error("unsupported factory index version {version} from {url}")]
-    UnsupportedFactoryVersion { url: String, version: u32 },
-    #[error("no factory tarball for BOS version '{0}'")]
-    MissingBosVersion(String),
+    #[error("invalid package feed from {url}: {source}")]
+    InvalidPackageFeed {
+        url: String,
+        #[source]
+        source: crate::feed::FeedError,
+    },
+    #[error("no package feed entry for BOS version '{0}'")]
+    MissingPackageFeedEntry(String),
     #[error("tarball download failed: {source}")]
     DownloadFailed {
         #[source]
@@ -785,42 +789,10 @@ async fn extract_staged(tarball_path: &Path, stage_dir: &Path) -> Result<(), Ini
     Ok(())
 }
 
-/// Find the factory tarball matching the given BOS version.
-#[must_use]
-pub fn find_tarball_for_version<'a>(
-    tarballs: &'a [FactoryTarball],
-    bos_version: &str,
-) -> Option<&'a FactoryTarball> {
-    tarballs.iter().find(|t| t.bos_version == bos_version)
-}
-
-/// Parse and validate a factory-index response body.
-///
-/// Pure function — no I/O. Returns `FactoryIndexParse` on bad JSON,
-/// `UnsupportedFactoryVersion` when `version != FACTORY_INDEX_VERSION`,
-/// otherwise the parsed [`crate::types::FactoryIndex`].
-fn parse_and_validate_factory_index(
-    url: &str,
-    body: &[u8],
-) -> Result<crate::types::FactoryIndex, InitStoreError> {
-    let parsed: crate::types::FactoryIndex =
-        serde_json::from_slice(body).map_err(|source| InitStoreError::FactoryIndexParse {
-            url: url.to_owned(),
-            source,
-        })?;
-    if parsed.version != crate::index::FACTORY_INDEX_VERSION {
-        return Err(InitStoreError::UnsupportedFactoryVersion {
-            url: url.to_owned(),
-            version: parsed.version,
-        });
-    }
-    Ok(parsed)
-}
-
 /// Initialize the Nix store from a factory tarball.
 ///
-/// 1. Fetch factory index from the factory server
-/// 2. Find tarball matching current BOS version
+/// 1. Fetch the package feed from the factory server
+/// 2. Find the feed entry matching current BOS version
 /// 3. Download tarball to `download_dir` (streaming to disk)
 /// 4. Extract to `<stage_dir>/nix.tmp`
 /// 5. Promote `<stage_dir>/nix.tmp/nix` to `<stage_dir>/nix`
@@ -865,32 +837,42 @@ pub async fn init_store(
         })?;
     }
 
-    // Step 1: Fetch factory index
-    let factory_url = crate::index::make_factory_url(&factory_server.base_url);
-    let factory_body = client
-        .get(&factory_url)
+    // Step 1: Fetch the package feed
+    let feed_url = crate::index::make_package_feed_url(&factory_server.base_url);
+    let feed_body = client
+        .get(&feed_url)
         .send()
         .await
-        .map_err(|source| InitStoreError::FactoryIndexFetch {
-            url: factory_url.clone(),
+        .map_err(|source| InitStoreError::PackageFeedFetch {
+            url: feed_url.clone(),
             source,
         })?
         .error_for_status()
-        .map_err(|source| InitStoreError::FactoryIndexFetch {
-            url: factory_url.clone(),
+        .map_err(|source| InitStoreError::PackageFeedFetch {
+            url: feed_url.clone(),
             source,
         })?
         .bytes()
         .await
-        .map_err(|source| InitStoreError::FactoryIndexFetch {
-            url: factory_url.clone(),
+        .map_err(|source| InitStoreError::PackageFeedFetch {
+            url: feed_url.clone(),
             source,
         })?;
-    let factory_index = parse_and_validate_factory_index(&factory_url, &factory_body)?;
+    let feed: crate::feed::PackageFeed =
+        serde_json::from_slice(&feed_body).map_err(|source| InitStoreError::PackageFeedParse {
+            url: feed_url.clone(),
+            source,
+        })?;
+    crate::feed::validate_feed(&feed_url, &feed).map_err(|source| {
+        InitStoreError::InvalidPackageFeed {
+            url: feed_url.clone(),
+            source,
+        }
+    })?;
 
-    // Step 2: Find matching tarball
-    let tarball = find_tarball_for_version(&factory_index.tarballs, bos_version)
-        .ok_or_else(|| InitStoreError::MissingBosVersion(bos_version.to_owned()))?;
+    // Step 2: Find the matching feed entry
+    let tarball = crate::feed::select_entry(&feed_url, &feed, bos_version)
+        .map_err(|_| InitStoreError::MissingPackageFeedEntry(bos_version.to_owned()))?;
 
     // Step 3: Download tarball to disk
     let tarball_path = download_dir.join("init-tarball.tar.gz");
@@ -1233,39 +1215,6 @@ mod tests {
         assert_eq!(buf, b"line one\nline two\n");
     }
 
-    #[test]
-    fn find_tarball_for_version_matches() {
-        let tarballs = vec![
-            FactoryTarball {
-                bos_version: "1.0.0".into(),
-                download_url: "https://example.com/1.0.0.tar.gz".into(),
-                profile_path: "/nix/var/nix/gcroots/profiles/bmc".into(),
-            },
-            FactoryTarball {
-                bos_version: "2.0.0".into(),
-                download_url: "https://example.com/2.0.0.tar.gz".into(),
-                profile_path: "/nix/var/nix/gcroots/profiles/bmc".into(),
-            },
-        ];
-        let found = find_tarball_for_version(&tarballs, "1.0.0");
-        assert!(found.is_some());
-        assert_eq!(
-            found.expect("BUG: just checked is_some").download_url,
-            "https://example.com/1.0.0.tar.gz"
-        );
-    }
-
-    #[test]
-    fn find_tarball_for_version_missing_returns_none() {
-        let tarballs = vec![FactoryTarball {
-            bos_version: "1.0.0".into(),
-            download_url: "https://example.com/1.0.0.tar.gz".into(),
-            profile_path: "/nix/var/nix/gcroots/profiles/bmc".into(),
-        }];
-        let found = find_tarball_for_version(&tarballs, "9.9.9");
-        assert!(found.is_none());
-    }
-
     #[tokio::test]
     async fn realize_store_paths_uses_single_nix_store_realise_invocation() {
         let runner = MockCommandRunner::new(vec![]);
@@ -1561,40 +1510,6 @@ mod tests {
             panic!("expected EstimateExited, got: {err:?}");
         };
         assert_eq!(messages, &["error: cannot reach substituter".to_owned()]);
-    }
-
-    #[test]
-    fn parse_factory_index_accepts_v1() {
-        let body = br#"{"version": 1, "tarballs": []}"#;
-        let parsed = parse_and_validate_factory_index("http://test", body)
-            .expect("BUG: v1 factory index should parse");
-        assert_eq!(parsed.version, 1);
-        assert!(parsed.tarballs.is_empty());
-    }
-
-    #[test]
-    fn parse_factory_index_rejects_unsupported_version() {
-        let body = br#"{"version": 99, "tarballs": []}"#;
-        let err = parse_and_validate_factory_index("http://test", body)
-            .expect_err("BUG: version 99 should be rejected");
-        assert!(
-            matches!(
-                err,
-                InitStoreError::UnsupportedFactoryVersion { version: 99, .. }
-            ),
-            "expected UnsupportedFactoryVersion {{ version: 99 }}, got {err:?}"
-        );
-    }
-
-    #[test]
-    fn parse_factory_index_rejects_bad_json() {
-        let body = b"not json";
-        let err = parse_and_validate_factory_index("http://test", body)
-            .expect_err("BUG: garbage bytes should not parse");
-        assert!(
-            matches!(err, InitStoreError::FactoryIndexParse { .. }),
-            "expected FactoryIndexParse, got {err:?}"
-        );
     }
 
     fn make_test_tarball(

@@ -25,9 +25,9 @@ TARBALL_PATH=$(nix build "$REPO_DIR#init-tarball-armv7" --no-link --print-out-pa
 cp "$TARBALL_PATH"/nix-*.tar.gz "$SERVE_DIR/init-tarball.tar.gz"
 echo "    Tarball: $SERVE_DIR/init-tarball.tar.gz ($(du -h "$SERVE_DIR/init-tarball.tar.gz" | cut -f1))"
 
-# Step 2: Generate nix-factory.v1.json and servers.json with actual IP
+# Step 2: Generate nix-package-feed.v1.json and servers.json with actual IP
 echo "==> Generating config files for $HOST_IP..."
-sed "s/\${HOST_IP}/$HOST_IP/g" "$SCRIPT_DIR/nix-factory.v1.json" >"$SERVE_DIR/nix-factory.v1.json"
+sed "s/\${HOST_IP}/$HOST_IP/g" "$SCRIPT_DIR/nix-package-feed.v1.json" >"$SERVE_DIR/nix-package-feed.v1.json"
 sed "s/\${HOST_IP}/$HOST_IP/g" "$SCRIPT_DIR/servers.json" >"/tmp/bmc-nix-init-servers.json"
 
 # Step 3: Deploy servers.json to device

@@ -565,7 +565,7 @@ let
 
   initArtifacts = import ./nix/init-artifacts.nix {
     inherit self pkgs lib;
-    inherit (bmc.lib) mkIndex mkTarball mkFactoryIndex;
+    inherit (bmc.lib) mkIndex mkTarball mkPackageFeed;
     packages = armv7PackageDefs;
     bmc-nix-cli = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-cli { };
     hooksOverridePath = "${nativeHooksPackage}/hooks";
