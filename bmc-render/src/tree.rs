@@ -2129,6 +2129,53 @@ pub(crate) fn build_taffy_node(
     }
 }
 
+/// Whitespace a line may break at. Non-breaking spaces glue their
+/// neighbors into one word, exactly as the wrapper treats them.
+fn is_breaking_whitespace(c: char) -> bool {
+    c.is_whitespace() && !matches!(c, '\u{A0}' | '\u{2007}' | '\u{202F}')
+}
+
+/// Split spans into words for min-content probing. A word ends only at
+/// breaking whitespace — it may cross span boundaries, so each word is
+/// a list of styled fragments preserving its parts' span styles.
+fn split_min_content_words(spans: &[SpanData]) -> Vec<Vec<SpanData>> {
+    let mut words: Vec<Vec<SpanData>> = Vec::new();
+    let mut word: Vec<SpanData> = Vec::new();
+    for span in spans {
+        for (i, fragment) in span.text.split(is_breaking_whitespace).enumerate() {
+            if i > 0 && !word.is_empty() {
+                words.push(std::mem::take(&mut word));
+            }
+            if !fragment.is_empty() {
+                word.push(SpanData {
+                    text: fragment.to_owned(),
+                    ..span.clone()
+                });
+            }
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
+}
+
+/// Min-content width of a paragraph: the widest single word measured
+/// unwrapped. Wrapping at this width breaks at word boundaries only,
+/// so both axes of the resulting measurement match CSS min-content.
+pub(crate) fn min_content_paragraph_width(
+    renderer: &mut dyn Renderer,
+    base_style: &TextStyle,
+    spans: &[SpanData],
+) -> f32 {
+    let mut min_width = 0.0_f32;
+    for word in split_min_content_words(spans) {
+        let (w, _) = renderer.measure_paragraph(base_style, &word, None);
+        min_width = min_width.max(w);
+    }
+    min_width
+}
+
 /// Compute taffy layout with the standard measure function for paragraphs,
 /// notifications, and buttons.
 pub(crate) fn compute_taffy_layout(
@@ -2149,9 +2196,20 @@ pub(crate) fn compute_taffy_layout(
 
             if let Some(ctx) = node_context {
                 if let Some(ref para) = ctx.paragraph {
+                    // A min-content probe wraps at the widest single word.
+                    // Probing at max_width 0 instead breaks per glyph into an
+                    // absurdly tall tower whose height becomes the min-size
+                    // floor of every ancestor, freezing flex containers at
+                    // bogus minimums; probing unwrapped inflates the min
+                    // width to the whole line, so shrinkable panels blow out
+                    // their row instead of wrapping.
                     let available_width = known_dimensions.width.or(match available_space.width {
                         AvailableSpace::Definite(w) => Some(w),
-                        AvailableSpace::MinContent => Some(0.0),
+                        AvailableSpace::MinContent => Some(min_content_paragraph_width(
+                            renderer,
+                            &para.base_style,
+                            &para.spans,
+                        )),
                         AvailableSpace::MaxContent => None,
                     });
                     let max_width = if para.base_style.text_overflow != TextOverflow::Wrap {
@@ -2544,6 +2602,52 @@ fn inset_from_props(props: &PropsData) -> taffy::Rect<LengthPercentageAuto> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn span(text: &str) -> SpanData {
+        SpanData {
+            text: text.to_owned(),
+            weight: None,
+            color: None,
+            italic: false,
+            underline: false,
+            strikethrough: false,
+        }
+    }
+
+    fn word_texts(words: &[Vec<SpanData>]) -> Vec<Vec<&str>> {
+        words
+            .iter()
+            .map(|w| w.iter().map(|s| s.text.as_str()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn min_content_words_join_across_span_boundaries() {
+        // "hashrate" is one word split across two styled spans: probing its
+        // fragments separately would under-report the min-content width.
+        let words = split_min_content_words(&[span("current hash"), span("rate now")]);
+        assert_eq!(
+            word_texts(&words),
+            [vec!["current"], vec!["hash", "rate"], vec!["now"],]
+        );
+    }
+
+    #[test]
+    fn min_content_words_treat_nbsp_as_glue() {
+        // A line cannot break at U+00A0, so "10\u{A0}TH/s" must probe as one
+        // word; regular spaces still split.
+        let words = split_min_content_words(&[span("about 10\u{A0}TH/s total")]);
+        assert_eq!(
+            word_texts(&words),
+            [vec!["about"], vec!["10\u{A0}TH/s"], vec!["total"]]
+        );
+    }
+
+    #[test]
+    fn min_content_words_drop_leading_and_trailing_whitespace() {
+        let words = split_min_content_words(&[span("  spaced  out  ")]);
+        assert_eq!(word_texts(&words), [vec!["spaced"], vec!["out"]]);
+    }
 
     #[test]
     fn test_props_size() {

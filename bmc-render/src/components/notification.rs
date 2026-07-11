@@ -9,7 +9,7 @@ use bmc_wasm_protocol::*;
 use taffy::prelude::*;
 
 use crate::renderer::Renderer;
-use crate::tree::SpanData;
+use crate::tree::{SpanData, min_content_paragraph_width};
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -81,7 +81,28 @@ pub(crate) fn measure_notification(
 ) -> Size<f32> {
     let avail_w = known_dimensions.width.or(match available_space.width {
         AvailableSpace::Definite(w) => Some(w),
-        AvailableSpace::MinContent => Some(0.0),
+        // Min-content: wide enough for the widest single word, so the
+        // probe wraps at word boundaries. Probing at width 0 instead
+        // breaks per glyph into a tower whose height becomes the
+        // min-size floor of every ancestor.
+        AvailableSpace::MinContent => {
+            let mut word_w = 0.0_f32;
+            if !notif.title.is_empty() {
+                word_w = word_w.max(min_content_paragraph_width(
+                    renderer,
+                    &notification_title_style(),
+                    &plain_spans(&notif.title),
+                ));
+            }
+            if !notif.subtitle.is_empty() {
+                word_w = word_w.max(min_content_paragraph_width(
+                    renderer,
+                    &notification_subtitle_style(),
+                    &plain_spans(&notif.subtitle),
+                ));
+            }
+            Some(word_w + NOTIF_TEXT_LEFT + NOTIF_PAD)
+        }
         AvailableSpace::MaxContent => None,
     });
     let text_w = avail_w.map(|w| (w - NOTIF_TEXT_LEFT - NOTIF_PAD).max(0.0));
