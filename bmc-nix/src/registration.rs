@@ -1,6 +1,6 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::types::{FactoryServerEntry, ServerEntry, ServersConfig};
 
@@ -31,6 +31,10 @@ pub enum RegisterError {
         #[source]
         source: std::io::Error,
     },
+    #[error(transparent)]
+    Load(#[from] crate::servers_config::LoadServersConfigError),
+    #[error("server id '{id}' collides with the factory server id; pick a different --id")]
+    FactoryIdCollision { id: String },
 }
 
 /// Write `contents` to `path` atomically and durably: temporary sibling,
@@ -57,60 +61,94 @@ fn write_persisted(path: &Path, tmp_path: &Path, contents: &str) -> Result<(), R
     })
 }
 
-/// Insert or replace a server entry in `servers.json` by `id`.
+/// A validated servers-config update, ready to be written.
 ///
-/// Reads the existing [`ServersConfig`], drops any entry sharing the new
-/// entry's `id`, appends the new entry, and writes the result back
-/// atomically via a temporary sibling file plus `rename`. A missing
-/// config is bootstrapped with the registered server doubling as the
-/// mandatory `factory` entry, so a dev-provisioned device (`deck init`
-/// writes no registry) becomes usable without manual seeding.
+/// Produced by [`prepare_registration`]; holds the serialized config and
+/// its destination so the caller can interleave other side effects
+/// (`nix.conf`) between validation and the final write without the
+/// config being re-read.
+#[derive(Debug)]
+pub struct PreparedRegistration {
+    path: PathBuf,
+    serialized: String,
+}
+
+impl PreparedRegistration {
+    /// Write the prepared config atomically via a temporary sibling
+    /// plus `rename`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegisterError`] if the write fails.
+    pub fn persist(&self) -> Result<(), RegisterError> {
+        let tmp_path = self.path.with_extension("json.tmp");
+        write_persisted(&self.path, &tmp_path, &self.serialized)
+    }
+}
+
+/// Load the servers config, insert or replace `entry` by `id`, and
+/// serialize the result without writing it.
+///
+/// The config comes from the runtime file when present, from the
+/// shipped default when only the runtime file is missing (preserving
+/// the shipped factory entry), and — when neither exists — from an
+/// entry-as-factory bootstrap marked with `bootstrapped_factory`, so a
+/// dev-provisioned device becomes usable without manual seeding.
+/// Registering an id equal to the loaded factory id is rejected unless
+/// the config is marker-bootstrapped, in which case the factory and the
+/// matching server entry are updated in sync.
 ///
 /// # Errors
 ///
-/// Returns [`RegisterError`] if the config cannot be read, parsed, or
-/// written back.
-pub fn register_server(
-    servers_config_path: &Path,
+/// Returns [`RegisterError`] if the config cannot be loaded, if the id
+/// collides with a non-bootstrapped factory, or if serialization fails.
+pub fn prepare_registration(
+    runtime_path: &Path,
+    default_path: &Path,
     entry: ServerEntry,
-) -> Result<(), RegisterError> {
-    let path_str = servers_config_path.display().to_string();
-
-    let mut config: ServersConfig = match std::fs::read_to_string(servers_config_path) {
-        Ok(raw) => serde_json::from_str(&raw).map_err(|source| RegisterError::Parse {
-            path: path_str.clone(),
-            source,
-        })?,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => ServersConfig {
-            factory: FactoryServerEntry {
-                id: entry.id.clone(),
-                base_url: entry.base_url.clone(),
-                known_public_key: entry.known_public_key.clone(),
-                priority: entry.priority,
-                enabled: entry.enabled,
+) -> Result<PreparedRegistration, RegisterError> {
+    let mut config =
+        match crate::servers_config::load_servers_config_opt(runtime_path, default_path)? {
+            Some(config) => config,
+            None => ServersConfig {
+                factory: FactoryServerEntry {
+                    id: entry.id.clone(),
+                    base_url: entry.base_url.clone(),
+                    known_public_key: entry.known_public_key.clone(),
+                    priority: entry.priority,
+                    enabled: entry.enabled,
+                },
+                servers: Vec::new(),
+                bootstrapped_factory: true,
             },
-            servers: Vec::new(),
-            bootstrapped_factory: false,
-        },
-        Err(source) => {
-            return Err(RegisterError::Read {
-                path: path_str,
-                source,
-            });
+        };
+
+    if entry.id == config.factory.id {
+        if !config.bootstrapped_factory {
+            return Err(RegisterError::FactoryIdCollision { id: entry.id });
         }
-    };
+        config.factory.base_url.clone_from(&entry.base_url);
+        config
+            .factory
+            .known_public_key
+            .clone_from(&entry.known_public_key);
+        config.factory.priority = entry.priority;
+        config.factory.enabled = entry.enabled;
+    }
 
     config.servers.retain(|s| s.id != entry.id);
     config.servers.push(entry);
 
     let serialized =
         serde_json::to_string_pretty(&config).map_err(|source| RegisterError::Serialize {
-            path: path_str,
+            path: runtime_path.display().to_string(),
             source,
         })?;
 
-    let tmp_path = servers_config_path.with_extension("json.tmp");
-    write_persisted(servers_config_path, &tmp_path, &serialized)
+    Ok(PreparedRegistration {
+        path: runtime_path.to_path_buf(),
+        serialized,
+    })
 }
 
 /// Register a substituter and its trusted public key in `nix.conf`.
@@ -217,21 +255,25 @@ mod tests {
         serde_json::from_str(&raw).expect("BUG: parse servers.json")
     }
 
+    fn register(path: &Path, entry: ServerEntry) -> Result<(), RegisterError> {
+        let mut default = path.as_os_str().to_owned();
+        default.push(".default");
+        prepare_registration(path, Path::new(&default), entry)?.persist()
+    }
+
     #[test]
-    fn register_server_inserts_then_replaces_by_id() {
+    fn register_inserts_then_replaces_by_id() {
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let path = tmp.path().join("servers.json");
         write_base_config(&path);
 
-        register_server(&path, sample_entry("dev", "https://dev.example.com/v1"))
+        register(&path, sample_entry("dev", "https://dev.example.com/v1"))
             .expect("BUG: first register");
         let config = read_config(&path);
         assert_eq!(config.servers.len(), 1);
-        assert_eq!(config.servers[0].id, "dev");
         assert_eq!(config.servers[0].base_url, "https://dev.example.com/v1");
-        assert!(config.servers[0].enabled);
 
-        register_server(&path, sample_entry("dev", "https://dev.example.com/v2"))
+        register(&path, sample_entry("dev", "https://dev.example.com/v2"))
             .expect("BUG: second register");
         let config = read_config(&path);
         assert_eq!(
@@ -243,37 +285,106 @@ mod tests {
     }
 
     #[test]
-    fn register_server_bootstraps_missing_config_with_entry_as_factory() {
+    fn register_seeds_missing_runtime_from_default() {
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let path = tmp.path().join("servers.json");
+        write_base_config(&tmp.path().join("servers.json.default"));
 
-        register_server(&path, sample_entry("dev", "https://dev.example.com/v1"))
-            .expect("BUG: bootstrap register");
+        register(&path, sample_entry("dev", "https://dev.example.com/v1"))
+            .expect("BUG: seeded register");
 
         let config = read_config(&path);
-        assert_eq!(config.factory.id, "dev");
-        assert_eq!(config.factory.base_url, "https://dev.example.com/v1");
-        assert_eq!(config.factory.known_public_key, "cache.example.com:AAAA");
-        assert!(config.factory.enabled);
+        assert_eq!(
+            config.factory.id, "forge",
+            "shipped factory entry must be preserved"
+        );
+        assert!(!config.bootstrapped_factory);
         assert_eq!(config.servers.len(), 1);
         assert_eq!(config.servers[0].id, "dev");
     }
 
     #[test]
-    fn register_server_creates_missing_parent_directory() {
+    fn register_bootstraps_when_runtime_and_default_missing() {
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
-        // Mirror a device with no /etc/nix-upgrade yet: the config path's
-        // parent does not exist, so the write must create it rather than
-        // fail with ENOENT.
+        let path = tmp.path().join("servers.json");
+
+        register(&path, sample_entry("dev", "https://dev.example.com/v1"))
+            .expect("BUG: bootstrap register");
+
+        let config = read_config(&path);
+        assert_eq!(config.factory.id, "dev");
+        assert!(
+            config.bootstrapped_factory,
+            "bootstrap must record its provenance"
+        );
+        assert_eq!(config.servers.len(), 1);
+        assert_eq!(config.servers[0].id, "dev");
+    }
+
+    #[test]
+    fn reregister_after_bootstrap_updates_factory_and_server_in_sync() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let path = tmp.path().join("servers.json");
+
+        register(&path, sample_entry("dev", "https://dev.example.com/v1"))
+            .expect("BUG: bootstrap register");
+        register(&path, sample_entry("dev", "https://dev.example.com/v2"))
+            .expect("BUG: re-register on a bootstrapped config");
+
+        let config = read_config(&path);
+        assert_eq!(config.factory.base_url, "https://dev.example.com/v2");
+        assert!(config.bootstrapped_factory);
+        assert_eq!(config.servers.len(), 1);
+        assert_eq!(config.servers[0].base_url, "https://dev.example.com/v2");
+    }
+
+    #[test]
+    fn register_rejects_factory_id_collision_without_marker() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let path = tmp.path().join("servers.json");
+        write_base_config(&path);
+
+        let err = register(&path, sample_entry("forge", "https://evil.example.com/v1"))
+            .expect_err("factory id collision must be rejected");
+        assert!(matches!(err, RegisterError::FactoryIdCollision { .. }));
+    }
+
+    #[test]
+    fn register_rejects_collision_on_unmarked_bootstrap_lookalike() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let path = tmp.path().join("servers.json");
+        std::fs::write(
+            &path,
+            r#"{"factory":{"id":"dev","base_url":"https://dev.example.com/v1","known_public_key":"k","priority":50,"enabled":true},"servers":[{"id":"dev","type":"cache","base_url":"https://dev.example.com/v1","known_public_key":"k","priority":50,"enabled":true}]}"#,
+        )
+        .expect("BUG: write lookalike config");
+
+        let err = register(&path, sample_entry("dev", "https://dev.example.com/v2"))
+            .expect_err("unmarked bootstrap lookalike must reject the collision");
+        assert!(matches!(err, RegisterError::FactoryIdCollision { .. }));
+    }
+
+    #[test]
+    fn register_errors_on_corrupt_runtime_without_default() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let path = tmp.path().join("servers.json");
+        std::fs::write(&path, "{ corrupt").expect("BUG: write corrupt config");
+
+        register(&path, sample_entry("dev", "https://dev.example.com/v1"))
+            .expect_err("corruption without a default must not bootstrap");
+        assert!(tmp.path().join("servers.json.bcp").exists());
+        assert!(!path.exists(), "prepare must not recreate the runtime file");
+    }
+
+    #[test]
+    fn register_creates_missing_parent_directory() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let path = tmp.path().join("nix-upgrade").join("servers.json");
 
-        register_server(&path, sample_entry("dev", "https://dev.example.com/v1"))
+        register(&path, sample_entry("dev", "https://dev.example.com/v1"))
             .expect("BUG: register into a missing directory");
 
-        assert!(
-            path.exists(),
-            "servers.json must be written under a created dir"
-        );
+        assert!(path.exists());
         assert_eq!(read_config(&path).factory.id, "dev");
     }
 

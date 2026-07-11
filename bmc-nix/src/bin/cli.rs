@@ -1104,6 +1104,7 @@ async fn cmd_activate(
 )]
 fn cmd_register_server(
     servers_config: &Path,
+    default_servers_config: &Path,
     nix_conf: &Path,
     id: String,
     server_type: String,
@@ -1145,12 +1146,16 @@ fn cmd_register_server(
         enabled: true,
         required: !optional,
     };
-    // Register the substituter (nix.conf) before the server (servers.json):
-    // if the process dies between the two writes, a server missing from the
-    // registry is more benign than a registered server whose binary cache is
-    // absent — the latter fetches an index it then cannot realize.
+    let prepared =
+        bmc_nix::registration::prepare_registration(servers_config, default_servers_config, entry)?;
+    // Register the substituter (nix.conf) before persisting the server
+    // registry: if the process dies between the two writes, a server
+    // missing from the registry is more benign than a registered server
+    // whose binary cache is absent — the latter fetches an index it then
+    // cannot realize. The registry content was validated up front, so a
+    // bad config aborts before nix.conf is touched.
     bmc_nix::registration::register_substituter(nix_conf, cache_url, cache_public_key)?;
-    bmc_nix::registration::register_server(servers_config, entry)?;
+    prepared.persist()?;
     Ok(())
 }
 
@@ -1359,6 +1364,7 @@ async fn main() -> anyhow::Result<()> {
             optional,
         } => cmd_register_server(
             &servers_config,
+            &resolve_default_config_path(&servers_config, None),
             &nix_conf,
             id,
             server_type,
@@ -1561,6 +1567,34 @@ mod tests {
             "/run/sysupgrade/servers.json.default",
         ])
         .expect("BUG: upgrade must accept the flag");
+    }
+
+    #[test]
+    fn register_server_leaves_nix_conf_untouched_when_prepare_fails() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let servers = tmp.path().join("servers.json");
+        let nix_conf = tmp.path().join("nix.conf");
+        std::fs::write(&servers, "{ corrupt").expect("BUG: write corrupt config");
+
+        cmd_register_server(
+            &servers,
+            &resolve_default_config_path(&servers, None),
+            &nix_conf,
+            "dev".to_owned(),
+            "http".to_owned(),
+            "https://dev.example.com/v1".to_owned(),
+            "index:KEY".to_owned(),
+            "https://cache.example.com",
+            "cache:KEY",
+            50,
+            false,
+        )
+        .expect_err("prepare failure must abort the command");
+
+        assert!(
+            !nix_conf.exists(),
+            "nix.conf must not be touched when prepare fails"
+        );
     }
 
     #[test]
