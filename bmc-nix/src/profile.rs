@@ -736,6 +736,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn build_symlink_tree_allows_cargo_timings_collision() {
+        let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
+
+        // Every crate built with `cargo --timings` ships the shared workspace-deps chart
+        // under the same relative path, with per-build content.
+        let store_a = tmp.path().join("store-a");
+        create_fake_store(
+            &store_a,
+            &["cargo-timings/cargo-timing-workspace-deps-check.html"],
+        );
+        let store_b = tmp.path().join("store-b");
+        create_fake_store(
+            &store_b,
+            &["cargo-timings/cargo-timing-workspace-deps-check.html"],
+        );
+
+        let packages = vec![
+            test_resolved_package("pkg-a", store_a.to_str().expect("BUG: valid UTF-8")),
+            test_resolved_package("pkg-b", store_b.to_str().expect("BUG: valid UTF-8")),
+        ];
+
+        let output_dir = tmp.path().join("output");
+        std::fs::create_dir_all(&output_dir).expect("BUG: should create output dir");
+
+        build_symlink_tree(&output_dir, &packages)
+            .await
+            .expect("BUG: allowlisted collision should not error");
+
+        let chart = output_dir.join("cargo-timings/cargo-timing-workspace-deps-check.html");
+        assert!(chart.is_symlink(), "timing chart should be a symlink");
+        assert_eq!(
+            std::fs::read_link(&chart).expect("BUG: should read symlink"),
+            store_a.join("cargo-timings/cargo-timing-workspace-deps-check.html"),
+            "first package's symlink should win",
+        );
+    }
+
+    #[tokio::test]
     async fn build_symlink_tree_allows_dir_name_collision() {
         let tmp = tempfile::tempdir().expect("BUG: should create tempdir");
 

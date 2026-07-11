@@ -53,6 +53,7 @@ const ALLOWED_COLLISIONS: &[CollisionRule] = &[
     CollisionRule::DirPath("share/fish/vendor_conf.d"),
     CollisionRule::DirPath("share/fish/vendor_functions.d"),
     CollisionRule::DirPath("etc/profile.d"),
+    CollisionRule::DirPath("cargo-timings"),
 ];
 
 pub(super) fn allowed(rel_path: &Path) -> bool {
