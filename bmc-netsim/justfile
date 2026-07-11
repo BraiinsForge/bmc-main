@@ -1,0 +1,15 @@
+# bmc-netsim dev tasks — local-iteration shortcuts around the simulator binary.
+
+dir := source_directory()
+
+[private]
+default:
+    @just --justfile {{ justfile() }} --list
+
+# Regenerate the committed blueprint JSON schema from the Rust types.
+schema:
+    UPDATE_SCHEMA=1 cargo test -p bmc-netsim blueprint_schema
+
+# Run the simulator against a blueprint (defaults to the bundled example).
+run blueprint=(dir / "blueprints/example.json5"):
+    cargo run -p bmc-netsim -- run {{ blueprint }}

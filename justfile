@@ -1,4 +1,5 @@
 mod manifest 'bmc-widget-manifest/justfile'
+mod netsim 'bmc-netsim/justfile'
 mod virt 'bmc-virt/justfile'
 mod wasm 'bmc-wasm-runtime/justfile'
 mod fe 'frontend/justfile'

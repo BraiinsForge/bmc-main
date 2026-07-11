@@ -1,0 +1,264 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Blueprint",
+  "description": "A run: the device instances to bring up.",
+  "type": "object",
+  "properties": {
+    "instances": {
+      "description": "Each entry instantiates one device `count` times.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Instance"
+      }
+    }
+  },
+  "required": [
+    "instances"
+  ],
+  "$defs": {
+    "AxeosParams": {
+      "description": "Tunables for a simulated AxeOS miner.",
+      "type": "object",
+      "properties": {
+        "hashrate_ths": {
+          "description": "Current hashrate to hover around, in TH/s.",
+          "type": "number",
+          "format": "double",
+          "default": 4.5
+        },
+        "model_name": {
+          "description": "Model name reported as `deviceModel`.",
+          "type": "string",
+          "default": "NerdQAxe++"
+        },
+        "nominal_ths": {
+          "description": "Nameplate (expected) hashrate at current settings, in TH/s.",
+          "type": "number",
+          "format": "double",
+          "default": 4.5
+        },
+        "power_w": {
+          "description": "Power draw to hover around, in W.",
+          "type": "number",
+          "format": "double",
+          "default": 76.0
+        },
+        "status": {
+          "description": "HTTP status the telemetry endpoint returns (503 = present, unreadable).",
+          "type": "integer",
+          "format": "uint16",
+          "default": 200,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "temp_c": {
+          "description": "Temperature to hover around, in °C.",
+          "type": "number",
+          "format": "double",
+          "default": 62.0
+        },
+        "uptime_s": {
+          "description": "Reported uptime, in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 187020,
+          "minimum": 0
+        }
+      }
+    },
+    "BosParams": {
+      "description": "Tunables for a simulated BOS+ miner.",
+      "type": "object",
+      "properties": {
+        "auth_status": {
+          "description": "HTTP status the login endpoint returns; 401 = the miner needs credentials\nthe widget doesn't have, so it never authenticates (the no-creds case).",
+          "type": "integer",
+          "format": "uint16",
+          "default": 200,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "hashrate_ths": {
+          "description": "Current hashrate to hover around, in TH/s (low value = not-okay).",
+          "type": "number",
+          "format": "double",
+          "default": 100.0
+        },
+        "model_name": {
+          "description": "Model name reported on `/miner/details`.",
+          "type": "string",
+          "default": "BMM 101"
+        },
+        "nominal_ths": {
+          "description": "Nameplate (`sticker_hashrate`) hashrate, in TH/s.",
+          "type": "number",
+          "format": "double",
+          "default": 100.0
+        },
+        "power_w": {
+          "description": "Power draw to hover around, in W.",
+          "type": "number",
+          "format": "double",
+          "default": 3250.0
+        },
+        "status": {
+          "description": "HTTP status the telemetry endpoints return (503 = present, unreadable).",
+          "type": "integer",
+          "format": "uint16",
+          "default": 200,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "temp_c": {
+          "description": "Junction temperature to hover around, in °C.",
+          "type": "number",
+          "format": "double",
+          "default": 65.0
+        },
+        "uptime_s": {
+          "description": "Reported uptime, in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 187020,
+          "minimum": 0
+        }
+      }
+    },
+    "Instance": {
+      "description": "One device instance, discriminated by `device`\nand carrying that device's typed params.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "default": 1,
+              "minimum": 0
+            },
+            "device": {
+              "type": "string",
+              "const": "bos"
+            },
+            "label": {
+              "description": "Human label describing this entry's scenario, shown in the readout.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "params": {
+              "$ref": "#/$defs/BosParams"
+            }
+          },
+          "required": [
+            "device"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "default": 1,
+              "minimum": 0
+            },
+            "device": {
+              "type": "string",
+              "const": "ubos"
+            },
+            "label": {
+              "description": "Human label describing this entry's scenario, shown in the readout.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "params": {
+              "$ref": "#/$defs/UbosParams"
+            }
+          },
+          "required": [
+            "device"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "default": 1,
+              "minimum": 0
+            },
+            "device": {
+              "type": "string",
+              "const": "axeos"
+            },
+            "label": {
+              "description": "Human label describing this entry's scenario, shown in the readout.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "params": {
+              "$ref": "#/$defs/AxeosParams"
+            }
+          },
+          "required": [
+            "device"
+          ]
+        }
+      ]
+    },
+    "UbosParams": {
+      "description": "Tunables for a simulated uBOS HashNode.",
+      "type": "object",
+      "properties": {
+        "hashrate_ths": {
+          "description": "Current hashrate to hover around, in TH/s.",
+          "type": "number",
+          "format": "double",
+          "default": 4.0
+        },
+        "model_name": {
+          "description": "Product name reported on `/api/info`.",
+          "type": "string",
+          "default": "HashNode"
+        },
+        "power_w": {
+          "description": "Power draw to hover around, in W.",
+          "type": "number",
+          "format": "double",
+          "default": 200.0
+        },
+        "status": {
+          "description": "HTTP status the telemetry endpoint returns (503 = present, unreadable).",
+          "type": "integer",
+          "format": "uint16",
+          "default": 200,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "temp_c": {
+          "description": "Temperature to hover around, in °C.",
+          "type": "number",
+          "format": "double",
+          "default": 65.0
+        },
+        "uptime_s": {
+          "description": "Reported uptime, in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 187020,
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

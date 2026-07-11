@@ -1,0 +1,32 @@
+[package]
+name = "bmc-netsim"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins <braiins@braiins.com>"]
+description = "Generic mDNS + REST network-resource simulator for driving widgets against fake devices"
+readme = "README.md"
+
+# Package the committed schema into the crane source;
+# without it the `blueprint_schema_is_current` test
+# can't read it in the nix sandbox.
+[package.metadata.nix]
+include = ["blueprint.schema.json"]
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+json5.workspace = true
+mdns-sd.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }
+
+[lints]
+workspace = true

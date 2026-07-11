@@ -1,0 +1,214 @@
+// Copyright (C) 2026  Braiins Systems s.r.o.
+
+//! HTTP responder: serve a resource's endpoints on its own TCP port.
+
+use std::sync::Arc;
+use std::time::Instant;
+
+use anyhow::{Context, Result, bail};
+use axum::{Json, Router, routing};
+
+use crate::blueprint::{Body, EndpointSpec};
+use crate::cache::Cache;
+use crate::render;
+
+/// Build the router: a `Render` endpoint fills its template per request (noise
+/// keyed on `seed`, time from `start`); an `Accumulate` endpoint reads `cache`.
+pub fn build_router(
+    endpoints: Vec<EndpointSpec>,
+    seed: u64,
+    start: Instant,
+    cache: &Arc<Cache>,
+) -> Result<Router> {
+    let mut router = Router::new();
+    for endpoint in endpoints {
+        let body = endpoint.body.clone();
+        let cache = Arc::clone(cache);
+        let status =
+            axum::http::StatusCode::from_u16(endpoint.status).unwrap_or(axum::http::StatusCode::OK);
+        let handler = move || {
+            let body = body.clone();
+            let cache = Arc::clone(&cache);
+            async move {
+                let json = match &body {
+                    Body::Render(template) => {
+                        render::render(template, start.elapsed().as_secs_f64(), seed)
+                    }
+                    Body::Accumulate(reader) => reader(&cache),
+                };
+                (status, Json(json))
+            }
+        };
+        let method_router = match endpoint.method.to_ascii_uppercase().as_str() {
+            "GET" => routing::get(handler),
+            "POST" => routing::post(handler),
+            "PUT" => routing::put(handler),
+            "DELETE" => routing::delete(handler),
+            other => bail!("unsupported HTTP method {other} for {}", endpoint.path),
+        };
+        router = router.route(&endpoint.path, method_router);
+    }
+    Ok(router)
+}
+
+/// A port held open for a resource, with the router that will answer on it.
+#[derive(Debug)]
+pub struct Bound {
+    port: u16,
+    listener: tokio::net::TcpListener,
+    router: Router,
+}
+
+/// Take `0.0.0.0:port` for `endpoints`.
+///
+/// Binding is split from serving so the caller can hold the port
+/// before advertising the device: a taken port must stop the run,
+/// rather than surface from a detached task once mDNS has published it.
+pub async fn bind(
+    port: u16,
+    endpoints: Vec<EndpointSpec>,
+    seed: u64,
+    start: Instant,
+    cache: Arc<Cache>,
+) -> Result<Bound> {
+    let router = build_router(endpoints, seed, start, &cache)?;
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
+        .await
+        .with_context(|| format!("binding 0.0.0.0:{port}"))?;
+    Ok(Bound {
+        port,
+        listener,
+        router,
+    })
+}
+
+impl Bound {
+    /// Answer on the held port until the task is dropped or the listener errors.
+    pub async fn serve(self) -> Result<()> {
+        axum::serve(self.listener, self.router)
+            .await
+            .with_context(|| format!("serving on port {}", self.port))?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    use axum::body::{Body as AxumBody, to_bytes};
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt as _;
+
+    use crate::blueprint::Instance;
+    use crate::cache::Cache;
+    use crate::sampler::backfill;
+
+    /// Drive a real GET through the axeos router and assert the response shape.
+    /// Structural only — values come from seeded noise, so exact numbers vary.
+    async fn get(instance: &Instance, path: &str) -> (StatusCode, serde_json::Value) {
+        let resource = instance.resource("axeos-01", 0);
+        let series = resource
+            .sampler
+            .as_ref()
+            .map(|s| {
+                s.series
+                    .iter()
+                    .map(|x| (x.name.clone(), x.capacity))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let cache = Arc::new(Cache::new::<Vec<_>>(series));
+        if let Some(sampler) = resource.sampler.as_ref() {
+            backfill(&cache, sampler, 0x51ACE);
+        }
+        let router = super::build_router(resource.endpoints, 0x51ACE, Instant::now(), &cache)
+            .expect("router builds");
+        let request = Request::get(path)
+            .body(AxumBody::empty())
+            .expect("request builds");
+        let response = router.oneshot(request).await.expect("router responds");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body reads");
+        (
+            status,
+            serde_json::from_slice(&bytes).expect("body is json"),
+        )
+    }
+
+    fn axeos() -> Instance {
+        Instance::Axeos {
+            label: None,
+            params: crate::devices::axeos::Params::default(),
+            count: 1,
+        }
+    }
+
+    /// Bind the axeos resource on `port`, as `serve` does before announcing.
+    async fn bind_axeos(port: u16) -> anyhow::Result<super::Bound> {
+        let resource = axeos().resource("axeos-01", port);
+        super::bind(
+            port,
+            resource.endpoints,
+            0,
+            Instant::now(),
+            Arc::new(Cache::new::<Vec<_>>(Vec::new())),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_taken_port_fails_the_bind_rather_than_the_detached_task() {
+        // The caller announces only once this returns: a port it cannot hold
+        // must fail here, not from the task with the device already advertised.
+        let held = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("BUG: an ephemeral port must bind");
+        let taken = held
+            .local_addr()
+            .expect("BUG: bound socket has an address")
+            .port();
+
+        let err = bind_axeos(taken)
+            .await
+            .expect_err("BUG: binding a taken port must fail");
+        assert!(
+            format!("{err:#}").contains(&taken.to_string()),
+            "the failure must name the port: {err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_free_port_binds_before_anything_is_announced() {
+        assert!(bind_axeos(0).await.is_ok(), "port 0 takes any free port");
+    }
+
+    #[tokio::test]
+    async fn statistics_endpoint_serves_the_accumulated_matrix() {
+        let (status, body) = get(&axeos(), "/api/system/statistics").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body["labels"],
+            serde_json::json!(["hashrate", "power", "asicTemp", "timestamp"]),
+        );
+        let rows = body["statistics"].as_array().expect("statistics array");
+        assert_eq!(rows.len(), 300, "full 10-minute window");
+        assert!(
+            rows.iter()
+                .all(|r| r.as_array().is_some_and(|c| c.len() == 4))
+        );
+        assert!(body["currentTimestamp"].is_number());
+    }
+
+    #[tokio::test]
+    async fn info_endpoint_renders_the_live_leaves() {
+        let (status, body) = get(&axeos(), "/api/system/info").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["hashRate"].is_number(), "rendered $value leaf");
+        assert!(body["expectedHashrate"].is_number(), "nominal present");
+        assert_eq!(body["ASICModel"], "BM1370");
+    }
+}

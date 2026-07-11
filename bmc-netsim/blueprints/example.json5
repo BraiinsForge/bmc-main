@@ -1,0 +1,31 @@
+{
+  "$schema": "../blueprint.schema.json",
+
+  instances: [
+    {
+        count: 3,
+        device: "bos",
+        label: "Healthy BMM 101 fleet",
+    },
+
+    {
+        count: 1,
+        device: "bos",
+        label: "Straggler mining <20% of nominal → not-okay",
+        params: { model_name: "BMM 101", hashrate_ths: 8 }
+      },
+
+    {
+        count: 1,
+        device: "ubos",
+        label: "Present over mDNS but API fails → present-but-no-reading",
+        params: { status: 503 }
+    },
+
+    {
+        count: 2,
+        device: "axeos",
+        label: "Pair of NerdQAxe++ miners",
+    },
+  ],
+}

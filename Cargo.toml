@@ -16,6 +16,7 @@ members = [
     "bmc-led",
     "bmc-log",
     "bmc-mock",
+    "bmc-netsim",
     "bmc-nix",
     "bmc-openwrt",
     "bmc-platform",
@@ -287,6 +288,7 @@ intel_tex_2 = "0.5"
 inventory = "0.3"
 itertools = "0.14.0"
 jpeg-decoder = { version = "0.3.2", default-features = false }
+json5 = "0.4.1"
 jsonschema = { version = "0.46.4", default-features = false }
 keyframe = { version = "1.1", default-features = false }
 khronos-egl = { version = "6", features = ["dynamic"] }

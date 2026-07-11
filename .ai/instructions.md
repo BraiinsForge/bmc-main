@@ -354,3 +354,6 @@ When multiple valid approaches exist, choose based on:
 - prefer self-documenting code that runs over a comment: `assert!(cond, "why")`, `expect("BUG: …")`, and descriptive
   names/consts beat cryptic code plus an explanatory comment — the intent can't drift and shows on failure. See the
   `code-style` skill for the fuller rule.
+- treat `bmc-netsim` profiles and the widget's family adapters (`widgets-wasm/fleet-management/src/families/`) as
+  deliberate **subsets** of the upstream device APIs (BOS+ boser REST, uBOS, ESP-Miner) — a field missing from them does
+  not mean upstream lacks it; verify against the upstream openapi/firmware before concluding a field is unavailable
