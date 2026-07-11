@@ -245,6 +245,7 @@ impl InitEnv {
                 enabled: true,
             },
             servers: Vec::new(),
+            bootstrapped_factory: false,
         };
         let json = serde_json::to_string(&config).expect("BUG: serialize servers config");
         std::fs::write(&self.servers_config, json).expect("BUG: write servers.json");

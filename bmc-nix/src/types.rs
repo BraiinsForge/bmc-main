@@ -212,6 +212,12 @@ pub struct ServersConfig {
     pub factory: FactoryServerEntry,
     #[serde(default)]
     pub servers: Vec<ServerEntry>,
+    /// Set only when `register-server` bootstrapped this config on a
+    /// device that had neither a runtime nor a default config; gates
+    /// the synchronized factory + server-entry update on repeat
+    /// registration. Shipped defaults must never set it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bootstrapped_factory: bool,
 }
 
 /// Factory server entry in the server registry.
@@ -808,5 +814,33 @@ mod tests {
         let summary = StrategySummary::from_packages(&packages);
         assert_eq!(summary.upgrade.len(), 1);
         assert_eq!(summary.install.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod servers_config_serde_tests {
+    use super::*;
+
+    const LEGACY: &str = r#"{"factory":{"id":"forge","base_url":"https://cache.braiins.com/v1","known_public_key":"k","priority":0,"enabled":true},"servers":[]}"#;
+
+    #[test]
+    fn config_without_marker_deserializes_as_not_bootstrapped() {
+        let config: ServersConfig =
+            serde_json::from_str(LEGACY).expect("BUG: legacy config must parse");
+        assert!(!config.bootstrapped_factory);
+    }
+
+    #[test]
+    fn marker_is_omitted_when_false_and_kept_when_true() {
+        let mut config: ServersConfig =
+            serde_json::from_str(LEGACY).expect("BUG: legacy config must parse");
+        let json = serde_json::to_string(&config).expect("BUG: serialize");
+        assert!(!json.contains("bootstrapped_factory"));
+
+        config.bootstrapped_factory = true;
+        let json = serde_json::to_string(&config).expect("BUG: serialize");
+        assert!(json.contains(r#""bootstrapped_factory":true"#));
+        let round: ServersConfig = serde_json::from_str(&json).expect("BUG: round-trip");
+        assert!(round.bootstrapped_factory);
     }
 }

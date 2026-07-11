@@ -90,6 +90,7 @@ pub fn register_server(
                 enabled: entry.enabled,
             },
             servers: Vec::new(),
+            bootstrapped_factory: false,
         },
         Err(source) => {
             return Err(RegisterError::Read {
