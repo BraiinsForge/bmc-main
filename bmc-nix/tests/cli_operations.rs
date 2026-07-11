@@ -391,7 +391,7 @@ fn remove_nonexistent_package_errors() {
 /// `upgrade`, so it points at an inert path.
 fn write_servers_config(env: &TestEnv, name: &str, configured_index: &Path) -> PathBuf {
     let config = format!(
-        r#"{{"factory":{{"id":"factory","base_url":"file:///dev/null","known_public_key":"k","priority":0,"enabled":true}},"servers":[{{"id":"braiins","type":"mirror","base_url":"file://{}","known_public_key":"k","priority":10,"enabled":true,"required":true}}]}}"#,
+        r#"{{"factory":{{"id":"factory","base_url":"file:///dev/null","known_public_key":"k","priority":0,"enabled":true}},"servers":[{{"id":"braiins","index_url":"file://{}","known_public_key":"k","priority":10,"enabled":true,"required":true}}]}}"#,
         configured_index.display()
     );
     let path = env.tmp.path().join(name);
@@ -677,8 +677,9 @@ fn upgrade_custom_index_wins_precedence_then_next_boot_stages() {
         &custom_ref_next,
         "--profile-dir",
         &profile,
-        "--next-boot",
+        "--firmware",
         "9.9",
+        "--next-boot",
     ]);
     let gen_path = run.generation_path("next-boot upgrade");
 
@@ -703,5 +704,322 @@ fn upgrade_custom_index_wins_precedence_then_next_boot_stages() {
         staged.packages["clock"].store_path,
         store_custom_next.display().to_string(),
         "staged clock should resolve to the custom 1.1.0 store path"
+    );
+}
+
+// ── upgrade: package feed resolution ─────────────────────────────────────────
+
+/// A loopback HTTP server that counts hits per exact request path, for
+/// asserting which feed/index documents `upgrade` actually requested.
+/// Bound first (so routes can reference the kernel-assigned port), then
+/// served via [`PendingCountingServer::serve`].
+struct PendingCountingServer {
+    listener: std::net::TcpListener,
+    addr: std::net::SocketAddr,
+}
+
+fn bind_counting_server() -> PendingCountingServer {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("BUG: bind loopback listener");
+    let addr = listener.local_addr().expect("BUG: read local addr");
+    PendingCountingServer { listener, addr }
+}
+
+struct CountingServer {
+    addr: std::net::SocketAddr,
+    hits: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, usize>>>,
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl PendingCountingServer {
+    fn base_url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+
+    fn serve(self, routes: Vec<(String, Vec<u8>)>) -> CountingServer {
+        use std::io::{BufRead as _, Write as _};
+
+        let listener = self.listener;
+        let addr = self.addr;
+        let hits: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, usize>>> =
+            std::sync::Arc::default();
+        let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        let thread_hits = std::sync::Arc::clone(&hits);
+        let thread_shutdown = std::sync::Arc::clone(&shutdown);
+        let handle = std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                // Checked before any read: the drop-time nudge connection
+                // never sends a request, so reading first would block.
+                if thread_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
+                let Ok(stream) = stream else {
+                    continue;
+                };
+                let mut reader =
+                    std::io::BufReader::new(stream.try_clone().expect("BUG: clone stream"));
+                let mut request_line = String::new();
+                if reader
+                    .read_line(&mut request_line)
+                    .expect("BUG: read request line")
+                    == 0
+                {
+                    continue;
+                }
+                let path = request_line
+                    .split_whitespace()
+                    .nth(1)
+                    .expect("BUG: malformed request line")
+                    .to_owned();
+                loop {
+                    let mut line = String::new();
+                    let n = reader.read_line(&mut line).expect("BUG: read header line");
+                    if n == 0 || line == "\r\n" || line == "\n" {
+                        break;
+                    }
+                }
+                *thread_hits
+                    .lock()
+                    .expect("BUG: hits lock")
+                    .entry(path.clone())
+                    .or_insert(0) += 1;
+                let mut stream = reader.into_inner();
+                let (status, body) = match routes.iter().find(|(route, _)| *route == path) {
+                    Some((_, body)) => ("200 OK", body.clone()),
+                    None => ("404 Not Found", b"not found".to_vec()),
+                };
+                let header = format!(
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream
+                    .write_all(header.as_bytes())
+                    .expect("BUG: write response header");
+                stream.write_all(&body).expect("BUG: write response body");
+            }
+        });
+
+        CountingServer {
+            addr,
+            hits,
+            shutdown,
+            handle: Some(handle),
+        }
+    }
+}
+
+impl CountingServer {
+    fn hit_count(&self, path: &str) -> usize {
+        self.hits
+            .lock()
+            .expect("BUG: hits lock")
+            .get(path)
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+impl Drop for CountingServer {
+    fn drop(&mut self) {
+        self.shutdown
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let _ = std::net::TcpStream::connect(self.addr);
+        if let Some(handle) = self.handle.take() {
+            handle.join().expect("BUG: HTTP server thread panicked");
+        }
+    }
+}
+
+/// Write a `servers.json` whose single server links a package feed.
+fn write_feed_servers_config(env: &TestEnv, name: &str, feed_url: &str) -> PathBuf {
+    let config = format!(
+        r#"{{"factory":{{"id":"factory","base_url":"file:///dev/null","known_public_key":"k","priority":0,"enabled":true}},"servers":[{{"id":"braiins","feed_url":"{feed_url}","known_public_key":"k","priority":10,"enabled":true,"required":true}}]}}"#,
+    );
+    let path = env.tmp.path().join(name);
+    std::fs::write(&path, config).expect("BUG: write servers.json");
+    path
+}
+
+/// Serialize a feed whose entries pair BOS versions with index URLs.
+fn feed_json(entries: &[(&str, &str)]) -> Vec<u8> {
+    let entries: Vec<String> = entries
+        .iter()
+        .map(|(bos_version, index_url)| {
+            format!(
+                r#"{{"bos_version":"{bos_version}","download_url":"http://unused.invalid/t.tar","profile_path":"/unused","index_url":"{index_url}"}}"#
+            )
+        })
+        .collect();
+    format!(r#"{{"version":1,"entries":[{}]}}"#, entries.join(",")).into_bytes()
+}
+
+fn index_json(packages: &[(&str, &str, &Path)]) -> Vec<u8> {
+    let entries: Vec<String> = packages
+        .iter()
+        .map(|(pkg, version, store)| {
+            format!(
+                r#"{{"name":"{pkg}","version":"{version}","store_path":"{}"}}"#,
+                store.display()
+            )
+        })
+        .collect();
+    format!(
+        r#"{{"version":1,"provenance":null,"indexes":[],"caches":[],"packages":[{}]}}"#,
+        entries.join(",")
+    )
+    .into_bytes()
+}
+
+/// The sysupgrade combination: an existing runtime `servers.json` (feed A)
+/// beats the staged `--default-servers-config` (feed B) — FALLBACK
+/// precedence — and `--next-boot` stages the generation without touching
+/// `current`.
+#[test]
+#[serial]
+fn upgrade_prefers_runtime_config_over_staged_default_and_stages_next_boot() {
+    let env = setup();
+    let store_base = env.make_store("store-clock-0.9.0", &["bin/clock"]);
+    create_activation_entrypoint(&store_base);
+    env.add_packages(&[("clock", "0.9.0", &store_base)], &[])
+        .ok("seed gen 1 with clock 0.9.0");
+
+    let store_next = env.make_store("store-clock-1.0.0", &["bin/clock"]);
+    create_activation_entrypoint(&store_next);
+
+    let pending = bind_counting_server();
+    let base = pending.base_url();
+    let server = pending.serve(vec![
+        (
+            "/feed-a.json".to_owned(),
+            feed_json(&[("9.9", &format!("{base}/index-a.json"))]),
+        ),
+        (
+            "/index-a.json".to_owned(),
+            index_json(&[("clock", "1.0.0", &store_next)]),
+        ),
+        (
+            "/feed-b.json".to_owned(),
+            feed_json(&[("9.9", &format!("{base}/index-b.json"))]),
+        ),
+        (
+            "/index-b.json".to_owned(),
+            index_json(&[("clock", "1.0.0", &store_next)]),
+        ),
+    ]);
+
+    let runtime = write_feed_servers_config(&env, "servers.json", &format!("{base}/feed-a.json"));
+    let staged =
+        write_feed_servers_config(&env, "servers.json.default", &format!("{base}/feed-b.json"));
+
+    let profile = env.profile_dir_arg();
+    let runtime_arg = runtime.display().to_string();
+    let staged_arg = staged.display().to_string();
+    let run = env.run(&[
+        "upgrade",
+        "--servers-config",
+        &runtime_arg,
+        "--default-servers-config",
+        &staged_arg,
+        "--profile-dir",
+        &profile,
+        "--firmware",
+        "9.9",
+        "--next-boot",
+    ]);
+    let gen_path = run.generation_path("next-boot upgrade against runtime feed");
+
+    assert_eq!(server.hit_count("/feed-a.json"), 1, "runtime feed fetched");
+    assert_eq!(
+        server.hit_count("/index-a.json"),
+        1,
+        "runtime feed's index fetched"
+    );
+    assert_eq!(
+        server.hit_count("/feed-b.json"),
+        0,
+        "an existing runtime config must shadow the staged default"
+    );
+    assert_eq!(server.hit_count("/index-b.json"), 0);
+
+    assert!(gen_path.ends_with("2-link"), "got {gen_path:?}");
+    assert_eq!(
+        std::fs::read_link(env.profile_dir.join("next.9.9")).expect("BUG: read next.9.9 symlink"),
+        PathBuf::from("2-link"),
+        "next-boot must stage gen 2 in the next.9.9 marker"
+    );
+    assert_eq!(
+        env.current_link_target(),
+        PathBuf::from("1-link"),
+        "next-boot must leave current pointing at gen 1"
+    );
+}
+
+/// Feed flow: with two firmware entries in the feed, only the index of
+/// the `--firmware` target is requested.
+#[test]
+#[serial]
+fn upgrade_follows_only_the_target_firmware_index() {
+    let env = setup();
+    let store_base = env.make_store("store-clock-0.9.0", &["bin/clock"]);
+    create_activation_entrypoint(&store_base);
+    env.add_packages(&[("clock", "0.9.0", &store_base)], &[])
+        .ok("seed gen 1 with clock 0.9.0");
+
+    let store_target = env.make_store("store-clock-2.0.0", &["bin/clock"]);
+    create_activation_entrypoint(&store_target);
+    let store_other = env.make_store("store-clock-1.5.0", &["bin/clock"]);
+
+    let pending = bind_counting_server();
+    let base = pending.base_url();
+    let server = pending.serve(vec![
+        (
+            "/feed.json".to_owned(),
+            feed_json(&[
+                ("1.1", &format!("{base}/index-11.json")),
+                ("2.2", &format!("{base}/index-22.json")),
+            ]),
+        ),
+        (
+            "/index-11.json".to_owned(),
+            index_json(&[("clock", "1.5.0", &store_other)]),
+        ),
+        (
+            "/index-22.json".to_owned(),
+            index_json(&[("clock", "2.0.0", &store_target)]),
+        ),
+    ]);
+
+    let servers = write_feed_servers_config(&env, "servers.json", &format!("{base}/feed.json"));
+
+    let profile = env.profile_dir_arg();
+    let servers_arg = servers.display().to_string();
+    let run = env.run(&[
+        "upgrade",
+        "--servers-config",
+        &servers_arg,
+        "--profile-dir",
+        &profile,
+        "--firmware",
+        "2.2",
+    ]);
+    let gen_path = run.generation_path("feed-scoped upgrade");
+
+    assert_eq!(server.hit_count("/feed.json"), 1);
+    assert_eq!(
+        server.hit_count("/index-22.json"),
+        1,
+        "the target firmware's index must be fetched"
+    );
+    assert_eq!(
+        server.hit_count("/index-11.json"),
+        0,
+        "the other firmware's index must not be fetched"
+    );
+
+    let manifest = read_manifest(&gen_path).expect("BUG: read gen2 manifest");
+    assert_eq!(
+        manifest.packages["clock"].version, "2.0.0",
+        "clock should resolve against the 2.2 firmware index"
     );
 }

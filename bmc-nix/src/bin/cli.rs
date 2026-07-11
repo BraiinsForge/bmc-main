@@ -4,11 +4,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use bmc_nix::activation::{self, ActivationOutcome, GenerationSelector};
+use bmc_nix::index::{AD_HOC_INDEX_PRIORITY, AdHocIndexRef};
 use bmc_nix::manifest;
 use bmc_nix::mount::{self, MountOutcome};
 use bmc_nix::types::{
     BaseSelector, FetchedIndex, GcConfig, InstallResult, Manifest, MergedIndex, PackageChange,
-    PackageVersion, ServerEntry,
+    PackageVersion, ServerEntry, ServerSource,
 };
 use bmc_nix::upgrade::ActivationMode;
 use clap::{Parser, Subcommand};
@@ -327,12 +328,18 @@ enum Commands {
         #[arg(long, default_value = "current")]
         base: BaseSelector,
 
-        /// Build the new generation but defer activation to the next boot
-        /// of the given BOS version: write the `next.<BOS_VERSION>` marker
-        /// consumed only by that firmware's boot-time activator instead of
-        /// swapping `current`.
-        #[arg(long, value_name = "BOS_VERSION", conflicts_with = "no_activate")]
-        next_boot: Option<String>,
+        /// Firmware version that scopes feed-entry selection. Defaults to
+        /// the contents of /etc/bos_version when registry resolution
+        /// encounters a feed-linked server; required together with
+        /// --next-boot.
+        #[arg(long, value_parser = parse_bos_version)]
+        firmware: Option<String>,
+
+        /// Build the new generation but defer activation to the next boot:
+        /// write the `next.<BOS_VERSION>` marker for the version supplied by
+        /// --firmware instead of swapping `current`.
+        #[arg(long, conflicts_with = "no_activate", requires = "firmware")]
+        next_boot: bool,
 
         /// Package name to install during this upgrade (repeatable).
         /// Resolved against the same indexes as the upgrade.
@@ -472,6 +479,9 @@ enum Commands {
     /// Inserts (or replaces by `id`) a server entry in `servers.json` and
     /// appends the substituter plus its trusted key to `nix.conf`. Points
     /// a device at a developer machine for the upgrade test harness.
+    #[command(group(
+        clap::ArgGroup::new("source").required(true).multiple(false)
+    ))]
     RegisterServer {
         /// Path to the server registry.
         #[arg(long, default_value = "/etc/nix-upgrade/servers.json")]
@@ -485,13 +495,21 @@ enum Commands {
         #[arg(long)]
         id: String,
 
-        /// Server type marker recorded in the registry.
-        #[arg(long = "type", default_value = "http")]
-        server_type: String,
+        /// Exact URL of the server's package feed document; exactly one
+        /// of --feed-url/--index-url must be given.
+        #[arg(long, group = "source", value_parser = parse_feed_url)]
+        feed_url: Option<String>,
 
-        /// Base URL of the package index server.
-        #[arg(long)]
-        base_url: String,
+        /// Exact URL of the server's package index document; exactly one
+        /// of --feed-url/--index-url must be given.
+        #[arg(long, group = "source", value_parser = parse_index_url)]
+        index_url: Option<String>,
+
+        /// Base URL recorded on the factory entry when this registration
+        /// bootstraps the registry or re-registers the bootstrapped
+        /// factory id.
+        #[arg(long, value_parser = parse_factory_base_url)]
+        factory_base_url: Option<String>,
 
         /// Public key stored for future index verification; the device
         /// does not currently verify fetched indexes against it.
@@ -602,40 +620,31 @@ fn parse_index_ref(value: &str, index: usize) -> (String, String) {
     (format!("custom-{index}"), value.to_owned())
 }
 
-/// Build the fetch set: the configured servers plus one synthetic
-/// entry per `--index` reference.
+/// Build the ad-hoc fetch list: one reference per `--index` flag.
 ///
-/// Custom entries sit at priority 0 (highest precedence), so a custom
+/// Ad-hoc references sit at priority 0 (highest precedence), so an ad-hoc
 /// index wins a version tie against any configured server. Ids come from
 /// each reference's optional `ID=` prefix, defaulting to `custom-<n>` by
-/// flag order; the `custom` type is a stable marker and is not consulted
-/// during resolution.
-fn build_fetch_set(
-    mut configured: Vec<ServerEntry>,
-    custom_indexes: &[String],
-) -> Vec<ServerEntry> {
-    for (i, reference) in custom_indexes.iter().enumerate() {
-        let (id, base_url) = parse_index_ref(reference, i);
-        configured.push(ServerEntry {
-            id,
-            server_type: "custom".to_owned(),
-            base_url,
-            known_public_key: String::new(),
-            priority: 0,
-            enabled: true,
-            required: true,
-        });
-    }
-    configured
+/// flag order.
+fn build_ad_hoc_refs(custom_indexes: &[String]) -> Vec<AdHocIndexRef> {
+    custom_indexes
+        .iter()
+        .enumerate()
+        .map(|(i, value)| {
+            let (id, reference) = parse_index_ref(value, i);
+            AdHocIndexRef { id, reference }
+        })
+        .collect()
 }
 
-/// Fail when the fetch set has no enabled entry to fetch from.
+/// Fail when there is neither an enabled server nor an ad-hoc reference
+/// to fetch from.
 ///
 /// The shipped default `servers.json` carries an empty `servers` list, so
 /// a plain `upgrade` with no `--index` would otherwise fetch nothing,
 /// resolve every package as absent and mislabel them all as stale.
-fn ensure_fetchable(fetch_set: &[ServerEntry]) -> anyhow::Result<()> {
-    if fetch_set.iter().any(|s| s.enabled) {
+fn ensure_fetchable(servers: &[ServerEntry], ad_hoc: &[AdHocIndexRef]) -> anyhow::Result<()> {
+    if servers.iter().any(|s| s.enabled) || !ad_hoc.is_empty() {
         return Ok(());
     }
     anyhow::bail!("no upgrade index configured: add a server to servers.json or pass --index <url>")
@@ -643,22 +652,44 @@ fn ensure_fetchable(fetch_set: &[ServerEntry]) -> anyhow::Result<()> {
 
 async fn fetch_and_merge_primary_indexes(
     client: &reqwest::Client,
-    fetch_set: &[ServerEntry],
+    ad_hoc: &[AdHocIndexRef],
 ) -> Result<MergedIndex, bmc_nix::index::FetchIndexesError> {
-    let mut enabled_servers: Vec<&ServerEntry> = fetch_set.iter().filter(|s| s.enabled).collect();
-    enabled_servers.sort_by_key(|s| s.priority);
-
-    let mut fetched = Vec::with_capacity(enabled_servers.len());
-    for server in enabled_servers {
-        let index = bmc_nix::index::fetch_index(client, &server.base_url).await?;
+    let mut fetched = Vec::with_capacity(ad_hoc.len());
+    for reference in ad_hoc {
+        let index = bmc_nix::index::fetch_index(client, &reference.reference).await?;
         fetched.push(FetchedIndex {
-            server_id: server.id.clone(),
-            server_priority: server.priority,
+            server_id: reference.id.clone(),
+            server_priority: AD_HOC_INDEX_PRIORITY,
             index,
         });
     }
 
     Ok(bmc_nix::index::merge_indexes(fetched))
+}
+
+/// Validate a BOS version at parse time: non-empty, no `/`, no
+/// whitespace — it is embedded into the `next.<BOS_VERSION>` marker
+/// file name and matched against package feed entries.
+fn parse_bos_version(s: &str) -> Result<String, String> {
+    if s.is_empty() || s.contains('/') || s.contains(char::is_whitespace) {
+        return Err(format!("invalid BOS version '{s}'"));
+    }
+    Ok(s.to_owned())
+}
+
+fn parse_feed_url(s: &str) -> Result<String, String> {
+    bmc_nix::types::validate_content_url("--feed-url", s)?;
+    Ok(s.to_owned())
+}
+
+fn parse_index_url(s: &str) -> Result<String, String> {
+    bmc_nix::types::validate_content_url("--index-url", s)?;
+    Ok(s.to_owned())
+}
+
+fn parse_factory_base_url(s: &str) -> Result<String, String> {
+    bmc_nix::types::validate_content_url("--factory-base-url", s)?;
+    Ok(s.to_owned())
 }
 
 fn activation_mode_from_no_activate(no_activate: bool) -> ActivationMode {
@@ -865,37 +896,50 @@ async fn cmd_upgrade(
     hooks_dir: String,
     hooks_override_path: Option<PathBuf>,
     base: BaseSelector,
+    firmware: Option<String>,
     no_activate: bool,
-    next_boot: Option<String>,
+    next_boot: bool,
     install: Vec<String>,
     install_from: Option<PathBuf>,
     log_format: LogFormat,
 ) -> anyhow::Result<()> {
-    if let Some(version) = &next_boot {
-        anyhow::ensure!(
-            !version.is_empty() && !version.contains('/') && !version.contains(char::is_whitespace),
-            "invalid --next-boot BOS version '{version}'"
-        );
-    }
-    let fetch_set = if only_indexes {
-        build_fetch_set(Vec::new(), &indexes)
+    let activation_mode = if next_boot {
+        ActivationMode::NextBoot {
+            bos_version: firmware
+                .clone()
+                .expect("BUG: clap requires --firmware with --next-boot"),
+        }
     } else {
-        let servers_path =
-            servers_config.unwrap_or_else(|| PathBuf::from("/etc/nix-upgrade/servers.json"));
-        let default_path = resolve_default_config_path(&servers_path, default_servers_config);
-        let config = bmc_nix::servers_config::load_servers_config(&servers_path, &default_path)?;
-        build_fetch_set(config.servers, &indexes)
+        activation_mode_from_no_activate(no_activate)
     };
-    ensure_fetchable(&fetch_set)?;
+    let ad_hoc = build_ad_hoc_refs(&indexes);
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(INDEX_FETCH_TIMEOUT_SECS))
         .build()
         .expect("BUG: reqwest client builder");
     let merged = if only_indexes {
-        fetch_and_merge_primary_indexes(&client, &fetch_set).await?
+        ensure_fetchable(&[], &ad_hoc)?;
+        fetch_and_merge_primary_indexes(&client, &ad_hoc).await?
     } else {
-        bmc_nix::index::fetch_and_merge_indexes(&client, &fetch_set).await?
+        let servers_path =
+            servers_config.unwrap_or_else(|| PathBuf::from("/etc/nix-upgrade/servers.json"));
+        let default_path = resolve_default_config_path(&servers_path, default_servers_config);
+        let config = bmc_nix::servers_config::load_servers_config(&servers_path, &default_path)?;
+        ensure_fetchable(&config.servers, &ad_hoc)?;
+        // /etc/bos_version is consulted only when a feed actually needs
+        // scoping, so index-only registries keep working without it.
+        let needs_scope = config
+            .servers
+            .iter()
+            .any(|s| s.enabled && matches!(s.source, ServerSource::Feed { .. }));
+        let scope = match (firmware, needs_scope) {
+            (Some(version), _) => Some(version),
+            (None, true) => Some(read_bos_version(Path::new("/etc/bos_version"))?),
+            (None, false) => None,
+        };
+        bmc_nix::index::fetch_and_merge_indexes(&client, &config.servers, &ad_hoc, scope.as_deref())
+            .await?
     };
 
     let mut install_names = install;
@@ -926,10 +970,7 @@ async fn cmd_upgrade(
         Some(&merged),
         &install_packages,
         &[],
-        match next_boot {
-            Some(bos_version) => ActivationMode::NextBoot { bos_version },
-            None => activation_mode_from_no_activate(no_activate),
-        },
+        activation_mode,
         None,
         Some(&progress),
         &hooks_dir,
@@ -1118,8 +1159,8 @@ fn cmd_register_server(
     default_servers_config: &Path,
     nix_conf: &Path,
     id: String,
-    server_type: String,
-    base_url: String,
+    source: ServerSource,
+    factory_base_url: Option<&str>,
     index_public_key: String,
     cache_url: &str,
     cache_public_key: &str,
@@ -1127,13 +1168,20 @@ fn cmd_register_server(
     optional: bool,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(!id.trim().is_empty(), "--id must not be empty");
-    anyhow::ensure!(!server_type.trim().is_empty(), "--type must not be empty");
-    anyhow::ensure!(
-        base_url.starts_with("https://")
-            || base_url.starts_with("http://")
-            || base_url.starts_with("file://"),
-        "--base-url must be an http(s):// or file:// URL, got '{base_url}'"
-    );
+    match &source {
+        ServerSource::Feed { feed_url } => {
+            bmc_nix::types::validate_content_url("--feed-url", feed_url)
+                .map_err(anyhow::Error::msg)?;
+        }
+        ServerSource::Index { index_url } => {
+            bmc_nix::types::validate_content_url("--index-url", index_url)
+                .map_err(anyhow::Error::msg)?;
+        }
+    }
+    if let Some(url) = factory_base_url {
+        bmc_nix::types::validate_content_url("--factory-base-url", url)
+            .map_err(anyhow::Error::msg)?;
+    }
     anyhow::ensure!(
         cache_url.starts_with("https://")
             || cache_url.starts_with("http://")
@@ -1148,11 +1196,9 @@ fn cmd_register_server(
         !cache_public_key.trim().is_empty(),
         "--cache-public-key must not be empty"
     );
-    let factory_base_url = base_url.clone();
     let entry = ServerEntry {
         id,
-        server_type,
-        base_url,
+        source,
         known_public_key: index_public_key,
         priority,
         enabled: true,
@@ -1162,7 +1208,7 @@ fn cmd_register_server(
         servers_config,
         default_servers_config,
         entry,
-        Some(&factory_base_url),
+        factory_base_url,
     )?;
     // Register the substituter (nix.conf) before persisting the server
     // registry: if the process dies between the two writes, a server
@@ -1283,6 +1329,7 @@ async fn main() -> anyhow::Result<()> {
             indexes,
             only_indexes,
             base,
+            firmware,
             next_boot,
             install,
             install_from,
@@ -1297,6 +1344,7 @@ async fn main() -> anyhow::Result<()> {
                 common.hooks_dir,
                 common.hooks_override_path,
                 base,
+                firmware,
                 common.no_activate,
                 next_boot,
                 install,
@@ -1386,26 +1434,36 @@ async fn main() -> anyhow::Result<()> {
             servers_config,
             nix_conf,
             id,
-            server_type,
-            base_url,
+            feed_url,
+            index_url,
+            factory_base_url,
             index_public_key,
             cache_url,
             cache_public_key,
             priority,
             optional,
-        } => cmd_register_server(
-            &servers_config,
-            &resolve_default_config_path(&servers_config, None),
-            &nix_conf,
-            id,
-            server_type,
-            base_url,
-            index_public_key,
-            &cache_url,
-            &cache_public_key,
-            priority,
-            optional,
-        ),
+        } => {
+            let source = match (feed_url, index_url) {
+                (Some(feed_url), None) => ServerSource::Feed { feed_url },
+                (None, Some(index_url)) => ServerSource::Index { index_url },
+                (None, None) | (Some(_), Some(_)) => {
+                    unreachable!("BUG: clap enforces exactly one of --feed-url/--index-url")
+                }
+            };
+            cmd_register_server(
+                &servers_config,
+                &resolve_default_config_path(&servers_config, None),
+                &nix_conf,
+                id,
+                source,
+                factory_base_url.as_deref(),
+                index_public_key,
+                &cache_url,
+                &cache_public_key,
+                priority,
+                optional,
+            )
+        }
     }
 }
 
@@ -1421,21 +1479,26 @@ mod tests {
             "upgrade",
             "--index",
             "file:///tmp/index.json",
-            "--next-boot",
+            "--firmware",
             "2026.07.1",
+            "--next-boot",
         ])
         .expect("BUG: parse should succeed");
 
         let Commands::Upgrade {
-            next_boot, common, ..
+            firmware,
+            next_boot,
+            common,
+            ..
         } = cli.command
         else {
             panic!("BUG: parsed command must be upgrade");
         };
+        assert!(next_boot, "next-boot activation must be recorded");
         assert_eq!(
-            next_boot.as_deref(),
+            firmware.as_deref(),
             Some("2026.07.1"),
-            "next-boot target version must be recorded"
+            "firmware scope must be recorded"
         );
         assert!(
             !common.no_activate,
@@ -1481,8 +1544,9 @@ mod tests {
             "upgrade",
             "--index",
             "file:///tmp/index.json",
-            "--next-boot",
+            "--firmware",
             "2026.07.1",
+            "--next-boot",
             "--no-activate",
         ])
         .expect_err("BUG: next-boot conflicts with no-activate");
@@ -1491,7 +1555,7 @@ mod tests {
     }
 
     #[test]
-    fn upgrade_rejects_next_boot_without_a_version() {
+    fn upgrade_rejects_next_boot_without_firmware() {
         let err = Cli::try_parse_from([
             "bmc-nix-cli",
             "upgrade",
@@ -1499,9 +1563,76 @@ mod tests {
             "file:///tmp/index.json",
             "--next-boot",
         ])
-        .expect_err("BUG: --next-boot requires the target BOS version");
+        .expect_err("BUG: --next-boot requires --firmware at parse time");
 
-        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn upgrade_rejects_malformed_firmware_at_parse() {
+        let err = Cli::try_parse_from([
+            "bmc-nix-cli",
+            "upgrade",
+            "--index",
+            "file:///tmp/index.json",
+            "--firmware",
+            "2026 07.1",
+        ])
+        .expect_err("BUG: whitespace in a BOS version must fail at parse");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn register_server_requires_exactly_one_source_flag() {
+        let base = [
+            "bmc-nix-cli",
+            "register-server",
+            "--id",
+            "dev",
+            "--index-public-key",
+            "index:KEY",
+            "--cache-url",
+            "https://cache.example.com",
+            "--cache-public-key",
+            "cache:KEY",
+        ];
+
+        let err = Cli::try_parse_from(base).expect_err("BUG: a source flag is required");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+
+        let both = base
+            .into_iter()
+            .chain([
+                "--feed-url",
+                "https://dev.example.com/feed.json",
+                "--index-url",
+                "https://dev.example.com/index.json",
+            ])
+            .collect::<Vec<_>>();
+        let err = Cli::try_parse_from(both).expect_err("BUG: the source flags are exclusive");
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn register_server_rejects_relative_feed_url_at_parse() {
+        let err = Cli::try_parse_from([
+            "bmc-nix-cli",
+            "register-server",
+            "--id",
+            "dev",
+            "--feed-url",
+            "feeds/feed.json",
+            "--index-public-key",
+            "index:KEY",
+            "--cache-url",
+            "https://cache.example.com",
+            "--cache-public-key",
+            "cache:KEY",
+        ])
+        .expect_err("BUG: a relative --feed-url must fail at parse");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
     }
 
     #[test]
@@ -1612,8 +1743,10 @@ mod tests {
             &resolve_default_config_path(&servers, None),
             &nix_conf,
             "dev".to_owned(),
-            "http".to_owned(),
-            "https://dev.example.com/v1".to_owned(),
+            ServerSource::Index {
+                index_url: "https://dev.example.com/v1/index.json".to_owned(),
+            },
+            None,
             "index:KEY".to_owned(),
             "https://cache.example.com",
             "cache:KEY",
@@ -1768,8 +1901,9 @@ mod tests {
     fn configured_server(id: &str, priority: u32) -> ServerEntry {
         ServerEntry {
             id: id.to_owned(),
-            server_type: "mirror".to_owned(),
-            base_url: format!("https://{id}.example.com/v1"),
+            source: ServerSource::Index {
+                index_url: format!("https://{id}.example.com/v1/nix-package-index.v1.json"),
+            },
             known_public_key: "k".to_owned(),
             priority,
             enabled: true,
@@ -1778,67 +1912,64 @@ mod tests {
     }
 
     #[test]
-    fn build_fetch_set_appends_synthetic_custom_entries() {
-        let configured = vec![configured_server("s1", 10)];
+    fn build_ad_hoc_refs_numbers_bare_references() {
         let customs = vec![
             "file:///mnt/data/local.json".to_owned(),
             "https://cache.example.com/v1".to_owned(),
         ];
 
-        let set = build_fetch_set(configured, &customs);
+        let refs = build_ad_hoc_refs(&customs);
 
-        assert_eq!(set.len(), 3);
-        assert_eq!(set[0].id, "s1");
-
-        assert_eq!(set[1].id, "custom-0");
-        assert_eq!(set[1].base_url, "file:///mnt/data/local.json");
-        assert_eq!(set[1].priority, 0);
-        assert_eq!(set[1].server_type, "custom");
-        assert!(set[1].enabled);
-
-        assert_eq!(set[2].id, "custom-1");
-        assert_eq!(set[2].base_url, "https://cache.example.com/v1");
-        assert_eq!(set[2].priority, 0);
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].id, "custom-0");
+        assert_eq!(refs[0].reference, "file:///mnt/data/local.json");
+        assert_eq!(refs[1].id, "custom-1");
+        assert_eq!(refs[1].reference, "https://cache.example.com/v1");
     }
 
     #[test]
-    fn build_fetch_set_honors_explicit_index_ids() {
+    fn build_ad_hoc_refs_honors_explicit_index_ids() {
         let customs = vec![
             "forge=https://cache.example.com/v1".to_owned(),
             "https://cache.example.com/v2?a=b".to_owned(),
         ];
 
-        let set = build_fetch_set(Vec::new(), &customs);
+        let refs = build_ad_hoc_refs(&customs);
 
         // An `ID=` prefix names the entry, so a firmware upgrade can
         // attribute packages to the configured server's id.
-        assert_eq!(set[0].id, "forge");
-        assert_eq!(set[0].base_url, "https://cache.example.com/v1");
+        assert_eq!(refs[0].id, "forge");
+        assert_eq!(refs[0].reference, "https://cache.example.com/v1");
         // A bare reference keeps the `custom-<n>` fallback by flag order, and
         // an `=` inside the URL is not mistaken for an id delimiter.
-        assert_eq!(set[1].id, "custom-1");
-        assert_eq!(set[1].base_url, "https://cache.example.com/v2?a=b");
+        assert_eq!(refs[1].id, "custom-1");
+        assert_eq!(refs[1].reference, "https://cache.example.com/v2?a=b");
     }
 
     #[test]
     fn ensure_fetchable_errors_when_no_enabled_entries() {
         assert!(
-            ensure_fetchable(&[]).is_err(),
+            ensure_fetchable(&[], &[]).is_err(),
             "an empty fetch set must be a fatal error"
         );
 
         let mut disabled = configured_server("s1", 10);
         disabled.enabled = false;
         assert!(
-            ensure_fetchable(&[disabled]).is_err(),
+            ensure_fetchable(&[disabled], &[]).is_err(),
             "an all-disabled fetch set must be a fatal error"
         );
     }
 
     #[test]
     fn ensure_fetchable_ok_with_one_enabled_entry() {
-        ensure_fetchable(&[configured_server("s1", 10)])
+        ensure_fetchable(&[configured_server("s1", 10)], &[])
             .expect("BUG: one enabled entry should be fetchable");
+        ensure_fetchable(
+            &[],
+            &build_ad_hoc_refs(&["file:///tmp/index.json".to_owned()]),
+        )
+        .expect("BUG: one ad-hoc reference should be fetchable");
     }
 
     #[tokio::test]
@@ -1864,9 +1995,9 @@ mod tests {
         .expect("BUG: write root index");
 
         let root_ref = format!("file://{}", root_path.display());
-        let fetch_set = build_fetch_set(Vec::new(), &[root_ref]);
+        let ad_hoc = build_ad_hoc_refs(&[root_ref]);
         let client = reqwest::Client::new();
-        let merged = fetch_and_merge_primary_indexes(&client, &fetch_set)
+        let merged = fetch_and_merge_primary_indexes(&client, &ad_hoc)
             .await
             .expect("BUG: primary-only fetch should merge the explicit index");
 
@@ -1913,8 +2044,9 @@ mod tests {
 
         let file_server = ServerEntry {
             id: "forge".to_owned(),
-            server_type: "mirror".to_owned(),
-            base_url: format!("file://{}", index_path.display()),
+            source: ServerSource::Index {
+                index_url: format!("file://{}", index_path.display()),
+            },
             known_public_key: "k".to_owned(),
             priority: 10,
             enabled: true,
@@ -1922,7 +2054,7 @@ mod tests {
         };
 
         let client = reqwest::Client::new();
-        let merged = bmc_nix::index::fetch_and_merge_indexes(&client, &[file_server])
+        let merged = bmc_nix::index::fetch_and_merge_indexes(&client, &[file_server], &[], None)
             .await
             .expect("BUG: merge should succeed");
 
@@ -1992,8 +2124,9 @@ mod tests {
 
         let configured = vec![ServerEntry {
             id: "forge".to_owned(),
-            server_type: "mirror".to_owned(),
-            base_url: format!("file://{}", configured_path.display()),
+            source: ServerSource::Index {
+                index_url: format!("file://{}", configured_path.display()),
+            },
             known_public_key: "k".to_owned(),
             priority: 10,
             enabled: true,
@@ -2001,9 +2134,9 @@ mod tests {
         }];
         let customs = vec![format!("file://{}", custom_path.display())];
 
-        let fetch_set = build_fetch_set(configured, &customs);
+        let ad_hoc = build_ad_hoc_refs(&customs);
         let client = reqwest::Client::new();
-        let merged = bmc_nix::index::fetch_and_merge_indexes(&client, &fetch_set)
+        let merged = bmc_nix::index::fetch_and_merge_indexes(&client, &configured, &ad_hoc, None)
             .await
             .expect("BUG: merge should succeed");
 

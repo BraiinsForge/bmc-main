@@ -299,6 +299,52 @@ mod tests {
         assert!(dir.path().join("servers.json.bcp").exists());
     }
 
+    const OLD_SCHEMA: &str = r#"{"factory":{"id":"forge","base_url":"https://cache.braiins.com/v1","known_public_key":"k","priority":0,"enabled":true},"servers":[{"id":"dev","type":"http","base_url":"https://dev.example.com/v1","known_public_key":"k","priority":50,"enabled":true}]}"#;
+
+    #[test]
+    fn old_schema_runtime_is_quarantined_and_default_served() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let (runtime, default) = paths(&dir);
+        write(&runtime, OLD_SCHEMA);
+        write(&default, FACTORY_ONLY);
+
+        let config = load_servers_config(&runtime, &default)
+            .expect("BUG: an old-schema runtime must fall back to the default");
+
+        assert_eq!(config.factory.id, "forge");
+        assert!(config.servers.is_empty());
+        assert!(dir.path().join("servers.json.bcp").exists());
+        assert!(!runtime.exists());
+    }
+
+    #[test]
+    fn old_schema_runtime_without_default_errors_after_quarantine() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let (runtime, default) = paths(&dir);
+        write(&runtime, OLD_SCHEMA);
+
+        let err = load_servers_config(&runtime, &default)
+            .expect_err("an old-schema runtime without a default must error");
+        assert!(matches!(err, LoadServersConfigError::NoConfig { .. }));
+        assert!(dir.path().join("servers.json.bcp").exists());
+    }
+
+    #[test]
+    fn old_schema_default_errors_without_quarantine() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let (runtime, default) = paths(&dir);
+        write(&default, OLD_SCHEMA);
+
+        let err = load_servers_config(&runtime, &default)
+            .expect_err("an old-schema default must be a hard error");
+        assert!(matches!(err, LoadServersConfigError::DefaultParse { .. }));
+        assert!(
+            default.exists(),
+            "the default file must never be quarantined"
+        );
+        assert!(!dir.path().join("servers.json.default.bcp").exists());
+    }
+
     #[test]
     fn malformed_default_errors() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
@@ -329,7 +375,7 @@ mod tests {
         let (runtime, default) = paths(&dir);
         write(
             &default,
-            r#"{"factory":{"id":"forge","base_url":"https://cache.braiins.com/v1","known_public_key":"k","priority":0,"enabled":true},"servers":[{"id":"forge","type":"http","base_url":"https://x/v1","known_public_key":"k","priority":1,"enabled":true}]}"#,
+            r#"{"factory":{"id":"forge","base_url":"https://cache.braiins.com/v1","known_public_key":"k","priority":0,"enabled":true},"servers":[{"id":"forge","index_url":"https://x/v1/i.json","known_public_key":"k","priority":1,"enabled":true}]}"#,
         );
 
         let err = load_servers_config(&runtime, &default).expect_err("factory dup is invalid");

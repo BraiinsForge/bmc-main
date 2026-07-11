@@ -237,21 +237,128 @@ fn default_true() -> bool {
     true
 }
 
+/// Where a configured server's content lives: exactly one of a package
+/// feed (the per-firmware release catalog) or a direct package index.
+/// Both are exact document URLs — nothing is appended to them.
+#[derive(Debug, Clone)]
+pub enum ServerSource {
+    Feed { feed_url: String },
+    Index { index_url: String },
+}
+
 /// A configured package server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "RawServerEntry", into = "RawServerEntry")]
 pub struct ServerEntry {
     pub id: String,
-    #[serde(rename = "type")]
-    pub server_type: String,
-    pub base_url: String,
+    pub source: ServerSource,
     pub known_public_key: String,
     pub priority: u32,
     pub enabled: bool,
     /// When true, a failed index fetch from this server aborts the whole
     /// merge. When false, the failure degrades to a warning and the merge
     /// proceeds with the remaining servers.
-    #[serde(default = "default_true")]
     pub required: bool,
+}
+
+/// Wire shape of [`ServerEntry`]: the source enum flattens to optional
+/// `feed_url`/`index_url` fields, with exactly-one enforcement and URL
+/// validation on deserialization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RawServerEntry {
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    feed_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    index_url: Option<String>,
+    known_public_key: String,
+    priority: u32,
+    enabled: bool,
+    #[serde(default = "default_true")]
+    required: bool,
+}
+
+impl TryFrom<RawServerEntry> for ServerEntry {
+    type Error = String;
+
+    fn try_from(raw: RawServerEntry) -> Result<Self, Self::Error> {
+        let source = match (raw.feed_url, raw.index_url) {
+            (Some(feed_url), None) => {
+                validate_content_url("feed_url", &feed_url)?;
+                ServerSource::Feed { feed_url }
+            }
+            (None, Some(index_url)) => {
+                validate_content_url("index_url", &index_url)?;
+                ServerSource::Index { index_url }
+            }
+            (Some(_), Some(_)) | (None, None) => {
+                return Err(format!(
+                    "server '{}' must contain exactly one of feed_url or index_url",
+                    raw.id
+                ));
+            }
+        };
+        Ok(ServerEntry {
+            id: raw.id,
+            source,
+            known_public_key: raw.known_public_key,
+            priority: raw.priority,
+            enabled: raw.enabled,
+            required: raw.required,
+        })
+    }
+}
+
+impl From<ServerEntry> for RawServerEntry {
+    fn from(entry: ServerEntry) -> Self {
+        let (feed_url, index_url) = match entry.source {
+            ServerSource::Feed { feed_url } => (Some(feed_url), None),
+            ServerSource::Index { index_url } => (None, Some(index_url)),
+        };
+        RawServerEntry {
+            id: entry.id,
+            feed_url,
+            index_url,
+            known_public_key: entry.known_public_key,
+            priority: entry.priority,
+            enabled: entry.enabled,
+            required: entry.required,
+        }
+    }
+}
+
+/// Absolute-URL check for server content links, parsed with
+/// [`reqwest::Url`]: the scheme must be `http`, `https`, or `file`;
+/// http(s) URLs must carry a host; `file` URLs must carry an absolute
+/// path and no host. `what` names the offending field in the error.
+///
+/// # Errors
+///
+/// Returns a human-readable description of why `url` was rejected.
+pub fn validate_content_url(what: &str, url: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url).map_err(|source| {
+        format!("{what} '{url}' is not an absolute http(s):// or file:// URL: {source}")
+    })?;
+    match parsed.scheme() {
+        "http" | "https" => {
+            if parsed.host_str().is_none() {
+                return Err(format!("{what} '{url}' has no host"));
+            }
+        }
+        "file" => {
+            if parsed.host_str().is_some_and(|host| !host.is_empty())
+                || !parsed.path().starts_with('/')
+            {
+                return Err(format!("{what} '{url}' must be an absolute file:///… path"));
+            }
+        }
+        other => {
+            return Err(format!(
+                "{what} '{url}' has unsupported scheme '{other}' (expected http, https, or file)"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A single fetched index bundled with its source-server metadata.
@@ -689,8 +796,7 @@ mod tests {
     fn server_entry_omitting_required_defaults_to_true() {
         let json = r#"{
             "id": "dev",
-            "type": "http",
-            "base_url": "https://dev.example.com/v1",
+            "index_url": "https://dev.example.com/v1/nix-package-index.v1.json",
             "known_public_key": "k",
             "priority": 50,
             "enabled": true
@@ -707,8 +813,7 @@ mod tests {
     fn server_entry_honours_explicit_required_false() {
         let json = r#"{
             "id": "dev",
-            "type": "http",
-            "base_url": "https://dev.example.com/v1",
+            "index_url": "https://dev.example.com/v1/nix-package-index.v1.json",
             "known_public_key": "k",
             "priority": 50,
             "enabled": true,
@@ -810,5 +915,80 @@ mod servers_config_serde_tests {
         assert!(json.contains(r#""bootstrapped_factory":true"#));
         let round: ServersConfig = serde_json::from_str(&json).expect("BUG: round-trip");
         assert!(round.bootstrapped_factory);
+    }
+}
+
+#[cfg(test)]
+mod server_entry_serde_tests {
+    use super::*;
+
+    #[test]
+    fn server_entry_feed_source_round_trips() {
+        let json = r#"{"id":"s","feed_url":"https://h/nix-package-feed.v1.json","known_public_key":"k","priority":1,"enabled":true}"#;
+        let entry: ServerEntry = serde_json::from_str(json).expect("BUG: valid feed entry");
+        assert!(
+            matches!(&entry.source, ServerSource::Feed { feed_url } if feed_url == "https://h/nix-package-feed.v1.json")
+        );
+        assert!(entry.required, "required defaults to true");
+        let back = serde_json::to_string(&entry).expect("BUG: serializable");
+        assert!(back.contains("feed_url") && !back.contains("index_url"));
+    }
+
+    #[test]
+    fn server_entry_index_source_round_trips() {
+        let json = r#"{"id":"s","index_url":"file:///tmp/i.json","known_public_key":"k","priority":1,"enabled":true,"required":false}"#;
+        let entry: ServerEntry = serde_json::from_str(json).expect("BUG: valid index entry");
+        assert!(matches!(&entry.source, ServerSource::Index { .. }));
+        assert!(!entry.required);
+    }
+
+    #[test]
+    fn server_entry_rejects_both_and_neither_source() {
+        let both = r#"{"id":"s","feed_url":"https://a/f.json","index_url":"https://a/i.json","known_public_key":"k","priority":1,"enabled":true}"#;
+        let err = serde_json::from_str::<ServerEntry>(both)
+            .expect_err("both sources")
+            .to_string();
+        assert!(
+            err.contains("exactly one of feed_url or index_url"),
+            "{err}"
+        );
+        let neither = r#"{"id":"s","known_public_key":"k","priority":1,"enabled":true}"#;
+        assert!(serde_json::from_str::<ServerEntry>(neither).is_err());
+    }
+
+    #[test]
+    fn server_entry_rejects_old_base_url_shape() {
+        let old = r#"{"id":"s","type":"http","base_url":"https://h","known_public_key":"k","priority":1,"enabled":true}"#;
+        assert!(serde_json::from_str::<ServerEntry>(old).is_err());
+    }
+
+    #[test]
+    fn server_entry_rejects_relative_url() {
+        let rel = r#"{"id":"s","index_url":"h/i.json","known_public_key":"k","priority":1,"enabled":true}"#;
+        let err = serde_json::from_str::<ServerEntry>(rel)
+            .expect_err("relative URL")
+            .to_string();
+        assert!(err.contains("http://") || err.contains("absolute"), "{err}");
+    }
+
+    #[test]
+    fn server_entry_rejects_malformed_absolute_urls() {
+        let bare = r#"{"id":"s","feed_url":"https://","known_public_key":"k","priority":1,"enabled":true}"#;
+        assert!(
+            serde_json::from_str::<ServerEntry>(bare).is_err(),
+            "a scheme with no host must be rejected"
+        );
+        let relative_file = r#"{"id":"s","index_url":"file://relative/path","known_public_key":"k","priority":1,"enabled":true}"#;
+        assert!(
+            serde_json::from_str::<ServerEntry>(relative_file).is_err(),
+            "a file URL without an absolute path must be rejected"
+        );
+    }
+
+    #[test]
+    fn validate_content_url_accepts_absolute_forms() {
+        validate_content_url("feed_url", "https://h/f.json").expect("BUG: https accepted");
+        validate_content_url("feed_url", "http://h:8080/f.json").expect("BUG: http accepted");
+        validate_content_url("index_url", "file:///tmp/i.json").expect("BUG: file accepted");
     }
 }

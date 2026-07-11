@@ -8,7 +8,7 @@ use tracing::{debug, warn};
 
 use crate::types::{
     FetchedIndex, InstalledBy, ManifestPackage, MergedIndex, MergedPackageEntry, PackageIndex,
-    ResolvedPackage, ServerEntry,
+    ResolvedPackage, ServerEntry, ServerSource,
 };
 
 pub const PACKAGE_INDEX_VERSION: u32 = 1;
@@ -92,6 +92,28 @@ pub enum FetchIndexesError {
     IndexTooLarge { location: String, size: u64 },
     #[error("federated index walk exceeded the {limit}-index cap")]
     TooManyIndexes { limit: usize },
+    #[error("package feed at {url} is invalid JSON: {source}")]
+    InvalidFeedJson {
+        url: String,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("server '{server_id}': package feed fetch for firmware '{firmware}' failed: {source}")]
+    FeedFetch {
+        server_id: String,
+        firmware: String,
+        #[source]
+        source: Box<FetchIndexesError>,
+    },
+    #[error("server '{server_id}': package feed does not serve firmware '{firmware}': {source}")]
+    FeedResolution {
+        server_id: String,
+        firmware: String,
+        #[source]
+        source: crate::feed::FeedError,
+    },
+    #[error("server '{server_id}' links a package feed but no firmware scope is available")]
+    MissingFirmwareScope { server_id: String },
 }
 
 /// Maximum accepted size of a single fetched index, in bytes.
@@ -269,6 +291,77 @@ pub async fn fetch_index(
     parse_and_validate_index(&location, &body)
 }
 
+/// Fetch and validate a package index at an exact document URL — no
+/// filename appending for either scheme.
+async fn fetch_index_document(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<PackageIndex, FetchIndexesError> {
+    let (location, body) = fetch_document_bytes(client, url, MAX_INDEX_BYTES).await?;
+    parse_and_validate_index(&location, &body)
+}
+
+/// Fetch and deserialize a package feed document at an exact URL.
+///
+/// Fetch + deserialize ONLY — no validation; the per-server resolver
+/// runs [`crate::feed::validate_feed`]/[`crate::feed::select_entry`]/
+/// [`crate::feed::require_index_url`] and owns the `FeedError` mapping.
+async fn fetch_package_feed(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<crate::feed::PackageFeed, FetchIndexesError> {
+    let (location, body) = fetch_document_bytes(client, url, MAX_INDEX_BYTES).await?;
+    serde_json::from_slice(&body).map_err(|source| FetchIndexesError::InvalidFeedJson {
+        url: location,
+        source,
+    })
+}
+
+/// Resolve one configured server to its package index.
+///
+/// An index-linked server fetches its exact document. A feed-linked
+/// server fetches the feed, selects the `firmware` entry, and follows
+/// that entry's `index_url`; feed selection failures surface as
+/// [`FetchIndexesError::FeedResolution`] and transport failures as
+/// [`FetchIndexesError::FeedFetch`], both naming the server id and the
+/// target firmware. A feed-linked server without a firmware scope is
+/// [`FetchIndexesError::MissingFirmwareScope`].
+async fn fetch_server_index(
+    client: &reqwest::Client,
+    server: &ServerEntry,
+    firmware: Option<&str>,
+) -> Result<PackageIndex, FetchIndexesError> {
+    match &server.source {
+        ServerSource::Index { index_url } => fetch_index_document(client, index_url).await,
+        ServerSource::Feed { feed_url } => {
+            let Some(firmware) = firmware else {
+                return Err(FetchIndexesError::MissingFirmwareScope {
+                    server_id: server.id.clone(),
+                });
+            };
+            let wrap_fetch = |source: FetchIndexesError| FetchIndexesError::FeedFetch {
+                server_id: server.id.clone(),
+                firmware: firmware.to_owned(),
+                source: Box::new(source),
+            };
+            let wrap_feed = |source: crate::feed::FeedError| FetchIndexesError::FeedResolution {
+                server_id: server.id.clone(),
+                firmware: firmware.to_owned(),
+                source,
+            };
+            let feed = fetch_package_feed(client, feed_url)
+                .await
+                .map_err(wrap_fetch)?;
+            crate::feed::validate_feed(feed_url, &feed).map_err(wrap_feed)?;
+            let entry = crate::feed::select_entry(feed_url, &feed, firmware).map_err(wrap_feed)?;
+            let index_url = crate::feed::require_index_url(feed_url, entry).map_err(wrap_feed)?;
+            fetch_index_document(client, index_url)
+                .await
+                .map_err(wrap_fetch)
+        }
+    }
+}
+
 /// Upper bound on the total number of indexes fetched in a single
 /// [`fetch_and_merge_indexes`] call (primaries plus federated children).
 ///
@@ -286,10 +379,31 @@ fn canonical_base_url(base_url: &str) -> String {
     base_url.trim_end_matches('/').to_owned()
 }
 
-/// Fetch and merge indexes from all servers, following federated
-/// `indexes` URLs with visited-set cycle detection.
+/// An ad-hoc `--index` reference resolved alongside the configured
+/// servers.
 ///
-/// Top-level fetch failures abort the whole call with `Err`. Federated
+/// `reference` keeps the `--index` flag's semantics: an `http(s)` base
+/// URL the well-known index filename is appended to, or a `file://`
+/// document path read verbatim. Ad-hoc references are always fatal on
+/// fetch failure.
+#[derive(Debug, Clone)]
+pub struct AdHocIndexRef {
+    pub id: String,
+    pub reference: String,
+}
+
+/// Priority assigned to ad-hoc `--index` references: 0 is the highest
+/// precedence, so an ad-hoc index wins a version tie against any
+/// configured server.
+pub const AD_HOC_INDEX_PRIORITY: u32 = 0;
+
+/// Fetch and merge indexes from all servers and ad-hoc references,
+/// following federated `indexes` URLs with visited-set cycle detection.
+///
+/// Configured servers resolve through their [`ServerSource`]: an exact
+/// index document, or a package feed whose `firmware` entry links the
+/// index. Required-server and ad-hoc fetch failures abort the whole call
+/// with `Err`; optional-server failures degrade to a warning. Federated
 /// child failures are logged and skipped; the merge continues. Child
 /// references are also rejected unless their `base_url` is `http://` or
 /// `https://` (top-level configured servers keep `file://` support). The
@@ -301,8 +415,10 @@ fn canonical_base_url(base_url: &str) -> String {
 pub async fn fetch_and_merge_indexes(
     client: &reqwest::Client,
     servers: &[ServerEntry],
+    ad_hoc: &[AdHocIndexRef],
+    firmware: Option<&str>,
 ) -> Result<MergedIndex, FetchIndexesError> {
-    fetch_and_merge_indexes_with_cap(client, servers, MAX_TOTAL_INDEXES).await
+    fetch_and_merge_indexes_with_cap(client, servers, ad_hoc, firmware, MAX_TOTAL_INDEXES).await
 }
 
 /// Reduce the per-server primary fetch results to the successful indexes.
@@ -311,11 +427,13 @@ pub async fn fetch_and_merge_indexes(
 /// An optional server's failure degrades to a warning so the merge proceeds
 /// with the servers that did respond. The first optional failure is
 /// remembered so that an all-optional set where every fetch failed still
-/// surfaces an error rather than silently returning an empty index. The
-/// `fetch_results` are positionally aligned with `enabled_servers`.
+/// surfaces an error rather than silently returning an empty index, unless
+/// an ad-hoc source will satisfy source resolution. The `fetch_results` are
+/// positionally aligned with `enabled_servers`.
 fn select_primary_indexes(
     enabled_servers: &[&ServerEntry],
     fetch_results: Vec<Result<FetchedIndex, FetchIndexesError>>,
+    has_ad_hoc_source: bool,
 ) -> Result<Vec<FetchedIndex>, FetchIndexesError> {
     let mut primary_results: Vec<FetchedIndex> = Vec::new();
     let mut first_optional_error: Option<FetchIndexesError> = None;
@@ -334,7 +452,7 @@ fn select_primary_indexes(
         }
     }
 
-    if primary_results.is_empty() && !enabled_servers.is_empty() {
+    if primary_results.is_empty() && !enabled_servers.is_empty() && !has_ad_hoc_source {
         return Err(first_optional_error
             .expect("BUG: enabled servers with no successful fetch imply a recorded failure"));
     }
@@ -342,32 +460,25 @@ fn select_primary_indexes(
     Ok(primary_results)
 }
 
-/// [`fetch_and_merge_indexes`] with an explicit walk cap, so the federation
-/// bound can be exercised without building hundreds of fixtures.
-async fn fetch_and_merge_indexes_with_cap(
+/// Fetch the top-level fetch set: the enabled configured servers reduced
+/// via [`select_primary_indexes`], then the ad-hoc references. Ad-hoc
+/// references are reduced separately from the configured servers: any
+/// ad-hoc fetch failure is fatal, matching the required synthetic entries
+/// they used to be.
+async fn fetch_primary_indexes(
     client: &reqwest::Client,
-    servers: &[ServerEntry],
-    max_total_indexes: usize,
-) -> Result<MergedIndex, FetchIndexesError> {
-    let mut enabled_servers: Vec<&ServerEntry> = servers.iter().filter(|s| s.enabled).collect();
-    enabled_servers.sort_by_key(|s| s.priority);
-
-    if enabled_servers.len() > max_total_indexes {
-        return Err(FetchIndexesError::TooManyIndexes {
-            limit: max_total_indexes,
-        });
-    }
-
+    enabled_servers: &[&ServerEntry],
+    ad_hoc: &[AdHocIndexRef],
+    firmware: Option<&str>,
+) -> Result<Vec<FetchedIndex>, FetchIndexesError> {
     let fetch_results: Vec<Result<FetchedIndex, FetchIndexesError>> =
         join_all(enabled_servers.iter().map(|server| async move {
-            let url = make_index_url(&server.base_url);
-            let index = fetch_index(client, &server.base_url).await?;
+            let index = fetch_server_index(client, server, firmware).await?;
             let commit = index
                 .provenance
                 .as_ref()
                 .map_or("none", |p| p.commit.as_str());
             debug!(
-                url = %url,
                 server_id = %server.id,
                 commit = %commit,
                 "fetched index",
@@ -380,12 +491,58 @@ async fn fetch_and_merge_indexes_with_cap(
         }))
         .await;
 
-    let primary_results = select_primary_indexes(&enabled_servers, fetch_results)?;
+    // Every ad-hoc failure is propagated below, so a non-empty ad-hoc set
+    // either supplies a successful source or makes the whole call fail.
+    let mut primary_results =
+        select_primary_indexes(enabled_servers, fetch_results, !ad_hoc.is_empty())?;
+
+    let ad_hoc_results: Vec<Result<FetchedIndex, FetchIndexesError>> =
+        join_all(ad_hoc.iter().map(|reference| async move {
+            let index = fetch_index(client, &reference.reference).await?;
+            Ok::<_, FetchIndexesError>(FetchedIndex {
+                server_id: reference.id.clone(),
+                server_priority: AD_HOC_INDEX_PRIORITY,
+                index,
+            })
+        }))
+        .await;
+    for result in ad_hoc_results {
+        primary_results.push(result?);
+    }
+
+    Ok(primary_results)
+}
+
+/// [`fetch_and_merge_indexes`] with an explicit walk cap, so the federation
+/// bound can be exercised without building hundreds of fixtures.
+async fn fetch_and_merge_indexes_with_cap(
+    client: &reqwest::Client,
+    servers: &[ServerEntry],
+    ad_hoc: &[AdHocIndexRef],
+    firmware: Option<&str>,
+    max_total_indexes: usize,
+) -> Result<MergedIndex, FetchIndexesError> {
+    let mut enabled_servers: Vec<&ServerEntry> = servers.iter().filter(|s| s.enabled).collect();
+    enabled_servers.sort_by_key(|s| s.priority);
+
+    if enabled_servers.len() + ad_hoc.len() > max_total_indexes {
+        return Err(FetchIndexesError::TooManyIndexes {
+            limit: max_total_indexes,
+        });
+    }
+
+    let primary_results = fetch_primary_indexes(client, &enabled_servers, ad_hoc, firmware).await?;
 
     let mut all_fetched: Vec<FetchedIndex> = Vec::new();
     let mut visited: HashSet<String> = enabled_servers
         .iter()
-        .map(|s| canonical_base_url(&s.base_url))
+        .map(|s| {
+            canonical_base_url(match &s.source {
+                ServerSource::Feed { feed_url } => feed_url,
+                ServerSource::Index { index_url } => index_url,
+            })
+        })
+        .chain(ad_hoc.iter().map(|r| canonical_base_url(&r.reference)))
         .collect();
 
     let mut queue: VecDeque<(String, u32, String)> = VecDeque::new();
@@ -403,7 +560,7 @@ async fn fetch_and_merge_indexes_with_cap(
     // Counts fetch attempts, not successes, so a hostile or flaky index
     // that lists many unreachable children still exhausts the cap instead
     // of letting the walk retry them forever.
-    let mut attempted: usize = enabled_servers.len();
+    let mut attempted: usize = enabled_servers.len() + ad_hoc.len();
 
     while let Some((server_id, server_priority, base_url)) = queue.pop_front() {
         if !visited.insert(canonical_base_url(&base_url)) {
@@ -2000,23 +2157,16 @@ mod tests {
         format!("file://{}", path.display())
     }
 
-    fn server_entry(base_url: &str) -> ServerEntry {
-        ServerEntry {
-            id: "primary".to_owned(),
-            server_type: "package".to_owned(),
-            base_url: base_url.to_owned(),
-            known_public_key: String::new(),
-            priority: 10,
-            enabled: true,
-            required: true,
-        }
+    fn server_entry(index_url: &str) -> ServerEntry {
+        required_server("primary", index_url, 10)
     }
 
-    fn required_server(id: &str, base_url: &str, priority: u32) -> ServerEntry {
+    fn required_server(id: &str, index_url: &str, priority: u32) -> ServerEntry {
         ServerEntry {
             id: id.to_owned(),
-            server_type: "package".to_owned(),
-            base_url: base_url.to_owned(),
+            source: ServerSource::Index {
+                index_url: index_url.to_owned(),
+            },
             known_public_key: String::new(),
             priority,
             enabled: true,
@@ -2024,10 +2174,23 @@ mod tests {
         }
     }
 
-    fn optional_server(id: &str, base_url: &str, priority: u32) -> ServerEntry {
+    fn optional_server(id: &str, index_url: &str, priority: u32) -> ServerEntry {
         ServerEntry {
             required: false,
-            ..required_server(id, base_url, priority)
+            ..required_server(id, index_url, priority)
+        }
+    }
+
+    fn feed_server(id: &str, feed_url: &str, priority: u32, required: bool) -> ServerEntry {
+        ServerEntry {
+            id: id.to_owned(),
+            source: ServerSource::Feed {
+                feed_url: feed_url.to_owned(),
+            },
+            known_public_key: String::new(),
+            priority,
+            enabled: true,
+            required,
         }
     }
 
@@ -2088,7 +2251,7 @@ mod tests {
 
         let client = reqwest::Client::new();
         let servers = vec![server_entry(&root)];
-        let err = fetch_and_merge_indexes_with_cap(&client, &servers, 2)
+        let err = fetch_and_merge_indexes_with_cap(&client, &servers, &[], None, 2)
             .await
             .expect_err("a federation chain past the cap must abort");
 
@@ -2112,7 +2275,7 @@ mod tests {
 
         let client = reqwest::Client::new();
         let servers = vec![server_entry(&root)];
-        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, 2)
+        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, &[], None, 2)
             .await
             .expect("BUG: a chain at the cap must merge");
 
@@ -2132,7 +2295,7 @@ mod tests {
 
         let client = reqwest::Client::new();
         let servers = vec![server_entry(&root)];
-        let err = fetch_and_merge_indexes_with_cap(&client, &servers, 2)
+        let err = fetch_and_merge_indexes_with_cap(&client, &servers, &[], None, 2)
             .await
             .expect_err("dead children must still consume the cap and abort the walk");
 
@@ -2155,7 +2318,7 @@ mod tests {
             server_entry(&root_b),
             server_entry(&root_c),
         ];
-        let err = fetch_and_merge_indexes_with_cap(&client, &servers, 2)
+        let err = fetch_and_merge_indexes_with_cap(&client, &servers, &[], None, 2)
             .await
             .expect_err("more enabled top-level servers than the cap must abort");
 
@@ -2180,7 +2343,7 @@ mod tests {
 
         let client = reqwest::Client::new();
         let servers = vec![server_entry(&root)];
-        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, 256)
+        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, &[], None, 256)
             .await
             .expect("BUG: a rejected child scheme must not abort the whole walk");
 
@@ -2227,7 +2390,7 @@ mod tests {
 
         let client = reqwest::Client::new();
         let servers = vec![server_entry(&root)];
-        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, 256)
+        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, &[], None, 256)
             .await
             .expect("BUG: federation should merge");
 
@@ -2295,7 +2458,7 @@ mod tests {
             required_server("healthy", &healthy, 10),
             optional_server("dead", &dead, 20),
         ];
-        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, 256)
+        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, &[], None, 256)
             .await
             .expect("BUG: an unreachable optional server must not abort the merge");
 
@@ -2327,7 +2490,7 @@ mod tests {
             required_server("dead", &dead, 10),
             required_server("healthy", &healthy, 20),
         ];
-        let err = fetch_and_merge_indexes_with_cap(&client, &servers, 256)
+        let err = fetch_and_merge_indexes_with_cap(&client, &servers, &[], None, 256)
             .await
             .expect_err(
                 "an unreachable required server must abort the merge \
@@ -2350,7 +2513,7 @@ mod tests {
             optional_server("dead0", &dead0, 10),
             optional_server("dead1", &dead1, 20),
         ];
-        let err = fetch_and_merge_indexes_with_cap(&client, &servers, 256)
+        let err = fetch_and_merge_indexes_with_cap(&client, &servers, &[], None, 256)
             .await
             .expect_err("every enabled server failing must error, not yield an empty index");
 
@@ -2369,13 +2532,568 @@ mod tests {
 
         let client = reqwest::Client::new();
         let servers = vec![disabled];
-        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, 256)
+        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, &[], None, 256)
             .await
             .expect("BUG: no enabled servers must yield an empty merge, not an error");
 
         assert!(
             merged.packages.is_empty(),
             "a fetch set with no enabled server must merge to nothing"
+        );
+    }
+
+    // ---- feed-linked server resolution tests ----
+
+    type RouteHits = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, usize>>>;
+
+    /// A bound-but-not-yet-serving route listener, split so callers can
+    /// learn the port (feed bodies embed the server's own URLs) before
+    /// the route table is known.
+    struct PendingRouteServer {
+        listener: tokio::net::TcpListener,
+        addr: std::net::SocketAddr,
+    }
+
+    async fn bind_route_server() -> PendingRouteServer {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("BUG: failed to bind mock server");
+        let addr = listener.local_addr().expect("BUG: no local addr");
+        PendingRouteServer { listener, addr }
+    }
+
+    impl PendingRouteServer {
+        fn base_url(&self) -> String {
+            format!("http://{}", self.addr)
+        }
+
+        /// Serve `routes` (exact path -> body, unknown paths 404) with
+        /// per-path hit counting. Abort the returned handle when done.
+        fn serve(self, routes: Vec<(String, String)>) -> (RouteHits, tokio::task::JoinHandle<()>) {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+            let hits: RouteHits = std::sync::Arc::default();
+            let task_hits = std::sync::Arc::clone(&hits);
+            let listener = self.listener;
+
+            let handle = tokio::spawn(async move {
+                loop {
+                    let Ok((mut stream, _)) = listener.accept().await else {
+                        break;
+                    };
+                    let mut buf = [0_u8; 4096];
+                    let Ok(n) = stream.read(&mut buf).await else {
+                        continue;
+                    };
+                    let request = String::from_utf8_lossy(&buf[..n]);
+                    let path = request.split_whitespace().nth(1).unwrap_or("").to_owned();
+                    *task_hits
+                        .lock()
+                        .expect("BUG: hits lock")
+                        .entry(path.clone())
+                        .or_insert(0) += 1;
+                    let response = match routes.iter().find(|(p, _)| *p == path) {
+                        Some((_, body)) => format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                            body.len(),
+                            body
+                        ),
+                        None => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_owned(),
+                    };
+                    let _ = stream.write_all(response.as_bytes()).await;
+                }
+            });
+
+            (hits, handle)
+        }
+    }
+
+    fn hit_count(hits: &RouteHits, path: &str) -> usize {
+        hits.lock()
+            .expect("BUG: hits lock")
+            .get(path)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn feed_entry(bos_version: &str, index_url: Option<&str>) -> crate::feed::PackageFeedEntry {
+        crate::feed::PackageFeedEntry {
+            bos_version: bos_version.to_owned(),
+            download_url: "https://example.com/init.tar.gz".to_owned(),
+            profile_path: "/nix/var/nix/gcroots/profiles/bmc".to_owned(),
+            index_url: index_url.map(str::to_owned),
+        }
+    }
+
+    fn feed_json(entries: Vec<crate::feed::PackageFeedEntry>) -> String {
+        serde_json::to_string(&crate::feed::PackageFeed {
+            version: 1,
+            entries,
+        })
+        .expect("BUG: serialize feed")
+    }
+
+    fn index_json(package: &str) -> String {
+        format!(
+            r#"{{"version":{PACKAGE_INDEX_VERSION},"provenance":null,"indexes":[],"caches":[],"packages":[{{"name":"{package}","version":"1.0.0","store_path":"/nix/store/{package}"}}]}}"#
+        )
+    }
+
+    #[tokio::test]
+    async fn feed_server_resolves_firmware_index_at_exact_paths() {
+        let pending = bind_route_server().await;
+        let base = pending.base_url();
+        let (hits, server) = pending.serve(vec![
+            (
+                "/custom-feed-name.json".to_owned(),
+                feed_json(vec![feed_entry(
+                    "fw1",
+                    Some(&format!("{base}/custom-index-name.json")),
+                )]),
+            ),
+            ("/custom-index-name.json".to_owned(), index_json("clock")),
+        ]);
+
+        let client = reqwest::Client::new();
+        let servers = vec![feed_server(
+            "feedsrv",
+            &format!("{base}/custom-feed-name.json"),
+            10,
+            true,
+        )];
+        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, &[], Some("fw1"), 256)
+            .await
+            .expect("BUG: feed-linked resolution should merge");
+
+        server.abort();
+
+        assert_eq!(
+            merged.by_name.get("clock").map(Vec::len),
+            Some(1),
+            "the feed-resolved index's package must be merged"
+        );
+        assert_eq!(
+            hit_count(&hits, "/custom-feed-name.json"),
+            1,
+            "the feed must be requested at exactly its configured URL"
+        );
+        assert_eq!(
+            hit_count(&hits, "/custom-index-name.json"),
+            1,
+            "the index must be requested at exactly the feed entry's URL"
+        );
+        assert_eq!(
+            hits.lock().expect("BUG: hits lock").len(),
+            2,
+            "no other path may be requested (no filename appending)"
+        );
+    }
+
+    #[tokio::test]
+    async fn required_feed_without_target_firmware_aborts() {
+        let pending = bind_route_server().await;
+        let base = pending.base_url();
+        let (_hits, server) = pending.serve(vec![(
+            "/feed.json".to_owned(),
+            feed_json(vec![feed_entry("other-fw", None)]),
+        )]);
+
+        let client = reqwest::Client::new();
+        let servers = vec![feed_server(
+            "feedsrv",
+            &format!("{base}/feed.json"),
+            10,
+            true,
+        )];
+        let err = fetch_and_merge_indexes_with_cap(&client, &servers, &[], Some("fw1"), 256)
+            .await
+            .expect_err("a required feed without the target firmware must abort");
+
+        server.abort();
+
+        assert!(
+            matches!(
+                &err,
+                FetchIndexesError::FeedResolution { server_id, firmware, source: crate::feed::FeedError::MissingEntry { .. } }
+                    if server_id == "feedsrv" && firmware == "fw1"
+            ),
+            "expected FeedResolution/MissingEntry naming server and firmware, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn required_feed_entry_without_index_url_aborts() {
+        let pending = bind_route_server().await;
+        let base = pending.base_url();
+        let (_hits, server) = pending.serve(vec![(
+            "/feed.json".to_owned(),
+            feed_json(vec![feed_entry("fw1", None)]),
+        )]);
+
+        let client = reqwest::Client::new();
+        let servers = vec![feed_server(
+            "feedsrv",
+            &format!("{base}/feed.json"),
+            10,
+            true,
+        )];
+        let err = fetch_and_merge_indexes_with_cap(&client, &servers, &[], Some("fw1"), 256)
+            .await
+            .expect_err("a feed entry without index_url must abort upgrade resolution");
+
+        server.abort();
+
+        assert!(
+            matches!(
+                &err,
+                FetchIndexesError::FeedResolution {
+                    source: crate::feed::FeedError::MissingIndexUrl { .. },
+                    ..
+                }
+            ),
+            "expected FeedResolution/MissingIndexUrl, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn optional_feed_failure_degrades() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let healthy = write_index(
+            dir.path(),
+            "healthy.json",
+            &[],
+            r#"{"name":"clock","version":"1.0.0","store_path":"/nix/store/clock"}"#,
+        );
+        let dead = dead_http_url().await;
+
+        let client = reqwest::Client::new();
+        let servers = vec![
+            required_server("healthy", &healthy, 10),
+            feed_server("flaky", &format!("{dead}/feed.json"), 20, false),
+        ];
+        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, &[], Some("fw1"), 256)
+            .await
+            .expect("BUG: an unreachable optional feed must not abort the merge");
+
+        assert_eq!(merged.by_name.get("clock").map(Vec::len), Some(1));
+    }
+
+    #[tokio::test]
+    async fn all_optional_feed_failures_still_error() {
+        let dead0 = dead_http_url().await;
+        let dead1 = dead_http_url().await;
+
+        let client = reqwest::Client::new();
+        let servers = vec![
+            feed_server("dead0", &format!("{dead0}/feed.json"), 10, false),
+            feed_server("dead1", &format!("{dead1}/feed.json"), 20, false),
+        ];
+        let err = fetch_and_merge_indexes_with_cap(&client, &servers, &[], Some("fw1"), 256)
+            .await
+            .expect_err("every enabled feed failing must error, not yield an empty index");
+
+        assert!(
+            matches!(err, FetchIndexesError::FeedFetch { .. }),
+            "expected the first per-server feed fetch error, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ad_hoc_success_allows_all_optional_feed_failures_to_degrade() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let reference = write_index(
+            dir.path(),
+            "adhoc.json",
+            &[],
+            r#"{"name":"adhoc-pkg","version":"1.0.0","store_path":"/nix/store/adhoc"}"#,
+        );
+        let dead0 = dead_http_url().await;
+        let dead1 = dead_http_url().await;
+
+        let client = reqwest::Client::new();
+        let servers = vec![
+            feed_server("dead0", &format!("{dead0}/feed.json"), 10, false),
+            feed_server("dead1", &format!("{dead1}/feed.json"), 20, false),
+        ];
+        let ad_hoc = vec![AdHocIndexRef {
+            id: "custom-0".to_owned(),
+            reference,
+        }];
+        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, &ad_hoc, Some("fw1"), 256)
+            .await
+            .expect("BUG: a successful ad-hoc index satisfies source resolution");
+
+        assert_eq!(merged.by_name.get("adhoc-pkg").map(Vec::len), Some(1));
+    }
+
+    #[tokio::test]
+    async fn disabled_feed_server_is_never_fetched() {
+        let pending = bind_route_server().await;
+        let base = pending.base_url();
+        let (hits, server) = pending.serve(vec![
+            (
+                "/feed.json".to_owned(),
+                feed_json(vec![feed_entry("fw1", Some(&format!("{base}/index.json")))]),
+            ),
+            ("/index.json".to_owned(), index_json("clock")),
+        ]);
+
+        let disabled = ServerEntry {
+            enabled: false,
+            ..feed_server("off", &format!("{base}/feed.json"), 10, true)
+        };
+
+        let client = reqwest::Client::new();
+        let merged = fetch_and_merge_indexes_with_cap(&client, &[disabled], &[], Some("fw1"), 256)
+            .await
+            .expect("BUG: a disabled server must merge to nothing, not error");
+
+        server.abort();
+
+        assert!(merged.packages.is_empty());
+        assert_eq!(
+            hit_count(&hits, "/feed.json"),
+            0,
+            "a disabled server's feed must never be requested"
+        );
+        assert_eq!(
+            hit_count(&hits, "/index.json"),
+            0,
+            "a disabled server's index must never be requested"
+        );
+    }
+
+    #[tokio::test]
+    async fn feed_server_without_firmware_scope_errors() {
+        let pending = bind_route_server().await;
+        let base = pending.base_url();
+        let (hits, server) = pending.serve(vec![(
+            "/feed.json".to_owned(),
+            feed_json(vec![feed_entry("fw1", None)]),
+        )]);
+
+        let client = reqwest::Client::new();
+        let servers = vec![feed_server(
+            "feedsrv",
+            &format!("{base}/feed.json"),
+            10,
+            true,
+        )];
+        let err = fetch_and_merge_indexes_with_cap(&client, &servers, &[], None, 256)
+            .await
+            .expect_err("an enabled feed server with no firmware scope must error");
+
+        server.abort();
+
+        assert!(
+            matches!(
+                &err,
+                FetchIndexesError::MissingFirmwareScope { server_id } if server_id == "feedsrv"
+            ),
+            "expected MissingFirmwareScope, got {err:?}"
+        );
+        assert_eq!(
+            hit_count(&hits, "/feed.json"),
+            0,
+            "the scope check must fail before any fetch"
+        );
+    }
+
+    #[tokio::test]
+    async fn ad_hoc_http_ref_appends_well_known_filename_and_merges() {
+        let pending = bind_route_server().await;
+        let base = pending.base_url();
+        let well_known = format!("/nix-package-index.v{PACKAGE_INDEX_VERSION}.json");
+        let (hits, server) = pending.serve(vec![
+            (well_known.clone(), index_json("adhoc-pkg")),
+            (
+                "/feed.json".to_owned(),
+                feed_json(vec![feed_entry("fw1", Some(&format!("{base}/index.json")))]),
+            ),
+            ("/index.json".to_owned(), index_json("feed-pkg")),
+        ]);
+
+        let client = reqwest::Client::new();
+        let servers = vec![feed_server(
+            "feedsrv",
+            &format!("{base}/feed.json"),
+            10,
+            true,
+        )];
+        let ad_hoc = vec![AdHocIndexRef {
+            id: "custom-0".to_owned(),
+            reference: base.clone(),
+        }];
+        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, &ad_hoc, Some("fw1"), 256)
+            .await
+            .expect("BUG: ad-hoc and configured servers should merge together");
+
+        server.abort();
+
+        assert_eq!(merged.by_name.get("adhoc-pkg").map(Vec::len), Some(1));
+        assert_eq!(merged.by_name.get("feed-pkg").map(Vec::len), Some(1));
+        assert_eq!(
+            hit_count(&hits, &well_known),
+            1,
+            "an ad-hoc http reference keeps base-URL semantics (filename appended)"
+        );
+    }
+
+    #[tokio::test]
+    async fn ad_hoc_file_ref_reads_document_verbatim() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let reference = write_index(
+            dir.path(),
+            "adhoc.json",
+            &[],
+            r#"{"name":"adhoc-pkg","version":"1.0.0","store_path":"/nix/store/adhoc"}"#,
+        );
+
+        let client = reqwest::Client::new();
+        let ad_hoc = vec![AdHocIndexRef {
+            id: "custom-0".to_owned(),
+            reference,
+        }];
+        let merged = fetch_and_merge_indexes_with_cap(&client, &[], &ad_hoc, None, 256)
+            .await
+            .expect("BUG: an ad-hoc file reference should merge");
+
+        assert_eq!(merged.by_name.get("adhoc-pkg").map(Vec::len), Some(1));
+    }
+
+    #[tokio::test]
+    async fn ad_hoc_failure_is_fatal() {
+        let dead = dead_http_url().await;
+
+        let client = reqwest::Client::new();
+        let ad_hoc = vec![AdHocIndexRef {
+            id: "custom-0".to_owned(),
+            reference: dead,
+        }];
+        let err = fetch_and_merge_indexes_with_cap(&client, &[], &ad_hoc, None, 256)
+            .await
+            .expect_err("an unreachable ad-hoc reference must abort");
+
+        assert!(
+            matches!(err, FetchIndexesError::Fetch { .. }),
+            "expected the ad-hoc fetch error, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn index_server_requests_exact_custom_path() {
+        let pending = bind_route_server().await;
+        let base = pending.base_url();
+        let (hits, server) = pending.serve(vec![(
+            "/custom-index-name.json".to_owned(),
+            index_json("clock"),
+        )]);
+
+        let client = reqwest::Client::new();
+        let servers = vec![required_server(
+            "direct",
+            &format!("{base}/custom-index-name.json"),
+            10,
+        )];
+        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, &[], None, 256)
+            .await
+            .expect("BUG: a direct index server should merge");
+
+        server.abort();
+
+        assert_eq!(merged.by_name.get("clock").map(Vec::len), Some(1));
+        assert_eq!(
+            hit_count(&hits, "/custom-index-name.json"),
+            1,
+            "a direct index_url must be requested verbatim, not appended to"
+        );
+        assert_eq!(
+            hits.lock().expect("BUG: hits lock").len(),
+            1,
+            "no other path may be requested"
+        );
+    }
+
+    /// `std::io::Write` sink shared with the test so a scoped `tracing`
+    /// subscriber's formatted output can be asserted on.
+    #[derive(Clone, Default)]
+    struct SharedLogBuffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for SharedLogBuffer {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("BUG: log buffer lock").extend(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SharedLogBuffer {
+        type Writer = SharedLogBuffer;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn optional_feed_degrade_warning_names_server_firmware_and_cause() {
+        let pending = bind_route_server().await;
+        let base = pending.base_url();
+        let (_hits, server) = pending.serve(vec![(
+            "/feed.json".to_owned(),
+            feed_json(vec![feed_entry("other-fw", None)]),
+        )]);
+
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let healthy = write_index(
+            dir.path(),
+            "healthy.json",
+            &[],
+            r#"{"name":"clock","version":"1.0.0","store_path":"/nix/store/clock"}"#,
+        );
+
+        let client = reqwest::Client::new();
+        let servers = vec![
+            required_server("healthy", &healthy, 10),
+            feed_server("flaky", &format!("{base}/feed.json"), 20, false),
+        ];
+
+        // Warm-up run: fully register the degrade-warning callsite before
+        // the capture subscriber exists. Parallel tests hit the same
+        // callsite, and a registration racing the subscriber's interest
+        // rebuild would cache the event as disabled.
+        fetch_and_merge_indexes_with_cap(&client, &servers, &[], Some("fw1"), 256)
+            .await
+            .expect("BUG: the optional feed failure must degrade, not abort");
+
+        let buffer = SharedLogBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(buffer.clone())
+            .with_ansi(false)
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+
+        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, &[], Some("fw1"), 256)
+            .await
+            .expect("BUG: the optional feed failure must degrade, not abort");
+
+        drop(guard);
+        server.abort();
+
+        assert_eq!(merged.by_name.get("clock").map(Vec::len), Some(1));
+        let log = String::from_utf8(buffer.0.lock().expect("BUG: log buffer lock").clone())
+            .expect("BUG: utf8 log output");
+        assert!(log.contains("flaky"), "warning must name the server: {log}");
+        assert!(
+            log.contains("fw1"),
+            "warning must name the target firmware: {log}"
+        );
+        assert!(
+            log.contains("no package feed entry"),
+            "warning must carry the cause: {log}"
         );
     }
 }

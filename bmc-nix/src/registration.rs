@@ -35,6 +35,10 @@ pub enum RegisterError {
     Load(#[from] crate::servers_config::LoadServersConfigError),
     #[error("server id '{id}' collides with the factory server id; pick a different --id")]
     FactoryIdCollision { id: String },
+    #[error(
+        "registering '{id}' seeds or updates the factory entry; --factory-base-url is required"
+    )]
+    FactoryBaseUrlRequired { id: String },
 }
 
 /// Write `contents` to `path` atomically and durably: temporary sibling,
@@ -96,28 +100,35 @@ impl PreparedRegistration {
 /// dev-provisioned device becomes usable without manual seeding.
 /// Registering an id equal to the loaded factory id is rejected unless
 /// the config is marker-bootstrapped, in which case the factory and the
-/// matching server entry are updated in sync. `factory_base_url`, when
-/// given, supplies the factory entry's base URL on bootstrap and on the
-/// bootstrapped same-id resync instead of deriving it from the entry.
+/// matching server entry are updated in sync. `factory_base_url`
+/// supplies the factory entry's base URL; it is required whenever the
+/// registration seeds or updates the factory entry — the no-config
+/// bootstrap and the bootstrapped same-id resync — and ignored
+/// otherwise.
 ///
 /// # Errors
 ///
 /// Returns [`RegisterError`] if the config cannot be loaded, if the id
-/// collides with a non-bootstrapped factory, or if serialization fails.
+/// collides with a non-bootstrapped factory, if the factory base URL is
+/// required but missing, or if serialization fails.
 pub fn prepare_registration(
     runtime_path: &Path,
     default_path: &Path,
     entry: ServerEntry,
     factory_base_url: Option<&str>,
 ) -> Result<PreparedRegistration, RegisterError> {
-    let factory_base_url = factory_base_url.unwrap_or(&entry.base_url);
+    let require_factory_base_url = || {
+        factory_base_url.ok_or_else(|| RegisterError::FactoryBaseUrlRequired {
+            id: entry.id.clone(),
+        })
+    };
     let mut config =
         match crate::servers_config::load_servers_config_opt(runtime_path, default_path)? {
             Some(config) => config,
             None => ServersConfig {
                 factory: FactoryServerEntry {
                     id: entry.id.clone(),
-                    base_url: factory_base_url.to_owned(),
+                    base_url: require_factory_base_url()?.to_owned(),
                     known_public_key: entry.known_public_key.clone(),
                     priority: entry.priority,
                     enabled: entry.enabled,
@@ -131,7 +142,7 @@ pub fn prepare_registration(
         if !config.bootstrapped_factory {
             return Err(RegisterError::FactoryIdCollision { id: entry.id });
         }
-        factory_base_url.clone_into(&mut config.factory.base_url);
+        require_factory_base_url()?.clone_into(&mut config.factory.base_url);
         config
             .factory
             .known_public_key
@@ -227,16 +238,36 @@ fn config_value(line: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::ServerSource;
 
-    fn sample_entry(id: &str, base_url: &str) -> ServerEntry {
+    fn sample_entry(id: &str, index_url: &str) -> ServerEntry {
         ServerEntry {
             id: id.to_owned(),
-            server_type: "cache".to_owned(),
-            base_url: base_url.to_owned(),
+            source: ServerSource::Index {
+                index_url: index_url.to_owned(),
+            },
             known_public_key: "cache.example.com:AAAA".to_owned(),
             priority: 10,
             enabled: true,
             required: true,
+        }
+    }
+
+    fn feed_entry(id: &str, feed_url: &str) -> ServerEntry {
+        ServerEntry {
+            source: ServerSource::Feed {
+                feed_url: feed_url.to_owned(),
+            },
+            ..sample_entry(id, "https://unused.example.com/i.json")
+        }
+    }
+
+    fn entry_index_url(entry: &ServerEntry) -> &str {
+        match &entry.source {
+            ServerSource::Index { index_url } => index_url,
+            ServerSource::Feed { feed_url } => {
+                panic!("BUG: expected an index-linked entry, got feed {feed_url}")
+            }
         }
     }
 
@@ -260,9 +291,17 @@ mod tests {
     }
 
     fn register(path: &Path, entry: ServerEntry) -> Result<(), RegisterError> {
+        register_with_factory(path, entry, None)
+    }
+
+    fn register_with_factory(
+        path: &Path,
+        entry: ServerEntry,
+        factory_base_url: Option<&str>,
+    ) -> Result<(), RegisterError> {
         let mut default = path.as_os_str().to_owned();
         default.push(".default");
-        prepare_registration(path, Path::new(&default), entry, None)?.persist()
+        prepare_registration(path, Path::new(&default), entry, factory_base_url)?.persist()
     }
 
     #[test]
@@ -275,7 +314,10 @@ mod tests {
             .expect("BUG: first register");
         let config = read_config(&path);
         assert_eq!(config.servers.len(), 1);
-        assert_eq!(config.servers[0].base_url, "https://dev.example.com/v1");
+        assert_eq!(
+            entry_index_url(&config.servers[0]),
+            "https://dev.example.com/v1"
+        );
 
         register(&path, sample_entry("dev", "https://dev.example.com/v2"))
             .expect("BUG: second register");
@@ -285,7 +327,10 @@ mod tests {
             1,
             "same id must replace, not duplicate"
         );
-        assert_eq!(config.servers[0].base_url, "https://dev.example.com/v2");
+        assert_eq!(
+            entry_index_url(&config.servers[0]),
+            "https://dev.example.com/v2"
+        );
     }
 
     #[test]
@@ -312,11 +357,16 @@ mod tests {
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let path = tmp.path().join("servers.json");
 
-        register(&path, sample_entry("dev", "https://dev.example.com/v1"))
-            .expect("BUG: bootstrap register");
+        register_with_factory(
+            &path,
+            sample_entry("dev", "https://dev.example.com/v1/i.json"),
+            Some("https://dev.example.com/factory"),
+        )
+        .expect("BUG: bootstrap register");
 
         let config = read_config(&path);
         assert_eq!(config.factory.id, "dev");
+        assert_eq!(config.factory.base_url, "https://dev.example.com/factory");
         assert!(
             config.bootstrapped_factory,
             "bootstrap must record its provenance"
@@ -326,20 +376,96 @@ mod tests {
     }
 
     #[test]
+    fn register_bootstrap_without_factory_base_url_fails() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let path = tmp.path().join("servers.json");
+
+        let err = register(
+            &path,
+            sample_entry("dev", "https://dev.example.com/v1/i.json"),
+        )
+        .expect_err("bootstrap without --factory-base-url must fail");
+        assert!(matches!(err, RegisterError::FactoryBaseUrlRequired { .. }));
+        assert!(!path.exists(), "a failed bootstrap must not write a config");
+    }
+
+    #[test]
     fn reregister_after_bootstrap_updates_factory_and_server_in_sync() {
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let path = tmp.path().join("servers.json");
 
-        register(&path, sample_entry("dev", "https://dev.example.com/v1"))
-            .expect("BUG: bootstrap register");
-        register(&path, sample_entry("dev", "https://dev.example.com/v2"))
-            .expect("BUG: re-register on a bootstrapped config");
+        register_with_factory(
+            &path,
+            sample_entry("dev", "https://dev.example.com/v1/i.json"),
+            Some("https://dev.example.com/factory1"),
+        )
+        .expect("BUG: bootstrap register");
+        register_with_factory(
+            &path,
+            sample_entry("dev", "https://dev.example.com/v2/i.json"),
+            Some("https://dev.example.com/factory2"),
+        )
+        .expect("BUG: re-register on a bootstrapped config");
 
         let config = read_config(&path);
-        assert_eq!(config.factory.base_url, "https://dev.example.com/v2");
+        assert_eq!(
+            config.factory.base_url, "https://dev.example.com/factory2",
+            "the factory base URL must track the second --factory-base-url"
+        );
         assert!(config.bootstrapped_factory);
         assert_eq!(config.servers.len(), 1);
-        assert_eq!(config.servers[0].base_url, "https://dev.example.com/v2");
+        assert_eq!(
+            entry_index_url(&config.servers[0]),
+            "https://dev.example.com/v2/i.json"
+        );
+    }
+
+    #[test]
+    fn reregister_after_bootstrap_without_factory_base_url_fails() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let path = tmp.path().join("servers.json");
+
+        register_with_factory(
+            &path,
+            sample_entry("dev", "https://dev.example.com/v1/i.json"),
+            Some("https://dev.example.com/factory1"),
+        )
+        .expect("BUG: bootstrap register");
+        let err = register(
+            &path,
+            sample_entry("dev", "https://dev.example.com/v2/i.json"),
+        )
+        .expect_err("a bootstrapped same-id re-registration requires --factory-base-url");
+        assert!(matches!(err, RegisterError::FactoryBaseUrlRequired { .. }));
+    }
+
+    #[test]
+    fn register_persists_and_reloads_both_source_variants() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let path = tmp.path().join("servers.json");
+        write_base_config(&path);
+
+        register(
+            &path,
+            sample_entry("direct", "https://direct.example.com/i.json"),
+        )
+        .expect("BUG: register index-linked entry");
+        register(
+            &path,
+            feed_entry("feeder", "https://feeder.example.com/f.json"),
+        )
+        .expect("BUG: register feed-linked entry");
+
+        let config = read_config(&path);
+        assert_eq!(config.servers.len(), 2);
+        assert!(matches!(
+            &config.servers[0].source,
+            ServerSource::Index { index_url } if index_url == "https://direct.example.com/i.json"
+        ));
+        assert!(matches!(
+            &config.servers[1].source,
+            ServerSource::Feed { feed_url } if feed_url == "https://feeder.example.com/f.json"
+        ));
     }
 
     #[test]
@@ -359,7 +485,7 @@ mod tests {
         let path = tmp.path().join("servers.json");
         std::fs::write(
             &path,
-            r#"{"factory":{"id":"dev","base_url":"https://dev.example.com/v1","known_public_key":"k","priority":50,"enabled":true},"servers":[{"id":"dev","type":"cache","base_url":"https://dev.example.com/v1","known_public_key":"k","priority":50,"enabled":true}]}"#,
+            r#"{"factory":{"id":"dev","base_url":"https://dev.example.com/v1","known_public_key":"k","priority":50,"enabled":true},"servers":[{"id":"dev","index_url":"https://dev.example.com/v1/i.json","known_public_key":"k","priority":50,"enabled":true}]}"#,
         )
         .expect("BUG: write lookalike config");
 
@@ -385,8 +511,12 @@ mod tests {
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let path = tmp.path().join("nix-upgrade").join("servers.json");
 
-        register(&path, sample_entry("dev", "https://dev.example.com/v1"))
-            .expect("BUG: register into a missing directory");
+        register_with_factory(
+            &path,
+            sample_entry("dev", "https://dev.example.com/v1/i.json"),
+            Some("https://dev.example.com/factory"),
+        )
+        .expect("BUG: register into a missing directory");
 
         assert!(path.exists());
         assert_eq!(read_config(&path).factory.id, "dev");

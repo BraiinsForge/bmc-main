@@ -286,7 +286,30 @@ impl<N> PackageUpgrader<N> {
             return Err(PackageProbeError::NoEnabledServers);
         }
 
-        let merged = match bmc_nix::index::fetch_and_merge_indexes(&self.client, &servers).await {
+        // Feed servers resolve their exact index server-side, keyed by the
+        // running firmware version; plain index servers need no scope.
+        let firmware_scope = if servers.iter().any(|server| {
+            server.enabled && matches!(server.source, bmc_nix::types::ServerSource::Feed { .. })
+        }) {
+            let version = std::fs::read_to_string("/etc/bos_version").map_err(|err| {
+                warn!(error = %err, "Cannot read the BOS version for feed resolution");
+                PackageProbeError::IndexUnusable(format!(
+                    "failed to read the BOS version from /etc/bos_version: {err}"
+                ))
+            })?;
+            Some(version.trim().to_owned())
+        } else {
+            None
+        };
+
+        let merged = match bmc_nix::index::fetch_and_merge_indexes(
+            &self.client,
+            &servers,
+            &[],
+            firmware_scope.as_deref(),
+        )
+        .await
+        {
             Ok(merged) => merged,
             Err(err @ bmc_nix::index::FetchIndexesError::Fetch { .. }) => {
                 warn!(error = %err, "Package index fetch failed");
@@ -724,7 +747,7 @@ mod tests {
     /// `base_url`.
     fn write_enabled_server(path: &Path, base_url: &str) {
         let json = format!(
-            r#"{{"factory":{{"id":"forge","base_url":"{base_url}","known_public_key":"k","priority":0,"enabled":false}},"servers":[{{"id":"srv","type":"mirror","base_url":"{base_url}","known_public_key":"k","priority":10,"enabled":true,"required":true}}]}}"#
+            r#"{{"factory":{{"id":"forge","base_url":"{base_url}","known_public_key":"k","priority":0,"enabled":false}},"servers":[{{"id":"srv","index_url":"{base_url}","known_public_key":"k","priority":10,"enabled":true,"required":true}}]}}"#
         );
         std::fs::write(path, json).expect("BUG: write servers.json");
     }
