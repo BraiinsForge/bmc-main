@@ -574,6 +574,7 @@ let
 in
 {
   inherit commonDeps bmc deps makeRustflagsEnv wasmWidgetCatalog;
+  inherit (initArtifacts) mkInitArtifacts;
   inherit (wasmWidgetsModule) wasmExamples wasmWidgetsBundle wasmWidgets;
   checks = frontend.checks;
   # Nested attrset of cross-built deck packages.
@@ -587,7 +588,7 @@ in
     deck-packages = armv7PackageDefs;
     deck-packages-debug = armv7PackageDefsDebug;
   };
-  packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // initArtifacts // {
+  packages = cratePackages // widgetPackages // combinedWidgetPackages // nativeWidgetPackages // specialPackages // initArtifacts.packages // {
     inherit bmc-video-play-armv7;
     bmc-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-mock { };
     bmc-nix-cli = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-cli { };

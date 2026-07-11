@@ -1,7 +1,11 @@
 # init-artifacts: Produces the initialization index, tarball, and package feed for ARM.
 #
-# Selects init packages from the full packages attrset and produces
-# the init-index, init-tarball, and init-package-feed for device provisioning.
+# `mkInitArtifacts` builds the init index + tarball for a given BOS
+# version; the flake's stock outputs are `mkInitArtifacts { }` plus the
+# placeholder package feed. `packageBump` replaces one package with a
+# symlinkJoin wrapper carrying a marker file, so its version and store
+# path change — the sysupgrade e2e uses it to make the upgrade plan
+# against an already-initialized store non-empty.
 { self
 , pkgs
 , lib
@@ -13,7 +17,8 @@
 , hooksOverridePath ? null # native hooks for cross-compilation bootstrap
 }:
 let
-  bosVersion = "2026-03-27-0-a11e594b-26.02.1";
+  defaultBosVersion = "2026-03-27-0-a11e594b-26.02.1";
+  defaultPkgsVersion = "20260715";
   profilePath = "/nix/var/nix/gcroots/profiles/bmc";
 
   # Ship every widget package (manifest-derived WASM widgets plus the
@@ -28,40 +33,59 @@ let
     "bos-avahi"
   ] ++ widgetNames;
 
-  # Select init packages and convert to the list format mkIndex/mkTarball expect
-  initPackages = map
-    (name: packages.${name} // { inherit name; }
-      // lib.optionalAttrs (name == "core") { metadata = { bmc_version = bosVersion; }; })
-    initPackageNames;
+  mkInitArtifacts = { bosVersion ? defaultBosVersion, packageBump ? null }:
+    let
+      bump = p:
+        if packageBump == null || p.name != packageBump.name then p
+        else p // {
+          version = packageBump.version;
+          pkg = pkgs.symlinkJoin {
+            name = "${p.name}-${packageBump.version}-bump";
+            paths = [ p.pkg ];
+            postBuild = ''
+              mkdir -p $out/share/sysupgrade-e2e
+              echo '${packageBump.version}' > $out/share/sysupgrade-e2e/bump
+            '';
+          };
+        };
 
-  index = mkIndex {
-    packages = initPackages;
-    caches = [{
-      name = "default";
-      cache_url = "https://cache.braiins.com";
-      cache_key = "cache.braiins.com:placeholder";
-    }];
-    commit = self.rev or "dirty";
-  };
+      # Select init packages and convert to the list format mkIndex/mkTarball expect
+      initPackages = map
+        (name: bump (packages.${name} // { inherit name; }
+          // lib.optionalAttrs (name == "core") { metadata = { bmc_version = bosVersion; }; }))
+        initPackageNames;
+    in
+    {
+      init-index-armv7 = mkIndex {
+        packages = initPackages;
+        caches = [{
+          name = "default";
+          cache_url = "https://cache.braiins.com";
+          cache_key = "cache.braiins.com:placeholder";
+        }];
+        commit = self.rev or "dirty";
+      };
 
-  tarball = mkTarball {
-    packages = initPackages;
-    inherit bmc-nix-cli hooksOverridePath;
-    bos_version = bosVersion;
-    profile_path = profilePath;
-  };
+      init-tarball-armv7 = mkTarball {
+        packages = initPackages;
+        inherit bmc-nix-cli hooksOverridePath;
+        bos_version = bosVersion;
+        profile_path = profilePath;
+      };
+    };
 
-  # Package feed — placeholder URL for local testing.
   packageFeed = mkPackageFeed {
     entries = [{
-      bos_version = bosVersion;
-      download_url = "https://cache.braiins.com/v1/nix-${bosVersion}.tar.gz";
+      bos_version = defaultBosVersion;
+      download_url = "https://downloads.braiinsforge.com/tarballs/nix-${defaultBosVersion}.tar.gz";
+      index_url = "https://downloads.braiinsforge.com/indexes/pkgs-${defaultPkgsVersion}/nix-package-index.v1.json";
       profile_path = profilePath;
     }];
   };
 in
 {
-  init-index-armv7 = index;
-  init-tarball-armv7 = tarball;
-  init-package-feed = packageFeed;
+  inherit mkInitArtifacts;
+  packages = mkInitArtifacts { } // {
+    init-package-feed = packageFeed;
+  };
 }

@@ -227,6 +227,10 @@
 
         bmc = workspace.bmc;
 
+        # Per-version init artifacts for the sysupgrade e2e rig
+        # (consumed by nix/e2e-artifacts.nix via builtins.getFlake).
+        lib = { inherit (workspace) mkInitArtifacts; };
+
         packages = workspace.packages // {
           wasm-capture = capture.package;
           wasm-examples = capture.wasmExamples;
