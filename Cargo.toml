@@ -16,9 +16,6 @@ members = [
     "bmc-log",
     "bmc-mock",
     "bmc-nix",
-    "bmc-nix-init",
-    "bmc-nix-init-mock",
-    "bmc-nix-init-openwrt",
     "bmc-openwrt",
     "bmc-platform",
     "bmc-render",
@@ -167,7 +164,6 @@ bmc-kobject = { path = "bmc-kobject" }
 bmc-led = { path = "bmc-led", default-features = false }
 bmc-log = { path = "bmc-log" }
 bmc-nix = { path = "bmc-nix" }
-bmc-nix-init = { path = "bmc-nix-init" }
 bmc-overlay-device-info = { path = "system-overlays/bmc-overlay-device-info" }
 bmc-overlay-offline = { path = "system-overlays/bmc-overlay-offline" }
 bmc-overlay-settings-tray = { path = "system-overlays/bmc-overlay-settings-tray" }

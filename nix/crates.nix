@@ -21,16 +21,6 @@ wasmWidgetCrates // {
     path = "bmc-mock";
     packageName = "bmc-mock";
   };
-  bmc-nix-init-mock = defineCrate {
-    path = "bmc-nix-init-mock";
-    packageName = "bmc-nix-init-mock";
-  };
-  bmc-nix-init-openwrt = defineCrate {
-    path = "bmc-nix-init-openwrt";
-    packageName = "bmc-nix-init-openwrt";
-    # Produce binary named "bmc-nix-init" to match the OpenWrt service
-    binName = "bmc-nix-init";
-  };
   bmc-openwrt = defineCrate {
     path = "bmc-openwrt";
     packageName = "bmc-openwrt";

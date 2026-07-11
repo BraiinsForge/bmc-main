@@ -92,7 +92,7 @@ in
       rustCrossTarget = ciPkgs.stdenv.hostPlatform.rust.rustcTarget;
     };
   };
-  # musl profiles for statically linked binaries (bmc-nix-init-openwrt)
+  # musl profiles for statically linked binaries (bmc-nix-cli)
   armv7-musl-release = workspaces.minimal.mkBuildProfile {
     minimalDeps = true;
     rustProfile = "release";

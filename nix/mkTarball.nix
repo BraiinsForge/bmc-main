@@ -6,7 +6,7 @@
 # - A pre-built profile generation (symlink tree, manifest, hooks)
 #
 # The profile is NOT activated (no `current` symlink). Activation
-# happens on the device at first boot via bmc-nix-initializer.
+# happens on the device at first boot via `bmc-nix-cli init`.
 { pkgs, lib, mkIndex }:
 { packages # same format as mkIndex
 , bmc-nix-cli # derivation of the bmc-nix CLI tool (native build)

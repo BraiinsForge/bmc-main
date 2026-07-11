@@ -1,6 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
 
-use super::data;
 use crate::config::{
     self, BREATHE_PERIOD, ERROR_DURATION, KNIGHT_RIDER_PERIOD, RGB_GREEN, RGB_ORANGE, RGB_RED,
     RGB_VIOLET60, SUCCESS_DURATION,
@@ -8,9 +7,6 @@ use crate::config::{
 use crate::data::{LedCommand, LedEffect, LedEvent, LedScene};
 use std::time::Instant;
 use tokio::sync::mpsc::Sender;
-use tracing::{debug, error};
-
-const EVENT_BUFFER_SIZE: usize = 4;
 
 #[derive(Debug)]
 pub struct LedDriver {
@@ -272,44 +268,6 @@ impl LedIndicatorsState {
         };
         resolved.filter(|s| !matches!(s.effect, LedEffect::None))
     }
-}
-
-/// Spawn the `LedIndicatorsState`-driven event loop and return its
-/// event sender.
-///
-/// The loop receives [`LedEvent`]s on the returned channel, folds them
-/// into a `LedIndicatorsState`, and forwards the arbitrated scene as a
-/// `LedCommand::SetEffect` on `command_sender`.
-///
-/// Used by `bmc-nix-init-openwrt` to drive system indicators during
-/// the one-shot init flow without pulling in the full `LedCoordinator`
-/// machinery from `bmc`. The bmc daemon path uses `LedController` +
-/// `LedCoordinator` directly and does not call this.
-#[must_use]
-pub fn spawn_led_event_loop(command_sender: Sender<LedCommand>) -> Sender<data::LedEvent> {
-    let (sender, mut receiver) = tokio::sync::mpsc::channel(EVENT_BUFFER_SIZE);
-
-    tokio::spawn(async move {
-        let mut state = LedIndicatorsState::default();
-        while let Some(event) = receiver.recv().await {
-            debug!("Received LED event: {:?}", event);
-
-            state.apply_event(event);
-
-            // A resolved `None` is an explicit clear, not "nothing to do":
-            // without it the SPI worker keeps its last scene, so e.g. the
-            // post-scan idle never replaces a finished scan animation.
-            let cmd = match state.current_scene() {
-                Some(scene) => LedCommand::SetEffect(scene),
-                None => LedIndicatorsState::NONE_SCENE,
-            };
-            if let Err(e) = command_sender.send(cmd).await {
-                error!("Failed to send LED command {:?}: {e}", cmd);
-            }
-        }
-    });
-
-    sender
 }
 
 #[cfg(test)]
