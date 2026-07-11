@@ -771,3 +771,68 @@ async fn init_store_blocks_on_held_init_lock() {
         "the store must be promoted after the lock is released"
     );
 }
+
+#[tokio::test]
+#[serial]
+async fn init_store_from_tarball_promotes_and_keeps_source() {
+    let tmp = TempDir::new().expect("BUG: tempdir");
+    let stage_dir = tmp.path().join("stage");
+    let tarball_bytes = build_tarball(tmp.path(), &[("nix/store/localpkg/marker", b"local")]);
+    let tarball = tmp.path().join("local-init.tar.gz");
+    std::fs::write(&tarball, tarball_bytes).expect("BUG: write local tarball");
+
+    let result = bmc_nix::store::init_store_from_tarball(
+        &tarball,
+        Path::new(PROFILE_PATH),
+        &stage_dir,
+        false,
+    )
+    .await
+    .expect("direct-tarball init should succeed");
+
+    assert_eq!(result.profile_path, PathBuf::from(PROFILE_PATH));
+    assert!(
+        stage_dir.join("nix/store/localpkg/marker").exists(),
+        "the local tarball's store must be promoted"
+    );
+    assert!(
+        tarball.exists(),
+        "the caller-provided tarball must not be deleted"
+    );
+    assert!(
+        !stage_dir.join("nix.tmp").exists(),
+        "staging must not survive a successful init"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn init_store_from_tarball_missing_file_fails_before_staging() {
+    let tmp = TempDir::new().expect("BUG: tempdir");
+    let stage_dir = tmp.path().join("stage");
+    let missing = tmp.path().join("no-such.tar.gz");
+
+    let err = bmc_nix::store::init_store_from_tarball(
+        &missing,
+        Path::new(PROFILE_PATH),
+        &stage_dir,
+        false,
+    )
+    .await
+    .expect_err("a missing tarball must fail");
+
+    // The variant exists to preserve the offending path and I/O cause;
+    // assert those, not just the rendered text.
+    let bmc_nix::store::InitStoreError::TarballUnavailable { path, source } = err else {
+        panic!("expected TarballUnavailable, got: {err}");
+    };
+    assert!(
+        path.ends_with("no-such.tar.gz"),
+        "error must carry the offending path: {path}"
+    );
+    assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+    assert!(
+        !stage_dir.join("nix").exists() && !stage_dir.join("nix.tmp").exists(),
+        "nothing may be promoted or staged for a missing tarball"
+    );
+}

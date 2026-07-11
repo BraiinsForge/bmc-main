@@ -596,6 +596,12 @@ pub enum InitStoreError {
         #[source]
         source: std::io::Error,
     },
+    #[error("factory tarball unavailable at {path}: {source}")]
+    TarballUnavailable {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("tarball extraction failed: {0}")]
     ExtractionFailed(#[source] std::io::Error),
     #[error("tar exited with {status}: {stderr}")]
@@ -824,6 +830,48 @@ async fn acquire_init_lock(stage_dir: &Path) -> Result<bmc_log::flock::FileLock,
     .expect("BUG: lock task should not panic")
 }
 
+/// Refuse to wipe the store while /nix is an active mount backed by it.
+fn ensure_wipe_unmounted(wipe_store: bool) -> Result<(), InitStoreError> {
+    let nix = Path::new("/nix");
+    if wipe_store
+        && crate::partition::is_path_mounted(nix).map_err(|source| {
+            InitStoreError::MountCheckFailed {
+                path: path_string(nix),
+                source,
+            }
+        })?
+    {
+        return Err(InitStoreError::StoreMounted {
+            path: path_string(nix),
+        });
+    }
+    Ok(())
+}
+
+/// Remove leftovers from previous interrupted runs: a stale staging
+/// tree, and a store demoted by an interrupted --wipe.
+fn clean_stale_staging(stage_dir: &Path) -> Result<(), InitStoreError> {
+    for leftover in ["nix.tmp", "nix.wiped"] {
+        let path = stage_dir.join(leftover);
+        remove_path_if_exists(&path).map_err(|source| InitStoreError::StagePrepareFailed {
+            path: path_string(&path),
+            source,
+        })?;
+    }
+    Ok(())
+}
+
+/// Extract a tarball into staging and atomically promote it to
+/// `<stage_dir>/nix` — the pipeline tail shared by both init paths.
+async fn extract_and_promote(
+    tarball_path: &Path,
+    stage_dir: &Path,
+    wipe_store: bool,
+) -> Result<(), InitStoreError> {
+    prepare_promoted_store_path(stage_dir, wipe_store)?;
+    extract_staged(tarball_path, stage_dir).await
+}
+
 /// Initialize the Nix store from a factory tarball.
 ///
 /// 0. Take the exclusive init lock on `<stage_dir>/.init.lock`
@@ -853,30 +901,11 @@ pub async fn init_store(
     // Defense in depth: never wipe the store while /nix is the active
     // mount backed by it. cmd_init checks this first for a fast failure,
     // but enforcing it here protects any future library caller too.
-    let nix = Path::new("/nix");
-    if wipe_store
-        && crate::partition::is_path_mounted(nix).map_err(|source| {
-            InitStoreError::MountCheckFailed {
-                path: path_string(nix),
-                source,
-            }
-        })?
-    {
-        return Err(InitStoreError::StoreMounted {
-            path: path_string(nix),
-        });
-    }
+    ensure_wipe_unmounted(wipe_store)?;
 
-    // Clean up leftovers from previous interrupted runs first — before
-    // any download eats data-partition space: a stale staging tree, and
-    // a store demoted by an interrupted --wipe.
-    for leftover in ["nix.tmp", "nix.wiped"] {
-        let path = stage_dir.join(leftover);
-        remove_path_if_exists(&path).map_err(|source| InitStoreError::StagePrepareFailed {
-            path: path_string(&path),
-            source,
-        })?;
-    }
+    // Clean up leftovers first — before any download eats
+    // data-partition space.
+    clean_stale_staging(stage_dir)?;
 
     // Step 1: Fetch the package feed
     let feed_url = crate::index::make_package_feed_url(&factory_server.base_url);
@@ -958,14 +987,43 @@ pub async fn init_store(
         p.on_extracting();
     }
 
-    prepare_promoted_store_path(stage_dir, wipe_store)?;
-    extract_staged(&tarball_path, stage_dir).await?;
+    extract_and_promote(&tarball_path, stage_dir, wipe_store).await?;
 
     // Step 5: Clean up tarball
     let _ = tokio::fs::remove_file(&tarball_path).await;
 
     Ok(InitStoreResult {
         profile_path: PathBuf::from(&tarball.profile_path),
+    })
+}
+
+/// Initialize the Nix store from a local factory tarball.
+///
+/// The direct-path counterpart of [`init_store`]: no feed fetch, no
+/// download — the caller supplies the tarball and the profile path its
+/// pre-built generation was created for. The tarball is not deleted;
+/// the caller owns it.
+pub async fn init_store_from_tarball(
+    tarball: &Path,
+    profile_path: &Path,
+    stage_dir: &Path,
+    wipe_store: bool,
+) -> Result<InitStoreResult, InitStoreError> {
+    let _lock = acquire_init_lock(stage_dir).await?;
+
+    // Pre-check readability so a typo'd path fails with the offending
+    // path and cause instead of an opaque tar error after staging.
+    std::fs::File::open(tarball).map_err(|source| InitStoreError::TarballUnavailable {
+        path: path_string(tarball),
+        source,
+    })?;
+
+    ensure_wipe_unmounted(wipe_store)?;
+    clean_stale_staging(stage_dir)?;
+    extract_and_promote(tarball, stage_dir, wipe_store).await?;
+
+    Ok(InitStoreResult {
+        profile_path: profile_path.to_owned(),
     })
 }
 
