@@ -83,8 +83,7 @@ substituters. There is no fallback to remote indexes to paper over a missing ent
 ## Initialization
 
 The firmware tarball is also the vehicle by which a device that has never had Nix gains a `/nix/store` for the first
-time. This is used both by the very first firmware release that introduces Nix (users cannot skip that version) and by
-the fallback recovery path after a factory reset that wipes the store.
+time. This is used by the very first firmware release that introduces Nix (users cannot skip that version).
 
 Two pieces are involved:
 
@@ -119,13 +118,14 @@ in the tarball.
    unless `--wipe` is passed. `--wipe` refuses to run while `/nix` is an active mount — the running system would be
    using the very store it deletes.
 3. **Select and download the initialization tarball.** Selection is by the BOS version read from `/etc/bos_version`,
-   matched against the factory index (the `factory` entry from `/etc/nix-upgrade/servers.json`; see
-   [`upgrades.md`](upgrades.md#initialization-and-factory-reset) for how first-boot certificate validation and tarball
-   signatures interact). If no tarball matches the current BOS version, the initializer escalates to a full BOS upgrade
-   — the latest BOS version always has to have a tarball on the factory server, otherwise this whole path breaks.
+   matched against the factory index (the `factory` entry from `/etc/nix-upgrade/servers.json`). If no tarball matches
+   the requested BOS version, `init` fails — the factory server has to keep a tarball for every Nix-capable BOS version,
+   otherwise this path breaks.
 4. **Apply the factory tarball signature policy.** If the factory entry has `require_signature: true`, the CLI fetches
    `<download_url>.sig`, verifies the tarball against `known_public_key`, and aborts on a missing, malformed, or
    rejected signature. If `require_signature` is absent or false, verification is skipped and a warning is logged.
+   Because NTP has not synced on first boot, the download client disables TLS certificate validation and the signature
+   is the primary integrity guarantee.
 5. **Unpack the tarball into `/mnt/data/nix.tmp` and atomically promote `nix.tmp/nix` to `nix`.** The tarball extracts
    into a staging directory inside `/mnt/data`. Only the extracted `nix.tmp/nix` subtree is renamed to `<data-dir>/nix`;
    entries outside `nix/` are ignored and removed with the staging directory — live rootfs files such as
@@ -136,17 +136,6 @@ in the tarball.
 Once `nix` is in place, the initial profile shipped inside the tarball is available and can be activated on next boot.
 Activation itself is not part of `init` — the boot-time service handles it, the same way it would after a firmware
 upgrade.
-
-### Relation to the Fallback Initializer
-
-The static fallback initializer covered in [`upgrades.md`](upgrades.md#initialization-and-factory-reset) — the small
-program kept forever for recovering from a wiped store on a device that no longer has any Nix-produced code available —
-performs a similar sequence, but from outside the tarball. `bmc-nix-cli init` is the in-tarball path for the common
-case, where the tarball itself carries the code that will do the initialization; the static initializer is the
-last-resort path for when the tarball cannot be applied because nothing on the device can execute it yet.
-
-Both paths must converge on the same on-disk layout: `/mnt/data/nix` containing the store,
-`/nix/var/nix/gcroots/profiles/` carrying the initial profile, with `nix.tmp` used only as a staging directory.
 
 ## BOS Downgrade
 

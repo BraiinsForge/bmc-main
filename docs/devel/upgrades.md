@@ -213,10 +213,11 @@ but not implemented yet. Progress is reported so a long GC does not look like a 
 
 ## Initialization and Factory Reset
 
-The Nix store on new devices is populated in one of three ways:
+The Nix store on new devices is populated in one of two ways:
 
-- **Factory flash.** New devices are shipped with `/nix/store` and `/nix/var/nix` already populated and the initial
-  profile activated (or activated on first boot).
+- **Factory provisioning.** SD card images carry `/nix/store` and `/nix/var/nix` already initialized inside the image.
+  eMMC devices will ship the initial store read-only on a dedicated partition, with the working store initialized from
+  that offline copy. The initial profile is activated (or activated on first boot).
 - **First-boot upgrade from a pre-Nix firmware.** The first Nix-capable firmware is marked as a required version (users
   cannot skip it). Its image `COMMAND` invokes `bmc-nix-cli init` from the tarball, which prepares `/dev/mmcblk0p4` as
   an ext4 data partition mounted at `/mnt/data`, fetches the initialization tarball for the incoming firmware's version
@@ -225,16 +226,9 @@ The Nix store on new devices is populated in one of three ways:
   — live rootfs files come from activation on first boot (see
   [`openwrt-tarball.md`](openwrt-tarball.md#initialization)); the profile activates on next boot. If `/mnt/data/nix`
   already exists, `init` exits successfully without changing it unless `--wipe` is passed.
-- **Fallback initializer.** A small statically-linked binary is kept forever on the device to recover from a wiped
-  store. It offers minimal Wi-Fi configuration, then downloads the tarball listed in `factory` from `servers.json` for
-  the current `/etc/bos_version`. Because NTP has not synced yet, the client disables TLS certificate validation and can
-  rely on the tarball's Ed25519 signature (verified against `known_public_key`) as the primary integrity guarantee.
-  Verification is controlled by `factory.require_signature`: when true, the initializer fetches `<download_url>.sig` and
-  aborts on a missing, malformed, or rejected signature; when false (the serde default), it skips verification and logs
-  a warning (see [`../stories/nix-store-initializer.md`](../stories/nix-store-initializer.md)).
 
-Factory reset drops a marker file that instructs the initializer to wipe `/nix/store` and its state on the next boot.
-Doing it via the initializer avoids fighting running processes that hold open files in the store.
+Factory reset reinitializes the store from the offline initial store, so restoring factory state needs no network
+access.
 
 ## `installed_by` and Removal Policy
 

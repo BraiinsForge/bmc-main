@@ -45,12 +45,6 @@ model (`small`, `medium`, `large`) and keep their own widget-specific configurat
 Factory default scene sets matched to each product, so a freshly provisioned or factory-reset device shows relevant
 content out of the box. Defaults cycle automatically and apply only when the device has no usable configuration.
 
-### [Nix Store Initializer](nix-store-initializer.md)
-
-A last-resort recovery component that runs on every boot. When the device has no initialized Nix store — typically after
-a factory reset — it takes over the display, guides the user through WiFi setup via an open access point, downloads and
-activates the Nix store, and falls back to firmware upgrade if no matching bundle exists.
-
 ### [Nix Store & Profile Power-Loss Safety](nix-store-durability.md)
 
 Durability guarantees for the on-device software store: losing power during first-time installation, an upgrade, or a
