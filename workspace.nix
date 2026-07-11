@@ -175,6 +175,9 @@ let
   # Minimal workspace config for musl profiles (bmc-openwrt, statically linked)
   workspaceMinimal = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
+    # No cargo-timings charts in $out: crate outputs become deck packages,
+    # and identical chart paths across packages conflict in the profile union.
+    timings = false;
     nativeDeps = _pkgs: (commonDeps.buildDeps _pkgs);
     # Workspace-deps step compiles ALL Cargo.lock entries, including
     # crates from glibc-only binaries (compositor, widgets). Provide
@@ -196,6 +199,7 @@ let
   # Full workspace config for glibc profiles (widgets, compositor)
   workspace = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
+    timings = false;
     nativeDeps = _pkgs: (commonDeps.buildDeps _pkgs) ++ (commonDeps.guiBuildDeps _pkgs);
     # packages that will be cross-compiled for target arch
     targetDeps = commonDeps.guiTargetDeps;
