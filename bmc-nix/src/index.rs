@@ -170,57 +170,76 @@ async fn fetch_index_bytes_with_cap(
     reference: &str,
     cap: u64,
 ) -> Result<(String, Vec<u8>), FetchIndexesError> {
-    if let Some(path) = reference.strip_prefix("file://") {
-        let metadata = tokio::fs::metadata(path).await.map_err(|source| {
-            if source.kind() == std::io::ErrorKind::NotFound {
-                FetchIndexesError::FileNotFound {
-                    path: path.to_owned(),
-                }
-            } else {
-                FetchIndexesError::FileRead {
-                    path: path.to_owned(),
-                    source,
-                }
-            }
-        })?;
-        if !metadata.file_type().is_file() {
-            return Err(FetchIndexesError::FileRead {
-                path: path.to_owned(),
-                source: std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "index reference is not a regular file",
-                ),
-            });
-        }
-        check_index_size_with_cap(path, metadata.len(), cap)?;
-        let bytes = tokio::fs::read(path).await.map_err(|source| {
-            if source.kind() == std::io::ErrorKind::NotFound {
-                FetchIndexesError::FileNotFound {
-                    path: path.to_owned(),
-                }
-            } else {
-                FetchIndexesError::FileRead {
-                    path: path.to_owned(),
-                    source,
-                }
-            }
-        })?;
-        return Ok((path.to_owned(), bytes));
+    if reference.starts_with("file://") {
+        return fetch_document_bytes(client, reference, cap).await;
     }
+    fetch_http_bytes(client, &make_index_url(reference), cap).await
+}
 
-    let url = make_index_url(reference);
+/// Fetch the document at `url` verbatim — no filename is appended for
+/// either scheme. `file://<path>` reads `<path>` directly; anything else
+/// is requested as-is over http(s), so http(s) URLs must have been
+/// validated absolute upstream.
+async fn fetch_document_bytes(
+    client: &reqwest::Client,
+    url: &str,
+    cap: u64,
+) -> Result<(String, Vec<u8>), FetchIndexesError> {
+    if let Some(path) = url.strip_prefix("file://") {
+        return fetch_file_bytes(path, cap).await;
+    }
+    fetch_http_bytes(client, url, cap).await
+}
+
+/// Read a `file://` document from `path`, rejecting non-regular files and
+/// anything whose metadata length exceeds `cap` before reading.
+async fn fetch_file_bytes(path: &str, cap: u64) -> Result<(String, Vec<u8>), FetchIndexesError> {
+    let map_io_error = |source: std::io::Error| {
+        if source.kind() == std::io::ErrorKind::NotFound {
+            FetchIndexesError::FileNotFound {
+                path: path.to_owned(),
+            }
+        } else {
+            FetchIndexesError::FileRead {
+                path: path.to_owned(),
+                source,
+            }
+        }
+    };
+    let metadata = tokio::fs::metadata(path).await.map_err(map_io_error)?;
+    if !metadata.file_type().is_file() {
+        return Err(FetchIndexesError::FileRead {
+            path: path.to_owned(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "index reference is not a regular file",
+            ),
+        });
+    }
+    check_index_size_with_cap(path, metadata.len(), cap)?;
+    let bytes = tokio::fs::read(path).await.map_err(map_io_error)?;
+    Ok((path.to_owned(), bytes))
+}
+
+/// GET `url` over http(s), rejecting early on a `Content-Length` over
+/// `cap` and accumulating the body chunk by chunk against the same cap.
+async fn fetch_http_bytes(
+    client: &reqwest::Client,
+    url: &str,
+    cap: u64,
+) -> Result<(String, Vec<u8>), FetchIndexesError> {
     let mut response = client
-        .get(&url)
+        .get(url)
         .send()
         .await
         .and_then(reqwest::Response::error_for_status)
         .map_err(|source| FetchIndexesError::Fetch {
-            url: url.clone(),
+            url: url.to_owned(),
             source,
         })?;
 
     if let Some(len) = response.content_length() {
-        check_index_size_with_cap(&url, len, cap)?;
+        check_index_size_with_cap(url, len, cap)?;
     }
 
     let mut bytes: Vec<u8> = Vec::new();
@@ -228,14 +247,14 @@ async fn fetch_index_bytes_with_cap(
         .chunk()
         .await
         .map_err(|source| FetchIndexesError::Fetch {
-            url: url.clone(),
+            url: url.to_owned(),
             source,
         })?
     {
-        check_index_size_with_cap(&url, (bytes.len() + chunk.len()) as u64, cap)?;
+        check_index_size_with_cap(url, (bytes.len() + chunk.len()) as u64, cap)?;
         bytes.extend_from_slice(&chunk);
     }
-    Ok((url, bytes))
+    Ok((url.to_owned(), bytes))
 }
 
 /// Fetch and validate a single index from a reference.
@@ -1734,6 +1753,81 @@ mod tests {
             path, expected,
             "fetch_index must request the versioned path"
         );
+    }
+
+    #[tokio::test]
+    async fn fetch_document_bytes_requests_exact_http_path() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("BUG: failed to bind mock server");
+        let addr = listener.local_addr().expect("BUG: no local addr");
+
+        let body = "feed-bytes";
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+
+        let server_task = tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("BUG: mock server failed to accept");
+            let mut buf = [0_u8; 4096];
+            let n = stream
+                .read(&mut buf)
+                .await
+                .expect("BUG: failed to read request");
+            let request = String::from_utf8_lossy(&buf[..n]);
+            let request_line = request
+                .lines()
+                .next()
+                .expect("BUG: empty request")
+                .to_owned();
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("BUG: failed to write response");
+            request_line
+        });
+
+        let client = reqwest::Client::new();
+        let url = format!("http://{addr}/custom-doc-name.json");
+        let (location, bytes) = fetch_document_bytes(&client, &url, MAX_INDEX_BYTES)
+            .await
+            .expect("BUG: fetch_document_bytes should succeed against mock server");
+
+        let request_line = server_task.await.expect("BUG: mock server task panicked");
+        let path = request_line
+            .split_whitespace()
+            .nth(1)
+            .expect("BUG: malformed request line");
+        assert_eq!(
+            path, "/custom-doc-name.json",
+            "fetch_document_bytes must request the given URL verbatim"
+        );
+        assert_eq!(location, url);
+        assert_eq!(bytes, body.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn fetch_document_bytes_reads_file_url_verbatim() {
+        let dir = tempfile::tempdir().expect("BUG: temp dir");
+        let path = dir.path().join("custom-doc-name.json");
+        std::fs::write(&path, b"feed-bytes").expect("BUG: write document file");
+
+        let client = reqwest::Client::new();
+        let url = format!("file://{}", path.display());
+        let (location, bytes) = fetch_document_bytes(&client, &url, MAX_INDEX_BYTES)
+            .await
+            .expect("BUG: fetch_document_bytes should read the file verbatim");
+
+        assert_eq!(location, path.display().to_string());
+        assert_eq!(bytes, b"feed-bytes");
     }
 
     #[test]
