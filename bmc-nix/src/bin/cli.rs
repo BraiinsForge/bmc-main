@@ -8,7 +8,7 @@ use bmc_nix::manifest;
 use bmc_nix::mount::{self, MountOutcome};
 use bmc_nix::types::{
     BaseSelector, FetchedIndex, GcConfig, InstallResult, Manifest, MergedIndex, PackageChange,
-    PackageVersion, ServerEntry, ServersConfig,
+    PackageVersion, ServerEntry,
 };
 use bmc_nix::upgrade::ActivationMode;
 use clap::{Parser, Subcommand};
@@ -317,6 +317,11 @@ enum Commands {
         )]
         only_indexes: bool,
 
+        /// Read-only fallback used when the server registry file does
+        /// not exist (default: the --servers-config path + ".default").
+        #[arg(long, conflicts_with = "only_indexes")]
+        default_servers_config: Option<PathBuf>,
+
         /// Base generation to diff against: `current` (default),
         /// `latest`, or a positive integer generation number.
         #[arg(long, default_value = "current")]
@@ -348,6 +353,11 @@ enum Commands {
         /// Path to the server registry.
         #[arg(long, default_value = "/etc/nix-upgrade/servers.json")]
         servers_config: PathBuf,
+
+        /// Read-only fallback used when the server registry file does
+        /// not exist (default: the --servers-config path + ".default").
+        #[arg(long)]
+        default_servers_config: Option<PathBuf>,
 
         /// Data partition device to format and mount when needed.
         #[arg(long, default_value = "/dev/mmcblk0p4")]
@@ -516,15 +526,16 @@ fn resolve_base(
     }
 }
 
-/// Load the server registry from `path`.
-///
-/// A missing or unparseable file is fatal: `upgrade` consumes the config
-/// init already provisioned and never repairs or falls back.
-fn load_servers_config(path: &Path) -> anyhow::Result<ServersConfig> {
-    let contents = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read servers config at {}", path.display()))?;
-    serde_json::from_str(&contents)
-        .with_context(|| format!("failed to parse servers config at {}", path.display()))
+/// Default-config path: the explicit override when given, otherwise
+/// the runtime config path with a literal ".default" suffix appended,
+/// so a custom `--servers-config` keeps its default co-located
+/// (`registry.conf` → `registry.conf.default`).
+fn resolve_default_config_path(servers_config: &Path, explicit: Option<PathBuf>) -> PathBuf {
+    explicit.unwrap_or_else(|| {
+        let mut derived = servers_config.as_os_str().to_owned();
+        derived.push(".default");
+        PathBuf::from(derived)
+    })
 }
 
 /// Load the GC config from `path`, falling back to defaults when absent.
@@ -836,6 +847,7 @@ async fn cmd_reset_profile(
 )]
 async fn cmd_upgrade(
     servers_config: Option<PathBuf>,
+    default_servers_config: Option<PathBuf>,
     indexes: Vec<String>,
     only_indexes: bool,
     profile_dir: PathBuf,
@@ -859,7 +871,8 @@ async fn cmd_upgrade(
     } else {
         let servers_path =
             servers_config.unwrap_or_else(|| PathBuf::from("/etc/nix-upgrade/servers.json"));
-        let config = load_servers_config(&servers_path)?;
+        let default_path = resolve_default_config_path(&servers_path, default_servers_config);
+        let config = bmc_nix::servers_config::load_servers_config(&servers_path, &default_path)?;
         build_fetch_set(config.servers, &indexes)
     };
     ensure_fetchable(&fetch_set)?;
@@ -947,8 +960,13 @@ fn is_initialized(data_dir: &Path) -> bool {
     data_dir.join("nix").is_dir()
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "CLI dispatch — all args are required"
+)]
 async fn cmd_init(
     servers_config: PathBuf,
+    default_servers_config: Option<PathBuf>,
     data_partition: PathBuf,
     data_dir: PathBuf,
     bos_version_file: PathBuf,
@@ -979,7 +997,8 @@ async fn cmd_init(
         return Ok(());
     }
 
-    let servers = load_servers_config(&servers_config)?;
+    let default_path = resolve_default_config_path(&servers_config, default_servers_config);
+    let servers = bmc_nix::servers_config::load_servers_config(&servers_config, &default_path)?;
     let bos_version = read_bos_version(&bos_version_file)?;
     let client = build_init_http_client();
     let progress = progress::CliProgress::new(log_format);
@@ -1239,6 +1258,7 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Upgrade {
             servers_config,
+            default_servers_config,
             indexes,
             only_indexes,
             base,
@@ -1249,6 +1269,7 @@ async fn main() -> anyhow::Result<()> {
         } => {
             cmd_upgrade(
                 servers_config,
+                default_servers_config,
                 indexes,
                 only_indexes,
                 common.profile_dir,
@@ -1266,6 +1287,7 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Init {
             servers_config,
+            default_servers_config,
             data_partition,
             data_dir,
             bos_version_file,
@@ -1274,6 +1296,7 @@ async fn main() -> anyhow::Result<()> {
         } => {
             cmd_init(
                 servers_config,
+                default_servers_config,
                 data_partition,
                 data_dir,
                 bos_version_file,
@@ -1486,6 +1509,61 @@ mod tests {
     }
 
     #[test]
+    fn resolve_default_derives_by_literal_suffix() {
+        assert_eq!(
+            resolve_default_config_path(Path::new("/etc/nix-upgrade/servers.json"), None),
+            PathBuf::from("/etc/nix-upgrade/servers.json.default")
+        );
+        assert_eq!(
+            resolve_default_config_path(Path::new("/tmp/test/registry.conf"), None),
+            PathBuf::from("/tmp/test/registry.conf.default")
+        );
+    }
+
+    #[test]
+    fn resolve_default_prefers_explicit_path() {
+        assert_eq!(
+            resolve_default_config_path(
+                Path::new("/etc/nix-upgrade/servers.json"),
+                Some(PathBuf::from("/run/sysupgrade/servers.json.default"))
+            ),
+            PathBuf::from("/run/sysupgrade/servers.json.default")
+        );
+    }
+
+    #[test]
+    fn upgrade_default_servers_config_conflicts_with_only_indexes() {
+        Cli::try_parse_from([
+            "bmc-nix-cli",
+            "upgrade",
+            "--index",
+            "file:///tmp/index.json",
+            "--only-indexes",
+            "--default-servers-config",
+            "/tmp/servers.json.default",
+        ])
+        .expect_err("--default-servers-config must conflict with --only-indexes");
+    }
+
+    #[test]
+    fn init_and_upgrade_accept_default_servers_config() {
+        Cli::try_parse_from([
+            "bmc-nix-cli",
+            "init",
+            "--default-servers-config",
+            "/run/sysupgrade/servers.json.default",
+        ])
+        .expect("BUG: init must accept the flag");
+        Cli::try_parse_from([
+            "bmc-nix-cli",
+            "upgrade",
+            "--default-servers-config",
+            "/run/sysupgrade/servers.json.default",
+        ])
+        .expect("BUG: upgrade must accept the flag");
+    }
+
+    #[test]
     fn init_download_dir_defaults_to_persistent_storage() {
         let cli = Cli::try_parse_from(["bmc-nix-cli", "init"])
             .expect("BUG: init should parse with defaults");
@@ -1528,48 +1606,6 @@ mod tests {
 
         std::fs::create_dir(tmp.path().join("nix")).expect("BUG: setup");
         assert!(is_initialized(tmp.path()));
-    }
-
-    #[test]
-    fn load_servers_config_reads_valid_file() {
-        let dir = tempfile::tempdir().expect("BUG: temp dir");
-        let path = dir.path().join("servers.json");
-        std::fs::write(
-            &path,
-            r#"{
-                "factory": {"id":"forge","base_url":"https://cache.braiins.com/v1","known_public_key":"k","priority":0,"enabled":true},
-                "servers": [
-                    {"id":"s1","type":"mirror","base_url":"https://s1.example.com/v1","known_public_key":"k","priority":10,"enabled":true}
-                ]
-            }"#,
-        )
-        .expect("BUG: write servers.json");
-
-        let config = load_servers_config(&path).expect("BUG: valid config should load");
-        assert_eq!(config.servers.len(), 1);
-        assert_eq!(config.servers[0].id, "s1");
-        assert!(config.servers[0].enabled);
-    }
-
-    #[test]
-    fn load_servers_config_missing_file_is_fatal() {
-        let dir = tempfile::tempdir().expect("BUG: temp dir");
-        let path = dir.path().join("absent.json");
-        assert!(
-            load_servers_config(&path).is_err(),
-            "missing config must be a fatal error"
-        );
-    }
-
-    #[test]
-    fn load_servers_config_unparseable_file_is_fatal() {
-        let dir = tempfile::tempdir().expect("BUG: temp dir");
-        let path = dir.path().join("servers.json");
-        std::fs::write(&path, "this is not json").expect("BUG: write garbage");
-        assert!(
-            load_servers_config(&path).is_err(),
-            "unparseable config must be a fatal error"
-        );
     }
 
     #[test]
