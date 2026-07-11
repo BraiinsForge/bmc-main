@@ -216,7 +216,6 @@ struct InitEnv {
     download_dir: PathBuf,
     data_partition: PathBuf,
     servers_config: PathBuf,
-    bos_version_file: PathBuf,
     path_env: String,
 }
 
@@ -236,7 +235,6 @@ fn setup() -> InitEnv {
     InitEnv {
         data_partition: tmp.path().join("dummy-partition"),
         servers_config: tmp.path().join("servers.json"),
-        bos_version_file: tmp.path().join("bos_version"),
         data_dir,
         download_dir,
         tmp,
@@ -265,10 +263,6 @@ impl InitEnv {
         std::fs::write(&self.servers_config, json).expect("BUG: write servers.json");
     }
 
-    fn write_bos_version(&self, version: &str) {
-        std::fs::write(&self.bos_version_file, version).expect("BUG: write bos_version");
-    }
-
     fn run(&self, args: &[String]) -> CliRun {
         let output = Command::new(bin())
             .args(args)
@@ -287,7 +281,7 @@ impl InitEnv {
 
     /// Invoke `init`, passing all five flags explicitly (never relying on
     /// the on-device defaults). `extra` appends further flags (e.g. `--wipe`).
-    fn run_init(&self, extra: &[&str]) -> CliRun {
+    fn run_init(&self, firmware: &str, extra: &[&str]) -> CliRun {
         let mut args = vec![
             "init".to_owned(),
             "--servers-config".to_owned(),
@@ -296,13 +290,30 @@ impl InitEnv {
             path_arg(&self.data_partition),
             "--data-dir".to_owned(),
             path_arg(&self.data_dir),
-            "--bos-version-file".to_owned(),
-            path_arg(&self.bos_version_file),
+            "--firmware".to_owned(),
+            firmware.to_owned(),
             "--download-dir".to_owned(),
             path_arg(&self.download_dir),
         ];
         args.extend(extra.iter().map(|s| (*s).to_owned()));
         self.run(&args)
+    }
+
+    /// Invoke `init --tarball --profile-path`, passing only the two
+    /// partition flags plus the direct-path pair (the feed-only flags
+    /// conflict with --tarball).
+    fn run_init_tarball(&self, tarball: &Path, profile_path: &str) -> CliRun {
+        self.run(&[
+            "init".to_owned(),
+            "--data-partition".to_owned(),
+            path_arg(&self.data_partition),
+            "--data-dir".to_owned(),
+            path_arg(&self.data_dir),
+            "--tarball".to_owned(),
+            path_arg(tarball),
+            "--profile-path".to_owned(),
+            profile_path.to_owned(),
+        ])
     }
 
     fn run_is_initialized(&self) -> CliRun {
@@ -382,9 +393,7 @@ fn init_downloads_extracts_and_promotes() {
     ]);
 
     env.write_servers_config(&base_url);
-    env.write_bos_version(bos_version);
-
-    let run = env.run_init(&[]);
+    let run = env.run_init(bos_version, &[]);
 
     assert!(
         run.status.success(),
@@ -419,9 +428,7 @@ fn init_is_noop_when_already_initialized() {
     // Unreachable (connection refused) address: the no-op path must not
     // touch the network at all.
     env.write_servers_config("http://127.0.0.1:1");
-    env.write_bos_version("irrelevant");
-
-    let run = env.run_init(&[]);
+    let run = env.run_init("irrelevant", &[]);
 
     assert!(
         run.status.success(),
@@ -468,9 +475,7 @@ fn init_rejects_tarball_without_nix_subtree() {
     ]);
 
     env.write_servers_config(&base_url);
-    env.write_bos_version(bos_version);
-
-    let run = env.run_init(&[]);
+    let run = env.run_init(bos_version, &[]);
 
     assert!(
         !run.status.success(),
@@ -526,9 +531,7 @@ fn init_collects_stale_leftovers() {
     ]);
 
     env.write_servers_config(&base_url);
-    env.write_bos_version(bos_version);
-
-    let run = env.run_init(&[]);
+    let run = env.run_init(bos_version, &[]);
 
     assert!(
         run.status.success(),
@@ -572,9 +575,7 @@ fn init_fails_when_bos_version_not_in_index() {
     }]);
 
     env.write_servers_config(&base_url);
-    env.write_bos_version(requested_version);
-
-    let run = env.run_init(&[]);
+    let run = env.run_init(requested_version, &[]);
 
     assert!(
         !run.status.success(),
@@ -834,5 +835,65 @@ async fn init_store_from_tarball_missing_file_fails_before_staging() {
     assert!(
         !stage_dir.join("nix").exists() && !stage_dir.join("nix.tmp").exists(),
         "nothing may be promoted or staged for a missing tarball"
+    );
+}
+
+#[test]
+#[serial]
+fn init_from_tarball_promotes_and_prints_profile_path() {
+    let env = setup();
+    let tarball_bytes = build_tarball(env.tmp.path(), &[("nix/store/directpkg/marker", b"direct")]);
+    let tarball = env.tmp.path().join("direct-init.tar.gz");
+    std::fs::write(&tarball, tarball_bytes).expect("BUG: write direct tarball");
+
+    let run = env.run_init_tarball(&tarball, PROFILE_PATH);
+
+    assert!(
+        run.status.success(),
+        "expected exit 0, got {:?}. stderr:\n{}",
+        run.status.code(),
+        run.stderr,
+    );
+    assert_eq!(run.stdout, format!("{PROFILE_PATH}\n"));
+    assert!(
+        env.data_dir.join("nix/store/directpkg/marker").exists(),
+        "the direct tarball's store must be promoted"
+    );
+    assert!(tarball.exists(), "the source tarball must be kept");
+}
+
+#[test]
+#[serial]
+fn init_from_missing_tarball_fails_cleanly() {
+    let env = setup();
+    let missing = env.tmp.path().join("no-such.tar.gz");
+
+    let run = env.run_init_tarball(&missing, PROFILE_PATH);
+
+    assert!(!run.status.success(), "a missing tarball must not exit 0");
+    assert!(
+        run.stderr.contains("unavailable"),
+        "stderr should name the unavailable tarball: {}",
+        run.stderr,
+    );
+    assert!(
+        !env.data_dir.join("nix").exists(),
+        "nothing may be promoted for a missing tarball"
+    );
+}
+
+#[test]
+#[serial]
+fn init_from_corrupt_tarball_fails_without_promotion() {
+    let env = setup();
+    let corrupt = env.tmp.path().join("corrupt.tar.gz");
+    std::fs::write(&corrupt, b"not a gzip stream").expect("BUG: write corrupt tarball");
+
+    let run = env.run_init_tarball(&corrupt, PROFILE_PATH);
+
+    assert!(!run.status.success(), "a corrupt tarball must not exit 0");
+    assert!(
+        !env.data_dir.join("nix").exists(),
+        "a failed extraction must never be promoted"
     );
 }

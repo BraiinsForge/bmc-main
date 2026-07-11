@@ -374,9 +374,10 @@ enum Commands {
         #[arg(long, default_value = "/mnt/data")]
         data_dir: PathBuf,
 
-        /// File containing the current BOS version.
-        #[arg(long, default_value = "/etc/bos_version")]
-        bos_version_file: PathBuf,
+        /// Firmware version used to select the package-feed entry.
+        /// Defaults to the contents of /etc/bos_version.
+        #[arg(long, value_parser = parse_bos_version)]
+        firmware: Option<String>,
 
         /// Directory for the downloaded factory tarball.
         #[arg(long, default_value = "/mnt/data")]
@@ -385,6 +386,26 @@ enum Commands {
         /// Replace an existing promoted store at <data-dir>/nix.
         #[arg(long, action = clap::ArgAction::SetTrue)]
         wipe: bool,
+
+        /// Local factory tarball: skip the feed fetch and download and
+        /// extract this file instead. The file is kept after
+        /// extraction. Requires --profile-path.
+        #[arg(
+            long,
+            requires = "profile_path",
+            conflicts_with_all = [
+                "servers_config",
+                "default_servers_config",
+                "firmware",
+                "download_dir",
+            ]
+        )]
+        tarball: Option<PathBuf>,
+
+        /// Profile path the tarball's pre-built generation was created
+        /// for (the network path reads it from the feed entry).
+        #[arg(long, requires = "tarball")]
+        profile_path: Option<PathBuf>,
     },
 
     /// Fsck, format, and mount the data partition when needed
@@ -1021,9 +1042,11 @@ async fn cmd_init(
     default_servers_config: Option<PathBuf>,
     data_partition: PathBuf,
     data_dir: PathBuf,
-    bos_version_file: PathBuf,
+    firmware: Option<String>,
     download_dir: PathBuf,
     wipe: bool,
+    tarball: Option<PathBuf>,
+    profile_path: Option<PathBuf>,
     log_format: LogFormat,
 ) -> anyhow::Result<()> {
     // An active /nix means the system is running from the store this
@@ -1049,21 +1072,29 @@ async fn cmd_init(
         return Ok(());
     }
 
-    let default_path = resolve_default_config_path(&servers_config, default_servers_config);
-    let servers = bmc_nix::servers_config::load_servers_config(&servers_config, &default_path)?;
-    let bos_version = read_bos_version(&bos_version_file)?;
-    let client = build_init_http_client();
-    let progress = progress::CliProgress::new(log_format);
-    let result = bmc_nix::store::init_store(
-        &client,
-        &servers.factory,
-        &bos_version,
-        &download_dir,
-        &data_dir,
-        wipe,
-        Some(&progress),
-    )
-    .await?;
+    let result = if let Some(tarball) = tarball {
+        let profile_path = profile_path.expect("BUG: clap enforces --profile-path with --tarball");
+        bmc_nix::store::init_store_from_tarball(&tarball, &profile_path, &data_dir, wipe).await?
+    } else {
+        let default_path = resolve_default_config_path(&servers_config, default_servers_config);
+        let servers = bmc_nix::servers_config::load_servers_config(&servers_config, &default_path)?;
+        let bos_version = match firmware {
+            Some(version) => version,
+            None => read_bos_version(Path::new("/etc/bos_version"))?,
+        };
+        let client = build_init_http_client();
+        let progress = progress::CliProgress::new(log_format);
+        bmc_nix::store::init_store(
+            &client,
+            &servers.factory,
+            &bos_version,
+            &download_dir,
+            &data_dir,
+            wipe,
+            Some(&progress),
+        )
+        .await?
+    };
 
     println!("{}", result.profile_path.display());
     Ok(())
@@ -1359,18 +1390,22 @@ async fn main() -> anyhow::Result<()> {
             default_servers_config,
             data_partition,
             data_dir,
-            bos_version_file,
+            firmware,
             download_dir,
             wipe,
+            tarball,
+            profile_path,
         } => {
             cmd_init(
                 servers_config,
                 default_servers_config,
                 data_partition,
                 data_dir,
-                bos_version_file,
+                firmware,
                 download_dir,
                 wipe,
+                tarball,
+                profile_path,
                 log_format,
             )
             .await
@@ -2201,5 +2236,95 @@ mod tests {
             panic!("BUG: parsed command must be activate");
         };
         assert!(matches!(generation, Some(GenerationSelector::Next)));
+    }
+
+    #[test]
+    fn init_accepts_tarball_with_profile_path() {
+        let cli = Cli::try_parse_from([
+            "bmc-nix-cli",
+            "init",
+            "--tarball",
+            "/tmp/t.tar.gz",
+            "--profile-path",
+            "/nix/var/nix/gcroots/profiles/bmc",
+        ])
+        .expect("BUG: --tarball with --profile-path should parse");
+        let Commands::Init {
+            tarball,
+            profile_path,
+            ..
+        } = cli.command
+        else {
+            panic!("BUG: parsed command must be init");
+        };
+        assert!(tarball.is_some());
+        assert!(profile_path.is_some());
+    }
+
+    #[test]
+    fn init_tarball_and_profile_path_are_both_or_neither() {
+        for partial in [
+            vec!["bmc-nix-cli", "init", "--tarball", "/tmp/t.tar.gz"],
+            vec![
+                "bmc-nix-cli",
+                "init",
+                "--profile-path",
+                "/nix/var/nix/gcroots/profiles/bmc",
+            ],
+        ] {
+            assert!(
+                Cli::try_parse_from(partial.clone()).is_err(),
+                "{partial:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn init_accepts_explicit_firmware() {
+        let cli = Cli::try_parse_from(["bmc-nix-cli", "init", "--firmware", "2026-test-1"])
+            .expect("BUG: init should accept an explicit firmware version");
+
+        let Commands::Init { firmware, .. } = cli.command else {
+            panic!("BUG: parsed command must be init");
+        };
+        assert_eq!(firmware.as_deref(), Some("2026-test-1"));
+    }
+
+    #[test]
+    fn init_rejects_bos_version_file() {
+        let error = Cli::try_parse_from([
+            "bmc-nix-cli",
+            "init",
+            "--bos-version-file",
+            "/tmp/bos_version",
+        ])
+        .expect_err("BUG: init must accept the firmware value, not a file path");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn init_tarball_conflicts_with_feed_only_flags() {
+        for (flag, value) in [
+            ("--servers-config", "/tmp/servers.json"),
+            ("--default-servers-config", "/tmp/servers.json.default"),
+            ("--firmware", "2026-test-1"),
+            ("--download-dir", "/tmp/dl"),
+        ] {
+            let args = [
+                "bmc-nix-cli",
+                "init",
+                "--tarball",
+                "/tmp/t.tar.gz",
+                "--profile-path",
+                "/nix/var/nix/gcroots/profiles/bmc",
+                flag,
+                value,
+            ];
+            assert!(
+                Cli::try_parse_from(args).is_err(),
+                "{flag} must conflict with --tarball"
+            );
+        }
     }
 }
