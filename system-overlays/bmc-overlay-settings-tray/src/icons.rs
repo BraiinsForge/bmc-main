@@ -36,7 +36,13 @@ pub fn register_icons(renderer: &mut dyn Renderer) -> TrayIcons {
     // consumes at build time; here we only hand the pre-compiled bytes to the
     // renderer. Registration returning None (parse failure or ID exhaustion)
     // leaves that icon's Option unset and the slot renders empty.
-    let mut reg = |icon: &Svg| -> Option<SvgId> { renderer.register_svg(icon.name, icon.data) };
+    let mut reg = |icon: &Svg| -> Option<SvgId> {
+        let id = renderer.register_svg(icon.name, icon.data);
+        if id.is_none() {
+            tracing::warn!("failed to register tray icon {}", icon.name);
+        }
+        id
+    };
     TrayIcons {
         wifi: WifiIcons {
             problem: reg(&PROBLEM),
@@ -50,6 +56,10 @@ pub fn register_icons(renderer: &mut dyn Renderer) -> TrayIcons {
             brightness_low: reg(&BRIGHTNESS_LOW),
             brightness_high: reg(&BRIGHTNESS_HIGH),
             night_mode: reg(&NIGHT_MODE),
+            night_mode_aspect: {
+                let (w, h) = NIGHT_MODE.viewbox();
+                w / h
+            },
             restart: reg(&RESTART),
             close: reg(&CLOSE),
         },

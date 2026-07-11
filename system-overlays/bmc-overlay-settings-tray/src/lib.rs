@@ -1,12 +1,13 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! Swipe-from-top quick-settings overlay: a brightness slider plus WiFi station
-//! info and hold-to-confirm reconfigure/reconnect buttons. Ported from the
-//! `settings-stub` widget to a native `bmc-render` `TreeNode` overlay.
+//! Swipe-from-top quick-settings overlay: round icon controls (±10 step
+//! buttons for brightness and volume, night-mode toggle, hold-to-confirm
+//! restart and WiFi reconfigure/reconnect) plus WiFi station info. Ported from
+//! the `settings-stub` widget to a native `bmc-render` `TreeNode` overlay.
 //!
 //! The surface is fullscreen with a full input region so the tray blocks scene
-//! swipes behind it while up. It dismisses on an upward swipe or after an
-//! inactivity timeout.
+//! swipes behind it while up. It dismisses via its close button, an upward
+//! swipe, or an inactivity timeout.
 
 mod dismiss;
 mod fsm;
@@ -39,20 +40,12 @@ const NETWORK_REFRESH: Duration = Duration::from_millis(2000);
 /// Idle period after which the tray auto-dismisses.
 const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Minimum spacing between brightness writes while dragging, so a drag does not
-/// drive ~90 per-frame `set_brightness` config writes. The finger-up value is
-/// always delivered by the release branch in `render`, independent of this
-/// throttle.
-const BRIGHTNESS_SEND_INTERVAL: Duration = Duration::from_millis(80);
-
-/// Same drag throttle for the volume slider.
-const VOLUME_SEND_INTERVAL: Duration = Duration::from_millis(80);
-
-/// After a volume drag ends, incoming volume events stay dropped for this
-/// settle window so a late in-flight echo of our own throttled write cannot
-/// snap the knob back. External changes landing inside the window are lost
-/// until the next broadcast — accepted, same as the brightness fix upstream.
-const VOLUME_ECHO_SETTLE: Duration = Duration::from_millis(300);
+/// After a ± step tap, incoming events for that setting stay dropped for this
+/// settle window (extended per tap) so a late in-flight echo of our own write
+/// cannot snap the value back and steal the base of the next tap. External
+/// changes landing inside the window are lost until the next broadcast —
+/// accepted.
+const STEP_ECHO_SETTLE: Duration = Duration::from_millis(300);
 
 /// Fast wake cadence while a hold FSM is animating, so the hold/timeout edges
 /// fire without a touch/network event to wake the loop.
@@ -279,28 +272,40 @@ pub struct NightModeView {
     pub until: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RestartView {
-    pub label: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent per-control visibility flags mirroring the capability bits"
+)]
 pub struct SettingsTrayView {
     pub shape: DisplayShape,
     pub width: u32,
     pub height: u32,
     pub brightness: u8,
+    pub show_brightness: bool,
     pub volume: u8,
     pub show_volume: bool,
     pub night_mode: Option<NightModeView>,
-    pub restart: Option<RestartView>,
+    pub show_restart: bool,
+    /// Dynamic captions for the shared caption line; `None` when the control
+    /// rests. The restart caption carries the decline reason while the FSM
+    /// surfaces one.
+    pub restart_caption: Option<String>,
+    pub reconfig_caption: Option<String>,
+    pub reconnect_caption: Option<String>,
+    /// 0..=1 hold fractions for the progress rings.
+    pub restart_progress: f32,
+    pub reconfig_progress: f32,
+    pub reconnect_progress: f32,
     pub hostname: Option<String>,
     pub ip: Option<String>,
     pub wifi_signal: Option<i32>,
     pub ssid: Option<String>,
     pub setup_ssid: Option<String>,
     pub wifi_buttons: bool,
-    pub wifi_label: &'static str,
+    /// Forced pressed key for storybook injection; the runtime leaves this
+    /// `None` and derives the pressed key from the tree's touch state.
+    pub pressed_key: Option<String>,
 }
 
 impl SettingsTrayView {
@@ -314,22 +319,27 @@ impl SettingsTrayView {
             width: profile.display.logical_width,
             height: profile.display.logical_height,
             brightness: 50,
+            show_brightness: true,
             volume: 50,
             show_volume: matches!(product, SettingsTrayProduct::Bmc100),
             night_mode: Some(NightModeView {
                 active: false,
                 until: String::new(),
             }),
-            restart: Some(RestartView {
-                label: "Restart".to_owned(),
-            }),
+            show_restart: true,
+            restart_caption: None,
+            reconfig_caption: None,
+            reconnect_caption: None,
+            restart_progress: 0.0,
+            reconfig_progress: 0.0,
+            reconnect_progress: 0.0,
             hostname: None,
             ip: None,
             wifi_signal: None,
             ssid: None,
             setup_ssid: None,
             wifi_buttons: wifi_reconfig_supported(product),
-            wifi_label: ButtonState::default().label(),
+            pressed_key: None,
         }
     }
 }
@@ -352,13 +362,33 @@ impl SettingsTrayRenderState {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// Direction of a ± step tap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Down,
+    Up,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct SettingsTrayRenderOutput {
-    pub brightness_drag: Option<u8>,
-    pub brightness_release: Option<u8>,
-    pub volume_drag: Option<u8>,
-    pub volume_release: Option<u8>,
+    pub brightness_step: Option<Step>,
+    pub volume_step: Option<Step>,
     pub night_mode_tapped: bool,
+    pub close_tapped: bool,
+    /// The pressed key sampled after this frame's event processing differs
+    /// from the one the tree was built with — the overlay must repaint so
+    /// press/release inversion shows (no FSM polls the step buttons).
+    pub pressed_changed: bool,
+}
+
+/// Step size for the ± volume/brightness buttons, matching the stable tray.
+const STEP: u8 = 10;
+
+fn step_value(current: u8, step: Step, min: u8, max: u8) -> u8 {
+    match step {
+        Step::Up => current.saturating_add(STEP).min(max),
+        Step::Down => current.saturating_sub(STEP).max(min),
+    }
 }
 
 #[expect(missing_debug_implementations, reason = "TreeUi is not Debug")]
@@ -375,12 +405,10 @@ pub struct SettingsTrayOverlay {
     panel_height: f32,
 
     brightness: u8,
+    /// End of the post-tap brightness echo settle window.
+    brightness_settle_until: Option<Instant>,
     volume: u8,
-    /// Set when the volume slider moved during this touch sequence; gates echo
-    /// suppression and the post-release settle window.
-    volume_dragged: bool,
-    last_volume_sent: Instant,
-    /// End of the post-release echo settle window.
+    /// End of the post-tap volume echo settle window.
     volume_settle_until: Option<Instant>,
     /// Latest night-mode state from the `night_mode` event. No local prediction.
     night_active: bool,
@@ -409,11 +437,15 @@ pub struct SettingsTrayOverlay {
 
     touch_track: Option<TouchTrack>,
     last_interaction: Instant,
-    last_brightness_sent: Instant,
 
     dismissing: bool,
     /// Set on any content change; drives the Task-9 panel cache.
     content_dirty: bool,
+    /// State changed during a render pass's read-back. Converted into
+    /// `content_dirty` at the start of the next tick — setting `content_dirty`
+    /// directly would be consumed by the host right after the stale paint the
+    /// read-back came from, caching the old frame with no repaint to follow.
+    repaint_queued: bool,
     /// Pure reveal/dismiss slide phase; the host reads its offset to blit the
     /// cached panel without re-laying-out the tree.
     slide: Slide,
@@ -453,9 +485,8 @@ impl SettingsTrayOverlay {
             height,
             panel_height,
             brightness: 50,
+            brightness_settle_until: None,
             volume: 50,
-            volume_dragged: false,
-            last_volume_sent: now,
             volume_settle_until: None,
             night_active: false,
             night_until: String::new(),
@@ -473,9 +504,9 @@ impl SettingsTrayOverlay {
             render_state: SettingsTrayRenderState::new(now),
             touch_track: None,
             last_interaction: now,
-            last_brightness_sent: now,
             dismissing: false,
             content_dirty: true,
+            repaint_queued: false,
             slide: Slide::default(),
             caps: None,
             pending_requests: Vec::new(),
@@ -484,7 +515,7 @@ impl SettingsTrayOverlay {
     }
 
     #[must_use]
-    fn view(&self) -> SettingsTrayView {
+    fn view(&self, now: Instant) -> SettingsTrayView {
         let mut view = SettingsTrayView::for_product(self.product);
         view.shape = self.shape;
         view.width = self.width;
@@ -495,24 +526,28 @@ impl SettingsTrayOverlay {
             active: self.night_active,
             until: self.night_until.clone(),
         });
-        let restart_label = if self.restart.shows_message() {
-            self.declined_reason
-                .clone()
-                .unwrap_or_else(|| self.restart.label().to_owned())
+        view.restart_caption = if self.restart.shows_message() {
+            Some(
+                self.declined_reason
+                    .clone()
+                    .unwrap_or_else(|| self.restart.label().to_owned()),
+            )
         } else {
-            self.restart.label().to_owned()
+            self.restart.caption().map(str::to_owned)
         };
-        view.restart = Some(RestartView {
-            label: restart_label,
-        });
+        view.restart_progress = self.restart.progress(now);
+        view.reconfig_caption = self.button.caption().map(str::to_owned);
+        view.reconfig_progress = self.button.progress(now);
+        view.reconnect_caption = self.reconnect.caption().map(str::to_owned);
+        view.reconnect_progress = self.reconnect.progress(now);
         view.hostname.clone_from(&self.hostname);
         view.ip.clone_from(&self.ip);
         view.wifi_signal = self.wifi_signal;
         view.ssid.clone_from(&self.ssid);
         view.setup_ssid.clone_from(&self.setup_ssid);
         view.wifi_buttons = wifi_reconfig_supported(self.product);
-        view.wifi_label = self.button.label();
         if let Some(caps) = self.caps {
+            view.show_brightness = caps.brightness;
             view.show_volume = caps.sound;
             view.wifi_buttons = caps.wifi_setup;
         } else {
@@ -522,7 +557,7 @@ impl SettingsTrayOverlay {
             // arrive).
             view.show_volume = false;
             view.night_mode = None;
-            view.restart = None;
+            view.show_restart = false;
             view.wifi_buttons = wifi_reconfig_supported(self.product);
         }
         view
@@ -608,11 +643,71 @@ impl SettingsTrayOverlay {
         }
     }
 
-    /// Whether an incoming volume event must be dropped: the finger owns the
-    /// slider mid-drag, or a just-released drag's settle window is open.
+    /// Whether an incoming volume event must be dropped: a recent step tap's
+    /// settle window is still open.
     fn volume_echo_blocked(&self, now: Instant) -> bool {
-        (self.volume_dragged && self.touch_track.is_some())
-            || self.volume_settle_until.is_some_and(|t| now < t)
+        self.volume_settle_until.is_some_and(|t| now < t)
+    }
+
+    /// Whether an incoming brightness event must be dropped: a recent step
+    /// tap's settle window is still open.
+    fn brightness_echo_blocked(&self, now: Instant) -> bool {
+        self.brightness_settle_until.is_some_and(|t| now < t)
+    }
+
+    /// [`SystemOverlay::on_volume`] with an explicit `now`, so tests drive
+    /// the settle window deterministically.
+    fn on_volume_at(&mut self, value: u8, now: Instant) {
+        if self.volume_echo_blocked(now) {
+            return;
+        }
+        if value != self.volume {
+            self.volume = value;
+            self.content_dirty = true;
+        }
+    }
+
+    /// [`SystemOverlay::on_brightness`] with an explicit `now`, so tests
+    /// drive the settle window deterministically.
+    fn on_brightness_at(&mut self, value: u8, now: Instant) {
+        if self.brightness_echo_blocked(now) {
+            return;
+        }
+        if value != self.brightness {
+            self.brightness = value;
+            self.content_dirty = true;
+        }
+    }
+
+    /// Apply a frame's interaction read-back to overlay state and queue the
+    /// resulting requests.
+    fn apply_render_output(&mut self, output: SettingsTrayRenderOutput, now: Instant) {
+        if let Some(step) = output.brightness_step {
+            let b = step_value(self.brightness, step, ui::MIN_BRIGHTNESS, 100);
+            self.brightness = b;
+            self.repaint_queued = true;
+            self.pending_requests
+                .push(SettingsRequest::SetBrightness(b));
+            self.brightness_settle_until = Some(now + STEP_ECHO_SETTLE);
+        }
+        if let Some(step) = output.volume_step {
+            let v = step_value(self.volume, step, 0, 100);
+            self.volume = v;
+            self.repaint_queued = true;
+            self.pending_requests.push(SettingsRequest::SetVolume(v));
+            self.volume_settle_until = Some(now + STEP_ECHO_SETTLE);
+        }
+        if output.night_mode_tapped {
+            self.pending_requests.push(SettingsRequest::ToggleNightMode);
+        }
+        if output.close_tapped {
+            // No repaint needed: `dismissing` starts the slide on the next
+            // tick and the slide animation drives renders.
+            self.dismissing = true;
+        }
+        if output.pressed_changed {
+            self.repaint_queued = true;
+        }
     }
 
     /// Whether a hold FSM is mid-animation or a hold button is pressed this
@@ -659,7 +754,11 @@ impl SystemOverlay for SettingsTrayOverlay {
         // The panel cache may still show pre-hide transient UI (hold progress,
         // reconnect cooldown); when this reset changes content, repaint instead
         // of blitting the stale cache through the reveal ramp.
-        if self.button != ButtonState::default() || self.reconnect != ReconnectState::default() {
+        if self.button != ButtonState::default()
+            || self.reconnect != ReconnectState::default()
+            || self.restart != RestartState::default()
+            || self.declined_reason.is_some()
+        {
             self.content_dirty = true;
         }
         self.button = ButtonState::default();
@@ -680,20 +779,11 @@ impl SystemOverlay for SettingsTrayOverlay {
     }
 
     fn on_brightness(&mut self, value: u8) {
-        if value != self.brightness {
-            self.brightness = value;
-            self.content_dirty = true;
-        }
+        self.on_brightness_at(value, Instant::now());
     }
 
     fn on_volume(&mut self, value: u8) {
-        if self.volume_echo_blocked(Instant::now()) {
-            return;
-        }
-        if value != self.volume {
-            self.volume = value;
-            self.content_dirty = true;
-        }
+        self.on_volume_at(value, Instant::now());
     }
 
     fn on_night_mode(&mut self, active: bool, until: &str) {
@@ -732,7 +822,6 @@ impl SystemOverlay for SettingsTrayOverlay {
         )]
         match event {
             TouchEvent::Down { x, y, .. } => {
-                self.volume_dragged = false;
                 let pt = Pt {
                     x: x as f32,
                     y: y as f32,
@@ -751,9 +840,6 @@ impl SystemOverlay for SettingsTrayOverlay {
                 }
             }
             TouchEvent::Up { .. } => {
-                if self.volume_dragged {
-                    self.volume_settle_until = Some(Instant::now() + VOLUME_ECHO_SETTLE);
-                }
                 if let Some(track) = self.touch_track.take()
                     && dismiss::classify(track.start, track.latest)
                 {
@@ -761,9 +847,6 @@ impl SystemOverlay for SettingsTrayOverlay {
                 }
             }
             TouchEvent::Cancel => {
-                if self.volume_dragged {
-                    self.volume_settle_until = Some(Instant::now() + VOLUME_ECHO_SETTLE);
-                }
                 self.touch_track = None;
             }
         }
@@ -771,6 +854,12 @@ impl SystemOverlay for SettingsTrayOverlay {
 
     fn tick(&mut self, now: Instant) -> TickOutcome {
         self.refresh_network();
+        // Read-back changes queue here instead of setting content_dirty
+        // directly: the host consumes content_dirty right after the paint the
+        // read-back came from, which was built before the change.
+        if std::mem::take(&mut self.repaint_queued) {
+            self.content_dirty = true;
+        }
         let was_dirty = self.content_dirty;
         self.advance_buttons(now);
 
@@ -818,16 +907,14 @@ impl SystemOverlay for SettingsTrayOverlay {
         // three; the painted pixels are discarded (the host exports no prewarm
         // buffer).
         let now = Instant::now();
-        let mut view = self.view();
+        let mut view = self.view(now);
         view.show_volume = true;
         view.wifi_buttons = true;
         view.night_mode = Some(NightModeView {
             active: false,
             until: "06:30".to_owned(),
         });
-        view.restart = Some(RestartView {
-            label: "Restart".to_owned(),
-        });
+        view.show_restart = true;
         let _ = render_settings_tray(
             renderer,
             (self.width, self.height),
@@ -839,61 +926,9 @@ impl SystemOverlay for SettingsTrayOverlay {
 
     fn render(&mut self, renderer: &mut dyn Renderer, size: (u32, u32)) {
         let now = Instant::now();
-        let view = self.view();
+        let view = self.view(now);
         let output = render_settings_tray(renderer, size, &mut self.render_state, &view, now);
-
-        if let Some(b) = output.brightness_drag {
-            if b != self.brightness {
-                self.brightness = b;
-                self.content_dirty = true;
-            }
-            if now.duration_since(self.last_brightness_sent) >= BRIGHTNESS_SEND_INTERVAL {
-                self.pending_requests
-                    .push(SettingsRequest::SetBrightness(b));
-                self.last_brightness_sent = now;
-            }
-        }
-        // The release click carries the authoritative finger-up position on
-        // every lift (multi-frame drag, coalesced drag, or tap); deliver it
-        // unconditionally so the value the finger lifted at is what bmc applies,
-        // independent of the mid-drag throttle.
-        if let Some(b) = output.brightness_release {
-            if b != self.brightness {
-                self.brightness = b;
-                self.content_dirty = true;
-            }
-            self.pending_requests
-                .push(SettingsRequest::SetBrightness(b));
-            self.last_brightness_sent = now;
-        }
-
-        if let Some(v) = output.volume_drag {
-            self.volume_dragged = true;
-            if v != self.volume {
-                self.volume = v;
-                self.content_dirty = true;
-            }
-            if now.duration_since(self.last_volume_sent) >= VOLUME_SEND_INTERVAL {
-                self.pending_requests.push(SettingsRequest::SetVolume(v));
-                self.last_volume_sent = now;
-            }
-        }
-        // The release click carries the authoritative finger-up position on
-        // every lift (multi-frame drag, coalesced drag, or tap); deliver it
-        // unconditionally so the value the finger lifted at is what bmc applies,
-        // independent of the mid-drag throttle.
-        if let Some(v) = output.volume_release {
-            if v != self.volume {
-                self.volume = v;
-                self.content_dirty = true;
-            }
-            self.pending_requests.push(SettingsRequest::SetVolume(v));
-            self.last_volume_sent = now;
-        }
-
-        if output.night_mode_tapped {
-            self.pending_requests.push(SettingsRequest::ToggleNightMode);
-        }
+        self.apply_render_output(output, now);
     }
 
     fn drain_settings_requests(&mut self) -> Vec<SettingsRequest> {
@@ -930,6 +965,17 @@ impl SystemOverlay for SettingsTrayOverlay {
     }
 }
 
+const PRESSABLE: [&str; 8] = [
+    ui::VOLUME_DOWN_KEY,
+    ui::VOLUME_UP_KEY,
+    ui::BRIGHTNESS_DOWN_KEY,
+    ui::BRIGHTNESS_UP_KEY,
+    ui::NIGHT_MODE_KEY,
+    ui::RESTART_KEY,
+    ui::WIFI_RECONFIG_KEY,
+    ui::WIFI_RECONNECT_KEY,
+];
+
 pub fn render_settings_tray(
     renderer: &mut dyn Renderer,
     size: (u32, u32),
@@ -945,20 +991,38 @@ pub fn render_settings_tray(
         u32::try_from(now.duration_since(state.last_render).as_millis()).unwrap_or(u32::MAX);
     state.last_render = now;
 
+    // Sampled before the render: the tree the render lays out was built from
+    // this state, so it is the baseline `pressed_changed` compares against.
+    let pressed_derived = PRESSABLE.iter().copied().find(|k| state.tree.is_pressed(k));
+    let pressed = view.pressed_key.as_deref().or(pressed_derived);
+
     let wifi_view = if let Some(ssid) = view.setup_ssid.as_deref() {
         WifiView::Setup { ap_ssid: ssid }
     } else {
-        WifiView::Idle {
-            label: view.wifi_label,
-        }
+        WifiView::Idle
     };
     let controls = ui::Controls {
+        brightness: view.show_brightness.then_some(view.brightness),
         volume: view.show_volume.then_some(view.volume),
-        night_mode: view.night_mode.as_ref().map(|n| n.active),
-        restart: view.restart.as_ref().map(|r| r.label.as_str()),
+        night_mode: view.night_mode.as_ref().map(|n| ui::NightMode {
+            active: n.active,
+            until: &n.until,
+        }),
+        restart: view.show_restart.then_some(ui::HoldControl {
+            caption: view.restart_caption.as_deref(),
+            progress: view.restart_progress,
+        }),
+        wifi_reconfig: ui::HoldControl {
+            caption: view.reconfig_caption.as_deref(),
+            progress: view.reconfig_progress,
+        },
+        wifi_reconnect: ui::HoldControl {
+            caption: view.reconnect_caption.as_deref(),
+            progress: view.reconnect_progress,
+        },
+        pressed,
     };
     let node = ui::build_tree(
-        view.brightness,
         view.hostname.as_deref(),
         view.ip.as_deref(),
         view.wifi_signal,
@@ -983,32 +1047,25 @@ pub fn render_settings_tray(
         }
     };
 
-    let brightness_drag = result.drags.get(ui::BRIGHTNESS_SLIDER_KEY).map(|hit| {
-        let frac = (hit.x / hit.width).clamp(0.0, 1.0);
-        dismiss::brightness_from_fraction(frac)
-    });
-    // The release click carries the finger-up position even when the whole
-    // down-move-up is coalesced into one frame (no `drags` entry by then).
-    let brightness_release = result.clicks.get(ui::BRIGHTNESS_SLIDER_KEY).map(|hit| {
-        let frac = (hit.x / hit.width).clamp(0.0, 1.0);
-        dismiss::brightness_from_fraction(frac)
-    });
-
-    let volume_drag = result.drags.get(ui::VOLUME_SLIDER_KEY).map(|hit| {
-        let frac = (hit.x / hit.width).clamp(0.0, 1.0);
-        dismiss::volume_from_fraction(frac)
-    });
-    let volume_release = result.clicks.get(ui::VOLUME_SLIDER_KEY).map(|hit| {
-        let frac = (hit.x / hit.width).clamp(0.0, 1.0);
-        dismiss::volume_from_fraction(frac)
-    });
-
+    // The render processed this frame's queued touch events, so the pressed
+    // key can differ from the pre-render sample; that difference is what
+    // demands the repaint showing the press/release inversion.
+    let pressed_after = PRESSABLE.iter().copied().find(|k| state.tree.is_pressed(k));
+    let step_of = |down: &str, up: &str| {
+        if result.clicks.contains_key(up) {
+            Some(Step::Up)
+        } else if result.clicks.contains_key(down) {
+            Some(Step::Down)
+        } else {
+            None
+        }
+    };
     SettingsTrayRenderOutput {
-        brightness_drag,
-        brightness_release,
-        volume_drag,
-        volume_release,
+        brightness_step: step_of(ui::BRIGHTNESS_DOWN_KEY, ui::BRIGHTNESS_UP_KEY),
+        volume_step: step_of(ui::VOLUME_DOWN_KEY, ui::VOLUME_UP_KEY),
         night_mode_tapped: result.clicks.contains_key(ui::NIGHT_MODE_KEY),
+        close_tapped: result.clicks.contains_key(ui::CLOSE_KEY),
+        pressed_changed: pressed_after != pressed_derived,
     }
 }
 
@@ -1032,7 +1089,7 @@ mod view_tests {
         overlay.ssid = Some("Braiins-WiFi".to_owned());
         overlay.on_wifi_ap(Some("Deck setup"));
 
-        let view = overlay.view();
+        let view = overlay.view(now);
 
         assert_eq!(view.brightness, 70);
         assert_eq!(view.hostname.as_deref(), Some("braiins-deck"));
@@ -1041,7 +1098,10 @@ mod view_tests {
         assert_eq!(view.ssid.as_deref(), Some("Braiins-WiFi"));
         assert_eq!(view.setup_ssid.as_deref(), Some("Deck setup"));
         assert!(view.wifi_buttons);
-        assert_eq!(view.wifi_label, ButtonState::Active.label());
+        assert_eq!(
+            view.reconfig_caption, None,
+            "an active setup AP silences the reconfigure caption"
+        );
     }
 
     #[test]
@@ -1057,7 +1117,7 @@ mod view_tests {
         });
         overlay.on_night_mode(true, "06:30");
         assert_eq!(
-            overlay.view().night_mode,
+            overlay.view(now).night_mode,
             Some(NightModeView {
                 active: true,
                 until: "06:30".to_owned(),
@@ -1072,7 +1132,7 @@ mod view_tests {
         let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
         overlay.on_wifi_ap(Some(""));
         assert_eq!(
-            overlay.view().setup_ssid,
+            overlay.view(now).setup_ssid,
             None,
             "an empty AP SSID means setup inactive — the setup view must not show"
         );
@@ -1083,10 +1143,10 @@ mod view_tests {
         let now = Instant::now();
         let overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
         // No capabilities event ever arrived (v1 compositor).
-        let view = overlay.view();
+        let view = overlay.view(now);
         assert!(!view.show_volume, "volume is v2-only");
         assert!(view.night_mode.is_none(), "night mode is v2-only");
-        assert!(view.restart.is_none(), "restart is v2-only");
+        assert!(!view.show_restart, "restart is v2-only");
         assert!(
             view.wifi_buttons,
             "BMC100 keeps its product-gated WiFi buttons"
@@ -1102,7 +1162,7 @@ mod view_tests {
             sound: false,
             wifi_setup: false,
         });
-        let view = overlay.view();
+        let view = overlay.view(now);
         assert!(!view.show_volume);
         assert!(
             !view.wifi_buttons,
@@ -1112,10 +1172,7 @@ mod view_tests {
             view.night_mode.is_some(),
             "night mode shows on every v2 compositor"
         );
-        assert!(
-            view.restart.is_some(),
-            "restart shows on every v2 compositor"
-        );
+        assert!(view.show_restart, "restart shows on every v2 compositor");
     }
 
     #[test]
@@ -1158,7 +1215,7 @@ mod view_tests {
         });
 
         let _ = overlay.tick(now);
-        let view = overlay.view();
+        let view = overlay.view(now);
 
         assert_eq!(view.ip.as_deref(), Some("192.168.1.42"));
         assert_eq!(view.ssid.as_deref(), Some("Braiins-WiFi"));
@@ -1210,7 +1267,7 @@ mod view_tests {
         overlay.env = Box::new(StaticEnv { snapshot: None });
 
         let _ = overlay.tick(now);
-        let view = overlay.view();
+        let view = overlay.view(now);
 
         assert_eq!(view.ip, None);
         assert_eq!(view.ssid, None);
@@ -1273,42 +1330,25 @@ mod volume_echo_tests {
     }
 
     #[test]
-    fn echo_is_dropped_while_finger_owns_the_slider() {
-        let mut o = overlay();
-        o.volume = 40;
-        o.on_touch(TouchEvent::Down {
-            id: 0,
-            x: 100.0,
-            y: 100.0,
-        });
-        o.volume_dragged = true; // the adapter render sets this on a drag hit
-        o.on_volume(70);
-        assert_eq!(o.volume, 40, "mid-drag echo must not move the knob");
-    }
-
-    #[test]
     fn echo_is_dropped_within_the_settle_window_and_honored_after() {
+        let t0 = Instant::now();
         let mut o = overlay();
         o.volume = 40;
-        o.on_touch(TouchEvent::Down {
-            id: 0,
-            x: 100.0,
-            y: 100.0,
-        });
-        o.volume_dragged = true;
-        o.on_touch(TouchEvent::Up { id: 0 });
-        o.on_volume(70);
+        o.apply_render_output(
+            SettingsTrayRenderOutput {
+                volume_step: Some(Step::Up),
+                ..Default::default()
+            },
+            t0,
+        );
+        assert_eq!(o.volume, 50);
+        o.on_volume_at(50, t0 + STEP_ECHO_SETTLE / 2);
         assert_eq!(
-            o.volume, 40,
+            o.volume, 50,
             "echo within the settle window must be dropped"
         );
 
-        o.volume_settle_until = Some(
-            Instant::now()
-                .checked_sub(Duration::from_millis(1))
-                .expect("BUG: instant underflow computing an already-elapsed settle window"),
-        );
-        o.on_volume(70);
+        o.on_volume_at(70, t0 + STEP_ECHO_SETTLE);
         assert_eq!(o.volume, 70, "external changes resume after the window");
     }
 
@@ -1317,6 +1357,169 @@ mod volume_echo_tests {
         let mut o = overlay();
         o.on_volume(15);
         assert_eq!(o.volume, 15);
+    }
+}
+
+#[cfg(test)]
+mod step_tests {
+    use super::*;
+
+    fn volume_up() -> SettingsTrayRenderOutput {
+        SettingsTrayRenderOutput {
+            volume_step: Some(Step::Up),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn steps_clamp_to_their_ranges() {
+        assert_eq!(step_value(95, Step::Up, ui::MIN_BRIGHTNESS, 100), 100);
+        assert_eq!(step_value(15, Step::Down, ui::MIN_BRIGHTNESS, 100), 10);
+        assert_eq!(step_value(5, Step::Down, 0, 100), 0);
+        assert_eq!(step_value(40, Step::Up, 0, 100), 50);
+    }
+
+    #[test]
+    fn volume_taps_compound_locally_and_extend_the_settle_window() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        overlay.volume = 40;
+        overlay.apply_render_output(volume_up(), t0);
+        let t1 = t0 + Duration::from_millis(300);
+        overlay.apply_render_output(volume_up(), t1);
+        let t2 = t1 + Duration::from_millis(300);
+        overlay.apply_render_output(volume_up(), t2);
+        assert_eq!(overlay.volume, 70, "three +10 taps compound from 40");
+        let sent: Vec<_> = overlay.drain_settings_requests();
+        assert_eq!(
+            sent,
+            vec![
+                SettingsRequest::SetVolume(50),
+                SettingsRequest::SetVolume(60),
+                SettingsRequest::SetVolume(70),
+            ]
+        );
+        overlay.on_volume_at(50, t2 + Duration::from_millis(100));
+        assert_eq!(
+            overlay.volume, 70,
+            "a stale echo inside the settle window is dropped"
+        );
+        assert!(
+            overlay.volume_echo_blocked(t0 + STEP_ECHO_SETTLE + Duration::from_millis(100)),
+            "the last tap extended the window past the first tap's deadline"
+        );
+        assert!(!overlay.volume_echo_blocked(t2 + STEP_ECHO_SETTLE));
+    }
+
+    #[test]
+    fn brightness_taps_compound_locally_and_extend_the_settle_window() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+        overlay.brightness = 40;
+        let brightness_up = || SettingsTrayRenderOutput {
+            brightness_step: Some(Step::Up),
+            ..Default::default()
+        };
+        overlay.apply_render_output(brightness_up(), t0);
+        let t1 = t0 + Duration::from_millis(300);
+        overlay.apply_render_output(brightness_up(), t1);
+        let t2 = t1 + Duration::from_millis(300);
+        overlay.apply_render_output(brightness_up(), t2);
+        assert_eq!(overlay.brightness, 70, "three +10 taps compound from 40");
+        let sent: Vec<_> = overlay.drain_settings_requests();
+        assert_eq!(
+            sent,
+            vec![
+                SettingsRequest::SetBrightness(50),
+                SettingsRequest::SetBrightness(60),
+                SettingsRequest::SetBrightness(70),
+            ]
+        );
+        overlay.on_brightness_at(50, t2 + Duration::from_millis(100));
+        assert_eq!(
+            overlay.brightness, 70,
+            "a stale echo inside the settle window is dropped"
+        );
+        assert!(
+            overlay.brightness_echo_blocked(t0 + STEP_ECHO_SETTLE + Duration::from_millis(100)),
+            "the last tap extended the window past the first tap's deadline"
+        );
+        assert!(!overlay.brightness_echo_blocked(t2 + STEP_ECHO_SETTLE));
+    }
+
+    #[test]
+    fn boundary_taps_stay_clamped_but_still_send() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        overlay.volume = 100;
+        overlay.brightness = ui::MIN_BRIGHTNESS;
+        overlay.apply_render_output(volume_up(), now);
+        overlay.apply_render_output(
+            SettingsTrayRenderOutput {
+                brightness_step: Some(Step::Down),
+                ..Default::default()
+            },
+            now,
+        );
+        assert_eq!(overlay.volume, 100);
+        assert_eq!(overlay.brightness, ui::MIN_BRIGHTNESS);
+        let sent: Vec<_> = overlay.drain_settings_requests();
+        assert_eq!(
+            sent,
+            vec![
+                SettingsRequest::SetVolume(100),
+                SettingsRequest::SetBrightness(ui::MIN_BRIGHTNESS),
+            ],
+            "a tap at the clamp boundary re-sends the clamped absolute value"
+        );
+    }
+
+    #[test]
+    fn close_tap_starts_the_dismiss_slide_next_tick() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        overlay.apply_render_output(
+            SettingsTrayRenderOutput {
+                close_tapped: true,
+                ..Default::default()
+            },
+            now,
+        );
+        let outcome = overlay.tick(now + Duration::from_millis(1));
+        assert!(overlay.slide.is_dismissing());
+        assert!(
+            outcome.visible,
+            "the surface stays mapped while sliding out"
+        );
+    }
+
+    #[test]
+    fn read_back_changes_repaint_on_the_next_tick() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        overlay.content_dirty = false;
+        overlay.apply_render_output(volume_up(), now);
+        assert!(
+            !overlay.content_dirty,
+            "read-back must not set content_dirty in the same pass (the host \
+             consumes it right after the stale paint)"
+        );
+        let outcome = overlay.tick(now + Duration::from_millis(10));
+        assert!(
+            overlay.content_dirty,
+            "the queued repaint becomes a dirty tick"
+        );
+        assert!(outcome.wants_render);
+
+        overlay.content_dirty = false;
+        overlay.apply_render_output(
+            SettingsTrayRenderOutput {
+                pressed_changed: true,
+                ..Default::default()
+            },
+            now,
+        );
+        assert!(overlay.tick(now + Duration::from_millis(20)).wants_render);
     }
 }
 
@@ -1412,7 +1615,7 @@ mod slide_tests {
         // and nearly settled (~ -0.004*height), so demand a deep mid-flight
         // offset to distinguish the two.
         #[expect(clippy::cast_precision_loss, reason = "display height fits f32")]
-        let h = overlay.view().height as f32;
+        let h = overlay.view(t1).height as f32;
         let mid = overlay.wants_cached_blit(t1 + Duration::from_millis(90));
         assert!(
             mid.is_some_and(|off| off < -h / 16.0),

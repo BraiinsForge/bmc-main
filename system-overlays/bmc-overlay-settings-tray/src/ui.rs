@@ -5,17 +5,11 @@
 //! of host/GL imports so it compiles and unit-tests on the host.
 
 use bmc_platform::DisplayShape;
-use bmc_render::tree::{
-    DrawCommand, PropsData, SpanData, TextStyle, TreeNode, col, make_button, row, spacer, text,
+use bmc_render::tree::{DrawCommand, PropsData, TextStyle, TreeNode, col, row, spacer, text};
+use bmc_wasm_protocol::colors::{GRAY_50, GREEN_50, TRANSPARENT, WHITE};
+use bmc_wasm_protocol::{
+    ArcCap, ArcFill, ArcSegments, Color, CrossAlign, Fill, FontWeight, SvgId, TextAlign,
 };
-use bmc_wasm_protocol::colors::{GRAY_50, GRAY_80, GREEN_50, TRANSPARENT, WHITE};
-use bmc_wasm_protocol::{ButtonSize, ButtonStyle, Color, CrossAlign, FontWeight, SvgId, TextAlign};
-
-/// Stable touch key for the brightness slider drag.
-pub const BRIGHTNESS_SLIDER_KEY: &str = "brightness";
-
-/// Stable touch key for the volume slider drag.
-pub const VOLUME_SLIDER_KEY: &str = "volume";
 
 /// Stable touch key for the WiFi reconfiguration hold button.
 pub const WIFI_RECONFIG_KEY: &str = "wifi_reconfig";
@@ -29,18 +23,119 @@ pub const NIGHT_MODE_KEY: &str = "night_mode";
 /// Stable touch key for the restart hold button.
 pub const RESTART_KEY: &str = "restart";
 
+/// Stable touch key for the volume −10 step button.
+pub const VOLUME_DOWN_KEY: &str = "volume_down";
+
+/// Stable touch key for the volume +10 step button.
+pub const VOLUME_UP_KEY: &str = "volume_up";
+
+/// Stable touch key for the brightness −10 step button.
+pub const BRIGHTNESS_DOWN_KEY: &str = "brightness_down";
+
+/// Stable touch key for the brightness +10 step button.
+pub const BRIGHTNESS_UP_KEY: &str = "brightness_up";
+
+/// Stable touch key for the close (dismiss) button.
+pub const CLOSE_KEY: &str = "close";
+
+/// Brightness floor: the step buttons never dim the panel below this.
+pub const MIN_BRIGHTNESS: u8 = 10;
+
 /// Panel scrim: the tray composites over the live scene, so its background is a
 /// near-opaque black that lets the scene faintly show through. Matches the
 /// `0.95`-opacity black the shipped swipe rollettes used.
 const SCRIM: Color = Color::from_rgba(0, 0, 0, 0xF2);
 
+/// Resting circle fill behind every control icon.
+const CIRCLE_FILL: Color = Color::from_rgba(255, 255, 255, 77);
+
+/// Circle fill while the finger is down; the icon is tinted black so it stays
+/// legible on the near-white disc.
+const CIRCLE_PRESSED: Color = Color::from_rgba(255, 255, 255, 204);
+
+/// Icon tint paired with [`CIRCLE_PRESSED`].
+const ICON_PRESSED_TINT: Color = Color::from_rgba(0, 0, 0, 255);
+
+/// Circle fill of the night-mode button while night mode is active. The icon
+/// stays white on this blue in both press states — the press inversion is
+/// deliberately suppressed so active night mode always reads as blue.
+const NIGHT_ACTIVE: Color = Color::from_rgba(0x10, 0x43, 0xCD, 255);
+
+/// Hold-progress ring color; its alpha is scaled by the hold fraction.
+const HOLD_RING: Color = Color::from_rgba(0x8B, 0x7C, 0xFF, 255);
+
+/// Stroke width of the hold-progress ring.
+const RING_W: f32 = 4.0;
+
+/// Edge length of the square close touch target.
+const CLOSE_TARGET: f32 = 48.0;
+
+/// Edge length of the close glyph inside its touch target.
+const CLOSE_GLYPH: f32 = 24.0;
+
+/// Gap between the two buttons of a ± pair on the Large tier.
+const STEP_GAP_LARGE: f32 = 12.0;
+
+/// Fixed text-block widths on the Large tier so caption swaps never shift
+/// the centered-row math (bmc-render cannot ellipsize; strings are fitted).
+const LARGE_PAIR_W: f32 = 236.0;
+const LARGE_SINGLE_W: f32 = 160.0;
+
+/// Stable geometry of the Large tier's top info section: panel top padding,
+/// left inset, and the right inset keeping the section clear of the close
+/// target (26px edge + 48px glyph + 32px spacing).
+const WIDE_TOP_PAD: f32 = 33.0;
+const WIDE_INFO_LEFT_PAD: f32 = 32.0;
+const WIDE_INFO_RIGHT_PAD: f32 = 106.0;
+
+/// Size of the gray headers above the Large tier's info values.
+const INFO_HEADER_SIZE: u32 = 16;
+
+/// Gap between an info header and its value.
+const INFO_HEADER_GAP: f32 = 4.0;
+
+/// Fit budgets for the runtime strings in the Large tier's info blocks.
+const WIDE_HOSTNAME_WIDTH: f32 = 320.0;
+const WIDE_SSID_WIDTH: f32 = 400.0;
+
+/// Line-height factor the renderer applies to text nodes.
+const LINE_H: f32 = 1.4;
+
+/// Top edge (px) of the control rows on round panels: below the chord-safe
+/// close target, so control and close hit regions are disjoint
+/// (hit-testing favors the smaller region).
+const ROUND_CONTROLS_TOP: f32 = 142.0;
+
+/// Gap kept below the Wi-Fi info on round panels, so it clears the curved
+/// bottom edge instead of sitting flush against it.
+const ROUND_BOTTOM_GAP: f32 = 48.0;
+
+/// Gap kept above the hostname on round panels so the first row clears the
+/// curved top edge.
+const ROUND_TOP_GAP: f32 = 48.0;
+
+/// Horizontal inset on round panels, keeping content inside the inscribed
+/// circle where the usable width is narrower than the full panel.
+const ROUND_H_PAD: f32 = 48.0;
+
+/// Usable hostname width (px) on round panels. Near the top curve the
+/// inscribed circle's chord is narrower than the full width, so the centered
+/// hostname is budgeted against this chord rather than the panel width.
+const ROUND_HOSTNAME_WIDTH: f32 = 256.0;
+
+/// Conservative per-glyph advance (px) for the 24px bold hostname font,
+/// rounded up from the measured Braiins Sans bold width so the character
+/// budget never under-counts and lets a string overflow its row. The
+/// renderer has no single-line ellipsis, so the fit is enforced on the
+/// string in [`fit_line`] instead.
+const HOSTNAME_CHAR_W: f32 = 16.0;
+
 /// What to show in the WiFi/reconfig area of the overlay.
 #[derive(Debug, Clone, Copy)]
 pub enum WifiView<'a> {
-    /// Normal mode: station info row plus the hold-to-confirm button below it.
-    /// `label` is the button caption (changes to convey hold progress).
-    Idle { label: &'a str },
-    /// Setup mode: compact row with a SETUP badge and the AP SSID, no button.
+    /// Normal mode: the station info line.
+    Idle,
+    /// Setup mode: compact row with a SETUP badge and the AP SSID.
     Setup { ap_ssid: &'a str },
 }
 
@@ -50,7 +145,7 @@ pub struct Panel {
     pub shape: DisplayShape,
     pub width: u32,
     pub height: u32,
-    /// Whether to render the WiFi reconfigure/reconnect button row. WiFi
+    /// Whether to render the WiFi reconfigure/reconnect buttons. WiFi
     /// reconfiguration is only supported on boards whose AP runs over the
     /// mac80211 radio (BMC100, BFM100); the BMM boards drive their ESP32 AP
     /// through a separate firmware path the overlay does not implement, so the
@@ -103,88 +198,155 @@ impl WifiIcons {
 }
 
 /// Registered icon ids for the control icons vendored from the stable tray.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct ControlIcons {
     pub sound_low: Option<SvgId>,
     pub sound_high: Option<SvgId>,
     pub brightness_low: Option<SvgId>,
     pub brightness_high: Option<SvgId>,
     pub night_mode: Option<SvgId>,
+    /// Width/height of the night-mode glyph, read from its viewBox (the
+    /// only non-square control icon; the host stretches without it).
+    pub night_mode_aspect: f32,
     pub restart: Option<SvgId>,
     pub close: Option<SvgId>,
 }
 
-/// The v2 control surfaces to render. `None` fields are hidden — either the
-/// capability is missing (volume) or the compositor is v1 (night mode,
-/// restart). `night_mode` carries the active state; `restart` carries the
-/// button caption (swapped to convey hold progress).
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Controls<'a> {
-    pub volume: Option<u8>,
-    pub night_mode: Option<bool>,
-    pub restart: Option<&'a str>,
+impl Default for ControlIcons {
+    fn default() -> Self {
+        Self {
+            sound_low: None,
+            sound_high: None,
+            brightness_low: None,
+            brightness_high: None,
+            night_mode: None,
+            night_mode_aspect: 1.0,
+            restart: None,
+            close: None,
+        }
+    }
 }
 
-const MIN_BRIGHTNESS: u8 = 10;
-const MAX_BRIGHTNESS: u8 = 100;
+/// Dynamic state of one hold-to-confirm control: its shared-caption text (the
+/// FSM caption, `None` when resting) and the 0..=1 hold fraction for the ring.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HoldControl<'a> {
+    pub caption: Option<&'a str>,
+    pub progress: f32,
+}
 
-/// Aspect ratio (width / height) at or above which the Wi-Fi info collapses
-/// into a single row; below it the SSID and IP stack vertically.
-const WIDE_ASPECT: f32 = 2.0;
+/// Night-mode toggle state: whether it is active and the formatted end time
+/// (empty when unknown).
+#[derive(Debug, Clone, Copy)]
+pub struct NightMode<'a> {
+    pub active: bool,
+    pub until: &'a str,
+}
 
-/// Gap kept below the Wi-Fi info on round panels, so it clears the curved
-/// bottom edge instead of sitting flush against it.
-const ROUND_BOTTOM_GAP: f32 = 48.0;
+/// The control surfaces to render. `None` fields are hidden — either the
+/// capability is missing (brightness, volume) or the compositor is v1 (night
+/// mode, restart). `pressed` is the touch key currently held down, inverting
+/// that button's colors.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Controls<'a> {
+    pub brightness: Option<u8>,
+    pub volume: Option<u8>,
+    pub night_mode: Option<NightMode<'a>>,
+    pub restart: Option<HoldControl<'a>>,
+    pub wifi_reconfig: HoldControl<'a>,
+    pub wifi_reconnect: HoldControl<'a>,
+    pub pressed: Option<&'a str>,
+}
 
-/// Gap kept above the hostname on round panels, mirroring the bottom gap so
-/// the first row clears the curved top edge.
-const ROUND_TOP_GAP: f32 = 48.0;
+/// Per-panel control sizing. Selected by panel width in [`tier_for`]: the
+/// Large tier (BMC100) adds static text blocks under every group; the
+/// medium/small tiers render bare buttons with a shared caption line.
+#[derive(Debug, Clone, Copy)]
+struct Tier {
+    circle: f32,
+    icon: f32,
+    pair_gap: f32,
+    group_gap: f32,
+    large_text: bool,
+    value_size: u32,
+    caption_size: u32,
+    hostname_size: u32,
+    wifi_text_size: u32,
+    /// Height/width of the WiFi signal icon in the info section — must not
+    /// exceed the info line's text height on the compact tiers or it, not
+    /// the text, sets the line height and busts the vertical budget.
+    wifi_icon_size: f32,
+    padding: f32,
+    row_gap: f32,
+}
 
-/// Horizontal inset on round panels, keeping content inside the inscribed
-/// circle where the usable width is narrower than the full panel.
-const ROUND_H_PAD: f32 = 48.0;
+fn tier_for(panel: &Panel) -> Tier {
+    if panel.width >= 960 {
+        Tier {
+            circle: 112.0,
+            icon: 48.0,
+            pair_gap: STEP_GAP_LARGE,
+            group_gap: 20.0,
+            large_text: true,
+            value_size: 24,
+            caption_size: 20,
+            hostname_size: 24,
+            wifi_text_size: 22,
+            wifi_icon_size: 32.0,
+            padding: 24.0,
+            row_gap: 16.0,
+        }
+    } else if panel.width <= 320 {
+        Tier {
+            circle: 48.0,
+            icon: 22.0,
+            pair_gap: 6.0,
+            group_gap: 12.0,
+            large_text: false,
+            value_size: 12,
+            caption_size: 12,
+            hostname_size: 16,
+            wifi_text_size: 12,
+            wifi_icon_size: 17.0,
+            padding: 12.0,
+            row_gap: 6.0,
+        }
+    } else {
+        Tier {
+            circle: 64.0,
+            icon: 28.0,
+            pair_gap: 8.0,
+            group_gap: 20.0,
+            large_text: false,
+            value_size: 14,
+            caption_size: 14,
+            hostname_size: 18,
+            wifi_text_size: 14,
+            wifi_icon_size: 20.0,
+            padding: 16.0,
+            row_gap: 8.0,
+        }
+    }
+}
 
-/// Symmetric padding inside rectangular panels.
-const RECT_PADDING: f32 = 24.0;
-
-/// Usable hostname width (px) on round panels. Near the top curve the
-/// inscribed circle's chord is narrower than the full width, so the centered
-/// hostname is budgeted against this chord rather than the panel width.
-const ROUND_HOSTNAME_WIDTH: f32 = 256.0;
-
-/// Conservative per-glyph advance (px) for the 24px bold hostname font,
-/// rounded up from the measured Braiins Sans bold width so the character
-/// budget never under-counts and lets a hostname overflow its row. The
-/// renderer has no single-line ellipsis, so the fit is enforced on the
-/// string in [`fit_hostname`] instead.
-const HOSTNAME_CHAR_W: f32 = 16.0;
-
-/// Truncate `hostname` with a trailing ellipsis so it fits on one line within
-/// `width_px`. Pure (no host calls) so it stays host-testable.
+/// Generic width-fitting for single-line UI strings: a conservative per-glyph
+/// budget scaled from the 24px hostname advance. The renderer cannot
+/// ellipsize, so overlong strings are truncated here.
 #[must_use]
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    reason = "max_chars is a small non-negative count"
+    clippy::cast_precision_loss,
+    reason = "max_chars is a small non-negative count; text sizes are small"
 )]
-fn fit_hostname(hostname: &str, width_px: f32) -> String {
-    let max_chars = (width_px / HOSTNAME_CHAR_W).floor().max(1.0) as usize;
-    if hostname.chars().count() <= max_chars {
-        return hostname.to_owned();
+fn fit_line(s: &str, width_px: f32, size: u32) -> String {
+    let glyph = HOSTNAME_CHAR_W * (size as f32) / 24.0;
+    let max_chars = (width_px / glyph).floor().max(1.0) as usize;
+    if s.chars().count() <= max_chars {
+        return s.to_owned();
     }
-    let kept: String = hostname.chars().take(max_chars.saturating_sub(1)).collect();
+    let kept: String = s.chars().take(max_chars.saturating_sub(1)).collect();
     format!("{kept}…")
-}
-
-/// A `Secondary`/`Normal` hold-to-confirm button keyed by `key`.
-fn button(key: &str, label: impl Into<String>) -> TreeNode {
-    button_styled(key, label, ButtonStyle::Secondary)
-}
-
-/// Like [`button`] but with an explicit style — night mode uses `Primary` to
-/// signal its active state.
-fn button_styled(key: &str, label: impl Into<String>, style: ButtonStyle) -> TreeNode {
-    make_button(key, label, style, ButtonSize::Normal, None, false, None)
 }
 
 fn text_style(size: u32, color: Color) -> TextStyle {
@@ -237,11 +399,11 @@ fn pad_horizontal(node: TreeNode, padding: f32) -> TreeNode {
     )
 }
 
-/// Centered hostname header row. The string is pre-fitted by [`fit_hostname`],
+/// Centered hostname header row. The string is pre-fitted by [`fit_line`],
 /// so it is laid out on a single line without wrapping. The centering column
 /// is what actually centers the text node; a bare paragraph with
 /// `align: Center` does not center under a stretching parent.
-fn hostname_row(hostname: &str) -> TreeNode {
+fn hostname_row(hostname: &str, size: u32) -> TreeNode {
     col(
         PropsData {
             cross_align: CrossAlign::Center,
@@ -250,7 +412,7 @@ fn hostname_row(hostname: &str) -> TreeNode {
         vec![text(
             hostname,
             TextStyle {
-                size: 24,
+                size,
                 weight: FontWeight::BOLD,
                 color: WHITE,
                 align: TextAlign::Center,
@@ -260,29 +422,7 @@ fn hostname_row(hostname: &str) -> TreeNode {
     )
 }
 
-fn wifi_icon(icons: WifiIcons, wifi_signal: Option<i32>) -> TreeNode {
-    TreeNode::Canvas {
-        props: PropsData {
-            width: 32.0,
-            height: 32.0,
-            ..PropsData::default()
-        },
-        touch_key: None,
-        draws: vec![DrawCommand::Svg {
-            x: 0.0,
-            y: 0.0,
-            w: 32.0,
-            h: 32.0,
-            color: TRANSPARENT,
-            icon_id: icons.for_signal(wifi_signal),
-            anti_alias: true,
-            fills: Vec::new(),
-        }],
-    }
-}
-
-/// A fixed-size icon canvas for a registered SVG (control glyphs).
-pub(crate) fn control_icon(icon_id: Option<SvgId>, size: f32) -> TreeNode {
+fn wifi_icon(icons: WifiIcons, wifi_signal: Option<i32>, size: f32) -> TreeNode {
     TreeNode::Canvas {
         props: PropsData {
             width: size,
@@ -296,299 +436,683 @@ pub(crate) fn control_icon(icon_id: Option<SvgId>, size: f32) -> TreeNode {
             w: size,
             h: size,
             color: TRANSPARENT,
-            icon_id,
+            icon_id: icons.for_signal(wifi_signal),
             anti_alias: true,
             fills: Vec::new(),
         }],
     }
 }
 
-/// Brightness section: an optional "Brightness" label above a draggable slider
-/// and its percentage readout. The label is dropped on short panels (narrow
-/// rectangular) where the extra row would push the Wi-Fi info off the bottom.
-fn brightness_section(brightness: u8, with_label: bool, icons: ControlIcons) -> TreeNode {
-    let frac = f32::from(brightness.saturating_sub(MIN_BRIGHTNESS))
-        / f32::from(MAX_BRIGHTNESS - MIN_BRIGHTNESS);
-    let slider = row(
-        PropsData {
-            cross_align: CrossAlign::Center,
-            gap: 16.0,
-            ..PropsData::default()
-        },
-        vec![
-            control_icon(icons.brightness_low, 24.0),
-            col(
-                PropsData {
-                    flex: 1.0,
-                    ..PropsData::default()
-                },
-                vec![TreeNode::ProgressBar {
-                    touch_key: Some(BRIGHTNESS_SLIDER_KEY.to_owned()),
-                    track_h: 8.0,
-                    mode: 0,
-                    fraction: frac,
-                    active: false,
-                    fill_color: GREEN_50,
-                    track_color: GRAY_80,
-                    bg_color: TRANSPARENT,
-                    skin: None,
-                }],
-            ),
-            control_icon(icons.brightness_high, 24.0),
-            text(
-                format!("{brightness}%"),
-                TextStyle {
-                    size: 24,
-                    weight: FontWeight::BOLD,
-                    color: WHITE,
-                    ..TextStyle::default()
-                },
-            ),
-        ],
-    );
-    let mut children = Vec::with_capacity(2);
-    if with_label {
-        children.push(text("Brightness", text_style(24, WHITE)));
-    }
-    children.push(slider);
-    col(
-        PropsData {
-            gap: 8.0,
-            ..PropsData::default()
-        },
-        children,
-    )
+/// An icon inside a round button. `aspect` is width/height — 1.0 for the
+/// square control glyphs; nightmode.svg is 49×48 and keeps its ratio
+/// instead of stretching.
+#[derive(Debug, Clone, Copy)]
+struct ButtonIcon {
+    id: Option<SvgId>,
+    aspect: f32,
 }
 
-/// Volume section: a draggable slider flanked by the sound low/high icons and
-/// its percentage readout. Full 0-100 range, no floor. The label is dropped on
-/// short panels like the brightness label.
-fn volume_section(volume: u8, with_label: bool, icons: ControlIcons) -> TreeNode {
-    let frac = f32::from(volume) / 100.0;
-    let slider = row(
-        PropsData {
-            cross_align: CrossAlign::Center,
-            gap: 16.0,
-            ..PropsData::default()
-        },
-        vec![
-            control_icon(icons.sound_low, 24.0),
-            col(
-                PropsData {
-                    flex: 1.0,
-                    ..PropsData::default()
-                },
-                vec![TreeNode::ProgressBar {
-                    touch_key: Some(VOLUME_SLIDER_KEY.to_owned()),
-                    track_h: 8.0,
-                    mode: 0,
-                    fraction: frac,
-                    active: false,
-                    fill_color: GREEN_50,
-                    track_color: GRAY_80,
-                    bg_color: TRANSPARENT,
-                    skin: None,
-                }],
-            ),
-            control_icon(icons.sound_high, 24.0),
-            text(
-                format!("{volume}%"),
-                TextStyle {
-                    size: 24,
-                    weight: FontWeight::BOLD,
-                    color: WHITE,
-                    ..TextStyle::default()
-                },
-            ),
-        ],
-    );
-    let mut children = Vec::with_capacity(2);
-    if with_label {
-        children.push(text("Volume", text_style(24, WHITE)));
+impl ButtonIcon {
+    fn square(id: Option<SvgId>) -> Self {
+        Self { id, aspect: 1.0 }
     }
-    children.push(slider);
-    col(
-        PropsData {
-            gap: 8.0,
-            ..PropsData::default()
-        },
-        children,
-    )
 }
 
-/// Advisory per-button width. The panel's usable width caps the row below this
-/// when the buttons cannot all fit (round and narrow panels).
-const CONTROL_BUTTON_W: f32 = 220.0;
-
-/// Every present control — WiFi reconfigure/reconnect, night-mode, restart — on
-/// a single centered row of equal, label-independent halves. Each is a plain
-/// `Button` (no icons) so the row reads as one uniform control set;
-/// hold-to-confirm shows only as a swapped caption. `wifi_label` is `Some` only
-/// when the WiFi buttons apply (the product supports reconfigure and it is not
-/// in setup mode). `usable` bounds the row width so it never overruns the
-/// panel; `None` when no control is present.
-fn controls_bar(
-    wifi_label: Option<&str>,
-    night_mode: Option<bool>,
-    restart: Option<&str>,
-    usable: f32,
-) -> Option<TreeNode> {
-    let mut buttons: Vec<TreeNode> = Vec::new();
-    if let Some(label) = wifi_label {
-        buttons.push(button(WIFI_RECONFIG_KEY, label));
-        buttons.push(button(WIFI_RECONNECT_KEY, "Reconnect WiFi"));
+/// One round icon button: a filled circle, an optional full-circle hold ring
+/// whose alpha is the hold progress, and a centered icon. `icon_tint`
+/// `TRANSPARENT` keeps the SVG's native fill (white for controls); an opaque
+/// tint colorizes the whole icon.
+fn round_button(
+    key: &str,
+    icon: ButtonIcon,
+    diameter: f32,
+    icon_size: f32,
+    fill: Color,
+    icon_tint: Color,
+    ring_progress: Option<f32>,
+) -> TreeNode {
+    let c = diameter / 2.0;
+    // Hold buttons keep the stable inner-circle-inside-the-ring geometry
+    // (104px fill inside the 112px ring); ringless buttons fill the whole
+    // tier diameter.
+    let fill_r = if ring_progress.is_some() {
+        c - RING_W
+    } else {
+        c
+    };
+    let mut draws = vec![DrawCommand::Circle {
+        cx: c,
+        cy: c,
+        r: fill_r,
+        fill: Fill::Solid(fill),
+    }];
+    if let Some(p) = ring_progress {
+        draws.push(DrawCommand::Arc {
+            cx: c,
+            cy: c,
+            radius: c - RING_W / 2.0,
+            start_angle: 0.0,
+            end_angle: std::f32::consts::TAU,
+            width: RING_W,
+            fill: ArcFill::Solid(HOLD_RING.scale_alpha(p)),
+            segments: ArcSegments::Continuous,
+            cap: ArcCap::Butt,
+        });
     }
-    if let Some(active) = night_mode {
-        buttons.push(button_styled(
-            NIGHT_MODE_KEY,
-            "Night Mode",
-            if active {
-                ButtonStyle::Primary
-            } else {
-                ButtonStyle::Secondary
+    let (icon_w, icon_h) = (icon_size * icon.aspect, icon_size);
+    draws.push(DrawCommand::Svg {
+        x: c - icon_w / 2.0,
+        y: c - icon_h / 2.0,
+        w: icon_w,
+        h: icon_h,
+        color: icon_tint,
+        icon_id: icon.id,
+        anti_alias: true,
+        fills: Vec::new(),
+    });
+    TreeNode::Canvas {
+        props: PropsData {
+            width: diameter,
+            height: diameter,
+            ..PropsData::default()
+        },
+        touch_key: Some(key.to_owned()),
+        draws,
+    }
+}
+
+fn press_fill(pressed: bool) -> Color {
+    if pressed { CIRCLE_PRESSED } else { CIRCLE_FILL }
+}
+
+fn press_tint(pressed: bool) -> Color {
+    if pressed {
+        ICON_PRESSED_TINT
+    } else {
+        TRANSPARENT
+    }
+}
+
+/// A ±step pair (volume / brightness) with its value text below. On the Large
+/// tier the block is a fixed-width column with bold value + gray name.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "flat display fields, same as build_tree"
+)]
+fn pair_group(
+    tier: Tier,
+    down_key: &'static str,
+    up_key: &'static str,
+    low_icon: Option<SvgId>,
+    high_icon: Option<SvgId>,
+    value: u8,
+    name: &str,
+    pressed: Option<&str>,
+) -> TreeNode {
+    let btn = |key: &'static str, icon: Option<SvgId>| {
+        let p = pressed == Some(key);
+        round_button(
+            key,
+            ButtonIcon::square(icon),
+            tier.circle,
+            tier.icon,
+            press_fill(p),
+            press_tint(p),
+            None,
+        )
+    };
+    let buttons = row(
+        PropsData {
+            gap: tier.pair_gap,
+            ..PropsData::default()
+        },
+        vec![btn(down_key, low_icon), btn(up_key, high_icon)],
+    );
+    let mut kids = vec![
+        buttons,
+        fixed_height(if tier.large_text { 8.0 } else { 2.0 }),
+    ];
+    if tier.large_text {
+        kids.push(text(
+            format!("{value}"),
+            TextStyle {
+                size: tier.value_size,
+                weight: FontWeight::BOLD,
+                color: WHITE,
+                align: TextAlign::Center,
+                ..TextStyle::default()
+            },
+        ));
+        kids.push(text(
+            name,
+            TextStyle {
+                size: tier.caption_size,
+                color: GRAY_50,
+                align: TextAlign::Center,
+                ..TextStyle::default()
+            },
+        ));
+    } else {
+        kids.push(text(
+            format!("{value}"),
+            TextStyle {
+                size: tier.value_size,
+                color: WHITE,
+                align: TextAlign::Center,
+                ..TextStyle::default()
             },
         ));
     }
-    if let Some(label) = restart {
-        buttons.push(button(RESTART_KEY, label));
+    col(
+        PropsData {
+            cross_align: CrossAlign::Center,
+            width: if tier.large_text { LARGE_PAIR_W } else { 0.0 },
+            ..PropsData::default()
+        },
+        kids,
+    )
+}
+
+/// A single-button group. Large tier adds the fixed-width label/sublabel
+/// block; other tiers render the bare button.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "flat display fields, same as build_tree"
+)]
+fn single_group(
+    tier: Tier,
+    key: &'static str,
+    icon: ButtonIcon,
+    fill: Color,
+    tint: Color,
+    ring: Option<f32>,
+    label: &str,
+    sublabel: &str,
+) -> TreeNode {
+    let btn = round_button(key, icon, tier.circle, tier.icon, fill, tint, ring);
+    if !tier.large_text {
+        return btn;
     }
-    let count = u16::try_from(buttons.len()).unwrap_or(u16::MAX);
-    if count == 0 {
-        return None;
+    // The label/sublabel copy is fixed at compile time ("Night Mode: Off",
+    // "hold 5 seconds", …) and sized to its column; the conservative
+    // `fit_line` glyph budget would truncate it, so it is rendered verbatim.
+    let mut kids = vec![btn, fixed_height(8.0)];
+    kids.push(text(
+        label,
+        TextStyle {
+            size: tier.caption_size,
+            weight: FontWeight::BOLD,
+            color: WHITE,
+            align: TextAlign::Center,
+            ..TextStyle::default()
+        },
+    ));
+    if !sublabel.is_empty() {
+        kids.push(text(
+            sublabel,
+            TextStyle {
+                size: tier.caption_size,
+                color: GRAY_50,
+                align: TextAlign::Center,
+                ..TextStyle::default()
+            },
+        ));
     }
-    let width = (f32::from(count) * CONTROL_BUTTON_W).min(usable);
-    let halves: Vec<TreeNode> = buttons
-        .into_iter()
-        .map(|node| {
-            col(
+    col(
+        PropsData {
+            cross_align: CrossAlign::Center,
+            width: LARGE_SINGLE_W,
+            ..PropsData::default()
+        },
+        kids,
+    )
+}
+
+/// All control groups in spec order, split into the ± pair groups
+/// (volume/brightness) and the single-button groups. On the Large tier the
+/// two halves concatenate into one row; medium/small render them as two rows.
+/// `wifi` is true only when the WiFi buttons apply (product/caps gate, not
+/// in setup mode).
+fn control_groups(
+    tier: Tier,
+    controls: &Controls<'_>,
+    icons: ControlIcons,
+    wifi_icons: WifiIcons,
+    wifi: bool,
+) -> (Vec<TreeNode>, Vec<TreeNode>) {
+    let mut pairs = Vec::new();
+    if let Some(v) = controls.volume {
+        pairs.push(pair_group(
+            tier,
+            VOLUME_DOWN_KEY,
+            VOLUME_UP_KEY,
+            icons.sound_low,
+            icons.sound_high,
+            v,
+            "Volume",
+            controls.pressed,
+        ));
+    }
+    if let Some(b) = controls.brightness {
+        pairs.push(pair_group(
+            tier,
+            BRIGHTNESS_DOWN_KEY,
+            BRIGHTNESS_UP_KEY,
+            icons.brightness_low,
+            icons.brightness_high,
+            b,
+            "Brightness",
+            controls.pressed,
+        ));
+    }
+
+    let mut singles = Vec::new();
+    if let Some(night) = controls.night_mode {
+        // The boundary reads as "current state lasts until HH:MM" in both
+        // states: the end of the night window while active, its next start
+        // while inactive (empty when the schedule is disabled).
+        let sublabel = if night.until.is_empty() {
+            String::new()
+        } else {
+            format!("Until {}", night.until)
+        };
+        singles.push(single_group(
+            tier,
+            NIGHT_MODE_KEY,
+            ButtonIcon {
+                id: icons.night_mode,
+                aspect: icons.night_mode_aspect,
+            },
+            if night.active {
+                NIGHT_ACTIVE
+            } else {
+                CIRCLE_FILL
+            },
+            TRANSPARENT,
+            None,
+            if night.active {
+                "Night Mode: On"
+            } else {
+                "Night Mode: Off"
+            },
+            &sublabel,
+        ));
+    }
+    if let Some(restart) = controls.restart {
+        let p = controls.pressed == Some(RESTART_KEY);
+        singles.push(single_group(
+            tier,
+            RESTART_KEY,
+            ButtonIcon::square(icons.restart),
+            press_fill(p),
+            press_tint(p),
+            Some(restart.progress),
+            "Restart",
+            "hold 5 seconds",
+        ));
+    }
+    if wifi {
+        let p = controls.pressed == Some(WIFI_RECONFIG_KEY);
+        singles.push(single_group(
+            tier,
+            WIFI_RECONFIG_KEY,
+            ButtonIcon::square(wifi_icons.problem),
+            press_fill(p),
+            press_tint(p),
+            Some(controls.wifi_reconfig.progress),
+            "Reset WiFi",
+            "hold 3 seconds",
+        ));
+        let p = controls.pressed == Some(WIFI_RECONNECT_KEY);
+        singles.push(single_group(
+            tier,
+            WIFI_RECONNECT_KEY,
+            ButtonIcon::square(wifi_icons.strong),
+            press_fill(p),
+            press_tint(p),
+            Some(controls.wifi_reconnect.progress),
+            "Reconnect",
+            "hold 3 seconds",
+        ));
+    }
+    (pairs, singles)
+}
+
+/// The control row nodes: one row (pairs + singles) on the Large tier, two
+/// rows ([pairs], [singles]) on medium/small, each row centered. Empty rows
+/// are dropped entirely.
+fn control_rows(tier: Tier, pairs: Vec<TreeNode>, singles: Vec<TreeNode>) -> Vec<TreeNode> {
+    let centered = |groups: Vec<TreeNode>| {
+        col(
+            PropsData {
+                cross_align: CrossAlign::Center,
+                ..PropsData::default()
+            },
+            vec![row(
                 PropsData {
-                    flex: 1.0,
+                    gap: tier.group_gap,
+                    cross_align: CrossAlign::Start,
                     ..PropsData::default()
                 },
-                vec![node],
-            )
+                groups,
+            )],
+        )
+    };
+    if tier.large_text {
+        let mut groups = pairs;
+        groups.extend(singles);
+        if groups.is_empty() {
+            return Vec::new();
+        }
+        return vec![centered(groups)];
+    }
+    [pairs, singles]
+        .into_iter()
+        .filter(|groups| !groups.is_empty())
+        .map(centered)
+        .collect()
+}
+
+/// Dynamic status line under the control rows. Precedence: restart >
+/// reconfigure > reconnect > night-mode-until (medium/small only) > none.
+/// Prefixed with the control name so unlabeled small-tier buttons stay
+/// attributable.
+fn shared_caption(tier: Tier, controls: &Controls<'_>, usable: f32) -> Option<TreeNode> {
+    let raw = if let Some(c) = controls.restart.and_then(|r| r.caption) {
+        Some(format!("Restart: {c}"))
+    } else if let Some(c) = controls.wifi_reconfig.caption {
+        Some(format!("Reset WiFi: {c}"))
+    } else if let Some(c) = controls.wifi_reconnect.caption {
+        Some(format!("Reconnect: {c}"))
+    } else if !tier.large_text
+        && let Some(n) = controls.night_mode
+        && !n.until.is_empty()
+    {
+        Some(if n.active {
+            format!("Night mode on until {}", n.until)
+        } else {
+            format!("Night mode off until {}", n.until)
         })
-        .collect();
-    Some(col(
+    } else {
+        None
+    };
+    raw.map(|s| {
+        col(
+            PropsData {
+                cross_align: CrossAlign::Center,
+                ..PropsData::default()
+            },
+            vec![text(
+                fit_line(&s, usable, tier.caption_size),
+                TextStyle {
+                    size: tier.caption_size,
+                    color: GRAY_50,
+                    align: TextAlign::Center,
+                    ..TextStyle::default()
+                },
+            )],
+        )
+    })
+}
+
+/// Top-left corner of the absolutely positioned close target, in panel
+/// coordinates. Shared by `close_button` and the hit-disjointness test:
+/// top-right padded corner on rectangular panels; on round panels centered
+/// on the 45° point of the disc inset by 56px, which is chord-safe (farthest
+/// corner ≈218px < R = 240).
+fn close_origin(panel: &Panel, tier: Tier) -> (f32, f32) {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "panel sizes are far below f32 mantissa precision"
+    )]
+    let w = panel.width as f32;
+    match panel.shape {
+        DisplayShape::Rectangular => (w - tier.padding - CLOSE_TARGET, tier.padding),
+        DisplayShape::Round => {
+            let r = w / 2.0;
+            let d = (r - 56.0) * std::f32::consts::FRAC_1_SQRT_2;
+            (r + d - CLOSE_TARGET / 2.0, r - d - CLOSE_TARGET / 2.0)
+        }
+    }
+}
+
+/// The 48×48 close target with its 24×24 gray glyph, absolutely positioned
+/// via `PropsData` insets (finite inset = absolute positioning).
+fn close_button(panel: &Panel, tier: Tier, icon: Option<SvgId>) -> TreeNode {
+    let (left, top) = close_origin(panel, tier);
+    let glyph_inset = (CLOSE_TARGET - CLOSE_GLYPH) / 2.0;
+    TreeNode::Canvas {
+        props: PropsData {
+            width: CLOSE_TARGET,
+            height: CLOSE_TARGET,
+            inset_top: top,
+            inset_left: left,
+            ..PropsData::default()
+        },
+        touch_key: Some(CLOSE_KEY.to_owned()),
+        draws: vec![DrawCommand::Svg {
+            x: glyph_inset,
+            y: glyph_inset,
+            w: CLOSE_GLYPH,
+            h: CLOSE_GLYPH,
+            color: TRANSPARENT,
+            icon_id: icon,
+            anti_alias: true,
+            fills: Vec::new(),
+        }],
+    }
+}
+
+/// One Large-tier info block: a small gray header over a white value node.
+fn info_block(header: &'static str, value: TreeNode) -> TreeNode {
+    col(
+        PropsData {
+            gap: INFO_HEADER_GAP,
+            ..PropsData::default()
+        },
+        vec![text(header, text_style(INFO_HEADER_SIZE, GRAY_50)), value],
+    )
+}
+
+/// The Large tier's top info section: hostname and IP address grouped in the
+/// left corner, the WiFi connection block in the right corner, nothing in
+/// between — each a gray header over a 24px value. In setup mode the WiFi
+/// block carries the SETUP badge, the AP SSID, and the join hint instead of
+/// the station info.
+fn wide_header(
+    hostname: &str,
+    ip: &str,
+    icons: WifiIcons,
+    wifi_signal: Option<i32>,
+    ssid: &str,
+    tier: Tier,
+    wifi_view: WifiView<'_>,
+) -> TreeNode {
+    let value_size = tier.hostname_size;
+    let wifi_block = match wifi_view {
+        WifiView::Idle => info_block(
+            "WiFi Connection",
+            row(
+                PropsData {
+                    cross_align: CrossAlign::Center,
+                    gap: 16.0,
+                    ..PropsData::default()
+                },
+                vec![
+                    wifi_icon(icons, wifi_signal, tier.wifi_icon_size),
+                    text(
+                        fit_line(ssid, WIDE_SSID_WIDTH, value_size),
+                        text_style(value_size, WHITE),
+                    ),
+                ],
+            ),
+        ),
+        WifiView::Setup { ap_ssid } => info_block(
+            "WiFi Connection",
+            col(
+                PropsData {
+                    gap: 6.0,
+                    ..PropsData::default()
+                },
+                vec![
+                    row(
+                        PropsData {
+                            cross_align: CrossAlign::Center,
+                            gap: 12.0,
+                            ..PropsData::default()
+                        },
+                        vec![
+                            wifi_icon(icons, None, tier.wifi_icon_size),
+                            text(
+                                "SETUP",
+                                TextStyle {
+                                    size: 14,
+                                    weight: FontWeight::BOLD,
+                                    color: GREEN_50,
+                                    ..TextStyle::default()
+                                },
+                            ),
+                            text(
+                                fit_line(ap_ssid, WIDE_SSID_WIDTH, value_size),
+                                text_style(value_size, WHITE),
+                            ),
+                        ],
+                    ),
+                    text(
+                        "Join this network from your phone to reconfigure WiFi.",
+                        text_style(INFO_HEADER_SIZE, GRAY_50),
+                    ),
+                ],
+            ),
+        ),
+    };
+    row(
+        PropsData::default(),
+        vec![
+            fixed_width(WIDE_INFO_LEFT_PAD),
+            row(
+                PropsData {
+                    gap: 48.0,
+                    ..PropsData::default()
+                },
+                vec![
+                    info_block(
+                        "Hostname",
+                        text(
+                            fit_line(hostname, WIDE_HOSTNAME_WIDTH, value_size),
+                            text_style(value_size, WHITE),
+                        ),
+                    ),
+                    info_block("IP Address", text(ip, text_style(value_size, WHITE))),
+                ],
+            ),
+            spacer(1.0),
+            wifi_block,
+            fixed_width(WIDE_INFO_RIGHT_PAD),
+        ],
+    )
+}
+
+/// The Large tier's flow children: two equal flex halves pin the control
+/// block's top edge to the vertical middle, matching the stable design. The
+/// top half holds the info header, the bottom half the control rows and the
+/// shared caption.
+fn wide_halves(
+    header: TreeNode,
+    rows: Vec<TreeNode>,
+    caption_node: TreeNode,
+    tier: Tier,
+    h_pad: f32,
+) -> [TreeNode; 2] {
+    let half = PropsData {
+        flex: 1.0,
+        ..PropsData::default()
+    };
+    let mut bottom_half: Vec<TreeNode> = Vec::new();
+    for row_node in rows {
+        bottom_half.push(pad_horizontal(row_node, h_pad));
+        bottom_half.push(fixed_height(tier.row_gap));
+    }
+    bottom_half.push(pad_horizontal(caption_node, h_pad));
+    [
+        col(half, vec![fixed_height(WIDE_TOP_PAD), header]),
+        col(half, bottom_half),
+    ]
+}
+
+/// Compact station info for the medium/small tiers: one centered line of
+/// icon + fitted SSID. The IP is not shown on these tiers.
+fn compact_info(
+    icons: WifiIcons,
+    wifi_signal: Option<i32>,
+    ssid: &str,
+    tier: Tier,
+    usable: f32,
+) -> TreeNode {
+    let gap = 12.0;
+    let ssid_budget = usable - tier.wifi_icon_size - gap;
+    col(
         PropsData {
             cross_align: CrossAlign::Center,
             ..PropsData::default()
         },
         vec![row(
             PropsData {
-                gap: 16.0,
-                width,
+                cross_align: CrossAlign::Center,
+                gap,
                 ..PropsData::default()
             },
-            halves,
+            vec![
+                wifi_icon(icons, wifi_signal, tier.wifi_icon_size),
+                text(
+                    fit_line(ssid, ssid_budget, tier.wifi_text_size),
+                    text_style(tier.wifi_text_size, WHITE),
+                ),
+            ],
         )],
-    ))
-}
-
-/// Rectangular overlay column: hostname header, brightness, optional volume,
-/// optional night-mode/restart controls, then the Wi-Fi `info` block pushed to
-/// the bottom edge. `with_brightness_label` is dropped on short panels to
-/// reclaim the vertical space, and doubles as the volume label flag.
-fn rect_overlay(
-    hostname_str: &str,
-    brightness: u8,
-    with_brightness_label: bool,
-    volume: Option<u8>,
-    controls_extra: Option<TreeNode>,
-    info: TreeNode,
-    icons: ControlIcons,
-) -> TreeNode {
-    let mut children = vec![
-        hostname_row(hostname_str),
-        brightness_section(brightness, with_brightness_label, icons),
-    ];
-    if let Some(v) = volume {
-        children.push(volume_section(v, with_brightness_label, icons));
-    }
-    if let Some(node) = controls_extra {
-        children.push(node);
-    }
-    children.push(spacer(1.0));
-    children.push(info);
-    col(
-        PropsData {
-            background: SCRIM,
-            padding: RECT_PADDING,
-            gap: 16.0,
-            ..PropsData::default()
-        },
-        children,
     )
 }
 
-/// Setup-mode row: a SETUP badge and the AP SSID to join, plus a one-line hint.
-fn setup_row(icons: WifiIcons, ap_ssid: &str) -> TreeNode {
-    col(
-        PropsData {
-            gap: 6.0,
-            ..PropsData::default()
-        },
-        vec![
-            row(
-                PropsData {
-                    cross_align: CrossAlign::Center,
-                    gap: 12.0,
-                    ..PropsData::default()
-                },
-                vec![
-                    wifi_icon(icons, None),
-                    text(
-                        "SETUP",
-                        TextStyle {
-                            size: 14,
-                            weight: FontWeight::BOLD,
-                            color: GREEN_50,
-                            ..TextStyle::default()
-                        },
-                    ),
-                    flex_text(22, WHITE, ap_ssid, TextAlign::Left),
-                ],
-            ),
-            text(
-                "Join this network from your phone to reconfigure WiFi.",
-                text_style(16, GRAY_50),
-            ),
-        ],
-    )
-}
-
-/// The trailing WiFi section used by every layout branch. `info` is the station
-/// icon+SSID+IP node for normal mode; the reconfigure/reconnect buttons live in
-/// [`controls_bar`], not here.
-fn wifi_section(info: TreeNode, icons: WifiIcons, view: WifiView<'_>) -> TreeNode {
-    match view {
-        WifiView::Setup { ap_ssid } => setup_row(icons, ap_ssid),
-        WifiView::Idle { .. } => info,
-    }
-}
-
-/// A text node whose paragraph flexes to share row width with its siblings.
-fn flex_text(size: u32, color: Color, s: &str, align: TextAlign) -> TreeNode {
-    TreeNode::Paragraph {
-        props: PropsData {
-            flex: 1.0,
-            ..PropsData::default()
-        },
-        base_style: TextStyle {
-            size,
-            color,
-            align,
+/// Setup-mode section for the medium/small tiers: one centered line — icon,
+/// badge, fitted SSID — occupying the same height the idle info line does,
+/// so the vertical budgets hold. The Large tier shows setup mode inside
+/// [`wide_header`] instead.
+fn setup_row(icons: WifiIcons, ap_ssid: &str, tier: Tier, usable: f32) -> TreeNode {
+    let gap = 12.0;
+    let badge_size = tier.wifi_text_size;
+    let badge = text(
+        "SETUP",
+        TextStyle {
+            size: badge_size,
+            weight: FontWeight::BOLD,
+            color: GREEN_50,
             ..TextStyle::default()
         },
-        spans: vec![SpanData {
-            text: s.to_owned(),
-            weight: None,
-            color: None,
-            italic: false,
-            underline: false,
-            strikethrough: false,
-        }],
-    }
+    );
+    #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
+    let badge_w = HOSTNAME_CHAR_W * (badge_size as f32) / 24.0 * 5.0;
+    let ssid_budget = usable - tier.wifi_icon_size - badge_w - 2.0 * gap;
+    col(
+        PropsData {
+            cross_align: CrossAlign::Center,
+            ..PropsData::default()
+        },
+        vec![row(
+            PropsData {
+                cross_align: CrossAlign::Center,
+                gap,
+                ..PropsData::default()
+            },
+            vec![
+                wifi_icon(icons, None, tier.wifi_icon_size),
+                badge,
+                text(
+                    fit_line(ap_ssid, ssid_budget, tier.wifi_text_size),
+                    text_style(tier.wifi_text_size, WHITE),
+                ),
+            ],
+        )],
+    )
 }
 
 /// Build the overlay UI tree for the current state.
@@ -599,7 +1123,6 @@ fn flex_text(size: u32, color: Color, s: &str, align: TextAlign) -> TreeNode {
     reason = "overlay state is a flat set of display fields"
 )]
 pub fn build_tree(
-    brightness: u8,
     hostname: Option<&str>,
     ip: Option<&str>,
     wifi_signal: Option<i32>,
@@ -610,181 +1133,111 @@ pub fn build_tree(
     controls_icons: ControlIcons,
     controls: Controls<'_>,
 ) -> TreeNode {
-    let Panel {
-        shape,
-        width,
-        height,
-        wifi_buttons,
-    } = panel;
+    let tier = tier_for(&panel);
+    let w = panel.width as f32;
 
     // Fit the hostname to the row's usable width up front: round panels are
     // capped by the inscribed circle's chord, rectangular ones by the panel
-    // width minus padding.
-    let hostname_budget = match shape {
+    // width minus the close target's horizontal band on both sides.
+    let hostname_budget = match panel.shape {
         DisplayShape::Round => ROUND_HOSTNAME_WIDTH,
-        DisplayShape::Rectangular => (width as f32) - 2.0 * RECT_PADDING,
+        DisplayShape::Rectangular => w - 2.0 * (CLOSE_TARGET + tier.padding),
     };
-    let hostname_str = fit_hostname(hostname.unwrap_or("N/A"), hostname_budget);
+    let hostname_str = fit_line(
+        hostname.unwrap_or("N/A"),
+        hostname_budget,
+        tier.hostname_size,
+    );
     let ssid_str = ssid.unwrap_or("Not configured");
-    let ip_str = format!("IP {}", ip.unwrap_or("---"));
 
-    let wide = matches!(shape, DisplayShape::Rectangular)
-        && (width as f32) / (height as f32) >= WIDE_ASPECT;
+    // The WiFi hold buttons render only in normal (non-setup) mode and only
+    // when the product supports reconfiguration; the setup badge still
+    // renders via setup_row.
+    let wifi = panel.wifi_buttons && matches!(wifi_view, WifiView::Idle);
+    let (pairs, singles) = control_groups(tier, &controls, controls_icons, icons, wifi);
+    let rows = control_rows(tier, pairs, singles);
 
-    // The WiFi reconfigure/reconnect buttons join the single control row, but
-    // only in normal (non-setup) mode and only when the product supports
-    // reconfiguration; the setup badge still renders via wifi_section.
-    let wifi_label = match wifi_view {
-        WifiView::Idle { label } if wifi_buttons => Some(label),
-        WifiView::Idle { .. } | WifiView::Setup { .. } => None,
+    let hostname_h = tier.hostname_size as f32 * LINE_H;
+    let caption_h = tier.caption_size as f32 * LINE_H;
+    let (usable, h_pad) = match panel.shape {
+        DisplayShape::Round => (w - 2.0 * ROUND_H_PAD, ROUND_H_PAD),
+        DisplayShape::Rectangular => (w - 2.0 * tier.padding, tier.padding),
     };
 
-    match shape {
-        // Round panels clip the corners: inset content horizontally, drop the
-        // brightness into the wide middle band, center the Wi-Fi rows, and keep
-        // the hostname and Wi-Fi clear of the curved top and bottom edges.
-        DisplayShape::Round => {
-            let info = round_info(icons, wifi_signal, ssid_str, &ip_str);
-            let mut children = vec![
-                fixed_height(ROUND_TOP_GAP),
-                hostname_row(&hostname_str),
-                spacer(1.0),
-                pad_horizontal(
-                    brightness_section(brightness, true, controls_icons),
-                    ROUND_H_PAD,
-                ),
-            ];
-            if let Some(v) = controls.volume {
-                children.push(pad_horizontal(
-                    volume_section(v, true, controls_icons),
-                    ROUND_H_PAD,
-                ));
-            }
-            let usable = (width as f32) - 2.0 * ROUND_H_PAD;
-            if let Some(node) =
-                controls_bar(wifi_label, controls.night_mode, controls.restart, usable)
-            {
-                children.push(pad_horizontal(node, ROUND_H_PAD));
-            }
-            children.push(spacer(1.0));
-            children.push(pad_horizontal(
-                wifi_section(info, icons, wifi_view),
-                ROUND_H_PAD,
-            ));
-            children.push(fixed_height(ROUND_BOTTOM_GAP));
-            col(
-                PropsData {
-                    background: SCRIM,
-                    gap: 16.0,
-                    ..PropsData::default()
-                },
-                children,
-            )
-        }
-        DisplayShape::Rectangular if wide => {
-            let info = wide_info(icons, wifi_signal, ssid_str, &ip_str);
-            let usable = (width as f32) - 2.0 * RECT_PADDING;
-            rect_overlay(
-                &hostname_str,
-                brightness,
-                true,
-                controls.volume,
-                controls_bar(wifi_label, controls.night_mode, controls.restart, usable),
-                wifi_section(info, icons, wifi_view),
-                controls_icons,
-            )
+    // The caption slot always occupies its line height so captions appearing
+    // and disappearing never shift the control rows.
+    let caption_node =
+        shared_caption(tier, &controls, usable).unwrap_or_else(|| fixed_height(caption_h));
+
+    // The wide panel folds the station/setup info into its top header; only
+    // the compact tiers keep a dedicated info line at the bottom.
+    let compact_wifi_node = || match wifi_view {
+        WifiView::Setup { ap_ssid } => setup_row(icons, ap_ssid, tier, usable),
+        WifiView::Idle => compact_info(icons, wifi_signal, ssid_str, tier, usable),
+    };
+
+    let mut children: Vec<TreeNode> = Vec::new();
+    match panel.shape {
+        DisplayShape::Rectangular if tier.large_text => {
+            let header = wide_header(
+                hostname.unwrap_or("N/A"),
+                ip.unwrap_or("---"),
+                icons,
+                wifi_signal,
+                ssid_str,
+                tier,
+                wifi_view,
+            );
+            children.extend(wide_halves(header, rows, caption_node, tier, h_pad));
         }
         DisplayShape::Rectangular => {
-            let info = narrow_info(icons, wifi_signal, ssid_str, &ip_str);
-            // Narrow panel: drop the "Brightness" label so the Wi-Fi info and IP
-            // are not pushed off the bottom edge.
-            let usable = (width as f32) - 2.0 * RECT_PADDING;
-            rect_overlay(
-                &hostname_str,
-                brightness,
-                false,
-                controls.volume,
-                controls_bar(wifi_label, controls.night_mode, controls.restart, usable),
-                wifi_section(info, icons, wifi_view),
-                controls_icons,
-            )
+            // Top padding is an explicit spacer (not container padding) so the
+            // close button's absolute insets resolve against the panel box.
+            children.push(fixed_height(tier.padding));
+            children.push(pad_horizontal(
+                hostname_row(&hostname_str, tier.hostname_size),
+                CLOSE_TARGET + tier.padding,
+            ));
+            // Pin the first control row below the close target's bottom edge
+            // so their hit regions stay disjoint.
+            children.push(fixed_height((CLOSE_TARGET - hostname_h).max(tier.row_gap)));
+            for row_node in rows {
+                children.push(pad_horizontal(row_node, h_pad));
+                children.push(fixed_height(tier.row_gap));
+            }
+            children.push(pad_horizontal(caption_node, h_pad));
+            children.push(fixed_height(tier.row_gap));
+            children.push(spacer(1.0));
+            children.push(pad_horizontal(compact_wifi_node(), h_pad));
+            children.push(fixed_height(tier.padding));
+        }
+        DisplayShape::Round => {
+            children.push(fixed_height(ROUND_TOP_GAP));
+            children.push(hostname_row(&hostname_str, tier.hostname_size));
+            // Pin the control rows to a fixed top edge below the chord-safe
+            // close target.
+            children.push(fixed_height(
+                ROUND_CONTROLS_TOP - ROUND_TOP_GAP - hostname_h,
+            ));
+            for row_node in rows {
+                children.push(pad_horizontal(row_node, h_pad));
+                children.push(fixed_height(tier.row_gap));
+            }
+            children.push(pad_horizontal(caption_node, h_pad));
+            children.push(spacer(1.0));
+            children.push(pad_horizontal(compact_wifi_node(), h_pad));
+            children.push(fixed_height(ROUND_BOTTOM_GAP));
         }
     }
-}
-
-/// Round-panel station info: a centered icon+SSID row above a centered IP line.
-fn round_info(icons: WifiIcons, wifi_signal: Option<i32>, ssid: &str, ip: &str) -> TreeNode {
+    // Last child: absolute positioning takes it out of flow, and rendering
+    // follows child order, so it paints on top of everything.
+    children.push(close_button(&panel, tier, controls_icons.close));
     col(
         PropsData {
-            cross_align: CrossAlign::Center,
-            gap: 8.0,
+            background: SCRIM,
             ..PropsData::default()
         },
-        vec![
-            row(
-                PropsData {
-                    cross_align: CrossAlign::Center,
-                    gap: 12.0,
-                    ..PropsData::default()
-                },
-                vec![
-                    wifi_icon(icons, wifi_signal),
-                    text(ssid, text_style(22, WHITE)),
-                ],
-            ),
-            text(
-                ip,
-                TextStyle {
-                    size: 22,
-                    color: GRAY_50,
-                    align: TextAlign::Center,
-                    ..TextStyle::default()
-                },
-            ),
-        ],
-    )
-}
-
-/// Wide-panel station info: icon, SSID, and right-aligned IP all on one row.
-/// Both SSID and IP flex so the IP right-aligns within its own share and never
-/// spills past the right edge when either string is long; a bare content-width
-/// IP node would push out instead.
-fn wide_info(icons: WifiIcons, wifi_signal: Option<i32>, ssid: &str, ip: &str) -> TreeNode {
-    row(
-        PropsData {
-            cross_align: CrossAlign::Center,
-            gap: 16.0,
-            ..PropsData::default()
-        },
-        vec![
-            wifi_icon(icons, wifi_signal),
-            flex_text(22, WHITE, ssid, TextAlign::Left),
-            flex_text(22, GRAY_50, ip, TextAlign::Right),
-        ],
-    )
-}
-
-/// Narrow-panel station info: icon+SSID row above the IP line.
-fn narrow_info(icons: WifiIcons, wifi_signal: Option<i32>, ssid: &str, ip: &str) -> TreeNode {
-    col(
-        PropsData {
-            gap: 8.0,
-            ..PropsData::default()
-        },
-        vec![
-            row(
-                PropsData {
-                    cross_align: CrossAlign::Center,
-                    gap: 12.0,
-                    ..PropsData::default()
-                },
-                vec![
-                    wifi_icon(icons, wifi_signal),
-                    flex_text(22, WHITE, ssid, TextAlign::Left),
-                ],
-            ),
-            text(ip, text_style(22, GRAY_50)),
-        ],
+        children,
     )
 }
 
@@ -819,9 +1272,33 @@ mod tests {
         }
     }
 
+    fn small_panel() -> Panel {
+        Panel {
+            shape: DisplayShape::Rectangular,
+            width: 320,
+            height: 240,
+            wifi_buttons: true,
+        }
+    }
+
+    /// Every optional control present: the worst-case layout.
+    fn all_controls() -> Controls<'static> {
+        Controls {
+            brightness: Some(100),
+            volume: Some(100),
+            night_mode: Some(NightMode {
+                active: true,
+                until: "06:30",
+            }),
+            restart: Some(HoldControl::default()),
+            wifi_reconfig: HoldControl::default(),
+            wifi_reconnect: HoldControl::default(),
+            pressed: None,
+        }
+    }
+
     fn build(panel: Panel, view: WifiView<'_>) -> TreeNode {
         build_tree(
-            55,
             Some("braiins-deck"),
             Some("10.0.0.2"),
             Some(-55),
@@ -836,14 +1313,13 @@ mod tests {
 
     fn build_with_controls(panel: Panel, controls: Controls<'_>) -> TreeNode {
         build_tree(
-            55,
             Some("braiins-deck"),
             Some("10.0.0.2"),
             Some(-55),
             Some("MyWifi"),
             WifiIcons::default(),
             panel,
-            WifiView::Idle { label: "x" },
+            WifiView::Idle,
             ControlIcons::default(),
             controls,
         )
@@ -868,94 +1344,691 @@ mod tests {
         }
     }
 
-    /// Recursively collect every `ProgressBar` fraction in the tree.
-    fn slider_fractions(node: &TreeNode, out: &mut Vec<f32>) {
-        if let TreeNode::ProgressBar { fraction, .. } = node {
-            out.push(*fraction);
-        }
-        if let Some(kids) = children(node) {
-            for k in kids {
-                slider_fractions(k, out);
-            }
-        }
-    }
-
-    /// The `style` byte of the first `Button` with the given id, if present.
-    fn button_style(node: &TreeNode, key: &str) -> Option<u8> {
-        if let TreeNode::Button { id, style, .. } = node
-            && id == key
+    /// Depth-first search for the first Canvas carrying `key`.
+    fn find_canvas<'t>(node: &'t TreeNode, key: &str) -> Option<&'t Vec<DrawCommand>> {
+        if let TreeNode::Canvas {
+            touch_key: Some(k),
+            draws,
+            ..
+        } = node
+            && k == key
         {
-            return Some(*style);
+            return Some(draws);
         }
-        children(node)?.iter().find_map(|k| button_style(k, key))
+        children(node)?.iter().find_map(|k| find_canvas(k, key))
     }
 
-    /// Recursively collect every `Button` id in the tree.
-    fn button_ids(node: &TreeNode, out: &mut Vec<String>) {
-        if let TreeNode::Button { id, .. } = node {
-            out.push(id.clone());
+    /// Recursively collect every keyed Canvas touch key in the tree.
+    fn canvas_keys(node: &TreeNode, out: &mut Vec<String>) {
+        if let TreeNode::Canvas {
+            touch_key: Some(k), ..
+        } = node
+        {
+            out.push(k.clone());
         }
         if let Some(kids) = children(node) {
             for k in kids {
-                button_ids(k, out);
+                canvas_keys(k, out);
             }
         }
     }
 
-    #[test]
-    fn brightness_fraction_is_b_minus_ten_over_ninety() {
-        // 55 -> (55-10)/90 = 0.5; the slider must carry exactly that.
-        let mut fracs = Vec::new();
-        slider_fractions(
-            &build(wide_panel(), WifiView::Idle { label: "x" }),
-            &mut fracs,
+    /// Whether the subtree contains an unkeyed Canvas (the WiFi status icon).
+    fn has_unkeyed_canvas(node: &TreeNode) -> bool {
+        if let TreeNode::Canvas {
+            touch_key: None, ..
+        } = node
+        {
+            return true;
+        }
+        children(node).into_iter().flatten().any(has_unkeyed_canvas)
+    }
+
+    /// Recursively collect every span text in the tree.
+    fn collect_texts(node: &TreeNode, out: &mut Vec<String>) {
+        if let TreeNode::Paragraph { spans, .. } = node {
+            for span in spans {
+                out.push(span.text.clone());
+            }
+        }
+        if let Some(kids) = children(node) {
+            for k in kids {
+                collect_texts(k, out);
+            }
+        }
+    }
+
+    /// Largest text size in the subtree — the line height driver of a text
+    /// band (hostname, caption).
+    fn max_text_size(node: &TreeNode) -> u32 {
+        let own = if let TreeNode::Paragraph { base_style, .. } = node {
+            base_style.size
+        } else {
+            0
+        };
+        children(node)
+            .into_iter()
+            .flatten()
+            .map(max_text_size)
+            .fold(own, u32::max)
+    }
+
+    /// Abs-diff float assertion (`float_cmp` is denied by the workspace lints).
+    fn assert_close(actual: f32, expected: f32, what: &str) {
+        assert!(
+            (actual - expected).abs() < 1e-3,
+            "{what}: expected ~{expected}, got {actual}"
         );
-        assert_eq!(fracs.len(), 1, "exactly one brightness slider");
-        assert!((fracs[0] - 0.5).abs() < 1e-6, "got {}", fracs[0]);
+    }
+
+    fn assert_circle(panel: &Panel, expected: f32) {
+        assert!((tier_for(panel).circle - expected).abs() < f32::EPSILON);
     }
 
     #[test]
-    fn volume_section_renders_when_requested() {
-        let mut fracs = Vec::new();
-        let controls = Controls {
-            volume: Some(30),
+    fn tier_selection_by_panel() {
+        assert_circle(&wide_panel(), 112.0);
+        assert_circle(&narrow_panel(), 64.0);
+        assert_circle(&round_panel(), 64.0);
+        assert_circle(&small_panel(), 48.0);
+    }
+
+    #[test]
+    fn round_button_draws_circle_then_ring_then_icon() {
+        let btn = round_button(
+            "k",
+            ButtonIcon::square(None),
+            112.0,
+            48.0,
+            CIRCLE_FILL,
+            TRANSPARENT,
+            Some(0.5),
+        );
+        let TreeNode::Canvas {
+            draws, touch_key, ..
+        } = btn
+        else {
+            panic!("expected Canvas")
+        };
+        assert_eq!(touch_key.as_deref(), Some("k"));
+        let DrawCommand::Circle {
+            fill: Fill::Solid(circle),
+            r,
+            ..
+        } = &draws[0]
+        else {
+            panic!("expected Circle")
+        };
+        assert_eq!(*circle, CIRCLE_FILL);
+        assert_close(
+            *r,
+            56.0 - RING_W,
+            "a hold button's fill sits inside the ring",
+        );
+        let DrawCommand::Arc {
+            fill: ArcFill::Solid(ring),
+            width,
+            ..
+        } = &draws[1]
+        else {
+            panic!("expected ring Arc")
+        };
+        assert!((*width - RING_W).abs() < f32::EPSILON);
+        assert_eq!(*ring, HOLD_RING.scale_alpha(0.5));
+        assert!(matches!(draws[2], DrawCommand::Svg { .. }));
+    }
+
+    #[test]
+    fn ringless_button_fills_the_whole_diameter() {
+        let btn = round_button(
+            "k",
+            ButtonIcon::square(None),
+            112.0,
+            48.0,
+            CIRCLE_FILL,
+            TRANSPARENT,
+            None,
+        );
+        let TreeNode::Canvas { draws, .. } = btn else {
+            panic!("expected Canvas")
+        };
+        let DrawCommand::Circle { r, .. } = &draws[0] else {
+            panic!("expected Circle")
+        };
+        assert_close(*r, 56.0, "no ring: the fill spans the tier diameter");
+        assert!(
+            !draws.iter().any(|d| matches!(d, DrawCommand::Arc { .. })),
+            "no ring arc without hold progress"
+        );
+    }
+
+    #[test]
+    fn gating_decides_which_buttons_exist() {
+        let keys = |panel: Panel, view: WifiView<'_>, controls: Controls<'_>| {
+            let mut out = Vec::new();
+            canvas_keys(
+                &build_tree(
+                    Some("braiins-deck"),
+                    Some("10.0.0.2"),
+                    Some(-55),
+                    Some("MyWifi"),
+                    WifiIcons::default(),
+                    panel,
+                    view,
+                    ControlIcons::default(),
+                    controls,
+                ),
+                &mut out,
+            );
+            out
+        };
+
+        let minimal = keys(wide_panel(), WifiView::Idle, Controls::default());
+        assert!(
+            minimal.iter().any(|k| k == CLOSE_KEY),
+            "{CLOSE_KEY} always renders"
+        );
+        for key in [
+            BRIGHTNESS_DOWN_KEY,
+            BRIGHTNESS_UP_KEY,
+            VOLUME_DOWN_KEY,
+            VOLUME_UP_KEY,
+            NIGHT_MODE_KEY,
+            RESTART_KEY,
+        ] {
+            assert!(!minimal.iter().any(|k| k == key), "{key} is gated off");
+        }
+        assert!(
+            minimal.iter().any(|k| k == WIFI_RECONFIG_KEY),
+            "wifi buttons render when the panel supports them"
+        );
+
+        let full = keys(wide_panel(), WifiView::Idle, all_controls());
+        for key in [
+            BRIGHTNESS_DOWN_KEY,
+            BRIGHTNESS_UP_KEY,
+            VOLUME_DOWN_KEY,
+            VOLUME_UP_KEY,
+            NIGHT_MODE_KEY,
+            RESTART_KEY,
+            WIFI_RECONFIG_KEY,
+            WIFI_RECONNECT_KEY,
+            CLOSE_KEY,
+        ] {
+            assert!(full.iter().any(|k| k == key), "{key} renders when enabled");
+        }
+
+        let mut no_wifi_panel = wide_panel();
+        no_wifi_panel.wifi_buttons = false;
+        let no_wifi = keys(no_wifi_panel, WifiView::Idle, all_controls());
+        assert!(!no_wifi.iter().any(|k| k == WIFI_RECONFIG_KEY));
+        assert!(!no_wifi.iter().any(|k| k == WIFI_RECONNECT_KEY));
+
+        let setup = keys(
+            wide_panel(),
+            WifiView::Setup {
+                ap_ssid: "Deck ABCD",
+            },
+            all_controls(),
+        );
+        assert!(!setup.iter().any(|k| k == WIFI_RECONFIG_KEY));
+        assert!(!setup.iter().any(|k| k == WIFI_RECONNECT_KEY));
+        assert!(setup.iter().any(|k| k == CLOSE_KEY));
+    }
+
+    /// The night button's circle fill and icon tint.
+    fn night_colors(controls: Controls<'_>) -> (Color, Color) {
+        let tree = build_with_controls(wide_panel(), controls);
+        let draws = find_canvas(&tree, NIGHT_MODE_KEY).expect("BUG: night canvas must exist");
+        let DrawCommand::Circle {
+            fill: Fill::Solid(fill),
+            ..
+        } = draws[0]
+        else {
+            panic!("expected Circle")
+        };
+        let DrawCommand::Svg { color, .. } = draws[draws.len() - 1] else {
+            panic!("expected Svg")
+        };
+        (fill, color)
+    }
+
+    #[test]
+    fn night_mode_active_fills_blue_and_never_inverts() {
+        let night = |active| Controls {
+            night_mode: Some(NightMode {
+                active,
+                until: "06:30",
+            }),
             ..Controls::default()
         };
-        slider_fractions(&build_with_controls(wide_panel(), controls), &mut fracs);
-        assert_eq!(fracs.len(), 2, "brightness and volume sliders");
-        assert!(
-            (fracs[1] - 0.3).abs() < 1e-6,
-            "volume is an identity mapping: got {}",
-            fracs[1]
+        assert_eq!(night_colors(night(true)), (NIGHT_ACTIVE, TRANSPARENT));
+        assert_eq!(night_colors(night(false)), (CIRCLE_FILL, TRANSPARENT));
+
+        let pressed_active = Controls {
+            pressed: Some(NIGHT_MODE_KEY),
+            ..night(true)
+        };
+        assert_eq!(
+            night_colors(pressed_active),
+            (NIGHT_ACTIVE, TRANSPARENT),
+            "a pressed active night button must not invert"
+        );
+        let pressed_inactive = Controls {
+            pressed: Some(NIGHT_MODE_KEY),
+            ..night(false)
+        };
+        assert_eq!(
+            night_colors(pressed_inactive),
+            (CIRCLE_FILL, TRANSPARENT),
+            "a pressed inactive night button must not invert either"
         );
     }
 
     #[test]
-    fn night_mode_active_state_is_style_indicated() {
-        let style = |active| {
+    fn pressed_step_button_inverts() {
+        let controls = Controls {
+            volume: Some(40),
+            pressed: Some(VOLUME_UP_KEY),
+            ..Controls::default()
+        };
+        let tree = build_with_controls(wide_panel(), controls);
+        let draws = find_canvas(&tree, VOLUME_UP_KEY).expect("BUG: volume-up canvas must exist");
+        let DrawCommand::Circle {
+            fill: Fill::Solid(fill),
+            ..
+        } = draws[0]
+        else {
+            panic!("expected Circle")
+        };
+        assert_eq!(fill, CIRCLE_PRESSED);
+        let DrawCommand::Svg { color, .. } = draws[draws.len() - 1] else {
+            panic!("expected Svg")
+        };
+        assert_eq!(color, ICON_PRESSED_TINT);
+
+        let unpressed =
+            find_canvas(&tree, VOLUME_DOWN_KEY).expect("BUG: volume-down canvas must exist");
+        let DrawCommand::Circle {
+            fill: Fill::Solid(fill),
+            ..
+        } = unpressed[0]
+        else {
+            panic!("expected Circle")
+        };
+        assert_eq!(fill, CIRCLE_FILL, "only the pressed button inverts");
+    }
+
+    #[test]
+    fn hold_progress_renders_ring_alpha() {
+        let ring_of = |progress| {
             let controls = Controls {
-                night_mode: Some(active),
+                restart: Some(HoldControl {
+                    caption: None,
+                    progress,
+                }),
                 ..Controls::default()
             };
-            button_style(&build_with_controls(wide_panel(), controls), NIGHT_MODE_KEY)
-                .expect("BUG: the night-mode button must be present when night_mode is Some")
+            let tree = build_with_controls(wide_panel(), controls);
+            let draws = find_canvas(&tree, RESTART_KEY).expect("BUG: restart canvas must exist");
+            draws
+                .iter()
+                .find_map(|d| {
+                    if let DrawCommand::Arc {
+                        fill: ArcFill::Solid(c),
+                        ..
+                    } = d
+                    {
+                        Some(*c)
+                    } else {
+                        None
+                    }
+                })
+                .expect("BUG: restart canvas must carry the hold ring")
         };
-        assert_eq!(
-            style(true),
-            ButtonStyle::Primary as u8,
-            "active night mode must use the highlighted Primary button style"
+        assert_eq!(ring_of(0.5), HOLD_RING.scale_alpha(0.5));
+        assert_eq!(ring_of(0.0), HOLD_RING.scale_alpha(0.0));
+    }
+
+    #[test]
+    fn caption_precedence_and_prefixes() {
+        let caption_texts = |panel: Panel, controls: Controls<'_>| {
+            let mut texts = Vec::new();
+            collect_texts(&build_with_controls(panel, controls), &mut texts);
+            texts
+        };
+        let holding = HoldControl {
+            caption: Some("Keep holding…"),
+            progress: 0.2,
+        };
+
+        let all = Controls {
+            restart: Some(holding),
+            wifi_reconfig: holding,
+            wifi_reconnect: holding,
+            ..Controls::default()
+        };
+        let all_texts = caption_texts(narrow_panel(), all);
+        assert!(
+            all_texts.iter().any(|t| t == "Restart: Keep holding…"),
+            "restart beats the wifi captions"
         );
-        assert_eq!(
-            style(false),
-            ButtonStyle::Secondary as u8,
-            "inactive night mode must use the Secondary button style"
+        assert!(
+            !all_texts
+                .iter()
+                .any(|t| t.starts_with("Reset WiFi:") || t.starts_with("Reconnect:")),
+            "the losing captions must not render alongside the winner"
         );
+
+        let wifi_only = Controls {
+            wifi_reconfig: holding,
+            wifi_reconnect: holding,
+            ..Controls::default()
+        };
+        let wifi_texts = caption_texts(narrow_panel(), wifi_only);
+        assert!(
+            wifi_texts.iter().any(|t| t == "Reset WiFi: Keep holding…"),
+            "reconfigure beats reconnect"
+        );
+        assert!(
+            !wifi_texts.iter().any(|t| t.starts_with("Reconnect:")),
+            "the losing reconnect caption must not render"
+        );
+
+        let reconnect_only = Controls {
+            wifi_reconnect: HoldControl {
+                caption: Some("Reconnecting…"),
+                progress: 0.0,
+            },
+            ..Controls::default()
+        };
+        assert!(
+            caption_texts(narrow_panel(), reconnect_only)
+                .iter()
+                .any(|t| t == "Reconnect: Reconnecting…")
+        );
+
+        let night = Controls {
+            night_mode: Some(NightMode {
+                active: true,
+                until: "22:00",
+            }),
+            ..Controls::default()
+        };
+        assert!(
+            caption_texts(narrow_panel(), night)
+                .iter()
+                .any(|t| t == "Night mode on until 22:00"),
+            "compact tiers surface the night end time on the caption line"
+        );
+        assert!(
+            !caption_texts(wide_panel(), night)
+                .iter()
+                .any(|t| t.starts_with("Night mode on until")),
+            "the Large tier shows the end time in the night group instead"
+        );
+        assert!(
+            caption_texts(wide_panel(), night)
+                .iter()
+                .any(|t| t == "Until 22:00")
+        );
+    }
+
+    const PAIR_KEYS: [&str; 4] = [
+        VOLUME_DOWN_KEY,
+        VOLUME_UP_KEY,
+        BRIGHTNESS_DOWN_KEY,
+        BRIGHTNESS_UP_KEY,
+    ];
+    const SINGLE_KEYS: [&str; 4] = [
+        NIGHT_MODE_KEY,
+        RESTART_KEY,
+        WIFI_RECONFIG_KEY,
+        WIFI_RECONNECT_KEY,
+    ];
+
+    fn is_control_key(k: &str) -> bool {
+        PAIR_KEYS.contains(&k) || SINGLE_KEYS.contains(&k)
+    }
+
+    /// Assert the wide layout's two-equal-flex-halves structure: the control
+    /// block's top edge is the vertical middle by construction, both halves'
+    /// fixed content fits within its half, and the middle clears the close
+    /// target.
+    fn assert_wide_halves(
+        panel: &Panel,
+        tier: Tier,
+        setup: bool,
+        kids: &[TreeNode],
+        close_bottom: f32,
+        panel_h: f32,
+    ) {
+        let [top, bottom, _close] = kids else {
+            panic!("{panel:?}: wide root must be two halves + close");
+        };
+        let (TreeNode::Column(top_props, top_kids), TreeNode::Column(bottom_props, bottom_kids)) =
+            (top, bottom)
+        else {
+            panic!("{panel:?}: halves must be columns");
+        };
+        assert!(top_props.flex > 0.0, "{panel:?}: halves must flex");
+        assert_close(
+            top_props.flex,
+            bottom_props.flex,
+            "equal flex weights pin the middle",
+        );
+        let mut top_keys = Vec::new();
+        canvas_keys(top, &mut top_keys);
+        assert!(
+            !top_keys.iter().any(|k| is_control_key(k)),
+            "{panel:?}: controls live in the bottom half"
+        );
+        let mut bottom_keys = Vec::new();
+        canvas_keys(bottom, &mut bottom_keys);
+        assert!(
+            bottom_keys.iter().any(|k| is_control_key(k)),
+            "{panel:?}: control rows must render"
+        );
+        let top_h: f32 = top_kids
+            .iter()
+            .map(|k| expected_flow_height(k, tier, setup))
+            .sum();
+        let bottom_h: f32 = bottom_kids
+            .iter()
+            .map(|k| expected_flow_height(k, tier, setup))
+            .sum();
+        assert!(
+            top_h <= panel_h / 2.0 + 1e-3,
+            "{panel:?} setup={setup}: header stack {top_h} overflows its half — \
+             min-content would push the controls below the middle"
+        );
+        assert!(
+            bottom_h <= panel_h / 2.0 + 1e-3,
+            "{panel:?} setup={setup}: control stack {bottom_h} overflows its half"
+        );
+        assert!(
+            panel_h / 2.0 >= close_bottom - 1e-3,
+            "{panel:?}: controls start at the middle, close bottom is {close_bottom}"
+        );
+    }
+
+    /// Expected height of [`wide_header`], derived from the same `Tier`
+    /// fields the builder uses so the test cannot drift from the layout
+    /// silently.
+    #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
+    fn wide_info_height(tier: Tier, setup: bool) -> f32 {
+        let value = (tier.hostname_size as f32 * LINE_H).max(tier.wifi_icon_size);
+        let value = if setup {
+            value + 6.0 + INFO_HEADER_SIZE as f32 * LINE_H
+        } else {
+            value
+        };
+        INFO_HEADER_SIZE as f32 * LINE_H + INFO_HEADER_GAP + value
+    }
+
+    /// Expected height of one flow child of the root column, derived from the
+    /// same `Tier` fields the builders use so the test cannot drift from the
+    /// layout silently. The flex filler reports 0 (its worst case).
+    #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
+    fn expected_flow_height(node: &TreeNode, tier: Tier, setup: bool) -> f32 {
+        if let TreeNode::Column(props, kids) = node
+            && kids.is_empty()
+        {
+            return props.height;
+        }
+        if matches!(node, TreeNode::Spacer { .. }) {
+            return 0.0;
+        }
+        let mut keys = Vec::new();
+        canvas_keys(node, &mut keys);
+        if keys.iter().any(|k| k == CLOSE_KEY) {
+            return 0.0;
+        }
+        let has_pair = keys.iter().any(|k| PAIR_KEYS.contains(&k.as_str()));
+        let has_single = keys.iter().any(|k| SINGLE_KEYS.contains(&k.as_str()));
+        if has_pair || has_single {
+            let value_gap = if tier.large_text { 8.0 } else { 2.0 };
+            let pair_h = tier.circle
+                + value_gap
+                + tier.value_size as f32 * LINE_H
+                + if tier.large_text {
+                    tier.caption_size as f32 * LINE_H
+                } else {
+                    0.0
+                };
+            let single_h = tier.circle
+                + if tier.large_text {
+                    8.0 + 2.0 * tier.caption_size as f32 * LINE_H
+                } else {
+                    0.0
+                };
+            return match (has_pair, has_single) {
+                (true, true) => pair_h.max(single_h),
+                (true, false) => pair_h,
+                (false, true) => single_h,
+                (false, false) => unreachable!(),
+            };
+        }
+        if has_unkeyed_canvas(node) {
+            return if tier.large_text {
+                wide_info_height(tier, setup)
+            } else {
+                tier.wifi_icon_size.max(tier.wifi_text_size as f32 * LINE_H)
+            };
+        }
+        let size = max_text_size(node);
+        if size > 0 {
+            return size as f32 * LINE_H;
+        }
+        0.0
+    }
+
+    #[test]
+    fn controls_start_below_the_close_target() {
+        let long_ssid = "An-Extremely-Long-Setup-Network-Name-420";
+        assert_eq!(long_ssid.chars().count(), 40);
+        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+            for (view, setup) in [
+                (WifiView::Idle, false),
+                (WifiView::Setup { ap_ssid: long_ssid }, true),
+            ] {
+                let tier = tier_for(&panel);
+                let tree = build_tree(
+                    Some("braiins-deck"),
+                    Some("10.0.0.2"),
+                    Some(-55),
+                    Some("MyWifi"),
+                    WifiIcons::default(),
+                    panel,
+                    view,
+                    ControlIcons::default(),
+                    all_controls(),
+                );
+                let kids = children(&tree).expect("BUG: root must be a container");
+
+                let close_bottom = close_origin(&panel, tier).1 + CLOSE_TARGET;
+                #[expect(clippy::cast_precision_loss, reason = "panel sizes are small")]
+                let panel_h = panel.height as f32;
+                if tier.large_text {
+                    assert_wide_halves(&panel, tier, setup, kids, close_bottom, panel_h);
+                    continue;
+                }
+
+                let mut before_controls = 0.0;
+                let mut total = 0.0;
+                let mut seen_controls = false;
+                for kid in kids {
+                    let mut keys = Vec::new();
+                    canvas_keys(kid, &mut keys);
+                    if keys.iter().any(|k| is_control_key(k)) {
+                        seen_controls = true;
+                    }
+                    if !seen_controls {
+                        before_controls += expected_flow_height(kid, tier, setup);
+                    }
+                    total += expected_flow_height(kid, tier, setup);
+                }
+                assert!(seen_controls, "{panel:?}: control rows must render");
+                assert!(
+                    before_controls >= close_bottom - 1e-3,
+                    "{panel:?} setup={setup}: controls start at {before_controls}, \
+                     close bottom is {close_bottom}"
+                );
+                assert!(
+                    total <= panel_h + 1e-3,
+                    "{panel:?} setup={setup}: fixed stack {total} overflows {panel_h} — \
+                     flex would shrink the pinned spacers and drag rows over the close target"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn close_is_the_only_absolutely_positioned_canvas() {
+        fn absolute_canvases<'t>(
+            node: &'t TreeNode,
+            out: &mut Vec<(&'t PropsData, Option<&'t str>)>,
+        ) {
+            if let TreeNode::Canvas {
+                props, touch_key, ..
+            } = node
+                && (props.inset_top.is_finite() || props.inset_left.is_finite())
+            {
+                out.push((props, touch_key.as_deref()));
+            }
+            if let Some(kids) = children(node) {
+                for k in kids {
+                    absolute_canvases(k, out);
+                }
+            }
+        }
+        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+            let tree = build_with_controls(panel, all_controls());
+            let mut absolute = Vec::new();
+            absolute_canvases(&tree, &mut absolute);
+            assert_eq!(
+                absolute.len(),
+                1,
+                "{panel:?}: the close target is the only out-of-flow touchable"
+            );
+            assert_eq!(absolute[0].1, Some(CLOSE_KEY));
+
+            let kids = children(&tree).expect("BUG: root must be a container");
+            let last = kids.last().expect("BUG: root must have children");
+            assert!(
+                matches!(
+                    last,
+                    TreeNode::Canvas { touch_key: Some(k), .. } if k == CLOSE_KEY
+                ),
+                "{panel:?}: the close canvas is the last root child so it paints on top"
+            );
+        }
     }
 
     #[test]
     fn round_panel_roots_a_column() {
         assert!(matches!(
-            build(round_panel(), WifiView::Idle { label: "x" }),
+            build(round_panel(), WifiView::Idle),
             TreeNode::Column(..)
         ));
     }
@@ -963,50 +2036,19 @@ mod tests {
     #[test]
     fn wide_and_narrow_both_root_a_column() {
         assert!(matches!(
-            build(wide_panel(), WifiView::Idle { label: "x" }),
+            build(wide_panel(), WifiView::Idle),
             TreeNode::Column(..)
         ));
         assert!(matches!(
-            build(narrow_panel(), WifiView::Idle { label: "x" }),
+            build(narrow_panel(), WifiView::Idle),
             TreeNode::Column(..)
         ));
-    }
-
-    #[test]
-    fn wifi_buttons_flag_gates_the_wifi_controls() {
-        let with = |wifi_buttons| {
-            let mut panel = wide_panel();
-            panel.wifi_buttons = wifi_buttons;
-            let mut ids = Vec::new();
-            button_ids(&build(panel, WifiView::Idle { label: "x" }), &mut ids);
-            ids
-        };
-        let enabled = with(true);
-        assert!(enabled.iter().any(|id| id == WIFI_RECONFIG_KEY));
-        assert!(enabled.iter().any(|id| id == WIFI_RECONNECT_KEY));
-
-        assert!(with(false).is_empty());
-    }
-
-    #[test]
-    fn setup_view_has_no_buttons() {
-        let mut ids = Vec::new();
-        button_ids(
-            &build(
-                wide_panel(),
-                WifiView::Setup {
-                    ap_ssid: "Deck ABCD",
-                },
-            ),
-            &mut ids,
-        );
-        assert!(ids.is_empty());
     }
 
     #[test]
     fn short_hostname_is_unchanged() {
         assert_eq!(
-            fit_hostname("braiins-deck", ROUND_HOSTNAME_WIDTH),
+            fit_line("braiins-deck", ROUND_HOSTNAME_WIDTH, 24),
             "braiins-deck"
         );
     }
@@ -1014,9 +2056,17 @@ mod tests {
     #[test]
     fn long_hostname_is_truncated_with_ellipsis() {
         let long = "braiins-deck-extremely-long-hostname-xyz";
-        let fitted = fit_hostname(long, ROUND_HOSTNAME_WIDTH);
+        let fitted = fit_line(long, ROUND_HOSTNAME_WIDTH, 24);
         assert!(fitted.ends_with('…'));
         assert!(fitted.chars().count() < long.chars().count());
+    }
+
+    #[test]
+    fn smaller_text_fits_more_characters() {
+        let s = "a-string-that-is-fairly-long-indeed";
+        let at_24 = fit_line(s, 256.0, 24);
+        let at_12 = fit_line(s, 256.0, 12);
+        assert!(at_12.chars().count() > at_24.chars().count());
     }
 
     fn distinct_icons() -> WifiIcons {
@@ -1075,5 +2125,26 @@ mod tests {
         assert_ne!(signal_band(Some(-59)), signal_band(Some(-61)));
         assert_ne!(signal_band(Some(-75)), signal_band(Some(-76)));
         assert_ne!(signal_band(Some(-65)), signal_band(None));
+    }
+
+    #[test]
+    fn round_close_target_stays_inside_the_disc_and_above_the_controls() {
+        // Round-panel chord safety: the far corner of the close target must
+        // stay inside the disc.
+        let panel = round_panel();
+        let tier = tier_for(&panel);
+        let (left, top) = close_origin(&panel, tier);
+        let r = 240.0_f32;
+        let far_x = left + CLOSE_TARGET - r;
+        let far_y = top - r;
+        let dist = (far_x * far_x + far_y * far_y).sqrt();
+        assert!(
+            dist < r,
+            "close target far corner at {dist} must stay inside the 240px disc"
+        );
+        assert!(
+            ROUND_CONTROLS_TOP >= top + CLOSE_TARGET,
+            "round control rows start below the close target"
+        );
     }
 }

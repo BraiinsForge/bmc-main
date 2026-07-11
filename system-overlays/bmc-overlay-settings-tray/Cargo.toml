@@ -3,9 +3,9 @@ name = "bmc-overlay-settings-tray"
 version = "0.1.0"
 edition = "2024"
 authors = ["Braiins Systems s.r.o."]
-description = "Swipe-from-top quick-settings overlay (brightness + WiFi)"
+description = "Swipe-from-top quick-settings overlay (brightness, volume, night mode, restart, WiFi)"
 
-# Wi-Fi icon SVGs are embedded via include_str!; the nix source filter keeps
+# Icon SVGs are compiled in via include_svg!; the nix source filter keeps
 # only rust/toml/lock otherwise.
 [package.metadata.nix]
 include = ["assets/**"]
