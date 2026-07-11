@@ -83,7 +83,7 @@ let
   # removes the legacy nix-mounter that the activator subsumes.
   #
   # Remove this derivation, the activation entry below, ./files/nix-activator,
-  # and the /etc/init.d/nix-activator + /etc/rc.d/S62nix-activator conffiles
+  # and the /etc/init.d/nix-activator + /etc/rc.d/S91nix-activator conffiles
   # entries once the firmware bundles nix-activator natively.
   firmware-init-services = armv7Pkgs.writeTextFile {
     name = "firmware-init-services";
