@@ -135,11 +135,11 @@ pub struct ResolvedPackage {
     pub pinned: PinStrategy,
 }
 
-/// Factory initialization index (factory.json)
+/// Package feed (nix-package-feed.v1.json)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FactoryIndex {
+pub struct PackageFeed {
     pub version: u32,
-    pub tarballs: Vec<FactoryTarball>,
+    pub entries: Vec<PackageFeedEntry>,
 }
 
 /// Profile manifest (stored in each generation)
@@ -375,12 +375,12 @@ pub fn resolve_installed_package(
 // store.rs
 #[derive(Debug, thiserror::Error)]
 pub enum InitStoreError {
-    #[error("failed to fetch factory index from {url}: {source}")]
-    FactoryIndexFetch { url: String, source: reqwest::Error },
-    #[error("invalid factory index JSON from {url}: {source}")]
-    FactoryIndexParse { url: String, source: serde_json::Error },
-    #[error("No factory /nix/store for current BOS version.")]
-    MissingBosVersion,
+    #[error("failed to fetch package feed from {url}: {source}")]
+    PackageFeedFetch { url: String, source: reqwest::Error },
+    #[error("invalid package feed JSON from {url}: {source}")]
+    PackageFeedParse { url: String, source: serde_json::Error },
+    #[error("no package feed entry for BOS version '{0}'")]
+    MissingPackageFeedEntry(String),
     #[error("store init failed: {0}")]
     Init(std::io::Error),
 }
@@ -450,9 +450,9 @@ pub async fn init_store(
 
 ```
 
-`init_store` is responsible for fetching the factory index from `factory_server.index_url`, selecting the matching
-tarball for the current BOS version, and initializing the Nix store from it. It also uses the tarball's `profile_path`
-to locate and activate the initial profile after extraction.
+`init_store` is responsible for fetching the package feed (`nix-package-feed.v1.json`) from the factory server's
+`base_url`, selecting the entry matching the current BOS version, and initializing the Nix store from that entry's
+tarball. It also uses the entry's `profile_path` to locate and activate the initial profile after extraction.
 
 ### 5. Garbage collection — generations + nix GC
 

@@ -69,7 +69,7 @@ Binary caches use the standard Nix format with NAR archives and narinfo metadata
 https://cache.braiins.com/
 ├── nix-cache-info                  # Cache metadata
 ├── nix-package-index.v1.json       # Root index (package list)
-├── nix-factory.v1.json             # Tarballs for initialization
+├── nix-package-feed.v1.json        # Per-firmware entries (init tarballs, release indexes)
 ├── <hash>.narinfo                  # Package metadata files
 └── nar/
     ├── <hash>.nar.xz               # Compressed NAR archives
@@ -176,21 +176,24 @@ should then choose latest by default in user's UI. Specific version might be use
     to reboot
   - `install_strategy` - This is the strategy in order to completely install the package.
 
-### Factory index structure
+### Package feed structure
 
-This is used for initialization of Nix on a given device. Braiins should ensure there is always a tarball for the latest
-firmware to prevent users not getting Nix initialized.
+The feed maps each BOS version to that firmware's release artifacts: the initialization tarball and, optionally, the
+firmware's own package index. Initialization selects the entry's tarball; firmware upgrades follow the entry's
+`index_url`. Braiins should ensure there is always an entry for the latest firmware to prevent users not getting Nix
+initialized.
 
-**Location:** `<https://<server>>/nix-factory.v1.json`
+**Location:** `<https://<server>>/nix-package-feed.v1.json`
 
 ```json
 {
   "version": 1,
-  "tarballs": [
+  "entries": [
     {
       "bos_version": "2026-03-04-0-8436f26b-26.02",
       "download_url": "https://cache.braiins.com/v1/nix-2026-03-04-0-8436f26b-26.02.tar.gz",
-      "profile_path": "/nix/var/nix/gcroots/profiles/bmc"
+      "profile_path": "/nix/var/nix/gcroots/profiles/bmc",
+      "index_url": "https://cache.braiins.com/v1/2026-03-04-0-8436f26b-26.02/nix-package-index.v1.json"
     }
   ]
 }
@@ -198,11 +201,13 @@ firmware to prevent users not getting Nix initialized.
 
 **Key fields:**
 
-- `version` - Version of the factory index itself
-- `tarballs` - List of initial Nix store tarballs per BOS version:
+- `version` - Version of the package feed itself
+- `entries` - One entry per BOS version:
   - `bos_version` - Full BOS version string from `/etc/bos_version` (e.g., "2026-03-04-0-8436f26b-26.02")
   - `download_url` - URL of the `.tar.gz` archive containing the initial Nix store and profile
   - `profile_path` - Path of the initial profile inside the tarball
+  - `index_url` - Optional exact URL of that firmware's `nix-package-index.v1.json`; required when the entry is used for
+    firmware-scoped index resolution
 
 ---
 
@@ -235,19 +240,18 @@ Additional metadata about servers (priority, enabled state).
   "servers": [
     {
       "id": "braiins_server",
-      "type": "system",
-      "base_url": "https://cache.braiins.com",
+      "feed_url": "https://cache.braiins.com/nix-package-feed.v1.json",
       "known_public_key": "cache.braiins.com:AAAAB3NzaC1...",
       "priority": 1,
       "enabled": true
     },
     {
       "id": "app_a_server",
-      "type": "application",
-      "base_url": "https://apps-cache.braiins.com",
+      "index_url": "https://apps-cache.braiins.com/nix-package-index.v1.json",
       "known_public_key": "apps-cache.braiins.com:BBBBB4NzaC2...",
       "priority": 2,
-      "enabled": true
+      "enabled": true,
+      "required": false
     }
   ]
 }
@@ -255,20 +259,23 @@ Additional metadata about servers (priority, enabled state).
 
 **Key fields:**
 
-- `factory` - Server entry for the factory index (used for initialization/reset):
+- `factory` - Server entry for the package feed (used for initialization/reset):
   - `id` - Unique server identifier
-  - `base_url` - Base URL for the factory server; the client appends /nix-factory.v1.json to fetch the factory index.
+  - `base_url` - Base URL for the factory server; the client appends /nix-package-feed.v1.json to fetch the feed.
   - `known_public_key` - Public key for signature verification
   - `priority` - Resolution priority (lower = higher priority)
   - `enabled` - Whether this server is active
-- `servers` - List of server entries for package indexes:
+- `servers` - List of server entries for package indexes. Each entry links its content by exactly one of:
+  - `feed_url` - Exact URL of the server's `nix-package-feed.v1.json`; the index is resolved per firmware through the
+    feed entry's `index_url`
+  - `index_url` - Exact URL of the server's `nix-package-index.v1.json`, fetched directly
   - `id` - Unique server identifier
-  - `type` - Server type (user facing type, ie. system or application)
-  - `base_url` - Base URL for the package server; the client appends /nix-package-index.v1.json to fetch the index.
   - `known_public_key` - Already known public key for signature verification. The server can also offer new keys with
     new cache servers. The keys here are already trusted.
   - `priority` - Conflict resolution priority (lower = higher priority)
   - `enabled` - Whether this server is being actively used for fetching packages
+  - `required` - Optional; defaults to true. A required server's fetch or feed-resolution failure aborts the upgrade; an
+    optional server degrades with a warning.
 
 The packages will be resolved by order of the priority to prevent shadowing of the official packages. Server priorities
 must be unique to avoid ambiguous resolution.
@@ -372,7 +379,7 @@ upgrading existing ones, as long as compatibility checks pass via checker packag
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │ 1. User Selection & BOS Check                                    │
-│    - System fetches nix-package-index.v1.json from all servers   │
+│    - System resolves each server's nix-package-index.v1.json     │
 │    - User browses and selects applications in web UI             │
 │    - Run compatibility checker packages                          │
 │    - If incompatibility detected: offer only full upgrade        │
@@ -412,7 +419,8 @@ upgrading existing ones, as long as compatibility checks pass via checker packag
 
 ### Phase 1: User Selection & BOS Check
 
-1. System fetches `nix-package-index.v1.json` from all enabled servers
+1. System resolves each enabled server's `nix-package-index.v1.json` — fetched directly from the entry's `index_url`,
+   or, for feed-linked servers, from the `index_url` of the feed entry matching the target firmware
 2. User browses available applications in web UI
 3. User selects applications to install or update
 4. For each selected app, run compatibility checker packages. If a newer BOS is necessary, full upgrade has to be
@@ -525,21 +533,24 @@ upgrade (see "Checker Packages"). During the upgrade, both BOS and the applicati
 upgraded to latest version.
 
 The BOS upgrade is handled by `bmc-upgrade`. It triggers a reboot. Unlike a normal package upgrade, the Nix side of a
-firmware upgrade is not driven from indexes fetched over the network — instead, the firmware tarball itself ships
-`bmc-nix-cli` together with a **pinned index** baked into the firmware image. That pinned index is the sole and
-authoritative source of package versions for this upgrade step. This guarantees that the set of applications activated
-alongside the new BOS matches exactly what the firmware was built and tested against, independent of what any remote
-server currently advertises.
+firmware upgrade is not resolved against whatever the servers currently advertise — instead, it is scoped to the
+incoming firmware version. The firmware tarball ships `bmc-nix-cli` and `servers.json.default`, and the CLI is invoked
+with `--firmware <incoming version>`: each feed-linked server's package feed is fetched and the entry matching that
+version selects the **feed-resolved index** — the exact index the firmware release was built and tested against. This
+guarantees that the set of applications activated alongside the new BOS matches what the firmware was validated with,
+independent of what any server's live index currently contains.
 
 Concretely:
 
-- Every firmware image includes `bmc-nix-cli` and one pinned `nix-package-index.v1.json`.
-- During a firmware upgrade, `bmc-nix-cli` is invoked from the tarball, and the pinned index is the only index used to
-  resolve store paths and build the new profile. Remote indexes and `servers.json` entries are ignored for this run.
+- Every firmware tarball includes `bmc-nix-cli` and `servers.json.default`; every firmware release publishes a feed
+  entry whose `index_url` names that release's `nix-package-index.v1.json`.
+- During a firmware upgrade, `bmc-nix-cli` is invoked from the tarball with `--firmware`, and the feed-resolved index
+  for that version is the only index used to resolve store paths and build the new profile. A resolution failure aborts
+  keep-current; there is no fallback to another index.
 - The no-downgrade filter from "Conflict Resolution" still applies against the currently installed versions, so a
   firmware upgrade will not roll an installed application back either.
 - After the firmware upgrade completes and the device is back to normal operation, subsequent upgrades (application
-  layer only) resume using the configured remote indexes as usual.
+  layer only) resume using the configured servers as usual.
 
 The new Nix profile is built before the BOS upgrade but not yet activated. A flag is written to the filesystem to
 indicate a pending profile activation. After the reboot, a boot service detects this flag and runs the profile
@@ -550,24 +561,24 @@ activation (Phase 5).
 - BOS upgrade happens BEFORE the profile activation (step 5), but triggers a reboot
 - Profile activation runs after boot via a service that checks the pending activation flag
 - BOS is NOT a Nix dependency — compatibility is checked by checker packages (see "Checker Packages")
-- The pinned index inside the firmware tarball is the only index consulted for the firmware-upgrade Nix step
+- The feed-resolved index for the incoming firmware is the only index consulted for the firmware-upgrade Nix step
 
 **User experience:** User selected "Install Miniminer Display v2.1.0" and sees installation progress.
 
 #### BOS Downgrade
 
 On some platforms (currently BMM101) the user is allowed to downgrade BOS to an older firmware. This case reuses the
-same mechanism as a firmware upgrade — the older firmware tarball still ships `bmc-nix-cli` and a pinned index — but
-with a different resolution outcome: the pinned index will typically advertise lower application versions than what is
-currently installed.
+same mechanism as a firmware upgrade — the feed keeps its entry for the older firmware, so the `--firmware` scope
+resolves to that release's own index — but with a different resolution outcome: the older release's index will typically
+advertise lower application versions than what is currently installed.
 
-The no-downgrade filter from "Conflict Resolution" still applies here without any special case. Entries in the pinned
-index whose version is lower than the currently installed version are discarded, and the installed version is kept
-as-is. In practice this means:
+The no-downgrade filter from "Conflict Resolution" still applies here without any special case. Entries in the older
+release's index whose version is lower than the currently installed version are discarded, and the installed version is
+kept as-is. In practice this means:
 
 - Installed applications keep their current, newer versions across a BOS downgrade.
-- The pinned index effectively acts as a floor / compatibility hint only for packages that would otherwise be missing;
-  for anything already installed at a higher version, its entries are thrown away.
+- The older release's index effectively acts as a floor / compatibility hint only for packages that would otherwise be
+  missing; for anything already installed at a higher version, its entries are thrown away.
 - No Nix-level rollback of application packages happens as a side effect of the BOS downgrade. If the user also wants to
   downgrade an application, that is a separate action (profile rollback or an explicit install of a specific version).
 
@@ -785,11 +796,11 @@ Among other things, the initial tarball should also contain the initial profile.
 activation script from it, not relying on the scripts or programs already available on the system to be able to build
 and activate the profile.
 
-The `factory` field in `/etc/nix-upgrade/servers.json` is the url used for fetching the available tarballs.
+The `factory` field in `/etc/nix-upgrade/servers.json` names the server whose package feed lists the available tarballs.
 
-The initial tarball is selected based on the bos version saved in `/etc/bos_version`. In case there is no tarball for a
-given version, the service will upgrade BOS itself. The latest version always has to have a tarball, otherwise this
-would break.
+The initial tarball is selected based on the bos version saved in `/etc/bos_version`, matched against the feed's
+entries. In case there is no entry for a given version, the service will upgrade BOS itself. The latest version always
+has to have a feed entry, otherwise this would break.
 
 The service needs to communicate to the user what's happening through multiple states and progress bars so that the user
 knows it's not stuck.

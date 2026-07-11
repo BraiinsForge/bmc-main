@@ -13,9 +13,8 @@ The build infrastructure produces three kinds of artifacts:
 3. **Tarball** (`.tar.gz`) — initial Nix store snapshot for device initialization, containing packages and a pre-built
    profile
 
-The factory index (`factory.json`) can be built either by Nix (`mkFactoryIndex.nix`, for local testing with placeholder
-URLs) or by CI tooling (`scripts/build-factory-index.sh`, assembling real download URLs from tarball `metadata.json`
-files).
+The package feed (`nix-package-feed.v1.json`) can be built either by Nix (`mkPackageFeed.nix`, for local testing with
+placeholder URLs) or by CI tooling assembling real download URLs from tarball `metadata.json` files.
 
 ---
 
@@ -29,8 +28,8 @@ nix/
 ├── mkWidgetPackage.nix    # Build a widget crate into a package derivation
 ├── mkIndex.nix            # Package list → index.json
 ├── mkTarball.nix          # Package list + bmc-nix CLI → .tar.gz + metadata
-├── mkFactoryIndex.nix     # Tarball entries → factory.json
-└── init-artifacts.nix     # Package list, index, tarball, and factory index
+├── mkPackageFeed.nix      # Feed entries → nix-package-feed.v1.json
+└── init-artifacts.nix     # Package list, index, tarball, and package feed
 ```
 
 `flake.nix` imports these files and passes shared arguments (`pkgs`, `commonDeps`, etc.). `artifacts.nix` is the single
@@ -65,7 +64,7 @@ source of truth for what packages are released and how they're assembled into th
                                            ▼
                                    (external tooling collects
                                     metadata.json from multiple
-                                    versions → factory.json)
+                                    versions → package feed)
 ```
 
 The **package list** is defined once and feeds both `mkIndex` and `mkTarball`. Adding a package to the system means
@@ -317,9 +316,9 @@ This is the most involved derivation. Steps inside the build:
 }
 ```
 
-This metadata is consumed by external tooling to build the factory index (`factory.json`) across multiple versions. The
-external tooling must supply the `download_url` field (not present in `metadata.json`) when assembling `factory.json`,
-since it depends on where the tarball is ultimately published.
+This metadata is consumed by external tooling to build the package feed (`nix-package-feed.v1.json`) across multiple
+versions. The external tooling must supply the `download_url` field (not present in `metadata.json`) when assembling the
+feed, since it depends on where the tarball is ultimately published.
 
 ---
 

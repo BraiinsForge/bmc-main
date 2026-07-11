@@ -12,53 +12,59 @@ Two things ship inside every tarball that concern `bmc-nix`:
 
 - **`bmc-nix-cli`** — the CLI wrapper around the `bmc-nix` library used during firmware installation and, when the store
   does not exist yet, initialization.
-- **The firmware index** — a `nix-package-index.v1.json` pinned to the exact package versions the firmware was built and
-  tested against.
+- **`servers.json.default`** — the shipped server registry, whose server entries link package feeds
+  (`nix-package-feed.v1.json`).
 
-These are not optional extras. Every released firmware tarball must contain both, so a device can complete a firmware
-upgrade without any network access beyond fetching the tarball and its store paths.
+These are not optional extras. Every released firmware tarball must contain both, so the firmware-upgrade Nix step can
+resolve the incoming firmware's package index without depending on whatever registry state the outgoing system carries.
 
-## Why It Ships With Its Own Index
+## Why the Index Is Resolved Through a Feed
 
-An ordinary application-layer upgrade merges every enabled server's `nix-package-index.v1.json` and resolves against the
-live view. A firmware upgrade must not do that. What is compatible with the new BOS is a build-time property of the
-firmware — the same set of applications that CI validated against the image. A remote server can gain, lose, or reorder
-versions at any time; consulting it during a firmware upgrade would let a device end up with an application set the
-firmware release was never tested with.
+An ordinary application-layer upgrade merges every enabled server's index and resolves against the live view. A firmware
+upgrade uses the same registry merge, but scopes every feed-linked server to the incoming firmware version. What is
+compatible with the new BOS is a build-time property of the firmware — the same set of applications that CI validated
+against the image. A feed's *current* entry can gain, lose, or reorder versions at any time; resolving it without the
+incoming firmware scope could select an application set the firmware release was never tested with.
 
-The firmware index closes that gap. It is a normal `nix-package-index.v1.json` — same schema, same conflict-resolution
-rules — but frozen at firmware build time and shipped inside the tarball. During the firmware-upgrade Nix step, it is
-the sole and authoritative source of package versions. `bmc-nix-cli upgrade --only-indexes` makes the consulted index
-set exactly the explicit `--index` references: remote indexes, `/etc/nix-upgrade/servers.json`, and federated
-`indexes[]` recursion are ignored for that run.
+The package feed closes that gap server-side. Each feed entry maps a `bos_version` to that firmware's own package index
+(`index_url`) — an ordinary `nix-package-index.v1.json`, same schema, same conflict-resolution rules, published
+per-release and left alone afterwards. The firmware-upgrade Nix step passes `--firmware <incoming version>`, so each
+feed-linked server resolves to the index published for that firmware. Enabled direct index servers and federated child
+indexes still join the merged view. The Forge release server is required, so its failure aborts keep-current; optional
+third-party server failures warn and are skipped when another source succeeds.
 
-See [`upgrades.md`](upgrades.md#firmware-upgrades) for how this index plugs into the overall upgrade flow, and
+See [`upgrades.md`](upgrades.md#firmware-upgrades) for how this plugs into the overall upgrade flow, and
 [`../devlogs/BDK-212/nix/nix-concepts.md`](../devlogs/BDK-212/nix/nix-concepts.md) for the ambient concepts.
 
 ## What `bmc-nix-cli` Does From The Tarball
 
-During a firmware upgrade, the tarball `COMMAND` must invoke `bmc-nix-cli` from the tarball with the tarball's firmware
-index as input:
+During a firmware upgrade, the tarball `COMMAND` must invoke `bmc-nix-cli` from the tarball with the staged registry as
+the fallback:
 
 ```sh
-bmc-nix-cli upgrade --only-indexes --index file://<tarball>/nix-package-index.v1.json --next-boot <bos-version>
+bmc-nix-cli upgrade \
+    --default-servers-config <staged>/servers.json.default \
+    --firmware <bos-version> \
+    --next-boot <bos-version>
 ```
 
 `<bos-version>` is the incoming firmware's version, read from the tarball's own version file — the running
-`/etc/bos_version` still names the outgoing BOS.
+`/etc/bos_version` still names the outgoing BOS. `--next-boot` requires the explicit `--firmware` so the feed can never
+silently scope to the outgoing version.
 
 The CLI:
 
-1. Parses the pinned `nix-package-index.v1.json`.
-2. Diffs it against the current profile manifest.
-3. Applies the standard resolution rules — including the no-downgrade filter, so lower-version entries in the pinned
-   index are discarded and any application already installed at a higher version stays at its current version. See
-   [`upgrades.md`](upgrades.md#resolution-algorithm).
-4. Ignores `servers.json` and does not follow `indexes[]` references inside the pinned index because `--only-indexes`
-   was selected.
-5. Realises the resolved store paths from the substituters configured on the device.
-6. Builds a new profile generation.
-7. Leaves the new generation staged as a `next.<bos-version>` symlink to the built `<N>-link`, named for the incoming
+1. Loads the server registry: a valid runtime `/etc/nix-upgrade/servers.json` wins wholesale; the staged
+   `servers.json.default` is used only when the runtime file is absent (a malformed runtime file is quarantined to
+   `.bcp` first).
+2. Resolves each feed-linked server: fetches its `nix-package-feed.v1.json`, selects the entry for `--firmware`, and
+   fetches the index at that entry's `index_url`, then merges enabled direct indexes and federated children.
+3. Diffs the merged view against the current profile manifest and applies the standard resolution rules — including the
+   no-downgrade filter, so lower-version entries are discarded and any application already installed at a higher version
+   stays at its current version. See [`upgrades.md`](upgrades.md#resolution-algorithm).
+4. Realises the resolved store paths from the substituters configured on the device.
+5. Builds a new profile generation.
+6. Leaves the new generation staged as a `next.<bos-version>` symlink to the built `<N>-link`, named for the incoming
    firmware version. Firmware upgrades **always** take this deferred-activation path — the profile is never activated
    in-place against the outgoing BOS. The incoming firmware's `nix-activator` consumes the marker after the BOS
    partition swap; any other firmware's activator cannot see it and sweeps it as stale, so a failed sysupgrade never
@@ -70,15 +76,17 @@ identical across build-host, factory-tarball, and firmware-tarball contexts.
 
 ## Consequences for the Firmware Build
 
-Every firmware build must produce, in addition to the OpenWrt image itself:
+Every firmware release must produce, in addition to the OpenWrt image itself:
 
-- The pinned `nix-package-index.v1.json` covering all applications intended to ship with that firmware release.
-- A static armv7-musl `bmc-nix-cli` binary for the device.
+- A published `nix-package-index.v1.json` covering all applications intended to ship with that firmware release, and a
+  package feed entry for the release's `bos_version` pointing at it via `index_url`.
+- A static armv7-musl `bmc-nix-cli` binary for the device (shipped in the tarball).
+- A `servers.json.default` registry in the tarball whose feed-linked entries name the feeds serving those releases.
 - A substituter setup on the device (`nix.conf`) from which the on-device `nix-store --realise` step can pull every
-  store path the pinned index references.
+  store path the release's index references.
 
-The pinned index must be self-consistent: every `store_path` it references must be reachable from the configured
-substituters. There is no fallback to remote indexes to paper over a missing entry — the run will abort.
+The required release index must be self-consistent: every `store_path` it references must be reachable from the
+configured substituters. Optional indexes may supplement it, but cannot make a failed required server succeed.
 
 ## Initialization
 
@@ -95,7 +103,7 @@ Two pieces are involved:
   necessary, no-ops when the store already exists (empty stdout), and otherwise initializes it for the incoming firmware
   version (printing the new profile path), in which case staging is already complete. When the store pre-existed, the
   `COMMAND` restores the `/nix` bind mount when missing, extends `PATH` with `/run/current-profile/bin` (otherwise added
-  only by login shells; realisation spawns `nix-store` on the outgoing system), and runs the pinned-index upgrade. On a
+  only by login shells; realisation spawns `nix-store` on the outgoing system), and runs the feed-resolved upgrade. On a
   pre-Nix system it runs `bmc-nix-cli init --wipe`, replacing any store left behind by an earlier aborted upgrade with
   one matching the firmware being flashed. In both branches the `COMMAND` passes the incoming firmware's version via
   `--bos-version-file` — the running `/etc/bos_version` may predate Nix and have no factory tarball.
@@ -118,9 +126,9 @@ in the tarball.
    unless `--wipe` is passed. `--wipe` refuses to run while `/nix` is an active mount — the running system would be
    using the very store it deletes.
 3. **Select and download the initialization tarball.** Selection is by the BOS version read from `/etc/bos_version`,
-   matched against the factory index (the `factory` entry from `/etc/nix-upgrade/servers.json`). If no tarball matches
-   the requested BOS version, `init` fails — the factory server has to keep a tarball for every Nix-capable BOS version,
-   otherwise this path breaks.
+   matched against the factory server's package feed (`nix-package-feed.v1.json`, fetched from the `factory` entry of
+   `/etc/nix-upgrade/servers.json`). If no feed entry matches the requested BOS version, `init` fails — the factory
+   server has to keep an entry for every Nix-capable BOS version, otherwise this path breaks.
 4. **Apply the factory tarball signature policy.** If the factory entry has `require_signature: true`, the CLI fetches
    `<download_url>.sig`, verifies the tarball against `known_public_key`, and aborts on a missing, malformed, or
    rejected signature. If `require_signature` is absent or false, verification is skipped and a warning is logged.
@@ -139,19 +147,20 @@ upgrade.
 
 ## BOS Downgrade
 
-On platforms that allow downgrading BOS (currently BMM101), the older firmware's tarball still contains its own pinned
-firmware index. The mechanism is unchanged: `bmc-nix-cli` runs against that older index, the no-downgrade filter drops
-any lower-version entries, and the currently installed applications stay at their current versions. No separate
-downgrade code path is needed — this falls out of the resolution algorithm. See
-[`upgrades.md`](upgrades.md#bos-downgrade).
+On platforms that allow downgrading BOS (currently BMM101), the feed keeps its entry for the older `bos_version`, so the
+older firmware's `--firmware` scope resolves to its own release index. The mechanism is unchanged: `bmc-nix-cli` runs
+against that older index, the no-downgrade filter drops any lower-version entries, and the currently installed
+applications stay at their current versions. No separate downgrade code path is needed — this falls out of the
+resolution algorithm. See [`upgrades.md`](upgrades.md#bos-downgrade).
 
 ## Contributor Checklist
 
-- Never let the firmware-upgrade code path fall back to remote indexes. The pinned firmware index inside the tarball is
-  the only source.
-- Every firmware tarball must include both `bmc-nix-cli` and a self-consistent firmware index. Omitting either is a
-  release blocker.
-- Treat the firmware index as a normal `nix-package-index.v1.json`. Do not invent a separate schema for it; sharing the
-  schema is what lets one CLI serve both flows.
+- The firmware-upgrade code path scopes every feed-linked server to the `--firmware` target. Keep the Forge release
+  server required; optional third-party servers may degrade when another source succeeds, and federation continues
+  normally.
+- Every firmware tarball must include both `bmc-nix-cli` and `servers.json.default`, and every release must publish a
+  feed entry whose `index_url` names a self-consistent release index. Omitting any of these is a release blocker.
+- Treat the feed-resolved index as a normal `nix-package-index.v1.json`. Do not invent a separate schema for it; sharing
+  the schema is what lets one CLI serve both flows.
 - The no-downgrade rule applies here too. Do not add a firmware-upgrade-only bypass to "force" older versions in — that
   is what manual profile rollback is for.

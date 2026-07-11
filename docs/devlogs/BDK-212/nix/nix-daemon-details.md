@@ -56,9 +56,9 @@ label for details (e.g. SSID, error message). States driven from Rust via Slint 
     - Show AP SSID + "Connect to WiFi" on display
     - Start captive portal / listen for WiFi config (reuse `InitialSetup` WiFi pattern from `bmc/src/initial_setup.rs`)
     - On WiFi configured → connect, show "Connecting..."
-07. Fetch factory index from server configured in `/etc/nix-upgrade/servers.json`
-08. Match tarball to current BOS version from `/etc/bos-version`
-09. If no matching tarball found:
+07. Fetch the package feed from the factory server configured in `/etc/nix-upgrade/servers.json`
+08. Match a feed entry to current BOS version from `/etc/bos-version`
+09. If no matching entry found:
     - Show "Downloading" progress, "Upgrading system..."
     - Upgrade BOS using the current upgrade process (fetch firmware index, download, sysupgrade → reboot)
     - After reboot, the initializer runs again from step 1 with the new BOS version

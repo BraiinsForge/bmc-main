@@ -22,9 +22,9 @@ activation scripts, generated files, and manifests fit into the profile lifecycl
 
 ### [Upgrades](upgrades.md)
 
-How application and firmware upgrades are resolved and applied: package indexes and servers, the no-downgrade resolution
-algorithm, the firmware-pinned index used during BOS upgrades, BOS downgrade on BMM101, rollback, garbage collection,
-and store initialization.
+How application and firmware upgrades are resolved and applied: package indexes, feeds, and servers, the no-downgrade
+resolution algorithm, the feed-resolved index used during BOS upgrades, BOS downgrade on BMM101, rollback, garbage
+collection, and store initialization.
 
 ### [Firmware and Package Upgrade Interlinking](firmware-package-interlinking.md)
 
@@ -53,8 +53,8 @@ not reverted, and how per-service `etc/init.d.conf` configuration shapes the sto
 ### [OpenWrt Firmware Tarball](openwrt-tarball.md)
 
 What the firmware sysupgrade tarball contains from the Nix upgrade point of view: the on-tarball `bmc-nix-cli` binary
-and the pinned firmware index, why the firmware ships its own index instead of consulting remote servers, and the
-release-blocking invariants a firmware build must satisfy.
+and the shipped `servers.json.default` registry, why the upgrade resolves its index through a per-firmware package feed
+entry, and the release-blocking invariants a firmware build must satisfy.
 
 ### [Firmware Index Test Serving](firmware/README.md)
 

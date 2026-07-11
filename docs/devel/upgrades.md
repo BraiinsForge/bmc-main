@@ -16,18 +16,31 @@ are chosen, how a firmware upgrade differs from an application-only upgrade, and
 
 Two independent inputs drive package selection at runtime:
 
-- **Remote package indexes.** Each configured server publishes `nix-package-index.v1.json` listing available packages
-  (name, version, `store_path`, optional `upgrade_strategy` / `install_strategy` hints). Servers are declared in
-  `/etc/nix-upgrade/servers.json` with a `priority` and `known_public_key`. Indexes may also transitively reference
-  other indexes (`indexes[]`) for federated discovery. Store paths in indexes are realised on-device via
-  `nix-store --realise` from the substituters configured on the device; cache metadata in the index (`caches[]`,
-  per-package `cache`) is informational only and ignored by resolution.
+- **Remote package indexes.** Package indexes (`nix-package-index.v1.json`) list available packages (name, version,
+  `store_path`, optional `upgrade_strategy` / `install_strategy` hints). Servers are declared in
+  `/etc/nix-upgrade/servers.json` with a `priority` and `known_public_key`, and each entry links its content through
+  exactly one of two source URLs — both exact document URLs, never base URLs:
+
+  - `index_url` — the server's package index document, fetched directly.
+  - `feed_url` — the server's **package feed** (`nix-package-feed.v1.json`), a per-firmware release catalog whose
+    `entries` map a `bos_version` to that firmware's init tarball (`download_url`, `profile_path`) and package index
+    (`index_url`). Resolution fetches the feed, selects the entry for the target firmware version, and follows its
+    `index_url`. A feed-linked server participating in resolution without a firmware scope, or a selected entry without
+    an `index_url`, is a hard error. Fetch failures follow the server's `required` policy: required servers abort, while
+    optional servers warn and are skipped when another source succeeds. Resolution still fails when every enabled source
+    fails.
+
+  Indexes may also transitively reference other indexes (`indexes[]`) for federated discovery. Store paths in indexes
+  are realised on-device via `nix-store --realise` from the substituters configured on the device; cache metadata in the
+  index (`caches[]`, per-package `cache`) is informational only and ignored by resolution.
+
 - **The installed manifest.** Every profile generation carries its own `manifest` — the same shape as an index, plus
   `installed_by` (`system` or `user`), `installed_from` (server id), and `pinned` (semver constraint). The manifest is
   the record of what is currently installed; upgrade planning diffs it against the merged remote view.
 
-There is a third input that only appears during firmware upgrades: a **pinned index** shipped inside the firmware
-tarball itself. See [Firmware Upgrades](#firmware-upgrades).
+The firmware scope for feed-entry selection comes from `bmc-nix-cli upgrade --firmware <BOS_VERSION>`; without the flag,
+`/etc/bos_version` is read — but only when an enabled feed-linked server actually participates, so index-only registries
+and `--only-indexes` runs never touch it.
 
 ## Resolution Algorithm
 
@@ -75,36 +88,47 @@ The previous generation stays on disk and remains the rollback target.
 
 ## Firmware Upgrades
 
-Firmware (BOS) upgrades are orchestrated by `bmc-upgrade` and, unlike a normal package upgrade, must not consult remote
-indexes at all. Every firmware tarball ships with:
+Firmware (BOS) upgrades are orchestrated by `bmc-upgrade`. They merge all enabled package servers just like a normal
+package upgrade, but scope each feed-linked server to the incoming firmware version. Every firmware tarball ships with:
 
 - a copy of `bmc-nix-cli`, and
-- one **pinned** `nix-package-index.v1.json` baked into the image.
+- a `servers.json.default` registry whose server entries link package feeds.
 
-That pinned index is the sole and authoritative source of package versions for the Nix step of the firmware upgrade.
-Remote indexes and `servers.json` entries are ignored for this run. This guarantees the application set activated
-alongside the new BOS matches exactly what the firmware was built and tested against, independent of what any server
-currently advertises.
+The Nix step resolves against the server registry with the shipped file as the fallback: a valid runtime
+`/etc/nix-upgrade/servers.json` — explicit persistent device state, e.g. a `register-server` registration — wins
+wholesale; the staged default is used only when the runtime file is absent (a malformed runtime config is quarantined to
+`.bcp` first). Each feed-linked server's feed is fetched, the entry for the incoming firmware version is selected, and
+that entry's `index_url` joins the merged view alongside enabled direct index servers and federated child indexes.
+
+The Forge release server is required, so an unavailable feed, a missing target entry, or a missing `index_url` aborts
+the upgrade keep-current. Optional third-party server failures warn and are skipped when another source succeeds.
 
 One rule from the general flow still applies: the no-downgrade filter still runs against the currently installed
-versions. A firmware upgrade will not roll an installed application backwards even if the pinned index would otherwise
-suggest a lower version.
+versions. A firmware upgrade will not roll an installed application backwards even if the target firmware's index would
+otherwise suggest a lower version.
 
 The CLI contract for the tarball path is
-`bmc-nix-cli upgrade --only-indexes --index file://<tarball>/nix-package-index.v1.json --next-boot <bos-version>`, where
-`<bos-version>` is the incoming firmware's version read from the tarball's own version file — not the running
-`/etc/bos_version`, which still names the outgoing BOS. `--only-indexes` makes the consulted index set exactly the
-explicit `--index` references: it does not read `servers.json`, and it does not follow federated `indexes[]` references
-inside those indexes.
+
+```sh
+bmc-nix-cli upgrade \
+    --default-servers-config <staged>/servers.json.default \
+    --firmware <bos-version> \
+    --next-boot <bos-version>
+```
+
+where `<bos-version>` is the incoming firmware's version read from the tarball's own version file — not the running
+`/etc/bos_version`, which still names the outgoing BOS. `--firmware` scopes feed-entry selection to the incoming
+firmware; `--next-boot` requires it, because silently scoping to the outgoing `/etc/bos_version` during a sysupgrade is
+exactly the bug the explicit flag prevents.
 
 **Activation is always deferred.** A firmware upgrade never activates the new profile in-place — the running BOS is on
 its way out, and its running services must not be reconfigured to match a generation built for the incoming BOS. The
-tarball command must invoke `bmc-nix-cli upgrade --next-boot <bos-version>`, which produces a `next.<bos-version>`
-symlink to a built generation (see [Deferred Activation](#deferred-activation---next-boot)). After the reboot into the
-new BOS, `nix-activator` consumes that symlink and runs the target generation's activation against the previous
-`current`. Because the marker carries the incoming version in its name, an activator on any other firmware — in
-particular the old BOS after a sysupgrade that failed before flashing — never finds it and removes it as stale instead
-of activating packages resolved for a firmware it is not running. Once the device is back to normal operation,
+tarball command must invoke `bmc-nix-cli upgrade --firmware <bos-version> --next-boot <bos-version>`, which produces a
+`next.<bos-version>` symlink to a built generation (see [Deferred Activation](#deferred-activation---next-boot)). After
+the reboot into the new BOS, `nix-activator` consumes that symlink and runs the target generation's activation against
+the previous `current`. Because the marker carries the incoming version in its name, an activator on any other firmware
+— in particular the old BOS after a sysupgrade that failed before flashing — never finds it and removes it as stale
+instead of activating packages resolved for a firmware it is not running. Once the device is back to normal operation,
 subsequent upgrades resume the ordinary application-layer flow using remote indexes.
 
 There is no code path in the firmware-upgrade flow that activates the profile immediately — treating `--next-boot` as
@@ -113,13 +137,13 @@ be replaced) BOS does not provide.
 
 ## Deferred Activation (`--next-boot`)
 
-`bmc-nix-cli upgrade --next-boot <bos-version>` is the same resolution and profile-build path as a normal upgrade, but
-it stops before activation. It still builds the next numbered generation directory (`<N>-link`) up front. Instead of
-swapping `current`, it atomically writes `next.<bos-version>` as a symlink inside the profile directory
-(`/nix/var/nix/gcroots/profiles/bmc/next.<bos-version>`) pointing at that freshly built `<N>-link`. The value of
-`--next-boot` is the BOS version whose boot may consume the staged generation — the version the resolved index belongs
-to. Encoding it in the marker name is what gates activation: an activator never checks a version, it simply cannot see a
-marker staged for a different firmware.
+`bmc-nix-cli upgrade --firmware <bos-version> --next-boot <bos-version>` is the same resolution and profile-build path
+as a normal upgrade, but it stops before activation. It still builds the next numbered generation directory (`<N>-link`)
+up front. Instead of swapping `current`, it atomically writes `next.<bos-version>` as a symlink inside the profile
+directory (`/nix/var/nix/gcroots/profiles/bmc/next.<bos-version>`) pointing at that freshly built `<N>-link`. The value
+of `--next-boot` is the BOS version whose boot may consume the staged generation — the version the resolved index
+belongs to. Encoding it in the marker name is what gates activation: an activator never checks a version, it simply
+cannot see a marker staged for a different firmware.
 
 Every profile apply run removes stale deferred-activation markers (all `next.*`, and a bare legacy `next`) immediately
 after taking the profile lock. This means any later run invalidates a pending deferred activation, including a no-op run
@@ -175,14 +199,14 @@ not exclusive to it: any caller that needs to synchronise activation with a rebo
 ## BOS Downgrade
 
 On platforms that allow the user to downgrade BOS (currently BMM101), the same firmware-tarball mechanism is reused with
-a different resolution outcome. The older firmware's pinned index will typically advertise lower application versions
-than what is currently installed.
+a different resolution outcome. The older firmware's feed-resolved index will typically advertise lower application
+versions than what is currently installed.
 
 Nothing special is needed for this case — the no-downgrade filter drops those lower-version entries and the installed
 versions are kept as-is. In practice:
 
 - Installed applications keep their current, newer versions across a BOS downgrade.
-- The pinned index acts as a floor / compatibility hint only for packages that would otherwise be missing.
+- The older firmware's index acts as a floor / compatibility hint only for packages that would otherwise be missing.
 - No Nix-level rollback of application packages happens as a side effect. If the user also wants to downgrade an
   application, that is a separate action: profile rollback, or an explicit install pinned to a specific version.
 
@@ -220,12 +244,14 @@ The Nix store on new devices is populated in one of two ways:
   that offline copy. The initial profile is activated (or activated on first boot).
 - **First-boot upgrade from a pre-Nix firmware.** The first Nix-capable firmware is marked as a required version (users
   cannot skip it). Its image `COMMAND` invokes `bmc-nix-cli init` from the tarball, which prepares `/dev/mmcblk0p4` as
-  an ext4 data partition mounted at `/mnt/data`, fetches the initialization tarball for the incoming firmware's version
-  (passed by the `COMMAND` via `--bos-version-file`; the running `/etc/bos_version` predates Nix and has no tarball),
-  stages it into `/mnt/data/nix.tmp`, and atomically promotes `nix.tmp/nix` to `nix`, discarding entries outside `nix/`
-  — live rootfs files come from activation on first boot (see
-  [`openwrt-tarball.md`](openwrt-tarball.md#initialization)); the profile activates on next boot. If `/mnt/data/nix`
-  already exists, `init` exits successfully without changing it unless `--wipe` is passed.
+  an ext4 data partition mounted at `/mnt/data`, fetches the factory server's package feed and from it the
+  initialization tarball for the incoming firmware's version (passed by the `COMMAND` via `--bos-version-file`; the
+  running `/etc/bos_version` predates Nix and has no tarball), stages it into `/mnt/data/nix.tmp`, and atomically
+  promotes `nix.tmp/nix` to `nix`, discarding entries outside `nix/` — live rootfs files come from activation on first
+  boot (see [`openwrt-tarball.md`](openwrt-tarball.md#initialization)); the profile activates on next boot. `init` exits
+  successfully without changing an existing store only when it is fully initialized: the store is nonempty and its
+  database and BMC profile are present. An incomplete `/mnt/data/nix` is not overwritten implicitly; recovery must pass
+  `--wipe`.
 
 Factory reset reinitializes the store from the offline initial store, so restoring factory state needs no network
 access.
@@ -246,7 +272,9 @@ stale-and-kept for both `system` and `user`.
 
 - Never let a resolution path bypass the no-downgrade filter. It is the single load-bearing rule that protects users
   from server-side mistakes.
-- Firmware-upgrade code paths must not consult remote indexes. Route through the pinned index shipped in the tarball.
+- Firmware-upgrade code paths scope every feed-linked server to the target firmware with explicit `--firmware`. Keep the
+  Forge release server required; optional third-party servers may degrade when another source succeeds, and federation
+  continues normally.
 - Failure modes prefer keep-current over guess: stale packages, ambiguous priorities, and unavailable store paths all
   abort cleanly rather than silently substituting.
 - Store-path realisation, hook execution, and activation are separate stages. Don't fold side effects into the

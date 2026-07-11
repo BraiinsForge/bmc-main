@@ -22,7 +22,7 @@ Flow:
 2. If yes — exit immediately, `bmc` starts normally
 3. If no — check for network connectivity
 4. If no WiFi — enter AP mode, present WiFi setup (same pattern as the main app's initial setup)
-5. Fetch the factory index, download the initial store tarball
+5. Fetch the factory server's package feed, download the initial store tarball
 6. Extract and activate the initial profile
 7. Exit, `bmc` starts normally
 
