@@ -264,11 +264,21 @@ impl<N> PackageUpgrader<N> {
     async fn fetch_index_and_manifest(
         &self,
     ) -> Result<(bmc_nix::types::MergedIndex, bmc_nix::types::Manifest), PackageProbeError> {
-        let config = bmc_nix::servers_config::load_servers_config(&self.config.servers_config_path)
-            .map_err(|err| {
-                warn!(error = %err, "Servers config unavailable");
-                PackageProbeError::ServersConfigUnavailable(err.to_string())
-            })?;
+        // Same convention as the CLI: the read-only shipped default lives
+        // next to the runtime config under a literal ".default" suffix.
+        let default_path = {
+            let mut derived = self.config.servers_config_path.as_os_str().to_owned();
+            derived.push(".default");
+            PathBuf::from(derived)
+        };
+        let config = bmc_nix::servers_config::load_servers_config(
+            &self.config.servers_config_path,
+            &default_path,
+        )
+        .map_err(|err| {
+            warn!(error = %err, "Servers config unavailable");
+            PackageProbeError::ServersConfigUnavailable(err.to_string())
+        })?;
         let servers = config.servers;
 
         if !servers.iter().any(|server| server.enabled) {
@@ -953,7 +963,10 @@ mod tests {
             !dir.path().join("servers.json.bcp").exists(),
             "recovering a missing (not corrupt) config must not back anything up"
         );
-        assert!(path.exists(), "the recovered config must be persisted");
+        assert!(
+            !path.exists(),
+            "the default is served in memory and never persisted"
+        );
     }
 
     #[tokio::test]
