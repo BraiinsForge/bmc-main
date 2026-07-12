@@ -108,6 +108,24 @@ test -f "$profile/staged-ran" \
 test -L "$profile/next.test-1" \
     || fail "retry marker was removed on failure"
 
+# Plain boot: no staged marker, 'current' exists. The current
+# generation's entrypoint runs (without PROFILE_OLD_GENERATION) and
+# 'current' stays put.
+profile="$tmp/plain"
+mkdir -p "$profile"
+write_entrypoint "$profile/1-link" "
+test -z \"\${PROFILE_OLD_GENERATION:-}\" || exit 1
+touch \"$profile/current-ran\""
+ln -s 1-link "$profile/current"
+
+NIX_ACTIVATOR_PROFILE_DIR="$profile"
+activate_profile || fail "plain boot activation reported failure"
+
+test "$(readlink "$profile/current")" = "1-link" \
+    || fail "current changed on a plain boot"
+test -f "$profile/current-ran" \
+    || fail "current generation entrypoint did not run on a plain boot"
+
 # A staged entrypoint that flips 'current' and succeeds: the marker is
 # consumed and no fallback runs.
 profile="$tmp/success"
