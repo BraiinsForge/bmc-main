@@ -223,3 +223,8 @@ frontend:
   extends: .app
   script:
     - nix build .#frontend
+
+init-tarball:
+  extends: .app
+  script:
+    - nix build .#init-tarball-armv7
