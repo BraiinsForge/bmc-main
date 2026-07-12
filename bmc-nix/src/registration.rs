@@ -171,10 +171,12 @@ pub fn prepare_registration(
 /// Merges `<url>` into the `extra-substituters` line and `<public_key>`
 /// into the `extra-trusted-public-keys` line, appending each token only
 /// when it is not already present so registering a second server keeps
-/// the first. Idempotent: a token already present leaves the file
-/// unchanged and skips the rewrite. A missing `nix.conf` is treated as
-/// empty and created. The write is atomic via a temporary sibling plus
-/// `rename`.
+/// the first. A key whose name (the token before the `:`) matches an
+/// existing one replaces it: nix trusts only the first key per name, so
+/// an appended rotated key would be silently ignored. Idempotent: a
+/// token already present leaves the file unchanged and skips the
+/// rewrite. A missing `nix.conf` is treated as empty and created. The
+/// write is atomic via a temporary sibling plus `rename`.
 ///
 /// # Errors
 ///
@@ -205,6 +207,9 @@ pub fn register_substituter(
         match lines.iter().position(|l| config_key(l) == Some(key)) {
             Some(pos) => {
                 let mut tokens: Vec<&str> = config_value(&lines[pos]).split_whitespace().collect();
+                if key == "extra-trusted-public-keys" {
+                    tokens.retain(|t| *t == value || public_key_name(t) != public_key_name(value));
+                }
                 if !tokens.contains(&value) {
                     tokens.push(value);
                 }
@@ -223,6 +228,11 @@ pub fn register_substituter(
 
     let tmp_path = nix_conf_path.with_extension("conf.tmp");
     write_persisted(nix_conf_path, &tmp_path, &updated)
+}
+
+/// Return the name part of a `name:base64` public-key token.
+fn public_key_name(token: &str) -> &str {
+    token.split_once(':').map_or(token, |(name, _)| name)
 }
 
 /// Return the trimmed key of a `key = value` line, if it has one.
@@ -566,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn register_substituter_accumulates_rotated_values() {
+    fn register_substituter_replaces_a_rotated_key_of_the_same_name() {
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let path = tmp.path().join("nix.conf");
         std::fs::write(
@@ -597,8 +607,8 @@ mod tests {
         );
         assert_eq!(
             key_lines,
-            vec!["extra-trusted-public-keys = dev-upgrade:OLD dev-upgrade:NEW"],
-            "rotated key accumulates alongside the old one (removal is out of scope)"
+            vec!["extra-trusted-public-keys = dev-upgrade:NEW"],
+            "nix trusts only the first key per name, so the rotated key must replace the old one"
         );
         assert!(
             contents
