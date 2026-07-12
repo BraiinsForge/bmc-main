@@ -81,13 +81,22 @@ let
 
   # Firmware-bridging activation step.
   #
-  # The host firmware currently does not ship /etc/init.d/nix-activator,
-  # so this activation entry lays it down on every activation and
-  # removes the legacy nix-mounter that the activator subsumes.
+  # Firmware that bundles nix-activator is the canonical source: boot
+  # runs the ROM copy from the ROM rc.d link and this entry leaves its
+  # init.d path alone. Only on firmware without one does it lay down
+  # ./files/nix-activator (the same contract in shell, independent of
+  # the ROM CLI) as an overlay copy of /etc/init.d/nix-activator plus
+  # an S91 rc.d link. Neither is a sysupgrade conffile: flashing any
+  # firmware sheds the bridge — a bundling image boots its own
+  # activator to consume the staged marker, while flashing another
+  # bridge-needing image leaves the profile dormant until the next
+  # deploy or init re-runs activation (accepted for the transition).
+  # Either way this entry removes the legacy nix-mounter that the
+  # activator subsumes.
   #
-  # Remove this derivation, the activation entry below, ./files/nix-activator,
-  # and the /etc/init.d/nix-activator + /etc/rc.d/S91nix-activator conffiles
-  # entries once the firmware bundles nix-activator natively.
+  # Remove this derivation, the activation entry below, and
+  # ./files/nix-activator once no supported firmware lacks the bundled
+  # activator.
   firmware-init-services = armv7Pkgs.writeTextFile {
     name = "firmware-init-services";
     executable = true;
@@ -97,20 +106,35 @@ let
       set -e
 
       src="${./files/nix-activator}"
+      rom=/rom/etc/init.d/nix-activator
       target=/etc/init.d/nix-activator
 
-      mkdir -p /etc/init.d /etc/rc.d
-      if ! cmp -s "$src" "$target" 2>/dev/null; then
-          cp "$src" "$target.tmp"
-          chmod 755 "$target.tmp"
-          mv -Tf "$target.tmp" "$target"
+      if [ ! -x "$rom" ]; then
+          mkdir -p /etc/init.d /etc/rc.d
+          if ! cmp -s "$src" "$target" 2>/dev/null; then
+              cp "$src" "$target.tmp"
+              chmod 755 "$target.tmp"
+              mv -Tf "$target.tmp" "$target"
+          fi
       fi
-      # Recreate the rc.d symlink atomically: `ln -sf` unlinks before it
-      # symlinks, and a power loss in that window would leave no
-      # S91nix-activator at all — the activator would never run again.
-      # The dot prefix keeps the temp name out of rc.d's S*/K* globbing.
-      ln -sfn ../init.d/nix-activator /etc/rc.d/.S91nix-activator.tmp
-      mv -Tf /etc/rc.d/.S91nix-activator.tmp /etc/rc.d/S91nix-activator
+
+      # The overlay S91 link is only needed when the firmware provides
+      # no rc.d link of its own; a ROM link resolves through the merged
+      # /etc/init.d path, so it runs the overlay copy where one masks
+      # the ROM script. With both links enabled, boot ran the activator
+      # twice and stacked /nix bind mounts. S91 is always
+      # bootstrap-owned — firmware links its activator in the S6x
+      # range — so it is safe to drop whenever the ROM has a link.
+      if ls /rom/etc/rc.d/S[0-9]*nix-activator >/dev/null 2>&1; then
+          rm -f /etc/rc.d/S91nix-activator
+      else
+          # Recreate the rc.d symlink atomically: `ln -sf` unlinks before
+          # it symlinks, and a power loss in that window would leave no
+          # S91nix-activator at all — the activator would never run again.
+          # The dot prefix keeps the temp name out of rc.d's S*/K* globbing.
+          ln -sfn ../init.d/nix-activator /etc/rc.d/.S91nix-activator.tmp
+          mv -Tf /etc/rc.d/.S91nix-activator.tmp /etc/rc.d/S91nix-activator
+      fi
 
       rm -f /etc/init.d/nix-mounter
       rm -f /etc/rc.d/S*nix-mounter /etc/rc.d/K*nix-mounter
@@ -194,8 +218,6 @@ let
       "/etc/nix/nix.conf"
       "/etc/nix-upgrade/servers.json"
       "/etc/nix-upgrade/gc.json"
-      "/etc/init.d/nix-activator"
-      "/etc/rc.d/S91nix-activator"
     ];
   };
 
