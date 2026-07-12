@@ -30,17 +30,14 @@ pub fn sync_filesystem_of(path: &Path) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-/// `syncfs(2)` exists only on Linux, so this stub stands in on other
-/// targets. It is never reached in practice — no `bmc-nix` binary is
-/// built off Linux — but keeps the crate compilable there, matching the
-/// `decode_dev_t` rationale that this Linux-only code is still
-/// type-checked as part of the workspace.
+/// `syncfs(2)` exists only on Linux, so this no-op stands in on other
+/// targets. The durability contract is device-only: off-Linux callers
+/// are dev/test hosts (e.g. `bmc-mock` and tests on aarch64-darwin),
+/// where skipping the flush loses nothing the platform could have
+/// guaranteed anyway.
 #[cfg(not(target_os = "linux"))]
 pub fn sync_filesystem_of(_path: &Path) -> Result<(), std::io::Error> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "syncfs is only available on Linux",
-    ))
+    Ok(())
 }
 
 /// Run [`sync_filesystem_of`] on a blocking thread, for async callers.
