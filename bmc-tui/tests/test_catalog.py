@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tarfile
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -1277,3 +1278,84 @@ def test_cleardown_logs_only_under_dry_run() -> None:
         dry_run.reset(token)
     reads = [argv[-1] for argv in exc.runs]
     assert not any("umount" in c or "rm -rf" in c or "stop" in c for c in reads)
+
+
+def test_flash_e2e_never_skips_on_matching_version(tmp_path: Path) -> None:
+    image = _image(tmp_path)
+    exc = _Exec(_routes({"bos_version": image.version}))
+    catalog.flash_e2e(Device("h", backend=exc), image, assume_yes=True)
+    assert any(argv[-1] == f"sysupgrade {shlex.quote(image.remote_path)}" for argv in exc.runs)
+
+
+def test_flash_e2e_aborts_when_declined(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(catalog.console, "confirm", lambda _q: False)
+    with pytest.raises(Abort, match="--yes"):
+        catalog.flash_e2e(Device("h", backend=_Exec(_routes({}))), _image(tmp_path))
+
+
+def test_require_lineage_accepts_image_a_version(tmp_path: Path) -> None:
+    run = _e2e_run(tmp_path)
+    exc = _Exec(_routes({"bos_version": run.image_a.version}))
+    catalog.require_lineage(Device("h", backend=exc), run)
+
+
+def test_require_lineage_rejects_other_firmware(tmp_path: Path) -> None:
+    exc = _Exec(_routes({"bos_version": "something-else"}))
+    with pytest.raises(Abort, match="expects image A"):
+        catalog.require_lineage(Device("h", backend=exc), _e2e_run(tmp_path))
+
+
+def test_bump_absent_passes_and_rejects(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    catalog.ensure_bump_absent(Device("h", backend=_Exec(_routes({}))), run)
+    exc = _Exec(_routes({"[ -e /nix/store/cli-b ]": "yes"}))
+    with pytest.raises(Abort, match="already exists"):
+        catalog.ensure_bump_absent(Device("h", backend=exc), run)
+
+
+def test_record_generation_stores_the_resolved_link(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    exc = _Exec(_routes({"readlink -f": _GEN}))
+    catalog.record_generation(Device("h", backend=exc), run)
+    assert run.generation_before == _GEN
+
+
+def test_record_generation_aborts_without_a_generation(tmp_path: Path) -> None:
+    with pytest.raises(Abort, match="not initialized"):
+        catalog.record_generation(Device("h", backend=_Exec(_routes({}))), _rigged_run(tmp_path))
+
+
+def test_record_generation_reads_the_variants_profile(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    assert run.variant_b is not None
+    run.variant_b = replace(run.variant_b, profile_path="/nix/other/profiles/bmc")
+    exc = _Exec(_routes({"readlink -f": _GEN}))
+    catalog.record_generation(Device("h", backend=exc), run)
+    assert any("/nix/other/profiles/bmc/current" in argv[-1] for argv in exc.runs)
+
+
+def test_require_uploaded_passes_when_the_device_holds_the_bytes(tmp_path: Path) -> None:
+    run = _e2e_run(tmp_path)
+    exc = _Exec(_routes({"sha256sum": run.image_a.sha256}))
+    catalog.require_uploaded(Device("10.0.0.9", backend=exc), run.image_a)
+
+
+def test_require_uploaded_aborts_when_the_device_lacks_them(tmp_path: Path) -> None:
+    run = _e2e_run(tmp_path)
+    with pytest.raises(Abort, match=r"10\.0\.0\.9"):
+        catalog.require_uploaded(Device("10.0.0.9", backend=_Exec(_routes({}))), run.image_a)
+
+
+def test_marker_and_image_sweep_commands(tmp_path: Path) -> None:
+    exc = _Exec(_routes({}))
+    dev = Device("h", backend=exc)
+    run = _e2e_run(tmp_path)
+    catalog.drop_e2e_marker(dev)
+    catalog.cleanup_e2e_marker(dev)
+    catalog.sweep_uploaded_images(dev, run)
+    cmds = [argv[-1] for argv in exc.runs]
+    assert cmds == [
+        "touch /mnt/data/nix/.sysupgrade-e2e-marker",
+        "rm -f /mnt/data/nix/.sysupgrade-e2e-marker",
+        "rm -f /tmp/a.tar /tmp/b.tar",
+    ]

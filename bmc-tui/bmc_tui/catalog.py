@@ -839,6 +839,116 @@ def _poll_until(
         sleep(2)
 
 
+@stage("Uploaded image on pinned device")
+def require_uploaded(dev: Device, image: Image) -> str:
+    """Identity tie for the destructive window: the pinned connection must
+    hold the exact bytes the name-addressed upload verified. A resolver
+    handing out a different unit — several Decks can announce the same
+    mDNS name — fails here, before anything destructive runs."""
+
+    if dry_run.get():
+        return "upload check skipped (dry-run)"
+    require(
+        _remote_sha(dev, image.remote_path) == image.sha256,
+        f"{console.lit(dev.host)} does not hold the verified upload "
+        f"{console.lit(image.remote_path)} — is the pinned address the right device?",
+    )
+    return f"{console.lit(image.remote_path)} verified via {console.lit(dev.host)}"
+
+
+@stage("Flash firmware (e2e)")
+def flash_e2e(dev: Device, image: Image, *, assume_yes: bool = False) -> str:
+    """Flash unconditionally — deliberately no same-version skip: after the
+    destructive cleardown a skip would strand the device storeless. The
+    bytes were uploaded and verified before anything destructive ran."""
+
+    require(
+        assume_yes
+        or dry_run.get()
+        or console.confirm(
+            f"Flash {console.lit(image.version)} to {console.lit(dev.host)}? "
+            "The device will reboot."
+        ),
+        "flash declined — pass --yes to skip the prompt",
+    )
+    dev.run(f"sysupgrade {shlex.quote(image.remote_path)}", expect_disconnect=True)
+    return f"{console.lit(image.version)} → reboot"
+
+
+@stage("Device on image A's firmware")
+def require_lineage(dev: Device, run: E2eRun) -> str:
+    """The upgrade scenario runs against image A's lineage — asserted, not
+    assumed."""
+
+    version = dev.version
+    if dry_run.get():
+        return f"device runs {console.lit(version)} (assertion skipped under dry-run)"
+    require(
+        version == run.image_a.version,
+        f"device runs {console.lit(version)}, scenario B expects image A's "
+        f"{console.lit(run.image_a.version)}",
+    )
+    return console.lit(version)
+
+
+@stage("Bumped path absent")
+def ensure_bump_absent(dev: Device, run: E2eRun) -> str:
+    """The bumped store path must not pre-exist: its post-upgrade presence
+    is what proves nix-store realised it from the rig cache."""
+
+    path = run.bumped_path
+    if path is None:
+        msg = "BUG: the rig was not assembled before the bump-absence check"
+        raise RuntimeError(msg)
+    require(
+        "yes" not in dev.read(f"[ -e {shlex.quote(path)} ] && echo yes || true"),
+        f"{console.lit(path)} already exists on the device — the upgrade would prove nothing",
+    )
+    return f"{console.lit(path)} absent"
+
+
+@stage("Record generation")
+def record_generation(dev: Device, run: E2eRun) -> str:
+    """Read the same `current` link verify_upgraded compares against —
+    variant B's profile — so the advance check can never pass vacuously
+    by comparing two unrelated profiles."""
+
+    b = run.variant_b
+    if b is None:
+        msg = "BUG: e2e artifacts were not built before recording the generation"
+        raise RuntimeError(msg)
+    current = shlex.quote(f"{b.profile_path}/current")
+    run.generation_before = dev.read(f"readlink -f {current} 2>/dev/null || true")
+    require(bool(run.generation_before), "no current generation — the store is not initialized")
+    return console.lit(run.generation_before)
+
+
+@stage("Drop e2e marker")
+def drop_e2e_marker(dev: Device) -> str:
+    """A file outside store/, var/, and the profile tree; GC ignores it and
+    is-initialized only checks the directory. Scenario B's preservation
+    discriminator: it must survive an in-place upgrade."""
+
+    dev.run(f"touch {_E2E_MARKER}")
+    return console.lit(_E2E_MARKER)
+
+
+@stage("Clean up e2e marker")
+def cleanup_e2e_marker(dev: Device) -> str:
+    dev.run(f"rm -f {_E2E_MARKER}")
+    return console.lit(_E2E_MARKER)
+
+
+@stage("Sweep uploaded images")
+def sweep_uploaded_images(dev: Device, run: E2eRun) -> str:
+    """Remove the firmware tars pushed to /tmp — cleanup after a failure or
+    a declined flash; a flashed image is gone with the reboot anyway."""
+
+    paths = [run.image_a.remote_path, run.image_b.remote_path]
+    dev.run("rm -f " + " ".join(shlex.quote(p) for p in paths))
+    return ", ".join(console.lit(p) for p in paths)
+
+
 def _mem_available(dev: Device) -> int:
     """Free RAM in bytes; /tmp is swapless tmpfs, so RAM bounds upload+flash."""
 
@@ -849,7 +959,7 @@ def _mem_available(dev: Device) -> int:
 def _remote_sha(dev: Device, remote_path: str) -> str:
     """Hex sha256 of the on-device file; empty when absent, so never a false match."""
 
-    return dev.read(f"sha256sum {remote_path} 2>/dev/null | cut -d' ' -f1")
+    return dev.read(f"sha256sum {shlex.quote(remote_path)} 2>/dev/null | cut -d' ' -f1")
 
 
 def _wait_reachable(
