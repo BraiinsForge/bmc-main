@@ -5,8 +5,9 @@ alternate partition and reboots into. This document covers the pieces of that ta
 about; the OpenWrt image itself (kernel, rootfs, boot glue) is a BOS concern.
 
 > **Implementation status:** this describes the implemented `bmc-main` firmware payload and CLI behavior, and the
-> BOS-side `COMMAND` that packs and invokes it. Remaining cross-repo work: publish factory tarball `.sig` files and flip
-> the shipped `FactoryServerEntry.require_signature` setting once signatures are available.
+> BOS-side `COMMAND` that packs and invokes it. Remaining cross-repo work: content signature verification does not exist
+> yet — the CLI has no signature policy, verifies nothing against `known_public_key`, and the shipped
+> `servers.json.default` carries a placeholder key.
 
 Two things ship inside every tarball that concern `bmc-nix`:
 
@@ -152,11 +153,11 @@ in the tarball.
    matched against the factory server's package feed (`nix-package-feed.v1.json`, fetched from the `factory` entry of
    `/etc/nix-upgrade/servers.json`). If no feed entry matches the requested BOS version, `init` fails — the factory
    server has to keep an entry for every Nix-capable BOS version, otherwise this path breaks.
-4. **Apply the factory tarball signature policy.** If the factory entry has `require_signature: true`, the CLI fetches
-   `<download_url>.sig`, verifies the tarball against `known_public_key`, and aborts on a missing, malformed, or
-   rejected signature. If `require_signature` is absent or false, verification is skipped and a warning is logged.
-   Because NTP has not synced on first boot, the download client disables TLS certificate validation and the signature
-   is the primary integrity guarantee.
+4. **No content verification.** Signature verification is not implemented: the CLI consults neither the factory entry's
+   `known_public_key` nor any signature policy for the feed or the tarball. Because NTP has not synced on first boot,
+   the download client also disables TLS certificate validation, so the downloads are trusted by URL alone. (NAR
+   substitutions on the package-upgrade path are unaffected — nix verifies those against the `trusted-public-keys` that
+   `register-server` writes to `nix.conf`.)
 5. **Unpack the tarball into `/mnt/data/nix.tmp` and atomically promote `nix.tmp/nix` to `nix`.** The tarball extracts
    into a staging directory inside `/mnt/data`. Only the extracted `nix.tmp/nix` subtree is renamed to `<data-dir>/nix`;
    entries outside `nix/` are ignored and removed with the staging directory — live rootfs files such as
