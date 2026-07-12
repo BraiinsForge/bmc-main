@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from bmc_tui import console
+from bmc_tui import console, rig
 from bmc_tui.device import Device
 from bmc_tui.image import Image
 from bmc_tui.nix import Built, Nix, Pkg
@@ -458,6 +458,248 @@ def cleanup_remote_artifacts(dev: Device, plan: Provisioning) -> str:
     paths = [p for p in (plan.remote_tarball, _REMOTE_CLI) if p]
     dev.run(f"rm -f {' '.join(shlex.quote(p) for p in paths)}")
     return ", ".join(console.lit(p) for p in paths)
+
+
+# ── sysupgrade e2e ────────────────────────────────────────────────────────────
+
+_E2E_ARTIFACTS_FILE = "nix/e2e-artifacts.nix"
+_E2E_ATTRS = ["index-a", "tarball-a", "index-b", "tarball-b"]
+_SERVERS_JSON = "/etc/nix-upgrade/servers.json"
+_E2E_MARKER = f"{_NIX_BACKING}/.sysupgrade-e2e-marker"
+_BUMPED_PACKAGE = "bmc-nix-cli"
+_NIX_PAYLOAD_MEMBERS = ("bmc-nix-cli", "servers.json.default")
+
+
+@dataclass
+class E2eRig:
+    """The assembled rig's device-facing coordinates."""
+
+    base_url: str
+    feed_url: str
+    cache_url: str
+    cache_public_key: str
+    preflight_urls: list[str]
+
+
+@dataclass
+class E2eRun:
+    """Mutable carrier threaded through the e2e-sysupgrade stages."""
+
+    image_a: Image  # baseline firmware; scenario A flashes it over a cleared store
+    image_b: Image  # target firmware; scenario B upgrades A's store with it
+    variant_a: rig.Variant | None = None
+    variant_b: rig.Variant | None = None
+    rig: E2eRig | None = None
+    pinned_host: str | None = None  # numeric address for the cleardown/flash window
+    bumped_path: str | None = None  # variant B's bumped store path, from index B
+    generation_before: str | None = None  # scenario B's pre-flash current generation
+
+
+@stage("Validate e2e images")
+def validate_e2e_inputs(run: E2eRun) -> str:
+    """Two differing versions are load-bearing: an index identical to the
+    installed set yields an empty upgrade plan and never invokes nix-store.
+    Both images must be Nix-era — a legacy image would pass every generic
+    check and still reach the destructive cleardown."""
+
+    a, b = run.image_a.version, run.image_b.version
+    require(a != b, f"images A and B carry the same firmware version {console.lit(a)}")
+    for image in (run.image_a, run.image_b):
+        _require_nix_era(image)
+    return f"A {console.lit(a)}, B {console.lit(b)}"
+
+
+def _require_nix_era(image: Image) -> None:
+    """COMMAND only enters the Nix flow when it finds its two payload
+    members in the tar."""
+
+    members = set(image.members())
+    missing = [
+        member
+        for member in _NIX_PAYLOAD_MEMBERS
+        if f"{image.sysupgrade_dir}/{member}" not in members
+    ]
+    require(
+        not missing,
+        f"{console.lit(image.path.name)} is not Nix-era — payload member(s) missing: "
+        + ", ".join(missing),
+    )
+
+
+@stage("Build e2e artifacts")
+def build_e2e_artifacts(nix: Nix, run: E2eRun) -> str:
+    """Build both variants' index + tarball in one nix invocation (one
+    consistent evaluation of the worktree), for the images' exact
+    versions — the invariant the CLI cannot check itself: tarball
+    metadata == feed entry == flashed firmware version."""
+
+    args = {"bosVersionA": run.image_a.version, "bosVersionB": run.image_b.version}
+    outs = dict(zip(_E2E_ATTRS, nix.build_file(_E2E_ARTIFACTS_FILE, _E2E_ATTRS, args), strict=True))
+    run.variant_a = _variant(run.image_a.version, outs["index-a"], outs["tarball-a"])
+    run.variant_b = _variant(run.image_b.version, outs["index-b"], outs["tarball-b"])
+    return f"{console.lit(run.variant_a.tarball.name)}, {console.lit(run.variant_b.tarball.name)}"
+
+
+def _variant(bos_version: str, index_out: str, tarball_out: str) -> rig.Variant:
+    """Validate a variant's tarball metadata and locate its archive."""
+
+    meta_path = Path(tarball_out) / "metadata.json"
+    require(meta_path.is_file(), f"no metadata.json in {console.lit(tarball_out)}")
+    meta = json.loads(meta_path.read_text())
+    built_for = meta.get("bos_version") or "<unset>"
+    require(
+        built_for == bos_version,
+        f"artifact carries {console.lit(built_for)}, built for {console.lit(bos_version)}",
+    )
+    name = meta.get("tarball_name") or ""
+    tarball = Path(tarball_out) / name
+    require(
+        bool(name) and "/" not in name and tarball.is_file(),
+        f"metadata.json names a missing archive: {console.lit(name)}",
+    )
+    profile_path = meta.get("profile_path") or ""
+    require(
+        profile_path == os.path.normpath(profile_path) and profile_path.startswith("/nix/"),
+        f"profile_path is not a normalized path under /nix: {console.lit(profile_path)}",
+    )
+    return rig.Variant(
+        bos_version=bos_version,
+        profile_path=profile_path,
+        index=Path(index_out),
+        tarball=tarball,
+    )
+
+
+@stage("Assemble rig")
+def assemble_rig(nix: Nix, run: E2eRun, *, workdir: Path, base_url: str) -> str:
+    """Write the serve tree and the signed cache; record every URL the
+    device must later be able to fetch."""
+
+    a, b = run.variant_a, run.variant_b
+    if a is None or b is None:
+        msg = "BUG: e2e artifacts were not built before rig assembly"
+        raise RuntimeError(msg)
+    serve_root = workdir / "serve"
+    rig.write_serve_root(serve_root, [a, b], base_url)
+    public = rig.make_cache(nix, workdir / "cache-key.secret", serve_root / "cache", [a, b])
+    run.bumped_path = rig.package_store_path(b.index, _BUMPED_PACKAGE)
+    require(
+        run.bumped_path is not None,
+        f"index B lists no {console.lit(_BUMPED_PACKAGE)} — nothing would prove the upgrade",
+    )
+    narinfos = sorted((serve_root / "cache").glob("*.narinfo"))
+    require(bool(narinfos), "the rig cache holds no narinfo — nix copy produced nothing")
+    run.rig = E2eRig(
+        base_url=base_url,
+        feed_url=f"{base_url}/{rig.FEED_NAME}",
+        cache_url=f"{base_url}/cache",
+        cache_public_key=public,
+        preflight_urls=[
+            f"{base_url}/{rig.FEED_NAME}",
+            f"{base_url}/tarballs/{a.tarball.name}",
+            f"{base_url}/index/{a.bos_version}/{rig.INDEX_NAME}",
+            f"{base_url}/index/{b.bos_version}/{rig.INDEX_NAME}",
+            f"{base_url}/cache/{narinfos[0].name}",
+        ],
+    )
+    return f"{console.lit(base_url)} ({console.lit(len(narinfos))} narinfo(s))"
+
+
+@stage("Register rig on device")
+def register_rig(dev: Device, run: E2eRun) -> str:
+    """Point the device at the rig, in two steps: a complete runtime
+    servers.json whose factory entry is the rig (the only way to redirect
+    init), then register-server for the feed-linked entry + substituter.
+    Sysupgrade does not preserve the runtime registry, so this re-runs
+    before every flash. The ids must differ — registering under the
+    factory's own id is rejected as a collision."""
+
+    r = run.rig
+    if r is None:
+        msg = "BUG: the rig was not assembled before registration"
+        raise RuntimeError(msg)
+    config = json.dumps(
+        {
+            "factory": {
+                "id": "e2e-factory",
+                "base_url": r.base_url,
+                "known_public_key": r.cache_public_key,
+                "priority": 0,
+                "enabled": True,
+            },
+            "servers": [],
+        }
+    )
+    dev.run(f"mkdir -p /etc/nix-upgrade && printf '%s' {shlex.quote(config)} > {_SERVERS_JSON}")
+    dev.run(
+        f"{shlex.quote(_REMOTE_CLI)} register-server --id e2e "
+        f"--feed-url {shlex.quote(r.feed_url)} "
+        f"--index-public-key {shlex.quote(r.cache_public_key)} "
+        f"--cache-url {shlex.quote(r.cache_url)} "
+        f"--cache-public-key {shlex.quote(r.cache_public_key)}"
+    )
+    return (
+        f"factory {console.lit('e2e-factory')} + server {console.lit('e2e')}"
+        f" → {console.lit(r.base_url)}"
+    )
+
+
+@stage("Clean up server registry")
+def cleanup_server_registry(dev: Device) -> str:
+    """Remove the runtime servers.json pointing at the ephemeral rig: left
+    behind by an aborted run it would win over the shipped defaults and
+    send the next real init or upgrade to a dead URL. A completed flash
+    drops it anyway — sysupgrade does not preserve the runtime registry."""
+
+    dev.run(f"rm -f {_SERVERS_JSON}")
+    return console.lit(_SERVERS_JSON)
+
+
+@stage("Preflight rig from device")
+def preflight_rig(dev: Device, run: E2eRun) -> str:
+    """Probe the first bytes of every rig URL from the device itself
+    (busybox wget): host-IP autodetection, routing, firewall, or
+    URL-generation faults must fail here, not after the store is gone."""
+
+    r = run.rig
+    if r is None:
+        msg = "BUG: the rig was not assembled before preflight"
+        raise RuntimeError(msg)
+    failed = [url for url in r.preflight_urls if _first_bytes(dev, url) == 0]
+    require(not failed, "the device cannot fetch: " + ", ".join(console.lit(u) for u in failed))
+    return f"{console.lit(len(r.preflight_urls))} URLs reachable"
+
+
+def _first_bytes(dev: Device, url: str) -> int:
+    """Bounded reachability probe: how many of the first bytes busybox wget
+    pulls from `url`; 0 on any HTTP or routing failure (wget emits nothing
+    on error). Counting bytes instead of `&& echo ok` keeps the probe from
+    downloading the whole init tarball just to prove the URL works — dd
+    caps the read and wget dies on the closed pipe."""
+
+    count = dev.read(
+        f"wget -q -O - {shlex.quote(url)} 2>/dev/null | dd bs=64 count=1 2>/dev/null | wc -c"
+    )
+    try:
+        return int(count)
+    except ValueError:
+        return 0
+
+
+@stage("Pin device address")
+def pin_device_address(
+    dev: Device, run: E2eRun, *, resolve: Callable[[str], str] = socket.gethostbyname
+) -> str:
+    """Resolve --device to a numeric address for the cleardown/flash window:
+    the cleardown stops avahi with the generation's other services, so an
+    mDNS name can stop resolving mid-run. After each reboot the harness
+    returns to the original name — the reboot may take a new DHCP lease."""
+
+    try:
+        run.pinned_host = resolve(dev.host)
+    except OSError as e:
+        raise Abort(f"cannot resolve {console.lit(dev.host)}: {e}") from None
+    return console.lit(run.pinned_host)
 
 
 def _mem_available(dev: Device) -> int:

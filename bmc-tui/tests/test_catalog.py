@@ -2,6 +2,7 @@
 
 import io
 import json
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from bmc_tui import catalog
+from bmc_tui import catalog, rig
 from bmc_tui.device import Device
 from bmc_tui.image import Image
 from bmc_tui.nix import Built, Pkg
@@ -58,12 +59,20 @@ def _unreachable(argv: list[str]) -> "subprocess.CompletedProcess[str]":
     raise subprocess.CalledProcessError(255, argv)
 
 
-def _image(tmp_path: Path, *, top: str = _TOP, extra: tuple[str, ...] = ("rootfs.img",)) -> Image:
-    fw = tmp_path / "fw.tar"
+def _image(
+    tmp_path: Path,
+    *,
+    top: str = _TOP,
+    extra: tuple[str, ...] = ("rootfs.img",),
+    name: str = "fw.tar",
+    version: str = "2026-06-14-x",
+) -> Image:
+    fw = tmp_path / name
     with tarfile.open(fw, "w") as tar:
-        files = {"COMMAND": b'UPGRADE_FW_VERSION="2026-06-14-x"\n', **{n: b"x" for n in extra}}
-        for name, data in files.items():
-            info = tarfile.TarInfo(f"{top}/{name}")
+        command = f'UPGRADE_FW_VERSION="{version}"\n'.encode()
+        files = {"COMMAND": command, **{n: b"x" for n in extra}}
+        for name_, data in files.items():
+            info = tarfile.TarInfo(f"{top}/{name_}")
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
     return Image(fw)
@@ -81,6 +90,7 @@ class _FakeNix:
 
     def __init__(self, outs: dict[str, Path]) -> None:
         self._outs = outs
+        self.build_file_calls: list[tuple[str, list[str], dict[str, str]]] = []
 
     def discover_widgets(self) -> list[str]:
         return []
@@ -98,6 +108,7 @@ class _FakeNix:
         return str(self._outs[attr])
 
     def build_file(self, file: str, attrs: list[str], args: dict[str, str]) -> list[str]:
+        self.build_file_calls.append((file, attrs, args))
         return [str(self._outs[attr]) for attr in attrs]
 
     def generate_cache_key(self, name: str, secret: Path) -> str:
@@ -952,3 +963,189 @@ def test_remove_package_skips_when_absent() -> None:
     backend = _Exec(_routes({"list-packages": _list_packages("core")}))
     catalog.remove_package(Device("h", backend=backend), _cycle(), "widget-blockheight")
     assert all("remove-packages" not in run[-1] for run in backend.runs)
+
+
+# ── sysupgrade e2e ────────────────────────────────────────────────────────────
+
+_NIX_ERA_EXTRA = ("rootfs.img", "bmc-nix-cli", "servers.json.default")
+
+
+def _e2e_image(tmp_path: Path, *, name: str, version: str) -> Image:
+    return _image(tmp_path, name=name, version=version, extra=_NIX_ERA_EXTRA)
+
+
+def _index_out(tmp_path: Path, version: str, packages: list[tuple[str, str]]) -> Path:
+    out = tmp_path / f"index-{version}"
+    out.mkdir(parents=True, exist_ok=True)
+    entries = [{"name": n, "version": "1.0", "store_path": p} for n, p in packages]
+    (out / rig.INDEX_NAME).write_text(
+        json.dumps({"version": 1, "indexes": [], "caches": [], "packages": entries})
+    )
+    return out
+
+
+def _e2e_tarball_out(tmp_path: Path, version: str, *, meta_version: str | None = None) -> Path:
+    return _tarball_out(
+        tmp_path / f"tar-{version}",
+        overrides={
+            "bos_version": meta_version if meta_version is not None else version,
+            "tarball_name": f"nix-{version}.tar.gz",
+        },
+    )
+
+
+def _e2e_nix(tmp_path: Path, *, version_a: str = "va", version_b: str = "vb") -> _FakeNix:
+    return _FakeNix(
+        {
+            "index-a": _index_out(tmp_path, version_a, [("bmc-nix-cli", "/nix/store/cli-a")]),
+            "tarball-a": _e2e_tarball_out(tmp_path, version_a),
+            "index-b": _index_out(tmp_path, version_b, [("bmc-nix-cli", "/nix/store/cli-b")]),
+            "tarball-b": _e2e_tarball_out(tmp_path, version_b),
+            _CLI_ATTR: _cli_out(tmp_path),
+        }
+    )
+
+
+def _e2e_run(tmp_path: Path, *, version_a: str = "va", version_b: str = "vb") -> catalog.E2eRun:
+    return catalog.E2eRun(
+        image_a=_e2e_image(tmp_path, name="a.tar", version=version_a),
+        image_b=_e2e_image(tmp_path, name="b.tar", version=version_b),
+    )
+
+
+def test_e2e_inputs_reject_equal_versions(tmp_path: Path) -> None:
+    run = _e2e_run(tmp_path, version_a="same", version_b="same")
+    with pytest.raises(Abort, match="same firmware version"):
+        catalog.validate_e2e_inputs(run)
+
+
+def test_e2e_inputs_reject_a_legacy_payload(tmp_path: Path) -> None:
+    run = catalog.E2eRun(
+        image_a=_image(tmp_path, name="a.tar", version="va"),
+        image_b=_e2e_image(tmp_path, name="b.tar", version="vb"),
+    )
+    with pytest.raises(Abort, match="bmc-nix-cli"):
+        catalog.validate_e2e_inputs(run)
+
+
+def test_e2e_inputs_accept_a_nix_era_pair(tmp_path: Path) -> None:
+    catalog.validate_e2e_inputs(_e2e_run(tmp_path))
+
+
+def test_build_e2e_artifacts_builds_all_attrs_in_one_call(tmp_path: Path) -> None:
+    run = _e2e_run(tmp_path)
+    nix = _e2e_nix(tmp_path)
+    catalog.build_e2e_artifacts(nix, run)
+    assert nix.build_file_calls == [
+        (
+            "nix/e2e-artifacts.nix",
+            ["index-a", "tarball-a", "index-b", "tarball-b"],
+            {"bosVersionA": "va", "bosVersionB": "vb"},
+        )
+    ]
+    assert run.variant_a is not None and run.variant_a.bos_version == "va"
+    assert run.variant_b is not None and run.variant_b.tarball.name == "nix-vb.tar.gz"
+    assert run.variant_a.profile_path == "/nix/var/nix/gcroots/profiles/bmc"
+
+
+def test_build_e2e_artifacts_rejects_version_mismatch(tmp_path: Path) -> None:
+    nix = _e2e_nix(tmp_path)
+    nix._outs["tarball-a"] = _e2e_tarball_out(tmp_path / "bad", "va", meta_version="other")
+    with pytest.raises(Abort, match="carries"):
+        catalog.build_e2e_artifacts(nix, _e2e_run(tmp_path))
+
+
+def test_assemble_rig_records_urls_and_bumped_path(tmp_path: Path) -> None:
+    run = _e2e_run(tmp_path)
+    nix = _e2e_nix(tmp_path)
+    catalog.build_e2e_artifacts(nix, run)
+    catalog.assemble_rig(nix, run, workdir=tmp_path / "work", base_url="http://10.1.1.1:8083")
+    assert run.bumped_path == "/nix/store/cli-b"
+    assert run.rig is not None
+    assert run.rig.feed_url == f"http://10.1.1.1:8083/{rig.FEED_NAME}"
+    assert run.rig.cache_url == "http://10.1.1.1:8083/cache"
+    assert run.rig.cache_public_key == "sysupgrade-e2e-1:PUBLICKEY"
+    assert run.rig.preflight_urls == [
+        f"http://10.1.1.1:8083/{rig.FEED_NAME}",
+        "http://10.1.1.1:8083/tarballs/nix-va.tar.gz",
+        f"http://10.1.1.1:8083/index/va/{rig.INDEX_NAME}",
+        f"http://10.1.1.1:8083/index/vb/{rig.INDEX_NAME}",
+        "http://10.1.1.1:8083/cache/fake.narinfo",
+    ]
+
+
+def _rigged_run(tmp_path: Path) -> catalog.E2eRun:
+    run = _e2e_run(tmp_path)
+    nix = _e2e_nix(tmp_path)
+    catalog.build_e2e_artifacts(nix, run)
+    catalog.assemble_rig(nix, run, workdir=tmp_path / "work", base_url="http://10.1.1.1:8083")
+    return run
+
+
+def test_register_rig_writes_factory_then_registers_server(tmp_path: Path) -> None:
+    exc = _Exec(_routes({}))
+    dev = Device("h", backend=exc)
+    catalog.register_rig(dev, _rigged_run(tmp_path))
+    write_cmd, register_cmd = (argv[-1] for argv in exc.runs)
+    config = json.dumps(
+        {
+            "factory": {
+                "id": "e2e-factory",
+                "base_url": "http://10.1.1.1:8083",
+                "known_public_key": "sysupgrade-e2e-1:PUBLICKEY",
+                "priority": 0,
+                "enabled": True,
+            },
+            "servers": [],
+        }
+    )
+    assert write_cmd == (
+        "mkdir -p /etc/nix-upgrade && printf '%s' "
+        f"{shlex.quote(config)} > /etc/nix-upgrade/servers.json"
+    )
+    assert register_cmd == (
+        f"{shlex.quote(catalog._REMOTE_CLI)} register-server --id e2e "
+        f"--feed-url {shlex.quote(f'http://10.1.1.1:8083/{rig.FEED_NAME}')} "
+        "--index-public-key sysupgrade-e2e-1:PUBLICKEY "
+        "--cache-url http://10.1.1.1:8083/cache "
+        "--cache-public-key sysupgrade-e2e-1:PUBLICKEY"
+    )
+
+
+def test_cleanup_server_registry_removes_the_runtime_file() -> None:
+    exc = _Exec(_routes({}))
+    catalog.cleanup_server_registry(Device("h", backend=exc))
+    assert [argv[-1] for argv in exc.runs] == ["rm -f /etc/nix-upgrade/servers.json"]
+
+
+def test_preflight_passes_when_all_urls_yield_bytes(tmp_path: Path) -> None:
+    exc = _Exec(_routes({"wget": "64"}))
+    catalog.preflight_rig(Device("h", backend=exc), _rigged_run(tmp_path))
+    probes = [argv[-1] for argv in exc.runs if "wget" in argv[-1]]
+    assert len(probes) == 5
+    assert all("dd bs=64 count=1" in probe for probe in probes)  # bounded, not full downloads
+
+
+def test_preflight_aborts_naming_the_unreachable_url(tmp_path: Path) -> None:
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1]
+        if "wget" in cmd and rig.FEED_NAME not in cmd:
+            return _cp(argv, "64")
+        return _cp(argv, "0")
+
+    with pytest.raises(Abort, match=rig.FEED_NAME):
+        catalog.preflight_rig(Device("h", backend=_Exec(respond)), _rigged_run(tmp_path))
+
+
+def test_pin_device_address_records_the_numeric_ip(tmp_path: Path) -> None:
+    run = _e2e_run(tmp_path)
+    catalog.pin_device_address(Device("deck.local"), run, resolve=lambda _h: "10.0.0.9")
+    assert run.pinned_host == "10.0.0.9"
+
+
+def test_pin_device_address_aborts_on_resolution_failure(tmp_path: Path) -> None:
+    def resolve(_host: str) -> str:
+        raise OSError("no such host")
+
+    with pytest.raises(Abort, match="cannot resolve"):
+        catalog.pin_device_address(Device("deck.local"), _e2e_run(tmp_path), resolve=resolve)
