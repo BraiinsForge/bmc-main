@@ -949,6 +949,148 @@ def sweep_uploaded_images(dev: Device, run: E2eRun) -> str:
     return ", ".join(console.lit(p) for p in paths)
 
 
+@stage("Verify initialized")
+def verify_initialized(
+    dev: Device,
+    run: E2eRun,
+    *,
+    timeout: int = 300,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> str:
+    """Poll, not one-shot: activation happens at boot via nix-activator
+    after SSH already answers. The tarball ships a generation but no
+    `current` symlink — the activator's latest-generation fallback
+    promoting one is part of the contract under test."""
+
+    a = run.variant_a
+    if a is None:
+        msg = "BUG: e2e artifacts were not built before verification"
+        raise RuntimeError(msg)
+    if dry_run.get():
+        return "verification skipped (dry-run)"
+
+    def check() -> str | None:
+        version = dev.read("cat /etc/bos_version 2>/dev/null || true")
+        if version != a.bos_version:
+            return f"bos_version is {version or '<unset>'}, want {a.bos_version}"
+        if not dev.read(f"[ {_NIX_STORE} -ef {_NIX_BACKING} ] && echo yes || true"):
+            return f"{_NIX_STORE} is not backed by {_NIX_BACKING}"
+        current = shlex.quote(f"{a.profile_path}/current")
+        generation = dev.read(f"readlink -f {current} 2>/dev/null || true")
+        if not generation:
+            return "the activator's fallback did not promote a current generation"
+        return _services_not_running(dev, generation)
+
+    failure = _poll_until(_settling(check), timeout=timeout, sleep=sleep, clock=clock)
+    if failure is not None:
+        _dump_diagnostics(dev)
+        raise Abort(f"init verification failed: {failure}")
+    return f"{console.lit(a.bos_version)} initialized and active"
+
+
+@stage("Verify upgraded")
+def verify_upgraded(
+    dev: Device,
+    run: E2eRun,
+    *,
+    timeout: int = 300,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> str:
+    """Poll for the staged `next` generation's boot-time activation: the
+    store upgraded in place (marker intact), `current` advanced, the
+    bumped path realised from the rig cache, the next.<version-B> marker
+    consumed."""
+
+    b, before, bumped = run.variant_b, run.generation_before, run.bumped_path
+    if b is None or before is None or bumped is None:
+        msg = "BUG: scenario B prerequisites were not recorded before verification"
+        raise RuntimeError(msg)
+    if dry_run.get():
+        return "verification skipped (dry-run)"
+
+    def check() -> str | None:
+        version = dev.read("cat /etc/bos_version 2>/dev/null || true")
+        if version != b.bos_version:
+            return f"bos_version is {version or '<unset>'}, want {b.bos_version}"
+        if not dev.read(f"[ -f {_E2E_MARKER} ] && echo yes || true"):
+            return "the e2e marker vanished — the store was wiped, not upgraded"
+        current = shlex.quote(f"{b.profile_path}/current")
+        generation = dev.read(f"readlink -f {current} 2>/dev/null || true")
+        if not generation or generation == before:
+            return f"current still resolves to {generation or '<nothing>'}"
+        manifest = f"{generation}/manifest"
+        hit = dev.read(
+            f"grep -q {shlex.quote(bumped)} {shlex.quote(manifest)} 2>/dev/null && echo yes || true"
+        )
+        if not hit:
+            return f"the active manifest does not list the bumped path {bumped}"
+        names = dev.read(f"ls {shlex.quote(b.profile_path)} 2>/dev/null || true").split()
+        if f"next.{b.bos_version}" in names:
+            return f"next.{b.bos_version} is still pending — the activator did not consume it"
+        return _services_not_running(dev, generation)
+
+    failure = _poll_until(_settling(check), timeout=timeout, sleep=sleep, clock=clock)
+    if failure is not None:
+        _dump_diagnostics(dev)
+        raise Abort(f"upgrade verification failed: {failure}")
+    return f"{console.lit(b.bos_version)} upgraded in place"
+
+
+def _settling(check: Callable[[], str | None]) -> Callable[[], str | None]:
+    """Wrap a verification poll check so a transport failure counts as not
+    settled — the polls span the reboot window, where ssh can still flap."""
+
+    def wrapped() -> str | None:
+        try:
+            return check()
+        except subprocess.CalledProcessError:
+            return "the device is not answering ssh yet"
+
+    return wrapped
+
+
+def _services_not_running(dev: Device, generation: str) -> str | None:
+    """First S*-enabled generation service whose `status` exits nonzero
+    (exit 0 = running — the orchestrator's own convention; generated
+    services define no `running` action); None when all run. Disabled
+    services are not required to run."""
+
+    links = dev.read(f"ls {shlex.quote(generation)}/etc/rc.d/ 2>/dev/null || true").split()
+    for name in sorted({_rc_name(link) for link in links if link.startswith("S")}):
+        probe = f"/etc/init.d/{shlex.quote(name)} status >/dev/null 2>&1 && echo ok || true"
+        if "ok" not in dev.read(probe):
+            return f"service {name} is not running"
+    return None
+
+
+def _dump_diagnostics(dev: Device) -> None:
+    """Best-effort post-mortem before aborting a verification — boot-time
+    activation is otherwise undebuggable, and an unreachable device must
+    not turn the abort into a transport traceback. The activator's own
+    lines are grepped separately so a chatty boot cannot push them out of
+    the tail window; service state is probed, not just listed."""
+
+    service_state = (
+        "for s in /etc/init.d/*; do "
+        'printf "%s: " "${s##*/}"; '
+        '"$s" status >/dev/null 2>&1 && echo running || echo stopped; done'
+    )
+    for title, cmd in (
+        ("logread", "logread 2>/dev/null | tail -n 120"),
+        ("nix-activator", "logread 2>/dev/null | grep nix-activator | tail -n 60"),
+        ("profile", f"ls -l {_PROFILE_DIR}/ 2>/dev/null"),
+        ("manifest", f"head -c 4096 {_PROFILE_DIR}/current/manifest 2>/dev/null"),
+        ("service state", service_state),
+        ("mounts", "grep -E ' /(nix|mnt/data) ' /proc/mounts 2>/dev/null"),
+    ):
+        try:
+            console.kv(title, dev.read(f"{cmd} || true"))
+        except subprocess.CalledProcessError as e:
+            console.kv(title, f"unavailable: {e}")
+
+
 def _mem_available(dev: Device) -> int:
     """Free RAM in bytes; /tmp is swapless tmpfs, so RAM bounds upload+flash."""
 

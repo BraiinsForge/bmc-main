@@ -9,6 +9,7 @@ import tarfile
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 from pathlib import Path
+from typing import Required, TypedDict, Unpack
 
 import pytest
 
@@ -1359,3 +1360,166 @@ def test_marker_and_image_sweep_commands(tmp_path: Path) -> None:
         "rm -f /mnt/data/nix/.sysupgrade-e2e-marker",
         "rm -f /tmp/a.tar /tmp/b.tar",
     ]
+
+
+class _PollKnobs(TypedDict):
+    timeout: int
+    sleep: Callable[[float], None]
+    clock: Callable[[], float]
+
+
+def _instant() -> _PollKnobs:
+    """Poll knobs that make verification single-shot in tests."""
+    clock = iter([0.0, 100.0, 200.0, 300.0, 400.0])
+    return {"timeout": 1, "sleep": lambda _s: None, "clock": lambda: next(clock)}
+
+
+class _VerifyKnobs(TypedDict, total=False):
+    version: Required[str]
+    marker: bool
+    generation: str
+    manifest_hit: bool
+    profile_listing: str
+    services_ok: bool
+    mount_identity: bool
+
+
+def _verify_routes(**knobs: Unpack[_VerifyKnobs]) -> _Respond:
+    version = knobs["version"]
+    outputs = {
+        "bos_version": version,
+        "readlink -f": knobs.get("generation", _GEN),
+        "-ef": "yes" if knobs.get("mount_identity", True) else "",
+        ".sysupgrade-e2e-marker": "yes" if knobs.get("marker", True) else "",
+        "manifest": "yes" if knobs.get("manifest_hit", True) else "",
+        "gcroots/profiles/bmc 2>/dev/null": knobs.get("profile_listing", "1-link\ncurrent"),
+        " status ": "ok" if knobs.get("services_ok", True) else "",
+    }
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1]
+        if "rc.d" in cmd and cmd.startswith("ls"):
+            return _cp(argv, "S20bar")
+        for key, value in outputs.items():
+            if key in cmd:
+                return _cp(argv, value)
+        return _cp(argv)
+
+    return respond
+
+
+def test_verify_initialized_passes(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    exc = _Exec(_verify_routes(version="va"))
+    catalog.verify_initialized(Device("h", backend=exc), run, **_instant())
+
+
+def test_verify_initialized_fails_on_version_and_dumps_diagnostics(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    exc = _Exec(_verify_routes(version="wrong"))
+    with pytest.raises(Abort, match="bos_version"):
+        catalog.verify_initialized(Device("h", backend=exc), run, **_instant())
+    cmds = [argv[-1] for argv in exc.runs]
+    assert any("grep nix-activator" in c for c in cmds)
+    assert any("status >/dev/null 2>&1 && echo running" in c for c in cmds)
+
+
+def test_verify_initialized_tolerates_a_transport_flap(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    good = _verify_routes(version="va")
+    state = {"calls": 0}
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        state["calls"] += 1
+        if state["calls"] == 1:
+            raise subprocess.CalledProcessError(255, argv)
+        return good(argv)
+
+    clock = iter([0.0, 100.0, 200.0, 300.0, 400.0])
+    knobs: _PollKnobs = {"timeout": 250, "sleep": lambda _s: None, "clock": lambda: next(clock)}
+    catalog.verify_initialized(Device("h", backend=_Exec(respond)), run, **knobs)
+
+
+def test_verify_initialized_survives_an_unreachable_device(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    with pytest.raises(Abort, match="not answering"):
+        catalog.verify_initialized(Device("h", backend=_Exec(_unreachable)), run, **_instant())
+
+
+def test_verify_initialized_fails_on_mount_identity(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    exc = _Exec(_verify_routes(version="va", mount_identity=False))
+    with pytest.raises(Abort, match="not backed"):
+        catalog.verify_initialized(Device("h", backend=exc), run, **_instant())
+
+
+def test_verify_initialized_fails_without_a_promoted_current(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    exc = _Exec(_verify_routes(version="va", generation=""))
+    with pytest.raises(Abort, match="did not promote"):
+        catalog.verify_initialized(Device("h", backend=exc), run, **_instant())
+
+
+def test_verify_initialized_fails_on_a_stopped_service(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    exc = _Exec(_verify_routes(version="va", services_ok=False))
+    with pytest.raises(Abort, match="bar is not running"):
+        catalog.verify_initialized(Device("h", backend=exc), run, **_instant())
+
+
+def test_verify_upgraded_passes(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    run.generation_before = "/mnt/data/nix/var/nix/profiles/4"
+    exc = _Exec(_verify_routes(version="vb"))
+    catalog.verify_upgraded(Device("h", backend=exc), run, **_instant())
+
+
+def test_verify_upgraded_survives_an_unreachable_device(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    run.generation_before = "/mnt/data/nix/var/nix/profiles/4"
+    with pytest.raises(Abort, match="not answering"):
+        catalog.verify_upgraded(Device("h", backend=_Exec(_unreachable)), run, **_instant())
+
+
+def test_verify_upgraded_fails_when_marker_vanished(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    run.generation_before = "/mnt/data/nix/var/nix/profiles/4"
+    exc = _Exec(_verify_routes(version="vb", marker=False))
+    with pytest.raises(Abort, match="wiped"):
+        catalog.verify_upgraded(Device("h", backend=exc), run, **_instant())
+
+
+def test_verify_upgraded_fails_when_generation_did_not_advance(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    run.generation_before = _GEN
+    exc = _Exec(_verify_routes(version="vb"))
+    with pytest.raises(Abort, match="still resolves"):
+        catalog.verify_upgraded(Device("h", backend=exc), run, **_instant())
+
+
+def test_verify_upgraded_fails_when_manifest_misses_the_bump(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    run.generation_before = "/mnt/data/nix/var/nix/profiles/4"
+    exc = _Exec(_verify_routes(version="vb", manifest_hit=False))
+    with pytest.raises(Abort, match="bumped path"):
+        catalog.verify_upgraded(Device("h", backend=exc), run, **_instant())
+
+
+def test_verify_upgraded_fails_on_pending_next_marker(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    run.generation_before = "/mnt/data/nix/var/nix/profiles/4"
+    exc = _Exec(_verify_routes(version="vb", profile_listing="1-link\ncurrent\nnext.vb"))
+    with pytest.raises(Abort, match=r"next\.vb"):
+        catalog.verify_upgraded(Device("h", backend=exc), run, **_instant())
+
+
+def test_verify_upgraded_ignores_an_unrelated_next_marker(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    run.generation_before = "/mnt/data/nix/var/nix/profiles/4"
+    exc = _Exec(_verify_routes(version="vb", profile_listing="1-link\ncurrent\nnext.other"))
+    catalog.verify_upgraded(Device("h", backend=exc), run, **_instant())
+
+
+def test_rc_name_strips_prefix_and_priority() -> None:
+    assert catalog._rc_name("S20bar") == "bar"
+    assert catalog._rc_name("K05baz") == "baz"
