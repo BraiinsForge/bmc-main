@@ -100,6 +100,14 @@ class _FakeNix:
     def build_file(self, file: str, attrs: list[str], args: dict[str, str]) -> list[str]:
         return [str(self._outs[attr]) for attr in attrs]
 
+    def generate_cache_key(self, name: str, secret: Path) -> str:
+        secret.write_text("sk")
+        return f"{name}:PUBLICKEY"
+
+    def copy_signed(self, store_paths: list[str], cache: Path, secret: Path) -> None:
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "fake.narinfo").write_text("StorePath: /nix/store/fake\n")
+
     def copy(self, store_paths: list[str], dest: str) -> None:
         return None
 
@@ -303,6 +311,12 @@ class _Nix:
         return self.out_dir
 
     def build_file(self, file: str, attrs: list[str], args: dict[str, str]) -> list[str]:
+        raise NotImplementedError
+
+    def generate_cache_key(self, name: str, secret: Path) -> str:
+        raise NotImplementedError
+
+    def copy_signed(self, store_paths: list[str], cache: Path, secret: Path) -> None:
         raise NotImplementedError
 
     def resolve(self, attr: str) -> Pkg:

@@ -1,6 +1,7 @@
 """Unit tests for the local nix seam."""
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -136,3 +137,30 @@ def test_copy_runs_when_not_dry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(nix.subprocess, "run", lambda argv, **k: seen.append(argv) or _cp(argv))
     nix.real().copy(["/nix/store/x"], "ssh://h")
     assert seen == [["nix", "copy", "--to", "ssh://h", "/nix/store/x"]]
+
+
+def test_generate_cache_key_writes_secret_and_returns_public(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def run(argv: list[str], **kwargs: object) -> "subprocess.CompletedProcess[str]":
+        if "generate-secret" in argv:
+            assert argv == ["nix", "key", "generate-secret", "--key-name", "cache-1"]
+            return _cp(argv, "SECRETKEY\n")
+        assert argv == ["nix", "key", "convert-secret-to-public"]
+        assert kwargs["input"] == "SECRETKEY\n"
+        return _cp(argv, "cache-1:PUB\n")
+
+    monkeypatch.setattr(nix.subprocess, "run", run)
+    secret = tmp_path / "key.secret"
+    assert nix.real().generate_cache_key("cache-1", secret) == "cache-1:PUB"
+    assert secret.read_text() == "SECRETKEY\n"
+
+
+def test_copy_signed_signs_into_the_local_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[list[str]] = []
+    monkeypatch.setattr(nix.subprocess, "run", lambda argv, **_: seen.append(argv) or _cp(argv))
+    nix.real().copy_signed(["/nix/store/x"], tmp_path / "cache", tmp_path / "key.secret")
+    dest = f"file://{tmp_path}/cache?secret-key={tmp_path}/key.secret"
+    assert seen == [["nix", "copy", "--to", dest, "/nix/store/x"]]

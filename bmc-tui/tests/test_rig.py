@@ -1,0 +1,143 @@
+"""Unit tests for the e2e package rig."""
+
+import json
+import socket
+import urllib.request
+from pathlib import Path
+
+from bmc_tui import rig
+from bmc_tui.nix import Built, Pkg
+
+_PROFILE = "/nix/var/nix/gcroots/profiles/bmc"
+
+
+def _variant(tmp_path: Path, version: str, store_paths: list[str]) -> rig.Variant:
+    index = tmp_path / f"index-{version}"
+    index.mkdir()
+    packages = [
+        {"name": f"pkg{i}", "version": "1.0", "store_path": p} for i, p in enumerate(store_paths)
+    ]
+    (index / rig.INDEX_NAME).write_text(
+        json.dumps({"version": 1, "indexes": [], "caches": [], "packages": packages})
+    )
+    tarball_dir = tmp_path / f"tarball-{version}"
+    tarball_dir.mkdir()
+    tarball = tarball_dir / f"nix-{version}.tar.gz"
+    tarball.write_bytes(b"tar-bytes-" + version.encode())
+    return rig.Variant(bos_version=version, profile_path=_PROFILE, index=index, tarball=tarball)
+
+
+def _get(url: str) -> bytes:
+    with urllib.request.urlopen(url) as response:
+        return response.read()
+
+
+def test_feed_document_links_each_variant(tmp_path: Path) -> None:
+    a = _variant(tmp_path, "va", ["/nix/store/a"])
+    b = _variant(tmp_path, "vb", ["/nix/store/b"])
+    doc = json.loads(rig.feed_document([a, b], "http://10.0.0.1:8083"))
+    assert doc["version"] == 1
+    assert doc["entries"] == [
+        {
+            "bos_version": "va",
+            "download_url": "http://10.0.0.1:8083/tarballs/nix-va.tar.gz",
+            "profile_path": _PROFILE,
+            "index_url": f"http://10.0.0.1:8083/index/va/{rig.INDEX_NAME}",
+        },
+        {
+            "bos_version": "vb",
+            "download_url": "http://10.0.0.1:8083/tarballs/nix-vb.tar.gz",
+            "profile_path": _PROFILE,
+            "index_url": f"http://10.0.0.1:8083/index/vb/{rig.INDEX_NAME}",
+        },
+    ]
+
+
+def test_index_store_paths_and_package_lookup(tmp_path: Path) -> None:
+    v = _variant(tmp_path, "va", ["/nix/store/one", "/nix/store/two"])
+    assert rig.index_store_paths(v.index) == ["/nix/store/one", "/nix/store/two"]
+    assert rig.package_store_path(v.index, "pkg1") == "/nix/store/two"
+    assert rig.package_store_path(v.index, "absent") is None
+
+
+def test_serve_root_serves_feed_index_and_tarball(tmp_path: Path) -> None:
+    a = _variant(tmp_path, "va", ["/nix/store/a"])
+    root = tmp_path / "serve"
+    rig.write_serve_root(root, [a], "http://placeholder")
+    with rig.RigServer(root, port=0, bind_ip="127.0.0.1") as server:
+        base = f"http://127.0.0.1:{server.port}"
+        feed = json.loads(_get(f"{base}/{rig.FEED_NAME}"))
+        assert feed["entries"][0]["bos_version"] == "va"
+        assert json.loads(_get(f"{base}/index/va/{rig.INDEX_NAME}"))["packages"]
+        assert _get(f"{base}/tarballs/nix-va.tar.gz") == b"tar-bytes-va"
+
+
+def test_write_serve_root_is_rerunnable(tmp_path: Path) -> None:
+    a = _variant(tmp_path, "va", ["/nix/store/a"])
+    root = tmp_path / "serve"
+    rig.write_serve_root(root, [a], "http://placeholder")
+    rig.write_serve_root(root, [a], "http://placeholder")
+    assert (root / "tarballs" / "nix-va.tar.gz").read_bytes() == b"tar-bytes-va"
+
+
+def test_rig_server_serves_content_added_after_start(tmp_path: Path) -> None:
+    root = tmp_path / "serve"
+    root.mkdir()
+    with rig.RigServer(root, port=0, bind_ip="127.0.0.1") as server:
+        a = _variant(tmp_path, "va", ["/nix/store/a"])
+        rig.write_serve_root(root, [a], f"http://127.0.0.1:{server.port}")
+        feed = json.loads(_get(f"http://127.0.0.1:{server.port}/{rig.FEED_NAME}"))
+        assert feed["entries"][0]["bos_version"] == "va"
+
+
+def test_make_cache_signs_the_union_of_index_paths(tmp_path: Path) -> None:
+    copied: list[tuple[list[str], Path, Path]] = []
+
+    class _Nix:
+        def generate_cache_key(self, name: str, secret: Path) -> str:
+            secret.write_text("sk")
+            return f"{name}:PUB"
+
+        def copy_signed(self, store_paths: list[str], cache: Path, secret: Path) -> None:
+            copied.append((store_paths, cache, secret))
+
+        def discover_widgets(self) -> list[str]:
+            return []
+
+        def list_packages(self) -> list[str]:
+            return []
+
+        def resolve(self, attr: str) -> Pkg:
+            raise NotImplementedError
+
+        def build(self, pkgs: list[Pkg]) -> list[Built]:
+            return []
+
+        def build_out(self, attr: str) -> str:
+            raise NotImplementedError
+
+        def build_file(self, file: str, attrs: list[str], args: dict[str, str]) -> list[str]:
+            raise NotImplementedError
+
+        def copy(self, store_paths: list[str], dest: str) -> None:
+            return None
+
+    a = _variant(tmp_path, "va", ["/nix/store/shared", "/nix/store/a-only"])
+    b = _variant(tmp_path, "vb", ["/nix/store/shared", "/nix/store/b-only"])
+    secret = tmp_path / "key.secret"
+    public = rig.make_cache(_Nix(), secret, tmp_path / "cache", [a, b])
+    assert public == "sysupgrade-e2e-1:PUB"
+    assert secret.read_text() == "sk"
+    assert copied == [
+        (
+            ["/nix/store/a-only", "/nix/store/b-only", "/nix/store/shared"],
+            tmp_path / "cache",
+            secret,
+        )
+    ]
+
+
+def test_default_serve_ip_uses_the_route_towards_the_device() -> None:
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        port = listener.getsockname()[1]
+        assert rig.default_serve_ip("127.0.0.1", port=port) == "127.0.0.1"

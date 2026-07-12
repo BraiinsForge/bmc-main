@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from bmc_tui import console
@@ -75,6 +76,16 @@ class Nix(Protocol):
 
     def copy(self, store_paths: list[str], dest: str) -> None:
         """Copy closures to `dest`. Under --dry-run, log and skip."""
+        ...
+
+    def generate_cache_key(self, name: str, secret: Path) -> str:
+        """Write a fresh NAR-signing secret to `secret` and return its
+        public key."""
+        ...
+
+    def copy_signed(self, store_paths: list[str], cache: Path, secret: Path) -> None:
+        """Copy closures into a local file:// binary cache, signing every
+        path with `secret`."""
         ...
 
 
@@ -180,6 +191,32 @@ class _RealNix:
         env = dict(os.environ)
         env["NIX_SSHOPTS"] = f"{env.get('NIX_SSHOPTS', '')} -o LogLevel=ERROR".strip()
         subprocess.run(["nix", "copy", "--to", dest, *store_paths], check=True, env=env)
+
+    def generate_cache_key(self, name: str, secret: Path) -> str:
+        proc = subprocess.run(
+            ["nix", "key", "generate-secret", "--key-name", name],
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        secret.write_text(proc.stdout)
+        secret.chmod(0o600)
+        public = subprocess.run(
+            ["nix", "key", "convert-secret-to-public"],
+            input=proc.stdout,
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        return public.stdout.strip()
+
+    def copy_signed(self, store_paths: list[str], cache: Path, secret: Path) -> None:
+        # Host-side artifact staging, not a device mutation — runs under
+        # --dry-run like `build`; the ?secret-key param signs on write.
+        subprocess.run(
+            ["nix", "copy", "--to", f"file://{cache}?secret-key={secret}", *store_paths],
+            check=True,
+        )
 
 
 def real(*, max_jobs: int | None = None) -> Nix:
