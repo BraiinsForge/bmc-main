@@ -273,7 +273,7 @@ fn add_packages_mismatched_flag_counts_error() {
         "--version",
         "1.0.0",
     ]);
-    assert_eq!(run.exit_code(), Some(1));
+    assert_eq!(run.exit_code(), Some(2));
     assert!(
         run.stderr.contains("same number of times"),
         "stderr should explain the flag-count mismatch: {}",
@@ -372,7 +372,7 @@ fn remove_nonexistent_package_errors() {
         "--name",
         "nonexistent",
     ]);
-    assert_eq!(run.exit_code(), Some(1));
+    assert_eq!(run.exit_code(), Some(2));
     assert!(
         run.stderr.contains("requested for removal but not present"),
         "stderr should report the conflict: {}",
@@ -561,7 +561,7 @@ fn base_with_nonexistent_generation_errors() {
     create_activation_entrypoint(&store_a);
 
     let run = env.add_packages(&[("a", "1.0.0", &store_a)], &["--base", "42"]);
-    assert_eq!(run.exit_code(), Some(1));
+    assert_eq!(run.exit_code(), Some(2));
     assert!(
         run.stderr.contains("generation 42 not found"),
         "stderr should report the missing generation: {}",

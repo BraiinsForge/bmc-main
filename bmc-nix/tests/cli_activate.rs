@@ -152,7 +152,7 @@ fn activate_current_entrypoint_nonzero_is_hard_error() {
         "--profile-dir",
         &dir.path().display().to_string(),
     ]);
-    assert_eq!(run.exit_code(), Some(1));
+    assert_eq!(run.exit_code(), Some(2));
     // current stays put
     assert!(dir.path().join("current").symlink_metadata().is_ok());
 }
@@ -207,7 +207,7 @@ fn activate_latest_missing_is_hard_error() {
         "--generation",
         "latest",
     ]);
-    assert_eq!(run.exit_code(), Some(1));
+    assert_eq!(run.exit_code(), Some(2));
     assert!(
         run.stderr.contains("no profile generation"),
         "stderr should mention no-generation: {}",
@@ -245,7 +245,7 @@ fn activate_generation_number_missing_is_hard_error() {
         "--generation",
         "99",
     ]);
-    assert_eq!(run.exit_code(), Some(1));
+    assert_eq!(run.exit_code(), Some(2));
 }
 
 // ---------------------------------------------------------------------------
@@ -356,7 +356,7 @@ fn activate_next_failure_reverts_and_exits_nonzero() {
     ]);
     assert_eq!(
         run.exit_code(),
-        Some(1),
+        Some(2),
         "a reverted activation is still a failed activation"
     );
     // Gen 2's entrypoint ran (logged 2) then exited 42; the revert then
@@ -390,7 +390,7 @@ fn activate_next_failure_no_previous_propagates_error() {
         "--bos-version-file",
         &bos_version_file.display().to_string(),
     ]);
-    assert_eq!(run.exit_code(), Some(1));
+    assert_eq!(run.exit_code(), Some(2));
     assert!(
         dir.path().join("previous").symlink_metadata().is_err(),
         "no previous should have been staged (no current existed)",
@@ -421,7 +421,7 @@ fn mount_source_missing_exits_1() {
 }
 
 #[test]
-fn mount_target_is_regular_file_exits_1() {
+fn mount_target_is_regular_file_exits_2() {
     let dir = tmp_profile();
     let source = dir.path().join("source");
     std::fs::create_dir(&source).expect("BUG: mk source");
@@ -435,7 +435,7 @@ fn mount_target_is_regular_file_exits_1() {
         "--target",
         &target.display().to_string(),
     ]);
-    assert_eq!(run.exit_code(), Some(1));
+    assert_eq!(run.exit_code(), Some(2));
     assert!(
         run.stderr.contains("not a directory"),
         "stderr should mention non-directory target: {}",

@@ -383,7 +383,10 @@ enum Commands {
         #[arg(long, default_value = "/mnt/data")]
         download_dir: PathBuf,
 
-        /// Replace an existing promoted store at <data-dir>/nix.
+        /// Replace an existing promoted store at <data-dir>/nix. The
+        /// store is demoted before the replacement tarball is
+        /// validated: an init that fails after this point leaves the
+        /// device uninitialized, not on the old store.
         #[arg(long, action = clap::ArgAction::SetTrue)]
         wipe: bool,
 
@@ -1013,7 +1016,9 @@ async fn cmd_upgrade(
 ///
 /// TLS cert validation is disabled because NTP has not synced on
 /// first boot (clock is at epoch → certs appear "not yet valid").
-/// Tarball integrity is ensured by signature verification, not TLS.
+/// Nothing else authenticates the download: content signature
+/// verification is not implemented, so the fetched feed and tarball
+/// are trusted by URL alone.
 fn build_init_http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(15))
@@ -1260,13 +1265,28 @@ fn cmd_list_packages(profile_dir: Option<PathBuf>, format: OutputFormat) -> anyh
     Ok(())
 }
 
+#[tokio::main]
+async fn main() -> std::process::ExitCode {
+    let cli = Cli::parse();
+
+    match run(cli).await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("Error: {err:?}");
+            // Exit 1 belongs to is-initialized's "store absent" answer;
+            // runtime failures use 2 (clap's usage-error code) so the
+            // firmware COMMAND script never mistakes a broken run for
+            // an absent store.
+            std::process::ExitCode::from(2)
+        }
+    }
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "CLI dispatch — one match arm per subcommand"
 )]
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+async fn run(cli: Cli) -> anyhow::Result<()> {
     let log_format = cli.log_format;
 
     // File logging writes under `/var/log/bmc` and takes a sidecar lock —
@@ -1427,6 +1447,11 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::IsInitialized { data_dir } => {
+            // Exit 1 is a contract with the firmware sysupgrade
+            // COMMAND script, which routes exactly this status into
+            // its wipe-and-init branch. Runtime failures anywhere in
+            // this binary exit 2 (see main) so they can never
+            // masquerade as "store absent".
             if is_initialized(&data_dir) {
                 Ok(())
             } else {
