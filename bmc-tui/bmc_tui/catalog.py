@@ -743,7 +743,11 @@ def clear_nix_store(
     if failure is not None:
         raise Abort(f"the store is still referenced: {failure}")
     dev.run("sync")
-    if mounted:
+    # Boot can stack /nix bind mounts (each enabled copy of the activator
+    # runs mount_nix), so peel until the mount table is clear.
+    for _ in range(8):
+        if not dev.read(f"grep ' {_NIX_STORE} ' /proc/mounts || true"):
+            break
         dev.run(f"umount {_NIX_STORE}")
     require(
         not dev.read(f"grep ' {_NIX_STORE} ' /proc/mounts || true"),

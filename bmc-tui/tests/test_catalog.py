@@ -1157,19 +1157,21 @@ def test_pin_device_address_aborts_on_resolution_failure(tmp_path: Path) -> None
 _GEN = "/mnt/data/nix/var/nix/profiles/5"
 
 
-def _cleardown_routes(*, holders: str = "", orchestrator_lingers: bool = False) -> _Respond:
-    state = {"unmounted": False, "deleted": False}
+def _cleardown_routes(
+    *, holders: str = "", orchestrator_lingers: bool = False, mount_layers: int = 1
+) -> _Respond:
+    state = {"umounts": 0, "deleted": False}
 
     def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
         cmd = argv[-1]
         if "service delete" in cmd:
             state["deleted"] = True
         if "umount" in cmd:
-            state["unmounted"] = True
+            state["umounts"] += 1
         gone = state["deleted"] and not orchestrator_lingers
         outputs = {
             "service list": "" if gone else '{"bmc-nix-service-orchestrator":{}}',
-            "/proc/mounts": "" if state["unmounted"] else "/dev/x /nix ext4 rw 0 0",
+            "/proc/mounts": "" if state["umounts"] >= mount_layers else "/dev/x /nix ext4 rw 0 0",
             "readlink -f": _GEN,
             "/proc/[0-9]*": holders,
             "[ -d /mnt/data/nix ]": "yes",
@@ -1215,6 +1217,21 @@ def test_cleardown_aborts_when_the_orchestrator_never_disappears() -> None:
             clock=lambda: next(clock),
         )
     assert not any("shutdown" in argv[-1] or "umount" in argv[-1] for argv in exc.runs)
+
+
+def test_cleardown_peels_stacked_nix_mounts() -> None:
+    exc = _Exec(_cleardown_routes(mount_layers=3))
+    catalog.clear_nix_store(Device("h", backend=exc), assume_yes=True)
+    cmds = [argv[-1] for argv in exc.runs]
+    assert cmds.count("umount /nix") == 3
+    assert "rm -rf /mnt/data/nix" in cmds
+
+
+def test_cleardown_aborts_when_the_mount_never_clears() -> None:
+    exc = _Exec(_cleardown_routes(mount_layers=99))
+    with pytest.raises(Abort, match="still mounted"):
+        catalog.clear_nix_store(Device("h", backend=exc), assume_yes=True)
+    assert not any("rm -rf" in argv[-1] for argv in exc.runs)
 
 
 def test_cleardown_clears_a_stale_orchestrator_without_a_generation() -> None:
