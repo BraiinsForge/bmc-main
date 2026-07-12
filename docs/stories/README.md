@@ -63,6 +63,12 @@ as success.
 Swipe left/right to navigate between scenes and tap/drag to interact with widgets via touch events forwarded through the
 Wayland protocol.
 
+### [Settings Tray](settings-tray.md)
+
+A persistent overlay, revealed by swiping down from the top edge of any scene, for quick access to core system settings:
+brightness, sound volume, night mode, hold-to-confirm device restart, and WiFi reconfiguration. Controls are gated by
+what the device actually supports.
+
 ### [Night Mode](night-mode.md)
 
 Scheduled quiet-hours behavior that uses separate brightness and sound volume, optional screen auto-off with touch and
