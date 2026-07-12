@@ -8,9 +8,10 @@ dependency — and its lifecycle is coordinated with the Nix side rather than ex
 This document covers the pieces a contributor needs to work on the upgrade flow itself: what indexes exist, how versions
 are chosen, how a firmware upgrade differs from an application-only upgrade, and how downgrade and rollback are handled.
 
-> **Implementation status:** this document describes the implemented `bmc-main` behavior. Remaining cross-repo work:
-> pack and invoke the firmware Nix payload from the OpenWrt tarball `COMMAND`, publish factory tarball `.sig` files, and
-> flip the shipped `FactoryServerEntry.require_signature` setting once signatures are available.
+> **Implementation status:** this document describes the implemented `bmc-main` behavior. The OpenWrt tarball `COMMAND`
+> packs and invokes the firmware Nix payload (see [`openwrt-tarball.md`](openwrt-tarball.md)). Remaining cross-repo
+> work: publish factory tarball `.sig` files and flip the shipped `FactoryServerEntry.require_signature` setting once
+> signatures are available.
 
 ## Sources of Truth
 
@@ -113,17 +114,20 @@ The CLI contract for the tarball path is
 bmc-nix-cli upgrade \
     --default-servers-config <staged>/servers.json.default \
     --firmware <bos-version> \
-    --next-boot <bos-version>
+    --next-boot
 ```
 
 where `<bos-version>` is the incoming firmware's version read from the tarball's own version file — not the running
 `/etc/bos_version`, which still names the outgoing BOS. `--firmware` scopes feed-entry selection to the incoming
-firmware; `--next-boot` requires it, because silently scoping to the outgoing `/etc/bos_version` during a sysupgrade is
-exactly the bug the explicit flag prevents.
+firmware; `--next-boot` requires it and derives the marker version from the same value, because silently scoping to the
+outgoing `/etc/bos_version` during a sysupgrade is exactly the bug the explicit flag prevents. BOS runs the tarball
+`COMMAND` from image validation, which happens twice per sysupgrade run; the `COMMAND` stages once and skips the second
+pass via a `/tmp` marker (see
+[`openwrt-tarball.md`](openwrt-tarball.md#command-responsibilities-and-the-double-validation)).
 
 **Activation is always deferred.** A firmware upgrade never activates the new profile in-place — the running BOS is on
 its way out, and its running services must not be reconfigured to match a generation built for the incoming BOS. The
-tarball command must invoke `bmc-nix-cli upgrade --firmware <bos-version> --next-boot <bos-version>`, which produces a
+tarball command must invoke `bmc-nix-cli upgrade --firmware <bos-version> --next-boot`, which produces a
 `next.<bos-version>` symlink to a built generation (see [Deferred Activation](#deferred-activation---next-boot)). After
 the reboot into the new BOS, `nix-activator` consumes that symlink and runs the target generation's activation against
 the previous `current`. Because the marker carries the incoming version in its name, an activator on any other firmware
@@ -137,35 +141,54 @@ be replaced) BOS does not provide.
 
 ## Deferred Activation (`--next-boot`)
 
-`bmc-nix-cli upgrade --firmware <bos-version> --next-boot <bos-version>` is the same resolution and profile-build path
-as a normal upgrade, but it stops before activation. It still builds the next numbered generation directory (`<N>-link`)
-up front. Instead of swapping `current`, it atomically writes `next.<bos-version>` as a symlink inside the profile
-directory (`/nix/var/nix/gcroots/profiles/bmc/next.<bos-version>`) pointing at that freshly built `<N>-link`. The value
-of `--next-boot` is the BOS version whose boot may consume the staged generation — the version the resolved index
-belongs to. Encoding it in the marker name is what gates activation: an activator never checks a version, it simply
-cannot see a marker staged for a different firmware.
+`bmc-nix-cli upgrade --firmware <bos-version> --next-boot` is the same resolution and profile-build path as a normal
+upgrade, but it stops before activation. It still builds the next numbered generation directory (`<N>-link`) up front.
+Instead of swapping `current`, it atomically writes `next.<bos-version>` as a symlink inside the profile directory
+(`/nix/var/nix/gcroots/profiles/bmc/next.<bos-version>`) pointing at that freshly built `<N>-link`. The `--firmware`
+value is the BOS version whose boot may consume the staged generation — the version the resolved index belongs to.
+Encoding it in the marker name is what gates activation: an activator never checks a version, it simply cannot see a
+marker staged for a different firmware.
 
 Every profile apply run removes stale deferred-activation markers (all `next.*`, and a bare legacy `next`) immediately
 after taking the profile lock. This means any later run invalidates a pending deferred activation, including a no-op run
 that does not build a replacement generation. A second `--next-boot` run before reboot therefore replaces the pending
 target with the newly built generation.
 
-At boot, the `nix-activator` init script looks for `next.$(cat /etc/bos_version)`. When the marker for the running
-version is present and resolves to a generation directory, the script runs that generation's activation entrypoint with
+At boot, the firmware's `nix-activator` init script consumes the staged marker. The BOS image bundles both the script
+and `bmc-nix-cli`; the script is a thin wrapper that restores the persistent-store bind mount (`bmc-nix-cli mount`,
+ending the boot step early when the store is unavailable) and then runs `bmc-nix-cli activate --generation next`.
+Keeping the script thin is deliberate: the marker grammar and the activation contract live in exactly one place — the
+CLI built into the same image — so the boot script can never skew against the staging side.
+
+`activate --generation next` implements the boot contract (in `bmc-nix::activation`). It reads the running version from
+`--bos-version-file` (default `/etc/bos_version`) and looks for `next.<version>`. When the marker for the running
+version is present and resolves to a generation directory, it runs that generation's activation entrypoint with
 `current` still naming the previous generation — the entrypoint's final `write-boundary` step is the only thing that
 moves `current`, so a crash or failure before it leaves `current` on the previous generation. The entrypoint derives
 `PROFILE_OLD_GENERATION` from `current` itself, so diff-driven scripts see the real old generation without it being
-passed in. The marker is consumed only on success; on failure the script restores `current` to the target it snapshotted
-before the entrypoint ran (removing it when none existed), then falls through to re-activating `current` to reconcile
-the live system back onto the previous generation. Markers staged for other versions are removed as stale. When
-`/etc/bos_version` is missing or empty, staleness is undecidable: all markers are left alone and `current` is activated.
+passed in. The marker is consumed only on success; on failure the activator restores `current` to the target it
+snapshotted before the entrypoint ran (removing it when none existed), then falls through to re-activating `current` to
+reconcile the live system back onto the previous generation. Markers staged for other versions are removed as stale.
+When `/etc/bos_version` is missing or empty, staleness is undecidable: all markers are left alone and `current` is
+activated. Without a marker for the running version the activator falls back to activating `current`, which is a no-op —
+the common case on ordinary boots; on the very first boot after initialization no `current` exists yet and the fallback
+activates the latest generation instead, which is how the initial profile comes live.
 
-`bmc-nix-cli activate --generation next` implements the same contract in Rust (used by tests and the upgrade harness;
-the firmware boot path runs the shell script because the CLI ships as a package, not in the firmware image): it reads
-the running version from `--bos-version-file` (default `/etc/bos_version`), sweeps stale markers, activates the matching
-marker's generation with an in-memory revert to the old `current` on failure, and removes the marker on success. Without
-a marker for the running version it falls back to activating `current`, which is a no-op — the common case on ordinary
-boots.
+Not every supported firmware bundles the activator. For firmware without one, the core package carries a shell port of
+the same boot contract (`nix/pkgs/core/files/nix-activator`), and its `060` activation entry (`firmware-init-services`)
+provisions it as an overlay copy of `/etc/init.d/nix-activator` plus an `S91` rc.d link; on firmware with a bundled
+activator it leaves the init.d path alone and drops the overlay link, so exactly one enabled link remains — with two,
+boot ran the activator twice and stacked `/nix` bind mounts. Neither the overlay copy nor the link is a sysupgrade
+conffile: flashing any firmware sheds the bridge. A bundling image boots its own activator to consume the staged marker;
+flashing another bridge-needing image leaves the profile dormant until the next deploy or init re-runs activation. The
+shell variant and the provisioning entry are transitional: remove them once no supported firmware lacks the bundled
+activator.
+
+One portability trap for that shell port (and for any script that runs on the device, tarball `COMMAND` included): the
+device BusyBox is built without `CONFIG_FEATURE_TR_CLASSES`, so `tr -d '[:space:]'` deletes the literal characters
+`space:[]` instead of whitespace — this once mangled the version read from `/etc/bos_version` and made the activator
+sweep its own matching marker as stale. Use explicit character sets (`tr -d ' \t\r\n'`). nixpkgs' BusyBox enables the
+feature, so the nix-run script tests cannot catch this class of bug; only the device shows it.
 
 Activating any generation other than `current` follows this same revert rule, not just the staged marker: the whole
 sequence runs under the profile lock, and a failed entrypoint triggers automatic re-activation of the old generation. A
@@ -279,3 +302,6 @@ stale-and-kept for both `system` and `user`.
   abort cleanly rather than silently substituting.
 - Store-path realisation, hook execution, and activation are separate stages. Don't fold side effects into the
   resolution layer.
+- On-device shell (the tarball `COMMAND`, activation scripts, the shell activator) must not rely on optional BusyBox
+  features. Known trap: the device BusyBox lacks `CONFIG_FEATURE_TR_CLASSES`, so `tr` treats classes like `[:space:]` as
+  literal characters — use explicit character sets.

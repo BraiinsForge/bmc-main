@@ -4,9 +4,9 @@ The OpenWrt firmware tarball is the sysupgrade artifact produced by BOS builds �
 alternate partition and reboots into. This document covers the pieces of that tarball that the Nix upgrade path cares
 about; the OpenWrt image itself (kernel, rootfs, boot glue) is a BOS concern.
 
-> **Implementation status:** this describes the implemented `bmc-main` firmware payload and CLI behavior. Remaining
-> cross-repo work: pack and invoke the payload from the OpenWrt tarball `COMMAND`, publish factory tarball `.sig` files,
-> and flip the shipped `FactoryServerEntry.require_signature` setting once signatures are available.
+> **Implementation status:** this describes the implemented `bmc-main` firmware payload and CLI behavior, and the
+> BOS-side `COMMAND` that packs and invokes it. Remaining cross-repo work: publish factory tarball `.sig` files and flip
+> the shipped `FactoryServerEntry.require_signature` setting once signatures are available.
 
 Two things ship inside every tarball that concern `bmc-nix`:
 
@@ -45,12 +45,12 @@ the fallback:
 bmc-nix-cli upgrade \
     --default-servers-config <staged>/servers.json.default \
     --firmware <bos-version> \
-    --next-boot <bos-version>
+    --next-boot
 ```
 
 `<bos-version>` is the incoming firmware's version, read from the tarball's own version file — the running
-`/etc/bos_version` still names the outgoing BOS. `--next-boot` requires the explicit `--firmware` so the feed can never
-silently scope to the outgoing version.
+`/etc/bos_version` still names the outgoing BOS. `--next-boot` derives its marker version from the required explicit
+`--firmware`, so feed selection and deferred activation cannot target different firmware versions.
 
 The CLI:
 
@@ -74,6 +74,26 @@ The CLI:
 (`build-profile`, factory-tarball construction). Reusing one CLI keeps the resolution and profile-build code paths
 identical across build-host, factory-tarball, and firmware-tarball contexts.
 
+## `COMMAND` Responsibilities and the Double Validation
+
+The tarball's `COMMAND` is the BOS-side driver of everything above. It runs on the outgoing system as part of
+sysupgrade's image validation: it stages the payload (`bmc-nix-cli` and `servers.json.default`) into a temporary
+directory, selects the init or upgrade branch (see [Initialization](#initialization)), and invokes the tarball CLI with
+the incoming firmware's version. Staging completes before the flash — a failure aborts the sysupgrade keep-current — and
+the boot into the new firmware only ever consumes what staging left behind (the promoted store, or the
+`next.<bos-version>` marker).
+
+BOS validates a sysupgrade image twice per run: `/sbin/sysupgrade` calls `platform_check_image` through
+`/usr/libexec/validate_firmware_image`, and procd's `upgraded` re-validates the image before flashing. Without a guard,
+each pass would stage the profile and build its own generation. The `COMMAND` therefore records the target firmware
+version in `/tmp/bos-nix-profile-prepared` after a successful staging pass; the second pass finds its own target version
+in the marker, skips staging, and consumes the marker. Consuming it (rather than keeping it until reboot) means a
+leftover marker from an interrupted run can only shift staging to a later run's second pass, never suppress it for a
+whole run; the version content means a marker left by a run targeting a different firmware never matches. `/tmp` is
+tmpfs, so a reboot clears the marker regardless. The marker is an optimization, not a correctness gate — a missed skip
+only builds a redundant generation, and a second `--next-boot` run simply replaces the pending marker with the newer
+generation.
+
 ## Consequences for the Firmware Build
 
 Every firmware release must produce, in addition to the OpenWrt image itself:
@@ -84,6 +104,9 @@ Every firmware release must produce, in addition to the OpenWrt image itself:
 - A `servers.json.default` registry in the tarball whose feed-linked entries name the feeds serving those releases.
 - A substituter setup on the device (`nix.conf`) from which the on-device `nix-store --realise` step can pull every
   store path the release's index references.
+- A `bmc-nix-cli` bundled in the firmware rootfs itself, plus a `nix-activator` boot service that is a thin wrapper over
+  it (`bmc-nix-cli mount`, then `bmc-nix-cli activate --generation next`), so boot-time marker consumption always speaks
+  the grammar the image was built with. See [Deferred Activation](upgrades.md#deferred-activation---next-boot).
 
 The required release index must be self-consistent: every `store_path` it references must be reachable from the
 configured substituters. Optional indexes may supplement it, but cannot make a failed required server succeed.
@@ -164,3 +187,5 @@ resolution algorithm. See [`upgrades.md`](upgrades.md#bos-downgrade).
   the schema is what lets one CLI serve both flows.
 - The no-downgrade rule applies here too. Do not add a firmware-upgrade-only bypass to "force" older versions in — that
   is what manual profile rollback is for.
+- Staging runs from image validation, which BOS performs twice per sysupgrade. Keep the `/tmp/bos-nix-profile-prepared`
+  guard version-keyed and consumed on use, and never make correctness depend on it.
