@@ -43,22 +43,25 @@ pkgs.runCommand "nix-tarball-${bos_version}"
   rootDir=$TMPDIR/root
   mkdir -p $rootDir/nix/store
 
-  # 1. Build profile generation inside the tarball root
+  # 1. Copy all store paths from the closure
+  while IFS= read -r storePath; do
+    cp -a "$storePath" $rootDir/nix/store/
+  done < ${closureInfo}/store-paths
+
+  # 2. Populate the Nix database
+  export NIX_REMOTE=local?root=$rootDir
+  export USER=nobody
+  nix-store --load-db < ${closureInfo}/registration
+
+  # 3. Build profile generation inside the tarball root. This runs
+  #    after the database load so the CLI's nix-store realise/verify
+  #    calls see a chroot store in which every index path is already
+  #    valid — the host store is not reachable from the sandbox.
   bmc-nix-cli build-profile \
     --no-activate \
     --index ${index}/nix-package-index.v1.json \
     --profile-dir $rootDir${profile_path} \
     ${lib.optionalString (hooksOverridePath != null) "--hooks-override-path ${hooksOverridePath}"}
-
-  # 2. Copy all store paths from the closure
-  while IFS= read -r storePath; do
-    cp -a "$storePath" $rootDir/nix/store/
-  done < ${closureInfo}/store-paths
-
-  # 3. Populate the Nix database
-  export NIX_REMOTE=local?root=$rootDir
-  export USER=nobody
-  nix-store --load-db < ${closureInfo}/registration
 
   # 4. Create tarball
   mkdir -p $out
