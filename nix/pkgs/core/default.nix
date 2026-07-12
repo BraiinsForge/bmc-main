@@ -29,6 +29,14 @@ let
         ${./files/nix-activator}
     ${testBusybox}/bin/touch $out
   '';
+  firmwareInitServicesTest = armv7Pkgs.runCommand "firmware-init-services-test" { } ''
+    PATH=${testBusybox}/bin \
+    FIRMWARE_INIT_SERVICES_TEST_SHELL=${testBusybox}/bin/ash \
+      ${testBusybox}/bin/ash \
+        ${./tests/firmware-init-services.sh} \
+        ${firmware-init-services}/bin/firmware-init-services
+    ${testBusybox}/bin/touch $out
+  '';
 
   bmcNix = profile.buildCrate crates.bmc-nix { };
   selectBmcNixBin = bmc.lib.selectBmcNixBin { pkgs = armv7Pkgs; inherit bmcNix; };
@@ -63,11 +71,7 @@ let
   bmc-compositor = mkOpenWrtDaemon {
     name = "bmc-compositor";
     start = 95;
-    # TODO: Re-enable once the host firmware drops its monolithic
-    # bmc-openwrt and we ship a firmware that runs the compositor from
-    # this package. Until then ship the service file but keep it
-    # disabled so it doesn't race the legacy app.
-    enabled = false;
+    enabled = true;
     command = "${bmc-openwrt}/bin/bmc-openwrt";
     args = [ "--log-to-file" ];
     env = {
@@ -86,8 +90,10 @@ let
   # init.d path alone. Only on firmware without one does it lay down
   # ./files/nix-activator (the same contract in shell, independent of
   # the ROM CLI) as an overlay copy of /etc/init.d/nix-activator plus
-  # an S91 rc.d link. Neither is a sysupgrade conffile: flashing any
-  # firmware sheds the bridge — a bundling image boots its own
+  # an S91 rc.d link. It also stops and disables the legacy bmc service
+  # before the profile-managed compositor starts. Neither bridge file is
+  # a sysupgrade conffile: flashing any firmware sheds the bridge — a
+  # bundling image boots its own
   # activator to consume the staged marker, while flashing another
   # bridge-needing image leaves the profile dormant until the next
   # deploy or init re-runs activation (accepted for the transition).
@@ -105,12 +111,19 @@ let
       #!/bin/sh
       set -e
 
+      root="''${FIRMWARE_INIT_SERVICES_ROOT:-}"
       src="${./files/nix-activator}"
-      rom=/rom/etc/init.d/nix-activator
-      target=/etc/init.d/nix-activator
+      rom="$root/rom/etc/init.d/nix-activator"
+      target="$root/etc/init.d/nix-activator"
 
       if [ ! -x "$rom" ]; then
-          mkdir -p /etc/init.d /etc/rc.d
+          legacy_bmc="$root/etc/init.d/bmc"
+          if [ -x "$legacy_bmc" ]; then
+              "$legacy_bmc" stop
+              "$legacy_bmc" disable
+          fi
+
+          mkdir -p "$root/etc/init.d" "$root/etc/rc.d"
           if ! cmp -s "$src" "$target" 2>/dev/null; then
               cp "$src" "$target.tmp"
               chmod 755 "$target.tmp"
@@ -125,19 +138,19 @@ let
       # twice and stacked /nix bind mounts. S91 is always
       # bootstrap-owned — firmware links its activator in the S6x
       # range — so it is safe to drop whenever the ROM has a link.
-      if ls /rom/etc/rc.d/S[0-9]*nix-activator >/dev/null 2>&1; then
-          rm -f /etc/rc.d/S91nix-activator
+      if ls "$root"/rom/etc/rc.d/S[0-9]*nix-activator >/dev/null 2>&1; then
+          rm -f "$root/etc/rc.d/S91nix-activator"
       else
           # Recreate the rc.d symlink atomically: `ln -sf` unlinks before
           # it symlinks, and a power loss in that window would leave no
           # S91nix-activator at all — the activator would never run again.
           # The dot prefix keeps the temp name out of rc.d's S*/K* globbing.
-          ln -sfn ../init.d/nix-activator /etc/rc.d/.S91nix-activator.tmp
-          mv -Tf /etc/rc.d/.S91nix-activator.tmp /etc/rc.d/S91nix-activator
+          ln -sfn ../init.d/nix-activator "$root/etc/rc.d/.S91nix-activator.tmp"
+          mv -Tf "$root/etc/rc.d/.S91nix-activator.tmp" "$root/etc/rc.d/S91nix-activator"
       fi
 
-      rm -f /etc/init.d/nix-mounter
-      rm -f /etc/rc.d/S*nix-mounter /etc/rc.d/K*nix-mounter
+      rm -f "$root/etc/init.d/nix-mounter"
+      rm -f "$root"/etc/rc.d/S*nix-mounter "$root"/etc/rc.d/K*nix-mounter
 
       # These are rootfs writes, outside the profile filesystem that the
       # 998 write-boundary syncfs covers; flush them before it durably
@@ -225,6 +238,7 @@ let
     passthru = (old.passthru or { }) // {
       tests.activation = nixConfActivationTest;
       tests.activator = nixActivatorTest;
+      tests.firmware-init-services = firmwareInitServicesTest;
     };
   });
 in
