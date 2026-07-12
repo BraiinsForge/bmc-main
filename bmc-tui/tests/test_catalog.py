@@ -9,7 +9,7 @@ import tarfile
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 from pathlib import Path
-from typing import Required, TypedDict, Unpack
+from typing import Literal, Required, TypedDict, Unpack
 
 import pytest
 
@@ -17,6 +17,7 @@ from bmc_tui import catalog, rig
 from bmc_tui.device import Device
 from bmc_tui.image import Image
 from bmc_tui.nix import Built, Pkg
+from bmc_tui.procedures.e2e_sysupgrade import E2eSysupgrade
 from bmc_tui.procedures.init import Init
 from bmc_tui.stage import Abort, dry_run
 
@@ -1523,3 +1524,217 @@ def test_verify_upgraded_ignores_an_unrelated_next_marker(tmp_path: Path) -> Non
 def test_rc_name_strips_prefix_and_priority() -> None:
     assert catalog._rc_name("S20bar") == "bar"
     assert catalog._rc_name("K05baz") == "baz"
+
+
+def _e2e_full_routes(sha_a: str, sha_b: str) -> _Respond:
+    board = json.dumps({"board_name": "b", "release": {"target": _TARGET}})
+    state = {"flashes": 0, "mounted": True, "marker": False}
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1]
+        if cmd.startswith("sysupgrade "):
+            state["flashes"] += 1
+            state["mounted"] = True
+            return _cp(argv)
+        if cmd.startswith("touch ") and ".sysupgrade-e2e-marker" in cmd:
+            state["marker"] = True
+            return _cp(argv)
+        if "umount" in cmd:
+            state["mounted"] = False
+            return _cp(argv)
+        if cmd.startswith("ls") and ("rc.d" in cmd or "init.d" in cmd):
+            return _cp(argv, "S20bar" if "rc.d" in cmd else "bar")
+        outputs = {
+            "ubus call system board": board,
+            "bos_version": ["old", "va", "vb"][state["flashes"]],
+            "MemAvailable": "524288",
+            "sha256sum": sha_a if "a.tar" in cmd else sha_b,
+            "dd bs=64": "64",
+            "service list": "",
+            "[ -f /mnt/data/nix/.sysupgrade-e2e-marker ]": "yes" if state["marker"] else "",
+            "/proc/mounts": "/dev/x /nix ext4 rw 0 0" if state["mounted"] else "",
+            "readlink -f": _GEN if state["flashes"] < 2 else _GEN.replace("/5", "/6"),
+            "manifest": "yes",
+            "gcroots/profiles/bmc 2>/dev/null": "1-link\ncurrent",
+            " status ": "ok",
+            "[ -d /mnt/data/nix ]": "yes",
+            "/proc/[0-9]*": "",
+            "-ef": "yes",
+        }
+        for key, value in outputs.items():
+            if key in cmd:
+                return _cp(argv, value)
+        return _cp(argv)
+
+    return respond
+
+
+def _e2e_args(
+    tmp_path: Path,
+    *,
+    scenario: Literal["init", "upgrade", "full"] = "full",
+    dry_run_flag: bool = False,
+) -> tuple[E2eSysupgrade, Image, Image]:
+    a = _e2e_image(tmp_path, name="a.tar", version="va")
+    b = _e2e_image(tmp_path, name="b.tar", version="vb")
+    args = E2eSysupgrade(
+        device="127.0.0.1",
+        image_a=a.path,
+        image_b=b.path,
+        serve_ip="127.0.0.1",
+        scenario=scenario,
+        yes=True,
+        dry_run=dry_run_flag,
+    )
+    return args, a, b
+
+
+def _local_server(root: Path) -> rig.RigServer:
+    return rig.RigServer(root, port=0, bind_ip="127.0.0.1")
+
+
+def test_e2e_procedure_full_run_orders_the_scenarios(tmp_path: Path) -> None:
+    args, a, b = _e2e_args(tmp_path)
+    exc = _Exec(_e2e_full_routes(a.sha256, b.sha256))
+    dev = Device("127.0.0.1", backend=exc)
+    args.run(
+        dev=dev,
+        backend=_e2e_nix(tmp_path),
+        make_device=lambda _h: dev,
+        make_server=_local_server,
+    )
+    cmds = [argv[-1] for argv in exc.runs]
+    flashes = [i for i, c in enumerate(cmds) if c.startswith("sysupgrade ")]
+    registers = [i for i, c in enumerate(cmds) if "register-server" in c]
+    assert len(flashes) == 2
+    assert len(registers) == 2, "registration must re-run before EACH flash"
+    assert registers[0] < flashes[0] < registers[1] < flashes[1]
+    umount = cmds.index("umount /nix")
+    sha_checks_a = [i for i, c in enumerate(cmds) if "sha256sum" in c and "a.tar" in c]
+    assert sha_checks_a and min(sha_checks_a) < umount < flashes[0]
+    marker = next(i for i, c in enumerate(cmds) if c.startswith("touch "))
+    readlink_b = next(i for i, c in enumerate(cmds) if "readlink -f" in c and i > registers[1])
+    assert registers[1] < marker < readlink_b < flashes[1]
+    wgets = [i for i, c in enumerate(cmds) if "wget" in c]
+    destructive = [i for i, c in enumerate(cmds) if "rm -rf" in c or c == "umount /nix"]
+    assert wgets and destructive and max(wgets) < min(destructive)
+    sweep = [c for c in cmds if c.startswith("rm -f ")]
+    assert "rm -f /mnt/data/nix/.sysupgrade-e2e-marker" in sweep
+    assert "rm -f /etc/nix-upgrade/servers.json" in sweep
+    assert "rm -f /tmp/a.tar /tmp/b.tar" in sweep
+
+
+def test_e2e_procedure_routes_destructive_stages_through_the_pinned_device(
+    tmp_path: Path,
+) -> None:
+    args, a, b = _e2e_args(tmp_path)
+    respond = _e2e_full_routes(a.sha256, b.sha256)
+    exc, pinned_exc = _Exec(respond), _Exec(respond)
+    dev = Device("localhost", backend=exc)  # resolves to 127.0.0.1, so pinning re-addresses
+    pinned = Device("127.0.0.1", backend=pinned_exc)
+    args.run(
+        dev=dev,
+        backend=_e2e_nix(tmp_path),
+        make_device=lambda _h: pinned,
+        make_server=_local_server,
+    )
+    cmds = [argv[-1] for argv in exc.runs]
+    pinned_cmds = [argv[-1] for argv in pinned_exc.runs]
+    assert exc.streams and not pinned_exc.streams  # uploads ride the name-addressed device
+    assert not any(c.startswith("sysupgrade ") or "rm -rf" in c or "umount" in c for c in cmds)
+    assert len([c for c in pinned_cmds if c.startswith("sysupgrade ")]) == 2
+    assert any("rm -rf /mnt/data/nix" in c for c in pinned_cmds)
+    sha_ties = [c for c in pinned_cmds if "sha256sum" in c]
+    assert len(sha_ties) == 2  # the identity tie re-probes each upload via the pinned address
+
+
+def test_e2e_procedure_dry_run_touches_nothing(tmp_path: Path) -> None:
+    args, a, b = _e2e_args(tmp_path, dry_run_flag=True)
+    exc = _Exec(_e2e_full_routes(a.sha256, b.sha256))
+    dev = Device("127.0.0.1", backend=exc)
+    token = dry_run.set(False)  # the procedure sets it from its own flag
+    try:
+        args.run(
+            dev=dev,
+            backend=_e2e_nix(tmp_path),
+            make_device=lambda _h: dev,
+            make_server=_local_server,
+        )
+    finally:
+        dry_run.reset(token)
+    cmds = [argv[-1] for argv in exc.runs]
+    assert not any(c.startswith("sysupgrade ") for c in cmds)
+    assert not any("rm -rf" in c or "umount" in c for c in cmds)
+    assert not exc.streams  # no uploads happened
+
+
+def test_e2e_procedure_init_scenario_skips_upgrade_stages(tmp_path: Path) -> None:
+    args, a, b = _e2e_args(tmp_path, scenario="init")
+    exc = _Exec(_e2e_full_routes(a.sha256, b.sha256))
+    dev = Device("127.0.0.1", backend=exc)
+    args.run(
+        dev=dev,
+        backend=_e2e_nix(tmp_path),
+        make_device=lambda _h: dev,
+        make_server=_local_server,
+    )
+    cmds = [argv[-1] for argv in exc.runs]
+    assert len([c for c in cmds if c.startswith("sysupgrade ")]) == 1
+    assert not any("cli-b" in c for c in cmds)  # no bump-absence probe ran
+    assert not any(c.startswith("touch ") for c in cmds)  # no marker dropped
+
+
+def test_e2e_upgrade_scenario_aborts_readonly_on_uninitialized_store(tmp_path: Path) -> None:
+    args, a, b = _e2e_args(tmp_path, scenario="upgrade")
+    base = _e2e_full_routes(a.sha256, b.sha256)
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1]
+        if "bos_version" in cmd:
+            return _cp(argv, "va")
+        if "[ -d /mnt/data/nix ]" in cmd or "readlink -f" in cmd:
+            return _cp(argv)
+        return base(argv)
+
+    exc = _Exec(respond)
+    dev = Device("127.0.0.1", backend=exc)
+    with pytest.raises(Abort, match="not initialized"):
+        args.run(
+            dev=dev,
+            backend=_e2e_nix(tmp_path),
+            make_device=lambda _h: dev,
+            make_server=_local_server,
+        )
+    cmds = [argv[-1] for argv in exc.runs]
+    assert not exc.streams
+    assert not any("register-server" in c or "servers.json" in c or "chmod" in c for c in cmds)
+    assert not any(c.startswith("touch ") or c.startswith("sysupgrade ") for c in cmds)
+    assert not any("rm -f" in c for c in cmds)
+
+
+def test_e2e_upgrade_scenario_aborts_readonly_on_existing_bump(tmp_path: Path) -> None:
+    args, a, b = _e2e_args(tmp_path, scenario="upgrade")
+    base = _e2e_full_routes(a.sha256, b.sha256)
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1]
+        if "bos_version" in cmd:
+            return _cp(argv, "va")
+        if "[ -e " in cmd:
+            return _cp(argv, "yes")
+        return base(argv)
+
+    exc = _Exec(respond)
+    dev = Device("127.0.0.1", backend=exc)
+    with pytest.raises(Abort, match="already"):
+        args.run(
+            dev=dev,
+            backend=_e2e_nix(tmp_path),
+            make_device=lambda _h: dev,
+            make_server=_local_server,
+        )
+    cmds = [argv[-1] for argv in exc.runs]
+    assert not exc.streams
+    assert not any("register-server" in c or "servers.json" in c or "chmod" in c for c in cmds)
+    assert not any(c.startswith("touch ") or c.startswith("sysupgrade ") for c in cmds)
+    assert not any("rm -f" in c for c in cmds)

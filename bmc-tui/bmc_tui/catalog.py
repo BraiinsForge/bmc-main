@@ -493,6 +493,7 @@ class E2eRun:
     pinned_host: str | None = None  # numeric address for the cleardown/flash window
     bumped_path: str | None = None  # variant B's bumped store path, from index B
     generation_before: str | None = None  # scenario B's pre-flash current generation
+    device_mutated: bool = False  # set before the first device mutation; gates the sweep
 
 
 @stage("Validate e2e images")
@@ -889,6 +890,22 @@ def require_lineage(dev: Device, run: E2eRun) -> str:
         f"{console.lit(run.image_a.version)}",
     )
     return console.lit(version)
+
+
+@stage("Store initialized")
+def require_initialized_store(dev: Device) -> str:
+    """Scenario B's read-only precondition: an upgrade needs an initialized
+    store with a promoted generation BEFORE any mutation (registration,
+    marker) touches the device — without one the run must abort having
+    changed nothing."""
+
+    backing = bool(dev.read(f"[ -d {_NIX_BACKING} ] && echo yes || true"))
+    generation = dev.read(f"readlink -f {_PROFILE_DIR}/current 2>/dev/null || true")
+    require(
+        backing and bool(generation),
+        "the store is not initialized — run scenario A (or plain init) first",
+    )
+    return console.lit(generation)
 
 
 @stage("Bumped path absent")
