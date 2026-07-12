@@ -1365,6 +1365,16 @@ def test_require_uploaded_aborts_when_the_device_lacks_them(tmp_path: Path) -> N
         catalog.require_uploaded(Device("10.0.0.9", backend=_Exec(_routes({}))), run.image_a)
 
 
+def test_trust_image_keys_extracts_the_rootfs_keys_onto_the_device(tmp_path: Path) -> None:
+    run = _e2e_run(tmp_path)
+    exc = _Exec(_routes({}))
+    catalog.trust_image_keys(Device("h", backend=exc), run.image_a)
+    (cmd,) = [argv[-1] for argv in exc.runs]
+    assert f"tar -xf /tmp/{run.image_a.path.name}" in cmd
+    assert f'unsquashfs -q -n -d "$d/r" "$d/{_TOP}/rootfs.img" etc/opkg/keys' in cmd
+    assert 'cp "$d/r/etc/opkg/keys/"* /etc/opkg/keys/' in cmd
+
+
 def test_marker_and_image_sweep_commands(tmp_path: Path) -> None:
     exc = _Exec(_routes({}))
     dev = Device("h", backend=exc)
@@ -1629,6 +1639,9 @@ def test_e2e_procedure_full_run_orders_the_scenarios(tmp_path: Path) -> None:
     umount = cmds.index("umount /nix")
     sha_checks_a = [i for i, c in enumerate(cmds) if "sha256sum" in c and "a.tar" in c]
     assert sha_checks_a and min(sha_checks_a) < umount < flashes[0]
+    trusts = [i for i, c in enumerate(cmds) if "unsquashfs" in c]
+    assert len(trusts) == 2, "each flash must trust the incoming image's keys first"
+    assert min(sha_checks_a) < trusts[0] < umount and trusts[1] < flashes[1]
     marker = next(i for i, c in enumerate(cmds) if c.startswith("touch "))
     readlink_b = next(i for i, c in enumerate(cmds) if "readlink -f" in c and i > registers[1])
     assert registers[1] < marker < readlink_b < flashes[1]
@@ -1661,6 +1674,8 @@ def test_e2e_procedure_routes_destructive_stages_through_the_pinned_device(
     assert not any(c.startswith("sysupgrade ") or "rm -rf" in c or "umount" in c for c in cmds)
     assert len([c for c in pinned_cmds if c.startswith("sysupgrade ")]) == 2
     assert any("rm -rf /mnt/data/nix" in c for c in pinned_cmds)
+    # key trust mutates /etc/opkg/keys, so it must ride the pinned connection too
+    assert len([c for c in pinned_cmds if "unsquashfs" in c]) == 2
     sha_ties = [c for c in pinned_cmds if "sha256sum" in c]
     assert len(sha_ties) == 2  # the identity tie re-probes each upload via the pinned address
 

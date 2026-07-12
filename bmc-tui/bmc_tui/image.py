@@ -75,6 +75,13 @@ class Image:
         return all(f"{directory}/{f}" in names for f in ("COMMAND", "rootfs.img"))
 
     @property
+    def rootfs_size(self) -> int:
+        """Size of the tar's ``rootfs.img`` member — the transient tmpfs cost
+        of extracting it on the device."""
+        with tarfile.open(self.path) as tar:
+            return tar.getmember(f"{self.sysupgrade_dir}/rootfs.img").size
+
+    @property
     def version(self) -> str:
         """Firmware version — ``UPGRADE_FW_VERSION`` from the tar's COMMAND."""
         for line in self._command().splitlines():

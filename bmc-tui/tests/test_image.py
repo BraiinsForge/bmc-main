@@ -44,6 +44,12 @@ def test_sysupgrade_dir_and_is_sysupgrade(tmp_path: Path) -> None:
     assert image.is_sysupgrade is True
 
 
+def test_rootfs_size_reads_the_member_size(tmp_path: Path) -> None:
+    fw = tmp_path / "fw.tar"
+    _make_tar(fw)
+    assert Image(fw).rootfs_size == 1  # the helper writes b"x" as rootfs.img
+
+
 def test_version_parsed_from_command(tmp_path: Path) -> None:
     fw = tmp_path / "fw.tar"
     _make_tar(fw, command=b'UPGRADE_FW_MAJOR="a"\nUPGRADE_FW_VERSION="2026-06-14-x"\n')

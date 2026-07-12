@@ -861,6 +861,25 @@ def require_uploaded(dev: Device, image: Image) -> str:
     return f"{console.lit(image.remote_path)} verified via {console.lit(dev.host)}"
 
 
+@stage("Trust image signing keys")
+def trust_image_keys(dev: Device, image: Image) -> str:
+    """Install the image's usign public keys on the running system so the
+    flash's signature check accepts a dev-signed image on firmware that
+    ships different keys. Deliberately not `sysupgrade -F`: force would
+    also wave through a failed platform check, and the Nix store staging
+    runs inside it. Extraction is transient tmpfs and runs before anything
+    destructive, so a failure leaves the device untouched."""
+
+    rootfs = f"{image.sysupgrade_dir}/rootfs.img"
+    dev.run(
+        "d=$(mktemp -d) && trap 'rm -rf \"$d\"' EXIT && "
+        f'tar -xf {shlex.quote(image.remote_path)} -C "$d" {shlex.quote(rootfs)} && '
+        f'unsquashfs -q -n -d "$d/r" "$d/{rootfs}" etc/opkg/keys && '
+        'mkdir -p /etc/opkg/keys && cp "$d/r/etc/opkg/keys/"* /etc/opkg/keys/'
+    )
+    return f"{console.lit(image.path.name)} keys → {console.lit('/etc/opkg/keys')}"
+
+
 @stage("Flash firmware (e2e)")
 def flash_e2e(dev: Device, image: Image, *, assume_yes: bool = False) -> str:
     """Flash unconditionally — deliberately no same-version skip: after the
