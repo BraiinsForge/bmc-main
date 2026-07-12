@@ -66,6 +66,13 @@ class Nix(Protocol):
         artifacts (e.g. the init tarball) that carry no package metadata."""
         ...
 
+    def build_file(self, file: str, attrs: list[str], args: dict[str, str]) -> list[str]:
+        """Realise attrs of a parameterized nix file (`--impure -f`) in ONE
+        invocation — one consistent evaluation of the mutable worktree —
+        returning their out-paths in attr order. Flake outputs cannot take
+        parameters."""
+        ...
+
     def copy(self, store_paths: list[str], dest: str) -> None:
         """Copy closures to `dest`. Under --dry-run, log and skip."""
         ...
@@ -140,6 +147,30 @@ class _RealNix:
             msg = f"BUG: nix build printed {len(paths)} paths for {attr}"
             raise RuntimeError(msg)
         return paths[0]
+
+    def build_file(self, file: str, attrs: list[str], args: dict[str, str]) -> list[str]:
+        argstrs = [s for key, value in sorted(args.items()) for s in ("--argstr", key, value)]
+        proc = subprocess.run(
+            [
+                "nix",
+                "build",
+                "--impure",
+                "-f",
+                file,
+                *attrs,
+                "--no-link",
+                "--print-out-paths",
+                *argstrs,
+            ],
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        paths = proc.stdout.split()
+        if len(paths) != len(attrs):
+            msg = f"BUG: nix build printed {len(paths)} paths for {len(attrs)} attrs"
+            raise RuntimeError(msg)
+        return paths
 
     def copy(self, store_paths: list[str], dest: str) -> None:
         if dry_run.get():

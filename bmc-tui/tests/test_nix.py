@@ -80,6 +80,46 @@ def test_build_out_rejects_multiple_paths(monkeypatch: pytest.MonkeyPatch) -> No
         nix.real().build_out(".#init-tarball-armv7")
 
 
+def test_build_file_builds_all_attrs_in_one_invocation(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[list[str]] = []
+    monkeypatch.setattr(
+        nix.subprocess,
+        "run",
+        lambda argv, **_: seen.append(argv) or _cp(argv, "/nix/store/ia\n/nix/store/ta\n"),
+    )
+    outs = nix.real().build_file(
+        "nix/e2e-artifacts.nix",
+        ["index-a", "tarball-a"],
+        {"bosVersionA": "va", "bosVersionB": "vb"},
+    )
+    assert outs == ["/nix/store/ia", "/nix/store/ta"]
+    assert seen == [
+        [
+            "nix",
+            "build",
+            "--impure",
+            "-f",
+            "nix/e2e-artifacts.nix",
+            "index-a",
+            "tarball-a",
+            "--no-link",
+            "--print-out-paths",
+            "--argstr",
+            "bosVersionA",
+            "va",
+            "--argstr",
+            "bosVersionB",
+            "vb",
+        ]
+    ]
+
+
+def test_build_file_rejects_a_path_count_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(nix.subprocess, "run", lambda *a, **_: _cp(list(a[0]), "/one\n"))
+    with pytest.raises(RuntimeError, match="printed 1 paths for 2 attrs"):
+        nix.real().build_file("nix/e2e-artifacts.nix", ["index-a", "tarball-a"], {})
+
+
 def test_copy_skips_under_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[object] = []
     monkeypatch.setattr(nix.subprocess, "run", lambda *a, **k: calls.append(a))

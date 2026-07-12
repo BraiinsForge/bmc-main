@@ -97,6 +97,9 @@ class _FakeNix:
     def build_out(self, attr: str) -> str:
         return str(self._outs[attr])
 
+    def build_file(self, file: str, attrs: list[str], args: dict[str, str]) -> list[str]:
+        return [str(self._outs[attr]) for attr in attrs]
+
     def copy(self, store_paths: list[str], dest: str) -> None:
         return None
 
@@ -298,6 +301,9 @@ class _Nix:
 
     def build_out(self, attr: str) -> str:
         return self.out_dir
+
+    def build_file(self, file: str, attrs: list[str], args: dict[str, str]) -> list[str]:
+        raise NotImplementedError
 
     def resolve(self, attr: str) -> Pkg:
         name = attr.rsplit(".", 1)[-1]
