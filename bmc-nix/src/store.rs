@@ -559,6 +559,10 @@ pub enum InitStoreError {
         #[source]
         source: reqwest::Error,
     },
+    #[error(
+        "package feed from {url} is too large: {size} bytes exceeds the {MAX_FEED_BYTES}-byte cap"
+    )]
+    PackageFeedTooLarge { url: String, size: u64 },
     #[error("invalid package feed JSON from {url}: {source}")]
     PackageFeedParse {
         url: String,
@@ -636,6 +640,25 @@ pub enum InitStoreError {
 
 /// If no bytes arrive for this duration, the download is considered stalled.
 const READ_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Maximum accepted size of the factory package feed, in bytes.
+///
+/// A package feed is a small JSON document; like the index fetches'
+/// `MAX_INDEX_BYTES` cap, this bounds the memory an oversized or
+/// hostile response can make the device allocate. The tarball download
+/// below needs no such cap — it streams to disk.
+const MAX_FEED_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Reject a feed whose byte length exceeds [`MAX_FEED_BYTES`].
+fn check_feed_size(url: &str, len: u64) -> Result<(), InitStoreError> {
+    if len > MAX_FEED_BYTES {
+        return Err(InitStoreError::PackageFeedTooLarge {
+            url: url.to_owned(),
+            size: len,
+        });
+    }
+    Ok(())
+}
 
 /// Result of store initialization.
 #[derive(Debug)]
@@ -907,27 +930,37 @@ pub async fn init_store(
     // data-partition space.
     clean_stale_staging(stage_dir)?;
 
-    // Step 1: Fetch the package feed
+    // Step 1: Fetch the package feed, bounded like the index fetches:
+    // reject early on Content-Length, cap the accumulated body, and
+    // treat a stalled read as a failure instead of waiting forever.
     let feed_url = crate::index::make_package_feed_url(&factory_server.base_url);
-    let feed_body = client
+    let mut feed_response = client
         .get(&feed_url)
         .send()
         .await
-        .map_err(|source| InitStoreError::PackageFeedFetch {
-            url: feed_url.clone(),
-            source,
-        })?
-        .error_for_status()
-        .map_err(|source| InitStoreError::PackageFeedFetch {
-            url: feed_url.clone(),
-            source,
-        })?
-        .bytes()
-        .await
+        .and_then(reqwest::Response::error_for_status)
         .map_err(|source| InitStoreError::PackageFeedFetch {
             url: feed_url.clone(),
             source,
         })?;
+
+    if let Some(len) = feed_response.content_length() {
+        check_feed_size(&feed_url, len)?;
+    }
+    let mut feed_body: Vec<u8> = Vec::new();
+    while let Some(chunk) = tokio::time::timeout(READ_IDLE_TIMEOUT, feed_response.chunk())
+        .await
+        .map_err(|_| InitStoreError::DownloadStalled {
+            timeout_secs: READ_IDLE_TIMEOUT.as_secs(),
+        })?
+        .map_err(|source| InitStoreError::PackageFeedFetch {
+            url: feed_url.clone(),
+            source,
+        })?
+    {
+        check_feed_size(&feed_url, (feed_body.len() + chunk.len()) as u64)?;
+        feed_body.extend_from_slice(&chunk);
+    }
     let feed: crate::feed::PackageFeed =
         serde_json::from_slice(&feed_body).map_err(|source| InitStoreError::PackageFeedParse {
             url: feed_url.clone(),
@@ -1609,6 +1642,57 @@ mod tests {
             panic!("expected EstimateExited, got: {err:?}");
         };
         assert_eq!(messages, &["error: cannot reach substituter".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn init_store_rejects_oversized_package_feed() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("BUG: failed to bind mock server");
+        let addr = listener.local_addr().expect("BUG: no local addr");
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("BUG: accept");
+            let mut buf = [0_u8; 1024];
+            let _ = stream.read(&mut buf).await;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                MAX_FEED_BYTES + 1
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("BUG: write response");
+        });
+
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let factory = crate::types::FactoryServerEntry {
+            id: "factory".to_owned(),
+            base_url: format!("http://{addr}"),
+            known_public_key: "k".to_owned(),
+            priority: 0,
+            enabled: true,
+        };
+        let err = init_store(
+            &reqwest::Client::new(),
+            &factory,
+            "2026-01-01-0.0.1",
+            &dir.path().join("download"),
+            dir.path(),
+            false,
+            None,
+        )
+        .await
+        .expect_err("BUG: an oversized feed must be rejected before buffering");
+
+        assert!(
+            matches!(err, InitStoreError::PackageFeedTooLarge { .. }),
+            "expected PackageFeedTooLarge, got: {err:?}"
+        );
+        server.await.expect("BUG: mock server task");
     }
 
     fn make_test_tarball(
