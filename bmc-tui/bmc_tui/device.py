@@ -25,6 +25,13 @@ _SSH_OPTS = [
     "StrictHostKeyChecking=accept-new",
     "-o",
     "ConnectTimeout=8",
+    # ConnectTimeout only guards the connect phase; a session whose peer
+    # vanishes mid-command otherwise hangs forever. Keepalives turn that
+    # into ssh's exit 255 within ~15s, which expect_disconnect handles.
+    "-o",
+    "ServerAliveInterval=5",
+    "-o",
+    "ServerAliveCountMax=3",
     # quiet ssh's post-quantum-KEX warning
     "-o",
     "LogLevel=ERROR",
