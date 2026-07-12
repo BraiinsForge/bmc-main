@@ -32,6 +32,12 @@ _SSH_OPTS = [
 
 _CHUNK = 1 << 16  # 64 KiB upload chunk
 
+# Exit codes >= 128 mean the session died rather than the command failing:
+# 255 is ssh's own code for a dropped connection, and anything else in the
+# range encodes remote signal death (128+N, or a negative -N wrapped to an
+# unsigned byte) — what a reboot's shutdown does to the live session.
+_SESSION_DEATH_FLOOR = 128
+
 
 class Exec(Protocol):
     """Subprocess backend Device runs through — injected so tests need no ssh."""
@@ -107,17 +113,20 @@ class Device:
         """Run a mutating command and return its stripped stdout. Under
         --dry-run, log and skip, returning None.
 
-        ``expect_disconnect`` treats a dropped connection as success — for
-        commands that intentionally kill the session (e.g. ``sysupgrade``) —
-        and returns None since no output came back.
+        ``expect_disconnect`` treats a killed session (exit >= 128: ssh's
+        own 255 for a dropped connection, or a remote session killed by the
+        shutdown's signal) as success — for commands that intentionally
+        take the device down (e.g. ``sysupgrade``) — and returns None
+        since no output came back. A remote command failing outright
+        (small exit code, session alive) still raises.
         """
         if dry_run.get():
             console.kv("would run", command)
             return None
         try:
             return self._exec.run(self._ssh_argv(command)).stdout.strip()
-        except subprocess.SubprocessError:
-            if not expect_disconnect:
+        except subprocess.CalledProcessError as e:
+            if not (expect_disconnect and e.returncode >= _SESSION_DEATH_FLOOR):
                 raise
             return None
 

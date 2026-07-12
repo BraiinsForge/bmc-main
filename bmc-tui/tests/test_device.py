@@ -172,6 +172,19 @@ def test_run_swallows_disconnect_when_expected() -> None:
     Device("h", backend=backend).run("sysupgrade x", expect_disconnect=True)  # no raise
 
 
+def test_run_swallows_signal_killed_session_when_disconnect_expected() -> None:
+    # a rebooting device can kill the remote session with a signal instead of
+    # dropping the connection; 246 is -SIGUSR1 wrapped to an unsigned byte
+    backend = _FakeExec(error=subprocess.CalledProcessError(246, ["ssh"]))
+    Device("h", backend=backend).run("sysupgrade x", expect_disconnect=True)  # no raise
+
+
+def test_run_reraises_remote_failure_even_when_disconnect_expected() -> None:
+    backend = _FakeExec(error=subprocess.CalledProcessError(1, ["ssh"]))
+    with pytest.raises(subprocess.CalledProcessError):
+        Device("h", backend=backend).run("sysupgrade x", expect_disconnect=True)
+
+
 def test_run_reraises_disconnect_when_not_expected() -> None:
     backend = _FakeExec(error=subprocess.CalledProcessError(255, ["ssh"]))
     with pytest.raises(subprocess.CalledProcessError):
