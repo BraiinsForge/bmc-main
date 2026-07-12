@@ -73,7 +73,11 @@ activate_profile() {
 	# relocate the inputs for tests.
 	profile_dir="${NIX_ACTIVATOR_PROFILE_DIR:-/nix/var/nix/gcroots/profiles/bmc}"
 	current="$profile_dir/current"
-	bos_version="$(cat "${NIX_ACTIVATOR_BOS_VERSION_FILE:-/etc/bos_version}" 2>/dev/null | tr -d '[:space:]')"
+	# The explicit character set matters: device BusyBox is built
+	# without CONFIG_FEATURE_TR_CLASSES, so tr -d '[:space:]' deletes
+	# the literal characters 's p a c e : [ ]' — mangling the version
+	# and making the matching next marker look stale.
+	bos_version="$(cat "${NIX_ACTIVATOR_BOS_VERSION_FILE:-/etc/bos_version}" 2>/dev/null | tr -d ' \t\r\n')"
 
 	# The deferred-activation marker carries the BOS version it was
 	# staged for in its name: this activator only looks for the marker
