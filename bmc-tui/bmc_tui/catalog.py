@@ -702,6 +702,143 @@ def pin_device_address(
     return console.lit(run.pinned_host)
 
 
+_ORCHESTRATOR = "bmc-nix-service-orchestrator"
+
+
+@stage("Clear nix store")
+def clear_nix_store(
+    dev: Device,
+    *,
+    assume_yes: bool = False,
+    timeout: int = 60,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> str:
+    """Stop everything the active generation runs, prove nothing still
+    references /nix, unmount, and delete the backing store — the
+    destructive premise of the init-path scenario."""
+
+    mounted = bool(dev.read(f"grep ' {_NIX_STORE} ' /proc/mounts || true"))
+    backing = bool(dev.read(f"[ -d {_NIX_BACKING} ] && echo yes || true"))
+    done_if(not mounted and not backing)
+    require(
+        assume_yes
+        or dry_run.get()
+        or console.confirm(
+            f"Delete the nix store on {console.lit(dev.host)}? "
+            f"This clears {console.lit(_NIX_BACKING)}."
+        ),
+        "cleardown declined — pass --yes to skip the prompt",
+    )
+    generation = dev.read(f"readlink -f {_PROFILE_DIR}/current 2>/dev/null || true")
+    _clear_orchestrator(dev, timeout=timeout, sleep=sleep, clock=clock)
+    if generation:
+        _stop_generation_services(dev, generation)
+    if dry_run.get():
+        return "cleardown logged (dry-run)"
+    failure = _poll_until(
+        lambda: _nix_reference_holders(dev), timeout=timeout, sleep=sleep, clock=clock
+    )
+    if failure is not None:
+        raise Abort(f"the store is still referenced: {failure}")
+    dev.run("sync")
+    if mounted:
+        dev.run(f"umount {_NIX_STORE}")
+    require(
+        not dev.read(f"grep ' {_NIX_STORE} ' /proc/mounts || true"),
+        f"{console.lit(_NIX_STORE)} is still mounted after umount",
+    )
+    dev.run(f"rm -rf {_NIX_BACKING}")
+    return f"cleared {console.lit(_NIX_BACKING)}"
+
+
+def _clear_orchestrator(
+    dev: Device,
+    *,
+    timeout: int,
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+) -> None:
+    """Delete the transient activation orchestrator's ubus instance and wait
+    until it is gone BEFORE stopping services — it has no init.d entry, a
+    stale instance can linger even with a broken `current` link, and a
+    live one could restart what the cleardown stops. The wait is skipped
+    under dry-run: the delete is only logged, so the instance never
+    disappears."""
+
+    query = shlex.quote(json.dumps({"name": _ORCHESTRATOR}))
+    dev.run(f"ubus call service delete {query} 2>/dev/null || true")
+    if dry_run.get():
+        return
+    lingering = _poll_until(
+        lambda: _orchestrator_present(dev, query), timeout=timeout, sleep=sleep, clock=clock
+    )
+    if lingering is not None:
+        raise Abort(lingering)
+
+
+def _orchestrator_present(dev: Device, query: str) -> str | None:
+    listed = dev.read(f"ubus call service list {query} 2>/dev/null || true")
+    if _ORCHESTRATOR in listed:
+        return f"the {_ORCHESTRATOR} ubus instance did not disappear"
+    return None
+
+
+def _stop_generation_services(dev: Device, generation: str) -> None:
+    """Run the generation's K* shutdown links in lexical link order —
+    ascending priority under OpenWRT's two-digit convention — then
+    stop EVERY generation service — including the K*-linked ones (a
+    shutdown handler may leave its process running) and disabled ones,
+    which may have been started manually."""
+
+    links = dev.read(f"ls {shlex.quote(generation)}/etc/rc.d/ 2>/dev/null || true").split()
+    shutdown = [_rc_name(link) for link in sorted(links) if link.startswith("K")]
+    for name in shutdown:
+        dev.run(f"/etc/init.d/{shlex.quote(name)} shutdown 2>/dev/null || true")
+    services = dev.read(f"ls {shlex.quote(generation)}/etc/init.d/ 2>/dev/null || true").split()
+    for name in sorted(set(services)):
+        dev.run(f"/etc/init.d/{shlex.quote(name)} stop 2>/dev/null || true")
+
+
+def _nix_reference_holders(dev: Device) -> str | None:
+    """pid:comm of processes holding /nix references via exe, cwd, fd, or
+    maps — matching bare `/nix` targets too, not only paths under it.
+    None when clean."""
+
+    holders = dev.read(
+        "for p in /proc/[0-9]*; do "
+        "if ls -l $p/exe $p/cwd $p/fd 2>/dev/null | grep -qE ' /nix(/|$)' "
+        "|| grep -qE ' /nix(/|$)' $p/maps 2>/dev/null; "
+        'then echo "${p#/proc/}:$(cat $p/comm 2>/dev/null)"; fi; done'
+    )
+    return holders.replace("\n", ", ") or None
+
+
+def _rc_name(link: str) -> str:
+    """Service name behind an rc.d link: strip the S/K prefix and priority."""
+    return link[1:].lstrip("0123456789")
+
+
+def _poll_until(
+    check: Callable[[], str | None],
+    *,
+    timeout: float,
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+) -> str | None:
+    """Run `check` until it returns None (settled); on timeout, return its
+    last failure description."""
+
+    deadline = clock() + timeout
+    while True:
+        failure = check()
+        if failure is None:
+            return None
+        if clock() >= deadline:
+            return failure
+        sleep(2)
+
+
 def _mem_available(dev: Device) -> int:
     """Free RAM in bytes; /tmp is swapless tmpfs, so RAM bounds upload+flash."""
 

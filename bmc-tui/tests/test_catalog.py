@@ -1149,3 +1149,131 @@ def test_pin_device_address_aborts_on_resolution_failure(tmp_path: Path) -> None
 
     with pytest.raises(Abort, match="cannot resolve"):
         catalog.pin_device_address(Device("deck.local"), _e2e_run(tmp_path), resolve=resolve)
+
+
+_GEN = "/mnt/data/nix/var/nix/profiles/5"
+
+
+def _cleardown_routes(*, holders: str = "", orchestrator_lingers: bool = False) -> _Respond:
+    state = {"unmounted": False, "deleted": False}
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1]
+        if "service delete" in cmd:
+            state["deleted"] = True
+        if "umount" in cmd:
+            state["unmounted"] = True
+        gone = state["deleted"] and not orchestrator_lingers
+        outputs = {
+            "service list": "" if gone else '{"bmc-nix-service-orchestrator":{}}',
+            "/proc/mounts": "" if state["unmounted"] else "/dev/x /nix ext4 rw 0 0",
+            "readlink -f": _GEN,
+            "/proc/[0-9]*": holders,
+            "[ -d /mnt/data/nix ]": "yes",
+        }
+        if cmd.startswith("ls"):
+            outputs["rc.d"] = "K10foo\nK05baz\nS20bar"
+            outputs["init.d"] = "foo\nbar\nbaz"
+        for key, value in outputs.items():
+            if key in cmd:
+                return _cp(argv, value)
+        return _cp(argv)
+
+    return respond
+
+
+def test_cleardown_waits_out_the_orchestrator_before_stopping_services() -> None:
+    exc = _Exec(_cleardown_routes())
+    catalog.clear_nix_store(Device("h", backend=exc), assume_yes=True)
+    cmds = [argv[-1] for argv in exc.runs]
+    readlink = next(i for i, c in enumerate(cmds) if "readlink -f" in c)
+    delete = next(i for i, c in enumerate(cmds) if "service delete" in c)
+    listed = next(i for i, c in enumerate(cmds) if "service list" in c)
+    shutdown_baz = cmds.index("/etc/init.d/baz shutdown 2>/dev/null || true")
+    shutdown_foo = cmds.index("/etc/init.d/foo shutdown 2>/dev/null || true")
+    # The stop pass covers EVERY generation service — the K*-linked ones
+    # too, since a shutdown handler may leave its process running.
+    stops = [cmds.index(f"/etc/init.d/{n} stop 2>/dev/null || true") for n in ("bar", "baz", "foo")]
+    assert readlink < delete < listed < shutdown_baz < shutdown_foo < min(stops)
+    sync = cmds.index("sync")
+    umount = cmds.index("umount /nix")
+    assert max(stops) < sync < umount < cmds.index("rm -rf /mnt/data/nix")
+
+
+def test_cleardown_aborts_when_the_orchestrator_never_disappears() -> None:
+    exc = _Exec(_cleardown_routes(orchestrator_lingers=True))
+    clock = iter([0.0, 50.0, 100.0])
+    with pytest.raises(Abort, match="orchestrator"):
+        catalog.clear_nix_store(
+            Device("h", backend=exc),
+            assume_yes=True,
+            timeout=10,
+            sleep=lambda _s: None,
+            clock=lambda: next(clock),
+        )
+    assert not any("shutdown" in argv[-1] or "umount" in argv[-1] for argv in exc.runs)
+
+
+def test_cleardown_clears_a_stale_orchestrator_without_a_generation() -> None:
+    state = {"deleted": False}
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1]
+        if "service delete" in cmd:
+            state["deleted"] = True
+        if "service list" in cmd:
+            return _cp(argv, "" if state["deleted"] else '{"bmc-nix-service-orchestrator":{}}')
+        if "[ -d /mnt/data/nix ]" in cmd:
+            return _cp(argv, "yes")
+        return _cp(argv)
+
+    exc = _Exec(respond)
+    catalog.clear_nix_store(Device("h", backend=exc), assume_yes=True)
+    cmds = [argv[-1] for argv in exc.runs]
+    assert any("service delete" in c for c in cmds)
+    assert not any("shutdown" in c for c in cmds)  # no generation resolved
+    assert any("rm -rf /mnt/data/nix" in c for c in cmds)
+
+
+def test_cleardown_aborts_while_processes_reference_nix() -> None:
+    exc = _Exec(_cleardown_routes(holders="123:bmc-openwrt"))
+    clock = iter([0.0, 0.0, 100.0])
+    with pytest.raises(Abort, match="bmc-openwrt"):
+        catalog.clear_nix_store(
+            Device("h", backend=exc),
+            assume_yes=True,
+            timeout=10,
+            sleep=lambda _s: None,
+            clock=lambda: next(clock),
+        )
+    assert not any("umount" in argv[-1] for argv in exc.runs)
+
+
+def test_cleardown_probes_nix_references_including_bare_targets() -> None:
+    exc = _Exec(_cleardown_routes())
+    catalog.clear_nix_store(Device("h", backend=exc), assume_yes=True)
+    probe = next(argv[-1] for argv in exc.runs if "/proc/[0-9]*" in argv[-1])
+    assert probe.count("/nix(/|$)") == 2  # exe/cwd/fd sweep AND the maps grep
+
+
+def test_cleardown_skips_when_store_already_absent() -> None:
+    exc = _Exec(_routes({}))
+    catalog.clear_nix_store(Device("h", backend=exc), assume_yes=True)
+    assert not any("rm -rf" in argv[-1] for argv in exc.runs)
+
+
+def test_cleardown_aborts_when_declined(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(catalog.console, "confirm", lambda _q: False)
+    with pytest.raises(Abort, match="--yes"):
+        catalog.clear_nix_store(Device("h", backend=_Exec(_cleardown_routes())))
+
+
+def test_cleardown_logs_only_under_dry_run() -> None:
+    exc = _Exec(_cleardown_routes())
+    token = dry_run.set(True)
+    try:
+        catalog.clear_nix_store(Device("h", backend=exc), assume_yes=True)
+    finally:
+        dry_run.reset(token)
+    reads = [argv[-1] for argv in exc.runs]
+    assert not any("umount" in c or "rm -rf" in c or "stop" in c for c in reads)
