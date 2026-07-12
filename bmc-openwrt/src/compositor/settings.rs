@@ -36,7 +36,7 @@ pub struct SettingsState {
     pub last_brightness: Option<u8>,
     pub last_volume: Option<u8>,
     pub last_wifi_ap: Option<String>,
-    pub last_night_mode: Option<(bool, String)>,
+    pub last_night_mode: Option<(bool, Option<String>)>,
     pub pending_actions: Vec<SettingsAction>,
 }
 
@@ -117,7 +117,7 @@ impl SettingsState {
     }
 
     /// Record the night-mode state and emit it to every live v2 resource.
-    pub fn set_night_mode(&mut self, active: bool, until: String) {
+    pub fn set_night_mode(&mut self, active: bool, until: Option<String>) {
         self.prune();
         for r in self.resources.iter().filter(|r| r.version() >= 2) {
             r.night_mode(u32::from(active), until.clone());
@@ -275,9 +275,9 @@ mod tests {
     fn caches_volume_and_night_mode_for_late_bind() {
         let mut s = SettingsState::new(caps_for_product(Product::Bmc100));
         s.set_volume(35);
-        s.set_night_mode(true, "06:30".to_owned());
+        s.set_night_mode(true, Some("06:30".to_owned()));
         assert_eq!(s.last_volume, Some(35));
-        assert_eq!(s.last_night_mode, Some((true, "06:30".to_owned())));
+        assert_eq!(s.last_night_mode, Some((true, Some("06:30".to_owned()))));
     }
 
     #[test]

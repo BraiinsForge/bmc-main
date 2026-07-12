@@ -246,13 +246,13 @@ pub fn start_night_mode_listener<U>(
             let active = *night_mode_rx.borrow_and_update();
             let config = system_manager.night_mode_config().await;
             let until = if active {
-                config.to.format("%H:%M").to_string()
+                Some(config.to.format("%H:%M").to_string())
             } else if config.enabled {
-                config.from.format("%H:%M").to_string()
+                Some(config.from.format("%H:%M").to_string())
             } else {
-                String::new()
+                None
             };
-            if let Err(e) = compositor.broadcast_night_mode(active, &until) {
+            if let Err(e) = compositor.broadcast_night_mode(active, until.as_deref()) {
                 warn!("broadcast_night_mode failed: {e}");
             }
             if night_mode_rx.changed().await.is_err() {

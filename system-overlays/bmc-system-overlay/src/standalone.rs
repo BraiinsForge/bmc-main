@@ -176,7 +176,7 @@ fn deliver_settings_events(client: &mut LayerSurfaceClient, overlay: &mut dyn Sy
         overlay.on_volume(v);
     }
     if let Some((active, until)) = client.take_night_mode() {
-        overlay.on_night_mode(active, &until);
+        overlay.on_night_mode(active, until.as_deref());
     }
     if let Some(reason) = client.take_restart_declined() {
         overlay.on_restart_declined(&reason);

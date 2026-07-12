@@ -242,11 +242,11 @@ pub struct HoldControl<'a> {
 }
 
 /// Night-mode toggle state: whether it is active and the formatted end time
-/// (empty when unknown).
+/// (`None` when the schedule is disabled).
 #[derive(Debug, Clone, Copy)]
 pub struct NightMode<'a> {
     pub active: bool,
-    pub until: &'a str,
+    pub until: Option<&'a str>,
 }
 
 /// The control surfaces to render. `None` fields are hidden — either the
@@ -722,12 +722,10 @@ fn control_groups(
     if let Some(night) = controls.night_mode {
         // The boundary reads as "current state lasts until HH:MM" in both
         // states: the end of the night window while active, its next start
-        // while inactive (empty when the schedule is disabled).
-        let sublabel = if night.until.is_empty() {
-            String::new()
-        } else {
-            format!("Until {}", night.until)
-        };
+        // while inactive (absent when the schedule is disabled).
+        let sublabel = night
+            .until
+            .map_or_else(String::new, |until| format!("Until {until}"));
         singles.push(single_group(
             tier,
             NIGHT_MODE_KEY,
@@ -838,12 +836,12 @@ fn shared_caption(tier: Tier, controls: &Controls<'_>, usable: f32) -> Option<Tr
         Some(format!("Reconnect: {c}"))
     } else if !tier.large_text
         && let Some(n) = controls.night_mode
-        && !n.until.is_empty()
+        && let Some(until) = n.until
     {
         Some(if n.active {
-            format!("Night mode on until {}", n.until)
+            format!("Night mode on until {until}")
         } else {
-            format!("Night mode off until {}", n.until)
+            format!("Night mode off until {until}")
         })
     } else {
         None
@@ -1300,7 +1298,7 @@ mod tests {
             volume: Some(100),
             night_mode: Some(NightMode {
                 active: true,
-                until: "06:30",
+                until: Some("06:30"),
             }),
             restart: Some(HoldControl::default()),
             wifi_reconfig: HoldControl::default(),
@@ -1650,7 +1648,7 @@ mod tests {
         let night = |active| Controls {
             night_mode: Some(NightMode {
                 active,
-                until: "06:30",
+                until: Some("06:30"),
             }),
             ..Controls::default()
         };
@@ -1811,7 +1809,7 @@ mod tests {
         let night = Controls {
             night_mode: Some(NightMode {
                 active: true,
-                until: "22:00",
+                until: Some("22:00"),
             }),
             ..Controls::default()
         };

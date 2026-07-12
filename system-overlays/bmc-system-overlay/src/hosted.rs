@@ -132,7 +132,7 @@ impl HostedOverlay {
                 self.overlay.on_volume(v);
             }
             if let Some((active, until)) = self.client.take_night_mode() {
-                self.overlay.on_night_mode(active, &until);
+                self.overlay.on_night_mode(active, until.as_deref());
             }
             if let Some(reason) = self.client.take_restart_declined() {
                 self.overlay.on_restart_declined(&reason);

@@ -119,11 +119,11 @@
         Report the night mode state. active is 1 while night mode is active,
         else 0. until is the "HH:MM" boundary the current state lasts to (the
         schedule end while active, the schedule start while enabled but
-        inactive), or the empty string while night mode is disabled. Emitted on
-        bind once known and again on every change, including schedule edits.
+        inactive), or null while night mode is disabled. Emitted on bind once
+        known and again on every change, including schedule edits.
       </description>
       <arg name="active" type="uint" summary="1 = active, 0 = inactive"/>
-      <arg name="until" type="string" summary="HH:MM boundary, empty when disabled"/>
+      <arg name="until" type="string" allow-null="true" summary="HH:MM boundary, null when disabled"/>
     </event>
 
     <event name="restart_declined" since="2">

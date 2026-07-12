@@ -198,8 +198,12 @@ pub trait Compositor: Send + Sync {
 
     /// Report the night-mode state and its "HH:MM" boundary to the
     /// settings-tray overlay via the `deck_settings_v1` `night_mode` event.
-    /// `until` is empty while night mode is disabled. Default: no-op.
-    fn broadcast_night_mode(&self, _active: bool, _until: &str) -> Result<(), CompositorError> {
+    /// `until` is `None` while night mode is disabled. Default: no-op.
+    fn broadcast_night_mode(
+        &self,
+        _active: bool,
+        _until: Option<&str>,
+    ) -> Result<(), CompositorError> {
         Ok(())
     }
 

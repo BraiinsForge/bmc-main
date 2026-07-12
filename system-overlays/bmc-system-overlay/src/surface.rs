@@ -75,7 +75,7 @@ struct State {
     /// Set on a `capabilities` event (first event after a v2 bind).
     pending_capabilities: Option<crate::overlay::SettingsCaps>,
     /// Set on a `night_mode` event.
-    pending_night_mode: Option<(bool, String)>,
+    pending_night_mode: Option<(bool, Option<String>)>,
     /// Set on a one-shot `restart_declined` event.
     pending_restart_declined: Option<String>,
     /// Set on a `wifi_ap` event; `Some(Some(ssid))`/`Some(None)` distinguishes a
@@ -526,7 +526,7 @@ impl LayerSurfaceClient {
         self.state.pending_capabilities.take()
     }
 
-    pub fn take_night_mode(&mut self) -> Option<(bool, String)> {
+    pub fn take_night_mode(&mut self) -> Option<(bool, Option<String>)> {
         self.state.pending_night_mode.take()
     }
 

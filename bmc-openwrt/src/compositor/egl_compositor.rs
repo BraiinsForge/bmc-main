@@ -2335,11 +2335,15 @@ impl Compositor for EglCompositor {
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 
-    fn broadcast_night_mode(&self, active: bool, until: &str) -> Result<(), CompositorError> {
+    fn broadcast_night_mode(
+        &self,
+        active: bool,
+        until: Option<&str>,
+    ) -> Result<(), CompositorError> {
         self.command_tx
             .send(CompositorCommand::SetNightMode {
                 active,
-                until: until.to_owned(),
+                until: until.map(str::to_owned),
             })
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }

@@ -53,7 +53,7 @@ pub enum CompositorCommand {
     },
     SetNightMode {
         active: bool,
-        until: String,
+        until: Option<String>,
     },
     RestartDeclined {
         reason: String,

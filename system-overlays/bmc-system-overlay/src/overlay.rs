@@ -354,9 +354,9 @@ pub trait SystemOverlay {
     fn on_capabilities(&mut self, _caps: SettingsCaps) {}
 
     /// Night-mode state reported by the compositor. `until` is the "HH:MM"
-    /// boundary of the current state, empty while night mode is disabled.
+    /// boundary of the current state, `None` while night mode is disabled.
     /// Called before `tick`. Default: no-op.
-    fn on_night_mode(&mut self, _active: bool, _until: &str) {}
+    fn on_night_mode(&mut self, _active: bool, _until: Option<&str>) {}
 
     /// One-shot notification that a restart request was declined. Called
     /// before `tick`. Default: no-op.

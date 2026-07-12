@@ -71,7 +71,7 @@ fn tray_view(
     view.volume = 40;
     view.night_mode = Some(NightModeView {
         active: false,
-        until: "22:00".to_owned(),
+        until: Some("22:00".to_owned()),
     });
     view.show_restart = true;
     view
@@ -126,7 +126,7 @@ fn all_groups_view(base: SettingsTrayView) -> SettingsTrayView {
     view.show_restart = true;
     view.night_mode = Some(NightModeView {
         active: true,
-        until: "06:30".to_owned(),
+        until: Some("06:30".to_owned()),
     });
     view.restart_caption = None;
     view.reconfig_caption = None;
@@ -306,7 +306,7 @@ fn settings_tray(ctx: &mut StoryCtx) {
         let mut night_mode_active = bmc100_tray_view();
         night_mode_active.night_mode = Some(NightModeView {
             active: true,
-            until: "06:30".to_owned(),
+            until: Some("06:30".to_owned()),
         });
         grid.cell(|ui| {
             ui.header("Settings tray", "Night mode active");
@@ -322,7 +322,7 @@ fn settings_tray(ctx: &mut StoryCtx) {
         let mut night_mode_inactive = bmc100_tray_view();
         night_mode_inactive.night_mode = Some(NightModeView {
             active: false,
-            until: String::new(),
+            until: None,
         });
         grid.cell(|ui| {
             ui.header("Settings tray", "Night mode inactive, no schedule");
@@ -338,7 +338,7 @@ fn settings_tray(ctx: &mut StoryCtx) {
         let mut night_bmm101 = bmm101_tray_view();
         night_bmm101.night_mode = Some(NightModeView {
             active: true,
-            until: "06:30".to_owned(),
+            until: Some("06:30".to_owned()),
         });
         grid.cell(|ui| {
             ui.header("Settings tray", "Night mode active, BMM101 caption line");
