@@ -61,11 +61,17 @@ const ICON_PRESSED_TINT: Color = Color::from_rgba(0, 0, 0, 255);
 /// deliberately suppressed so active night mode always reads as blue.
 const NIGHT_ACTIVE: Color = Color::from_rgba(0x10, 0x43, 0xCD, 255);
 
-/// Hold-progress ring color; its alpha is scaled by the hold fraction.
+/// Hold-progress ring color; its alpha grows with the hold fraction.
 const HOLD_RING: Color = Color::from_rgba(0x8B, 0x7C, 0xFF, 255);
 
-/// Stroke width of the hold-progress ring.
-const RING_W: f32 = 4.0;
+/// Stroke width of the hold-progress ring at full hold.
+const RING_W: f32 = 12.0;
+
+/// Stroke width of the hold-progress ring while idle.
+const RING_MIN_W: f32 = 3.0;
+
+/// Ring alpha while idle; grows to fully opaque at full hold.
+const RING_MIN_ALPHA: f32 = 0.3;
 
 /// Edge length of the square close touch target.
 const CLOSE_TARGET: f32 = 48.0;
@@ -459,7 +465,8 @@ impl ButtonIcon {
 }
 
 /// One round icon button: a filled circle, an optional full-circle hold ring
-/// whose alpha is the hold progress, and a centered icon. `icon_tint`
+/// whose width and alpha grow with the hold progress, and a centered icon.
+/// `icon_tint`
 /// `TRANSPARENT` keeps the SVG's native fill (white for controls); an opaque
 /// tint colorizes the whole icon.
 fn round_button(
@@ -473,8 +480,8 @@ fn round_button(
 ) -> TreeNode {
     let c = diameter / 2.0;
     // Hold buttons keep the stable inner-circle-inside-the-ring geometry
-    // (104px fill inside the 112px ring); ringless buttons fill the whole
-    // tier diameter.
+    // (88px fill inside the 112px ring, leaving room for the full-hold ring
+    // width); ringless buttons fill the whole tier diameter.
     let fill_r = if ring_progress.is_some() {
         c - RING_W
     } else {
@@ -487,14 +494,19 @@ fn round_button(
         fill: Fill::Solid(fill),
     }];
     if let Some(p) = ring_progress {
+        // The ring starts on the fill radius and grows outward; at full hold
+        // its outer edge reaches the button rim.
+        let ring_w = RING_MIN_W + (RING_W - RING_MIN_W) * p;
+        let ring_r = fill_r + (RING_W / 2.0) * p;
+        let alpha = RING_MIN_ALPHA + (1.0 - RING_MIN_ALPHA) * p;
         draws.push(DrawCommand::Arc {
             cx: c,
             cy: c,
-            radius: c - RING_W / 2.0,
+            radius: ring_r,
             start_angle: 0.0,
             end_angle: std::f32::consts::TAU,
-            width: RING_W,
-            fill: ArcFill::Solid(HOLD_RING.scale_alpha(p)),
+            width: ring_w,
+            fill: ArcFill::Solid(HOLD_RING.scale_alpha(alpha)),
             segments: ArcSegments::Continuous,
             cap: ArcCap::Butt,
         });
@@ -1434,7 +1446,7 @@ mod tests {
     }
 
     #[test]
-    fn round_button_draws_circle_then_ring_then_icon() {
+    fn hold_ring_is_readable_and_grows_with_progress() {
         let btn = round_button(
             "k",
             ButtonIcon::square(None),
@@ -1473,9 +1485,49 @@ mod tests {
         else {
             panic!("expected ring Arc")
         };
-        assert!((*width - RING_W).abs() < f32::EPSILON);
-        assert_eq!(*ring, HOLD_RING.scale_alpha(0.5));
+        assert_close(*width, 7.5, "half hold grows the ring from 3px to 12px");
+        assert_eq!(
+            *ring,
+            HOLD_RING.scale_alpha(0.65),
+            "half hold grows opacity from 30% to 100%",
+        );
         assert!(matches!(draws[2], DrawCommand::Svg { .. }));
+    }
+
+    #[test]
+    fn hold_ring_radius_starts_at_button_and_grows_outward() {
+        let radii = |progress| {
+            let btn = round_button(
+                "k",
+                ButtonIcon::square(None),
+                112.0,
+                48.0,
+                CIRCLE_FILL,
+                TRANSPARENT,
+                Some(progress),
+            );
+            let TreeNode::Canvas { draws, .. } = btn else {
+                panic!("expected Canvas")
+            };
+            let DrawCommand::Circle { r: button, .. } = &draws[0] else {
+                panic!("expected Circle")
+            };
+            let DrawCommand::Arc { radius: ring, .. } = &draws[1] else {
+                panic!("expected ring Arc")
+            };
+            (*button, *ring)
+        };
+
+        let (button, idle) = radii(0.0);
+        let (_, half) = radii(0.5);
+        let (_, full) = radii(1.0);
+        assert_close(idle, button, "the idle ring rests on the button radius");
+        assert_close(half, 47.0, "the half-hold ring grows outward");
+        assert_close(full, 50.0, "the full-hold ring reaches the outer rim");
+        assert!(
+            idle < half && half < full,
+            "the ring radius grows monotonically with hold progress"
+        );
     }
 
     #[test]
@@ -1686,8 +1738,16 @@ mod tests {
                 })
                 .expect("BUG: restart canvas must carry the hold ring")
         };
-        assert_eq!(ring_of(0.5), HOLD_RING.scale_alpha(0.5));
-        assert_eq!(ring_of(0.0), HOLD_RING.scale_alpha(0.0));
+        assert_eq!(
+            ring_of(0.5),
+            HOLD_RING.scale_alpha(0.65),
+            "half hold sits halfway between the 30% floor and opaque",
+        );
+        assert_eq!(
+            ring_of(0.0),
+            HOLD_RING.scale_alpha(RING_MIN_ALPHA),
+            "an idle hold button keeps a faint 30% ring",
+        );
     }
 
     #[test]
