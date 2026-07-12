@@ -69,6 +69,10 @@ find_latest_link() {
 activate_profile() {
 	local profile_dir current bos_version next marker entrypoint failed_generation old_target
 
+	# Assign explicitly: `local` alone leaves the variable unset, and
+	# the test suite sources this script under `set -u`.
+	failed_generation=""
+
 	# NIX_ACTIVATOR_PROFILE_DIR and NIX_ACTIVATOR_BOS_VERSION_FILE
 	# relocate the inputs for tests.
 	profile_dir="${NIX_ACTIVATOR_PROFILE_DIR:-/nix/var/nix/gcroots/profiles/bmc}"
