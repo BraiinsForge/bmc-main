@@ -69,6 +69,39 @@ paths, so make a code change (or serve a different profile) before running the h
 
 The upgrade server is terminated when the procedure ends, whether it succeeded or aborted.
 
+## Widget Install Variant
+
+`deck install-widget-e2e` exercises the widget-install path over the same machinery: discovery via
+`UpgradeService/GetInstallableWidgets`, planning via `CheckForUpgrade` with `installPackages`, and the shared
+`StartUpgrade` stream. The plain upgrade e2e serves the full package set, so nothing is ever installable by
+construction; this procedure creates the gap on purpose — it removes a widget from the device, then discovers and
+installs it back:
+
+```sh
+nix run .#deck -- install-widget-e2e --device DEVICE_IP
+```
+
+`--widget` picks the package to remove and reinstall (default `widget-blockheight`); it must be a leaf widget the served
+build contains, or the install is never offered. The prerequisites, `--packages`/`--profile`/`--password`/port flags,
+and the full-package-set caveat above all apply unchanged. Unlike `upgrade-e2e`, no code change between deploy and run
+is needed: the removal itself creates the plan difference, so rebuilding the same tree works.
+
+The shared preparation stages (preconditions through "Register server on device" and "Authenticate") are identical.
+Then:
+
+1. **Remove widget for reinstall** — `bmc-nix-cli remove-packages` on the device; skipped when the widget is already
+   absent, so the procedure re-runs cleanly after a mid-flight abort.
+2. **List installable widgets** — `GetInstallableWidgets` must offer the widget with its catalog metadata (uid, display
+   name, category, icon).
+3. **Check for install** — `CheckForUpgrade` with `installPackages: [WIDGET]` must plan the widget as an added change
+   and return an upgrade id.
+4. **Run upgrade** — the same `StartUpgrade` stream assertion as stage 8 above.
+5. **Verify widget installed** — the widget is back in `list-packages` and its uid is exposed by
+   `SceneManagementService/GetAvailableWidgets`, proving the running registry picked it up, not just the profile.
+
+The run is self-cleaning device-side — the reinstall returns the device to its baseline — but the `dev-upgrade` server
+registration persists exactly as with `upgrade-e2e`, so the cleanup below applies.
+
 ## Cleanup
 
 **Remove the registration once you stop the harness, or the device's upgrade checks break.** The `dev-upgrade` server
