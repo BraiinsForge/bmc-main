@@ -35,21 +35,32 @@ pub struct ModelAccumulator {
     pub chip_count: Option<u32>,
 }
 
+/// Nameplate hashrate (TH/s) for models whose API omits a nominal (today uBOS).
+/// Keyed on product name; a miss leaves the model nominal-less, so `is_ok`
+/// falls back to the floor.
+fn catalog_nominal_ths(name: &str) -> Option<f32> {
+    match name {
+        // Braiins Forge Miner: 4.8 TH/s nameplate (4× BM1370); uBOS exposes no nominal.
+        "HashNode" | "Braiins Forge Miner x4" => Some(4.8),
+        _ => None,
+    }
+}
+
 impl ModelAccumulator {
-    /// Build a `MinerModel` only once both the platform slug and product name
-    /// are set; return `None` if either is absent. The remaining hardware
-    /// fields ride along.
+    /// Build a `MinerModel` once both id (platform slug) and product name are
+    /// set, else `None`; the catalog supplies the nominal for API-less families.
     #[must_use]
     pub fn into_model(self) -> Option<MinerModel> {
         let (Some(id), Some(name)) = (self.id, self.name) else {
             return None;
         };
+        let nominal_hashrate_ths = catalog_nominal_ths(&name);
         Some(MinerModel {
             id,
             name,
             chip_type: self.chip_type,
             chip_count: self.chip_count,
-            nominal_hashrate_ths: None,
+            nominal_hashrate_ths,
         })
     }
 }
@@ -90,6 +101,32 @@ mod tests {
         assert_eq!(model.name, "BMM 101");
         assert_eq!(model.chip_type.as_deref(), Some("BM1370"));
         assert_eq!(model.chip_count, Some(152));
+        assert_eq!(model.nominal_hashrate_ths, None);
+    }
+
+    #[test]
+    fn into_model_stamps_catalog_nominal_for_a_known_ubos_model() {
+        let acc = ModelAccumulator {
+            id: Some("HashNode".to_owned()),
+            name: Some("HashNode".to_owned()),
+            ..ModelAccumulator::default()
+        };
+        let model = acc
+            .into_model()
+            .expect("BUG: id and name present builds a model");
+        assert_eq!(model.nominal_hashrate_ths, Some(4.8));
+    }
+
+    #[test]
+    fn into_model_leaves_an_uncataloged_model_without_a_nominal() {
+        let acc = ModelAccumulator {
+            id: Some("mystery".to_owned()),
+            name: Some("Mystery Miner".to_owned()),
+            ..ModelAccumulator::default()
+        };
+        let model = acc
+            .into_model()
+            .expect("BUG: id and name present builds a model");
         assert_eq!(model.nominal_hashrate_ths, None);
     }
 }

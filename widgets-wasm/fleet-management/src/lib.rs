@@ -33,6 +33,9 @@ mod summary;
 mod telemetry;
 mod view;
 
+#[cfg(test)]
+mod contract;
+
 #[cfg(target_arch = "wasm32")]
 mod manifest_params;
 

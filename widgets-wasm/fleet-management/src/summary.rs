@@ -26,13 +26,22 @@ use units::units::{DegreeCelsius, JoulePerTeraHash, TeraHashPerSecond, Watt};
 use crate::device::{DeviceFamily, DeviceList, KnownDevice};
 use crate::telemetry::TelemetryReading;
 
+/// A miner reading below this fraction of its nominal hashrate is not-ok.
+const OK_NOMINAL_FRACTION: f32 = 0.2;
+/// Fallback floor when no nominal is known: at least mining something.
 const OK_HASHRATE_FLOOR_THS: f32 = 0.1;
 
+/// Ok when the current hashrate is ≥ 20% of nominal (or, with no nominal known,
+/// above a small floor). A present device with no reading is not ok.
 #[must_use]
-pub fn is_ok(reading: &TelemetryReading) -> bool {
-    reading
-        .current_hashrate_ths
-        .is_some_and(|h| h > OK_HASHRATE_FLOOR_THS)
+pub fn is_ok(reading: &TelemetryReading, nominal_ths: Option<f32>) -> bool {
+    let Some(current) = reading.current_hashrate_ths else {
+        return false;
+    };
+    match nominal_ths {
+        Some(nominal) if nominal > 0.0 => current >= nominal * OK_NOMINAL_FRACTION,
+        _ => current > OK_HASHRATE_FLOOR_THS,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,7 +101,11 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
         let Some(reading) = dev.telemetry.as_ref().map(|s| &s.reading) else {
             continue;
         };
-        if is_ok(reading) {
+        // Nominal for the 20% rule: the reading's (API), else the model's (catalog).
+        let nominal = reading
+            .nominal_hashrate_ths
+            .or_else(|| dev.model.as_ref().and_then(|m| m.nominal_hashrate_ths));
+        if is_ok(reading, nominal) {
             ok_count += 1;
         }
         if let Some(h) = reading.current_hashrate_ths {
@@ -326,11 +339,41 @@ mod tests {
     }
 
     #[test]
-    fn ok_predicate_uses_the_hundred_gigahash_floor() {
-        assert!(!is_ok(&reading(Some(0.1))), "exactly the floor is not ok");
-        assert!(is_ok(&reading(Some(0.11))), "just above the floor is ok");
-        assert!(!is_ok(&reading(None)), "no hashrate reading is not ok");
-        assert!(!is_ok(&reading(Some(0.0))), "zero hashrate is not ok");
+    fn ok_predicate_without_nominal_uses_the_floor() {
+        assert!(
+            !is_ok(&reading(Some(0.1)), None),
+            "exactly the floor is not ok"
+        );
+        assert!(
+            is_ok(&reading(Some(0.11)), None),
+            "just above the floor is ok"
+        );
+        assert!(
+            !is_ok(&reading(None), None),
+            "no hashrate reading is not ok"
+        );
+        assert!(!is_ok(&reading(Some(0.0)), None), "zero hashrate is not ok");
+    }
+
+    #[test]
+    fn ok_predicate_with_nominal_uses_the_twenty_percent_rule() {
+        // Nominal 100 TH/s → ok at or above 20 TH/s, not-ok below.
+        assert!(
+            !is_ok(&reading(Some(8.0)), Some(100.0)),
+            "8 is below 20% of 100"
+        );
+        assert!(
+            is_ok(&reading(Some(25.0)), Some(100.0)),
+            "25 is above 20% of 100"
+        );
+        assert!(
+            is_ok(&reading(Some(100.0)), Some(100.0)),
+            "full nominal is ok"
+        );
+        assert!(
+            !is_ok(&reading(None), Some(100.0)),
+            "no reading is not ok even with a nominal"
+        );
     }
 
     #[test]
@@ -342,6 +385,53 @@ mod tests {
         assert_eq!(raw(&group.power), Some(50.0));
         assert_eq!(group.total_count, 2);
         assert_eq!(group.ok_count, 2);
+    }
+
+    #[test]
+    fn fold_counts_a_straggler_below_twenty_percent_of_nominal_as_not_ok() {
+        // 8 vs 100 TH/s nominal is below the 20% floor → not ok; 100 is ok.
+        let straggler = device(
+            Some("M"),
+            Some(TelemetryReading {
+                current_hashrate_ths: Some(8.0),
+                nominal_hashrate_ths: Some(100.0),
+                ..TelemetryReading::default()
+            }),
+        );
+        let healthy = device(
+            Some("M"),
+            Some(TelemetryReading {
+                current_hashrate_ths: Some(100.0),
+                nominal_hashrate_ths: Some(100.0),
+                ..TelemetryReading::default()
+            }),
+        );
+        let group = fold_group("M".to_owned(), &[&straggler, &healthy]);
+        assert_eq!(group.total_count, 2);
+        assert_eq!(group.ok_count, 1, "only the healthy miner is ok");
+    }
+
+    #[test]
+    fn fold_uses_the_model_catalog_nominal_when_the_reading_lacks_one() {
+        // uBOS-style: no reading nominal, but the model carries a catalog one
+        // (100 TH/s) → the 20% rule applies via the model (8 straggles, 30 ok).
+        let mut straggler = device(Some("M"), Some(reading(Some(8.0))));
+        straggler
+            .model
+            .as_mut()
+            .expect("BUG: device built with a model")
+            .nominal_hashrate_ths = Some(100.0);
+        let mut healthy = device(Some("M"), Some(reading(Some(30.0))));
+        healthy
+            .model
+            .as_mut()
+            .expect("BUG: device built with a model")
+            .nominal_hashrate_ths = Some(100.0);
+        let group = fold_group("M".to_owned(), &[&straggler, &healthy]);
+        assert_eq!(
+            group.ok_count, 1,
+            "only the healthy device clears 20% of the catalog nominal"
+        );
     }
 
     #[test]

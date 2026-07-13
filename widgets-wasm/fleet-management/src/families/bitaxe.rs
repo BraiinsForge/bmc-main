@@ -116,6 +116,9 @@ impl FamilyAdapter for BitaxeAdapter {
             if let Some(ghs) = json.f64("/hashRate").filter(|v| *v >= 0.0) {
                 reading.current_hashrate_ths = Some((ghs / 1_000.0) as f32);
             }
+            if let Some(ghs) = json.f64("/expectedHashrate").filter(|v| *v >= 0.0) {
+                reading.nominal_hashrate_ths = Some((ghs / 1_000.0) as f32);
+            }
             if let Some(watts) = json.f64("/power").filter(|v| *v >= 0.0) {
                 reading.power_w = Some(watts as f32);
             }
@@ -134,6 +137,7 @@ impl FamilyAdapter for BitaxeAdapter {
     fn reset_telemetry(&self, endpoint: &str, reading: &mut TelemetryReading) {
         if endpoint == EP_INFO {
             reading.current_hashrate_ths = None;
+            reading.nominal_hashrate_ths = None;
             reading.power_w = None;
             reading.temperature_c = None;
             reading.uptime_s = None;
@@ -196,7 +200,7 @@ mod tests {
     fn parses_a_bitaxe_device_and_stamps_family() {
         let found = BitaxeAdapter
             .parse_found(&axeos_found())
-            .expect("BUG: valid AxeOS discovery fixture must parse");
+            .expect("BUG: valid AxeOS discovery event must parse");
         assert_eq!(
             found.identity.id.as_str(),
             "bitaxe/Bitaxe Gamma 602 (A1B2)._http._tcp.local."
@@ -224,10 +228,10 @@ mod tests {
     fn parses_txt_model_hint_from_discovery() {
         let found = BitaxeAdapter
             .parse_found(&axeos_found())
-            .expect("BUG: valid AxeOS discovery fixture must parse");
+            .expect("BUG: valid AxeOS discovery event must parse");
         let model = found
             .model_hint
-            .expect("BUG: fixture TXT family and board must create a model hint");
+            .expect("BUG: TXT family and board must create a model hint");
         assert_eq!(model.id, "axeos:Gamma:602");
         assert_eq!(model.name, "Bitaxe Gamma 602");
         assert_eq!(model.chip_type.as_deref(), Some("BM1370"));
@@ -251,6 +255,7 @@ mod tests {
     fn info_json() -> MapJson {
         let mut j = MapJson::default();
         j.floats.insert("/hashRate", 1_071.197_262_612);
+        j.floats.insert("/expectedHashrate", 1_200.0);
         j.floats.insert("/power", 35.5);
         j.floats.insert("/temp", 59.0);
         j.ints.insert("/uptimeSeconds", 382);
@@ -258,13 +263,17 @@ mod tests {
     }
 
     #[test]
-    fn parses_system_info_into_all_four_readings() {
+    fn parses_system_info_into_readings() {
         let mut r = TelemetryReading::default();
         BitaxeAdapter.parse_telemetry("/info", &info_json(), &mut r);
         let hr = r
             .current_hashrate_ths
-            .expect("BUG: fixture hashRate must produce current hashrate");
+            .expect("BUG: hashRate must produce current hashrate");
         assert!((hr - 1.071_197_3).abs() < 1e-4, "got {hr}");
+        let nominal = r
+            .nominal_hashrate_ths
+            .expect("BUG: expectedHashrate must produce nominal");
+        assert!((nominal - 1.2).abs() < 1e-4, "got {nominal}");
         assert_eq!(r.power_w, Some(35.5));
         assert_eq!(r.temperature_c, Some(59.0));
         assert_eq!(r.uptime_s, Some(382));
@@ -283,11 +292,13 @@ mod tests {
     fn negative_sensor_readings_are_ignored() {
         let mut j = info_json();
         j.floats.insert("/hashRate", -1.0);
+        j.floats.insert("/expectedHashrate", -1.0);
         j.floats.insert("/power", -1.0);
         j.floats.insert("/temp", -1.0);
         let mut r = TelemetryReading::default();
         BitaxeAdapter.parse_telemetry("/info", &j, &mut r);
         assert_eq!(r.current_hashrate_ths, None);
+        assert_eq!(r.nominal_hashrate_ths, None);
         assert_eq!(r.power_w, None);
         assert_eq!(r.temperature_c, None);
         assert_eq!(r.uptime_s, Some(382));
@@ -317,10 +328,10 @@ mod tests {
         };
         BitaxeAdapter.reset_telemetry("/info", &mut r);
         assert_eq!(r.current_hashrate_ths, None);
+        assert_eq!(r.nominal_hashrate_ths, None);
         assert_eq!(r.power_w, None);
         assert_eq!(r.temperature_c, None);
         assert_eq!(r.uptime_s, None);
-        assert_eq!(r.nominal_hashrate_ths, Some(7.0));
     }
 
     #[test]
@@ -334,7 +345,7 @@ mod tests {
         BitaxeAdapter.parse_model("/info", &j, &mut acc);
         let model = acc
             .into_model()
-            .expect("BUG: deviceModel fixture must create a complete model");
+            .expect("BUG: deviceModel must create a complete model");
         assert_eq!(model.id, "NerdQAxe+");
         assert_eq!(model.name, "NerdQAxe+");
         assert_eq!(model.chip_type.as_deref(), Some("BM1370"));
@@ -351,7 +362,7 @@ mod tests {
         BitaxeAdapter.parse_model("/info", &j, &mut acc);
         let model = acc
             .into_model()
-            .expect("BUG: boardVersion fixture must create a complete model");
+            .expect("BUG: boardVersion must create a complete model");
         assert_eq!(model.id, "axeos-board:602");
         assert_eq!(model.name, "Bitaxe board 602");
         assert_eq!(model.chip_type.as_deref(), Some("BM1370"));

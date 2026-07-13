@@ -163,6 +163,9 @@ impl FamilyAdapter for BosAdapter {
                 {
                     reading.uptime_s = Some(uptime);
                 }
+                if let Some(ghs) = json.f64("/sticker_hashrate/gigahash_per_second") {
+                    reading.nominal_hashrate_ths = Some(ths_from_ghs(ghs));
+                }
             }
             _ => {}
         }
@@ -175,7 +178,10 @@ impl FamilyAdapter for BosAdapter {
                 reading.power_w = None;
             }
             EP_HASHBOARDS => reading.temperature_c = None,
-            EP_DETAILS => reading.uptime_s = None,
+            EP_DETAILS => {
+                reading.uptime_s = None;
+                reading.nominal_hashrate_ths = None;
+            }
             _ => {}
         }
     }
@@ -299,12 +305,27 @@ mod tests {
     }
 
     #[test]
-    fn parses_details_uptime() {
+    fn parses_details_uptime_and_sticker_nominal() {
         let mut j = MapJson::default();
         j.ints.insert("/bosminer_uptime_s", 187_020);
+        j.floats
+            .insert("/sticker_hashrate/gigahash_per_second", 100_000.0);
         let mut r = TelemetryReading::default();
         BosAdapter.parse_telemetry("/miner/details", &j, &mut r);
         assert_eq!(r.uptime_s, Some(187_020));
+        assert_eq!(r.nominal_hashrate_ths, Some(100.0));
+    }
+
+    #[test]
+    fn details_reset_clears_uptime_and_nominal() {
+        let mut r = TelemetryReading {
+            uptime_s: Some(100),
+            nominal_hashrate_ths: Some(100.0),
+            ..TelemetryReading::default()
+        };
+        BosAdapter.reset_telemetry("/miner/details", &mut r);
+        assert_eq!(r.uptime_s, None);
+        assert_eq!(r.nominal_hashrate_ths, None);
     }
 
     #[test]
