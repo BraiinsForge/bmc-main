@@ -37,12 +37,16 @@ use crate::paging;
 use crate::summary::{FleetSummary, GroupSummary};
 use crate::view::{PageTurn, PagerScope, details_click_id, pager_click_id};
 
+pub mod dashboard;
 pub mod fixtures;
+pub mod parts;
+pub mod table;
 
-const OK_ICON: Svg = include_svg!("assets/ok.svg");
-const NOT_OK_ICON: Svg = include_svg!("assets/not-ok.svg");
-const CHEVRON_LEFT: Svg = include_svg!("assets/chevron-left.svg");
-const CHEVRON_RIGHT: Svg = include_svg!("assets/chevron-right.svg");
+const OK_ICON: Svg = include_svg!("assets/icons/perf-ok.svg");
+// Binary ok/not-ok status maps not-ok to the "off" glyph.
+const NOT_OK_ICON: Svg = include_svg!("assets/icons/perf-off.svg");
+const CHEVRON_LEFT: Svg = include_svg!("assets/icons/chevron-left.svg");
+const CHEVRON_RIGHT: Svg = include_svg!("assets/icons/chevron-right.svg");
 const ICON_PX: f32 = 22.0;
 
 const LABEL_COLOR: Color = GRAY_60;
@@ -88,16 +92,18 @@ const PAIR_GAP: f32 = 6.0;
 // this inset on both sides.
 const PADDING: f32 = 24.0;
 
-// Fixed breakdown column widths, shared by the header and data rows so labels
-// sit over their values. Each is its column's widest expected content plus a
-// roughly constant slack, so left-aligned values land at evenly spaced
+// Fixed breakdown column widths, shared by the header and data rows
+// so labels sit over their values. Each is its column's widest expected content
+// plus a roughly constant slack, so left-aligned values land at evenly spaced
 // positions for typical data (a much shorter value leaves more trailing space).
+//
 // The widths also budget for the right-aligned pager cluster on the header row
 // (48 + 8 + ~28 + 8 + 48 ≈ 140 px plus its 12 px column gap); each data row
 // right-aligns its Details tap affordance into the same remainder.
+//
 // The model column is the widest the header budget allows so full model names
-// such as "Braiins Mini Miner BMM 101" show untruncated in the Full band; the
-// Large model column relies on code-side truncation.
+// such as "Braiins Mini Miner BMM 101" show untruncated in the Full band;
+// the Large model column relies on code-side truncation.
 const COL_HASHRATE: f32 = 140.0;
 const COL_MODEL_FULL: f32 = 375.0;
 const COL_MODEL_LARGE: f32 = 180.0;
