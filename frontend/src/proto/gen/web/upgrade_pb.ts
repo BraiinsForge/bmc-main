@@ -6,6 +6,8 @@ import type { GenEnum, GenFile, GenMessage, GenService } from '@bufbuild/protobu
 import { enumDesc, fileDesc, messageDesc, serviceDesc } from '@bufbuild/protobuf/codegenv2';
 import type { Empty, EmptySchema, Timestamp } from '@bufbuild/protobuf/wkt';
 import { file_google_protobuf_empty, file_google_protobuf_timestamp } from '@bufbuild/protobuf/wkt';
+import type { WidgetCategory } from './scene_management_pb';
+import { file_web_scene_management } from './scene_management_pb';
 import type { Message } from '@bufbuild/protobuf';
 
 /**
@@ -14,8 +16,8 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_upgrade: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'ChF3ZWIvdXBncmFkZS5wcm90bxIPYnJhaWlucy5ibWMud2ViIjMKC1JlbGVhc2VJbmZvEg8KB3ZlcnNpb24YASABKAkSEwoLZGVzY3JpcHRpb24YAiABKAkiyQEKD0Zpcm13YXJlVXBncmFkZRIMCgRoYXNoGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSMAoMcmVsZWFzZV9kYXRlGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBITCgtkZXNjcmlwdGlvbhgEIAEoCRIXCg9maWxlX3NpemVfYnl0ZXMYBSABKAQSNwoRcHJldmlvdXNfcmVsZWFzZXMYBiADKAsyHC5icmFpaW5zLmJtYy53ZWIuUmVsZWFzZUluZm8iuwEKDVBhY2thZ2VDaGFuZ2USDAoEbmFtZRgBIAEoCRIZCgx2ZXJzaW9uX2Zyb20YAiABKAlIAIgBARIXCgp2ZXJzaW9uX3RvGAMgASgJSAGIAQESFQoIY2F0ZWdvcnkYBCABKAlIAogBARIWCgljaGFuZ2Vsb2cYBSABKAlIA4gBAUIPCg1fdmVyc2lvbl9mcm9tQg0KC192ZXJzaW9uX3RvQgsKCV9jYXRlZ29yeUIMCgpfY2hhbmdlbG9nItcBChJQYWNrYWdlVXBncmFkZVBsYW4SLwoHY2hhbmdlcxgBIAMoCzIeLmJyYWlpbnMuYm1jLndlYi5QYWNrYWdlQ2hhbmdlEiAKE2Rvd25sb2FkX3NpemVfYnl0ZXMYAiABKARIAIgBARIYCgtibWNfdmVyc2lvbhgDIAEoCUgBiAEBEhoKDWJtY19jaGFuZ2Vsb2cYBCABKAlIAogBAUIWChRfZG93bmxvYWRfc2l6ZV9ieXRlc0IOCgxfYm1jX3ZlcnNpb25CEAoOX2JtY19jaGFuZ2Vsb2ciiAIKF0NoZWNrRm9yVXBncmFkZVJlc3BvbnNlEhcKCnVwZ3JhZGVfaWQYASABKAlIAIgBARI3CghmaXJtd2FyZRgCIAEoCzIgLmJyYWlpbnMuYm1jLndlYi5GaXJtd2FyZVVwZ3JhZGVIAYgBARI6CghwYWNrYWdlcxgDIAEoCzIjLmJyYWlpbnMuYm1jLndlYi5QYWNrYWdlVXBncmFkZVBsYW5IAogBARI2CgpkaXNydXB0aW9uGAQgASgOMiIuYnJhaWlucy5ibWMud2ViLlVwZ3JhZGVEaXNydXB0aW9uQg0KC191cGdyYWRlX2lkQgsKCV9maXJtd2FyZUILCglfcGFja2FnZXMiKQoTU3RhcnRVcGdyYWRlUmVxdWVzdBISCgp1cGdyYWRlX2lkGAEgASgJIl0KF1VwZ3JhZGVEb3dubG9hZFByb2dyZXNzEhgKEGRvd25sb2FkZWRfYnl0ZXMYASABKAQSGAoLdG90YWxfYnl0ZXMYAiABKARIAIgBAUIOCgxfdG90YWxfYnl0ZXMihAIKD1VwZ3JhZGVQcm9ncmVzcxI8Cghkb3dubG9hZBgBIAEoCzIoLmJyYWlpbnMuYm1jLndlYi5VcGdyYWRlRG93bmxvYWRQcm9ncmVzc0gAEj0KDXBhY2thZ2VfcGhhc2UYAiABKA4yJC5icmFpaW5zLmJtYy53ZWIuUGFja2FnZVVwZ3JhZGVQaGFzZUgAEj8KDmZpcm13YXJlX3BoYXNlGAMgASgOMiUuYnJhaWlucy5ibWMud2ViLkZpcm13YXJlVXBncmFkZVBoYXNlSAASKgoIZmluaXNoZWQYBCABKAsyFi5nb29nbGUucHJvdG9idWYuRW1wdHlIAEIHCgVldmVudCKxAQoVU2V0QXV0b1VwZ3JhZGVSZXF1ZXN0Eg8KB2VuYWJsZWQYASABKAgSPQoJZnJlcXVlbmN5GAIgASgOMiUuYnJhaWlucy5ibWMud2ViLkF1dG9VcGdyYWRlRnJlcXVlbmN5SACIAQESEQoEaG91chgDIAEoDUgBiAEBEhMKBm1pbnV0ZRgEIAEoDUgCiAEBQgwKCl9mcmVxdWVuY3lCBwoFX2hvdXJCCQoHX21pbnV0ZSKyAQoWR2V0QXV0b1VwZ3JhZGVSZXNwb25zZRIPCgdlbmFibGVkGAEgASgIEj0KCWZyZXF1ZW5jeRgCIAEoDjIlLmJyYWlpbnMuYm1jLndlYi5BdXRvVXBncmFkZUZyZXF1ZW5jeUgAiAEBEhEKBGhvdXIYAyABKA1IAYgBARITCgZtaW51dGUYBCABKA1IAogBAUIMCgpfZnJlcXVlbmN5QgcKBV9ob3VyQgkKB19taW51dGUqzQEKFEF1dG9VcGdyYWRlRnJlcXVlbmN5EiYKIkFVVE9fVVBHUkFERV9GUkVRVUVOQ1lfVU5TUEVDSUZJRUQQABIgChxBVVRPX1VQR1JBREVfRlJFUVVFTkNZX0RBSUxZEAESIQodQVVUT19VUEdSQURFX0ZSRVFVRU5DWV9XRUVLTFkQAhIkCiBBVVRPX1VQR1JBREVfRlJFUVVFTkNZX0JJX1dFRUtMWRADEiIKHkFVVE9fVVBHUkFERV9GUkVRVUVOQ1lfTU9OVEhMWRAEKnoKEVVwZ3JhZGVEaXNydXB0aW9uEiIKHlVQR1JBREVfRElTUlVQVElPTl9VTlNQRUNJRklFRBAAEiIKHlVQR1JBREVfRElTUlVQVElPTl9BUFBfUkVTVEFSVBABEh0KGVVQR1JBREVfRElTUlVQVElPTl9SRUJPT1QQAirQAQoTUGFja2FnZVVwZ3JhZGVQaGFzZRIlCiFQQUNLQUdFX1VQR1JBREVfUEhBU0VfVU5TUEVDSUZJRUQQABIjCh9QQUNLQUdFX1VQR1JBREVfUEhBU0VfUkVBTElaSU5HEAESIwofUEFDS0FHRV9VUEdSQURFX1BIQVNFX1ZFUklGWUlORxACEiIKHlBBQ0tBR0VfVVBHUkFERV9QSEFTRV9CVUlMRElORxADEiQKIFBBQ0tBR0VfVVBHUkFERV9QSEFTRV9BQ1RJVkFUSU5HEAQqsQEKFEZpcm13YXJlVXBncmFkZVBoYXNlEiYKIkZJUk1XQVJFX1VQR1JBREVfUEhBU0VfVU5TUEVDSUZJRUQQABImCiJGSVJNV0FSRV9VUEdSQURFX1BIQVNFX0RPV05MT0FESU5HEAESJAogRklSTVdBUkVfVVBHUkFERV9QSEFTRV9WRVJJRllJTkcQAhIjCh9GSVJNV0FSRV9VUEdSQURFX1BIQVNFX0FQUExZSU5HEAMy5AIKDlVwZ3JhZGVTZXJ2aWNlElMKD0NoZWNrRm9yVXBncmFkZRIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRooLmJyYWlpbnMuYm1jLndlYi5DaGVja0ZvclVwZ3JhZGVSZXNwb25zZRJYCgxTdGFydFVwZ3JhZGUSJC5icmFpaW5zLmJtYy53ZWIuU3RhcnRVcGdyYWRlUmVxdWVzdBogLmJyYWlpbnMuYm1jLndlYi5VcGdyYWRlUHJvZ3Jlc3MwARJQCg5TZXRBdXRvVXBncmFkZRImLmJyYWlpbnMuYm1jLndlYi5TZXRBdXRvVXBncmFkZVJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSUQoOR2V0QXV0b1VwZ3JhZGUSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaJy5icmFpaW5zLmJtYy53ZWIuR2V0QXV0b1VwZ3JhZGVSZXNwb25zZWIGcHJvdG8z',
-        [file_google_protobuf_empty, file_google_protobuf_timestamp],
+        'ChF3ZWIvdXBncmFkZS5wcm90bxIPYnJhaWlucy5ibWMud2ViIjMKC1JlbGVhc2VJbmZvEg8KB3ZlcnNpb24YASABKAkSEwoLZGVzY3JpcHRpb24YAiABKAkiyQEKD0Zpcm13YXJlVXBncmFkZRIMCgRoYXNoGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSMAoMcmVsZWFzZV9kYXRlGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBITCgtkZXNjcmlwdGlvbhgEIAEoCRIXCg9maWxlX3NpemVfYnl0ZXMYBSABKAQSNwoRcHJldmlvdXNfcmVsZWFzZXMYBiADKAsyHC5icmFpaW5zLmJtYy53ZWIuUmVsZWFzZUluZm8iuwEKDVBhY2thZ2VDaGFuZ2USDAoEbmFtZRgBIAEoCRIZCgx2ZXJzaW9uX2Zyb20YAiABKAlIAIgBARIXCgp2ZXJzaW9uX3RvGAMgASgJSAGIAQESFQoIY2F0ZWdvcnkYBCABKAlIAogBARIWCgljaGFuZ2Vsb2cYBSABKAlIA4gBAUIPCg1fdmVyc2lvbl9mcm9tQg0KC192ZXJzaW9uX3RvQgsKCV9jYXRlZ29yeUIMCgpfY2hhbmdlbG9nItcBChJQYWNrYWdlVXBncmFkZVBsYW4SLwoHY2hhbmdlcxgBIAMoCzIeLmJyYWlpbnMuYm1jLndlYi5QYWNrYWdlQ2hhbmdlEiAKE2Rvd25sb2FkX3NpemVfYnl0ZXMYAiABKARIAIgBARIYCgtibWNfdmVyc2lvbhgDIAEoCUgBiAEBEhoKDWJtY19jaGFuZ2Vsb2cYBCABKAlIAogBAUIWChRfZG93bmxvYWRfc2l6ZV9ieXRlc0IOCgxfYm1jX3ZlcnNpb25CEAoOX2JtY19jaGFuZ2Vsb2ciiAIKF0NoZWNrRm9yVXBncmFkZVJlc3BvbnNlEhcKCnVwZ3JhZGVfaWQYASABKAlIAIgBARI3CghmaXJtd2FyZRgCIAEoCzIgLmJyYWlpbnMuYm1jLndlYi5GaXJtd2FyZVVwZ3JhZGVIAYgBARI6CghwYWNrYWdlcxgDIAEoCzIjLmJyYWlpbnMuYm1jLndlYi5QYWNrYWdlVXBncmFkZVBsYW5IAogBARI2CgpkaXNydXB0aW9uGAQgASgOMiIuYnJhaWlucy5ibWMud2ViLlVwZ3JhZGVEaXNydXB0aW9uQg0KC191cGdyYWRlX2lkQgsKCV9maXJtd2FyZUILCglfcGFja2FnZXMiMgoWQ2hlY2tGb3JVcGdyYWRlUmVxdWVzdBIYChBpbnN0YWxsX3BhY2thZ2VzGAEgAygJIjEKEkluc3RhbGxhYmxlUHJldmlldxINCgVpbWFnZRgBIAEoCRIMCgRzaXplGAIgASgJIq8CChFJbnN0YWxsYWJsZVdpZGdldBIUCgxwYWNrYWdlX25hbWUYASABKAkSCwoDdWlkGAIgASgJEg8KB3ZlcnNpb24YAyABKAkSFAoMZGlzcGxheV9uYW1lGAQgASgJEhQKB3N1Ym5hbWUYBSABKAlIAIgBARIxCghjYXRlZ29yeRgGIAEoDjIfLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRDYXRlZ29yeRIYCgtkZXNjcmlwdGlvbhgHIAEoCUgBiAEBEhEKBGljb24YCCABKAlIAogBARI1CghwcmV2aWV3cxgJIAMoCzIjLmJyYWlpbnMuYm1jLndlYi5JbnN0YWxsYWJsZVByZXZpZXdCCgoIX3N1Ym5hbWVCDgoMX2Rlc2NyaXB0aW9uQgcKBV9pY29uIlQKHUdldEluc3RhbGxhYmxlV2lkZ2V0c1Jlc3BvbnNlEjMKB3dpZGdldHMYASADKAsyIi5icmFpaW5zLmJtYy53ZWIuSW5zdGFsbGFibGVXaWRnZXQiKQoTU3RhcnRVcGdyYWRlUmVxdWVzdBISCgp1cGdyYWRlX2lkGAEgASgJIl0KF1VwZ3JhZGVEb3dubG9hZFByb2dyZXNzEhgKEGRvd25sb2FkZWRfYnl0ZXMYASABKAQSGAoLdG90YWxfYnl0ZXMYAiABKARIAIgBAUIOCgxfdG90YWxfYnl0ZXMihAIKD1VwZ3JhZGVQcm9ncmVzcxI8Cghkb3dubG9hZBgBIAEoCzIoLmJyYWlpbnMuYm1jLndlYi5VcGdyYWRlRG93bmxvYWRQcm9ncmVzc0gAEj0KDXBhY2thZ2VfcGhhc2UYAiABKA4yJC5icmFpaW5zLmJtYy53ZWIuUGFja2FnZVVwZ3JhZGVQaGFzZUgAEj8KDmZpcm13YXJlX3BoYXNlGAMgASgOMiUuYnJhaWlucy5ibWMud2ViLkZpcm13YXJlVXBncmFkZVBoYXNlSAASKgoIZmluaXNoZWQYBCABKAsyFi5nb29nbGUucHJvdG9idWYuRW1wdHlIAEIHCgVldmVudCKxAQoVU2V0QXV0b1VwZ3JhZGVSZXF1ZXN0Eg8KB2VuYWJsZWQYASABKAgSPQoJZnJlcXVlbmN5GAIgASgOMiUuYnJhaWlucy5ibWMud2ViLkF1dG9VcGdyYWRlRnJlcXVlbmN5SACIAQESEQoEaG91chgDIAEoDUgBiAEBEhMKBm1pbnV0ZRgEIAEoDUgCiAEBQgwKCl9mcmVxdWVuY3lCBwoFX2hvdXJCCQoHX21pbnV0ZSKyAQoWR2V0QXV0b1VwZ3JhZGVSZXNwb25zZRIPCgdlbmFibGVkGAEgASgIEj0KCWZyZXF1ZW5jeRgCIAEoDjIlLmJyYWlpbnMuYm1jLndlYi5BdXRvVXBncmFkZUZyZXF1ZW5jeUgAiAEBEhEKBGhvdXIYAyABKA1IAYgBARITCgZtaW51dGUYBCABKA1IAogBAUIMCgpfZnJlcXVlbmN5QgcKBV9ob3VyQgkKB19taW51dGUqzQEKFEF1dG9VcGdyYWRlRnJlcXVlbmN5EiYKIkFVVE9fVVBHUkFERV9GUkVRVUVOQ1lfVU5TUEVDSUZJRUQQABIgChxBVVRPX1VQR1JBREVfRlJFUVVFTkNZX0RBSUxZEAESIQodQVVUT19VUEdSQURFX0ZSRVFVRU5DWV9XRUVLTFkQAhIkCiBBVVRPX1VQR1JBREVfRlJFUVVFTkNZX0JJX1dFRUtMWRADEiIKHkFVVE9fVVBHUkFERV9GUkVRVUVOQ1lfTU9OVEhMWRAEKnoKEVVwZ3JhZGVEaXNydXB0aW9uEiIKHlVQR1JBREVfRElTUlVQVElPTl9VTlNQRUNJRklFRBAAEiIKHlVQR1JBREVfRElTUlVQVElPTl9BUFBfUkVTVEFSVBABEh0KGVVQR1JBREVfRElTUlVQVElPTl9SRUJPT1QQAirQAQoTUGFja2FnZVVwZ3JhZGVQaGFzZRIlCiFQQUNLQUdFX1VQR1JBREVfUEhBU0VfVU5TUEVDSUZJRUQQABIjCh9QQUNLQUdFX1VQR1JBREVfUEhBU0VfUkVBTElaSU5HEAESIwofUEFDS0FHRV9VUEdSQURFX1BIQVNFX1ZFUklGWUlORxACEiIKHlBBQ0tBR0VfVVBHUkFERV9QSEFTRV9CVUlMRElORxADEiQKIFBBQ0tBR0VfVVBHUkFERV9QSEFTRV9BQ1RJVkFUSU5HEAQqsQEKFEZpcm13YXJlVXBncmFkZVBoYXNlEiYKIkZJUk1XQVJFX1VQR1JBREVfUEhBU0VfVU5TUEVDSUZJRUQQABImCiJGSVJNV0FSRV9VUEdSQURFX1BIQVNFX0RPV05MT0FESU5HEAESJAogRklSTVdBUkVfVVBHUkFERV9QSEFTRV9WRVJJRllJTkcQAhIjCh9GSVJNV0FSRV9VUEdSQURFX1BIQVNFX0FQUExZSU5HEAMy1gMKDlVwZ3JhZGVTZXJ2aWNlEmQKD0NoZWNrRm9yVXBncmFkZRInLmJyYWlpbnMuYm1jLndlYi5DaGVja0ZvclVwZ3JhZGVSZXF1ZXN0GiguYnJhaWlucy5ibWMud2ViLkNoZWNrRm9yVXBncmFkZVJlc3BvbnNlEl8KFUdldEluc3RhbGxhYmxlV2lkZ2V0cxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRouLmJyYWlpbnMuYm1jLndlYi5HZXRJbnN0YWxsYWJsZVdpZGdldHNSZXNwb25zZRJYCgxTdGFydFVwZ3JhZGUSJC5icmFpaW5zLmJtYy53ZWIuU3RhcnRVcGdyYWRlUmVxdWVzdBogLmJyYWlpbnMuYm1jLndlYi5VcGdyYWRlUHJvZ3Jlc3MwARJQCg5TZXRBdXRvVXBncmFkZRImLmJyYWlpbnMuYm1jLndlYi5TZXRBdXRvVXBncmFkZVJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSUQoOR2V0QXV0b1VwZ3JhZGUSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaJy5icmFpaW5zLmJtYy53ZWIuR2V0QXV0b1VwZ3JhZGVSZXNwb25zZWIGcHJvdG8z',
+        [file_google_protobuf_empty, file_google_protobuf_timestamp, file_web_scene_management],
     );
 
 /**
@@ -181,6 +183,124 @@ export const CheckForUpgradeResponseSchema: GenMessage<CheckForUpgradeResponse> 
     messageDesc(file_web_upgrade, 4);
 
 /**
+ * @generated from message braiins.bmc.web.CheckForUpgradeRequest
+ */
+export type CheckForUpgradeRequest = Message<'braiins.bmc.web.CheckForUpgradeRequest'> & {
+    /**
+     * @generated from field: repeated string install_packages = 1;
+     */
+    installPackages: string[];
+};
+
+/**
+ * Describes the message braiins.bmc.web.CheckForUpgradeRequest.
+ * Use `create(CheckForUpgradeRequestSchema)` to create a new message.
+ */
+export const CheckForUpgradeRequestSchema: GenMessage<CheckForUpgradeRequest> =
+    /*@__PURE__*/
+    messageDesc(file_web_upgrade, 5);
+
+/**
+ * @generated from message braiins.bmc.web.InstallablePreview
+ */
+export type InstallablePreview = Message<'braiins.bmc.web.InstallablePreview'> & {
+    /**
+     * @generated from field: string image = 1;
+     */
+    image: string;
+
+    /**
+     * Scene size the preview depicts (e.g. "full", "medium", "small_left").
+     * Free-form so future sizes this build does not know still round-trip.
+     *
+     * @generated from field: string size = 2;
+     */
+    size: string;
+};
+
+/**
+ * Describes the message braiins.bmc.web.InstallablePreview.
+ * Use `create(InstallablePreviewSchema)` to create a new message.
+ */
+export const InstallablePreviewSchema: GenMessage<InstallablePreview> = /*@__PURE__*/ messageDesc(file_web_upgrade, 6);
+
+/**
+ * @generated from message braiins.bmc.web.InstallableWidget
+ */
+export type InstallableWidget = Message<'braiins.bmc.web.InstallableWidget'> & {
+    /**
+     * @generated from field: string package_name = 1;
+     */
+    packageName: string;
+
+    /**
+     * @generated from field: string uid = 2;
+     */
+    uid: string;
+
+    /**
+     * @generated from field: string version = 3;
+     */
+    version: string;
+
+    /**
+     * @generated from field: string display_name = 4;
+     */
+    displayName: string;
+
+    /**
+     * @generated from field: optional string subname = 5;
+     */
+    subname?: string | undefined;
+
+    /**
+     * Unknown/unrecognized index categories arrive as WIDGET_CATEGORY_UNSPECIFIED.
+     *
+     * @generated from field: braiins.bmc.web.WidgetCategory category = 6;
+     */
+    category: WidgetCategory;
+
+    /**
+     * @generated from field: optional string description = 7;
+     */
+    description?: string | undefined;
+
+    /**
+     * @generated from field: optional string icon = 8;
+     */
+    icon?: string | undefined;
+
+    /**
+     * @generated from field: repeated braiins.bmc.web.InstallablePreview previews = 9;
+     */
+    previews: InstallablePreview[];
+};
+
+/**
+ * Describes the message braiins.bmc.web.InstallableWidget.
+ * Use `create(InstallableWidgetSchema)` to create a new message.
+ */
+export const InstallableWidgetSchema: GenMessage<InstallableWidget> = /*@__PURE__*/ messageDesc(file_web_upgrade, 7);
+
+/**
+ * @generated from message braiins.bmc.web.GetInstallableWidgetsResponse
+ */
+export type GetInstallableWidgetsResponse = Message<'braiins.bmc.web.GetInstallableWidgetsResponse'> & {
+    /**
+     * @generated from field: repeated braiins.bmc.web.InstallableWidget widgets = 1;
+     */
+    widgets: InstallableWidget[];
+};
+
+/**
+ * Describes the message braiins.bmc.web.GetInstallableWidgetsResponse.
+ * Use `create(GetInstallableWidgetsResponseSchema)` to create a new message.
+ */
+export const GetInstallableWidgetsResponseSchema: GenMessage<GetInstallableWidgetsResponse> =
+    /*@__PURE__*/
+    messageDesc(file_web_upgrade, 8);
+
+/**
  * @generated from message braiins.bmc.web.StartUpgradeRequest
  */
 export type StartUpgradeRequest = Message<'braiins.bmc.web.StartUpgradeRequest'> & {
@@ -196,7 +316,7 @@ export type StartUpgradeRequest = Message<'braiins.bmc.web.StartUpgradeRequest'>
  */
 export const StartUpgradeRequestSchema: GenMessage<StartUpgradeRequest> =
     /*@__PURE__*/
-    messageDesc(file_web_upgrade, 5);
+    messageDesc(file_web_upgrade, 9);
 
 /**
  * @generated from message braiins.bmc.web.UpgradeDownloadProgress
@@ -219,7 +339,7 @@ export type UpgradeDownloadProgress = Message<'braiins.bmc.web.UpgradeDownloadPr
  */
 export const UpgradeDownloadProgressSchema: GenMessage<UpgradeDownloadProgress> =
     /*@__PURE__*/
-    messageDesc(file_web_upgrade, 6);
+    messageDesc(file_web_upgrade, 10);
 
 /**
  * @generated from message braiins.bmc.web.UpgradeProgress
@@ -270,7 +390,7 @@ export type UpgradeProgress = Message<'braiins.bmc.web.UpgradeProgress'> & {
  * Describes the message braiins.bmc.web.UpgradeProgress.
  * Use `create(UpgradeProgressSchema)` to create a new message.
  */
-export const UpgradeProgressSchema: GenMessage<UpgradeProgress> = /*@__PURE__*/ messageDesc(file_web_upgrade, 7);
+export const UpgradeProgressSchema: GenMessage<UpgradeProgress> = /*@__PURE__*/ messageDesc(file_web_upgrade, 11);
 
 /**
  * @generated from message braiins.bmc.web.SetAutoUpgradeRequest
@@ -303,7 +423,7 @@ export type SetAutoUpgradeRequest = Message<'braiins.bmc.web.SetAutoUpgradeReque
  */
 export const SetAutoUpgradeRequestSchema: GenMessage<SetAutoUpgradeRequest> =
     /*@__PURE__*/
-    messageDesc(file_web_upgrade, 8);
+    messageDesc(file_web_upgrade, 12);
 
 /**
  * @generated from message braiins.bmc.web.GetAutoUpgradeResponse
@@ -336,7 +456,7 @@ export type GetAutoUpgradeResponse = Message<'braiins.bmc.web.GetAutoUpgradeResp
  */
 export const GetAutoUpgradeResponseSchema: GenMessage<GetAutoUpgradeResponse> =
     /*@__PURE__*/
-    messageDesc(file_web_upgrade, 9);
+    messageDesc(file_web_upgrade, 13);
 
 /**
  * @generated from enum braiins.bmc.web.AutoUpgradeFrequency
@@ -474,8 +594,16 @@ export const UpgradeService: GenService<{
      */
     checkForUpgrade: {
         methodKind: 'unary';
-        input: typeof EmptySchema;
+        input: typeof CheckForUpgradeRequestSchema;
         output: typeof CheckForUpgradeResponseSchema;
+    };
+    /**
+     * @generated from rpc braiins.bmc.web.UpgradeService.GetInstallableWidgets
+     */
+    getInstallableWidgets: {
+        methodKind: 'unary';
+        input: typeof EmptySchema;
+        output: typeof GetInstallableWidgetsResponseSchema;
     };
     /**
      * @generated from rpc braiins.bmc.web.UpgradeService.StartUpgrade

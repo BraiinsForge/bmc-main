@@ -1230,7 +1230,7 @@ class View extends Component<Props, State> {
 
         try {
             const { signal } = this.upgradesFeedCheckAbort.replace();
-            const upgradeInfo = await pb.rpc.upgrade.checkForUpgrade({}, { signal });
+            const upgradeInfo = await pb.rpc.upgrade.checkForUpgrade({ installPackages: [] }, { signal });
 
             // Upgrade available
             if (upgradeInfo.firmware || upgradeInfo.packages) {
