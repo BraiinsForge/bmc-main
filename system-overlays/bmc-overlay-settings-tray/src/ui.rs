@@ -1360,7 +1360,8 @@ mod tests {
             | TreeNode::Notification { .. }
             | TreeNode::RelTime { .. }
             | TreeNode::Modal { .. }
-            | TreeNode::ProgressBar { .. } => None,
+            | TreeNode::ProgressBar { .. }
+            | TreeNode::Switcher { .. } => None,
         }
     }
 

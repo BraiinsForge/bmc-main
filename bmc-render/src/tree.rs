@@ -348,6 +348,12 @@ pub enum TreeNode {
         icon: Option<SvgId>,
         content: Box<TreeNode>,
     },
+    /// Segmented view switcher — rounded pill of icon tabs, one active.
+    Switcher {
+        active: usize,
+        disabled: bool,
+        tabs: Vec<SwitcherTabData>,
+    },
     /// Modal dialog overlay
     Modal {
         modal_id: String,
@@ -833,6 +839,23 @@ impl<'a> TreeReader<'a> {
                     kind,
                     icon,
                     content,
+                })
+            }
+            NODE_SWITCHER => {
+                let active = self.read_u8()? as usize;
+                let disabled = self.read_u8()? != 0;
+                let tab_count = self.read_u8()?;
+                let mut tabs = Vec::with_capacity(tab_count as usize);
+                for _ in 0..tab_count {
+                    let icon = self.read_icon_id()?;
+                    let id_len = self.read_u16()?;
+                    let click_id = self.read_string(id_len)?;
+                    tabs.push(SwitcherTabData { icon, click_id });
+                }
+                Ok(TreeNode::Switcher {
+                    active,
+                    disabled,
+                    tabs,
                 })
             }
             NODE_PROGRESS_BAR => {
@@ -1403,6 +1426,7 @@ use crate::components::notification::{
     NotificationData, measure_notification, render_notification,
 };
 use crate::components::progress_bar::{ProgressBarData, render_progress_bar};
+use crate::components::switcher::{SwitcherData, SwitcherTabData, render_switcher, switcher_size};
 use crate::components::tag::{TAG_PAD_VERT, TagData, render_tag, tag_content_padding, tag_theme};
 use crate::components::{ButtonSize, ButtonStyle, draw_button};
 use crate::interaction::InteractionState;
@@ -1511,6 +1535,7 @@ pub struct NodeContext {
     scroll_key: Option<String>,
     progress_bar: Option<ProgressBarData>,
     tag: Option<TagData>,
+    switcher: Option<SwitcherData>,
 }
 
 /// Per-frame mutable state passed through the render pipeline.
@@ -2064,6 +2089,35 @@ pub(crate) fn build_taffy_node(
             Ok(id)
         }
 
+        TreeNode::Switcher {
+            active,
+            disabled,
+            tabs,
+        } => {
+            let data = SwitcherData {
+                active: *active,
+                disabled: *disabled,
+                tabs: tabs.clone(),
+            };
+            let (sw, sh) = switcher_size(&data);
+            let style = Style {
+                size: Size {
+                    width: length(sw),
+                    height: length(sh),
+                },
+                ..Default::default()
+            };
+            let id = taffy.new_leaf(style)?;
+            taffy.set_node_context(
+                id,
+                Some(NodeContext {
+                    switcher: Some(data),
+                    ..Default::default()
+                }),
+            )?;
+            Ok(id)
+        }
+
         TreeNode::Modal {
             modal_id,
             is_open,
@@ -2431,6 +2485,12 @@ pub(crate) fn render_taffy_node(
         && let Some(ref notif) = ctx.notification
     {
         render_notification(notif, x, y, w, h, renderer);
+    }
+
+    if let Some(ctx) = taffy.get_node_context(node_id)
+        && let Some(ref sw) = ctx.switcher
+    {
+        render_switcher(sw, x, y, w, h, renderer, interaction, result);
     }
 
     let Ok(children) = taffy.children(node_id) else {

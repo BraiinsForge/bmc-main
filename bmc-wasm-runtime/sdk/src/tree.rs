@@ -43,8 +43,8 @@ use bmc_wasm_protocol::{
     DRAW_RECT, DRAW_ROTATED, DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Easing,
     Fill, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL,
     NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_RELTIME, NODE_ROW, NODE_SCROLL,
-    NODE_SPACER, NODE_TAG, PathPaint, RelTimeClamp, RelTimeFormat, SvgId, TagIconMode, TagKind,
-    encode_arc_cap, encode_arc_fill, encode_arc_segments, encode_fill,
+    NODE_SPACER, NODE_SWITCHER, NODE_TAG, PathPaint, RelTimeClamp, RelTimeFormat, SvgId,
+    TagIconMode, TagKind, encode_arc_cap, encode_arc_fill, encode_arc_segments, encode_fill,
 };
 
 use crate::PropsFieldValue;
@@ -67,6 +67,7 @@ pub use crate::notification::*;
 pub use crate::progress_bar::*;
 pub use crate::relative_time::*;
 pub use crate::status_overlay::*;
+pub use crate::switcher::*;
 pub use crate::tag::*;
 pub use crate::text::*;
 
@@ -319,6 +320,25 @@ impl TreeBuffer {
         };
         self.write_u8(mode as u8);
         self.write_icon_id(icon_id);
+    }
+
+    /// Write a view-switcher node.
+    ///
+    /// ```text
+    /// [NODE_SWITCHER][active:u8][disabled:u8][tab_count:u8]
+    ///   per tab: [icon:u16][click_id_len:u16][click_id_bytes...]
+    /// ```
+    pub fn write_switcher(&mut self, active: usize, disabled: bool, tabs: &[SwitcherTab]) {
+        self.write_u8(NODE_SWITCHER);
+        self.write_u8(active as u8);
+        self.write_u8(u8::from(disabled));
+        self.write_u8(tabs.len() as u8);
+        for tab in tabs {
+            self.write_icon_id(tab.icon);
+            let bytes = tab.click_id.as_bytes();
+            self.write_u16(bytes.len() as u16);
+            self.write_bytes(bytes);
+        }
     }
 
     /// Write a modal node.
@@ -1385,6 +1405,12 @@ pub enum Node {
         icon: TagIcon,
         content: Box<Node>,
     },
+    /// Segmented view switcher — host-rendered rounded pill of icon tabs.
+    Switcher {
+        active: usize,
+        disabled: bool,
+        tabs: Vec<SwitcherTab>,
+    },
     /// Scrollable container — clips children and allows vertical scrolling.
     Scroll {
         scroll_key: String,
@@ -1775,6 +1801,13 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             subtitle,
         } => {
             buf.write_notification(*kind, title, subtitle);
+        }
+        Node::Switcher {
+            active,
+            disabled,
+            tabs,
+        } => {
+            buf.write_switcher(*active, *disabled, tabs);
         }
         Node::Modal {
             modal_id,
@@ -2238,6 +2271,15 @@ fn collect_interaction_keys(node: &Node, keys: &mut Vec<String>) {
                     keys.push(footer_secondary_key.clone());
                 }
                 keys.push(std::format!("{modal_id}::close"));
+            }
+        }
+        Node::Switcher {
+            tabs,
+            disabled: false,
+            ..
+        } => {
+            for tab in tabs {
+                keys.push(tab.click_id.clone());
             }
         }
         _ => {}
