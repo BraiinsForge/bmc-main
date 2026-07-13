@@ -258,6 +258,39 @@ impl TryFrom<u8> for UnitSystem {
     }
 }
 
+// Wire → domain conversions, feature-gated so the wasm SDK path stays formato-free.
+#[cfg(feature = "domain")]
+impl From<NumberFormat> for bmc_shared_utils::number_format::NumberFormat {
+    fn from(value: NumberFormat) -> Self {
+        match value {
+            NumberFormat::SpaceGroupCommaDecimal => Self::SpaceGroupCommaDecimal,
+            NumberFormat::CommaGroupDotDecimal => Self::CommaGroupDotDecimal,
+            NumberFormat::DotGroupCommaDecimal => Self::DotGroupCommaDecimal,
+            NumberFormat::SpaceGroupDotDecimal => Self::SpaceGroupDotDecimal,
+        }
+    }
+}
+
+#[cfg(feature = "domain")]
+impl From<TemperatureUnit> for bmc_shared_utils::temperature::TemperatureUnit {
+    fn from(value: TemperatureUnit) -> Self {
+        match value {
+            TemperatureUnit::Celsius => Self::Celsius,
+            TemperatureUnit::Fahrenheit => Self::Fahrenheit,
+        }
+    }
+}
+
+#[cfg(feature = "domain")]
+impl From<UnitSystem> for bmc_shared_utils::unit_system::UnitSystem {
+    fn from(value: UnitSystem) -> Self {
+        match value {
+            UnitSystem::Metric => Self::Metric,
+            UnitSystem::Imperial => Self::Imperial,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -33,11 +33,12 @@ pub enum NumberFormat {
 impl NumberFormat {
     #[expect(clippy::needless_pass_by_value)]
     pub fn format_number<T: Formato>(self, number: T, precision: usize) -> String {
+        // A non-breaking space groups thousands so a number never wraps mid-value in the UI.
         let (group_sep, decimal_sep) = match self {
-            NumberFormat::SpaceGroupCommaDecimal => (" ", ","),
+            NumberFormat::SpaceGroupCommaDecimal => ("\u{00a0}", ","),
             NumberFormat::CommaGroupDotDecimal => (",", "."),
             NumberFormat::DotGroupCommaDecimal => (".", ","),
-            NumberFormat::SpaceGroupDotDecimal => (" ", "."),
+            NumberFormat::SpaceGroupDotDecimal => ("\u{00a0}", "."),
         };
 
         let options = FormatOptions::new()
@@ -63,7 +64,7 @@ mod tests {
         let number = 1234567.89;
         let format = NumberFormat::SpaceGroupCommaDecimal;
         let result = format.format_number(number, 2);
-        assert_eq!(result, "1 234 567,89");
+        assert_eq!(result, "1\u{00a0}234\u{00a0}567,89");
     }
 
     #[test]
@@ -87,7 +88,7 @@ mod tests {
         let number = 1234567.89;
         let format = NumberFormat::SpaceGroupDotDecimal;
         let result = format.format_number(number, 3);
-        assert_eq!(result, "1 234 567.890");
+        assert_eq!(result, "1\u{00a0}234\u{00a0}567.890");
 
         let number = 0_u64;
         let format = NumberFormat::SpaceGroupDotDecimal;
@@ -97,12 +98,12 @@ mod tests {
         let number = 1234567_u64;
         let format = NumberFormat::SpaceGroupDotDecimal;
         let result = format.format_number(number, 0);
-        assert_eq!(result, "1 234 567");
+        assert_eq!(result, "1\u{00a0}234\u{00a0}567");
 
         let number = 1234567_f64;
         let format = NumberFormat::SpaceGroupDotDecimal;
         let result = format.format_number(number, 1);
-        assert_eq!(result, "1 234 567.0");
+        assert_eq!(result, "1\u{00a0}234\u{00a0}567.0");
     }
 
     #[test]

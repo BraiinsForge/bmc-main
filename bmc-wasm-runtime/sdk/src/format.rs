@@ -22,11 +22,42 @@
 //!
 //! Mirrors the JS SDK's `sdk.format.*` API from deckfeeder.
 //!
-//! Preference-aware formatters delegate to host functions that use `formato`
-//! and the operator-controlled fields of the deck-wide `SystemSnapshot`
-//! (`number_format`, `unit_system`, `temperature_unit`) — see [`crate::system`].
-//! Use the macros [`format_number!`], [`format_speed!`], [`format_temperature!`].
+//! Preference-aware formatters keyed on the deck-wide `SystemSnapshot`
+//! (`number_format`, `unit_system`, `temperature_unit`). wasm goes through the
+//! host; native through the same `bmc_shared_utils` core, matching the device.
+//!
+//! Use the macros `format_number!`, `format_speed!`, `format_temperature!`.
 
+// The host runs the same core, so native output matches the device.
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use bmc_shared_utils::number_format::NumberFormat;
+    use bmc_shared_utils::temperature::TemperatureUnit;
+    use bmc_shared_utils::unit_system::UnitSystem;
+
+    pub(super) fn number_format() -> NumberFormat {
+        crate::system::current()
+            .number_format()
+            .map(NumberFormat::from)
+            .unwrap_or_default()
+    }
+
+    pub(super) fn temperature_unit() -> TemperatureUnit {
+        crate::system::current()
+            .temperature_unit()
+            .map(TemperatureUnit::from)
+            .unwrap_or_default()
+    }
+
+    pub(super) fn unit_system() -> UnitSystem {
+        crate::system::current()
+            .unit_system()
+            .map(UnitSystem::from)
+            .unwrap_or_default()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
 unsafe extern "C" {
     fn host_format_number(value: f64, decimals: u32, out_ptr: *mut u8, out_len: u32) -> i32;
     fn host_format_speed(
@@ -58,9 +89,11 @@ unsafe extern "C" {
 
 /// Sentinel returned by `host_resolve_tz` for unknown IANA names.
 /// Real UTC offsets are bounded to ±14 hours, so this value never collides.
+#[cfg(target_arch = "wasm32")]
 const TZ_UNKNOWN: i32 = i32::MIN;
 
 /// Read a host formatting result from a 64-byte stack buffer.
+#[cfg(target_arch = "wasm32")]
 fn read_host_buf(buf: &[u8; 64], len: i32) -> String {
     if len <= 0 {
         return String::new();
@@ -74,26 +107,52 @@ fn read_host_buf(buf: &[u8; 64], len: i32) -> String {
 #[doc(hidden)]
 #[must_use]
 pub fn _host_format_number(value: f64, decimals: u32) -> String {
-    let mut buf = [0_u8; 64];
-    let len = unsafe { host_format_number(value, decimals, buf.as_mut_ptr(), buf.len() as u32) };
-    read_host_buf(&buf, len)
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut buf = [0_u8; 64];
+        let len =
+            unsafe { host_format_number(value, decimals, buf.as_mut_ptr(), buf.len() as u32) };
+        read_host_buf(&buf, len)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        native::number_format().format_number(value, decimals as usize)
+    }
 }
 
 /// Format a speed using host-side preferences. Called by [`format_speed!`].
 #[doc(hidden)]
 #[must_use]
 pub fn _host_format_speed(value: f64, decimals: u32, metric_unit: u32) -> String {
-    let mut buf = [0_u8; 64];
-    let len = unsafe {
-        host_format_speed(
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut buf = [0_u8; 64];
+        let len = unsafe {
+            host_format_speed(
+                value,
+                decimals,
+                metric_unit,
+                buf.as_mut_ptr(),
+                buf.len() as u32,
+            )
+        };
+        read_host_buf(&buf, len)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use bmc_shared_utils::unit_system::MetricSpeedUnit;
+        let metric_unit = if metric_unit == 1 {
+            MetricSpeedUnit::Ms
+        } else {
+            MetricSpeedUnit::KmH
+        };
+        native::unit_system().format_speed(
+            native::number_format(),
             value,
-            decimals,
+            decimals as usize,
             metric_unit,
-            buf.as_mut_ptr(),
-            buf.len() as u32,
         )
-    };
-    read_host_buf(&buf, len)
+    }
 }
 
 /// Format a distance using host-side preferences.
@@ -101,26 +160,46 @@ pub fn _host_format_speed(value: f64, decimals: u32, metric_unit: u32) -> String
 #[doc(hidden)]
 #[must_use]
 pub fn _host_format_distance(value: f64, decimals: u32) -> String {
-    let mut buf = [0_u8; 64];
-    let len = unsafe { host_format_distance(value, decimals, buf.as_mut_ptr(), buf.len() as u32) };
-    read_host_buf(&buf, len)
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut buf = [0_u8; 64];
+        let len =
+            unsafe { host_format_distance(value, decimals, buf.as_mut_ptr(), buf.len() as u32) };
+        read_host_buf(&buf, len)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        native::unit_system().format_distance(native::number_format(), value, decimals as usize)
+    }
 }
 
 /// Format a temperature using host-side preferences. Called by [`format_temperature!`].
 #[doc(hidden)]
 #[must_use]
 pub fn _host_format_temperature(value: f64, decimals: u32, show_unit: u32) -> String {
-    let mut buf = [0_u8; 64];
-    let len = unsafe {
-        host_format_temperature(
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut buf = [0_u8; 64];
+        let len = unsafe {
+            host_format_temperature(
+                value,
+                decimals,
+                show_unit,
+                buf.as_mut_ptr(),
+                buf.len() as u32,
+            )
+        };
+        read_host_buf(&buf, len)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        native::temperature_unit().format(
+            native::number_format(),
             value,
-            decimals,
-            show_unit,
-            buf.as_mut_ptr(),
-            buf.len() as u32,
+            decimals as usize,
+            show_unit != 0,
         )
-    };
-    read_host_buf(&buf, len)
+    }
 }
 
 /// Format a unix timestamp using a chrono strftime pattern.
@@ -139,6 +218,7 @@ pub fn _host_format_temperature(value: f64, decimals: u32, show_unit: u32) -> St
 /// let s = strftime(ts, "%d.%m.%Y %H:%M:%S"); // "04.03.2026 04:19:23"
 /// ```
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn strftime(timestamp: i64, format: &str) -> String {
     let mut buf = [0_u8; 64];
     let len = unsafe {
@@ -165,12 +245,15 @@ pub fn strftime(timestamp: i64, format: &str) -> String {
 // rendering an event's time in both the user's configured timezone
 // and the event's local timezone, or rendering metric and imperial side-by-side.
 
+#[cfg(target_arch = "wasm32")]
 use crate::system::{self, DateFormat, TimeFormat};
+#[cfg(target_arch = "wasm32")]
 use crate::tz::Tz;
 
 /// Overrides for [`format_time`]. Any `Some`-valued field replaces the
 /// corresponding `system::current()` preference for this call only.
 #[derive(Clone, Debug, Default)]
+#[cfg(target_arch = "wasm32")]
 pub struct FormatTimeOpts {
     /// Override the system's [`TimeFormat`].
     /// `None` uses `system::current().time_format()`.
@@ -187,6 +270,7 @@ pub struct FormatTimeOpts {
 /// Overrides for [`format_date`]. Any `Some`-valued field replaces the
 /// corresponding `system::current()` preference for this call only.
 #[derive(Clone, Debug, Default)]
+#[cfg(target_arch = "wasm32")]
 pub struct FormatDateOpts {
     /// Override the system's [`DateFormat`].
     /// `None` uses `system::current().date_format()`.
@@ -208,6 +292,7 @@ pub struct FormatDateOpts {
 /// let s = format_time(now, FormatTimeOpts { with_seconds: true, ..default }); // "13:45:09"
 /// ```
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn format_time(now: crate::host::SystemTime, opts: FormatTimeOpts) -> String {
     let format = opts
         .format
@@ -235,6 +320,7 @@ pub fn format_time(now: crate::host::SystemTime, opts: FormatTimeOpts) -> String
 /// let s = format_date(now, FormatDateOpts::default()); // "12.03.2026"
 /// ```
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn format_date(now: crate::host::SystemTime, opts: FormatDateOpts) -> String {
     let format = opts
         .format
@@ -266,6 +352,7 @@ pub fn format_date(now: crate::host::SystemTime, opts: FormatDateOpts) -> String
 /// let s = format_hour(now, None); // "20" or "8PM"
 /// ```
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn format_hour(now: crate::host::SystemTime, tz: Option<&Tz>) -> String {
     let pattern = match system::current().time_format().unwrap_or_default() {
         TimeFormat::Hour24 => "%H",
@@ -278,6 +365,7 @@ pub fn format_hour(now: crate::host::SystemTime, tz: Option<&Tz>) -> String {
 /// mode. [`format_time`] deliberately omits it; render this beside the time as
 /// a separate element when a 12-hour reading would otherwise be ambiguous.
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn meridiem(now: crate::host::SystemTime, tz: Option<&Tz>) -> Option<String> {
     match system::current().time_format().unwrap_or_default() {
         TimeFormat::Hour24 => None,
@@ -290,6 +378,7 @@ pub fn meridiem(now: crate::host::SystemTime, tz: Option<&Tz>) -> Option<String>
 /// shift `now.unix_secs` into wall-clock seconds before handing to
 /// [`strftime`].
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn local_unix_secs_or_system(now: &crate::host::SystemTime, tz: Option<&Tz>) -> i64 {
     if let Some(t) = tz
         && let Some(secs) = local_unix_secs(now, t)
@@ -308,6 +397,7 @@ pub fn local_unix_secs_or_system(now: &crate::host::SystemTime, tz: Option<&Tz>)
 /// Shift `now.unix_secs` by `tz`'s UTC offset for a downstream `strftime`.
 /// Returns `None` when the host doesn't recognise the tz name.
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn local_unix_secs(now: &crate::host::SystemTime, tz: &Tz) -> Option<i64> {
     let offset_secs = resolve_tz_offset(tz, now.unix_secs)?;
     Some(now.unix_secs + i64::from(offset_secs))
@@ -316,6 +406,7 @@ pub fn local_unix_secs(now: &crate::host::SystemTime, tz: &Tz) -> Option<i64> {
 /// Resolve the UTC offset (in seconds) for an IANA-name timezone at a
 /// moment. Returns `None` when the host doesn't recognise the name.
 #[must_use]
+#[cfg(target_arch = "wasm32")]
 pub fn resolve_tz_offset(tz: &Tz, unix_secs: i64) -> Option<i32> {
     let name = tz.iana().as_bytes();
     #[expect(
@@ -332,6 +423,7 @@ pub fn resolve_tz_offset(tz: &Tz, unix_secs: i64) -> Option<i32> {
 
 /// Append a UTC offset as `+H` for whole hours or `+H:MM` when it has minutes.
 /// Sign is always emitted; hours are unpadded, minutes zero-padded.
+#[cfg(target_arch = "wasm32")]
 pub fn push_utc_offset(s: &mut String, offset_secs: i32) {
     let sign = if offset_secs < 0 { '-' } else { '+' };
     let abs = offset_secs.unsigned_abs();
@@ -345,6 +437,7 @@ pub fn push_utc_offset(s: &mut String, offset_secs: i32) {
 }
 
 /// Outcome of resolving a timezone for a caption.
+#[cfg(target_arch = "wasm32")]
 #[derive(Debug)]
 pub enum TzLabel {
     /// Resolved cleanly: `city` is the display name, `offset_secs` its UTC offset.
@@ -361,6 +454,7 @@ pub enum TzLabel {
 /// Resolve `override_tz` → system timezone → UTC into a [`TzLabel`] at
 /// `now_secs` (the offset is date-dependent through DST). Pass `None` to
 /// caption the system timezone directly.
+#[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn resolve_tz_for_label(override_tz: Option<&Tz>, now_secs: i64) -> TzLabel {
     if let Some(t) = override_tz {
@@ -398,6 +492,7 @@ pub fn resolve_tz_for_label(override_tz: Option<&Tz>, now_secs: i64) -> TzLabel 
 
 /// Append a [`TzLabel`]'s caption: `City (±H)` / `City (±H:MM)` when resolved
 /// (see [`push_utc_offset`]), `City (unknown)` otherwise.
+#[cfg(target_arch = "wasm32")]
 pub fn push_tz_caption(s: &mut String, label: &TzLabel) {
     match label {
         TzLabel::Resolved { city, offset_secs } => {
@@ -497,6 +592,7 @@ macro_rules! format_temperature {
 /// assert_eq!(format_duration(0, false), "T-0");
 /// assert_eq!(format_duration(-100, true), "T-0");
 /// ```
+#[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn format_duration(remaining_secs: i64, show_seconds: bool) -> String {
     if remaining_secs <= 0 {
@@ -525,6 +621,7 @@ pub fn format_duration(remaining_secs: i64, show_seconds: bool) -> String {
 }
 
 /// Append `n`'s decimal digits to `s` (smallest representation, no padding).
+#[cfg(target_arch = "wasm32")]
 pub fn push_int(s: &mut String, n: i64) {
     if n >= 10 {
         push_int(s, n / 10);
@@ -533,6 +630,7 @@ pub fn push_int(s: &mut String, n: i64) {
 }
 
 /// Append `n`'s decimal digits to `s`, zero-padded to two characters.
+#[cfg(target_arch = "wasm32")]
 pub fn push_pad2(s: &mut String, n: i64) {
     if n < 10 {
         s.push('0');
@@ -541,6 +639,7 @@ pub fn push_pad2(s: &mut String, n: i64) {
 }
 
 /// Push a non-negative integer left-padded with `0` to `width` digits.
+#[cfg(target_arch = "wasm32")]
 fn push_padded(s: &mut String, n: i64, width: usize) {
     let digits = digit_count(n);
     for _ in digits..width {
@@ -550,6 +649,7 @@ fn push_padded(s: &mut String, n: i64, width: usize) {
 }
 
 /// Decimal digit count of a non-negative `i64`, with `0` counted as one digit.
+#[cfg(target_arch = "wasm32")]
 fn digit_count(n: i64) -> usize {
     if n < 10 {
         return 1;
@@ -582,6 +682,7 @@ fn digit_count(n: i64) -> usize {
 /// assert_eq!(format_f64_fixed(123.456, 0), "123");
 /// assert_eq!(format_f64_fixed(-1.0, 3), "-1.000");
 /// ```
+#[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn format_f64_fixed(value: f64, decimals: u32) -> String {
     let decimals = decimals.min(9) as usize;
@@ -614,7 +715,9 @@ pub fn format_f64_fixed(value: f64, decimals: u32) -> String {
     out
 }
 
-#[cfg(test)]
+// These exercise the wasm-only pure helpers (duration / f64 / host-buffer),
+// so the module is gated to wasm alongside them.
+#[cfg(all(test, target_arch = "wasm32"))]
 mod tests {
     use super::*;
 

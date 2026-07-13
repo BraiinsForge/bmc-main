@@ -8,11 +8,9 @@ license = "GPL-3.0-or-later"
 crate-type = ["rlib"]
 
 [features]
-## Enable 3D math utilities (glam re-export, Orientation↔Quat conversion).
-## Adds ~6KB to WASM binary. Only needed for widgets doing 3D math beyond basic Orientation use.
 math-3d = ["glam"]
-## Enable `profile::span`/`report` (fuel-based section profiling). Off by
-## default so production widgets carry no profiling code.
+# Enable `profile::span`/`report` (fuel-based section profiling).
+# Off by default so production widgets carry no profiling code.
 profiling = []
 
 [dependencies]
@@ -23,6 +21,14 @@ bmc-wasm-protocol = { path = "../protocol" }
 bmc-wasm-sdk-macros = { path = "../sdk-macros" }
 glam = { workspace = true, default-features = false, features = ["libm"], optional = true }
 ufmt = { workspace = true }
+
+# Native-only: the storybook (and any non-wasm build) formats
+# through the shared core instead of the host FFI.
+# Kept off the wasm target so `formato` never lands in a widget binary
+# — on device, formatting still goes through the host.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bmc-shared-utils = { workspace = true }
+bmc-wasm-protocol = { path = "../protocol", features = ["domain"] }
 
 [lints]
 workspace = true

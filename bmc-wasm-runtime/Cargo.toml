@@ -19,12 +19,12 @@ anyhow.workspace = true
 bmc-led.workspace = true
 bmc-render = { path = "../bmc-render" }
 bmc-shared-time = { path = "../bmc-shared/time" }
-bmc-wasm-protocol = { path = "protocol", features = ["serde", "widget-protocol"] }
+bmc-shared-utils = { workspace = true }
+bmc-wasm-protocol = { path = "protocol", features = ["domain", "serde", "widget-protocol"] }
 bmc-widget-manifest.workspace = true
 bmc-widget-protocol.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
-formato.workspace = true
 iana-time-zone.workspace = true
 ii-stopwatch.workspace = true
 tracing.workspace = true

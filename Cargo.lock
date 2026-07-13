@@ -891,7 +891,7 @@ dependencies = [
  "clap",
  "json5",
  "mdns-sd",
- "schemars 1.2.1",
+ "schemars",
  "serde",
  "serde_json",
  "tokio",
@@ -1376,6 +1376,7 @@ dependencies = [
 name = "bmc-wasm-protocol"
 version = "0.1.0"
 dependencies = [
+ "bmc-shared-utils",
  "bmc-widget-protocol",
  "palette",
  "serde",
@@ -1391,6 +1392,7 @@ dependencies = [
  "bmc-led",
  "bmc-render",
  "bmc-shared-time",
+ "bmc-shared-utils",
  "bmc-wasm-protocol",
  "bmc-wasm-sdk",
  "bmc-widget-manifest",
@@ -1403,7 +1405,6 @@ dependencies = [
  "egui_autocomplete",
  "femtovg",
  "flate2",
- "formato",
  "glow 0.16.0",
  "glutin",
  "glutin-winit",
@@ -1447,6 +1448,7 @@ dependencies = [
  "bmc-led",
  "bmc-render-macros",
  "bmc-render-skin",
+ "bmc-shared-utils",
  "bmc-wasm-protocol",
  "bmc-wasm-sdk-macros",
  "glam",

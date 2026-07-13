@@ -28,6 +28,7 @@ pub fn unavailable() -> String {
     NOT_AVAILABLE.to_owned()
 }
 
+#[derive(Debug)]
 pub struct Rendered {
     pub value: String,
     pub unit: Option<&'static str>,
@@ -49,10 +50,10 @@ impl Rendered {
 
 pub fn push_int(out: &mut String, value: u64) {
     if value >= 10 {
-        push_int(out, value / 10);
+        push_int(out, value.div_euclid(10));
     }
     out.push(char::from(
-        b'0' + u8::try_from(value % 10).expect("BUG: decimal digit fits u8"),
+        b'0' + u8::try_from(value.rem_euclid(10)).expect("BUG: decimal digit fits u8"),
     ));
 }
 
@@ -65,96 +66,42 @@ pub fn push_fixed_abs(out: &mut String, value: f64, decimals: u32) {
         reason = "fixed-point formatting of bounded, non-negative miner values"
     )]
     let scaled = (value.abs() * scale as f64).round() as u64;
-    push_int(out, scaled / scale);
+    push_int(out, scaled.div_euclid(scale));
     if decimals == 0 {
         return;
     }
     out.push('.');
-    let frac = scaled % scale;
-    let mut divisor = scale / 10;
+    let frac = scaled.rem_euclid(scale);
+    let mut divisor = scale.div_euclid(10);
     while divisor > 0 {
         out.push(char::from(
-            b'0' + u8::try_from((frac / divisor) % 10).expect("BUG: decimal digit fits u8"),
+            b'0' + u8::try_from(frac.div_euclid(divisor).rem_euclid(10))
+                .expect("BUG: decimal digit fits u8"),
         ));
-        divisor /= 10;
+        divisor = divisor.div_euclid(10);
     }
 }
 
-// Group separators and the decimal mark come from the device `number_format`
-// system setting via the host. The host path is wasm-only; the non-wasm
-// fallback keeps the magnitude deterministic so the surrounding composition
-// (sign, symbol, unit) stays unit-testable.
-#[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn group(magnitude: f64, decimals: u32) -> String {
     bmc_wasm_sdk::format_number!(magnitude, decimals)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[must_use]
-pub fn group(magnitude: f64, decimals: u32) -> String {
-    let mut out = String::new();
-    push_fixed_abs(&mut out, magnitude, decimals);
-    out
-}
-
-// Temperature and speed carry device-setting conversions the host owns:
-// °C→°F and the km/h input→m/s|mph per the user's unit preferences, on top of
-// `number_format`. The host path is wasm-only; the non-wasm fallback emits the
-// metric form so the surrounding composition stays unit-testable.
-#[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn temperature(value: DegreeCelsius, decimals: u32) -> String {
     bmc_wasm_sdk::format_temperature!(value.raw(), decimals)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[must_use]
-pub fn temperature(value: DegreeCelsius, decimals: u32) -> String {
-    let mut out = String::new();
-    push_signed_fixed(&mut out, value.raw(), decimals);
-    out.push_str(" °C");
-    out
-}
-
 /// Degree-only temperature ("26°", no scale letter) for the dense forecast
 /// strips, where the unit would crowd the layout.
-#[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn temperature_bare(value: DegreeCelsius, decimals: u32) -> String {
     bmc_wasm_sdk::format_temperature!(value.raw(), decimals, bare)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[must_use]
-pub fn temperature_bare(value: DegreeCelsius, decimals: u32) -> String {
-    let mut out = String::new();
-    push_signed_fixed(&mut out, value.raw(), decimals);
-    out.push('°');
-    out
-}
-
-#[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn speed(value: KilometerPerHour, decimals: u32) -> String {
     bmc_wasm_sdk::format_speed!(value.raw(), decimals, ms)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[must_use]
-pub fn speed(value: KilometerPerHour, decimals: u32) -> String {
-    let mut out = String::new();
-    push_signed_fixed(&mut out, value.raw() / 3.6, decimals);
-    out.push_str(" m/s");
-    out
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn push_signed_fixed(out: &mut String, value: f64, decimals: u32) {
-    if value < 0.0 {
-        out.push('-');
-    }
-    push_fixed_abs(out, value, decimals);
 }
 
 #[must_use]
@@ -207,7 +154,7 @@ mod tests {
 
     #[test]
     fn speed_converts_kilometers_per_hour_to_meters_per_second() {
-        assert_eq!(speed(KilometerPerHour(12.6), 1), "3.5 m/s");
+        assert_eq!(speed(KilometerPerHour(12.6), 1), "3,5 m/s");
     }
 
     #[test]
@@ -232,7 +179,7 @@ mod tests {
         );
         assert_eq!(
             fixed_strip_zero_fraction(Availability::Available(Percent(50.25)), 2).value,
-            "50.25"
+            "50,25"
         );
         assert_eq!(
             fixed_strip_zero_fraction(Availability::<Percent>::Unavailable, 2).value,

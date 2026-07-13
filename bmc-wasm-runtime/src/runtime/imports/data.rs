@@ -708,13 +708,16 @@ fn format_speed_with_prefs(
     decimals: u32,
     metric_unit: MetricSpeedUnit,
 ) -> String {
-    let (converted, suffix) = match (unit_system, metric_unit) {
-        (UnitSystem::Imperial, _) => (value_kmh * 0.621_371_192, " mph"),
-        (UnitSystem::Metric, MetricSpeedUnit::KmH) => (value_kmh, " km/h"),
-        (UnitSystem::Metric, MetricSpeedUnit::Ms) => (value_kmh / 3.6, " m/s"),
+    let metric_unit = match metric_unit {
+        MetricSpeedUnit::KmH => bmc_shared_utils::unit_system::MetricSpeedUnit::KmH,
+        MetricSpeedUnit::Ms => bmc_shared_utils::unit_system::MetricSpeedUnit::Ms,
     };
-    let num = format_number_with_prefs(number_format, converted, decimals);
-    format!("{num}{suffix}")
+    bmc_shared_utils::unit_system::UnitSystem::from(unit_system).format_speed(
+        number_format.into(),
+        value_kmh,
+        decimals as usize,
+        metric_unit,
+    )
 }
 
 fn register_speed_format_import(linker: &mut Linker<HostState>) -> Result<()> {
@@ -805,12 +808,11 @@ fn format_distance_with_prefs(
     value_km: f64,
     decimals: u32,
 ) -> String {
-    let (converted, suffix) = match unit_system {
-        UnitSystem::Imperial => (value_km * 0.621_371_192, " mi"),
-        UnitSystem::Metric => (value_km, " km"),
-    };
-    let num = format_number_with_prefs(number_format, converted, decimals);
-    format!("{num}{suffix}")
+    bmc_shared_utils::unit_system::UnitSystem::from(unit_system).format_distance(
+        number_format.into(),
+        value_km,
+        decimals as usize,
+    )
 }
 
 fn register_distance_format_import(linker: &mut Linker<HostState>) -> Result<()> {
@@ -870,19 +872,12 @@ fn format_temperature_with_prefs(
     decimals: u32,
     show_unit: bool,
 ) -> String {
-    let (converted, scale) = match temperature_unit {
-        TemperatureUnit::Celsius => (value_c, "C"),
-        TemperatureUnit::Fahrenheit => (value_c * 9.0 / 5.0 + 32.0, "F"),
-    };
-    let num = format_number_with_prefs(number_format, converted, decimals);
-    // Degree-only mode (`show_unit == false`) drops the scale letter and the
-    // leading space, matching deckfeeder's `format.temperature(t, 'C', false)`
-    // used for the dense hourly and daily strips ("26°").
-    if show_unit {
-        format!("{num} \u{00b0}{scale}")
-    } else {
-        format!("{num}\u{00b0}")
-    }
+    bmc_shared_utils::temperature::TemperatureUnit::from(temperature_unit).format(
+        number_format.into(),
+        value_c,
+        decimals as usize,
+        show_unit,
+    )
 }
 
 fn register_temperature_format_import(linker: &mut Linker<HostState>) -> Result<()> {

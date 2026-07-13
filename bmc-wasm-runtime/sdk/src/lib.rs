@@ -285,7 +285,6 @@ pub mod assets;
 pub mod cache;
 #[cfg(target_arch = "wasm32")]
 pub mod calendar;
-#[cfg(target_arch = "wasm32")]
 pub mod format;
 pub mod host;
 #[cfg(target_arch = "wasm32")]

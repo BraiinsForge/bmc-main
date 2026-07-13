@@ -202,11 +202,11 @@ mod tests {
     fn formats_signed_percent_with_explicit_sign() {
         assert_eq!(
             signed_percent(Availability::Available(Percent(1.82)), 2).value,
-            "+1.82"
+            "+1,82"
         );
         assert_eq!(
             signed_percent(Availability::Available(Percent(-0.77)), 2).value,
-            "-0.77"
+            "-0,77"
         );
     }
 
@@ -214,7 +214,7 @@ mod tests {
     fn signed_percent_unit_omits_percent_when_unavailable() {
         assert_eq!(
             signed_percent_unit(Availability::Available(Percent(1.82)), 2),
-            "+1.82%"
+            "+1,82%"
         );
         assert_eq!(
             signed_percent_unit(Availability::<Percent>::Unavailable, 2),
@@ -237,7 +237,10 @@ mod tests {
             currency: Currency::Usd,
             value: 104_250.4,
         };
-        assert_eq!(money(Availability::Available(usd), 0).value, "$ 104250");
+        assert_eq!(
+            money(Availability::Available(usd), 0).value,
+            "$ 104\u{a0}250"
+        );
     }
 
     #[test]
@@ -247,7 +250,10 @@ mod tests {
             value: 104_250.4,
         };
         assert_eq!(money_symbol(Availability::Available(usd)), Some("$"));
-        assert_eq!(money_amount(Availability::Available(usd), 0), "104250");
+        assert_eq!(
+            money_amount(Availability::Available(usd), 0),
+            "104\u{a0}250"
+        );
         assert_eq!(money_symbol(Availability::Unavailable), None);
         assert_eq!(money_amount(Availability::Unavailable, 0), "N/A");
     }
@@ -256,7 +262,7 @@ mod tests {
     fn formats_approximate_fixed_value_like_boser() {
         assert_eq!(
             approx_fixed(Availability::Available(Percent(0.1234)), 3).value,
-            "~ 0.123"
+            "~ 0,123"
         );
         assert_eq!(
             approx_fixed(Availability::<Percent>::Unavailable, 3).value,
@@ -268,7 +274,7 @@ mod tests {
     fn unavailable_public_integer_reads_not_available() {
         assert_eq!(
             public_integer(Availability::Available(870_123)).value,
-            "870123"
+            "870\u{a0}123"
         );
         assert_eq!(public_integer(Availability::Unavailable).value, "N/A");
     }

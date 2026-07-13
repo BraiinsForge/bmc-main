@@ -120,6 +120,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-shared-utils"
+version = "0.1.0"
+dependencies = [
+ "formato",
+ "serde",
+]
+
+[[package]]
 name = "bmc-svg-compiler"
 version = "0.1.0"
 dependencies = [
@@ -134,6 +142,7 @@ version = "0.0.0"
 name = "bmc-wasm-protocol"
 version = "0.1.0"
 dependencies = [
+ "bmc-shared-utils",
  "palette",
 ]
 
@@ -144,6 +153,7 @@ dependencies = [
  "bmc-led",
  "bmc-render-macros",
  "bmc-render-skin",
+ "bmc-shared-utils",
  "bmc-wasm-protocol",
  "bmc-wasm-sdk-macros",
  "glam",
@@ -445,6 +455,12 @@ dependencies = [
  "tinyvec",
  "ttf-parser",
 ]
+
+[[package]]
+name = "formato"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61f6f3299260c1f4180ce881f8bb2bfc1195ceeafd54eea899af5859a6f882ad"
 
 [[package]]
 name = "futures-core"

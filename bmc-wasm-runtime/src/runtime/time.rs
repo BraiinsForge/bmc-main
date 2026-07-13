@@ -24,28 +24,9 @@
 
 use bmc_wasm_protocol::system::NumberFormat;
 use chrono::{DateTime, Datelike, Local, Timelike};
-use formato::{FormatOptions, Formato};
 
-/// Format a number using the given number format preference and `formato` crate.
 pub(super) fn format_number_with_prefs(nf: NumberFormat, value: f64, decimals: u32) -> String {
-    let (group_sep, decimal_sep) = match nf {
-        NumberFormat::SpaceGroupCommaDecimal => ("\u{00a0}", ","),
-        NumberFormat::CommaGroupDotDecimal => (",", "."),
-        NumberFormat::DotGroupCommaDecimal => (".", ","),
-        NumberFormat::SpaceGroupDotDecimal => ("\u{00a0}", "."),
-    };
-
-    let options = FormatOptions::new()
-        .with_thousands(group_sep)
-        .with_decimal(decimal_sep);
-
-    let pattern = if decimals == 0 {
-        "#,##0".to_owned()
-    } else {
-        format!("#,##0.{}", "0".repeat(decimals as usize))
-    };
-
-    value.formato_ops(&pattern, &options)
+    bmc_shared_utils::number_format::NumberFormat::from(nf).format_number(value, decimals as usize)
 }
 
 /// Expand an RRULE string into concrete UTC timestamps.
