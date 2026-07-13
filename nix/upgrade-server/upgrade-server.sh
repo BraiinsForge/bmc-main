@@ -209,8 +209,8 @@ if jq -e '[.packages[].metadata.assets? // empty] | length > 0' "$index_file" >/
     mv "$index_file.tmp" "$index_file"
 fi
 
-jq -n --arg base_url "$base_url" --arg key "$cache_public_key" \
-    '{id: "dev-upgrade", type: "http", base_url: $base_url, known_public_key: $key, priority: 50, enabled: true}' \
+jq -n --arg index_url "$base_url/nix-package-index.v1.json" --arg key "$cache_public_key" \
+    '{id: "dev-upgrade", index_url: $index_url, known_public_key: $key, priority: 50, enabled: true}' \
     >"$work_dir/servers.json"
 
 # Compression off: narinfo FileSize is then the exact wire size, so the
@@ -257,7 +257,7 @@ mirrors the cache key):
 
   bmc-nix-cli register-server \\
     --id dev-upgrade \\
-    --base-url $base_url \\
+    --index-url $base_url/nix-package-index.v1.json \\
     --index-public-key '$cache_public_key' \\
     --cache-url $cache_url \\
     --cache-public-key '$cache_public_key'

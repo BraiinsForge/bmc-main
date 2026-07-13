@@ -834,6 +834,27 @@ def test_snapshot_profile_aborts_on_unexpected_link() -> None:
         catalog.snapshot_profile(Device("h", backend=backend), _cycle())
 
 
+def test_register_upgrade_server_registers_index_document_url() -> None:
+    # Regression: the register-server rename from --base-url to --index-url
+    # also changed URL semantics — --index-url is fetched verbatim rather than
+    # having the filename appended, so the harness must register the index
+    # document itself, not the bare serving base.
+    backend = _Exec(_routes({}))
+    cycle = _cycle()
+    cycle.host = "10.0.0.20"
+    cycle.cache_public_key = "dev-upgrade:KEY"
+    catalog.register_upgrade_server(Device("h", backend=backend), cycle)
+    cmd = backend.runs[-1][-1]
+    assert "--base-url" not in cmd
+    assert (
+        f"register-server --id {catalog._UPGRADE_SERVER_ID} "
+        "--index-url http://10.0.0.20:8081/nix-package-index.v1.json "
+        "--index-public-key dev-upgrade:KEY "
+        "--cache-url http://10.0.0.20:8080 "
+        "--cache-public-key dev-upgrade:KEY"
+    ) in cmd
+
+
 def _manifest(**paths: str) -> str:
     return json.dumps({"packages": {name: {"store_path": p} for name, p in paths.items()}})
 

@@ -60,8 +60,8 @@ path that no longer reflects what ships.
    (`$XDG_STATE_HOME/bmc-upgrade-server`). Server output goes to `bmc-upgrade-server.log` in the system temp directory.
    The advertised host address is autodetected from the route to the device.
 5. **Register server on device** — runs `bmc-nix-cli register-server` on the device with id `dev-upgrade`, pointing both
-   the index base URL and the cache substituter at the developer machine. The index is unsigned, so the index public key
-   mirrors the cache key, matching the command `upgrade-server` itself prints.
+   the index document URL (`--index-url`) and the cache substituter at the developer machine. The index is unsigned, so
+   the index public key mirrors the cache key, matching the command `upgrade-server` itself prints.
 6. **Authenticate** — `AuthenticationService/Login` via grpcurl (plaintext h2c on port 80); the returned token becomes
    the `session_id` cookie for the authenticated `UpgradeService` calls.
 7. **Check for upgrade** — expects a populated `packages` plan, an `APP_RESTART` disruption, and an upgrade id.
