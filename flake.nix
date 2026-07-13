@@ -6,7 +6,8 @@
     self.lfs = true;
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    nixlib.url = "git+ssh://git@gitlab.ii.zone/nix/lib";
+    # TODO(#BDK-567): back to master once nix/lib!68 (build-script cc role fix) merges
+    nixlib.url = "git+ssh://git@gitlab.ii.zone/nix/lib?ref=fbo/fix-cross-buildscript-static";
     ci-tools.url = "git+ssh://git@gitlab.ii.zone/nix/ci-tools.git";
     ci-tools.inputs.nixpkgs.follows = "nixpkgs";
     ci-tools.inputs.flake-utils.follows = "flake-utils";
