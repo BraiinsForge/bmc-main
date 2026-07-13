@@ -49,6 +49,7 @@ members = [
     "deck-alarm-v1",
     "deck-screen-edge-v1",
     "deck-settings-v1",
+    "system-overlays/bmc-overlay-alarm",
     "system-overlays/bmc-overlay-device-info",
     "system-overlays/bmc-overlay-offline",
     "system-overlays/bmc-overlay-settings-tray",
@@ -165,6 +166,7 @@ bmc-kobject = { path = "bmc-kobject" }
 bmc-led = { path = "bmc-led", default-features = false }
 bmc-log = { path = "bmc-log" }
 bmc-nix = { path = "bmc-nix" }
+bmc-overlay-alarm = { path = "system-overlays/bmc-overlay-alarm" }
 bmc-overlay-device-info = { path = "system-overlays/bmc-overlay-device-info" }
 bmc-overlay-offline = { path = "system-overlays/bmc-overlay-offline" }
 bmc-overlay-settings-tray = { path = "system-overlays/bmc-overlay-settings-tray" }

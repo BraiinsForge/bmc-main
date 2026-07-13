@@ -14,6 +14,7 @@ use std::time::Instant;
 
 use crate::prelude::*;
 
+use bmc_overlay_alarm::{AlarmRenderState, AlarmView, render_alarm};
 use bmc_overlay_device_info::{DeviceInfoView, render_device_info};
 use bmc_overlay_offline::{OfflineView, render_offline};
 use bmc_overlay_settings_tray::{
@@ -155,6 +156,31 @@ fn device_info_cell(view: DeviceInfoView, checker: bool) -> CustomRenderFn {
     Box::new(move |r, _interaction, w, h, _delta| {
         draw_backdrop(r, w, h, checker);
         render_device_info(r, (w as u32, h as u32), &view);
+    })
+}
+
+thread_local! {
+    static ALARM_LABEL_RENDER_STATE: RefCell<AlarmRenderState> =
+        RefCell::new(AlarmRenderState::new(Instant::now()));
+    static ALARM_NO_LABEL_RENDER_STATE: RefCell<AlarmRenderState> =
+        RefCell::new(AlarmRenderState::new(Instant::now()));
+}
+
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "storybook frame size to logical overlay size"
+)]
+fn alarm_cell(
+    view: AlarmView,
+    state_key: &'static LocalKey<RefCell<AlarmRenderState>>,
+    checker: bool,
+) -> CustomRenderFn {
+    Box::new(move |r, _interaction, w, h, _delta| {
+        draw_backdrop(r, w, h, checker);
+        state_key.with_borrow_mut(|state| {
+            render_alarm(r, (w as u32, h as u32), state, &view);
+        });
     })
 }
 
@@ -428,6 +454,41 @@ fn settings_tray(ctx: &mut StoryCtx) {
             ui.div_custom(
                 (setup_bmm100.width, setup_bmm100.height),
                 settings_tray_cell(setup_bmm100, &SETUP_BMM100_TRAY_RENDER_STATE, checker),
+            );
+        });
+    });
+}
+
+#[story]
+fn alarm(ctx: &mut StoryCtx) {
+    let checker = ctx.toggle("Backdrop", true).get();
+    ctx.ui.grid(1, 16.0, |grid| {
+        grid.cell(|ui| {
+            ui.header("Alarm", "with label");
+            ui.div_custom(
+                (DISPLAY_W, DISPLAY_H),
+                alarm_cell(
+                    AlarmView {
+                        time: "07:30".to_owned(),
+                        label: "Wake up".to_owned(),
+                    },
+                    &ALARM_LABEL_RENDER_STATE,
+                    checker,
+                ),
+            );
+        });
+        grid.cell(|ui| {
+            ui.header("Alarm", "no label");
+            ui.div_custom(
+                (DISPLAY_W, DISPLAY_H),
+                alarm_cell(
+                    AlarmView {
+                        time: "06:00".to_owned(),
+                        label: String::new(),
+                    },
+                    &ALARM_NO_LABEL_RENDER_STATE,
+                    checker,
+                ),
             );
         });
     });

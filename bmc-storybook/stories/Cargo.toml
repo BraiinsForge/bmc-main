@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 toml.workspace = true
 
 [dependencies]
+bmc-overlay-alarm = { path = "../../system-overlays/bmc-overlay-alarm" }
 bmc-overlay-device-info = { path = "../../system-overlays/bmc-overlay-device-info" }
 bmc-overlay-offline = { path = "../../system-overlays/bmc-overlay-offline" }
 bmc-overlay-settings-tray = { path = "../../system-overlays/bmc-overlay-settings-tray" }

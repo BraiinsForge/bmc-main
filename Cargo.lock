@@ -969,6 +969,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-overlay-alarm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bmc-render",
+ "bmc-system-overlay",
+ "bmc-wasm-protocol",
+ "tracing",
+]
+
+[[package]]
 name = "bmc-overlay-device-info"
 version = "0.1.0"
 dependencies = [
@@ -1117,6 +1128,7 @@ name = "bmc-storybook"
 version = "0.1.0"
 dependencies = [
  "anstyle-parse",
+ "bmc-overlay-alarm",
  "bmc-overlay-device-info",
  "bmc-overlay-offline",
  "bmc-overlay-settings-tray",
@@ -1172,6 +1184,7 @@ dependencies = [
 name = "bmc-storybook-stories"
 version = "0.1.0"
 dependencies = [
+ "bmc-overlay-alarm",
  "bmc-overlay-device-info",
  "bmc-overlay-offline",
  "bmc-overlay-settings-tray",

@@ -1,0 +1,23 @@
+[package]
+name = "bmc-overlay-alarm"
+version = "0.1.0"
+edition = "2024"
+authors = ["Braiins Systems s.r.o."]
+description = "Full-screen firing-alarm overlay (snooze + dismiss)"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bmc-overlay-alarm"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+bmc-render.workspace = true
+bmc-system-overlay.workspace = true
+bmc-wasm-protocol.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
