@@ -7,7 +7,8 @@ edition = "2024"
 workspace = true
 
 [features]
-default = ["overlay-offline", "overlay-device-info", "overlay-settings-tray"]
+default = ["overlay-alarm", "overlay-offline", "overlay-device-info", "overlay-settings-tray"]
+overlay-alarm = ["dep:bmc-overlay-alarm"]
 overlay-offline = ["dep:bmc-overlay-offline"]
 overlay-device-info = ["dep:bmc-overlay-device-info"]
 overlay-settings-tray = ["dep:bmc-overlay-settings-tray"]
@@ -30,6 +31,7 @@ wayland-client = { workspace = true }
 
 bmc-gpu-render-lock = { workspace = true }
 bmc-log = { workspace = true }
+bmc-overlay-alarm = { workspace = true, optional = true }
 bmc-overlay-device-info = { workspace = true, optional = true }
 bmc-overlay-offline = { workspace = true, optional = true }
 bmc-overlay-settings-tray = { workspace = true, optional = true }

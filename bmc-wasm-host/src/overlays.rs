@@ -61,6 +61,13 @@ pub fn build_overlays(egl: &EglContext) -> Vec<HostedOverlay> {
     register_overlay!(
         overlays,
         egl,
+        "overlay-alarm",
+        "alarm",
+        Box::new(bmc_overlay_alarm::AlarmOverlay::default())
+    );
+    register_overlay!(
+        overlays,
+        egl,
         "overlay-offline",
         "offline",
         Box::new(bmc_overlay_offline::OfflineOverlay::default())

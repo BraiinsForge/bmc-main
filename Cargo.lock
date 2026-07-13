@@ -1335,6 +1335,7 @@ dependencies = [
  "anyhow",
  "bmc-gpu-render-lock",
  "bmc-log",
+ "bmc-overlay-alarm",
  "bmc-overlay-device-info",
  "bmc-overlay-offline",
  "bmc-overlay-settings-tray",
