@@ -38,6 +38,12 @@ How `deck upgrade-e2e` drives a full package upgrade cycle against a real Deck: 
 developer machine via `nix run .#upgrade-server`, registering the server on the device, and exercising CheckForUpgrade
 and StartUpgrade over gRPC while asserting the bmc profile advanced.
 
+### [End-to-End Firmware Sysupgrade Harness](sysupgrade-e2e-harness.md)
+
+How `deck e2e-sysupgrade` flashes two full firmware images against a real Deck to exercise the firmware Nix flow: the
+init path (clear the store, flash image A) and the in-place upgrade path (flash image B), served from a local package
+rig — including how to build the two differing-version images through the bos-main CI.
+
 ### [Mock Upgrade Scenarios](mock/upgrade-scenarios.md)
 
 How `bmc-mock` simulates every upgrade state offline: the runtime-editable `upgrade-scenario.json` state selector, the
