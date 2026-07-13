@@ -30,10 +30,11 @@ Starting the firmware offer does not resolve or install packages inside `bmc`. `
 to a handoff file (`record_pending_install` → `PendingInstall { install: names }`), stops the widgets, and hands the
 image to `sysupgrade`. It forwards names, nothing more.
 
-The `sysupgrade` sequence runs `bmc-nix-cli upgrade [--install-from <handoff>] --next-boot <bos-version>` **before the
-flash**. That resolves the full package set plus the pending installs against the configured servers — the same servers
-the check's probe used — and builds the next generation with deferred activation. The flash follows; after the reboot
-`nix-activator` promotes the staged generation (see [`upgrades.md`](upgrades.md#deferred-activation---next-boot)).
+The `sysupgrade` sequence runs `bmc-nix-cli upgrade --firmware <bos-version> [--install-from <handoff>] --next-boot`
+**before the flash**. That resolves the full package set plus the pending installs against the configured servers — the
+same servers the check's probe used — and builds the next generation with deferred activation. The flash follows; after
+the reboot `nix-activator` promotes the staged generation (see
+[`upgrades.md`](upgrades.md#deferred-activation---next-boot)).
 
 The two resolutions run the same code against the same servers, but not necessarily the same index content: the
 firmware-time run resolves in the target firmware's context, which can advertise different versions or more packages
@@ -73,9 +74,8 @@ reachable that resolution then consults.
 ## Implementation status
 
 This branch implements the check/offer split, the verbatim carry of install names onto the firmware offer, the handoff
-writer in `bmc`, and the `bmc-nix-cli upgrade --install-from` consumer. The one remaining piece is cross-repo: the
-on-device `sysupgrade` sequence is not yet wired to pass `--install-from <handoff>` to `bmc-nix-cli upgrade`, so on real
-hardware the carried install is currently a no-op. The mock exercises the full write-then-consume round-trip.
+writer in `bmc`, and the `bmc-nix-cli upgrade --install-from` consumer. The OpenWrt `COMMAND` passes the handoff when it
+exists, so the on-device firmware path performs the same write-then-consume round-trip as the mock.
 
 The handoff does **not** need to survive the reboot, and its tmpfs path is not a defect — a repeatedly-made misreading.
 `bmc` writes it and hands the image to `sysupgrade`; `sysupgrade` — not `bmc` — then runs
@@ -84,9 +84,8 @@ the same boot (everything package-side is pre-flash, as above). The file is writ
 system and never crosses a reboot, so `/tmp/bmc-nix-pending-install.json` only has to exist at that moment, which it
 does.
 
-The firmware run resolves against the configured servers, not a tarball-baked pinned index. The pinned-index description
-in [`upgrades.md`](upgrades.md#firmware-upgrades) and [`openwrt-tarball.md`](openwrt-tarball.md) predates that change
-and is stale; those documents should be reconciled separately.
+The firmware run resolves against the configured servers. The feed entry for the exact incoming firmware version selects
+the package index used for that run.
 
 ## Contributor note
 

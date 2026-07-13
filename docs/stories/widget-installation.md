@@ -67,10 +67,8 @@ widget" picker and provide the user experience described below.
 ## Constraints
 
 - Uninstalling widget packages and any generic (non-widget) package management UI are out of scope.
-- Installing together with a firmware upgrade to the latest firmware happens in a single run — nothing is persisted
-  across the reboot. The one case this does not cover is a device that cannot reach the latest firmware directly and
-  must pass through an intermediate major release first; after landing on that intermediate firmware, the user repeats
-  the install from the picker.
+- Installing together with a firmware upgrade happens in a single run — nothing is persisted across the reboot. The
+  configured feed selects the package index for the exact firmware version being installed.
 - The disruption warning is a distinct axis from the upgrade type. Today an application upgrade implies a brief screen
   restart and a firmware upgrade implies a reboot, but that correspondence is not guaranteed and is never assumed.
 - The interactive picker experience — the preview panel, the confirmation dialog, and the reconnect-and-resume handling
