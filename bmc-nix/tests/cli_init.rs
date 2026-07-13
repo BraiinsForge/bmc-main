@@ -425,6 +425,15 @@ fn init_is_noop_when_already_initialized() {
         .expect("BUG: mkdir pre-existing store");
     std::fs::write(&marker, "pre-existing").expect("BUG: write pre-existing marker");
 
+    // A promoted store only counts as initialized with its Nix database
+    // and the BMC profile gcroot alongside the store paths.
+    let database = env.data_dir.join("nix/var/nix/db/db.sqlite");
+    std::fs::create_dir_all(database.parent().expect("BUG: database has a parent"))
+        .expect("BUG: mkdir nix database dir");
+    std::fs::write(&database, "").expect("BUG: write pre-existing database");
+    std::fs::create_dir_all(env.data_dir.join("nix/var/nix/gcroots/profiles/bmc"))
+        .expect("BUG: mkdir bmc profile gcroot");
+
     // Unreachable (connection refused) address: the no-op path must not
     // touch the network at all.
     env.write_servers_config("http://127.0.0.1:1");

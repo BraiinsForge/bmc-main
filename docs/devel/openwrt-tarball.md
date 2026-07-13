@@ -84,6 +84,18 @@ the incoming firmware's version. Staging completes before the flash — a failur
 the boot into the new firmware only ever consumes what staging left behind (the promoted store, or the
 `next.<bos-version>` marker).
 
+The branch decision uses `bmc-nix-cli is-initialized`, whose exit status is a contract with the `COMMAND`:
+
+- `0` — the store is fully initialized and bind-mounted at `/nix`;
+- `1` — the store is absent or incomplete;
+- `3` — the store is fully initialized but is not bind-mounted at `/nix`;
+- `2` — the command encountered a runtime failure.
+
+Exits `1` and `3` select the wipe-and-init path. A fully initialized but unmounted store is an inconsistent recovery
+state, such as one left by a failed first-Nix sysupgrade, so the incoming firmware reinitializes it instead of trusting
+its profile. Exit `2` aborts the sysupgrade so a runtime failure can never be mistaken for a recoverable store state.
+`init --wipe` still refuses to run while anything is mounted at `/nix`.
+
 BOS validates a sysupgrade image twice per run: `/sbin/sysupgrade` calls `platform_check_image` through
 `/usr/libexec/validate_firmware_image`, and procd's `upgraded` re-validates the image before flashing. Without a guard,
 each pass would stage the profile and build its own generation. The `COMMAND` therefore records the target firmware
@@ -124,13 +136,14 @@ Two pieces are involved:
 - The firmware image `COMMAND` — the sysupgrade hook that BOS runs before applying the new image. On a Nix-era running
   system — identified by the presence of `/etc/init.d/nix-activator`, a rootfs marker independent of this boot's mount
   and activation state — the `COMMAND` first runs `bmc-nix-cli init` without `--wipe`: it mounts the data partition when
-  necessary, no-ops when the store already exists (empty stdout), and otherwise initializes it for the incoming firmware
-  version (printing the new profile path), in which case staging is already complete. When the store pre-existed, the
-  `COMMAND` restores the `/nix` bind mount when missing, extends `PATH` with `/run/current-profile/bin` (otherwise added
-  only by login shells; realisation spawns `nix-store` on the outgoing system), and runs the feed-resolved upgrade. On a
-  pre-Nix system it runs `bmc-nix-cli init --wipe`, replacing any store left behind by an earlier aborted upgrade with
-  one matching the firmware being flashed. In both branches the `COMMAND` passes the incoming firmware's version via
-  `--bos-version-file` — the running `/etc/bos_version` may predate Nix and have no factory tarball.
+  necessary, no-ops when the store is fully initialized (empty stdout), and otherwise initializes it for the incoming
+  firmware version (printing the new profile path), in which case staging is already complete. When the store
+  pre-existed, the `COMMAND` restores the `/nix` bind mount when missing, extends `PATH` with `/run/current-profile/bin`
+  (otherwise added only by login shells; realisation spawns `nix-store` on the outgoing system), and runs the
+  feed-resolved upgrade. On a pre-Nix system it runs `bmc-nix-cli init --wipe`, replacing any store left behind by an
+  earlier aborted upgrade with one matching the firmware being flashed. In both branches the `COMMAND` passes the
+  incoming firmware's version via `--bos-version-file` — the running `/etc/bos_version` may predate Nix and have no
+  factory tarball.
 
 The `init` command is intentionally distinct from the firmware-upgrade flow (`build-profile` and friends). Init operates
 before there is any profile to diff against; it only has to populate the store and lay down the initial profile shipped
@@ -146,9 +159,11 @@ in the tarball.
    `e2fsck -p`, escalating to `e2fsck -y` when preen cannot repair it and reformatting with `mkfs.ext4` when errors
    remain even after that, before creating the mount point and mounting it as ext4. If the partition is already mounted
    at `/mnt/data`, this step is a no-op.
-2. **Short-circuit when the store is already promoted.** If `<data-dir>/nix` exists, `init` exits 0 without changing it
-   unless `--wipe` is passed. `--wipe` refuses to run while `/nix` is an active mount — the running system would be
-   using the very store it deletes.
+2. **Short-circuit when the store is initialized.** `init` requires a nonempty `<data-dir>/nix/store`, the
+   `<data-dir>/nix/var/nix/db/db.sqlite` database, and the `<data-dir>/nix/var/nix/gcroots/profiles/bmc` profile. When
+   all three are present, it exits 0 without changing the store unless `--wipe` is passed. An incomplete store is not
+   overwritten implicitly; recovery must explicitly pass `--wipe`. `--wipe` refuses to run while `/nix` is an active
+   mount — the running system would be using the very store it deletes.
 3. **Select and download the initialization tarball.** Selection is by the BOS version read from `/etc/bos_version`,
    matched against the factory server's package feed (`nix-package-feed.v1.json`, fetched from the `factory` entry of
    `/etc/nix-upgrade/servers.json`). If no feed entry matches the requested BOS version, `init` fails — the factory

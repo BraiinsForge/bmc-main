@@ -422,11 +422,16 @@ enum Commands {
         data_dir: PathBuf,
     },
 
-    /// Check whether the promoted Nix store exists
+    /// Check whether the promoted Nix store exists and is mounted at
+    /// the Nix store mount point
     IsInitialized {
         /// Data partition mount point.
         #[arg(long, default_value = "/mnt/data")]
         data_dir: PathBuf,
+
+        /// Nix store mount point the promoted store must be bound to.
+        #[arg(long, default_value = "/nix")]
+        nix_dir: PathBuf,
     },
 
     /// Prune old profile generations, then collect store garbage
@@ -1034,8 +1039,25 @@ fn read_bos_version(path: &Path) -> anyhow::Result<String> {
         .to_owned())
 }
 
-fn is_initialized(data_dir: &Path) -> bool {
-    data_dir.join("nix").is_dir()
+fn store_is_initialized(data_dir: &Path) -> bool {
+    let nix_dir = data_dir.join("nix");
+    let store_has_paths = std::fs::read_dir(nix_dir.join("store"))
+        .is_ok_and(|mut entries| matches!(entries.next(), Some(Ok(_))));
+
+    store_has_paths
+        && nix_dir.join("var/nix/db/db.sqlite").is_file()
+        && nix_dir.join("var/nix/gcroots/profiles/bmc").is_dir()
+}
+
+/// Shell `[ a -ef b ]` equivalent: the promoted store and the mount
+/// point are the same filesystem object, i.e. the bind mount is in
+/// place (and is not some foreign mount shadowing the target).
+fn is_store_mounted(store_dir: &Path, nix_dir: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(store_dir), std::fs::metadata(nix_dir)) {
+        (Ok(store), Ok(nix)) => store.dev() == nix.dev() && store.ino() == nix.ino(),
+        _ => false,
+    }
 }
 
 #[expect(
@@ -1072,7 +1094,7 @@ async fn cmd_init(
     // The firmware COMMAND distinguishes this no-op from a fresh
     // initialization by stdout: keep it empty here; a fresh init
     // prints the promoted profile path below.
-    if is_initialized(&data_dir) && !wipe {
+    if store_is_initialized(&data_dir) && !wipe {
         tracing::info!("store already initialized");
         return Ok(());
     }
@@ -1273,7 +1295,7 @@ async fn main() -> std::process::ExitCode {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("Error: {err:?}");
-            // Exit 1 belongs to is-initialized's "store absent" answer;
+            // Exit 1 belongs to is-initialized's "store absent or incomplete" answer;
             // runtime failures use 2 (clap's usage-error code) so the
             // firmware COMMAND script never mistakes a broken run for
             // an absent store.
@@ -1446,16 +1468,27 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             Ok(())
         }
 
-        Commands::IsInitialized { data_dir } => {
-            // Exit 1 is a contract with the firmware sysupgrade
-            // COMMAND script, which routes exactly this status into
-            // its wipe-and-init branch. Runtime failures anywhere in
-            // this binary exit 2 (see main) so they can never
-            // masquerade as "store absent".
-            if is_initialized(&data_dir) {
+        Commands::IsInitialized { data_dir, nix_dir } => {
+            // The exit codes are a contract with the firmware
+            // sysupgrade COMMAND script: 1 (store absent or incomplete)
+            // and 3 (store present but not mounted) route into its
+            // wipe-and-init branch. An unmounted store is inconsistent
+            // state and is reinitialized for the incoming firmware.
+            // Runtime failures anywhere in this binary exit 2 (see main)
+            // so they can never masquerade as either answer.
+            let store_dir = data_dir.join("nix");
+            if !store_is_initialized(&data_dir) {
+                std::process::exit(1)
+            }
+            if is_store_mounted(&store_dir, &nix_dir) {
                 Ok(())
             } else {
-                std::process::exit(1)
+                eprintln!(
+                    "store present at {} but not mounted at {}",
+                    store_dir.display(),
+                    nix_dir.display()
+                );
+                std::process::exit(3)
             }
         }
 
@@ -1854,32 +1887,83 @@ mod tests {
         let cli = Cli::try_parse_from(["bmc-nix-cli", "is-initialized"])
             .expect("BUG: is-initialized should parse with defaults");
 
-        let Commands::IsInitialized { data_dir } = cli.command else {
+        let Commands::IsInitialized { data_dir, nix_dir } = cli.command else {
             panic!("BUG: parsed command must be is-initialized");
         };
         assert_eq!(data_dir, PathBuf::from("/mnt/data"));
+        assert_eq!(nix_dir, PathBuf::from("/nix"));
     }
 
     #[test]
-    fn is_initialized_requires_promoted_store_directory() {
+    fn store_is_initialized_requires_store_database_and_profile() {
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
-        assert!(!is_initialized(tmp.path()));
+        assert!(!store_is_initialized(tmp.path()));
 
         std::fs::create_dir_all(tmp.path().join("nix.tmp/nix")).expect("BUG: setup");
         assert!(
-            !is_initialized(tmp.path()),
+            !store_is_initialized(tmp.path()),
             "staged but unpromoted store must not count as initialized"
         );
 
         std::fs::write(tmp.path().join("nix"), "").expect("BUG: setup");
         assert!(
-            !is_initialized(tmp.path()),
+            !store_is_initialized(tmp.path()),
             "a non-directory nix path must not count as initialized"
         );
         std::fs::remove_file(tmp.path().join("nix")).expect("BUG: cleanup");
 
         std::fs::create_dir(tmp.path().join("nix")).expect("BUG: setup");
-        assert!(is_initialized(tmp.path()));
+        assert!(
+            !store_is_initialized(tmp.path()),
+            "an empty promoted store must not count as initialized"
+        );
+
+        std::fs::create_dir_all(tmp.path().join("nix/store/package")).expect("BUG: setup");
+        assert!(
+            !store_is_initialized(tmp.path()),
+            "store paths without the Nix database must not count as initialized"
+        );
+
+        let database = tmp.path().join("nix/var/nix/db/db.sqlite");
+        std::fs::create_dir_all(database.parent().expect("BUG: database has a parent"))
+            .expect("BUG: setup");
+        std::fs::write(&database, "").expect("BUG: setup");
+        assert!(
+            !store_is_initialized(tmp.path()),
+            "a store without the BMC profile directory must not count as initialized"
+        );
+
+        std::fs::create_dir_all(tmp.path().join("nix/var/nix/gcroots/profiles/bmc"))
+            .expect("BUG: setup");
+        assert!(
+            store_is_initialized(tmp.path()),
+            "a populated store with its database and BMC profile is initialized"
+        );
+    }
+
+    #[test]
+    fn is_store_mounted_requires_the_same_filesystem_object() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let store_dir = tmp.path().join("nix");
+        std::fs::create_dir(&store_dir).expect("BUG: setup");
+
+        // Same directory reached through two paths stands in for the
+        // bind mount: identical device and inode, like `[ a -ef b ]`.
+        let alias = tmp.path().join("alias");
+        std::os::unix::fs::symlink(&store_dir, &alias).expect("BUG: setup");
+        assert!(is_store_mounted(&store_dir, &alias));
+
+        let other = tmp.path().join("other");
+        std::fs::create_dir(&other).expect("BUG: setup");
+        assert!(
+            !is_store_mounted(&store_dir, &other),
+            "a different directory on the mount point must not count as mounted"
+        );
+
+        assert!(
+            !is_store_mounted(&store_dir, &tmp.path().join("missing")),
+            "a missing mount point must not count as mounted"
+        );
     }
 
     #[test]
