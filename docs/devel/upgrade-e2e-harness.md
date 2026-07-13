@@ -7,8 +7,8 @@ to a new generation. It is a development harness; nothing here ships on the devi
 
 ## Prerequisites
 
-- A Deck with a Nix-initialized store (`nix run .#deck -- init`, then `nix run .#deck -- deploy`), running a firmware
-  whose backend implements the `UpgradeService` RPCs (`CheckForUpgrade`, `StartUpgrade`).
+- A Deck with a Nix-initialized store (`nix run .#deck -- init`, then `nix run .#deck -- deploy`), running a bmc app
+  that implements the `UpgradeService` RPCs (`CheckForUpgrade`, `StartUpgrade`).
 
 - `/etc/nix-upgrade/servers.json` on the device — created automatically when missing. Factory provisioning normally
   writes it; a `deck init` device lacks it, and `register-server` (the "Register server on device" stage) then
