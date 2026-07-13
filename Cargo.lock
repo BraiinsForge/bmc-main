@@ -1153,6 +1153,7 @@ dependencies = [
  "egui",
  "egui_extras",
  "femtovg",
+ "fleet-management",
  "inventory",
  "libloading",
  "notify",
@@ -1204,6 +1205,7 @@ dependencies = [
  "bmc-storybook-api",
  "bmc-system-overlay",
  "bmc-wasm-sdk",
+ "fleet-management",
  "inventory",
  "toml",
 ]
@@ -2955,6 +2957,16 @@ dependencies = [
  "crc32fast",
  "libz-rs-sys",
  "miniz_oxide",
+]
+
+[[package]]
+name = "fleet-management"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bmc-wasm-sdk",
+ "mining",
+ "units",
 ]
 
 [[package]]
@@ -5000,6 +5012,13 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
+
+[[package]]
+name = "mining"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+]
 
 [[package]]
 name = "miniz_oxide"
@@ -8555,6 +8574,13 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
+name = "units"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+]
 
 [[package]]
 name = "untrusted"

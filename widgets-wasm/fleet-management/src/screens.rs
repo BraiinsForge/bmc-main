@@ -18,9 +18,13 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "render code uses many SDK exports and macros in one file"
+// The lint only fires in non-test builds, so the expect is scoped to match.
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::wildcard_imports,
+        reason = "screen code uses many SDK builders, macros, and tokens"
+    )
 )]
 use bmc_wasm_sdk::*;
 
@@ -32,6 +36,8 @@ use crate::layout::{FLEET_ROW_H, Layout, TABLE_GAP, choose, truncate_label};
 use crate::paging;
 use crate::summary::{FleetSummary, GroupSummary};
 use crate::view::{PageTurn, PagerScope, details_click_id, pager_click_id};
+
+pub mod fixtures;
 
 const OK_ICON: Svg = include_svg!("assets/ok.svg");
 const NOT_OK_ICON: Svg = include_svg!("assets/not-ok.svg");
@@ -202,17 +208,17 @@ fn status_pair(icon: &Svg, color: Color, count: usize, font: u32) -> Node {
                 props!(width: ICON_PX, height: ICON_PX),
                 vec![Draw::svg(0.0, 0.0, ICON_PX, ICON_PX, icon, color)],
             ),
-            text(
-                format_number!(ok_count_f64(count), 0),
-                style!(size: font, color: VALUE_COLOR),
-            ),
+            text(count_str(count), style!(size: font, color: VALUE_COLOR)),
         ],
     )
 }
 
-// The okay/not-okay status counts: a green check with the mining count and a
-// red `!` with the not-okay count. Each pair appears only when its count is
-// above zero; every group has at least one device, so at least one is shown.
+// The okay/not-okay status counts:
+// - a green check with the mining count and
+// - a red `!` with the not-okay count.
+//
+// Each pair appears only when its count is above zero;
+// every group has at least one device, so at least one is shown.
 fn counts(ok: usize, not_ok: usize, font: u32) -> Node {
     let mut pairs: Vec<Node> = Vec::new();
     if ok > 0 {
@@ -224,12 +230,13 @@ fn counts(ok: usize, not_ok: usize, font: u32) -> Node {
     row(props!(gap: 16.0, cross_align: CrossAlign::Center), pairs)
 }
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "fleet device counts stay within f64's exact integer range"
-)]
-fn ok_count_f64(count: usize) -> f64 {
-    count as f64
+fn count_str(count: usize) -> String {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "fleet device counts stay within f64's exact integer range"
+    )]
+    let value = count as f64;
+    format_number!(value, 0)
 }
 
 // The headline hashrate and ok/online counts always lead; Power and Efficiency
@@ -335,10 +342,7 @@ fn row_icon(x: f32, icon: &Svg, color: Color) -> Draw {
 
 fn draw_status_pair(draws: &mut Vec<Draw>, x: f32, icon: &Svg, color: Color, count: usize) {
     draws.push(row_icon(x, icon, color));
-    draws.push(cell_text(
-        x + ICON_PX + PAIR_GAP,
-        format_number!(ok_count_f64(count), 0),
-    ));
+    draws.push(cell_text(x + ICON_PX + PAIR_GAP, count_str(count)));
 }
 
 // The drawn twin of `counts`: pairs pack left into fixed slots, each shown
@@ -614,6 +618,7 @@ fn device_row(device: &GroupSummary, variant: SizeVariant, cols: &TableColumns) 
 }
 
 /// The drilled-into model the renderer shows instead of the fleet table.
+#[derive(Debug)]
 pub struct DetailData<'a> {
     pub group: &'a GroupSummary,
     pub rows: &'a [GroupSummary],
@@ -622,6 +627,7 @@ pub struct DetailData<'a> {
 
 /// The built frame plus the page count of whatever table it shows, so the
 /// click handler clamps against the exact view that was rendered.
+#[derive(Debug)]
 pub struct Frame {
     pub root: Node,
     pub page_count: usize,

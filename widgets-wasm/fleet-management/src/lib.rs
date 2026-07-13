@@ -18,6 +18,13 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+// Native builds (the storybook) can't reach the wasm-exported logic; suppress
+// the false dead_code there only — wasm and tests still catch the real thing.
+#![cfg_attr(
+    not(any(target_arch = "wasm32", test)),
+    expect(dead_code, reason = "reachable only via wasm exports and tests")
+)]
+
 mod adapter;
 mod device;
 mod discovery;
@@ -28,6 +35,7 @@ mod manual;
 mod model;
 mod naming;
 mod paging;
+pub mod screens;
 mod session;
 mod summary;
 mod telemetry;
@@ -38,9 +46,6 @@ mod contract;
 
 #[cfg(target_arch = "wasm32")]
 mod manifest_params;
-
-#[cfg(target_arch = "wasm32")]
-mod render;
 
 #[cfg(target_arch = "wasm32")]
 #[expect(
@@ -416,7 +421,7 @@ pub extern "C" fn render(_delta_ms: u32) {
                 }
             }
             let detail = if let (Some(sel), Some(idx)) = (nav.detail.as_ref(), selected) {
-                Some(render::DetailData {
+                Some(screens::DetailData {
                     group: derived
                         .summary
                         .groups
@@ -432,7 +437,7 @@ pub extern "C" fn render(_delta_ms: u32) {
             } else {
                 None
             };
-            let frame = render::view(
+            let frame = screens::view(
                 &derived.summary,
                 detail,
                 nav.fleet_page,

@@ -23,6 +23,7 @@ bmc-render-skin = { path = "../../bmc-render/skin" }
 bmc-storybook-api = { path = "../api" }
 bmc-system-overlay = { path = "../../system-overlays/bmc-system-overlay" }
 bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
+fleet-management = { path = "../../widgets-wasm/fleet-management" }
 inventory.workspace = true
 
 [lints]

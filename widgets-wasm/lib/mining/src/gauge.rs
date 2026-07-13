@@ -57,6 +57,7 @@ pub enum GaugeState {
     Overclocked,
 }
 
+#[derive(Debug)]
 pub struct Gauge {
     pub state: GaugeState,
     pub lit_count: usize,
@@ -326,7 +327,7 @@ mod tests {
     fn lit_sweep_end_spans_full_circle_at_max_and_clamps() {
         use std::f32::consts::{PI, TAU};
         assert!(lit_sweep_end(0).abs() < 1e-6);
-        assert!((lit_sweep_end(TICK_COUNT / 2) - PI).abs() < 1e-6);
+        assert!((lit_sweep_end(TICK_COUNT.div_euclid(2)) - PI).abs() < 1e-6);
         assert!((lit_sweep_end(TICK_COUNT) - TAU).abs() < 1e-6);
         assert!((lit_sweep_end(TICK_COUNT + 5) - TAU).abs() < 1e-6);
     }
