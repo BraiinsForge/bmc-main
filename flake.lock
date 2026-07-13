@@ -143,10 +143,10 @@
         "nixpkgs-do-not-override": "nixpkgs-do-not-override"
       },
       "locked": {
-        "lastModified": 1783965330,
-        "narHash": "sha256-4ysZFhjNafunB9Y3ypUVunfOLK9zLtjuneexTxGKbw0=",
+        "lastModified": 1783970216,
+        "narHash": "sha256-Ohu4MfkV8fXm0hExnJjG826eEUaHRd6cW6HF3fceqO0=",
         "ref": "fbo/fix-cross-buildscript-static",
-        "rev": "565516d26b4c744a113a2ddd345f8cb077370b81",
+        "rev": "922cf05b7089f5955608c5e31cd890f6fc6ef93b",
         "revCount": 165,
         "type": "git",
         "url": "ssh://git@gitlab.ii.zone/nix/lib"
