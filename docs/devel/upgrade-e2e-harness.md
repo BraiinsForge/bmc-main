@@ -41,6 +41,11 @@ change at the same version both count. Rebuilding from the same tree that deploy
 paths, so make a code change (or serve a different profile) before running the harness, otherwise the
 `Check for upgrade` stage aborts with "no package upgrade offered".
 
+**Deploy the current tree before the run.** Run `nix run .#deck -- deploy` first so the installed baseline is the latest
+software, then make your code change and run `upgrade-e2e`. That way you are verifying that the newest software can
+still upgrade itself; running the harness against a stale deployed baseline instead exercises some old-version upgrade
+path that no longer reflects what ships.
+
 ## What the Stages Do
 
 1. **grpcurl present / Device reachable / bmc-nix-cli present** — fail-fast preconditions; `bmc-nix-cli` is bootstrapped
@@ -83,8 +88,9 @@ nix run .#deck -- install-widget-e2e --device DEVICE_IP
 
 `--widget` picks the package to remove and reinstall (default `widget-blockheight`); it must be a leaf widget the served
 build contains, or the install is never offered. The prerequisites, `--packages`/`--profile`/`--password`/port flags,
-and the full-package-set caveat above all apply unchanged. Unlike `upgrade-e2e`, no code change between deploy and run
-is needed: the removal itself creates the plan difference, so rebuilding the same tree works.
+and the full-package-set caveat above all apply unchanged. As with `upgrade-e2e`, deploy the current tree first
+(`nix run .#deck -- deploy`) so the install runs against the latest software. Unlike `upgrade-e2e`, no code change
+between deploy and run is needed: the removal itself creates the plan difference, so rebuilding the same tree works.
 
 The shared preparation stages (preconditions through "Register server on device" and "Authenticate") are identical.
 Then:
