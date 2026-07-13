@@ -65,11 +65,6 @@ wasmWidgetCrates // {
     packageName = "bmc-nix";
     binName = "bmc-activation-copy-files";
   };
-  bmc-activation-write-boundary = defineCrate {
-    path = "./bmc-nix";
-    packageName = "bmc-nix";
-    binName = "bmc-activation-write-boundary";
-  };
   bmc-virt-leds = defineCrate {
     path = "bmc-virt/leds";
     packageName = "bmc-virt-leds";

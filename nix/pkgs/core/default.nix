@@ -176,7 +176,7 @@ let
       # Durable 'current' commit. Runs last, after every other activation
       # step and before the 999-activated completion flag, so 'current'
       # advances to the new generation only once its activation succeeds.
-      { prefix = "998"; bin = profile.buildCrate crates.bmc-activation-write-boundary { }; }
+      { prefix = "998"; bin = selectBmcNixBin "bmc-activation-write-boundary"; }
     ];
     services = [ bmc-compositor ];
     out = [
