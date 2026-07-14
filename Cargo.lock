@@ -7960,8 +7960,7 @@ dependencies = [
 [[package]]
 name = "tokio-cron-scheduler"
 version = "0.19.0"
-source = "sparse+http://registry.ii.zone/api/v1/crates/"
-checksum = "eaa9405182eb42c8af5a63e9446a7de78d43462007eaa4f027091637f21463c5"
+source = "git+https://github.com/BraiinsForge/tokio-cron-scheduler.git?rev=ff74921fc53f7374782b4333b7e5724a88c82213#ff74921fc53f7374782b4333b7e5724a88c82213"
 dependencies = [
  "chrono",
  "chrono-tz",

@@ -1,2 +1,0 @@
-[registries.braiins]
-index = "sparse+http://registry.ii.zone/api/v1/crates/"

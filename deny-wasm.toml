@@ -138,6 +138,5 @@ unknown-registry = "deny"
 unknown-git = "warn"
 allow-registry = [
     "https://github.com/rust-lang/crates.io-index",
-    "sparse+http://registry.ii.zone/api/v1/crates/",
 ]
 allow-git = []
