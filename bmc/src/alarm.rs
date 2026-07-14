@@ -156,7 +156,6 @@ pub(crate) enum SnoozeLimit {
 }
 
 impl SnoozeLimit {
-    #[expect(dead_code, reason = "consumed by future display-overlay channel")]
     pub(crate) fn limit(&self) -> Option<u32> {
         match self {
             SnoozeLimit::Forever => None,
@@ -295,6 +294,18 @@ impl From<AlarmData> for ActiveAlarm {
             data: value,
             snooze_count: 0,
         }
+    }
+}
+
+impl ActiveAlarm {
+    /// Whether this firing may still be snoozed: snooze is configured *and* the
+    /// per-firing snooze count is below the limit (`Forever` has none). The
+    /// single source of truth shared by the snooze-command guard and the
+    /// overlay's snooze-button gating in `startup.rs`, so the two cannot drift.
+    pub(crate) fn snooze_allowed(&self) -> bool {
+        self.snooze_options
+            .as_ref()
+            .is_some_and(|opts| opts.limit.limit().is_none_or(|max| self.snooze_count < max))
     }
 }
 
@@ -554,16 +565,33 @@ impl AlarmScheduler {
     /// Re-snoozing the same alarm cancels the prior pending entry.
     async fn handle_snooze_command(&self) {
         info!("Received Snooze command");
-        let Some(active_alarm) = self.current_alarm.lock().await.take() else {
-            return;
+        let active_alarm = {
+            let mut current_alarm = self.current_alarm.lock().await;
+            let Some(active_alarm) = current_alarm.as_ref() else {
+                return;
+            };
+
+            // Snooze must be both enabled and under its limit. Checking here --
+            // before anything is taken, cancelled, or a `Snoozed` event is sent
+            // -- leaves the alarm ringing (only "Stop" applies) when snooze is
+            // not on offer, so a stale or spurious snooze request cannot silence
+            // a no-snooze alarm with nothing left to re-fire.
+            if !active_alarm.alarm.snooze_allowed() {
+                return;
+            }
+
+            current_alarm
+                .take()
+                .expect("BUG: alarm present, checked above")
         };
         let mut alarm = active_alarm.alarm.clone();
         active_alarm.cancel().await;
         self.alarm_bus.send_event(AlarmEvent::Snoozed);
 
-        let Some(snooze) = alarm.snooze_options.as_ref() else {
-            return;
-        };
+        let snooze = alarm
+            .snooze_options
+            .as_ref()
+            .expect("BUG: snooze_allowed guarantees snooze_options is Some");
         let duration = snooze.duration.duration();
         let fire_at_utc_ms = chrono::Utc::now().timestamp_millis().saturating_add(
             i64::try_from(duration.as_millis()).expect("BUG: snooze duration must fit in i64 ms"),
@@ -1090,6 +1118,46 @@ pub(crate) enum AlarmError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn active_alarm(snooze_options: Option<SnoozeOptions>, snooze_count: u32) -> ActiveAlarm {
+        let data = AlarmData::new(
+            true,
+            "test".to_owned(),
+            NaiveTime::from_hms_opt(7, 30, 0).expect("BUG: valid test time"),
+            HashSet::new(),
+            None,
+            snooze_options,
+        );
+        ActiveAlarm { data, snooze_count }
+    }
+
+    fn snooze(limit: SnoozeLimit) -> SnoozeOptions {
+        SnoozeOptions {
+            limit,
+            duration: SnoozeDuration::FiveMinutes,
+        }
+    }
+
+    #[test]
+    fn snooze_not_allowed_without_snooze_options() {
+        // Regression: a snooze request on a no-snooze alarm must be rejected up
+        // front so it is not cancelled with nothing to re-fire.
+        assert!(!active_alarm(None, 0).snooze_allowed());
+    }
+
+    #[test]
+    fn snooze_allowed_forever_ignores_count() {
+        assert!(active_alarm(Some(snooze(SnoozeLimit::Forever)), 0).snooze_allowed());
+        assert!(active_alarm(Some(snooze(SnoozeLimit::Forever)), 99).snooze_allowed());
+    }
+
+    #[test]
+    fn snooze_allowed_until_limit_reached() {
+        assert!(active_alarm(Some(snooze(SnoozeLimit::Three)), 0).snooze_allowed());
+        assert!(active_alarm(Some(snooze(SnoozeLimit::Three)), 2).snooze_allowed());
+        assert!(!active_alarm(Some(snooze(SnoozeLimit::Three)), 3).snooze_allowed());
+        assert!(!active_alarm(Some(snooze(SnoozeLimit::Three)), 4).snooze_allowed());
+    }
 
     #[test]
     fn test_weekday_to_num_string() {

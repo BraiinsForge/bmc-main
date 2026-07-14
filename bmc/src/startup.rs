@@ -48,7 +48,9 @@ fn spawn_alarm_overlay_listener(compositor: Arc<dyn Compositor>, alarm_bus: Alar
                 event = events.recv() => match event {
                     Ok(AlarmEvent::Started { alarm }) => {
                         let time = alarm.data.time.format("%H:%M").to_string();
-                        let snooze_allowed = alarm.data.snooze_options.is_some();
+                        // Offer snooze only while it is actually available; the
+                        // controller enforces the same predicate before snoozing.
+                        let snooze_allowed = alarm.snooze_allowed();
                         if let Err(err) =
                             compositor.broadcast_alarm_ring(time, alarm.data.name, snooze_allowed)
                         {
