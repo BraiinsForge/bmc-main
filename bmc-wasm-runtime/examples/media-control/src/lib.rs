@@ -25,7 +25,7 @@ use upnp::{
     parse_mute, parse_position_info, parse_transport_actions, parse_transport_info, parse_volume,
 };
 
-const WINAMP_SKIN: Skin = include_skin!("assets/skins/winamp/");
+const LLAMA_SKIN: Skin = include_skin!("assets/skins/llama/");
 const DEFAULT_PREVIEW: Bitmap = include_bitmap!("assets/skins/default_preview.png");
 
 /// Available skins for the skin picker. Index 0 = default (no skin).
@@ -37,9 +37,9 @@ const SKINS: &[SkinOption] = &[
         preview: SkinPreview::Standalone(&DEFAULT_PREVIEW),
     },
     SkinOption {
-        name: WINAMP_SKIN.name,
-        description: WINAMP_SKIN.description,
-        skin: Some(&WINAMP_SKIN),
+        name: LLAMA_SKIN.name,
+        description: LLAMA_SKIN.description,
+        skin: Some(&LLAMA_SKIN),
         preview: SkinPreview::FromSkin,
     },
 ];
@@ -346,7 +346,7 @@ thread_local! {
     static CONNECTED_DEVICE_NAME: RefCell<String> = const { RefCell::new(String::new()) };
     /// Rolling discovery log (newest first, max `DISCOVERY_LOG_MAX` entries).
     static DISCOVERY_LOG: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    /// Index into `SKINS` array (0 = default, 1 = Winamp, ...).
+    /// Index into `SKINS` array (0 = default, 1 = Llama, ...).
     static SKIN_INDEX: Cell<usize> = const { Cell::new(1) };
 }
 

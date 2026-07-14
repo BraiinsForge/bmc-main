@@ -1,5 +1,5 @@
-name = "Winamp Classic"
-description = "Classic Winamp 2.x look"
+name = "Llama"
+description = "Classic media player aesthetic"
 
 [palette]
 background = "#151520"
