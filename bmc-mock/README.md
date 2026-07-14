@@ -1,4 +1,7 @@
-## Braiins Clock (BMC) - Mock
+## bmc mock
+
+A mock that is runnable on regular personal computers, simulating the backend of the application running on the
+hardware. Currently not implementing the compositor.
 
 Start mock by running:
 
@@ -12,7 +15,7 @@ On a first run, it creates a directory in `~/.local/share/bmc-mockup` with the f
 bmc-mockup
 ├─── mockfs
 └─── www
-        ├─── bmc    
+        ├─── bmc
         └─── var
 ```
 

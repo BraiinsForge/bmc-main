@@ -1,4 +1,4 @@
-Braiins clock
+# bmc-main
 
 ## Setting up repository
 
