@@ -2,10 +2,11 @@
 
 include:
   - project: "nix/ci-tools"
-    ref: &ci-tools-rev d74f0f33c361490b7ecb6d5e4f200de4d481ae34 # update using this command: `nix run .#ci-tools.update`
+    ref: &ci-tools-rev ee804d609ad9971aefa7707f976bdeb5d00306cb # update using: `nix run git+ssh://git@gitlab.ii.zone/nix/ci-tools.git#update`
     file: "ci.yml"
     inputs:
       rev: *ci-tools-rev
+      ci_tools_flake: "git+ssh://git@gitlab.ii.zone/nix/ci-tools.git?rev=ee804d609ad9971aefa7707f976bdeb5d00306cb"
       # Paths excluded from the host workspace's clippy/fmt sweep:
       # vendored upstream forks (linted upstream) and separate cargo
       # workspaces (wasm widgets — different target, own lint configs).

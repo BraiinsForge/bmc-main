@@ -8,10 +8,6 @@
     flake-utils.url = "github:numtide/flake-utils";
     # TODO(#BDK-567): back to master once nix/lib!68 (build-script cc role fix) merges
     nixlib.url = "git+ssh://git@gitlab.ii.zone/nix/lib?ref=fbo/fix-cross-buildscript-static";
-    ci-tools.url = "git+ssh://git@gitlab.ii.zone/nix/ci-tools.git";
-    ci-tools.inputs.nixpkgs.follows = "nixpkgs";
-    ci-tools.inputs.flake-utils.follows = "flake-utils";
-    ci-tools.inputs.nixlib.follows = "nixlib";
 
     # uv2nix stack — builds the in-repo Python uv workspace (bmc-tui +
     # bmc-virt harness) from the root uv.lock.
@@ -32,7 +28,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, nixlib, ci-tools, pyproject-nix, uv2nix, pyproject-build-systems, ... }:
+  outputs = { self, nixpkgs, flake-utils, nixlib, pyproject-nix, uv2nix, pyproject-build-systems, ... }:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ] (localSystem:
       let
         pkgs = import nixpkgs {
@@ -215,7 +211,6 @@
         legacyPackages = workspace.legacyPackages // {
           inherit pkgs;
           inherit (workspace.bmc) armv7-nixpkgs;
-          ci-tools = ci-tools.packages.${localSystem};
         };
 
         checks =

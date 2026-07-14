@@ -1,31 +1,5 @@
 {
   "nodes": {
-    "ci-tools": {
-      "inputs": {
-        "flake-utils": [
-          "flake-utils"
-        ],
-        "nixlib": [
-          "nixlib"
-        ],
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1779880430,
-        "narHash": "sha256-cq2+n6j53zex5w6HRClQk0aoik+t0E2meYcqkyO6VCs=",
-        "ref": "refs/heads/master",
-        "rev": "d74f0f33c361490b7ecb6d5e4f200de4d481ae34",
-        "revCount": 13,
-        "type": "git",
-        "url": "ssh://git@gitlab.ii.zone/nix/ci-tools.git"
-      },
-      "original": {
-        "type": "git",
-        "url": "ssh://git@gitlab.ii.zone/nix/ci-tools.git"
-      }
-    },
     "crane": {
       "locked": {
         "lastModified": 1779041105,
@@ -253,7 +227,6 @@
     },
     "root": {
       "inputs": {
-        "ci-tools": "ci-tools",
         "flake-utils": "flake-utils",
         "nixlib": "nixlib",
         "nixpkgs": "nixpkgs_2",
