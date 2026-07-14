@@ -45,26 +45,6 @@ wasmWidgetCrates // {
     packageName = "bmc-nix";
     binName = "bmc-nix-cli";
   };
-  bmc-hook-merge-files = defineCrate {
-    path = "bmc-nix";
-    packageName = "bmc-nix";
-    binName = "bmc-hook-merge-files";
-  };
-  bmc-hook-file-symlinks = defineCrate {
-    path = "bmc-nix";
-    packageName = "bmc-nix";
-    binName = "bmc-hook-file-symlinks";
-  };
-  bmc-hook-activation-resolver = defineCrate {
-    path = "bmc-nix";
-    packageName = "bmc-nix";
-    binName = "bmc-hook-activation-resolver";
-  };
-  bmc-activation-copy-files = defineCrate {
-    path = "bmc-nix";
-    packageName = "bmc-nix";
-    binName = "bmc-activation-copy-files";
-  };
   bmc-virt-leds = defineCrate {
     path = "bmc-virt/leds";
     packageName = "bmc-virt-leds";
