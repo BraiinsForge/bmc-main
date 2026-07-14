@@ -96,15 +96,15 @@
       "locked": {
         "lastModified": 1781213927,
         "narHash": "sha256-9JHYxgbXdTaOjhIHQtZc8PthXZwNg57EERuNMH8zFvk=",
-        "ref": "refs/heads/master",
+        "owner": "BraiinsForge",
+        "repo": "nix-source-info",
         "rev": "1ddc46d0e0b6bbc1809b06aab7a2320ce95543ba",
-        "revCount": 4,
-        "type": "git",
-        "url": "ssh://git@gitlab.ii.zone/nix/source-info"
+        "type": "github"
       },
       "original": {
-        "type": "git",
-        "url": "ssh://git@gitlab.ii.zone/nix/source-info"
+        "owner": "BraiinsForge",
+        "repo": "nix-source-info",
+        "type": "github"
       }
     },
     "nixlib": {
@@ -113,22 +113,24 @@
         "fenix": "fenix",
         "flake-utils": "flake-utils_2",
         "globset": "globset",
-        "nix-source-info": "nix-source-info",
+        "nix-source-info": [
+          "nix-source-info"
+        ],
         "nixpkgs-do-not-override": "nixpkgs-do-not-override"
       },
       "locked": {
         "lastModified": 1783970216,
         "narHash": "sha256-Ohu4MfkV8fXm0hExnJjG826eEUaHRd6cW6HF3fceqO0=",
-        "ref": "fbo/fix-cross-buildscript-static",
+        "owner": "BraiinsForge",
+        "repo": "nix-lib",
         "rev": "922cf05b7089f5955608c5e31cd890f6fc6ef93b",
-        "revCount": 165,
-        "type": "git",
-        "url": "ssh://git@gitlab.ii.zone/nix/lib"
+        "type": "github"
       },
       "original": {
+        "owner": "BraiinsForge",
         "ref": "fbo/fix-cross-buildscript-static",
-        "type": "git",
-        "url": "ssh://git@gitlab.ii.zone/nix/lib"
+        "repo": "nix-lib",
+        "type": "github"
       }
     },
     "nixpkgs": {
@@ -228,6 +230,7 @@
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
+        "nix-source-info": "nix-source-info",
         "nixlib": "nixlib",
         "nixpkgs": "nixpkgs_2",
         "pyproject-build-systems": "pyproject-build-systems",
