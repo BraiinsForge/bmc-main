@@ -402,8 +402,9 @@ pub trait SystemOverlay {
         false
     }
 
-    /// Active alarm reported by the compositor.
-    fn on_alarm_ring(&mut self, _time: &str, _label: &str) {}
+    /// Active alarm reported by the compositor. `snooze_allowed` is `false` when
+    /// the alarm has no snooze options configured.
+    fn on_alarm_ring(&mut self, _time: &str, _label: &str, _snooze_allowed: bool) {}
 
     /// Compositor requested to stop the alarm.
     fn on_alarm_stop(&mut self) {}

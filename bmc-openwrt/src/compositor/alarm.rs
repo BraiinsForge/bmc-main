@@ -49,10 +49,10 @@ impl AlarmState {
         std::mem::take(&mut self.pending_actions)
     }
 
-    pub fn ring(&mut self, time: &str, label: &str) {
+    pub fn ring(&mut self, time: &str, label: &str, snooze_allowed: bool) {
         self.prune();
         for r in &self.resources {
-            r.ring_alarm(time.to_owned(), label.to_owned());
+            r.ring_alarm(time.to_owned(), label.to_owned(), u32::from(snooze_allowed));
         }
     }
     pub fn stop(&mut self) {

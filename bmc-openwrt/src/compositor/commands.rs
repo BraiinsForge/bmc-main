@@ -70,6 +70,7 @@ pub enum CompositorCommand {
     RingAlarm {
         time: String,
         label: String,
+        snooze_allowed: bool,
     },
     StopAlarm,
 }

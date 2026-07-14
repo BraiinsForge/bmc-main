@@ -34,6 +34,8 @@ struct Ring {
     /// Alarm label; empty when the alarm has no name, in which case the screen
     /// falls back to "Alarm" (see `build_alarm_ui_tree`).
     label: String,
+    /// Whether the alarm may be snoozed; `false` hides the snooze button.
+    snooze_allowed: bool,
 }
 
 /// Keeps context for UI rendering.
@@ -76,6 +78,8 @@ pub struct AlarmView {
     pub time: String,
     /// Alarm label; empty falls back to "Alarm" at render (see `build_alarm_ui_tree`).
     pub label: String,
+    /// Whether the snooze button is shown; `false` renders stop-only.
+    pub snooze_allowed: bool,
 }
 
 /// A 400×100 alarm action button: a solid `fill` background, an optional 1px
@@ -197,21 +201,28 @@ pub fn build_alarm_ui_tree(view: &AlarmView, size: (u32, u32)) -> TreeNode {
         },
     );
 
+    let mut buttons = vec![alarm_button(
+        STOP_ALARM_KEY,
+        "Stop Alarm",
+        Fill::Solid(ORANGE_50),
+        None,
+    )];
+    if view.snooze_allowed {
+        buttons.push(alarm_button(
+            SNOOZE_ALARM_KEY,
+            "Snooze",
+            Fill::Solid(TRANSPARENT),
+            Some(GRAY_30),
+        ));
+    }
+
     let buttons_row = row(
         PropsData {
             gap: 48.0,
             cross_align: CrossAlign::Center,
             ..Default::default()
         },
-        [
-            alarm_button(STOP_ALARM_KEY, "Stop Alarm", Fill::Solid(ORANGE_50), None),
-            alarm_button(
-                SNOOZE_ALARM_KEY,
-                "Snooze",
-                Fill::Solid(TRANSPARENT),
-                Some(GRAY_30),
-            ),
-        ],
+        buttons,
     );
 
     col(
@@ -300,10 +311,11 @@ impl SystemOverlay for AlarmOverlay {
         true
     }
 
-    fn on_alarm_ring(&mut self, time: &str, label: &str) {
+    fn on_alarm_ring(&mut self, time: &str, label: &str, snooze_allowed: bool) {
         self.ringing = Some(Ring {
             time: time.to_owned(),
             label: label.to_owned(),
+            snooze_allowed,
         });
         self.dirty = true;
     }
@@ -345,6 +357,7 @@ impl SystemOverlay for AlarmOverlay {
         let view: AlarmView = AlarmView {
             time: ring.time.clone(),
             label: ring.label.clone(),
+            snooze_allowed: ring.snooze_allowed,
         };
 
         let output = render_alarm(r, size, &mut self.render_state, &view);

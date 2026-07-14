@@ -464,13 +464,14 @@ fn alarm(ctx: &mut StoryCtx) {
     let checker = ctx.toggle("Backdrop", true).get();
     ctx.ui.grid(1, 16.0, |grid| {
         grid.cell(|ui| {
-            ui.header("Alarm", "with label");
+            ui.header("Alarm", "with label, snooze allowed");
             ui.div_custom(
                 (DISPLAY_W, DISPLAY_H),
                 alarm_cell(
                     AlarmView {
                         time: "07:30".to_owned(),
                         label: "Wake up".to_owned(),
+                        snooze_allowed: true,
                     },
                     &ALARM_LABEL_RENDER_STATE,
                     checker,
@@ -478,13 +479,14 @@ fn alarm(ctx: &mut StoryCtx) {
             );
         });
         grid.cell(|ui| {
-            ui.header("Alarm", "no label");
+            ui.header("Alarm", "no label, snooze disabled");
             ui.div_custom(
                 (DISPLAY_W, DISPLAY_H),
                 alarm_cell(
                     AlarmView {
                         time: "06:00".to_owned(),
                         label: String::new(),
+                        snooze_allowed: false,
                     },
                     &ALARM_NO_LABEL_RENDER_STATE,
                     checker,

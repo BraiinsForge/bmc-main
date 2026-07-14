@@ -2005,8 +2005,12 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             state.compositor.deck_widget_state.broadcast_shutdown();
             state.should_exit = true;
         }
-        CompositorCommand::RingAlarm { time, label } => {
-            state.compositor.alarm.ring(&time, &label);
+        CompositorCommand::RingAlarm {
+            time,
+            label,
+            snooze_allowed,
+        } => {
+            state.compositor.alarm.ring(&time, &label, snooze_allowed);
         }
         CompositorCommand::StopAlarm => {
             state.compositor.alarm.stop();
@@ -2394,9 +2398,18 @@ impl Compositor for EglCompositor {
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 
-    fn broadcast_alarm_ring(&self, time: String, label: String) -> Result<(), CompositorError> {
+    fn broadcast_alarm_ring(
+        &self,
+        time: String,
+        label: String,
+        snooze_allowed: bool,
+    ) -> Result<(), CompositorError> {
         self.command_tx
-            .send(CompositorCommand::RingAlarm { time, label })
+            .send(CompositorCommand::RingAlarm {
+                time,
+                label,
+                snooze_allowed,
+            })
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 

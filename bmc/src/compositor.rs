@@ -233,7 +233,12 @@ pub trait Compositor: Send + Sync {
     /// Broadcast that the alarm is ringing to the alarm-overlay via `deck_alarm_v1`
     /// `ring_alarm` event.
     /// Default: no-op.
-    fn broadcast_alarm_ring(&self, _time: String, _label: String) -> Result<(), CompositorError> {
+    fn broadcast_alarm_ring(
+        &self,
+        _time: String,
+        _label: String,
+        _snooze_allowed: bool,
+    ) -> Result<(), CompositorError> {
         Ok(())
     }
 
