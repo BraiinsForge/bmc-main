@@ -30,6 +30,7 @@ mod device;
 mod discovery;
 mod families;
 mod filter;
+mod history;
 mod layout;
 mod manual;
 mod model;
@@ -39,7 +40,8 @@ pub mod screens;
 mod session;
 mod summary;
 mod telemetry;
-mod view;
+pub mod view;
+mod view_data;
 
 #[cfg(test)]
 mod contract;
@@ -67,6 +69,10 @@ use families::bitaxe::BitaxeAdapter;
 use families::bos::BosAdapter;
 #[cfg(target_arch = "wasm32")]
 use families::ubos::UbosAdapter;
+#[cfg(target_arch = "wasm32")]
+use screens::dashboard::DashboardViewData;
+#[cfg(target_arch = "wasm32")]
+use screens::table::TableViewData;
 
 #[cfg(target_arch = "wasm32")]
 thread_local! {
@@ -74,12 +80,14 @@ thread_local! {
     static DERIVED: RefCell<Option<DerivedView>> = const { RefCell::new(None) };
     static VIEW: RefCell<view::ViewState> = const { RefCell::new(view::ViewState::new()) };
     static NAMES: RefCell<Option<NamesCache>> = const { RefCell::new(None) };
+    static HISTORY: RefCell<history::HashrateHistory> =
+        RefCell::new(history::HashrateHistory::default());
 }
 
-/// The parsed `device_names` mapping, cached per params version. The detail
-/// rows rebuild per device event while drilled in, so they must not re-read
-/// the params and re-parse the JSON on the host (or re-warn) each time —
-/// the mapping can only change when the params do.
+/// The parsed `device_names` mapping, cached per params version. The
+/// model-detail rows rebuild per device event while drilled in, so they must
+/// not re-read the params and re-parse the JSON on the host (or re-warn) each
+/// time — the mapping can only change when the params do.
 #[cfg(target_arch = "wasm32")]
 struct NamesCache {
     params_version: u64,
@@ -114,8 +122,8 @@ fn with_device_names<R>(f: impl FnOnce(&JsonDoc) -> R) -> R {
 /// The render-ready fleet summary, cached so the filter → group → fold → sort
 /// pipeline and the model-list parsing run only when the fleet or the params
 /// actually change — not on every render frame (renders fire per discovery and
-/// per telemetry event, hundreds per pass on a large fleet). The detail rows
-/// are cached per selection and cleared on any seq/params rebuild.
+/// per telemetry event, hundreds per pass on a large fleet). The model-detail
+/// rows are cached per selection and cleared on any seq/params rebuild.
 #[cfg(target_arch = "wasm32")]
 struct DerivedView {
     devices_seq: u64,
@@ -123,17 +131,17 @@ struct DerivedView {
     summary: summary::FleetSummary,
     filters: filter::Filters,
     fleet_name: String,
-    detail: Option<DetailCache>,
+    model_detail: Option<ModelDetailCache>,
 }
 
 /// Folded device rows for the drilled-into group, keyed by its partition
 /// key. Cleared whenever the summary rebuilds so the rows always derive
 /// from the same device snapshot.
 #[cfg(target_arch = "wasm32")]
-struct DetailCache {
+struct ModelDetailCache {
     family: Option<DeviceFamily>,
     label: String,
-    rows: Vec<summary::GroupSummary>,
+    rows: Vec<(DeviceId, summary::GroupSummary)>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -343,14 +351,14 @@ fn parse_normalized_model_list(raw: &str) -> Vec<String> {
 /// Fold the per-device rows for the drilled-into group, under the same
 /// filters the cached summary was built with.
 #[cfg(target_arch = "wasm32")]
-fn rebuild_detail_rows(
+fn rebuild_model_detail_rows(
     filters: &filter::Filters,
-    sel: &view::DetailSelection,
-) -> Vec<summary::GroupSummary> {
+    sel: &view::ModelDetailSelection,
+) -> Vec<(DeviceId, summary::GroupSummary)> {
     with_device_names(|doc| {
         let lookup = |key: &str| doc.str(&fmt!("/{}", naming::escape_pointer(key)));
         DEVICES.with(|d| {
-            summary::detail_rows(&d.borrow(), filters, sel.family, &sel.label, |dev| {
+            summary::model_detail_rows(&d.borrow(), filters, sel.family, &sel.label, |dev| {
                 naming::resolve(&dev.identity.name, &dev.identity.host, lookup)
             })
         })
@@ -359,12 +367,12 @@ fn rebuild_detail_rows(
 
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the render entry orchestrates derive, view dispatch, and click routing"
+)]
 pub extern "C" fn render(_delta_ms: u32) {
-    let WidgetSize {
-        width,
-        height,
-        variant,
-    } = widget_size();
+    let WidgetSize { width, height, .. } = widget_size();
     let seq = DEVICES.with(|d| d.borrow().seq());
     let params_version = bmc_wasm_sdk::params::version();
     DERIVED.with(|cell| {
@@ -384,73 +392,105 @@ pub extern "C" fn render(_delta_ms: u32) {
                 axeos_enabled: params.axeos_enabled,
             };
             let summary = DEVICES.with(|d| summary::summarize(&d.borrow(), &filters));
+            // Append one hashrate sample per new devices sequence for the charts.
+            DEVICES.with(|d| HISTORY.with(|h| h.borrow_mut().record(seq, &summary, &d.borrow())));
             *cell = Some(DerivedView {
                 devices_seq: seq,
                 params_version,
                 summary,
                 filters,
                 fleet_name: params.fleet_name,
-                detail: None,
+                model_detail: None,
             });
         }
         let derived = cell.as_mut().expect("BUG: derived view populated above");
         VIEW.with(|view_state| {
             let mut nav = view_state.borrow_mut();
             let selected = nav
-                .detail
+                .model_detail
                 .as_ref()
                 .and_then(|sel| view::selected_index(&derived.summary.groups, sel));
             // A selection whose group vanished (filtered out, devices gone)
             // falls back to the fleet table.
-            if nav.detail.is_some() && selected.is_none() {
-                nav.detail = None;
-                derived.detail = None;
+            if nav.model_detail.is_some() && selected.is_none() {
+                nav.model_detail = None;
+                derived.model_detail = None;
             }
-            if let Some(sel) = nav.detail.as_ref() {
+            if let Some(sel) = nav.model_detail.as_ref() {
                 let fresh = derived
-                    .detail
+                    .model_detail
                     .as_ref()
                     .is_some_and(|c| c.family == sel.family && c.label == sel.label);
                 if !fresh {
-                    let rows = rebuild_detail_rows(&derived.filters, sel);
-                    derived.detail = Some(DetailCache {
+                    let rows = rebuild_model_detail_rows(&derived.filters, sel);
+                    derived.model_detail = Some(ModelDetailCache {
                         family: sel.family,
                         label: sel.label.clone(),
                         rows,
                     });
                 }
             }
-            let detail = if let (Some(sel), Some(idx)) = (nav.detail.as_ref(), selected) {
-                Some(screens::DetailData {
-                    group: derived
-                        .summary
-                        .groups
-                        .get(idx)
-                        .expect("BUG: index found in this group list"),
-                    rows: &derived
-                        .detail
-                        .as_ref()
-                        .expect("BUG: detail cache rebuilt above")
-                        .rows,
-                    page: sel.page,
-                })
+            let (root, page_count) = if let Some(sel) = nav.model_detail.as_ref() {
+                // A live selection (its group survived the fallback above); the
+                // folded device rows are cached in `derived.model_detail`.
+                let rows = &derived
+                    .model_detail
+                    .as_ref()
+                    .expect("BUG: model-detail cache rebuilt above")
+                    .rows;
+                if let Some(device_id) = sel.device.as_deref() {
+                    // The drilled-into device's screen. A device that vanished
+                    // between tap and render titles on its id.
+                    let hostname = rows
+                        .iter()
+                        .find(|(id, _)| id.as_str() == device_id)
+                        .map_or(device_id, |(_, g)| g.label.as_str());
+                    (screens::model_detail::device_detail(hostname), 1)
+                } else {
+                    let data = HISTORY.with(|h| {
+                        screens::model_detail::ModelDetailViewData::from_summary(
+                            &sel.label,
+                            rows,
+                            sel.page,
+                            &h.borrow(),
+                        )
+                    });
+                    let page_count = data.page_count;
+                    (screens::model_detail::model_detail_view(&data), page_count)
+                }
+            } else if derived.summary.groups.is_empty() {
+                (screens::searching(), 1)
             } else {
-                None
+                match nav.mode {
+                    view::ViewMode::Grid => {
+                        let data = HISTORY.with(|h| {
+                            DashboardViewData::from_summary(
+                                &derived.summary,
+                                &derived.fleet_name,
+                                &h.borrow(),
+                            )
+                        });
+                        (screens::dashboard::dashboard_view(&data), 1)
+                    }
+                    view::ViewMode::List => {
+                        let table = HISTORY.with(|h| {
+                            TableViewData::from_summary(
+                                &derived.summary,
+                                &derived.fleet_name,
+                                nav.fleet_page,
+                                &h.borrow(),
+                            )
+                        });
+                        let page_count = table.page_count;
+                        (screens::table::table_view(&table), page_count)
+                    }
+                }
             };
-            let frame = screens::view(
-                &derived.summary,
-                detail,
-                nav.fleet_page,
-                width,
-                height,
-                variant,
-                &derived.fleet_name,
-            );
-            let result = render_ui(width, height, frame.root);
+            let result = render_ui(width, height, root);
             let mut changed = false;
             for id in result.clicks.keys() {
                 if let Some(action) = view::parse_click(id) {
-                    changed |= view::apply(&mut nav, action, frame.page_count);
+                    changed |= view::apply(&mut nav, action, page_count);
                 }
             }
             if changed {

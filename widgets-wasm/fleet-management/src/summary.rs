@@ -20,10 +20,9 @@
 
 use std::collections::BTreeMap;
 
-use units::availability::Availability;
-use units::units::{DegreeCelsius, JoulePerTeraHash, TeraHashPerSecond, Watt};
+use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
-use crate::device::{DeviceFamily, DeviceList, KnownDevice};
+use crate::device::{DeviceFamily, DeviceId, DeviceList, KnownDevice};
 use crate::telemetry::TelemetryReading;
 
 /// A miner reading below this fraction of its nominal hashrate is not-ok.
@@ -48,19 +47,21 @@ pub fn is_ok(reading: &TelemetryReading, nominal_ths: Option<f32>) -> bool {
 pub struct GroupSummary {
     pub label: String,
     pub family: Option<DeviceFamily>,
-    pub hashrate: Availability<TeraHashPerSecond>,
-    pub power: Availability<Watt>,
-    pub efficiency: Availability<JoulePerTeraHash>,
-    pub min_temperature: Availability<DegreeCelsius>,
-    pub avg_temperature: Availability<DegreeCelsius>,
-    pub max_temperature: Availability<DegreeCelsius>,
+    pub hashrate: Option<Hashrate>,
+    pub power: Option<ElectricPower>,
+    pub efficiency: Option<MiningEfficiency>,
+    pub min_temperature: Option<Temperature>,
+    pub avg_temperature: Option<Temperature>,
+    pub max_temperature: Option<Temperature>,
     pub total_count: usize,
     pub ok_count: usize,
+    /// Unreachable devices; the reachable-but-not-`ok` remainder is degraded.
+    pub off_count: usize,
 }
 
 fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
-    // A model group shares one family; the catch-all "Unknown" group may mix
-    // families, so it carries none and is pinned last when ordering.
+    // A model group shares one family; the "Unknown" catch-all may mix families,
+    // so it carries none.
     let family = if label == UNKNOWN_GROUP {
         None
     } else {
@@ -68,15 +69,15 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
     };
     let total_count = devices.len();
     let mut ok_count = 0;
+    let mut off_count = 0;
 
     let mut hashrate_sum = 0.0_f64;
     let mut hashrate_any = false;
     let mut power_sum = 0.0_f64;
     let mut power_any = false;
 
-    // Efficiency ranges over devices reporting BOTH a hashrate (zero allowed)
-    // and a power; a device missing power is excluded so unattributable free
-    // hashrate cannot make efficiency look artificially good.
+    // Efficiency needs BOTH hashrate (zero ok) and power; missing-power devices
+    // are excluded so free hashrate can't flatter the J/TH.
     let mut eff_hashrate = 0.0_f64;
     let mut eff_power = 0.0_f64;
     let mut eff_any = false;
@@ -87,13 +88,12 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
     let mut temp_max = f64::MIN;
 
     for dev in devices {
-        // An unreachable device folds as a zero producer: hashrate 0, power 0,
-        // temperature absent. It is present in the sums (so the group reads
-        // 0.00 TH/s / 0 W rather than N/A) but never mining, and it drops out
-        // of the temperature range. Efficiency is left untouched: a 0/0 device
-        // is a no-op on Σpower / Σhashrate. Keyed on reachability, not on the
-        // reading, so a reachable idle miner (0 TH/s, real power) keeps it.
+        // Unreachable folds as a zero producer: in the hashrate/power sums
+        // (group reads 0 TH/s / 0 W, not N/A) but never mining, out
+        // of the temperature range, a no-op on efficiency.
+        // Keyed on reachability, so a reachable idle miner keeps its real power.
         if !dev.reachable {
+            off_count += 1;
             hashrate_any = true;
             power_any = true;
             continue;
@@ -130,11 +130,10 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
         }
     }
 
-    let hashrate = availability(hashrate_any, || TeraHashPerSecond(hashrate_sum));
-    let power = availability(power_any, || Watt(power_sum));
-    let efficiency = availability(eff_any && eff_hashrate > 0.0, || {
-        JoulePerTeraHash(eff_power / eff_hashrate)
-    });
+    let hashrate = hashrate_any.then(|| Hashrate::from_terahashes_per_second(hashrate_sum));
+    let power = power_any.then(|| ElectricPower::from_watts(power_sum));
+    let efficiency = (eff_any && eff_hashrate > 0.0)
+        .then(|| MiningEfficiency::from_joules_per_terahash(eff_power / eff_hashrate));
 
     let (min_temperature, avg_temperature, max_temperature) = if temp_count > 0 {
         #[expect(
@@ -143,16 +142,12 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
         )]
         let avg = temp_sum / temp_count as f64;
         (
-            Availability::Available(DegreeCelsius(temp_min)),
-            Availability::Available(DegreeCelsius(avg)),
-            Availability::Available(DegreeCelsius(temp_max)),
+            Some(Temperature::from_celsius(temp_min)),
+            Some(Temperature::from_celsius(avg)),
+            Some(Temperature::from_celsius(temp_max)),
         )
     } else {
-        (
-            Availability::Unavailable,
-            Availability::Unavailable,
-            Availability::Unavailable,
-        )
+        (None, None, None)
     };
 
     GroupSummary {
@@ -166,14 +161,7 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
         max_temperature,
         total_count,
         ok_count,
-    }
-}
-
-fn availability<Q>(present: bool, value: impl FnOnce() -> Q) -> Availability<Q> {
-    if present {
-        Availability::Available(value())
-    } else {
-        Availability::Unavailable
+        off_count,
     }
 }
 
@@ -205,19 +193,15 @@ fn partition_key(dev: &KnownDevice) -> (Option<usize>, String) {
 
 #[must_use]
 pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> FleetSummary {
-    // Every known device is shown — avahi-discovered or manual — regardless of
-    // reachability. An unreachable device is folded as a zero producer (see
-    // `fold_group`) so it counts toward the group total without inflating its
-    // metrics. Only the operator's model/family filters can hide a device.
+    // Every known device is shown regardless of reachability (folded as a zero
+    // producer, see `fold_group`); only operator model/family filters hide one.
     let visible: Vec<&KnownDevice> = devices
         .iter()
         .filter(|d| filters.is_visible(d.identity.family, d.model.as_ref()))
         .collect();
 
-    // Key on family as well as model name so two families that happen to share
-    // a display name (e.g. a "BMM"-class device running both BOS and uBOS) stay
-    // separate groups instead of silently merging. Model-less devices share the
-    // single family-agnostic "Unknown" catch-all.
+    // Key on family as well as model name so two families sharing a display name
+    // don't merge. Model-less devices share the family-agnostic "Unknown" group.
     let mut partitions: BTreeMap<(Option<usize>, String), Vec<&KnownDevice>> = BTreeMap::new();
     for dev in &visible {
         partitions.entry(partition_key(dev)).or_default().push(dev);
@@ -246,22 +230,20 @@ pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> Flee
     FleetSummary { total, groups }
 }
 
-/// Per-device rows for the drilled-into model group: each matching device
-/// folded as a single-device group labeled by its resolved display name,
-/// sorted by that name (ASCII-case-insensitive, keeping Unicode case tables
-/// out of the wasm binary). Rows apply the same operator filters as the
-/// summary, so a partition spanning families (the Unknown catch-all) cannot
-/// resurrect hidden devices.
+/// Per-device rows (id + folded single-device group) for the drilled-into model,
+/// sorted by display name (ASCII-case-insensitive, to keep Unicode tables out of
+/// the binary). Same filters as the summary, so the family-spanning Unknown
+/// catch-all can't resurrect hidden devices.
 #[must_use]
-pub fn detail_rows(
+pub fn model_detail_rows(
     devices: &DeviceList,
     filters: &crate::filter::Filters,
     family: Option<DeviceFamily>,
     label: &str,
     resolve: impl Fn(&KnownDevice) -> String,
-) -> Vec<GroupSummary> {
+) -> Vec<(DeviceId, GroupSummary)> {
     let family_index = family.map(DeviceFamily::index);
-    let mut rows: Vec<GroupSummary> = devices
+    let mut rows: Vec<(DeviceId, GroupSummary)> = devices
         .iter()
         .filter(|dev| {
             let (fam, lab) = partition_key(dev);
@@ -270,14 +252,14 @@ pub fn detail_rows(
                 && filters.is_visible(dev.identity.family, dev.model.as_ref())
         })
         // fold_group's "Unknown"-label family sentinel may misfire on a
-        // device display-named "Unknown"; detail rows never read `family`.
-        .map(|dev| fold_group(resolve(dev), &[dev]))
+        // device display-named "Unknown"; model-detail rows never read `family`.
+        .map(|dev| (dev.identity.id.clone(), fold_group(resolve(dev), &[dev])))
         .collect();
     rows.sort_by(|a, b| {
-        a.label
+        a.1.label
             .to_ascii_lowercase()
-            .cmp(&b.label.to_ascii_lowercase())
-            .then_with(|| a.label.cmp(&b.label))
+            .cmp(&b.1.label.to_ascii_lowercase())
+            .then_with(|| a.1.label.cmp(&b.1.label))
     });
     rows
 }
@@ -289,7 +271,6 @@ mod tests {
     use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceSource, KnownDevice};
     use crate::filter::Filters;
     use crate::telemetry::TelemetrySnapshot;
-    use units::units::Quantity;
 
     fn device(model: Option<&str>, reading: Option<TelemetryReading>) -> KnownDevice {
         KnownDevice {
@@ -327,8 +308,33 @@ mod tests {
         }
     }
 
-    fn raw(value: &Availability<impl Quantity>) -> Option<f64> {
-        value.as_option().map(|q| q.raw())
+    /// Extract a metric's canonical-unit magnitude for assertions.
+    trait Canonical {
+        fn canonical(self) -> f64;
+    }
+    impl Canonical for Hashrate {
+        fn canonical(self) -> f64 {
+            self.as_terahashes_per_second()
+        }
+    }
+    impl Canonical for ElectricPower {
+        fn canonical(self) -> f64 {
+            self.as_watts()
+        }
+    }
+    impl Canonical for Temperature {
+        fn canonical(self) -> f64 {
+            self.as_celsius()
+        }
+    }
+    impl Canonical for MiningEfficiency {
+        fn canonical(self) -> f64 {
+            self.as_joules_per_terahash()
+        }
+    }
+
+    fn raw<Q: Canonical + Copy>(value: Option<Q>) -> Option<f64> {
+        value.map(Canonical::canonical)
     }
 
     fn reading(hashrate: Option<f32>) -> TelemetryReading {
@@ -381,8 +387,8 @@ mod tests {
         let a = device(Some("M"), Some(full(1.0, 30.0, 60.0)));
         let b = device(Some("M"), Some(full(2.0, 20.0, 50.0)));
         let group = fold_group("M".to_owned(), &[&a, &b]);
-        assert_eq!(raw(&group.hashrate), Some(3.0));
-        assert_eq!(raw(&group.power), Some(50.0));
+        assert_eq!(raw(group.hashrate), Some(3.0));
+        assert_eq!(raw(group.power), Some(50.0));
         assert_eq!(group.total_count, 2);
         assert_eq!(group.ok_count, 2);
     }
@@ -442,7 +448,7 @@ mod tests {
         let a = device(Some("M"), Some(full(1.0, 30.0, 60.0)));
         let b = device(Some("M"), Some(full(2.0, 20.0, 50.0)));
         let group = fold_group("M".to_owned(), &[&a, &b]);
-        let eff = raw(&group.efficiency).expect("BUG: efficiency available");
+        let eff = raw(group.efficiency).expect("BUG: efficiency available");
         assert!((eff - 50.0 / 3.0).abs() < 1e-6, "got {eff}");
     }
 
@@ -460,10 +466,10 @@ mod tests {
             }),
         );
         let group = fold_group("M".to_owned(), &[&a, &b]);
-        let eff = raw(&group.efficiency).expect("BUG: efficiency available");
+        let eff = raw(group.efficiency).expect("BUG: efficiency available");
         assert!((eff - 30.0).abs() < 1e-6, "got {eff}");
-        assert_eq!(raw(&group.power), Some(30.0));
-        assert_eq!(raw(&group.hashrate), Some(6.0));
+        assert_eq!(raw(group.power), Some(30.0));
+        assert_eq!(raw(group.hashrate), Some(6.0));
     }
 
     #[test]
@@ -473,9 +479,9 @@ mod tests {
         let a = device(Some("M"), Some(full(1.0, 30.0, 60.0)));
         let b = device(Some("M"), Some(full(0.0, 17.0, 40.0)));
         let group = fold_group("M".to_owned(), &[&a, &b]);
-        let eff = raw(&group.efficiency).expect("BUG: efficiency available");
+        let eff = raw(group.efficiency).expect("BUG: efficiency available");
         assert!((eff - 47.0).abs() < 1e-6, "got {eff}");
-        assert_eq!(raw(&group.power), Some(47.0));
+        assert_eq!(raw(group.power), Some(47.0));
     }
 
     #[test]
@@ -485,9 +491,9 @@ mod tests {
         let idle = device(Some("M"), Some(full(0.0, 8.0, 35.0)));
         let active = device(Some("M"), Some(full(1.0, 32.0, 60.0)));
         let group = fold_group("M".to_owned(), &[&idle, &active]);
-        let total_power = raw(&group.power).expect("BUG: power available");
-        let total_hashrate = raw(&group.hashrate).expect("BUG: hashrate available");
-        let eff = raw(&group.efficiency).expect("BUG: efficiency available");
+        let total_power = raw(group.power).expect("BUG: power available");
+        let total_hashrate = raw(group.hashrate).expect("BUG: hashrate available");
+        let eff = raw(group.efficiency).expect("BUG: efficiency available");
         assert!((eff - 40.0).abs() < 1e-6, "got {eff}");
         assert!(
             (eff - total_power / total_hashrate).abs() < 1e-6,
@@ -501,19 +507,19 @@ mod tests {
         let b = device(Some("M"), Some(full(1.0, 30.0, 50.0)));
         let c = device(Some("M"), Some(full(1.0, 30.0, 60.0)));
         let group = fold_group("M".to_owned(), &[&a, &b, &c]);
-        assert_eq!(raw(&group.min_temperature), Some(40.0));
-        assert_eq!(raw(&group.avg_temperature), Some(50.0));
-        assert_eq!(raw(&group.max_temperature), Some(60.0));
+        assert_eq!(raw(group.min_temperature), Some(40.0));
+        assert_eq!(raw(group.avg_temperature), Some(50.0));
+        assert_eq!(raw(group.max_temperature), Some(60.0));
     }
 
     #[test]
     fn fold_all_missing_is_unavailable() {
         let a = device(Some("M"), None);
         let group = fold_group("M".to_owned(), &[&a]);
-        assert_eq!(group.hashrate, Availability::Unavailable);
-        assert_eq!(group.power, Availability::Unavailable);
-        assert_eq!(group.efficiency, Availability::Unavailable);
-        assert_eq!(group.min_temperature, Availability::Unavailable);
+        assert_eq!(group.hashrate, None);
+        assert_eq!(group.power, None);
+        assert_eq!(group.efficiency, None);
+        assert_eq!(group.min_temperature, None);
         assert_eq!(group.total_count, 1);
         assert_eq!(group.ok_count, 0);
     }
@@ -676,10 +682,11 @@ mod tests {
         let g = &summary.groups[0];
         assert_eq!(g.total_count, 2, "both devices are known and counted");
         assert_eq!(g.ok_count, 1, "only the reachable miner is mining");
-        assert_eq!(raw(&g.hashrate), Some(1.0), "unreachable adds 0 hashrate");
-        assert_eq!(raw(&g.power), Some(30.0), "unreachable adds 0 power");
+        assert_eq!(g.off_count, 1, "the unreachable device is off");
+        assert_eq!(raw(g.hashrate), Some(1.0), "unreachable adds 0 hashrate");
+        assert_eq!(raw(g.power), Some(30.0), "unreachable adds 0 power");
         assert_eq!(
-            raw(&g.max_temperature),
+            raw(g.max_temperature),
             Some(60.0),
             "unreachable temp omitted"
         );
@@ -697,9 +704,10 @@ mod tests {
         let g = &summary.groups[0];
         assert_eq!(g.total_count, 2);
         assert_eq!(g.ok_count, 0, "all not mining");
-        assert_eq!(raw(&g.hashrate), Some(0.0), "present zero, not N/A");
-        assert_eq!(raw(&g.power), Some(0.0), "present zero, not N/A");
-        assert_eq!(g.max_temperature, Availability::Unavailable);
+        assert_eq!(g.off_count, 2, "both devices are off");
+        assert_eq!(raw(g.hashrate), Some(0.0), "present zero, not N/A");
+        assert_eq!(raw(g.power), Some(0.0), "present zero, not N/A");
+        assert_eq!(g.max_temperature, None);
     }
 
     #[test]
@@ -711,12 +719,9 @@ mod tests {
         let g = &summary.groups[0];
         assert_eq!(g.total_count, 1);
         assert_eq!(g.ok_count, 0, "0 TH/s is below the mining floor");
-        assert_eq!(
-            raw(&g.power),
-            Some(8.0),
-            "reachable idle power is preserved"
-        );
-        assert_eq!(raw(&g.max_temperature), Some(40.0));
+        assert_eq!(g.off_count, 0, "reachable idle is degraded, not off");
+        assert_eq!(raw(g.power), Some(8.0), "reachable idle power is preserved");
+        assert_eq!(raw(g.max_temperature), Some(40.0));
     }
 
     #[test]
@@ -731,8 +736,8 @@ mod tests {
             ),
         ]);
         let summary = summarize(&l, &Filters::default());
-        assert_eq!(raw(&summary.total.hashrate), Some(3.0));
-        assert_eq!(raw(&summary.total.power), Some(50.0));
+        assert_eq!(raw(summary.total.hashrate), Some(3.0));
+        assert_eq!(raw(summary.total.power), Some(50.0));
         assert_eq!(summary.total.total_count, 2);
         assert_eq!(summary.total.ok_count, 2);
     }
@@ -748,9 +753,9 @@ mod tests {
             ("b", Some("B"), Some(full(1.0, 30.0, 90.0)), true),
         ]);
         let summary = summarize(&l, &Filters::default());
-        assert_eq!(raw(&summary.total.min_temperature), Some(40.0));
-        assert_eq!(raw(&summary.total.max_temperature), Some(90.0));
-        let avg = raw(&summary.total.avg_temperature).expect("BUG: avg available");
+        assert_eq!(raw(summary.total.min_temperature), Some(40.0));
+        assert_eq!(raw(summary.total.max_temperature), Some(90.0));
+        let avg = raw(summary.total.avg_temperature).expect("BUG: avg available");
         assert!((avg - (40.0 + 60.0 + 90.0) / 3.0).abs() < 1e-6, "got {avg}");
         assert!(
             (avg - 70.0).abs() > 1.0,
@@ -768,7 +773,7 @@ mod tests {
             ("b", Some("B"), Some(full(3.0, 30.0, 50.0)), true),
         ]);
         let summary = summarize(&l, &Filters::default());
-        let eff = raw(&summary.total.efficiency).expect("BUG: efficiency available");
+        let eff = raw(summary.total.efficiency).expect("BUG: efficiency available");
         assert!((eff - 15.0).abs() < 1e-6, "got {eff}");
     }
 
@@ -787,8 +792,8 @@ mod tests {
         let summary = summarize(&l, &filters);
         let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
         assert_eq!(labels, ["BMM 101"], "the blacklisted group is gone");
-        assert_eq!(raw(&summary.total.hashrate), Some(1.0));
-        assert_eq!(raw(&summary.total.power), Some(30.0));
+        assert_eq!(raw(summary.total.hashrate), Some(1.0));
+        assert_eq!(raw(summary.total.power), Some(30.0));
     }
 
     #[test]
@@ -804,7 +809,7 @@ mod tests {
         let summary = summarize(&l, &filters);
         let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
         assert_eq!(labels, ["BMM 101"], "only the whitelisted model survives");
-        assert_eq!(raw(&summary.total.hashrate), Some(1.0));
+        assert_eq!(raw(summary.total.hashrate), Some(1.0));
     }
 
     fn family_list(specs: &[(&str, DeviceFamily, &str, TelemetryReading)]) -> DeviceList {
@@ -856,18 +861,18 @@ mod tests {
         let summary = summarize(&l, &filters);
         let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
         assert_eq!(labels, ["BMM 101"], "the disabled family's group is gone");
-        assert_eq!(raw(&summary.total.hashrate), Some(1.0));
-        assert_eq!(raw(&summary.total.power), Some(30.0));
+        assert_eq!(raw(summary.total.hashrate), Some(1.0));
+        assert_eq!(raw(summary.total.power), Some(30.0));
     }
 
     #[test]
-    fn detail_rows_fold_each_device_separately() {
+    fn model_detail_rows_fold_each_device_separately() {
         let l = list(&[
             ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
             ("b", Some("BMM 101"), Some(full(2.0, 20.0, 50.0)), true),
             ("c", Some("Other"), Some(full(9.0, 90.0, 70.0)), true),
         ]);
-        let rows = detail_rows(
+        let rows = model_detail_rows(
             &l,
             &Filters::default(),
             Some(DeviceFamily::Bos),
@@ -875,20 +880,20 @@ mod tests {
             |d| d.identity.name.clone(),
         );
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].label, "a");
-        assert_eq!(raw(&rows[0].hashrate), Some(1.0));
-        assert_eq!(rows[0].total_count, 1);
-        assert_eq!(rows[0].ok_count, 1);
-        assert_eq!(raw(&rows[1].hashrate), Some(2.0));
+        assert_eq!(rows[0].1.label, "a");
+        assert_eq!(raw(rows[0].1.hashrate), Some(1.0));
+        assert_eq!(rows[0].1.total_count, 1);
+        assert_eq!(rows[0].1.ok_count, 1);
+        assert_eq!(raw(rows[1].1.hashrate), Some(2.0));
     }
 
     #[test]
-    fn detail_rows_sort_by_display_name_case_insensitively() {
+    fn model_detail_rows_sort_by_display_name_case_insensitively() {
         let l = list(&[
             ("x", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
             ("y", Some("BMM 101"), Some(full(2.0, 20.0, 50.0)), true),
         ]);
-        let rows = detail_rows(
+        let rows = model_detail_rows(
             &l,
             &Filters::default(),
             Some(DeviceFamily::Bos),
@@ -901,30 +906,30 @@ mod tests {
                 }
             },
         );
-        let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+        let labels: Vec<&str> = rows.iter().map(|r| r.1.label.as_str()).collect();
         assert_eq!(labels, ["Alpha", "bravo"]);
     }
 
     #[test]
-    fn detail_rows_for_the_unknown_group_take_modelless_devices() {
+    fn model_detail_rows_for_the_unknown_group_take_modelless_devices() {
         let l = list(&[
             ("a", None, Some(full(1.0, 30.0, 60.0)), true),
             ("b", Some("BMM 101"), Some(full(2.0, 20.0, 50.0)), true),
         ]);
-        let rows = detail_rows(&l, &Filters::default(), None, "Unknown", |d| {
+        let rows = model_detail_rows(&l, &Filters::default(), None, "Unknown", |d| {
             d.identity.name.clone()
         });
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].label, "a");
+        assert_eq!(rows[0].1.label, "a");
     }
 
     #[test]
-    fn detail_rows_require_the_family_to_match() {
+    fn model_detail_rows_require_the_family_to_match() {
         let l = family_list(&[
             ("a", DeviceFamily::Bos, "BMM 101", full(1.0, 30.0, 60.0)),
             ("b", DeviceFamily::Ubos, "BMM 101", full(2.0, 20.0, 50.0)),
         ]);
-        let rows = detail_rows(
+        let rows = model_detail_rows(
             &l,
             &Filters::default(),
             Some(DeviceFamily::Bos),
@@ -932,11 +937,11 @@ mod tests {
             |d| d.identity.name.clone(),
         );
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].label, "a");
+        assert_eq!(rows[0].1.label, "a");
     }
 
     #[test]
-    fn detail_rows_hide_a_disabled_familys_modelless_devices() {
+    fn model_detail_rows_hide_a_disabled_familys_modelless_devices() {
         // The Unknown partition spans families; disabling BOS must hide its
         // model-less device from the drill-in even though the uBOS one keeps
         // the group alive in the summary.
@@ -962,15 +967,15 @@ mod tests {
             bos_enabled: false,
             ..Default::default()
         };
-        let rows = detail_rows(&l, &filters, None, "Unknown", |d| d.identity.name.clone());
-        let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+        let rows = model_detail_rows(&l, &filters, None, "Unknown", |d| d.identity.name.clone());
+        let labels: Vec<&str> = rows.iter().map(|r| r.1.label.as_str()).collect();
         assert_eq!(labels, ["b"], "the disabled family's device must not leak");
     }
 
     #[test]
-    fn detail_row_of_an_unreachable_device_reads_zero() {
+    fn model_detail_row_of_an_unreachable_device_reads_zero() {
         let l = list(&[("a", Some("BMM 101"), Some(full(9.0, 90.0, 80.0)), false)]);
-        let rows = detail_rows(
+        let rows = model_detail_rows(
             &l,
             &Filters::default(),
             Some(DeviceFamily::Bos),
@@ -978,9 +983,9 @@ mod tests {
             |d| d.identity.name.clone(),
         );
         assert_eq!(rows.len(), 1);
-        assert_eq!(raw(&rows[0].hashrate), Some(0.0));
-        assert_eq!(raw(&rows[0].power), Some(0.0));
-        assert_eq!(rows[0].ok_count, 0);
-        assert_eq!(rows[0].max_temperature, Availability::Unavailable);
+        assert_eq!(raw(rows[0].1.hashrate), Some(0.0));
+        assert_eq!(raw(rows[0].1.power), Some(0.0));
+        assert_eq!(rows[0].1.ok_count, 0);
+        assert_eq!(rows[0].1.max_temperature, None);
     }
 }

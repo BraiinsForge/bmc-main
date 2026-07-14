@@ -13,6 +13,8 @@
 )]
 use bmc_wasm_sdk::*;
 
+use crate::view::{ViewMode, view_click_id};
+
 // Design tokens map 1:1 to the Figma "Braiins DECK" frames.
 pub const CARD_BG: Color = Color::from_hex(0x09_09_09);
 pub const HEADER_BG: Color = GRAY_100;
@@ -34,6 +36,7 @@ pub const FRAME_W: f32 = 1280.0;
 pub const FRAME_H: f32 = 480.0;
 pub const PAD: f32 = 24.0;
 pub const GAP: f32 = 8.0;
+pub const DETAIL_BUTTON_WIDTH: f32 = 96.0;
 
 pub const PERF_OK: Svg = include_svg!("assets/icons/perf-ok.svg");
 pub const PERF_LOW: Svg = include_svg!("assets/icons/perf-low.svg");
@@ -79,11 +82,11 @@ fn toggle(list_active: bool) -> Node {
         &[
             Tab {
                 icon: &TOGGLE_GRID,
-                click_id: "view_grid",
+                click_id: view_click_id(ViewMode::Grid),
             },
             Tab {
                 icon: &TOGGLE_LIST,
-                click_id: "view_list",
+                click_id: view_click_id(ViewMode::List),
             },
         ],
     )

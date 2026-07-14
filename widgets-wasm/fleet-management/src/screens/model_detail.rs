@@ -1,8 +1,5 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! List view (per-model breakdown): the fleet's models as table rows,
-//! the list-view twin of the dashboard grid.
-
 #[cfg_attr(
     not(test),
     expect(
@@ -12,67 +9,67 @@
 )]
 use bmc_wasm_sdk::*;
 
-use crate::device::DeviceFamily;
 use crate::layout::truncate_label;
 use crate::screens::parts::{
-    BORDER, CARD_BG, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEADER_BG, LABEL, LABEL_FONT, PAD,
-    ROW_FONT, area_chart, header, status_counts,
+    BORDER, CARD_BG, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEADER_BG, LABEL, LABEL_FONT,
+    METRIC_ICON, PAD, STAT_TEMP, area_chart, icon,
 };
-use crate::view::{PageTurn, PagerScope, model_detail_click_id, pager_click_id};
+use crate::view::{PageTurn, PagerScope, pager_click_id};
 
+const CHEVRON_LEFT: Svg = include_svg!("assets/icons/chevron-left.svg");
 const PAGER_UP: Svg = include_svg!("assets/icons/chevron-up.svg");
 const PAGER_DOWN: Svg = include_svg!("assets/icons/chevron-down.svg");
 
 // Column widths within the table card.
-const COL_MODEL: f32 = 340.0;
-const COL_STATUS: f32 = 150.0;
-const COL_HASHRATE: f32 = 122.0;
-const COL_SPARK: f32 = 80.0;
-const COL_POWER: f32 = 106.0;
-const COL_EFF: f32 = 118.0;
-const COL_AVG: f32 = 86.0;
-const STATUS_SLOT: f32 = 50.0;
-const SPARK_W: f32 = COL_SPARK - 16.0;
-const MODEL_CHARS: usize = 28;
+const COL_HOST: f32 = 260.0;
+const COL_HASHRATE: f32 = 132.0;
+const COL_SPARK: f32 = 96.0;
+const SPARK_W: f32 = 80.0;
+const COL_POWER: f32 = 112.0;
+const COL_EFF: f32 = 132.0;
+const COL_TEMP: f32 = 90.0;
 
+const HOST_CHARS: usize = 20;
 const ROW_PAD: f32 = 20.0;
 // A full page of rows must fit the body height.
 // Overflow clamps the flex row up to min-content and shifts the pinned pager.
 const HEAD_H: f32 = 56.0;
 const DATA_H: f32 = 78.0;
-const MODEL_FONT: u32 = 22;
-const STATUS_ICON: f32 = 16.0;
+const TITLE_FONT: u32 = 24;
+const HOST_FONT: u32 = 24;
+const VALUE_FONT: u32 = 24;
+const BACK: f32 = 40.0;
 
 #[derive(Debug)]
-pub struct ModelRow {
-    pub name: String,
-    /// The model group's family, for the Detail drill-in click id.
-    pub family: Option<DeviceFamily>,
-    pub ok: usize,
-    pub degraded: usize,
-    pub off: usize,
+pub struct DeviceRow {
+    pub hostname: String,
+    /// The device drill-in click id.
+    pub click_id: String,
     pub hashrate: Hashrate,
     pub series: Vec<f32>,
     pub power: ElectricPower,
     pub efficiency: MiningEfficiency,
     pub avg_temp: Temperature,
+    pub min_temp: Temperature,
+    pub max_temp: Temperature,
 }
 
 #[derive(Debug)]
-pub struct TableViewData {
+pub struct ModelDetailViewData {
+    /// The drilled-into model name.
     pub title: String,
     pub device_count: usize,
-    pub rows: Vec<ModelRow>,
+    pub rows: Vec<DeviceRow>,
     pub page: usize,
     pub page_count: usize,
 }
 
 #[must_use]
-pub fn table_view(data: &TableViewData) -> Node {
+pub fn model_detail_view(data: &ModelDetailViewData) -> Node {
     col(
         props!(background: BLACK, width: FRAME_W, height: FRAME_H, padding: PAD, gap: 16.0),
         [
-            header(&data.title, data.device_count, true),
+            detail_header(&data.title, data.device_count),
             row(
                 props!(gap: GAP, flex: 1.0),
                 [
@@ -84,13 +81,37 @@ pub fn table_view(data: &TableViewData) -> Node {
     )
 }
 
-fn table_card(data: &TableViewData) -> Node {
+fn detail_header(title: &str, count: usize) -> Node {
+    row(
+        props!(height: BACK, cross_align: CrossAlign::Center, gap: 16.0),
+        [
+            back_button(),
+            text(
+                title,
+                style!(size: TITLE_FONT, weight: FontWeight::BOLD, color: WHITE),
+            ),
+            text(
+                fmt!("{count} Devices"),
+                style!(size: LABEL_FONT, color: LABEL),
+            ),
+        ],
+    )
+}
+
+fn back_button() -> Node {
+    touchable(
+        "back",
+        props!(width: BACK, height: BACK, background: GRAY_90),
+        vec![Draw::svg(10.0, 10.0, 20.0, 20.0, &CHEVRON_LEFT, WHITE).with_anti_alias()],
+    )
+}
+
+fn table_card(data: &ModelDetailViewData) -> Node {
     let mut rows: Vec<Node> = vec![header_row()];
     for r in &data.rows {
         rows.push(separator());
-        rows.push(model_row(r));
+        rows.push(device_row(r));
     }
-    // border-sim card wrapping the header + data rows.
     col(
         props!(background: BORDER, flex: 1.0, padding: 1.0),
         [col(
@@ -104,39 +125,28 @@ fn header_row() -> Node {
     row(
         props!(background: HEADER_BG, height: HEAD_H, padding: ROW_PAD, cross_align: CrossAlign::Center),
         [
-            head_cell(COL_MODEL, "Model"),
-            head_cell(COL_STATUS, "Status"),
+            head_cell(COL_HOST, "Hostname"),
             head_cell(COL_HASHRATE, "Hashrate"),
             head_cell(COL_SPARK, ""),
             head_cell(COL_POWER, "Power"),
             head_cell(COL_EFF, "Efficiency"),
-            head_cell(COL_AVG, "Avg"),
+            temp_head("Avg"),
+            temp_head("Min"),
+            temp_head("Max"),
             col(props!(flex: 1.0), Vec::<Node>::new()),
         ],
     )
 }
 
-fn model_row(r: &ModelRow) -> Node {
+fn device_row(r: &DeviceRow) -> Node {
     row(
         props!(height: DATA_H, padding: ROW_PAD, cross_align: CrossAlign::Center),
         [
             cell(
-                COL_MODEL,
+                COL_HOST,
                 text(
-                    truncate_label(&r.name, MODEL_CHARS),
-                    style!(size: MODEL_FONT, weight: FontWeight::BOLD, color: WHITE),
-                ),
-            ),
-            cell(
-                COL_STATUS,
-                status_counts(
-                    r.ok,
-                    r.degraded,
-                    r.off,
-                    STATUS_ICON,
-                    ROW_FONT,
-                    STATUS_SLOT,
-                    FontWeight::REGULAR,
+                    truncate_label(&r.hostname, HOST_CHARS),
+                    style!(size: HOST_FONT, weight: FontWeight::SEMIBOLD, color: WHITE),
                 ),
             ),
             cell(
@@ -158,9 +168,11 @@ fn model_row(r: &ModelRow) -> Node {
                 COL_EFF,
                 value(&r.efficiency.format_value(1), MiningEfficiency::UNIT),
             ),
-            cell(COL_AVG, value(&r.avg_temp.format_value(0), "°C")),
+            cell(COL_TEMP, value(&r.avg_temp.format_value(0), "°C")),
+            cell(COL_TEMP, value(&r.min_temp.format_value(0), "°C")),
+            cell(COL_TEMP, value(&r.max_temp.format_value(0), "°C")),
             col(props!(flex: 1.0), Vec::<Node>::new()),
-            detail_button(r.family, &r.name),
+            detail_button(&r.click_id),
         ],
     )
 }
@@ -172,6 +184,19 @@ fn head_cell(width: f32, label: &str) -> Node {
     )
 }
 
+fn temp_head(label: &str) -> Node {
+    col(
+        props!(width: COL_TEMP),
+        [row(
+            props!(gap: 8.0, cross_align: CrossAlign::Center),
+            [
+                text(label, style!(size: LABEL_FONT, color: LABEL)),
+                icon(&STAT_TEMP, METRIC_ICON, LABEL),
+            ],
+        )],
+    )
+}
+
 fn cell(width: f32, node: Node) -> Node {
     col(props!(width: width, cross_align: CrossAlign::Start), [node])
 }
@@ -179,14 +204,13 @@ fn cell(width: f32, node: Node) -> Node {
 fn value(number: &str, unit: &str) -> Node {
     text(
         fmt!("{number} {unit}"),
-        style!(size: ROW_FONT, color: WHITE),
+        style!(size: VALUE_FONT, color: WHITE),
     )
 }
 
-fn detail_button(family: Option<DeviceFamily>, name: &str) -> Node {
-    let id = model_detail_click_id(family, name);
+fn detail_button(click_id: &str) -> Node {
     touchable(
-        &id,
+        click_id,
         props!(width: DETAIL_BUTTON_WIDTH, height: 48.0, background: GRAY_90),
         vec![Draw::text(
             DETAIL_BUTTON_WIDTH / 2.0,
@@ -202,7 +226,6 @@ fn separator() -> Node {
 }
 
 fn pager(can_up: bool, can_down: bool) -> Node {
-    // Compact pair pinned to the table's bottom — the leading spacer pushes it down.
     col(
         props!(gap: 8.0, cross_align: CrossAlign::Center),
         [
@@ -210,19 +233,18 @@ fn pager(can_up: bool, can_down: bool) -> Node {
             pager_button(
                 &PAGER_UP,
                 can_up,
-                pager_click_id(PagerScope::Fleet, PageTurn::Prev),
+                pager_click_id(PagerScope::ModelDetail, PageTurn::Prev),
             ),
             pager_button(
                 &PAGER_DOWN,
                 can_down,
-                pager_click_id(PagerScope::Fleet, PageTurn::Next),
+                pager_click_id(PagerScope::ModelDetail, PageTurn::Next),
             ),
         ],
     )
 }
 
 fn pager_button(svg: &Svg, enabled: bool, click_id: &str) -> Node {
-    // Disabled keeps the chip and only dims the glyph; a dead direction isn't tappable.
     let glyph = if enabled {
         WHITE
     } else {
@@ -235,4 +257,32 @@ fn pager_button(svg: &Svg, enabled: bool, click_id: &str) -> Node {
     } else {
         canvas(props, draws)
     }
+}
+
+/// The single-device screen (back chip + device name),
+/// opened from a device's Detail button.
+#[must_use]
+pub fn device_detail(hostname: &str) -> Node {
+    col(
+        props!(background: BLACK, width: FRAME_W, height: FRAME_H, padding: PAD, gap: 16.0),
+        [
+            row(
+                props!(height: BACK, cross_align: CrossAlign::Center, gap: 16.0),
+                [
+                    back_button(),
+                    text(
+                        hostname,
+                        style!(size: TITLE_FONT, weight: FontWeight::BOLD, color: WHITE),
+                    ),
+                ],
+            ),
+            center(
+                props!(flex: 1.0),
+                [text(
+                    "Device detail \u{2014} coming soon",
+                    style!(size: 28, color: LABEL),
+                )],
+            ),
+        ],
+    )
 }

@@ -2,15 +2,28 @@
 
 //! Hand-picked fixture summaries for the storybook screens.
 
-use units::availability::Availability;
-use units::units::{DegreeCelsius, JoulePerTeraHash, TeraHashPerSecond, Watt};
+use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
 use crate::device::DeviceFamily;
-use crate::screens::dashboard::DashboardVm;
-use crate::screens::table::{FleetTableVm, ModelRow};
+use crate::screens::dashboard::DashboardViewData;
+use crate::screens::model_detail::{DeviceRow, ModelDetailViewData};
+use crate::screens::table::{ModelRow, TableViewData};
 use crate::summary::{FleetSummary, GroupSummary};
+use crate::view::device_click_id;
 
 const TABLE_PAGE_SIZE: usize = 4;
+
+fn family_of(name: &str) -> Option<DeviceFamily> {
+    if name.starts_with("uBOS") {
+        Some(DeviceFamily::Ubos)
+    } else if name.starts_with("BOS") {
+        Some(DeviceFamily::Bos)
+    } else if name.starts_with("AxeOS") {
+        Some(DeviceFamily::Bitaxe)
+    } else {
+        None
+    }
+}
 
 #[expect(
     clippy::too_many_arguments,
@@ -30,10 +43,11 @@ fn model(
 ) -> ModelRow {
     ModelRow {
         name: name.to_owned(),
+        family: family_of(name),
         ok,
         degraded,
         off,
-        hashrate_ths,
+        hashrate: Hashrate::from_terahashes_per_second(f64::from(hashrate_ths)),
         series: vec![
             spark_lo,
             spark_lo + 1.0,
@@ -45,9 +59,9 @@ fn model(
             spark_hi + 0.2,
             spark_hi,
         ],
-        power_w,
-        efficiency_jth,
-        avg_temp_c,
+        power: ElectricPower::from_watts(f64::from(power_w)),
+        efficiency: MiningEfficiency::from_joules_per_terahash(f64::from(efficiency_jth)),
+        avg_temp: Temperature::from_celsius(f64::from(avg_temp_c)),
     }
 }
 
@@ -93,7 +107,7 @@ fn fleet_models() -> Vec<ModelRow> {
 
 /// One page of the mock fleet table; `page` is clamped to the valid range.
 #[must_use]
-pub fn sample_table_page(page: usize) -> FleetTableVm {
+pub fn sample_table_page(page: usize) -> TableViewData {
     let all = fleet_models();
     let device_count: usize = all.iter().map(|m| m.ok + m.degraded + m.off).sum();
     let page_count = all.len().div_ceil(TABLE_PAGE_SIZE).max(1);
@@ -103,7 +117,7 @@ pub fn sample_table_page(page: usize) -> FleetTableVm {
         .skip(page * TABLE_PAGE_SIZE)
         .take(TABLE_PAGE_SIZE)
         .collect();
-    FleetTableVm {
+    TableViewData {
         title: "Dominika's Mining Rig".to_owned(),
         device_count,
         rows,
@@ -114,23 +128,23 @@ pub fn sample_table_page(page: usize) -> FleetTableVm {
 
 /// The Figma "Fleet overview" frame values, for the dashboard story.
 #[must_use]
-pub fn sample_dashboard() -> DashboardVm {
-    DashboardVm {
+pub fn sample_dashboard() -> DashboardViewData {
+    DashboardViewData {
         title: "Dominika's Mining Rig".to_owned(),
         device_count: 54,
         ok: 43,
         degraded: 4,
         off: 7,
-        hashrate_ths: 17.08,
+        hashrate: Hashrate::from_terahashes_per_second(17.08),
         hashrate_series: vec![
             7.0, 9.0, 12.0, 15.5, 17.0, 17.6, 18.0, 18.1, 17.9, 18.0, 18.2, 18.1, 17.9, 18.0, 18.1,
             18.0, 17.8, 18.0, 18.1, 16.8, 16.4, 16.9, 17.1, 17.08,
         ],
-        power_w: 60.0,
-        efficiency_jth: 10.01,
-        temp_min_c: 54.0,
-        temp_avg_c: 65.0,
-        temp_max_c: 78.0,
+        power: ElectricPower::from_watts(60.0),
+        efficiency: MiningEfficiency::from_joules_per_terahash(10.01),
+        temp_min: Temperature::from_celsius(54.0),
+        temp_avg: Temperature::from_celsius(65.0),
+        temp_max: Temperature::from_celsius(78.0),
     }
 }
 
@@ -152,14 +166,15 @@ fn group(
     GroupSummary {
         label: label.to_owned(),
         family,
-        hashrate: Availability::Available(TeraHashPerSecond(hashrate_ths)),
-        power: Availability::Available(Watt(power_w)),
-        efficiency: Availability::Available(JoulePerTeraHash(efficiency_jth)),
-        min_temperature: Availability::Available(DegreeCelsius(min_c)),
-        avg_temperature: Availability::Available(DegreeCelsius(avg_c)),
-        max_temperature: Availability::Available(DegreeCelsius(max_c)),
+        hashrate: Some(Hashrate::from_terahashes_per_second(hashrate_ths)),
+        power: Some(ElectricPower::from_watts(power_w)),
+        efficiency: Some(MiningEfficiency::from_joules_per_terahash(efficiency_jth)),
+        min_temperature: Some(Temperature::from_celsius(min_c)),
+        avg_temperature: Some(Temperature::from_celsius(avg_c)),
+        max_temperature: Some(Temperature::from_celsius(max_c)),
         total_count: total,
         ok_count: ok,
+        off_count: total - ok,
     }
 }
 
@@ -209,4 +224,62 @@ pub fn sample_fleet() -> FleetSummary {
         7,
     );
     FleetSummary { total, groups }
+}
+
+/// Ten mock devices (three pages of four) for the model-detail story,
+/// each with a baked hashrate series; the down device (0 TH/s) reads flat.
+fn model_detail_devices() -> Vec<DeviceRow> {
+    let device = |name: &str, hashrate: f32, temp: f32| DeviceRow {
+        hostname: name.to_owned(),
+        click_id: device_click_id(name),
+        hashrate: Hashrate::from_terahashes_per_second(f64::from(hashrate)),
+        series: vec![
+            hashrate * 0.95,
+            hashrate,
+            hashrate * 1.03,
+            hashrate * 1.01,
+            hashrate,
+            hashrate * 0.98,
+            hashrate * 1.02,
+            hashrate,
+        ],
+        power: ElectricPower::from_watts(2.05),
+        efficiency: MiningEfficiency::from_joules_per_terahash(3.3),
+        avg_temp: Temperature::from_celsius(f64::from(temp)),
+        min_temp: Temperature::from_celsius(f64::from(temp) - 4.0),
+        max_temp: Temperature::from_celsius(f64::from(temp) + 6.0),
+    };
+    vec![
+        device("Miner-Abcde", 1.01, 65.0),
+        device("John's Miner", 1.00, 66.0),
+        device("Miner - Level 2", 1.02, 64.0),
+        device("Miner - Level 2", 0.98, 67.0),
+        device("bmm-123456", 0.83, 65.0),
+        device("bmm-789abc", 0.79, 63.0),
+        device("bmm-def012", 0.82, 64.0),
+        device("bmm-345678", 0.81, 66.0),
+        device("bmm-9abcde", 0.00, 71.0),
+        device("bmm-f01234", 0.80, 65.0),
+    ]
+}
+
+/// One page of the mock model detail; `page` is clamped to the valid range.
+#[must_use]
+pub fn sample_model_detail_view(page: usize) -> ModelDetailViewData {
+    let all = model_detail_devices();
+    let device_count = all.len();
+    let page_count = device_count.div_ceil(TABLE_PAGE_SIZE).max(1);
+    let page = page.min(page_count - 1);
+    let rows = all
+        .into_iter()
+        .skip(page * TABLE_PAGE_SIZE)
+        .take(TABLE_PAGE_SIZE)
+        .collect();
+    ModelDetailViewData {
+        title: "BOS BMM".to_owned(),
+        device_count,
+        rows,
+        page,
+        page_count,
+    }
 }

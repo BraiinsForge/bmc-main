@@ -113,14 +113,8 @@ pub fn credential_keys(family: DeviceFamily) -> &'static [&'static str] {
 pub struct DeviceId(String);
 
 impl DeviceId {
+    #[cfg(test)]
     #[must_use]
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(
-            dead_code,
-            reason = "used in host tests only; wasm builds ids via for_family"
-        )
-    )]
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
@@ -208,14 +202,8 @@ impl DeviceList {
         Self::default()
     }
 
+    #[cfg(test)]
     #[must_use]
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(
-            dead_code,
-            reason = "used in host tests only; the render path keys on summary groups"
-        )
-    )]
     pub fn is_empty(&self) -> bool {
         self.devices.is_empty()
     }
@@ -224,25 +212,12 @@ impl DeviceList {
     /// removal). A derived view cached against this value is recomputed only
     /// when the fleet actually changed, never per render frame.
     #[must_use]
-    #[cfg_attr(
-        all(not(target_arch = "wasm32"), not(test)),
-        expect(
-            dead_code,
-            reason = "render-side cache key; used by the wasm render path and host tests"
-        )
-    )]
     pub fn seq(&self) -> u64 {
         self.seq
     }
 
+    #[cfg(test)]
     #[must_use]
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(
-            dead_code,
-            reason = "used in host tests only; not reachable on the wasm target"
-        )
-    )]
     pub fn len(&self) -> usize {
         self.devices.len()
     }
@@ -296,13 +271,7 @@ impl DeviceList {
 
     /// Bump the discovery sequence of a device still being announced.
     /// Reachability is left to telemetry polling.
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(
-            dead_code,
-            reason = "re-discovery hook; the discovery handler currently upserts instead"
-        )
-    )]
+    #[cfg(test)]
     pub fn mark_seen(&mut self, id: &DeviceId) {
         self.seq += 1;
         let seq = self.seq;
@@ -321,13 +290,7 @@ impl DeviceList {
         self.devices.iter()
     }
 
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(
-            dead_code,
-            reason = "whole-list snapshot; the driver now snapshots per family via ids_for_family"
-        )
-    )]
+    #[cfg(test)]
     #[must_use]
     pub fn ids(&self) -> Vec<DeviceId> {
         self.devices.iter().map(|d| d.identity.id.clone()).collect()

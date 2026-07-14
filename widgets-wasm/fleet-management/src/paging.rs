@@ -1,58 +1,5 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-use bmc_wasm_sdk::SizeVariant;
-
-use crate::layout::{DETAIL_ROW_H, FLEET_ROW_H, TABLE_GAP};
-
-// Vertical space above the table rows: 24px padding top and bottom, the
-// overview cluster (taller in Full: 64px title / 48px hero), the separator,
-// the 48px header row (its pager buttons set the height), and the column
-// gaps between them.
-const OVERHEAD_FULL: f32 = 196.0;
-const OVERHEAD_LARGE: f32 = 180.0;
-
-/// Model rows that fit one page of the breakdown table; at least 1 so a
-/// pathological viewport still shows something. A row's step is its drawn
-/// height plus the column gap, both shared with the renderer via `layout`.
-#[must_use]
-pub fn rows_per_page_fleet(height: u32, variant: SizeVariant) -> usize {
-    rows_for(height, overhead(variant), FLEET_ROW_H + TABLE_GAP)
-}
-
-/// Device rows that fit one page of the detail table.
-#[must_use]
-pub fn rows_per_page_detail(height: u32, variant: SizeVariant) -> usize {
-    rows_for(height, overhead(variant), DETAIL_ROW_H + TABLE_GAP)
-}
-
-fn overhead(variant: SizeVariant) -> f32 {
-    match variant {
-        SizeVariant::Full => OVERHEAD_FULL,
-        SizeVariant::Large | SizeVariant::Medium | SizeVariant::Small => OVERHEAD_LARGE,
-    }
-}
-
-fn rows_for(height: u32, overhead: f32, step: f32) -> usize {
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "viewport heights stay within f32's exact integer range"
-    )]
-    let avail = height as f32 - overhead;
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "the quotient is non-negative and small; truncation is the floor we want"
-    )]
-    let rows = (avail.max(0.0) / step) as usize;
-    rows.max(1)
-}
-
-/// Pages needed for `len` rows; at least 1 so the indicator reads `1/1`.
-#[must_use]
-pub fn page_count(len: usize, per_page: usize) -> usize {
-    len.div_ceil(per_page).max(1)
-}
-
 /// The page actually shown: the stored page clamped into the page count, so
 /// a fleet shrinking under the operator can never strand the view.
 #[must_use]
@@ -60,37 +7,9 @@ pub fn effective_page(page: usize, count: usize) -> usize {
     page.min(count.saturating_sub(1))
 }
 
-/// Index range of `page`'s rows.
-#[must_use]
-pub fn page_bounds(len: usize, per_page: usize, page: usize) -> core::ops::Range<usize> {
-    let start = (page * per_page).min(len);
-    let end = (start + per_page).min(len);
-    start..end
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bmc_wasm_sdk::SizeVariant;
-
-    #[test]
-    fn fleet_rows_fit_the_canonical_boxes() {
-        assert_eq!(rows_per_page_fleet(480, SizeVariant::Full), 6);
-        assert_eq!(rows_per_page_fleet(480, SizeVariant::Large), 6);
-    }
-
-    #[test]
-    fn at_least_one_row_even_when_the_viewport_is_tiny() {
-        assert_eq!(rows_per_page_fleet(10, SizeVariant::Full), 1);
-    }
-
-    #[test]
-    fn page_count_rounds_up_and_is_never_zero() {
-        assert_eq!(page_count(0, 7), 1);
-        assert_eq!(page_count(7, 7), 1);
-        assert_eq!(page_count(8, 7), 2);
-        assert_eq!(page_count(21, 7), 3);
-    }
 
     #[test]
     fn effective_page_clamps_to_the_last_page() {
@@ -98,19 +17,5 @@ mod tests {
         assert_eq!(effective_page(2, 3), 2);
         assert_eq!(effective_page(5, 3), 2);
         assert_eq!(effective_page(5, 1), 0);
-    }
-
-    #[test]
-    fn page_bounds_slice_full_and_partial_pages() {
-        assert_eq!(page_bounds(10, 4, 0), 0..4);
-        assert_eq!(page_bounds(10, 4, 1), 4..8);
-        assert_eq!(page_bounds(10, 4, 2), 8..10);
-        assert_eq!(page_bounds(10, 4, 9), 10..10);
-    }
-
-    #[test]
-    fn detail_rows_fit_the_canonical_boxes() {
-        assert_eq!(rows_per_page_detail(480, SizeVariant::Full), 6);
-        assert_eq!(rows_per_page_detail(480, SizeVariant::Large), 7);
     }
 }

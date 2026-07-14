@@ -12,8 +12,6 @@
 )]
 use bmc_wasm_sdk::*;
 
-use units::format::group;
-
 use crate::screens::parts::{
     BORDER, CARD_BG, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD, STAT_EFFICIENCY,
     STAT_POWER, STAT_TEMP, VALUE_FONT, area_chart, header, icon, status_counts,
@@ -26,45 +24,50 @@ const CHART_W: f32 = 819.0;
 const TILE_W: f32 = 405.0;
 
 #[derive(Debug)]
-pub struct DashboardVm {
+pub struct DashboardViewData {
     pub title: String,
     pub device_count: usize,
     pub ok: usize,
     pub degraded: usize,
     pub off: usize,
-    pub hashrate_ths: f32,
+    pub hashrate: Hashrate,
     pub hashrate_series: Vec<f32>,
-    pub power_w: f32,
-    pub efficiency_jth: f32,
-    pub temp_min_c: f32,
-    pub temp_avg_c: f32,
-    pub temp_max_c: f32,
+    pub power: ElectricPower,
+    pub efficiency: MiningEfficiency,
+    pub temp_min: Temperature,
+    pub temp_avg: Temperature,
+    pub temp_max: Temperature,
 }
 
 #[must_use]
-pub fn dashboard(vm: &DashboardVm) -> Node {
+pub fn dashboard_view(data: &DashboardViewData) -> Node {
     col(
         props!(background: BLACK, width: FRAME_W, height: FRAME_H, padding: PAD, gap: 16.0),
-        [header(&vm.title, vm.device_count, false), grid(vm)],
+        [header(&data.title, data.device_count, false), grid(data)],
     )
 }
 
-fn grid(vm: &DashboardVm) -> Node {
+fn grid(data: &DashboardViewData) -> Node {
     col(
         props!(gap: GAP, flex: 1.0),
         [
-            row(props!(gap: GAP), [fleet_status(vm), hashrate(vm)]),
+            row(props!(gap: GAP), [fleet_status(data), hashrate(data)]),
             row(
                 props!(gap: GAP),
                 [
-                    metric_tile("Power", &STAT_POWER, &group(f64::from(vm.power_w), 0), "W"),
+                    metric_tile(
+                        "Power",
+                        &STAT_POWER,
+                        &data.power.format_value(0),
+                        ElectricPower::UNIT,
+                    ),
                     metric_tile(
                         "Efficiency",
                         &STAT_EFFICIENCY,
-                        &group(f64::from(vm.efficiency_jth), 2),
-                        "J/TH",
+                        &data.efficiency.format_value(2),
+                        MiningEfficiency::UNIT,
                     ),
-                    temp_tile(vm),
+                    temp_tile(data),
                 ],
             ),
         ],
@@ -85,15 +88,15 @@ fn card(width: f32, children: Vec<Node>) -> Node {
     )
 }
 
-fn fleet_status(vm: &DashboardVm) -> Node {
+fn fleet_status(data: &DashboardViewData) -> Node {
     card(
         STATUS_W,
         vec![
             text("Fleet Status", style!(size: LABEL_FONT, color: LABEL)),
             status_counts(
-                vm.ok,
-                vm.degraded,
-                vm.off,
+                data.ok,
+                data.degraded,
+                data.off,
                 STATUS_ICON,
                 VALUE_FONT,
                 96.0,
@@ -104,18 +107,18 @@ fn fleet_status(vm: &DashboardVm) -> Node {
 }
 
 // Hashrate card: the area chart plus the hero value drawn over it on one canvas.
-fn hashrate(vm: &DashboardVm) -> Node {
-    let mut draws = area_chart(&vm.hashrate_series, CHART_W, ROW_H, 0.42);
+fn hashrate(data: &DashboardViewData) -> Node {
+    let mut draws = area_chart(&data.hashrate_series, CHART_W, ROW_H, 0.42);
     draws.push(Draw::text(
         CHART_W / 2.0,
         ROW_H / 2.0 - 24.0,
-        "Hashrate (24h)",
+        "Hashrate",
         style!(size: LABEL_FONT, color: LABEL, align: TextAlign::Center, valign: VerticalAlign::Center),
     ));
     draws.push(Draw::text(
         CHART_W / 2.0,
         ROW_H / 2.0 + 12.0,
-        fmt!("{} TH/s", group(f64::from(vm.hashrate_ths), 2)),
+        data.hashrate.format(2),
         style!(size: VALUE_FONT, weight: FontWeight::SEMIBOLD, color: WHITE, align: TextAlign::Center, valign: VerticalAlign::Center),
     ));
     col(
@@ -143,7 +146,7 @@ fn metric_tile(label: &str, svg: &Svg, value: &str, unit: &str) -> Node {
     )
 }
 
-fn temp_tile(vm: &DashboardVm) -> Node {
+fn temp_tile(data: &DashboardViewData) -> Node {
     card(
         TILE_W,
         vec![
@@ -154,9 +157,9 @@ fn temp_tile(vm: &DashboardVm) -> Node {
             row(
                 props!(gap: 24.0),
                 [
-                    value_row(&group(f64::from(vm.temp_avg_c), 0), "°C"),
-                    value_row(&group(f64::from(vm.temp_min_c), 0), "°C"),
-                    value_row(&group(f64::from(vm.temp_max_c), 0), "°C"),
+                    value_row(&data.temp_avg.format_value(0), "°C"),
+                    value_row(&data.temp_min.format_value(0), "°C"),
+                    value_row(&data.temp_max.format_value(0), "°C"),
                 ],
             ),
         ],
