@@ -1,8 +1,9 @@
 # bmc-render-keyboard
 
 Modal on-screen keyboard rendered via \[`bmc_render::renderer::Renderer`\]. Tap-based text input with multiple layouts
-(QWERTY, QWERTZ, AZERTY, Nordic); layout data derived from AOSP LatinIME (Apache 2.0). When active the keyboard takes
-over the entire screen — widgets request text input and receive the completed string, they never see the keyboard UI.
+(QWERTY, QWERTZ, AZERTY, Nordic); layout data derived from AOSP LatinIME (Apache 2.0), keypress sounds taken from AOSP
+`frameworks/base` (Apache 2.0, see `assets/sounds/LICENSE-AOSP`). When active the keyboard takes over the entire screen
+— widgets request text input and receive the completed string, they never see the keyboard UI.
 
 ## Usage
 
