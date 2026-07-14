@@ -4,10 +4,6 @@ Updated: 2026-06-04.
 
 Repro baseline:
 
-- current device target: SSH config host `home-deck.rpi.wg` over VPN
-- previous LAN target: `10.0.0.129`
-- serial fallback was `/dev/ttyUSB0` at 115200 baud, but the device is not currently connected over serial
-- config: `docs/devlogs/BDK-501/bmc_config_mining_info_wiggle_repro.json`
 - command shape: start compositor with `BMC_DIAG_SWIPE_REPLAY_FIFO=/run/bmc-swipe-replay` and
   `bmc-openwrt --hardware-profile=BFM100`
 - wiggle sequence:
@@ -264,7 +260,6 @@ Result:
   - `MMU 0 fault addr 0xfffff2c0`
   - `recover hung GPU!`
 - run summary: `wiggle_steps=60 wiggle_end=3 render_allocs=3 render_releases=0`.
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-fail-cropped-dst-memory-20260603T2151/`.
 
 Conclusion:
 
@@ -323,7 +318,6 @@ Result:
   - `MMU 0 fault addr 0xfffff2c0`
   - `recover hung GPU!`
 - run summary: `wiggle_steps=43 wiggle_end=1 render_allocs=3 render_releases=0`.
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-fail-cleanup-before-release-20260603T2159/`.
 
 Conclusion:
 
@@ -353,7 +347,6 @@ Evidence:
   - entering neighbor committed its first buffers at `22:04:50.260` and `22:04:50.322`
 - kernel fault uptime maps to roughly the `22:04:49-22:04:50` wall-clock window for this boot, before the entering
   neighbor's first host buffer commits.
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-fail-slot-instrumentation-20260603T2204/`.
 
 Conclusion:
 
@@ -396,7 +389,6 @@ Result:
   - after wiggle 1: `MemAvailable=114492 kB`, `CmaFree=24912 kB`
   - after wiggle 2: `MemAvailable=107380 kB`, `CmaFree=31684 kB`
   - after wiggle 3: `MemAvailable=102188 kB`, `CmaFree=61296 kB`
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-pageflip-gate-20260604T0000/`.
 
 Buffer destroy observation from this run:
 
@@ -445,7 +437,6 @@ Result:
   - after wiggle 1: `MemAvailable=114756 kB`, `CmaFree=44456 kB`
   - after wiggle 2: `MemAvailable=111456 kB`, `CmaFree=43156 kB`
   - after wiggle 3: `MemAvailable=109416 kB`, `CmaFree=43132 kB`
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-defer-release-until-pageflip-20260604T0020/`.
 
 Buffer destroy observation from this run:
 
@@ -490,7 +481,6 @@ Result:
   - after wiggle 1: `MemAvailable=114736 kB`, `CmaFree=20244 kB`
   - after wiggle 2: `MemAvailable=107480 kB`, `CmaFree=26720 kB`
   - after wiggle 3: `MemAvailable=104292 kB`, `CmaFree=71332 kB`
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-rotated-source-inset-20260604T0035/`.
 
 Buffer destroy observation from this run:
 
@@ -536,7 +526,6 @@ Result:
   - after startup: `MemAvailable=119340 kB`, `CmaFree=19664 kB`
   - before wiggle 1: `MemAvailable=119252 kB`, `CmaFree=19628 kB`
   - after wiggle 1: `MemAvailable=117360 kB`, `CmaFree=19484 kB`
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-host-staging-480-20260604T0118/`.
 
 Timing and buffer-destroy observation:
 
@@ -589,7 +578,6 @@ Result:
   - after startup: `MemAvailable=118904 kB`, `CmaFree=42004 kB`
   - before wiggle 1: `MemAvailable=118848 kB`, `CmaFree=41968 kB`
   - after wiggle 1: `MemAvailable=119000 kB`, `CmaFree=41824 kB`
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-pre-blit-finish-20260604T0134/`.
 
 Timing and phase evidence:
 
@@ -653,7 +641,6 @@ Result:
   - after startup: `MemAvailable=118876 kB`, `CmaFree=25324 kB`
   - before wiggle 1: `MemAvailable=118844 kB`, `CmaFree=25252 kB`
   - after wiggle 1: `MemAvailable=118968 kB`, `CmaFree=25040 kB`
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-femtovg-flush-split-20260604T0149/`.
 
 Timing and phase evidence:
 
@@ -704,7 +691,6 @@ Result:
 - sampled memory/CMA at the failure sample:
   - `MemAvailable=118832 kB`
   - `CmaFree=35016 kB`
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-skip-simple-text-20260604T0300/`.
 
 Timing and buffer-destroy observation:
 
@@ -751,7 +737,6 @@ Result:
 - sampled memory/CMA at the failure sample:
   - `MemAvailable=119040 kB`
   - `CmaFree=42812 kB`
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-paragraph-no-deco-measure-20260604T0325/`.
 
 Timing and buffer-destroy observation:
 
@@ -796,7 +781,6 @@ Result:
 - sampled memory/CMA at the failure sample:
   - `MemAvailable=119292 kB`
   - `CmaFree=29952 kB`
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-paragraph-fallback-font-20260604T0345/`.
 
 Timing and buffer-destroy observation:
 
@@ -840,7 +824,6 @@ Result:
 - sampled memory/CMA at the failure sample:
   - `MemAvailable=118816 kB`
   - `CmaFree=30812 kB`
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-merge-paragraph-spans-20260604T0400/`.
 
 Timing and buffer-destroy observation:
 
@@ -883,7 +866,6 @@ Result:
 - sampled memory/CMA at the failure sample:
   - `MemAvailable=118768 kB`
   - `CmaFree=35932 kB`
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-paragraph-simple-lines-20260604T0415/`.
 
 Timing and buffer-destroy observation:
 
@@ -944,7 +926,6 @@ Result:
   - run 3 visible portion: `faults_after_startup=98`, `faults_after_wiggle_1=98`
 - post-run dmesg sanity check showed the dmesg tail ending at the previous paragraph-simple-lines fault; no new
   `MMU fault status` appeared after this verifier run.
-- bundle: `/tmp/claude-1001/BDK-501-verify-paragraph-placeholder-lines-20260604T0425/`.
 
 Conclusion:
 
@@ -977,7 +958,6 @@ Result:
 - sampled memory/CMA at the failure sample:
   - `MemAvailable=116588 kB`
   - `CmaFree=47708 kB`
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-paragraph-xmask-lines-20260604T0438/`.
 
 Timing and buffer-destroy observation:
 
@@ -1016,7 +996,6 @@ Result:
 - sampled memory/CMA at the failure sample:
   - `MemAvailable=119528 kB`
   - `CmaFree=29068 kB`
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-paragraph-flush-lines-20260604T0450/`.
 
 Timing and buffer-destroy observation:
 
@@ -1055,7 +1034,6 @@ Result:
 - sampled memory/CMA at the failure sample:
   - `MemAvailable=113584 kB`
   - `CmaFree=61344 kB`
-- failure bundle: `/tmp/claude-1001/BDK-501-verify-paragraph-xmask-limit8-20260604T0033/`.
 
 Timing and buffer-destroy observation:
 
@@ -1105,7 +1083,6 @@ Result:
 - sampled memory/CMA at the failure sample:
   - `MemAvailable=115844 kB`
   - `CmaFree=43680 kB`
-- full log: `/tmp/claude-1001/bdk501-no-lock-cpu0-verify-device-20260604.log`.
 
 Buffer-destroy observation:
 
@@ -1150,7 +1127,6 @@ Result:
 - sampled memory/CMA at the failure sample:
   - `MemAvailable=107984 kB`
   - `CmaFree=50228 kB`
-- full log: `/tmp/claude-1001/bdk501-no-lock-etna-cflush-all-verify-device-20260604.log`.
 
 Buffer-destroy observation:
 
@@ -1194,7 +1170,6 @@ Result:
 - sampled memory/CMA at the failure sample:
   - `MemAvailable=110608 kB`
   - `CmaFree=47524 kB`
-- full log: `/tmp/claude-1001/bdk501-no-lock-etna-draw-stall-verify-device-20260604.log`.
 
 Buffer-destroy observation:
 
@@ -1241,7 +1216,6 @@ Result:
 - sampled memory/CMA at the failure sample:
   - `MemAvailable=114956 kB`
   - `CmaFree=25684 kB`
-- full log: `/tmp/claude-1001/bdk501-no-lock-compositor-etna-flush-only-verify-device-20260604.log`.
 
 Buffer-destroy observation:
 
@@ -1287,7 +1261,6 @@ Result:
 - minimum sampled values across the diagnostic:
   - `MemAvailable=97836 kB`
   - `CmaFree=43320 kB`
-- full log: `/tmp/claude-1001/bdk501-no-lock-etna-no-ts-verify-device-20260604.log`.
 
 Buffer-destroy observation:
 
@@ -1348,7 +1321,6 @@ Result:
 - sampled memory/CMA at the failing sample:
   - `MemAvailable=109356 kB`
   - `CmaFree=43880 kB`
-- full log: `/tmp/claude-1001/bdk501-no-lock-etna-no-supertile-verify-device-20260604.log`.
 
 Buffer-destroy observation:
 
@@ -1390,7 +1362,6 @@ Result:
 - sampled memory/CMA at the failing sample:
   - `MemAvailable=109548 kB`
   - `CmaFree=41264 kB`
-- full log: `/tmp/claude-1001/bdk501-no-lock-etna-no-singlebuffer-verify-device-20260604.log`.
 
 Buffer-destroy observation:
 
@@ -1433,7 +1404,6 @@ Result:
 - sampled memory/CMA at the failing sample:
   - `MemAvailable=114988 kB`
   - `CmaFree=40772 kB`
-- full log: `/tmp/claude-1001/bdk501-no-lock-etna-linear-pe-verify-device-20260604.log`.
 
 Buffer-destroy observation:
 
@@ -1477,7 +1447,6 @@ Result:
 - sampled memory/CMA at the failing sample:
   - `MemAvailable=107852 kB`
   - `CmaFree=38264 kB`
-- full log: `/tmp/claude-1001/bdk501-no-lock-etna-zero-verify-device-20260604.log`.
 
 Buffer-destroy observation:
 
@@ -1524,7 +1493,6 @@ Result:
 - minimum sampled values across the diagnostic:
   - `MemAvailable=96880 kB`
   - `CmaFree=35488 kB`
-- full log: `/tmp/claude-1001/bdk501-no-lock-etna-no-texdesc-verify-device-20260604.log`.
 
 Buffer-destroy observation:
 
@@ -1572,7 +1540,6 @@ Result:
 - minimum sampled values across the diagnostic:
   - `MemAvailable=102744 kB`
   - `CmaFree=52516 kB`
-- full log: `/tmp/claude-1001/bdk501-no-lock-gallium-thread0-verify-device-20260604.log`.
 
 Buffer-destroy observation:
 
@@ -1616,7 +1583,6 @@ Result:
 - sampled memory/CMA at the failing sample:
   - `MemAvailable=112040 kB`
   - `CmaFree=50416 kB`
-- full log: `/tmp/claude-1001/bdk501-no-lock-etna-combined-feature-disable-verify-device-20260604.log`.
 
 Buffer-destroy observation:
 
@@ -1686,7 +1652,6 @@ Result:
 - sampled memory/CMA at the failing sample:
   - `MemAvailable=109876 kB`
   - `CmaFree=46480 kB`
-- full log: `/tmp/claude-1001/bdk501-no-lock-etna-nocache-verify-device-20260604.log`.
 
 Buffer-destroy observation:
 
@@ -1747,7 +1712,6 @@ Result:
 - sampled memory/CMA at the failing sample:
   - `MemAvailable=115636 kB`
   - `CmaFree=50872 kB`
-- full log: `/tmp/claude-1001/bdk501-no-lock-etna-no-early-z-verify-device-20260604.log`.
 
 Buffer-destroy observation:
 
@@ -1799,7 +1763,6 @@ Result:
 - repeated-run memory/CMA stayed healthy:
   - minimum sampled `MemAvailable=112972 kB`
   - minimum sampled `CmaFree=51472 kB`
-- full repeat verifier log: `/tmp/claude-1001/bdk501-skip-compositor-gpu-submits-verify-20260604.log`.
 
 Conclusion:
 
@@ -1849,7 +1812,6 @@ Result:
   - `CmaFree=10336 kB`
 - host `Dropped destroyed buffer`: `0`.
 - compositor `Dropped destroyed buffer ObjectId(wl_buffer@11)` appeared after the verifier had detected the new fault.
-- full verifier log: `/tmp/claude-1001/bdk501-clear-only-submit-verify-20260604.log`.
 
 Conclusion:
 
@@ -1900,7 +1862,6 @@ Result:
   - `CmaFree=49760 kB`
 - host `Dropped destroyed buffer`: `0`.
 - compositor `Dropped destroyed buffer ObjectId(wl_buffer@11)` appeared after the verifier had detected the new fault.
-- full verifier log: `/tmp/claude-1001/bdk501-no-pageflip-submit-verify-20260604.log`.
 
 Conclusion:
 
@@ -1953,7 +1914,6 @@ Result:
   - `CmaFree=43404 kB`
 - host `Dropped destroyed buffer`: `0`.
 - compositor destroyed-buffer drops appeared after the verifier had detected the new fault.
-- full verifier log: `/tmp/claude-1001/bdk501-no-pageflip-no-post-finish-verify-20260604.log`.
 
 Conclusion:
 
@@ -2014,12 +1974,6 @@ Result:
   - `faults_before=197`
   - `faults_after_run_10=197`
 - memory/CMA was healthy in both concurrent and serial replay tests.
-- full logs:
-  - `/tmp/claude-1001/bdk501-concurrent-eglretrace-device-20260604.log`
-  - `/tmp/claude-1001/bdk501-serial-eglretrace-device-20260604.log`
-  - `/tmp/claude-1001/bdk501-concurrent-eglretrace-flush-all-device-20260604.log`
-  - `/tmp/claude-1001/bdk501-concurrent-eglretrace-cflush-all-device-20260604.log`
-  - `/tmp/claude-1001/bdk501-flocked-eglretrace-device-20260604.log`
 
 Conclusion:
 
@@ -2066,9 +2020,6 @@ Result:
   - concurrent after run 1: `MemAvailable=169012 kB`, `CmaFree=92528 kB`.
   - single-control before: `MemAvailable=168688 kB`, `CmaFree=92168 kB`.
   - single-control after: `MemAvailable=165480 kB`, `CmaFree=87828 kB`.
-- full logs:
-  - `/tmp/claude-1001/bdk501-concurrent-eglretrace-clean-device-20260604.log`
-  - `/tmp/claude-1001/bdk501-single-eglretrace-clean-device-20260604.log`
 
 Conclusion:
 
@@ -2106,7 +2057,6 @@ Result:
 - memory/CMA was healthy:
   - before: `MemAvailable=165400 kB`, `CmaFree=86192 kB`.
   - after run 1: `MemAvailable=164188 kB`, `CmaFree=85432 kB`.
-- full log: `/tmp/claude-1001/bdk501-concurrent-eglretrace-surfaceless-device-20260604.log`.
 
 Conclusion:
 
@@ -2127,8 +2077,7 @@ Hypothesis:
 
 Tested change:
 
-- built a small ARMv7 DRM ioctl probe in `/tmp/claude-1001/drm_syncobj_probe.c`.
-- copied it to the device as `/tmp/drm_syncobj_probe`.
+- built and deployed a small ARMv7 DRM ioctl probe.
 - checked the render node and both card nodes:
   - `/dev/dri/renderD128`
   - `/dev/dri/card1`
@@ -2198,8 +2147,7 @@ Hypothesis:
 
 Tested change:
 
-- built a small ARMv7 EGL/GBM/GLES probe in `/tmp/claude-1001/egl_native_fence_probe.c`.
-- copied it to the device as `/tmp/egl_native_fence_probe`.
+- built and deployed a small ARMv7 EGL/GBM/GLES probe.
 - initialized EGL on `/dev/dri/renderD128` with a GBM display.
 - created a surfaceless OpenGL ES context.
 - loaded and called:

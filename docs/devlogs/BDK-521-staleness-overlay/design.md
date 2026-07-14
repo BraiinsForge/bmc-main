@@ -1,14 +1,13 @@
 # BDK-521 — SDK poll staleness & shared stale-data overlay
 
-Ticket: [BDK-521](https://braiins.atlassian.net/browse/BDK-521) (Story, epic BDK-212 Extensibility Framework).
+Ticket: BDK-521 (Story, epic BDK-212 Extensibility Framework).
 
 ## Context
 
 Stale-data signaling is hand-rolled per widget today. The mining widgets share `widgets-wasm/lib/mining/src/overlay.rs`
 (a red warning-icon "Stale data" banner on a solid `GRAY_100` rectangle), the weather widget carries its own copy
-(`widgets-wasm/weather/src/render.rs`), and the image widget added a third on this branch (`widgets-wasm/image`, via
-`Badge::Stale`). Each is a static label — it does not say how old the shown data is, and each widget decides on its own
-when it is stale.
+(`widgets-wasm/weather/src/render.rs`), and the image widget carries a third (`widgets-wasm/image`, via `Badge::Stale`).
+Each is a static label — it does not say how old the shown data is, and each widget decides on its own when it is stale.
 
 The stable 26.02 branch solved this better with a "Last refresh … ago" pill. This ticket ports that model: staleness is
 computed **once** in the SDK poll engine, and widgets only ask `is_stale()` and place a shared, reusable, Carbon-aligned
@@ -206,7 +205,7 @@ One commit per widget; **the last migration to stop using a shared banner delete
 - weather — replace `render::with_stale_banner` (local `stale_banner()`), fed by the poll handle.
 - mining-clock, mining-info — replace the `lib/mining/overlay` **stale** case (the auth-error case stays until its own
   commit).
-- image — replace the local `render::with_stale_banner` (`Badge::Stale`) on this branch.
+- image — replace its local `render::with_stale_banner` (`Badge::Stale`).
 - mining auth-error — migrated to `Tag(Error)` in a tail-end commit that removes the final `lib/mining/overlay` remnant.
 
 ## Commit plan

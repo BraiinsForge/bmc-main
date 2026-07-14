@@ -1,9 +1,8 @@
 # WASM fuel profiling + single-file report consolidation
 
-Ticket: <https://braiins.atlassian.net/browse/BDK-221> — Deck-side tooling tech debt (Task under the BDK-221 parent).
+Ticket: BDK-221 — Deck-side tooling tech debt (Task under the BDK-221 parent).
 
-A side-mission that grew out of the BDK-304 ISS freeze hunt. Kept in its own commits, separate from the widget — this is
-profiling tooling, not ISS code.
+A side investigation that grew out of the BDK-304 ISS freeze hunt. This is profiling tooling, not ISS code.
 
 ## Why this was needed
 

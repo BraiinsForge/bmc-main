@@ -1,10 +1,8 @@
 # BDK-304 — Promote ISS-position WASM widget to production
 
-Ticket: <https://braiins.atlassian.net/browse/BDK-304> — "Create a replica of ISS position widget on the WASM runtime
-with live-rendered attributes."
+Ticket: BDK-304 — "Create a replica of ISS position widget on the WASM runtime with live-rendered attributes."
 
-Working notes for the promotion + fix effort. Kept in its own commits so the history can be squashed/reworded at the
-end.
+Technical notes from the promotion and fix effort.
 
 ## Goal
 

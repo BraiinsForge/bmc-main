@@ -1,6 +1,6 @@
 # BDK-437 Memory Analysis
 
-Device: Braiins Deck (10.0.0.129) Date: 2026-05-11
+Device: Braiins Deck. Date: 2026-05-11.
 
 ## System Memory Overview
 
@@ -266,7 +266,7 @@ Made depth renderbuffer allocation conditional on widget needs. Flat mode widget
 
 ### Controlled full-size flip-clock runs
 
-Measured on device `10.0.0.107` with `/proc/<pid>/smaps_rollup`.
+Measured on a Deck with `/proc/<pid>/smaps_rollup`.
 
 #### 1 full-size extruded widget
 

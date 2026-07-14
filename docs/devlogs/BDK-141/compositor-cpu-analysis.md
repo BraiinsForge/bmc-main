@@ -180,8 +180,7 @@ idle case (no scenes, no widgets) is a subset of H1 only: the GPU render cycle i
 
 ### 4.1 Tooling: `ii-stopwatch` integration
 
-The [`ii-stopwatch`](https://gitlab.ii.zone/bos/bos-main/-/tree/master/open/utils-rs/stopwatch) crate from the BOS
-project is ideal for this task:
+The local [`ii-stopwatch`](../../../bmc-shared/stopwatch/) crate is ideal for this task:
 
 - **Zero-cost when disabled**: All macros compile to `{}` when the `enabled` feature is off
 - **No external dependencies**: Single-file crate using only `std::time`
@@ -944,8 +943,7 @@ of iterations skip rendering. Callbacks count (74) matches render count exactly 
 - `bmc-openwrt/src/compositor/render/drm_output.rs` — DRM page flip mechanism
 - `bmc-openwrt/src/compositor/state.rs` — frame callback dispatch, surface commit handling
 - `widgets/wasm/src/egl.rs` — widget-side EGL resource management (lazy init, cleanup, sync)
-- [`ii-stopwatch`](https://gitlab.ii.zone/bos/bos-main/-/tree/master/open/utils-rs/stopwatch) — zero-cost timing
-  instrumentation crate
+- [`ii-stopwatch`](../../../bmc-shared/stopwatch/) — zero-cost timing instrumentation crate
 - [Niri compositor](https://github.com/YaLTeR/niri) — reference Smithay-based Wayland compositor
 - [Niri Redraw Loop wiki](https://github.com/YaLTeR/niri/wiki/Development:-Redraw-Loop) — documentation of Niri's
   damage-driven rendering state machine

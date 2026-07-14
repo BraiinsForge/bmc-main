@@ -4,10 +4,6 @@
 #
 # Usage:
 #   ./run.sh <HOST_IP> <DEVICE_IP>
-#
-# Example:
-#   ./run.sh 10.0.0.104 10.0.0.129
-#
 # Prerequisites:
 #   - nix (for building the tarball and running caddy)
 #   - ssh access to the device as root

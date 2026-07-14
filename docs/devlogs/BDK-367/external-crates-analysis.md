@@ -1,9 +1,9 @@
-# External Crates Analysis: tooling/ subtree
+# External Crates Analysis: `tooling/` Subtree
 
-## Current State
+## Original State
 
-The `tooling/` directory is a **vendored git subtree** from `ssh://git@gitlab.ii.zone/tooling/tooling.git`, pinned at
-commit `651d341b` in `crate-verification.config.json`.
+At the time of this analysis, the `tooling/` directory was a **vendored git subtree** from an internal upstream
+repository, pinned at commit `651d341b` in `crate-verification.config.json`.
 
 It contains 6 crates used primarily by the firmware upgrade system:
 
@@ -25,7 +25,7 @@ pulled in as dependencies.
 - `flake.nix` excludes all tooling crates from the formatter
 - `verify_crates.sh` + `crate-verification.config.json` verify the vendored copy matches upstream at the pinned commit
 
-## Proposed Change: Git Dependencies (Option A)
+## Implemented Change: Git Dependencies (Option A)
 
 Replace vendored subtree with Cargo git dependencies pointing at upstream.
 
@@ -43,12 +43,12 @@ index-bmc          = { path = "tooling/crates/index-bmc" }
 index-common       = { path = "tooling/crates/index-common" }
 
 # After:
-tooling-std        = { git = "ssh://git@gitlab.ii.zone/tooling/tooling.git", rev = "e2868e0b" }
-tooling-std-macros = { git = "ssh://git@gitlab.ii.zone/tooling/tooling.git", rev = "e2868e0b" }
-minerctl-defs      = { git = "ssh://git@gitlab.ii.zone/tooling/tooling.git", rev = "e2868e0b" }
-idxgen-data        = { git = "ssh://git@gitlab.ii.zone/tooling/tooling.git", rev = "e2868e0b" }
-index-bmc          = { git = "ssh://git@gitlab.ii.zone/tooling/tooling.git", rev = "e2868e0b" }
-index-common       = { git = "ssh://git@gitlab.ii.zone/tooling/tooling.git", rev = "e2868e0b" }
+tooling-std        = { git = "<upstream-repository-url>", rev = "<pinned-revision>" }
+tooling-std-macros = { git = "<upstream-repository-url>", rev = "<pinned-revision>" }
+minerctl-defs      = { git = "<upstream-repository-url>", rev = "<pinned-revision>" }
+idxgen-data        = { git = "<upstream-repository-url>", rev = "<pinned-revision>" }
+index-bmc          = { git = "<upstream-repository-url>", rev = "<pinned-revision>" }
+index-common       = { git = "<upstream-repository-url>", rev = "<pinned-revision>" }
 ```
 
 Cargo deduplicates — same repo+rev = single checkout.
@@ -75,7 +75,7 @@ After switching to git deps:
 - Remove `tooling` entry from `crate-verification.config.json`
 - Drop `verify_crates.sh` tooling verification (subtree no longer exists)
 
-### Risks
+### Considered Risks
 
 - Main risk: `mkWorkspaceConfig` not handling git deps → discovered at `nix build` time
 - Mitigation: test with `nix build .#checks.x86_64-linux.build` before full cleanup

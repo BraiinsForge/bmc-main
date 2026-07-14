@@ -95,7 +95,7 @@ Could be any combination of:
 Shared context would save compiled shaders, Mesa threads, and context state. Each surface still needs framebuffers (~few
 KB each).
 
-## smaps Validation (captured on device 10.0.0.107)
+## smaps Validation
 
 The earlier `RssAnon`-only measurements were enough to identify EGL/Mesa as a suspect, but not enough to say whether the
 cost was duplicated per widget or just looked large because of shared libraries. `smaps_rollup` answers that.

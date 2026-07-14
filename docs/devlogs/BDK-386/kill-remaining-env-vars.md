@@ -2,9 +2,9 @@
 
 ## Context
 
-`mv/BDK-386/consolidate-env-to-wayland` moved *settings* (timezone, night mode, localization) from env vars to typed
-`deck_widget_v1` events. It left five env vars on every widget spawn — the pieces of state the widget needed
-synchronously at `main()` entry, before it could do the first Wayland roundtrip:
+The earlier BDK-386 work moved *settings* (timezone, night mode, localization) from env vars to typed `deck_widget_v1`
+events. It left five env vars on every widget spawn — the pieces of state the widget needed synchronously at `main()`
+entry, before it could do the first Wayland roundtrip:
 
 ```
 DECK_INSTANCE_ID    # UUID echoed back in get_widget_surface(instance_id)
@@ -14,7 +14,7 @@ DECK_HEIGHT         # pixel height
 DECK_PARAMS         # per-widget config as a JSON blob
 ```
 
-`FOLLOWUP.md` laid out the plan for killing these too. This devlog records what actually landed.
+This devlog records the subsequent removal of these variables.
 
 ## End state
 
@@ -25,7 +25,7 @@ WAYLAND_DISPLAY=wayland-0
 XDG_RUNTIME_DIR=/tmp/runtime-xxxx
 ```
 
-Verified on 10.116.72.132 with `cat /proc/$(pgrep bmc-widget-flip-clock)/environ`. Zero `DECK_*` left.
+Verified on a Deck with `cat /proc/$(pgrep bmc-widget-flip-clock)/environ`. Zero `DECK_*` left.
 
 Every piece of per-widget state is delivered via typed `deck_widget_v1` events emitted on `get_widget_surface`,
 terminated by a new `configure_done` sentinel.
@@ -105,9 +105,9 @@ a kernel-enforced property of the socket, not a UUID the widget could lie about.
 
 ### 1. SO_PEERCRED, not a per-instance socket
 
-Three options were on the table (see FOLLOWUP.md §Design 1). We picked `SO_PEERCRED` because smithay's existing accept
-loop already returns a plain `UnixStream`, so `client.get_credentials(dhandle)` drops into the existing code path
-`instance_id_for_surface_by_pid` was already using for Slint render surfaces. Zero smithay surgery.
+Three options were considered. We picked `SO_PEERCRED` because smithay's existing accept loop already returns a plain
+`UnixStream`, so `client.get_credentials(dhandle)` drops into the existing code path `instance_id_for_surface_by_pid`
+was already using for Slint render surfaces. Zero smithay surgery.
 
 The PID→instance map lives in `DeckWidgetProtocolState.widgets` (a `HashMap<InstanceId, WidgetData>` with a `pid`
 field), populated by the new `SetWidgetPid` command.
@@ -206,25 +206,25 @@ Built clean for ARMv7 via `.#armv7-glibc-release`:
 - `target/armv7-unknown-linux-gnueabihf/release/bmc-widget-flip-clock` (4.4 MB)
 - `target/armv7-unknown-linux-gnueabihf/release/bmc-widget-digital-clock` (2.7 MB)
 
-Deployed to 10.116.72.132 via `scripts/nix-cargo-deploy.sh`.
+Deployed to a Deck via `scripts/nix-cargo-deploy.sh`.
 
 Environment verification — `cat /proc/$(pgrep bmc-widget-flip-clock)/environ`:
 
 ```
 WAYLAND_DISPLAY=wayland-0
-XDG_RUNTIME_DIR=/tmp/runtime-Lagomm
+XDG_RUNTIME_DIR=/tmp/runtime-xxxx
 ```
 
-Zero `DECK_*`. Exactly the target end-state from §"Target end-state" of `FOLLOWUP.md`.
+Zero `DECK_*` remained.
 
-The extruded→flat visual test from the FOLLOWUP.md test plan was run (config flip + compositor restart) — the flip-clock
-re-rendered with the new animation mode, confirming params flow through the protocol end to end.
+The extruded→flat visual test was run (config flip + compositor restart) — the flip-clock re-rendered with the new
+animation mode, confirming params flow through the protocol end to end.
 
 `bmc-widget-protocol` and `bmc-widget` unit tests pass (22 tests total).
 
 ## Not in scope (deferred)
 
-Carried over from `FOLLOWUP.md §Non-goals`:
+The following remained deliberately deferred:
 
 - **`config.json` format** unchanged.
 - **Hot-reload of params without widget restart** — coordinator still respawns the process on param change.
@@ -234,7 +234,5 @@ Carried over from `FOLLOWUP.md §Non-goals`:
 
 ## References
 
-- Plan: `docs/devlogs/BDK-386/FOLLOWUP.md`
 - Previous step: `docs/devlogs/BDK-386/wayland-env-consolidation.md`
 - Ticket: BDK-386
-- Branch: `mv/BDK-386/consolidate-env-to-wayland`
