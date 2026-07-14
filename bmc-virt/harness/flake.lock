@@ -3,6 +3,7 @@
     "bmc-root": {
       "inputs": {
         "flake-utils": "flake-utils",
+        "nix-source-info": "nix-source-info",
         "nixlib": "nixlib",
         "nixpkgs": "nixpkgs_2",
         "pyproject-build-systems": "pyproject-build-systems",
@@ -21,81 +22,24 @@
     },
     "crane": {
       "locked": {
-        "lastModified": 1741479724,
-        "narHash": "sha256-fnyETBKSVRa5abjOiRG/IAzKZq5yX8U6oRrHstPl4VM=",
+        "lastModified": 1779041105,
+        "narHash": "sha256-nnGD2f8OlAZT2i5OfwikJsw+ifWfiA4d6A8BWlgOXV0=",
         "owner": "ipetkov",
         "repo": "crane",
-        "rev": "60202a2e3597a3d91f5e791aab03f45470a738b5",
+        "rev": "10e6e3cb966f7cfcc789fe5eee7a85f3188ce08b",
         "type": "github"
       },
       "original": {
         "owner": "ipetkov",
-        "ref": "v0.20.2",
+        "ref": "v0.23.4",
         "repo": "crane",
         "type": "github"
-      }
-    },
-    "docker-spider": {
-      "inputs": {
-        "crane": [
-          "bmc-root",
-          "nixlib",
-          "crane"
-        ],
-        "fenix": "fenix",
-        "flake-utils": [
-          "bmc-root",
-          "nixlib",
-          "flake-utils"
-        ],
-        "nixpkgs": [
-          "bmc-root",
-          "nixlib",
-          "nixpkgs-do-not-override"
-        ]
-      },
-      "locked": {
-        "lastModified": 1773777280,
-        "narHash": "sha256-TupxGPktVHyzCmPHyvsxm9G3j8r7yhnIi/h86vtQxfI=",
-        "ref": "refs/heads/master",
-        "rev": "1e60ca346da57742a6d4151211985e78d23ee676",
-        "revCount": 11,
-        "type": "git",
-        "url": "ssh://git@gitlab.ii.zone/bos/docker-spider"
-      },
-      "original": {
-        "type": "git",
-        "url": "ssh://git@gitlab.ii.zone/bos/docker-spider"
       }
     },
     "fenix": {
       "inputs": {
-        "nixpkgs": [
-          "bmc-root",
-          "nixlib",
-          "docker-spider",
-          "nixpkgs"
-        ],
-        "rust-analyzer-src": "rust-analyzer-src"
-      },
-      "locked": {
-        "lastModified": 1773732206,
-        "narHash": "sha256-HKibxaUXyWd4Hs+ZUnwo6XslvaFqFqJh66uL9tphU4Q=",
-        "owner": "nix-community",
-        "repo": "fenix",
-        "rev": "0aa13c1b54063a8d8679b28a5cd357ba98f4a56b",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nix-community",
-        "repo": "fenix",
-        "type": "github"
-      }
-    },
-    "fenix_2": {
-      "inputs": {
         "nixpkgs": "nixpkgs",
-        "rust-analyzer-src": "rust-analyzer-src_2"
+        "rust-analyzer-src": "rust-analyzer-src"
       },
       "locked": {
         "lastModified": 1773213034,
@@ -165,58 +109,68 @@
         "type": "github"
       }
     },
-    "nix-filter": {
+    "globset": {
+      "inputs": {
+        "nixpkgs-lib": [
+          "bmc-root",
+          "nixlib",
+          "nixpkgs-do-not-override"
+        ]
+      },
       "locked": {
-        "lastModified": 1731533336,
-        "narHash": "sha256-oRam5PS1vcrr5UPgALW0eo1m/5/pls27Z/pabHNy2Ms=",
-        "owner": "numtide",
-        "repo": "nix-filter",
-        "rev": "f7653272fd234696ae94229839a99b73c9ab7de0",
+        "lastModified": 1756146523,
+        "narHash": "sha256-dn8WNgwVQe0xBJ/d4CiRRcEVSgNclG6WSbqFEf6V024=",
+        "owner": "pdtpartners",
+        "repo": "globset",
+        "rev": "62da8904981f01dc7c97f56c3ea4f131a8393411",
         "type": "github"
       },
       "original": {
-        "owner": "numtide",
-        "repo": "nix-filter",
+        "owner": "pdtpartners",
+        "repo": "globset",
         "type": "github"
       }
     },
     "nix-source-info": {
       "locked": {
-        "lastModified": 1776861597,
-        "narHash": "sha256-w/+UkH0c5S7f7Jb4Sy4ZYodfhImP69BgWjDn069uZ/4=",
-        "ref": "refs/heads/master",
-        "rev": "559dc19b09bbbf3ee5cfcad9ecef3308c4863c32",
-        "revCount": 1,
-        "type": "git",
-        "url": "ssh://git@gitlab.ii.zone/nix/source-info"
+        "lastModified": 1781213927,
+        "narHash": "sha256-9JHYxgbXdTaOjhIHQtZc8PthXZwNg57EERuNMH8zFvk=",
+        "owner": "BraiinsForge",
+        "repo": "nix-source-info",
+        "rev": "1ddc46d0e0b6bbc1809b06aab7a2320ce95543ba",
+        "type": "github"
       },
       "original": {
-        "type": "git",
-        "url": "ssh://git@gitlab.ii.zone/nix/source-info"
+        "owner": "BraiinsForge",
+        "repo": "nix-source-info",
+        "type": "github"
       }
     },
     "nixlib": {
       "inputs": {
         "crane": "crane",
-        "docker-spider": "docker-spider",
-        "fenix": "fenix_2",
+        "fenix": "fenix",
         "flake-utils": "flake-utils_2",
-        "nix-filter": "nix-filter",
-        "nix-source-info": "nix-source-info",
+        "globset": "globset",
+        "nix-source-info": [
+          "bmc-root",
+          "nix-source-info"
+        ],
         "nixpkgs-do-not-override": "nixpkgs-do-not-override"
       },
       "locked": {
-        "lastModified": 1778771934,
-        "narHash": "sha256-FL3YICdCqW3nfXBoStAnFDSPytYfNZnfWwjjIBMYqas=",
-        "ref": "refs/heads/master",
-        "rev": "f772037f4ea3641125cccc2a63632dccdf4780f9",
-        "revCount": 148,
-        "type": "git",
-        "url": "ssh://git@gitlab.ii.zone/nix/lib"
+        "lastModified": 1783970216,
+        "narHash": "sha256-Ohu4MfkV8fXm0hExnJjG826eEUaHRd6cW6HF3fceqO0=",
+        "owner": "BraiinsForge",
+        "repo": "nix-lib",
+        "rev": "922cf05b7089f5955608c5e31cd890f6fc6ef93b",
+        "type": "github"
       },
       "original": {
-        "type": "git",
-        "url": "ssh://git@gitlab.ii.zone/nix/lib"
+        "owner": "BraiinsForge",
+        "ref": "fbo/fix-cross-buildscript-static",
+        "repo": "nix-lib",
+        "type": "github"
       }
     },
     "nixpkgs": {
@@ -341,23 +295,6 @@
       }
     },
     "rust-analyzer-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1773697963,
-        "narHash": "sha256-xdKI77It9PM6eNrCcDZsnP4SKulZwk8VkDgBRVMnCb8=",
-        "owner": "rust-lang",
-        "repo": "rust-analyzer",
-        "rev": "2993637174252ff60a582fd1f55b9ab52c39db6d",
-        "type": "github"
-      },
-      "original": {
-        "owner": "rust-lang",
-        "ref": "nightly",
-        "repo": "rust-analyzer",
-        "type": "github"
-      }
-    },
-    "rust-analyzer-src_2": {
       "flake": false,
       "locked": {
         "lastModified": 1773182115,
