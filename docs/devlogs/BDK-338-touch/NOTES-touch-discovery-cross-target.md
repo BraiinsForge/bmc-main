@@ -1,8 +1,7 @@
 # Touch discovery: HW vs VM capability survey
 
-Companion note to `IMPLEMENTATION_PLAN-libudev-zero.md`. Records the empirical capability audit that validated the
-capability-based discovery predicate in `bmc-platform::linux_input` (shared by compositor and VM relay) across both
-appliance targets.
+Records the empirical capability audit that validated the capability-based discovery predicate in
+`bmc-platform::linux_input` (shared by compositor and VM relay) across both appliance targets.
 
 ## Question
 

@@ -118,12 +118,9 @@ production compositors like Niri do (see Section 7).
 This causes widget processes (even hidden ones whose surfaces are committed but not in the active scene) to re-render
 and submit new buffers at ~60fps, burning CPU in those processes too.
 
-**Note**: The devlog `widget-refactor-implementation.md` (Stage 15) explicitly calls out that frame callback filtering
-for hidden widgets is **not yet implemented**:
-
-> "Hidden widgets naturally pause because the compositor stops sending frame callbacks to non-visible widgets" — this is
-> the *intended* behavior, but looking at `state.rs:200-201`, frame callbacks from ALL committed surfaces are collected
-> into `pending_frame_callbacks` without filtering by visibility.
+**Note**: Hidden widgets were intended to pause when the compositor stops sending frame callbacks to non-visible
+widgets. However, `state.rs:200-201` collects frame callbacks from all committed surfaces into `pending_frame_callbacks`
+without filtering by visibility.
 
 ### H3: Busy polling on command channel
 
@@ -168,15 +165,14 @@ symptomatic of the "do everything every tick" design.
 | ----- | ---------------------------------- | ------------------- | ------------------------------------------------------ |
 | H1    | Unconditional GPU render cycle     | **High (30-60%)**   | High — GPU driver overhead on Mali is substantial      |
 | H2    | Frame callbacks to hidden widgets  | **Medium (10-30%)** | Medium — depends on number of widget processes running |
-| H1+H2 | Combined render + widget re-render | **~43%**            | High — matches the "~43% CPU" figure from the devlog   |
+| H1+H2 | Combined render + widget re-render | **~43%**            | High — matches the prior "~43% CPU" measurement        |
 | H3    | Command channel polling            | **Low (\<1%)**      | High — trivial cost                                    |
 | H4    | Socket accept polling              | **Low (\<1%)**      | High — trivial cost                                    |
 | H5    | Client flush                       | **Low (\<1%)**      | High — trivial cost                                    |
 | H6    | Time syscalls                      | **Negligible**      | High                                                   |
 
-**The ~43% figure** from `widget-refactor-implementation.md` (Stage 13) refers to using "full output as damage region
-for all widgets" — but this was measured with widgets present. The idle case (no scenes, no widgets) is a subset of H1
-only: the GPU render cycle itself.
+**The prior ~43% measurement** refers to using "full output as damage region for all widgets" with widgets present. The
+idle case (no scenes, no widgets) is a subset of H1 only: the GPU render cycle itself.
 
 ---
 
@@ -948,8 +944,6 @@ of iterations skip rendering. Callbacks count (74) matches render count exactly 
 - `bmc-openwrt/src/compositor/render/drm_output.rs` — DRM page flip mechanism
 - `bmc-openwrt/src/compositor/state.rs` — frame callback dispatch, surface commit handling
 - `widgets/wasm/src/egl.rs` — widget-side EGL resource management (lazy init, cleanup, sync)
-- `docs/devlogs/BDK-141/widget-refactor-implementation.md` — Stage 13 (43% CPU note), Stage 15 (frame callback
-  filtering)
 - [`ii-stopwatch`](https://gitlab.ii.zone/bos/bos-main/-/tree/master/open/utils-rs/stopwatch) — zero-cost timing
   instrumentation crate
 - [Niri compositor](https://github.com/YaLTeR/niri) — reference Smithay-based Wayland compositor
