@@ -133,14 +133,6 @@ let
 
     # Env vars needed by Slint for font rendering and runtime linking
     env = {
-      FONTCONFIG_FILE = pkgs.writeText "fonts.conf" ''
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
-        <fontconfig>
-          <dir>${pkgs.corefonts}</dir>
-        </fontconfig>
-      '';
-
       LD_LIBRARY_PATH = "${lib.makeLibraryPath [
         pkgs.libgcc
         # rodio (used by bmc-render-keyboard for keypress sounds, pulled into
@@ -192,9 +184,6 @@ let
       libdrm
       alsa-lib
     ];
-    env = {
-      FONTCONFIG_FILE = commonDeps.env.FONTCONFIG_FILE;
-    };
   };
 
   # Full workspace config for glibc profiles (widgets, compositor)

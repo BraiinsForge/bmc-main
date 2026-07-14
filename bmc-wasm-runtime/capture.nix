@@ -37,7 +37,14 @@ let
       EGL_PLATFORM = "surfaceless";
       # Fontconfig in nix sandbox can't find system fonts — point it at the
       # nix store path of corefonts so text rendering is deterministic.
-      FONTCONFIG_FILE = commonDeps.env.FONTCONFIG_FILE;
+      FONTCONFIG_FILE = pkgs.writeText "fonts.conf" ''
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+        <fontconfig>
+          <dir>${pkgs.corefonts}</dir>
+        </fontconfig>
+      '';
+
       # Mesa/libGL are dlopened at runtime — make them discoverable.
       LD_LIBRARY_PATH = lib.makeLibraryPath [
         pkgs.mesa
