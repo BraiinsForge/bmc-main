@@ -13,6 +13,8 @@ volume, night mode, device restart, and WiFi reconfiguration — without leaving
 - Swiping down from the top edge reveals the tray on top of whatever scene is showing.
 - A predominantly vertical upward swipe dismisses it; a horizontal drag across the controls does not.
 - The tray dismisses itself after 15 seconds without interaction.
+- The tray retracts on its own if a full-screen screen takes over while it is open — for example when an alarm starts
+  ringing — so it never sits on top of that screen.
 - While the tray is sliding in or out it does not react to touch, so a late tap cannot trigger a control mid-animation.
 
 ### Adjust brightness and volume

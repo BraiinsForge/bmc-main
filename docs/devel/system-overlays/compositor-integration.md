@@ -2,8 +2,9 @@
 
 This document describes the compositor-side support for system overlays: advertising `wlr-layer-shell`, compositing
 layer surfaces above the active scene, tracking and reclaiming their buffers, hit-testing touch, suppressing scene
-navigation while an overlay is up, and recognizing the edge-reveal gesture. The two vendored protocols are covered in
-[`protocols.md`](protocols.md); the client side is in [`framework.md`](framework.md).
+navigation while an overlay is up, preempting the settings tray for a modal overlay, recognizing the edge-reveal
+gesture, and relaying the alarm. The three vendored protocols are covered in [`protocols.md`](protocols.md); the client
+side is in [`framework.md`](framework.md).
 
 All of this lives under `bmc-openwrt/src/compositor/`.
 
@@ -29,9 +30,9 @@ use this: the offline indicator on `Bottom`, the startup overlay on `Top` (opaqu
 panel on `Overlay`. Stacking is purely by rank, independent of the order overlays start in.
 
 `is_fullscreen_blocker(layer, geo, output)` returns true when a layer surface is above `Background` *and* its geometry
-covers the whole output. It is the predicate behind two policies (below): suppressing scene-drag and demoting scene
-neighbors. It keys on *any* full-screen layer surface above background, not a specific layer, so the full-screen boot
-screen on `Top` blocks scene swipes just as an `Overlay` surface would.
+covers the whole output. It is the predicate behind three policies (below): suppressing scene-drag, demoting scene
+neighbors, and preempting the settings tray. It keys on *any* full-screen layer surface above background, not a specific
+layer, so the full-screen boot screen on `Top` blocks scene swipes just as an `Overlay` surface would.
 
 ## Layer-surface buffer tracking
 
@@ -73,6 +74,24 @@ neighbors should release their buffers rather than stay pre-rendered. Both are d
 is blocked when a full-screen blocker is active **or** any screen edge is currently revealed. On that condition the
 compositor demotes the would-be `Prepared` neighbors to `Dormant`, freeing their buffers since swiping is disabled
 anyway.
+
+## Modal-overlay preemption
+
+The settings tray sits on the top (`Overlay`) layer, painted above everything so the user can pull it down over any
+content — but it must *yield* when a modal full-screen overlay takes the screen (a firing alarm; the startup screen).
+The compositor owns this because it is the single source of truth for the layer stack.
+
+`modal_overlay_active()` is the predicate: a mapped `is_fullscreen_blocker` on a layer *below* `Overlay` (so the tray
+never counts itself). This is purely geometric — any full-screen overlay below the tray qualifies, so a new modal
+overlay needs no wiring here and the tray needs no per-feature knowledge. Today only the alarm and the startup screen
+match; the startup screen only ever maps at boot, before the tray can be pulled down.
+
+Like the neighbor-suppression check, a modal map/unmap happens during dispatch, not on a scene command, so the main loop
+compares `modal_overlay_active()` against its last value each iteration and, on the edge, emits `deck_settings_v1`'s
+`preempted(active)` to the tray. The tray retracts on `preempted(1)` (see [`overlays.md`](overlays.md)). The signal is
+edge-triggered and not cached for bind replay: the tray binds at startup before any modal maps, and a preemption while
+the tray is hidden is harmless (a screen-edge overlay stays unmapped unless revealed). Deliberately *not* used for this:
+tying it to the alarm specifically — that would make every future modal overlay re-plumb the tray.
 
 ## Edge-reveal gesture
 
@@ -123,3 +142,36 @@ cached so a late-binding overlay receives the current state immediately on bind.
 once a real value exists, so a cold cache does not snap the overlay's slider to 0 on bind; the WiFi-AP value is replayed
 unconditionally (empty string when setup mode is inactive). The protocol shape and the reason bmc — not the overlay —
 owns brightness are in [`protocols.md`](protocols.md).
+
+The `preempted` event does not come from bmc: `set_preempted(active)` is called from the loop's modal-preemption edge
+check (above) and fans out to bound v3 resources. It is not cached — see the modal-preemption section for why edge-only
+emission is correct.
+
+## `deck_alarm_v1` dispatch
+
+The compositor creates the `deck_alarm_v1` global and relays between bmc's alarm domain and the alarm overlay, mirroring
+the settings dispatch. `AlarmState` tracks the bound overlay resources, a `pending_actions` buffer, and a `ringing`
+flag:
+
+- Outgoing: `AlarmState::ring(time, label, snooze_allowed)` fans out `ring_alarm` to every live resource and sets
+  `ringing`; `stop()` fans out `stop_alarm` and clears it. Both prune dead resources first, so a client that vanished
+  without `destroy` is reaped on the next emit.
+- Incoming: `snooze_alarm` / `dismiss_alarm` requests are buffered as `AlarmAction`s and drained each loop pass into
+  lossless `AlarmCommand`s on a dedicated mpsc channel to bmc (not the lossy broadcast). `destroy` removes the session
+  by resource identity.
+
+bmc drives `ring` / `stop` through the `Compositor::broadcast_alarm_ring` / `broadcast_alarm_stop` trait methods (a
+`bmc` startup task bridges `AlarmBus` events and the overlay); the drained commands flow back as `AlarmCommand::Dismiss`
+/ `Snooze`. See [`protocols.md`](protocols.md) for the responsibility split.
+
+### No-overlay / crash fallback
+
+An alarm must never ring with no way to silence it, even if no overlay is bound at fire time or the overlay client dies
+mid-ring. When `ring` fires the loop arms a watchdog (`arm_alarm_fallback`): it seeds a "no live overlay since" instant
+if none is bound, then polls every `ALARM_FALLBACK_POLL` (1 s). `AlarmState::has_live_overlay()` reports whether any
+bound resource is still alive; with none for `ALARM_FALLBACK_GRACE` (2 s) the compositor auto-dismisses (queues a
+`Dismiss` as if the overlay had requested it). Independently, while an alarm is ringing with no live overlay, *any*
+touch dismisses it immediately (and is consumed, not routed into gestures). `stop` / dismissal cancels the watchdog.
+This is why only the alarm overlay binds `deck_alarm_v1`: `has_live_overlay()` counts bound resources, so a passive
+listener binding the protocol would mask a real crash — the settings tray instead learns about a firing alarm through
+the generic `deck_settings_v1` preemption above, not by binding `deck_alarm_v1`.

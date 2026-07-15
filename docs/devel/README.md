@@ -119,8 +119,8 @@ deck-wide system settings exposed by the SDK, widget/display geometry, update ho
 How privileged, non-widget UI surfaces (startup connection progress, an offline indicator, the swipe-from-top
 quick-settings panel) are built as `wlr-layer-shell` clients that stack above the active scene. Covers the
 `bmc-system-overlay` framework crate and its `SystemOverlay` trait, the hosted-vs-standalone run modes, the compositor's
-layer-shell compositing/buffer-tracking/edge-gesture support, the two vendored protocols (`deck_screen_edge_v1`,
-`deck_settings_v1`), and the concrete overlays.
+layer-shell compositing/buffer-tracking/edge-gesture support, the three vendored protocols (`deck_screen_edge_v1`,
+`deck_settings_v1`, `deck_alarm_v1`), and the concrete overlays.
 
 ### WASM Host
 

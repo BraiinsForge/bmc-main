@@ -1,8 +1,8 @@
 # System Overlays
 
 System overlays are privileged, full-screen-or-corner UI surfaces that live *outside* the scene-widget model: WiFi setup
-progress, an offline indicator, a swipe-from-top quick-settings panel, and later alarms and notifications. They are
-`wlr-layer-shell` clients, not `deck_widget_v1` widgets, and they stack above the active scene.
+progress, an offline indicator, a swipe-from-top quick-settings panel, a full-screen firing-alarm screen, and later
+notifications. They are `wlr-layer-shell` clients, not `deck_widget_v1` widgets, and they stack above the active scene.
 
 The protocol rationale — why these are layer-shell surfaces rather than widgets, and why two small Wayland extensions
 are vendored — is recorded in
@@ -48,6 +48,7 @@ The overlay crates are grouped under the top-level `system-overlays/` folder, mi
 - `system-overlays/bmc-overlay-device-info` — full-screen startup connection-progress overlay.
 - `system-overlays/bmc-overlay-offline` — bottom-right offline indicator.
 - `system-overlays/bmc-overlay-settings-tray` — swipe-from-top quick-settings panel.
+- `system-overlays/bmc-overlay-alarm` — full-screen firing-alarm screen (Stop / Snooze).
 - `system-overlays/layer-shell-test-client` — a standalone layer-shell client used to exercise the compositor support
   directly.
 
@@ -56,27 +57,31 @@ the overlay framework, so they sit at the workspace root beside `bmc-widget-prot
 and the compositor free of a dependency into the overlay folder:
 
 - `deck-screen-edge-v1` — top/bottom edge swipe-reveal (`deck_screen_edge_v1`).
-- `deck-settings-v1` — compositor-relayed brightness and WiFi-setup control (`deck_settings_v1`).
+- `deck-settings-v1` — compositor-relayed settings control and modal-overlay preemption (`deck_settings_v1`).
+- `deck-alarm-v1` — firing-alarm ring/stop signalling and dismiss/snooze return path (`deck_alarm_v1`).
 
-See [`protocols.md`](protocols.md) for both.
+See [`protocols.md`](protocols.md) for all three.
 
 ## The concrete overlays
 
-| Overlay       | Crate                       | Layer     | Placement    | Input | Screen edge | Settings IPC |
-| ------------- | --------------------------- | --------- | ------------ | ----- | ----------- | ------------ |
-| Device info   | `bmc-overlay-device-info`   | `Top`     | full-screen  | full  | no          | no           |
-| Offline       | `bmc-overlay-offline`       | `Bottom`  | bottom-right | none  | no          | no           |
-| Settings tray | `bmc-overlay-settings-tray` | `Overlay` | full-screen  | full  | `Top`       | yes          |
+| Overlay       | Crate                       | Layer     | Placement    | Input | Screen edge | Compositor IPC     |
+| ------------- | --------------------------- | --------- | ------------ | ----- | ----------- | ------------------ |
+| Device info   | `bmc-overlay-device-info`   | `Top`     | full-screen  | full  | no          | no                 |
+| Offline       | `bmc-overlay-offline`       | `Bottom`  | bottom-right | none  | no          | no                 |
+| Settings tray | `bmc-overlay-settings-tray` | `Overlay` | full-screen  | full  | `Top`       | `deck_settings_v1` |
+| Alarm         | `bmc-overlay-alarm`         | `Top`     | full-screen  | full  | no          | `deck_alarm_v1`    |
 
-Their behavior, data sources, and dismiss rules are in [`overlays.md`](overlays.md).
+The settings tray also *receives* modal-overlay preemption over `deck_settings_v1` (it retracts when a full-screen modal
+overlay such as the alarm maps below it). Their behavior, data sources, and dismiss rules are in
+[`overlays.md`](overlays.md).
 
 ## Enabling and disabling
 
 Hosted overlays are gated twice:
 
 - **Compile time** — each is an optional dependency behind a Cargo feature on `bmc-wasm-host` (`overlay-offline`,
-  `overlay-device-info`, `overlay-settings-tray`), all on by `default`. Dropping a feature removes the crate from the
-  build entirely.
+  `overlay-device-info`, `overlay-settings-tray`, `overlay-alarm`), all on by `default`. Dropping a feature removes the
+  crate from the build entirely.
 - **Runtime** — each compiled-in overlay maps to an env var `BMC_OVERLAY_<NAME>` (name uppercased, `-`→`_`, e.g.
   `BMC_OVERLAY_SETTINGS_TRAY`). Overlays are default-on; a value of `0`/`false`/`off` (case-insensitive) skips one — it
   is logged and never connected. Unknown values keep it on.
@@ -92,7 +97,7 @@ configuration mechanism. Both gates live in `bmc-wasm-host/src/overlays.rs` (`bu
 - [Compositor integration](compositor-integration.md) — how the Smithay compositor advertises `wlr-layer-shell`,
   composites layer surfaces above the scene, tracks their buffers, evicts textures on a NULL-buffer unmap, hit-tests
   touch, suppresses scene-drag, and recognizes the edge-reveal gesture.
-- [Protocols](protocols.md) — the two vendored Wayland protocols `deck_screen_edge_v1` and `deck_settings_v1`:
-  interfaces, requests, events, the responsibility split, and how they diverge from their upstreams.
-- [Overlays](overlays.md) — the three concrete overlays: what each shows, when it maps and dismisses, its data sources,
+- [Protocols](protocols.md) — the three vendored Wayland protocols `deck_screen_edge_v1`, `deck_settings_v1`, and
+  `deck_alarm_v1`: interfaces, requests, events, the responsibility split, and how they diverge from their upstreams.
+- [Overlays](overlays.md) — the four concrete overlays: what each shows, when it maps and dismisses, its data sources,
   and its platform gating.

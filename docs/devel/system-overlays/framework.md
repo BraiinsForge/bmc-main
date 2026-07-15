@@ -12,20 +12,24 @@ For where overlays sit in the system and how the two run modes differ, see [`REA
 An overlay implements `SystemOverlay` (`system-overlays/bmc-system-overlay/src/overlay.rs`). Only three methods are
 required; the rest have defaults so a passive overlay stays small.
 
-| Method                                                                 | Required | Purpose                                                                                                                    |
-| ---------------------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `layer_config`                                                         | yes      | Static placement and input policy (layer, anchor, size, margins, namespace, input region).                                 |
-| `tick(now) -> TickOutcome`                                             | yes      | Per-pass background work; reports whether it wants to be on-screen, wants a redraw, and when to wake next. Must not block. |
-| `render(renderer, size)`                                               | yes      | Draw the frame. The `&mut dyn Renderer` is valid only for this call.                                                       |
-| `init`                                                                 | no       | Called once before the first render.                                                                                       |
-| `prewarm(renderer)`                                                    | no       | Pay one-time renderer setup (SVG icon decode, glyph atlas) at host startup, not on first reveal.                           |
-| `on_touch(event)`                                                      | no       | Delivered only when the input region is not `None`.                                                                        |
-| `screen_edge() -> Option`                                              | no       | Opt in to edge swipe-reveal (`Top` or `Bottom`); `None` is a normal tick-driven overlay.                                   |
-| `on_reveal`                                                            | no       | Called once per reveal of an armed edge, before its first frame.                                                           |
-| `uses_settings() -> bool`                                              | no       | Whether to bind `deck_settings_v1`; gates the three settings hooks.                                                        |
-| `on_brightness` / `on_wifi_ap`                                         | no       | Settings events from the compositor, delivered before `tick`.                                                              |
-| `drain_settings_requests`                                              | no       | Control requests to send this pass, drained after `render`.                                                                |
-| `wants_cached_blit(now)` / `take_content_dirty` / `mark_content_dirty` | no       | Hooks for the blit-only reveal animation (see below).                                                                      |
+| Method                                                                                                     | Required | Purpose                                                                                                                                              |
+| ---------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `layer_config`                                                                                             | yes      | Static placement and input policy (layer, anchor, size, margins, namespace, input region).                                                           |
+| `tick(now) -> TickOutcome`                                                                                 | yes      | Per-pass background work; reports whether it wants to be on-screen, wants a redraw, and when to wake next. Must not block.                           |
+| `render(renderer, size)`                                                                                   | yes      | Draw the frame. The `&mut dyn Renderer` is valid only for this call.                                                                                 |
+| `init`                                                                                                     | no       | Called once before the first render.                                                                                                                 |
+| `prewarm(renderer)`                                                                                        | no       | Pay one-time renderer setup (SVG icon decode, glyph atlas) at host startup, not on first reveal.                                                     |
+| `on_touch(event)`                                                                                          | no       | Delivered only when the input region is not `None`.                                                                                                  |
+| `screen_edge() -> Option`                                                                                  | no       | Opt in to edge swipe-reveal (`Top` or `Bottom`); `None` is a normal tick-driven overlay.                                                             |
+| `on_reveal`                                                                                                | no       | Called once per reveal of an armed edge, before its first frame.                                                                                     |
+| `uses_settings() -> bool`                                                                                  | no       | Whether to bind `deck_settings_v1`; gates the settings hooks below.                                                                                  |
+| `on_brightness` / `on_volume` / `on_night_mode` / `on_wifi_ap` / `on_restart_declined` / `on_capabilities` | no       | Settings events from the compositor, delivered before `tick`.                                                                                        |
+| `on_preempted(active)`                                                                                     | no       | A modal full-screen overlay took (or released) the screen; delivered over `deck_settings_v1`, before `tick`. A transient overlay retracts on `true`. |
+| `drain_settings_requests`                                                                                  | no       | Control requests to send this pass, drained after `render`.                                                                                          |
+| `uses_alarm() -> bool`                                                                                     | no       | Whether to bind `deck_alarm_v1`; gates the alarm hooks below.                                                                                        |
+| `on_alarm_ring(time, label, snooze_allowed)` / `on_alarm_stop`                                             | no       | Firing-alarm events from the compositor, delivered before `tick`.                                                                                    |
+| `drain_alarm_requests`                                                                                     | no       | Alarm control requests (dismiss/snooze) to send this pass, drained after `render`.                                                                   |
+| `wants_cached_blit(now)` / `take_content_dirty` / `mark_content_dirty`                                     | no       | Hooks for the blit-only reveal animation (see below).                                                                                                |
 
 `TickOutcome` carries three fields: `visible` (want to be on-screen — when `false` the framework unmaps the surface and
 frees its buffers), `wants_render` (content changed; ignored while `!visible`), and `next_wake` (earliest instant to
@@ -60,16 +64,18 @@ context, runs `init`, and arms the screen edge if the overlay opted in.
 
 Each host loop pass touches every overlay in a fixed order (`bmc-wasm-host/src/main_loop.rs`):
 
-1. `dispatch(egl)` — drain Wayland events: deliver touch, pick up reveal/hide and settings events, translate
-   `wl_buffer.release` into freed export slots, and react to a configure-driven resize.
+1. `dispatch(egl)` — drain Wayland events: deliver touch, pick up reveal/hide, settings events (including preemption),
+   and alarm ring/stop events, translate `wl_buffer.release` into freed export slots, and react to a configure-driven
+   resize.
 2. `tick(now)` — run the overlay's background work and recompute visibility. For a screen-edge overlay, visible means
    *revealed by the compositor* **and** the overlay's own `tick` says it wants to be on screen.
 3. `needs_hide()` → `hide(egl)` — if mapped but no longer visible, attach a NULL buffer, round-trip the unmap, free the
    export buffers, and (for an edge overlay) re-arm the edge.
 4. `needs_render(now)` → `render_hosted_overlay(...)` — if it should draw this pass, render through the shared renderer
    and submit to the overlay's own layer surface.
-5. `forward_settings_requests()` — drain and send any `deck_settings_v1` requests the overlay produced (a brightness
-   drag is read during `render`, so this runs *after* render so the request goes out the same pass).
+5. `forward_settings_requests()` / `forward_alarm_requests()` — drain and send any `deck_settings_v1` / `deck_alarm_v1`
+   requests the overlay produced (a brightness drag or a Stop/Snooze tap is read during `render`, so this runs *after*
+   render so the request goes out the same pass).
 
 A failed or disconnected overlay is shut down (freeing its GPU resources) and dropped from the list; a `retain` would
 skip `shutdown(egl)` and leak, because the render target does not free on `Drop`.
