@@ -767,6 +767,28 @@ impl CompositorState {
         })
     }
 
+    /// True when a mapped full-screen overlay *below* the top (`Overlay`) layer
+    /// is covering the scene — the firing-alarm or startup overlay, not the
+    /// settings-tray itself (which lives on `Overlay` and is excluded by the
+    /// layer-rank filter). Unlike `fullscreen_blocker_active`, this never counts
+    /// the tray, so it can drive the `deck_settings_v1.preempted` signal that
+    /// retracts the tray. Purely geometric: any full-screen preempting overlay
+    /// qualifies, so new modal overlays need no wiring here.
+    #[must_use]
+    pub fn modal_overlay_active(&self) -> bool {
+        use crate::compositor::layer_surface::{is_fullscreen_blocker, layer_rank};
+        let output = Size::from((
+            i32::try_from(self.width).expect("BUG: logical display width fits i32"),
+            i32::try_from(self.height).expect("BUG: logical display height fits i32"),
+        ));
+        self.layer_surfaces.iter().any(|e| {
+            e.is_mapped()
+                && layer_rank(e.layer) < layer_rank(Layer::Overlay)
+                && e.last_geometry
+                    .is_some_and(|g| is_fullscreen_blocker(e.layer, g, output))
+        })
+    }
+
     /// True when `surface` is tracked as a wlr-layer-shell surface.
     #[must_use]
     pub fn surface_has_layer_role(&self, surface: &WlSurface) -> bool {

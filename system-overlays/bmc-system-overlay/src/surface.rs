@@ -79,6 +79,9 @@ struct State {
     pending_night_mode: Option<(bool, Option<String>)>,
     /// Set on a one-shot `restart_declined` event.
     pending_restart_declined: Option<String>,
+    /// Set on a `preempted` event; `true` when a modal full-screen overlay is
+    /// covering the scene, drained by the framework into `on_preempted`.
+    pending_preempted: Option<bool>,
     /// Set on a `wifi_ap` event; `Some(Some(ssid))`/`Some(None)` distinguishes a
     /// fresh event (active/inactive) from "no event this pass".
     #[expect(
@@ -145,6 +148,7 @@ impl Default for State {
             pending_capabilities: None,
             pending_night_mode: None,
             pending_restart_declined: None,
+            pending_preempted: None,
             pending_wifi_ap: None,
             wants_alarm: false,
             alarm: None,
@@ -563,6 +567,10 @@ impl LayerSurfaceClient {
         self.state.pending_restart_declined.take()
     }
 
+    pub fn take_preempted(&mut self) -> Option<bool> {
+        self.state.pending_preempted.take()
+    }
+
     pub fn take_wifi_ap(&mut self) -> Option<Option<String>> {
         self.state.pending_wifi_ap.take()
     }
@@ -725,7 +733,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 }
                 "deck_settings_v1" if state.wants_settings => {
                     let settings =
-                        registry.bind::<DeckSettingsV1, _, _>(name, version.min(2), qh, ());
+                        registry.bind::<DeckSettingsV1, _, _>(name, version.min(3), qh, ());
                     state.settings = Some(settings);
                 }
                 "deck_alarm_v1" if state.wants_alarm => {
@@ -843,6 +851,9 @@ impl Dispatch<DeckSettingsV1, ()> for State {
             }
             deck_settings_v1::Event::RestartDeclined { reason } => {
                 state.pending_restart_declined = Some(reason);
+            }
+            deck_settings_v1::Event::Preempted { active } => {
+                state.pending_preempted = Some(active != 0);
             }
             other => tracing::debug!(?other, "unhandled deck_settings_v1 event"),
         }

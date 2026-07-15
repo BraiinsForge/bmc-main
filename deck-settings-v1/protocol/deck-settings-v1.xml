@@ -10,7 +10,7 @@
     dismiss request is dropped: hide is owned by deck_screen_edge_v1.
   </copyright>
 
-  <interface name="deck_settings_v1" version="2">
+  <interface name="deck_settings_v1" version="3">
     <description summary="Deck settings control interface">
       Lightweight compositor-relayed IPC for the settings-tray overlay to control
       system state it must not touch directly. The target platform (OpenWrt/ARMv7)
@@ -132,6 +132,19 @@
         short human-readable reason. Not state: never replayed on bind.
       </description>
       <arg name="reason" type="string" summary="why the restart was declined"/>
+    </event>
+
+    <event name="preempted" since="3">
+      <description summary="a modal overlay took the screen">
+        Sent when a modal, full-screen overlay on a layer below the tray (e.g.
+        the firing-alarm or startup overlay) maps over the scene or is gone
+        again. active is 1 while such an overlay is covering the screen, 0 once
+        it clears. The tray retracts on active=1 so it does not sit on top of a
+        firing alarm. Generic: any full-screen preempting overlay drives this,
+        not a specific feature. Edge-driven: emitted on change, not replayed on
+        bind.
+      </description>
+      <arg name="active" type="uint" summary="1 = a modal overlay is covering the screen, 0 = clear"/>
     </event>
   </interface>
 </protocol>

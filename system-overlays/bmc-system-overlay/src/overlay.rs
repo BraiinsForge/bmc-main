@@ -389,6 +389,14 @@ pub trait SystemOverlay {
     /// no-op.
     fn on_wifi_ap(&mut self, _ssid: Option<&str>) {}
 
+    /// Preemption state reported by the compositor: `true` while a modal
+    /// full-screen overlay (alarm, startup) is covering the scene, `false` once
+    /// it clears. A transient overlay such as the settings-tray retracts on
+    /// `true`. Generic — driven by any full-screen preempting overlay, not a
+    /// specific feature. Delivered over `deck_settings_v1`, so gated by
+    /// `uses_settings`. Called before `tick`. Default: no-op.
+    fn on_preempted(&mut self, _active: bool) {}
+
     /// Drain control requests the overlay wants to send this pass. Called after
     /// `tick`. Default: none.
     fn drain_settings_requests(&mut self) -> Vec<SettingsRequest> {

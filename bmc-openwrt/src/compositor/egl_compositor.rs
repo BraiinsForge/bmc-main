@@ -487,6 +487,7 @@ impl EglCompositor {
             alarm_fallback_generation: 0,
             alarm_no_overlay_since: None,
             last_neighbors_suppressed: false,
+            last_modal_overlay_active: false,
         };
         app_state.reevaluate_automatic_cycling(Instant::now());
 
@@ -694,6 +695,18 @@ impl EglCompositor {
             if suppressed != app_state.last_neighbors_suppressed {
                 app_state.last_neighbors_suppressed = suppressed;
                 emit_lifecycle_transitions(&mut app_state);
+            }
+
+            // A modal full-screen overlay (alarm, startup) mapping or unmapping
+            // is not a scene command either, so — like the suppression check
+            // above — detect the edge here and tell the settings-tray to retract
+            // via `deck_settings_v1.preempted`. Generic: any full-screen
+            // preempting overlay drives this, so new modal overlays need no
+            // wiring, and the tray no longer binds `deck_alarm_v1`.
+            let modal_active = app_state.compositor.modal_overlay_active();
+            if modal_active != app_state.last_modal_overlay_active {
+                app_state.last_modal_overlay_active = modal_active;
+                app_state.compositor.settings.set_preempted(modal_active);
             }
 
             app_state.refresh_redraw_state();
@@ -973,6 +986,13 @@ struct AppState {
     /// demoting scene-swipe neighbors to `Dormant` when an overlay maps or a
     /// screen edge reveals, and restoring them when it goes away.
     last_neighbors_suppressed: bool,
+    /// Last observed value of [`CompositorState::modal_overlay_active`]. A modal
+    /// full-screen overlay maps/unmaps during dispatch, not on a scene command,
+    /// so — like `last_neighbors_suppressed` — comparing against this each loop
+    /// iteration lets us emit `deck_settings_v1.preempted` only on the edge, so
+    /// the settings-tray retracts when an alarm (or other modal overlay) covers
+    /// the screen and is told when it clears.
+    last_modal_overlay_active: bool,
 }
 
 impl AppState {
@@ -2689,6 +2709,7 @@ mod tests {
             alarm_fallback_generation: 0,
             alarm_no_overlay_since: None,
             last_neighbors_suppressed: false,
+            last_modal_overlay_active: false,
         }
     }
 

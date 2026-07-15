@@ -189,6 +189,9 @@ fn deliver_settings_events(client: &mut LayerSurfaceClient, overlay: &mut dyn Sy
     if let Some(reason) = client.take_restart_declined() {
         overlay.on_restart_declined(&reason);
     }
+    if let Some(active) = client.take_preempted() {
+        overlay.on_preempted(active);
+    }
 }
 
 fn forward_settings_requests(client: &mut LayerSurfaceClient, overlay: &mut dyn SystemOverlay) {

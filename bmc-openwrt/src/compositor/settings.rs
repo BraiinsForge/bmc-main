@@ -132,6 +132,17 @@ impl SettingsState {
             r.restart_declined(reason.to_owned());
         }
     }
+
+    /// Emit the preemption state to every live v3 resource: `true` while a
+    /// modal full-screen overlay (alarm, startup) is covering the scene. The
+    /// tray retracts on `true`. Edge-driven by the loop (see
+    /// `CompositorState::modal_overlay_active`); no cache, no bind replay.
+    pub fn set_preempted(&mut self, active: bool) {
+        self.prune();
+        for r in self.resources.iter().filter(|r| r.version() >= 3) {
+            r.preempted(u32::from(active));
+        }
+    }
 }
 
 impl GlobalDispatch<DeckSettingsV1, ()> for CompositorState {
@@ -239,7 +250,7 @@ impl Dispatch<DeckSettingsV1, ()> for CompositorState {
 
 /// Advertise the `deck_settings_v1` global.
 pub fn create_global(display: &DisplayHandle) {
-    display.create_global::<CompositorState, DeckSettingsV1, ()>(2, ());
+    display.create_global::<CompositorState, DeckSettingsV1, ()>(3, ());
 }
 
 #[cfg(test)]

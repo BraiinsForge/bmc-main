@@ -960,6 +960,18 @@ impl SystemOverlay for SettingsTrayOverlay {
         std::mem::take(&mut self.pending_requests)
     }
 
+    /// Retract when a modal full-screen overlay (a firing alarm, startup) takes
+    /// the screen, so the tray never sits on top of it. Generic: the compositor
+    /// derives this from any full-screen preempting overlay, so the tray does
+    /// not bind — and does not need to know about — each such feature's
+    /// protocol. `active == false` (the overlay cleared) needs no action; the
+    /// user reopens the tray by pulling it down again.
+    fn on_preempted(&mut self, active: bool) {
+        if active {
+            self.begin_dismiss();
+        }
+    }
+
     fn wants_cached_blit(&self, now: Instant) -> Option<f32> {
         self.slide
             .cached_blit_offset(now, self.content_dirty, self.panel_height)

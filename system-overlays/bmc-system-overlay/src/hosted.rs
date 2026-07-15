@@ -138,6 +138,9 @@ impl HostedOverlay {
             if let Some(reason) = self.client.take_restart_declined() {
                 self.overlay.on_restart_declined(&reason);
             }
+            if let Some(active) = self.client.take_preempted() {
+                self.overlay.on_preempted(active);
+            }
         }
         if self.overlay.uses_alarm() {
             // One latest-wins slot, so a stop-then-ring within a single dispatch
