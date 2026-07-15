@@ -6,9 +6,11 @@ use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
 use crate::device::DeviceFamily;
 use crate::screens::dashboard::DashboardViewData;
+use crate::screens::device_detail::{DeviceDetailData, DeviceState};
 use crate::screens::model_detail::{DeviceRow, ModelDetailViewData};
 use crate::screens::table::{ModelRow, TableViewData};
 use crate::summary::{FleetSummary, GroupSummary};
+use crate::telemetry::DeviceTemp;
 use crate::view::device_click_id;
 
 const TABLE_PAGE_SIZE: usize = 4;
@@ -282,4 +284,40 @@ pub fn sample_model_detail_view(page: usize) -> ModelDetailViewData {
         page,
         page_count,
     }
+}
+
+fn device_detail_fixture(mac: Option<&str>, temperature: DeviceTemp) -> DeviceDetailData {
+    DeviceDetailData {
+        model: "Mini Miner".to_owned(),
+        hostname: "John's Miner".to_owned(),
+        ip: "192.111.18".to_owned(),
+        mac: mac.map(str::to_owned),
+        state: DeviceState::Ok,
+        hashrate: Hashrate::from_terahashes_per_second(2.08),
+        hashrate_series: vec![1.9, 2.0, 2.1, 2.05, 2.08, 2.0, 2.1, 2.08],
+        nominal_hashrate: Hashrate::from_terahashes_per_second(16.52),
+        power: ElectricPower::from_watts(60.0),
+        efficiency: MiningEfficiency::from_joules_per_terahash(2.01),
+        uptime_hours: 12,
+        temperature,
+    }
+}
+
+/// A multi-sensor miner: the temp tile shows the Avg/Min/Max spread.
+#[must_use]
+pub fn sample_device_detail() -> DeviceDetailData {
+    device_detail_fixture(
+        Some("02:1A:4B:7C:9D:01"),
+        DeviceTemp::Spread {
+            min: Temperature::from_celsius(54.0),
+            avg: Temperature::from_celsius(65.0),
+            max: Temperature::from_celsius(78.0),
+        },
+    )
+}
+
+/// A single-sensor miner (uBOS, no MAC): the temp tile shows one value.
+#[must_use]
+pub fn sample_device_detail_single() -> DeviceDetailData {
+    device_detail_fixture(None, DeviceTemp::Single(Temperature::from_celsius(65.0)))
 }

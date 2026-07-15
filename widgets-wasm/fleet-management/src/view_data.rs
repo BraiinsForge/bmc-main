@@ -3,12 +3,16 @@
 //! Build the redesigned screens' view data from the live fleet summary
 //! and its recorded hashrate history.
 
-use crate::device::DeviceId;
+use bmc_wasm_sdk::{Hashrate, Temperature};
+
+use crate::device::{DeviceId, KnownDevice};
 use crate::history::HashrateHistory;
 use crate::screens::dashboard::DashboardViewData;
+use crate::screens::device_detail::{DeviceDetailData, DeviceState};
 use crate::screens::model_detail::{DeviceRow, ModelDetailViewData};
 use crate::screens::table::{ModelRow, TableViewData};
 use crate::summary::{FleetSummary, GroupSummary};
+use crate::telemetry::DeviceTemp;
 use crate::view::device_click_id;
 
 /// Model groups per page in the list view.
@@ -126,10 +130,59 @@ impl ModelDetailViewData {
     }
 }
 
+/// Whole hours from a second count, for the uptime tile.
+#[expect(clippy::integer_division, reason = "uptime is shown in whole hours")]
+fn seconds_to_hours(seconds: u64) -> u64 {
+    seconds / 3600
+}
+
+impl DeviceDetailData {
+    /// One device's detail: the fold-of-one group gives hashrate/power/efficiency/state,
+    /// the raw reading gives MAC/uptime/nominal/temperature.
+    #[must_use]
+    pub(crate) fn from_device(
+        model: &str,
+        group: &GroupSummary,
+        device: &KnownDevice,
+        hashrate_series: Vec<f32>,
+    ) -> Self {
+        let reading = device.telemetry.as_ref().map(|s| &s.reading);
+        let nominal_ths = reading
+            .and_then(|r| r.nominal_hashrate_ths)
+            .or_else(|| device.model.as_ref().and_then(|m| m.nominal_hashrate_ths));
+        let state = if group.off_count > 0 {
+            DeviceState::Off
+        } else if group.ok_count > 0 {
+            DeviceState::Ok
+        } else {
+            DeviceState::Degraded
+        };
+        Self {
+            model: model.to_owned(),
+            hostname: group.label.clone(),
+            ip: device.identity.host.clone(),
+            mac: reading.and_then(|r| r.mac.clone()),
+            state,
+            hashrate: group.hashrate.unwrap_or_default(),
+            hashrate_series,
+            nominal_hashrate: nominal_ths.map_or_else(Hashrate::default, |n| {
+                Hashrate::from_terahashes_per_second(f64::from(n))
+            }),
+            power: group.power.unwrap_or_default(),
+            efficiency: group.efficiency.unwrap_or_default(),
+            uptime_hours: reading.and_then(|r| r.uptime_s).map_or(0, seconds_to_hours),
+            temperature: reading
+                .and_then(|r| r.temperature)
+                .unwrap_or(DeviceTemp::Single(Temperature::from_celsius(0.0))),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device::{DeviceFamily, DeviceId};
+    use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceSource};
+    use crate::telemetry::{TelemetryReading, TelemetrySnapshot};
     use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
     fn grp(label: &str, total: usize, ok: usize, off: usize) -> GroupSummary {
@@ -195,5 +248,92 @@ mod tests {
         let last = ModelDetailViewData::from_summary("BMM 101", &rows, 9, &history);
         assert_eq!(last.page, 1, "an out-of-range page clamps to the last");
         assert_eq!(last.rows.len(), 2);
+    }
+
+    fn device(
+        model: Option<crate::model::MinerModel>,
+        reading: Option<TelemetryReading>,
+    ) -> KnownDevice {
+        KnownDevice {
+            identity: DeviceIdentity {
+                id: DeviceId::new("d"),
+                family: DeviceFamily::Bos,
+                name: "d".to_owned(),
+                host: "10.0.0.9".to_owned(),
+                port: 80,
+                source: DeviceSource::Discovered,
+            },
+            model,
+            telemetry: reading.map(|reading| TelemetrySnapshot {
+                reading,
+                refreshed_seq: 1,
+            }),
+            last_seen_seq: 1,
+            reachable: true,
+            consecutive_failures: 0,
+        }
+    }
+
+    #[test]
+    fn device_detail_maps_the_group_and_the_raw_reading() {
+        let reading = TelemetryReading {
+            nominal_hashrate_ths: Some(16.0),
+            uptime_s: Some(43_200),
+            temperature: Some(DeviceTemp::Spread {
+                min: Temperature::from_celsius(54.0),
+                avg: Temperature::from_celsius(65.0),
+                max: Temperature::from_celsius(78.0),
+            }),
+            mac: Some("aa:bb:cc:dd:ee:ff".to_owned()),
+            ..TelemetryReading::default()
+        };
+        let data = DeviceDetailData::from_device(
+            "Mini Miner",
+            &grp("John's Miner", 1, 1, 0),
+            &device(None, Some(reading)),
+            vec![],
+        );
+        assert_eq!(data.hostname, "John's Miner");
+        assert_eq!(data.ip, "10.0.0.9");
+        assert_eq!(data.mac.as_deref(), Some("aa:bb:cc:dd:ee:ff"));
+        assert_eq!(data.state, DeviceState::Ok);
+        assert_eq!(data.uptime_hours, 12, "43200 s / 3600");
+        assert_eq!(
+            data.nominal_hashrate,
+            Hashrate::from_terahashes_per_second(16.0)
+        );
+        assert_eq!(
+            data.temperature,
+            DeviceTemp::Spread {
+                min: Temperature::from_celsius(54.0),
+                avg: Temperature::from_celsius(65.0),
+                max: Temperature::from_celsius(78.0),
+            }
+        );
+    }
+
+    #[test]
+    fn device_detail_falls_back_to_catalog_nominal_and_marks_off() {
+        let model = crate::model::MinerModel {
+            id: "id".to_owned(),
+            name: "HashNode".to_owned(),
+            chip_type: None,
+            chip_count: None,
+            nominal_hashrate_ths: Some(4.5),
+        };
+        let data = DeviceDetailData::from_device(
+            "HashNode",
+            &grp("bmm", 1, 0, 1),
+            &device(Some(model), None),
+            vec![],
+        );
+        assert_eq!(data.state, DeviceState::Off);
+        assert_eq!(data.mac, None);
+        assert_eq!(data.uptime_hours, 0);
+        assert_eq!(
+            data.nominal_hashrate,
+            Hashrate::from_terahashes_per_second(4.5),
+            "catalog nominal when the reading has none"
+        );
     }
 }

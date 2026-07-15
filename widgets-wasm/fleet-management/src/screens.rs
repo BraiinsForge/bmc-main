@@ -30,6 +30,7 @@
 use bmc_wasm_sdk::*;
 
 pub mod dashboard;
+pub mod device_detail;
 pub mod fixtures;
 pub mod icons;
 pub mod model_detail;

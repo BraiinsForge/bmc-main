@@ -174,13 +174,57 @@ pub fn area_chart(series: &[f32], w: f32, h: f32, top_frac: f32) -> Vec<Draw> {
             )
         })
         .collect();
-    let mut area = trend.clone();
+    // Fill and stroke share one pre-smoothed top edge drawn as straight segments.
+    // A smoothed fill instead bends toward its baseline corners and peels off the stroke.
+    let curve = smooth_curve(&trend);
+    let mut area = curve.clone();
     area.push((w, h));
     area.push((0.0, h));
     vec![
-        fill!(area, linear: (CHART.with_alpha(0.55), CHART.with_alpha(0.05)), smooth),
-        path!(trend, stroke: 2.0, color: CHART, smooth),
+        fill!(area, linear: (CHART.with_alpha(0.55), CHART.with_alpha(0.05))),
+        path!(curve, stroke: 3.0, color: CHART),
     ]
+}
+
+// Sample the Catmull-Rom spline through `pts` into a dense polyline (the renderer's
+// control points, `bmc-render::build_femtovg_path`), so a linear draw looks smooth.
+fn smooth_curve(pts: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    const STEPS: usize = 10;
+    if pts.len() < 3 {
+        return pts.to_vec();
+    }
+    let n = pts.len();
+    let mut out = vec![pts[0]];
+    for i in 0..n - 1 {
+        let p0 = pts[i.saturating_sub(1)];
+        let p1 = pts[i];
+        let p2 = pts[i + 1];
+        let p3 = pts[(i + 2).min(n - 1)];
+        let cp1 = (p1.0 + (p2.0 - p0.0) / 6.0, p1.1 + (p2.1 - p0.1) / 6.0);
+        let cp2 = (p2.0 - (p3.0 - p1.0) / 6.0, p2.1 - (p3.1 - p1.1) / 6.0);
+        for s in 1..=STEPS {
+            out.push(cubic_bezier(p1, cp1, cp2, p2, idx_f32(s) / idx_f32(STEPS)));
+        }
+    }
+    out
+}
+
+fn cubic_bezier(
+    p0: (f32, f32),
+    c1: (f32, f32),
+    c2: (f32, f32),
+    p1: (f32, f32),
+    t: f32,
+) -> (f32, f32) {
+    let mt = 1.0 - t;
+    let w0 = mt * mt * mt;
+    let w1 = 3.0 * mt * mt * t;
+    let w2 = 3.0 * mt * t * t;
+    let w3 = t * t * t;
+    (
+        w0 * p0.0 + w1 * c1.0 + w2 * c2.0 + w3 * p1.0,
+        w0 * p0.1 + w1 * c1.1 + w2 * c2.1 + w3 * p1.1,
+    )
 }
 
 #[must_use]

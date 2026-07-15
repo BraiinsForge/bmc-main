@@ -439,13 +439,38 @@ pub extern "C" fn render(_delta_ms: u32) {
                     .expect("BUG: model-detail cache rebuilt above")
                     .rows;
                 if let Some(device_id) = sel.device.as_deref() {
-                    // The drilled-into device's screen. A device that vanished
-                    // between tap and render titles on its id.
-                    let hostname = rows
+                    // The drilled-into device's detail, from its fold-of-one row and its raw reading.
+                    // A device gone between tap and render falls back to the model breakdown.
+                    let detail = rows
                         .iter()
                         .find(|(id, _)| id.as_str() == device_id)
-                        .map_or(device_id, |(_, g)| g.label.as_str());
-                    (screens::model_detail::device_detail(hostname), 1)
+                        .and_then(|(id, group)| {
+                            let series = HISTORY.with(|h| h.borrow().device_series(id));
+                            DEVICES.with(|devs| {
+                                devs.borrow()
+                                    .iter()
+                                    .find(|dev| dev.identity.id.as_str() == device_id)
+                                    .map(|dev| {
+                                        screens::device_detail::DeviceDetailData::from_device(
+                                            &sel.label, group, dev, series,
+                                        )
+                                    })
+                            })
+                        });
+                    if let Some(data) = detail {
+                        (screens::device_detail::device_detail_view(&data), 1)
+                    } else {
+                        let data = HISTORY.with(|h| {
+                            screens::model_detail::ModelDetailViewData::from_summary(
+                                &sel.label,
+                                rows,
+                                sel.page,
+                                &h.borrow(),
+                            )
+                        });
+                        let page_count = data.page_count;
+                        (screens::model_detail::model_detail_view(&data), page_count)
+                    }
                 } else {
                     let data = HISTORY.with(|h| {
                         screens::model_detail::ModelDetailViewData::from_summary(

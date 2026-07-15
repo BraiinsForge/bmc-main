@@ -8,7 +8,7 @@ use fleet_management::view::{PageTurn, PagerScope, pager_click_id};
 
 story_meta! { title: "widgets/fleet" }
 
-#[story(default)]
+#[story(order = 1, default)]
 fn dashboard(ctx: &mut StoryCtx) {
     ctx.ui.div(
         Full,
@@ -16,7 +16,7 @@ fn dashboard(ctx: &mut StoryCtx) {
     );
 }
 
-#[story]
+#[story(order = 2)]
 fn table(ctx: &mut StoryCtx) {
     // Twelve mock models paginate four-per-page; the pager clicks nudge the knob.
     let prev = pager_click_id(PagerScope::Fleet, PageTurn::Prev);
@@ -32,7 +32,7 @@ fn table(ctx: &mut StoryCtx) {
     );
 }
 
-#[story]
+#[story(order = 3)]
 fn model_detail(ctx: &mut StoryCtx) {
     // Ten device rows span three pages; the pager nudges the knob, Back just logs.
     let prev = pager_click_id(PagerScope::ModelDetail, PageTurn::Prev);
@@ -51,10 +51,24 @@ fn model_detail(ctx: &mut StoryCtx) {
     );
 }
 
-#[story]
+#[story(order = 4)]
 fn device_detail(ctx: &mut StoryCtx) {
-    // The single-device screen from a device's Detail button; Back just logs.
+    // Multi-sensor miner: the temp tile shows Avg/Min/Max. Back just logs.
     ctx.action_with_key("Back", "back");
-    ctx.ui
-        .div(Full, screens::model_detail::device_detail("Miner-Abcde"));
+    ctx.ui.div(
+        Full,
+        screens::device_detail::device_detail_view(&screens::fixtures::sample_device_detail()),
+    );
+}
+
+#[story(order = 5)]
+fn device_detail_single(ctx: &mut StoryCtx) {
+    // Single-sensor miner (uBOS): one temp value, no MAC.
+    ctx.action_with_key("Back", "back");
+    ctx.ui.div(
+        Full,
+        screens::device_detail::device_detail_view(
+            &screens::fixtures::sample_device_detail_single(),
+        ),
+    );
 }
