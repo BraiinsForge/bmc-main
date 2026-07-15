@@ -164,10 +164,12 @@ in the tarball.
    all three are present, it exits 0 without changing the store unless `--wipe` is passed. An incomplete store is not
    overwritten implicitly; recovery must explicitly pass `--wipe`. `--wipe` refuses to run while `/nix` is an active
    mount — the running system would be using the very store it deletes.
-3. **Select and download the initialization tarball.** Selection is by the BOS version read from `/etc/bos_version`,
-   matched against the factory server's package feed (`nix-package-feed.v1.json`, fetched from the `factory` entry of
-   `/etc/nix-upgrade/servers.json`). If no feed entry matches the requested BOS version, `init` fails — the factory
-   server has to keep an entry for every Nix-capable BOS version, otherwise this path breaks.
+3. **Select and download the initialization tarball.** Selection is by the BOS version read from `--bos-version-file`
+   (default `/etc/bos_version`). The firmware `COMMAND` overrides it with the staged incoming version file, because the
+   running file still names the outgoing firmware. The version is matched against the factory server's package feed
+   (`nix-package-feed.v1.json`, fetched from the `factory` entry of `/etc/nix-upgrade/servers.json`). If no feed entry
+   matches the requested BOS version, `init` fails — the factory server has to keep an entry for every Nix-capable BOS
+   version, otherwise this path breaks.
 4. **No content verification.** Signature verification is not implemented: the CLI consults neither the factory entry's
    `known_public_key` nor any signature policy for the feed or the tarball. Because NTP has not synced on first boot,
    the download client also disables TLS certificate validation, so the downloads are trusted by URL alone. (NAR
