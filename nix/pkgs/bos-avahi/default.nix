@@ -76,7 +76,13 @@ let
 in
 {
   pkg = packageWithTests;
-  version = armv7Pkgs.avahi.version;
+  version =
+    # Package indexes validate versions with semver::Version::parse, which
+    # rejects upstream avahi's two-component "0.8"; assert nixpkgs still
+    # ships exactly 0.8 so a bump fails at eval instead of silently
+    # reporting a stale version.
+    assert armv7Pkgs.avahi.version == "0.8";
+    "0.8.0";
   category = "core";
   description = "Avahi daemon and BOS miner mDNS advertisement";
   upgrade_strategy = null;
