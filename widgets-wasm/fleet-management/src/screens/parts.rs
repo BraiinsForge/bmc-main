@@ -13,6 +13,7 @@
 )]
 use bmc_wasm_sdk::*;
 
+use crate::screens::icons;
 use crate::view::{ViewMode, view_click_id};
 
 // Design tokens map 1:1 to the Figma "Braiins DECK" frames.
@@ -37,15 +38,14 @@ pub const FRAME_H: f32 = 480.0;
 pub const PAD: f32 = 24.0;
 pub const GAP: f32 = 8.0;
 pub const DETAIL_BUTTON_WIDTH: f32 = 96.0;
+pub const BACK_CHIP: f32 = 40.0;
 
-pub const PERF_OK: Svg = include_svg!("assets/icons/perf-ok.svg");
-pub const PERF_LOW: Svg = include_svg!("assets/icons/perf-low.svg");
-pub const PERF_OFF: Svg = include_svg!("assets/icons/perf-off.svg");
-pub const STAT_POWER: Svg = include_svg!("assets/icons/stat-power.svg");
-pub const STAT_EFFICIENCY: Svg = include_svg!("assets/icons/stat-efficiency.svg");
-pub const STAT_TEMP: Svg = include_svg!("assets/icons/stat-temp.svg");
-const TOGGLE_GRID: Svg = include_svg!("assets/icons/dashboard.svg");
-const TOGGLE_LIST: Svg = include_svg!("assets/icons/list.svg");
+// Table-card row geometry, shared by the list and model-detail screens.
+pub const ROW_PAD: f32 = 20.0;
+// A full page of rows must fit the body height.
+// Overflow clamps the flex row up to min-content and shifts the pinned pager.
+pub const HEAD_H: f32 = 56.0;
+pub const DATA_H: f32 = 78.0;
 
 // A tinted icon of `size`, on its own square canvas.
 #[must_use]
@@ -53,6 +53,16 @@ pub fn icon(svg: &Svg, size: f32, color: Color) -> Node {
     canvas(
         props!(width: size, height: size),
         vec![Draw::svg(0.0, 0.0, size, size, svg, color).with_anti_alias()],
+    )
+}
+
+// The back chip — a tappable `back` button with a left chevron.
+#[must_use]
+pub fn back_button() -> Node {
+    touchable(
+        "back",
+        props!(width: BACK_CHIP, height: BACK_CHIP, background: GRAY_90),
+        vec![Draw::svg(10.0, 10.0, 20.0, 20.0, &icons::CHEVRON_LEFT, WHITE).with_anti_alias()],
     )
 }
 
@@ -81,11 +91,11 @@ fn toggle(list_active: bool) -> Node {
         false,
         &[
             Tab {
-                icon: &TOGGLE_GRID,
+                icon: &icons::TOGGLE_GRID,
                 click_id: view_click_id(ViewMode::Grid),
             },
             Tab {
-                icon: &TOGGLE_LIST,
+                icon: &icons::TOGGLE_LIST,
                 click_id: view_click_id(ViewMode::List),
             },
         ],
@@ -106,9 +116,17 @@ pub fn status_counts(
     row(
         props!(cross_align: CrossAlign::Center),
         [
-            status_item(&PERF_OK, ok, OK, icon_px, font, slot_w, weight),
-            status_item(&PERF_LOW, degraded, DEGRADED, icon_px, font, slot_w, weight),
-            status_item(&PERF_OFF, off, OFF, icon_px, font, slot_w, weight),
+            status_item(&icons::PERF_OK, ok, OK, icon_px, font, slot_w, weight),
+            status_item(
+                &icons::PERF_LOW,
+                degraded,
+                DEGRADED,
+                icon_px,
+                font,
+                slot_w,
+                weight,
+            ),
+            status_item(&icons::PERF_OFF, off, OFF, icon_px, font, slot_w, weight),
         ],
     )
 }

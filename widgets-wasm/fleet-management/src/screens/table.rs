@@ -14,14 +14,12 @@ use bmc_wasm_sdk::*;
 
 use crate::device::DeviceFamily;
 use crate::layout::truncate_label;
+use crate::screens::icons;
 use crate::screens::parts::{
-    BORDER, CARD_BG, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEADER_BG, LABEL, LABEL_FONT, PAD,
-    ROW_FONT, area_chart, header, status_counts,
+    BORDER, CARD_BG, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H, HEADER_BG, LABEL,
+    LABEL_FONT, PAD, ROW_FONT, ROW_PAD, area_chart, header, status_counts,
 };
 use crate::view::{PageTurn, PagerScope, model_detail_click_id, pager_click_id};
-
-const PAGER_UP: Svg = include_svg!("assets/icons/chevron-up.svg");
-const PAGER_DOWN: Svg = include_svg!("assets/icons/chevron-down.svg");
 
 // Column widths within the table card.
 const COL_MODEL: f32 = 340.0;
@@ -35,11 +33,6 @@ const STATUS_SLOT: f32 = 50.0;
 const SPARK_W: f32 = COL_SPARK - 16.0;
 const MODEL_CHARS: usize = 28;
 
-const ROW_PAD: f32 = 20.0;
-// A full page of rows must fit the body height.
-// Overflow clamps the flex row up to min-content and shifts the pinned pager.
-const HEAD_H: f32 = 56.0;
-const DATA_H: f32 = 78.0;
 const MODEL_FONT: u32 = 22;
 const STATUS_ICON: f32 = 16.0;
 
@@ -208,12 +201,12 @@ fn pager(can_up: bool, can_down: bool) -> Node {
         [
             col(props!(flex: 1.0), Vec::<Node>::new()),
             pager_button(
-                &PAGER_UP,
+                &icons::PAGER_UP,
                 can_up,
                 pager_click_id(PagerScope::Fleet, PageTurn::Prev),
             ),
             pager_button(
-                &PAGER_DOWN,
+                &icons::PAGER_DOWN,
                 can_down,
                 pager_click_id(PagerScope::Fleet, PageTurn::Next),
             ),

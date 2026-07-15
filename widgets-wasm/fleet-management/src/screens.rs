@@ -31,6 +31,7 @@ use bmc_wasm_sdk::*;
 
 pub mod dashboard;
 pub mod fixtures;
+pub mod icons;
 pub mod model_detail;
 pub mod parts;
 pub mod table;

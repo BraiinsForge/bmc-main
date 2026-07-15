@@ -10,15 +10,13 @@
 use bmc_wasm_sdk::*;
 
 use crate::layout::truncate_label;
+use crate::screens::icons;
 use crate::screens::parts::{
-    BORDER, CARD_BG, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEADER_BG, LABEL, LABEL_FONT,
-    METRIC_ICON, PAD, STAT_TEMP, area_chart, icon,
+    BACK_CHIP, BORDER, CARD_BG, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H,
+    HEADER_BG, LABEL, LABEL_FONT, METRIC_ICON, PAD, ROW_PAD, TITLE_FONT, area_chart, back_button,
+    icon,
 };
 use crate::view::{PageTurn, PagerScope, pager_click_id};
-
-const CHEVRON_LEFT: Svg = include_svg!("assets/icons/chevron-left.svg");
-const PAGER_UP: Svg = include_svg!("assets/icons/chevron-up.svg");
-const PAGER_DOWN: Svg = include_svg!("assets/icons/chevron-down.svg");
 
 // Column widths within the table card.
 const COL_HOST: f32 = 260.0;
@@ -30,15 +28,8 @@ const COL_EFF: f32 = 132.0;
 const COL_TEMP: f32 = 90.0;
 
 const HOST_CHARS: usize = 20;
-const ROW_PAD: f32 = 20.0;
-// A full page of rows must fit the body height.
-// Overflow clamps the flex row up to min-content and shifts the pinned pager.
-const HEAD_H: f32 = 56.0;
-const DATA_H: f32 = 78.0;
-const TITLE_FONT: u32 = 24;
 const HOST_FONT: u32 = 24;
 const VALUE_FONT: u32 = 24;
-const BACK: f32 = 40.0;
 
 #[derive(Debug)]
 pub struct DeviceRow {
@@ -83,7 +74,7 @@ pub fn model_detail_view(data: &ModelDetailViewData) -> Node {
 
 fn detail_header(title: &str, count: usize) -> Node {
     row(
-        props!(height: BACK, cross_align: CrossAlign::Center, gap: 16.0),
+        props!(height: BACK_CHIP, cross_align: CrossAlign::Center, gap: 16.0),
         [
             back_button(),
             text(
@@ -95,14 +86,6 @@ fn detail_header(title: &str, count: usize) -> Node {
                 style!(size: LABEL_FONT, color: LABEL),
             ),
         ],
-    )
-}
-
-fn back_button() -> Node {
-    touchable(
-        "back",
-        props!(width: BACK, height: BACK, background: GRAY_90),
-        vec![Draw::svg(10.0, 10.0, 20.0, 20.0, &CHEVRON_LEFT, WHITE).with_anti_alias()],
     )
 }
 
@@ -191,7 +174,7 @@ fn temp_head(label: &str) -> Node {
             props!(gap: 8.0, cross_align: CrossAlign::Center),
             [
                 text(label, style!(size: LABEL_FONT, color: LABEL)),
-                icon(&STAT_TEMP, METRIC_ICON, LABEL),
+                icon(&icons::STAT_TEMP, METRIC_ICON, LABEL),
             ],
         )],
     )
@@ -231,12 +214,12 @@ fn pager(can_up: bool, can_down: bool) -> Node {
         [
             col(props!(flex: 1.0), Vec::<Node>::new()),
             pager_button(
-                &PAGER_UP,
+                &icons::PAGER_UP,
                 can_up,
                 pager_click_id(PagerScope::ModelDetail, PageTurn::Prev),
             ),
             pager_button(
-                &PAGER_DOWN,
+                &icons::PAGER_DOWN,
                 can_down,
                 pager_click_id(PagerScope::ModelDetail, PageTurn::Next),
             ),
@@ -257,32 +240,4 @@ fn pager_button(svg: &Svg, enabled: bool, click_id: &str) -> Node {
     } else {
         canvas(props, draws)
     }
-}
-
-/// The single-device screen (back chip + device name),
-/// opened from a device's Detail button.
-#[must_use]
-pub fn device_detail(hostname: &str) -> Node {
-    col(
-        props!(background: BLACK, width: FRAME_W, height: FRAME_H, padding: PAD, gap: 16.0),
-        [
-            row(
-                props!(height: BACK, cross_align: CrossAlign::Center, gap: 16.0),
-                [
-                    back_button(),
-                    text(
-                        hostname,
-                        style!(size: TITLE_FONT, weight: FontWeight::BOLD, color: WHITE),
-                    ),
-                ],
-            ),
-            center(
-                props!(flex: 1.0),
-                [text(
-                    "Device detail \u{2014} coming soon",
-                    style!(size: 28, color: LABEL),
-                )],
-            ),
-        ],
-    )
 }

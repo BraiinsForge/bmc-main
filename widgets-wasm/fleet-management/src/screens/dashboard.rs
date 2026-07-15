@@ -12,9 +12,10 @@
 )]
 use bmc_wasm_sdk::*;
 
+use crate::screens::icons;
 use crate::screens::parts::{
-    BORDER, CARD_BG, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD, STAT_EFFICIENCY,
-    STAT_POWER, STAT_TEMP, VALUE_FONT, area_chart, header, icon, status_counts,
+    BORDER, CARD_BG, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD, VALUE_FONT,
+    area_chart, header, icon, status_counts,
 };
 
 const STATUS_ICON: f32 = 32.0;
@@ -57,13 +58,13 @@ fn grid(data: &DashboardViewData) -> Node {
                 [
                     metric_tile(
                         "Power",
-                        &STAT_POWER,
+                        &icons::STAT_POWER,
                         &data.power.format_value(0),
                         ElectricPower::UNIT,
                     ),
                     metric_tile(
                         "Efficiency",
-                        &STAT_EFFICIENCY,
+                        &icons::STAT_EFFICIENCY,
                         &data.efficiency.format_value(2),
                         MiningEfficiency::UNIT,
                     ),
@@ -171,7 +172,7 @@ fn temp_head(label: &str) -> Node {
         props!(gap: 8.0, cross_align: CrossAlign::Center),
         [
             text(label, style!(size: LABEL_FONT, color: LABEL)),
-            icon(&STAT_TEMP, METRIC_ICON, LABEL),
+            icon(&icons::STAT_TEMP, METRIC_ICON, LABEL),
         ],
     )
 }
