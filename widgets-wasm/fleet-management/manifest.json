@@ -17,8 +17,10 @@
   "supported_viewports": [
     {
       "type": "rectangular",
-      "min_width": 317,
-      "min_height": 238
+      "min_width": 1280,
+      "max_width": 1280,
+      "min_height": 480,
+      "max_height": 480
     }
   ],
   "params": {

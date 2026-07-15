@@ -1044,7 +1044,9 @@ fn dispatch_touch_events(
 // ── Tile ────────────────────────────────────────────────────────────
 
 pub(crate) struct PreviewTile {
-    pub(crate) runtime: WasmWidgetRuntime,
+    /// `None` for a placeholder — a size the manifest declines: no runtime built
+    /// (no live widget, no discovery), painted as a "not supported" slab.
+    pub(crate) runtime: Option<WasmWidgetRuntime>,
     /// Caller-owned renderer drawn alongside `runtime`. Bracket each
     /// `runtime.render(...)` call with `runtime.with_renderer(ptr, ...)`.
     pub(crate) renderer: FemtoVgRenderer,
@@ -1374,6 +1376,9 @@ impl TestbedApp {
         for idx in 0..self.tiles.len() {
             let placed_shape = self.layout.tiles[idx].shape;
             let tile = &mut self.tiles[idx];
+            if tile.runtime.is_none() {
+                continue; // placeholder tile — nothing to hot-reload
+            }
             let (led_tx, led_rx) = if tile.led_count.is_some() {
                 let (led_tx, led_rx) = std::sync::mpsc::channel();
                 (Some(led_tx), Some(led_rx))
@@ -1398,7 +1403,7 @@ impl TestbedApp {
                 rt_config,
             ) {
                 Ok(rt) => {
-                    tile.runtime = rt;
+                    tile.runtime = Some(rt);
                     tile.led_rx = led_rx;
                     tile.led_scene = None;
                     tile.led_enabled = false;
@@ -1548,16 +1553,24 @@ impl TestbedApp {
             }
             .with_context(|| format!("create renderer for {label}"))?;
             let geometry = RuntimeTileGeometry::for_viewport_shape(platform, placed.shape);
-            let runtime = WasmWidgetRuntime::new(
-                &wasm_bytes,
-                w,
-                h,
-                geometry.viewport_shape,
-                geometry.display,
-                chrono::Local::now().fixed_offset(),
-                rt_config,
-            )
-            .with_context(|| format!("create runtime for {label}"))?;
+            // A runtime only for a supported size: constructing one runs the guest's
+            // `init` (and its discovery), so placeholders stay wasm-free.
+            let runtime = if viewport_supported(placed, &self.manifest.supported_viewports) {
+                Some(
+                    WasmWidgetRuntime::new(
+                        &wasm_bytes,
+                        w,
+                        h,
+                        geometry.viewport_shape,
+                        geometry.display,
+                        chrono::Local::now().fixed_offset(),
+                        rt_config,
+                    )
+                    .with_context(|| format!("create runtime for {label}"))?,
+                )
+            } else {
+                None
+            };
             tiles.push(PreviewTile {
                 runtime,
                 renderer,
@@ -1578,8 +1591,12 @@ impl TestbedApp {
             self.gpu_pool.len(),
             gpu_pool_len_after_init(initial_pool_len, self.layout.tiles.len())
         );
-        let (major, minor, patch) = tiles[0].runtime.sdk_version();
-        println!("Widget SDK version: {major}.{minor}.{patch}");
+        if let Some((major, minor, patch)) = tiles
+            .iter()
+            .find_map(|t| t.runtime.as_ref().map(WasmWidgetRuntime::sdk_version))
+        {
+            println!("Widget SDK version: {major}.{minor}.{patch}");
+        }
         // Snapshot the active recording tile's KV directory at start
         // so the fixture's `header.kv` reproduces the initial state on replay.
         if let Some(ref mut rec) = self.recording_mode.state
@@ -1635,9 +1652,18 @@ impl TestbedApp {
             if active_record_idx.is_some_and(|active| active != tile_idx) {
                 continue;
             }
+            if tile.runtime.is_none() {
+                continue; // placeholder tile — no live widget to render
+            }
             tile.drain_led_commands();
-            tile.runtime.set_hermetic(offline);
-            tile.runtime.set_time(system_time, monotonic_ms);
+            tile.runtime
+                .as_mut()
+                .expect("BUG: placeholder skipped above")
+                .set_hermetic(offline);
+            tile.runtime
+                .as_mut()
+                .expect("BUG: placeholder skipped above")
+                .set_time(system_time, monotonic_ms);
             tile.renderer
                 .begin_frame(tile.gpu.width, tile.gpu.height, 1.0);
 
@@ -1646,16 +1672,25 @@ impl TestbedApp {
                 core::ptr::addr_of_mut!(tile.renderer);
             let renderer_ptr = std::ptr::NonNull::new(renderer_raw)
                 .expect("BUG: addr_of_mut! cannot produce null");
-            tile.runtime.poll_deliveries_with_renderer(renderer_ptr);
+            tile.runtime
+                .as_mut()
+                .expect("BUG: placeholder skipped above")
+                .poll_deliveries_with_renderer(renderer_ptr);
             let outcome = tile
                 .runtime
+                .as_mut()
+                .expect("BUG: placeholder skipped above")
                 .with_renderer(renderer_ptr, |rt| rt.render(delta_ms));
             match outcome {
                 Ok(RenderStatus::Ok) => {
                     if !tile.ever_rendered {
                         tracing::info!(
                             label = %tile.label,
-                            instance_id = %tile.runtime.asset_namespace(),
+                            instance_id = %tile
+                                .runtime
+                                .as_ref()
+                                .expect("BUG: placeholder skipped above")
+                                .asset_namespace(),
                             "tile: first render after construction/reload"
                         );
                         tile.ever_rendered = true;
@@ -1676,13 +1711,13 @@ impl TestbedApp {
             }
             tile.renderer.flush();
         }
-        // Pick the FULL tile (idx 0) as the perf-report sampling source — matches the prior
-        // testbed which sampled tile 0 too. The other tiles still render but aren't reported.
-        if let Some(tile) = self.tiles.first_mut() {
-            self.perf.samples.push(tile.runtime.last_timings());
+        // The first live tile (FULL on BMC100) for the perf report; placeholders
+        // have no runtime to time.
+        if let Some(runtime) = self.tiles.iter_mut().find_map(|tile| tile.runtime.as_mut()) {
+            self.perf.samples.push(runtime.last_timings());
             self.perf
                 .section_samples
-                .push(tile.runtime.take_profile_sections());
+                .push(runtime.take_profile_sections());
         }
 
         // Restore framebuffer + viewport so egui draws onto the screen FBO at the right size.
@@ -1774,7 +1809,12 @@ impl TestbedApp {
                 g.add(lbl(""));
                 g.label(cell_fps(fps));
                 g.end_row();
-                if let Some(t) = self.tiles.first().map(|t| t.runtime.last_timings()) {
+                if let Some(t) = self
+                    .tiles
+                    .first()
+                    .and_then(|t| t.runtime.as_ref())
+                    .map(WasmWidgetRuntime::last_timings)
+                {
                     g.add(lbl("FULL wasm:"));
                     g.label(cell_us(t.wasm_us));
                     g.add(lbl("deser:"));
@@ -1850,6 +1890,69 @@ fn gpu_pool_len_after_init(pool_len: usize, needed_tiles: usize) -> usize {
     pool_len.saturating_sub(needed_tiles)
 }
 
+/// Whether a widget's `supported` viewports admit a tile of this shape and size.
+/// An empty list is unconstrained — every tile qualifies.
+fn viewport_supported(
+    placed: &PlacedTile,
+    supported: &[bmc_widget_manifest::WidgetViewportConstraint],
+) -> bool {
+    use bmc_widget_manifest::ViewportShape;
+    if supported.is_empty() {
+        return true;
+    }
+    supported.iter().any(|c| {
+        let shape_ok = matches!(
+            (placed.shape, c.viewport_shape),
+            (
+                platforms::DisplayShape::Rectangular,
+                ViewportShape::Rectangular
+            ) | (platforms::DisplayShape::Round, ViewportShape::Round)
+        );
+        shape_ok
+            && c.min_width.is_none_or(|lo| placed.w >= lo)
+            && c.max_width.is_none_or(|hi| placed.w <= hi)
+            && c.min_height.is_none_or(|lo| placed.h >= lo)
+            && c.max_height.is_none_or(|hi| placed.h <= hi)
+    })
+}
+
+/// Paint a dim "size not supported" slab where a widget declines a tile.
+fn paint_placeholder(painter: &egui::Painter, rect: egui::Rect, label: &str) {
+    painter.rect_filled(rect, 0.0, egui::Color32::from_gray(14));
+    painter.rect_stroke(
+        rect,
+        0.0,
+        egui::Stroke::new(1.0, egui::Color32::from_gray(38)),
+        egui::StrokeKind::Inside,
+    );
+    let icon = rect.center() - egui::vec2(0.0, 16.0);
+    let radius = 13.0;
+    let stroke = egui::Stroke::new(2.0, egui::Color32::from_gray(80));
+    painter.circle_stroke(icon, radius, stroke);
+    let slash = radius * 0.72;
+    painter.line_segment(
+        [
+            icon + egui::vec2(-slash, -slash),
+            icon + egui::vec2(slash, slash),
+        ],
+        stroke,
+    );
+    painter.text(
+        rect.center() + egui::vec2(0.0, 12.0),
+        egui::Align2::CENTER_CENTER,
+        "Size not supported",
+        egui::FontId::proportional(13.0),
+        egui::Color32::from_gray(120),
+    );
+    painter.text(
+        rect.center() + egui::vec2(0.0, 30.0),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(11.0),
+        egui::Color32::from_gray(75),
+    );
+}
+
 fn paint_tile_texture(ui: &egui::Ui, tile: &PreviewTile, rect: egui::Rect) {
     // FemtoVG renders bottom-up into the FBO; flip V to display top-down.
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 1.0), egui::pos2(1.0, 0.0));
@@ -1872,6 +1975,10 @@ thread_local! {
 }
 
 impl eframe::App for TestbedApp {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one egui frame: resize lock, lazy tile init, render, side panels, per-tile paint + touch"
+    )]
     fn ui(&mut self, root_ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // One-shot resize lock. Avoid min/max size commands: on Wayland they can fail
         // protocol validation while switching between narrow and wide platform layouts.
@@ -1951,6 +2058,11 @@ impl eframe::App for TestbedApp {
                         origin + egui::vec2(tile.x as f32, tile.y as f32),
                         egui::vec2(tile.gpu.width as f32, tile.gpu.height as f32),
                     );
+                    // A declined size gets the "not supported" slab, not a texture.
+                    if tile.runtime.is_none() {
+                        paint_placeholder(ui.painter(), rect, &tile.label);
+                        continue;
+                    }
                     // Recording mode focuses on a single size — non-active tiles get
                     // a flat dark slab instead of the WASM texture (whose FBO contents
                     // are stale since `render_tiles` skipped them), and don't receive
@@ -1992,7 +2104,14 @@ impl eframe::App for TestbedApp {
                     } else {
                         None
                     };
-                    dispatch_touch_events(&response, rect, &mut tile.runtime, rec_for_tile);
+                    dispatch_touch_events(
+                        &response,
+                        rect,
+                        tile.runtime
+                            .as_mut()
+                            .expect("BUG: placeholder skipped above"),
+                        rec_for_tile,
+                    );
 
                     if tile.led_count.is_some() {
                         paint_led_strip(ui.painter(), tile, origin, time_s);

@@ -55,7 +55,9 @@ impl TestbedApp {
         // Fire `on_params_update` on every tile — operator-driven changes apply to all
         // size variants previewed in the testbed, not just the active recording tile.
         for tile in &mut self.tiles {
-            tile.runtime.deliver_params_update(new_params.clone());
+            if let Some(runtime) = tile.runtime.as_mut() {
+                runtime.deliver_params_update(new_params.clone());
+            }
         }
         self.params = new_params;
 

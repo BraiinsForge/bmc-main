@@ -87,7 +87,9 @@ impl TestbedApp {
             return;
         }
         for tile in &mut self.tiles {
-            tile.runtime.deliver_system_update(new_system.clone());
+            if let Some(runtime) = tile.runtime.as_mut() {
+                runtime.deliver_system_update(new_system.clone());
+            }
         }
         self.system = new_system;
 

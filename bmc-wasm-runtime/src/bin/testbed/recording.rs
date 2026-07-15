@@ -402,10 +402,13 @@ impl TestbedApp {
 
         // Pull network events out of the active tile's runtime, plus the fetch events the
         // observer pushed into the shared buffer.
-        let runtime_events = if let Some(tile) = self.tiles.get_mut(rec.active_tile) {
-            tile.runtime.take_recorded_events()
-        } else {
-            Vec::new()
+        let runtime_events = match self
+            .tiles
+            .get_mut(rec.active_tile)
+            .and_then(|tile| tile.runtime.as_mut())
+        {
+            Some(runtime) => runtime.take_recorded_events(),
+            None => Vec::new(),
         };
         let network_timeline = fixtures::fixture_events_to_timeline(&runtime_events);
         let fetch_timeline: Vec<TimelineEvent> = std::mem::take(
