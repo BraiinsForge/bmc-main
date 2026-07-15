@@ -86,6 +86,39 @@ fn tmp_profile() -> TempDir {
     TempDir::new().expect("BUG: tempdir")
 }
 
+fn quarantined_marker(profile_dir: &Path, marker: &str) -> PathBuf {
+    let prefix = format!("{marker}.invalid.");
+    let matches = std::fs::read_dir(profile_dir)
+        .expect("BUG: read profile directory")
+        .map(|entry| entry.expect("BUG: read profile entry"))
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "exactly one quarantine must preserve {marker}"
+    );
+    let quarantine = matches
+        .first()
+        .expect("BUG: exactly one quarantine was asserted");
+    let name = quarantine.file_name();
+    let suffix = name
+        .to_str()
+        .expect("BUG: quarantine name must be UTF-8")
+        .strip_prefix(&prefix)
+        .expect("BUG: quarantine name must retain marker prefix");
+    let timestamp = suffix
+        .split('.')
+        .next()
+        .expect("BUG: quarantine name must contain a timestamp");
+    assert!(
+        timestamp.parse::<u128>().is_ok_and(|value| value > 0),
+        "quarantine name must contain a positive numeric timestamp: {}",
+        name.display()
+    );
+    quarantine.path()
+}
+
 // ---------------------------------------------------------------------------
 // activate --generation current (default)
 
@@ -138,6 +171,55 @@ fn activate_current_falls_back_to_latest_when_symlink_missing() {
     ]);
     run.ok("activate current with fallback");
     assert_eq!(read_activation_log(dir.path()), vec![4]);
+}
+
+#[test]
+#[serial]
+fn activate_current_quarantines_regular_file_and_activates_latest() {
+    let dir = tmp_profile();
+    make_gen(dir.path(), 1, 0);
+    make_gen(dir.path(), 4, 0);
+    std::fs::write(dir.path().join("current"), b"invalid current")
+        .expect("BUG: write invalid current");
+
+    let run = run_cli(&[
+        "activate",
+        "--profile-dir",
+        &dir.path().display().to_string(),
+    ]);
+
+    run.ok("activate current with a regular-file obstruction");
+    assert_eq!(read_activation_log(dir.path()), vec![4]);
+    assert_eq!(
+        std::fs::read(quarantined_marker(dir.path(), "current"))
+            .expect("BUG: read quarantined current"),
+        b"invalid current"
+    );
+}
+
+#[test]
+#[serial]
+fn activate_current_quarantines_directory_and_activates_latest() {
+    let dir = tmp_profile();
+    make_gen(dir.path(), 1, 0);
+    make_gen(dir.path(), 4, 0);
+    std::fs::create_dir(dir.path().join("current")).expect("BUG: create invalid current");
+    std::fs::write(dir.path().join("current/evidence"), b"preserved")
+        .expect("BUG: write invalid current evidence");
+
+    let run = run_cli(&[
+        "activate",
+        "--profile-dir",
+        &dir.path().display().to_string(),
+    ]);
+
+    run.ok("activate current with a directory obstruction");
+    assert_eq!(read_activation_log(dir.path()), vec![4]);
+    assert_eq!(
+        std::fs::read(quarantined_marker(dir.path(), "current").join("evidence"))
+            .expect("BUG: read quarantined current evidence"),
+        b"preserved"
+    );
 }
 
 #[test]
@@ -271,6 +353,66 @@ fn activate_next_no_next_delegates_to_current() {
     ]);
     run.ok("activate --generation next with no next");
     assert_eq!(read_activation_log(dir.path()), vec![1]);
+}
+
+#[test]
+#[serial]
+fn activate_next_quarantines_regular_file_and_activates_current() {
+    let dir = tmp_profile();
+    make_gen(dir.path(), 1, 0);
+    symlink("1-link", dir.path().join("current")).expect("BUG: current");
+    std::fs::write(dir.path().join("next.1.0"), b"invalid next").expect("BUG: write invalid next");
+    let bos_version_file = dir.path().join("bos_version");
+    std::fs::write(&bos_version_file, "1.0\n").expect("BUG: write bos version");
+
+    let run = run_cli(&[
+        "activate",
+        "--profile-dir",
+        &dir.path().display().to_string(),
+        "--generation",
+        "next",
+        "--bos-version-file",
+        &bos_version_file.display().to_string(),
+    ]);
+
+    run.ok("activate next with a regular-file obstruction");
+    assert_eq!(read_activation_log(dir.path()), vec![1]);
+    assert_eq!(
+        std::fs::read(quarantined_marker(dir.path(), "next.1.0"))
+            .expect("BUG: read quarantined next"),
+        b"invalid next"
+    );
+}
+
+#[test]
+#[serial]
+fn activate_next_quarantines_directory_and_activates_current() {
+    let dir = tmp_profile();
+    make_gen(dir.path(), 1, 0);
+    symlink("1-link", dir.path().join("current")).expect("BUG: current");
+    std::fs::create_dir(dir.path().join("next.1.0")).expect("BUG: create invalid next");
+    std::fs::write(dir.path().join("next.1.0/evidence"), b"preserved")
+        .expect("BUG: write invalid next evidence");
+    let bos_version_file = dir.path().join("bos_version");
+    std::fs::write(&bos_version_file, "1.0\n").expect("BUG: write bos version");
+
+    let run = run_cli(&[
+        "activate",
+        "--profile-dir",
+        &dir.path().display().to_string(),
+        "--generation",
+        "next",
+        "--bos-version-file",
+        &bos_version_file.display().to_string(),
+    ]);
+
+    run.ok("activate next with a directory obstruction");
+    assert_eq!(read_activation_log(dir.path()), vec![1]);
+    assert_eq!(
+        std::fs::read(quarantined_marker(dir.path(), "next.1.0").join("evidence"))
+            .expect("BUG: read quarantined next evidence"),
+        b"preserved"
+    );
 }
 
 #[test]

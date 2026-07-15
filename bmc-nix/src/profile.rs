@@ -1523,6 +1523,8 @@ mod tests {
             | crate::activation::ActivationError::EntrypointNotFound { .. }
             | crate::activation::ActivationError::NoGeneration { .. }
             | crate::activation::ActivationError::ResolveIo { .. }
+            | crate::activation::ActivationError::QuarantineTimestamp { .. }
+            | crate::activation::ActivationError::Quarantine { .. }
             | crate::activation::ActivationError::RevertedAfterFailure { .. }
             | crate::activation::ActivationError::RevertFailed { .. }
             | crate::activation::ActivationError::ConsumeMarker { .. }
@@ -1563,6 +1565,8 @@ mod tests {
             | crate::activation::ActivationError::EntrypointNotFound { .. }
             | crate::activation::ActivationError::NoGeneration { .. }
             | crate::activation::ActivationError::ResolveIo { .. }
+            | crate::activation::ActivationError::QuarantineTimestamp { .. }
+            | crate::activation::ActivationError::Quarantine { .. }
             | crate::activation::ActivationError::RevertedAfterFailure { .. }
             | crate::activation::ActivationError::RevertFailed { .. }
             | crate::activation::ActivationError::ConsumeMarker { .. }

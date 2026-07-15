@@ -3,6 +3,7 @@
 use std::io;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::profile::parse_generation_link_name;
 
@@ -37,6 +38,19 @@ pub enum ActivationError {
         #[source]
         source: io::Error,
     },
+    #[error("failed to timestamp invalid activation marker '{path}': {source}")]
+    QuarantineTimestamp {
+        path: String,
+        #[source]
+        source: std::time::SystemTimeError,
+    },
+    #[error("failed to quarantine invalid activation marker '{path}' as '{quarantine}': {source}")]
+    Quarantine {
+        path: String,
+        quarantine: String,
+        #[source]
+        source: io::Error,
+    },
     #[error("generation activated, but consuming its marker '{path}' failed: {source}")]
     ConsumeMarker {
         path: String,
@@ -62,7 +76,8 @@ pub enum ActivationError {
 /// Which profile generation to activate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GenerationSelector {
-    /// `<profile-dir>/current`, with a soft fallback to `find_latest_link`.
+    /// `<profile-dir>/current`, quarantining a non-symlink obstruction and
+    /// falling back to `find_latest_link` when no valid link remains.
     Current,
     /// The largest `<N>-link` in the profile directory.
     Latest,
@@ -213,10 +228,11 @@ pub fn remove_next(profile_dir: &Path, bos_version: &str) -> io::Result<()> {
 /// [`crate::profile::activate_profile`] (which reverts to `current` on
 /// failure).
 ///
-/// `Current` softly falls back to `find_latest_link` (both for a
-/// missing symlink and for a missing/non-executable entrypoint) and only
-/// returns [`ActivationOutcome::Skipped`] when nothing resolves; `Latest`
-/// and `Number(N)` never fall back. `Next` activates the
+/// `Current` quarantines a non-symlink marker and softly falls back to
+/// `find_latest_link` (both for a missing symlink and for a
+/// missing/non-executable entrypoint). It only returns
+/// [`ActivationOutcome::Skipped`] when nothing resolves; `Latest` and
+/// `Number(N)` never fall back. `Next` activates the
 /// `next.<bos-version>` marker matching `bos_version` (the running
 /// firmware's) and removes it on success; markers staged for other
 /// versions are removed as stale. When no marker for this version
@@ -251,26 +267,33 @@ pub async fn activate(
                 sweep_next_markers(profile_dir, Some(marker))
                     .map_err(io_to_activation(profile_dir))?;
                 let next = profile_dir.join(marker);
-                // `metadata` follows the symlink, so `NotFound` covers both an
-                // absent and a dangling marker; only a marker that resolves to
-                // a real generation is honored. A dangling marker (partial GC,
-                // manual cleanup) must fall back to `current` instead of
-                // failing every boot — the good `current` generation still
-                // boots. Any other error (EACCES, ELOOP, …) says nothing
-                // about staleness and must surface rather than silently skip
-                // a genuinely staged generation.
-                match std::fs::metadata(&next) {
-                    Ok(_) => GenerationSelector::Next,
-                    Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                        if next.symlink_metadata().is_ok() {
-                            tracing::warn!(
-                                "staged next generation {} is dangling; falling back to current",
-                                next.display()
-                            );
+                if matches!(
+                    quarantine_invalid_marker(profile_dir, marker)?,
+                    MarkerPresence::Symlink
+                ) {
+                    // `metadata` follows the symlink, so `NotFound` covers a
+                    // concurrently removed or dangling marker. A dangling
+                    // marker (partial GC, manual cleanup) must fall back to
+                    // `current` instead of failing every boot — the good
+                    // `current` generation still boots. Any other error
+                    // (EACCES, ELOOP, …) says nothing about staleness and must
+                    // surface rather than silently skip a genuinely staged
+                    // generation.
+                    match std::fs::metadata(&next) {
+                        Ok(_) => GenerationSelector::Next,
+                        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                            if next.symlink_metadata().is_ok() {
+                                tracing::warn!(
+                                    "staged next generation {} is dangling; falling back to current",
+                                    next.display()
+                                );
+                            }
+                            GenerationSelector::Current
                         }
-                        GenerationSelector::Current
+                        Err(err) => return Err(io_to_activation(profile_dir)(err)),
                     }
-                    Err(err) => return Err(io_to_activation(profile_dir)(err)),
+                } else {
+                    GenerationSelector::Current
                 }
             }
         },
@@ -337,6 +360,12 @@ fn resolve_selector(
 
 pub(crate) fn resolve_current_link(profile_dir: &Path) -> Result<Option<PathBuf>, ActivationError> {
     let current = profile_dir.join("current");
+    if matches!(
+        quarantine_invalid_marker(profile_dir, "current")?,
+        MarkerPresence::Missing
+    ) {
+        return Ok(None);
+    }
     match std::fs::read_link(&current) {
         Ok(target) => {
             let absolute = if target.is_absolute() {
@@ -352,6 +381,72 @@ pub(crate) fn resolve_current_link(profile_dir: &Path) -> Result<Option<PathBuf>
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(io_to_activation(profile_dir)(err)),
     }
+}
+
+enum MarkerPresence {
+    Missing,
+    Symlink,
+}
+
+fn quarantine_invalid_marker(
+    profile_dir: &Path,
+    marker_name: &str,
+) -> Result<MarkerPresence, ActivationError> {
+    let marker = profile_dir.join(marker_name);
+    let metadata = match marker.symlink_metadata() {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(MarkerPresence::Missing),
+        Err(err) => return Err(io_to_activation(&marker)(err)),
+    };
+    if metadata.file_type().is_symlink() {
+        return Ok(MarkerPresence::Symlink);
+    }
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|source| ActivationError::QuarantineTimestamp {
+            path: marker.display().to_string(),
+            source,
+        })?
+        .as_nanos();
+    let quarantine_stem = format!("{marker_name}.invalid.{timestamp}");
+    let quarantine = unique_quarantine_path(profile_dir, &quarantine_stem)?;
+    std::fs::rename(&marker, &quarantine).map_err(|source| ActivationError::Quarantine {
+        path: marker.display().to_string(),
+        quarantine: quarantine.display().to_string(),
+        source,
+    })?;
+    crate::fs_sync::fsync_dir(profile_dir).map_err(|source| ActivationError::Quarantine {
+        path: marker.display().to_string(),
+        quarantine: quarantine.display().to_string(),
+        source,
+    })?;
+    tracing::warn!(
+        marker = %marker.display(),
+        quarantine = %quarantine.display(),
+        "quarantined invalid activation marker"
+    );
+    Ok(MarkerPresence::Missing)
+}
+
+fn unique_quarantine_path(
+    profile_dir: &Path,
+    quarantine_stem: &str,
+) -> Result<PathBuf, ActivationError> {
+    for suffix in 0_usize.. {
+        let file_name = if suffix == 0 {
+            quarantine_stem.to_owned()
+        } else {
+            format!("{quarantine_stem}.{suffix}")
+        };
+        let candidate = profile_dir.join(file_name);
+        match candidate.symlink_metadata() {
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(candidate),
+            Ok(_) => {}
+            Err(err) => return Err(io_to_activation(&candidate)(err)),
+        }
+    }
+    unreachable!("usize quarantine suffix space cannot be exhausted")
 }
 
 pub(crate) fn io_to_activation(profile_dir: &Path) -> impl Fn(io::Error) -> ActivationError + '_ {
@@ -554,6 +649,21 @@ mod tests {
             .expect("BUG: find")
             .expect("BUG: newest generation link must be present");
         assert_eq!(latest, dir.path().join("1-link"));
+    }
+
+    #[test]
+    fn unique_quarantine_path_appends_suffix_after_collisions() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        std::fs::write(dir.path().join("current.invalid.123"), b"first")
+            .expect("BUG: write first quarantine");
+        std::fs::write(dir.path().join("current.invalid.123.1"), b"second")
+            .expect("BUG: write second quarantine");
+
+        assert_eq!(
+            unique_quarantine_path(dir.path(), "current.invalid.123")
+                .expect("BUG: choose quarantine path"),
+            dir.path().join("current.invalid.123.2")
+        );
     }
 
     #[test]
