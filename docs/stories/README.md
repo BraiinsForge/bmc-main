@@ -93,8 +93,9 @@ Information about all implemented official widgets.
 
 ### Audio & Alarms
 
-*Not yet documented.* Alarm scheduling with repeat patterns, snooze, and custom sound playback through the on-board
-speaker.
+See [Clock Alarm](alarm.md) for the whole alarm feature — configuring alarms from the web app (time, repeat days, label,
+sound, and per-alarm snooze) and the on-screen behavior of a firing alarm (the ringing screen, Stop/Snooze, and snooze
+limits).
 
 ### Display & Scenes
 

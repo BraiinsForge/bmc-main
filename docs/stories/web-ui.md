@@ -128,6 +128,6 @@ firmware rebuild.
 
 - Firmware upgrade flow — separate story area.
 - Initial-setup wizard — separate story area.
-- Alarm / scheduler configuration — separate story area.
+- Alarm / scheduler configuration — see the [Clock Alarm](alarm.md) story.
 - Account management — separate story area.
 - Auth can be added later; the current focus is scene/widget configuration surface.
