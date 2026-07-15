@@ -22,12 +22,26 @@ pub enum AlarmAction {
     Snooze,
 }
 
+/// The alarm currently ringing, retained so a late-binding overlay can be
+/// replayed the `ring_alarm` event on bind. `Some` between a `ring` and its
+/// `stop`.
+#[derive(Debug, Clone)]
+struct Ring {
+    time: String,
+    label: String,
+    snooze_allowed: bool,
+}
+
 /// Tracks bound alarm resources and buffers overlay requests for the loop to
 /// drain.
 #[derive(Debug, Default)]
 pub struct AlarmState {
     pub resources: Vec<DeckAlarmV1>,
     pub pending_actions: Vec<AlarmAction>,
+    /// The active ring, `Some` between a `ring` and its `stop`. Lets the loop's
+    /// no-overlay fallback and touch-to-dismiss act only while an alarm is
+    /// actually firing, and carries the payload replayed to a late binder.
+    ringing: Option<Ring>,
 }
 
 impl AlarmState {
@@ -49,17 +63,59 @@ impl AlarmState {
         std::mem::take(&mut self.pending_actions)
     }
 
+    /// Whether an alarm is currently ringing (between `ring` and `stop`).
+    pub fn is_ringing(&self) -> bool {
+        self.ringing.is_some()
+    }
+
     pub fn ring(&mut self, time: &str, label: &str, snooze_allowed: bool) {
         self.prune();
+        self.ringing = Some(Ring {
+            time: time.to_owned(),
+            label: label.to_owned(),
+            snooze_allowed,
+        });
         for r in &self.resources {
             r.ring_alarm(time.to_owned(), label.to_owned(), u32::from(snooze_allowed));
         }
     }
     pub fn stop(&mut self) {
         self.prune();
+        self.ringing = None;
         for r in &self.resources {
             r.stop_alarm();
         }
+    }
+
+    /// Replay the active ring to a freshly bound resource. Called from `bind` so
+    /// an overlay that (re)binds mid-ring — e.g. a host that was absent at fire
+    /// time or crashed and restarted within the fallback grace window — maps the
+    /// alarm immediately instead of sitting idle while `has_live_overlay`
+    /// already reports it live, which would otherwise satisfy the watchdog and
+    /// suppress touch-to-dismiss with nothing on screen.
+    fn replay_ring(&self, resource: &DeckAlarmV1) {
+        if let Some(ring) = &self.ringing {
+            resource.ring_alarm(
+                ring.time.clone(),
+                ring.label.clone(),
+                u32::from(ring.snooze_allowed),
+            );
+        }
+    }
+
+    /// Whether at least one overlay resource is still bound and alive. `false`
+    /// means no overlay is present to render/dismiss a ringing alarm — either
+    /// none bound at fire time or the overlay client died. Does not prune, so it
+    /// is a cheap `&self` probe usable from the touch path.
+    pub fn has_live_overlay(&self) -> bool {
+        self.resources.iter().any(Resource::is_alive)
+    }
+
+    /// Queue a dismiss as if the overlay had requested it; drained by the loop
+    /// into `AlarmCommand::Dismiss`. Used by the no-overlay fallback.
+    pub fn request_dismiss(&mut self) {
+        self.pending_actions.push(AlarmAction::Dismiss);
+        self.ringing = None;
     }
 }
 
@@ -73,6 +129,9 @@ impl GlobalDispatch<DeckAlarmV1, ()> for CompositorState {
         data_init: &mut DataInit<'_, Self>,
     ) {
         let resource = data_init.init(resource, ());
+        // Replay the active ring to this new resource so a mid-ring (re)bind
+        // maps immediately instead of defeating the watchdog; see `replay_ring`.
+        state.alarm.replay_ring(&resource);
         state.alarm.resources.push(resource);
     }
 }
@@ -115,5 +174,48 @@ mod tests {
         s.pending_actions.push(AlarmAction::Snooze);
         assert_eq!(s.drain_actions(), vec![AlarmAction::Snooze]);
         assert!(s.drain_actions().is_empty());
+    }
+
+    #[test]
+    fn ring_and_stop_toggle_ringing() {
+        let mut s = AlarmState::default();
+        assert!(!s.is_ringing());
+        s.ring("07:30", "Wake up", true);
+        assert!(s.is_ringing());
+        s.stop();
+        assert!(!s.is_ringing());
+    }
+
+    #[test]
+    fn ring_retains_replay_payload_until_cleared() {
+        // The payload `replay_ring` re-sends to a late-binding overlay is kept
+        // for the whole ring and dropped on stop, so a mid-ring (re)bind maps
+        // the alarm instead of defeating the no-overlay watchdog. The wire
+        // fan-out itself needs a live resource and is covered on-device.
+        let mut s = AlarmState::default();
+        assert!(s.ringing.is_none());
+        s.ring("07:30", "Wake up", true);
+        let ring = s.ringing.as_ref().expect("BUG: ringing after ring()");
+        assert_eq!(
+            (ring.time.as_str(), ring.label.as_str(), ring.snooze_allowed),
+            ("07:30", "Wake up", true)
+        );
+        s.stop();
+        assert!(s.ringing.is_none());
+    }
+
+    #[test]
+    fn no_resources_means_no_live_overlay() {
+        let s = AlarmState::default();
+        assert!(!s.has_live_overlay());
+    }
+
+    #[test]
+    fn request_dismiss_queues_dismiss_and_clears_ringing() {
+        let mut s = AlarmState::default();
+        s.ring("07:30", "", false);
+        s.request_dismiss();
+        assert!(!s.is_ringing());
+        assert_eq!(s.drain_actions(), vec![AlarmAction::Dismiss]);
     }
 }

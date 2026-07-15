@@ -560,9 +560,9 @@ impl AlarmScheduler {
         });
     }
 
-    /// Stop the running alarm and register a cancellable
-    /// pending snooze that re-fires through `alarm_sender`.
-    /// Re-snoozing the same alarm cancels the prior pending entry.
+    /// If snooze limit is not reached yet, stop the running alarm
+    /// and register a cancellable pending snooze that re-fires through
+    /// `alarm_sender`. Re-snoozing the same alarm cancels the prior pending entry.
     async fn handle_snooze_command(&self) {
         info!("Received Snooze command");
         let active_alarm = {
@@ -584,6 +584,7 @@ impl AlarmScheduler {
                 .take()
                 .expect("BUG: alarm present, checked above")
         };
+
         let mut alarm = active_alarm.alarm.clone();
         active_alarm.cancel().await;
         self.alarm_bus.send_event(AlarmEvent::Snoozed);

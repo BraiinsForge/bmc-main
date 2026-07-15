@@ -84,6 +84,14 @@ const FRAME_CALLBACK_TICK: Duration = Duration::from_millis(16);
 const TRANSITION_WARM_UP_RETRY: Duration = Duration::from_millis(16);
 const TRANSITION_WARM_UP_TIMEOUT: Duration = Duration::from_millis(300);
 
+/// How often, while an alarm is ringing, the loop probes for a live overlay so
+/// a mid-ring overlay crash is noticed promptly (see `on_alarm_fallback_tick`).
+const ALARM_FALLBACK_POLL: Duration = Duration::from_secs(1);
+/// How long an alarm may ring with no live overlay before the compositor
+/// auto-dismisses it — the no-overlay fallback grace. Long enough for a
+/// crashed overlay to re-bind and replay before we give up on the UI.
+const ALARM_FALLBACK_GRACE: Duration = Duration::from_secs(10);
+
 /// Backoff ladder for post-startup touch-discovery retries.
 ///
 /// Sized to cover the udev/sysfs visibility race on mdev-only OpenWrt
@@ -476,6 +484,8 @@ impl EglCompositor {
             ),
             pending_transition_warm_up: None,
             scene_cycling_timer_generation: 0,
+            alarm_fallback_generation: 0,
+            alarm_no_overlay_since: None,
             last_neighbors_suppressed: false,
         };
         app_state.reevaluate_automatic_cycling(Instant::now());
@@ -937,6 +947,12 @@ struct AppState {
     automatic_cycling: AutomaticCycling,
     pending_transition_warm_up: Option<TransitionWarmUp>,
     scene_cycling_timer_generation: u64,
+    /// Generation guard for the alarm no-overlay fallback watchdog timer; a
+    /// bump invalidates any in-flight timer (mirrors `scene_cycling_timer_generation`).
+    alarm_fallback_generation: u64,
+    /// When the ringing alarm was first observed with no live overlay; `None`
+    /// while an overlay is present. Drives the `ALARM_FALLBACK_GRACE` deadline.
+    alarm_no_overlay_since: Option<Instant>,
     /// Calloop handle, used to (re-)arm the touch-discovery retry timer
     /// from `schedule_touch_discovery_retry`.
     loop_handle: LoopHandle<'static, AppState>,
@@ -1073,6 +1089,58 @@ impl AppState {
         if let Err(e) = result {
             tracing::error!("failed to schedule scene cycling timer: {e}");
         }
+    }
+
+    /// Arm the no-overlay fallback watchdog for a freshly-ringing alarm. Seeds
+    /// `alarm_no_overlay_since` when no overlay is bound at fire time so that
+    /// case dismisses exactly `ALARM_FALLBACK_GRACE` later, then polls every
+    /// `ALARM_FALLBACK_POLL` to catch a mid-ring overlay crash. Bumping the
+    /// generation drops any previously-armed watchdog.
+    fn arm_alarm_fallback(&mut self) {
+        self.alarm_no_overlay_since =
+            (!self.compositor.alarm.has_live_overlay()).then(Instant::now);
+        self.alarm_fallback_generation = self.alarm_fallback_generation.saturating_add(1);
+        let generation = self.alarm_fallback_generation;
+        let timer = Timer::from_duration(ALARM_FALLBACK_POLL);
+        let result = self.loop_handle.insert_source(timer, move |_, (), state| {
+            if generation != state.alarm_fallback_generation || !state.compositor.alarm.is_ringing()
+            {
+                return TimeoutAction::Drop;
+            }
+            if state.on_alarm_fallback_tick(Instant::now()) {
+                TimeoutAction::ToDuration(ALARM_FALLBACK_POLL)
+            } else {
+                TimeoutAction::Drop
+            }
+        });
+        if let Err(e) = result {
+            tracing::error!("failed to schedule alarm fallback timer: {e}");
+        }
+    }
+
+    /// Invalidate the fallback watchdog (alarm stopped / dismissed elsewhere).
+    fn cancel_alarm_fallback(&mut self) {
+        self.alarm_fallback_generation = self.alarm_fallback_generation.saturating_add(1);
+        self.alarm_no_overlay_since = None;
+    }
+
+    /// One watchdog poll. Returns whether to keep polling. With a live overlay,
+    /// the overlay owns the alarm — reset the no-overlay clock and keep watching
+    /// in case it later crashes. With no overlay for `ALARM_FALLBACK_GRACE`,
+    /// auto-dismiss and stop polling (bmc's `stop` follows and clears `ringing`).
+    fn on_alarm_fallback_tick(&mut self, now: Instant) -> bool {
+        if self.compositor.alarm.has_live_overlay() {
+            self.alarm_no_overlay_since = None;
+            return true;
+        }
+        let since = *self.alarm_no_overlay_since.get_or_insert(now);
+        if now.duration_since(since) < ALARM_FALLBACK_GRACE {
+            return true;
+        }
+        tracing::warn!("alarm ringing with no live overlay; auto-dismissing");
+        self.compositor.alarm.request_dismiss();
+        self.alarm_no_overlay_since = None;
+        false
     }
 
     fn on_scene_cycling_timer(&mut self, now: Instant) {
@@ -1279,6 +1347,16 @@ impl AppState {
     ) {
         use smithay::input::touch::DownEvent;
         use smithay::utils::SERIAL_COUNTER;
+
+        // No-overlay fallback: while an alarm rings with no overlay to show its
+        // Stop/Snooze buttons, any touch dismisses it immediately. Consume the
+        // touch so it does not also drive gestures/scene drags on the widget
+        // behind. With a live overlay this is skipped — the overlay owns input.
+        if self.compositor.alarm.is_ringing() && !self.compositor.alarm.has_live_overlay() {
+            tracing::info!("touch dismissed alarm ringing with no live overlay");
+            self.compositor.alarm.request_dismiss();
+            return;
+        }
 
         let location = self.touch_location(event);
         let time = event.time_msec();
@@ -2011,9 +2089,11 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             snooze_allowed,
         } => {
             state.compositor.alarm.ring(&time, &label, snooze_allowed);
+            state.arm_alarm_fallback();
         }
         CompositorCommand::StopAlarm => {
             state.compositor.alarm.stop();
+            state.cancel_alarm_fallback();
         }
     }
 }
@@ -2496,11 +2576,12 @@ impl Compositor for EglCompositor {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppState, CompositorState, Emission, GestureConfig, GestureState, LibinputInputBackend,
-        LifecycleSink, LifecycleState, RedrawState, TRANSITION_WARM_UP_TIMEOUT, TouchSlot,
-        TransitionWarmUp, clamp_initial_lifecycle, dispatch_timeout, emit_lifecycle_batches,
-        emit_lifecycle_transitions, emit_transition_incoming_batch, handle_clear_pid_command,
-        handle_command, transition_incoming_widget_ids, transition_warm_up_ready,
+        ALARM_FALLBACK_GRACE, AppState, CompositorState, Emission, GestureConfig, GestureState,
+        LibinputInputBackend, LifecycleSink, LifecycleState, RedrawState,
+        TRANSITION_WARM_UP_TIMEOUT, TouchSlot, TransitionWarmUp, clamp_initial_lifecycle,
+        dispatch_timeout, emit_lifecycle_batches, emit_lifecycle_transitions,
+        emit_transition_incoming_batch, handle_clear_pid_command, handle_command,
+        transition_incoming_widget_ids, transition_warm_up_ready,
     };
     use crate::compositor::CompositorCommand;
     use crate::compositor::scene_cycling::{
@@ -2605,6 +2686,8 @@ mod tests {
             ),
             pending_transition_warm_up: None,
             scene_cycling_timer_generation: 0,
+            alarm_fallback_generation: 0,
+            alarm_no_overlay_since: None,
             last_neighbors_suppressed: false,
         }
     }
@@ -2699,6 +2782,42 @@ mod tests {
         fn y_transformed(&self, _height: i32) -> f64 {
             self.y
         }
+    }
+
+    #[test]
+    fn alarm_fallback_auto_dismisses_when_no_overlay() {
+        let now = Instant::now();
+        let mut state = make_app_state();
+        // No overlay resources are bound in the test harness.
+        state.compositor.alarm.ring("07:30", "", false);
+
+        // First poll only records the no-overlay start; still within grace.
+        assert!(state.on_alarm_fallback_tick(now));
+        assert!(state.compositor.alarm.is_ringing());
+
+        // Once grace has elapsed, the alarm auto-dismisses and polling stops.
+        assert!(!state.on_alarm_fallback_tick(now + ALARM_FALLBACK_GRACE));
+        assert!(!state.compositor.alarm.is_ringing());
+        assert_eq!(
+            state.compositor.alarm.drain_actions(),
+            vec![crate::compositor::alarm::AlarmAction::Dismiss]
+        );
+    }
+
+    #[test]
+    fn touch_dismisses_alarm_when_no_overlay() {
+        let mut state = make_app_state();
+        state.compositor.alarm.ring("07:30", "", false);
+
+        state.on_touch_down(&FakeTouchEvent::new(0, 1));
+
+        assert!(!state.compositor.alarm.is_ringing());
+        assert_eq!(
+            state.compositor.alarm.drain_actions(),
+            vec![crate::compositor::alarm::AlarmAction::Dismiss]
+        );
+        // The touch was consumed, not routed into gesture arbitration.
+        assert!(state.active_touch_slots.is_empty());
     }
 
     #[test]
