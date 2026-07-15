@@ -56,12 +56,10 @@ fn grid(data: &DashboardViewData) -> Node {
             row(
                 props!(gap: GAP),
                 [
-                    metric_tile(
-                        "Power",
-                        &icons::STAT_POWER,
-                        &data.power.format_value(0),
-                        ElectricPower::UNIT,
-                    ),
+                    {
+                        let (v, u) = data.power.format_si_parts(3);
+                        metric_tile("Power", &icons::STAT_POWER, &v, &u)
+                    },
                     metric_tile(
                         "Efficiency",
                         &icons::STAT_EFFICIENCY,
@@ -119,7 +117,7 @@ fn hashrate(data: &DashboardViewData) -> Node {
     draws.push(Draw::text(
         CHART_W / 2.0,
         ROW_H / 2.0 + 12.0,
-        data.hashrate.format(2),
+        data.hashrate.format_si(3),
         style!(size: VALUE_FONT, weight: FontWeight::SEMIBOLD, color: WHITE, align: TextAlign::Center, valign: VerticalAlign::Center),
     ));
     col(

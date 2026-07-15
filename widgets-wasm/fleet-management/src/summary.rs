@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 
 use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
-use crate::device::{DeviceFamily, DeviceId, DeviceList, KnownDevice};
+use crate::device::{DeviceFamily, DeviceId, DeviceList, KnownDevice, PollFailure};
 use crate::telemetry::{DeviceTemp, TelemetryReading};
 
 /// A miner reading below this fraction of its nominal hashrate is not-ok.
@@ -40,6 +40,44 @@ pub fn is_ok(reading: &TelemetryReading, nominal_ths: Option<f32>) -> bool {
     match nominal_ths {
         Some(nominal) if nominal > 0.0 => current >= nominal * OK_NOMINAL_FRACTION,
         _ => current > OK_HASHRATE_FLOOR_THS,
+    }
+}
+
+/// A reported device's surfaced status: whether it is delivering usable data,
+/// and if not, why. Rendered as an icon and label on the device rows and detail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceStatus {
+    /// Reachable and mining at or above the ok threshold.
+    Ok,
+    /// Reachable but under-performing — below 20% of nominal, or idle.
+    Degraded,
+    /// Not delivering telemetry, with no HTTP response at all.
+    Unreachable,
+    /// Not delivering telemetry: the API answered with an error (e.g. 503).
+    ApiError,
+}
+
+/// Derive a device's [`DeviceStatus`] from its liveness and last failure. A
+/// reachable device is `Ok`/`Degraded` by the 20% rule against its nominal
+/// (reading's, else the model catalog's); an unreachable one is `ApiError` when
+/// its last pass got an HTTP error, otherwise `Unreachable`.
+#[must_use]
+pub fn device_status(device: &KnownDevice) -> DeviceStatus {
+    if device.reachable {
+        let reading = device.telemetry.as_ref().map(|s| &s.reading);
+        let nominal = reading
+            .and_then(|r| r.nominal_hashrate_ths)
+            .or_else(|| device.model.as_ref().and_then(|m| m.nominal_hashrate_ths));
+        if reading.is_some_and(|r| is_ok(r, nominal)) {
+            DeviceStatus::Ok
+        } else {
+            DeviceStatus::Degraded
+        }
+    } else {
+        match device.last_failure {
+            Some(PollFailure::ApiError) => DeviceStatus::ApiError,
+            Some(PollFailure::Unreachable) | None => DeviceStatus::Unreachable,
+        }
     }
 }
 
@@ -193,11 +231,14 @@ fn partition_key(dev: &KnownDevice) -> (Option<usize>, String) {
 
 #[must_use]
 pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> FleetSummary {
-    // Every known device is shown regardless of reachability (folded as a zero
-    // producer, see `fold_group`); only operator model/family filters hide one.
+    // Only positively identified devices enter the report: AxeOS/uBOS/manual are
+    // confirmed at discovery, a base-type BOS only once it answers a poll — so a
+    // non-miner `_http._tcp` responder never counts. A confirmed device then folds
+    // regardless of reachability (an unreachable one as a zero producer, see
+    // `fold_group`); operator model/family filters hide it further.
     let visible: Vec<&KnownDevice> = devices
         .iter()
-        .filter(|d| filters.is_visible(d.identity.family, d.model.as_ref()))
+        .filter(|d| d.is_reported() && filters.is_visible(d.identity.family, d.model.as_ref()))
         .collect();
 
     // Key on family as well as model name so two families sharing a display name
@@ -241,19 +282,26 @@ pub fn model_detail_rows(
     family: Option<DeviceFamily>,
     label: &str,
     resolve: impl Fn(&KnownDevice) -> String,
-) -> Vec<(DeviceId, GroupSummary)> {
+) -> Vec<(DeviceId, GroupSummary, DeviceStatus)> {
     let family_index = family.map(DeviceFamily::index);
-    let mut rows: Vec<(DeviceId, GroupSummary)> = devices
+    let mut rows: Vec<(DeviceId, GroupSummary, DeviceStatus)> = devices
         .iter()
         .filter(|dev| {
             let (fam, lab) = partition_key(dev);
-            fam == family_index
+            dev.is_reported()
+                && fam == family_index
                 && lab == label
                 && filters.is_visible(dev.identity.family, dev.model.as_ref())
         })
         // fold_group's "Unknown"-label family sentinel may misfire on a
         // device display-named "Unknown"; model-detail rows never read `family`.
-        .map(|dev| (dev.identity.id.clone(), fold_group(resolve(dev), &[dev])))
+        .map(|dev| {
+            (
+                dev.identity.id.clone(),
+                fold_group(resolve(dev), &[dev]),
+                device_status(dev),
+            )
+        })
         .collect();
     rows.sort_by(|a, b| {
         a.1.label
@@ -268,7 +316,9 @@ pub fn model_detail_rows(
 mod tests {
     use super::*;
 
-    use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceSource, KnownDevice};
+    use crate::device::{
+        DeviceFamily, DeviceId, DeviceIdentity, DeviceSource, KnownDevice, Membership,
+    };
     use crate::filter::Filters;
     use crate::telemetry::TelemetrySnapshot;
 
@@ -296,6 +346,8 @@ mod tests {
             last_seen_seq: 1,
             reachable: true,
             consecutive_failures: 0,
+            membership: Membership::Confirmed,
+            last_failure: None,
         }
     }
 
@@ -581,6 +633,99 @@ mod tests {
         let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
         assert_eq!(labels, ["BMM 101", "Bitaxe Gamma 601", "Unknown"]);
         assert_eq!(summary.groups[0].total_count, 2);
+    }
+
+    fn discovered(id: &str, family: DeviceFamily, host: &str, port: u16) -> DeviceIdentity {
+        DeviceIdentity {
+            id: DeviceId::new(id),
+            family,
+            name: id.to_owned(),
+            host: host.to_owned(),
+            port,
+            source: DeviceSource::Discovered,
+        }
+    }
+
+    #[test]
+    fn a_candidate_is_excluded_until_it_answers_a_poll() {
+        // A base-type sighting that hasn't answered (a non-miner `_http._tcp`
+        // responder, or a real BOS mid-boot) is a candidate — hidden from the
+        // report until an answered poll confirms it.
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("bos/x");
+        list.upsert(discovered("bos/x", DeviceFamily::Bos, "192.168.1.136", 80));
+        assert_eq!(
+            summarize(&list, &Filters::default()).total.total_count,
+            0,
+            "an unconfirmed candidate must not be counted"
+        );
+        list.record_pass(&id, reading(Some(5.0)), true);
+        assert_eq!(
+            summarize(&list, &Filters::default()).total.total_count,
+            1,
+            "answering a poll admits it to the report"
+        );
+    }
+
+    #[test]
+    fn an_identified_but_unanswered_device_is_still_reported() {
+        // A positively family-identified device (uBOS on its own type) is shown
+        // even before it answers, so an erroring miner surfaces rather than hides.
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("ubos/ubos-01");
+        list.upsert(discovered(
+            "ubos/ubos-01",
+            DeviceFamily::Ubos,
+            "10.0.0.4",
+            8080,
+        ));
+        assert_eq!(summarize(&list, &Filters::default()).total.total_count, 0);
+        list.identify(&id);
+        assert_eq!(
+            summarize(&list, &Filters::default()).total.total_count,
+            1,
+            "an identified device is reported even with no telemetry"
+        );
+    }
+
+    #[test]
+    fn device_status_reflects_liveness_and_failure_kind() {
+        use crate::device::PollFailure;
+        use crate::telemetry::TelemetrySnapshot;
+
+        let base = || KnownDevice {
+            identity: discovered("d", DeviceFamily::Bos, "10.0.0.1", 80),
+            model: None,
+            telemetry: None,
+            last_seen_seq: 1,
+            reachable: false,
+            consecutive_failures: 0,
+            membership: Membership::Identified,
+            last_failure: None,
+        };
+        let with_reading = |ths: f32| {
+            let mut d = base();
+            d.reachable = true;
+            d.telemetry = Some(TelemetrySnapshot {
+                reading: reading(Some(ths)),
+                refreshed_seq: 1,
+            });
+            d
+        };
+
+        assert_eq!(device_status(&with_reading(5.0)), DeviceStatus::Ok);
+        assert_eq!(device_status(&with_reading(0.0)), DeviceStatus::Degraded);
+
+        let mut api_error = base();
+        api_error.last_failure = Some(PollFailure::ApiError);
+        assert_eq!(device_status(&api_error), DeviceStatus::ApiError);
+
+        let mut no_response = base();
+        no_response.last_failure = Some(PollFailure::Unreachable);
+        assert_eq!(device_status(&no_response), DeviceStatus::Unreachable);
+
+        // A freshly identified device with no recorded failure reads as unreachable.
+        assert_eq!(device_status(&base()), DeviceStatus::Unreachable);
     }
 
     #[test]

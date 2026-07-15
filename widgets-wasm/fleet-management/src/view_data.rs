@@ -8,10 +8,10 @@ use bmc_wasm_sdk::{Hashrate, Temperature};
 use crate::device::{DeviceId, KnownDevice};
 use crate::history::HashrateHistory;
 use crate::screens::dashboard::DashboardViewData;
-use crate::screens::device_detail::{DeviceDetailData, DeviceState};
+use crate::screens::device_detail::DeviceDetailData;
 use crate::screens::model_detail::{DeviceRow, ModelDetailViewData};
 use crate::screens::table::{ModelRow, TableViewData};
-use crate::summary::{FleetSummary, GroupSummary};
+use crate::summary::{DeviceStatus, FleetSummary, GroupSummary, device_status};
 use crate::telemetry::DeviceTemp;
 use crate::view::device_click_id;
 
@@ -98,7 +98,7 @@ impl ModelDetailViewData {
     #[must_use]
     pub(crate) fn from_summary(
         title: &str,
-        rows: &[(DeviceId, GroupSummary)],
+        rows: &[(DeviceId, GroupSummary, DeviceStatus)],
         page: usize,
         history: &HashrateHistory,
     ) -> Self {
@@ -108,9 +108,10 @@ impl ModelDetailViewData {
             .iter()
             .skip(page * MODEL_DETAIL_PAGE_SIZE)
             .take(MODEL_DETAIL_PAGE_SIZE)
-            .map(|(id, g)| DeviceRow {
+            .map(|(id, g, status)| DeviceRow {
                 hostname: g.label.clone(),
                 click_id: device_click_id(id.as_str()),
+                status: *status,
                 hashrate: g.hashrate.unwrap_or_default(),
                 series: history.device_series(id),
                 power: g.power.unwrap_or_default(),
@@ -150,13 +151,7 @@ impl DeviceDetailData {
         let nominal_ths = reading
             .and_then(|r| r.nominal_hashrate_ths)
             .or_else(|| device.model.as_ref().and_then(|m| m.nominal_hashrate_ths));
-        let state = if group.off_count > 0 {
-            DeviceState::Off
-        } else if group.ok_count > 0 {
-            DeviceState::Ok
-        } else {
-            DeviceState::Degraded
-        };
+        let state = device_status(device);
         Self {
             model: model.to_owned(),
             hostname: group.label.clone(),
@@ -181,7 +176,7 @@ impl DeviceDetailData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceSource};
+    use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceSource, Membership};
     use crate::telemetry::{TelemetryReading, TelemetrySnapshot};
     use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
@@ -232,11 +227,15 @@ mod tests {
 
     #[test]
     fn model_detail_paginates_devices_and_maps_the_click_id() {
-        let rows: Vec<(DeviceId, GroupSummary)> = (0..6_u64)
+        let rows: Vec<(DeviceId, GroupSummary, DeviceStatus)> = (0..6_u64)
             .map(|i| {
                 let mut name = String::from("dev-");
                 units::format::push_int(&mut name, i);
-                (DeviceId::new(name.clone()), grp(&name, 1, 1, 0))
+                (
+                    DeviceId::new(name.clone()),
+                    grp(&name, 1, 1, 0),
+                    DeviceStatus::Ok,
+                )
             })
             .collect();
         let history = HashrateHistory::default();
@@ -271,12 +270,15 @@ mod tests {
             last_seen_seq: 1,
             reachable: true,
             consecutive_failures: 0,
+            membership: Membership::Confirmed,
+            last_failure: None,
         }
     }
 
     #[test]
     fn device_detail_maps_the_group_and_the_raw_reading() {
         let reading = TelemetryReading {
+            current_hashrate_ths: Some(15.0),
             nominal_hashrate_ths: Some(16.0),
             uptime_s: Some(43_200),
             temperature: Some(DeviceTemp::Spread {
@@ -296,7 +298,11 @@ mod tests {
         assert_eq!(data.hostname, "John's Miner");
         assert_eq!(data.ip, "10.0.0.9");
         assert_eq!(data.mac.as_deref(), Some("aa:bb:cc:dd:ee:ff"));
-        assert_eq!(data.state, DeviceState::Ok);
+        assert_eq!(
+            data.state,
+            DeviceStatus::Ok,
+            "reachable and above 20% of nominal"
+        );
         assert_eq!(data.uptime_hours, 12, "43200 s / 3600");
         assert_eq!(
             data.nominal_hashrate,
@@ -313,7 +319,7 @@ mod tests {
     }
 
     #[test]
-    fn device_detail_falls_back_to_catalog_nominal_and_marks_off() {
+    fn device_detail_falls_back_to_catalog_nominal_and_marks_unreachable() {
         let model = crate::model::MinerModel {
             id: "id".to_owned(),
             name: "HashNode".to_owned(),
@@ -321,13 +327,11 @@ mod tests {
             chip_count: None,
             nominal_hashrate_ths: Some(4.5),
         };
-        let data = DeviceDetailData::from_device(
-            "HashNode",
-            &grp("bmm", 1, 0, 1),
-            &device(Some(model), None),
-            vec![],
-        );
-        assert_eq!(data.state, DeviceState::Off);
+        // Unreachable with no telemetry: state comes from the device, not the group.
+        let mut dev = device(Some(model), None);
+        dev.reachable = false;
+        let data = DeviceDetailData::from_device("HashNode", &grp("bmm", 1, 0, 1), &dev, vec![]);
+        assert_eq!(data.state, DeviceStatus::Unreachable);
         assert_eq!(data.mac, None);
         assert_eq!(data.uptime_hours, 0);
         assert_eq!(

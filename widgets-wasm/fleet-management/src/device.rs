@@ -177,6 +177,43 @@ pub struct DeviceIdentity {
 /// flaky network does not blank the device.
 const UNREACHABLE_AFTER_FAILED_PASSES: usize = 3;
 
+/// Failed poll passes a never-confirmed candidate is probed before it is treated
+/// as a non-miner `_http._tcp` responder and left dormant (dropped from the poll
+/// cursor). A real miner confirms on its first answered pass, well within this
+/// budget; a mDNS re-announce after a genuine restart re-adds it as a fresh
+/// candidate with a fresh budget.
+const CANDIDATE_PROBE_PASSES: usize = 3;
+
+/// How far a device has earned into the fleet, along one axis: how sure we are
+/// it's a miner and whether it may be reported. Orthogonal to liveness
+/// ([`KnownDevice::reachable`]) — a `Confirmed` device can still be unreachable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Membership {
+    /// A base-type `_http._tcp` sighting on probation: polled within the probe
+    /// budget, hidden until it answers. Might not be a miner at all.
+    Candidate,
+    /// A candidate that spent its probe budget without answering — treated as a
+    /// non-miner responder: no longer polled, never reported.
+    Dormant,
+    /// Positively family-identified at discovery (uBOS type, AxeOS TXT, or a
+    /// manual entry). Polled indefinitely and shown — with a "not responding"
+    /// status until it delivers telemetry.
+    Identified,
+    /// Has delivered valid telemetry at least once. Polled indefinitely and shown
+    /// with live data. Terminal: never demoted, so a credential reset or an
+    /// unreachable spell does not drop it from the report.
+    Confirmed,
+}
+
+/// Why the most recent poll pass failed, for a device's surfaced status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PollFailure {
+    /// No HTTP response at all — connection refused, timed out, or DNS failed.
+    Unreachable,
+    /// The device answered, but with an error status (e.g. 503) not usable data.
+    ApiError,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct KnownDevice {
     pub identity: DeviceIdentity,
@@ -188,6 +225,32 @@ pub struct KnownDevice {
     /// by any reachable pass; once it reaches [`UNREACHABLE_AFTER_FAILED_PASSES`]
     /// the device flips to unreachable.
     pub consecutive_failures: usize,
+    /// How far the device has earned into the report and the poll cursor — see
+    /// [`Membership`]; drives [`Self::is_reported`] and [`Self::is_pollable`].
+    pub membership: Membership,
+    /// Why the last failed pass failed, for the surfaced status of a device with
+    /// no live telemetry. `None` after a reachable pass or before any poll.
+    pub last_failure: Option<PollFailure>,
+}
+
+impl KnownDevice {
+    /// Whether the poll driver should keep contacting this device — everything but
+    /// a spent [`Membership::Dormant`] candidate. A confirmed or identified miner
+    /// may recover or still be booting; a live candidate is within its budget.
+    #[must_use]
+    pub fn is_pollable(&self) -> bool {
+        self.membership != Membership::Dormant
+    }
+
+    /// Whether the device has earned a place in the fleet report: positively
+    /// identified or confirmed. A bare candidate stays out until it answers.
+    #[must_use]
+    pub fn is_reported(&self) -> bool {
+        matches!(
+            self.membership,
+            Membership::Identified | Membership::Confirmed
+        )
+    }
 }
 
 #[derive(Debug, Default)]
@@ -247,6 +310,8 @@ impl DeviceList {
                 last_seen_seq: seq,
                 reachable: false,
                 consecutive_failures: 0,
+                membership: Membership::Candidate,
+                last_failure: None,
             });
             true
         }
@@ -305,6 +370,19 @@ impl DeviceList {
             .collect()
     }
 
+    /// Ids of devices in `family` still worth polling ([`KnownDevice::is_pollable`]):
+    /// every confirmed device plus candidates that have not yet spent their probe
+    /// budget. The poll driver builds each pass from this, so a dead `_http._tcp`
+    /// responder drops out instead of slowing every pass with a doomed login.
+    #[must_use]
+    pub fn pollable_ids_for_family(&self, family: DeviceFamily) -> Vec<DeviceId> {
+        self.devices
+            .iter()
+            .filter(|d| d.identity.family == family && d.is_pollable())
+            .map(|d| d.identity.id.clone())
+            .collect()
+    }
+
     /// Ids of devices in `family` that were added manually (not discovered).
     /// The reconcile uses this so it only ever adds or removes manual rows,
     /// leaving mDNS-discovered devices untouched.
@@ -317,7 +395,9 @@ impl DeviceList {
             .collect()
     }
 
-    /// Stamp the latest telemetry reading and reachability onto a device.
+    /// Stamp the latest telemetry reading and reachability onto a device. A
+    /// returned reading is the positive miner test, so this promotes the device to
+    /// [`Membership::Confirmed`] and clears any recorded failure.
     pub fn apply_telemetry(&mut self, id: &DeviceId, reading: TelemetryReading, reachable: bool) {
         self.seq += 1;
         let seq = self.seq;
@@ -327,6 +407,39 @@ impl DeviceList {
                 refreshed_seq: seq,
             });
             dev.reachable = reachable;
+            dev.membership = Membership::Confirmed;
+            dev.last_failure = None;
+        }
+    }
+
+    /// Promote a positively family-identified device (AxeOS TXT, uBOS dedicated
+    /// type, manual entry) to [`Membership::Identified`]: shown and polled
+    /// indefinitely, though "not responding" until it delivers telemetry. Leaves a
+    /// [`Membership::Confirmed`] device alone (never demotes) and no-ops for an
+    /// unknown id. Bumps the mutation sequence when it changes visibility.
+    pub fn identify(&mut self, id: &DeviceId) {
+        let changed = self
+            .devices
+            .iter_mut()
+            .find(|d| &d.identity.id == id)
+            .is_some_and(|dev| {
+                let promote = matches!(dev.membership, Membership::Candidate | Membership::Dormant);
+                if promote {
+                    dev.membership = Membership::Identified;
+                }
+                promote
+            });
+        if changed {
+            self.seq += 1;
+        }
+    }
+
+    /// Record why the current pass failed, for the surfaced status of a device
+    /// with no live telemetry. Overwritten each failed pass; cleared by a reachable
+    /// one. Paired with [`Self::record_pass`], which already advances the sequence.
+    pub fn set_last_failure(&mut self, id: &DeviceId, failure: PollFailure) {
+        if let Some(dev) = self.devices.iter_mut().find(|d| &d.identity.id == id) {
+            dev.last_failure = Some(failure);
         }
     }
 
@@ -357,6 +470,13 @@ impl DeviceList {
                 dev.consecutive_failures = dev.consecutive_failures.saturating_add(1);
                 if dev.consecutive_failures >= UNREACHABLE_AFTER_FAILED_PASSES {
                     dev.reachable = false;
+                }
+                // A bare candidate that spends its probe budget is a non-miner
+                // responder: retire it from the poll cursor.
+                if dev.membership == Membership::Candidate
+                    && dev.consecutive_failures >= CANDIDATE_PROBE_PASSES
+                {
+                    dev.membership = Membership::Dormant;
                 }
                 dev.consecutive_failures
             }
@@ -390,6 +510,7 @@ impl DeviceList {
             dev.model = None;
             dev.reachable = false;
             dev.consecutive_failures = 0;
+            dev.last_failure = None;
         }
     }
 }
@@ -870,6 +991,154 @@ mod tests {
             "a device never reached must not be shown green during the grace period"
         );
         assert!(dev.telemetry.is_none(), "there are no values to keep");
+    }
+
+    #[test]
+    fn a_fresh_candidate_is_polled_but_not_reported() {
+        let mut list = DeviceList::new();
+        list.upsert(identity("a", "10.0.0.1"));
+        let dev = list.iter().next().expect("BUG: present");
+        assert_eq!(dev.membership, Membership::Candidate);
+        assert!(dev.is_pollable(), "a fresh candidate is polled");
+        assert!(!dev.is_reported(), "but hidden until it answers");
+    }
+
+    #[test]
+    fn a_reachable_pass_confirms_the_device() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a");
+        list.upsert(identity("a", "10.0.0.1"));
+        assert!(!list.iter().next().expect("BUG: present").is_reported());
+        list.record_pass(&id, good_reading(), true);
+        let dev = list.iter().next().expect("BUG: present");
+        assert_eq!(
+            dev.membership,
+            Membership::Confirmed,
+            "answering a poll confirms"
+        );
+        assert!(dev.is_reported());
+    }
+
+    #[test]
+    fn confirmation_survives_a_credential_clear() {
+        // A confirmed device stays confirmed (and reported) when a credential
+        // change clears its telemetry — it must not drop out of the report.
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a");
+        list.upsert(identity("a", "10.0.0.1"));
+        list.record_pass(&id, good_reading(), true);
+        list.clear_telemetry_for(DeviceFamily::Bos);
+        let dev = list.iter().next().expect("BUG: present");
+        assert_eq!(dev.membership, Membership::Confirmed);
+        assert!(
+            dev.is_reported(),
+            "a confirmed device survives a telemetry clear"
+        );
+    }
+
+    #[test]
+    fn identify_shows_and_polls_but_does_not_confirm() {
+        // A positively family-identified device (uBOS/AxeOS/manual) is reported and
+        // polled at once, but stays "identified, not confirmed" until it answers.
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a");
+        list.upsert(identity("a", "10.0.0.1"));
+        list.identify(&id);
+        let dev = list.iter().next().expect("BUG: present");
+        assert_eq!(dev.membership, Membership::Identified);
+        assert!(dev.is_reported(), "identified devices are shown");
+        assert!(dev.is_pollable());
+    }
+
+    #[test]
+    fn a_spent_candidate_goes_dormant_and_drops_out_of_the_poll_cursor() {
+        // A never-answering candidate (a non-miner _http._tcp responder) is polled
+        // only until it exhausts its probe budget, then retired: hidden and unpolled.
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a");
+        list.upsert(identity("a", "10.0.0.1"));
+        assert_eq!(list.pollable_ids_for_family(DeviceFamily::Bos).len(), 1);
+        for _ in 0..CANDIDATE_PROBE_PASSES {
+            list.record_pass(&id, TelemetryReading::default(), false);
+        }
+        let dev = list.iter().next().expect("BUG: present");
+        assert_eq!(dev.membership, Membership::Dormant);
+        assert!(
+            !dev.is_reported(),
+            "a dead candidate never enters the report"
+        );
+        assert!(
+            list.pollable_ids_for_family(DeviceFamily::Bos).is_empty(),
+            "and stops being polled"
+        );
+    }
+
+    #[test]
+    fn a_confirmed_device_keeps_being_polled_when_red() {
+        // A confirmed miner gone unreachable must stay in the cursor so it can
+        // recover; only unconfirmed candidates go dormant.
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a");
+        list.upsert(identity("a", "10.0.0.1"));
+        list.record_pass(&id, good_reading(), true); // confirms it
+        for _ in 0..CANDIDATE_PROBE_PASSES + 2 {
+            list.record_pass(&id, TelemetryReading::default(), false);
+        }
+        let dev = list.iter().next().expect("BUG: present");
+        assert_eq!(
+            dev.membership,
+            Membership::Confirmed,
+            "never demoted to dormant"
+        );
+        assert_eq!(
+            list.pollable_ids_for_family(DeviceFamily::Bos).len(),
+            1,
+            "a confirmed device keeps being polled even when red"
+        );
+    }
+
+    #[test]
+    fn an_identified_device_is_polled_past_the_budget_but_not_confirmed() {
+        // A positively family-identified device that never answers (a uBOS whose
+        // API 503s) keeps being polled — a still-booting miner must not be dropped —
+        // yet stays "identified, not confirmed" until it delivers telemetry.
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a");
+        list.upsert(identity("a", "10.0.0.1"));
+        list.identify(&id);
+        for _ in 0..CANDIDATE_PROBE_PASSES + 3 {
+            list.record_pass(&id, TelemetryReading::default(), false);
+        }
+        let dev = list.iter().next().expect("BUG: present");
+        assert_eq!(
+            dev.membership,
+            Membership::Identified,
+            "identified is never retired"
+        );
+        assert!(
+            dev.is_pollable(),
+            "and stays in the poll cursor past the budget"
+        );
+        assert_eq!(list.pollable_ids_for_family(DeviceFamily::Bos).len(), 1);
+    }
+
+    #[test]
+    fn set_last_failure_records_the_reason_and_a_reachable_pass_clears_it() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a");
+        list.upsert(identity("a", "10.0.0.1"));
+        list.record_pass(&id, TelemetryReading::default(), false);
+        list.set_last_failure(&id, PollFailure::ApiError);
+        assert_eq!(
+            list.iter().next().expect("BUG: present").last_failure,
+            Some(PollFailure::ApiError)
+        );
+        list.record_pass(&id, good_reading(), true);
+        assert_eq!(
+            list.iter().next().expect("BUG: present").last_failure,
+            None,
+            "a reachable pass clears the recorded failure"
+        );
     }
 
     #[test]

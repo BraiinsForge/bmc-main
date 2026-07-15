@@ -72,3 +72,16 @@ fn device_detail_single(ctx: &mut StoryCtx) {
         ),
     );
 }
+
+#[story(order = 6)]
+fn device_detail_error(ctx: &mut StoryCtx) {
+    // Present over mDNS but not answering (a 503 API): the State tile shows the
+    // "API error" glyph and the metrics fall back to zero.
+    ctx.action_with_key("Back", "back");
+    ctx.ui.div(
+        Full,
+        screens::device_detail::device_detail_view(
+            &screens::fixtures::sample_device_detail_error(),
+        ),
+    );
+}

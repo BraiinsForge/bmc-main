@@ -5,6 +5,7 @@ use bmc_wasm_sdk::{Svg, include_svg};
 pub const PERF_OK: Svg = include_svg!("assets/icons/perf-ok.svg");
 pub const PERF_LOW: Svg = include_svg!("assets/icons/perf-low.svg");
 pub const PERF_OFF: Svg = include_svg!("assets/icons/perf-off.svg");
+pub const UNLINK: Svg = include_svg!("assets/icons/unlink.svg");
 pub const STAT_POWER: Svg = include_svg!("assets/icons/stat-power.svg");
 pub const STAT_EFFICIENCY: Svg = include_svg!("assets/icons/stat-efficiency.svg");
 pub const STAT_TEMP: Svg = include_svg!("assets/icons/stat-temp.svg");

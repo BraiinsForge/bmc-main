@@ -141,30 +141,46 @@ struct DerivedView {
 struct ModelDetailCache {
     family: Option<DeviceFamily>,
     label: String,
-    rows: Vec<(DeviceId, summary::GroupSummary)>,
+    rows: Vec<(DeviceId, summary::GroupSummary, summary::DeviceStatus)>,
 }
 
+/// The base mDNS type BOS and AxeOS both advertise under.
 #[cfg(target_arch = "wasm32")]
-fn on_bos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
+const HTTP_SERVICE_TYPES: &[&str] = &["_http._tcp"];
+
+/// BOS and AxeOS share `_http._tcp`; the base type resolves reliably even with a
+/// co-located mDNS responder, unlike the flaky `_sub` subtype PTRs. AxeOS passes a
+/// positive TXT test here, so it is identified and kept polled; BOS has no
+/// discovery signal on the shared type and enters only as a candidate. Either way
+/// the report waits for an answered poll — a non-miner responder never earns it.
+#[cfg(target_arch = "wasm32")]
+fn on_http_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     match event {
-        mdns::MdnsEvent::Found(json) => ingest(&BosAdapter, json),
-        mdns::MdnsEvent::Removed(name) => on_removed(DeviceFamily::Bos, name),
+        mdns::MdnsEvent::Found(json) => {
+            let doc = JsonDoc::parse(json.as_bytes());
+            let txt = |key| doc.str(key).is_some_and(|v| !v.is_empty());
+            if txt("/txt/family") || txt("/txt/board") {
+                ingest(&BitaxeAdapter, &doc, true);
+            } else {
+                ingest(&BosAdapter, &doc, false);
+            }
+        }
+        // A base-type removal carries no family, so drop under both ids.
+        mdns::MdnsEvent::Removed(name) => {
+            on_removed(DeviceFamily::Bos, name);
+            on_removed(DeviceFamily::Bitaxe, name);
+        }
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 fn on_ubos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     match event {
-        mdns::MdnsEvent::Found(json) => ingest(&UbosAdapter, json),
+        mdns::MdnsEvent::Found(json) => {
+            let doc = JsonDoc::parse(json.as_bytes());
+            ingest(&UbosAdapter, &doc, true);
+        }
         mdns::MdnsEvent::Removed(name) => on_removed(DeviceFamily::Ubos, name),
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn on_bitaxe_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
-    match event {
-        mdns::MdnsEvent::Found(json) => ingest(&BitaxeAdapter, json),
-        mdns::MdnsEvent::Removed(name) => on_removed(DeviceFamily::Bitaxe, name),
     }
 }
 
@@ -203,20 +219,32 @@ fn on_removed(family: DeviceFamily, name: &str) {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn ingest(adapter: &dyn FamilyAdapter, json: &str) {
-    let doc = JsonDoc::parse(json.as_bytes());
-    if let Some(found) = adapter.parse_found(&doc) {
+fn ingest(adapter: &dyn FamilyAdapter, doc: &JsonDoc, identified: bool) {
+    if let Some(found) = adapter.parse_found(doc) {
         let identity = found.identity;
         let model_hint = found.model_hint;
         let family = identity.family;
         let name = identity.name.clone();
+        let id = identity.id.clone();
         let model = model_hint
             .as_ref()
             .map_or_else(|| "model pending".to_owned(), |m| m.name.clone());
         let is_new = DEVICES.with(|d| d.borrow_mut().upsert_with_model_hint(identity, model_hint));
+        // AxeOS/uBOS are positively family-identified at discovery, so keep polling
+        // them until they answer; a base-type BOS is only a candidate. Neither
+        // enters the report here — that waits for an answered poll.
+        if identified {
+            DEVICES.with(|d| d.borrow_mut().identify(&id));
+        }
         if is_new {
+            let verb = if identified {
+                "discovered"
+            } else {
+                "sighted candidate"
+            };
             log_info!(
-                "fleet: discovered {} {} ({})",
+                "fleet: {} {} {} ({})",
+                verb,
                 family_label(family),
                 name,
                 model
@@ -231,14 +259,12 @@ fn ingest(adapter: &dyn FamilyAdapter, json: &str) {
 #[unsafe(no_mangle)]
 pub extern "C" fn init() {
     reconcile_manual_hosts();
-    if mdns::mdns_browse(BosAdapter.browse_service_types(), on_bos_event).is_none() {
-        log_warn!("fleet: BOS mDNS browse rejected by host runtime limits");
+    // One base-type browse for BOS + AxeOS (reliable co-located), plus uBOS's own type.
+    if mdns::mdns_browse(HTTP_SERVICE_TYPES, on_http_event).is_none() {
+        log_warn!("fleet: HTTP mDNS browse rejected by host runtime limits");
     }
     if mdns::mdns_browse(UbosAdapter.browse_service_types(), on_ubos_event).is_none() {
         log_warn!("fleet: uBOS mDNS browse rejected by host runtime limits");
-    }
-    if mdns::mdns_browse(BitaxeAdapter.browse_service_types(), on_bitaxe_event).is_none() {
-        log_warn!("fleet: AxeOS mDNS browse rejected by host runtime limits");
     }
     request_frame();
 }
@@ -354,7 +380,7 @@ fn parse_normalized_model_list(raw: &str) -> Vec<String> {
 fn rebuild_model_detail_rows(
     filters: &filter::Filters,
     sel: &view::ModelDetailSelection,
-) -> Vec<(DeviceId, summary::GroupSummary)> {
+) -> Vec<(DeviceId, summary::GroupSummary, summary::DeviceStatus)> {
     with_device_names(|doc| {
         let lookup = |key: &str| doc.str(&fmt!("/{}", naming::escape_pointer(key)));
         DEVICES.with(|d| {
@@ -443,8 +469,8 @@ pub extern "C" fn render(_delta_ms: u32) {
                     // A device gone between tap and render falls back to the model breakdown.
                     let detail = rows
                         .iter()
-                        .find(|(id, _)| id.as_str() == device_id)
-                        .and_then(|(id, group)| {
+                        .find(|(id, _, _)| id.as_str() == device_id)
+                        .and_then(|(id, group, _)| {
                             let series = HISTORY.with(|h| h.borrow().device_series(id));
                             DEVICES.with(|devs| {
                                 devs.borrow()

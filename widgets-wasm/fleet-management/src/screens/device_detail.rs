@@ -14,9 +14,10 @@ use bmc_wasm_sdk::*;
 
 use crate::screens::icons;
 use crate::screens::parts::{
-    BACK_CHIP, BORDER, CARD_BG, DEGRADED, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON,
-    OFF, OK, PAD, TITLE_FONT, VALUE_FONT, area_chart, back_button, icon,
+    BACK_CHIP, BORDER, CARD_BG, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD,
+    TITLE_FONT, VALUE_FONT, area_chart, back_button, icon, status_glyph,
 };
+use crate::summary::DeviceStatus;
 use crate::telemetry::DeviceTemp;
 
 // Charts need an explicit canvas size, so derive each tile's inner dimensions
@@ -29,20 +30,13 @@ const CHART_H: f32 = TILE_H - 2.0;
 const TILE_GAP: f32 = 24.0;
 const STATE_ICON: f32 = 32.0;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum DeviceState {
-    Ok,
-    Degraded,
-    Off,
-}
-
 #[derive(Debug)]
 pub struct DeviceDetailData {
     pub model: String,
     pub hostname: String,
     pub ip: String,
     pub mac: Option<String>,
-    pub state: DeviceState,
+    pub state: DeviceStatus,
     pub hashrate: Hashrate,
     pub hashrate_series: Vec<f32>,
     pub nominal_hashrate: Hashrate,
@@ -66,10 +60,10 @@ pub fn device_detail_view(d: &DeviceDetailData) -> Node {
                         [
                             ip_mac_tile(&d.ip, d.mac.as_deref()),
                             state_tile(d.state),
-                            chart_tile("Hashrate", &d.hashrate.format(2), &d.hashrate_series),
+                            chart_tile("Hashrate", &d.hashrate.format_si(3), &d.hashrate_series),
                             chart_tile(
                                 "Nominal Hashrate",
-                                &d.nominal_hashrate.format(2),
+                                &d.nominal_hashrate.format_si(3),
                                 &d.hashrate_series,
                             ),
                         ],
@@ -77,12 +71,10 @@ pub fn device_detail_view(d: &DeviceDetailData) -> Node {
                     row(
                         props!(gap: GAP, flex: 1.0),
                         [
-                            metric_tile(
-                                "Power",
-                                &icons::STAT_POWER,
-                                &d.power.format_value(0),
-                                ElectricPower::UNIT,
-                            ),
+                            {
+                                let (v, u) = d.power.format_si_parts(3);
+                                metric_tile("Power", &icons::STAT_POWER, &v, &u)
+                            },
                             metric_tile(
                                 "Efficiency",
                                 &icons::STAT_EFFICIENCY,
@@ -176,12 +168,8 @@ fn ip_mac_tile(ip: &str, mac: Option<&str>) -> Node {
     ])
 }
 
-fn state_tile(state: DeviceState) -> Node {
-    let (svg, color, label) = match state {
-        DeviceState::Ok => (&icons::PERF_OK, OK, "OK"),
-        DeviceState::Degraded => (&icons::PERF_LOW, DEGRADED, "Degraded"),
-        DeviceState::Off => (&icons::PERF_OFF, OFF, "Off"),
-    };
+fn state_tile(state: DeviceStatus) -> Node {
+    let (svg, color, label) = status_glyph(state);
     tile(vec![
         text("State", style!(size: LABEL_FONT, color: LABEL)),
         row(

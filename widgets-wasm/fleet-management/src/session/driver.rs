@@ -33,12 +33,15 @@ use super::{
     adapter_for, on_discovery, on_removal, pass_reachable, reauth_decision,
 };
 use crate::adapter::FamilyAdapter;
-use crate::device::{DeviceFamily, DeviceId, FamilyMap, family_label};
+use crate::device::{DeviceFamily, DeviceId, FamilyMap, PollFailure, family_label};
 use crate::manifest_params::Params;
 use crate::model::{MinerModel, ModelAccumulator};
 use crate::telemetry::TelemetryReading;
 
-const PASS_INTERVAL_MS: u32 = 15_000;
+// Delay between one poll pass finishing and the next starting. Short enough that
+// a device discovered mid-pass (deferred to the next snapshot) is polled within a
+// few seconds rather than sitting blank, and that live values stay fresh.
+const PASS_INTERVAL_MS: u32 = 4_000;
 // Fleet devices live on the local network, so an unreachable one should fail
 // fast instead of holding the SDK-default 10s timeout for a whole pass.
 const DEVICE_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
@@ -67,6 +70,9 @@ struct FamilyDriver {
     model: ModelAccumulator,
     outcomes: Vec<Option<EndpointOutcome>>,
     reauthed: bool,
+    /// Why this pass's endpoints failed so far, for the device's surfaced status
+    /// when it yields no telemetry. Reset at each device; `ApiError` dominates.
+    pass_failure: Option<PollFailure>,
 }
 
 impl FamilyDriver {
@@ -80,6 +86,7 @@ impl FamilyDriver {
             model: ModelAccumulator::default(),
             outcomes: Vec::new(),
             reauthed: false,
+            pass_failure: None,
         }
     }
 
@@ -276,7 +283,7 @@ fn start_pass(family: DeviceFamily, opening_delay_ms: u32) {
         });
         return;
     }
-    let ids = crate::DEVICES.with(|d| d.borrow().ids_for_family(family));
+    let ids = crate::DEVICES.with(|d| d.borrow().pollable_ids_for_family(family));
     let empty = ids.is_empty();
     with_driver(family, |d| {
         d.pending_kick.clear();
@@ -326,6 +333,7 @@ fn begin_device(family: DeviceFamily, delay_ms: u32) {
         d.model = ModelAccumulator::default();
         d.outcomes = vec![None; endpoint_count];
         d.reauthed = false;
+        d.pass_failure = None;
     });
     let needs_login =
         adapter.auth_endpoint().is_some() && TOKENS.with(|t| !t.borrow().contains_key(&id));
@@ -543,6 +551,29 @@ fn on_telemetry(family: DeviceFamily, endpoint_idx: usize, response: &bmc_wasm_s
         EndpointOutcome::Failed
     };
 
+    // Track why a failed endpoint failed, for the surfaced status of a device that
+    // yields no telemetry: an HTTP status means the API answered (badly, e.g. 503);
+    // status 0 means nothing reached us. `ApiError` dominates a mix — any answer at
+    // all means the miner is reachable, just erroring.
+    if matches!(
+        outcome,
+        EndpointOutcome::Failed | EndpointOutcome::AuthFailed
+    ) {
+        let kind = if response.status == 0 {
+            PollFailure::Unreachable
+        } else {
+            PollFailure::ApiError
+        };
+        with_driver(family, |d| {
+            d.pass_failure = match (d.pass_failure, kind) {
+                (Some(PollFailure::ApiError), _) | (_, PollFailure::ApiError) => {
+                    Some(PollFailure::ApiError)
+                }
+                _ => Some(PollFailure::Unreachable),
+            };
+        });
+    }
+
     let done = with_driver(family, |d| {
         d.outcomes[endpoint_idx] = Some(outcome);
         d.pending = d.pending.saturating_sub(1);
@@ -591,7 +622,7 @@ fn barrier(family: DeviceFamily) {
 }
 
 fn finalize_device(family: DeviceFamily, id: &DeviceId) {
-    let (reading, reachable, model) = with_driver(family, |d| {
+    let (reading, reachable, model, pass_failure) = with_driver(family, |d| {
         let outcomes: Vec<EndpointOutcome> = d
             .outcomes
             .iter()
@@ -601,12 +632,16 @@ fn finalize_device(family: DeviceFamily, id: &DeviceId) {
             d.reading.clone(),
             pass_reachable(&outcomes),
             d.model.clone(),
+            d.pass_failure,
         )
     });
     let model = model.into_model();
     let failures = crate::DEVICES.with(|devs| {
         let mut devs = devs.borrow_mut();
         let failures = devs.record_pass(id, reading.clone(), reachable);
+        if !reachable {
+            devs.set_last_failure(id, pass_failure.unwrap_or(PollFailure::Unreachable));
+        }
         if let Some(model) = model.clone() {
             devs.apply_model(id, model);
         }

@@ -102,9 +102,13 @@ pub(crate) fn reconcile_manual_into(
     let desired_ids: Vec<DeviceId> = desired.iter().map(|d| d.id.clone()).collect();
     let mut added_any = false;
     for identity in desired {
+        let id = identity.id.clone();
         if list.upsert(identity) {
             added_any = true;
         }
+        // The operator's explicit entry is a positive identification, so a manual
+        // host is shown and polled at once — "not responding" until it answers.
+        list.identify(&id);
     }
     let removed_ids: Vec<DeviceId> = current
         .into_iter()
@@ -299,6 +303,16 @@ mod tests {
         let ids = list.manual_ids_for_family(DeviceFamily::Bos);
         assert_eq!(ids.len(), 1);
         assert_eq!(ids[0].as_str(), "bos/manual/10.0.0.5:8080");
+    }
+
+    #[test]
+    fn manual_devices_are_identified_and_shown_on_add() {
+        let mut list = DeviceList::new();
+        reconcile_manual_into(&mut list, DeviceFamily::Bos, vec![manual_id("10.0.0.5")]);
+        assert!(
+            list.iter().next().expect("BUG: present").is_reported(),
+            "an operator-entered host is positively identified by the entry itself"
+        );
     }
 
     #[test]

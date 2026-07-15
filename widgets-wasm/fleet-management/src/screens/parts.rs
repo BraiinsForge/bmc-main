@@ -14,6 +14,7 @@
 use bmc_wasm_sdk::*;
 
 use crate::screens::icons;
+use crate::summary::DeviceStatus;
 use crate::view::{ViewMode, view_click_id};
 
 // Design tokens map 1:1 to the Figma "Braiins DECK" frames.
@@ -24,6 +25,7 @@ pub const LABEL: Color = GRAY_40;
 pub const OK: Color = GREEN_50;
 pub const DEGRADED: Color = ORANGE_40;
 pub const OFF: Color = BLUE_60;
+pub const ERROR: Color = RED_50;
 pub const CHART: Color = VIOLET_60;
 
 pub const TITLE_FONT: u32 = 24;
@@ -100,6 +102,19 @@ fn toggle(list_active: bool) -> Node {
             },
         ],
     )
+}
+
+// Icon, tint, and label for a device's fine status — shared by the device-detail
+// State tile and the model-detail rows so both read identically. Unreachable and
+// API-error share the broken-link glyph, split by colour and label.
+#[must_use]
+pub fn status_glyph(status: DeviceStatus) -> (&'static Svg, Color, &'static str) {
+    match status {
+        DeviceStatus::Ok => (&icons::PERF_OK, OK, "OK"),
+        DeviceStatus::Degraded => (&icons::PERF_LOW, DEGRADED, "Degraded"),
+        DeviceStatus::Unreachable => (&icons::UNLINK, OFF, "Unreachable"),
+        DeviceStatus::ApiError => (&icons::UNLINK, ERROR, "API error"),
+    }
 }
 
 // The three status counts (ok / degraded / off) — always all three, even zeros.

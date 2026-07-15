@@ -6,10 +6,10 @@ use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
 use crate::device::DeviceFamily;
 use crate::screens::dashboard::DashboardViewData;
-use crate::screens::device_detail::{DeviceDetailData, DeviceState};
+use crate::screens::device_detail::DeviceDetailData;
 use crate::screens::model_detail::{DeviceRow, ModelDetailViewData};
 use crate::screens::table::{ModelRow, TableViewData};
-use crate::summary::{FleetSummary, GroupSummary};
+use crate::summary::{DeviceStatus, FleetSummary, GroupSummary};
 use crate::telemetry::DeviceTemp;
 use crate::view::device_click_id;
 
@@ -231,9 +231,10 @@ pub fn sample_fleet() -> FleetSummary {
 /// Ten mock devices (three pages of four) for the model-detail story,
 /// each with a baked hashrate series; the down device (0 TH/s) reads flat.
 fn model_detail_devices() -> Vec<DeviceRow> {
-    let device = |name: &str, hashrate: f32, temp: f32| DeviceRow {
+    let device = |name: &str, hashrate: f32, temp: f32, status: DeviceStatus| DeviceRow {
         hostname: name.to_owned(),
         click_id: device_click_id(name),
+        status,
         hashrate: Hashrate::from_terahashes_per_second(f64::from(hashrate)),
         series: vec![
             hashrate * 0.95,
@@ -251,17 +252,18 @@ fn model_detail_devices() -> Vec<DeviceRow> {
         min_temp: Temperature::from_celsius(f64::from(temp) - 4.0),
         max_temp: Temperature::from_celsius(f64::from(temp) + 6.0),
     };
+    // Spread the four statuses across the pages so the story shows each glyph.
     vec![
-        device("Miner-Abcde", 1.01, 65.0),
-        device("John's Miner", 1.00, 66.0),
-        device("Miner - Level 2", 1.02, 64.0),
-        device("Miner - Level 2", 0.98, 67.0),
-        device("bmm-123456", 0.83, 65.0),
-        device("bmm-789abc", 0.79, 63.0),
-        device("bmm-def012", 0.82, 64.0),
-        device("bmm-345678", 0.81, 66.0),
-        device("bmm-9abcde", 0.00, 71.0),
-        device("bmm-f01234", 0.80, 65.0),
+        device("Miner-Abcde", 1.01, 65.0, DeviceStatus::Ok),
+        device("John's Miner", 1.00, 66.0, DeviceStatus::Ok),
+        device("Miner - Level 2", 1.02, 64.0, DeviceStatus::Ok),
+        device("Miner - Level 2", 0.98, 67.0, DeviceStatus::Degraded),
+        device("bmm-123456", 0.83, 65.0, DeviceStatus::Ok),
+        device("bmm-789abc", 0.79, 63.0, DeviceStatus::Ok),
+        device("bmm-def012", 0.00, 64.0, DeviceStatus::Unreachable),
+        device("bmm-345678", 0.81, 66.0, DeviceStatus::Ok),
+        device("bmm-9abcde", 0.00, 71.0, DeviceStatus::ApiError),
+        device("bmm-f01234", 0.80, 65.0, DeviceStatus::Ok),
     ]
 }
 
@@ -286,13 +288,17 @@ pub fn sample_model_detail_view(page: usize) -> ModelDetailViewData {
     }
 }
 
-fn device_detail_fixture(mac: Option<&str>, temperature: DeviceTemp) -> DeviceDetailData {
+fn device_detail_fixture(
+    mac: Option<&str>,
+    temperature: DeviceTemp,
+    state: DeviceStatus,
+) -> DeviceDetailData {
     DeviceDetailData {
         model: "Mini Miner".to_owned(),
         hostname: "John's Miner".to_owned(),
         ip: "192.111.18".to_owned(),
         mac: mac.map(str::to_owned),
-        state: DeviceState::Ok,
+        state,
         hashrate: Hashrate::from_terahashes_per_second(2.08),
         hashrate_series: vec![1.9, 2.0, 2.1, 2.05, 2.08, 2.0, 2.1, 2.08],
         nominal_hashrate: Hashrate::from_terahashes_per_second(16.52),
@@ -313,11 +319,27 @@ pub fn sample_device_detail() -> DeviceDetailData {
             avg: Temperature::from_celsius(65.0),
             max: Temperature::from_celsius(78.0),
         },
+        DeviceStatus::Ok,
     )
 }
 
 /// A single-sensor miner (uBOS, no MAC): the temp tile shows one value.
 #[must_use]
 pub fn sample_device_detail_single() -> DeviceDetailData {
-    device_detail_fixture(None, DeviceTemp::Single(Temperature::from_celsius(65.0)))
+    device_detail_fixture(
+        None,
+        DeviceTemp::Single(Temperature::from_celsius(65.0)),
+        DeviceStatus::Ok,
+    )
+}
+
+/// A miner present over mDNS but not delivering telemetry (a 503 API): the State
+/// tile reads "API error" and the metrics fall back to zero.
+#[must_use]
+pub fn sample_device_detail_error() -> DeviceDetailData {
+    device_detail_fixture(
+        None,
+        DeviceTemp::Single(Temperature::from_celsius(0.0)),
+        DeviceStatus::ApiError,
+    )
 }

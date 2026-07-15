@@ -14,8 +14,9 @@ use crate::screens::icons;
 use crate::screens::parts::{
     BACK_CHIP, BORDER, CARD_BG, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H,
     HEADER_BG, LABEL, LABEL_FONT, METRIC_ICON, PAD, ROW_PAD, TITLE_FONT, area_chart, back_button,
-    icon,
+    icon, status_glyph,
 };
+use crate::summary::DeviceStatus;
 use crate::view::{PageTurn, PagerScope, pager_click_id};
 
 // Column widths within the table card.
@@ -36,6 +37,7 @@ pub struct DeviceRow {
     pub hostname: String,
     /// The device drill-in click id.
     pub click_id: String,
+    pub status: DeviceStatus,
     pub hashrate: Hashrate,
     pub series: Vec<f32>,
     pub power: ElectricPower,
@@ -122,40 +124,70 @@ fn header_row() -> Node {
 }
 
 fn device_row(r: &DeviceRow) -> Node {
+    let host = cell(
+        COL_HOST,
+        text(
+            truncate_label(&r.hostname, HOST_CHARS),
+            style!(size: HOST_FONT, weight: FontWeight::SEMIBOLD, color: WHITE),
+        ),
+    );
+    // A device with no live telemetry would be a row of meaningless zeros; show
+    // its status where the metrics would be, instead of cramming it beside them.
+    let body = match r.status {
+        DeviceStatus::Ok | DeviceStatus::Degraded => metric_cells(r),
+        DeviceStatus::Unreachable | DeviceStatus::ApiError => vec![status_banner(r.status)],
+    };
+    let mut children = vec![host];
+    children.extend(body);
+    children.push(detail_button(&r.click_id));
     row(
         props!(height: DATA_H, padding: ROW_PAD, cross_align: CrossAlign::Center),
+        children,
+    )
+}
+
+// The metric cells for a delivering device, ending in the flex slack that pushes
+// the Detail button to the right edge.
+fn metric_cells(r: &DeviceRow) -> Vec<Node> {
+    vec![
+        cell(COL_HASHRATE, {
+            let (v, u) = r.hashrate.format_si_parts(3);
+            value(&v, &u)
+        }),
+        cell(
+            COL_SPARK,
+            canvas(
+                props!(width: SPARK_W, height: 32.0),
+                area_chart(&r.series, SPARK_W, 32.0, 0.15),
+            ),
+        ),
+        cell(COL_POWER, {
+            let (v, u) = r.power.format_si_parts(3);
+            value(&v, &u)
+        }),
+        cell(
+            COL_EFF,
+            value(&r.efficiency.format_value(1), MiningEfficiency::UNIT),
+        ),
+        cell(COL_TEMP, value(&r.avg_temp.format_value(0), "°C")),
+        cell(COL_TEMP, value(&r.min_temp.format_value(0), "°C")),
+        cell(COL_TEMP, value(&r.max_temp.format_value(0), "°C")),
+        col(props!(flex: 1.0), Vec::<Node>::new()),
+    ]
+}
+
+// A non-delivering device: the status glyph + label fill the metric area,
+// left-aligned just after the hostname, in place of a row of zeros.
+fn status_banner(status: DeviceStatus) -> Node {
+    let (svg, color, label) = status_glyph(status);
+    row(
+        props!(flex: 1.0, gap: 12.0, cross_align: CrossAlign::Center),
         [
-            cell(
-                COL_HOST,
-                text(
-                    truncate_label(&r.hostname, HOST_CHARS),
-                    style!(size: HOST_FONT, weight: FontWeight::SEMIBOLD, color: WHITE),
-                ),
+            icon(svg, 24.0, color),
+            text(
+                label,
+                style!(size: VALUE_FONT, weight: FontWeight::SEMIBOLD, color: color),
             ),
-            cell(
-                COL_HASHRATE,
-                value(&r.hashrate.format_value(2), Hashrate::UNIT),
-            ),
-            cell(
-                COL_SPARK,
-                canvas(
-                    props!(width: SPARK_W, height: 32.0),
-                    area_chart(&r.series, SPARK_W, 32.0, 0.15),
-                ),
-            ),
-            cell(
-                COL_POWER,
-                value(&r.power.format_value(2), ElectricPower::UNIT),
-            ),
-            cell(
-                COL_EFF,
-                value(&r.efficiency.format_value(1), MiningEfficiency::UNIT),
-            ),
-            cell(COL_TEMP, value(&r.avg_temp.format_value(0), "°C")),
-            cell(COL_TEMP, value(&r.min_temp.format_value(0), "°C")),
-            cell(COL_TEMP, value(&r.max_temp.format_value(0), "°C")),
-            col(props!(flex: 1.0), Vec::<Node>::new()),
-            detail_button(&r.click_id),
         ],
     )
 }
