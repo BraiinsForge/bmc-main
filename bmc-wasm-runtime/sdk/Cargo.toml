@@ -21,6 +21,7 @@ bmc-wasm-protocol = { path = "../protocol" }
 bmc-wasm-sdk-macros = { path = "../sdk-macros" }
 glam = { workspace = true, default-features = false, features = ["libm"], optional = true }
 ufmt = { workspace = true }
+unit-prefix = { workspace = true }
 
 # Native-only: the storybook (and any non-wasm build) formats
 # through the shared core instead of the host FFI.

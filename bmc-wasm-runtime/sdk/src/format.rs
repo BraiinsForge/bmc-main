@@ -28,6 +28,11 @@
 //!
 //! Use the macros `format_number!`, `format_speed!`, `format_temperature!`.
 
+#![expect(
+    clippy::used_underscore_items,
+    reason = "the module's own host-boundary `_host_format_*` helpers call each other"
+)]
+
 // The host runs the same core, so native output matches the device.
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
@@ -118,6 +123,47 @@ pub fn _host_format_number(value: f64, decimals: u32) -> String {
     {
         native::number_format().format_number(value, decimals as usize)
     }
+}
+
+/// SI value and unit split, D3 `.3s`-style: `("13.2", "kW")`. `unit_prefix`
+/// picks the scale; the mantissa renders through the host at `sig_figs`
+/// significant digits. Split so value and unit can be sized apart.
+#[doc(hidden)]
+#[must_use]
+pub fn _host_format_si_parts(value: f64, sig_figs: u32, base_unit: &str) -> (String, String) {
+    let (mantissa, prefix) = match unit_prefix::NumberPrefix::decimal(value) {
+        unit_prefix::NumberPrefix::Standalone(m) => (m, ""),
+        unit_prefix::NumberPrefix::Prefixed(p, m) => (m, p.symbol()),
+    };
+    let value_str = _host_format_number(mantissa, si_decimals(mantissa, sig_figs));
+    let mut unit = String::with_capacity(prefix.len() + base_unit.len());
+    unit.push_str(prefix);
+    unit.push_str(base_unit);
+    (value_str, unit)
+}
+
+/// [`_host_format_si_parts`] joined into `"value unit"`, e.g. `"13.2 kW"`.
+#[doc(hidden)]
+#[must_use]
+pub fn _host_format_si(value: f64, sig_figs: u32, base_unit: &str) -> String {
+    let (mut s, unit) = _host_format_si_parts(value, sig_figs, base_unit);
+    s.push(' ');
+    s.push_str(&unit);
+    s
+}
+
+/// Decimals to show `sig_figs` significant digits of a mantissa in `[1, 1000)`.
+/// Integer digits counted by range — the no-std wasm target lacks `log10`.
+fn si_decimals(mantissa: f64, sig_figs: u32) -> u32 {
+    let m = mantissa.abs();
+    let int_digits = if m < 10.0 {
+        1
+    } else if m < 100.0 {
+        2
+    } else {
+        3
+    };
+    sig_figs.saturating_sub(int_digits)
 }
 
 /// Format a speed using host-side preferences. Called by [`format_speed!`].
@@ -858,5 +904,19 @@ mod tests {
     #[test]
     fn f64_fixed_does_not_emit_negative_zero() {
         assert_eq!(format_f64_fixed(-0.001, 2), "0.00");
+    }
+}
+
+#[cfg(test)]
+mod si_decimals_tests {
+    use super::si_decimals;
+
+    #[test]
+    fn targets_the_requested_significant_figures() {
+        assert_eq!(si_decimals(13.2, 3), 1); // 13.2
+        assert_eq!(si_decimals(154.0, 3), 0); // 154
+        assert_eq!(si_decimals(9.11, 3), 2); // 9.11
+        assert_eq!(si_decimals(312.5, 3), 0); // 313
+        assert_eq!(si_decimals(0.0, 3), 2); // 0.00
     }
 }

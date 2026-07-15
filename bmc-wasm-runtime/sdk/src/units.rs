@@ -186,6 +186,19 @@ impl ElectricPower {
         s.push_str(Self::UNIT);
         s
     }
+
+    /// SI-prefixed at `sig_figs` significant digits, e.g. `13.2 kW`, so a big
+    /// aggregate power stays compact.
+    #[must_use]
+    pub fn format_si(self, sig_figs: u32) -> String {
+        crate::format::_host_format_si(self.as_watts(), sig_figs, Self::UNIT)
+    }
+
+    /// SI value and unit as split strings, for value/unit rendering.
+    #[must_use]
+    pub fn format_si_parts(self, sig_figs: u32) -> (String, String) {
+        crate::format::_host_format_si_parts(self.as_watts(), sig_figs, Self::UNIT)
+    }
 }
 
 /// Mining hashrate, stored canonically in terahashes per second.
@@ -219,6 +232,23 @@ impl Hashrate {
         s.push(' ');
         s.push_str(Self::UNIT);
         s
+    }
+
+    /// SI-prefixed at `sig_figs` sig figs, from the H/s base so the prefix is
+    /// real (`313 TH/s`, `16.5 PH/s`), never `kTH/s`.
+    #[must_use]
+    pub fn format_si(self, sig_figs: u32) -> String {
+        crate::format::_host_format_si(self.as_terahashes_per_second() * 1e12, sig_figs, "H/s")
+    }
+
+    /// SI value and unit as split strings, for value/unit rendering.
+    #[must_use]
+    pub fn format_si_parts(self, sig_figs: u32) -> (String, String) {
+        crate::format::_host_format_si_parts(
+            self.as_terahashes_per_second() * 1e12,
+            sig_figs,
+            "H/s",
+        )
     }
 }
 

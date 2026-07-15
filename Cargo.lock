@@ -1456,6 +1456,7 @@ dependencies = [
  "bmc-wasm-sdk-macros",
  "glam",
  "ufmt",
+ "unit-prefix",
 ]
 
 [[package]]
@@ -8592,6 +8593,12 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
+name = "unit-prefix"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3"
 
 [[package]]
 name = "units"
