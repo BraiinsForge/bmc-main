@@ -76,7 +76,9 @@ let
 in
 {
   pkg = packageWithTests;
-  version = armv7Pkgs.avahi.version;
+  # Full three-component semver; upstream avahi says "0.8", which package
+  # indexes (validated with semver::Version::parse) reject.
+  version = "0.8.0";
   category = "core";
   description = "Avahi daemon and BOS miner mDNS advertisement";
   upgrade_strategy = null;
