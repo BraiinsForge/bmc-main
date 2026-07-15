@@ -597,12 +597,16 @@ fn finalize_device(family: DeviceFamily, id: &DeviceId) {
             .iter()
             .map(|o| o.unwrap_or(EndpointOutcome::Failed))
             .collect();
-        (d.reading, pass_reachable(&outcomes), d.model.clone())
+        (
+            d.reading.clone(),
+            pass_reachable(&outcomes),
+            d.model.clone(),
+        )
     });
     let model = model.into_model();
     let failures = crate::DEVICES.with(|devs| {
         let mut devs = devs.borrow_mut();
-        let failures = devs.record_pass(id, reading, reachable);
+        let failures = devs.record_pass(id, reading.clone(), reachable);
         if let Some(model) = model.clone() {
             devs.apply_model(id, model);
         }
@@ -652,8 +656,9 @@ fn telemetry_summary(reading: &TelemetryReading) -> String {
     if let Some(v) = reading.power_w {
         parts.push(fmt!("{} W", format_number!(f64::from(v), 0)));
     }
-    if let Some(v) = reading.temperature_c {
-        parts.push(fmt!("{} °C", format_number!(f64::from(v), 1)));
+    if let Some(temp) = reading.temperature {
+        let (_, avg, _) = temp.as_range();
+        parts.push(fmt!("{} °C", format_number!(avg.as_celsius(), 1)));
     }
     if let Some(v) = reading.uptime_s {
         parts.push(fmt!("{} s uptime", v));

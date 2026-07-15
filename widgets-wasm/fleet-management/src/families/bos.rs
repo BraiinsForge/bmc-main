@@ -18,13 +18,13 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::ufmt;
+use bmc_wasm_sdk::{Temperature, ufmt};
 
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
 use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceSource};
 use crate::discovery::{JsonLookup, extract_endpoint};
 use crate::model::ModelAccumulator;
-use crate::telemetry::TelemetryReading;
+use crate::telemetry::{DeviceTemp, TelemetryReading};
 
 const EP_STATS: &str = "/miner/stats";
 const EP_HASHBOARDS: &str = "/miner/hw/hashboards";
@@ -37,9 +37,9 @@ const MAX_HASHBOARDS: usize = 16;
 
 pub const BOS_TELEMETRY_ENDPOINTS: &[&str] = &[EP_STATS, EP_HASHBOARDS, EP_DETAILS];
 
-/// Map the BOS `Platform` enum integer (as serialized over REST) to its
-/// stable slug. Mirrors `proto::Platform` in `ii-bos-plus-proto`; an
-/// `Unspecified`/`0` or unrecognized value has no slug.
+/// Map the BOS `Platform` enum integer (as serialized over REST) to its stable slug.
+/// Mirrors `proto::Platform` in `ii-bos-plus-proto`;
+/// an `Unspecified`/`0` or unrecognized value has no slug.
 #[must_use]
 fn platform_slug(platform: i64) -> Option<&'static str> {
     match platform {
@@ -63,8 +63,8 @@ fn ths_from_ghs(ghs: f64) -> f32 {
     (ghs / 1_000.0) as f32
 }
 
-/// BOS advertises `_http._tcp` with the `_bos` subtype. Browsing the subtype
-/// directly means every event on this browse is a BOS device.
+/// BOS advertises `_http._tcp` with the `_bos` subtype.
+/// Browsing the subtype directly means every event on this browse is a BOS device.
 pub const BOS_SERVICE_TYPES: &[&str] = &["_bos._sub._http._tcp"];
 
 pub struct BosAdapter;
@@ -122,7 +122,8 @@ impl FamilyAdapter for BosAdapter {
 
     #[expect(
         clippy::cast_possible_truncation,
-        reason = "sensor values fit in f32 for realistic readings"
+        clippy::cast_precision_loss,
+        reason = "sensor values fit f32; the tiny board count is exact in f64"
     )]
     fn parse_telemetry(
         &self,
@@ -143,18 +144,32 @@ impl FamilyAdapter for BosAdapter {
                 }
             }
             EP_HASHBOARDS => {
-                let mut max: Option<f32> = None;
+                // One temperature per hashboard.
+                let mut min = f64::MAX;
+                let mut max = f64::MIN;
+                let mut sum = 0.0_f64;
+                let mut count = 0_usize;
                 for i in 0..MAX_HASHBOARDS {
                     let path = bmc_wasm_sdk::fmt!(
                         "/hashboards/{}/highest_chip_temp/temperature/degree_c",
                         i
                     );
                     if let Some(c) = json.f64(&path) {
-                        let c = c as f32;
-                        max = Some(max.map_or(c, |m| m.max(c)));
+                        min = min.min(c);
+                        max = max.max(c);
+                        sum += c;
+                        count += 1;
                     }
                 }
-                reading.temperature_c = max;
+                reading.temperature = match count {
+                    0 => None,
+                    1 => Some(DeviceTemp::Single(Temperature::from_celsius(sum))),
+                    _ => Some(DeviceTemp::Spread {
+                        min: Temperature::from_celsius(min),
+                        avg: Temperature::from_celsius(sum / count as f64),
+                        max: Temperature::from_celsius(max),
+                    }),
+                };
             }
             EP_DETAILS => {
                 if let Some(uptime) = json
@@ -166,6 +181,7 @@ impl FamilyAdapter for BosAdapter {
                 if let Some(ghs) = json.f64("/sticker_hashrate/gigahash_per_second") {
                     reading.nominal_hashrate_ths = Some(ths_from_ghs(ghs));
                 }
+                reading.mac = json.str("/mac_address").filter(|s| !s.is_empty());
             }
             _ => {}
         }
@@ -177,10 +193,11 @@ impl FamilyAdapter for BosAdapter {
                 reading.current_hashrate_ths = None;
                 reading.power_w = None;
             }
-            EP_HASHBOARDS => reading.temperature_c = None,
+            EP_HASHBOARDS => reading.temperature = None,
             EP_DETAILS => {
                 reading.uptime_s = None;
                 reading.nominal_hashrate_ths = None;
+                reading.mac = None;
             }
             _ => {}
         }
@@ -279,7 +296,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_hashboards_temperature_as_max_chip_across_boards() {
+    fn parses_hashboards_temperature_as_a_spread_across_boards() {
         let mut j = MapJson::default();
         j.floats
             .insert("/hashboards/0/highest_chip_temp/temperature/degree_c", 61.0);
@@ -287,12 +304,19 @@ mod tests {
             .insert("/hashboards/1/highest_chip_temp/temperature/degree_c", 67.5);
         let mut r = TelemetryReading::default();
         BosAdapter.parse_telemetry("/miner/hw/hashboards", &j, &mut r);
-        assert_eq!(r.temperature_c, Some(67.5));
+        assert_eq!(
+            r.temperature,
+            Some(DeviceTemp::Spread {
+                min: Temperature::from_celsius(61.0),
+                avg: Temperature::from_celsius(64.25),
+                max: Temperature::from_celsius(67.5),
+            }),
+        );
     }
 
     #[test]
     fn hashboard_temperature_scans_past_a_missing_board() {
-        // Board 0 failed (absent); boards 1 and 2 report. The max temp must
+        // Board 0 failed (absent); boards 1 and 2 report. The spread must
         // come from the present boards, not stop at the gap on board 0.
         let mut j = MapJson::default();
         j.floats
@@ -301,7 +325,14 @@ mod tests {
             .insert("/hashboards/2/highest_chip_temp/temperature/degree_c", 70.0);
         let mut r = TelemetryReading::default();
         BosAdapter.parse_telemetry("/miner/hw/hashboards", &j, &mut r);
-        assert_eq!(r.temperature_c, Some(70.0));
+        assert_eq!(
+            r.temperature,
+            Some(DeviceTemp::Spread {
+                min: Temperature::from_celsius(61.0),
+                avg: Temperature::from_celsius(65.5),
+                max: Temperature::from_celsius(70.0),
+            }),
+        );
     }
 
     #[test]
@@ -345,14 +376,17 @@ mod tests {
         let mut r = TelemetryReading {
             current_hashrate_ths: Some(50.0),
             power_w: Some(20.0),
-            temperature_c: Some(60.0),
+            temperature: Some(DeviceTemp::Single(Temperature::from_celsius(60.0))),
             uptime_s: Some(100),
-            nominal_hashrate_ths: None,
+            ..TelemetryReading::default()
         };
         BosAdapter.reset_telemetry("/miner/stats", &mut r);
         assert_eq!(r.current_hashrate_ths, None);
         assert_eq!(r.power_w, None);
-        assert_eq!(r.temperature_c, Some(60.0));
+        assert_eq!(
+            r.temperature,
+            Some(DeviceTemp::Single(Temperature::from_celsius(60.0)))
+        );
         assert_eq!(r.uptime_s, Some(100));
     }
 

@@ -18,13 +18,13 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_wasm_sdk::ufmt;
+use bmc_wasm_sdk::{Temperature, ufmt};
 
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
 use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceSource};
 use crate::discovery::{JsonLookup, extract_endpoint};
 use crate::model::{MinerModel, ModelAccumulator};
-use crate::telemetry::TelemetryReading;
+use crate::telemetry::{DeviceTemp, TelemetryReading};
 
 const EP_INFO: &str = "/info";
 
@@ -99,7 +99,8 @@ impl FamilyAdapter for BitaxeAdapter {
 
     #[expect(
         clippy::cast_possible_truncation,
-        reason = "sensor values fit in f32 for realistic readings"
+        clippy::cast_precision_loss,
+        reason = "sensor values fit f32; the sensor count is exact in f64"
     )]
     fn parse_telemetry(
         &self,
@@ -122,9 +123,29 @@ impl FamilyAdapter for BitaxeAdapter {
             if let Some(watts) = json.f64("/power").filter(|v| *v >= 0.0) {
                 reading.power_w = Some(watts as f32);
             }
-            if let Some(c) = json.f64("/temp").filter(|v| *v >= 0.0) {
-                reading.temperature_c = Some(c as f32);
+            // ASIC temp, plus temp2 on multi-sensor boards.
+            let mut min = f64::MAX;
+            let mut max = f64::MIN;
+            let mut sum = 0.0_f64;
+            let mut count = 0_usize;
+            for path in ["/temp", "/temp2"] {
+                if let Some(c) = json.f64(path).filter(|v| *v >= 0.0) {
+                    min = min.min(c);
+                    max = max.max(c);
+                    sum += c;
+                    count += 1;
+                }
             }
+            reading.temperature = match count {
+                0 => None,
+                1 => Some(DeviceTemp::Single(Temperature::from_celsius(sum))),
+                _ => Some(DeviceTemp::Spread {
+                    min: Temperature::from_celsius(min),
+                    avg: Temperature::from_celsius(sum / count as f64),
+                    max: Temperature::from_celsius(max),
+                }),
+            };
+            reading.mac = non_empty(json, "/macAddr");
             if let Some(uptime) = json
                 .i64("/uptimeSeconds")
                 .and_then(|v| u64::try_from(v).ok())
@@ -139,8 +160,9 @@ impl FamilyAdapter for BitaxeAdapter {
             reading.current_hashrate_ths = None;
             reading.nominal_hashrate_ths = None;
             reading.power_w = None;
-            reading.temperature_c = None;
+            reading.temperature = None;
             reading.uptime_s = None;
+            reading.mac = None;
         }
     }
 
@@ -275,7 +297,10 @@ mod tests {
             .expect("BUG: expectedHashrate must produce nominal");
         assert!((nominal - 1.2).abs() < 1e-4, "got {nominal}");
         assert_eq!(r.power_w, Some(35.5));
-        assert_eq!(r.temperature_c, Some(59.0));
+        assert_eq!(
+            r.temperature,
+            Some(DeviceTemp::Single(Temperature::from_celsius(59.0)))
+        );
         assert_eq!(r.uptime_s, Some(382));
     }
 
@@ -300,7 +325,7 @@ mod tests {
         assert_eq!(r.current_hashrate_ths, None);
         assert_eq!(r.nominal_hashrate_ths, None);
         assert_eq!(r.power_w, None);
-        assert_eq!(r.temperature_c, None);
+        assert_eq!(r.temperature, None);
         assert_eq!(r.uptime_s, Some(382));
     }
 
@@ -309,9 +334,9 @@ mod tests {
         let mut r = TelemetryReading {
             current_hashrate_ths: Some(99.0),
             power_w: Some(10.0),
-            temperature_c: Some(50.0),
+            temperature: Some(DeviceTemp::Single(Temperature::from_celsius(50.0))),
             uptime_s: Some(123),
-            nominal_hashrate_ths: None,
+            ..TelemetryReading::default()
         };
         BitaxeAdapter.parse_telemetry("/info", &MapJson::default(), &mut r);
         assert_eq!(r, TelemetryReading::default());
@@ -322,15 +347,16 @@ mod tests {
         let mut r = TelemetryReading {
             current_hashrate_ths: Some(1.0),
             power_w: Some(35.0),
-            temperature_c: Some(59.0),
+            temperature: Some(DeviceTemp::Single(Temperature::from_celsius(59.0))),
             uptime_s: Some(382),
             nominal_hashrate_ths: Some(7.0),
+            ..TelemetryReading::default()
         };
         BitaxeAdapter.reset_telemetry("/info", &mut r);
         assert_eq!(r.current_hashrate_ths, None);
         assert_eq!(r.nominal_hashrate_ths, None);
         assert_eq!(r.power_w, None);
-        assert_eq!(r.temperature_c, None);
+        assert_eq!(r.temperature, None);
         assert_eq!(r.uptime_s, None);
     }
 

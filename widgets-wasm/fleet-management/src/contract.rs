@@ -12,7 +12,8 @@ use crate::families::bitaxe::BitaxeAdapter;
 use crate::families::bos::BosAdapter;
 use crate::families::ubos::UbosAdapter;
 use crate::model::ModelAccumulator;
-use crate::telemetry::TelemetryReading;
+use crate::telemetry::{DeviceTemp, TelemetryReading};
+use bmc_wasm_sdk::Temperature;
 
 #[test]
 fn bos_sim_response_derives_the_intended_device() {
@@ -69,7 +70,15 @@ fn bos_sim_response_derives_the_intended_device() {
         "sticker_hashrate"
     );
     assert_eq!(reading.power_w, Some(3_250.0));
-    assert_eq!(reading.temperature_c, Some(65.0));
+    assert_eq!(
+        reading.temperature,
+        Some(DeviceTemp::Spread {
+            min: Temperature::from_celsius(65.0),
+            avg: Temperature::from_celsius(65.0),
+            max: Temperature::from_celsius(65.0),
+        }),
+        "two hashboards, both 65 °C",
+    );
     assert_eq!(reading.uptime_s, Some(187_020));
 
     let mut acc = ModelAccumulator::default();
@@ -115,7 +124,11 @@ fn ubos_sim_response_derives_the_intended_device_with_catalog_nominal() {
         "uBOS API reports no nominal"
     );
     assert_eq!(reading.power_w, Some(200.0));
-    assert_eq!(reading.temperature_c, Some(65.0));
+    assert_eq!(
+        reading.temperature,
+        Some(DeviceTemp::Single(Temperature::from_celsius(65.0))),
+        "uBOS single sensor",
+    );
     assert_eq!(reading.uptime_s, Some(187_020));
 
     let mut acc = ModelAccumulator::default();
@@ -162,7 +175,11 @@ fn axeos_sim_response_derives_the_intended_device() {
     assert_eq!(reading.current_hashrate_ths, Some(4.5));
     assert_eq!(reading.nominal_hashrate_ths, Some(4.5), "expectedHashrate");
     assert_eq!(reading.power_w, Some(76.0));
-    assert_eq!(reading.temperature_c, Some(62.0));
+    assert_eq!(
+        reading.temperature,
+        Some(DeviceTemp::Single(Temperature::from_celsius(62.0))),
+        "AxeOS single `temp` sensor",
+    );
     assert_eq!(reading.uptime_s, Some(187_020));
 
     let mut acc = ModelAccumulator::default();

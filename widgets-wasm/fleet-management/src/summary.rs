@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
 use crate::device::{DeviceFamily, DeviceId, DeviceList, KnownDevice};
-use crate::telemetry::TelemetryReading;
+use crate::telemetry::{DeviceTemp, TelemetryReading};
 
 /// A miner reading below this fraction of its nominal hashrate is not-ok.
 const OK_NOMINAL_FRACTION: f32 = 0.2;
@@ -121,12 +121,12 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
             eff_power += f64::from(p);
             eff_any = true;
         }
-        if let Some(t) = reading.temperature_c {
-            let t = f64::from(t);
-            temp_sum += t;
+        // Group spread: min of device mins, max of maxes, mean of avgs.
+        if let Some((lo, avg, hi)) = reading.temperature.map(DeviceTemp::as_range) {
+            temp_sum += avg.as_celsius();
             temp_count += 1;
-            temp_min = temp_min.min(t);
-            temp_max = temp_max.max(t);
+            temp_min = temp_min.min(lo.as_celsius());
+            temp_max = temp_max.max(hi.as_celsius());
         }
     }
 
@@ -303,7 +303,9 @@ mod tests {
         TelemetryReading {
             current_hashrate_ths: Some(hashrate),
             power_w: Some(power),
-            temperature_c: Some(temp),
+            temperature: Some(DeviceTemp::Single(Temperature::from_celsius(f64::from(
+                temp,
+            )))),
             ..TelemetryReading::default()
         }
     }
@@ -556,7 +558,7 @@ mod tests {
             // apply_telemetry sets reachability; a reachable device with no
             // reading stays as upserted (reachable, telemetry None).
             if let Some(reading) = reading {
-                list.apply_telemetry(&id, *reading, *reachable);
+                list.apply_telemetry(&id, reading.clone(), *reachable);
             }
         }
         list
@@ -836,7 +838,7 @@ mod tests {
                     nominal_hashrate_ths: None,
                 },
             );
-            l.apply_telemetry(&id, *reading, true);
+            l.apply_telemetry(&id, reading.clone(), true);
         }
         l
     }

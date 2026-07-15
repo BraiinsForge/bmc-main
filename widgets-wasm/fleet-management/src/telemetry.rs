@@ -18,16 +18,44 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+use bmc_wasm_sdk::Temperature;
+
+/// A device's temperature at the fidelity its sensors provide.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DeviceTemp {
+    /// One sensor (uBOS, single-board miners).
+    Single(Temperature),
+    /// Several sensors (BOS+ per hashboard, AxeOS `temp`/`temp2`).
+    Spread {
+        min: Temperature,
+        avg: Temperature,
+        max: Temperature,
+    },
+}
+
+impl DeviceTemp {
+    /// `(min, avg, max)`; a `Single` reports its one value for all three.
+    #[must_use]
+    pub fn as_range(self) -> (Temperature, Temperature, Temperature) {
+        match self {
+            Self::Single(t) => (t, t, t),
+            Self::Spread { min, avg, max } => (min, avg, max),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct TelemetryReading {
     pub current_hashrate_ths: Option<f32>,
     pub nominal_hashrate_ths: Option<f32>,
     pub power_w: Option<f32>,
     pub uptime_s: Option<u64>,
-    pub temperature_c: Option<f32>,
+    pub temperature: Option<DeviceTemp>,
+    /// Device MAC where the API exposes it — BOS+ and AxeOS, not uBOS.
+    pub mac: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TelemetrySnapshot {
     pub reading: TelemetryReading,
     pub refreshed_seq: u64,
@@ -44,6 +72,7 @@ mod tests {
         assert_eq!(r.nominal_hashrate_ths, None);
         assert_eq!(r.power_w, None);
         assert_eq!(r.uptime_s, None);
-        assert_eq!(r.temperature_c, None);
+        assert_eq!(r.temperature, None);
+        assert_eq!(r.mac, None);
     }
 }

@@ -19,13 +19,13 @@
 // the grant above.
 
 use base64::prelude::{BASE64_STANDARD, Engine as _};
-use bmc_wasm_sdk::ufmt;
+use bmc_wasm_sdk::{Temperature, ufmt};
 
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
 use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceSource};
 use crate::discovery::{JsonLookup, extract_endpoint};
 use crate::model::ModelAccumulator;
-use crate::telemetry::TelemetryReading;
+use crate::telemetry::{DeviceTemp, TelemetryReading};
 
 const EP_INFO: &str = "/info";
 
@@ -94,8 +94,9 @@ impl FamilyAdapter for UbosAdapter {
             if let Some(mw) = json.f64("/power_out_mw") {
                 reading.power_w = Some((mw / 1_000.0) as f32);
             }
+            // uBOS has one board sensor.
             if let Some(c) = json.f64("/temperature") {
-                reading.temperature_c = Some(c as f32);
+                reading.temperature = Some(DeviceTemp::Single(Temperature::from_celsius(c)));
             }
             if let Some(uptime) = json.i64("/uptime").and_then(|v| u64::try_from(v).ok()) {
                 reading.uptime_s = Some(uptime);
@@ -107,7 +108,7 @@ impl FamilyAdapter for UbosAdapter {
         if endpoint == EP_INFO {
             reading.current_hashrate_ths = None;
             reading.power_w = None;
-            reading.temperature_c = None;
+            reading.temperature = None;
             reading.uptime_s = None;
         }
     }
@@ -183,7 +184,10 @@ mod tests {
         let hr = r.current_hashrate_ths.expect("BUG: hashrate present");
         assert!((hr - 1.071_197_3).abs() < 1e-4, "got {hr}");
         assert_eq!(r.power_w, Some(35.0));
-        assert_eq!(r.temperature_c, Some(59.0));
+        assert_eq!(
+            r.temperature,
+            Some(DeviceTemp::Single(Temperature::from_celsius(59.0)))
+        );
         assert_eq!(r.uptime_s, Some(382));
     }
 
@@ -192,9 +196,9 @@ mod tests {
         let mut r = TelemetryReading {
             current_hashrate_ths: Some(99.0),
             power_w: Some(10.0),
-            temperature_c: Some(50.0),
+            temperature: Some(DeviceTemp::Single(Temperature::from_celsius(50.0))),
             uptime_s: Some(123),
-            nominal_hashrate_ths: None,
+            ..TelemetryReading::default()
         };
         UbosAdapter.parse_telemetry("/info", &MapJson::default(), &mut r);
         assert_eq!(r, TelemetryReading::default());
@@ -205,14 +209,15 @@ mod tests {
         let mut r = TelemetryReading {
             current_hashrate_ths: Some(1.0),
             power_w: Some(35.0),
-            temperature_c: Some(59.0),
+            temperature: Some(DeviceTemp::Single(Temperature::from_celsius(59.0))),
             uptime_s: Some(382),
             nominal_hashrate_ths: Some(7.0),
+            ..TelemetryReading::default()
         };
         UbosAdapter.reset_telemetry("/info", &mut r);
         assert_eq!(r.current_hashrate_ths, None);
         assert_eq!(r.power_w, None);
-        assert_eq!(r.temperature_c, None);
+        assert_eq!(r.temperature, None);
         assert_eq!(r.uptime_s, None);
         assert_eq!(r.nominal_hashrate_ths, Some(7.0));
     }
