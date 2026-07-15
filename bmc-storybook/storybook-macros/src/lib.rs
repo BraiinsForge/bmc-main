@@ -31,6 +31,8 @@ struct StoryArgs {
     name: Option<String>,
     grid: bool,
     default: bool,
+    /// Sort position within the group; unset sorts last, by name.
+    order: u32,
 }
 
 impl Parse for StoryArgs {
@@ -40,6 +42,7 @@ impl Parse for StoryArgs {
                 name: None,
                 grid: false,
                 default: false,
+                order: u32::MAX,
             });
         }
 
@@ -57,14 +60,21 @@ impl Parse for StoryArgs {
         // Optional keywords: `grid`, `default` (in any order)
         let mut grid = false;
         let mut default = false;
+        let mut order = u32::MAX;
         while !input.is_empty() {
             let kw: syn::Ident = input.parse()?;
             if kw == "grid" {
                 grid = true;
             } else if kw == "default" {
                 default = true;
+            } else if kw == "order" {
+                input.parse::<Token![=]>()?;
+                order = input.parse::<syn::LitInt>()?.base10_parse()?;
             } else {
-                return Err(syn::Error::new(kw.span(), "expected `grid` or `default`"));
+                return Err(syn::Error::new(
+                    kw.span(),
+                    "expected `grid`, `default`, or `order = N`",
+                ));
             }
             if input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -75,6 +85,7 @@ impl Parse for StoryArgs {
             name,
             grid,
             default,
+            order,
         })
     }
 }
@@ -137,6 +148,7 @@ pub fn story(attr: TokenStream, item: TokenStream) -> TokenStream {
             name: None,
             grid: false,
             default: false,
+            order: u32::MAX,
         }
     } else {
         match syn::parse::<StoryArgs>(attr) {
@@ -151,6 +163,7 @@ pub fn story(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let grid = args.grid;
     let default = args.default;
+    let order = args.order;
 
     // Detect return type: `-> Node` (auto-wrap) vs `-> ()` / no return (document mode).
     let returns_node = !is_unit_return(&input_fn.sig.output);
@@ -194,6 +207,7 @@ pub fn story(attr: TokenStream, item: TokenStream) -> TokenStream {
                     source: #source_code,
                     grid: #grid,
                     default: #default,
+                    order: #order,
                 }
             }
         }
@@ -210,6 +224,7 @@ pub fn story(attr: TokenStream, item: TokenStream) -> TokenStream {
                     source: #source_code,
                     grid: #grid,
                     default: #default,
+                    order: #order,
                 }
             }
         }

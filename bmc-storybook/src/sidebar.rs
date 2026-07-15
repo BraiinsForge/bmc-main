@@ -200,7 +200,19 @@ fn build_tree(stories: &[OwnedStoryEntry], groups: &[OwnedStoryGroupMeta]) -> Tr
         }
     }
 
+    sort_stories(&mut tree, stories);
     tree
+}
+
+/// Sort each node's stories by `(order, name)` so the catalog is deterministic;
+/// inventory registration order is otherwise arbitrary link order.
+fn sort_stories(node: &mut TreeNode, stories: &[OwnedStoryEntry]) {
+    node.stories.sort_by(|&a, &b| {
+        (stories[a].order, &stories[a].name).cmp(&(stories[b].order, &stories[b].name))
+    });
+    for child in node.children.values_mut() {
+        sort_stories(child, stories);
+    }
 }
 
 fn render_tree_node(

@@ -66,6 +66,8 @@ pub struct OwnedStoryEntry {
     /// When `true` and the story is the only one in its group, the sidebar
     /// collapses the group to a flat entry.
     pub default: bool,
+    /// Sort position within its group; unset (`u32::MAX`) sorts last, by name.
+    pub order: u32,
     /// Keeps the .so mapped. `None` for statically-linked stories.
     _library: Option<Arc<libloading::Library>>,
 }
@@ -91,6 +93,7 @@ impl OwnedStoryEntry {
             source: entry.source.to_owned(),
             grid: entry.grid,
             default: entry.default,
+            order: entry.order,
             _library: None,
         }
     }
@@ -104,6 +107,7 @@ impl OwnedStoryEntry {
             source: entry.source.to_owned(),
             grid: entry.grid,
             default: entry.default,
+            order: entry.order,
             _library: Some(Arc::clone(library)),
         }
     }

@@ -364,6 +364,8 @@ pub struct StoryEntry {
     /// collapses the group to a flat entry and the header shows only the
     /// group title, not "Group / Story Name".
     pub default: bool,
+    /// Sort position within its group; unset (`u32::MAX`) sorts last, by name.
+    pub order: u32,
 }
 
 inventory::collect!(StoryEntry);
