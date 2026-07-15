@@ -34,14 +34,13 @@ pub(in crate::runtime) fn mdns_browse_thread(
     event_tx: std::sync::mpsc::Sender<MdnsEvent>,
     stop_rx: std::sync::mpsc::Receiver<()>,
 ) {
-    use mdns_sd::{ServiceDaemon, ServiceEvent};
+    use mdns_sd::ServiceEvent;
 
-    let daemon = match ServiceDaemon::new() {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::error!("mDNS daemon creation failed: {e}");
-            return;
-        }
+    // One shared daemon for all browses. Multiple `ServiceDaemon`s on one host
+    // contend on the 5353 socket and lose subtype PTRs (`_x._sub._http._tcp`)
+    // while base types resolve — one daemon removes the contention.
+    let Some(daemon) = shared_mdns_daemon() else {
+        return;
     };
 
     let receivers: Vec<_> = service_types
@@ -56,7 +55,6 @@ pub(in crate::runtime) fn mdns_browse_thread(
         .collect();
 
     if receivers.is_empty() {
-        let _ = daemon.shutdown();
         return;
     }
 
@@ -115,7 +113,25 @@ pub(in crate::runtime) fn mdns_browse_thread(
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    let _ = daemon.shutdown();
+    // Stop only our browses; the shared daemon serves the other families.
+    for (service_type, _) in &receivers {
+        let _ = daemon.stop_browse(service_type);
+    }
+}
+
+/// The process-wide mDNS daemon shared by every browse thread. `None` if it
+/// couldn't be created.
+fn shared_mdns_daemon() -> Option<&'static mdns_sd::ServiceDaemon> {
+    static DAEMON: std::sync::OnceLock<Option<mdns_sd::ServiceDaemon>> = std::sync::OnceLock::new();
+    DAEMON
+        .get_or_init(|| match mdns_sd::ServiceDaemon::new() {
+            Ok(daemon) => Some(daemon),
+            Err(e) => {
+                tracing::error!("mDNS daemon creation failed: {e}");
+                None
+            }
+        })
+        .as_ref()
 }
 
 /// Background thread for SSDP M-SEARCH discovery.
