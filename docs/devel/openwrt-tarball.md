@@ -133,17 +133,13 @@ Two pieces are involved:
 
 - `bmc-nix-cli init` — an initialization subcommand of the same on-tarball CLI. It performs the on-device steps
   described below.
-- The firmware image `COMMAND` — the sysupgrade hook that BOS runs before applying the new image. On a Nix-era running
-  system — identified by the presence of `/etc/init.d/nix-activator`, a rootfs marker independent of this boot's mount
-  and activation state — the `COMMAND` first runs `bmc-nix-cli init` without `--wipe`: it mounts the data partition when
-  necessary, no-ops when the store is fully initialized (empty stdout), and otherwise initializes it for the incoming
-  firmware version (printing the new profile path), in which case staging is already complete. When the store
-  pre-existed, the `COMMAND` restores the `/nix` bind mount when missing, extends `PATH` with `/run/current-profile/bin`
-  (otherwise added only by login shells; realisation spawns `nix-store` on the outgoing system), and runs the
-  feed-resolved upgrade. On a pre-Nix system it runs `bmc-nix-cli init --wipe`, replacing any store left behind by an
-  earlier aborted upgrade with one matching the firmware being flashed. In both branches the `COMMAND` passes the
-  incoming firmware's version via `--firmware` — the running `/etc/bos_version` may predate Nix and have no factory
-  tarball.
+- The firmware image `COMMAND` — the sysupgrade hook that BOS runs before applying the new image. It prepares and mounts
+  the data partition, then uses `bmc-nix-cli is-initialized` to select the next step. A fully initialized store already
+  bind-mounted at `/nix` takes the feed-resolved upgrade path. An absent or incomplete store, or a fully initialized
+  store that is not mounted at `/nix`, takes `bmc-nix-cli init --wipe`, replacing inconsistent state left by an earlier
+  attempt with a store matching the firmware being flashed. The upgrade path extends `PATH` with the active profile and
+  gcroot fallbacks because realisation spawns `nix-store` on the outgoing system. Both paths pass the incoming
+  firmware's version via `--firmware` — the running `/etc/bos_version` may predate Nix and have no factory tarball.
 
 The `init` command is intentionally distinct from the firmware-upgrade flow (`build-profile` and friends). Init operates
 before there is any profile to diff against; it only has to populate the store and lay down the initial profile shipped
