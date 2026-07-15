@@ -16,9 +16,16 @@
       },
 
     {
+        count: 2,
+        device: "ubos",
+        label: "Healthy Braiins Forge Miner x4 fleet",
+        params: { model_name: "Braiins Forge Miner x4", hashrate_ths: 4.2, power_w: 195, temp_c: 62 }
+    },
+
+    {
         count: 1,
         device: "ubos",
-        label: "Present over mDNS but API fails → present-but-no-reading",
+        label: "Present over mDNS but API 503s → identified, API-error status",
         params: { status: 503 }
     },
 
