@@ -21,14 +21,17 @@ use crate::screens::parts::{
 };
 use crate::view::{PageTurn, PagerScope, model_detail_click_id, pager_click_id};
 
-// Column widths within the table card.
-const COL_MODEL: f32 = 340.0;
+// Column widths within the table card. Balanced against the Figma "Braiins DECK"
+// list frame: Model was over-wide and starved the rest, the sparkline worst of
+// all — width shifted off Model onto the spark (to the design's ~83px) and the
+// value columns.
+const COL_MODEL: f32 = 310.0;
 const COL_STATUS: f32 = 150.0;
-const COL_HASHRATE: f32 = 122.0;
-const COL_SPARK: f32 = 80.0;
+const COL_HASHRATE: f32 = 127.0;
+const COL_SPARK: f32 = 100.0;
 const COL_POWER: f32 = 106.0;
 const COL_EFF: f32 = 118.0;
-const COL_AVG: f32 = 86.0;
+const COL_AVG: f32 = 91.0;
 const STATUS_SLOT: f32 = 50.0;
 const SPARK_W: f32 = COL_SPARK - 16.0;
 const MODEL_CHARS: usize = 28;
@@ -132,10 +135,10 @@ fn model_row(r: &ModelRow) -> Node {
                     FontWeight::REGULAR,
                 ),
             ),
-            cell(
-                COL_HASHRATE,
-                value(&r.hashrate.format_value(2), Hashrate::UNIT),
-            ),
+            cell(COL_HASHRATE, {
+                let (v, u) = r.hashrate.format_si_parts(3);
+                value(&v, &u)
+            }),
             cell(
                 COL_SPARK,
                 canvas(
@@ -143,10 +146,10 @@ fn model_row(r: &ModelRow) -> Node {
                     area_chart(&r.series, SPARK_W, 32.0, 0.15),
                 ),
             ),
-            cell(
-                COL_POWER,
-                value(&r.power.format_value(2), ElectricPower::UNIT),
-            ),
+            cell(COL_POWER, {
+                let (v, u) = r.power.format_si_parts(3);
+                value(&v, &u)
+            }),
             cell(
                 COL_EFF,
                 value(&r.efficiency.format_value(1), MiningEfficiency::UNIT),
