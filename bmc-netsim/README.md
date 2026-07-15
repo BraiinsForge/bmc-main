@@ -19,6 +19,9 @@ only means the widget has not needed it yet. Before concluding a field is unavai
 truth (the API's openapi/spec or the firmware), never netsim. When the widget starts reading a new field, model it here
 too.
 
+Vendored snapshots of those upstream contracts live under [`reference/`](reference/) for in-repo lookup — currently the
+BOS+ boser openapi; AxeOS and uBOS are noted there.
+
 ## Quick start
 
 ```sh
