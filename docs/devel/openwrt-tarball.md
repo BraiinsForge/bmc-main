@@ -142,8 +142,8 @@ Two pieces are involved:
   (otherwise added only by login shells; realisation spawns `nix-store` on the outgoing system), and runs the
   feed-resolved upgrade. On a pre-Nix system it runs `bmc-nix-cli init --wipe`, replacing any store left behind by an
   earlier aborted upgrade with one matching the firmware being flashed. In both branches the `COMMAND` passes the
-  incoming firmware's version via `--bos-version-file` — the running `/etc/bos_version` may predate Nix and have no
-  factory tarball.
+  incoming firmware's version via `--firmware` — the running `/etc/bos_version` may predate Nix and have no factory
+  tarball.
 
 The `init` command is intentionally distinct from the firmware-upgrade flow (`build-profile` and friends). Init operates
 before there is any profile to diff against; it only has to populate the store and lay down the initial profile shipped
@@ -164,9 +164,9 @@ in the tarball.
    all three are present, it exits 0 without changing the store unless `--wipe` is passed. An incomplete store is not
    overwritten implicitly; recovery must explicitly pass `--wipe`. `--wipe` refuses to run while `/nix` is an active
    mount — the running system would be using the very store it deletes.
-3. **Select and download the initialization tarball.** Selection is by the BOS version read from `--bos-version-file`
-   (default `/etc/bos_version`). The firmware `COMMAND` overrides it with the staged incoming version file, because the
-   running file still names the outgoing firmware. The version is matched against the factory server's package feed
+3. **Select and download the initialization tarball.** Selection is by `--firmware`, falling back to the version in
+   `/etc/bos_version` when the flag is omitted. The firmware `COMMAND` passes the incoming version explicitly because
+   the running file still names the outgoing firmware. The version is matched against the factory server's package feed
    (`nix-package-feed.v1.json`, fetched from the `factory` entry of `/etc/nix-upgrade/servers.json`). If no feed entry
    matches the requested BOS version, `init` fails — the factory server has to keep an entry for every Nix-capable BOS
    version, otherwise this path breaks.

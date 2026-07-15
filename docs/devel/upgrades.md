@@ -268,10 +268,10 @@ The Nix store on new devices is populated in one of two ways:
 - **First-boot upgrade from a pre-Nix firmware.** The first Nix-capable firmware is marked as a required version (users
   cannot skip it). Its image `COMMAND` invokes `bmc-nix-cli init` from the tarball, which prepares `/dev/mmcblk0p4` as
   an ext4 data partition mounted at `/mnt/data`, fetches the factory server's package feed and from it the
-  initialization tarball for the incoming firmware's version (passed by the `COMMAND` via `--bos-version-file`; the
-  running `/etc/bos_version` predates Nix and has no tarball), stages it into `/mnt/data/nix.tmp`, and atomically
-  promotes `nix.tmp/nix` to `nix`, discarding entries outside `nix/` — live rootfs files come from activation on first
-  boot (see [`openwrt-tarball.md`](openwrt-tarball.md#initialization)); the profile activates on next boot. `init` exits
+  initialization tarball for the incoming firmware's version (passed by the `COMMAND` via `--firmware`; the running
+  `/etc/bos_version` predates Nix and has no tarball), stages it into `/mnt/data/nix.tmp`, and atomically promotes
+  `nix.tmp/nix` to `nix`, discarding entries outside `nix/` — live rootfs files come from activation on first boot (see
+  [`openwrt-tarball.md`](openwrt-tarball.md#initialization)); the profile activates on next boot. `init` exits
   successfully without changing an existing store only when it is fully initialized: the store is nonempty and its
   database and BMC profile are present. An incomplete `/mnt/data/nix` is not overwritten implicitly; recovery must pass
   `--wipe`.
