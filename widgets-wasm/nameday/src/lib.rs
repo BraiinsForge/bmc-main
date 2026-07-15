@@ -155,11 +155,16 @@ mod wasm_glue {
                 }
             }
 
-            if data_found {
-                let fetched_at = FETCHED_NAMEDAY_TIMESTAMP
-                    .with_borrow(std::clone::Clone::clone)
-                    .expect("BUG: build_request did not populate FETCHED_NAMEDAY_TIMESTAMP.");
+            let fetched_at = FETCHED_NAMEDAY_TIMESTAMP
+                .with_borrow(std::clone::Clone::clone)
+                .expect("BUG: build_request did not populate FETCHED_NAMEDAY_TIMESTAMP.");
 
+            if !is_today(&fetched_at) {
+                // Data were fetched for incorrect date. This happens when NTP sync occurs
+                // after scheduling the fetch before the fetch successfully completes
+                // (it fails on TLS cert validation before time is synced).
+                handle.retry();
+            } else if data_found {
                 NAMEDAY_DATA.with(|d| {
                     *d.borrow_mut() = Some(NamedayData {
                         names_per_country,
