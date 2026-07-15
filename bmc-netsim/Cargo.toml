@@ -16,6 +16,7 @@ include = ["blueprint.schema.json"]
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
+fake.workspace = true
 json5.workspace = true
 mdns-sd.workspace = true
 schemars.workspace = true

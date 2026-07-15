@@ -56,9 +56,15 @@ pub fn noise01(seed: u64, t: f64) -> f64 {
     low + (high - low) * smooth
 }
 
+/// A stable value in `[0, 1)` from `seed` alone — the time-free [`noise01`].
+#[must_use]
+pub fn stable01(seed: u64) -> f64 {
+    lattice(seed, 0)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{mix, noise01};
+    use super::{mix, noise01, stable01};
 
     #[test]
     fn noise_is_stable_for_same_seed_and_time() {
@@ -81,5 +87,19 @@ mod tests {
         let power = mix(42, "power");
         let gap = (noise01(hashrate, 3.0) - noise01(power, 3.0)).abs();
         assert!(gap > f64::EPSILON, "distinct keys should decorrelate");
+    }
+
+    #[test]
+    fn stable01_is_constant_per_seed_and_decorrelates() {
+        let one = stable01(mix(0, "bos-01"));
+        assert!((0.0..1.0).contains(&one), "{one} out of [0, 1)");
+        assert!(
+            (stable01(mix(0, "bos-01")) - one).abs() < f64::EPSILON,
+            "same seed is stable",
+        );
+        assert!(
+            (stable01(mix(0, "bos-02")) - one).abs() > f64::EPSILON,
+            "distinct seeds decorrelate",
+        );
     }
 }

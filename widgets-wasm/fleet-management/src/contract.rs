@@ -18,7 +18,7 @@ use bmc_wasm_sdk::Temperature;
 #[test]
 fn bos_sim_response_derives_the_intended_device() {
     // bos.rs default: BMM 101, 100 TH/s, sticker 100 TH/s, 3250 W, 65 °C,
-    // uptime 187020, two BM1370 boards of 76 chips.
+    // uptime 187020, two BM1370 boards (76 chips) spread, MAC on details.
     let mut found = MapJson::default();
     found.strings.insert("/service_type", "_http._tcp.local.");
     found.strings.insert("/name", "bos-01._http._tcp.local.");
@@ -41,17 +41,18 @@ fn bos_sim_response_derives_the_intended_device() {
     let mut boards = MapJson::default();
     boards
         .floats
-        .insert("/hashboards/0/highest_chip_temp/temperature/degree_c", 65.0);
+        .insert("/hashboards/0/highest_chip_temp/temperature/degree_c", 60.0);
     boards.strings.insert("/hashboards/0/chip_type", "BM1370");
     boards.ints.insert("/hashboards/0/chips_count", 76);
     boards
         .floats
-        .insert("/hashboards/1/highest_chip_temp/temperature/degree_c", 65.0);
+        .insert("/hashboards/1/highest_chip_temp/temperature/degree_c", 70.0);
     boards.strings.insert("/hashboards/1/chip_type", "BM1370");
     boards.ints.insert("/hashboards/1/chips_count", 76);
     let mut details = MapJson::default();
     details.ints.insert("/bosminer_uptime_s", 187_020);
     details.ints.insert("/platform", 8);
+    details.strings.insert("/mac_address", "02:AB:CD:EF:01:23");
     details
         .strings
         .insert("/miner_identity/miner_model", "BMM 101");
@@ -73,13 +74,14 @@ fn bos_sim_response_derives_the_intended_device() {
     assert_eq!(
         reading.temperature,
         Some(DeviceTemp::Spread {
-            min: Temperature::from_celsius(65.0),
+            min: Temperature::from_celsius(60.0),
             avg: Temperature::from_celsius(65.0),
-            max: Temperature::from_celsius(65.0),
+            max: Temperature::from_celsius(70.0),
         }),
-        "two hashboards, both 65 °C",
+        "two hashboards spread around the 65 °C baseline",
     );
     assert_eq!(reading.uptime_s, Some(187_020));
+    assert_eq!(reading.mac.as_deref(), Some("02:AB:CD:EF:01:23"));
 
     let mut acc = ModelAccumulator::default();
     BosAdapter.parse_model("/miner/hw/hashboards", &boards, &mut acc);
@@ -130,6 +132,7 @@ fn ubos_sim_response_derives_the_intended_device_with_catalog_nominal() {
         "uBOS single sensor",
     );
     assert_eq!(reading.uptime_s, Some(187_020));
+    assert_eq!(reading.mac, None, "uBOS API carries no MAC");
 
     let mut acc = ModelAccumulator::default();
     UbosAdapter.parse_model("/info", &info, &mut acc);
@@ -166,6 +169,7 @@ fn axeos_sim_response_derives_the_intended_device() {
     info.floats.insert("/power", 76.0);
     info.floats.insert("/temp", 62.0);
     info.ints.insert("/uptimeSeconds", 187_020);
+    info.strings.insert("/macAddr", "02:AB:CD:EF:04:56");
     info.strings.insert("/deviceModel", "NerdQAxe++");
     info.strings.insert("/ASICModel", "BM1370");
     info.ints.insert("/asicCount", 4);
@@ -181,6 +185,7 @@ fn axeos_sim_response_derives_the_intended_device() {
         "AxeOS single `temp` sensor",
     );
     assert_eq!(reading.uptime_s, Some(187_020));
+    assert_eq!(reading.mac.as_deref(), Some("02:AB:CD:EF:04:56"));
 
     let mut acc = ModelAccumulator::default();
     BitaxeAdapter.parse_model("/info", &info, &mut acc);

@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
 use crate::blueprint::{AnnounceSpec, Body, EndpointSpec, ResourceSpec, Sampler, SeriesSpec};
-use crate::build::{celsius, drift, leaf, steady};
+use crate::build::{celsius, drift, leaf, mac, steady};
 use crate::cache::Cache;
 
 /// AxeOS 10-minute history window: 300 samples at a 2 s cadence
@@ -120,6 +120,7 @@ impl Params {
                         "power": leaf(power),
                         "temp": leaf(temp),
                         "uptimeSeconds": self.uptime_s,
+                        "macAddr": mac(name),
                         "deviceModel": self.model_name.as_str(),
                         "ASICModel": "BM1370",
                         "asicCount": 4,

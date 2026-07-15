@@ -228,6 +228,7 @@ embedded-hal = { version = "1.0.0" }
 embedded-hal-async = { version = "1.0.0" }
 enum-assoc = "1.2.4"
 evdev = "0.13.1"
+fake = "4"
 fdlimit = "0.3.0"
 femtovg = "0.20.4"
 file-rotate = "0.7.6"

@@ -16,7 +16,18 @@ use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
 use crate::blueprint::{AnnounceSpec, Body, EndpointSpec, ResourceSpec};
-use crate::build::{celsius, drift, leaf, steady};
+use crate::build::{celsius, drift, leaf, mac, steady};
+use crate::noise::{mix, mix_index, stable01};
+
+/// Peak per-board temperature spread (°C): each board sits within half this
+/// of the miner's baseline.
+const BOARD_TEMP_SPREAD_C: f64 = 12.0;
+
+/// A stable per-board temperature offset (°C), keyed on device identity and
+/// board index, so the fleet shows a real min/avg/max spread.
+fn board_offset(base: u64, index: usize) -> f64 {
+    (stable01(mix_index(base, index)) - 0.5) * BOARD_TEMP_SPREAD_C
+}
 
 /// Tunables for a simulated BOS+ miner.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -62,6 +73,7 @@ impl Params {
     pub fn resource(&self, name: &str, port: u16) -> ResourceSpec {
         let ghs = leaf(drift(self.hashrate_ths * 1_000.0));
         let watt = leaf(drift(self.power_w));
+        let base = mix(0, name);
         let endpoints = vec![
             EndpointSpec {
                 method: "POST".to_owned(),
@@ -81,7 +93,9 @@ impl Params {
             EndpointSpec {
                 method: "GET".to_owned(),
                 path: "/api/v1/miner/hw/hashboards".to_owned(),
-                body: Body::Render(json!({ "hashboards": [self.board(), self.board()] })),
+                body: Body::Render(json!({
+                    "hashboards": [self.board(board_offset(base, 0)), self.board(board_offset(base, 1))],
+                })),
                 status: self.status,
             },
             EndpointSpec {
@@ -90,6 +104,7 @@ impl Params {
                 body: Body::Render(json!({
                     "bosminer_uptime_s": self.uptime_s,
                     "platform": 8,
+                    "mac_address": mac(name),
                     "miner_identity": { "miner_model": self.model_name.as_str() },
                     "sticker_hashrate": { "gigahash_per_second": leaf(steady(self.nominal_ths * 1_000.0)) },
                 })),
@@ -109,10 +124,10 @@ impl Params {
         }
     }
 
-    /// One hashboard entry with a drifting chip temperature.
-    fn board(&self) -> Json {
+    /// A hashboard whose chip temperature drifts around the baseline plus `offset_c`.
+    fn board(&self, offset_c: f64) -> Json {
         json!({
-            "highest_chip_temp": { "temperature": { "degree_c": leaf(celsius(self.temp_c)) } },
+            "highest_chip_temp": { "temperature": { "degree_c": leaf(celsius(self.temp_c + offset_c)) } },
             "chip_type": "BM1370",
             "chips_count": 76,
         })
