@@ -13,7 +13,7 @@
 
 use std::time::{Duration, Instant};
 
-use ::deck_alarm_v1::client::deck_alarm_v1::{self, DeckAlarmV1};
+use ::deck_alarm_v1::client::deck_alarm_v1::{self, DeckAlarmV1, Snooze};
 use anyhow::Context;
 use wayland_client::backend::ObjectId;
 use wayland_client::protocol::{
@@ -177,7 +177,7 @@ impl State {
         self.pending_hidden = true;
     }
 
-    /// Record a `ring_alarm` into the single latest-wins alarm slot.
+    /// Record an `alarm_ringing` into the single latest-wins alarm slot.
     fn note_alarm_ring(&mut self, time: String, label: String, snooze_allowed: bool) {
         self.pending_alarm_event = Some(AlarmEvent::Ring {
             time,
@@ -186,7 +186,7 @@ impl State {
         });
     }
 
-    /// Record a `stop_alarm` into the single latest-wins alarm slot.
+    /// Record an `alarm_stopped` into the single latest-wins alarm slot.
     fn note_alarm_stop(&mut self) {
         self.pending_alarm_event = Some(AlarmEvent::Stop);
     }
@@ -870,14 +870,16 @@ impl Dispatch<DeckAlarmV1, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            deck_alarm_v1::Event::RingAlarm {
+            deck_alarm_v1::Event::AlarmRinging {
                 time,
                 label,
                 snooze_allowed,
             } => {
-                state.note_alarm_ring(time, label, snooze_allowed != 0);
+                // Unknown enum values default to no-snooze, the safe fallback.
+                let snooze_allowed = matches!(snooze_allowed, WEnum::Value(Snooze::Allowed));
+                state.note_alarm_ring(time, label, snooze_allowed);
             }
-            deck_alarm_v1::Event::StopAlarm => {
+            deck_alarm_v1::Event::AlarmStopped => {
                 state.note_alarm_stop();
             }
             other => tracing::debug!(?other, "unhandled deck_alarm_v1 event"),

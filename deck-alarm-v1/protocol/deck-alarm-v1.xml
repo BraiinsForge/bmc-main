@@ -29,8 +29,14 @@
       <description summary="destroy the alarm interface"/>
     </request>
 
-    <event name="ring_alarm">
-      <description summary="ring the alarm">
+    <enum name="snooze">
+      <description summary="whether a firing alarm may be snoozed"/>
+      <entry name="not_allowed" value="0" summary="the alarm may not be snoozed"/>
+      <entry name="allowed" value="1" summary="the alarm may be snoozed"/>
+    </enum>
+
+    <event name="alarm_ringing">
+      <description summary="the alarm started ringing">
         Sent when an alarm fires. Carries what the overlay renders: the alarm's
         scheduled time, its label, and whether snoozing is allowed. The overlay
         maps its full-screen surface on this event and unmaps after the user
@@ -38,10 +44,10 @@
       </description>
       <arg name="time" type="string" summary="scheduled alarm time, e.g. 07:30"/>
       <arg name="label" type="string" summary="alarm label, empty if unset"/>
-      <arg name="snooze_allowed" type="uint" summary="1 if the alarm may be snoozed, 0 otherwise"/>
+      <arg name="snooze_allowed" type="uint" enum="snooze" summary="whether the alarm may be snoozed"/>
     </event>
 
-    <event name="stop_alarm">
+    <event name="alarm_stopped">
       <description summary="the alarm stopped ringing">
         Sent when the alarm is no longer ringing for a reason this overlay did
         not initiate (timeout, dismissal from another surface, or bmc fallback).

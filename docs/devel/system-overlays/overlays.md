@@ -113,14 +113,15 @@ surface, the compositor treats it as a modal blocker: it suppresses scene naviga
 Visibility is a single `Option<Ring>`; `tick` reports `visible` exactly while it is `Some`, so the overlay is purely
 event-driven with no timed wake:
 
-- **`on_alarm_ring(time, label, snooze_allowed)`** (the `deck_alarm_v1.ring_alarm` event) fills the ring state and maps
-  the surface. `snooze_allowed` is decided in `bmc` — `false` when the alarm has no snooze options *or* its per-firing
-  snooze count has reached the configured limit — and hides the Snooze button.
+- **`on_alarm_ring(time, label, snooze_allowed)`** (the `deck_alarm_v1.alarm_ringing` event) fills the ring state and
+  maps the surface. `snooze_allowed` is decided in `bmc` — `not_allowed` when the alarm has no snooze options *or* its
+  per-firing snooze count has reached the configured limit — and hides the Snooze button.
 - A **Stop Alarm** tap queues `AlarmRequest::Dismiss`; a **Snooze** tap queues `AlarmRequest::Snooze`. The framework
   drains these after `render` and sends them over `deck_alarm_v1`; `bmc` acts and the resulting stop comes back as the
-  `stop_alarm` event.
-- **`on_alarm_stop`** (the `deck_alarm_v1.stop_alarm` event) clears the ring state so the surface unmaps. It is sent for
-  any stop the overlay did not initiate — timeout, a dismiss from the web UI, or the compositor's no-overlay fallback.
+  `alarm_stopped` event.
+- **`on_alarm_stop`** (the `deck_alarm_v1.alarm_stopped` event) clears the ring state so the surface unmaps. It is sent
+  for any stop the overlay did not initiate — timeout, a dismiss from the web UI, or the compositor's no-overlay
+  fallback.
 
 The compositor keeps a **no-overlay / crash fallback**: if an alarm rings with no live overlay bound (or the overlay
 dies mid-ring), it auto-dismisses after a short grace, and any touch dismisses it immediately. That watchdog lives in

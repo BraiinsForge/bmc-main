@@ -231,7 +231,7 @@ pub trait Compositor: Send + Sync {
     }
 
     /// Broadcast that the alarm is ringing to the alarm-overlay via `deck_alarm_v1`
-    /// `ring_alarm` event.
+    /// `alarm_ringing` event.
     /// Default: no-op.
     fn broadcast_alarm_ring(
         &self,
@@ -243,7 +243,7 @@ pub trait Compositor: Send + Sync {
     }
 
     /// Broadcast that the alarm stopped to the alarm-overlay via `deck_alarm_v1`
-    /// `stop_alarm` event.
+    /// `alarm_stopped` event.
     /// Default: no-op.
     fn broadcast_alarm_stop(&self) -> Result<(), CompositorError> {
         Ok(())

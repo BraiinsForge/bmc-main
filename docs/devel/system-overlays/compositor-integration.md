@@ -153,8 +153,8 @@ The compositor creates the `deck_alarm_v1` global and relays between bmc's alarm
 the settings dispatch. `AlarmState` tracks the bound overlay resources, a `pending_actions` buffer, and a `ringing`
 flag:
 
-- Outgoing: `AlarmState::ring(time, label, snooze_allowed)` fans out `ring_alarm` to every live resource and sets
-  `ringing`; `stop()` fans out `stop_alarm` and clears it. Both prune dead resources first, so a client that vanished
+- Outgoing: `AlarmState::ring(time, label, snooze_allowed)` fans out `alarm_ringing` to every live resource and sets
+  `ringing`; `stop()` fans out `alarm_stopped` and clears it. Both prune dead resources first, so a client that vanished
   without `destroy` is reaped on the next emit.
 - Incoming: `snooze_alarm` / `dismiss_alarm` requests are buffered as `AlarmAction`s and drained each loop pass into
   lossless `AlarmCommand`s on a dedicated mpsc channel to bmc (not the lossy broadcast). `destroy` removes the session

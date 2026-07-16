@@ -3,7 +3,7 @@
 //! Full-screen firing-alarm overlay.
 //!
 //! Maps a full-screen surface while an alarm is ringing (driven by the
-//! `deck_alarm_v1` `ring_alarm` event) and unmaps once the user snoozes or
+//! `deck_alarm_v1` `alarm_ringing` event) and unmaps once the user snoozes or
 //! dismisses, or the compositor reports the alarm stopped. Snooze/dismiss taps
 //! are sent back over the same protocol.
 
@@ -26,7 +26,7 @@ use bmc_wasm_protocol::{CrossAlign, Fill, PathPaint, PropsData, TRANSPARENT};
 const STOP_ALARM_KEY: &str = "stop_alarm_button";
 const SNOOZE_ALARM_KEY: &str = "snooze_alarm_button";
 
-/// The firing alarm currently shown, as delivered by the `ring_alarm` event.
+/// The firing alarm currently shown, as delivered by the `alarm_ringing` event.
 #[derive(Debug)]
 struct Ring {
     /// Scheduled alarm time, preformatted for display (e.g. `07:30`).

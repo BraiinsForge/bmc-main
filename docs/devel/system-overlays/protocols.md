@@ -99,18 +99,18 @@ rather than reaching into bmc directly.
 
 ### `deck_alarm_v1` (version 1)
 
-| Member                                    | Kind    | Args                                                    | Notes                                                                                                                                            |
-| ----------------------------------------- | ------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `snooze_alarm`                            | request | —                                                       | Ask the compositor to snooze the ringing alarm.                                                                                                  |
-| `dismiss_alarm`                           | request | —                                                       | Ask the compositor to stop (dismiss) the ringing alarm.                                                                                          |
-| `destroy`                                 | request | —                                                       | Destructor.                                                                                                                                      |
-| `ring_alarm(time, label, snooze_allowed)` | event   | `time: string`, `label: string`, `snooze_allowed: uint` | An alarm fired. Carries what the overlay renders: scheduled time (e.g. `07:30`), label (empty if unset), and whether the Snooze button is shown. |
-| `stop_alarm`                              | event   | —                                                       | The alarm stopped for a reason the overlay did not initiate (timeout, dismissal elsewhere, or bmc fallback). The overlay unmaps.                 |
+| Member                                       | Kind    | Args                                                             | Notes                                                                                                                                            |
+| -------------------------------------------- | ------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `snooze_alarm`                               | request | —                                                                | Ask the compositor to snooze the ringing alarm.                                                                                                  |
+| `dismiss_alarm`                              | request | —                                                                | Ask the compositor to stop (dismiss) the ringing alarm.                                                                                          |
+| `destroy`                                    | request | —                                                                | Destructor.                                                                                                                                      |
+| `alarm_ringing(time, label, snooze_allowed)` | event   | `time: string`, `label: string`, `snooze_allowed: snooze` (enum) | An alarm fired. Carries what the overlay renders: scheduled time (e.g. `07:30`), label (empty if unset), and whether the Snooze button is shown. |
+| `alarm_stopped`                              | event   | —                                                                | The alarm stopped for a reason the overlay did not initiate (timeout, dismissal elsewhere, or bmc fallback). The overlay unmaps.                 |
 
 **Responsibility split.** The overlay sends `dismiss_alarm` / `snooze_alarm`; the compositor forwards them to bmc as
 lossless `AlarmCommand`s (a dedicated mpsc channel, not the lossy broadcast used for scene events), and bmc's alarm
-controller acts. bmc's `AlarmEvent`s are translated the other way into `ring_alarm` / `stop_alarm`. `snooze_allowed` is
-computed by bmc — `false` when the alarm has no snooze options or its snooze count has reached the configured limit —
-and the limit is *also* enforced in the controller, so the overlay's hidden button is UI, not the sole guard. The
-compositor tracks a `ringing` flag and the set of bound overlay resources to drive its no-overlay/crash fallback
-([`compositor-integration.md`](compositor-integration.md)).
+controller acts. bmc's `AlarmEvent`s are translated the other way into `alarm_ringing` / `alarm_stopped`.
+`snooze_allowed` is computed by bmc — `not_allowed` when the alarm has no snooze options or its snooze count has reached
+the configured limit — and the limit is *also* enforced in the controller, so the overlay's hidden button is UI, not the
+sole guard. The compositor tracks a `ringing` flag and the set of bound overlay resources to drive its no-overlay/crash
+fallback ([`compositor-integration.md`](compositor-integration.md)).

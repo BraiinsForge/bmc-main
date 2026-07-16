@@ -7,12 +7,21 @@
 //! forwards to bmc. The `ring`/`stop` event fan-out is a pure helper
 //! over the resource list so it is testable without Wayland resources.
 
-use ::deck_alarm_v1::server::deck_alarm_v1::{self, DeckAlarmV1};
+use ::deck_alarm_v1::server::deck_alarm_v1::{self, DeckAlarmV1, Snooze};
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
 
 use super::state::CompositorState;
+
+/// Map the internal snooze-allowed bool to the wire enum.
+fn snooze_flag(allowed: bool) -> Snooze {
+    if allowed {
+        Snooze::Allowed
+    } else {
+        Snooze::NotAllowed
+    }
+}
 
 /// A control request from the overlay, drained by the compositor loop and
 /// forwarded to bmc through the widget action channel.
@@ -23,7 +32,7 @@ pub enum AlarmAction {
 }
 
 /// The alarm currently ringing, retained so a late-binding overlay can be
-/// replayed the `ring_alarm` event on bind. `Some` between a `ring` and its
+/// replayed the `alarm_ringing` event on bind. `Some` between a `ring` and its
 /// `stop`.
 #[derive(Debug, Clone)]
 struct Ring {
@@ -76,14 +85,18 @@ impl AlarmState {
             snooze_allowed,
         });
         for r in &self.resources {
-            r.ring_alarm(time.to_owned(), label.to_owned(), u32::from(snooze_allowed));
+            r.alarm_ringing(
+                time.to_owned(),
+                label.to_owned(),
+                snooze_flag(snooze_allowed),
+            );
         }
     }
     pub fn stop(&mut self) {
         self.prune();
         self.ringing = None;
         for r in &self.resources {
-            r.stop_alarm();
+            r.alarm_stopped();
         }
     }
 
@@ -95,10 +108,10 @@ impl AlarmState {
     /// suppress touch-to-dismiss with nothing on screen.
     fn replay_ring(&self, resource: &DeckAlarmV1) {
         if let Some(ring) = &self.ringing {
-            resource.ring_alarm(
+            resource.alarm_ringing(
                 ring.time.clone(),
                 ring.label.clone(),
-                u32::from(ring.snooze_allowed),
+                snooze_flag(ring.snooze_allowed),
             );
         }
     }
