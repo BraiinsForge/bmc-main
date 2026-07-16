@@ -1,0 +1,42 @@
+{
+  "$schema": "../blueprint.schema.json",
+
+  // The example fleet at 10x count (~90 devices) for the on-device stress test:
+  // the same mix at scale, so the poller's round-robin cadence and the Deck's
+  // load can be measured under a realistically large fleet. Run with
+  // `just netsim::run stress`.
+  instances: [
+    {
+        count: 30,
+        device: "bos",
+        label: "Healthy BMM 101 fleet",
+    },
+
+    {
+        count: 10,
+        device: "bos",
+        label: "Stragglers mining <20% of nominal → not-okay",
+        params: { model_name: "BMM 101", hashrate_ths: 8 }
+      },
+
+    {
+        count: 20,
+        device: "ubos",
+        label: "Healthy Braiins Forge Miner x4 fleet",
+        params: { model_name: "Braiins Forge Miner x4", hashrate_ths: 4.2, power_w: 195, temp_c: 62 }
+    },
+
+    {
+        count: 10,
+        device: "ubos",
+        label: "Present over mDNS but API 503s → identified, API-error status",
+        params: { status: 503 }
+    },
+
+    {
+        count: 20,
+        device: "axeos",
+        label: "NerdQAxe++ fleet",
+    },
+  ],
+}
