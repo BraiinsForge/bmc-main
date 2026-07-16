@@ -140,8 +140,8 @@ skip-tree = [
 ]
 
 # ── Licenses ──────────────────────────────────────────────────────────
-# Not checked in CI — workspace crates are proprietary (license = "").
-# Enable later if third-party license auditing is needed.
+# Workspace crates are GPL-3.0-or-later. Third-party license auditing is
+# not checked in CI — enable if GPL-compatibility auditing is needed.
 
 # ── Sources ───────────────────────────────────────────────────────────
 [sources]

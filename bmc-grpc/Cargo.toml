@@ -2,6 +2,7 @@
 name = "bmc-grpc"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 
 # Proto sources compiled by build.rs; the nix source filter keeps only
 # rust/toml/lock unless a crate opts extra files in here.

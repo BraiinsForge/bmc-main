@@ -2,6 +2,7 @@
 name = "deck-settings-v1"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 authors = ["Braiins Systems s.r.o."]
 description = "Vendored deck_settings_v1 Wayland protocol (overlay system-control IPC)"
 

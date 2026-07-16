@@ -2,6 +2,7 @@
 name = "bmc-storybook"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 
 # Toolbar icon SVGs loaded via include_bytes!; the nix source filter keeps only
 # rust/toml/lock otherwise. The cross-crate assets referenced by the discovered

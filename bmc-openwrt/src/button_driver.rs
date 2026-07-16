@@ -1,8 +1,7 @@
-// Copyright (C) 2024  Braiins Systems s.r.o.
+// Copyright (C) 2024, 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Forge s.r.o.
 //
-// This file is part of Braiins Open-Source Initiative (BOSI).
-//
-// BOSI is free software: you can redistribute it and/or modify
+// This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
@@ -15,10 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 //
-// Please, keep in mind that we may also license BOSI or any part thereof
-// under a proprietary license. For more information on the terms and conditions
-// of such proprietary license or if you have any other questions, please
-// contact us at opensource@braiins.com.
+// Braiins Systems s.r.o. and Braiins Forge s.r.o. each reserve the right
+// to grant any party a license to this program, or any part thereof,
+// under any terms, and such a grant shall be considered distinct from
+// the grant above.
 
 //! Provides Unix implementation for button primitives
 

@@ -2,6 +2,7 @@
 name = "bmc-widget-protocol"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 authors = ["Braiins Systems s.r.o."]
 description = "Wayland protocol extension for Deck widget communication"
 

@@ -2,6 +2,7 @@
 name = "bmc-platform"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 authors = ["Braiins <braiins@braiins.com>"]
 
 # `mkWorkspaceConfig` omits root includes from per-crate sources,

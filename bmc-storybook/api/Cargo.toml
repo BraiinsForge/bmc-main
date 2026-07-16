@@ -2,6 +2,7 @@
 name = "bmc-storybook-api"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 
 [dependencies]
 bmc-render = { path = "../../bmc-render" }

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <protocol name="deck_screen_edge_v1">
   <copyright>
-    Copyright (C) 2026  Braiins Systems s.r.o.
+    Copyright (C) 2026  Braiins Forge s.r.o.
     SPDX-License-Identifier: MIT-CMU
 
     Forked from kde-screen-edge-v1 (SPDX-FileCopyrightText: 2023 Vlad Zahorodnii,

@@ -2,6 +2,7 @@
 name = "bmc-widget-codegen"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 authors = ["Braiins Systems s.r.o."]
 description = "Reads a widget `manifest.json` and emits a typed-accessor `manifest_params.rs` Rust module"
 

@@ -1,3 +1,23 @@
+// Copyright (C) 2025  Braiins Systems s.r.o.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//
+// Braiins Systems s.r.o. and Braiins Forge s.r.o. each reserve the right
+// to grant any party a license to this program, or any part thereof,
+// under any terms, and such a grant shall be considered distinct from
+// the grant above.
+
 @use '@/styles/carbon' as *;
 
 $color-bg: $background-inverse;
@@ -9,7 +29,9 @@ $color-border: transparent;
     border: 1px solid $color-border;
     color: $color-fg;
 
-    // From carbon's own styling
+    // The shadow, sizing and type values below come from Carbon's own
+    // tooltip styling.
+    // Copyright IBM Corp., Carbon Design System, licensed under Apache-2.0.
     box-shadow: 0 2px 6px rgb(0 0 0 / 30%);
     z-index: 9000;
 
@@ -40,7 +62,9 @@ $color-border: transparent;
         padding: 0;
     }
 
-    // The rest is from https://github.com/mohsinulhaq/react-popper-tooltip/blob/master/src/styles.css
+    // The placement styles below come from react-popper-tooltip.
+    // Copyright (c) 2018-present Mohsin Ul Haq, licensed under MIT.
+    // https://github.com/mohsinulhaq/react-popper-tooltip/blob/master/src/styles.css
     &[data-popper-interactive='false'] {
         pointer-events: none;
     }

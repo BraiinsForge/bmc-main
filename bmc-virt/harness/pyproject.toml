@@ -2,6 +2,7 @@
 name = "bmc-virt"
 version = "0.1.0"
 description = "BMC virtual machine event daemon, test harness, and CLI"
+license = "GPL-3.0-or-later"
 requires-python = ">=3.11"
 dependencies = [
     "rich>=14",

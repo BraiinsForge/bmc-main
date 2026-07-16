@@ -2,6 +2,7 @@
 name = "bmc-render"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 
 # Fonts embedded via include_bytes! from the top-level assets tree, this crate's
 # own icon/bitmap/mesh assets (build.rs and storybook stories), plus the few

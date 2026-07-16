@@ -2,6 +2,7 @@
 name = "bmc-widget-manifest"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 authors = ["Braiins Systems s.r.o."]
 description = "Widget manifest types — the on-disk schema for `manifest.json` shared between the compositor, the wasm host runtime, and tooling"
 

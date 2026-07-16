@@ -2,6 +2,7 @@
 name = "media-control"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 
 # SVG assets embedded via the SDK include_svg! macro plus proto sources
 # compiled by build.rs; the nix source filter keeps only rust/toml/lock.

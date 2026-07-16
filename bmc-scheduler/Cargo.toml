@@ -2,6 +2,7 @@
 name = "bmc-scheduler"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 description = "A system event and notification scheduler for embedded Linux systems"
 
 [dependencies]

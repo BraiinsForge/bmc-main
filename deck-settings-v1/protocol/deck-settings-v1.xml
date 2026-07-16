@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <protocol name="deck_settings_v1">
   <copyright>
-    Copyright (C) 2026 Braiins Systems s.r.o.
+    Copyright (C) 2026  Braiins Forge s.r.o.
     SPDX-License-Identifier: MIT
 
     Re-homed from the BDK-343 btc-prague branch, where deck_settings_v1 lived in

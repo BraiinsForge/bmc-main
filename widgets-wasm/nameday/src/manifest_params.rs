@@ -1,5 +1,3 @@
-// Copyright (C) 2026  Braiins Systems s.r.o.
-
 // AUTO-GENERATED FROM ../manifest.json by `bmc-widget-codegen` v0.1.0.
 // Do not edit by hand. Run `just wasm::gen <widget>` after changing the manifest.
 

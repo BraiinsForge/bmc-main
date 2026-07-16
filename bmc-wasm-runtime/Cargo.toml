@@ -2,6 +2,7 @@
 name = "bmc-wasm-runtime"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 
 # The capture report askama template, the testbed's bundled platform list, and
 # the example manifests the testbed tests resolve at runtime; the nix source

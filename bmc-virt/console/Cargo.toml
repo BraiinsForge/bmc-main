@@ -2,6 +2,7 @@
 name = "bmc-virt-console"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 
 # Logo, icon SVGs and the embedded UI font are pulled in via include_bytes!;
 # the nix source filter keeps only rust/toml/lock otherwise.
