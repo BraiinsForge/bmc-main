@@ -125,7 +125,16 @@ fn shared_mdns_daemon() -> Option<&'static mdns_sd::ServiceDaemon> {
     static DAEMON: std::sync::OnceLock<Option<mdns_sd::ServiceDaemon>> = std::sync::OnceLock::new();
     DAEMON
         .get_or_init(|| match mdns_sd::ServiceDaemon::new() {
-            Ok(daemon) => Some(daemon),
+            Ok(daemon) => {
+                // Learn devices from responders' periodic/startup announcements,
+                // not only from replies to our own queries — over lossy WiFi
+                // multicast every extra broadcast is another chance to hear
+                // a device whose query response was dropped. Off by default.
+                if let Err(e) = daemon.accept_unsolicited(true) {
+                    tracing::warn!("mDNS accept_unsolicited failed: {e}");
+                }
+                Some(daemon)
+            }
             Err(e) => {
                 tracing::error!("mDNS daemon creation failed: {e}");
                 None
