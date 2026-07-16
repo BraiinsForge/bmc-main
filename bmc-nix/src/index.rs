@@ -2622,6 +2622,7 @@ mod tests {
             download_url: "https://example.com/init.tar.gz".to_owned(),
             profile_path: "/nix/var/nix/gcroots/profiles/bmc".to_owned(),
             index_url: index_url.map(str::to_owned),
+            signature: None,
         }
     }
 

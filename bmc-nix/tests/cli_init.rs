@@ -380,6 +380,7 @@ fn init_downloads_extracts_and_promotes() {
         download_url: format!("{base_url}{tarball_route_path}"),
         profile_path: PROFILE_PATH.to_owned(),
         index_url: None,
+        signature: None,
     }]);
     let _server = pending.serve(vec![
         Route {
@@ -471,6 +472,7 @@ fn init_rejects_tarball_without_nix_subtree() {
         download_url: format!("{base_url}{tarball_route_path}"),
         profile_path: PROFILE_PATH.to_owned(),
         index_url: None,
+        signature: None,
     }]);
     let _server = pending.serve(vec![
         Route {
@@ -527,6 +529,7 @@ fn init_collects_stale_leftovers() {
         download_url: format!("{base_url}{tarball_route_path}"),
         profile_path: PROFILE_PATH.to_owned(),
         index_url: None,
+        signature: None,
     }]);
     let _server = pending.serve(vec![
         Route {
@@ -577,6 +580,7 @@ fn init_fails_when_bos_version_not_in_index() {
         download_url: format!("{base_url}/nix-{indexed_version}.tar.gz"),
         profile_path: PROFILE_PATH.to_owned(),
         index_url: None,
+        signature: None,
     }]);
     let _server = pending.serve(vec![Route {
         path: "/nix-package-feed.v1.json".to_owned(),
@@ -628,6 +632,7 @@ async fn init_store_wipe_replaces_existing_store() {
         download_url: format!("{base_url}{tarball_route_path}"),
         profile_path: PROFILE_PATH.to_owned(),
         index_url: None,
+        signature: None,
     }]);
     let _server = pending.serve(vec![
         Route {
@@ -700,6 +705,7 @@ async fn init_store_blocks_on_held_init_lock() {
         download_url: format!("{base_url}{tarball_route_path}"),
         profile_path: PROFILE_PATH.to_owned(),
         index_url: None,
+        signature: None,
     }]);
     let server = pending.serve(vec![
         Route {

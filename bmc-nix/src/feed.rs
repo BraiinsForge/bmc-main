@@ -28,6 +28,12 @@ pub struct PackageFeedEntry {
     /// valid for store init but cannot serve upgrade resolution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index_url: Option<String>,
+    /// Nix-style `name:base64` Ed25519 signature of the init tarball
+    /// (see [`crate::signature`]). Only verification-enabled init
+    /// consumes it — and hard-fails when it is absent; upgrade
+    /// resolution and unsigned development feeds parse without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
 }
 
 /// Failure to validate a package feed or select an entry from it.
@@ -117,6 +123,7 @@ mod tests {
             download_url: format!("https://example.com/{v}.tar.gz"),
             profile_path: "/nix/var/nix/gcroots/profiles/bmc".to_owned(),
             index_url: index_url.map(str::to_owned),
+            signature: None,
         }
     }
 
@@ -198,6 +205,24 @@ mod tests {
             !serde_json::to_string(&without)
                 .expect("BUG: serializable")
                 .contains("index_url")
+        );
+    }
+
+    #[test]
+    fn entry_round_trips_with_and_without_signature() {
+        let with: PackageFeedEntry = serde_json::from_str(
+            r#"{"bos_version":"a","download_url":"d","profile_path":"p","signature":"k:c2ln"}"#,
+        )
+        .expect("BUG: valid JSON");
+        assert_eq!(with.signature.as_deref(), Some("k:c2ln"));
+        let without: PackageFeedEntry =
+            serde_json::from_str(r#"{"bos_version":"a","download_url":"d","profile_path":"p"}"#)
+                .expect("BUG: valid JSON");
+        assert!(without.signature.is_none());
+        assert!(
+            !serde_json::to_string(&without)
+                .expect("BUG: serializable")
+                .contains("signature")
         );
     }
 
