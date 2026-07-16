@@ -1017,21 +1017,6 @@ async fn cmd_upgrade(
     Ok(())
 }
 
-/// Build a shared HTTP client for first-boot init downloads.
-///
-/// TLS cert validation is disabled because NTP has not synced on
-/// first boot (clock is at epoch → certs appear "not yet valid").
-/// Nothing else authenticates the download: content signature
-/// verification is not implemented, so the fetched feed and tarball
-/// are trusted by URL alone.
-fn build_init_http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(15))
-        .danger_accept_invalid_certs(true)
-        .build()
-        .expect("BUG: failed to build HTTP client")
-}
-
 fn read_bos_version(path: &Path) -> anyhow::Result<String> {
     Ok(std::fs::read_to_string(path)
         .with_context(|| format!("failed to read BOS version from {}", path.display()))?
@@ -1109,7 +1094,10 @@ async fn cmd_init(
             Some(version) => version,
             None => read_bos_version(Path::new("/etc/bos_version"))?,
         };
-        let client = build_init_http_client();
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .build()
+            .expect("BUG: failed to build HTTP client");
         let progress = progress::CliProgress::new(log_format);
         bmc_nix::store::init_store(
             &client,
