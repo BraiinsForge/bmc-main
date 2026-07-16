@@ -16,6 +16,7 @@ pub mod progress;
 pub mod registration;
 pub mod servers_config;
 pub mod service_orchestrator;
+pub mod signature;
 pub mod store;
 pub mod types;
 pub mod upgrade;

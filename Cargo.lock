@@ -895,6 +895,7 @@ name = "bmc-nix"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bmc-log",
  "clap",
  "cognos",
@@ -902,6 +903,7 @@ dependencies = [
  "futures",
  "libc",
  "reqwest",
+ "ring",
  "semver",
  "serde",
  "serde_json",
