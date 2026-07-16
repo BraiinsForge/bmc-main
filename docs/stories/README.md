@@ -52,6 +52,13 @@ recovery wipe never leaves the device trusting corrupt or incomplete software. I
 interrupted upgrades fall back to the previous working version, and storage errors fail loudly instead of masquerading
 as success.
 
+### [Nix Store Initialization](nix-store-initialization.md)
+
+How a device upgrading from firmware without Nix support gains its package store: the ordinary firmware upgrade
+downloads the store contents published for exactly that firmware release and verifies their Ed25519 signature against a
+factory-provisioned key before installing anything, so a network attacker cannot plant tampered software. Inconsistent
+stores are wiped and reinitialized at the next firmware upgrade.
+
 ### [Touch & Gestures](touch-and-gestures.md)
 
 Swipe left/right to navigate between scenes and tap/drag to interact with widgets via touch events forwarded through the
