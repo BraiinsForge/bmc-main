@@ -38,9 +38,10 @@ use crate::renderer::Renderer;
 use crate::tree::{AnimationContext, DrawCommand, HostAnimationDef};
 use crate::{AnimationState, PrevDrawValues, TransitionState};
 
-/// Interpolated mesh parameters for transition override. Wraps the same
-/// `MeshDrawArgs` shape rendered later, so override application is a struct
-/// copy instead of a 21-field shuffle.
+/// Interpolated mesh parameters for transition override.
+/// Wraps the same `MeshDrawArgs` shape rendered later,
+/// so override application is a struct copy
+/// instead of a 21-field shuffle.
 #[derive(Debug, Clone, Copy)]
 struct MeshOverride {
     args: MeshDrawArgs,
@@ -96,6 +97,90 @@ fn stroke_color(color: Color, color_override: Option<Color>, alpha: f32) -> Colo
     } else {
         base
     }
+}
+
+/// Most runs one path can usefully produce.
+/// A path needing more than this at its period is far longer
+/// than anything on screen, and walking it would tie up
+/// the render thread building runs nobody sees.
+const MAX_DASH_RUNS: f32 = 10_000.0;
+
+/// Total arc length of a polyline, or `None` if the points don't describe
+/// one that can be measured — non-finite coordinates, or a length past `f32`.
+fn path_length(points: &[(f32, f32)]) -> Option<f32> {
+    let total: f32 = points
+        .windows(2)
+        .map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1))
+        .sum();
+    total.is_finite().then_some(total)
+}
+
+/// Painted runs of a `(on, off)` dash pattern, walked by arc length.
+/// Re-validated here because the caller scales the pattern,
+/// which can shrink a sound one below the walkable minimum.
+/// Anything rejected draws as one solid run.
+fn dash_runs(points: &[(f32, f32)], on: f32, off: f32) -> Vec<Vec<(f32, f32)>> {
+    let Some(Dash { on, off }) = Dash::new(on, off) else {
+        return vec![points.to_vec()];
+    };
+    // The walk cannot spin, but it can still grind: a segment far longer
+    // than its period costs one run per period before the guard below stops it.
+    // Decide that up front rather than after millions of allocations.
+    let unwalkable = path_length(points).is_none_or(|len| len / (on + off) > MAX_DASH_RUNS);
+    if unwalkable {
+        return vec![points.to_vec()];
+    }
+    let mut runs: Vec<Vec<(f32, f32)>> = Vec::new();
+    let mut painting = true;
+    // distance left before the on/off band flips
+    let mut budget = on;
+    let mut run: Vec<(f32, f32)> = vec![points[0]];
+    for pair in points.windows(2) {
+        let (ax, ay) = pair[0];
+        let (bx, by) = pair[1];
+        let (dx, dy) = (bx - ax, by - ay);
+        let len = dx.hypot(dy);
+        if len <= 0.0 {
+            continue;
+        }
+        let (ux, uy) = (dx / len, dy / len);
+        let mut walked = 0.0_f32;
+        // `>=` so a band ending exactly on the vertex flips here rather than
+        // carrying to the next segment, which would leave `budget` at zero.
+        // Exiting on a strict `<` also keeps `budget` positive below, so no
+        // later segment can inherit a phase that never flips again.
+        while len - walked >= budget {
+            // Points come from the guest too: at coordinates where the ULP
+            // exceeds `budget`, the walk stops advancing and would spin here.
+            let next = walked + budget;
+            if next <= walked {
+                break;
+            }
+            walked = next;
+            let point = (ax + ux * walked, ay + uy * walked);
+            if painting {
+                run.push(point);
+                if run.len() >= 2 {
+                    runs.push(core::mem::take(&mut run));
+                } else {
+                    run.clear();
+                }
+            } else {
+                run = vec![point];
+            }
+            painting = !painting;
+            budget = if painting { on } else { off };
+        }
+        budget -= len - walked;
+        // A flip landing on the vertex already recorded it as the run's start.
+        if painting && run.last() != Some(&(bx, by)) {
+            run.push((bx, by));
+        }
+    }
+    if painting && run.len() >= 2 {
+        runs.push(run);
+    }
+    runs
 }
 
 pub(crate) fn render_draw_command(
@@ -800,14 +885,16 @@ fn render_draw_inner(
                         *smooth,
                     );
                 }
-                PathPaint::Stroke { color, width } => {
-                    renderer.stroke_path(
-                        pts,
-                        *width * scale,
-                        stroke_color(*color, color_override, alpha),
-                        *closed,
-                        *smooth,
-                    );
+                PathPaint::Stroke { color, width, dash } => {
+                    let paint_color = stroke_color(*color, color_override, alpha);
+                    if let Some(d) = dash {
+                        // scale the pattern like the width
+                        for run in dash_runs(pts, d.on * scale, d.off * scale) {
+                            renderer.stroke_path(&run, *width * scale, paint_color, false, false);
+                        }
+                    } else {
+                        renderer.stroke_path(pts, *width * scale, paint_color, *closed, *smooth);
+                    }
                 }
             }
 
@@ -1312,6 +1399,86 @@ mod tests {
     use super::*;
     use crate::TransitionStateKey;
     use crate::tree::{AutoFit, SpanData};
+
+    #[test]
+    fn dash_runs_splits_a_horizontal_line_into_even_dashes() {
+        // 100px line, 10 on / 10 off → dashes at 0-10, 20-30, 40-50, 60-70, 80-90.
+        let runs = dash_runs(&[(0.0, 0.0), (100.0, 0.0)], 10.0, 10.0);
+        assert_eq!(runs.len(), 5);
+        assert_eq!(runs[0], vec![(0.0, 0.0), (10.0, 0.0)]);
+        assert_eq!(runs[1], vec![(20.0, 0.0), (30.0, 0.0)]);
+        assert_eq!(runs[4], vec![(80.0, 0.0), (90.0, 0.0)]);
+    }
+
+    #[test]
+    fn dash_runs_returns_a_solid_run_for_a_degenerate_pattern() {
+        let pts = [(0.0, 0.0), (10.0, 5.0)];
+        assert_eq!(dash_runs(&pts, 0.0, 4.0), vec![pts.to_vec()]);
+        // A negative gap once walked the arc backwards forever; non-finite
+        // params slip past the sum guard too. Both must fold to one solid run.
+        assert_eq!(dash_runs(&pts, 10.0, -5.0), vec![pts.to_vec()]);
+        assert_eq!(dash_runs(&pts, f32::NAN, 4.0), vec![pts.to_vec()]);
+        assert_eq!(dash_runs(&pts, 10.0, f32::INFINITY), vec![pts.to_vec()]);
+        // A zero gap left the walk budget at 0, so it advanced by nothing
+        // for as long as the segment lasted; it reads as solid anyway.
+        assert_eq!(dash_runs(&pts, 5.0, 0.0), vec![pts.to_vec()]);
+        // Sub-pixel runs stop moving an f32 walk long before they draw.
+        assert_eq!(dash_runs(&pts, 1e-9, 1e-9), vec![pts.to_vec()]);
+    }
+
+    #[test]
+    fn dash_runs_draws_a_path_too_long_to_dash_as_one_solid_run() {
+        // Points are guest data. The walk cannot spin here, but at an 8 px period
+        // it would take millions of steps to reach the magnitude where the step
+        // stops registering — bounded, and a stall all the same.
+        let pts = [(0.0, 0.0), (1e30, 0.0)];
+        assert_eq!(dash_runs(&pts, 4.0, 4.0), vec![pts.to_vec()]);
+    }
+
+    #[test]
+    fn dash_runs_draws_an_unmeasurable_path_as_one_solid_run() {
+        // Compared by shape, not value: a run carrying NaN is never `==` itself.
+        for far in [f32::NAN, f32::INFINITY] {
+            let pts = [(0.0, 0.0), (far, 0.0)];
+            let runs = dash_runs(&pts, 4.0, 4.0);
+            assert_eq!(runs.len(), 1, "x = {far}: expected one solid run");
+            assert_eq!(runs[0].len(), pts.len(), "x = {far}: run kept every point");
+        }
+    }
+
+    #[test]
+    fn dash_runs_flips_where_a_band_boundary_lands_on_a_vertex() {
+        // Integer points with an integer dash put the band's end exactly on the
+        // vertex at x=2. The flip has to be emitted there, or `budget` leaves
+        // the segment at zero and every later segment inherits the wedge.
+        let pts = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (3.0, 0.0), (4.0, 0.0)];
+        assert_eq!(
+            dash_runs(&pts, 2.0, 2.0),
+            vec![vec![(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)]],
+            "dash 0–2 then a gap to the end"
+        );
+    }
+
+    #[test]
+    fn dash_runs_keeps_painting_past_a_vertex_hit_in_the_gap() {
+        // The same wedge, landing while the pattern is off.
+        // Everything past it went undrawn, `painting` never flipping back.
+        let pts = [(0.0, 0.0), (3.0, 0.0), (4.0, 0.0), (8.0, 0.0)];
+        assert_eq!(
+            dash_runs(&pts, 2.0, 2.0),
+            vec![vec![(0.0, 0.0), (2.0, 0.0)], vec![(4.0, 0.0), (6.0, 0.0)],],
+            "dash 0–2, gap 2–4, dash 4–6, gap 6–8"
+        );
+    }
+
+    #[test]
+    fn dash_runs_spans_a_corner() {
+        // Two 10px legs (horizontal then vertical),
+        // dash 15 on / 5 off: the first dash must cross
+        // the corner, carrying into the second leg.
+        let runs = dash_runs(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)], 15.0, 5.0);
+        assert_eq!(runs[0], vec![(0.0, 0.0), (10.0, 0.0), (10.0, 5.0)]);
+    }
 
     #[derive(Debug)]
     enum RenderEvent {

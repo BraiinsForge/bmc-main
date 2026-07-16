@@ -40,8 +40,8 @@ use bmc_wasm_protocol::{
     AnimProperty, ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, AutoFit, BitmapId, Color,
     ColorSpace, DRAW_ARC, DRAW_AUTOFIT_TEXT, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE,
     DRAW_CURVED_TEXT, DRAW_ICON, DRAW_MESH, DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH,
-    DRAW_RECT, DRAW_ROTATED, DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Easing,
-    Fill, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL,
+    DRAW_RECT, DRAW_ROTATED, DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Dash,
+    Easing, Fill, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL,
     NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_RELTIME, NODE_ROW, NODE_SCROLL,
     NODE_SPACER, NODE_SWITCHER, NODE_TAG, PathPaint, RelTimeClamp, RelTimeFormat, SvgId,
     TagIconMode, TagKind, encode_arc_cap, encode_arc_fill, encode_arc_segments, encode_fill,
@@ -1187,9 +1187,35 @@ impl Draw {
             paint: PathPaint::Stroke {
                 color,
                 width: stroke_width,
+                dash: None,
             },
             closed,
             interpolation,
+        }
+    }
+
+    /// Dashed polyline; the host splits it by arc length.
+    /// Prefer `path!`'s `dashed:`.
+    #[must_use]
+    pub fn dashed_path(
+        points: Vec<(f32, f32)>,
+        stroke_width: f32,
+        color: Color,
+        dash_on: f32,
+        dash_off: f32,
+    ) -> Self {
+        Self::Path {
+            points,
+            paint: PathPaint::Stroke {
+                color,
+                width: stroke_width,
+                dash: Some(Dash {
+                    on: dash_on,
+                    off: dash_off,
+                }),
+            },
+            closed: false,
+            interpolation: Interpolation::Linear,
         }
     }
 
@@ -1647,6 +1673,9 @@ macro_rules! path {
     ($pts:expr, stroke: $w:expr, color: $c:expr, closed, smooth) => {
         $crate::Draw::path($pts, $w, $c, true, $crate::Interpolation::CatmullRom)
     };
+    ($pts:expr, stroke: $w:expr, color: $c:expr, dashed: ($on:expr, $off:expr)) => {
+        $crate::Draw::dashed_path($pts, $w, $c, $on, $off)
+    };
 }
 
 /// Build a filled polygon ([`Draw::fill_path`]) with a solid colour or gradient.
@@ -2047,6 +2076,9 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             if matches!(paint, PathPaint::Fill(_)) {
                 flags |= 0x04;
             }
+            if matches!(paint, PathPaint::Stroke { dash: Some(_), .. }) {
+                flags |= 0x08;
+            }
             buf.write_u8(DRAW_PATH);
             buf.write_u8(flags);
             buf.write_u16(points.len() as u16);
@@ -2056,9 +2088,13 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             }
             match paint {
                 PathPaint::Fill(fill) => buf.write_fill(fill),
-                PathPaint::Stroke { color, width } => {
+                PathPaint::Stroke { color, width, dash } => {
                     buf.write_color(*color);
                     buf.write_f32(*width);
+                    if let Some(d) = dash {
+                        buf.write_f32(d.on);
+                        buf.write_f32(d.off);
+                    }
                 }
             }
         }
@@ -2587,7 +2623,26 @@ mod fill_wire_tests {
             paint,
             PathPaint::Stroke {
                 color: red,
-                width: 2.0
+                width: 2.0,
+                dash: None,
+            }
+        );
+    }
+
+    #[test]
+    fn path_macro_dashed_carries_the_pattern() {
+        let pts = vec![(0.0, 0.0), (10.0, 0.0)];
+        let red = Color::from_rgb(0xFF, 0, 0);
+        let draw = path!(pts, stroke: 1.0, color: red, dashed: (6.0, 4.0));
+        let Draw::Path { paint, .. } = draw else {
+            panic!("path! must build a Draw::Path");
+        };
+        assert_eq!(
+            paint,
+            PathPaint::Stroke {
+                color: red,
+                width: 1.0,
+                dash: Some(Dash { on: 6.0, off: 4.0 }),
             }
         );
     }

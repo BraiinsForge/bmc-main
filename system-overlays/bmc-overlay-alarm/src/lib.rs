@@ -143,7 +143,11 @@ fn alarm_button(key: &str, label: &str, fill: Fill, border: Option<Color>) -> Tr
                 (BUTTON_W - 0.5, BUTTON_H - 0.5),
                 (0.5, BUTTON_H - 0.5),
             ],
-            paint: PathPaint::Stroke { color, width: 1.0 },
+            paint: PathPaint::Stroke {
+                color,
+                width: 1.0,
+                dash: None,
+            },
             closed: true,
             smooth: false,
         });

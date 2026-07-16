@@ -97,6 +97,30 @@ impl Fill {
     }
 }
 
+/// Repeating stroke dash: `on` px painted, `off` px skipped.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Dash {
+    pub on: f32,
+    pub off: f32,
+}
+
+impl Dash {
+    /// Shortest run accepted on either side.
+    /// A run below this is far under one pixel, so it draws as a solid line
+    /// regardless; it also keeps the renderer's arc-length walk advancing,
+    /// since past ~2^16 px the f32 ULP exceeds it.
+    const MIN_RUN: f32 = 0.01;
+
+    /// A dash pattern, or `None` when the two figures cannot describe one
+    /// — non-finite, or a run too short to see on either side.
+    /// `None` means no dash, which draws solid: what a zero-length gap already amounts to.
+    #[must_use]
+    pub fn new(on: f32, off: f32) -> Option<Self> {
+        let usable = |run: f32| run.is_finite() && run >= Self::MIN_RUN;
+        (usable(on) && usable(off)).then_some(Self { on, off })
+    }
+}
+
 /// Paint for a variable-length path: a stroked outline or a filled interior.
 ///
 /// A stroke carries a solid colour and a line width; a fill carries a [`Fill`]
@@ -104,8 +128,12 @@ impl Fill {
 /// (a stroke with a gradient, a fill with a line width) unrepresentable.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PathPaint {
-    /// Stroked outline: solid `color`, `width` pixels wide.
-    Stroke { color: Color, width: f32 },
+    /// Stroked outline: solid `color`, `width` px wide, optional `dash`.
+    Stroke {
+        color: Color,
+        width: f32,
+        dash: Option<Dash>,
+    },
     /// Filled interior with a [`Fill`] paint.
     Fill(Fill),
 }
@@ -174,6 +202,35 @@ mod tests {
 
     const RED: Color = Color::from_rgb(0xFF, 0x00, 0x00);
     const BLUE: Color = Color::from_rgb(0x00, 0x00, 0xFF);
+
+    #[test]
+    fn dash_keeps_a_pattern_both_sides_can_walk() {
+        assert_eq!(Dash::new(4.0, 4.0), Some(Dash { on: 4.0, off: 4.0 }));
+        assert_eq!(
+            Dash::new(0.01, 0.01),
+            Some(Dash {
+                on: 0.01,
+                off: 0.01
+            })
+        );
+    }
+
+    #[test]
+    fn dash_rejects_figures_that_cannot_describe_a_pattern() {
+        for (on, off) in [
+            (0.0, 4.0),
+            (4.0, 0.0),
+            (-1.0, 4.0),
+            (4.0, -1.0),
+            (1e-9, 1e-9),
+            (f32::NAN, 4.0),
+            (4.0, f32::NAN),
+            (f32::INFINITY, 4.0),
+            (4.0, f32::INFINITY),
+        ] {
+            assert_eq!(Dash::new(on, off), None, "({on}, {off}) is not a dash");
+        }
+    }
 
     #[test]
     fn color_converts_to_solid_fill() {

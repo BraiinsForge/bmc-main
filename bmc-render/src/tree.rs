@@ -1092,6 +1092,7 @@ impl<'a> TreeReader<'a> {
                 let closed = flags & 0x01 != 0;
                 let smooth = flags & 0x02 != 0;
                 let fill = flags & 0x04 != 0;
+                let dashed = flags & 0x08 != 0;
                 let point_count = self.read_u16()? as usize;
                 let mut points = Vec::with_capacity(point_count);
                 for _ in 0..point_count {
@@ -1103,10 +1104,15 @@ impl<'a> TreeReader<'a> {
                     PathPaint::Fill(self.read_fill()?)
                 } else {
                     let color = Color::from_raw(self.read_u32()?);
-                    PathPaint::Stroke {
-                        color,
-                        width: self.read_f32()?,
-                    }
+                    let width = self.read_f32()?;
+                    let dash = if dashed {
+                        // Both figures are read either way, so a rejected pattern
+                        // doesn't desync the stream — it just draws solid.
+                        Dash::new(self.read_f32()?, self.read_f32()?)
+                    } else {
+                        None
+                    };
+                    PathPaint::Stroke { color, width, dash }
                 };
                 Ok(DrawCommand::Path {
                     points,
@@ -1353,6 +1359,38 @@ mod fill_decode_tests {
             panic!("expected Path");
         };
         assert_eq!(paint, PathPaint::Fill(Fill::linear(0.0, a, b)));
+    }
+
+    #[test]
+    fn path_stroke_round_trips_a_dash_pattern() {
+        let mut data = vec![DRAW_PATH];
+        data.push(0x08); // stroke (not fill) + dashed
+        data.extend_from_slice(&2_u16.to_le_bytes());
+        for (x, y) in [(0.0_f32, 0.0_f32), (10.0, 0.0)] {
+            data.extend_from_slice(&x.to_le_bytes());
+            data.extend_from_slice(&y.to_le_bytes());
+        }
+        let raw = 0x1122_3344_u32;
+        data.extend_from_slice(&raw.to_le_bytes()); // color
+        data.extend_from_slice(&3.0_f32.to_le_bytes()); // width
+        data.extend_from_slice(&6.0_f32.to_le_bytes()); // dash on
+        data.extend_from_slice(&4.0_f32.to_le_bytes()); // dash off
+
+        let mut de = TreeReader::new(&data);
+        let DrawCommand::Path { paint, .. } = de
+            .read_draw()
+            .expect("BUG: test buffer encodes a valid dashed DRAW_PATH")
+        else {
+            panic!("expected Path");
+        };
+        assert_eq!(
+            paint,
+            PathPaint::Stroke {
+                color: Color::from_raw(raw),
+                width: 3.0,
+                dash: Some(Dash { on: 6.0, off: 4.0 }),
+            }
+        );
     }
 
     #[test]
