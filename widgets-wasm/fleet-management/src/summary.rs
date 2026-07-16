@@ -222,11 +222,10 @@ pub struct FleetSummary {
 
 /// The grouping key `summarize` partitions on: family index plus model name,
 /// with model-less devices in the family-agnostic catch-all.
-fn partition_key(dev: &KnownDevice) -> (Option<usize>, String) {
-    dev.model.as_ref().map_or_else(
-        || (None, UNKNOWN_GROUP.to_owned()),
-        |m| (Some(dev.identity.family.index()), m.name.clone()),
-    )
+fn partition_key(dev: &KnownDevice) -> (Option<usize>, &str) {
+    dev.model.as_ref().map_or((None, UNKNOWN_GROUP), |m| {
+        (Some(dev.identity.family.index()), m.name.as_str())
+    })
 }
 
 #[must_use]
@@ -243,14 +242,15 @@ pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> Flee
 
     // Key on family as well as model name so two families sharing a display name
     // don't merge. Model-less devices share the family-agnostic "Unknown" group.
-    let mut partitions: BTreeMap<(Option<usize>, String), Vec<&KnownDevice>> = BTreeMap::new();
+    let mut partitions: BTreeMap<(Option<usize>, &str), Vec<&KnownDevice>> = BTreeMap::new();
     for dev in &visible {
         partitions.entry(partition_key(dev)).or_default().push(dev);
     }
 
+    // Own the label once per group here, not once per device in `partition_key`.
     let mut groups: Vec<GroupSummary> = partitions
         .into_iter()
-        .map(|((_, label), devs)| fold_group(label, &devs))
+        .map(|((_, label), devs)| fold_group(label.to_owned(), &devs))
         .collect();
     // Order by family (uBOS, BOS, Bitaxe), alphabetically by model name within
     // a family, with the family-less "Unknown" group pinned last.
