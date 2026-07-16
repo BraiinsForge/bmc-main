@@ -1197,21 +1197,27 @@ struct HotReload {
 struct PerfState {
     /// Total frames rendered so far. Used to drive the `--perf-frames` exit condition.
     frame_count: u32,
-    /// Per-frame timings from FULL tile's runtime; written to disk by `--perf-report=` at exit.
+    /// Per-frame timings from FULL tile's runtime;
+    /// written to disk by `--perf-report=` at exit.
     samples: Vec<bmc_render::FrameTimings>,
     /// Per-frame fuel per profiling section from the FULL tile's guest.
     section_samples: Vec<std::collections::BTreeMap<String, u64>>,
-    /// Last frame's wall-clock duration (microseconds); recent samples averaged for FPS.
+    /// Set once the report is written, so the frame-count threshold
+    /// and an early window close can't double-write it.
+    written: bool,
+    /// Last frame's wall-clock duration (microseconds);
+    /// recent samples averaged for FPS.
     recent_frame_us: std::collections::VecDeque<u32>,
 }
 
-/// Recording-mode bundle: the optional in-flight recording state plus the shared
-/// fetch buffer the active tile's fetch observer pushes into.
+/// Recording-mode bundle: the optional in-flight recording state plus
+/// the shared fetch buffer the active tile's fetch observer pushes into.
 pub(crate) struct RecordingMode {
-    /// `Some` only when started via `--record=<size>`; `None` resets it after Save/Cancel.
+    /// `Some` only when started via `--record=<size>`;
+    /// `None` resets it after Save/Cancel.
     pub(crate) state: Option<RecordingState>,
-    /// Shared buffer for fetch events captured by the active tile's fetch observer. Held
-    /// behind `Arc<Mutex<_>>` because the observer runs on background fetch threads.
+    /// Shared buffer for fetch events captured by the active tile's fetch observer.
+    /// Held behind `Arc<Mutex<_>>` because the observer runs on background fetch threads.
     pub(crate) fetch_events: std::sync::Arc<std::sync::Mutex<Vec<TimelineEvent>>>,
 }
 
@@ -1330,6 +1336,7 @@ impl TestbedApp {
                 frame_count: 0,
                 samples: Vec::new(),
                 section_samples: Vec::new(),
+                written: false,
                 recent_frame_us: std::collections::VecDeque::with_capacity(60),
             },
             recording_mode: RecordingMode {
@@ -1629,15 +1636,29 @@ impl TestbedApp {
         GET_PROC_ADDRESS.with(|cell| cell.borrow().clone())
     }
 
-    /// Drive one frame: each tile's WASM runtime renders into its FBO. Egui paints the
-    /// textures afterward via `painter.image`.
+    /// Write the perf report once, from whatever samples were collected so far.
+    /// Idempotent, so the `--perf-frames` threshold and an early window close
+    /// can each seal the run without double-writing.
+    fn finish_perf_report(&mut self) {
+        if self.perf.written {
+            return;
+        }
+        let Some(path) = self.cli.perf_report_path.as_ref() else {
+            return;
+        };
+        write_perf_report(path, &self.perf.samples, &self.perf.section_samples);
+        self.perf.written = true;
+    }
+
+    /// Drive one frame: each tile's WASM runtime renders into its FBO.
+    /// Egui paints the textures afterward via `painter.image`.
     ///
-    /// Saves the GL framebuffer binding + viewport before mutating them per tile
-    /// and restores both at the end so egui's own draw list runs against the screen
-    /// framebuffer the way it expects.
+    /// Saves the GL framebuffer binding + viewport before mutating them
+    /// per tile and restores both at the end so egui's own draw list runs
+    /// against the screen framebuffer the way it expects.
     ///
-    /// Skipping this caused screen-wide trails (egui's clear hit
-    /// a tile FBO instead of the default framebuffer).
+    /// Skipping this caused screen-wide trails
+    /// (egui's clear hit a tile FBO instead of the default framebuffer).
     ///
     /// Drive each tile on-demand off its own runtime scheduler;
     /// returns the earliest next render across tiles (ms) for the host wake.
@@ -2050,12 +2071,13 @@ fn paint_tile_texture(ui: &egui::Ui, tile: &PreviewTile, rect: egui::Rect) {
     }
 }
 
-// Process-wide cell holding the eframe-provided GL proc address loader, populated in
-// `TestbedApp::new` and read by `init_tiles` / `poll_hot_reload`.
+// Process-wide cell holding the eframe-provided GL proc address loader,
+// populated in `TestbedApp::new` and read by `init_tiles` / `poll_hot_reload`.
 //
-// A thread-local sidesteps the `dyn Fn` capture lifetime question while keeping
-// the closure trivially cloneable. `thread_local!` is a macro, so this stays
-// a regular `//` comment — doc comments don't attach to macro invocations.
+// A thread-local sidesteps the `dyn Fn` capture lifetime question while
+// keeping the closure trivially cloneable. `thread_local!` is a macro,
+// so this stays a regular `//` comment — doc comments don't attach
+// to macro invocations.
 thread_local! {
     static GET_PROC_ADDRESS: std::cell::RefCell<Option<GlProcAddress>>
         = const { std::cell::RefCell::new(None) };
@@ -2073,8 +2095,16 @@ impl eframe::App for TestbedApp {
         reason = "one egui frame: resize lock, lazy tile init, render, side panels, per-tile paint + touch"
     )]
     fn ui(&mut self, root_ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        // One-shot resize lock. Avoid min/max size commands: on Wayland they can fail
-        // protocol validation while switching between narrow and wide platform layouts.
+        // A manual window close still seals the perf report from whatever
+        // was collected, so an operator who closed early instead of waiting
+        // for `--perf-frames` doesn't lose the run.
+        if root_ui.ctx().input(|i| i.viewport().close_requested()) {
+            self.finish_perf_report();
+            return;
+        }
+        // One-shot resize lock. Avoid min/max size commands:
+        // on Wayland they can fail protocol validation while switching
+        // between narrow and wide platform layouts.
         if self.size_pin_attempts > 0 {
             let ctx = root_ui.ctx();
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(self.requested_size));
@@ -2120,12 +2150,9 @@ impl eframe::App for TestbedApp {
         // On-demand per tile; `next_wake` = earliest a tile wants a frame (ms).
         let next_wake = self.render_tiles(delta_ms);
 
-        // Perf-report exit condition: write JSON + close the viewport once we've collected
-        // enough samples. Matches the prior `--perf-frames` flag behaviour.
-        if let Some(ref path) = self.cli.perf_report_path
-            && self.perf.frame_count >= self.cli.perf_frames
-        {
-            write_perf_report(path, &self.perf.samples, &self.perf.section_samples);
+        // Seal the report and close once enough real renders are collected.
+        if self.cli.perf_report_path.is_some() && self.perf.frame_count >= self.cli.perf_frames {
+            self.finish_perf_report();
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
