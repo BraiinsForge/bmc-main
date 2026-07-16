@@ -21,8 +21,6 @@
 use crate::model::MinerModel;
 use crate::telemetry::{TelemetryReading, TelemetrySnapshot};
 
-use core::ops::{Index, IndexMut};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceFamily {
     Bos,
@@ -31,16 +29,13 @@ pub enum DeviceFamily {
 }
 
 impl DeviceFamily {
-    /// Every family, in storage order. The single source of truth that
-    /// [`FamilyMap`] is sized and indexed against.
+    /// Every family, in storage order — the canonical order the summary groups
+    /// and the poll ring walk families in.
     pub const ALL: [DeviceFamily; 3] =
         [DeviceFamily::Bos, DeviceFamily::Ubos, DeviceFamily::Bitaxe];
 
-    /// Number of families; the length of every [`FamilyMap`].
-    pub const COUNT: usize = Self::ALL.len();
-
-    /// Position of this family in [`ALL`](Self::ALL); the index into a
-    /// [`FamilyMap`].
+    /// Position of this family in [`ALL`](Self::ALL), a stable grouping key for
+    /// the summary and history.
     #[must_use]
     pub fn index(self) -> usize {
         match self {
@@ -48,32 +43,6 @@ impl DeviceFamily {
             DeviceFamily::Ubos => 1,
             DeviceFamily::Bitaxe => 2,
         }
-    }
-}
-
-/// A total map from every [`DeviceFamily`] to a `T`, indexed by
-/// [`DeviceFamily::index`]. The backing array's length is tied to
-/// [`DeviceFamily::COUNT`], so adding a family is a compile error until every
-/// map is widened — unlike a bare `[T; 3]` paired with a hand-written index,
-/// where a mismatch silently corrupts state at runtime.
-pub struct FamilyMap<T>([T; DeviceFamily::COUNT]);
-
-impl<T> FamilyMap<T> {
-    pub fn from_fn(mut f: impl FnMut(DeviceFamily) -> T) -> Self {
-        Self(core::array::from_fn(|i| f(DeviceFamily::ALL[i])))
-    }
-}
-
-impl<T> Index<DeviceFamily> for FamilyMap<T> {
-    type Output = T;
-    fn index(&self, family: DeviceFamily) -> &T {
-        &self.0[family.index()]
-    }
-}
-
-impl<T> IndexMut<DeviceFamily> for FamilyMap<T> {
-    fn index_mut(&mut self, family: DeviceFamily) -> &mut T {
-        &mut self.0[family.index()]
     }
 }
 
@@ -640,21 +609,9 @@ mod tests {
 
     #[test]
     fn family_all_is_consistent_with_index() {
-        assert_eq!(DeviceFamily::COUNT, DeviceFamily::ALL.len());
         for (i, family) in DeviceFamily::ALL.iter().enumerate() {
             assert_eq!(family.index(), i, "ALL order must match index()");
         }
-    }
-
-    #[test]
-    fn family_map_round_trips_each_family() {
-        let mut map: FamilyMap<usize> = FamilyMap::from_fn(DeviceFamily::index);
-        for family in DeviceFamily::ALL {
-            assert_eq!(map[family], family.index());
-        }
-        map[DeviceFamily::Ubos] = 99;
-        assert_eq!(map[DeviceFamily::Ubos], 99);
-        assert_eq!(map[DeviceFamily::Bos], DeviceFamily::Bos.index());
     }
 
     #[test]

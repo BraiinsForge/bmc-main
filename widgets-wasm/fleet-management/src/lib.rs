@@ -210,9 +210,9 @@ fn on_removed(family: DeviceFamily, name: &str) {
             model
         );
     }
-    // Remove from the device list before reacting, so a driver re-snapshot
-    // triggered by the removal (a `Redefer`) cannot re-arm a kick to the gone
-    // device. This matches the manual-reconcile order (`reconcile_manual_hosts`).
+    // Remove from the device list before reacting, so the ring rebuild an
+    // abandon may trigger excludes the gone device instead of re-polling it.
+    // Matches the manual-reconcile order (`reconcile_manual_hosts`).
     DEVICES.with(|d| d.borrow_mut().remove(&id));
     session::remove_token(&id);
     request_frame();
@@ -417,9 +417,16 @@ pub extern "C" fn render(_delta_ms: u32) {
                 ubos_enabled: params.ubos_enabled,
                 axeos_enabled: params.axeos_enabled,
             };
-            let summary = DEVICES.with(|d| summary::summarize(&d.borrow(), &filters));
+            let summary = {
+                let _s = profile::span("summarize");
+                DEVICES.with(|d| summary::summarize(&d.borrow(), &filters))
+            };
             // Append one hashrate sample per new devices sequence for the charts.
-            DEVICES.with(|d| HISTORY.with(|h| h.borrow_mut().record(seq, &summary, &d.borrow())));
+            {
+                let _s = profile::span("history");
+                DEVICES
+                    .with(|d| HISTORY.with(|h| h.borrow_mut().record(seq, &summary, &d.borrow())));
+            }
             *cell = Some(DerivedView {
                 devices_seq: seq,
                 params_version,
@@ -537,7 +544,10 @@ pub extern "C" fn render(_delta_ms: u32) {
                     }
                 }
             };
-            let result = render_ui(width, height, root);
+            let result = {
+                let _s = profile::span("submit");
+                render_ui(width, height, root)
+            };
             let mut changed = false;
             for id in result.clicks.keys() {
                 if let Some(action) = view::parse_click(id) {
