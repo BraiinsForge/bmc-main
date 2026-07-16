@@ -969,11 +969,11 @@ fn dispatch_touch_events(
     rect: egui::Rect,
     runtime: &mut WasmWidgetRuntime,
     recording: Option<&mut RecordingState>,
-) {
+) -> bool {
     // Mirror the device host: a widget that doesn't export `on_touch` is
     // non-interactive, so it never receives touch events.
     if !runtime.exports_on_touch() {
-        return;
+        return false;
     }
     // Carry the recording reborrow through each branch by hand instead of `as_deref_mut`
     // (which clippy rejects since the `Option`'s inner type is already a `&mut`).
@@ -1035,14 +1035,18 @@ fn dispatch_touch_events(
     }
     if touched {
         // Fire `on_touch` once for the gesture, mirroring the host's per-drain
-        // delivery. Renders are unconditional here, so this is purely to exercise
-        // the hook (and any side effects) the way the device does.
+        // delivery; the caller arms `pending_interaction` so the reaction renders.
         runtime.deliver_touch();
     }
+    touched
 }
 
 // ── Tile ────────────────────────────────────────────────────────────
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent per-tile status flags (dead/rendered/touch/led), not a state machine"
+)]
 pub(crate) struct PreviewTile {
     /// `None` for a placeholder — a size the manifest declines: no runtime built
     /// (no live widget, no discovery), painted as a "not supported" slab.
@@ -1057,6 +1061,14 @@ pub(crate) struct PreviewTile {
     label: String,
     logged_dead: bool,
     ever_rendered: bool,
+    /// Monotonic-ms deadline for this tile's next WASM render,
+    /// armed from `next_frame_delay()` at each render.
+    ///
+    /// `None` = idle until a delivery or touch.
+    /// Absolute, not per-tick relative, so it fires rather than receding.
+    next_render_at_ms: Option<u64>,
+    /// A touch landed since the last render; forces the next tick to render.
+    pending_interaction: bool,
     pub(crate) led_count: Option<u32>,
     /// Receiver for LED requests from the widget (drained each frame).
     led_rx: Option<std::sync::mpsc::Receiver<LedRequest>>,
@@ -1581,6 +1593,8 @@ impl TestbedApp {
                 label,
                 logged_dead: false,
                 ever_rendered: false,
+                next_render_at_ms: None,
+                pending_interaction: false,
                 led_count: placed.led_count,
                 led_rx,
                 led_scene: None,
@@ -1624,7 +1638,17 @@ impl TestbedApp {
     ///
     /// Skipping this caused screen-wide trails (egui's clear hit
     /// a tile FBO instead of the default framebuffer).
-    fn render_tiles(&mut self, delta_ms: u32) {
+    ///
+    /// Drive each tile on-demand off its own runtime scheduler;
+    /// returns the earliest next render across tiles (ms) for the host wake.
+    ///
+    /// Clock and delivery drain run every tick; the WASM render is gated,
+    /// so idle tiles cost nothing — the contract the device host honours.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one on-demand drive pass: per-tile clock, delivery drain, render gate, deadline arming, perf sample"
+    )]
+    fn render_tiles(&mut self, delta_ms: u32) -> Option<u64> {
         // SAFETY: gl is current on this thread inside `App::ui`; the queries below only read.
         let (prev_fbo, prev_viewport) = unsafe {
             let prev_fbo = self.gl.get_parameter_i32(eframe::glow::FRAMEBUFFER_BINDING);
@@ -1648,6 +1672,15 @@ impl TestbedApp {
         // slabs in `App::ui`. Skipping the WASM render here both clarifies the visual focus
         // and keeps non-active runtimes from spending fuel on frames nobody will keep.
         let active_record_idx = self.recording_mode.state.as_ref().map(|r| r.active_tile);
+        // Perf report samples the first live tile (placeholders have no runtime).
+        let perf_idx = self.tiles.iter().position(|t| t.runtime.is_some());
+        let mut next_wake_ms: Option<u64> = None;
+        // Captured only on a real render, so `--perf-frames` counts widget
+        // renders, not idle ticks.
+        let mut perf_capture: Option<(
+            bmc_render::FrameTimings,
+            std::collections::BTreeMap<String, u64>,
+        )> = None;
         for (tile_idx, tile) in self.tiles.iter_mut().enumerate() {
             if active_record_idx.is_some_and(|active| active != tile_idx) {
                 continue;
@@ -1656,26 +1689,57 @@ impl TestbedApp {
                 continue; // placeholder tile — no live widget to render
             }
             tile.drain_led_commands();
-            tile.runtime
-                .as_mut()
-                .expect("BUG: placeholder skipped above")
-                .set_hermetic(offline);
-            tile.runtime
-                .as_mut()
-                .expect("BUG: placeholder skipped above")
-                .set_time(system_time, monotonic_ms);
-            tile.renderer
-                .begin_frame(tile.gpu.width, tile.gpu.height, 1.0);
 
             // `*mut FemtoVgRenderer` → `*mut dyn Renderer` is a coercion, not an `as` cast.
             let renderer_raw: *mut dyn bmc_render::renderer::Renderer =
                 core::ptr::addr_of_mut!(tile.renderer);
             let renderer_ptr = std::ptr::NonNull::new(renderer_raw)
                 .expect("BUG: addr_of_mut! cannot produce null");
-            tile.runtime
-                .as_mut()
-                .expect("BUG: placeholder skipped above")
-                .poll_deliveries_with_renderer(renderer_ptr);
+
+            // Clock + delivery drain every tick (renderer parked
+            // so bitmap-registering delivery callbacks work).
+            //
+            // No `begin_frame` — it clears the FBO,
+            // so it must bracket a real render, not a drain.
+            let immediate = {
+                let rt = tile
+                    .runtime
+                    .as_mut()
+                    .expect("BUG: placeholder skipped above");
+                rt.set_hermetic(offline);
+                rt.set_time(system_time, monotonic_ms);
+                rt.poll_deliveries_with_renderer(renderer_ptr);
+                rt.next_frame_delay() == Some(0)
+            };
+
+            // Render only when the tile's scheduler asks: first frame,
+            // queued touch, deadline reached, or an immediate (maybe delivery-raised) request.
+            let due = !tile.ever_rendered
+                || tile.pending_interaction
+                || tile.next_render_at_ms.is_some_and(|at| monotonic_ms >= at)
+                || immediate;
+            if !due {
+                // Delivery armed a future (non-immediate) frame: set the deadline once.
+                if tile.next_render_at_ms.is_none() {
+                    let rt = tile
+                        .runtime
+                        .as_mut()
+                        .expect("BUG: placeholder skipped above");
+                    if rt.wants_next_frame() {
+                        tile.next_render_at_ms =
+                            Some(monotonic_ms + u64::from(rt.next_frame_delay().unwrap_or(0)));
+                    }
+                }
+                if let Some(at) = tile.next_render_at_ms {
+                    let delay = at.saturating_sub(monotonic_ms);
+                    next_wake_ms = Some(next_wake_ms.map_or(delay, |w| w.min(delay)));
+                }
+                continue;
+            }
+            tile.pending_interaction = false;
+
+            tile.renderer
+                .begin_frame(tile.gpu.width, tile.gpu.height, 1.0);
             let outcome = tile
                 .runtime
                 .as_mut()
@@ -1710,14 +1774,35 @@ impl TestbedApp {
                 }
             }
             tile.renderer.flush();
+
+            // Arm the next deadline from what the widget just requested (`None` = idle).
+            // Set only here, never per idle tick, so it can't recede.
+            let next_at = {
+                let rt = tile
+                    .runtime
+                    .as_mut()
+                    .expect("BUG: placeholder skipped above");
+                rt.wants_next_frame()
+                    .then(|| monotonic_ms + u64::from(rt.next_frame_delay().unwrap_or(0)))
+            };
+            tile.next_render_at_ms = next_at;
+            if let Some(at) = next_at {
+                let delay = at.saturating_sub(monotonic_ms);
+                next_wake_ms = Some(next_wake_ms.map_or(delay, |w| w.min(delay)));
+            }
+
+            if Some(tile_idx) == perf_idx {
+                let rt = tile
+                    .runtime
+                    .as_mut()
+                    .expect("BUG: placeholder skipped above");
+                perf_capture = Some((rt.last_timings(), rt.take_profile_sections()));
+            }
         }
-        // The first live tile (FULL on BMC100) for the perf report; placeholders
-        // have no runtime to time.
-        if let Some(runtime) = self.tiles.iter_mut().find_map(|tile| tile.runtime.as_mut()) {
-            self.perf.samples.push(runtime.last_timings());
-            self.perf
-                .section_samples
-                .push(runtime.take_profile_sections());
+        if let Some((timings, sections)) = perf_capture {
+            self.perf.samples.push(timings);
+            self.perf.section_samples.push(sections);
+            self.perf.frame_count += 1;
         }
 
         // Restore framebuffer + viewport so egui draws onto the screen FBO at the right size.
@@ -1735,6 +1820,8 @@ impl TestbedApp {
                 prev_viewport[3],
             );
         }
+
+        next_wake_ms
     }
 
     /// Paint the stats panel inside an explicit rect (the empty slot right of SMALL tile).
@@ -1974,6 +2061,12 @@ thread_local! {
         = const { std::cell::RefCell::new(None) };
 }
 
+/// Host wake floor when nothing sooner is scheduled: drains deliveries
+/// and animates chrome (the LED strip) without running widget WASM
+/// — real renders are gated per tile.
+/// ~30 Hz keeps LEDs smooth; it is not a render rate.
+const DRAIN_TICK_MS: u64 = 33;
+
 impl eframe::App for TestbedApp {
     #[expect(
         clippy::too_many_lines,
@@ -2024,8 +2117,8 @@ impl eframe::App for TestbedApp {
 
         // Render each widget into its FBO before egui submits its own draw list.
         // Must happen before checkerboard / image draws to keep GL state contained.
-        self.render_tiles(delta_ms);
-        self.perf.frame_count += 1;
+        // On-demand per tile; `next_wake` = earliest a tile wants a frame (ms).
+        let next_wake = self.render_tiles(delta_ms);
 
         // Perf-report exit condition: write JSON + close the viewport once we've collected
         // enough samples. Matches the prior `--perf-frames` flag behaviour.
@@ -2104,7 +2197,7 @@ impl eframe::App for TestbedApp {
                     } else {
                         None
                     };
-                    dispatch_touch_events(
+                    let touched = dispatch_touch_events(
                         &response,
                         rect,
                         tile.runtime
@@ -2112,6 +2205,7 @@ impl eframe::App for TestbedApp {
                             .expect("BUG: placeholder skipped above"),
                         rec_for_tile,
                     );
+                    tile.pending_interaction |= touched;
 
                     if tile.led_count.is_some() {
                         paint_led_strip(ui.painter(), tile, origin, time_s);
@@ -2134,7 +2228,9 @@ impl eframe::App for TestbedApp {
                 }
             });
 
-        ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        // Earliest tile deadline, capped at the drain tick for deliveries + chrome.
+        let repaint_ms = next_wake.map_or(DRAIN_TICK_MS, |w| w.min(DRAIN_TICK_MS));
+        ctx.request_repaint_after(std::time::Duration::from_millis(repaint_ms));
     }
 }
 

@@ -44,6 +44,7 @@ Schema references:
 import gzip
 import json
 import sys
+from itertools import cycle
 from pathlib import Path
 
 from _common import find_testbed_thread
@@ -150,9 +151,12 @@ def build_counters(profile: dict, perf: dict) -> list[dict]:
                     phase, 'Frame timing (µs)', values, times, pid, main_idx, color
                 )
             )
-    fuel_colors = ('orange', 'red', 'magenta', 'ink')
+
+    # Cycle a distinct fuel palette so every section gets a counter
+    # — a fixed-length tuple silently zip-truncated the sections past its end.
+    fuel_colors = ('orange', 'red', 'magenta', 'ink', 'yellow')
     for (name, values), color in zip(
-        (per_frame.get('fuel') or {}).items(), fuel_colors
+        (per_frame.get('fuel') or {}).items(), cycle(fuel_colors)
     ):
         counters.append(make_counter(name, 'Fuel', values, times, pid, main_idx, color))
     return counters
