@@ -2,6 +2,8 @@
 
 //! mDNS announcement: advertise a resource so widgets discover it.
 
+use std::net::{Ipv4Addr, UdpSocket};
+
 use anyhow::Result;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 
@@ -16,6 +18,14 @@ pub trait Announcer {
 /// mDNS/DNS-SD announcer backed by a shared `mdns-sd` daemon.
 pub struct MdnsAnnouncer {
     daemon: ServiceDaemon,
+    /// The one LAN IPv4 to advertise.
+    ///
+    /// `enable_addr_auto` otherwise lists every interface (docker/veth/loopback),
+    /// which bloats each `_http._tcp` record and leaks unreachable addresses
+    /// — costly for a Deck browsing a busy type over lossy WiFi multicast.
+    ///
+    /// `None` (host offline) falls back to auto.
+    lan_ip: Option<Ipv4Addr>,
 }
 
 impl std::fmt::Debug for MdnsAnnouncer {
@@ -29,7 +39,20 @@ impl MdnsAnnouncer {
     pub fn new() -> Result<Self> {
         Ok(Self {
             daemon: ServiceDaemon::new()?,
+            lan_ip: primary_lan_ipv4(),
         })
+    }
+}
+
+/// The primary LAN IPv4 — the source address the OS would use to reach a public
+/// host. No packet is sent; the connect only picks the default-route interface,
+/// so it skips docker/veth/loopback. `None` when offline.
+fn primary_lan_ipv4() -> Option<Ipv4Addr> {
+    let sock = UdpSocket::bind(("0.0.0.0", 0)).ok()?;
+    sock.connect(("8.8.8.8", 80)).ok()?;
+    match sock.local_addr().ok()? {
+        std::net::SocketAddr::V4(addr) => Some(*addr.ip()),
+        std::net::SocketAddr::V6(_) => None,
     }
 }
 
@@ -49,10 +72,16 @@ impl Announcer for MdnsAnnouncer {
         let host_name = format!("{}.local.", dns_label(name));
         let props: Vec<(String, String)> =
             txt.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        // Empty `ip` + `enable_addr_auto` advertises (and tracks)
-        // the host's real interface addresses, so a Deck on the LAN can reach it.
-        let info = ServiceInfo::new(&ty_domain, name, &host_name, "", port, &props[..])?
-            .enable_addr_auto();
+        // Advertise the one LAN address a Deck can reach, not every interface's
+        // (see `lan_ip`); fall back to auto-detecting all when the host is offline.
+        let info = match self.lan_ip {
+            Some(ip) => {
+                let ip = ip.to_string();
+                ServiceInfo::new(&ty_domain, name, &host_name, ip.as_str(), port, &props[..])?
+            }
+            None => ServiceInfo::new(&ty_domain, name, &host_name, "", port, &props[..])?
+                .enable_addr_auto(),
+        };
         self.daemon.register(info)?;
         tracing::debug!(name = %name, ty = %ty_domain, port, "registered mDNS service");
         Ok(())
