@@ -15,7 +15,7 @@ use bmc_wasm_sdk::*;
 use crate::screens::icons;
 use crate::screens::parts::{
     BACK_CHIP, BORDER, CARD_BG, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD,
-    TITLE_FONT, VALUE_FONT, area_chart, back_button, icon, status_glyph,
+    TITLE_FONT, VALUE_FONT, back_button, icon, scaled_area_chart, status_glyph,
 };
 use crate::summary::DeviceStatus;
 use crate::telemetry::DeviceTemp;
@@ -60,12 +60,19 @@ pub fn device_detail_view(d: &DeviceDetailData) -> Node {
                         [
                             ip_mac_tile(&d.ip, d.mac.as_deref()),
                             state_tile(d.state),
-                            chart_tile("Hashrate", &d.hashrate.format_si(3), &d.hashrate_series),
                             chart_tile(
-                                "Nominal Hashrate",
-                                &d.nominal_hashrate.format_si(3),
-                                &d.hashrate_series,
+                                "Hashrate",
+                                &d.hashrate.format_si(3),
+                                scaled_area_chart(
+                                    &d.hashrate_series,
+                                    CHART_W,
+                                    CHART_H,
+                                    0.42,
+                                    nominal_ths(d.nominal_hashrate),
+                                    false,
+                                ),
                             ),
+                            nominal_tile(d.nominal_hashrate),
                         ],
                     ),
                     row(
@@ -185,9 +192,27 @@ fn state_tile(state: DeviceStatus) -> Node {
     ])
 }
 
-// Area chart with the label + hero value drawn over it, on one fixed canvas.
-fn chart_tile(label: &str, value: &str, series: &[f32]) -> Node {
-    let mut draws = area_chart(series, CHART_W, CHART_H, 0.42);
+// Nameplate TH/s for the chart ceiling; `None` when unknown.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a chart ceiling is fine at f32 precision"
+)]
+fn nominal_ths(nominal: Hashrate) -> Option<f32> {
+    let ths = nominal.as_terahashes_per_second() as f32;
+    (ths > 0.0).then_some(ths)
+}
+
+// Nominal is a static nameplate, so it shows as a value, not a time chart.
+fn nominal_tile(nominal: Hashrate) -> Node {
+    let (v, u) = nominal.format_si_parts(3);
+    tile(vec![
+        text("Nominal Hashrate", style!(size: LABEL_FONT, color: LABEL)),
+        value_row(&v, &u),
+    ])
+}
+
+// label + hero value over a pre-built chart
+fn chart_tile(label: &str, value: &str, mut draws: Vec<Draw>) -> Node {
     draws.push(Draw::text(
         CHART_W / 2.0,
         CHART_H / 2.0 - 20.0,

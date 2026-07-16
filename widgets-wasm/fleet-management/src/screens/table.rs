@@ -14,12 +14,11 @@ use bmc_wasm_sdk::*;
 
 use crate::device::DeviceFamily;
 use crate::layout::truncate_label;
-use crate::screens::icons;
 use crate::screens::parts::{
     BORDER, CARD_BG, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H, HEADER_BG, LABEL,
-    LABEL_FONT, PAD, ROW_FONT, ROW_PAD, area_chart, header, status_counts,
+    LABEL_FONT, PAD, ROW_FONT, ROW_PAD, area_chart, header, pager, status_counts,
 };
-use crate::view::{PageTurn, PagerScope, model_detail_click_id, pager_click_id};
+use crate::view::{PagerScope, model_detail_click_id};
 
 // Column widths within the table card. Balanced against the Figma "Braiins DECK"
 // list frame: Model was over-wide and starved the rest, the sparkline worst of
@@ -73,7 +72,7 @@ pub fn table_view(data: &TableViewData) -> Node {
                 props!(gap: GAP, flex: 1.0),
                 [
                     table_card(data),
-                    pager(data.page > 0, data.page + 1 < data.page_count),
+                    pager(PagerScope::Fleet, data.page, data.page_count),
                 ],
             ),
         ],
@@ -195,40 +194,4 @@ fn detail_button(family: Option<DeviceFamily>, name: &str) -> Node {
 
 fn separator() -> Node {
     col(props!(height: 1.0, background: BORDER), Vec::<Node>::new())
-}
-
-fn pager(can_up: bool, can_down: bool) -> Node {
-    // Compact pair pinned to the table's bottom — the leading spacer pushes it down.
-    col(
-        props!(gap: 8.0, cross_align: CrossAlign::Center),
-        [
-            col(props!(flex: 1.0), Vec::<Node>::new()),
-            pager_button(
-                &icons::PAGER_UP,
-                can_up,
-                pager_click_id(PagerScope::Fleet, PageTurn::Prev),
-            ),
-            pager_button(
-                &icons::PAGER_DOWN,
-                can_down,
-                pager_click_id(PagerScope::Fleet, PageTurn::Next),
-            ),
-        ],
-    )
-}
-
-fn pager_button(svg: &Svg, enabled: bool, click_id: &str) -> Node {
-    // Disabled keeps the chip and only dims the glyph; a dead direction isn't tappable.
-    let glyph = if enabled {
-        WHITE
-    } else {
-        WHITE.with_alpha(0.3)
-    };
-    let draws = vec![Draw::svg(10.0, 10.0, 20.0, 20.0, svg, glyph).with_anti_alias()];
-    let props = props!(width: 40.0, height: 40.0, background: GRAY_90);
-    if enabled {
-        touchable(click_id, props, draws)
-    } else {
-        canvas(props, draws)
-    }
 }

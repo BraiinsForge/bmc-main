@@ -15,7 +15,7 @@ use bmc_wasm_sdk::*;
 
 use crate::screens::icons;
 use crate::summary::DeviceStatus;
-use crate::view::{ViewMode, view_click_id};
+use crate::view::{PageTurn, PagerScope, ViewMode, pager_click_id, view_click_id};
 
 // Design tokens map 1:1 to the Figma "Braiins DECK" frames.
 pub const CARD_BG: Color = Color::from_hex(0x09_09_09);
@@ -33,6 +33,9 @@ pub const VALUE_FONT: u32 = 40;
 pub const ROW_FONT: u32 = 20;
 pub const LABEL_FONT: u32 = 20;
 pub const METRIC_ICON: f32 = 20.0;
+const AXIS_FONT: u32 = 16;
+// keeps a flat/zero run's stroke off the clipped canvas edge
+const BASELINE_INSET: f32 = 3.0;
 
 // Fixed geometry for the Deck's Full band (1280 x 480).
 pub const FRAME_W: f32 = 1280.0;
@@ -41,6 +44,8 @@ pub const PAD: f32 = 24.0;
 pub const GAP: f32 = 8.0;
 pub const DETAIL_BUTTON_WIDTH: f32 = 96.0;
 pub const BACK_CHIP: f32 = 40.0;
+// Wide enough for a two-digit "N / NN" count, so the page text never wraps.
+const PAGER_W: f32 = 72.0;
 
 // Table-card row geometry, shared by the list and model-detail screens.
 pub const ROW_PAD: f32 = 20.0;
@@ -177,7 +182,7 @@ pub fn area_chart(series: &[f32], w: f32, h: f32, top_frac: f32) -> Vec<Draw> {
         .fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
     let span = (max - min).max(1e-3);
     let top = h * top_frac;
-    let usable = h - top;
+    let usable = h - top - BASELINE_INSET;
     let last = idx_f32(series.len().max(2) - 1);
     let trend: Vec<(f32, f32)> = series
         .iter()
@@ -201,8 +206,101 @@ pub fn area_chart(series: &[f32], w: f32, h: f32, top_frac: f32) -> Vec<Draw> {
     ]
 }
 
-// Sample the Catmull-Rom spline through `pts` into a dense polyline (the renderer's
-// control points, `bmc-render::build_femtovg_path`), so a linear draw looks smooth.
+// Large charts: 0-anchored to `nice(max(nominal, window max))` with dashed
+// gridlines and optional right-edge tick labels. Sparklines stay bare.
+#[must_use]
+pub fn scaled_area_chart(
+    series: &[f32],
+    w: f32,
+    h: f32,
+    top_frac: f32,
+    nominal: Option<f32>,
+    ticks: bool,
+) -> Vec<Draw> {
+    let local_max = series.iter().copied().fold(0.0_f32, f32::max);
+    let ceiling_hint = nominal.unwrap_or(0.0).max(local_max);
+    let Some((ceiling, step)) = nice_scale(ceiling_hint) else {
+        return area_chart(series, w, h, top_frac);
+    };
+    let top = h * top_frac;
+    let plot_h = (h - top - BASELINE_INSET).max(1.0);
+    let last = idx_f32(series.len().max(2) - 1);
+    let y_of = |v: f32| top + (1.0 - (v / ceiling).clamp(0.0, 1.0)) * plot_h;
+    let trend: Vec<(f32, f32)> = series
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| (idx_f32(i) / last * w, y_of(v)))
+        .collect();
+    let curve = smooth_curve(&trend);
+    let mut area = curve.clone();
+    area.push((w, h));
+    area.push((0.0, h));
+
+    // gridlines behind the fill, so they never darken the data line
+    let grid = WHITE.with_alpha(0.14);
+    let mut draws: Vec<Draw> = Vec::new();
+    let mut labels: Vec<Draw> = Vec::new();
+    let mut level = step;
+    while level <= ceiling + step * 0.5 {
+        let y = y_of(level);
+        draws.push(path!(vec![(0.0, y), (w, y)], stroke: 1.0, color: grid, dashed: (4.0, 4.0)));
+        // Ticks only where the chart is wide enough to keep them off the overlay.
+        if ticks {
+            labels.push(Draw::text(
+                w - GAP,
+                y,
+                Hashrate::from_terahashes_per_second(f64::from(level)).format_si(3),
+                style!(size: AXIS_FONT, color: LABEL, align: TextAlign::Right, valign: VerticalAlign::Center),
+            ));
+        }
+        level += step;
+    }
+    draws.push(fill!(area, linear: (CHART.with_alpha(0.55), CHART.with_alpha(0.05))));
+    draws.push(path!(curve, stroke: 3.0, color: CHART));
+    draws.extend(labels);
+    draws
+}
+
+// Round axis ceiling ≥ `raw` and gridline step (1/2/5 × 10ⁿ); `None` if raw <= 0.
+fn nice_scale(raw: f32) -> Option<(f32, f32)> {
+    if raw <= 0.0 {
+        return None;
+    }
+    let step = nice_step(raw / 3.0);
+    let ceiling = (raw / step).ceil() * step;
+    Some((ceiling, step))
+}
+
+fn nice_step(rough: f32) -> f32 {
+    let mag = pow10_floor(rough);
+    let norm = rough / mag; // [1, 10)
+    let snapped = if norm <= 1.0 {
+        1.0
+    } else if norm <= 2.0 {
+        2.0
+    } else if norm <= 5.0 {
+        5.0
+    } else {
+        10.0
+    };
+    snapped * mag
+}
+
+// Largest power of ten ≤ `v`, sans `log10`/int casts.
+fn pow10_floor(v: f32) -> f32 {
+    let mut p = 1.0_f32;
+    while p * 10.0 <= v {
+        p *= 10.0;
+    }
+    while p > v {
+        p /= 10.0;
+    }
+    p
+}
+
+// Sample a Catmull-Rom spline through `pts` into a dense polyline.
+// Control-point y is clamped to each segment's endpoint band,
+// so the curve can't overshoot a peak or dip off-canvas.
 fn smooth_curve(pts: &[(f32, f32)]) -> Vec<(f32, f32)> {
     const STEPS: usize = 10;
     if pts.len() < 3 {
@@ -215,8 +313,15 @@ fn smooth_curve(pts: &[(f32, f32)]) -> Vec<(f32, f32)> {
         let p1 = pts[i];
         let p2 = pts[i + 1];
         let p3 = pts[(i + 2).min(n - 1)];
-        let cp1 = (p1.0 + (p2.0 - p0.0) / 6.0, p1.1 + (p2.1 - p0.1) / 6.0);
-        let cp2 = (p2.0 - (p3.0 - p1.0) / 6.0, p2.1 - (p3.1 - p1.1) / 6.0);
+        let (lo, hi) = (p1.1.min(p2.1), p1.1.max(p2.1));
+        let cp1 = (
+            p1.0 + (p2.0 - p0.0) / 6.0,
+            (p1.1 + (p2.1 - p0.1) / 6.0).clamp(lo, hi),
+        );
+        let cp2 = (
+            p2.0 - (p3.0 - p1.0) / 6.0,
+            (p2.1 - (p3.1 - p1.1) / 6.0).clamp(lo, hi),
+        );
         for s in 1..=STEPS {
             out.push(cubic_bezier(p1, cp1, cp2, p2, idx_f32(s) / idx_f32(STEPS)));
         }
@@ -247,6 +352,49 @@ pub fn count_str(count: usize) -> String {
     let mut out = String::new();
     units::format::push_int(&mut out, count as u64);
     out
+}
+
+/// The bottom page control: 1-based page/total framed by up/down chips.
+/// `scope` scopes the turn click ids to the fleet or model-detail table.
+#[must_use]
+pub fn pager(scope: PagerScope, page: usize, page_count: usize) -> Node {
+    col(
+        props!(gap: 8.0, cross_align: CrossAlign::Center, width: PAGER_W),
+        [
+            // Leading spacer pushes the cluster to the bottom of its column.
+            col(props!(flex: 1.0), Vec::<Node>::new()),
+            pager_button(
+                &icons::PAGER_UP,
+                page > 0,
+                pager_click_id(scope, PageTurn::Prev),
+            ),
+            text(
+                fmt!("{} / {}", page + 1, page_count.max(1)),
+                style!(size: LABEL_FONT, color: LABEL),
+            ),
+            pager_button(
+                &icons::PAGER_DOWN,
+                page + 1 < page_count,
+                pager_click_id(scope, PageTurn::Next),
+            ),
+        ],
+    )
+}
+
+fn pager_button(svg: &Svg, enabled: bool, click_id: &str) -> Node {
+    // Disabled keeps the chip and only dims the glyph; a dead direction isn't tappable.
+    let glyph = if enabled {
+        WHITE
+    } else {
+        WHITE.with_alpha(0.3)
+    };
+    let draws = vec![Draw::svg(10.0, 10.0, 20.0, 20.0, svg, glyph).with_anti_alias()];
+    let props = props!(width: 40.0, height: 40.0, background: GRAY_90);
+    if enabled {
+        touchable(click_id, props, draws)
+    } else {
+        canvas(props, draws)
+    }
 }
 
 #[expect(

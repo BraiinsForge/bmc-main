@@ -14,10 +14,10 @@ use crate::screens::icons;
 use crate::screens::parts::{
     BACK_CHIP, BORDER, CARD_BG, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H,
     HEADER_BG, LABEL, LABEL_FONT, METRIC_ICON, PAD, ROW_PAD, TITLE_FONT, area_chart, back_button,
-    icon, status_glyph,
+    icon, pager, status_glyph,
 };
 use crate::summary::DeviceStatus;
-use crate::view::{PageTurn, PagerScope, pager_click_id};
+use crate::view::PagerScope;
 
 // Column widths within the table card.
 const COL_HOST: f32 = 260.0;
@@ -67,7 +67,7 @@ pub fn model_detail_view(data: &ModelDetailViewData) -> Node {
                 props!(gap: GAP, flex: 1.0),
                 [
                     table_card(data),
-                    pager(data.page > 0, data.page + 1 < data.page_count),
+                    pager(PagerScope::ModelDetail, data.page, data.page_count),
                 ],
             ),
         ],
@@ -238,38 +238,4 @@ fn detail_button(click_id: &str) -> Node {
 
 fn separator() -> Node {
     col(props!(height: 1.0, background: BORDER), Vec::<Node>::new())
-}
-
-fn pager(can_up: bool, can_down: bool) -> Node {
-    col(
-        props!(gap: 8.0, cross_align: CrossAlign::Center),
-        [
-            col(props!(flex: 1.0), Vec::<Node>::new()),
-            pager_button(
-                &icons::PAGER_UP,
-                can_up,
-                pager_click_id(PagerScope::ModelDetail, PageTurn::Prev),
-            ),
-            pager_button(
-                &icons::PAGER_DOWN,
-                can_down,
-                pager_click_id(PagerScope::ModelDetail, PageTurn::Next),
-            ),
-        ],
-    )
-}
-
-fn pager_button(svg: &Svg, enabled: bool, click_id: &str) -> Node {
-    let glyph = if enabled {
-        WHITE
-    } else {
-        WHITE.with_alpha(0.3)
-    };
-    let draws = vec![Draw::svg(10.0, 10.0, 20.0, 20.0, svg, glyph).with_anti_alias()];
-    let props = props!(width: 40.0, height: 40.0, background: GRAY_90);
-    if enabled {
-        touchable(click_id, props, draws)
-    } else {
-        canvas(props, draws)
-    }
 }

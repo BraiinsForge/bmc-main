@@ -15,7 +15,7 @@ use bmc_wasm_sdk::*;
 use crate::screens::icons;
 use crate::screens::parts::{
     BORDER, CARD_BG, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD, VALUE_FONT,
-    area_chart, header, icon, status_counts,
+    header, icon, scaled_area_chart, status_counts,
 };
 
 const STATUS_ICON: f32 = 32.0;
@@ -107,7 +107,7 @@ fn fleet_status(data: &DashboardViewData) -> Node {
 
 // Hashrate card: the area chart plus the hero value drawn over it on one canvas.
 fn hashrate(data: &DashboardViewData) -> Node {
-    let mut draws = area_chart(&data.hashrate_series, CHART_W, ROW_H, 0.42);
+    let mut draws = scaled_area_chart(&data.hashrate_series, CHART_W, ROW_H, 0.42, None, true);
     draws.push(Draw::text(
         CHART_W / 2.0,
         ROW_H / 2.0 - 24.0,
