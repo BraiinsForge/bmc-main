@@ -248,12 +248,20 @@ fn path_arg(path: &Path) -> String {
 }
 
 impl InitEnv {
+    /// Register the factory server with the shared test keypair's
+    /// public key as the trust anchor — the default for binary-level
+    /// tests, which exercise `init`'s verification-on default path.
     fn write_servers_config(&self, base_url: &str) {
+        let (_, public) = test_init_keypair();
+        self.write_servers_config_with_key(base_url, &public);
+    }
+
+    fn write_servers_config_with_key(&self, base_url: &str, known_public_key: &str) {
         let config = ServersConfig {
             factory: FactoryServerEntry {
                 id: "test".to_owned(),
                 base_url: base_url.to_owned(),
-                known_public_key: String::new(),
+                known_public_key: known_public_key.to_owned(),
                 priority: 0,
                 enabled: true,
             },
@@ -381,7 +389,7 @@ fn init_downloads_extracts_and_promotes() {
         download_url: format!("{base_url}{tarball_route_path}"),
         profile_path: PROFILE_PATH.to_owned(),
         index_url: None,
-        signature: None,
+        signature: Some(sign_with_test_key(&tarball_bytes)),
     }]);
     let _server = pending.serve(vec![
         Route {
@@ -473,7 +481,9 @@ fn init_rejects_tarball_without_nix_subtree() {
         download_url: format!("{base_url}{tarball_route_path}"),
         profile_path: PROFILE_PATH.to_owned(),
         index_url: None,
-        signature: None,
+        // Correctly signed: the missing-nix-subtree rejection under
+        // test happens after verification.
+        signature: Some(sign_with_test_key(&tarball_bytes)),
     }]);
     let _server = pending.serve(vec![
         Route {
@@ -530,7 +540,7 @@ fn init_collects_stale_leftovers() {
         download_url: format!("{base_url}{tarball_route_path}"),
         profile_path: PROFILE_PATH.to_owned(),
         index_url: None,
-        signature: None,
+        signature: Some(sign_with_test_key(&tarball_bytes)),
     }]);
     let _server = pending.serve(vec![
         Route {
@@ -608,6 +618,171 @@ fn init_fails_when_bos_version_not_in_index() {
     assert!(
         !env.data_dir.join("nix").exists(),
         "nothing must be promoted when the BOS version is unindexed"
+    );
+}
+
+/// The production default: no flag passed, an unsigned feed entry must
+/// fail before the tarball is ever requested.
+#[test]
+#[serial]
+fn init_rejects_unsigned_feed_entry_by_default() {
+    let env = setup();
+    let bos_version = "2026-test-1";
+
+    let pending = bind_server();
+    let base_url = pending.base_url();
+    let tarball_route_path = format!("/nix-{bos_version}.tar.gz");
+    let tarball_bytes = build_tarball(env.tmp.path(), &[("nix/store/testpkg/marker", b"hello")]);
+    let feed_bytes = package_feed_bytes(vec![PackageFeedEntry {
+        bos_version: bos_version.to_owned(),
+        download_url: format!("{base_url}{tarball_route_path}"),
+        profile_path: PROFILE_PATH.to_owned(),
+        index_url: None,
+        signature: None,
+    }]);
+    let server = pending.serve(vec![
+        Route {
+            path: "/nix-package-feed.v1.json".to_owned(),
+            body: feed_bytes,
+        },
+        Route {
+            path: tarball_route_path,
+            body: tarball_bytes,
+        },
+    ]);
+
+    env.write_servers_config(&base_url);
+    let run = env.run_init(bos_version, &[]);
+
+    assert_eq!(
+        run.status.code(),
+        Some(2),
+        "an unsigned feed entry must fail as a runtime error. stderr:\n{}",
+        run.stderr,
+    );
+    assert!(
+        run.stderr.contains("has no signature"),
+        "stderr should name the missing signature: {}",
+        run.stderr,
+    );
+    assert_eq!(
+        server.hits(),
+        1,
+        "only the feed may have been fetched: the missing signature must \
+         abort before the tarball download"
+    );
+    assert!(
+        !env.data_dir.join("nix").exists(),
+        "nothing must be promoted from an unsigned feed entry"
+    );
+}
+
+#[test]
+#[serial]
+fn init_rejects_signature_by_untrusted_key_by_default() {
+    let env = setup();
+    let bos_version = "2026-test-1";
+    let (untrusted_secret, _) = signing_keypair("braiins-init-1", &[9; 32]);
+
+    let pending = bind_server();
+    let base_url = pending.base_url();
+    let tarball_route_path = format!("/nix-{bos_version}.tar.gz");
+    let tarball_bytes = build_tarball(env.tmp.path(), &[("nix/store/testpkg/marker", b"hello")]);
+    let feed_bytes = package_feed_bytes(vec![PackageFeedEntry {
+        bos_version: bos_version.to_owned(),
+        download_url: format!("{base_url}{tarball_route_path}"),
+        profile_path: PROFILE_PATH.to_owned(),
+        index_url: None,
+        signature: Some(
+            bmc_nix::signature::sign(&untrusted_secret, &sha256(&tarball_bytes))
+                .expect("BUG: valid secret key"),
+        ),
+    }]);
+    let _server = pending.serve(vec![
+        Route {
+            path: "/nix-package-feed.v1.json".to_owned(),
+            body: feed_bytes,
+        },
+        Route {
+            path: tarball_route_path,
+            body: tarball_bytes,
+        },
+    ]);
+
+    env.write_servers_config(&base_url);
+    let run = env.run_init(bos_version, &[]);
+
+    assert_eq!(
+        run.status.code(),
+        Some(2),
+        "a signature by an untrusted key must fail as a runtime error. stderr:\n{}",
+        run.stderr,
+    );
+    assert!(
+        run.stderr
+            .contains("init tarball signature verification failed"),
+        "stderr should name the verification failure: {}",
+        run.stderr,
+    );
+    assert!(
+        !env.data_dir.join("nix").exists(),
+        "a tarball signed by an untrusted key must never be promoted"
+    );
+    assert!(
+        !env.download_dir.join("init-tarball.tar.gz").exists(),
+        "the rejected tarball must not linger at the download path"
+    );
+}
+
+/// The development escape hatch: `--no-verify-signature` accepts an
+/// unsigned feed entry even with no usable trust anchor configured,
+/// and says loudly that verification is off.
+#[test]
+#[serial]
+fn init_no_verify_signature_skips_verification_with_warning() {
+    let env = setup();
+    let bos_version = "2026-test-1";
+
+    let pending = bind_server();
+    let base_url = pending.base_url();
+    let tarball_route_path = format!("/nix-{bos_version}.tar.gz");
+    let tarball_bytes = build_tarball(env.tmp.path(), &[("nix/store/testpkg/marker", b"hello")]);
+    let feed_bytes = package_feed_bytes(vec![PackageFeedEntry {
+        bos_version: bos_version.to_owned(),
+        download_url: format!("{base_url}{tarball_route_path}"),
+        profile_path: PROFILE_PATH.to_owned(),
+        index_url: None,
+        signature: None,
+    }]);
+    let _server = pending.serve(vec![
+        Route {
+            path: "/nix-package-feed.v1.json".to_owned(),
+            body: feed_bytes,
+        },
+        Route {
+            path: tarball_route_path,
+            body: tarball_bytes,
+        },
+    ]);
+
+    env.write_servers_config_with_key(&base_url, "");
+    let run = env.run_init(bos_version, &["--no-verify-signature"]);
+
+    assert!(
+        run.status.success(),
+        "expected exit 0, got {:?}. stderr:\n{}",
+        run.status.code(),
+        run.stderr,
+    );
+    assert_eq!(run.stdout, format!("{PROFILE_PATH}\n"));
+    assert!(
+        run.stderr.contains("signature verification disabled"),
+        "stderr should warn that verification is off: {}",
+        run.stderr,
+    );
+    assert!(
+        env.data_dir.join("nix/store/testpkg/marker").exists(),
+        "the unverified store must still be promoted"
     );
 }
 
@@ -798,6 +973,18 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
         .as_ref()
         .try_into()
         .expect("BUG: SHA-256 digest is 32 bytes")
+}
+
+/// The keypair behind [`InitEnv::write_servers_config`]'s trust anchor
+/// and [`sign_with_test_key`].
+fn test_init_keypair() -> (String, String) {
+    signing_keypair("braiins-init-1", &[7; 32])
+}
+
+/// Feed-entry signature over `tarball_bytes` by the shared test key.
+fn sign_with_test_key(tarball_bytes: &[u8]) -> String {
+    let (secret, _) = test_init_keypair();
+    bmc_nix::signature::sign(&secret, &sha256(tarball_bytes)).expect("BUG: valid secret key")
 }
 
 /// Deterministic Ed25519 keypair in the nix line formats:

@@ -384,11 +384,18 @@ enum Commands {
         download_dir: PathBuf,
 
         /// Replace an existing promoted store at <data-dir>/nix. The
-        /// store is demoted before the replacement tarball is
-        /// validated: an init that fails after this point leaves the
-        /// device uninitialized, not on the old store.
+        /// store is demoted after the downloaded tarball's signature
+        /// is verified but before it is extracted: an init that fails
+        /// during extraction leaves the device uninitialized, not on
+        /// the old store.
         #[arg(long, action = clap::ArgAction::SetTrue)]
         wipe: bool,
+
+        /// Skip Ed25519 signature verification of the downloaded init
+        /// tarball (development escape hatch; verification against the
+        /// factory entry's known_public_key is on by default).
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        no_verify_signature: bool,
 
         /// Local factory tarball: skip the feed fetch and download and
         /// extract this file instead. The file is kept after
@@ -401,6 +408,7 @@ enum Commands {
                 "default_servers_config",
                 "firmware",
                 "download_dir",
+                "no_verify_signature",
             ]
         )]
         tarball: Option<PathBuf>,
@@ -1057,6 +1065,7 @@ async fn cmd_init(
     firmware: Option<String>,
     download_dir: PathBuf,
     wipe: bool,
+    no_verify_signature: bool,
     tarball: Option<PathBuf>,
     profile_path: Option<PathBuf>,
     log_format: LogFormat,
@@ -1094,6 +1103,17 @@ async fn cmd_init(
             Some(version) => version,
             None => read_bos_version(Path::new("/etc/bos_version"))?,
         };
+        let verification = if no_verify_signature {
+            tracing::warn!(
+                "init tarball signature verification disabled by --no-verify-signature; \
+                 trusting the transport alone"
+            );
+            bmc_nix::store::SignatureVerification::Disabled
+        } else {
+            bmc_nix::store::SignatureVerification::Enabled {
+                trusted_public_key: servers.factory.known_public_key.clone(),
+            }
+        };
         let client = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(15))
             .build()
@@ -1106,7 +1126,7 @@ async fn cmd_init(
             &download_dir,
             &data_dir,
             wipe,
-            &bmc_nix::store::SignatureVerification::Disabled,
+            &verification,
             Some(&progress),
         )
         .await?
@@ -1424,6 +1444,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             firmware,
             download_dir,
             wipe,
+            no_verify_signature,
             tarball,
             profile_path,
         } => {
@@ -1435,6 +1456,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 firmware,
                 download_dir,
                 wipe,
+                no_verify_signature,
                 tarball,
                 profile_path,
                 log_format,
