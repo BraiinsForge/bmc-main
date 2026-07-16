@@ -411,9 +411,8 @@ impl Configuration {
     // Handoff for a firmware-carried widget install: bmc writes it here, the
     // sysupgrade sequence consumes it via `bmc-nix-cli upgrade --install-from`
     // before the flash in the same boot, so it never crosses the reboot and its
-    // tmpfs location is fine. Wiring that sysupgrade step on-device is a
-    // cross-repo follow-up; see docs/devel/firmware-package-interlinking.md.
-    const PENDING_INSTALL_PATH: &str = "/tmp/bmc-nix-pending-install.json";
+    // tmpfs location is fine. See docs/devel/firmware-package-interlinking.md.
+    const PENDING_INSTALL_PATH: &str = "/dev/shm/bmc-nix-pending-install.json";
     const NIX_HOOKS_DIR: &str = "hooks";
 }
 

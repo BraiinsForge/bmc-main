@@ -523,7 +523,7 @@ async fn firmware_success_with_install_consumes_the_handoff() {
     }
 
     // The handoff was consumed, not left behind.
-    let handoff = mock.mockfs.join("tmp/bmc-nix-pending-install.json");
+    let handoff = mock.mockfs.join("dev/shm/bmc-nix-pending-install.json");
     assert!(
         !handoff.exists(),
         "consumed handoff must be removed: {}",
@@ -661,7 +661,7 @@ async fn failed_firmware_apply_leaves_no_pending_install_handoff() {
     // The failed firmware run must not leave a pending-install handoff on
     // disk. A later, unrelated successful firmware upgrade that requested no
     // install would otherwise consume it and install widgets nobody asked for.
-    let handoff = mock.mockfs.join("tmp/bmc-nix-pending-install.json");
+    let handoff = mock.mockfs.join("dev/shm/bmc-nix-pending-install.json");
     assert!(
         !handoff.exists(),
         "stale pending-install handoff left after a failed firmware upgrade: {}",
