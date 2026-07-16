@@ -26,7 +26,7 @@ use std::time::Duration;
 use bmc_wasm_sdk::profile;
 use bmc_wasm_sdk::ufmt;
 use bmc_wasm_sdk::{
-    FetchRequest, FetchRequestId, fmt, format_number, log_info, log_warn, request_frame,
+    FetchRequest, FetchRequestId, fmt, format_number, log_debug, log_info, log_warn, request_frame,
 };
 
 use super::{
@@ -180,6 +180,20 @@ fn gather_ring() -> Vec<DeviceId> {
             ids.extend(crate::DEVICES.with(|d| d.borrow().pollable_ids_for_family(family)));
         }
     }
+    // Debug-level so it's silent at the production INFO threshold; raise the
+    // device log level to DEBUG to watch the fleet's membership over time.
+    let census = crate::DEVICES.with(|d| d.borrow().census());
+    log_debug!(
+        "fleet census: total={} reported={} reachable={} ring={} — cand={} dormant={} ident={} confirmed={}",
+        census.total,
+        census.reported,
+        census.reachable,
+        ids.len(),
+        census.candidate,
+        census.dormant,
+        census.identified,
+        census.confirmed,
+    );
     ids
 }
 

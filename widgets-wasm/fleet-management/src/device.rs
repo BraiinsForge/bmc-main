@@ -230,6 +230,20 @@ impl KnownDevice {
     }
 }
 
+/// A snapshot of the fleet by membership and liveness, for tracing where the
+/// device count goes — Dormant retirement, removal, or unreachability — from
+/// ground truth instead of a fast-rotating poll log.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Census {
+    pub total: usize,
+    pub reported: usize,
+    pub reachable: usize,
+    pub candidate: usize,
+    pub dormant: usize,
+    pub identified: usize,
+    pub confirmed: usize,
+}
+
 #[derive(Debug, Default)]
 pub struct DeviceList {
     devices: Vec<KnownDevice>,
@@ -358,6 +372,26 @@ impl DeviceList {
             .filter(|d| d.identity.family == family && d.is_pollable())
             .map(|d| d.identity.id.clone())
             .collect()
+    }
+
+    /// Count the fleet by membership and liveness for a diagnostic snapshot.
+    #[must_use]
+    pub fn census(&self) -> Census {
+        let mut c = Census {
+            total: self.devices.len(),
+            ..Census::default()
+        };
+        for dev in &self.devices {
+            c.reported += usize::from(dev.is_reported());
+            c.reachable += usize::from(dev.reachable);
+            match dev.membership {
+                Membership::Candidate => c.candidate += 1,
+                Membership::Dormant => c.dormant += 1,
+                Membership::Identified => c.identified += 1,
+                Membership::Confirmed => c.confirmed += 1,
+            }
+        }
+        c
     }
 
     /// Ids of devices in `family` that were added manually (not discovered).
@@ -984,6 +1018,25 @@ mod tests {
         );
         assert!(dev.is_reported());
         assert!(dev.is_confirmed(), "and is now a proven miner");
+    }
+
+    #[test]
+    fn census_counts_by_membership_and_liveness() {
+        let mut list = DeviceList::new();
+        let confirmed = DeviceId::new("a");
+        list.upsert(identity("a", "10.0.0.1"));
+        list.record_pass(&confirmed, good_reading(), true);
+        let dormant = DeviceId::new("b");
+        list.upsert(identity("b", "10.0.0.2"));
+        for _ in 0..CANDIDATE_PROBE_PASSES {
+            list.record_pass(&dormant, TelemetryReading::default(), false);
+        }
+        let c = list.census();
+        assert_eq!(c.total, 2);
+        assert_eq!(c.confirmed, 1);
+        assert_eq!(c.reachable, 1, "only the answered device is reachable");
+        assert_eq!(c.dormant, 1, "the spent candidate retired to dormant");
+        assert_eq!(c.reported, 1, "the dormant candidate is not reported");
     }
 
     #[test]
