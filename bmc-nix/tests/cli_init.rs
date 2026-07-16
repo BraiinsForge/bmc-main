@@ -29,6 +29,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::JoinHandle;
 
 use bmc_nix::feed::{PackageFeed, PackageFeedEntry};
+use bmc_nix::store::SignatureVerification;
 use bmc_nix::types::{FactoryServerEntry, ServersConfig};
 use serial_test::serial;
 use tempfile::TempDir;
@@ -661,6 +662,7 @@ async fn init_store_wipe_replaces_existing_store() {
         &download_dir,
         &stage_dir,
         true,
+        &SignatureVerification::Disabled,
         None,
     )
     .await
@@ -746,6 +748,7 @@ async fn init_store_blocks_on_held_init_lock() {
             &task_download_dir,
             &task_stage_dir,
             false,
+            &SignatureVerification::Disabled,
             None,
         )
         .await
@@ -785,6 +788,270 @@ async fn init_store_blocks_on_held_init_lock() {
     assert!(
         stage_dir.join("nix/store/lockpkg/marker").exists(),
         "the store must be promoted after the lock is released"
+    );
+}
+
+// ── init tarball signature verification (library level) ─────────────────
+
+fn sha256(bytes: &[u8]) -> [u8; 32] {
+    ring::digest::digest(&ring::digest::SHA256, bytes)
+        .as_ref()
+        .try_into()
+        .expect("BUG: SHA-256 digest is 32 bytes")
+}
+
+/// Deterministic Ed25519 keypair in the nix line formats:
+/// (`name:base64(seed ‖ public)`, `name:base64(public)`).
+fn signing_keypair(name: &str, seed: &[u8; 32]) -> (String, String) {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD as BASE64;
+    use ring::signature::KeyPair as _;
+
+    let pair = ring::signature::Ed25519KeyPair::from_seed_unchecked(seed)
+        .expect("BUG: any 32-byte seed is a valid Ed25519 seed");
+    let public = pair.public_key().as_ref().to_vec();
+    let mut secret = seed.to_vec();
+    secret.extend_from_slice(&public);
+    (
+        format!("{name}:{}", BASE64.encode(&secret)),
+        format!("{name}:{}", BASE64.encode(&public)),
+    )
+}
+
+/// Serve a feed+tarball pair for `bos_version`; the feed entry's
+/// signature is whatever `make_signature` derives from the exact bytes
+/// the tarball route will serve.
+fn serve_init_routes(
+    tmp: &TempDir,
+    bos_version: &str,
+    make_signature: impl FnOnce(&[u8]) -> Option<String>,
+) -> (TestHttpServer, String) {
+    let pending = bind_server();
+    let base_url = pending.base_url();
+    let tarball_route_path = format!("/nix-{bos_version}.tar.gz");
+    let tarball_bytes = build_tarball(tmp.path(), &[("nix/store/signedpkg/marker", b"signed")]);
+    let feed_bytes = package_feed_bytes(vec![PackageFeedEntry {
+        bos_version: bos_version.to_owned(),
+        download_url: format!("{base_url}{tarball_route_path}"),
+        profile_path: PROFILE_PATH.to_owned(),
+        index_url: None,
+        signature: make_signature(&tarball_bytes),
+    }]);
+    let server = pending.serve(vec![
+        Route {
+            path: "/nix-package-feed.v1.json".to_owned(),
+            body: feed_bytes,
+        },
+        Route {
+            path: tarball_route_path,
+            body: tarball_bytes,
+        },
+    ]);
+    (server, base_url)
+}
+
+async fn run_init_store(
+    tmp: &TempDir,
+    base_url: String,
+    bos_version: &str,
+    verification: &SignatureVerification,
+) -> Result<bmc_nix::store::InitStoreResult, bmc_nix::store::InitStoreError> {
+    let factory_server = FactoryServerEntry {
+        id: "test".to_owned(),
+        base_url,
+        known_public_key: String::new(),
+        priority: 0,
+        enabled: true,
+    };
+    bmc_nix::store::init_store(
+        &reqwest::Client::new(),
+        &factory_server,
+        bos_version,
+        &tmp.path().join("download"),
+        &tmp.path().join("stage"),
+        false,
+        verification,
+        None,
+    )
+    .await
+}
+
+#[tokio::test]
+#[serial]
+async fn init_store_accepts_correctly_signed_tarball() {
+    let tmp = TempDir::new().expect("BUG: tempdir");
+    let bos_version = "2026-test-1";
+    let (secret, public) = signing_keypair("braiins-init-1", &[7; 32]);
+    let (_server, base_url) = serve_init_routes(&tmp, bos_version, |bytes| {
+        Some(bmc_nix::signature::sign(&secret, &sha256(bytes)).expect("BUG: valid secret key"))
+    });
+
+    let result = run_init_store(
+        &tmp,
+        base_url,
+        bos_version,
+        &SignatureVerification::Enabled {
+            trusted_public_key: public,
+        },
+    )
+    .await
+    .expect("a correctly signed tarball must initialize");
+
+    assert_eq!(result.profile_path, PathBuf::from(PROFILE_PATH));
+    assert!(
+        tmp.path().join("stage/nix/store/signedpkg/marker").exists(),
+        "the verified store must be promoted"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn init_store_rejects_signature_over_different_content() {
+    let tmp = TempDir::new().expect("BUG: tempdir");
+    let bos_version = "2026-test-1";
+    let (secret, public) = signing_keypair("braiins-init-1", &[7; 32]);
+    let (_server, base_url) = serve_init_routes(&tmp, bos_version, |_| {
+        Some(
+            bmc_nix::signature::sign(&secret, &sha256(b"not the served tarball"))
+                .expect("BUG: valid secret key"),
+        )
+    });
+
+    let err = run_init_store(
+        &tmp,
+        base_url,
+        bos_version,
+        &SignatureVerification::Enabled {
+            trusted_public_key: public,
+        },
+    )
+    .await
+    .expect_err("a signature over different content must be rejected");
+
+    assert!(
+        matches!(
+            &err,
+            bmc_nix::store::InitStoreError::SignatureVerificationFailed {
+                source: bmc_nix::signature::SignatureError::VerificationFailed { .. },
+            }
+        ),
+        "expected SignatureVerificationFailed, got: {err:?}"
+    );
+    assert!(
+        !tmp.path().join("download/init-tarball.tar.gz").exists(),
+        "the rejected tarball must not linger at the download path"
+    );
+    assert!(
+        !tmp.path().join("stage/nix").exists(),
+        "a rejected tarball must never be promoted"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn init_store_rejects_signature_by_untrusted_key() {
+    let tmp = TempDir::new().expect("BUG: tempdir");
+    let bos_version = "2026-test-1";
+    let (untrusted_secret, _) = signing_keypair("braiins-init-1", &[9; 32]);
+    let (_, trusted_public) = signing_keypair("braiins-init-1", &[7; 32]);
+    let (_server, base_url) = serve_init_routes(&tmp, bos_version, |bytes| {
+        Some(
+            bmc_nix::signature::sign(&untrusted_secret, &sha256(bytes))
+                .expect("BUG: valid secret key"),
+        )
+    });
+
+    let err = run_init_store(
+        &tmp,
+        base_url,
+        bos_version,
+        &SignatureVerification::Enabled {
+            trusted_public_key: trusted_public,
+        },
+    )
+    .await
+    .expect_err("a signature by an untrusted key must be rejected");
+
+    assert!(
+        matches!(
+            &err,
+            bmc_nix::store::InitStoreError::SignatureVerificationFailed {
+                source: bmc_nix::signature::SignatureError::VerificationFailed { .. },
+            }
+        ),
+        "expected SignatureVerificationFailed, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn init_store_requires_signature_before_download() {
+    let tmp = TempDir::new().expect("BUG: tempdir");
+    let bos_version = "2026-test-1";
+    let (_, public) = signing_keypair("braiins-init-1", &[7; 32]);
+    let (server, base_url) = serve_init_routes(&tmp, bos_version, |_| None);
+
+    let err = run_init_store(
+        &tmp,
+        base_url,
+        bos_version,
+        &SignatureVerification::Enabled {
+            trusted_public_key: public,
+        },
+    )
+    .await
+    .expect_err("an unsigned feed entry must be rejected");
+
+    assert!(
+        matches!(
+            &err,
+            bmc_nix::store::InitStoreError::MissingSignature(version) if version == bos_version
+        ),
+        "expected MissingSignature, got: {err:?}"
+    );
+    assert_eq!(
+        server.hits(),
+        1,
+        "only the feed may have been fetched: the missing signature must \
+         abort before the tarball download"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn init_store_rejects_malformed_trusted_key_before_download() {
+    let tmp = TempDir::new().expect("BUG: tempdir");
+    let bos_version = "2026-test-1";
+    let (secret, _) = signing_keypair("braiins-init-1", &[7; 32]);
+    let (server, base_url) = serve_init_routes(&tmp, bos_version, |bytes| {
+        Some(bmc_nix::signature::sign(&secret, &sha256(bytes)).expect("BUG: valid secret key"))
+    });
+
+    let err = run_init_store(
+        &tmp,
+        base_url,
+        bos_version,
+        &SignatureVerification::Enabled {
+            trusted_public_key: "not a nix-format key".to_owned(),
+        },
+    )
+    .await
+    .expect_err("a malformed trusted key must be rejected");
+
+    assert!(
+        matches!(
+            &err,
+            bmc_nix::store::InitStoreError::SignatureVerificationFailed {
+                source: bmc_nix::signature::SignatureError::MalformedPublicKey(_),
+            }
+        ),
+        "expected MalformedPublicKey, got: {err:?}"
+    );
+    assert_eq!(
+        server.hits(),
+        1,
+        "only the feed may have been fetched: the malformed trust anchor \
+         must abort before the tarball download"
     );
 }
 

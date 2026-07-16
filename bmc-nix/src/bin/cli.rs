@@ -1106,6 +1106,7 @@ async fn cmd_init(
             &download_dir,
             &data_dir,
             wipe,
+            &bmc_nix::store::SignatureVerification::Disabled,
             Some(&progress),
         )
         .await?

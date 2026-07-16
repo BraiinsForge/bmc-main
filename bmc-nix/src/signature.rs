@@ -89,6 +89,20 @@ pub fn verify(
         })
 }
 
+/// Validate a nix-format `name:base64(public key)` line without
+/// verifying anything, so a caller holding a trust anchor can fail
+/// fast on a malformed one before fetching what it is meant to check.
+///
+/// # Errors
+///
+/// Returns [`SignatureError::MalformedPublicKey`] when the line is not
+/// a well-formed 32-byte Ed25519 public key.
+pub fn validate_public_key(line: &str) -> Result<(), SignatureError> {
+    decode_line(line, ED25519_PUBLIC_KEY_LEN)
+        .map(|_| ())
+        .map_err(SignatureError::MalformedPublicKey)
+}
+
 /// Split a nix-format `name:base64` line and decode its payload,
 /// requiring exactly `expected_len` bytes.
 fn decode_line(line: &str, expected_len: usize) -> Result<(&str, Vec<u8>), String> {
@@ -191,6 +205,21 @@ mod tests {
             ),
             "expected KeyNameMismatch, got: {err:?}"
         );
+    }
+
+    #[test]
+    fn validate_public_key_accepts_valid_and_rejects_malformed() {
+        let (_, public) = test_keypair("k");
+        validate_public_key(&public).expect("BUG: a valid public key line must validate");
+        let wrong_length = format!("k:{}", BASE64.encode([0_u8; 31]));
+        for line in ["nocolon", "k:!!!not-base64!!!", wrong_length.as_str()] {
+            let err = validate_public_key(line)
+                .expect_err("BUG: a malformed public key line must be rejected");
+            assert!(
+                matches!(err, SignatureError::MalformedPublicKey(_)),
+                "expected MalformedPublicKey for {line:?}, got: {err:?}"
+            );
+        }
     }
 
     #[test]

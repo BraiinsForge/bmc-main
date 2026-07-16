@@ -636,6 +636,13 @@ pub enum InitStoreError {
         #[source]
         source: crate::partition::PreparePartitionError,
     },
+    #[error("package feed entry for BOS version '{0}' has no signature")]
+    MissingSignature(String),
+    #[error("init tarball signature verification failed: {source}")]
+    SignatureVerificationFailed {
+        #[source]
+        source: crate::signature::SignatureError,
+    },
 }
 
 /// If no bytes arrive for this duration, the download is considered stalled.
@@ -664,6 +671,19 @@ fn check_feed_size(url: &str, len: u64) -> Result<(), InitStoreError> {
 #[derive(Debug)]
 pub struct InitStoreResult {
     pub profile_path: PathBuf,
+}
+
+/// Whether [`init_store`] verifies the downloaded tarball's Ed25519
+/// signature (see [`crate::signature`]).
+#[derive(Debug, Clone)]
+pub enum SignatureVerification {
+    /// Verify the feed entry's signature against this nix-style
+    /// `name:base64` trusted public key (the factory entry's
+    /// `known_public_key`). An absent feed signature is a hard
+    /// failure, exactly like a bad one.
+    Enabled { trusted_public_key: String },
+    /// Trust the transport alone.
+    Disabled,
 }
 
 /// Progress callback for tarball download.
@@ -899,12 +919,21 @@ async fn extract_and_promote(
 ///
 /// 0. Take the exclusive init lock on `<stage_dir>/.init.lock`
 /// 1. Fetch the package feed from the factory server
-/// 2. Find the feed entry matching current BOS version
-/// 3. Download tarball to `download_dir` (streaming to disk)
-/// 4. Extract to `<stage_dir>/nix.tmp`
-/// 5. Promote `<stage_dir>/nix.tmp/nix` to `<stage_dir>/nix`
-/// 6. Clean up downloaded tarball
-/// 7. Return the `profile_path` from the tarball metadata
+/// 2. Find the feed entry matching current BOS version; with
+///    verification enabled, require its signature and a well-formed
+///    trusted key before anything is downloaded
+/// 3. Download tarball to `download_dir` (streaming to disk, hashing
+///    each chunk)
+/// 4. Verify the signature over the tarball's SHA-256 digest
+/// 5. Extract to `<stage_dir>/nix.tmp`
+/// 6. Promote `<stage_dir>/nix.tmp/nix` to `<stage_dir>/nix`
+/// 7. Clean up downloaded tarball
+/// 8. Return the `profile_path` from the tarball metadata
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the init pipeline's inputs are genuinely this many; \
+              grouping them into a struct would only rename the problem"
+)]
 pub async fn init_store(
     client: &reqwest::Client,
     factory_server: &FactoryServerEntry,
@@ -912,10 +941,9 @@ pub async fn init_store(
     download_dir: &Path,
     stage_dir: &Path,
     wipe_store: bool,
+    verification: &SignatureVerification,
     progress: Option<&dyn DownloadProgress>,
 ) -> Result<InitStoreResult, InitStoreError> {
-    use tokio::io::AsyncWriteExt;
-
     // Serialize against any other initializer before the fixed-name
     // download or staging paths are touched. Held until return, so the
     // post-promotion download cleanup is covered too.
@@ -977,12 +1005,65 @@ pub async fn init_store(
     let tarball = crate::feed::select_entry(&feed_url, &feed, bos_version)
         .map_err(|_| InitStoreError::MissingPackageFeedEntry(bos_version.to_owned()))?;
 
-    // Step 3: Download tarball to disk
+    // A malformed trust anchor or an unsigned entry must fail before
+    // any download bytes hit the disk.
+    let required_signature = match verification {
+        SignatureVerification::Enabled { trusted_public_key } => {
+            crate::signature::validate_public_key(trusted_public_key)
+                .map_err(|source| InitStoreError::SignatureVerificationFailed { source })?;
+            let signature = tarball
+                .signature
+                .as_deref()
+                .ok_or_else(|| InitStoreError::MissingSignature(bos_version.to_owned()))?;
+            Some((trusted_public_key.as_str(), signature))
+        }
+        SignatureVerification::Disabled => None,
+    };
+
+    // Steps 3+4: Download tarball to disk and verify its signature
     let tarball_path = download_dir.join("init-tarball.tar.gz");
     std::fs::create_dir_all(download_dir).map_err(InitStoreError::WriteFailed)?;
 
+    download_and_verify_tarball(
+        client,
+        &tarball.download_url,
+        &tarball_path,
+        required_signature,
+        progress,
+    )
+    .await?;
+
+    // Step 5: Extract into staging and promote the store atomically
+    if let Some(p) = progress {
+        p.on_extracting();
+    }
+
+    extract_and_promote(&tarball_path, stage_dir, wipe_store).await?;
+
+    // Step 6: Clean up tarball
+    let _ = tokio::fs::remove_file(&tarball_path).await;
+
+    Ok(InitStoreResult {
+        profile_path: PathBuf::from(&tarball.profile_path),
+    })
+}
+
+/// Stream the tarball at `download_url` to `tarball_path`, hashing
+/// each chunk, then verify `required_signature` — a
+/// `(trusted public key, signature)` pair — over the final SHA-256
+/// digest. A rejected tarball is removed so no poisoned artifact
+/// lingers at the fixed download path.
+async fn download_and_verify_tarball(
+    client: &reqwest::Client,
+    download_url: &str,
+    tarball_path: &Path,
+    required_signature: Option<(&str, &str)>,
+    progress: Option<&dyn DownloadProgress>,
+) -> Result<(), InitStoreError> {
+    use tokio::io::AsyncWriteExt;
+
     let mut response = client
-        .get(&tarball.download_url)
+        .get(download_url)
         .send()
         .await
         .map_err(|source| InitStoreError::DownloadFailed { source })?
@@ -993,7 +1074,8 @@ pub async fn init_store(
         .content_length()
         .and_then(|n| usize::try_from(n).ok());
     let mut downloaded: usize = 0;
-    let mut file = tokio::fs::File::create(&tarball_path)
+    let mut digest = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut file = tokio::fs::File::create(tarball_path)
         .await
         .map_err(InitStoreError::WriteFailed)?;
 
@@ -1007,6 +1089,7 @@ pub async fn init_store(
         file.write_all(&chunk)
             .await
             .map_err(InitStoreError::WriteFailed)?;
+        digest.update(&chunk);
         downloaded += chunk.len();
         if let Some(p) = progress {
             p.on_bytes_downloaded(downloaded, total_size);
@@ -1015,19 +1098,18 @@ pub async fn init_store(
     file.flush().await.map_err(InitStoreError::WriteFailed)?;
     drop(file);
 
-    // Step 4: Extract into staging and promote the store atomically
-    if let Some(p) = progress {
-        p.on_extracting();
+    if let Some((trusted_public_key, signature)) = required_signature {
+        let digest: [u8; 32] = digest
+            .finish()
+            .as_ref()
+            .try_into()
+            .expect("BUG: SHA-256 digests are 32 bytes");
+        if let Err(source) = crate::signature::verify(trusted_public_key, &digest, signature) {
+            let _ = tokio::fs::remove_file(tarball_path).await;
+            return Err(InitStoreError::SignatureVerificationFailed { source });
+        }
     }
-
-    extract_and_promote(&tarball_path, stage_dir, wipe_store).await?;
-
-    // Step 5: Clean up tarball
-    let _ = tokio::fs::remove_file(&tarball_path).await;
-
-    Ok(InitStoreResult {
-        profile_path: PathBuf::from(&tarball.profile_path),
-    })
+    Ok(())
 }
 
 /// Initialize the Nix store from a local factory tarball.
@@ -1683,6 +1765,7 @@ mod tests {
             &dir.path().join("download"),
             dir.path(),
             false,
+            &SignatureVerification::Disabled,
             None,
         )
         .await
