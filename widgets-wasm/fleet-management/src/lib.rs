@@ -57,7 +57,7 @@ mod manifest_params;
 use bmc_wasm_sdk::*;
 
 #[cfg(target_arch = "wasm32")]
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 #[cfg(target_arch = "wasm32")]
 use adapter::FamilyAdapter;
@@ -82,6 +82,27 @@ thread_local! {
     static NAMES: RefCell<Option<NamesCache>> = const { RefCell::new(None) };
     static HISTORY: RefCell<history::HashrateHistory> =
         RefCell::new(history::HashrateHistory::default());
+    static DISPLAY_FRAME_PENDING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Coalescing window for display refreshes.
+/// Each device's poll bumps the devices sequence, so re-deriving per poll
+/// re-folds the whole fleet N times a round; batching updates into one render
+/// per window makes that once a window instead.
+///
+/// Aggregates drift slowly (a device is re-polled only once a round),
+/// so the sub-second lag is imperceptible.
+#[cfg(target_arch = "wasm32")]
+const DISPLAY_COALESCE_MS: u32 = 500;
+
+/// Request a coalesced display refresh: a no-op while one
+/// is already scheduled, so a burst of device updates costs
+/// one re-derive/render, not N.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn request_display_frame() {
+    if !DISPLAY_FRAME_PENDING.with(|p| p.replace(true)) {
+        request_frame_after(DISPLAY_COALESCE_MS);
+    }
 }
 
 /// The parsed `device_names` mapping, cached per params version. The
@@ -398,6 +419,8 @@ fn rebuild_model_detail_rows(
     reason = "the render entry orchestrates derive, view dispatch, and click routing"
 )]
 pub extern "C" fn render(_delta_ms: u32) {
+    // Any render serves a pending coalesced refresh; re-arm only on the next update.
+    DISPLAY_FRAME_PENDING.with(|p| p.set(false));
     let WidgetSize { width, height, .. } = widget_size();
     let seq = DEVICES.with(|d| d.borrow().seq());
     let params_version = bmc_wasm_sdk::params::version();

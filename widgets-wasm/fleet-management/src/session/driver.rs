@@ -633,7 +633,10 @@ fn finalize_device(id: &DeviceId) {
         failures
     });
     log_fetch(family, id, reachable, failures, &reading, model.as_ref());
-    request_frame();
+    // Coalesced: a full round bumps the sequence N times,
+    // but the display only needs to refold once per window,
+    // not once per device.
+    crate::request_display_frame();
     advance();
 }
 
