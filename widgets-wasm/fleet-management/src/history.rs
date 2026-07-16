@@ -4,7 +4,7 @@
 //! one sample per telemetry refold (gated on the devices sequence, so
 //! filter/params-only refolds don't double-count), capped to a recent window.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use bmc_wasm_sdk::Hashrate;
 
@@ -15,14 +15,14 @@ use crate::summary::FleetSummary;
 const WINDOW: usize = 32;
 
 #[derive(Debug, Default)]
-struct Ring(Vec<f32>);
+struct Ring(VecDeque<f32>);
 
 impl Ring {
     fn push(&mut self, value: f32) {
         if self.0.len() == WINDOW {
-            self.0.remove(0);
+            self.0.pop_front();
         }
-        self.0.push(value);
+        self.0.push_back(value);
     }
 }
 
@@ -82,21 +82,21 @@ impl HashrateHistory {
 
     #[must_use]
     pub(crate) fn total_series(&self) -> Vec<f32> {
-        self.total.0.clone()
+        self.total.0.iter().copied().collect()
     }
 
     #[must_use]
     pub(crate) fn model_series(&self, family: Option<DeviceFamily>, label: &str) -> Vec<f32> {
         self.models
             .get(&(family.map(DeviceFamily::index), label.to_owned()))
-            .map_or_else(Vec::new, |ring| ring.0.clone())
+            .map_or_else(Vec::new, |ring| ring.0.iter().copied().collect())
     }
 
     #[must_use]
     pub(crate) fn device_series(&self, id: &DeviceId) -> Vec<f32> {
         self.devices
             .get(id)
-            .map_or_else(Vec::new, |ring| ring.0.clone())
+            .map_or_else(Vec::new, |ring| ring.0.iter().copied().collect())
     }
 }
 
