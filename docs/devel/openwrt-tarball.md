@@ -5,9 +5,10 @@ alternate partition and reboots into. This document covers the pieces of that ta
 about; the OpenWrt image itself (kernel, rootfs, boot glue) is a BOS concern.
 
 > **Implementation status:** this describes the implemented `bmc-main` firmware payload and CLI behavior, and the
-> BOS-side `COMMAND` that packs and invokes it. Remaining cross-repo work: content signature verification does not exist
-> yet — the CLI has no signature policy, verifies nothing against `known_public_key`, and the shipped
-> `servers.json.default` carries a placeholder key.
+> BOS-side `COMMAND` that packs and invokes it. Remaining cross-repo work: bmc-packages does not yet sign feed entries
+> at publish time, and the shipped `servers.json.default` carries a placeholder key — the factory server must publish
+> signed feed entries before firmware carrying this init ships, because verification-enabled init refuses unsigned
+> entries.
 
 Two things ship inside every tarball that concern `bmc-nix`:
 
@@ -166,11 +167,17 @@ in the tarball.
    (`nix-package-feed.v1.json`, fetched from the `factory` entry of `/etc/nix-upgrade/servers.json`). If no feed entry
    matches the requested BOS version, `init` fails — the factory server has to keep an entry for every Nix-capable BOS
    version, otherwise this path breaks.
-4. **No content verification.** Signature verification is not implemented: the CLI consults neither the factory entry's
-   `known_public_key` nor any signature policy for the feed or the tarball. The downloads are authenticated by TLS alone
-   — the certificate must validate, which requires a roughly correct system clock. (NAR substitutions on the
-   package-upgrade path are unaffected — nix verifies those against the `trusted-public-keys` that `register-server`
-   writes to `nix.conf`.)
+4. **Verify the tarball signature.** The feed entry carries a nix-style `name:base64` Ed25519 signature of the init
+   tarball, and `init` verifies it against the factory entry's `known_public_key` by default. The tarball is hashed
+   (SHA-256) while it streams to disk; the signature covers a domain-separated fingerprint of that digest
+   (`bmc-init-tarball-1;sha256:<hex>`), never the tarball bytes themselves. A feed entry without a signature or a trust
+   anchor that fails to parse aborts the init before the download starts; a downloaded tarball that fails verification
+   is deleted and never extracted. `--no-verify-signature` is the only escape hatch — a development convenience that
+   logs a loud warning and trusts the transport alone. The feed document itself is authenticated by TLS — the
+   certificate must validate, which requires a roughly correct system clock. The local `--tarball` init path stays
+   outside signature verification: it is a trust-what-you-hand-it dev/recovery path with no feed entry to carry a
+   signature. (NAR substitutions on the package-upgrade path are unaffected — nix verifies those against the
+   `trusted-public-keys` that `register-server` writes to `nix.conf`.)
 5. **Unpack the tarball into `/mnt/data/nix.tmp` and atomically promote `nix.tmp/nix` to `nix`.** The tarball extracts
    into a staging directory inside `/mnt/data`. Only the extracted `nix.tmp/nix` subtree is renamed to `<data-dir>/nix`;
    entries outside `nix/` are ignored and removed with the staging directory — live rootfs files such as

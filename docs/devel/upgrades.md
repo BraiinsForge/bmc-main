@@ -9,9 +9,10 @@ This document covers the pieces a contributor needs to work on the upgrade flow 
 are chosen, how a firmware upgrade differs from an application-only upgrade, and how downgrade and rollback are handled.
 
 > **Implementation status:** this document describes the implemented `bmc-main` behavior. The OpenWrt tarball `COMMAND`
-> packs and invokes the firmware Nix payload (see [`openwrt-tarball.md`](openwrt-tarball.md)). Remaining cross-repo
-> work: factory tarball and feed downloads carry no signature verification — the CLI has no signature policy, and
-> `known_public_key` on the factory entry is stored but never consulted.
+> packs and invokes the firmware Nix payload (see [`openwrt-tarball.md`](openwrt-tarball.md)). Init verifies the factory
+> tarball's Ed25519 signature against the factory entry's `known_public_key` by default. Remaining cross-repo work:
+> bmc-packages does not yet sign the published feed entries, and the shipped `servers.json.default` carries a
+> placeholder key.
 
 ## Sources of Truth
 
