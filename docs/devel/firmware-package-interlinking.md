@@ -81,7 +81,7 @@ The handoff does **not** need to survive the reboot, and its tmpfs path is not a
 `bmc` writes it and hands the image to `sysupgrade`; `sysupgrade` — not `bmc` — then runs
 `bmc-nix-cli upgrade --install-from` to resolve and build those packages into the next generation *before* the flash, in
 the same boot (everything package-side is pre-flash, as above). The file is written and consumed within one running
-system and never crosses a reboot, so `/tmp/bmc-nix-pending-install.json` only has to exist at that moment, which it
+system and never crosses a reboot, so `/dev/shm/bmc-nix-pending-install.json` only has to exist at that moment, which it
 does.
 
 The firmware run resolves against the configured servers. The feed entry for the exact incoming firmware version selects
