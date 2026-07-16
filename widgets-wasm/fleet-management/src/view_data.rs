@@ -272,6 +272,7 @@ mod tests {
             consecutive_failures: 0,
             membership: Membership::Confirmed,
             last_failure: None,
+            unreachable_since: None,
         }
     }
 

@@ -200,6 +200,10 @@ pub struct KnownDevice {
     /// Why the last failed pass failed, for the surfaced status of a device with
     /// no live telemetry. `None` after a reachable pass or before any poll.
     pub last_failure: Option<PollFailure>,
+    /// Unix secs since the device went no-response unreachable
+    /// (`None` while reachable or API-erroring);
+    /// drives retirement of a long-gone device.
+    pub unreachable_since: Option<i64>,
 }
 
 impl KnownDevice {
@@ -303,6 +307,7 @@ impl DeviceList {
                 consecutive_failures: 0,
                 membership: Membership::Candidate,
                 last_failure: None,
+                unreachable_since: None,
             });
             true
         }
@@ -340,6 +345,30 @@ impl DeviceList {
     pub fn remove(&mut self, id: &DeviceId) {
         self.seq += 1;
         self.devices.retain(|d| &d.identity.id != id);
+    }
+
+    /// Retire devices unreachable with no response (not an API error) for over
+    /// `ttl_secs`, by host clock `now_secs`. Keep-confirmed spares mDNS churn;
+    /// this drops a genuinely gone device. Returns the number removed.
+    #[must_use]
+    pub fn prune_gone(&mut self, now_secs: i64, ttl_secs: i64) -> usize {
+        for dev in &mut self.devices {
+            if !dev.reachable && dev.last_failure == Some(PollFailure::Unreachable) {
+                dev.unreachable_since.get_or_insert(now_secs);
+            } else {
+                dev.unreachable_since = None;
+            }
+        }
+        let before = self.devices.len();
+        self.devices.retain(|dev| {
+            dev.unreachable_since
+                .is_none_or(|since| now_secs.saturating_sub(since) <= ttl_secs)
+        });
+        let removed = before - self.devices.len();
+        if removed > 0 {
+            self.seq += 1;
+        }
+        removed
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &KnownDevice> {
@@ -472,6 +501,7 @@ impl DeviceList {
             self.apply_telemetry(id, reading, true);
             if let Some(dev) = self.devices.iter_mut().find(|d| &d.identity.id == id) {
                 dev.consecutive_failures = 0;
+                dev.unreachable_since = None;
             }
             return 0;
         }
@@ -1193,5 +1223,62 @@ mod tests {
         let dev = list.iter().next().expect("BUG: present");
         assert!(dev.model.is_none());
         assert!(!dev.reachable);
+    }
+
+    // A device that answered, then went unreachable with no response.
+    fn make_gone(list: &mut DeviceList, id_str: &str, failure: PollFailure) -> DeviceId {
+        let id = DeviceId::new(id_str);
+        list.upsert(identity(id_str, "10.0.0.9"));
+        list.record_pass(&id, good_reading(), true);
+        for _ in 0..UNREACHABLE_AFTER_FAILED_PASSES {
+            list.record_pass(&id, TelemetryReading::default(), false);
+        }
+        list.set_last_failure(&id, failure);
+        id
+    }
+
+    #[test]
+    fn prune_gone_retires_a_device_unreachable_past_the_ttl() {
+        let mut list = DeviceList::new();
+        make_gone(
+            &mut list,
+            "bos/dead._http._tcp.local.",
+            PollFailure::Unreachable,
+        );
+        // The first prune stamps the clock; still inside the window.
+        assert_eq!(list.prune_gone(1_000, 300), 0);
+        assert_eq!(list.len(), 1, "within the ttl the device is kept");
+        // Past the window it retires from the fleet.
+        assert_eq!(list.prune_gone(1_301, 300), 1);
+        assert!(list.is_empty(), "a long-gone device is dropped");
+    }
+
+    #[test]
+    fn prune_gone_spares_an_api_erroring_device() {
+        let mut list = DeviceList::new();
+        make_gone(
+            &mut list,
+            "ubos/busy._ubos._tcp.local.",
+            PollFailure::ApiError,
+        );
+        // A 503 device is present but erroring — never retired, however long.
+        assert_eq!(list.prune_gone(1_000, 300), 0);
+        assert_eq!(list.prune_gone(9_999, 300), 0);
+        assert_eq!(list.len(), 1, "a 503 device stays in the fleet");
+    }
+
+    #[test]
+    fn prune_gone_timer_resets_when_a_device_recovers() {
+        let mut list = DeviceList::new();
+        let id = make_gone(
+            &mut list,
+            "bos/flap._http._tcp.local.",
+            PollFailure::Unreachable,
+        );
+        assert_eq!(list.prune_gone(1_000, 300), 0, "stamped at t=1000");
+        // It answers again before the ttl — the timer must reset.
+        list.record_pass(&id, good_reading(), true);
+        assert_eq!(list.prune_gone(1_400, 300), 0, "recovered, so not retired");
+        assert_eq!(list.len(), 1);
     }
 }

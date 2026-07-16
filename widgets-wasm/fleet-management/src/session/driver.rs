@@ -26,7 +26,8 @@ use std::time::Duration;
 use bmc_wasm_sdk::profile;
 use bmc_wasm_sdk::ufmt;
 use bmc_wasm_sdk::{
-    FetchRequest, FetchRequestId, fmt, format_number, log_debug, log_info, log_warn, request_frame,
+    FetchRequest, FetchRequestId, SystemTime, fmt, format_number, log_debug, log_info, log_warn,
+    request_frame,
 };
 
 use super::{
@@ -54,6 +55,9 @@ const MIN_TICK_MS: u32 = 150;
 // Fleet devices live on the local network, so an unreachable one should fail
 // fast instead of holding the SDK-default 10s timeout.
 const DEVICE_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
+// Drop a no-response device from the fleet after this long unreachable,
+// so a dead fleet's count decays. Generous, so a rebooting miner recovers first.
+const RETIRE_AFTER_SECS: i64 = 300;
 
 /// The gap before the next device's opening fetch: the rotation period
 /// split evenly across the ring, floored at [`MIN_TICK_MS`].
@@ -174,6 +178,12 @@ fn resolve_identity(id: &DeviceId) -> Option<(DeviceFamily, String, u16)> {
 /// — the snapshot the ring rebuilds from at the start of each rotation.
 fn gather_ring() -> Vec<DeviceId> {
     let _s = profile::span("gather_ring");
+    let now = SystemTime::now().unix_secs;
+    let retired = crate::DEVICES.with(|d| d.borrow_mut().prune_gone(now, RETIRE_AFTER_SECS));
+    if retired > 0 {
+        log_info!("fleet: retired {retired} device(s) unreachable > {RETIRE_AFTER_SECS}s");
+        crate::request_display_frame();
+    }
     let mut ids = Vec::new();
     for family in DeviceFamily::ALL {
         if family_enabled(family) {

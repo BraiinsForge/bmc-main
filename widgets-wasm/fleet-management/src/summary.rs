@@ -348,6 +348,7 @@ mod tests {
             consecutive_failures: 0,
             membership: Membership::Confirmed,
             last_failure: None,
+            unreachable_since: None,
         }
     }
 
@@ -702,6 +703,7 @@ mod tests {
             consecutive_failures: 0,
             membership: Membership::Identified,
             last_failure: None,
+            unreachable_since: None,
         };
         let with_reading = |ths: f32| {
             let mut d = base();
