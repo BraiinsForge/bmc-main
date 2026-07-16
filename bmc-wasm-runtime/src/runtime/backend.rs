@@ -628,6 +628,31 @@ impl WasmWidgetRuntime {
                 "wasm_tick {wasm} vm_rss_kb={vm_rss_kb} rss_shmem_kb={rss_shmem_kb}",
                 wasm = self.wasm_w,
             );
+            // Each profiling span's share of cumulative guest fuel
+            // — which spans dominate the wasm render on this hardware.
+            //
+            // Read-only: the host never drains `profile_sections`,
+            // and draining here would starve the testbed's per-frame capture.
+            let sections = &self.store.data().profile_sections;
+            let total: u64 = sections.values().sum();
+            if total > 0 {
+                let mut ranked: Vec<(&str, u64)> = sections
+                    .iter()
+                    .map(|(name, fuel)| (name.as_str(), *fuel))
+                    .collect();
+                ranked.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+                #[expect(
+                    clippy::integer_division,
+                    reason = "an integer percent is the intended log format"
+                )]
+                let shares = ranked
+                    .iter()
+                    .take(6)
+                    .map(|(name, fuel)| format!("{name}={}%", fuel * 100 / total))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                tracing::info!(target: bmc_render::profile::TARGET, "wasm_sections {shares}");
+            }
             ii_stopwatch::stopwatch_reset!(self.wasm_w);
         }
 
