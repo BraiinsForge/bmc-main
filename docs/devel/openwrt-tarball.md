@@ -167,10 +167,10 @@ in the tarball.
    matches the requested BOS version, `init` fails — the factory server has to keep an entry for every Nix-capable BOS
    version, otherwise this path breaks.
 4. **No content verification.** Signature verification is not implemented: the CLI consults neither the factory entry's
-   `known_public_key` nor any signature policy for the feed or the tarball. Because NTP has not synced on first boot,
-   the download client also disables TLS certificate validation, so the downloads are trusted by URL alone. (NAR
-   substitutions on the package-upgrade path are unaffected — nix verifies those against the `trusted-public-keys` that
-   `register-server` writes to `nix.conf`.)
+   `known_public_key` nor any signature policy for the feed or the tarball. The downloads are authenticated by TLS alone
+   — the certificate must validate, which requires a roughly correct system clock. (NAR substitutions on the
+   package-upgrade path are unaffected — nix verifies those against the `trusted-public-keys` that `register-server`
+   writes to `nix.conf`.)
 5. **Unpack the tarball into `/mnt/data/nix.tmp` and atomically promote `nix.tmp/nix` to `nix`.** The tarball extracts
    into a staging directory inside `/mnt/data`. Only the extracted `nix.tmp/nix` subtree is renamed to `<data-dir>/nix`;
    entries outside `nix/` are ignored and removed with the staging directory — live rootfs files such as
