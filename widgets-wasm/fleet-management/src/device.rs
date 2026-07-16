@@ -220,6 +220,14 @@ impl KnownDevice {
             Membership::Identified | Membership::Confirmed
         )
     }
+
+    /// Whether the device has ever answered a poll — a proven miner,
+    /// kept in the fleet even when mDNS drops its record
+    /// (its liveness is polling-governed).
+    #[must_use]
+    pub fn is_confirmed(&self) -> bool {
+        self.membership == Membership::Confirmed
+    }
 }
 
 #[derive(Debug, Default)]
@@ -958,6 +966,7 @@ mod tests {
         assert_eq!(dev.membership, Membership::Candidate);
         assert!(dev.is_pollable(), "a fresh candidate is polled");
         assert!(!dev.is_reported(), "but hidden until it answers");
+        assert!(!dev.is_confirmed(), "and unconfirmed until it answers");
     }
 
     #[test]
@@ -974,6 +983,7 @@ mod tests {
             "answering a poll confirms"
         );
         assert!(dev.is_reported());
+        assert!(dev.is_confirmed(), "and is now a proven miner");
     }
 
     #[test]

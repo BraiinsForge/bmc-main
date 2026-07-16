@@ -205,13 +205,20 @@ fn on_ubos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     }
 }
 
-/// Drop a device discovery reported as gone, logging its family and model
-/// before it leaves the list. The family namespaces the id, matching how the
-/// device was inserted.
+/// React to an mDNS `ServiceRemoved`: drop an unconfirmed discovery,
+/// but keep a confirmed miner (its liveness is polling-governed, not mDNS-governed).
+/// The family namespaces the id, matching how the device was inserted.
 #[cfg(target_arch = "wasm32")]
 fn on_removed(family: DeviceFamily, name: &str) {
     let id = DeviceId::for_family(family, name);
-    let info = DEVICES.with(|d| {
+    // mDNS `ServiceRemoved` fires on cache expiry — a missed multicast
+    // refresh over lossy WiFi, not only a real departure.
+    //
+    // A confirmed miner (answered a poll) is kept regardless,
+    // its liveness governed by polling from here, so a dropped
+    // announcement can't churn it out; only a device that never
+    // proved itself leaves on an mDNS removal.
+    let found = DEVICES.with(|d| {
         d.borrow()
             .iter()
             .find(|dev| dev.identity.id == id)
@@ -219,21 +226,30 @@ fn on_removed(family: DeviceFamily, name: &str) {
                 (
                     dev.identity.family,
                     dev.model.as_ref().map(|m| m.name.clone()),
+                    dev.is_confirmed(),
                 )
             })
     });
-    if let Some((family, model)) = info {
-        let model = model.unwrap_or_else(|| "unknown model".to_owned());
+    let Some((family, model, confirmed)) = found else {
+        return;
+    };
+    if confirmed {
         log_info!(
-            "fleet: removed {} {} ({})",
+            "fleet: kept confirmed {} {} despite mDNS removal",
             family_label(family),
-            name,
-            model
+            name
         );
+        return;
     }
-    // Remove from the device list before reacting, so the ring rebuild an
-    // abandon may trigger excludes the gone device instead of re-polling it.
-    // Matches the manual-reconcile order (`reconcile_manual_hosts`).
+    let model = model.unwrap_or_else(|| "unknown model".to_owned());
+    log_info!(
+        "fleet: removed {} {} ({})",
+        family_label(family),
+        name,
+        model
+    );
+    // Remove before reacting so a ring rebuild excludes the gone device instead
+    // of re-polling it (matches the manual-reconcile order).
     DEVICES.with(|d| d.borrow_mut().remove(&id));
     session::remove_token(&id);
     request_frame();
