@@ -318,7 +318,7 @@ pub enum SocketOutbound {
 }
 
 /// An mDNS event queued for delivery to WASM.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MdnsEvent {
     /// Service found/resolved — carries JSON with service details.
     Found(String),

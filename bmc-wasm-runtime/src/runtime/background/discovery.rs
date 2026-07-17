@@ -24,7 +24,8 @@ use std::time::{Duration, Instant};
 
 use crate::host_api::{MdnsEvent, SsdpEvent, UdpBroadcastEvent};
 
-/// Background thread for mDNS browse sessions.
+/// Background thread for one mDNS browse session: subscribe the caller's channel
+/// to the shared hub for its service types, then wait for the stop signal.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "thread entry point — values are moved in"
@@ -34,113 +35,177 @@ pub(in crate::runtime) fn mdns_browse_thread(
     event_tx: std::sync::mpsc::Sender<MdnsEvent>,
     stop_rx: std::sync::mpsc::Receiver<()>,
 ) {
-    use mdns_sd::ServiceEvent;
-
-    // One shared daemon for all browses. Multiple `ServiceDaemon`s on one host
-    // contend on the 5353 socket and lose subtype PTRs (`_x._sub._http._tcp`)
-    // while base types resolve — one daemon removes the contention.
-    let Some(daemon) = shared_mdns_daemon() else {
+    let Some(hub) = mdns_hub() else {
         return;
     };
+    let id = hub.subscribe(&service_types, &event_tx);
+    // Block until asked to stop, or until the stop sender is dropped.
+    let _ = stop_rx.recv();
+    hub.unsubscribe(&service_types, id);
+}
 
-    let receivers: Vec<_> = service_types
-        .iter()
-        .filter_map(|st| match daemon.browse(st) {
-            Ok(rx) => Some((st.clone(), rx)),
-            Err(e) => {
-                tracing::error!("mDNS browse({st}) failed: {e}");
-                None
+/// One shared daemon, one `browse()` per service type, fanned out to every
+/// subscriber. mdns-sd 0.18.2 keys queriers by service type, so a second
+/// `browse()` of a type overwrites the first's listener and a `stop_browse()`
+/// stops it for everyone; the hub owns the single browse per type and refcounts
+/// subscribers, deferring `stop_browse` to the last one to leave. One daemon
+/// also avoids the 5353-socket contention that drops subtype PTRs.
+struct MdnsHub {
+    daemon: mdns_sd::ServiceDaemon,
+    types: std::sync::Mutex<std::collections::HashMap<String, TypeSubscribers>>,
+    next_id: std::sync::atomic::AtomicU64,
+}
+
+struct TypeSubscribers {
+    events: mdns_sd::Receiver<mdns_sd::ServiceEvent>,
+    subscribers: Vec<(u64, std::sync::mpsc::Sender<MdnsEvent>)>,
+}
+
+impl MdnsHub {
+    fn subscribe(&self, service_types: &[String], tx: &std::sync::mpsc::Sender<MdnsEvent>) -> u64 {
+        use std::collections::hash_map::Entry;
+
+        let id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut types = self.types.lock().expect("BUG: mDNS hub mutex poisoned");
+        for st in service_types {
+            match types.entry(st.clone()) {
+                Entry::Occupied(mut e) => e.get_mut().subscribers.push((id, tx.clone())),
+                Entry::Vacant(e) => match self.daemon.browse(st) {
+                    Ok(events) => {
+                        e.insert(TypeSubscribers {
+                            events,
+                            subscribers: vec![(id, tx.clone())],
+                        });
+                    }
+                    Err(err) => tracing::error!("mDNS browse({st}) failed: {err}"),
+                },
             }
-        })
-        .collect();
-
-    if receivers.is_empty() {
-        return;
+        }
+        id
     }
 
-    loop {
-        if stop_rx.try_recv().is_ok() {
-            break;
-        }
-        for (_, rx) in &receivers {
-            while let Ok(event) = rx.try_recv() {
-                match event {
-                    ServiceEvent::ServiceResolved(info) => {
-                        let svc_type = info.ty_domain.clone();
-                        let name = info.get_fullname().to_owned();
-                        let port = info.get_port();
-                        let host = info
-                            .get_addresses_v4()
-                            .iter()
-                            .next()
-                            .map(ToString::to_string)
-                            .unwrap_or_default();
-
-                        let txt_pairs: Vec<String> = info
-                            .get_properties()
-                            .iter()
-                            .map(|p| {
-                                let k = p.key();
-                                let v = p.val_str();
-                                format!("\"{}\":\"{}\"", escape_json(k), escape_json(v))
-                            })
-                            .collect();
-                        let txt_json = format!("{{{}}}", txt_pairs.join(","));
-
-                        let json = format!(
-                            "{{\"service_type\":\"{}\",\"name\":\"{}\",\"host\":\"{}\",\"port\":{},\"txt\":{}}}",
-                            escape_json(&svc_type),
-                            escape_json(&name),
-                            escape_json(&host),
-                            port,
-                            txt_json,
-                        );
-                        if event_tx.send(MdnsEvent::Found(json)).is_err() {
-                            break;
-                        }
-                    }
-                    ServiceEvent::ServiceRemoved(_, fullname) => {
-                        if event_tx.send(MdnsEvent::Removed(fullname)).is_err() {
-                            break;
-                        }
-                    }
-                    ServiceEvent::SearchStarted(_)
-                    | ServiceEvent::ServiceFound(_, _)
-                    | ServiceEvent::SearchStopped(_)
-                    | _ => {}
+    fn unsubscribe(&self, service_types: &[String], id: u64) {
+        let mut types = self.types.lock().expect("BUG: mDNS hub mutex poisoned");
+        for st in service_types {
+            if let Some(subs) = types.get_mut(st) {
+                subs.subscribers.retain(|(sid, _)| *sid != id);
+                if subs.subscribers.is_empty() {
+                    let _ = self.daemon.stop_browse(st);
+                    types.remove(st);
                 }
             }
         }
-        std::thread::sleep(Duration::from_millis(100));
     }
-    // Stop only our browses; the shared daemon serves the other families.
-    for (service_type, _) in &receivers {
-        let _ = daemon.stop_browse(service_type);
+
+    /// Drain every type's daemon events and fan each out to its subscribers,
+    /// dropping any whose receiver has hung up and reaping a type once its last
+    /// subscriber is gone.
+    fn pump_once(&self) {
+        let mut types = self.types.lock().expect("BUG: mDNS hub mutex poisoned");
+        let mut drained = Vec::new();
+        for (st, subs) in types.iter_mut() {
+            while let Ok(event) = subs.events.try_recv() {
+                let Some(msg) = to_mdns_event(event) else {
+                    continue;
+                };
+                subs.subscribers
+                    .retain(|(_, tx)| tx.send(msg.clone()).is_ok());
+            }
+            if subs.subscribers.is_empty() {
+                drained.push(st.clone());
+            }
+        }
+        for st in drained {
+            let _ = self.daemon.stop_browse(&st);
+            types.remove(&st);
+        }
     }
 }
 
-/// The process-wide mDNS daemon shared by every browse thread. `None` if it
-/// couldn't be created.
-fn shared_mdns_daemon() -> Option<&'static mdns_sd::ServiceDaemon> {
-    static DAEMON: std::sync::OnceLock<Option<mdns_sd::ServiceDaemon>> = std::sync::OnceLock::new();
-    DAEMON
+/// Convert an mdns-sd event into a WASM-facing [`MdnsEvent`], or `None` for the
+/// lifecycle events the guest doesn't consume.
+fn to_mdns_event(event: mdns_sd::ServiceEvent) -> Option<MdnsEvent> {
+    use mdns_sd::ServiceEvent;
+
+    match event {
+        ServiceEvent::ServiceResolved(info) => {
+            let svc_type = info.ty_domain.clone();
+            let name = info.get_fullname().to_owned();
+            let port = info.get_port();
+            let host = info
+                .get_addresses_v4()
+                .iter()
+                .next()
+                .map(ToString::to_string)
+                .unwrap_or_default();
+            let txt_pairs: Vec<String> = info
+                .get_properties()
+                .iter()
+                .map(|p| {
+                    format!(
+                        "\"{}\":\"{}\"",
+                        escape_json(p.key()),
+                        escape_json(p.val_str())
+                    )
+                })
+                .collect();
+            let txt_json = format!("{{{}}}", txt_pairs.join(","));
+            let json = format!(
+                "{{\"service_type\":\"{}\",\"name\":\"{}\",\"host\":\"{}\",\"port\":{},\"txt\":{}}}",
+                escape_json(&svc_type),
+                escape_json(&name),
+                escape_json(&host),
+                port,
+                txt_json,
+            );
+            Some(MdnsEvent::Found(json))
+        }
+        ServiceEvent::ServiceRemoved(_, fullname) => Some(MdnsEvent::Removed(fullname)),
+        ServiceEvent::SearchStarted(_)
+        | ServiceEvent::ServiceFound(_, _)
+        | ServiceEvent::SearchStopped(_)
+        | _ => None,
+    }
+}
+
+/// The process-wide mDNS hub, created on first use (`None` if the daemon can't
+/// be created). Spawns the fan-out pump the first time it succeeds.
+fn mdns_hub() -> Option<&'static MdnsHub> {
+    static HUB: std::sync::OnceLock<Option<MdnsHub>> = std::sync::OnceLock::new();
+    static PUMP: std::sync::Once = std::sync::Once::new();
+    let hub = HUB
         .get_or_init(|| match mdns_sd::ServiceDaemon::new() {
             Ok(daemon) => {
                 // Learn devices from responders' periodic/startup announcements,
                 // not only from replies to our own queries — over lossy WiFi
-                // multicast every extra broadcast is another chance to hear
-                // a device whose query response was dropped. Off by default.
+                // multicast every extra broadcast is another chance to hear a
+                // device whose query response was dropped. Off by default.
                 if let Err(e) = daemon.accept_unsolicited(true) {
                     tracing::warn!("mDNS accept_unsolicited failed: {e}");
                 }
-                Some(daemon)
+                Some(MdnsHub {
+                    daemon,
+                    types: std::sync::Mutex::new(std::collections::HashMap::new()),
+                    next_id: std::sync::atomic::AtomicU64::new(0),
+                })
             }
             Err(e) => {
                 tracing::error!("mDNS daemon creation failed: {e}");
                 None
             }
         })
-        .as_ref()
+        .as_ref()?;
+    PUMP.call_once(move || {
+        std::thread::spawn(move || {
+            loop {
+                hub.pump_once();
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+    });
+    Some(hub)
 }
 
 /// Background thread for SSDP M-SEARCH discovery.
