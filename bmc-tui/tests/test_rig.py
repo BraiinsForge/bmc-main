@@ -31,6 +31,7 @@ import pytest
 
 from bmc_tui import rig
 from bmc_tui.nix import Attr, Built, Pkg, StorePath
+from bmc_tui.stage import Abort
 
 _PROFILE = "/nix/var/nix/gcroots/profiles/bmc"
 
@@ -287,3 +288,86 @@ def test_fault_stall_is_path_selective_feed_survives(tmp_path: Path) -> None:
                 response.read()
         finally:
             server.set_fault(rig.FaultMode.NONE)
+
+
+def _signed_pair(tmp_path: Path) -> tuple[rig.Variant, Path]:
+    # `replace` is a module-level import in test_rig.py since Task 2
+    v = replace(_variant(tmp_path, "va", ["/nix/store/a"]), signature="sysupgrade-e2e-1:GOOD")
+    root = tmp_path / "serve"
+    rig.write_serve_root(root, [v], "http://h:1")
+    return v, root
+
+
+def test_strip_feed_signatures_removes_only_the_signature(tmp_path: Path) -> None:
+    v, root = _signed_pair(tmp_path)
+    rig.strip_feed_signatures(root)
+    doc = json.loads((root / rig.FEED_NAME).read_text())
+    assert "signature" not in doc["entries"][0]
+    assert doc["entries"][0]["bos_version"] == "va"
+    rig.write_serve_root(root, [v], "http://h:1")  # the documented restore
+    restored = json.loads((root / rig.FEED_NAME).read_text())
+    assert restored["entries"][0]["signature"] == "sysupgrade-e2e-1:GOOD"
+
+
+def test_set_feed_signatures_overwrites_every_entry(tmp_path: Path) -> None:
+    _, root = _signed_pair(tmp_path)
+    rig.set_feed_signatures(root, "sysupgrade-e2e-1:WRONG")
+    doc = json.loads((root / rig.FEED_NAME).read_text())
+    assert doc["entries"][0]["signature"] == "sysupgrade-e2e-1:WRONG"
+
+
+def test_corrupt_tarball_flips_bytes_and_restore_relinks(tmp_path: Path) -> None:
+    v, root = _signed_pair(tmp_path)
+    good = v.tarball.read_bytes()
+    rig.corrupt_tarball(root, v.tarball.name)
+    served = root / "tarballs" / v.tarball.name
+    assert not served.is_symlink()  # now a poisoned regular file
+    corrupted = served.read_bytes()
+    assert corrupted != good and len(corrupted) == len(good)
+    assert v.tarball.read_bytes() == good  # the store artifact is untouched
+    rig.write_serve_root(root, [v], "http://h:1")
+    assert (root / "tarballs" / v.tarball.name).read_bytes() == good
+
+
+def test_corrupt_index_serves_malformed_json(tmp_path: Path) -> None:
+    v, root = _signed_pair(tmp_path)
+    rig.corrupt_index(root, "va")
+    raw = (root / "index" / "va" / rig.INDEX_NAME).read_text()
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(raw)
+    rig.write_serve_root(root, [v], "http://h:1")
+    assert json.loads((root / "index" / "va" / rig.INDEX_NAME).read_text())["packages"]
+
+
+def test_cache_swap_is_reversible_and_restore_is_idempotent(tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "x.narinfo").write_text("n")
+    rig.swap_cache_away(cache)
+    assert not cache.exists()
+    rig.restore_cache(cache)
+    assert (cache / "x.narinfo").read_text() == "n"
+    rig.restore_cache(cache)  # nothing swapped: no-op
+    assert (cache / "x.narinfo").read_text() == "n"
+
+
+def test_corrupt_tarball_names_an_empty_artifact(tmp_path: Path) -> None:
+    """A zero-byte served tarball must abort naming the real cause (an
+    empty artifact reached the rig), not crash with an IndexError."""
+    v, root = _signed_pair(tmp_path)
+    served = root / "tarballs" / v.tarball.name
+    served.unlink()
+    served.write_bytes(b"")
+    with pytest.raises(Abort, match="empty"):
+        rig.corrupt_tarball(root, v.tarball.name)
+
+
+def test_restore_cache_refuses_to_clobber_a_live_cache(tmp_path: Path) -> None:
+    """Both the cache and its .withheld sibling existing means the swap
+    bookkeeping broke — restoring must refuse loudly instead of renaming
+    over live cache contents."""
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    cache.with_name("cache.withheld").mkdir()
+    with pytest.raises(RuntimeError, match="BUG: both"):
+        rig.restore_cache(cache)

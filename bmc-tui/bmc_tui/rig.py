@@ -39,6 +39,7 @@ from typing import Self
 
 from bmc_tui.nix import Nix, StorePath
 from bmc_tui.server import ServerHandle, server
+from bmc_tui.stage import require
 
 FEED_NAME = "nix-package-feed.v1.json"
 INDEX_NAME = "nix-package-index.v1.json"
@@ -105,6 +106,63 @@ def _relink(link: Path, target: Path) -> None:
     matching the mkdir(exist_ok=True) calls around it."""
     link.unlink(missing_ok=True)
     link.symlink_to(target)
+
+
+def strip_feed_signatures(root: Path) -> None:
+    """A2 tamper: drop every entry's signature — verification-on init must
+    refuse before fetching any tarball bytes. Restore: write_serve_root."""
+    _rewrite_feed(root, lambda entry: entry.pop("signature", None))
+
+
+def set_feed_signatures(root: Path, signature: str) -> None:
+    """A1/A3 tamper: overwrite every entry's signature with `signature`
+    (wrong key, or wrong key name). Restore: write_serve_root."""
+    _rewrite_feed(root, lambda entry: entry.__setitem__("signature", signature))
+
+
+def _rewrite_feed(root: Path, mutate: "Callable[[dict[str, str]], object]") -> None:
+    feed = root / FEED_NAME
+    doc = json.loads(feed.read_text())
+    for entry in doc["entries"]:
+        mutate(entry)
+    feed.write_text(json.dumps(doc, indent=2))
+
+
+def corrupt_tarball(root: Path, name: str) -> None:
+    """A4 tamper: swap the served tarball symlink for a same-length copy
+    with its last byte flipped — the feed signature stays for the
+    original digest. Restore: write_serve_root re-links the store copy."""
+    served = root / "tarballs" / name
+    data = bytearray(served.read_bytes())
+    require(len(data) > 0, f"served tarball {name} is empty — an empty artifact reached the rig")
+    data[-1] ^= 0xFF
+    served.unlink()
+    served.write_bytes(bytes(data))
+
+
+def corrupt_index(root: Path, bos_version: str) -> None:
+    """C3 tamper: serve malformed JSON as the version's index. Restore:
+    write_serve_root re-links the store copy."""
+    served = root / "index" / bos_version / INDEX_NAME
+    served.unlink()
+    served.write_text("{ this is not json")
+
+
+def swap_cache_away(cache: Path) -> None:
+    """C1 tamper: move the cache aside — reversible, unlike emptying it
+    (write_serve_root does not recreate the cache)."""
+    cache.rename(cache.with_name(cache.name + ".withheld"))
+
+
+def restore_cache(cache: Path) -> None:
+    """Undo swap_cache_away; safe to call from finally when nothing was
+    swapped."""
+    withheld = cache.with_name(cache.name + ".withheld")
+    if withheld.exists():
+        if cache.exists():
+            msg = f"BUG: both {cache.name} and {withheld.name} exist — refusing to clobber"
+            raise RuntimeError(msg)
+        withheld.rename(cache)
 
 
 CACHE_KEY_NAME = "sysupgrade-e2e-1"
